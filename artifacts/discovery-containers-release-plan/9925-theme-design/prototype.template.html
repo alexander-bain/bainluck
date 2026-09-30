@@ -63,13 +63,14 @@
   .note { position:absolute; left:12px; right:12px; background:#1F2937; color:#F9FAFB; font-size:12px; line-height:1.4; border-radius:10px; padding:9px 11px; z-index:9; box-shadow:0 6px 18px rgba(0,0,0,.25); }
   .note b { color:#6EE7B7; } .tap { position:absolute; width:34px; height:34px; border-radius:50%; background:rgba(16,185,129,.28); border:2px solid var(--accent-brand); z-index:8; }
   .fixture { display:inline-block; font-size:9.5px; font-weight:800; letter-spacing:.08em; color:#92400E; background:#FEF3C7; border:1px solid #F59E0B; border-radius:5px; padding:1px 5px; vertical-align:middle; }
+  .proposal { display:inline-block; font-size:9.5px; font-weight:800; letter-spacing:.08em; color:#1E3A8A; background:#DBEAFE; border:1px solid #60A5FA; border-radius:5px; padding:1px 5px; vertical-align:middle; }
   .state { margin-bottom:12px; }
   .state .lbl { font-size:11px; font-weight:700; color:#374151; margin:0 2px 5px; }
   img.shot { width:390px; display:block; }
 </style>
 </head>
 <body>
-<div class="banner"><b>Local design prototype for #9925. Not deployed, not an acceptance.</b> Every question, price and count comes from production reads on 2026-09-30 between 20:39 and 20:55Z (see <code>evidence/</code>). Items marked <span class="fixture">FIXTURE</span> show a state's shape only and use no real result. The ◆ rows depend on a cross-venue fold that does not exist yet (prerequisite P2 in README): the number shown is the most-traded venue row's price, not a blend.</div>
+<div class="banner"><b>Local design prototype for #9925. Not deployed, not an acceptance.</b> Every question, price and count comes from production reads on 2026-09-30 between 20:39 and 20:55Z (see <code>evidence/</code>). Items marked <span class="fixture">FIXTURE</span> show a state's shape only and use no real result. Items marked <span class="proposal">PROPOSED</span> are a design proposal, not something production serves: the collection count of <b>133</b> assumes a cross-venue fold (prerequisite P2 in README) that does not exist. Today's venue-group collapse gives <b>152</b>, and production serves no collection count at all. ◆ marks a row the proposed fold would merge with another venue's copy of the same question. The price shown is that row's own venue price, labelled with that venue only; the other venue's price appears beside it under its own name. Prices are never blended. The folds read "24h volume not reported". An empty 24h figure is not a measured zero: 49 of the 83 such awards rows have traded at some point, and none has a measured zero.</div>
 <div class="legend">Flow: ① Discover card → ② whole page → ③ scroll to a ceremony → ④ tap a question (the existing member page, real screenshot) → ⑤ Back lands on the same row → ⑥ Back lands on the same Discover card. ⑦ sparse and untraded behaviour · ⑧ page states · ⑨–⑩ second theme (AI), showing how the same contract works with no ceremony structure.</div>
 <div class="gallery" id="gallery"></div>
 <script>
@@ -78,9 +79,12 @@ const $ = (h) => { const t = document.createElement('template'); t.innerHTML = h
 const esc = (s) => String(s ?? '').replace(/[&<>"]/g, (c) => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
 const pct = (p) => p == null ? '—' : (p < 0.005 ? '<1%' : (p > 0.995 ? '>99%' : Math.round(p * 100) + '%'));
 const src = (list) => list.map((s) => s[0].toUpperCase() + s.slice(1)).join(' · ');
+// The other venue's copy of the same question, under its OWN name and price.
+const alsoLine = (also) => (also || []).map((a) => `${src([a.source])}: ${esc(a.leader)} ${pct(a.p)}`).join(' · ');
 const A = DATA.awards, AI = DATA.ai;
 const count = (secs) => secs.reduce((n, s) => n + s.groups.reduce((m, g) => m + g.rows.length, 0), 0);
 const HEADLINER_IDS = new Set([A.members[0].id, A.members[3].id]);
+const C = DATA.counts;
 const AWARDS_N = count(A.sections), AI_N = count(AI.sections);
 
 const chrome = (inner, { tab = 'Discover' } = {}) => `
@@ -100,7 +104,7 @@ function feedCard({ restored = false } = {}) {
       <div><div class="eyebrow">🎬 Awards Season</div><div class="q17" style="margin-top:6px">Who wins awards season?</div></div>
       <span style="color:var(--text-muted);font-size:20px;line-height:1">›</span></a>
     ${A.members.slice(0, 3).map((m) => compactRow(m)).join('')}
-    <a class="btnrow" href="#page">See all ${AWARDS_N} questions ›</a>
+    <a class="btnrow" href="#page">See all ${AWARDS_N} questions › <span class="proposal">PROPOSED</span></a>
     <div class="actions"><span>♡ Like</span><span>Share</span></div>
   </div>`;
 }
@@ -110,6 +114,7 @@ function dist(m, { title, kind = 'race', more } = {}) {
   const exclusive = kind === 'race';
   return `<a class="card" href="/futures/${m.id}" style="display:block;margin-bottom:10px">
     <div style="padding:13px 16px 2px;display:flex;justify-content:space-between;gap:8px"><div class="t" style="font-size:15px;font-weight:700">${esc(title || m.name)}</div><span class="mark" style="white-space:nowrap">${m.folded ? '◆ ' : ''}${src(m.sources)}</span></div>
+    ${m.also && m.also.length ? `<div class="mark" style="padding:2px 16px 0">Also on ${alsoLine(m.also)}</div>` : ''}
     ${exclusive ? '' : '<div class="mark" style="padding:2px 16px 0">Each line is its own chance</div>'}
     <div class="dist">${top.map((o, i) => `<div class="o"><span class="n">${esc(o.name)}</span><span class="v">${pct(o.p)}</span><span class="bar"><i class="${i === 0 ? 'lead' : ''}" style="width:${Math.round(o.p * 100)}%"></i></span></div>`).join('')}
     ${more ? `<div class="mark" style="margin-top:9px">${more}</div>` : ''}
@@ -117,20 +122,26 @@ function dist(m, { title, kind = 'race', more } = {}) {
 }
 
 function sectionRow(r, { hl = false, id } = {}) {
-  const lead = r.kind === 'nominee' ? `${esc(r.leader)} · chance of a nomination` : esc(r.leader);
-  return `<a class="row ${hl ? 'hl' : ''}" ${id ? `id="${id}"` : ''} href="/futures/${r.id}"><div><div class="t">${r.folded ? '◆ ' : ''}${esc(r.label)}</div><div class="s">${lead}</div></div><div class="pct">${pct(r.p)}<small>${src(r.sources)}</small></div></a>`;
+  const lead = r.kind === 'nomination' ? `${esc(r.leader)} · chance of a nomination` : esc(r.leader);
+  const also = r.also && r.also.length ? `<div class="s" style="font-size:12px;color:var(--text-muted)">Also on ${alsoLine(r.also)}</div>` : '';
+  return `<a class="row ${hl ? 'hl' : ''}" ${id ? `id="${id}"` : ''} href="/futures/${r.id}"><div><div class="t">${r.folded ? '◆ ' : ''}${esc(r.label)}</div><div class="s">${lead}</div>${also}</div><div class="pct">${pct(r.p)}<small>${src(r.sources)}</small></div></a>`;
 }
 
 function section(sec, { show = 5, hlId, openNoms = false } = {}) {
   const groups = sec.groups.map((g, gi) => {
-    const traded = g.rows.filter((r) => r.traded), idle = g.rows.filter((r) => !r.traded);
+    // Three volume states, never collapsed: a measured 0 is the only "no trades";
+    // an empty figure is "not reported" (the Kalshi writer stores 0 as empty).
+    const traded = g.rows.filter((r) => r.vol === 'traded');
+    const zero = g.rows.filter((r) => r.vol === 'zero24h');
+    const unknown = g.rows.filter((r) => r.vol === 'unknown24h');
     const isNoms = g.title === 'Nominations';
     if (isNoms && !openNoms) return `<div class="disclosure"><span>${g.title} (${g.rows.length})</span><span>⌄</span></div>`;
     const shown = traded.filter((r) => !HEADLINER_IDS.has(r.id) && !(r.twins || []).some((t) => HEADLINER_IDS.has(t))).slice(0, show);
     return `${g.title && sec.groups.length > 1 ? `<div class="grp"><span>${g.title}</span><span>${g.rows.length}</span></div>` : ''}
       ${shown.map((r) => sectionRow(r, { hl: r.id === hlId, id: `m-${r.id}` })).join('')}
       ${traded.length > shown.length ? `<a class="btnrow">Show all ${traded.length}</a>` : ''}
-      ${idle.length ? `<div class="disclosure"><span>Not traded yet (${idle.length})</span><span>⌄</span></div>` : ''}`;
+      ${zero.length ? `<div class="disclosure"><span>No trades in the last 24h (${zero.length})</span><span>⌄</span></div>` : ''}
+      ${unknown.length ? `<div class="disclosure"><span>24h volume not reported (${unknown.length})</span><span>⌄</span></div>` : ''}`;
   }).join('');
   return `<div class="h2" id="sec-${sec.key.replace(/\W+/g, '-')}"><span>${esc(sec.title)}</span>${sec.page ? `<a class="link" href="${sec.page}">Ceremony page ›</a>` : ''}</div>
     <div class="card">${groups.replace(/^\s*<a class="row/, '<a style="border-top:0" class="row')}</div>`;
@@ -143,12 +154,12 @@ function awardsPage({ hlId } = {}) {
     <div class="eyebrow">🎬 Collection · 2026–27 season</div>
     <h1 style="font-size:28px;font-weight:800;letter-spacing:-.02em;margin:6px 0 4px">Awards Season</h1>
     <div class="q17" style="font-weight:600;color:var(--text-primary)">Who wins awards season?</div>
-    <p style="font-size:14px;color:var(--text-secondary);margin:8px 0 4px;line-height:1.4">Winners and nominations for the Oscars, Grammys and Emmys. New questions join on their own.</p>
-    <div class="mark" style="margin-bottom:14px">${AWARDS_N} questions · prices as of 1:39 PM PT</div>
+    <p style="font-size:14px;color:var(--text-secondary);margin:8px 0 4px;line-height:1.4">Who wins, and who gets nominated, at the Oscars, Grammys, Daytime Emmys and Latin Grammys. New questions join on their own.</p>
+    <div class="mark" style="margin-bottom:14px">${AWARDS_N} questions <span class="proposal">PROPOSED</span> · prices as of 1:39 PM PT</div>
     <div>${A.sections.map((s) => `<span class="chip">${s.key}<span>${secCount(s)}</span></span>`).join('')}</div>
     <div class="h2" id="headliners"><span>Headliners</span></div>
-    ${dist(bp, { title: 'Oscars · Best Picture', more: '+38 more nominees' })}
-    ${dist(aoty, { title: 'Grammys · Album of the Year', more: '+12 more nominees' })}
+    ${dist(bp, { title: 'Oscars · Best Picture', more: `+${bp.outcome_count - bp.top.length} more films listed` })}
+    ${dist(aoty, { title: 'Grammys · Album of the Year', more: `+${aoty.outcome_count - aoty.top.length} more albums listed` })}
     ${A.sections.map((s) => section(s, { hlId })).join('')}
     <div style="height:30px"></div>`;
 }
@@ -164,8 +175,8 @@ function aiPage() {
     <p style="font-size:14px;color:var(--text-secondary);margin:8px 0 4px;line-height:1.4">Models, companies and launches. Questions join and leave on their own.</p>
     <div class="mark" style="margin-bottom:14px">${AI_N} questions · prices as of 1:39 PM PT</div>
     <div>${secs.map((s) => `<span class="chip">${({'Decided in October':'October','Decided by the new year':'By New Year'}[s.key] || s.key)}<span>${secCount(s)}</span></span>`).join('')}</div>
-    <div class="h2"><span>Most followed</span></div>
-    ${dist(best, { title: best.name, more: '+5 more models' })}
+    <div class="h2"><span>On Discover now</span></div>
+    ${dist(best, { title: best.name, more: `+${best.outcome_count - best.top.length} more listed` })}
     ${dist(hle, { title: hle.name, kind: 'thresholds' })}
     ${secs.map((s) => section(s, { show: 6 })).join('')}
     <div style="height:30px"></div>`;
@@ -188,16 +199,16 @@ function statesPage() {
 }
 
 const FRAMES = [
-  { cap: '<b>① Discover card.</b> The header opens the page (›), and "See all N" replaces the inline "All 6 questions". The three-row preview is unchanged. The count is for the whole collection, not the feed sample.', html: () => chrome(feedCard()), anchor: 'feed-awards', off: 60 },
-  { cap: '<b>② Whole page, top.</b> Title, the group\'s own question, one plain line on what\'s included, and ceremony chips (earned: 4 sections). Headliners are each ceremony\'s marquee category (existing <code>event_awards</code> config). No combined percentage.', html: () => chrome(awardsPage()), anchor: null },
-  { cap: '<b>③ A ceremony section.</b> The existing ceremony page is linked. Winners come first with the 5 most traded; nominations fold away and are labelled "chance of a nomination" (not a race); untraded questions sit behind a toggle (D102).', html: () => chrome(awardsPage()), anchor: 'sec-Oscars', off: 64 },
+  { cap: '<b>① Discover card.</b> The header opens the page (›), and "See all N" replaces the inline "All 6 questions". The three-row preview is unchanged. N counts the whole collection, not the feed sample. <b>133 is a proposed count</b>: it assumes the cross-venue fold (P2). Without the fold it is 152, and production serves no collection count today.', html: () => chrome(feedCard()), anchor: 'feed-awards', off: 60 },
+  { cap: '<b>② Whole page, top.</b> Title, the group\'s own question, one plain line on what\'s included, and ceremony chips (earned: 4 sections). The count and chip numbers assume the proposed fold. Headliners are each ceremony\'s marquee category (existing <code>event_awards</code> config). "+38 more films listed" is not "nominees": Oscar nominations are not announced yet, so these are candidates the venue lists. No combined percentage.', html: () => chrome(awardsPage()), anchor: null },
+  { cap: '<b>③ A ceremony section.</b> The existing ceremony page is linked. Winners come first with the 5 most traded; nomination questions fold away and read "chance of a nomination" (not a race). Rows with no reported 24h volume sit behind a toggle (D102). ◆ rows show their own venue price and name the other venue\'s price separately.', html: () => chrome(awardsPage()), anchor: 'sec-Oscars', off: 64 },
   { cap: '<b>④ Tap a question</b> → the existing member page (production screenshot; shown for Best Picture, /futures/6173044). The only change: its back link should read "Back to Awards Season" when arriving from the collection.', shot: 'shots/04-member-page-prod-futures-6173044.png' },
   { cap: '<b>⑤ Back → same row.</b> CollectionHub\'s existing <code>collection-reading:{slug}</code> restore brings the tapped row (here Best Actor) back to where it was, briefly highlighted.', html: () => chrome(awardsPage({ hlId: 5869749 })), anchor: 'm-5869749', off: 200 },
   { cap: '<b>⑥ Back → same Discover card.</b> The feed\'s existing snapshot and scroll mark (#7417, already used by DiscoverCollectionCard) bring back the card and its position.', html: () => chrome(feedCard({ restored: true })), anchor: 'feed-awards', off: 60 },
-  { cap: '<b>⑦ Sparse inside a big theme.</b> Grammys (12 of 36 winner questions traded) and Daytime Emmys (1 of 40): show what is traded and put the rest behind "Not traded yet (N)". No filler rows at a made-up 30%.', html: () => chrome(awardsPage()), anchor: 'sec-Grammys', off: 64 },
+  { cap: '<b>⑦ Sparse inside a big theme.</b> Grammys (12 of 36 winner questions report 24h volume) and Daytime Emmys (1 of 40). Show those, and put the rest behind "24h volume not reported (N)". This is not "Not traded yet": 49 of the 83 have lifetime volume, and 34 have no volume figure at all. "No trades in the last 24h" appears only for a measured 0, and there are 0 today. No filler rows of identical 29.5% quotes.', html: () => chrome(awardsPage()), anchor: 'sec-Grammys', off: 64 },
   { cap: '<b>⑧ States.</b> Sparse theme (real Oil bundle), one member missing, a settled question, withdrawn, and load error. Error and withdrawn reuse CollectionHub copy.', html: () => chrome(statesPage()), anchor: null },
-  { cap: '<b>⑨ Second theme: AI.</b> AI has no ceremony structure, so sections come from the questions\' own decide-by dates and the "most followed" block from feed rank. Same template with no new taxonomy.', html: () => chrome(aiPage()), anchor: null },
-  { cap: '<b>⑩ AI section.</b> 150 distinct questions (347 rows fold into their venue groups). Rows that have not traded fold away, as on the awards page. Two things this frame shows that the build has to fix: the titles here are raw stored names ("released on...?", "hit __"), where the real page must use the served display name (#3513); and questions whose deadline has passed (the >99% rows closing Sep 30) belong under "Awaiting result", not in a live list.', html: () => chrome(aiPage()), anchor: 'sec-Decided-in-October', off: 64 },
+  { cap: '<b>⑨ Second theme: AI.</b> AI has no ceremony structure, so sections come from the questions\' own decide-by dates. The top block is labelled "On Discover now" because it is the questions the Discover card currently shows. It is not "Most followed": no follow counts back it. 150 is the existing predicates applied offline to today\'s inventory; production serves no collection count. Same template with no new taxonomy.', html: () => chrome(aiPage()), anchor: null },
+  { cap: '<b>⑩ AI section.</b> 150 distinct questions (347 rows fold into their venue groups). Rows with no reported 24h volume fold away, as on the awards page. Two things this frame shows that the build has to fix: the titles here are raw stored names ("released on...?", "hit __"), where the real page must use the served display name (#3513); and questions whose deadline has passed (the >99% rows closing Sep 30) belong under "Awaiting result", not in a live list.', html: () => chrome(aiPage()), anchor: 'sec-Decided-in-October', off: 64 },
 ];
 
 const params = new URLSearchParams(location.search);
