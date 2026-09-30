@@ -11,6 +11,7 @@ import pytest
 
 from app.routes import events as ev
 from app.utils.name_normalization import (
+    college_state_abbreviated_names,
     college_state_expansion,
     college_state_query,
     expand_search_terms,
@@ -77,3 +78,48 @@ def test_the_team_gate_is_unchanged_without_the_abbreviation(monkeypatch) -> Non
     without_arm = [str(ev._build_team_search_filter(q).compile()) for q in typed]
     assert with_arm[:3] == without_arm[:3]
     assert with_arm[3] != without_arm[3]
+
+
+# The lead-order half: the card's evidence owns the `St` spelling the reader typed,
+# so `ohio st` is every word of the carded school (MC1) and #9044's split-words
+# key arms. Route-level proof: `test_the_school_leads_its_games_over_a_split_namesake`.
+from app.utils.search_match_class import MC1_ALL_TOKENS, match_class  # noqa: E402
+
+
+@pytest.mark.parametrize(
+    "name, abbreviated",
+    [
+        ("Ohio State Buckeyes", ("Ohio St Buckeyes",)),
+        ("Penn State Nittany Lions", ("Penn St Nittany Lions",)),
+        ("Kent State Golden Flashes", ("Kent St Golden Flashes",)),
+        ("Iowa STATE Cyclones", ("Iowa St Cyclones",)),
+    ],
+)
+def test_a_schools_name_with_state_spelled_st(name, abbreviated) -> None:
+    assert college_state_abbreviated_names(name) == abbreviated
+
+
+@pytest.mark.parametrize(
+    "name", ["State College Spartans", "Ohio Bobcats", "Statesmen", "Michigan St Spartans", "", None]
+)
+def test_a_leading_state_or_no_state_word_gets_nothing(name) -> None:
+    assert college_state_abbreviated_names(name) == ()
+
+
+def _row(name, aliases=(), abbreviation=None):
+    return {"name": name, "_aliases": list(aliases), "abbreviation": abbreviation,
+            "sport_key": "americanfootball_ncaaf"}
+
+
+@pytest.mark.parametrize("typed", ["ohio st", "Ohio St.", "OHIO ST"])
+def test_the_carded_school_owns_every_typed_word(typed) -> None:
+    """Before: `ohio st` was only a PREFIX of "Ohio State Buckeyes" (MC1B), so the
+    split-words key stayed off and the sooner Kent State v Ohio game led."""
+    evidence = ev._search_team_evidence(_row("Ohio State Buckeyes", abbreviation="OSU"), typed)
+    assert match_class(typed, evidence) <= MC1_ALL_TOKENS
+
+
+@pytest.mark.parametrize("query", ["ohio state", "ohio", "st louis", None])
+def test_every_other_query_scores_the_evidence_it_scored_before(query) -> None:
+    row = _row("Ohio State Buckeyes", ["Buckeyes"], "OSU")
+    assert ev._search_team_evidence(row, query).aliases == ("Buckeyes", "OSU")

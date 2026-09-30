@@ -253,3 +253,73 @@ async def test_without_the_expansion_the_abbreviation_loses_the_team_and_the_gam
     # on this rig either way (on production the Polymarket row lost the top-10 to
     # Kalshi's `Ohio St.` rows, which is ranking, not recall).
     assert KALSHI_MARKET in _futures(payload)
+
+
+# The half production's 16:4xZ check left open (web v5325): `ohio st` carded the
+# school but led its GAMES with Kent State Golden Flashes vs Ohio Bobcats — `ohio`
+# on the Bobcats, `state` on Kent State, and that game is sooner. #9044's
+# split-words key puts the carded club's games first, but it only arms when the
+# card's leader owns every typed word, and "Ohio State Buckeyes" does not own `st`.
+KENT = "Kent State Golden Flashes"
+BOBCATS = "Ohio Bobcats"
+SPLIT_GAME = f"{BOBCATS} @ {KENT}"
+
+
+async def _seed_split_namesake(session):
+    """`_seed` plus the namesake game, a day SOONER than the school's own."""
+    from sqlalchemy import select
+
+    from app.models.models import Event, Sport, Team
+
+    await _seed(session)
+    now = datetime.now(timezone.utc)
+    ncaaf = (
+        await session.execute(select(Sport).where(Sport.key == "americanfootball_ncaaf"))
+    ).scalar_one()
+    session.add(
+        Event(
+            sport_id=ncaaf.id,
+            home_team_name=KENT,
+            away_team_name=BOBCATS,
+            commence_time=now + timedelta(days=2),
+            status="scheduled",
+            event_tags=["provenance:source:espn"],
+        )
+    )
+    session.add_all([
+        Team(sport_id=ncaaf.id, name=KENT, abbreviation="KENT"),
+        Team(sport_id=ncaaf.id, name=BOBCATS, abbreviation="OHIO"),
+    ])
+    await session.commit()
+
+
+def _games_in_order(payload) -> list[str]:
+    assert "results" in payload, f"no `results` key; got {sorted(payload)}"
+    return [f"{e['away_team']} @ {e['home_team']}" for e in payload["results"]]
+
+
+@pytest.mark.parametrize("typed", ["ohio st", "Ohio St.", "ohio state"])
+async def test_the_school_leads_its_games_over_a_split_namesake(maker, search, typed):
+    """The school's own game first; the namesake game stays on the page after it."""
+    async with maker() as session:
+        await _seed_split_namesake(session)
+
+    payload = await search(typed)
+    assert _teams(payload)[0] == SCHOOL
+    games = _games_in_order(payload)
+    assert games[0] == GAME, games
+    assert SPLIT_GAME in games, "a key, never a filter"
+
+
+async def test_without_the_st_spelling_the_namesake_leads_again(maker, search, monkeypatch):
+    """The strawman: the card's `St` spelling made a no-op brings back
+    production's order — the sooner Kent State v Ohio game first."""
+    from app.routes import events as ev
+
+    monkeypatch.setattr(ev, "college_state_abbreviated_names", lambda name: ())
+    async with maker() as session:
+        await _seed_split_namesake(session)
+
+    payload = await search("ohio st")
+    assert _teams(payload)[0] == SCHOOL
+    assert _games_in_order(payload)[0] == SPLIT_GAME
