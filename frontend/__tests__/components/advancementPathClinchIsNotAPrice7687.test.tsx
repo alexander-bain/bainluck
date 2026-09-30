@@ -253,7 +253,8 @@ describe("#7687 the event page stops minting a clinch out of league_context", ()
 
   test("CONTROL: the rest of Boston's path is unchanged", () => {
     const html = renderEventPage(BOSTON_CELLS);
-    expect(html).toContain("AL / NL Champ");
+    // #9785: the grid's "AL / NL Champ" narrows to Boston's own league here.
+    expect(html).toContain("AL Champ");
     expect(html).toContain("12%");
     expect(html).toContain("World Series");
     expect(html).toContain("5%");

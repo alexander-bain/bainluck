@@ -7,6 +7,7 @@ import type { RelatedFuture, RelatedFuturesResponse, TeamProgressionResponse } f
 import { fetchRelatedFutures, formatProbability } from "@/lib/api";
 import { formatProbabilityPercent } from "@/lib/probabilityDisplay";
 import { disambiguateLabels } from "@/lib/labelDisambiguation";
+import { teamScopedColumnLabel } from "@/lib/teamScopedColumnLabel";
 import { teamShortName, teamShortNames } from "@/lib/teamShortName";
 import { teamTextColor } from "@/lib/teamColors";
 import { awardPriceIsStale } from "@/lib/awardPriceAge";
@@ -2636,29 +2637,33 @@ export default function RelatedFutures({
   if (leagueCtx && (leagueCtx.home_team || leagueCtx.away_team)) {
     // Convert league context cells to RelatedFuture entries for PlayoffPathPair
     const ctxToFutures = (
-      teamCtx: { cells: Record<string, number>; changes_24h: Record<string, number>; sources_available?: string[] } | undefined,
+      teamCtx: { cells: Record<string, number>; changes_24h: Record<string, number>; conference?: string | null; sources_available?: string[] } | undefined,
       columns: { key: string; label: string }[],
     ): PathSource[] => {
       if (!teamCtx) return [];
       const sourceCount = teamCtx.sources_available?.length ?? 1;
       return columns
         .filter((col) => teamCtx.cells[col.key] != null)
-        .map((col, i) => ({
+        .map((col, i) => {
+          // #9785: `AL / NL Champ` is the grid's header for both pennants; on
+          // one team's card it narrows to that team's own league.
+          const label = teamScopedColumnLabel(col.label, teamCtx.conference);
+          return {
           columnKey: col.key,
           future: {
           market_id: 0,
-          market_name: col.label,
-          clean_label: col.label,
+          market_name: label,
+          clean_label: label,
           display_category: "playoff_path",
           merge_group: null,
-          playoff_stage: col.label,
+          playoff_stage: label,
           playoff_stage_type: "progression",
           stage_order: i + 1,
           market_tier: i === columns.length - 1 ? 1 : 4 - i,
           category: "championship",
           source: "merged",
           outcome_id: 0,
-          outcome_name: col.label,
+          outcome_name: label,
           probability: teamCtx.cells[col.key],
           american_odds: null,
           probability_change_24h: teamCtx.changes_24h[col.key] ?? null,
@@ -2672,7 +2677,8 @@ export default function RelatedFutures({
           bookmaker_count: sourceCount,
           all_sources: teamCtx.sources_available,
           },
-        }));
+          };
+        });
     };
     homePlayoff = ctxToFutures(leagueCtx.home_team, leagueCtx.columns);
     awayPlayoff = ctxToFutures(leagueCtx.away_team, leagueCtx.columns);
