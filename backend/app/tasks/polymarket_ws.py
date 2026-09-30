@@ -1058,9 +1058,12 @@ async def _run_polymarket_ws_consumer():
         # chunks, oldest-dirty first (the buffer's insertion order). Open rows
         # past the bound stay buffered and lead the next flush — none dropped.
         # The FINAL drain has no successor flush, so it takes every row.
+        # CERT-3868: the two legs of a binary commit in one transaction or
+        # wait together — never one side read beside the other's old price.
         chunks = plan_flush_chunks(
             batch, open_outcome_ids, FLUSH_CHUNK_ROWS,
             None if final else OPEN_FLUSH_CHUNKS_PER_FLUSH,
+            open_complement_of,
         )
         stats["open_contract_flush_deferred"] += len(batch) - sum(
             len(c) for c in chunks

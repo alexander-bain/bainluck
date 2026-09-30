@@ -155,8 +155,77 @@ class TestWithComplements:
         assert with_complements([1, 2], 0.3, {1: 2, 2: 1}) == [(1, 0.3), (2, 0.3)]
 
 
-def _kittle_database(tmp_path):
-    engine = _database(tmp_path)
+class TestAtomicComplementFlush:
+    """CERT-3868 repair ``9733-ATOMIC-COMPLEMENT-FLUSH``. The two legs are
+    buffered as two rows, and the flush slices open rows into 500-row
+    transactions, at most two per ordinary flush. 999 rows ahead of a pair put
+    leg 1000 in the second chunk and deferred leg 1001: one side committed and
+    was read while the other still held its old price."""
+
+    PAIR = {1000: 1001, 1001: 1000}
+
+    def test_the_cap_boundary_defers_both_legs_together(self):
+        """The grader's probe: 999 rows then the pair. Before the repair the
+        plan was [500, 500] ending on leg 1000."""
+        buffered = [*range(1, 1000), 1000, 1001]
+        chunks = open_mod.plan_flush_chunks(
+            buffered, set(buffered), 500, 2, self.PAIR
+        )
+        planned = [oid for chunk in chunks for oid in chunk]
+        assert [len(c) for c in chunks] == [500, 499]
+        assert 1000 not in planned and 1001 not in planned
+
+    def test_a_pair_that_fits_is_planned_in_one_chunk(self):
+        buffered = [*range(1, 999), 1000, 1001]
+        chunks = open_mod.plan_flush_chunks(
+            buffered, set(buffered), 500, 2, self.PAIR
+        )
+        assert [len(c) for c in chunks] == [500, 500]
+        assert chunks[1][-2:] == [1000, 1001]
+
+    def test_a_pair_straddling_a_chunk_edge_starts_the_next_chunk(self):
+        """The final drain has no cap, but a chunk edge is still a
+        transaction edge."""
+        buffered = [*range(1, 500), 1000, 1001, 2000]
+        chunks = open_mod.plan_flush_chunks(
+            buffered, set(buffered), 500, None, self.PAIR
+        )
+        assert [len(c) for c in chunks] == [499, 3]
+        assert chunks[1] == [1000, 1001, 2000]
+
+    def test_legs_far_apart_in_the_buffer_travel_at_the_first_legs_place(self):
+        """A re-priced key keeps its old dict position, so the two legs can sit
+        anywhere in the buffer. The pair moves up to the older leg."""
+        buffered = [1000, 5, 6, 7, 1001, 8]
+        chunks = open_mod.plan_flush_chunks(
+            buffered, set(buffered), 2, 2, self.PAIR
+        )
+        assert chunks == [[1000, 1001], [5, 6]]
+
+    def test_a_pair_is_its_own_chunk_even_when_a_chunk_holds_one_row(self):
+        chunks = open_mod.plan_flush_chunks(
+            [1000, 1001, 5], {1000, 1001, 5}, 1, 1, self.PAIR
+        )
+        assert chunks == [[1000, 1001]]
+
+    def test_a_leg_whose_complement_is_not_buffered_goes_alone(self):
+        chunks = open_mod.plan_flush_chunks(
+            [1000, 5], {1000, 5}, 1, None, self.PAIR
+        )
+        assert chunks == [[1000], [5]]
+
+    def test_without_pairs_the_plan_is_unchanged(self):
+        """Control: the #9484 plan, row for row."""
+        buffered = [101, 102, 1, 103, 104, 2, 105]
+        opened = {101, 102, 103, 104, 105}
+        assert open_mod.plan_flush_chunks(buffered, opened, 2, 1, {}) == [
+            [1, 2],
+            [101, 102],
+        ]
+
+
+def _kittle_database(tmp_path, fail_outcome=None):
+    engine = _database(tmp_path, fail_outcome=fail_outcome)
     markets = text(
         "INSERT INTO futures_markets (id, source, external_id, name, status) "
         "VALUES (:i, 'polymarket', :e, 'Kittle 524.5+', 'open')"
@@ -248,6 +317,50 @@ class TestTheConsumer:
         assert _stored(engine, KITTLE_NO) == pytest.approx(0.24)
         assert _stored(engine, KITTLE_YES) == pytest.approx(0.77)
         assert stats["trades_below_min_order"] == 1
+
+    async def test_a_failed_write_keeps_both_legs_at_their_old_prices(
+        self, monkeypatch, tmp_path
+    ):
+        """CERT-3868 failed-transaction arm. One row per chunk, and the Yes
+        leg's UPDATE raises. Before the repair the No leg committed 0.10 alone
+        beside a Yes still at 0.77; now the pair shares one transaction, so
+        neither side is read at a price the other does not match."""
+        engine = _kittle_database(tmp_path, fail_outcome=KITTLE_YES)
+        monkeypatch.setattr(open_mod, "FLUSH_CHUNK_ROWS", 1)
+        rig = _Rig(
+            engine,
+            GAME_SLATE,
+            _open_rows(),
+            _frames_by_token({NO_TOKEN: [(0.0, _trade(NO_TOKEN, "0.10", "20"))]}),
+        )
+        stats = await _drive(monkeypatch, rig)
+
+        assert stats["errors"] >= 1
+        assert _stored(engine, KITTLE_NO) == pytest.approx(0.24)
+        assert _stored(engine, KITTLE_YES) == pytest.approx(0.77)
+        assert stats["final_flush_dropped"] == 2
+
+    async def test_one_row_chunks_still_commit_the_pair_together(
+        self, monkeypatch, tmp_path
+    ):
+        """Control for the cap arm: one row per chunk and one open chunk per
+        flush. A pair is wider than a chunk here, so it must still be planned
+        (as one two-row chunk) rather than starved. The planner tests above
+        are the arm that bites; this one proves the pair still drains."""
+        engine = _kittle_database(tmp_path)
+        monkeypatch.setattr(open_mod, "FLUSH_CHUNK_ROWS", 1)
+        monkeypatch.setattr(open_mod, "OPEN_FLUSH_CHUNKS_PER_FLUSH", 1)
+        rig = _Rig(
+            engine,
+            GAME_SLATE,
+            _open_rows(),
+            _frames_by_token({NO_TOKEN: [(0.0, _trade(NO_TOKEN, "0.10", "20"))]}),
+        )
+        stats = await _drive(monkeypatch, rig)
+
+        assert _stored(engine, KITTLE_NO) == pytest.approx(0.10)
+        assert _stored(engine, KITTLE_YES) == pytest.approx(0.90)
+        assert stats["final_flush_dropped"] == 0
 
     async def test_a_single_leg_future_is_untouched(self, monkeypatch, tmp_path):
         """Control: an open future with one leg (market 7) takes its tick and

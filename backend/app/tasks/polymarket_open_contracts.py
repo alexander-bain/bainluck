@@ -455,6 +455,7 @@ def plan_flush_chunks(
     open_outcome_ids: "set[int] | frozenset[int]",
     chunk_rows: int = FLUSH_CHUNK_ROWS,
     open_chunk_limit: Optional[int] = OPEN_FLUSH_CHUNKS_PER_FLUSH,
+    complement_of: Optional[Mapping[int, int]] = None,
 ) -> list[list[int]]:
     """The flush's transactions: every linked row first, then open rows.
 
@@ -462,14 +463,44 @@ def plan_flush_chunks(
     written; open rows are capped at ``open_chunk_limit`` chunks (None = all,
     for the final drain). Rows past the cap are simply not planned — they stay
     in the buffer, keep their place at its head, and are planned next flush.
+
+    CERT-3868 repair (``9733-ATOMIC-COMPLEMENT-FLUSH``). ``complement_of``
+    (``complement_pairs``) ties the two legs of one binary together. When
+    both are buffered they are one unit: planned into the SAME chunk, at the
+    first leg's place, or deferred together. A chunk is never split between
+    them and the cap never admits one without the other. Before this, 999 rows
+    ahead of a pair put leg 1000 in the second chunk and deferred leg 1001, so
+    one side committed and was read while the other still held its old price.
+    A unit that would overflow the current chunk starts the next one.
     """
     size = max(1, int(chunk_rows))
-    linked: list[int] = []
-    opened: list[int] = []
-    for oid in outcome_ids:
-        (opened if oid in open_outcome_ids else linked).append(oid)
-    chunks = [linked[i:i + size] for i in range(0, len(linked), size)]
-    open_chunks = [opened[i:i + size] for i in range(0, len(opened), size)]
+    complement_of = complement_of or {}
+    order = list(outcome_ids)
+    buffered = set(order)
+    placed: set[int] = set()
+    linked: list[list[int]] = []
+    opened: list[list[int]] = []
+    for oid in order:
+        if oid in placed:
+            continue
+        unit = [oid]
+        other = complement_of.get(oid)
+        if other is not None and other in buffered and other not in placed:
+            unit.append(other)
+        placed.update(unit)
+        is_open = any(o in open_outcome_ids for o in unit)
+        (opened if is_open else linked).append(unit)
+
+    def pack(units: list[list[int]]) -> list[list[int]]:
+        packed: list[list[int]] = []
+        for unit in units:
+            if not packed or len(packed[-1]) + len(unit) > size:
+                packed.append([])
+            packed[-1].extend(unit)
+        return packed
+
+    chunks = pack(linked)
+    open_chunks = pack(opened)
     if open_chunk_limit is not None:
         open_chunks = open_chunks[: max(0, int(open_chunk_limit))]
     return chunks + open_chunks
