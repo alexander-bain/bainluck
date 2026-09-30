@@ -1294,7 +1294,7 @@ class TestTheRealPostgresRailExists:
             "skips, and pytest exits 0 on an all-skipped run, so CI stays green "
             "while nothing is checked"
         )
-        return jobs["search-recall"]
+        return jobs["database-integration"]
 
     def test_the_job_still_provides_a_real_postgres(self):
         job = self._job()
