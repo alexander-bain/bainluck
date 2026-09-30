@@ -42,11 +42,13 @@ python3 scripts/claim_issue.py 123 'Review / Verify' --owner 'Discover' --stage 
 
 An ownership transfer uses `--expected-owner` with the current exact value; it does not silently replace someone else. `scripts/issue_progress.py ISSUE... --output <generated-path>` renders a bounded progress projection from current records; it creates no timer. Keep existing hand-maintained YOUR-TURN sections separate unless their owner explicitly migrates them.
 
-An idle worker with an eligible ready assignment is a dispatch defect. A worker with no eligible work stays idle; no invented audit, duplicate shopping or self-generated architecture program.
+An idle worker with an eligible Ready assignment is a dispatch defect. Spare coding capacity should fix useful nonblocking bugs when it can do so without distracting v3. Absence of v3 work alone is not a reason to idle; no invented audit, duplicate shopping or self-generated architecture program.
 
-The current coordinator owns the next handoff. When a worker returns a result or a dependency changes, check the existing scoped next issue against available contributors. Prepare its Ready state and single lane routing label when its prerequisites are met; record the specific dependency when they are not. Within an active coordinator run, apply the same rule to completed local subagents and reuse available contributors. Alex should not have to assign routine follow-through. Existing issue scopes supply the work; staffing an idle slot is not a reason to create a task.
+The current coordinator owns the next handoff. When a worker returns a result or a dependency changes, prepare one scoped next bug from existing issues for each eligible idle lane when possible, with an owner, exact files, isolated worktree, acceptance and one lane routing label. Protect current v3 work and shared Native/Xcode/deploy resources; return the lane at a safe boundary when v3 needs it. Overflow PRs queue behind the critical path; cap new work when review or integration WIP backs up. Record actual collisions, resource limits, review capacity or missing scoped work as the reason for a wait. Alex should not have to assign routine follow-through.
 
-Runner inboxes select queued messages in FIFO order. Before a required release handoff, the coordinator may hold specifically identified, unclaimed optional messages and leave exact reactivation pointers in the existing handoff. Preserve active directives and processes. This is a scoped priority decision within the existing inbox workflow; it adds no scheduler.
+Within an active coordinator run, reuse available local subagents as bounded contributors with disjoint scopes under the same rules. This adds no automatic paid polling and does not authorize arbitrary backlog mining or a wider selector.
+
+Runner inboxes select actionable queued messages in FIFO order; future-dated messages should not block an eligible Ready assignment. Before a required release handoff, the coordinator may hold specifically identified, unclaimed optional messages and leave exact reactivation pointers in the existing handoff. Preserve active directives and processes. This is a scoped priority decision within the existing inbox workflow; it adds no scheduler.
 
 ## Dispatch without empty model sessions
 
@@ -56,7 +58,7 @@ Runner inboxes select queued messages in FIFO order. Before a required release h
 
 Adoption is gradual: label the next prepared issue and active issue when that worker hands back. Unlabelled historical issues are not automatically adopted. Existing processes use their loaded runner until the safe between-session refresh; source merge alone is not proof every runner has adopted this behavior. Do not kill active sessions or restart the whole fleet for adoption.
 
-Distinguish dispatch states before acting: a model session or descendants beyond the runner's direct idle sleep mean busy; an In Progress issue occupies WIP; an empty eligible Ready set is a legitimate wait. Missing routing on an otherwise prepared next issue needs the coordinator's handoff, while a contradictory label or board state needs its existing owner's correction. Neither authorizes widening the selector. Runtime adoption requires a verified idle boundary, replacement identity and loaded-source receipt. Documentation and issue claims do not establish that receipt.
+Distinguish dispatch states before acting: a model session or descendants beyond the runner's direct idle sleep mean busy; an In Progress issue occupies WIP; an empty eligible Ready set needs the coordinator's scoped-work check or a specific wait reason above. Missing routing on an otherwise prepared next issue needs the coordinator's handoff, while a contradictory label or board state needs its existing owner's correction. Neither authorizes widening the selector. Runtime adoption requires a verified idle boundary, replacement identity and loaded-source receipt. Documentation and issue claims do not establish that receipt.
 
 ## Shopper, board freshness and YOUR-TURN
 
