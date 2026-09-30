@@ -991,3 +991,46 @@ describe("#5634 — one multi-word country list, two clients", () => {
     );
   });
 });
+
+/**
+ * #5634 — the esports organisation-type suffixes are one list with two
+ * spellings: the browser's `ESPORTS_ORG_SUFFIXES` (ux, PR #9682) and the
+ * iPhone's `esportsOrgSuffixes`. A suffix on one client and not the other is
+ * "Fukuoka SoftBank Hawks Gaming" on the site and "Gaming" on the phone.
+ */
+const swiftOrgSuffixes = tokensInLiteral(
+  swiftSource,
+  /static let esportsOrgSuffixes\s*:\s*Set<String>\s*=/,
+);
+const webOrgSuffixes = tokensInLiteral(
+  webSource,
+  /const ESPORTS_ORG_SUFFIXES\s*:\s*ReadonlySet<string>\s*=\s*new Set\(/,
+);
+
+describe("#5634 — one esports org-suffix list, two clients", () => {
+  it("both suffix sets were actually found and read", () => {
+    expect(swiftOrgSuffixes).toContain("esports");
+    expect(webOrgSuffixes).toContain("esports");
+    expect(new Set(swiftOrgSuffixes).size).toBe(swiftOrgSuffixes.length);
+    expect(new Set(webOrgSuffixes).size).toBe(webOrgSuffixes.length);
+  });
+
+  it("the two suffix sets are identical", () => {
+    const swift = new Set(swiftOrgSuffixes);
+    const web = new Set(webOrgSuffixes);
+    expect([...web].filter((t) => !swift.has(t))).toEqual([]);
+    expect([...swift].filter((t) => !web.has(t))).toEqual([]);
+  });
+
+  it("both clients gate the rule on the esports key, below football and above the last-word rule", () => {
+    // The browser's half is executed; the iPhone's is read out of source.
+    expect(teamShortName("G2 Esports", null, "esports_lol")).toBe("G2 Esports");
+    expect(swiftCode).toMatch(/return sport == "esports"/);
+    const football = swiftCode.indexOf("if keepsWholeClubName(sportKey: sportKey) {");
+    const org = swiftCode.indexOf("if keepsWholeOrgName(sportKey: sportKey) {");
+    const lastWord = swiftCode.indexOf("if isNonDistinctiveToken(last)");
+    expect(football).toBeGreaterThan(-1);
+    expect(org).toBeGreaterThan(football);
+    expect(lastWord).toBeGreaterThan(org);
+  });
+});
