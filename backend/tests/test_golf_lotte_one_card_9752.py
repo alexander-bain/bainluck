@@ -282,6 +282,31 @@ class TestTheFoldRefuses:
         })
         assert aliases == {}
 
+    @pytest.mark.parametrize("undated", ["kalshi", "polymarket", "both"])
+    def test_an_undated_group_never_folds(self, undated):
+        """Follow-up to CERT-3840: no date is no evidence the two groups are one week."""
+        kalshi, polymarket = _kalshi_lotte(), _polymarket_lotte()
+        if undated in ("kalshi", "both"):
+            kalshi.resolution_date = None
+        if undated in ("polymarket", "both"):
+            polymarket.resolution_date = None
+        folded, aliases = _fold_sponsor_split_tournaments({
+            "lotte_championship_presented_by_hoakalei": _group(kalshi),
+            "lotte_championship_womens": _group(polymarket),
+        })
+        assert aliases == {}
+        assert len(folded) == 2
+
+    def test_one_dated_market_dates_its_group(self):
+        """Control for the date rule: an undated market beside a dated one still folds."""
+        undated = _named("LPGA: LOTTE Championship Top 10", "polymarket", "3")
+        undated.resolution_date = None
+        folded, aliases = _fold_sponsor_split_tournaments({
+            "lotte_championship_presented_by_hoakalei": _group(_kalshi_lotte()),
+            "lotte_championship_womens": _group(_polymarket_lotte(), undated),
+        })
+        assert aliases == {"lotte_championship_presented_by_hoakalei": "lotte_championship_womens"}
+
     def test_a_generic_core_never_folds(self):
         folded, aliases = _fold_sponsor_split_tournaments({
             "championship_presented_by_bar": _group(
