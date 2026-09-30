@@ -167,9 +167,13 @@ describe("#6831 — a scoreless live game has no projection to print", () => {
       },
     });
 
-    expect(text).toMatch(/Projected\s+62/);
+    // #9944: this control used to pin the bare run-forward, 62 — six points in
+    // the 1st quarter run over the game, the defect #9944 names. Anchored to the
+    // 55 opening total it is 6 + (1 − 0.097) × 55 = 55.7.
+    expect(text).toMatch(/Projected\s+56\b/);
     expect(text).toMatch(/Projection/);
-    expect(text).toMatch(/62\.0/);
+    expect(text).toMatch(/55\.7/);
+    expect(text).not.toMatch(/Projected\s+62/);
   });
 
   it("CONTROL: the scoreless card keeps every number it can honestly show", () => {

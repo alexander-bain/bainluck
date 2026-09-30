@@ -130,7 +130,8 @@ describe("#9930 — extra innings have no pace projection to print", () => {
       },
     });
 
-    expect(text).toMatch(/Projected\s+9\b/);
+    // #9944: anchored to the 7 opening total, 6 + (1 − 0.667) × 7 = 8.3.
+    expect(text).toMatch(/Projected\s+8\b/);
     expect(text).toMatch(/Projection/);
   });
 
