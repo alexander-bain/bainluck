@@ -4752,6 +4752,21 @@ jobs:
             exit 1
           fi
 
+      - name: "#9850 seeded opening — clear, re-run, undo and refusals against real Postgres"
+        # The repair withdraws Trammell's seeded 47% opening on two legs; its
+        # compare-and-swap binds Decimal / aware datetime / int against numeric,
+        # timestamptz and integer columns, and its undo writes the exact BEFORE
+        # back. Only a real server runs those. Same skip detection as every gate here.
+        if: matrix.group == 'shared'
+        run: |
+          set -o pipefail
+          python -m pytest tests/integration/test_repair_9850_trammell_seeded_opening_pg.py \
+            -v -rs 2>&1 | tee /tmp/repair9850.txt
+          if grep -qiE "[0-9]+ skipped" /tmp/repair9850.txt; then
+            echo "::error::#9850 seeded-opening apply/restore gate SKIPPED — the gate did not run"
+            exit 1
+          fi
+
       - name: "#6974 MLS duplicate clubs — strip, fold, re-run and undo against real Postgres"
         # Folds 21 duplicate club rows through team_merge._apply_merge and then
         # DELETEs them; the delete's own FK actions (CASCADE / SET NULL) would

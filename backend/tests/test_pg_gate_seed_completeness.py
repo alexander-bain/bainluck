@@ -569,6 +569,12 @@ COVERED = (
     # select, bank, apply, mid-run refusal and `--restore`. `sports.active` is
     # the Python-side default the seed names.
     "test_repair_8100_phoenix_placement_apply_restore_pg.py",
+    # #9850 (Trammell's seeded opening). Seeds `futures_markets` and
+    # `futures_outcomes` by raw INSERT, in a private schema, to drive the
+    # seeded-opening repair's clear, re-run, `--restore` and refusals.
+    # `futures_markets.mutually_exclusive` is the Python-side default the seed
+    # names.
+    "test_repair_9850_trammell_seeded_opening_pg.py",
 )
 
 INTEGRATION_DIR = Path(__file__).parent / "integration"
