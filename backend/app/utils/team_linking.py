@@ -10,6 +10,7 @@ distinguish same-city teams like Lakers vs Clippers.
 """
 
 import logging
+import re
 from typing import Optional
 
 from app.utils.name_normalization import normalize_name as _normalize_name  # noqa: F401 — re-exported
@@ -53,10 +54,48 @@ def _names_match(candidate: str, team_name: str, alt_names: Optional[list] = Non
         # Substring match (only if both strings are long enough to avoid
         # false positives like "LA" matching everything)
         if len(candidate_norm) >= 8 and len(name_norm) >= 8:
-            if candidate_norm in name_norm or name_norm in candidate_norm:
+            if candidate_norm in name_norm:
+                return True
+            if name_norm in candidate_norm and not given_name_before_city(
+                candidate, name, team_name
+            ):
                 return True
 
     return False
+
+
+# One given name as a market prints it: "Parker", "A'Mauri", "Ja'Marr", "P.J.".
+# An all-caps token ("UNC", "PIT") is an abbreviation, never a given name.
+_GIVEN_NAME = re.compile(
+    r"^(?:[A-Z][a-z]+(?:['-][A-Z]?[a-z]+)*|[A-Z]'[A-Z][a-z]+|(?:[A-Z]\.){1,3})$"
+)
+_NAME_SUFFIXES = frozenset({"jr", "jr.", "sr", "sr.", "ii", "iii", "iv"})
+
+
+def given_name_before_city(candidate: str, alias: str, team_name: str) -> bool:
+    """True when ``candidate`` is one given name and then the team's city alias (#9726).
+
+    The Washington Huskies carry the alias "Washington", and "washington" is a
+    substring of "parker washington", so the substring arm bound Parker, Darnell
+    and Mike Washington Jr.'s NFL props to a college team page (and Matt
+    Campbell to Campbell, Denzel Washington to the Wizards, "Georgia Southern"
+    to Southern University). A city alias names the club only when it leads the
+    outcome; one capitalised word in front of it makes it someone's surname, or
+    another school ("Western Michigan").
+
+    Only a CITY alias qualifies, i.e. a proper prefix of the team's name
+    ("Washington" of "Washington Huskies"). A nickname alias ("Steelers" in "PIT
+    Steelers D/ST") and a name that is all alias ("Athletics") are untouched.
+    """
+    alias_norm = _normalize_name(alias)
+    if not alias_norm or not _normalize_name(team_name).startswith(alias_norm + " "):
+        return False
+    tokens = candidate.split()
+    while tokens and tokens[-1].lower() in _NAME_SUFFIXES:
+        tokens.pop()
+    if len(tokens) < 2 or not _GIVEN_NAME.match(tokens[0]):
+        return False
+    return _normalize_name(" ".join(tokens[1:])) == alias_norm
 
 
 def _normalized_names(team: dict) -> list[str]:

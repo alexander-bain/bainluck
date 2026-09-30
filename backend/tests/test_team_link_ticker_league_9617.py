@@ -112,8 +112,14 @@ def test_an_alias_is_never_shortened():
 def test_no_substring_match_inside_a_league():
     # The category matcher's substring arm, scoped to one college league, would
     # bind a school that has no row to a school whose name it contains.
-    assert match_outcome_to_team("Western Kentucky", [KENTUCKY_M]) == KENTUCKY_M["id"]
+    assert match_outcome_to_team(
+        "Western Kentucky wins 1st Half", [KENTUCKY_M]
+    ) == KENTUCKY_M["id"]
+    assert match_outcome_to_league_team("Western Kentucky wins 1st Half", [KENTUCKY_M]) is None
     assert match_outcome_to_league_team("Western Kentucky", [KENTUCKY_M]) is None
+    # #9726: one word before a city alias is another school, so the category
+    # matcher refuses the bare name too.
+    assert match_outcome_to_team("Western Kentucky", [KENTUCKY_M]) is None
 
 
 def test_a_player_or_a_matchup_is_not_a_team():
