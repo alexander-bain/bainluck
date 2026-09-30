@@ -119,6 +119,14 @@ _STANDALONE_AWARDS: list[tuple[str, str]] = [
     ("championship game mvp", "championship game mvp"),
     ("championship mvp", "championship game mvp"),
     ("world series mvp", "championship game mvp"),
+    # The All-Star Game MVP is a one-night award too, and it has its own
+    # family: it fell through to the bare "mvp" keyword and put Kalshi's
+    # resolved "All-Star Game MVP Winner" (Cody Bellinger, July) in the
+    # Yankees' season-MVP card as "✓ Won 100%" beside Judge at 34% (#9769).
+    ("all-star game mvp", "all-star game mvp"),
+    ("all star game mvp", "all-star game mvp"),
+    ("all-star mvp", "all-star game mvp"),
+    ("all star mvp", "all-star game mvp"),
     # The award spelled out.  Without it "MLS: 2026 Most Valuable Player",
     # "PLL: 2026 Jim Brown Most Valuable Player" and "WBC: Most Valuable
     # Player" are not family-shaped AT ALL (#6630) — they key to None and
@@ -198,6 +206,7 @@ _LABEL_OVERRIDES = {
     "mvp": "MVP",
     "finals mvp": "Finals MVP",
     "championship game mvp": "Championship Game MVP",
+    "all-star game mvp": "All-Star Game MVP",
     "cy young": "Cy Young",
     "heisman": "Heisman",
     "ballon dor": "Ballon d'Or",
@@ -757,11 +766,21 @@ def _collapse_cross_source(rows: list[dict]) -> list[dict]:
     return [_merge_rows(grp) for grp in groups.values()]
 
 
+# Words the label prints in capitals.  The family key is lower-cased, so a
+# league code that survives into it ("al reliever of the year") came out of
+# ``capitalize`` as the NAME "Al" — "Al Reliever Of The Year" on every AL/NL
+# award card of every MLB team page (#9769).
+_UPPERCASE_LABEL_WORDS = frozenset({
+    "mvp", "roy", "dpoy",
+    "al", "nl", "ap", "nba", "wnba", "nfl", "afc", "nfc", "mlb", "nhl", "mls",
+})
+
+
 def _family_label(fk: str) -> str:
     if fk in _LABEL_OVERRIDES:
         return _LABEL_OVERRIDES[fk]
     return " ".join(
-        w.upper() if w in ("mvp", "roy", "dpoy") else w.capitalize()
+        w.upper() if w in _UPPERCASE_LABEL_WORDS else w.capitalize()
         for w in fk.split()
     )
 
