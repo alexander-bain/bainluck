@@ -67,18 +67,9 @@ def test_a_less_prominent_club_still_sinks_under_a_city():
     assert "soccer_usa_mls" not in keys
 
 
-@pytest.mark.parametrize("rows,query", [(CHICAGO, "chicago"), (LOS_ANGELES, "los angeles")])
-def test_the_card_does_not_move(rows, query, monkeypatch):
-    """The stripped aliases reach only the lead tier: with the helper made a
-    no-op the card is identical, row for row."""
-    from app.routes import events as ev
-
-    card = [c["name"] for _k, c in _team_card_keyed(rows, query)]
-    monkeypatch.setattr(ev, "_alias_restates_name_prefix", lambda alias, name: False)
-    assert [c["name"] for _k, c in _team_card_keyed(rows, query)] == card
-    assert "Chicago Bears" not in card and "Los Angeles Rams" not in card, (
-        "the card half is a separate call (#9897); this ship moves only the games"
-    )
+# #9941 moved the card too: a bare city now cards one club per major league,
+# NFL included. Its pins (and the strawman this file used to hold as
+# `test_the_card_does_not_move`) are `tests/test_search_city_teams_card_9941.py`.
 
 
 def test_a_nickname_query_keeps_its_one_club():
