@@ -5817,6 +5817,27 @@ jobs:
             exit 1
           }
 
+      - name: "#9067 the live box-score pass spends its slots on games it will fetch (real Postgres)"
+        # The pass took 10 live rows by `fetched_at` nulls first and then
+        # skipped the ones it would not fetch (tennis: no ESPN path, and a
+        # line with no `fetched_at`). Skipped rows were never written, so they
+        # held every slot and a live MLB line score froze for 80 minutes. The
+        # defect is the ORDER BY + LIMIT on the JSONB column, so only Postgres
+        # shows it. Same database and fixture as the #8796 step.
+        if: matrix.group == 'isolated'
+        run: |
+          set -o pipefail
+          python -m pytest tests/integration/test_live_box_pass_reaches_every_fetchable_game_pg_9067.py \
+            -v -rs 2>&1 | tee /tmp/livebox9067.txt
+          if grep -qiE "[0-9]+ skipped" /tmp/livebox9067.txt; then
+            echo "::error::#9067 live box-score reach gate SKIPPED — the gate did not run"
+            exit 1
+          fi
+          grep -qE "[^0-9]2 passed," /tmp/livebox9067.txt || {
+            echo "::error::#9067 live box-score reach gate did not run both cases"
+            exit 1
+          }
+
       - name: "#837 subscription slate — provision the disposable database"
         # Its own database for the reason the #7617 step above gives: this
         # contract creates and drops the six tables the slate predicate joins,

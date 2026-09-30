@@ -191,6 +191,7 @@
     "#9049 the ESPN pass lets go of each game's row before its next ESPN call (real Postgres)",
     "#9602 a certain postseason game's row reads as a playoff game before game day (real Postgres)",
     "#8913 one game's failed write does not discard the live box-score pass (real Postgres)",
+    "#9067 the live box-score pass spends its slots on games it will fetch (real Postgres)",
     "#837 subscription slate — provision the disposable database",
     "#837 the socket does not subscribe to finished sport (real Postgres)",
     "#9484 a suspended match whose market still trades keeps its stream (real Postgres)",
