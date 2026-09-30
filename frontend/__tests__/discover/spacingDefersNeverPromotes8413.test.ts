@@ -147,7 +147,9 @@ describe("#8413 — the page uses the shared spacing at both sites", () => {
 
   it("spaces the raw list and the grouped list through spaceBySport", () => {
     expect(page).toContain("groupRelatedMarkets(spaceBySport(cooldownSafe, getItemCategory))");
-    expect(page).toMatch(/return spaceBySport\(\s*applyLocalPersonalization\(/);
+    // #9905: the spaced grouped list is then handed to `placeCollections`, so it
+    // is bound to a name rather than returned directly.
+    expect(page).toMatch(/const ordered = spaceBySport\(\s*applyLocalPersonalization\(/);
     expect(page).toMatch(/\}\),\s*getGroupedCategory,\s*\);/);
   });
 });

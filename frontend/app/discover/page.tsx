@@ -6,9 +6,10 @@ import Link from "next/link";
 import useSWR from "swr";
 import { fetchFeed, fetchResolutions } from "@/lib/api";
 import { useAuthContext } from "@/components/AuthProvider";
-import type { FeedItem, FeedEventData, FeedFuturesData, FeedBundleData, FeedConceptData } from "@/lib/types";
+import type { FeedItem, FeedEventData, FeedFuturesData, FeedBundleData, FeedConceptData, FeedCollectionData } from "@/lib/types";
 import DiscoverCard, { type DiscoverGroupedItem, GuessCard, DailyChallengeCard, ResolutionCard, ResolutionGroup } from "@/components/DiscoverCard";
 import EndOfFeedCard from "@/components/discover/EndOfFeedCard";
+import DiscoverCollectionCard from "@/components/discover/DiscoverCollectionCard";
 import MasonryCell, { MASONRY_GRID_CLASS } from "@/components/discover/MasonryCell";
 import FeedUnavailableNotice, { type FeedFailureReason } from "@/components/discover/FeedUnavailableNotice";
 import DiscoverSkeletonGrid from "@/components/discover/DiscoverSkeletonGrid";
@@ -73,6 +74,7 @@ import {
 import { CHALLENGE_SURFACES_ENABLED } from "@/lib/launchSurfaces";
 import { useDiscoverPriceStream } from "@/hooks/useDiscoverPriceStream";
 import { groupedLeaves, priceKey } from "@/lib/discover/priceRefresh";
+import { admitCollection, isCollectionItem, placeCollections, splitCollections } from "@/lib/discover/collectionFeed";
 
 const PAGE_SIZE = 20;
 const DISMISS_TTL_MS = 6 * 60 * 60 * 1000;
@@ -146,6 +148,8 @@ function getItemId(item: FeedItem): string {
   // give them a concept-specific id so they no longer share the `tournament-`
   // namespace (avoids a prefix collision in the dedup pass). (L2-167 Item 3.)
   if (item.type === "concept") return `concept-${(item.data as FeedConceptData).key}`;
+  // #9905 — a hub's identity is its slug.
+  if (item.type === "collection") return `collection-${(item.data as FeedCollectionData)?.slug}`;
   return `tournament-${(item.data as any).key}`;
 }
 
@@ -1120,7 +1124,10 @@ export default function DiscoverPage() {
     const raw = [...page1Items, ...allItems];
     // Deduplicate by stable item ID across pages (defense in depth — a paging
     // hiccup can never render the same card twice).
-    const unique = dedupeById(raw, getItemId);
+    const deduped = dedupeById(raw, getItemId);
+    // #9905 — collection cards sit out every step below and are put back in
+    // front of the card the server placed them before (see collectionFeed).
+    const { ordinary: unique, anchored: collections } = splitCollections(deduped, getItemId);
     // #2603 — first sight fixes a card's ranking score for this edition.
     const editionScores = editionScoresRef.current;
     recordEditionScores(editionScores, unique, getItemId);
@@ -1146,7 +1153,7 @@ export default function DiscoverPage() {
       : filtered;
     const cooldownSafe = cooldownFiltered.length > 0 ? cooldownFiltered : filtered;
     const grouped = groupRelatedMarkets(spaceBySport(cooldownSafe, getItemCategory));
-    return spaceBySport(
+    const ordered = spaceBySport(
       applyLocalPersonalization(grouped, activeOrderingProfile, (groupedItem) => {
         const item = groupedItem.type === "single" ? groupedItem.item : groupedItem.items?.[0];
         if (!item) return null;
@@ -1157,6 +1164,12 @@ export default function DiscoverPage() {
       }),
       getGroupedCategory,
     );
+    return placeCollections<DiscoverGroupedItem>(
+      ordered,
+      collections,
+      (gi) => (gi.type === "single" ? (gi.item ? [gi.item] : []) : gi.items ?? []).map(getItemId),
+      (item) => ({ type: "single", item }),
+    );
   }, [page1Items, allItems, dismissed, dismissedOwner, interactionProfile, orderingProfile, learningState, user?.uid]);
 
   // L2-215 Item 1 — suppression telemetry. Count the empty predictive envelopes
@@ -1164,7 +1177,7 @@ export default function DiscoverPage() {
   // identity data (no ids, names, sessions, or market text). Fired once per distinct
   // suppression signature so a stable feed does not re-emit on every render.
   const suppressedEnvelopes = useMemo(
-    () => collectSuppressedEnvelopes(dedupeById([...page1Items, ...allItems], getItemId)),
+    () => collectSuppressedEnvelopes(dedupeById([...page1Items, ...allItems], getItemId).filter((item) => !isCollectionItem(item))),
     [page1Items, allItems],
   );
   const suppressedSigRef = useRef("");
@@ -1594,6 +1607,15 @@ export default function DiscoverPage() {
         <div className={MASONRY_GRID_CLASS}>
           {visibleItems.map((gi, idx) => {
             const key = gi.type === "single" ? getItemId(gi.item!) : `group-${gi.groupTitle}-${idx}`;
+            // #9905 — only admitted collections reach this list.
+            const collection = gi.type === "single" ? admitCollection(gi.item) : null;
+            if (collection) {
+              return (
+                <MasonryCell key={key} data-testid="discover-card">
+                  <DiscoverCollectionCard entry={collection} />
+                </MasonryCell>
+              );
+            }
             // Queue 309 Item 3: a locked slot falls through to the normal
             // DiscoverCard rather than rendering nothing — suppressing the quiz
             // must never leave a hole in the masonry grid.
@@ -1682,7 +1704,11 @@ export default function DiscoverPage() {
 
         {!feedUnavailable && visibleCount >= processedItems.length && !hasMore && processedItems.length > 0 && (
           <div className="mt-6 mb-2 flex justify-center">
-            <EndOfFeedCard count={processedItems.length} onRefresh={handleRefreshFeed} />
+            {/* #9905 — a collection is not a market; the count names markets. */}
+            <EndOfFeedCard
+              count={processedItems.filter((gi) => !(gi.type === "single" && isCollectionItem(gi.item))).length}
+              onRefresh={handleRefreshFeed}
+            />
           </div>
         )}
       </main>
