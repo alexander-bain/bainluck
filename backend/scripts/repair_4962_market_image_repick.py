@@ -26,7 +26,7 @@ WHY THIS CLEARS RATHER THAN REPLACES
 
 Alex's constraint on #6444, verbatim: *"Do not replace with another arbitrary
 picture."* So this script writes NULL into the three image columns and stops.
-The corrected enricher then re-picks on its own beat (`minute=50, hour=*/4`,
+For open rows, the corrected enricher can re-pick on its own beat (`minute=50, hour=*/4`,
 `limit=200`, ordered by `volume_24h desc`), using the query the fix built. In
 between, the card is imageless, which is honest; a second unrelated photograph
 is not.
@@ -79,12 +79,17 @@ migration-class: nothing here runs on merge or on release.
 
     python3 scripts/restore_4962_market_images.py --apply
 
+The restore command is pinned to these identities and only restores still-NULL
+image columns; a re-picked image is never overwritten. Both commands default to
+the two specimens and accept --ids only to narrow scope. An attended operator
+must confirm the repair invocation: NULL alone is not an immutable repair receipt.
+
 USAGE
 
     python3 scripts/repair_4962_market_image_repick.py                 # dry run
     python3 scripts/repair_4962_market_image_repick.py --backup
     python3 scripts/repair_4962_market_image_repick.py --apply
-    python3 scripts/repair_4962_market_image_repick.py --ids 1,2 ...   # extend scope
+    # --ids may select only a subset of the two pinned specimens.
 
 ORDER, and it is the whole safety argument:
 
@@ -98,7 +103,8 @@ ORDER, and it is the whole safety argument:
         "python3 scripts/repair_4962_market_image_repick.py --apply"
 
   3. the next `enrich-market-images` fire (`:50` of every 4th hour) re-picks.
-     `image_url` going from NULL back to a URL is the after-check.
+     Resolved rows are not selected by the enricher and remain imageless.
+     Verify the actual reader-visible result; a replacement is not guaranteed.
 
 Non-detached `heroku run` fails silently in the sandbox (gotcha #48): use
 `run:detached` and verify the side effect ~60s later.
@@ -109,6 +115,7 @@ import asyncio
 import os
 import re
 import sys
+from urllib.parse import urlsplit
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
@@ -120,9 +127,115 @@ from app.tasks.base import get_task_session  # noqa: E402
 # here means the fix is not deployed and the repair must not run.
 from app.tasks.enrich_markets import _image_query_candidates  # noqa: E402
 
-#: The rows filed on #4962. Both `status='open'`, both holding a photograph of
-#: something else. `--ids` extends this; nothing widens it implicitly.
+#: The rows filed on #4962 (the golf row is now resolved), holding a photograph of
+#: something else. `--ids` may narrow this list, never widen it.
 FILED_MARKET_IDS = (16757297, 109295)
+PINNED_SPECIMENS = {
+    16757297: ("Presidents Cup Winner", "golf", "38465895"),
+    109295: (
+        "Will Taylor Swift meet with Pope Leo XIV before 2027?",
+        "entertainment",
+        "35156556",
+    ),
+}
+CAPTURED_COLUMNS = (
+    "id",
+    "name",
+    "llm_sport_category",
+    "status",
+    "image_url",
+    "image_width",
+    "image_height",
+)
+
+
+def is_filed_bad_image(row) -> bool:
+    """Only the documented identity and known wrong Pexels photo are eligible."""
+    name, category, photo = PINNED_SPECIMENS[row.id]
+    url = urlsplit(row.image_url or "")
+    return (
+        row.name == name
+        and row.llm_sport_category == category
+        and url.scheme == "https"
+        and url.netloc == "images.pexels.com"
+        and url.path == f"/photos/{photo}/pexels-photo-{photo}.jpeg"
+    )
+
+
+def captured_predicate(alias: str = "f") -> str:
+    return " AND ".join(
+        f"{alias}.{column} IS NOT DISTINCT FROM :{column}"
+        for column in CAPTURED_COLUMNS
+    )
+
+
+async def clear_captured_rows(session, rows) -> bool:
+    """CAS identity, exact image/dimensions AND the backup in the UPDATE itself.
+
+    Any concurrent change refuses the entire batch, including earlier clears.
+    The preliminary reconciliation is only a diagnostic, never the write gate.
+    """
+    for row in sorted(rows, key=lambda item: item.id):
+        if not await lock_captured_image_and_backup(session, row):
+            await session.rollback()
+            print(f"REFUSING: row {row.id} or backup changed; ALL clears rolled back.")
+            return False
+        result = await session.execute(
+            text(
+                "UPDATE futures_markets AS f SET image_url = NULL, image_width = NULL, "
+                "image_height = NULL WHERE "
+                + captured_predicate()
+                + f" AND EXISTS (SELECT 1 FROM {BACKUP_TABLE} b WHERE b.id = f.id "
+                "AND b.image_url IS NOT DISTINCT FROM f.image_url "
+                "AND b.image_width IS NOT DISTINCT FROM f.image_width "
+                "AND b.image_height IS NOT DISTINCT FROM f.image_height)"
+            ),
+            {column: getattr(row, column) for column in CAPTURED_COLUMNS},
+        )
+        if result.rowcount != 1:
+            await session.rollback()
+            print(
+                f"REFUSING: row {row.id} or its backup changed; ALL clears rolled back."
+            )
+            return False
+    return True
+
+
+async def lock_captured_image_and_backup(session, row, *, cleared=False) -> bool:
+    """Lock the market, then its exact backup, before the guarded write.
+
+    An EXISTS subquery in UPDATE alone can keep a stale backup snapshot while
+    waiting for the market lock. Separate locking reads use fresh READ COMMITTED
+    snapshots and retain both locks until commit/rollback. Market-first order is
+    shared by clear and restore; sorted batches prevent inverse row lock order.
+    """
+    params = {column: getattr(row, column) for column in CAPTURED_COLUMNS}
+    predicate = captured_predicate()
+    if cleared:
+        predicate = (
+            " AND ".join(
+                f"f.{column} IS NOT DISTINCT FROM :{column}"
+                for column in ("id", "name", "llm_sport_category", "status")
+            )
+            + " AND f.image_url IS NULL AND f.image_width IS NULL AND f.image_height IS NULL"
+        )
+    market = await session.execute(
+        text("SELECT f.id FROM futures_markets f WHERE " + predicate + " FOR UPDATE"),
+        params,
+    )
+    if market.fetchone() is None:
+        return False
+    backup = await session.execute(
+        text(
+            f"SELECT b.id FROM {BACKUP_TABLE} b WHERE b.id = :id "
+            "AND b.image_url IS NOT DISTINCT FROM :image_url "
+            "AND b.image_width IS NOT DISTINCT FROM :image_width "
+            "AND b.image_height IS NOT DISTINCT FROM :image_height FOR UPDATE"
+        ),
+        params,
+    )
+    return backup.fetchone() is not None
+
 
 #: The app whose deploy carries `enrich_market_images`. Not a heavy task.
 PRODUCER_APP = "bainluck"
@@ -144,7 +257,9 @@ def _legacy_image_keywords(name: str, category: str | None) -> str:
         name,
         flags=re.IGNORECASE,
     )
-    name = re.sub(r"\b(on|at|in|the|a|an|of|for|to|vs\.?|by)\b", " ", name, flags=re.IGNORECASE)
+    name = re.sub(
+        r"\b(on|at|in|the|a|an|of|for|to|vs\.?|by)\b", " ", name, flags=re.IGNORECASE
+    )
     name = re.sub(r"\d{4}[-/]\d{2,4}", "", name)
     name = re.sub(r"[:\-–—|()#]", " ", name)
     words = [w for w in name.split() if len(w) > 2][:4]
@@ -167,11 +282,18 @@ def query_changed(name: str, category: str | None) -> tuple[str, str, bool]:
 def _parse_ids(raw: str | None) -> tuple[int, ...]:
     if not raw:
         return FILED_MARKET_IDS
-    return tuple(int(part) for part in raw.replace(",", " ").split())
+    ids = tuple(dict.fromkeys(int(part) for part in raw.replace(",", " ").split()))
+    if not ids or not set(ids).issubset(FILED_MARKET_IDS):
+        raise ValueError("--ids may only narrow the two pinned #4962 specimens")
+    return ids
 
 
 async def run(args) -> int:
-    ids = _parse_ids(args.ids)
+    try:
+        ids = _parse_ids(args.ids)
+    except ValueError as invalid_scope:
+        print(f"REFUSING: {invalid_scope}")
+        return 2
     id_list = ", ".join(str(i) for i in ids)
 
     async with get_task_session() as session:
@@ -189,9 +311,16 @@ async def run(args) -> int:
         in_scope = []
         unchanged = []
         for row in rows:
+            if not is_filed_bad_image(row):
+                print(
+                    f"SKIP {row.id}: identity/category or known bad photo no longer matches."
+                )
+                continue
             old, new, changed = query_changed(row.name, row.llm_sport_category)
             mark = "" if row.image_url else "   (already imageless — nothing to clear)"
-            print(f"\n  {row.id}  {row.name!r}  [{row.llm_sport_category}] {row.status}{mark}")
+            print(
+                f"\n  {row.id}  {row.name!r}  [{row.llm_sport_category}] {row.status}{mark}"
+            )
             print(f"      stored : {row.image_url}")
             print(f"      old query : {old!r}")
             print(f"      new query : {new!r}   changed={changed}")
@@ -210,12 +339,16 @@ async def run(args) -> int:
             return 2
 
         if not (args.apply or args.backup):
-            print(f"\n=== dry run === {len(in_scope)} row(s) would be cleared. Nothing written.")
+            print(
+                f"\n=== dry run === {len(in_scope)} row(s) would be cleared. Nothing written."
+            )
             return 0
 
         app = os.environ.get("HEROKU_APP_NAME")
         if app != PRODUCER_APP:
-            where = f"'{app}'" if app else "not a Heroku dyno (HEROKU_APP_NAME is unset)"
+            where = (
+                f"'{app}'" if app else "not a Heroku dyno (HEROKU_APP_NAME is unset)"
+            )
             print(
                 f"\nREFUSING --backup/--apply: this is {where}, and the app that "
                 f"will re-pick these rows is '{PRODUCER_APP}'. The interlock above "
@@ -241,18 +374,27 @@ async def run(args) -> int:
             )
             # DO UPDATE, not DO NOTHING: a second --backup after another writer
             # moved a row must REFRESH it, or the undo restores a stale value.
-            result = await session.execute(
-                text(
-                    f"INSERT INTO {BACKUP_TABLE} (id, image_url, image_width, image_height) "
-                    "SELECT id, image_url, image_width, image_height FROM futures_markets "
-                    f"WHERE id IN ({scope_ids}) "
-                    "ON CONFLICT (id) DO UPDATE SET image_url = EXCLUDED.image_url, "
-                    "image_width = EXCLUDED.image_width, "
-                    "image_height = EXCLUDED.image_height, backed_up_at = now()"
+            for row in in_scope:
+                result = await session.execute(
+                    text(
+                        f"INSERT INTO {BACKUP_TABLE} (id, image_url, image_width, image_height) "
+                        "SELECT id, image_url, image_width, image_height FROM futures_markets f "
+                        "WHERE "
+                        + captured_predicate()
+                        + " ON CONFLICT (id) DO UPDATE SET image_url = EXCLUDED.image_url, "
+                        "image_width = EXCLUDED.image_width, "
+                        "image_height = EXCLUDED.image_height, backed_up_at = now()"
+                    ),
+                    {column: getattr(row, column) for column in CAPTURED_COLUMNS},
                 )
-            )
+                if result.rowcount != 1:
+                    await session.rollback()
+                    print(
+                        f"REFUSING backup: row {row.id} changed; ALL backups rolled back."
+                    )
+                    return 2
             await session.commit()
-            print(f"  backed up {result.rowcount} row(s) into {BACKUP_TABLE}")
+            print(f"  backed up {len(in_scope)} row(s) into {BACKUP_TABLE}")
 
         # The gate has to survive its own precondition: on the first dry run the
         # table does not exist, and "the backup is missing" is a verdict, not a
@@ -295,27 +437,32 @@ async def run(args) -> int:
                     "be cleared. Run --backup again."
                 )
                 return 2
-            result = await session.execute(
-                text(
-                    "UPDATE futures_markets SET image_url = NULL, image_width = NULL, "
-                    f"image_height = NULL WHERE id IN ({scope_ids})"
-                )
-            )
+            if not await clear_captured_rows(session, in_scope):
+                return 2
             await session.commit()
-            print(f"\n=== apply === cleared {result.rowcount} row(s).")
+            print(f"\n=== apply === cleared {len(in_scope)} row(s).")
             print(
-                "  the next enrich-market-images fire (:50, every 4th hour) re-picks "
-                "them with the corrected query. Undo:\n"
-                "    python3 scripts/restore_4962_market_images.py --apply"
+                "  open rows are eligible for a future enrich-market-images fire; resolved rows stay imageless. "
+                "Replacement is not guaranteed; verify reader-visible output. Undo:\n"
+                "    python3 scripts/restore_4962_market_images.py --apply --ids "
+                + ",".join(str(row.id) for row in in_scope)
             )
     return 0
 
 
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
-    parser.add_argument("--backup", action="store_true", help="copy in-scope rows into the backup table")
-    parser.add_argument("--apply", action="store_true", help="clear the image columns (needs a fresh backup)")
-    parser.add_argument("--ids", help="comma/space separated market ids (default: the #4962 filed rows)")
+    parser.add_argument(
+        "--backup", action="store_true", help="copy in-scope rows into the backup table"
+    )
+    parser.add_argument(
+        "--apply",
+        action="store_true",
+        help="clear the image columns (needs a fresh backup)",
+    )
+    parser.add_argument(
+        "--ids", help="subset of the two pinned #4962 market ids; widening is refused"
+    )
     return asyncio.run(run(parser.parse_args()))
 
 

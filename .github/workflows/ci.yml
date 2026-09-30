@@ -2814,6 +2814,27 @@ jobs:
             exit 1
           fi
 
+      - name: "#9238 guarded image apply/restore (real Postgres)"
+        if: matrix.group == 'shared'
+        run: |
+          set +e
+          python -m pytest tests/integration/test_image_repair_9238_apply_restore_pg.py \
+            -v -s -rs > /tmp/image-repair-9238-pg.txt 2>&1
+          image_gate_exit=$?
+          set -e
+          cat /tmp/image-repair-9238-pg.txt
+          if [ "$image_gate_exit" -ne 0 ]; then
+            exit "$image_gate_exit"
+          fi
+          if grep -qiE "[0-9]+ skipped" /tmp/image-repair-9238-pg.txt; then
+            echo "::error::image repair real-Postgres gate SKIPPED"
+            exit 1
+          fi
+          grep -qE "(^|[^0-9])24 passed([ ,]|$)" /tmp/image-repair-9238-pg.txt || {
+            echo "::error::image repair real-Postgres gate did not execute all 24 cases"
+            exit 1
+          }
+
       - name: "#2879 rekey apply/rollback round trip (real Postgres)"
         # CERT-847. `scripts/rekey_statpal_anchors_2879.py` runs unattended
         # under D51, which is granted only to a repair that "writes a backup
