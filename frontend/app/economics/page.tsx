@@ -10,7 +10,7 @@ import {
 import ErrorState from "@/components/ErrorState";
 import EconomicsSkeleton from "@/components/skeletons/EconomicsSkeleton";
 import { fetchEconomics } from "@/lib/api";
-import { ratePathHeading } from "@/lib/fedRatePath";
+import { heatmapMinWidth, ratePathHeading } from "@/lib/fedRatePath";
 import type { EconData, EconDistribution } from "@/lib/api";
 
 // ---------------------------------------------------------------------------
@@ -45,7 +45,8 @@ function FedHeatmap({ meetings }: { meetings: any[] }) {
           display: "grid",
           gridTemplateColumns: `70px repeat(${meetings.length}, 1fr)`,
           gap: 2,
-          minWidth: 500,
+          // #9856: the floor scales with the column count — see heatmapMinWidth.
+          minWidth: heatmapMinWidth(meetings.length),
         }}>
           <div />
           {meetings.map((m: any, i: number) => (
@@ -224,7 +225,8 @@ export default function EconomicsPage() {
             <div className="grid md:grid-cols-[1.6fr_1fr] gap-3.5">
               {/* min-w-0: this card is a GRID ITEM, and a grid item's default
                   `min-width: auto` floors its track at the min-content of its
-                  whole subtree — here, FedHeatmap's `minWidth: 500` heatmap. So
+                  whole subtree — here, FedHeatmap's `minWidth` heatmap (then a
+                  fixed 500; #9856 scales it by column). So
                   the track grew to 500px on a phone and took the document with
                   it (#4651: /economics measured 558px wide at a 390px viewport).
                   FedHeatmap's own `overflow-x-auto` scroller cannot save itself
