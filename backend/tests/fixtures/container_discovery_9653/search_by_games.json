@@ -8,7 +8,7 @@
           "api": "/api/containers/nfl-2026-week-5",
           "kind": "container",
           "slug": "nfl-2026-week-5",
-          "web": null
+          "web": "/collections/nfl-2026-week-5"
         },
         "edition": {
           "kind": "nfl_week",

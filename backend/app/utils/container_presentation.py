@@ -17,7 +17,8 @@ WHAT IT DECIDES, EXHAUSTIVELY.
    names. Read by round-tripping the slug through the adapters' OWN slug
    builders, so the identity can never disagree with the slug assembly wrote.
    Any other slug has no edition (``None``), never a nearest guess.
-2. **Destinations** — the web page and API path a member card taps through to.
+2. **Destinations** — the web page and API path a member card (or a nested
+   collection) taps through to.
    Only for a member whose row we actually hold; a member without a card has no
    destination, so it cannot become a broken link.
 3. **Sections** — members grouped by the class assembly stored on their edge
@@ -119,9 +120,11 @@ def market_destination(market_id: int) -> dict:
 
 
 def container_destination(slug: str) -> dict:
-    """A nested collection. There is no web hub page yet, so ``web`` is None
-    rather than a path that would 404."""
-    return {"kind": "container", "slug": slug, "web": None, "api": f"/api/containers/{slug}"}
+    """A collection hub. The web route is ``frontend/app/collections/[slug]``
+    (#9886). Search's collection card and a hub's nested children both read
+    this, so every entry to one collection lands on the same page."""
+    return {"kind": "container", "slug": slug, "web": f"/collections/{slug}",
+            "api": f"/api/containers/{slug}"}
 
 
 def _kickoff_key(entry: dict) -> tuple:

@@ -8,7 +8,7 @@
           "api": "/api/containers/mlb-2026-postseason",
           "kind": "container",
           "slug": "mlb-2026-postseason",
-          "web": null
+          "web": "/collections/mlb-2026-postseason"
         },
         "edition": {
           "kind": "mlb_postseason",
