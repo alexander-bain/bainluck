@@ -2280,11 +2280,25 @@ _BREAK_CLOCK_SPORT_PREFIXES = (
 )
 
 
+#: #9521: ESPN's own names for a live game stopped at a period boundary.
+#: `_parse_event` maps only STATUS_IN_PROGRESS to "in", so a real break arrives
+#: under these, never as "in" — measured 2026-09-30 00:15Z, MTL @ TOR:
+#: `STATUS_END_PERIOD`, displayClock "0:00", "End of 1st Period".
+_ESPN_BREAK_STATUSES = frozenset({"status_halftime", "status_end_period"})
+
+
 def _break_clock(ee, sport_key: str) -> str | None:
-    """"0:00" when a live, clockless reading sits at a known break, else None."""
-    if ee.status != "in" or ee.clock or not sport_key.startswith(
-        _BREAK_CLOCK_SPORT_PREFIXES
-    ):
+    """"0:00" when a live reading sits at a known break, else None.
+
+    A break is ESPN saying so (`_ESPN_BREAK_STATUSES`), or an "in" reading
+    with no clock whose detail is Halftime / "End of ...". Either way the
+    position is the period boundary, whatever clock rides along.
+    """
+    if not sport_key.startswith(_BREAK_CLOCK_SPORT_PREFIXES):
+        return None
+    if ee.status in _ESPN_BREAK_STATUSES:
+        return "0:00"
+    if ee.status != "in" or ee.clock:
         return None
     detail = (_sanitize_period(ee.status_detail) or "").strip().lower()
     if detail == "halftime" or detail.startswith("end of "):
@@ -2308,12 +2322,14 @@ async def compute_and_write_stat_model(session, event, ee, sport_key, stats):
     # one priced before the last score of the half on the row for the whole
     # break (MNF: 80.7% Bears at 10–7, every market ~42%). A break's position
     # is known without a clock — Halftime and "End of Nth ..." sit at a period
-    # boundary — so price it there.
+    # boundary — so price it there. ESPN names a real break with its own
+    # status (Halftime, End of Period), not "in"; that is a live reading too.
     break_clock = _break_clock(ee, sport_key)
+    is_live = ee.status == "in" or break_clock is not None
     has_game_progress = ee.clock or break_clock or sport_key.startswith("baseball_")
-    if ee.status != "in" or ee.home_score is None or ee.away_score is None or not has_game_progress:
+    if not is_live or ee.home_score is None or ee.away_score is None or not has_game_progress:
         # Track missing data for live games
-        if ee.status == "in":
+        if is_live:
             if ee.home_score is None or ee.away_score is None:
                 stats["stat_model_no_score"] = stats.get("stat_model_no_score", 0) + 1
             elif not ee.clock:
@@ -2367,7 +2383,7 @@ async def compute_and_write_stat_model(session, event, ee, sport_key, stats):
             period_str = _sanitize_period(ee.status_detail)
             if ee.period and not period_str:
                 period_str = str(ee.period)
-            model_clock = ee.clock or break_clock
+            model_clock = break_clock or ee.clock
             # #9020 / CERT-3657: the row refused this reading's position as
             # outrunning the wall clock. The model is priced at the position
             # the row DID admit (with this pass's score, which has its own

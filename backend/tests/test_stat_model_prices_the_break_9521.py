@@ -55,7 +55,11 @@ EAGLES = _team("21", "Philadelphia Eagles", "PHI", "Philadelphia")
 
 
 def _board_row(status_detail, *, home=10, away=7, clock=None, period=2):
-    """ESPN's NFL board row as `_parse_event` returns it — no clock at a break."""
+    """An "in" reading with no clock at a break — ESPN's brief in-progress tick.
+
+    A real break arrives under ESPN's own status, not "in":
+    `test_stat_model_prices_espn_break_statuses_9521` builds those via the parser.
+    """
     return ESPNEvent(
         espn_id="401872963",
         name="Philadelphia Eagles at Chicago Bears",
