@@ -177,7 +177,8 @@
     "#8430 a Polymarket child reuses the row its sibling holds (real Postgres)",
     "#837 an odds pass releases a sport's game rows before the next sport's call (real Postgres)",
     "#837 a failed sport no longer aborts the sports after it, and the scores loop releases per sport (real Postgres)",
-    "#8422 a fixture the Odds API re-issued prints once (real Postgres)"
+    "#8422 a fixture the Odds API re-issued prints once (real Postgres)",
+    "#8126 a settled Kalshi leg's captured verdict reaches its grade, and the undo round-trips (real Postgres)"
   ],
   "isolated": [
     "#837 blend stamp deadlock — provision the disposable database",
