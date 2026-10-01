@@ -143,12 +143,28 @@ SEARCH_THIN_RESPONSE_TTL_SECONDS = 30
 THIN_FUTURES_OUTCOME_ARM_STATES = frozenset({"shed", "budget_exceeded"})
 
 
-def search_response_ttl_seconds(futures_outcome_arm: str, *, warmer_rebuild: bool) -> int:
+def search_response_ttl_seconds(
+    futures_outcome_arm: str,
+    *,
+    warmer_rebuild: bool,
+    futures_split_arm: str = "absent",
+) -> int:
     """The cache life of one ``/search`` answer about to be written.
 
     The full :data:`SEARCH_RESPONSE_TTL_SECONDS` unless the futures outcome arm
-    did not merge (:data:`THIN_FUTURES_OUTCOME_ARM_STATES`) on a reader's request,
-    which gets :data:`SEARCH_THIN_RESPONSE_TTL_SECONDS`.
+    or the futures SPLIT arm did not merge (:data:`THIN_FUTURES_OUTCOME_ARM_STATES`)
+    on a reader's request, which gets :data:`SEARCH_THIN_RESPONSE_TTL_SECONDS`.
+
+    #10024: the split arm is the outcome arm's twin for a team + competition
+    query. `phillies world series` names the board in its title (`world series`)
+    and the club in one leg (`phillies`), so neither the name arm nor the
+    outcome arm can return it. If the split arm runs out of time, the answer is
+    empty: "No results". Production 2026-10-01 14:01-14:05Z served that empty
+    answer from the cache as a hit for about 3.5 minutes, on the release that
+    carries the split arm, while every uncached read returned "MLB World Series
+    Champion 2026". The arm's state is reported by the same window under the
+    same bound, so it gets the same short life. The default keeps every other
+    caller's answer exactly as before.
 
     A warmer rebuild keeps the full TTL even when thin. The head is rebuilt on
     every pass (~60 s), so a thin head answer is replaced by the next pass
@@ -157,9 +173,14 @@ def search_response_ttl_seconds(futures_outcome_arm: str, *, warmer_rebuild: boo
     head entry would open the very hole D81 was ruled to close, for exactly the
     head terms that are always thin.
     """
-    if warmer_rebuild or futures_outcome_arm not in THIN_FUTURES_OUTCOME_ARM_STATES:
+    if warmer_rebuild:
         return SEARCH_RESPONSE_TTL_SECONDS
-    return SEARCH_THIN_RESPONSE_TTL_SECONDS
+    if (
+        futures_outcome_arm in THIN_FUTURES_OUTCOME_ARM_STATES
+        or futures_split_arm in THIN_FUTURES_OUTCOME_ARM_STATES
+    ):
+        return SEARCH_THIN_RESPONSE_TTL_SECONDS
+    return SEARCH_RESPONSE_TTL_SECONDS
 
 #: Operator kill switch, mirroring ``FEED_INERT_PRINCIPAL_SHARE`` (ruling from
 #: LAT-P089: *an operator lever must be faster than a release when the failure
