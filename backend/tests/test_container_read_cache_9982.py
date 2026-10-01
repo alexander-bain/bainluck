@@ -186,12 +186,17 @@ async def test_stale_is_served_at_once_and_rebuilt_once_in_the_background(
     clock[0] += cache.CONTAINER_READ_FRESH_TTL_LIVE_SECONDS + 1
 
     rebuilds = []
+    # The rebuild is held at the door until both stale readers are served, so
+    # the test does not depend on whether `asyncio.wait_for` yields to the loop
+    # (it does on CI's Python 3.11, not on 3.12).
+    gate = asyncio.Event()
 
     class _Maker:
         def __call__(self):
             return self
 
         async def __aenter__(self):
+            await gate.wait()
             session = _session()
             rebuilds.append(session)
             return session
@@ -210,12 +215,38 @@ async def test_stale_is_served_at_once_and_rebuilt_once_in_the_background(
     assert _cards_hydrated(session) == []
     # A second stale reader before the rebuild lands does not start another.
     assert (await _get(_session())).headers["X-Feed-Cache"] == "stale_hit"
+    gate.set()
     await _drain_background()
     assert len(rebuilds) == 1
     assert _cards_hydrated(rebuilds[0])
 
     after = await _get(_session())
     assert after.headers["X-Feed-Cache"] == "hit"
+
+
+async def test_a_rebuild_that_lands_during_the_shared_read_is_served_not_restarted(
+    monkeypatch, redis, clock
+):
+    """CI's 3.11 found this: the shared read awaits, and a rebuild finishing
+    on this worker in that gap must not be followed by a second one."""
+    await _get(_session())
+    clock[0] += cache.CONTAINER_READ_FRESH_TTL_LIVE_SECONDS + 1
+    key = cache.container_read_cache_key("nfl-2026-week-5", 4, True)
+    landed = cache.CachedRead(
+        body=b'{"landed":true}', built_at=clock[0],
+        fresh_until=clock[0] + 30, stale_until=clock[0] + 60,
+    )
+    real_get = redis.get
+
+    async def _get_while_a_rebuild_lands(k):
+        route._remember_local(key, landed)
+        return await real_get(k)
+
+    monkeypatch.setattr(redis, "get", _get_while_a_rebuild_lands)
+    resp = await _get(_session())
+    assert resp.headers["X-Feed-Cache"] == "hit"
+    assert resp.body == landed.body
+    assert request_cache.inflight_count() == 0
 
 
 async def test_past_its_servable_window_an_entry_is_never_served(redis, clock):

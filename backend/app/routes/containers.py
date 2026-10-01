@@ -589,6 +589,13 @@ async def _serve_cached(db: AsyncSession, slug: str, published, include_children
     key = container_read_cache_key(slug, published.revision, include_children)
     now = time.time()
     entry, from_shared = await _load_entry(key, now)
+    if entry is not None and not entry.is_fresh(now):
+        # The shared read awaited; a rebuild on this worker may have landed
+        # meanwhile. Re-checked with no await between it and the claim below,
+        # so a just-finished rebuild is served instead of started again.
+        landed = _local_entries.get(key)
+        if landed is not None and landed.is_fresh(now):
+            entry, from_shared = landed, False
     if entry is not None:
         if entry.is_fresh(now):
             return _cached_response(entry, "shared_hit" if from_shared else "hit")
