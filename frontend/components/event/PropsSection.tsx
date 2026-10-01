@@ -604,6 +604,72 @@ function scriptOneSide(
 }
 
 /**
+ * #1626 slice 4 — THE SCRIPT prints one row per player ladder.
+ *
+ * After slice 3 the pregame board still spent a row per RUNG: under PASSING
+ * YARDS, `Aaron Rodgers: 150+` through `325+` was eight rows, DK Metcalf's
+ * receiving yards ten (Browns @ Steelers, `/events/14780550`, 390px,
+ * 2026-10-01, a page 16,864px tall). The rungs of one player's ladder are one
+ * question — "how far does he get?" — asked at every threshold.
+ *
+ * So a family's `Name: N+` rungs for one subject, three or more of them, become
+ * ONE row: the subject, the highest rung the script favours (its printed number
+ * at 50% or above — "at least 200 yards, 58%"), and a disclosure holding every
+ * rung in the normal row presentation. Collapsed, never dropped (gotcha #43).
+ * A ladder the script favours at no rung shows its lowest rung — the likeliest.
+ *
+ * Only marked, unsettled, unpending rungs join a ladder; anything else stays
+ * its own row exactly as before, and so does a subject with fewer than three.
+ */
+const LADDER_RUNG = /^(.+?):\s*(\d+(?:\.\d+)?)\+$/;
+const LADDER_MIN_RUNGS = 3;
+
+export type ScriptLadder = {
+  subject: string;
+  rungs: PropMark[];
+  headline: PropMark;
+  threshold: string;
+};
+
+export function scriptLadders(items: PropMark[]): Array<PropMark | ScriptLadder> {
+  const bySubject = new Map<string, Array<{ item: PropMark; at: number; n: string }>>();
+  for (const item of items) {
+    if (item.settled || item.pending_label?.trim() || scriptNumber(item) == null) continue;
+    const m = LADDER_RUNG.exec(item.label.trim());
+    if (!m) continue;
+    const rungs = bySubject.get(m[1]) ?? [];
+    rungs.push({ item, at: Number(m[2]), n: m[2] });
+    bySubject.set(m[1], rungs);
+  }
+  const ladderOf = new Map<PropMark["key"], ScriptLadder>();
+  for (const [subject, rungs] of bySubject) {
+    if (rungs.length < LADDER_MIN_RUNGS) continue;
+    const byThreshold = [...rungs].sort((a, b) => a.at - b.at);
+    const favoured = byThreshold.filter((r) => (scriptNumber(r.item) ?? 0) >= 0.5);
+    const pick = favoured.length > 0 ? favoured[favoured.length - 1] : byThreshold[0];
+    const ladder = {
+      subject,
+      rungs: rungs.map((r) => r.item),
+      headline: pick.item,
+      threshold: pick.n,
+    };
+    for (const r of rungs) ladderOf.set(r.item.key, ladder);
+  }
+  if (ladderOf.size === 0) return items;
+  const out: Array<PropMark | ScriptLadder> = [];
+  const placed = new Set<ScriptLadder>();
+  for (const item of items) {
+    const ladder = ladderOf.get(item.key);
+    if (!ladder) out.push(item);
+    else if (!placed.has(ladder)) {
+      placed.add(ladder);
+      out.push(ladder);
+    }
+  }
+  return out;
+}
+
+/**
  * Absolute movement of a prop from its pregame mark to the current number, or
  * null when either endpoint is missing (a forward-only mark that can't yet
  * diverge). Used to rank THE DIVERGENCE biggest-mover-first.
@@ -1133,7 +1199,23 @@ function PropFamilyBlock({
           {group.name}
         </div>
       )}
-      {head.length > 0 && <div className="space-y-2">{head.map(renderRow)}</div>}
+      {head.length > 0 && (
+        <div className="space-y-2">
+          {state === "script"
+            ? scriptLadders(head).map((entry) =>
+                "rungs" in entry ? (
+                  <ScriptLadderRow
+                    key={`ladder-${entry.subject}`}
+                    ladder={entry}
+                    renderRow={renderRow}
+                  />
+                ) : (
+                  renderRow(entry)
+                ),
+              )
+            : head.map(renderRow)}
+        </div>
+      )}
       {unchanged.length > 0 && (
         <details className={moved.length > 0 ? "mt-1.5" : ""}>
           <summary className="cursor-pointer select-none py-1 text-[11px] text-text-muted">
@@ -1188,6 +1270,37 @@ function ScriptFold({
         {familyName ?? MORE_PROPS_LABEL} ({items.length})
       </summary>
       <div className="mt-1 space-y-2">{items.map(renderRow)}</div>
+    </details>
+  );
+}
+
+/**
+ * #1626 slice 4: one player's ladder as one row — see `scriptLadders`. The row
+ * markup is `PropRow`'s, so the closed ladder reads like any other row; open, it
+ * lists every rung through the section's own `renderRow`.
+ */
+function ScriptLadderRow({
+  ladder,
+  renderRow,
+}: {
+  ladder: ScriptLadder;
+  renderRow: (item: PropMark) => ReactNode;
+}) {
+  return (
+    <details className="border-b border-surface-elevated last:border-0">
+      <summary className="flex items-center gap-3 py-2 cursor-pointer select-none">
+        <span className="flex-1 min-w-0 text-sm text-text-primary line-clamp-2">
+          {ladder.subject}
+        </span>
+        <span className="text-xs text-text-secondary tabular-nums shrink-0">
+          {ladder.threshold}+
+        </span>
+        <ScriptValue item={ladder.headline} />
+        <span className="text-[11px] text-text-muted tabular-nums shrink-0">
+          +{ladder.rungs.length - 1} more
+        </span>
+      </summary>
+      <div className="pl-3 pb-1 space-y-2">{ladder.rungs.map(renderRow)}</div>
     </details>
   );
 }
