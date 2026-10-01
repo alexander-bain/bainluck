@@ -575,6 +575,10 @@ async def get_team(identifier: str, debug_timing: bool = False, db: AsyncSession
             futures_team_ids, db, limit=30, timings=_ftime if debug_timing else None
         )
         futures_items = futures_data.get("items", [])
+        for item in futures_items:
+            item["display_tier"] = _display_tier(
+                item.get("market_tier"), item.get("market_name")
+            )
     except Exception:
         logger.exception("team page: futures section failed for team %s", team.id)
     _mark("futures")
@@ -1034,6 +1038,39 @@ def _answers_its_tier(market_name: str | None) -> bool:
     """False when a market's question is not the one its tier would label it with."""
     lowered = (market_name or "").lower()
     return not any(fragment in lowered for fragment in _NOT_A_TITLE_QUESTION)
+
+
+# The fragments of :data:`_NOT_A_TITLE_QUESTION` that name an award — tier 3's
+# question. Every one of them must also be in that tuple (guarded by a test).
+_AWARD_QUESTION: tuple[str, ...] = (
+    "of the year",
+    "of the month",
+    "glove",
+    "outstanding dh",
+    "hank aaron",
+    "cy young",
+    "mvp",
+)
+
+
+def _display_tier(market_tier: int | None, market_name: str | None) -> int | None:
+    """The tier a team page's Season Futures row is shown at (#10078).
+
+    The page hides every tier 1/2/4 row once a championship path exists — the
+    path, it assumes, already shows that question — and labels each remaining
+    row with its tier. Both assumptions fail for the families the path itself
+    refuses (:func:`_answers_its_tier`): "College Football Playoff Qualifiers"
+    is tier 4 (#7189), never a path step, so Miami's 83.5% was served and
+    never shown, and admitted at its stored tier it would read "Division".
+    Those rows are shown as what they ask: an award (3) or a prop (5).
+
+    The stored tier is not rewritten — Related Futures and the playoff grid
+    read tier 4 as "make the playoffs" (8709c44ce7); this is the page's label.
+    """
+    if market_tier not in (1, 2, 4) or _answers_its_tier(market_name):
+        return market_tier
+    lowered = (market_name or "").lower()
+    return 3 if any(fragment in lowered for fragment in _AWARD_QUESTION) else 5
 
 
 # A conference's title filed at tier 1 (#9660). Kalshi's college conference boards

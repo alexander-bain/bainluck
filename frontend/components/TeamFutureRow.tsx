@@ -30,8 +30,11 @@ export function TeamFutureRow({ item }: { item: TeamFutureItem }) {
     4: "Division",
     5: "Prop",
   };
-  const tierLabel = item.market_tier
-    ? tierLabels[item.market_tier] || "Market"
+  // #10078: the team page serves the tier a row is shown at — a qualifier board
+  // stored at tier 4 (#7189) reads "Prop", not "Division".
+  const shownTier = item.display_tier ?? item.market_tier;
+  const tierLabel = shownTier
+    ? tierLabels[shownTier] || "Market"
     : "Market";
   // L2-174 Item 3d — settled-means-settled. A graded winner (is_winner=True)
   // surfaces here at ~100% because Kalshi settled markets stay status='open'
