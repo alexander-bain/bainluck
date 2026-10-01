@@ -305,3 +305,184 @@ async def test_unconfirmed_resolves_the_market_and_grades_nothing():
     assert written == 0
     assert _outcome_writes(captured) == []
     assert any("futures_markets" in str(s) and "status" in str(s) for s in captured)
+
+
+# ── #9418 after-check: CLOB lags the push by minutes; Gamma does not ──────────
+#
+# Production 2026-10-01 05:3x–06:0xZ, after #9995 went live: 16 of 16 socket
+# resolutions read `unconfirmed` (0 CLOB read failures). Gamma had closed each
+# market and recorded `umaResolutionStatus: "resolved"` with 0/1 prices ~50 s
+# BEFORE the push (e.g. 0x3d779007… Chan-Yeong Oh v Kai-i Wang: closed
+# 05:56:04Z, Gamma updated 05:56:13Z, push 05:57:03Z), while CLOB `/markets`
+# still read `closed: false`, no winner, five minutes later. Gamma's
+# `outcomes`/`outcomePrices`/`clobTokenIds` are index-aligned with CLOB's
+# token order (read on the same specimen).
+
+from app.tasks.polymarket_ws import (  # noqa: E402
+    gamma_resolution_verdict,
+    settle_with_rechecks,
+)
+
+
+def _gamma(prices, *, closed=True, uma="resolved", tokens=(_OVER, _UNDER)):
+    import json as _json
+
+    return {
+        "conditionId": _COND,
+        "closed": closed,
+        "umaResolutionStatus": uma,
+        "outcomes": '["Over", "Under"]',
+        "outcomePrices": _json.dumps([str(p) for p in prices]),
+        "clobTokenIds": _json.dumps(list(tokens)),
+    }
+
+
+def _gverdict(push, gamma, legs=_LEGS, assets=_ASSETS):
+    return gamma_resolution_verdict(push.get("winning_asset_id"), gamma, legs, assets)
+
+
+def test_gamma_resolved_record_grades_the_winning_token():
+    assert _gverdict(_push(), _gamma([1, 0])) == (WS_RESOLUTION_WINNER, 101)
+    assert _gverdict(_push(_UNDER, "Under"), _gamma([0, 1])) == (WS_RESOLUTION_WINNER, 102)
+
+
+def test_gamma_accepts_list_fields_as_well_as_json_strings():
+    g = _gamma([1, 0])
+    g["outcomePrices"], g["clobTokenIds"] = ["1", "0"], [_OVER, _UNDER]
+    assert _gverdict(_push(), g) == (WS_RESOLUTION_WINNER, 101)
+
+
+def test_gamma_void_is_a_void():
+    assert _gverdict(_push(None, ""), _gamma([0.5, 0.5])) == (WS_RESOLUTION_VOID, None)
+
+
+def test_gamma_label_is_never_read():
+    assert _gverdict(_push(_OVER, "Under"), _gamma([1, 0])) == (WS_RESOLUTION_WINNER, 101)
+
+
+@pytest.mark.parametrize(
+    "gamma",
+    [
+        None,
+        _gamma([1, 0], closed=False),             # still trading
+        _gamma([1, 0], uma="proposed"),           # UMA not final
+        _gamma([1, 0], uma=None),
+        _gamma([0.9995, 0.0005]),                 # a price, not a payout
+        _gamma([1, 1]),                           # two winners
+        _gamma([1, 0.5]),                         # winner beside a non-zero
+        _gamma([0, 0]),                           # no leg paid
+        _gamma([0.7, 0]),                         # a top price is not a payout
+        _gamma([0.5, 0.49]),                      # not the void payout
+        _gamma([1, 0], tokens=(_OVER,)),          # misaligned lists
+        _gamma([1], tokens=(_OVER,)),             # one-legged
+    ],
+)
+def test_gamma_anything_short_of_a_settled_payout_is_unconfirmed(gamma):
+    assert _gverdict(_push(), gamma) == (WS_RESOLUTION_UNCONFIRMED, None)
+
+
+def test_gamma_winner_disagreeing_with_the_push_token_is_unconfirmed():
+    assert _gverdict(_push(_UNDER), _gamma([1, 0])) == (WS_RESOLUTION_UNCONFIRMED, None)
+
+
+def test_gamma_winner_that_is_not_a_leg_of_this_market_is_unconfirmed():
+    assert _gverdict(_push(), _gamma([1, 0]), legs=[102]) == (WS_RESOLUTION_UNCONFIRMED, None)
+    assert _gverdict(_push(), _gamma([1, 0]), assets={_UNDER: 102}) == (
+        WS_RESOLUTION_UNCONFIRMED,
+        None,
+    )
+
+
+def test_gamma_index_is_the_token_not_our_row_order():
+    """Prices [0, 1] name the SECOND token; that token's leg wins whatever id it has."""
+    assert _gverdict(_push(None), _gamma([0, 1]), assets={_OVER: 202, _UNDER: 201},
+                     legs=[201, 202]) == (WS_RESOLUTION_WINNER, 201)
+
+
+_UNC = (WS_RESOLUTION_UNCONFIRMED, None)
+_WIN = (WS_RESOLUTION_WINNER, 101)
+
+
+async def _settle(answers, delays=(10.0, 30.0)):
+    answers = list(answers)
+    asked, written, slept = [], [], []
+
+    async def ask():
+        asked.append(1)
+        return answers.pop(0)
+
+    async def write(v):
+        written.append(v)
+
+    async def sleep(d):
+        slept.append(d)
+
+    result = await settle_with_rechecks(ask, write, delays=delays, sleep=sleep)
+    return result, written, slept, len(asked)
+
+
+async def test_a_decided_first_answer_is_written_once_and_never_re_asked():
+    result, written, slept, asked = await _settle([_WIN])
+    assert result == (_WIN, False)
+    assert written == [_WIN] and slept == [] and asked == 1
+
+
+async def test_an_unconfirmed_first_answer_is_written_then_graded_on_a_re_ask():
+    """The market reads settled at once; the grade follows when the venue confirms."""
+    result, written, slept, asked = await _settle([_UNC, _UNC, _WIN])
+    assert result == (_WIN, True)
+    assert written == [_UNC, _WIN]
+    assert slept == [10.0, 30.0] and asked == 3
+
+
+async def test_a_venue_that_never_confirms_stays_unconfirmed_after_the_last_re_ask():
+    result, written, slept, asked = await _settle([_UNC, _UNC, _UNC])
+    assert result == (_UNC, False)
+    assert written == [_UNC]
+    assert asked == 3
+
+
+async def test_a_late_void_is_written_as_a_void():
+    void = (WS_RESOLUTION_VOID, None)
+    result, written, _slept, _asked = await _settle([_UNC, void])
+    assert result == (void, True) and written == [_UNC, void]
+
+
+def test_the_re_asks_finish_inside_one_socket_run():
+    """A recycle cancels outstanding settles; the waits must fit a run."""
+    from app.tasks.kalshi_ws import SUBSCRIPTION_REFRESH_SECONDS
+    from app.tasks.polymarket_ws import RESOLUTION_RECHECK_DELAYS_S
+
+    assert sum(RESOLUTION_RECHECK_DELAYS_S) < SUBSCRIPTION_REFRESH_SECONDS / 2
+
+
+async def test_the_gamma_read_asks_for_closed_markets_by_condition():
+    """`/markets/{id}` 422s on a condition id and the list form's default filter
+    is closed=false — both would read a settled market as absent."""
+    import httpx
+
+    from app.services.polymarket_api import PolymarketAPIService
+
+    seen = {}
+
+    def handler(request):
+        seen["path"], seen["params"] = request.url.path, dict(request.url.params)
+        return httpx.Response(200, json=[{"conditionId": "0xother"}, {"conditionId": _COND, "closed": True}])
+
+    svc = PolymarketAPIService()
+    await svc.gamma_client.aclose()
+    svc.gamma_client = httpx.AsyncClient(
+        base_url=svc.GAMMA_BASE_URL, transport=httpx.MockTransport(handler)
+    )
+    try:
+        row = await svc.get_closed_gamma_market_raw(_COND)
+    finally:
+        await svc.close()
+    assert seen == {"path": "/markets", "params": {"condition_ids": _COND, "closed": "true"}}
+    assert row == {"conditionId": _COND, "closed": True}
+
+
+def test_gamma_prices_and_tokens_of_different_lengths_are_unconfirmed():
+    """Index alignment is the whole proof of WHICH token won; a list that does
+    not line up proves nothing, even when a position happens to read 1."""
+    assert _gverdict(_push(None), _gamma([0, 1, 0])) == (WS_RESOLUTION_UNCONFIRMED, None)

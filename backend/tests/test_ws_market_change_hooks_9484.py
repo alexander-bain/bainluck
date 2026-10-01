@@ -56,6 +56,7 @@ from sqlalchemy.sql.dml import Update
 from sqlalchemy.sql.selectable import Select
 
 import app.services.kalshi_ws as kalshi_svc
+import app.services.polymarket_api as polymarket_api
 import app.tasks.kalshi_ws as kalshi_task
 import app.tasks.live_blend_refresh as blend_mod
 from app.models.models import FuturesOutcome
@@ -235,6 +236,19 @@ POLY_SLATE = [
 ]
 
 
+class _UndecidedPolymarketVenue:
+    """CLOB and Gamma both answer at once, neither has settled the market."""
+
+    async def get_clob_market_by_condition(self, _condition_id):
+        return None
+
+    async def get_closed_gamma_market_raw(self, _condition_id):
+        return None
+
+    async def close(self):
+        return None
+
+
 async def _drive_kalshi(monkeypatch, engine, messages, event_id=EVENT_ID,
                         fail_commits=0, venue="kalshi"):
     import websockets
@@ -308,6 +322,14 @@ async def _drive_kalshi(monkeypatch, engine, messages, event_id=EVENT_ID,
     monkeypatch.setattr(websockets, "connect", _connect)
     monkeypatch.setattr(
         task_base, "get_task_session", lambda *a, **kw: _SessionCtx()
+    )
+    # A `market_resolved` push asks the venue (CLOB, then Gamma, #9418) before
+    # it writes. Unstubbed, those were REAL network reads: fast refusals on a
+    # sandboxed laptop, slow answers on a CI runner — slow enough that the
+    # 0.5 s recycle above cancelled the settle before it wrote (PR #10019 CI).
+    # The venue here has not decided: the first answer is `unconfirmed`.
+    monkeypatch.setattr(
+        polymarket_api, "PolymarketAPIService", _UndecidedPolymarketVenue
     )
 
     if venue == "kalshi":
