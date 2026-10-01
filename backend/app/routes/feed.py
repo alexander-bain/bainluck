@@ -4867,6 +4867,7 @@ async def get_feed(
                     my_team_names=my_team_names,
                     tag_filter=dynamic_tag_filter or None,
                     static_tag_filter=static_tag_filter or None,
+                    sports_mode=(mode or "").lower() == "sports",
                 )
                 feed_items.extend(event_items)
             except Exception as e:
@@ -10155,6 +10156,7 @@ async def _score_events(
     tag_filter: Optional[list[str]] = None,
     static_tag_filter: Optional[list[str]] = None,
     price_refresh_events: list | None = None,
+    sports_mode: bool = False,
 ) -> list[dict]:
     """Score and format events for the feed.
 
@@ -10167,6 +10169,14 @@ async def _score_events(
     Tag filtering uses a two-tier approach:
     - Static tags (sport, league, tier, etc.) are pushed to SQL via GIN index
     - Dynamic tags (status, signal, timing, etc.) are filtered inline for freshness
+
+    ``sports_mode`` (#10001): the ``mode=sports`` request is the scoreboard, so
+    Discover's seen/dismiss suppression does not run on it. Those sets record
+    what a reader scrolled past or swiped on the DISCOVER deck; applied here
+    they deleted every MLB playoff game Alex had scrolled past there 80 minutes
+    earlier from his iPhone Sports tab, including one that was live and that he
+    had swiped. The sports-mode futures half (`_score_sports_mode_futures`)
+    already reads neither set.
     """
     # Wider time windows for my_teams_only — users want to see all their
     # team's upcoming games and recent results.
@@ -10507,10 +10517,11 @@ async def _score_events(
     for event in events:
         try:
             if not my_teams_only and price_refresh_events is None:
-                if event.id in ctx.recent_dismissed_event_ids:
-                    continue
-                if event.id in ctx.recent_seen_event_ids and event.status != "live":
-                    continue
+                if not sports_mode:
+                    if event.id in ctx.recent_dismissed_event_ids:
+                        continue
+                    if event.id in ctx.recent_seen_event_ids and event.status != "live":
+                        continue
                 if (
                     event.status == "live"
                     and event.commence_time

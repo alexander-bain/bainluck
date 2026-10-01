@@ -576,14 +576,17 @@ async def test_a_yankees_swipe_hides_that_card_keeps_baseball_and_writes_no_pref
     """Alex's own scenario, on the real write path.
 
     The reader (stored Nah on baseball, so the same reader the ship is for)
-    dismisses the Yankees @ Twins card. Afterwards: that exact card obeys its
-    scoped dismissal; the OTHER Yankees game, the Red Sox game and the
-    unrelated MLB game are all still served; and `user_preferences` is
-    byte-for-byte what it was — a swipe is not a sport-level declaration.
+    dismisses the Yankees @ Twins card on Discover — the only deck that sends
+    a swipe (native `DiscoverView`, web Discover cards). Afterwards, on
+    Discover: that exact card obeys its scoped dismissal; the OTHER Yankees
+    game, the Red Sox game and the unrelated MLB game are all still served.
+    On Sports (#10001) the scoreboard ignores Discover's dismissals, so the
+    whole slate is served there. And `user_preferences` is byte-for-byte what
+    it was — a swipe is not a sport-level declaration.
     """
     user = seed.users["nah"]
     before = await _prefs_of(pg, user)
-    page = await _feed(pg, user, session_id=SESSION_A, mode="sports")
+    page = await _feed(pg, user, session_id=SESSION_A)
     target = next(e for e in _mlb_events(page) if _matchup(e) == "Yankees @ Twins")
 
     await _swipe(
@@ -600,9 +603,12 @@ async def test_a_yankees_swipe_hides_that_card_keeps_baseball_and_writes_no_pref
         ],
     )
 
-    after = await _feed(pg, user, session_id=SESSION_A, mode="sports")
+    after = await _feed(pg, user, session_id=SESSION_A)
     got = sorted(_matchup(e) for e in _mlb_events(after))
     assert got == [m for m in MLB_SLATE if m != "Yankees @ Twins"], got
+    sports = await _feed(pg, user, session_id=SESSION_A, mode="sports")
+    got = sorted(_matchup(e) for e in _mlb_events(sports))
+    assert got == MLB_SLATE, f"#10001: a Discover swipe hid a Sports game: {got}"
     assert await _prefs_of(pg, user) == before, "a swipe rewrote sport_affinities"
 
 
@@ -653,9 +659,10 @@ async def test_what_a_yankees_swipe_actually_learns_is_bounded_and_not_team_targ
 
 async def test_anonymous_session_swipes_are_scoped_to_that_session(seed, pg):
     """The session-only principal: the swipe is keyed on `x-session-id`, the
-    dismissed card is hidden for THAT session, baseball stays, and a different
-    session sees the untouched slate."""
-    page = await _feed(pg, None, session_id=SESSION_A, mode="sports")
+    dismissed card is hidden on Discover for THAT session, baseball stays, and
+    a different session sees the untouched slate. Sports ignores Discover's
+    dismissals (#10001), so the swiping session's scoreboard keeps the card."""
+    page = await _feed(pg, None, session_id=SESSION_A)
     target = next(e for e in _mlb_events(page) if _matchup(e) == "Yankees @ Twins")
     await _swipe(
         pg,
@@ -663,10 +670,14 @@ async def test_anonymous_session_swipes_are_scoped_to_that_session(seed, pg):
         SESSION_A,
         [{"type": "event", "id": target["data"]["id"], "category": "baseball", "name": "Yankees vs Twins"}],
     )
-    a = sorted(_matchup(e) for e in _mlb_events(await _feed(pg, None, session_id=SESSION_A, mode="sports")))
-    b = sorted(_matchup(e) for e in _mlb_events(await _feed(pg, None, session_id=SESSION_B, mode="sports")))
+    a = sorted(_matchup(e) for e in _mlb_events(await _feed(pg, None, session_id=SESSION_A)))
+    b = sorted(_matchup(e) for e in _mlb_events(await _feed(pg, None, session_id=SESSION_B)))
+    a_sports = sorted(
+        _matchup(e) for e in _mlb_events(await _feed(pg, None, session_id=SESSION_A, mode="sports"))
+    )
     assert a == [m for m in MLB_SLATE if m != "Yankees @ Twins"], a
     assert b == MLB_SLATE, b
+    assert a_sports == MLB_SLATE, a_sports
 
 
 # ---------------------------------------------------------------------------
