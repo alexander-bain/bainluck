@@ -469,6 +469,17 @@ function shortAwardLabel(marketName: string, cleanLabel?: string): string {
   // finals. Order is the whole correctness argument here; keep the generic return last.
   if (/\bfinalists?\b/i.test(cleaned) && /\bmvp\b|most\s+valuable/i.test(cleaned)) return "MVP Finalist";
   if (/\bfinals\s+mvp\b/i.test(cleaned)) return "Finals MVP";
+  // #9956 — A SERIES MVP IS ITS OWN QUESTION TOO. `ALCS MVP` matched none of the arms above and
+  // fell through to the generic one, so /events/15321836 (2026-09-30 23:08Z) printed Yordan
+  // Álvarez as `MVP 96% · MVP 2%` — market 216 "AL MVP Winner?" beside market 62952891 "ALCS MVP
+  // Winner" — and Jose Altuve with two "MVP" chips. Above the championship arm on purpose: the
+  // spelled-out "American League Championship Series MVP" would otherwise read "Championship MVP".
+  if (/\bmvp\b|most\s+valuable/i.test(cleaned)) {
+    const abbr = cleaned.match(/\b([AN]L(?:CS|DS))\b/i);
+    if (abbr) return `${abbr[1].toUpperCase()} MVP`;
+    const spelled = cleaned.match(/\b(American|National)\s+League\s+(Championship|Division)\s+Series\b/i);
+    if (spelled) return `${spelled[1][0]}L${spelled[2][0]}S MVP`.toUpperCase();
+  }
   if (/\b(?:championship|super\s*bowl|world\s+series|grand\s+final)\b[^.]*?\bmvp\b/i.test(cleaned)) return "Championship MVP";
   if (/\bmvp\b|most\s+valuable/i.test(cleaned)) return "MVP";
   if (/\brookie\s+of\s+the\s+year\b/i.test(cleaned)) return "Rookie of the Year";
