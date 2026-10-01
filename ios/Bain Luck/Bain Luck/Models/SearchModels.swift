@@ -204,6 +204,56 @@ nonisolated struct SearchFuturesMarket: Decodable, Identifiable, Sendable {
     let topOutcomes: [SearchFuturesOutcome]?
     let outcomeCount: Int?
     let updatedAt: String?
+
+    /// #9963: date-ordered search outcomes are a ladder, not a ranked field.
+    /// Name the earliest date at or above even, using Discover's existing rule.
+    /// Unrecognized/mixed labels, called leaders and no crossover keep the
+    /// row's existing fallback; neither array position nor rank proves a date.
+    @MainActor var dateLadderAnswer: SearchFuturesOutcome? {
+        guard status != "resolved", let outcomes = topOutcomes, outcomes.count > 1 else { return nil }
+        // Each row keeps its existing called-result leader, including a called
+        // leg on an open market. Flat rows can show its grade without a quote.
+        guard outcomes.first?.verdict(in: self) == nil,
+              outcomes.first(where: { $0.probability != nil })?.verdict(in: self) == nil else { return nil }
+        let dated = outcomes.compactMap { outcome -> (SearchFuturesOutcome, Double)? in
+            Self.dateRungValue(outcome.name).map { (outcome, $0) }
+        }
+        guard dated.count == outcomes.count else { return nil }
+        let ordered = dated.sorted { $0.1 < $1.1 }
+        let points = ordered.map { outcome, value in
+            FeedDiscoverThresholdPoint(
+                source: "date_bucket", label: outcome.name, value: value, unit: nil,
+                direction: "before",
+                probability: outcome.probability.flatMap { $0.isFinite && (0...1).contains($0) ? $0 : nil },
+                needsSiblingMarkets: nil
+            )
+        }
+        return heatMapBetterThanEvenIndex(points).map { ordered[$0].0 }
+    }
+
+    private static func dateRungValue(_ label: String) -> Double? {
+        // Search does not serve threshold-point metadata. Recognize only a
+        // complete calendar-date label, including Discover's Before/By form.
+        let pattern = #"^(?:(?:Before|By) )?[A-Za-z]+ \d{1,2}, \d{4}$"#
+        guard label.range(of: pattern, options: [.regularExpression, .caseInsensitive]) != nil else { return nil }
+        let raw = label.replacingOccurrences(of: #"^(?:Before|By) "#, with: "", options: [.regularExpression, .caseInsensitive])
+        let formatter = DateFormatter()
+        formatter.locale = Locale(identifier: "en_US_POSIX")
+        formatter.calendar = Calendar(identifier: .gregorian)
+        formatter.timeZone = TimeZone(secondsFromGMT: 0)
+        formatter.isLenient = false
+        for format in ["MMMM d, yyyy", "MMM d, yyyy"] {
+            formatter.dateFormat = format
+            if let date = formatter.date(from: raw),
+               formatter.string(from: date).caseInsensitiveCompare(raw) == .orderedSame {
+                let parts = formatter.calendar.dateComponents([.year, .month, .day], from: date)
+                if let year = parts.year, let month = parts.month, let day = parts.day {
+                    return Double(year * 10_000 + month * 100 + day)
+                }
+            }
+        }
+        return nil
+    }
 }
 
 /// Top outcome for a futures market search result.
