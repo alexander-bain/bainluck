@@ -2998,6 +2998,44 @@ class TestOneNationalPresidentialRaceIsOneStory9877:
         assert stories.count("story:brazil_presidential_election") == 1
         assert stories.count("story:ai") == 2  # its authored cap, unchanged
 
+    # Production 2026-10-01 05:21Z, after the venue pair folded: this row was the
+    # race's second card (slot 15 behind FIRST_ROUND at slot 3). Persisted key NULL.
+    OUTRIGHT = (
+        112998,
+        "polymarket",
+        "Will any presidential candidate win outright in the first round of the "
+        "Brazil election?",
+        None,
+    )
+
+    def test_a_first_round_title_that_never_says_the_phrase_is_the_same_race(self):
+        outright = self._item(self.OUTRIGHT, 93)
+        first = self._item(self.FIRST_ROUND, 95)
+        assert outright["_quality_story_key"] == "story:brazil_presidential_election"
+        assert outright["_quality_family_key"] != first["_quality_family_key"]
+        capped = diversify_quality_families(
+            [first, outright], exact_family_cap=1, story_family_cap=5
+        )
+        assert [i["data"]["id"] for i in capped] == [59934255]
+        # The other open row of this shape (61980409) keys its own race.
+        assert (
+            national_presidential_election_story_key(
+                "Will any presidential candidate win outright in the first round "
+                "of the Bulgaria election?"
+            )
+            == "story:bulgaria_presidential_election"
+        )
+
+    def test_the_first_round_arm_needs_a_presidential_title_and_a_foreign_place(self):
+        for name in [
+            # No "presidential": the round of some other election.
+            "Will any candidate win outright in the first round of the Brazil election?",
+            # The US race is never a national-presidential story.
+            "Will any presidential candidate win outright in the first round of "
+            "the US election?",
+        ]:
+            assert national_presidential_election_story_key(name) is None, name
+
 
 class TestDiscoverFirstPageMixer:
     def _item(

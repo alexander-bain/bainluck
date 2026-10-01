@@ -1875,11 +1875,30 @@ _DEMONYM_TO_COUNTRY = {
 }
 
 
+# #9877 after-check (production, 2026-10-01 05:21Z): with the venue pair folded,
+# the opening feed still served Brazil's race twice — "Brazil Presidential
+# Election First Round Winner" at slot 3 and "Will any presidential candidate win
+# outright in the first round of the Brazil election?" at slot 15. The second
+# never says "Brazil presidential election" as one phrase, so it keyed nothing.
+# Over the 216 open titles that say "president" and "election" (05:3xZ) this
+# shape is exactly two rows, Brazil and Bulgaria, both Polymarket. A first round
+# is only ever a round of the race the title already calls presidential, so the
+# place before "election" names that race.
+_FIRST_ROUND_OF_ELECTION_RE = re.compile(
+    r"\bfirst\s+round\s+of\s+(?i:the\s+)?"
+    r"(?P<place>" + _PLACE_WORD + r"(?:\s+" + _PLACE_WORD + r"){0,2})"
+    r"\s+(?i:elections?)\b"
+)
+_PRESIDENTIAL_WORD_RE = re.compile(r"\bpresidential\b", re.IGNORECASE)
+
+
 def national_presidential_election_story_key(name: str) -> str | None:
     """``story:brazil_presidential_election`` for a non-US national presidential
     race, ``story:2027_france_presidential_election`` when the title names its
     edition, else ``None``."""
     match = _NATIONAL_PRESIDENTIAL_ELECTION_RE.search(name or "")
+    if match is None and _PRESIDENTIAL_WORD_RE.search(name or ""):
+        match = _FIRST_ROUND_OF_ELECTION_RE.search(name or "")
     if match is None:
         return None
     words = match.group("place").split()
@@ -1894,7 +1913,7 @@ def national_presidential_election_story_key(name: str) -> str | None:
     slug = re.sub(r"[^\w]+", "_", place).strip("_")
     if not slug:
         return None
-    year = match.group("year")
+    year = match.groupdict().get("year")
     edition = f"{year}_" if year else ""
     return f"story:{edition}{slug}{NATIONAL_PRESIDENTIAL_ELECTION_STORY_SUFFIX}"
 
