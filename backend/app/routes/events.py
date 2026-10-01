@@ -88,7 +88,7 @@ from app.utils.prematch_reading import (
     prematch_row_to_reading,
     resolve_prematch_reading,
 )
-from app.utils.period_window_grade import grade_period_window
+from app.utils.period_window_grade import grade_period_window, window_outcome_label
 from app.utils.served_period_scores import served_period_scores
 from app.utils.final_score_margin import margin_verdict_from_final_score
 from app.utils.resolution_authority import authority_tier
@@ -24078,6 +24078,15 @@ def _grade_closed_windows(closed_items, event, ticker_by_market_id) -> list[dict
             if not span:
                 continue
             unit, first_period, last_period = span
+            # #5088 — Polymarket's First-5 legs are a bare "Under" / "Boston Red
+            # Sox" with the line in the market name. Write the line in BEFORE the
+            # key and the grade: the key is the question, and five bare "Under"
+            # rungs (2.5 … 6.5) are five questions, not one. The label the reader
+            # sees is the same string, so "Under 2.5 · 2 runs — hit" says which.
+            outcome_name = (
+                window_outcome_label(market_name, outcome_name, home_name, away_name)
+                or outcome_name
+            )
             question_key = (unit, first_period, last_period, outcome_name)
             if question_key in _seen_questions:
                 continue

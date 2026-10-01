@@ -64,7 +64,7 @@ import re
 from app.utils.team_side import normalize_team_text as _norm
 from app.utils.team_side import resolve_team_side as _resolve_side
 
-__all__ = ["grade_period_window"]
+__all__ = ["grade_period_window", "window_outcome_label"]
 
 
 # A run-scored yes/no question: "First Inning Run", NRFI/YRFI, and Kalshi's
@@ -86,6 +86,62 @@ _TIE_RE = re.compile(r"^\s*(?:tie|draw)\b", re.IGNORECASE)
 
 # "Tampa Bay -1.5 first 5 innings" / "Atlanta +2.5".
 _SPREAD_RE = re.compile(r"^\s*(?P<team>.+?)\s+(?P<sign>[+-])\s*(?P<line>\d+(?:\.\d+)?)\b")
+
+
+# #5088 — Polymarket puts the LINE in the market name and leaves the outcome
+# bare: "Boston Red Sox vs. New York Yankees: 1st 5 Innings O/U 2.5" / "Under",
+# and "1st 5 Innings Spread: New York Yankees (-1.5)" / "Boston Red Sox".
+_MARKET_OU_LINE_RE = re.compile(r"\bO/U\s+(?P<line>\d+(?:\.\d+)?)\s*$", re.IGNORECASE)
+_MARKET_SPREAD_RE = re.compile(
+    r"\bSpread:\s*(?P<team>.+?)\s*\(\s*(?P<sign>[+-])\s*(?P<line>\d+(?:\.\d+)?)\s*\)\s*$",
+    re.IGNORECASE,
+)
+
+
+def window_outcome_label(market_name, outcome_name, home_team_name, away_team_name):
+    """The outcome with its line written in, when the venue left it in the market name.
+
+    #5088 — every First-5 market on a playoff page is Polymarket's, and its two
+    shapes put the line where :func:`grade_period_window` does not look:
+
+        "…: 1st 5 Innings O/U 2.5"                      / "Under"
+            -> "Under 2.5"
+        "1st 5 Innings Spread: New York Yankees (-1.5)" / "Boston Red Sox"
+            -> "Boston Red Sox +1.5"
+
+    A spread's line belongs to the club the MARKET names, so the other club's
+    leg takes the opposite sign. Measured on BOS@NYY 15321907 (the ux specimen,
+    02:03Z 10/1): all 14 First-5 legs were these two shapes, every one refused,
+    and once the fifth ended the questions left the page with no result.
+
+    Returns ``None`` — leave the row exactly as it is — unless the shape is
+    positively identified: a bare Over/Under on an ``O/U N`` market, or a bare
+    leg whose club AND the market's club each resolve to one side. An outcome
+    that already carries a line is never rewritten.
+    """
+    name = str(market_name or "")
+    outcome = str(outcome_name or "").strip()
+    if not outcome:
+        return None
+    outcome_key = _norm(outcome)
+
+    if outcome_key in ("over", "under"):
+        ou = _MARKET_OU_LINE_RE.search(name)
+        if not ou:
+            return None
+        return f"{outcome_key.capitalize()} {ou.group('line')}"
+
+    spread = _MARKET_SPREAD_RE.search(name)
+    if not spread or _SPREAD_RE.match(outcome):
+        return None
+    market_side = _resolve_side(spread.group("team"), home_team_name, away_team_name)
+    leg_side = _resolve_side(outcome, home_team_name, away_team_name)
+    if market_side is None or leg_side is None:
+        return None
+    sign = spread.group("sign")
+    if leg_side != market_side:
+        sign = "+" if sign == "-" else "-"
+    return f"{outcome} {sign}{spread.group('line')}"
 
 
 def _window_totals(first_period, last_period, home_period_scores, away_period_scores):
