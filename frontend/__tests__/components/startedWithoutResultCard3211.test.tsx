@@ -170,9 +170,14 @@ describe("#3211 · a past-kickoff scheduled card states what is not known", () =
   it("withholds the probability pair and the projection", () => {
     // CERT-792's argument, inherited: a filled bar is the loudest claim on the
     // card and there is no live price behind a match that may already be over.
+    // #9971: the PERCENT TOKEN, not the bare digits. Since #6361 this card
+    // prints its date, and on 2026-10-01 UTC kickoff-minus-3-days was "Sep 28"
+    // — the page-wide `not.toContain("28")` read the date as the withheld
+    // probability and reddened master. The controls below assert the same
+    // `NN%` shape, so this negative cannot go vacuous by the card dropping "%".
     const rendered = text(render(makeEvent()));
-    expect(rendered).not.toContain("72");
-    expect(rendered).not.toContain("28");
+    expect(rendered).not.toMatch(/\b72%/);
+    expect(rendered).not.toMatch(/\b28%/);
     expect(rendered).not.toContain("Proj");
   });
 });
@@ -183,13 +188,13 @@ describe("#3211 · CONTROLS — the healthy card is untouched", () => {
     // over a card that had simply stopped printing probabilities.
     const rendered = text(render(makeEvent({ commence_time: INSIDE_THE_GRACE })));
     expect(rendered).not.toContain(SUSPENDED_LABEL);
-    expect(rendered).toContain("72");
+    expect(rendered).toMatch(/\b72%/);
   });
 
   it("a fixture that has not kicked off is unchanged", () => {
     const rendered = text(render(makeEvent({ commence_time: NOT_YET_KICKED_OFF })));
     expect(rendered).not.toContain(SUSPENDED_LABEL);
-    expect(rendered).toContain("72");
+    expect(rendered).toMatch(/\b72%/);
   });
 
   it("a LIVE match hours past its start is still LIVE, not result-less", () => {
