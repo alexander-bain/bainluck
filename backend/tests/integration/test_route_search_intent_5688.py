@@ -99,6 +99,7 @@ from app.services.database import get_db, get_db_rw
 pytestmark = pytest.mark.asyncio
 
 SEARCH = "/api/events/search"
+YEAR_KEY = "futures_markets.name ~*"  # #8805's key: `_futures_season_order_key`
 
 
 def _is_iso_datetime(value: str) -> bool:
@@ -659,6 +660,10 @@ class TestTheNamedYearOrdersTheFuturesWindow:
     reverted key.
     """
 
+    # The year key is a regex on the MARKET name. A bare `~*` stopped naming it
+    # when #10024's split tier put a whole-word regex on an OUTCOME name into the
+    # same ORDER BY: `lazio playoffs` matched it, and `lazio 2026` would have
+    # passed with the year key reverted.
     async def test_a_named_year_sorts_the_futures_window_above_the_rank(
         self, client, recorder
     ):
@@ -666,13 +671,13 @@ class TestTheNamedYearOrdersTheFuturesWindow:
         clauses = recorder.futures_order_bys()
         assert clauses, "no futures window was built — the guard is vacuous"
         for clause in clauses:
-            assert "~*" in clause, (
+            assert YEAR_KEY in clause, (
                 "the year the reader typed never reached the futures window's "
                 f"ORDER BY; clause was {clause}"
             )
             # Position, not presence: below the rank, the key breaks ties only,
             # and ninety tied-high House primaries still fill the window.
-            assert clause.index("~*") < clause.index("ts_rank_cd"), (
+            assert clause.index(YEAR_KEY) < clause.index("ts_rank_cd"), (
                 "the year key sorts BELOW ts_rank_cd, so rows that rank higher "
                 f"without the year still fill the window; clause was {clause}"
             )
@@ -694,7 +699,7 @@ class TestTheNamedYearOrdersTheFuturesWindow:
         await client.get(f"{SEARCH}?q={query}")
         clauses = recorder.futures_order_bys()
         assert clauses, "no futures window was built — the guard is vacuous"
-        assert not [c for c in clauses if "~*" in c], (
+        assert not [c for c in clauses if YEAR_KEY in c], (
             f"{query!r} named no year but grew a futures year key; {clauses}"
         )
 

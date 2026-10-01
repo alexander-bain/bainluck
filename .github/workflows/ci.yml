@@ -4703,6 +4703,22 @@ jobs:
             exit 1
           fi
 
+      - name: "#10024 'dodgers world series' reaches the World Series board, not No results (real Postgres)"
+        # PILLAR: DISCOVER. SHIP: searching a team plus its competition answers
+        # with the competition's board. The query splits across the market name
+        # and one outcome; the split arms are trigram ILIKEs, a whole-word regex
+        # and a correlated EXISTS read only when tier<=1 comes back short — all
+        # Postgres facts. The in-rig strawman proves the cases measure the fix.
+        if: matrix.group == 'shared'
+        run: |
+          set -o pipefail
+          python -m pytest tests/integration/test_search_team_plus_competition_pg_10024.py \
+            -v -rs 2>&1 | tee /tmp/teampluscomp.txt
+          if grep -qiE "[0-9]+ skipped" /tmp/teampluscomp.txt; then
+            echo "::error::#10024 team-plus-competition contract SKIPPED — the gate did not run"
+            exit 1
+          fi
+
       - name: "#9947 'ohtani' keeps his MVP boards — the outcome arm reads ANY(ARRAY(...)) (real Postgres)"
         # PILLAR: DISCOVER. SHIP: typing a player keeps the boards they are
         # priced on. The outcome arm's `id IN (subquery)` let the planner walk
