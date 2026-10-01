@@ -106,6 +106,7 @@ from app.utils.event_completion import (
     EVENT_SUSPENDED,
     SETTLED_STATUSES,
     is_retired_event_status,
+    authority_not_started_past_schedule,
     served_commence_time,
     started_without_result,
 )
@@ -33571,6 +33572,18 @@ def _format_event(
         "home_score": event.home_score,
         "away_score": event.away_score,
     }
+
+    # #9968 — "LATE", NOT "STARTED". Inside the grace `started_without_result`
+    # is false whether or not ESPN has spoken, so a client could not tell a
+    # game past its listed time that ESPN still reads `pre` from one under way,
+    # and the web badge printed "Started" before first pitch. PRESENT ONLY WHEN
+    # TRUE (the `linescore` call above): absent means "not established", never
+    # "under way". Same `_served_now` as the two keys above, for their reason.
+    if authority_not_started_past_schedule(
+        event.status, event.commence_time, _served_now,
+        getattr(event, "win_probability_sources", None),
+    ):
+        response["authority_not_started"] = True
 
     # ── THE PER-SET GAMES LINE, WHEN WE HOLD ONE (live/073) ────────────────
     #
