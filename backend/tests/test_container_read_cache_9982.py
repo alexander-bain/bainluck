@@ -177,6 +177,10 @@ async def test_stale_is_served_at_once_and_rebuilt_once_in_the_background(
     monkeypatch, redis, clock
 ):
     first = await _get(_session())
+    # Published to Redis too, as it is in production by the time anyone is
+    # stale: the local copy and its shared twin must read as the SAME entry.
+    await _drain_background()
+    assert redis.store
     built = json.loads(first.body)
     # Week 5 carries a live game, so the payload ages on the LIVE windows.
     assert any(
@@ -368,6 +372,13 @@ def test_an_unparseable_payload_gets_the_ordinary_windows_never_longer():
 def test_the_envelope_round_trips_and_refuses_garbage():
     entry = cache.CachedRead(body=b'{"a":"\xc3\xa9\\n"}\n', built_at=1.5, fresh_until=31.5, stale_until=61.5)
     assert cache.decode_entry(cache.encode_entry(entry)) == entry
+    # A real clock stamp survives exactly: a shared copy must never read as
+    # newer (or older) than the local entry it was published from.
+    stamped = cache.CachedRead(
+        body=b"{}", built_at=1790820278.7646193, fresh_until=1790820308.7646193,
+        stale_until=1790820338.7646193,
+    )
+    assert cache.decode_entry(cache.encode_entry(stamped)) == stamped
     for raw in (None, "text", b"not zlib", b"", __import__("zlib").compress(b"no header")):
         assert cache.decode_entry(raw) is None
 

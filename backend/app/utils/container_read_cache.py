@@ -159,7 +159,9 @@ def encode_entry(entry: CachedRead) -> bytes:
     3.5 MB value would evict colder keys other rails depend on; Week 4's body is
     ~220 KB compressed.
     """
-    head = f"{entry.built_at:.3f} {entry.fresh_until:.3f} {entry.stale_until:.3f}\n"
+    # ``repr`` round-trips a float exactly. A rounded stamp made a shared copy
+    # look newer than the identical local one it was published from (CI, #9982).
+    head = f"{entry.built_at!r} {entry.fresh_until!r} {entry.stale_until!r}\n"
     return zlib.compress(head.encode("ascii") + entry.body, 6)
 
 
