@@ -466,7 +466,7 @@ function PropMiniCard({
   return (
     <div className="border border-surface-border rounded-lg p-3">
       <div className="flex items-center justify-between mb-2">
-        <div className="font-medium text-sm">{item.name}</div>
+        <div className="font-medium text-sm">{item.title ?? item.name}</div>
         <div className="flex items-center gap-2">
           <PriceAgeMark observedAt={cardStamp} scope="card" />
           {voided && (

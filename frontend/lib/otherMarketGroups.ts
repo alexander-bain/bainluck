@@ -505,6 +505,43 @@ export function askedQuestionTitle(marketName: string | null | undefined): strin
 }
 
 /**
+ * #1627 — the question alone, when a venue name is `<A> vs <B>: <question>`
+ * and A and B are THIS game's two teams.
+ *
+ * Kalshi heads every side question on a game with its own matchup, and
+ * Polymarket with its own spelling of it. On Browns @ Steelers
+ * (`/events/14780550`, 390px, 2026-10-01) Additional Markets printed
+ * `Pittsburgh vs Cleveland: Race to 35 Points`, `… : Safety`, `… : 1st
+ * Touchdown` — seventeen cards, each restating the game the hero names one
+ * screen up, in the venue's city names and the opposite order — beside
+ * `Steelers vs. Browns: Safety?`. The question is the part after the colon.
+ *
+ * Only when each side is exactly one of the event's teams and the two are
+ * different teams (`eventSideForLabel`, the rule the winner card already uses).
+ * A side we cannot place — `New York` on a Yankees–Mets page, or a matchup
+ * that is not this game — keeps the venue's whole string, so a market linked to
+ * the wrong game still says so on its face. `Set 1 Winner: A vs B` (question
+ * first) has no `vs` before its colon and is untouched.
+ */
+export function matchupPrefixedQuestion(
+  marketName: string | null | undefined,
+  homeTeam: string | null | undefined,
+  awayTeam: string | null | undefined,
+): string | null {
+  const name = (marketName ?? "").trim();
+  const colon = name.indexOf(":");
+  if (colon <= 0) return null;
+  const question = name.slice(colon + 1).trim();
+  if (!question) return null;
+  const sides = name.slice(0, colon).split(/\s+vs\.?\s+/i);
+  if (sides.length !== 2) return null;
+  const first = eventSideForLabel(sides[0], homeTeam, awayTeam);
+  const second = eventSideForLabel(sides[1], homeTeam, awayTeam);
+  if (first === null || second === null || first === second) return null;
+  return question;
+}
+
+/**
  * Is this market asking the GAME'S OWN question — the one the hero answers?
  *
  * ═══ #6595 — A LIVE GAME PAGE DECLARED A WINNER ═══
@@ -1019,7 +1056,10 @@ export function mergeOutcomes(rows: LabeledRow[]): OutcomeMergeResult {
 }
 
 export interface MarketCard {
+  /** The grouping key, and the heading unless `title` says otherwise. */
   name: string;
+  /** #1627: the heading printed, when it differs from `name` (`matchupPrefixedQuestion`). */
+  title?: string;
   outcomes: MergedOutcome[];
   withheld: number;
 }
@@ -1480,6 +1520,7 @@ export function buildMarketSection(
     cardOrder: string[];
     cards: Map<string, LabeledRow[]>;
     cardMarketIds: Map<string, Set<number>>;
+    cardTitles: Map<string, string>;
   }
   const drafts = new Map<string, Draft>();
   const draftOrder: string[] = [];
@@ -1536,6 +1577,12 @@ export function buildMarketSection(
         canonicalMatchupTitle(row.market_name, options.homeTeam, options.awayTeam) ??
         askedQuestionTitle(row.market_name) ??
         (row.market_name || "Unknown");
+    // #1627: the heading drops the venue's matchup when it is this game's own.
+    // Display only — `cardName` stays the key, so no two cards merge.
+    const cardTitle =
+      cardName === row.market_name
+        ? matchupPrefixedQuestion(row.market_name, options.homeTeam, options.awayTeam)
+        : null;
     // Inside a "Home Runs" card the statistic is redundant; the threshold is
     // not, because a statistic carries several (0.5 and 1.5 both occur live).
     const label = parsed
@@ -1548,7 +1595,14 @@ export function buildMarketSection(
 
     let draft = drafts.get(title);
     if (!draft) {
-      draft = { title, subtitle, cardOrder: [], cards: new Map(), cardMarketIds: new Map() };
+      draft = {
+        title,
+        subtitle,
+        cardOrder: [],
+        cards: new Map(),
+        cardMarketIds: new Map(),
+        cardTitles: new Map(),
+      };
       drafts.set(title, draft);
       draftOrder.push(title);
     }
@@ -1558,6 +1612,7 @@ export function buildMarketSection(
       card = [];
       draft.cards.set(cardName, card);
       draft.cardOrder.push(cardName);
+      if (cardTitle) draft.cardTitles.set(cardName, cardTitle);
     }
     if (typeof row._market_id === "number") {
       let ids = draft.cardMarketIds.get(cardName);
@@ -1717,7 +1772,13 @@ export function buildMarketSection(
       // exactly the row a count of quotes may not include.
       quotedOutcomes += outcomes.filter((o) => !o.result && o.prob != null).length;
       categoryWithheld += merged.withheld;
-      return { name, outcomes, withheld: merged.withheld };
+      const cardTitle = draft.cardTitles.get(name);
+      return {
+        name,
+        ...(cardTitle ? { title: cardTitle } : {}),
+        outcomes,
+        withheld: merged.withheld,
+      };
     });
 
     withheld += categoryWithheld;
