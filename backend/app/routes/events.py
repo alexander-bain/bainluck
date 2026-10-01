@@ -23,6 +23,7 @@ from sqlalchemy import select, and_, or_, union, func, case, cast, any_, literal
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload, aliased
 from sqlalchemy.orm.attributes import set_committed_value
+from sqlalchemy.sql.visitors import replacement_traverse
 from sqlalchemy.dialects.postgresql import ARRAY, JSONB
 from sqlalchemy.dialects.postgresql import insert
 
@@ -8908,6 +8909,42 @@ async def _recover_search_session(
         logger.warning("search session recovery failed: %s", exc)
 
 
+async def _typeahead_split_rows(db, stmt, deadline: float | None) -> tuple[list, str]:
+    """#10024: the dropdown's split-arm read — bounded, and never fatal.
+
+    The same budget as the typeahead outcome arm (`_TYPEAHEAD_OUTCOME_ARM_TIMEOUT_MS`,
+    capped by what is left of the deadline, shed under the stage floor), inside a
+    SAVEPOINT so a timeout rolls back only this statement: the team and event pools
+    are already in hand and the request answers with them. Returns ``(rows, state)``,
+    the state one of ``shed`` / ``budget_exceeded`` / ``merged`` (gotcha #53).
+    """
+    remaining_ms = (
+        _SEARCH_DEADLINE_MS
+        if deadline is None
+        else int((deadline - time.monotonic()) * 1000)
+    )
+    bound_ms = min(remaining_ms, _TYPEAHEAD_OUTCOME_ARM_TIMEOUT_MS)
+    if bound_ms < _SEARCH_MIN_STAGE_TIMEOUT_MS:
+        return [], "shed"
+    await _apply_search_statement_timeout(db, deadline, bound_ms=bound_ms)
+    savepoint = await db.begin_nested()
+    try:
+        rows = list((await db.execute(stmt)).scalars().unique().all())
+    except Exception as exc:  # noqa: BLE001 — re-raised unless it is the bound
+        await savepoint.rollback()
+        if not _is_query_timeout(exc):
+            raise
+        logger.warning(
+            "typeahead split arms exceeded their %d ms budget — answering "
+            "without them", bound_ms,
+        )
+        await _apply_search_statement_timeout(db, deadline)
+        return [], "budget_exceeded"
+    await savepoint.commit()
+    await _apply_search_statement_timeout(db, deadline)
+    return rows, "merged"
+
+
 async def _resolve_typeahead_outcome_arm(
     db: AsyncSession,
     arm,
@@ -14826,9 +14863,41 @@ async def typeahead_search(
     # through the SAME translation as /search's facet, so the two surfaces share
     # one map. `giants` (MLB and NFL) and every team-less query pass None, and
     # the call is then byte-for-byte the old one.
+    _ta_futures_rows = (
+        list(futures_result.scalars().unique().all())
+        if futures_result is not None
+        else []
+    )
+    # #10024: `dodgers world series` / `chiefs super bowl` — the board's name holds
+    # half the query and one of its options the rest, which no arm above accepts.
+    # The split arms are read only when the dropdown has NO futures row at all:
+    # this runs per keystroke, and on /search `red sox` / `new york` measured
+    # 1.5-3.4 s for them with nothing gained. A timed-out futures stage is not
+    # empty-by-answer, so it is not retried here.
+    _ta_split_arms = _split_futures_arms(ta_expanded)
+    if _ta_split_arms and futures_result is not None and not _ta_futures_rows:
+        _split_selects = [
+            select(FuturesMarket.id).where(arm, *_ta_open_now)
+            for arm in _ta_split_arms
+        ]
+        # The dropdown's own statement with ONLY its candidate filter swapped, so
+        # the ORDER BY and pool limit are the ones above by construction.
+        _ta_split_filter = FuturesMarket.id.in_(
+            select(union(*_split_selects).subquery().c.id)
+        )
+        _ta_futures_rows, _ta_split_state = await _typeahead_split_rows(
+            db,
+            replacement_traverse(
+                futures_query,
+                {},
+                lambda el: _ta_split_filter if el is _ta_candidate_filter else None,
+            ),
+            _ta_deadline,
+        )
+        _ta_mark(f"futures_split_arms_{_ta_split_state}")
     _ta_team_sport_category = _typeahead_team_sport_category(team_pool)
     ta_futures_ranked = _rerank_search_futures(
-        futures_result.scalars().unique().all() if futures_result is not None else [],
+        _ta_futures_rows,
         ta_expanded,
         _ta_team_sport_category,
     )
