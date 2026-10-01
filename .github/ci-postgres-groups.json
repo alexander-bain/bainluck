@@ -152,6 +152,7 @@
     "#6977 diacritic search fold, three rails (real Postgres)",
     "#9836 'ohio st' finds Ohio State, its game and both venues' markets (real Postgres)",
     "#9859 'sf giants' cards the San Francisco Giants and leads with their game (real Postgres)",
+    "'oscars' lists no fighter named Oscar as a game, on the page or the dropdown (real Postgres)",
     "#9897 'chicago' puts Sunday's Bears game with the week's games (real Postgres)",
     "#9940 'new york' leads with this week's games, not the city-twice ones (real Postgres)",
     "#10024 'dodgers world series' reaches the World Series board, not No results (real Postgres)",

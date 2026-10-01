@@ -1577,7 +1577,10 @@ class TestEventsBucketRequiresWordAboutness:
         """Including the league arm's remaining terms. `nba fed` must not smuggle
         the substring match back in through the UNION's league side."""
         assert "team_filter = _event_name_match(term, expansion)" in SEARCH_CODE
-        assert "_event_name_match(t, e) for t, e in expanded" in SEARCH_CODE
+        # The multi-term arm reads `event_expanded` — `expanded` minus the
+        # person-name award singulars (`oscars` -> `oscar`), never fewer terms.
+        assert "_event_name_match(t, e) for t, e in event_expanded" in SEARCH_CODE
+        assert "event_expanded = _event_arm_expanded(expanded)" in SEARCH_CODE
         assert "_event_name_match(t, e) for t, e in non_league_expanded" in SEARCH_CODE
 
     def test_no_minimum_length_constant_gates_the_rule(self):

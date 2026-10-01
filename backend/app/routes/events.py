@@ -1980,6 +1980,45 @@ _SEARCH_TERM_SYNONYMS: dict[str, str] = {
 }
 
 
+#: The award plurals whose singular is a common first name — the two entries
+#: above that expand ONE WAY for exactly that reason. The expansion is for the
+#: MARKET arms ("Oscar Winner: Best Picture"); no game is played by a ceremony,
+#: so on the arms that read participant names the singular only ever reaches
+#: people. Production 2026-10-01, `oscars` (119 searches / 90 days): /search
+#: listed two fights — Sandoval v Oscar Collazo and a fortnight-old "No result
+#: reported" Cavalcanti v Oscar Ravello — as GAMES under the Oscars, and the
+#: dropdown's second row was a tennis match, `%oscar%` inside "Boscardin".
+_PERSON_NAME_AWARD_PLURALS = frozenset({"oscars", "tonys"})
+
+
+def _event_arm_expanded(
+    expanded: list[tuple[str, str | None]]
+) -> list[tuple[str, str | None]]:
+    """`expanded` for the arms that match participant names. Pure.
+
+    Drops a person-name award plural's singular expansion, so `oscars` stays
+    `%oscars%` there and matches nobody's name; every other term passes through
+    with its expansion untouched, so the event SQL for any other query is the
+    same as before. The futures arms keep reading `expanded`.
+    """
+    return [
+        (t, None if t.lower() in _PERSON_NAME_AWARD_PLURALS else e)
+        for t, e in expanded
+    ]
+
+
+def _names_person_name_award(expanded: list[tuple[str, str | None]]) -> bool:
+    """True iff a term is a person-name award plural. Pure.
+
+    The dropdown's event FTS arm stems `oscars` to `oscar` with no help from the
+    synonym table, so dropping the expansion alone leaves that arm matching
+    every Oscar playing tonight; the dropdown drops the arm for these queries.
+    `/search` needs no counterpart — `_event_name_match` ANDs its FTS behind the
+    `%oscars%` substring, which no name contains.
+    """
+    return any(t.lower() in _PERSON_NAME_AWARD_PLURALS for t, _ in expanded)
+
+
 # LAT-P029 Item 1 (#1494): multi-word colloquial event names.
 #
 # THE CLASS, not the string. `_SEARCH_TERM_SYNONYMS` above is a ONE-TOKEN -> ONE-TOKEN
@@ -9793,10 +9832,12 @@ async def search_events(
     sport_alias_keys, _alias_consumed_terms = _resolve_sport_aliases(
         _unslotted_expanded
     )
-    non_league_expanded = [
+    # Every reader of this list is an event arm, so it never carries a
+    # person-name award expansion (`_event_arm_expanded`).
+    non_league_expanded = _event_arm_expanded([
         (t, e) for t, e in _unslotted_expanded
         if t.lower() not in _alias_consumed_terms
-    ]
+    ])
 
     # LAT-P033/#1732: the `fts_q = " ".join(exp if exp else term …)` string that
     # used to live here is DELETED, not deprecated. Its only consumer was the
@@ -9826,10 +9867,12 @@ async def search_events(
     # SUPERSET of the FTS arm here (the multi-term ILIKE requires every term but
     # allows them to land in different columns, where FTS required them all in one).
     # The frozen gold set is the guard.
+    # `oscars` must not reach the fighters named Oscar (`_event_arm_expanded`).
+    event_expanded = _event_arm_expanded(expanded)
     if len(terms) > 1:
-        team_filter = and_(*[_event_name_match(t, e) for t, e in expanded])
+        team_filter = and_(*[_event_name_match(t, e) for t, e in event_expanded])
     else:
-        term, expansion = expanded[0]
+        term, expansion = event_expanded[0]
         team_filter = _event_name_match(term, expansion)
 
     # LAT-P002/#1494 (1b): a league token must NOT widen the event predicate.
@@ -13807,17 +13850,22 @@ async def typeahead_search(
 
     # FTS query with expansions
     ta_fts_q = " ".join(exp if exp else term for term, exp in ta_expanded)
+    # The participant-name arms never read a person-name award's singular, and
+    # skip their FTS half for one (`_names_person_name_award`): `oscars` reached
+    # a tennis match through `%oscar%` inside "Boscardin".
+    ta_event_expanded = _event_arm_expanded(ta_expanded)
+    ta_event_fts_ok = not _names_person_name_award(ta_expanded)
 
     if is_multi_word:
         event_term_conditions = []
         team_term_conditions = []
         futures_term_conditions = []
-        for term, exp in ta_expanded:
+        for (term, exp), (_, ev_exp) in zip(ta_expanded, ta_event_expanded):
             # #9306: `_build_round_word_ilike` is `_build_expanded_ilike` for
             # every term but the four round words, which must be whole words.
             event_term_conditions.append(or_(
-                _build_round_word_ilike(Event.home_team_name, term, exp),
-                _build_round_word_ilike(Event.away_team_name, term, exp),
+                _build_round_word_ilike(Event.home_team_name, term, ev_exp),
+                _build_round_word_ilike(Event.away_team_name, term, ev_exp),
             ))
             # #7381: word-START, not anywhere. See `_build_word_start_ilike` for
             # the measurement and for why the dropdown takes a weaker rule than
@@ -13837,9 +13885,10 @@ async def typeahead_search(
         ilike_futures_filter = and_(*futures_term_conditions)
     else:
         term, exp = ta_expanded[0]
+        ev_exp = ta_event_expanded[0][1]
         ilike_event_names = or_(
-            _build_round_word_ilike(Event.home_team_name, term, exp),
-            _build_round_word_ilike(Event.away_team_name, term, exp),
+            _build_round_word_ilike(Event.home_team_name, term, ev_exp),
+            _build_round_word_ilike(Event.away_team_name, term, ev_exp),
         )
         ilike_event_filter = ilike_event_names
         if sport_alias_keys:
@@ -13858,7 +13907,7 @@ async def typeahead_search(
     fts_event_names = or_(
         _fts_filter(Event.home_team_name, ta_fts_q),
         _fts_filter(Event.away_team_name, ta_fts_q),
-    )
+    ) if ta_event_fts_ok else false()
     fts_event_f = fts_event_names
     if sport_alias_keys:
         fts_event_f = or_(fts_event_names, Sport.key.in_(sport_alias_keys))
@@ -13871,7 +13920,7 @@ async def typeahead_search(
     _ta_slot, _ta_slot_consumed = _resolve_broadcast_slot(ta_expanded)
     if _ta_slot:
         _ta_slot_rest = [
-            (t, e) for t, e in ta_expanded if t.lower() not in _ta_slot_consumed
+            (t, e) for t, e in ta_event_expanded if t.lower() not in _ta_slot_consumed
         ]
         _, _ta_slot_league_words = _resolve_sport_aliases(_ta_slot_rest)
         event_team_filter = and_(
@@ -13945,7 +13994,7 @@ async def typeahead_search(
     _ta_rounds, _ta_round_consumed = _resolve_postseason_games(terms)
     if _ta_rounds:
         _ta_round_rest = [
-            (t, e) for t, e in ta_expanded if t.lower() not in _ta_round_consumed
+            (t, e) for t, e in ta_event_expanded if t.lower() not in _ta_round_consumed
         ]
         _, _ta_round_league_words = _resolve_sport_aliases(_ta_round_rest)
         event_team_filter = or_(
