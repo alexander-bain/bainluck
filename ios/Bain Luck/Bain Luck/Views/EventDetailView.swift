@@ -64,7 +64,8 @@ struct EventDetailView: View {
             status: event.status,
             commenceTime: event.commenceTime,
             history: vm.history,
-            range: chartRange)
+            range: chartRange,
+            sportKey: event.sport)
     }
     @Environment(\.horizontalSizeClass) private var sizeClass
 

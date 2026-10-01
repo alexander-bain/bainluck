@@ -36,6 +36,7 @@ enum SharedChartWindow {
         commenceTime: String?,
         history: EventHistoryResponse?,
         range: OddsTimeRange,
+        sportKey: String? = nil,
         now: Date = Date()
     ) -> ClosedRange<Date>? {
         guard let scheduledStart = commenceTime?.asDate else { return nil }
@@ -82,7 +83,11 @@ enum SharedChartWindow {
         let start: Date
         switch range {
         case .sinceStart:
-            start = actualStart
+            // #6158 — a game that began late opens at its first OBSERVED opening
+            // period (less a lead-in), not the scheduled hour. Only ever later
+            // than `commence_time`; `nil` keeps the start above.
+            start = ObservedPlayStart.cut(scheduled: scheduledStart, history: history,
+                                          sportKey: sportKey) ?? actualStart
         case .all:
             let firstReading = earliestReading(in: history) ?? actualStart
             start = min(actualStart, max(firstReading, earliestPlausibleStart))
