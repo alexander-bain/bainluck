@@ -8,8 +8,30 @@ import { formatProbabilityPercent } from "@/lib/probabilityDisplay";
 import type { FeedFuturesData, FeedFuturesOutcome } from "@/lib/types";
 import type { CollectionMember } from "@/lib/collections";
 
-export function CollectionMemberCard({ member }: { member: CollectionMember }) {
+// #10089: Polymarket's mixed game listing (totals, spreads and a team-win leg)
+// shown under its own game would print that game's winner a second time with a
+// different number. In that related-to-this-game context only, it becomes a
+// link to the full listing with no percentages. The relation is the served one
+// (the hub passed this game, the market's event id is that game, the market is
+// a Polymarket `field`); nothing is inferred from names.
+export function isRelatedMixedListing(member: CollectionMember, relatedGame?: CollectionMember): boolean {
+  if (member.type !== "market" || relatedGame?.type !== "event" || member.eventId !== relatedGame.id) return false;
+  const market = member.item.data as FeedFuturesData;
+  return market.market_type === "field" && market.source === "polymarket";
+}
+
+export function CollectionMemberCard({ member, relatedGame }: { member: CollectionMember; relatedGame?: CollectionMember }) {
   const market = member.type === "market" ? member.item.data as FeedFuturesData : null;
+  if (market && isRelatedMixedListing(member, relatedGame)) {
+    const count = market.outcome_count > 0 ? market.outcome_count : 0;
+    return <Link href={member.href} data-related-listing-link className="flex items-center justify-between gap-3 rounded-card border border-surface-border bg-surface-card p-4 hover:bg-surface-elevated transition-colors focus-visible:outline focus-visible:outline-2 focus-visible:outline-accent-brand">
+      <span className="min-w-0">
+        <span className="block font-semibold text-text-primary">{market.name}</span>
+        <span className="block text-sm text-text-secondary">{count ? `${count} ${count === 1 ? "question" : "questions"} on this game` : "More questions on this game"}</span>
+      </span>
+      <span aria-hidden className="shrink-0 text-text-secondary">›</span>
+    </Link>;
+  }
   const outcomes = market?.top_outcomes as (FeedFuturesOutcome & GradedRow)[] | undefined;
   const resolved = !!market && ["resolved", "closed", "settled", "finalized", "final"].includes(market.status);
   const hasVerdict = outcomes?.some((outcome) => outcomeRowVerdict(outcome, resolved) !== null) ?? false;
