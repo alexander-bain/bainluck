@@ -42,6 +42,7 @@ import { isLikelyPersonName, isPersonFieldDomain } from "@/lib/eventConceptDispl
 import EntityImage from "@/components/EntityImage";
 import {
   groupByPropFamily,
+  propFamilyName,
   stripSharedLabelSuffix,
   type MatchupNames,
   type PropFamilyGroup,
@@ -629,6 +630,10 @@ export type ScriptLadder = {
   rungs: PropMark[];
   headline: PropMark;
   threshold: string;
+  /** Printed after the threshold: `+` for an `N+` ladder, nothing for an O/U line. */
+  suffix?: string;
+  /** #5240: the headline's pair-rounded percent, when it is one leg of a pair. */
+  pairedPercent?: number;
 };
 
 export function scriptLadders(items: PropMark[]): Array<PropMark | ScriptLadder> {
@@ -667,6 +672,83 @@ export function scriptLadders(items: PropMark[]): Array<PropMark | ScriptLadder>
     }
   }
   return out;
+}
+
+/**
+ * #1626 slice 5 — THE SCRIPT prints one row per player O/U ladder too.
+ *
+ * Slice 3 left one leg per Over/Under question, but a player with three lines
+ * still got three families, each a header over one row: `MICHAEL PITTMAN JR.:
+ * RECEIVING YARDS O/U 59.5 · Under 88%`, then `… O/U 69.5 · Under 91%`, then
+ * `… O/U 79.5 · Under 93%` (Browns @ Steelers, `/events/14780550`, 390px,
+ * 2026-10-01). The lines are one question — "how far does he get?" — asked at
+ * every line, the same as slice 4's `N+` ladder.
+ *
+ * So a subject's O/U families on one statistic, two or more of them, become ONE
+ * family (`… RECEIVING YARDS O/U`) holding ONE row: the headline line with the
+ * leg slice 3 kept there, and a disclosure listing every line ("Under 59.5",
+ * "Under 69.5", …). Collapsed, never dropped (gotcha #43). The headline is
+ * picked by slice 4's rule read on the Over: the highest line the script gives
+ * the Over at 50% or more, else the lowest line.
+ *
+ * A family joins only when it is down to a single marked, unsettled, unpending
+ * `Over`/`Under` leg — a pair slice 3 left whole, or anything else, stays its
+ * own family exactly as before.
+ */
+const OU_FAMILY = /^(.+?)\s+O\/U\s+(\d+(?:\.\d+)?)$/i;
+const OU_SIDE = /^(over|under)$/i;
+const OU_LADDER_MIN_LINES = 2;
+
+export type ScriptFamilyGroup = PropFamilyGroup<PropMark> & { ladder?: ScriptLadder };
+
+export function scriptOverUnderLadders(
+  groups: ReadonlyArray<PropFamilyGroup<PropMark>>,
+  pairPercents: ReadonlyMap<PropMark["key"], number> = EMPTY_PAIR_PERCENTS,
+): ScriptFamilyGroup[] {
+  type Line = { index: number; leg: PropMark; at: number; n: string; side: string };
+  const byQuestion = new Map<string, Line[]>();
+  groups.forEach((group, index) => {
+    if (group.name == null || group.items.length !== 1) return;
+    const leg = group.items[0];
+    if (leg.settled || leg.pending_label?.trim() || scriptNumber(leg) == null) return;
+    const side = leg.label.trim();
+    if (!OU_SIDE.test(side)) return;
+    const m = OU_FAMILY.exec(propFamilyName(leg.key) ?? "");
+    if (!m) return;
+    const lines = byQuestion.get(m[1]) ?? [];
+    lines.push({ index, leg, at: Number(m[2]), n: m[2], side });
+    byQuestion.set(m[1], lines);
+  });
+  const merged = new Map<number, ScriptFamilyGroup>();
+  const absorbed = new Set<number>();
+  for (const lines of byQuestion.values()) {
+    if (lines.length < OU_LADDER_MIN_LINES) continue;
+    const byLine = [...lines].sort((a, b) => a.at - b.at);
+    const over = (l: Line) => {
+      const p = scriptNumber(l.leg) ?? 0;
+      return /^over$/i.test(l.side) ? p : 1 - p;
+    };
+    const favoured = byLine.filter((l) => over(l) >= 0.5);
+    const pick = favoured.length > 0 ? favoured[favoured.length - 1] : byLine[0];
+    const rungs = byLine.map((l) => ({ ...l.leg, label: `${l.side} ${l.n}` }));
+    const first = Math.min(...lines.map((l) => l.index));
+    const name = (groups[first].name ?? "").replace(/\s+\d+(?:\.\d+)?$/, "");
+    merged.set(first, {
+      name,
+      items: rungs,
+      ladder: {
+        subject: pick.side,
+        rungs,
+        headline: rungs[byLine.indexOf(pick)],
+        threshold: pick.n,
+        suffix: "",
+        pairedPercent: pairPercents.get(pick.leg.key),
+      },
+    });
+    for (const l of lines) if (l.index !== first) absorbed.add(l.index);
+  }
+  if (merged.size === 0) return [...groups];
+  return groups.flatMap((g, i) => (absorbed.has(i) ? [] : [merged.get(i) ?? g]));
 }
 
 /**
@@ -967,7 +1049,7 @@ export default function PropsSection({
     activeState === "script"
       ? scriptOneSide(groups, activeState)
       : divergenceOneSide(groups, activeState, divergencePairs);
-  const shownGroups =
+  const oneSideGroups =
     graded.drop.size === 0 && oneSide.size === 0
       ? groups
       : groups.map((g) => ({
@@ -980,6 +1062,13 @@ export default function PropsSection({
   // its own sibling would be a second place this rule lives.
   const pairPercents =
     activeState === "script" ? scriptPairPercents(groups) : EMPTY_PAIR_PERCENTS;
+
+  // #1626 slice 5: a player's O/U lines, each one leg after slice 3, become one
+  // family with one row — see `scriptOverUnderLadders`.
+  const shownGroups: ScriptFamilyGroup[] =
+    activeState === "script"
+      ? scriptOverUnderLadders(oneSideGroups, pairPercents)
+      : oneSideGroups;
 
   // #5191: the same "decide it where the whole family is in hand" shape, for the
   // words rather than the numbers. State-independent — a rung restates its header
@@ -1142,7 +1231,7 @@ function PropFamilyBlock({
   divergencePairs = EMPTY_DIVERGENCE_PAIRS,
   insideUnchangedFold = false,
 }: {
-  group: PropFamilyGroup<PropMark>;
+  group: ScriptFamilyGroup;
   state: PropsState;
   renderRow: (item: PropMark) => ReactNode;
   /** #9914: rendered inside THE DIVERGENCE's section-level "Unchanged props"
@@ -1201,7 +1290,9 @@ function PropFamilyBlock({
       )}
       {head.length > 0 && (
         <div className="space-y-2">
-          {state === "script"
+          {state === "script" && group.ladder ? (
+            <ScriptLadderRow ladder={group.ladder} renderRow={renderRow} />
+          ) : state === "script"
             ? scriptLadders(head).map((entry) =>
                 "rungs" in entry ? (
                   <ScriptLadderRow
@@ -1275,7 +1366,8 @@ function ScriptFold({
 }
 
 /**
- * #1626 slice 4: one player's ladder as one row — see `scriptLadders`. The row
+ * #1626 slices 4/5: one player's ladder as one row — see `scriptLadders` and
+ * `scriptOverUnderLadders`. The row
  * markup is `PropRow`'s, so the closed ladder reads like any other row; open, it
  * lists every rung through the section's own `renderRow`.
  */
@@ -1293,9 +1385,9 @@ function ScriptLadderRow({
           {ladder.subject}
         </span>
         <span className="text-xs text-text-secondary tabular-nums shrink-0">
-          {ladder.threshold}+
+          {`${ladder.threshold}${ladder.suffix ?? "+"}`}
         </span>
-        <ScriptValue item={ladder.headline} />
+        <ScriptValue item={ladder.headline} pairedPercent={ladder.pairedPercent} />
         <span className="text-[11px] text-text-muted tabular-nums shrink-0">
           +{ladder.rungs.length - 1} more
         </span>
