@@ -659,6 +659,8 @@ export interface TeamFutureItem {
   resolution_date: string | null;
   /** L2-174 Item 3d — settled-WON grade (see types.ts TeamFutureItem). */
   is_winner?: boolean | null;
+  /** #10078 — the tier the team page shows this row at (see types.ts TeamFutureItem). */
+  display_tier?: number | null;
 }
 
 export interface ChampionshipPathEntry {

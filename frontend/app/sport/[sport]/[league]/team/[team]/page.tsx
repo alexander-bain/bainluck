@@ -23,6 +23,7 @@ import { buildDivisionRace } from "@/lib/teamDivisionRace";
 import { teamTextColor } from "@/lib/teamColors";
 import { teamHeadline } from "@/lib/teamHeadline";
 import { UpcomingGameCard, RecentGameCard } from "@/components/TeamGameCards";
+import { seasonFuturesRows } from "@/lib/teamSeasonFutures";
 import { TeamChampionshipPath } from "@/components/TeamChampionshipPath";
 import { TeamSeasonJourney } from "@/components/TeamSeasonJourney";
 import { TeamDivisionRace } from "@/components/TeamDivisionRace";
@@ -216,10 +217,7 @@ export default function TeamPage() {
 
   // Season futures: the championship path is surfaced as its own progression, so
   // the remaining list is props + awards + other markets (tiers outside 1/2/4).
-  const propsAndAwards =
-    championship_path.length > 0
-      ? futures.filter((f) => ![1, 2, 4].includes(f.market_tier ?? -1))
-      : futures;
+  const propsAndAwards = seasonFuturesRows(futures, championship_path);
 
   const jsonLd = {
     "@context": "https://schema.org",

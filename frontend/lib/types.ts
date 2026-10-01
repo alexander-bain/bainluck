@@ -2050,6 +2050,11 @@ export interface TeamFutureItem {
    *  settled markets stay status='open', gotcha #33), so the row can carry the
    *  WHAT-HIT/settled label. Null/false = not a confirmed hit → framed as live. */
   is_winner?: boolean | null;
+  /** #10078 — team page only: the tier this row is SHOWN at. A qualifier, seed or
+   *  award board stored at tier 1/2/4 (#7189) is served here as 3 or 5, so the page
+   *  neither hides it behind the championship path nor labels it "Division".
+   *  Absent elsewhere (My Stuff) — read `display_tier ?? market_tier`. */
+  display_tier?: number | null;
   canonical_market_key?: string | null;
   /** Season/year for display, e.g. "2025-26" or "2026" (BR52). */
   season_year?: string | null;
