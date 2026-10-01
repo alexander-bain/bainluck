@@ -1758,6 +1758,7 @@ export function buildMarketSection(
           sequence.set(o.label, n);
           return true;
         });
+      const seenResults = new Set<string>();
       const outcomes = [...merged.outcomes]
         .map((o) => {
           // A score the board has already ruled out is not a long shot, it is
@@ -1832,6 +1833,20 @@ export function buildMarketSection(
           // by codepoint rather than `localeCompare` keeps that answer
           // independent of whatever ICU data the runtime happens to carry.
           return a.label < b.label ? -1 : a.label > b.label ? 1 : 0;
+        })
+        // #10048 — one sentence per decided set. A set market can arrive as one
+        // row per PLAYER (Kalshi and Polymarket both write `Set 1 Winner` with
+        // outcomes `Alexander Zverev` / `Cameron Norrie`), and `decidedSetResult`
+        // answers for the market, so both rows got the same `result`. On
+        // /events/15320811 (Zverev 2–0 Norrie, production 10:5xZ 2026-10-01) the
+        // card read `Alexander Zverev won Set 1` twice and `… won Set 2` twice.
+        // A `result` replaces the whole row, so the repeat says nothing new: keep
+        // the first. Struck rows each name a different score and are never folded.
+        .filter((o) => {
+          if (!o.result || o.unreachable === true) return true;
+          if (seenResults.has(o.result)) return false;
+          seenResults.add(o.result);
+          return true;
         });
       renderedOutcomes += outcomes.length;
       // A row with a `result` renders the result and no number (`OutcomeBar`
