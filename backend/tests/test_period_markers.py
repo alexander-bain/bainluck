@@ -362,7 +362,8 @@ class TestEstimatedMarkerProvenance:
             ("aussierules_afl", ["1st Quarter", "2nd Quarter", "3rd Quarter", "4th Quarter"]),
             ("basketball_nba", ["1st Quarter", "2nd Quarter", "3rd Quarter", "4th Quarter"]),
             ("basketball_ncaab", ["1st Half", "2nd Half"]),
-            ("basketball_wncaab", ["1st Half", "2nd Half"]),
+            ("basketball_wncaab", ["1st Quarter", "2nd Quarter", "3rd Quarter", "4th Quarter"]),
+            ("basketball_euroleague", ["1st Quarter", "2nd Quarter", "3rd Quarter", "4th Quarter"]),
             ("americanfootball_nfl", ["1st Quarter", "2nd Quarter", "3rd Quarter", "4th Quarter"]),
             ("icehockey_nhl", ["1st Period", "2nd Period", "3rd Period"]),
         ],
@@ -389,6 +390,32 @@ class TestEstimatedMarkerProvenance:
         assert [m["timestamp"] for m in nfl] == [
             (ct + timedelta(minutes=o)).isoformat() for o in (0, 45, 110, 155)
         ]
+
+    def test_the_nba_keeps_its_48_minute_table(self):
+        ct = datetime(2026, 8, 30, 19, 0, tzinfo=timezone.utc)
+        nba = estimated_period_markers("basketball_nba", ct)
+        assert [m["timestamp"] for m in nba] == [
+            (ct + timedelta(minutes=o)).isoformat() for o in (0, 33, 80, 113)
+        ]
+
+    @pytest.mark.parametrize(
+        "sport_key",
+        ["basketball_euroleague", "basketball_wnba", "basketball_wncaab",
+         "basketball_nbl", "basketball_olympics"],
+    )
+    def test_a_40_minute_game_does_not_get_the_nba_table(self, sport_key):
+        """#10069, specimen 15292394 (EuroLeague, Dubai 78-77 Real Madrid): tip
+        16:00Z, last reading 17:53Z = +113 min, which is exactly the NBA table's
+        Q4. The chart drew '~Q4' on the final whistle. A 10-minute-quarter game
+        must place its 4th quarter well inside that span."""
+        ct = datetime(2026, 9, 24, 16, 0, tzinfo=timezone.utc)
+        last_reading = ct + timedelta(minutes=113)
+        markers = estimated_period_markers(sport_key, ct)
+        assert [m["timestamp"] for m in markers] == [
+            (ct + timedelta(minutes=o)).isoformat() for o in (0, 27, 70, 97)
+        ]
+        q4 = datetime.fromisoformat(markers[-1]["timestamp"])
+        assert last_reading - q4 >= timedelta(minutes=15)
 
     @pytest.mark.parametrize(
         "sport_key", ["tennis_atp_us_open", "golf_pga", "cricket_ipl", "mma_mixed_martial_arts", ""]
