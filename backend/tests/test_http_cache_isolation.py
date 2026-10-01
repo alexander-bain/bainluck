@@ -99,6 +99,56 @@ def test_non_200_and_non_get_are_untouched():
     assert _cc("/api/events/1", status=302) is None
 
 
+def test_polled_event_reads_carry_no_stale_window():
+    # The event page polls these; a stale window hands each poll the previous body.
+    for path in (
+        "/api/events/15322176",
+        "/api/events/15322176/history",
+        "/api/events/15322176/game-markets",
+        "/api/events/15322176/related-futures",
+    ):
+        assert _cc(path) == "public, max-age=10", path
+
+
+def test_unpolled_event_routes_keep_their_stale_window():
+    for path in (
+        "/api/events",
+        "/api/events/search",
+        "/api/events/typeahead",
+        "/api/events/live",
+        "/api/events/123abc",
+    ):
+        assert _cc(path) == "public, max-age=10, stale-while-revalidate=60", path
+
+
+def _directive_window_s(directive):
+    parts = dict(
+        p.strip().split("=", 1) for p in directive.split(",") if "=" in p
+    )
+    return int(parts["max-age"]) + int(parts.get("stale-while-revalidate", 0))
+
+
+def test_every_event_page_poll_reaches_the_origin():
+    """A poll answered inside max-age + stale-while-revalidate shows the PREVIOUS body.
+
+    Reads the cadences from the page itself, so raising either window — or
+    shortening the poll under it — goes red here, not on a reader's screen.
+    """
+    import pathlib
+    import re
+
+    root = pathlib.Path(__file__).resolve().parents[2] / "frontend"
+    page = (root / "app/events/[id]/page.tsx").read_text()
+    chart = (root / "components/event/WinnerEvolutionChart.tsx").read_text()
+    live_ms = int(re.search(r"const LIVE_REFRESH_INTERVAL = (\d+);", page).group(1))
+    chart_ms = int(re.search(r"refreshInterval: live \? (\d+) : 0", chart).group(1))
+
+    for path in ("/api/events/1", "/api/events/1/history", "/api/events/1/game-markets"):
+        window = _directive_window_s(_cc(path))
+        for cadence_ms in (live_ms, chart_ms):
+            assert window * 1000 < cadence_ms, (path, window, cadence_ms)
+
+
 def test_unmatched_public_path_gets_no_directive():
     assert _cc("/api/me/profile") is None  # not identity-bearing, not a cache prefix
     assert _cc("/api/me/profile", identity=True) == PRIVATE_DIRECTIVE
