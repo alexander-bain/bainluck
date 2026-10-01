@@ -505,7 +505,7 @@ async def _load_entry(key: str, now: float) -> tuple[Optional[CachedRead], bool]
     except asyncio.CancelledError:
         raise
     except Exception:  # noqa: BLE001 — fail open: a cache read never fails a hub
-        logger.debug("container hub cache: shared read failed for %s", key, exc_info=True)
+        logger.debug("container hub cache: shared read failed", exc_info=True)
     if shared is not None and not shared.is_servable(now):
         shared = None
     if shared is not None and (local is None or shared.built_at > local.built_at):
@@ -525,7 +525,7 @@ async def _publish_shared(key: str, entry: CachedRead) -> None:
             treat_none_as_miss=False,
         )
     except Exception:  # noqa: BLE001 — publication is best-effort
-        logger.debug("container hub cache: shared write failed for %s", key, exc_info=True)
+        logger.debug("container hub cache: shared write failed", exc_info=True)
 
 
 def _store_entry(key: str, entry: CachedRead) -> None:
@@ -555,7 +555,9 @@ def _cached_response(entry: CachedRead, label: str) -> Response:
     )
 
 
-async def _refresh_in_background(slug: str, include_children: bool, key: str, future) -> None:
+async def _refresh_in_background(
+    slug: str, include_children: bool, key: str, future, container_id: Optional[int]
+) -> None:
     """Rebuild a stale entry on its own session.
 
     The caller claims ``future`` (``begin_build``) BEFORE scheduling this, so a
@@ -578,7 +580,12 @@ async def _refresh_in_background(slug: str, include_children: bool, key: str, fu
     except asyncio.CancelledError:
         raise
     except Exception:  # noqa: BLE001 — the stale copy was already served
-        logger.warning("container hub cache: background rebuild of %s failed", key, exc_info=True)
+        # The container id, never the key: the key carries the request's slug.
+        logger.warning(
+            "container hub cache: background rebuild failed (container %s)",
+            container_id,
+            exc_info=True,
+        )
     finally:
         finish_build(key, future, result=result)
 
@@ -601,7 +608,11 @@ async def _serve_cached(db: AsyncSession, slug: str, published, include_children
             return _cached_response(entry, "shared_hit" if from_shared else "hit")
         leader, future = begin_build(key)
         if leader:
-            schedule_background(_refresh_in_background(slug, include_children, key, future))
+            schedule_background(
+                _refresh_in_background(
+                    slug, include_children, key, future, published.container_id
+                )
+            )
         return _cached_response(entry, "shared_stale_hit" if from_shared else "stale_hit")
 
     leader, future = begin_build(key)

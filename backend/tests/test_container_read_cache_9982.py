@@ -388,3 +388,33 @@ def test_the_key_names_slug_revision_and_scope():
     assert key == "container_read:v1:nfl-2026-week-4:r2:all"
     assert cache.container_read_cache_key("nfl-2026-week-4", 3, True) != key
     assert cache.container_read_cache_key("nfl-2026-week-4", 2, False) != key
+
+
+async def test_a_failed_background_rebuild_keeps_the_stale_copy_and_frees_the_slot(
+    monkeypatch, redis, clock, caplog
+):
+    first = await _get(_session())
+    clock[0] += cache.CONTAINER_READ_FRESH_TTL_LIVE_SECONDS + 1
+
+    class _Broken:
+        def __call__(self):
+            return self
+
+        async def __aenter__(self):
+            raise RuntimeError("database gone")
+
+        async def __aexit__(self, *exc):
+            return False
+
+    from app.services import database
+
+    monkeypatch.setattr(database, "async_session_maker", _Broken())
+    caplog.set_level("WARNING", logger=route.logger.name)
+    stale = await _get(_session())
+    await _drain_background()
+    assert stale.headers["X-Feed-Cache"] == "stale_hit" and stale.body == first.body
+    assert request_cache.inflight_count() == 0
+    failed = [r for r in caplog.records if "background rebuild failed" in r.getMessage()]
+    assert len(failed) == 1
+    # No request-supplied text in the log line (CodeQL py/log-injection).
+    assert "nfl-2026-week-5" not in failed[0].getMessage()
