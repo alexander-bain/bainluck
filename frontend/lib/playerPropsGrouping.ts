@@ -544,7 +544,7 @@ function identityKey(name: string, team: TeamSide): string {
  * The fix is not a cleverer alias rule — no rule evaluated one row at a time can
  * be order-independent, because the information needed to decide arrives later.
  * Every row is read first, the side sets are learned, and only then is any row
- * committed. `resolveBucketKey` is now a PURE FUNCTION of (name, side, side-set):
+ * committed. `resolveBucketSide` is now a PURE FUNCTION of (name, side, side-set):
  * it holds no state, so there is nothing left for order to perturb.
  *
  * ── THE ORDERING LESSON THAT STILL APPLIES ──
@@ -556,15 +556,15 @@ function identityKey(name: string, team: TeamSide): string {
  * of players, different sequence. **`playerMap` is still never deleted from**, and
  * buckets are still created in row order, so card order is unchanged by all of this.
  */
-function resolveBucketKey(
+function resolveBucketSide(
   knownSidesByName: ReadonlyMap<string, ReadonlySet<"home" | "away">>,
   name: string,
   team: TeamSide,
-): string {
+): TeamSide {
   const knownSides = knownSidesByName.get(name.toLowerCase());
   const knownCount = knownSides ? knownSides.size : 0;
 
-  if (team !== "unknown") return identityKey(name, team);
+  if (team !== "unknown") return team;
 
   // Unknown side. The decision depends ONLY on how many authoritative sides exist
   // for this name across the WHOLE payload — never on what has been seen so far —
@@ -576,10 +576,9 @@ function resolveBucketKey(
   //                    either same-named opponent would be a coin flip, and a
   //                    borrowed stat is worse than an unattributed one.
   if (knownCount === 1) {
-    const only = [...knownSides!][0];
-    return identityKey(name, only);
+    return [...knownSides!][0];
   }
-  return identityKey(name, "unknown");
+  return "unknown";
 }
 
 /**
@@ -778,7 +777,8 @@ export function groupPlayerProps(input: GroupPlayerPropsInput): GroupPlayerProps
 
   /** MUTATION ONLY. Every value here was already read; nothing here can throw. */
   function commitPlayerPropRow(c: RowCandidate): void {
-    const playerKey = resolveBucketKey(knownSidesByName, c.playerName, c.keyTeam);
+    const bucketSide = resolveBucketSide(knownSidesByName, c.playerName, c.keyTeam);
+    const playerKey = identityKey(c.playerName, bucketSide);
     if (!playerMap.has(playerKey)) {
       playerMap.set(playerKey, {
         name: c.playerName,
@@ -789,6 +789,13 @@ export function groupPlayerProps(input: GroupPlayerPropsInput): GroupPlayerProps
     }
 
     const playerEntry = playerMap.get(playerKey)!;
+    // #10126 — a bucket keyed to an authoritative side shows under THAT side.
+    // The card's display team used to be whichever row created the bucket, so
+    // when one of Deshaun Watson's untagged rows came first (11 of 43 on
+    // /events/14780550 carry no `player_team`) his Browns card read "unknown"
+    // and the dashboard's team filter, which keeps an unknown card under both
+    // teams, showed him under the Steelers too. The bucket already knew his side.
+    if (bucketSide !== "unknown") playerEntry.team = bucketSide;
     if (c.headshot && !playerEntry.headshot) playerEntry.headshot = c.headshot;
 
     if (!playerEntry.stats.has(c.statKey)) {
@@ -917,7 +924,8 @@ export function groupPlayerProps(input: GroupPlayerPropsInput): GroupPlayerProps
   function commitOtherRow(c: OtherCandidate): void {
     // `other[]` rows carry no `player_team`, so identity is always unknown here
     // and this pass groups exactly as it did before.
-    const playerKey = resolveBucketKey(knownSidesByName, c.playerName, "unknown");
+    const bucketSide = resolveBucketSide(knownSidesByName, c.playerName, "unknown");
+    const playerKey = identityKey(c.playerName, bucketSide);
     if (!playerMap.has(playerKey)) {
       playerMap.set(playerKey, {
         name: c.playerName,
@@ -925,6 +933,8 @@ export function groupPlayerProps(input: GroupPlayerPropsInput): GroupPlayerProps
         stats: new Map(),
       });
     }
+    // #10126 — same rule as `commitPlayerPropRow`.
+    if (bucketSide !== "unknown") playerMap.get(playerKey)!.team = bucketSide;
     // UNPRICED ROWS STOP HERE, and the placement of this line is load-bearing
     // twice over.
     //
