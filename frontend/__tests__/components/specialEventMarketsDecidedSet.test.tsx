@@ -240,3 +240,43 @@ describe("it refuses rather than guesses", () => {
     expect(html.match(BAR) ?? []).toHaveLength(2);
   });
 });
+
+/**
+ * #10048 — verbatim `other` rows, `GET /api/events/15320811/game-markets`,
+ * 2026-10-01 10:2xZ: Zverev 2–0 Norrie, FINAL, the event naming both players by
+ * surname. Set 1 is graded by Kalshi; set 2 is Polymarket's open leg, which read
+ * `last quote >99%` / `last quote <1%` under a 2–0 board.
+ */
+describe("#10048: a surname-only event still says who won the set", () => {
+  const ZVEREV_NORRIE = [
+    { market_name: "Set 2 Winner: Alexander Zverev vs Cameron Norrie", outcome_name: "Alexander Zverev", probability: 0.9955, source: "polymarket" },
+    { market_name: "Set 2 Winner: Alexander Zverev vs Cameron Norrie", outcome_name: "Cameron Norrie", probability: 0.0045, source: "polymarket" },
+    { market_name: "Alexander Zverev vs Cameron Norrie: Set 1 Winner", outcome_name: "Alexander Zverev", probability: 0.99, source: "kalshi", is_winner: true },
+    { market_name: "Alexander Zverev vs Cameron Norrie: Set 1 Winner", outcome_name: "Cameron Norrie", probability: 0.01, source: "kalshi", is_winner: false },
+  ];
+  const final = () =>
+    payload({
+      event_id: 15320811,
+      home_team: "Zverev",
+      away_team: "Norrie",
+      home_score: 2,
+      away_score: 0,
+      status: "completed",
+      other: ZVEREV_NORRIE,
+    } as unknown as Partial<GameMarketsResponse>);
+
+  test("THE SHIP: set 2 names its winner and quotes no price", () => {
+    const html = renderAsPage(final(), "tennis_atp_china_open");
+    const text = visible(html);
+    expect(resultRows(html)).toContain("Alexander Zverev won Set 2");
+    expect(text).not.toContain("Alexander Zverev wins Set 2");
+    expect(text).not.toContain("Cameron Norrie wins Set 2");
+    expect(text).not.toContain(">99%");
+  });
+
+  test("THE REGRESSION GUARD: the full-name payload with surname teams differs from a no-winner render", () => {
+    const withWinner = renderAsPage(final(), "tennis_atp_china_open");
+    const withoutWinner = renderAsPage(final(), "baseball_mlb");
+    expect(withWinner).not.toBe(withoutWinner);
+  });
+});
