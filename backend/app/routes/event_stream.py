@@ -155,6 +155,33 @@ def _in_kalshi_open_contract_bridge(market, now: datetime) -> bool:
     return all(o.is_winner is None for o in market.outcomes)
 
 
+def _in_polymarket_open_contract_bridge(market) -> bool:
+    """A Polymarket market the open-contract arm carries AND bridges to its
+    event's blend (#10091, `tasks/polymarket_open_contracts`), from the row.
+
+    Mirrors the arm's admission — unresolved (checked by the caller), no
+    `settled_at`, no graded leg (`is_winner IS NOT TRUE` and no
+    `resolution_source`: the column defaults FALSE, so a NULL test would call
+    every ungraded leg graded) — and its bridge (the blend's class rule calls
+    the market a game winner). `_has_mapped_winner` still asks the blend's full
+    speaker admission and the persisted token mapping. Either undo flag turns
+    the arm off, so it turns this off too.
+    """
+    from app.tasks.polymarket_open_contracts import open_contract_prices_enabled
+    from app.utils.live_blend import _class_says_game_winner
+
+    if market.source != "polymarket" or not open_contract_prices_enabled():
+        return False
+    if not _class_says_game_winner(market):
+        return False
+    if market.settled_at is not None:
+        return False
+    return all(
+        o.is_winner is not True and o.resolution_source is None
+        for o in market.outcomes
+    )
+
+
 def _market_in_quote_cohort(event, market, now: datetime) -> bool:
     """Current #9499 producer coverage, not a permanent venue-hours policy."""
     if event.completed_at is not None or market.source not in {"kalshi", "polymarket"}:
@@ -172,9 +199,11 @@ def _market_in_quote_cohort(event, market, now: datetime) -> bool:
         return start >= now - timedelta(hours=24)
     if event.status == "scheduled":
         if start > now + timedelta(hours=6):
-            # #9484: beyond the slate's horizon only the open-contract arm's
-            # bridged game winner publishes this event's blend.
-            return _in_kalshi_open_contract_bridge(market, now)
+            # #9484 / #10091: beyond the slate's horizon only the open-contract
+            # arms' bridged game winners publish this event's blend.
+            return _in_kalshi_open_contract_bridge(
+                market, now
+            ) or _in_polymarket_open_contract_bridge(market)
         return market.source == "kalshi" or start >= now - timedelta(hours=24)
     return False
 

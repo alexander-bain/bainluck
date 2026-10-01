@@ -157,10 +157,10 @@ def test_nonlive_requires_an_unsettled_mapped_moneyline(source, change):
 
 
 @pytest.mark.parametrize("status,age,source,expected", [
-    # #9484: past 6 h a Kalshi game winner is carried by the open-contract
-    # arm's event bridge; Polymarket has no bridge, so its horizon holds.
+    # #9484 / #10091: past 6 h a game winner is carried by its venue's
+    # open-contract arm's event bridge — Kalshi's and, since #10091, Polymarket's.
     ("scheduled", 6, "kalshi", True), ("scheduled", 6.01, "kalshi", True),
-    ("scheduled", 6.01, "polymarket", False),
+    ("scheduled", 6.01, "polymarket", True),
     ("scheduled", -25, "kalshi", True), ("scheduled", -25, "polymarket", False),
     ("scheduled", -24, "polymarket", True),
     ("suspended", -24, "kalshi", True), ("suspended", -24.01, "kalshi", False),
@@ -338,12 +338,6 @@ def test_a_naive_expiration_is_read_as_utc(monkeypatch):
     assert not route._has_mapped_winner(pit_cle_event(), [gone], PIT_CLE_SEEN)
 
 
-def test_polymarket_has_no_bridge_past_the_horizon():
-    market = market_fixture("polymarket")
-    event = event_fixture(commence_time=NOW + timedelta(hours=10))
-    assert not route._has_mapped_winner(event, [market], NOW)
-
-
 def test_the_route_mirror_refuses_a_non_winner_itself(monkeypatch):
     """`live_blend` refuses a non-winner speaker too, so through
     `_has_mapped_winner` the prop case above cannot tell which rule refused it.
@@ -354,3 +348,126 @@ def test_the_route_mirror_refuses_a_non_winner_itself(monkeypatch):
     assert not route._in_kalshi_open_contract_bridge(spread, PIT_CLE_SEEN)
     poly = pit_cle_market(source="polymarket")
     assert not route._in_kalshi_open_contract_bridge(poly, PIT_CLE_SEEN)
+
+
+# ── #10091: the Polymarket arm's event bridge, past the slate's 6 h ──────────
+#
+# The far-event route admitted Kalshi only, so an already subscribed, mapped,
+# open Polymarket winner 10 h out was refused `not_live` even once its producer
+# re-stamps the blend. The specimen is the frozen #10091 acceptance fixture's
+# shape: Steelers vs. Browns, a two-token binary whose SECOND token (`_side1`)
+# holds the LOWER outcome id. Condition/token/outcome ids are synthetic.
+
+
+def poly_pit_cle_market(**overrides):
+    values = dict(id=10091, event_id=14780550, source="polymarket", status="open",
+                  external_id="0x10091", name="Steelers vs. Browns",
+                  market_metadata={"clob_token_ids": ["10091001", "10091002"]},
+                  settled_at=None, expiration_time=None,
+                  outcomes=[
+                      FuturesOutcome(id=1009101, market_id=10091,
+                                     name="Pittsburgh Steelers",
+                                     external_id="0x10091_side1",
+                                     current_probability=.575, rank=1),
+                      FuturesOutcome(id=1009102, market_id=10091,
+                                     name="Cleveland Browns",
+                                     external_id="0x10091",
+                                     current_probability=.425, rank=2),
+                  ])
+    values.update(overrides)
+    return FuturesMarket(**values)
+
+
+def _no_undo_flags(monkeypatch):
+    monkeypatch.delenv("WS_OPEN_CONTRACT_PRICES", raising=False)
+    monkeypatch.delenv("POLYMARKET_WS_OPEN_CONTRACT_PRICES", raising=False)
+
+
+def test_polymarket_ten_hours_out_is_enrolled_by_its_bridged_winner(monkeypatch):
+    _no_undo_flags(monkeypatch)
+    event = pit_cle_event()
+    assert (event.commence_time - PIT_CLE_SEEN) > timedelta(hours=10)
+    assert route._has_mapped_winner(event, [poly_pit_cle_market()], PIT_CLE_SEEN)
+
+
+def test_polymarket_ungraded_false_default_is_not_a_grade(monkeypatch):
+    """`is_winner` defaults FALSE server-side: FALSE with no source is an
+    ungraded leg to the arm, so it is to the route. (Kalshi's mirror differs
+    because Kalshi's arm reads `IS NULL`.)"""
+    _no_undo_flags(monkeypatch)
+    market = poly_pit_cle_market()
+    for outcome in market.outcomes:
+        outcome.is_winner = False
+    assert route._has_mapped_winner(pit_cle_event(), [market], PIT_CLE_SEEN)
+
+
+@pytest.mark.parametrize("change", [
+    "switch_off_both", "switch_off_venue", "settled_at", "graded_true",
+    "graded_by_source", "resolved", "prop", "unmapped", "partial_tokens",
+    "completed", "suspended", "no_start", "wrong_match",
+])
+def test_the_polymarket_bridge_refuses_what_the_arm_does_not_carry(monkeypatch, change):
+    _no_undo_flags(monkeypatch)
+    event, market = pit_cle_event(), poly_pit_cle_market()
+    if change == "switch_off_both":
+        monkeypatch.setenv("WS_OPEN_CONTRACT_PRICES", "0")
+    elif change == "switch_off_venue":
+        monkeypatch.setenv("POLYMARKET_WS_OPEN_CONTRACT_PRICES", "0")
+    elif change == "settled_at":
+        market.settled_at = PIT_CLE_SEEN
+    elif change == "graded_true":
+        market.outcomes[1].is_winner = True
+    elif change == "graded_by_source":
+        market.outcomes[0].is_winner = False
+        market.outcomes[0].resolution_source = "polymarket_api"
+    elif change == "resolved":
+        market.status = "resolved"
+    elif change == "prop":
+        market.name = "Steelers vs. Browns: Total Points Over 44.5"
+    elif change == "unmapped":
+        market.market_metadata = {}
+    elif change == "partial_tokens":
+        market.market_metadata = {"clob_token_ids": ["10091001"]}
+    elif change == "completed":
+        event.completed_at = PIT_CLE_SEEN
+    elif change == "suspended":
+        event.status = "suspended"
+        event.commence_time = PIT_CLE_SEEN - timedelta(hours=25)
+    elif change == "no_start":
+        event.commence_time = None
+    else:
+        market.name = "Jets vs. Dolphins"
+        market.outcomes[0].name = "New York Jets"
+        market.outcomes[1].name = "Miami Dolphins"
+    assert not route._has_mapped_winner(event, [market], PIT_CLE_SEEN)
+
+
+def test_the_polymarket_route_mirror_refuses_on_its_own(monkeypatch):
+    """Through `_has_mapped_winner` the blend's own admission also refuses a
+    prop or a graded book, so these ask the mirror directly: it carries the
+    arm's rules and must refuse by itself."""
+    _no_undo_flags(monkeypatch)
+    assert route._in_polymarket_open_contract_bridge(poly_pit_cle_market())
+    prop = poly_pit_cle_market(name="Steelers vs. Browns - Halftime Result")
+    assert not route._in_polymarket_open_contract_bridge(prop)
+    graded = poly_pit_cle_market()
+    graded.outcomes[0].resolution_source = "polymarket_api"
+    assert not route._in_polymarket_open_contract_bridge(graded)
+    settled = poly_pit_cle_market(settled_at=PIT_CLE_SEEN)
+    assert not route._in_polymarket_open_contract_bridge(settled)
+    assert not route._in_polymarket_open_contract_bridge(pit_cle_market())
+    assert not route._in_kalshi_open_contract_bridge(
+        poly_pit_cle_market(), PIT_CLE_SEEN
+    )
+    monkeypatch.setenv("POLYMARKET_WS_OPEN_CONTRACT_PRICES", "0")
+    assert not route._in_polymarket_open_contract_bridge(poly_pit_cle_market())
+
+
+def test_polymarket_inside_the_slate_horizon_is_unchanged(monkeypatch):
+    """Positive control: 5 h out the slate rule admits it with no bridge, even
+    with the arm switched off."""
+    monkeypatch.setenv("POLYMARKET_WS_OPEN_CONTRACT_PRICES", "0")
+    event = pit_cle_event()
+    assert route._has_mapped_winner(
+        event, [poly_pit_cle_market()], event.commence_time - timedelta(hours=5),
+    )

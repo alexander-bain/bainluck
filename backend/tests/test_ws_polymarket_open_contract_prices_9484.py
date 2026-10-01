@@ -76,7 +76,14 @@ class TestTheSelector:
             in sql
         )
         assert "futures_markets.settled_at IS NULL" in sql
-        assert "events" not in sql and "event_id" not in sql
+        # #10091: the market's own event_id / name / external_id are read as
+        # columns (the bridge's inputs) — still no join and no event window.
+        assert "JOIN" not in sql and "FROM events" not in sql
+        assert "events." not in sql
+        assert (
+            "futures_markets.event_id, futures_markets.name, "
+            "futures_markets.external_id" in sql
+        )
         assert "commence_time" not in sql
         # Only the three token keys, never the whole blob.
         for key in ("clob_token_ids", "clobTokenIds", "clob_yes_token_by_outcome"):
@@ -692,6 +699,9 @@ class _Replayed:
     def all(self):
         return list(self._rows)
 
+    def scalars(self):
+        return self
+
 
 class _Session:
     """AsyncSession-shaped over a REAL sync Session for the price UPDATE; the
@@ -723,6 +733,17 @@ class _Session:
             return _Replayed([], rowcount=0)
         if isinstance(stmt, Select) and "win_probability_sources" in sql:
             return _Replayed([])
+        if isinstance(stmt, Select) and sql.startswith("SELECT events.id"):
+            # #10091: the bridge's event-state read, answered with the events
+            # the rig says are still to be decided.
+            self._rig.bridge_reads.append(
+                sorted(stmt.compile().params["id_1"])
+            )
+            if self._rig.bridge_read_fails:
+                raise RuntimeError("bridge read failed")
+            return _Replayed(
+                [e for e in self._rig.bridge_reads[-1] if e in self._rig.undecided]
+            )
         return _Replayed(self._rig.slate.pop(0) if self._rig.slate else [])
 
 
@@ -746,6 +767,12 @@ class _Rig:
         self.leg_reads = []
         self.subscribes = []
         self.redis = _FakeRedis()
+        # #10091: events the bridge's state read admits, the ids it was asked
+        # about, and every event set a flush handed the blend refresher.
+        self.undecided: set = set()
+        self.bridge_read_fails = False
+        self.bridge_reads = []
+        self.refreshed = []
 
     def open_read(self, index):
         if self.open_read_fails:
@@ -792,7 +819,8 @@ async def _drive(monkeypatch, rig, refresh=0.4, flush=0.05):
     import app.tasks.redis_state as redis_state
 
     class _Refresher(blend_mod.LiveBlendRefresher):
-        async def refresh(self, _event_ids):
+        async def refresh(self, event_ids):
+            rig.refreshed.append(set(event_ids))
             return None
 
         async def refresh_pending(self):
@@ -1108,3 +1136,173 @@ class TestTheConsumer:
         assert rig.subscribes == [[GAME_TOKEN]]
         assert stats["open_contract_assets"] == 0
         assert _stored(engine, 71) == pytest.approx(0.30)
+
+
+# ------------------------------------------------- the event bridge ----
+#
+# #10091, twin of the Kalshi arm's #9484 bridge. An admitted open game-winner
+# leg on an event more than 6 h out wrote its price and stopped: the flush
+# re-stamps the blend from `event_id_by_outcome`, which only the slate fed, so
+# the card waited for REST. The bridge carries each admitted winner leg's OWN
+# market's event into that map — no new subscription. Synthetic ids.
+
+FAR_EVENT, PROP_EVENT, DONE_EVENT = 14780550, 14780551, 14780552
+#: (market_id, outcome_id, token, event_id, name)
+FAR = [
+    (7, 71, "711", FAR_EVENT, "Steelers vs. Browns"),
+    (8, 81, "811", PROP_EVENT, "Steelers vs. Browns: Total Points Over 44.5"),
+    (9, 91, "911", None, "Will the Browns win the Super Bowl?"),
+]
+FAR_MARKET_ROWS = [
+    (mid, [tok], None, None, eid, name, f"0x{mid}")
+    for mid, _oid, tok, eid, name in FAR
+]
+
+
+def _admit(market_rows, outcome_rows, **kw):
+    return open_mod.open_contract_asset_map(market_rows, outcome_rows, **kw)
+
+
+class TestTheEventBridgeCandidates:
+    async def test_only_a_winners_admitted_legs_bridge_to_their_own_event(self):
+        admission = _admit(FAR_MARKET_ROWS, OPEN_OUTCOME_ROWS)
+        assert open_mod.open_contract_event_candidates(
+            FAR_MARKET_ROWS, admission
+        ) == {71: FAR_EVENT}, "prop and event-less market never bridge"
+
+    async def test_both_legs_of_a_binary_bridge_whatever_their_id_order(self):
+        """The `_side1` (token 1) leg holds the LOWER id, as in the frozen
+        fixture: pairing is by suffix, and both legs name the same event."""
+        rows = [(10, ["t0", "t1"], None, None, FAR_EVENT,
+                 "Steelers vs. Browns", "0x10")]
+        legs = [(101, 10, "0x10_side1", False), (102, 10, "0x10", False)]
+        admission = _admit(rows, legs)
+        assert admission.asset_to_outcome == {"t0": 102, "t1": 101}
+        assert open_mod.open_contract_event_candidates(rows, admission) == {
+            101: FAR_EVENT, 102: FAR_EVENT,
+        }
+
+    async def test_graded_and_slate_legs_are_never_bridged(self):
+        rows = [(10, ["t0", "t1"], None, None, FAR_EVENT,
+                 "Steelers vs. Browns", "0x10")]
+        graded = [(101, 10, "0x10_side1", True), (102, 10, "0x10", True)]
+        admission = _admit(rows, graded)
+        assert open_mod.open_contract_event_candidates(rows, admission) == {}
+        legs = [(101, 10, "0x10_side1", False), (102, 10, "0x10", False)]
+        on_slate = _admit(rows, legs, excluded_market_ids={10})
+        assert open_mod.open_contract_event_candidates(rows, on_slate) == {}
+
+    async def test_a_mirror_leg_bridges_to_its_own_markets_event(self):
+        """Market 11 names token 711, which market 7 owns: the mirror leg
+        bridges to market 11's event, never to the owner's."""
+        rows = FAR_MARKET_ROWS + [
+            (11, ["711"], None, None, PROP_EVENT + 10, "Browns vs. Steelers",
+             "0x11"),
+        ]
+        legs = OPEN_OUTCOME_ROWS + [(111, 11, "0x11", False)]
+        admission = _admit(rows, legs)
+        assert admission.mirrored_outcomes() == {111: 11}
+        assert open_mod.open_contract_event_candidates(rows, admission) == {
+            71: FAR_EVENT, 111: PROP_EVENT + 10,
+        }
+
+    async def test_a_winner_title_with_no_event_bridges_nothing(self):
+        """An unlinked matchup market reads as a winner by title; with no event
+        of its own there is nothing to re-stamp."""
+        rows = [(10, ["t0"], None, None, None, "Steelers vs. Browns", "0x10")]
+        legs = [(101, 10, "0x10", False)]
+        admission = _admit(rows, legs)
+        assert admission.asset_to_outcome == {"t0": 101}
+        assert open_mod.open_contract_event_candidates(rows, admission) == {}
+
+    async def test_rows_without_the_bridge_columns_bridge_nothing(self):
+        admission = _admit(OPEN_MARKET_ROWS, OPEN_OUTCOME_ROWS)
+        assert open_mod.open_contract_event_candidates(
+            OPEN_MARKET_ROWS, admission
+        ) == {}
+
+
+class TestTheEventBridgeConsumer:
+    def _rig(self, tmp_path, ticks, **kw):
+        rig = _Rig(
+            _database(tmp_path), GAME_SLATE, (FAR_MARKET_ROWS, OPEN_OUTCOME_ROWS),
+            _frames_by_token(ticks), **kw,
+        )
+        rig.undecided = {FAR_EVENT}
+        return rig
+
+    async def test_a_far_winners_flushed_price_refreshes_its_event(
+        self, monkeypatch, tmp_path
+    ):
+        """THE SHIP (producer half). The open winner's tick is stored AND its
+        event is handed to the blend refresher; the subscription is exactly
+        the existing cohort."""
+        rig = self._rig(tmp_path, {"711": [(0.0, _tick("711"))]})
+        stats = await _drive(monkeypatch, rig)
+
+        assert stats["errors"] == 0
+        assert _stored(rig.engine, 71) == pytest.approx(0.42)
+        assert rig.bridge_reads == [[FAR_EVENT]], "only the winner's event asked"
+        assert {FAR_EVENT} in rig.refreshed
+        assert stats["open_contract_bridged_outcomes"] == 1
+        assert stats["open_contract_bridged_events"] == 1
+        assert stats["open_contract_bridge_error"] is False
+        assert sorted(rig.subscribes) == sorted([[GAME_TOKEN], ["711", "811", "911"]])
+
+    async def test_a_decided_event_is_not_bridged(self, monkeypatch, tmp_path):
+        rig = self._rig(tmp_path, {"711": [(0.0, _tick("711"))]})
+        rig.undecided = set()  # completed / not scheduled-or-live
+        stats = await _drive(monkeypatch, rig)
+
+        assert _stored(rig.engine, 71) == pytest.approx(0.42)
+        assert all(FAR_EVENT not in ids for ids in rig.refreshed)
+        assert stats["open_contract_bridged_outcomes"] == 0
+
+    async def test_a_prop_tick_refreshes_no_event(self, monkeypatch, tmp_path):
+        rig = self._rig(tmp_path, {"811": [(0.0, _tick("811"))]})
+        rig.undecided = {FAR_EVENT, PROP_EVENT}
+        await _drive(monkeypatch, rig)
+
+        assert _stored(rig.engine, 81) == pytest.approx(0.42)
+        assert all(PROP_EVENT not in ids for ids in rig.refreshed)
+
+    async def test_no_quote_refreshes_nothing(self, monkeypatch, tmp_path):
+        rig = self._rig(tmp_path, {})
+        stats = await _drive(monkeypatch, rig)
+
+        assert stats["open_contract_bridged_outcomes"] == 1
+        assert rig.refreshed == []
+        assert _stored(rig.engine, 71) == pytest.approx(0.30)
+
+    async def test_a_failed_bridge_read_costs_the_restamp_never_the_price(
+        self, monkeypatch, tmp_path
+    ):
+        rig = self._rig(tmp_path, {"711": [(0.0, _tick("711"))]})
+        rig.bridge_read_fails = True
+        stats = await _drive(monkeypatch, rig)
+
+        assert stats["open_contract_bridge_error"] is True
+        assert stats["open_contract_admission_error"] is False
+        assert _stored(rig.engine, 71) == pytest.approx(0.42)
+        assert all(FAR_EVENT not in ids for ids in rig.refreshed)
+        assert ["711", "811", "911"] in rig.subscribes
+
+    async def test_the_bridge_never_overwrites_a_slate_leg(
+        self, monkeypatch, tmp_path
+    ):
+        """A slate tick still refreshes the slate's event, and the slate leg's
+        event is never replaced by a bridge entry."""
+        rig = self._rig(tmp_path, {GAME_TOKEN: [(0.0, _tick(GAME_TOKEN))]})
+        await _drive(monkeypatch, rig)
+
+        assert {EVENT_ID} in rig.refreshed
+        assert all(FAR_EVENT not in ids for ids in rig.refreshed)
+
+    async def test_the_undo_flag_bridges_nothing(self, monkeypatch, tmp_path):
+        monkeypatch.setenv("POLYMARKET_WS_OPEN_CONTRACT_PRICES", "0")
+        rig = self._rig(tmp_path, {"711": [(0.0, _tick("711"))]})
+        stats = await _drive(monkeypatch, rig)
+
+        assert rig.bridge_reads == []
+        assert stats["open_contract_bridged_outcomes"] == 0
+        assert rig.subscribes == [[GAME_TOKEN]]

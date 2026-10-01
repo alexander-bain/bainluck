@@ -799,10 +799,13 @@ def _log_open_contract_line(stats: dict, open_stats: dict) -> None:
     Its own line so the game line's format (and every grep of it) is untouched.
     `written` is rows that took a price; `deferred` is open rows a periodic
     flush left buffered for the next one — non-zero is a backlog, not a loss.
+    `bridged` is #10091's legs/events whose flushed price re-stamps the event
+    blend (0/0 with no `bridge_error` = no such contract this run).
     """
     logger.info(
         "Polymarket WS open contracts: assets=%d shards=%d/%d served=%d/%d "
-        "msgs=%d snapshot_quotes=%d written=%d deferred=%d",
+        "msgs=%d snapshot_quotes=%d written=%d deferred=%d "
+        "bridged=%d/%d%s",
         stats.get("open_contract_assets", 0),
         open_stats.get("shards_connected", 0), open_stats.get("shards", 0),
         open_stats.get("assets_served", 0),
@@ -811,6 +814,9 @@ def _log_open_contract_line(stats: dict, open_stats: dict) -> None:
         open_stats.get("book_snapshot_quotes", 0),
         stats.get("open_contract_prices_written", 0),
         stats.get("open_contract_flush_deferred", 0),
+        stats.get("open_contract_bridged_outcomes", 0),
+        stats.get("open_contract_bridged_events", 0),
+        " bridge_error" if stats.get("open_contract_bridge_error") else "",
     )
 
 
@@ -880,9 +886,12 @@ async def _run_polymarket_ws_consumer():
         FLUSH_CHUNK_ROWS, OPEN_CONTRACT_MAX_CONCURRENT_HANDSHAKES,
         book_snapshot_prices_enabled,
         OPEN_CONTRACT_MAX_QUEUE, OPEN_FLUSH_CHUNKS_PER_FLUSH,
-        open_contract_asset_map, open_contract_markets_stmt,
-        open_contract_outcome_stmts, open_contract_prices_enabled,
-        plan_flush_chunks, tokens_by_contract,
+        open_contract_asset_map, open_contract_event_candidates,
+        open_contract_markets_stmt, open_contract_outcome_stmts,
+        open_contract_prices_enabled, plan_flush_chunks, tokens_by_contract,
+    )
+    from app.tasks.ws_open_contracts import (  # #10091: the Kalshi arm's twin
+        open_contract_bridge_event_stmt, open_contract_event_bridge,
     )
     from app.tasks.ws_liveness import report as _report_liveness
     from app.utils.futures_rank import rerank_market_fields_stmt  # #6598
@@ -893,11 +902,17 @@ async def _run_polymarket_ws_consumer():
     # second client (`app.tasks.polymarket_open_contracts`). Never added to the
     # settlement maps or to the maps the #9418 admission watcher reads as "this
     # event is subscribed". A failed read costs the arm, never the game slate.
+    #
+    # Returns ``(admission, failed, bridge, bridge_failed)``. The #10091 EVENT
+    # BRIDGE is outcome → event for the admitted game-winner legs whose event is
+    # still to be decided (`open_contract_event_candidates`), so the flush
+    # re-stamps their event blend like a slate leg's. Its own read fails on its
+    # own: a failed bridge costs the blend re-stamp, never the prices.
     async def read_open_contracts(
         taken_assets, excluded_market_ids, taken_tokens_by_contract=None
     ):
         if not open_contract_prices_enabled():
-            return None, False
+            return None, False, {}, False
         try:
             async with get_task_session() as session:
                 market_rows = (
@@ -906,19 +921,36 @@ async def _run_polymarket_ws_consumer():
                 outcome_rows = []
                 for stmt in open_contract_outcome_stmts(r[0] for r in market_rows):
                     outcome_rows.extend((await session.execute(stmt)).all())
-            return (
-                open_contract_asset_map(
-                    market_rows, outcome_rows, taken_assets, excluded_market_ids,
-                    taken_tokens_by_contract,
-                ),
-                False,
+            admission = open_contract_asset_map(
+                market_rows, outcome_rows, taken_assets, excluded_market_ids,
+                taken_tokens_by_contract,
             )
         except Exception:
             logger.exception(
                 "Polymarket WS: open-contract admission read failed; "
                 "streaming the linked slate only this run"
             )
-            return None, True
+            return None, True, {}, False
+        candidates = open_contract_event_candidates(market_rows, admission)
+        if not candidates:
+            return admission, False, {}, False
+        try:
+            async with get_task_session() as session:
+                admitted = (
+                    await session.execute(
+                        open_contract_bridge_event_stmt(candidates.values())
+                    )
+                ).scalars().all()
+        except Exception:
+            logger.exception(
+                "Polymarket WS: open-contract event-bridge read failed; "
+                "streaming their prices without the event blend this run"
+            )
+            return admission, False, {}, True
+        return (
+            admission, False, open_contract_event_bridge(candidates, admitted),
+            False,
+        )
 
     # Q504-b: see the Kalshi arm — reported before the slate work, so a stall in
     # the token top-up or the slate query is visible as an AGE rather than as a
@@ -1221,6 +1253,12 @@ async def _run_polymarket_ws_consumer():
         "open_contract_admission_error": False,
         "open_contract_prices_written": 0,
         "open_contract_flush_deferred": 0,
+        # #10091 event bridge, twin of the Kalshi socket's: admitted game-winner
+        # legs (and their distinct events) whose flushed price re-stamps the
+        # event blend. 0 with no error is "no such contract this run".
+        "open_contract_bridged_outcomes": 0,
+        "open_contract_bridged_events": 0,
+        "open_contract_bridge_error": False,
         # #9484, twin of the Kalshi socket's: rows a flush wrote whose price
         # was already what it stored — written (liveness), but no market
         # invalidation sent.
@@ -1893,7 +1931,7 @@ async def _run_polymarket_ws_consumer():
     async def admit_open_contracts():
         # #9736 repair: which contract each game-socket token is, by its leg's
         # id, so an open leg with no token of its own can mirror it.
-        admission, failed = (
+        admission, failed, bridge, bridge_failed = (
             preread
             if preread is not None
             else await read_open_contracts(
@@ -1910,10 +1948,18 @@ async def _run_polymarket_ws_consumer():
             )
         )
         stats["open_contract_admission_error"] = failed
+        stats["open_contract_bridge_error"] = bridge_failed
         if admission is None:
             return
         for key, value in admission.counts.items():
             stats[f"open_contract_{key}"] = value
+        # #10091: their event is re-stamped after a flush exactly like a slate
+        # leg's (`event_ids_for_outcomes` in `flush_prices`). Never overwrites a
+        # slate entry — admission excluded every slate market's legs.
+        for outcome_id, event_id in bridge.items():
+            event_id_by_outcome.setdefault(outcome_id, event_id)
+        stats["open_contract_bridged_outcomes"] = len(bridge)
+        stats["open_contract_bridged_events"] = len(set(bridge.values()))
         stats["open_contract_assets"] = len(admission.asset_to_outcome)
         # #9736: a mirror of a game-socket token needs no open subscription, so
         # it is registered even when this arm subscribes nothing of its own.
