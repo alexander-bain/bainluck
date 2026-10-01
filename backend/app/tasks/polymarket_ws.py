@@ -11,6 +11,7 @@ Events:
 
 import asyncio
 import contextlib
+import json
 import logging
 import os
 import time
@@ -312,6 +313,106 @@ def ws_resolution_verdict(
     if owner is None or owner not in set(market_outcome_ids):
         return unconfirmed
     return (WS_RESOLUTION_WINNER, owner)
+
+
+#: Re-asks after a push the venue had not yet confirmed (#9418 after-check),
+#: seconds after the previous ask. Measured 2026-10-01 05:3x–06:0xZ on 16 of 16
+#: pushes: Gamma closes the market at T, records `umaResolutionStatus:
+#: "resolved"` with 0/1 `outcomePrices` by ~T+10 s, the socket push lands at
+#: ~T+60 s — and CLOB `/markets` still reads `closed: false`, no winner, more
+#: than five minutes later. The first ask therefore almost always answers from
+#: Gamma; these cover a Gamma read that is itself a few seconds behind. Total
+#: 220 s, inside the 600 s recycle; a recycle that cancels the wait leaves the
+#: market where it is today (resolved, ungraded, the Gamma rail's).
+RESOLUTION_RECHECK_DELAYS_S = (10.0, 30.0, 60.0, 120.0)
+
+
+def _price_list(raw) -> Optional[list]:
+    """Gamma serves list fields as JSON strings (``'["0", "1"]'``) or lists."""
+    if isinstance(raw, str):
+        try:
+            raw = json.loads(raw)
+        except (TypeError, ValueError):
+            return None
+    return raw if isinstance(raw, list) else None
+
+
+def gamma_resolution_verdict(
+    push_winning_asset_id, gamma_market, market_outcome_ids, asset_to_outcome
+):
+    """The same decision as :func:`ws_resolution_verdict`, read from Gamma. Pure.
+
+    CLOB `/markets` flips ``winner`` minutes after the venue settles; Gamma's
+    record of the same settlement is readable before the push even arrives
+    (measured, see :data:`RESOLUTION_RECHECK_DELAYS_S`). It is the record the
+    Gamma rail already grades from, so this is not a new authority, only an
+    earlier read of it — under the same rules:
+
+    - only a market Gamma calls ``closed`` with ``umaResolutionStatus ==
+      "resolved"`` is read at all (a price at 0.999 is a market, not a result);
+    - the winner is a TOKEN: ``clobTokenIds`` is index-aligned with
+      ``outcomePrices``, exactly one price must be 1 and every other 0, and the
+      token at that index must be the push's ``winning_asset_id`` when the push
+      names one and must belong to a leg of THIS market via ``asset_to_outcome``
+      — never a label, never a position in our rows;
+    - every price at exactly 0.5 is a void;
+    - anything else is ``unconfirmed``.
+    """
+    unconfirmed = (WS_RESOLUTION_UNCONFIRMED, None)
+    if not isinstance(gamma_market, dict):
+        return unconfirmed
+    if gamma_market.get("closed") is not True:
+        return unconfirmed
+    if gamma_market.get("umaResolutionStatus") != "resolved":
+        return unconfirmed
+    tokens = _price_list(gamma_market.get("clobTokenIds"))
+    raw_prices = _price_list(gamma_market.get("outcomePrices"))
+    if not tokens or not raw_prices or len(tokens) != len(raw_prices) or len(tokens) < 2:
+        return unconfirmed
+    try:
+        prices = [float(p) for p in raw_prices]
+    except (TypeError, ValueError):
+        return unconfirmed
+    if all(abs(p - _VOID_PAYOUT) < 1e-9 for p in prices):
+        return (WS_RESOLUTION_VOID, None)
+    winners = [i for i, p in enumerate(prices) if abs(p - 1.0) < 1e-9]
+    if len(winners) != 1:
+        return unconfirmed
+    if any(abs(p) >= 1e-9 for i, p in enumerate(prices) if i != winners[0]):
+        return unconfirmed
+    token = str(tokens[winners[0]] or "")
+    if not token:
+        return unconfirmed
+    if push_winning_asset_id and str(push_winning_asset_id) != token:
+        return unconfirmed
+    owner = asset_to_outcome.get(token)
+    if owner is None or owner not in set(market_outcome_ids):
+        return unconfirmed
+    return (WS_RESOLUTION_WINNER, owner)
+
+
+async def settle_with_rechecks(ask, write, *, delays=None, sleep=None):
+    """Write the first answer, then re-ask until the venue decides (#9418).
+
+    ``ask()`` returns a verdict; ``write(verdict)`` applies it. The FIRST answer
+    is always written — a settled market reads settled at once — and only an
+    ``unconfirmed`` one is re-asked, on ``delays``; the first decided verdict
+    is written over it and the loop stops. A write that fails on a re-ask
+    propagates, like the first. Returns ``(final verdict, decided_late)``.
+    """
+    delays = RESOLUTION_RECHECK_DELAYS_S if delays is None else delays
+    sleep = asyncio.sleep if sleep is None else sleep
+    verdict = await ask()
+    await write(verdict)
+    if verdict[0] != WS_RESOLUTION_UNCONFIRMED:
+        return verdict, False
+    for delay in delays:
+        await sleep(delay)
+        verdict = await ask()
+        if verdict[0] != WS_RESOLUTION_UNCONFIRMED:
+            await write(verdict)
+            return verdict, True
+    return verdict, False
 
 
 async def _apply_ws_resolution(session, market_id, outcomes, verdict):
@@ -1092,6 +1193,10 @@ async def _run_polymarket_ws_consumer():
         "resolutions_winner": 0,
         "resolutions_void": 0,
         "resolutions_unconfirmed": 0,
+        # #9418 after-check: decided by Gamma (CLOB not yet flipped), and
+        # decided only on a re-ask after the first answer was `unconfirmed`.
+        "resolutions_via_gamma": 0,
+        "resolutions_confirmed_late": 0,
         "errors": 0,
         # Q491: prices a failed flush put BACK on the buffer instead of dropping.
         # `errors` alone cannot distinguish a retried batch from a lost one.
@@ -1618,10 +1723,12 @@ async def _run_polymarket_ws_consumer():
         resolution_tasks.add(task)
         task.add_done_callback(resolution_tasks.discard)
 
-    async def _settle_resolution(msg: dict, condition_id: str, market_id: int):
-        winning_asset_id = msg.get("winning_asset_id")
-        outcomes = outcomes_by_market.get(market_id, [])
-
+    async def _ask_venue(winning_asset_id, condition_id: str, outcomes):
+        """One confirmation attempt: CLOB first, then Gamma when CLOB has not
+        decided (#9418 after-check — CLOB lags the push by minutes, Gamma
+        does not). Either read failing is an `unconfirmed` answer, not an error.
+        """
+        outcome_ids = [oid for oid, _ in outcomes]
         clob_market = None
         try:
             clob_market = await asyncio.wait_for(
@@ -1629,52 +1736,100 @@ async def _run_polymarket_ws_consumer():
                 timeout=RESOLUTION_CLOB_TIMEOUT_S,
             )
         except Exception:
-            # Unreachable venue ⇒ `unconfirmed`: resolved, graded by nobody here.
             logger.warning(
-                "Polymarket WS: CLOB read for %s failed; resolution left ungraded",
-                condition_id[:20], exc_info=True,
+                "Polymarket WS: CLOB read for %s failed", condition_id[:20],
+                exc_info=True,
             )
         verdict = ws_resolution_verdict(
-            winning_asset_id,
-            clob_market,
-            [oid for oid, _ in outcomes],
-            asset_to_outcome,
+            winning_asset_id, clob_market, outcome_ids, asset_to_outcome
+        )
+        if verdict[0] != WS_RESOLUTION_UNCONFIRMED:
+            return verdict
+        try:
+            gamma_market = await asyncio.wait_for(
+                resolution_service().get_closed_gamma_market_raw(condition_id),
+                timeout=RESOLUTION_CLOB_TIMEOUT_S,
+            )
+        except Exception:
+            logger.warning(
+                "Polymarket WS: Gamma read for %s failed", condition_id[:20],
+                exc_info=True,
+            )
+            return verdict
+        gamma_verdict = gamma_resolution_verdict(
+            winning_asset_id, gamma_market, outcome_ids, asset_to_outcome
+        )
+        if gamma_verdict[0] != WS_RESOLUTION_UNCONFIRMED:
+            stats["resolutions_via_gamma"] += 1
+        return gamma_verdict
+
+    async def _write_resolution(condition_id, market_id, outcomes, verdict, msg):
+        async with get_task_session() as session:
+            written = await _apply_ws_resolution(
+                session, market_id, outcomes, verdict
+            )
+            # #9484: the terminal invalidation carries the `settled_at`
+            # this transaction stored, read back inside it — the market is
+            # resolved exactly as REST will now serve it.
+            settled_at = (
+                await session.execute(
+                    select(FuturesMarket.settled_at).where(
+                        FuturesMarket.id == market_id,
+                        FuturesMarket.status == "resolved",
+                    )
+                )
+            ).scalar_one_or_none()
+            if settled_at is not None:
+                queue_market_change(
+                    session,
+                    market_id=market_id,
+                    source="polymarket",
+                    outcome_observed_at={},
+                    terminal=True,
+                    updated_at=settled_at,
+                )
+        await blend_refresher.publish_market_changes(session)
+        logger.info(
+            "Polymarket WS: %s resolved (verdict=%s, label=%s, %d/%d outcomes "
+            "written, no calibration scalar captured)",
+            condition_id[:20], verdict[0], msg.get("winning_outcome", ""),
+            written, len(outcomes),
         )
 
+    async def _settle_resolution(msg: dict, condition_id: str, market_id: int):
+        """Resolve now; grade as soon as the venue confirms the token.
+
+        The market is marked resolved on the FIRST answer whatever it is, so
+        a settled market reads settled at once (the pre-existing behaviour).
+        If that answer is `unconfirmed`, the venue is asked again on
+        :data:`RESOLUTION_RECHECK_DELAYS_S` and the first decided verdict is
+        written over it — `settled_at` is COALESCEd, so the second write keeps
+        the first time. A recycle that cancels the wait loses only the grade,
+        which the Gamma rail then supplies, exactly as before.
+        """
+        winning_asset_id = msg.get("winning_asset_id")
+        outcomes = outcomes_by_market.get(market_id, [])
+
+        async def ask():
+            return await _ask_venue(winning_asset_id, condition_id, outcomes)
+
+        writes = []
+
+        async def write(verdict):
+            await _write_resolution(condition_id, market_id, outcomes, verdict, msg)
+            # Counted at the write, not after the re-asks: a recycle cancels
+            # the wait, and the resolution it already committed still counts.
+            # `resolutions_<kind>` is the FIRST answer, as before #9418's
+            # re-ask; a grade written on a re-ask is `resolutions_confirmed_late`.
+            if not writes:
+                stats["resolutions"] += 1
+                stats[f"resolutions_{verdict[0]}"] += 1
+            else:
+                stats["resolutions_confirmed_late"] += 1
+            writes.append(verdict[0])
+
         try:
-            async with get_task_session() as session:
-                written = await _apply_ws_resolution(
-                    session, market_id, outcomes, verdict
-                )
-                # #9484: the terminal invalidation carries the `settled_at`
-                # this transaction stored, read back inside it — the market is
-                # resolved exactly as REST will now serve it.
-                settled_at = (
-                    await session.execute(
-                        select(FuturesMarket.settled_at).where(
-                            FuturesMarket.id == market_id,
-                            FuturesMarket.status == "resolved",
-                        )
-                    )
-                ).scalar_one_or_none()
-                if settled_at is not None:
-                    queue_market_change(
-                        session,
-                        market_id=market_id,
-                        source="polymarket",
-                        outcome_observed_at={},
-                        terminal=True,
-                        updated_at=settled_at,
-                    )
-            stats["resolutions"] += 1
-            stats[f"resolutions_{verdict[0]}"] += 1
-            await blend_refresher.publish_market_changes(session)
-            logger.info(
-                "Polymarket WS: %s resolved (verdict=%s, label=%s, %d/%d outcomes "
-                "written, no calibration scalar captured)",
-                condition_id[:20], verdict[0], msg.get("winning_outcome", ""),
-                written, len(outcomes),
-            )
+            await settle_with_rechecks(ask, write)
         except Exception:
             stats["errors"] += 1
             logger.exception("Polymarket WS: resolution error")

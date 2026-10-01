@@ -422,6 +422,30 @@ class PolymarketAPIService:
         except httpx.TimeoutException:
             raise
 
+    async def get_closed_gamma_market_raw(self, condition_id: str) -> Optional[dict]:
+        """The RAW Gamma record of one CLOSED market, by condition id (#9418).
+
+        ``/markets/{id}`` takes Gamma's numeric id and answers a condition id
+        with 422, so the by-condition read is the list form with
+        ``closed=true`` — required, because the list's default filter is
+        ``closed=false`` and drops exactly the settled market being asked about
+        (see ``get_markets_by_conditions``). Raw because the caller reads
+        ``umaResolutionStatus``, ``outcomePrices`` and ``clobTokenIds``, which
+        the parsed model does not keep. ``None`` when Gamma lists no closed
+        market for the id; rate limits and server errors re-raise (gotcha #36).
+        """
+        response = await self.gamma_client.get(
+            "/markets", params={"condition_ids": condition_id, "closed": "true"}
+        )
+        response.raise_for_status()
+        rows = response.json()
+        if not isinstance(rows, list):
+            return None
+        for row in rows:
+            if isinstance(row, dict) and row.get("conditionId") == condition_id:
+                return row
+        return None
+
     async def get_markets_by_conditions(
         self,
         condition_ids: list[str],
