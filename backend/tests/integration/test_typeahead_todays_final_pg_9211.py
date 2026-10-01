@@ -67,6 +67,10 @@ async def _seed(session):
     now, day_start = _clock()
     # Inside [day_start, now] whatever the hour: the midpoint of today so far.
     earlier_today = day_start + (now - day_start) / 2
+    # Doubleheader game 1, before `earlier_today` and still inside today. It was
+    # `earlier_today - 1 min`, which crosses `day_start` for the first ~2 minutes
+    # of the Eastern day (ux, CI at 04:00:01Z 10/1): the arm then rightly drops it.
+    earliest_today = day_start + (now - day_start) / 3
 
     nfl = Sport(key=NFL, name="NFL")
     mlb = Sport(key=MLB, name="MLB")
@@ -124,7 +128,7 @@ async def _seed(session):
         _game(nfl, "Cincinnati Bengals", "Pittsburgh Steelers", day_start - timedelta(hours=2),
               "completed", home_score=30, away_score=27),
         # The doubleheader: game 1 finished earlier today, game 2 is being played.
-        _game(mlb, "Tampa Bay Rays", "Boston Red Sox", earlier_today - timedelta(minutes=1),
+        _game(mlb, "Tampa Bay Rays", "Boston Red Sox", earliest_today,
               "completed", home_score=3, away_score=2),
         # #9226: scored, so the rule that a live row carries no score testifies.
         _game(mlb, "New York Yankees", "Boston Red Sox", now - timedelta(minutes=30), "live",
