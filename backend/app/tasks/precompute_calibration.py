@@ -9443,18 +9443,22 @@ async def _run_calibration_main_build(runner=None):
     # HERE — after the compute, before the gate, `json.dumps` and the durable
     # envelope — so it is judged, serialised and published in the same bytes and
     # the same generation as the curve, and the route serves it with no GET-time
-    # query. It runs on its OWN short session (5s per statement), never the
-    # build's, and outside every function `_main_input_fingerprint` hashes, so
-    # the bank survives (`test_calibration_paired_publication_6176`). It cannot
-    # fail this beat: every failure is a typed `unavailable` block.
+    # query. It runs on its OWN short session (5s per statement, 15s wall
+    # including teardown, shrunk to leave the publish its reserve before this
+    # build's deadline), never the build's, and outside every function
+    # `_main_input_fingerprint` hashes, so the bank survives
+    # (`test_calibration_paired_publication_6176`). It cannot fail or stall this
+    # beat: every failure is a typed `unavailable` block.
     from app.tasks.calibration_paired_publication import (
         PAYLOAD_KEY as PAIRED_ACCURACY_KEY,
         build_paired_accuracy,
+        remaining_publish_s,
     )
 
     with runner.stage("paired_accuracy"):
         response[PAIRED_ACCURACY_KEY] = await build_paired_accuracy(
-            generated_at=response.get("generated_at")
+            generated_at=response.get("generated_at"),
+            deadline_s=remaining_publish_s(runner),
         )
     runner.outcome["paired_accuracy"] = {
         "status": response[PAIRED_ACCURACY_KEY].get("status"),

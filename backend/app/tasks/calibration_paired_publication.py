@@ -33,14 +33,17 @@ THE FROZEN INITIAL POLICY (issue body, "October 1")
   ``incomplete``. Truncating by outcome id instead would score half of a game,
   which is a selection rule nobody chose.
 * **Its own session**, every statement bounded at
-  :data:`STATEMENT_TIMEOUT_MS` and the whole collection at
-  :data:`WALL_BUDGET_S`, inside ONE ``REPEATABLE READ READ ONLY`` transaction.
+  :data:`STATEMENT_TIMEOUT_MS` and the WHOLE call — collection AND teardown —
+  at :data:`WALL_BUDGET_S` (:func:`_within_wall`), shrunk further to fit the
+  build's remaining publish deadline. Everything runs inside ONE
+  ``REPEATABLE READ READ ONLY`` transaction.
   That one snapshot is what makes the block coherent: the event pick, the
   per-event candidate counts (the denominator), the refusal tally, the pair
   set and both legs' scores are all read from the same rows, and the collector
-  refuses to publish if the legs disagree with the count it admitted. Event ids
-  are materialised first, so the expensive per-outcome lateral seeks only ever
-  run over the admitted events.
+  refuses to publish if the ids or the legs disagree with the count it
+  admitted. The <=2000 candidate OUTCOME ids are materialised by their own
+  statement before the legs statement runs, and bound into it as a primary-key
+  restriction, so no outcome outside the sample ever reaches a lateral seek.
 * **Its own clock.** ``collected_at`` is when THIS sample was read. It is not
   the main curve's ``generated_at`` (recorded beside it as
   ``published_with_generated_at``, the artifact that carries the block) and it
@@ -92,10 +95,26 @@ SCHEMA = "paired-accuracy/v1"
 EVENT_LIMIT = 100
 CANDIDATE_CAP = 2000
 STATEMENT_TIMEOUT_MS = 5000
-#: The whole collection — three statements plus session setup and teardown.
-#: Each statement is already bounded server-side; this bounds the WAIT, so a
-#: connect stall or a slow teardown cannot hold the publish phase either.
-WALL_BUDGET_S = 15.0
+#: Server-side backstop for a client that walks away mid-transaction: Postgres
+#: aborts the transaction itself, so an abandoned teardown leaves no open
+#: snapshot behind. Applied with ``SET LOCAL``, so it dies with the transaction.
+IDLE_IN_TRANSACTION_TIMEOUT_MS = 5000
+
+#: The WHOLE call, teardown included: :data:`COLLECT_BUDGET_S` for the reads,
+#: then at most :data:`CLEANUP_BUDGET_S` for a cancelled session to close and
+#: dispose. ``asyncio.wait_for`` cannot give this guarantee — it waits for the
+#: cancelled coroutine's ``finally`` however long that takes — so the
+#: collection runs as its own task and a teardown that outlives its share is
+#: abandoned to finish on its own (see :func:`_within_wall`).
+COLLECT_BUDGET_S = 12.0
+CLEANUP_BUDGET_S = 3.0
+WALL_BUDGET_S = COLLECT_BUDGET_S + CLEANUP_BUDGET_S
+
+#: Kept free for the gate, serialisation and the durable + Redis publish when
+#: the build tells us how long it has left. Below the minimum, the block is not
+#: attempted at all — the curve matters more than this optional analysis.
+PUBLISH_RESERVE_S = 120.0
+MIN_COLLECT_S = 2.0
 
 #: How the collection's reads were made consistent, stated in the artifact.
 CONSISTENCY = "one_repeatable_read_read_only_transaction"
@@ -113,6 +132,7 @@ REASON_INSUFFICIENT_PAIRS = "insufficient_pairs"
 REASON_CANDIDATE_CAP = "candidate_cap_reached"
 REASON_TIMEOUT = "timeout"
 REASON_FAILED = "failed"
+REASON_PUBLISH_DEADLINE = "publish_deadline"
 
 FORECAST_KINDS = ("market", "model")
 
@@ -145,14 +165,16 @@ def _policy() -> dict[str, Any]:
     }
 
 
-def _collector(collected_at: Any, collection_ms: Optional[int]) -> dict[str, Any]:
+def _collector(
+    collected_at: Any, collection_ms: Optional[int], wall_budget_s: Optional[float] = None
+) -> dict[str, Any]:
     """When and how THIS sample was read — its own clock, not the curve's."""
     return {
         "collected_at": _iso(collected_at),
         "collection_ms": collection_ms,
         "consistency": CONSISTENCY,
         "statement_timeout_ms": STATEMENT_TIMEOUT_MS,
-        "wall_budget_s": WALL_BUDGET_S,
+        "wall_budget_s": WALL_BUDGET_S if wall_budget_s is None else round(wall_budget_s, 3),
     }
 
 
@@ -162,6 +184,7 @@ def unavailable(
     generated_at: Any = None,
     collected_at: Any = None,
     collection_ms: Optional[int] = None,
+    wall_budget_s: Optional[float] = None,
     detail: Optional[str] = None,
 ) -> dict:
     """The typed absence. Carries no score at all — never a zero standing in."""
@@ -170,7 +193,7 @@ def unavailable(
         "status": STATUS_UNAVAILABLE,
         "reason": reason,
         "published_with_generated_at": generated_at,
-        "collector": _collector(collected_at, collection_ms),
+        "collector": _collector(collected_at, collection_ms, wall_budget_s),
         "policy": _policy(),
         "sample": None,
         "exclusions": [],
@@ -227,6 +250,44 @@ SELECT ev.id AS event_id,
 FROM ev
 ORDER BY ev.commence_time DESC, ev.id DESC
 """
+
+
+def candidate_ids_sql() -> str:
+    """The admitted events' candidate OUTCOME ids — materialised before any seek.
+
+    The same population predicate as the per-event counts, so the id list IS
+    the admitted denominator. ``LIMIT :limit`` is passed one above
+    :data:`CANDIDATE_CAP`: the admitted counts already sum to at most the cap,
+    so reaching the extra row means the snapshot disagreed with itself.
+    """
+    return f"""
+SELECT fo.id AS outcome_id
+FROM futures_outcomes fo
+JOIN futures_markets fm ON fm.id = fo.market_id
+WHERE {_POPULATION_PREDICATE}
+  AND fm.event_id IN :event_ids
+ORDER BY fo.id ASC
+LIMIT :limit
+"""
+
+
+def remaining_publish_s(runner: Any) -> Optional[float]:
+    """Seconds left before the build's deadline, or ``None`` if it cannot say.
+
+    Read off the runner's own ledger, the same clock its phases budget against.
+    The null runner (no deadline) and any runner without that surface answer
+    ``None``, which leaves the fixed :data:`WALL_BUDGET_S` as the bound.
+    """
+    ledger = getattr(runner, "ledger", None)
+    remaining = getattr(ledger, "remaining_ms", None)
+    elapsed = getattr(runner, "elapsed_ms", None)
+    if not callable(remaining) or not callable(elapsed):
+        return None
+    try:
+        return float(remaining(elapsed_ms=elapsed())) / 1000.0
+    except Exception:  # noqa: BLE001 — an unreadable clock means "no extra bound"
+        logger.warning("calibration paired_accuracy: runner deadline unreadable", exc_info=True)
+        return None
 
 
 def admit_events(
@@ -353,6 +414,7 @@ def assemble(
     generated_at: Any = None,
     collected_at: Any = None,
     collection_ms: Optional[int] = None,
+    wall_budget_s: Optional[float] = None,
 ) -> dict[str, Any]:
     """Fold the selection and the kernel's per-outcome rows into the block."""
     rows = list(rows)
@@ -363,6 +425,7 @@ def assemble(
             generated_at=generated_at,
             collected_at=collected_at,
             collection_ms=collection_ms,
+            wall_budget_s=wall_budget_s,
         )
         block["sample"] = _sample(admission, rows)
         return block
@@ -394,7 +457,7 @@ def assemble(
         "status": status,
         "reason": reason,
         "published_with_generated_at": generated_at,
-        "collector": _collector(collected_at, collection_ms),
+        "collector": _collector(collected_at, collection_ms, wall_budget_s),
         "policy": _policy(),
         "sample": _sample(admission, rows),
         "exclusions": [
@@ -431,14 +494,38 @@ def _is_timeout(exc: BaseException) -> bool:
     return is_statement_timeout(exc)
 
 
-async def _collect(as_of: datetime) -> tuple[list, dict, list]:
-    """The three reads, in one read-only snapshot on a session of their own."""
+class _Incoherent(RuntimeError):
+    """The ids or the legs disagree with the denominator admitted from the same snapshot."""
+
+
+class _WallBudgetExceeded(RuntimeError):
+    """The collection did not finish inside its share of the wall budget."""
+
+
+#: Teardowns abandoned at the wall. Held so they are not garbage-collected
+#: mid-flight; each removes itself and has its outcome retrieved when it ends.
+_ABANDONED: set = set()
+
+
+def _retire(task: "asyncio.Task") -> None:
+    _ABANDONED.discard(task)
+    if not task.cancelled() and task.exception() is not None:
+        logger.warning(
+            "calibration paired_accuracy: abandoned teardown ended with %r", task.exception()
+        )
+
+
+async def _collect(as_of: datetime) -> tuple[list, dict, list, list]:
+    """The four reads, in one read-only snapshot on a session of their own."""
     from app.tasks.base import get_task_session
 
     async with get_task_session(statement_timeout_ms=STATEMENT_TIMEOUT_MS) as db:
-        # First statement of the transaction: one snapshot for all three
-        # reads, and a write is impossible even by mistake.
+        # First statement of the transaction: one snapshot for every read, and
+        # a write is impossible even by mistake.
         await db.execute(text("SET TRANSACTION ISOLATION LEVEL REPEATABLE READ READ ONLY"))
+        await db.execute(
+            text(f"SET LOCAL idle_in_transaction_session_timeout = {IDLE_IN_TRANSACTION_TIMEOUT_MS}")
+        )
         events = list(
             (
                 await db.execute(
@@ -448,39 +535,94 @@ async def _collect(as_of: datetime) -> tuple[list, dict, list]:
             ).mappings().all()
         )
         admission = admit_events(events)
+        ids: list = []
         rows: list = []
         if admission["admitted"]:
-            stmt = text(paired_legs_sql(event_ids=":event_ids")).bindparams(
-                bindparam("event_ids", expanding=True)
+            id_stmt = text(candidate_ids_sql()).bindparams(bindparam("event_ids", expanding=True))
+            ids = [
+                int(r["outcome_id"])
+                for r in (
+                    await db.execute(
+                        id_stmt,
+                        {
+                            "event_ids": [int(e["event_id"]) for e in admission["admitted"]],
+                            "limit": CANDIDATE_CAP + 1,
+                        },
+                    )
+                ).mappings().all()
+            ]
+            if len(ids) != admission["candidates"]:
+                raise _Incoherent(
+                    f"candidate ids returned {len(ids)} for {admission['candidates']} admitted"
+                )
+            legs_stmt = text(paired_legs_sql(outcome_ids=":outcome_ids")).bindparams(
+                bindparam("outcome_ids", expanding=True)
             )
             rows = list(
                 (
                     await db.execute(
-                        stmt,
-                        {
-                            "cursor": 0,
-                            "scan": CANDIDATE_CAP + 1,
-                            "event_ids": [int(e["event_id"]) for e in admission["admitted"]],
-                        },
+                        legs_stmt,
+                        {"cursor": 0, "scan": CANDIDATE_CAP + 1, "outcome_ids": ids},
                     )
                 ).mappings().all()
             )
-    return events, admission, rows
+    return events, admission, ids, rows
 
 
-class _Incoherent(RuntimeError):
-    """The legs disagree with the denominator admitted from the same snapshot."""
+async def _within_wall(make_coro, *, collect_s: float, cleanup_s: float):
+    """Run ``make_coro()`` with a wall that INCLUDES its cancellation teardown.
+
+    Returns its result, re-raises its exception, or raises
+    :class:`_WallBudgetExceeded` no later than ``collect_s + cleanup_s`` after
+    the call (plus scheduling jitter). A teardown that outlives ``cleanup_s`` is
+    left running in :data:`_ABANDONED` — its own ``finally`` still closes the
+    session and disposes the engine, and ``idle_in_transaction_session_timeout``
+    makes the server abort the transaction even if that never happens.
+
+    A cancellation of the CALLER cancels the collection and propagates; the
+    collection is never left issuing queries for a caller that has gone.
+    """
+    task = asyncio.ensure_future(make_coro())
+    try:
+        done, _ = await asyncio.wait({task}, timeout=collect_s)
+        if task in done:
+            return task.result()
+        task.cancel()
+        done, _ = await asyncio.wait({task}, timeout=cleanup_s)
+    except asyncio.CancelledError:
+        task.cancel()
+        if not task.done():
+            _ABANDONED.add(task)
+            task.add_done_callback(_retire)
+        raise
+    if task not in done:
+        _ABANDONED.add(task)
+        task.add_done_callback(_retire)
+        raise _WallBudgetExceeded(
+            f"collection exceeded {collect_s:.3f}s and its teardown exceeded "
+            f"{cleanup_s:.3f}s; teardown abandoned to finish on its own"
+        )
+    if not task.cancelled() and task.exception() is not None:
+        # It failed on its own between the two waits — report that, not the wall.
+        raise task.exception()
+    raise _WallBudgetExceeded(f"collection exceeded {collect_s:.3f}s; session closed")
 
 
-async def build_paired_accuracy(*, generated_at: Any = None, as_of: Optional[datetime] = None) -> dict:
+async def build_paired_accuracy(
+    *,
+    generated_at: Any = None,
+    as_of: Optional[datetime] = None,
+    deadline_s: Optional[float] = None,
+) -> dict:
     """Compute the block on its own bounded session. Never raises an ``Exception``.
 
     Every failure becomes a typed ``unavailable`` and is logged at ERROR with its
     traceback, so a broken producer is loud in Sentry while the curve still
-    publishes. A wall-budget expiry cancels the collection — the session's
-    ``finally`` closes it (rolling the read-only transaction back) and disposes
-    its engine — and reports ``timeout``. A cancellation of the CALLER is not
-    caught: the build that owns this call is the one that must see it.
+    publishes. ``deadline_s`` is the build's remaining time
+    (:func:`remaining_publish_s`); the wall shrinks to leave
+    :data:`PUBLISH_RESERVE_S` for the publish, and below :data:`MIN_COLLECT_S`
+    of collection time the block is not attempted. A cancellation of the CALLER
+    is not caught: the build that owns this call is the one that must see it.
     """
     as_of = as_of or datetime.now(timezone.utc)
     started = time.monotonic()
@@ -488,15 +630,32 @@ async def build_paired_accuracy(*, generated_at: Any = None, as_of: Optional[dat
     def elapsed() -> int:
         return round((time.monotonic() - started) * 1000)
 
+    cleanup_s = CLEANUP_BUDGET_S
+    collect_s = COLLECT_BUDGET_S
+    if deadline_s is not None:
+        collect_s = min(collect_s, deadline_s - PUBLISH_RESERVE_S - cleanup_s)
+    wall_s = max(0.0, collect_s) + cleanup_s
+    if deadline_s is not None and collect_s < MIN_COLLECT_S:
+        return unavailable(
+            REASON_PUBLISH_DEADLINE,
+            generated_at=generated_at,
+            collected_at=None,
+            collection_ms=0,
+            wall_budget_s=wall_s,
+            detail=f"{deadline_s:.1f}s left before the build deadline",
+        )
+
     try:
-        events, admission, rows = await asyncio.wait_for(_collect(as_of), WALL_BUDGET_S)
-        if len(rows) != admission["candidates"]:
-            # Unreachable inside one snapshot: the legs statement carries the
-            # count statement's WHERE plus the admitted ids, one row per outcome.
-            # Refused rather than scored, because a pair set that is not the
-            # admitted denominator is not the sample the block describes.
+        events, admission, ids, rows = await _within_wall(
+            lambda: _collect(as_of), collect_s=collect_s, cleanup_s=cleanup_s
+        )
+        if len(rows) != len(ids):
+            # Unreachable inside one snapshot: the legs statement is restricted
+            # to exactly these ids, one row per outcome. Refused rather than
+            # scored, because a pair set that is not the admitted denominator
+            # is not the sample the block describes.
             raise _Incoherent(
-                f"legs returned {len(rows)} rows for {admission['candidates']} admitted candidates"
+                f"legs returned {len(rows)} rows for {len(ids)} admitted candidates"
             )
         return assemble(
             events,
@@ -505,9 +664,10 @@ async def build_paired_accuracy(*, generated_at: Any = None, as_of: Optional[dat
             generated_at=generated_at,
             collected_at=as_of,
             collection_ms=elapsed(),
+            wall_budget_s=wall_s,
         )
     except Exception as error:  # noqa: BLE001 — typed absence; logged loudly below
-        timed_out = isinstance(error, asyncio.TimeoutError) or _is_timeout(error)
+        timed_out = isinstance(error, _WallBudgetExceeded) or _is_timeout(error)
         reason = REASON_TIMEOUT if timed_out else REASON_FAILED
         logger.exception("calibration paired_accuracy unavailable (%s)", reason)
         return unavailable(
@@ -515,5 +675,6 @@ async def build_paired_accuracy(*, generated_at: Any = None, as_of: Optional[dat
             generated_at=generated_at,
             collected_at=as_of,
             collection_ms=elapsed(),
+            wall_budget_s=wall_s,
             detail=f"{type(error).__name__}: {error}",
         )

@@ -109,18 +109,29 @@ def _improving_rows(n_events, *, early=0.55, final=0.80, source="kalshi"):
 
 class TestTheKernelEventFilterIsAdditive:
     def test_omitted_it_emits_the_statement_it_always_did(self):
-        assert kernel.paired_legs_sql() == kernel.paired_legs_sql(event_ids=None)
-        assert "fm.event_id IN" not in kernel.paired_legs_sql()
+        assert kernel.paired_legs_sql() == kernel.paired_legs_sql(outcome_ids=None)
+        assert "fo.id IN" not in kernel.paired_legs_sql()
 
     def test_supplied_it_adds_one_and_clause_and_nothing_else(self):
         bare = kernel.paired_legs_sql()
-        filtered = kernel.paired_legs_sql(event_ids=":event_ids")
-        added = "\n  AND fm.event_id IN :event_ids"
+        filtered = kernel.paired_legs_sql(outcome_ids=":outcome_ids")
+        added = "\n  AND fo.id IN :outcome_ids"
         assert filtered.count(added) == 1
         assert filtered.replace(added, "") == bare
 
+    def test_the_id_restriction_is_on_the_base_row_not_inside_a_lateral(self):
+        """The ids bound the WORK, not just the rows returned: the restriction is
+        a predicate on ``futures_outcomes`` in the outer WHERE — after every
+        LATERAL block and before the trailing ORDER BY/LIMIT — so the planner
+        applies it to the base scan, and no outcome outside the set reaches a
+        snapshot or book seek."""
+        sql = kernel.paired_legs_sql(outcome_ids=":outcome_ids")
+        restriction = sql.index("AND fo.id IN :outcome_ids")
+        assert sql.rindex("LATERAL") < sql.rindex("\nWHERE ") < restriction
+        assert restriction < sql.rindex("ORDER BY fo.id ASC") < sql.rindex("LIMIT")
+
     def test_the_feasibility_walk_is_unchanged(self):
-        assert "fm.event_id IN" not in kernel.paired_feasibility_sql()
+        assert "fo.id IN" not in kernel.paired_feasibility_sql()
 
 
 # ---------------------------------------------------------------------------
@@ -217,7 +228,11 @@ class TestExclusionsAreNamed:
 
     def test_both_statements_keep_the_graded_truth_eligible_population(self):
         predicate = calibration_truth_eligible_sql(source_col="fo.resolution_source")
-        for sql in (cpp.event_selection_sql(), kernel.paired_legs_sql(event_ids=":event_ids")):
+        for sql in (
+            cpp.event_selection_sql(),
+            cpp.candidate_ids_sql(),
+            kernel.paired_legs_sql(outcome_ids=":outcome_ids"),
+        ):
             assert "fo.is_winner IS NOT NULL" in sql
             assert predicate in sql
             assert "fm.status = 'resolved'" in sql
@@ -238,7 +253,7 @@ class TestTheKernelBoundariesHold:
         assert row["final_probability"] == 0.60
 
     def test_no_opening_or_stored_close_can_pose_as_a_leg(self):
-        sql = kernel.paired_legs_sql(event_ids=":event_ids")
+        sql = kernel.paired_legs_sql(outcome_ids=":outcome_ids")
         assert "opening_probability" not in sql
         assert "calibration_probability" not in sql
         assert "FROM futures_odds_snapshots" in sql
@@ -369,24 +384,36 @@ class _QueryCanceledError(Exception):
     pass
 
 
+def _ids(n):
+    return [{"outcome_id": i} for i in range(n)]
+
+
 class TestTheBoundedSession:
     @pytest.mark.asyncio
-    async def test_it_reads_one_read_only_snapshot_at_five_seconds(self, monkeypatch):
+    async def test_ids_are_materialised_and_bound_before_the_legs_run(self, monkeypatch):
         import app.tasks.base as base
 
         events = _events(2) + [{"event_id": 7, "commence_time": T0 - 7 * H, "n_candidates": 4000}]
-        session = _Session([[], events, _improving_rows(2)])
+        session = _Session([[], [], events, _ids(4), _improving_rows(2)])
         seen: dict = {}
         monkeypatch.setattr(base, "get_task_session", _session_factory(session, seen))
 
         block = await cpp.build_paired_accuracy(generated_at="GEN", as_of=T0 + 48 * H)
 
         assert seen["kwargs"] == {"statement_timeout_ms": 5000}
-        assert session.calls[0][0] == "SET TRANSACTION ISOLATION LEVEL REPEATABLE READ READ ONLY"
-        assert session.calls[1][1] == {"as_of": T0 + 48 * H, "event_limit": 101}
-        legs_params = session.calls[2][1]
-        assert legs_params["event_ids"] == [1000, 1001]
-        assert legs_params["scan"] == 2001 and legs_params["cursor"] == 0
+        sql = [c[0] for c in session.calls]
+        params = [c[1] for c in session.calls]
+        assert sql[0] == "SET TRANSACTION ISOLATION LEVEL REPEATABLE READ READ ONLY"
+        assert sql[1] == "SET LOCAL idle_in_transaction_session_timeout = 5000"
+        assert params[2] == {"as_of": T0 + 48 * H, "event_limit": 101}
+        # The ids statement sees ONLY the admitted events (7 was over the cap) ...
+        assert "AND fm.event_id IN" in sql[3] and "LATERAL" not in sql[3]
+        assert params[3] == {"event_ids": [1000, 1001], "limit": 2001}
+        # ... and the legs statement sees ONLY the ids it returned.
+        assert "AND fo.id IN" in sql[4]
+        assert params[4] == {"cursor": 0, "scan": 2001, "outcome_ids": [0, 1, 2, 3]}
+        assert len(session.calls) == 5
+
         assert block["status"] == cpp.STATUS_INCOMPLETE
         assert block["published_with_generated_at"] == "GEN"
         collector = block["collector"]
@@ -396,59 +423,33 @@ class TestTheBoundedSession:
         assert isinstance(collector["collection_ms"], int)
 
     @pytest.mark.asyncio
-    async def test_legs_that_disagree_with_the_admitted_denominator_are_refused(self, monkeypatch):
+    @pytest.mark.parametrize(
+        "answers,message",
+        [
+            ([[], [], _events(2), _ids(3)], "candidate ids returned 3 for 4 admitted"),
+            ([[], [], _events(2), _ids(4), _improving_rows(2)[:3]], "legs returned 3 rows for 4"),
+        ],
+    )
+    async def test_a_disagreement_with_the_admitted_denominator_is_refused(
+        self, monkeypatch, answers, message
+    ):
         import app.tasks.base as base
 
-        session = _Session([[], _events(2), _improving_rows(2)[:3]])
+        session = _Session(answers)
         monkeypatch.setattr(base, "get_task_session", _session_factory(session, {}))
         block = await cpp.build_paired_accuracy()
         assert block["status"] == cpp.STATUS_UNAVAILABLE and block["reason"] == cpp.REASON_FAILED
-        assert "3 rows for 4 admitted" in block["detail"]
+        assert message in block["detail"]
         assert block["market"] is None
 
     @pytest.mark.asyncio
-    async def test_the_wall_budget_cancels_closes_and_reports_timeout(self, monkeypatch):
+    async def test_no_events_runs_no_ids_or_legs_query(self, monkeypatch):
         import app.tasks.base as base
 
-        class _Slow(_Session):
-            async def execute(self, statement, params=None):
-                if len(self.calls) == 1:
-                    await asyncio.sleep(5)
-                return await super().execute(statement, params)
-
-        seen: dict = {}
-        monkeypatch.setattr(base, "get_task_session", _session_factory(_Slow([[], []]), seen))
-        monkeypatch.setattr(cpp, "WALL_BUDGET_S", 0.05)
-
-        block = await cpp.build_paired_accuracy(generated_at="GEN")
-
-        assert seen["exit_exc"] is asyncio.CancelledError, "the session was not closed on the wall"
-        assert block["status"] == cpp.STATUS_UNAVAILABLE and block["reason"] == cpp.REASON_TIMEOUT
-        assert block["market"] is None and block["sample"] is None
-
-    @pytest.mark.asyncio
-    async def test_a_cancelled_caller_is_not_swallowed(self, monkeypatch):
-        import app.tasks.base as base
-
-        class _Hang(_Session):
-            async def execute(self, statement, params=None):
-                await asyncio.sleep(5)
-
-        monkeypatch.setattr(base, "get_task_session", _session_factory(_Hang([]), {}))
-        task = asyncio.ensure_future(cpp.build_paired_accuracy())
-        await asyncio.sleep(0.01)
-        task.cancel()
-        with pytest.raises(asyncio.CancelledError):
-            await task
-
-    @pytest.mark.asyncio
-    async def test_no_events_runs_no_legs_query(self, monkeypatch):
-        import app.tasks.base as base
-
-        session = _Session([[], []])
+        session = _Session([[], [], []])
         monkeypatch.setattr(base, "get_task_session", _session_factory(session, {}))
         block = await cpp.build_paired_accuracy()
-        assert len(session.calls) == 2
+        assert len(session.calls) == 3
         assert block["reason"] == cpp.REASON_NO_ELIGIBLE_EVENTS
 
     @pytest.mark.asyncio
@@ -462,7 +463,7 @@ class TestTheBoundedSession:
     async def test_a_failing_read_is_a_typed_absence_and_rolls_back(self, monkeypatch, exc, reason):
         import app.tasks.base as base
 
-        session = _Session([[], _events(2)], raise_on=(3, exc))
+        session = _Session([[], [], _events(2), _ids(4)], raise_on=(5, exc))
         seen: dict = {}
         monkeypatch.setattr(base, "get_task_session", _session_factory(session, seen))
 
@@ -472,6 +473,148 @@ class TestTheBoundedSession:
         assert block["status"] == cpp.STATUS_UNAVAILABLE and block["reason"] == reason
         assert block["market"] is None and block["model"] is None and block["sample"] is None
         assert block["published_with_generated_at"] == "GEN"
+
+
+# ---------------------------------------------------------------------------
+# The wall is WHOLE: the REAL get_task_session, its teardown made slow
+# ---------------------------------------------------------------------------
+
+
+class _RealSessionHarness:
+    """Keeps the REAL ``get_task_session`` and replaces only database I/O.
+
+    Sol's review reproduction (artifacts/calibration/sol-original-ship-diagnosis-
+    20261001T1714Z/6176-REVIEW-ca93839f6a-cleanup-repro.py) showed the first cut's
+    ``asyncio.wait_for`` waiting out a slow ``session.close()`` and
+    ``engine.dispose()``. These tests run that teardown for real.
+    """
+
+    def __init__(self, monkeypatch, *, hang_s=10.0, close_s=0.0, dispose_s=0.0):
+        import app.tasks.base as base
+
+        self.log: list[str] = []
+        harness = self
+
+        class _Engine:
+            async def dispose(self):
+                await asyncio.sleep(dispose_s)
+                harness.log.append("dispose")
+
+        class _Session:
+            async def __aenter__(self):
+                return self
+
+            async def __aexit__(self, *exc):
+                return False
+
+            async def execute(self, *a, **k):
+                harness.log.append("execute")
+                await asyncio.sleep(hang_s)
+
+            async def close(self):
+                await asyncio.sleep(close_s)
+                harness.log.append("close")
+
+            async def rollback(self):
+                harness.log.append("rollback")
+
+            async def commit(self):
+                harness.log.append("commit")
+
+        monkeypatch.setattr(base, "_get_task_engine", lambda **kw: _Engine())
+        monkeypatch.setattr(base, "async_sessionmaker", lambda *a, **k: _Session)
+
+    async def drain(self, timeout=5.0):
+        pending = list(cpp._ABANDONED)
+        if pending:
+            await asyncio.wait(pending, timeout=timeout)
+
+
+class TestTheWallIncludesTheTeardown:
+    @pytest.mark.asyncio
+    async def test_a_slow_teardown_cannot_hold_the_publish_past_the_wall(self, monkeypatch):
+        harness = _RealSessionHarness(monkeypatch, close_s=1.0, dispose_s=1.0)
+        monkeypatch.setattr(cpp, "COLLECT_BUDGET_S", 0.05)
+        monkeypatch.setattr(cpp, "CLEANUP_BUDGET_S", 0.05)
+
+        started = asyncio.get_running_loop().time()
+        block = await cpp.build_paired_accuracy(generated_at="GEN")
+        elapsed = asyncio.get_running_loop().time() - started
+
+        assert block["status"] == cpp.STATUS_UNAVAILABLE and block["reason"] == cpp.REASON_TIMEOUT
+        assert elapsed < 0.5, f"the publish waited {elapsed:.2f}s on a 0.10s wall"
+        assert "teardown abandoned" in block["detail"]
+        assert cpp._ABANDONED, "the slow teardown was dropped, not owned"
+        assert "dispose" not in harness.log
+
+        # Cleanup stays OWNED: the abandoned teardown still closes and disposes.
+        await harness.drain()
+        assert harness.log == ["execute", "close", "dispose"]
+        assert not cpp._ABANDONED
+
+    @pytest.mark.asyncio
+    async def test_a_prompt_teardown_finishes_inside_the_wall(self, monkeypatch):
+        harness = _RealSessionHarness(monkeypatch)
+        monkeypatch.setattr(cpp, "COLLECT_BUDGET_S", 0.05)
+        monkeypatch.setattr(cpp, "CLEANUP_BUDGET_S", 1.0)
+
+        block = await cpp.build_paired_accuracy()
+
+        assert block["reason"] == cpp.REASON_TIMEOUT
+        assert "session closed" in block["detail"]
+        assert harness.log == ["execute", "close", "dispose"], "closed before returning"
+        assert not cpp._ABANDONED
+
+    @pytest.mark.asyncio
+    async def test_a_cancelled_caller_propagates_and_stops_the_queries(self, monkeypatch):
+        harness = _RealSessionHarness(monkeypatch, close_s=0.05, dispose_s=0.05)
+
+        task = asyncio.ensure_future(cpp.build_paired_accuracy())
+        await asyncio.sleep(0.02)
+        task.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await task
+
+        await harness.drain()
+        assert harness.log == ["execute", "close", "dispose"], (
+            "the collection kept querying, or was never closed, after its caller left"
+        )
+        assert not cpp._ABANDONED
+
+
+class TestThePublishDeadline:
+    @pytest.mark.asyncio
+    async def test_too_little_time_left_skips_without_opening_a_session(self, monkeypatch):
+        import app.tasks.base as base
+
+        def refuse(**kw):
+            raise AssertionError("a session was opened with no time to use it")
+
+        monkeypatch.setattr(base, "get_task_session", refuse)
+        block = await cpp.build_paired_accuracy(generated_at="GEN", deadline_s=100.0)
+        assert block["status"] == cpp.STATUS_UNAVAILABLE
+        assert block["reason"] == cpp.REASON_PUBLISH_DEADLINE
+        assert block["market"] is None
+
+    @pytest.mark.asyncio
+    async def test_the_wall_shrinks_to_leave_the_publish_its_reserve(self, monkeypatch):
+        import app.tasks.base as base
+
+        session = _Session([[], [], []])
+        monkeypatch.setattr(base, "get_task_session", _session_factory(session, {}))
+        block = await cpp.build_paired_accuracy(deadline_s=130.0)
+        # 130 - 120 reserve - 3 cleanup = 7s to collect, + 3s teardown.
+        assert block["collector"]["wall_budget_s"] == 10.0
+
+    def test_the_deadline_is_read_off_the_runners_own_clock(self):
+        from app.tasks.calibration_main_build import NULL_RUNNER
+
+        runner = SimpleNamespace(
+            ledger=SimpleNamespace(remaining_ms=lambda *, elapsed_ms: 900_000 - elapsed_ms),
+            elapsed_ms=lambda: 300_000,
+        )
+        assert cpp.remaining_publish_s(runner) == 600.0
+        assert cpp.remaining_publish_s(NULL_RUNNER) is None
 
 
 # ---------------------------------------------------------------------------
@@ -569,7 +712,7 @@ class TestSameGenerationPublication:
         pc, captured = wrapper
         calls = []
 
-        async def fake_build(*, generated_at=None, as_of=None):
+        async def fake_build(*, generated_at=None, as_of=None, deadline_s=None):
             calls.append(generated_at)
             return _assemble(_events(3), _improving_rows(3)) | {"published_with_generated_at": generated_at}
 
@@ -597,7 +740,7 @@ class TestSameGenerationPublication:
 
         pc, captured = wrapper
         build_ctx = base.get_task_session
-        session = _Session([[], _events(3), _improving_rows(3)])
+        session = _Session([[], [], _events(3), _ids(6), _improving_rows(3)])
 
         def factory(**kw):
             if kw.get("statement_timeout_ms") == cpp.STATEMENT_TIMEOUT_MS:
@@ -663,7 +806,8 @@ class TestTheBankAndTheRouteAreUntouched:
         )
         before = [fn() for fn in prints]
         cpp.event_selection_sql()
-        kernel.paired_legs_sql(event_ids=":event_ids")
+        cpp.candidate_ids_sql()
+        kernel.paired_legs_sql(outcome_ids=":outcome_ids")
         assert [fn() for fn in prints] == before
 
         hashed = "".join(

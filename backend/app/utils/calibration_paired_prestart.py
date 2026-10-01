@@ -690,7 +690,7 @@ def paired_legs_sql(
     final_max_stale_seconds: int = DEFAULT_FINAL_MAX_STALE_SECONDS,
     cursor: str = ":cursor",
     scan: str = ":scan",
-    event_ids: Optional[str] = None,
+    outcome_ids: Optional[str] = None,
 ) -> str:
     """Per-outcome early and final legs, with the whole pairing rule applied.
 
@@ -730,14 +730,17 @@ def paired_legs_sql(
     :func:`paired_feasibility_sql` passes literals instead — same statement,
     substituted in one place rather than paraphrased into a second one.
 
-    ``event_ids`` (#6176 publication) is an optional SQL fragment — a bind name
-    such as ``:event_ids`` for an expanding parameter — that restricts the walk
-    to an already-chosen, bounded set of events. It ANDs onto the population
-    predicate and changes nothing else: the pairing rule, the classes and the
-    book preference are the same statement. Omitted, the emitted SQL is exactly
-    what it was before the parameter existed.
+    ``outcome_ids`` (#6176 publication) is an optional SQL fragment — a bind
+    name such as ``:outcome_ids`` for an expanding parameter — naming an
+    already-MATERIALISED, bounded set of candidate outcome ids. It is a
+    primary-key restriction on ``futures_outcomes`` in the WHERE, so no outcome
+    outside the set ever reaches a lateral snapshot or book seek; the trailing
+    ``LIMIT`` alone bounds rows returned, never the work behind them. It ANDs
+    onto the population predicate and changes nothing else: the pairing rule,
+    the classes and the book preference are the same statement. Omitted, the
+    emitted SQL is exactly what it was before the parameter existed.
     """
-    event_filter = "" if event_ids is None else f"\n  AND fm.event_id IN {event_ids}"
+    id_filter = "" if outcome_ids is None else f"\n  AND fo.id IN {outcome_ids}"
     as_of_early = as_of_sql(_BOUNDARY, lead_seconds)
     early_fresh = _fresh_sql("early", as_of_early, early_max_stale_seconds)
     final_fresh = _fresh_sql("final", _BOUNDARY, final_max_stale_seconds)
@@ -807,7 +810,7 @@ LEFT JOIN LATERAL (
     LIMIT 1
 ) pair_book ON true
 WHERE {_POPULATION_PREDICATE}
-  AND fo.id > {cursor}{event_filter}
+  AND fo.id > {cursor}{id_filter}
 ORDER BY fo.id ASC
 LIMIT {scan}
 """
