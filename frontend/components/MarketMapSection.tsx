@@ -177,6 +177,50 @@ function closesFirstHalf(period: string, vocab: SportScoringVocab, halftime: Reg
   return at != null && at.end && at.inning === vocab.firstHalfEndsAfterInning;
 }
 
+/**
+ * The first period's score of an inning sport whose `End N` row was never
+ * sampled, or null when the samples cannot pin it down.
+ *
+ * #10008, production 2026-10-01 05:09Z at 390px: `/events/15321946`, Cubs 1 –
+ * 4 Padres, FINAL. The first-five card drew an empty rail and three last
+ * quotes. Its history held 12 rows and no `End 5th` (each row is a ~2-minute
+ * sample and the `End 5th` state lasts about that long), but it did hold
+ * `Bottom 5th` 1–4 and then `Bottom 6th` 1–4.
+ *
+ * A team's runs only go up. So any row up to inning N is a floor on what that
+ * team had when the inning closed, and any row after it is a ceiling. The final
+ * (or, live, the scoreboard in the later innings) is a ceiling too. When floor
+ * and ceiling meet for BOTH teams the score is exact. When a run landed between
+ * the two samples they do not meet, and this returns null rather than pick
+ * either neighbouring inning (#8557's controls).
+ */
+function bracketFirstInnings(
+  espnHistory: NonNullable<MarketMapSectionProps["espnHistory"]>,
+  endsAfterInning: number,
+  ceilingHome: number,
+  ceilingAway: number
+): { home: number; away: number } | null {
+  let floorHome: number | null = null;
+  let floorAway: number | null = null;
+  let capHome = ceilingHome;
+  let capAway = ceilingAway;
+  for (const row of espnHistory) {
+    if (!row.period || row.home_score == null || row.away_score == null) continue;
+    const at = inningOf(row.period);
+    if (!at) continue;
+    if (at.inning <= endsAfterInning) {
+      floorHome = Math.max(floorHome ?? row.home_score, row.home_score);
+      floorAway = Math.max(floorAway ?? row.away_score, row.away_score);
+    } else {
+      capHome = Math.min(capHome, row.home_score);
+      capAway = Math.min(capAway, row.away_score);
+    }
+  }
+  if (floorHome == null || floorAway == null) return null;
+  if (floorHome !== capHome || floorAway !== capAway) return null;
+  return { home: floorHome, away: floorAway };
+}
+
 function deriveHalfScores(
   espnHistory: MarketMapSectionProps["espnHistory"],
   finalHome: number | null,
@@ -189,13 +233,19 @@ function deriveHalfScores(
   const htEntry = [...espnHistory].reverse().find(
     (e) => e.period && closesFirstHalf(e.period, vocab, /halftime|^ht$|end of 2nd/i) && e.home_score != null
   );
-  if (!htEntry || htEntry.home_score == null || htEntry.away_score == null) return null;
+  const first =
+    htEntry && htEntry.home_score != null && htEntry.away_score != null
+      ? { home: htEntry.home_score, away: htEntry.away_score }
+      : vocab.firstHalfEndsAfterInning != null
+        ? bracketFirstInnings(espnHistory, vocab.firstHalfEndsAfterInning, finalHome, finalAway)
+        : null;
+  if (!first) return null;
 
   return {
-    h1Home: htEntry.home_score,
-    h1Away: htEntry.away_score,
-    h2Home: finalHome - htEntry.home_score,
-    h2Away: finalAway - htEntry.away_score,
+    h1Home: first.home,
+    h1Away: first.away,
+    h2Home: finalHome - first.home,
+    h2Away: finalAway - first.away,
   };
 }
 
@@ -253,13 +303,20 @@ function deriveLiveHalfScores(
   const htEntry = espnHistory.find(
     (e) => e.period && closesFirstHalf(e.period, vocab, /halftime|^ht$/i) && e.home_score != null
   );
-  if (!htEntry || htEntry.home_score == null || htEntry.away_score == null) return null;
+  // #10008: "2H" here means past inning N, so the scoreboard is a ceiling.
+  const first =
+    htEntry && htEntry.home_score != null && htEntry.away_score != null
+      ? { home: htEntry.home_score, away: htEntry.away_score }
+      : vocab.firstHalfEndsAfterInning != null
+        ? bracketFirstInnings(espnHistory, vocab.firstHalfEndsAfterInning, currentHome, currentAway)
+        : null;
+  if (!first) return null;
 
   return {
-    h1Home: htEntry.home_score,
-    h1Away: htEntry.away_score,
-    h2Home: currentHome - htEntry.home_score,
-    h2Away: currentAway - htEntry.away_score,
+    h1Home: first.home,
+    h1Away: first.away,
+    h2Home: currentHome - first.home,
+    h2Away: currentAway - first.away,
   };
 }
 
