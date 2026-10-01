@@ -201,6 +201,7 @@ final class PinManager: ObservableObject {
 
         mutationRevision += 1
         mutations[SavedPin(type: type, value: id)] = (mutationRevision, !alreadyPinned)
+        if isAuthenticated, alreadyPinned { pendingRemovals.insert(SavedPin(type: type, value: id)) }
         saveToDefaults()
 
         guard isAuthenticated else {
@@ -209,7 +210,6 @@ final class PinManager: ObservableObject {
         }
 
         savingKeys.insert(key)
-        if alreadyPinned { pendingRemovals.insert(SavedPin(type: type, value: id)) }
         feedback = PinActionFeedback(
             message: alreadyPinned ? "Removing…" : "Saving…",
             systemImage: "bookmark",
@@ -231,7 +231,6 @@ final class PinManager: ObservableObject {
                 } else {
                     removeLocally(type: type, id: id)
                 }
-                saveToDefaults()
                 #if os(iOS)
                 UINotificationFeedbackGenerator().notificationOccurred(.error)
                 #endif
@@ -242,6 +241,8 @@ final class PinManager: ObservableObject {
                 )
             }
             pendingRemovals.remove(SavedPin(type: type, value: id))
+            // Only now may the stored cache drop a removed pin (#9875).
+            saveToDefaults()
             mutationRevision += 1
             mutations[SavedPin(type: type, value: id)] = (mutationRevision, isPinned(type: type, id: id))
             savingKeys.remove(key)
@@ -307,11 +308,14 @@ final class PinManager: ObservableObject {
         } else { pinnedFuturesIDs = [] }
     }
 
+    /// A removal the server has not confirmed is still a saved pin on disk: a
+    /// cold restart whose first load fails must find it, not lose it (#9875).
     private func saveToDefaults() {
-        if let data = try? JSONEncoder().encode(Array(pinnedEventIDs)) {
+        func removing(_ type: String) -> [Int] { pendingRemovals.filter { $0.type == type }.map(\.value) }
+        if let data = try? JSONEncoder().encode(Array(pinnedEventIDs.union(removing("event")))) {
             defaults.set(data, forKey: eventsKey)
         }
-        if let data = try? JSONEncoder().encode(Array(pinnedFuturesIDs)) {
+        if let data = try? JSONEncoder().encode(Array(pinnedFuturesIDs.union(removing("future")))) {
             defaults.set(data, forKey: futuresKey)
         }
     }
