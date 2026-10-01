@@ -113,6 +113,10 @@ final class APinManagementInstalled9875Tests: XCTestCase {
             XCTAssertTrue(app.staticTexts["Couldn't refresh your saved pins. Known pins are shown below; you can still remove them."].exists)
             XCTAssertNotNil(reachable(app, id: "removePin.\(key)"))
             try record(app, "cold-offline-\(key)")
+            try remove(app, key)
+            XCTAssertTrue(wait { (try? self.saved(app))?.contains(key) == false })
+            XCTAssertEqual(try saved(app), before.subtracting([key]), "cold offline removal changes only the selected pin")
+            try record(app, "cold-offline-removed-\(key)")
             app.terminate()
         }
     }
