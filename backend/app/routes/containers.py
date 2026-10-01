@@ -35,15 +35,27 @@ list and search already serve (a constant number of queries, however many
 members), and a member whose row is gone is WITHHELD WITH A REASON — never a
 card we invented and never a link to a page that does not exist. The pure half
 lives in ``app.utils.container_presentation``.
+
+#9982 — THE PUBLISHED READ IS LIVE; THE CARDS BEHIND IT ARE CACHED. Week 4's
+3,479 members took ~5 s to hydrate on every request. The published read still
+runs every time and names the revision; the hydrated, rendered body is cached
+per (slug, revision) and ages on the Discover feed's clock — see
+``app.utils.container_read_cache`` and the section at the end of this file.
+``CONTAINERS_READ_CACHE_ENABLED=false`` is the kill switch.
 """
 
 from __future__ import annotations
 
+import asyncio
+import json
 import logging
+import math
 import os
+import time
 from typing import Literal, Optional
 
-from fastapi import APIRouter, Depends, HTTPException, Path, Query
+from fastapi import APIRouter, Depends, HTTPException, Path, Query, Response
+from fastapi.encoders import jsonable_encoder
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -62,6 +74,14 @@ from app.utils.container_presentation import (
     container_destination,
     edition_for_slug,
     present_sections,
+)
+from app.utils.container_read_cache import (
+    CachedRead,
+    container_read_cache_enabled,
+    container_read_cache_key,
+    decode_entry,
+    encode_entry,
+    payload_deadlines,
 )
 
 logger = logging.getLogger(__name__)
@@ -336,6 +356,14 @@ async def get_container(
         # that is not for readers.
         return {**payload, **base_empty}
 
+    if not container_read_cache_enabled():
+        return await _build_published_payload(db, published, include_children)
+    return await _serve_cached(db, slug, published, include_children)
+
+
+async def _build_published_payload(db: AsyncSession, published, include_children: bool) -> dict:
+    """The full 200 for a ``published`` / ``empty`` read — the uncached build."""
+    payload = _state_payload(published, edition_for_slug(published.slug))
     # Header and nested collections in ONE statement, keyed on the id the
     # published read returned (not the slug again), so both halves describe the
     # same row. A nested collection that is withdrawn is left out, matching the
@@ -404,3 +432,258 @@ async def get_container(
         "assembled": bool(members),
         "known_classes": sorted(EDGE_CLASSES),
     }
+
+
+# ---------------------------------------------------------------------------
+# #9982 — the served bytes, cached per (slug, revision)
+# ---------------------------------------------------------------------------
+#
+# Week 4 (3,479 members) took ~5 s to build on every request, and the web hub
+# re-reads on every Back. The published read above stays on the request path —
+# it is what names the revision — and only the hydration and rendering behind
+# it are cached, keyed on that revision, so a republish is never served stale
+# membership. Policy and envelope: ``app.utils.container_read_cache``.
+#
+# Two tiers: a small process-local one (a Back on the same worker costs
+# nothing) and Redis (another worker's build is one GET away). Both fail OPEN —
+# a Redis stall or a malformed entry means "build it", never an error. A stale
+# entry inside its servable window is served at once and ONE rebuild runs in
+# the background, so the next reader gets fresh cards without waiting.
+
+#: A Week 4 body is ~3.5 MB raw, so the process-local tier stays small.
+_LOCAL_MAX_ENTRIES = 4
+_local_entries: dict = {}
+
+#: How long a request waits on another request's in-flight build of the same
+#: key before answering 503 "building" — well under the web client's 12 s
+#: abort. A waiter never starts a second build while the owner is live.
+_COALESCE_WAIT_S = 8.0
+
+
+def _render(payload: dict) -> bytes:
+    """The bytes FastAPI's default ``JSONResponse`` renders for ``payload``.
+
+    Rendered once per build instead of once per request; byte-identical to the
+    uncached path (the same encoder, the same ``json.dumps`` arguments).
+    """
+    return json.dumps(
+        jsonable_encoder(payload),
+        ensure_ascii=False,
+        allow_nan=False,
+        indent=None,
+        separators=(",", ":"),
+    ).encode("utf-8")
+
+
+def _remember_local(key: str, entry: CachedRead) -> None:
+    if key not in _local_entries and len(_local_entries) >= _LOCAL_MAX_ENTRIES:
+        oldest = min(_local_entries, key=lambda k: _local_entries[k].built_at)
+        _local_entries.pop(oldest, None)
+    _local_entries[key] = entry
+
+
+def _reset_read_cache_for_tests() -> None:
+    _local_entries.clear()
+
+
+async def _load_entry(key: str, now: float) -> tuple[Optional[CachedRead], bool]:
+    """``(entry, from_shared)`` — the freshest servable copy of ``key``, or None."""
+    local = _local_entries.get(key)
+    if local is not None and local.is_fresh(now):
+        return local, False
+    if local is not None and not local.is_servable(now):
+        _local_entries.pop(key, None)
+        local = None
+
+    from app.utils.request_cache import bounded_redis_call, get_shared_async_redis
+
+    shared = None
+    try:
+        client = await get_shared_async_redis()
+        res = await bounded_redis_call(lambda: client.get(key))
+        if res.is_ok:
+            shared = decode_entry(res.value)
+    except asyncio.CancelledError:
+        raise
+    except Exception:  # noqa: BLE001 — fail open: a cache read never fails a hub
+        logger.debug("container hub cache: shared read failed", exc_info=True)
+    if shared is not None and not shared.is_servable(now):
+        shared = None
+    if shared is not None and (local is None or shared.built_at > local.built_at):
+        _remember_local(key, shared)
+        return shared, True
+    return local, False
+
+
+async def _publish_shared(key: str, entry: CachedRead) -> None:
+    from app.utils.request_cache import bounded_redis_call, get_shared_async_redis
+
+    ttl = max(1, int(math.ceil(entry.stale_until - time.time())))
+    try:
+        client = await get_shared_async_redis()
+        await bounded_redis_call(
+            lambda: client.set(key, encode_entry(entry), ex=ttl),
+            treat_none_as_miss=False,
+        )
+    except Exception:  # noqa: BLE001 — publication is best-effort
+        logger.debug("container hub cache: shared write failed", exc_info=True)
+
+
+def _store_entry(key: str, entry: CachedRead) -> None:
+    from app.utils.request_cache import schedule_background
+
+    _remember_local(key, entry)
+    schedule_background(_publish_shared(key, entry))
+
+
+async def _build_entry(db: AsyncSession, published, include_children: bool) -> CachedRead:
+    # The age origin is when the build STARTED reading, not when it finished.
+    built_at = time.time()
+    payload = await _build_published_payload(db, published, include_children)
+    fresh_until, stale_until = payload_deadlines(payload, built_at)
+    return CachedRead(
+        body=_render(payload), built_at=built_at, fresh_until=fresh_until, stale_until=stale_until
+    )
+
+
+#: Sent with a waiter's 503: by then the owner's build is seconds from landing.
+_NOT_READY_RETRY_AFTER_S = 2
+
+
+def _not_ready_response(state: Literal["building", "unavailable"]) -> Response:
+    """A waiter's answer when it cannot be handed an entry within ``_COALESCE_WAIT_S``.
+
+    ``building``: the owner is still hydrating, and stays the only build.
+    ``unavailable``: the owner failed and the wait is spent; the next request
+    takes the slot. Never a second concurrent hydration of the same key, and
+    never an empty hub that would read as a collection with no games.
+    """
+    return Response(
+        content=json.dumps({"detail": {"state": state}}, separators=(",", ":")).encode(),
+        status_code=503,
+        media_type="application/json",
+        headers={
+            "Retry-After": str(_NOT_READY_RETRY_AFTER_S),
+            "Cache-Control": "no-store",
+            "X-Feed-Cache": "unavailable",
+        },
+    )
+
+
+def _cached_response(entry: CachedRead, label: str) -> Response:
+    # `X-Feed-Cache` is the header the latency middleware buckets every route's
+    # cache outcome by; the labels are from its allowlist.
+    return Response(
+        content=entry.body,
+        media_type="application/json",
+        headers={"X-Feed-Cache": label},
+    )
+
+
+async def _refresh_in_background(
+    slug: str, include_children: bool, key: str, future, container_id: Optional[int]
+) -> None:
+    """Rebuild a stale entry on its own session.
+
+    The caller claims ``future`` (``begin_build``) BEFORE scheduling this, so a
+    burst of stale readers schedules one rebuild, not one per reader that
+    arrived before the first task got to run.
+    """
+    from app.services.database import async_session_maker
+    from app.utils.request_cache import finish_build
+
+    result = None
+    try:
+        async with async_session_maker() as session:
+            published = await read_published(session, slug)
+            if published.state in (READ_PUBLISHED, READ_EMPTY):
+                entry = await _build_entry(session, published, include_children)
+                fresh_key = container_read_cache_key(slug, published.revision, include_children)
+                _store_entry(fresh_key, entry)
+                if fresh_key == key:
+                    result = entry
+    except asyncio.CancelledError:
+        raise
+    except Exception:  # noqa: BLE001 — the stale copy was already served
+        # The container id, never the key: the key carries the request's slug.
+        logger.warning(
+            "container hub cache: background rebuild failed (container %s)",
+            container_id,
+            exc_info=True,
+        )
+    finally:
+        finish_build(key, future, result=result)
+
+
+async def _serve_cached(db: AsyncSession, slug: str, published, include_children: bool) -> Response:
+    from app.utils.request_cache import begin_build, finish_build, schedule_background
+
+    key = container_read_cache_key(slug, published.revision, include_children)
+    now = time.time()
+    entry, from_shared = await _load_entry(key, now)
+    if entry is not None and not entry.is_fresh(now):
+        # The shared read awaited; a rebuild on this worker may have landed
+        # meanwhile. Re-checked with no await between it and the claim below,
+        # so a just-finished rebuild is served instead of started again.
+        landed = _local_entries.get(key)
+        if landed is not None and landed.is_fresh(now):
+            entry, from_shared = landed, False
+    if entry is not None:
+        if entry.is_fresh(now):
+            return _cached_response(entry, "shared_hit" if from_shared else "hit")
+        leader, future = begin_build(key)
+        if leader:
+            schedule_background(
+                _refresh_in_background(
+                    slug, include_children, key, future, published.container_id
+                )
+            )
+        return _cached_response(entry, "shared_stale_hit" if from_shared else "stale_hit")
+
+    leader, future = begin_build(key)
+    loop = asyncio.get_running_loop()
+    deadline = loop.time() + _COALESCE_WAIT_S
+    while not leader:
+        joined = None
+        try:
+            joined = await asyncio.wait_for(
+                asyncio.shield(future), timeout=max(0.0, deadline - loop.time())
+            )
+        except asyncio.TimeoutError:
+            # The owner is still building: it stays the ONLY build. A second
+            # hydration here is what stacked 3 builds behind 1 owner (#9984).
+            if not future.done():
+                return _not_ready_response("building")
+        except asyncio.CancelledError:
+            # Our own cancellation propagates; an owner whose future was
+            # cancelled under us is a failed owner, not a reason to die.
+            task = asyncio.current_task()
+            if not future.cancelled() or (task is not None and task.cancelling()):
+                raise
+        except Exception:  # noqa: BLE001 — the owner failed: retry below
+            pass
+        if joined is None and future.done() and not future.cancelled():
+            if future.exception() is None:
+                joined = future.result()  # landed in the same tick the wait expired
+        if isinstance(joined, CachedRead):
+            return _cached_response(joined, "coalesced")
+        # The owner finished without an entry for us. A waiter woken after a
+        # new owner already landed serves that, rather than building again.
+        landed = _local_entries.get(key)
+        if landed is not None and landed.is_fresh(time.time()):
+            return _cached_response(landed, "coalesced")
+        if loop.time() >= deadline:
+            return _not_ready_response("unavailable")
+        # Retry only by taking the slot, so the waiters a failed owner left
+        # behind elect ONE new owner and the rest join it.
+        leader, future = begin_build(key)
+
+    entry = None
+    try:
+        entry = await _build_entry(db, published, include_children)
+    finally:
+        # Resolved on EVERY exit (request_cache's single-owner invariant); a
+        # failed or cancelled build hands waiters None and they elect a new owner.
+        finish_build(key, future, result=entry)
+    _store_entry(key, entry)
+    return _cached_response(entry, "miss")

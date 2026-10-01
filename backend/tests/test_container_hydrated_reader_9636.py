@@ -279,6 +279,9 @@ def _mlb_postseason():
 @pytest.fixture(autouse=True)
 def _enabled(monkeypatch):
     monkeypatch.setenv("CONTAINERS_READ_ENABLED", "true")
+    # This file pins the BUILD; the #9982 response cache in front of it is
+    # graded in ``test_container_read_cache_9982.py`` with these same hubs.
+    monkeypatch.setenv("CONTAINERS_READ_CACHE_ENABLED", "false")
 
 
 async def _get(session, slug, **kwargs):
