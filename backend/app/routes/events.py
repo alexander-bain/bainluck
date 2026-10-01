@@ -3771,9 +3771,10 @@ _SCOPE_QUALIFIERS = frozenset({
 def _demote_narrower_scope(name_matches: list, low: list[tuple[str, str]]) -> list:
     """#993 L2-44: for a bare award query ("nba mvp"), a market that adds a
     narrower scope the user did NOT ask for ("Eastern Conference Finals MVP")
-    must not headline over the season/full award on raw volume alone. Stable
-    partition: name-matches carrying a scope qualifier ABSENT from the query sink
-    below those that don't, preserving volume order within each group. No-op when
+    must not headline over the season/full award on raw volume alone. Rows
+    carrying a scope qualifier ABSENT from the query sink below the rows that
+    don't AND whose name holds a query word (#9996), preserving order within
+    each group. No-op when
     the query itself names the scope ("nba finals mvp" keeps the Finals market on
     top) — so it only ever corrects the bare-query headline, never regressing a
     scoped query. Reorders only; nothing is dropped (findability untouched)."""
@@ -3789,9 +3790,38 @@ def _demote_narrower_scope(name_matches: list, low: list[tuple[str, str]]) -> li
         n = m.name or ""
         return any(p.search(n) for p in pats)
 
-    broad = [m for m in name_matches if not _extra_scope(m)]
-    narrow = [m for m in name_matches if _extra_scope(m)]
-    return broad + narrow if narrow else name_matches
+    # #9996: a narrow row sinks only below the broad rows that share the
+    # question — a name holding a query word ("MVP Winner" for `nba mvp`). The
+    # caller passes the FULL list, so on `celtics` the old `broad + narrow` sank
+    # "Will Boston Celtics advance to the Eastern Conference Finals…", the one
+    # row naming the club, below the Draft Lottery and "Steph Curry Next Team",
+    # boards holding the Celtics only as a 1% and a 0.5% option. Each narrow row
+    # now moves to just after the last such broad row; every other row keeps
+    # its place, so a list with no question-sharing broad row is untouched.
+    def _shares_the_question(m) -> bool:
+        n = (m.name or "").lower()
+        return any((t and t in n) or (e and e in n) for t, e in low)
+
+    narrow = [_extra_scope(m) for m in name_matches]
+    last = max(
+        (
+            i
+            for i, (m, is_narrow) in enumerate(zip(name_matches, narrow))
+            if not is_narrow and _shares_the_question(m)
+        ),
+        default=-1,
+    )
+    if last < 0 or not any(narrow[:last]):
+        return name_matches
+    out, held = [], []
+    for i, (m, is_narrow) in enumerate(zip(name_matches, narrow)):
+        if is_narrow and i < last:
+            held.append(m)
+            continue
+        out.append(m)
+        if i == last:
+            out.extend(held)
+    return out
 
 
 #: #8726: a leg priced at or beyond these reads as a foregone answer on a card

@@ -113,8 +113,12 @@ def test_a_name_match_still_leads_every_option_only_row():
 
 
 def test_nets_sinks_the_hornets_board_below_the_nets_conference_boards_too():
-    # `_demote_narrower_scope` sinks "Eastern Conference" boards below full-scope
-    # ones; the Hornets board is full-scope but not about the Nets at all.
+    # The Hornets board is full-scope but not about the Nets at all, so it sinks
+    # below the Nets' "Eastern Conference" board. #9996: that board names the
+    # club, and no full-scope row's NAME holds `nets`, so `_demote_narrower_scope`
+    # no longer sinks it below the Champion board either. On the served page the
+    # headline lane hoists the Champion (tier 1, a real Nets contender) back to
+    # row 0; this is the re-rank alone.
     rows = [
         _Market(20569230, "NBA: 2027 Champion", 22589879, ["Brooklyn Nets", "Boston Celtics"]),
         _Market(3, "NCAAB Championship Winner", 5_000_000,
@@ -122,7 +126,7 @@ def test_nets_sinks_the_hornets_board_below_the_nets_conference_boards_too():
         _Market(61380772, "Will Brooklyn Nets advance to the Eastern Conference "
                 "Semifinals in the 2027 NBA Playoffs?", None, ["Yes", "No"], market_tier=2),
     ]
-    assert _ids(_rank(rows, [("nets", None)])) == [20569230, 61380772, 3]
+    assert _ids(_rank(rows, [("nets", None)])) == [61380772, 20569230, 3]
 
 
 def test_a_name_match_is_never_flagged_by_its_options():
