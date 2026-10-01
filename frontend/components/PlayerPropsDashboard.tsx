@@ -16,6 +16,14 @@ interface PlayerPropsDashboardProps {
   eventStatus?: string;
   homeTeam?: string;
   awayTeam?: string;
+  /** #10124 — the event's served team codes (`home_team_data.abbreviation`),
+   *  so the filter chips read CLE / PIT like the rest of the page. Optional: a
+   *  caller that does not pass them keeps the crest badge. */
+  homeTeamAbbrev?: string | null;
+  awayTeamAbbrev?: string | null;
+  /** #10124 — the event's sport key, for the crest-badge fallback, which the
+   *  event hero already calls with it. Optional, as above. */
+  sport?: string | null;
   homeColor?: string;
   awayColor?: string;
   boxScore?: { players?: Array<{ name: string; team: string; stats: Record<string, number> }> } | null;
@@ -425,6 +433,9 @@ export default function PlayerPropsDashboard({
   eventStatus,
   homeTeam,
   awayTeam,
+  homeTeamAbbrev,
+  awayTeamAbbrev,
+  sport,
   homeColor,
   awayColor,
   boxScore,
@@ -530,8 +541,24 @@ export default function PlayerPropsDashboard({
   // `|| "HOME"` rather than `??`: the old expression only reached its fallback
   // on a null/undefined name, so an EMPTY one labelled the chip with an empty
   // string. A filter button a reader cannot name is worse than a generic one.
-  const homeShortCode = shippableCrestBadge(homeTeam) || "HOME";
-  const awayShortCode = shippableCrestBadge(awayTeam) || "AWAY";
+  //
+  // #10124 — the badge reads a team's NICKNAME, so the Browns and Steelers
+  // painted BRO / STE (/events/14780550, 390px) while the page's market map
+  // read the served codes CLE / PIT. Passing the sport alone changes nothing
+  // for them: the badge is BRO with or without it. So a served code wins, but
+  // only as a PAIR — both sides carry a chip-shaped one (2–4 capitals/digits,
+  // which keeps out the long college names some rows store there) and they
+  // differ — so the chips can never read "CLE / STE" or one code twice.
+  // Otherwise the hero's own fallback: the badge, with the sport.
+  const chipCode = (abbrev?: string | null) => {
+    const code = (abbrev ?? "").trim();
+    return /^[A-Z0-9]{2,4}$/.test(code) ? code : "";
+  };
+  const homeCode = chipCode(homeTeamAbbrev);
+  const awayCode = chipCode(awayTeamAbbrev);
+  const servedCodes = homeCode !== "" && awayCode !== "" && homeCode !== awayCode;
+  const homeShortCode = (servedCodes ? homeCode : shippableCrestBadge(homeTeam, sport)) || "HOME";
+  const awayShortCode = (servedCodes ? awayCode : shippableCrestBadge(awayTeam, sport)) || "AWAY";
 
   return (
     <div>
