@@ -208,8 +208,12 @@ function detectCurrentHalf(
   vocab: SportScoringVocab
 ): "1H" | "2H" | null {
   if (!espnHistory || espnHistory.length === 0) return null;
-  const latest = espnHistory[espnHistory.length - 1];
-  if (!latest.period) return null;
+  // #9977: the latest row that NAMES a period, not the latest row. The served
+  // history interleaves ~2-minute samples carrying `period: null` between the
+  // rows written at each change, so the last row was a null sample about two
+  // minutes in three and the live first-five card lost its Actual for them.
+  const latest = [...espnHistory].reverse().find((e) => e.period);
+  if (!latest?.period) return null;
   // #8557: `Top 3rd` fell through to "2H" below, so a live first-five card
   // looked for a halftime row that baseball never writes and drew no Actual.
   // `End 5th` is still the first period, as `Halftime` is. A row that names
