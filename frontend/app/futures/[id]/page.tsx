@@ -697,6 +697,14 @@ export default function FuturesDetailPage({ params }: FuturesDetailPageProps) {
   }
 
   const isResolved = market.status === "resolved";
+  // #8135 / #10074: the Probability Trend card's ONE cadence sentence. Printed by the
+  // range controls on a sparse board; the chart's empty state is told it is already
+  // on screen so "Final — prices no longer update" does not appear twice.
+  const trendCadenceNote = historyData?.sparse
+    ? priceCadenceNote(isResolved, {
+        dormant: isCadenceDormant(boardLastObservationMs),
+      })
+    : null;
   // #7060 — the banner is gated on settlement EVIDENCE (`status`), never on a
   // scheduled date having gone by. See `lib/settlementBanner.ts`.
   const settlementBanner = settlementBannerText(market);
@@ -1113,13 +1121,7 @@ export default function FuturesDetailPage({ params }: FuturesDetailPageProps) {
                    whether any of it is recent. The specimen was sparse, open and
                    four weeks cold, so the old gate returned the live promise over
                    a chart captioned "Last number 29 days ago". */
-                cadenceNote={
-                  historyData.sparse
-                    ? priceCadenceNote(isResolved, {
-                        dormant: isCadenceDormant(boardLastObservationMs),
-                      })
-                    : null
-                }
+                cadenceNote={trendCadenceNote}
               />
             </div>
             {/* Tab toggle: Over Time / By Stage */}
@@ -1178,6 +1180,7 @@ export default function FuturesDetailPage({ params }: FuturesDetailPageProps) {
               fieldCeiling
               settled={isResolved}
               marketName={market?.name}
+              cadenceNoteShown={trendCadenceNote != null}
             />
           )}
           {/* The clarification: WHY the blend line moved (#871-style). Suppressed
