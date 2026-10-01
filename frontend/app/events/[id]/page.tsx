@@ -1075,7 +1075,15 @@ export default function EventPage({ params }: EventPageProps) {
   // "Start" that never happened. Same `false` the server sends for a venue's
   // resolution hour (#8215/#8370), so every consumer of that flag declines the
   // cut with no new branch. Absent a stoppage the served value passes through.
-  const commenceTimeIsKickoff = heroScoreIsStoppageFiller
+  //
+  // #6158 — and a game the authority still reads pregame past its listed hour
+  // (#9968's `authority_not_started`) has not kicked off YET. On 15322334
+  // (Costoulas v Lansere, listed 03:10Z, still scheduled at 03:14Z) the hero
+  // read "Pregame" while the chart pinned a "Start" line at 03:10Z. The flag is
+  // served only while the row is scheduled, so first play restores the cut.
+  const authorityHasNotStarted =
+    event?.status === "scheduled" && event?.authority_not_started === true;
+  const commenceTimeIsKickoff = heroScoreIsStoppageFiller || authorityHasNotStarted
     ? false
     : historyData?.commence_time_is_kickoff;
 
