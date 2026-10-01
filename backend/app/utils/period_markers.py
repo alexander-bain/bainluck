@@ -255,13 +255,25 @@ def estimated_period_markers(
         ]
 
     if sport_key.startswith("basketball"):
-        if "ncaab" in sport_key or "wncaab" in sport_key:
-            # NCAA basketball: 2 halves of 20 min each
+        if sport_key.startswith("basketball_ncaab"):
+            # Men's college basketball: 2 halves of 20 min each
             return [at(0, "1st Half"), at(55, "2nd Half")]
-        # NBA: 4 quarters of 12 min each (real-time ~30-35 min per quarter)
+        if sport_key.startswith("basketball_nba"):
+            # NBA: 4 quarters of 12 min each (real-time ~30-35 min per quarter)
+            return [
+                at(0, "1st Quarter"), at(33, "2nd Quarter"),
+                at(80, "3rd Quarter"), at(113, "4th Quarter"),
+            ]
+        # Everyone else plays 4 quarters of 10 min (#10069): FIBA — EuroLeague,
+        # NBL, the Olympics — and the WNBA and women's college game (see
+        # `sport_keys.py`'s period table: wncaab is quarters, not halves). The
+        # NBA table drew EuroLeague's '~Q4' on the final whistle of 15292394
+        # (last reading +113). Three WNBA finals games (2026-09-29/30) measured
+        # quarter starts at ~+31/+74/+102 from the listed time; FIBA runs
+        # tighter, with fewer timeouts.
         return [
-            at(0, "1st Quarter"), at(33, "2nd Quarter"),
-            at(80, "3rd Quarter"), at(113, "4th Quarter"),
+            at(0, "1st Quarter"), at(27, "2nd Quarter"),
+            at(70, "3rd Quarter"), at(97, "4th Quarter"),
         ]
 
     if sport_key.startswith("americanfootball"):
