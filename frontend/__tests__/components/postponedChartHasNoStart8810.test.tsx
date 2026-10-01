@@ -111,7 +111,9 @@ describe("#8810 — the event page wires it", () => {
 
   it("derives the flag from the stoppage filler, passing the served value through otherwise", () => {
     expect(src).toMatch(
-      /const commenceTimeIsKickoff = heroScoreIsStoppageFiller\s*\?\s*false\s*:\s*historyData\?\.commence_time_is_kickoff;/,
+      // #6158 adds one `||` arm (a game the authority still reads pregame); the
+      // stoppage filler stays the first operand.
+      /const commenceTimeIsKickoff = heroScoreIsStoppageFiller(?:\s*\|\|\s*authorityHasNotStarted)?\s*\?\s*false\s*:\s*historyData\?\.commence_time_is_kickoff;/,
     );
   });
 
