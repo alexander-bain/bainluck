@@ -302,9 +302,7 @@ class TestAMissingChildIsReceiptedNotEdged:
         ).scalar()
         assert left == 0
 
-    async def test_the_missing_child_leaves_no_receipt_it_cannot_key(
-        self, pg_session
-    ):
+    async def test_the_missing_child_leaves_no_receipt_it_cannot_key(self, pg_session):
         """The honest asymmetry, asserted rather than discovered later.
 
         `market_match_receipts.market_id` has a real FK to `futures_markets`,
@@ -382,7 +380,9 @@ class TestTheMatchersReceiptIsKept:
         await flush_receipts(pg_session, [matched])
         await pg_session.commit()
 
-        report = await assemble_container(pg_session, container, _candidates(market_ids))
+        report = await assemble_container(
+            pg_session, container, _candidates(market_ids)
+        )
         await pg_session.commit()
 
         assert report.edges_written == 3
@@ -403,7 +403,9 @@ class TestTheMatchersReceiptIsKept:
         await assemble_container(pg_session, container, _candidates(market_ids))
         await pg_session.commit()
 
-        report = await assemble_container(pg_session, container, _candidates(market_ids))
+        report = await assemble_container(
+            pg_session, container, _candidates(market_ids)
+        )
         await pg_session.commit()
 
         assert (report.receipts_written, report.receipts_preserved) == (3, 0)
@@ -417,17 +419,28 @@ class TestTheCollectionRow:
         from app.tasks.container_assembly import _collection_container
 
         first, how = await _collection_container(
-            pg_session, "nfl-2026-week-4", "NFL 2026 · Week 4", "season", None, None,
+            pg_session,
+            "nfl-2026-week-4",
+            "NFL 2026 · Week 4",
+            "season",
+            None,
+            None,
             apply=True,
         )
         await pg_session.commit()
         assert how == "created" and first.id is not None
 
         await pg_session.execute(
-            text("UPDATE containers SET name = 'corrected' WHERE id = :id"), {"id": first.id}
+            text("UPDATE containers SET name = 'corrected' WHERE id = :id"),
+            {"id": first.id},
         )
         again, how = await _collection_container(
-            pg_session, "nfl-2026-week-4", "NFL 2026 · Week 4", "season", None, None,
+            pg_session,
+            "nfl-2026-week-4",
+            "NFL 2026 · Week 4",
+            "season",
+            None,
+            None,
             apply=True,
         )
         await pg_session.commit()
@@ -443,8 +456,13 @@ class TestTheCollectionRow:
         from app.tasks.container_assembly import _collection_container
 
         stand_in, how = await _collection_container(
-            pg_session, "mlb-2026-postseason", "MLB 2026 Postseason", "tournament",
-            None, None, apply=False,
+            pg_session,
+            "mlb-2026-postseason",
+            "MLB 2026 Postseason",
+            "tournament",
+            None,
+            None,
+            apply=False,
         )
         assert how == "would_create" and stand_in.id is None
         assert (
@@ -828,9 +846,7 @@ class TestTheDanglingEdgeCheck:
         await pg_session.commit()
 
         result = await pg_session.execute(
-            text(
-                "SELECT count(*), count(container_id) FROM market_match_receipts"
-            )
+            text("SELECT count(*), count(container_id) FROM market_match_receipts")
         )
         total, with_container = result.fetchone()
         assert total == 3, "the receipts must survive their container"
@@ -860,14 +876,38 @@ async def _seed_tour_markets(session):
 
     rows = [
         # (external_id, name, ticker date, stored commence = ticker + 14d)
-        ("KXWTAMATCH-26SEP06SWIZHE-SWI", "Iga Swiatek wins", datetime(2026, 9, 20, 15, tzinfo=timezone.utc)),
-        ("KXWTAMATCH-26SEP06SWIZHE-ZHE", "Qinwen Zheng wins", datetime(2026, 9, 20, 15, tzinfo=timezone.utc)),
-        ("KXATPMATCH-26SEP07GEAVAN-GEA", "Gea wins", datetime(2026, 9, 21, 15, tzinfo=timezone.utc)),
-        ("KXMIXEDDOUBLESMATCH-26AUG25ABCDEF-A", "Mixed pair A wins", datetime(2026, 9, 8, 15, tzinfo=timezone.utc)),
+        (
+            "KXWTAMATCH-26SEP06SWIZHE-SWI",
+            "Iga Swiatek wins",
+            datetime(2026, 9, 20, 15, tzinfo=timezone.utc),
+        ),
+        (
+            "KXWTAMATCH-26SEP06SWIZHE-ZHE",
+            "Qinwen Zheng wins",
+            datetime(2026, 9, 20, 15, tzinfo=timezone.utc),
+        ),
+        (
+            "KXATPMATCH-26SEP07GEAVAN-GEA",
+            "Gea wins",
+            datetime(2026, 9, 21, 15, tzinfo=timezone.utc),
+        ),
+        (
+            "KXMIXEDDOUBLESMATCH-26AUG25ABCDEF-A",
+            "Mixed pair A wins",
+            datetime(2026, 9, 8, 15, tzinfo=timezone.utc),
+        ),
         # The tour AFTER the US Open: the 42 KXATPDOUBLES rows measured on
         # production were all 09-18 -> 09-20.
-        ("KXATPDOUBLES-26SEP18AAABBB-A", "Next tour pair A", datetime(2026, 10, 2, 15, tzinfo=timezone.utc)),
-        ("KXATPDOUBLES-26SEP18AAABBB-B", "Next tour pair B", datetime(2026, 10, 2, 15, tzinfo=timezone.utc)),
+        (
+            "KXATPDOUBLES-26SEP18AAABBB-A",
+            "Next tour pair A",
+            datetime(2026, 10, 2, 15, tzinfo=timezone.utc),
+        ),
+        (
+            "KXATPDOUBLES-26SEP18AAABBB-B",
+            "Next tour pair B",
+            datetime(2026, 10, 2, 15, tzinfo=timezone.utc),
+        ),
     ]
     ids = {}
     for external_id, name, commence in rows:
@@ -891,7 +931,9 @@ async def _seed_tour_markets(session):
 class TestTheDeclaredPass:
     """`run_declared_assembly` against a real schema, from empty."""
 
-    async def test_the_tables_probe_answers_yes_on_a_migrated_database(self, pg_session):
+    async def test_the_tables_probe_answers_yes_on_a_migrated_database(
+        self, pg_session
+    ):
         from app.tasks.container_assembly import containers_tables_present
 
         assert await containers_tables_present(pg_session) is True
@@ -973,14 +1015,14 @@ class TestTheDeclaredPass:
 
         total = (
             await pg_session.execute(
-                text(
-                    "SELECT count(*) FROM event_edges WHERE parent_type = 'container'"
-                )
+                text("SELECT count(*) FROM event_edges WHERE parent_type = 'container'")
             )
         ).scalar()
         assert total == first["members"]
 
-    async def test_a_pass_with_nothing_to_find_is_partial_not_complete(self, pg_session):
+    async def test_a_pass_with_nothing_to_find_is_partial_not_complete(
+        self, pg_session
+    ):
         """gotcha #53: "it returned" is not "it worked"."""
         from app.tasks.container_assembly import run_declared_assembly
         from app.utils.container_tournaments import US_OPEN_2026
@@ -1026,9 +1068,7 @@ class TestTheDeclaredPass:
         assert root["by_anchor"][0]["bounded_by_window"] is False
         edged = (
             await pg_session.execute(
-                text(
-                    "SELECT child_id FROM event_edges WHERE parent_type = 'container'"
-                )
+                text("SELECT child_id FROM event_edges WHERE parent_type = 'container'")
             )
         ).scalar()
         assert edged == market.id
@@ -1099,7 +1139,9 @@ class TestCorrectionsBeforeTheMigration:
     async def test_an_unmigrated_database_runs_the_old_pass(self, pg_session):
         """No ledger, no rule to honour: the pass must be exactly the old one."""
         container, market_ids = await _seed(pg_session)
-        report = await assemble_container(pg_session, container, _candidates(market_ids))
+        report = await assemble_container(
+            pg_session, container, _candidates(market_ids)
+        )
         await pg_session.commit()
 
         assert report.corrections == "absent"
@@ -1116,7 +1158,9 @@ class TestAWithdrawnMemberStaysWithdrawn:
         await assemble_container(s, container, _candidates(market_ids))
         await s.commit()
 
-        result = await withdraw_member(s, **_withdraw_kwargs(container.id, market_ids[2]))
+        result = await withdraw_member(
+            s, **_withdraw_kwargs(container.id, market_ids[2])
+        )
         await s.commit()
         assert result.applied and result.edges_removed == 1
 
@@ -1136,8 +1180,12 @@ class TestAWithdrawnMemberStaysWithdrawn:
         s = corrected_session
         container, market_ids = await _seed(s)
         await assemble_container(s, container, _candidates(market_ids))
-        first = await withdraw_member(s, **_withdraw_kwargs(container.id, market_ids[0]))
-        again = await withdraw_member(s, **_withdraw_kwargs(container.id, market_ids[0]))
+        first = await withdraw_member(
+            s, **_withdraw_kwargs(container.id, market_ids[0])
+        )
+        again = await withdraw_member(
+            s, **_withdraw_kwargs(container.id, market_ids[0])
+        )
         await s.commit()
 
         assert first.applied and not again.applied
@@ -1250,7 +1298,8 @@ class TestStaleRevisions:
 
         with pytest.raises(StaleRevision):
             await withdraw_member(
-                s, **_withdraw_kwargs(container.id, market_ids[1], expected_revision=seen)
+                s,
+                **_withdraw_kwargs(container.id, market_ids[1], expected_revision=seen),
             )
         await s.rollback()
         assert await _ledger_count(s) == 1
@@ -1282,7 +1331,9 @@ class TestStaleRevisions:
             await decider.execute(text("SET lock_timeout = '20s'"))
             await assembler.execute(text("SET lock_timeout = '20s'"))
 
-            await withdraw_member(decider, **_withdraw_kwargs(container.id, market_ids[2]))
+            await withdraw_member(
+                decider, **_withdraw_kwargs(container.id, market_ids[2])
+            )
             # The decider holds the lock, uncommitted. The pass must wait.
             pass_task = asyncio.create_task(
                 assemble_container(assembler, container, stale_candidates)
@@ -1318,7 +1369,9 @@ class TestStaleRevisions:
             await assemble_container(assembler, container, _candidates(market_ids))
             # The pass holds the lock, uncommitted. The withdrawal must wait.
             decision = asyncio.create_task(
-                withdraw_member(decider, **_withdraw_kwargs(container.id, market_ids[2]))
+                withdraw_member(
+                    decider, **_withdraw_kwargs(container.id, market_ids[2])
+                )
             )
             await asyncio.sleep(1.0)
             assert not decision.done(), "the withdrawal did not wait for the pass"
@@ -1403,7 +1456,9 @@ class TestTheReadContract:
         assert withdrawn.state == "withdrawn" and withdrawn.members == []
         assert len(await _edge_rows(s, container.id)) == 3, "membership is kept"
 
-        await publish_container(s, container_id=container.id, reason="fixed", actor="test")
+        await publish_container(
+            s, container_id=container.id, reason="fixed", actor="test"
+        )
         for market_id in market_ids:
             await withdraw_member(s, **_withdraw_kwargs(container.id, market_id))
         await s.commit()
@@ -1415,3 +1470,741 @@ class TestTheReadContract:
         for statement in UPGRADE_STATEMENTS:
             await corrected_session.execute(text(statement))
         await corrected_session.commit()
+
+
+# ---------------------------------------------------------------------------
+# #9649 — withdraw a published hub's winner edges, and undo it exactly
+# ---------------------------------------------------------------------------
+#
+# The operator's SQL (row locks, `to_jsonb` preimages, catalog-typed re-insert
+# with explicit ids, the FK on receipt_id) is only gradable on a server. Two
+# hubs shaped like Week 4/5: game cards, Kalshi + Polymarket winner duels (one
+# game with two Polymarket winners), and the controls that must stay — a "1H
+# Moneyline" segment winner, a spread duel and the Polymarket field wrapper.
+
+
+def _member_options(**changes):
+    from scripts.collection_publication import Options
+
+    base = dict(operation="withdraw-members")
+    base.update(changes)
+    return Options(**base)
+
+
+def _member_apply(manifest_or_backup, revisions, operation="withdraw-members"):
+    key = "manifest" if operation == "withdraw-members" else "backup"
+    return _member_options(
+        operation=operation,
+        apply=True,
+        restore_from_ledger=operation == "readmit-members",
+        hub_revisions=tuple(revisions.items()),
+        actor="authority-test",
+        reason="#9649 winner duplicates of the game card",
+        evidence={"review": "test"},
+        **{key: str(manifest_or_backup)},
+    )
+
+
+async def _full_rows(session, edge_ids):
+    from scripts.collection_publication import _preimages
+
+    await session.execute(text("SET LOCAL TIME ZONE 'UTC'"))
+    rows = await _preimages(session, edge_ids)
+    await session.rollback()
+    return rows
+
+
+async def _market_edge_ids(session, container_id):
+    rows = await session.execute(
+        text(
+            "SELECT child_id FROM event_edges WHERE parent_type = 'container' "
+            "AND parent_id = :cid AND kind = 'contains' AND child_type = 'market' "
+            "ORDER BY child_id"
+        ),
+        {"cid": container_id},
+    )
+    return [r[0] for r in rows.fetchall()]
+
+
+async def _event_count(session, container_id):
+    return (
+        await session.execute(
+            text(
+                "SELECT count(*) FROM event_edges WHERE parent_type = 'container' "
+                "AND parent_id = :cid AND kind = 'contains' AND child_type = 'event'"
+            ),
+            {"cid": container_id},
+        )
+    ).scalar()
+
+
+@pytest.fixture
+async def week_hubs(corrected_session, tmp_path):
+    """Two published NFL-week hubs, their manifest, and a session factory."""
+    import json
+    from types import SimpleNamespace
+
+    from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
+
+    from app.models.models import (
+        Container,
+        Event,
+        EventEdge,
+        FuturesMarket,
+        MarketMatchReceipt,
+        Sport,
+    )
+    from app.utils.container_corrections import publish_container
+
+    s = corrected_session
+    sport = Sport(key="americanfootball_nfl", name="NFL", active=True)
+    s.add(sport)
+    await s.flush()
+    now = datetime.now(timezone.utc)
+    hubs, targets, controls, games, pins = {}, [], [], {}, {}
+    layout = {
+        "nfl-2026-week-4": [
+            ("PIT Steelers vs CLE Browns", "Steelers vs. Browns", 1),
+            ("IND Colts vs WAS Commanders", "Colts vs. Commanders", 1),
+        ],
+        "nfl-2026-week-5": [("CHI Bears vs GB Packers", "Bears vs. Packers", 2)],
+    }
+    receipt_market = None
+    for slug, fixtures in layout.items():
+        hub = Container(
+            kind="season", name=slug, slug=slug, sport_id=sport.id, status="scheduled"
+        )
+        s.add(hub)
+        await s.flush()
+        hubs[slug] = hub.id
+        games[hub.id] = []
+        for kalshi_name, poly_name, poly_winners in fixtures:
+            game = Event(
+                sport_id=sport.id,
+                home_team_name=kalshi_name.split(" vs ")[1],
+                away_team_name=kalshi_name.split(" vs ")[0],
+                commence_time=now + timedelta(days=2),
+                status="scheduled",
+            )
+            s.add(game)
+            await s.flush()
+            games[hub.id].append(game.id)
+            s.add(
+                EventEdge(
+                    parent_type="container",
+                    parent_id=hub.id,
+                    child_type="event",
+                    child_id=game.id,
+                    kind="contains",
+                    edge_class="match_winner",
+                    source="authority_tournament_id",
+                    confidence=1,
+                )
+            )
+            rows = [("kalshi", f"KXNFLGAME-{game.id}", kalshi_name, "duel", True)]
+            rows += [
+                ("polymarket", f"0xwin{game.id}{n}", poly_name, "duel", True)
+                for n in range(poly_winners)
+            ]
+            rows += [
+                (
+                    "polymarket",
+                    f"0x1h{game.id}",
+                    f"1H Moneyline: {poly_name}",
+                    "duel",
+                    False,
+                ),
+                ("polymarket", f"0xsp{game.id}", "Spread: Home (-2.5)", "duel", False),
+                ("polymarket", f"0xfield{game.id}", poly_name, "field", False),
+            ]
+            for source, external_id, name, shape, is_target in rows:
+                market = FuturesMarket(
+                    source=source,
+                    external_id=external_id,
+                    sport_id=sport.id,
+                    name=name,
+                    category="sports",
+                    market_type=shape,
+                    event_id=game.id,
+                    commence_time=now + timedelta(days=2),
+                    status="open",
+                )
+                s.add(market)
+                await s.flush()
+                receipt_id = None
+                if is_target and receipt_market is None:
+                    receipt = MarketMatchReceipt(
+                        market_id=market.id,
+                        source=source,
+                        phase="container",
+                        outcome="linked",
+                        first_attempted_at=now,
+                        last_attempted_at=now,
+                        attempt_count=1,
+                    )
+                    s.add(receipt)
+                    await s.flush()
+                    receipt_market, receipt_id = market.id, receipt.id
+                edge = EventEdge(
+                    parent_type="container",
+                    parent_id=hub.id,
+                    child_type="market",
+                    child_id=market.id,
+                    kind="contains",
+                    edge_class="match_winner" if is_target else "prop",
+                    source="venue_grouping",
+                    confidence=0.875,
+                    receipt_id=receipt_id,
+                )
+                s.add(edge)
+                await s.flush()
+                record = dict(
+                    container_id=hub.id,
+                    container_slug=slug,
+                    edge_id=edge.id,
+                    edge_class=edge.edge_class,
+                    child_type="market",
+                    market_id=market.id,
+                    venue=source,
+                    market_type=shape,
+                    event_id=game.id,
+                    external_id=external_id,
+                )
+                (targets if is_target else controls).append(record)
+        await s.commit()
+        await publish_container(s, container_id=hub.id, reason="go", actor="test")
+        await s.commit()
+    ledger = (
+        await s.execute(text("SELECT id, container_id FROM container_corrections"))
+    ).fetchall()
+    for slug, cid in hubs.items():
+        hub_targets = [t for t in targets if t["container_id"] == cid]
+        for t in hub_targets:
+            t["expected_revision"] = await _revision(s, cid)
+        pins[str(cid)] = {
+            "slug": slug,
+            "publication_state": "published",
+            "membership_revision": await _revision(s, cid),
+            "events": len(games[cid]),
+            "market_edges": len(await _market_edge_ids(s, cid)),
+            "targets": len(hub_targets),
+            "ledger_rows": [r[0] for r in ledger if r[1] == cid],
+        }
+    manifest = tmp_path / "MANIFEST.json"
+    manifest.write_text(json.dumps({"issue": 9649, "pins": pins, "targets": targets}))
+    engine = create_async_engine(DB_URL)
+    factory = async_sessionmaker(engine, expire_on_commit=False)
+    try:
+        yield SimpleNamespace(
+            session=s,
+            factory=factory,
+            hubs=hubs,
+            games=games,
+            pins=pins,
+            targets=targets,
+            controls=controls,
+            manifest=manifest,
+            receipt_market=receipt_market,
+            tmp=tmp_path,
+        )
+    finally:
+        await engine.dispose()
+
+
+def _revisions(world, bump=0):
+    return {cid: 1 + bump for cid in world.hubs.values()}
+
+
+class TestMemberWithdrawPreview:
+    async def test_default_preview_reads_every_target_and_writes_nothing(
+        self, week_hubs
+    ):
+        from scripts.collection_publication import run_members
+
+        w = week_hubs
+        before = await _ledger_count(w.session)
+        doc, code = await run_members(
+            _member_options(manifest=str(w.manifest)), w.factory
+        )
+        assert code == 0 and doc["status"] == "preview" and doc["committed_hubs"] == []
+        week4, week5 = doc["hubs"]
+        assert len(week4["targets"]) == 4 and len(week5["targets"]) == 3
+        assert week4["would_be_revision"] == 1 + 4
+        assert all(t["preimage"]["confidence"] == "0.875" for t in week4["targets"])
+        assert week4["receipt_kind"] == "preview" and week4["undo"] is None
+        assert await _ledger_count(w.session) == before
+        for cid in w.hubs.values():
+            assert await _revision(w.session, cid) == 1
+        assert len(await _market_edge_ids(w.session, w.hubs["nfl-2026-week-4"])) == 10
+
+
+class TestMemberWithdrawApply:
+    async def test_apply_removes_exactly_the_targets_and_records_full_preimages(
+        self, week_hubs
+    ):
+        import json
+
+        from scripts.collection_publication import run_members
+
+        w = week_hubs
+        s = w.session
+        target_ids = [t["edge_id"] for t in w.targets]
+        rows_before = await _full_rows(s, target_ids)
+        doc, code = await run_members(
+            _member_apply(w.manifest, _revisions(w)), w.factory
+        )
+        assert code == 0 and doc["status"] == "applied", doc
+        assert doc["committed_hubs"] == sorted(w.hubs.values())
+        for receipt in doc["hubs"]:
+            cid = receipt["container_id"]
+            n = len(receipt["targets"])
+            assert receipt["committed"] is True
+            assert receipt["pre_revision"] == 1 and receipt["post_revision"] == 1 + n
+            assert [t["revision_after"] for t in receipt["targets"]] == list(
+                range(2, 2 + n)
+            )
+            assert await _revision(s, cid) == 1 + n
+            assert await _event_count(s, cid) == len(w.games[cid])
+            for t in receipt["targets"]:
+                assert t["preimage"] == rows_before[t["edge_id"]]
+        assert await _full_rows(s, target_ids) == {}
+        kept = {c["market_id"] for c in w.controls}
+        for cid in w.hubs.values():
+            assert (
+                set(await _market_edge_ids(s, cid))
+                == {c["market_id"] for c in w.controls if c["container_id"] == cid}
+                and kept
+            )
+        ledger = (
+            await s.execute(
+                text(
+                    "SELECT scope, action, child_id, evidence FROM container_corrections "
+                    "WHERE scope = 'member' ORDER BY id"
+                )
+            )
+        ).fetchall()
+        assert len(ledger) == len(w.targets)
+        evidence = {r[2]: r[3] for r in ledger}
+        receipt_target = next(
+            t for t in w.targets if t["market_id"] == w.receipt_market
+        )
+        recorded = evidence[w.receipt_market]
+        recorded = json.loads(recorded) if isinstance(recorded, str) else recorded
+        assert recorded["preimage"] == rows_before[receipt_target["edge_id"]]
+        assert recorded["preimage"]["receipt_id"] is not None
+        assert recorded["classifier"]["result"] is True
+
+    async def test_withdrawals_survive_a_recurring_assembly_pass(self, week_hubs):
+        """Even a pass from code that still proposes winners cannot re-add them."""
+        from types import SimpleNamespace
+
+        from scripts.collection_publication import run_members
+
+        w = week_hubs
+        s = w.session
+        await run_members(_member_apply(w.manifest, _revisions(w)), w.factory)
+        cid = w.hubs["nfl-2026-week-4"]
+        proposed = [t for t in w.targets if t["container_id"] == cid]
+        candidates = [
+            Candidate(
+                child_type="market",
+                child_id=t["market_id"],
+                source="venue_grouping",
+                evidence=MemberEvidence(node_type="market", name="Steelers vs. Browns"),
+                external_id=t["external_id"],
+                market_source=t["venue"],
+            )
+            for t in proposed
+        ]
+        report = await assemble_container(
+            s, SimpleNamespace(id=cid, slug="nfl-2026-week-4"), candidates
+        )
+        await s.commit()
+        assert report.corrections == "honoured"
+        assert sorted(x["child_id"] for x in report.withdrawn) == sorted(
+            t["market_id"] for t in proposed
+        )
+        assert not set(await _market_edge_ids(s, cid)) & {
+            t["market_id"] for t in proposed
+        }
+
+    async def test_a_failure_rolls_back_that_hub_and_reports_the_earlier_commit(
+        self, week_hubs, monkeypatch
+    ):
+        from app.utils import container_corrections as cc
+        from scripts.collection_publication import run_members
+
+        w = week_hubs
+        s = w.session
+        week4, week5 = w.hubs["nfl-2026-week-4"], w.hubs["nfl-2026-week-5"]
+        real = cc.withdraw_member
+        calls = {"week5": 0}
+
+        async def flaky(session, **kwargs):
+            if kwargs["container_id"] == week5:
+                calls["week5"] += 1
+                if calls["week5"] == 2:
+                    raise RuntimeError("connection lost mid-hub")
+            return await real(session, **kwargs)
+
+        monkeypatch.setattr(cc, "withdraw_member", flaky)
+        week5_edges = await _market_edge_ids(s, week5)
+        doc, code = await run_members(
+            _member_apply(w.manifest, _revisions(w)), w.factory
+        )
+        assert code == 1 and doc["status"] == "partial"
+        assert doc["committed_hubs"] == [week4]
+        first, second = doc["hubs"]
+        assert first["status"] == "applied" and first["committed"] is True
+        assert second["status"] == "failed" and second["committed"] is False
+        assert await _revision(s, week4) == 1 + 4
+        assert await _revision(s, week5) == 1
+        assert await _market_edge_ids(s, week5) == week5_edges
+        week5_rows = (
+            await s.execute(
+                text(
+                    "SELECT count(*) FROM container_corrections "
+                    "WHERE container_id = :cid AND scope = 'member'"
+                ),
+                {"cid": week5},
+            )
+        ).scalar()
+        assert week5_rows == 0
+
+    async def test_a_stale_hub_refuses_every_hub_before_any_write(self, week_hubs):
+        from app.utils.container_corrections import withdraw_member
+        from scripts.collection_publication import run_members
+
+        w = week_hubs
+        s = w.session
+        week5 = w.hubs["nfl-2026-week-5"]
+        control = next(c for c in w.controls if c["container_id"] == week5)
+        await withdraw_member(s, **_withdraw_kwargs(week5, control["market_id"]))
+        await s.commit()
+        before = await _ledger_count(s)
+        doc, code = await run_members(
+            _member_apply(w.manifest, _revisions(w)), w.factory
+        )
+        assert code == 1 and doc["status"] == "refused" and doc["committed_hubs"] == []
+        assert [h["status"] for h in doc["hubs"]] == ["not_attempted", "refused"]
+        assert doc["hubs"][1]["current_revision"] == 2
+        assert await _ledger_count(s) == before
+        assert await _revision(s, w.hubs["nfl-2026-week-4"]) == 1
+
+
+class TestExactRestore:
+    async def _withdrawn(self, w):
+        import json
+
+        from scripts.collection_publication import run_members
+
+        doc, code = await run_members(
+            _member_apply(w.manifest, _revisions(w)), w.factory
+        )
+        assert code == 0, doc
+        backup = w.tmp / "BACKUP.json"
+        backup.write_text(json.dumps(doc))
+        posts = {h["container_id"]: h["post_revision"] for h in doc["hubs"]}
+        return doc, backup, posts
+
+    async def test_restore_reinserts_the_identical_rows_without_assembly(
+        self, week_hubs
+    ):
+        from scripts.collection_publication import run_members
+
+        w = week_hubs
+        s = w.session
+        target_ids = [t["edge_id"] for t in w.targets]
+        rows_before = await _full_rows(s, target_ids)
+        withdrawn, backup, posts = await self._withdrawn(w)
+
+        preview, code = await run_members(
+            _member_options(
+                operation="readmit-members",
+                restore_from_ledger=True,
+                backup=str(backup),
+            ),
+            w.factory,
+        )
+        assert code == 0 and preview["status"] == "preview"
+        assert await _full_rows(s, target_ids) == {}
+
+        doc, code = await run_members(
+            _member_apply(backup, posts, "readmit-members"), w.factory
+        )
+        assert code == 0 and doc["status"] == "applied", doc
+        assert await _full_rows(s, target_ids) == rows_before
+        for receipt in doc["hubs"]:
+            cid, n = receipt["container_id"], len(receipt["targets"])
+            assert receipt["receipt_kind"] == "restore_apply"
+            assert receipt["post_revision"] == posts[cid] + n == 1 + 2 * n
+            assert await _revision(s, cid) == 1 + 2 * n
+        latest = (
+            await s.execute(
+                text(
+                    "SELECT DISTINCT ON (child_id) action FROM container_corrections "
+                    "WHERE scope = 'member' ORDER BY child_id, id DESC"
+                )
+            )
+        ).fetchall()
+        assert {r[0] for r in latest} == {"readmit"}
+
+        # A later pass that (after #9990) never proposes winners leaves them be.
+        from types import SimpleNamespace
+
+        week4 = w.hubs["nfl-2026-week-4"]
+        controls = [c for c in w.controls if c["container_id"] == week4]
+        report = await assemble_container(
+            s,
+            SimpleNamespace(id=week4, slug="nfl-2026-week-4"),
+            [
+                Candidate(
+                    child_type="market",
+                    child_id=c["market_id"],
+                    source="venue_grouping",
+                    evidence=MemberEvidence(node_type="market", name="Spread"),
+                    external_id=c["external_id"],
+                    market_source=c["venue"],
+                )
+                for c in controls
+            ],
+        )
+        await s.commit()
+        assert report.withdrawn == []
+        assert await _full_rows(s, target_ids) == rows_before
+
+    @pytest.mark.parametrize(
+        "drift",
+        ["intervening_correction", "silent_ledger_row", "edge_reinserted", "identity"],
+    )
+    async def test_restore_refuses_drift_before_any_write(self, week_hubs, drift):
+        from app.utils.container_corrections import withdraw_member
+        from scripts.collection_publication import run_members
+
+        w = week_hubs
+        s = w.session
+        withdrawn, backup, posts = await self._withdrawn(w)
+        week4 = w.hubs["nfl-2026-week-4"]
+        target = next(t for t in w.targets if t["container_id"] == week4)
+        if drift == "intervening_correction":
+            control = next(c for c in w.controls if c["container_id"] == week4)
+            await withdraw_member(s, **_withdraw_kwargs(week4, control["market_id"]))
+        elif drift == "silent_ledger_row":
+            # A decision recorded without its revision bump (a legacy writer).
+            from app.utils.container_corrections import _record
+
+            await _record(
+                s,
+                container_id=week4,
+                scope="member",
+                action="withdraw",
+                child_type="market",
+                child_id=1,
+                reason="x",
+                actor="x",
+                revision=posts[week4],
+            )
+        elif drift == "edge_reinserted":
+            await s.execute(
+                text(
+                    "INSERT INTO event_edges (parent_type, parent_id, child_type, "
+                    "child_id, kind, class, source, confidence) VALUES "
+                    "('container', :cid, 'market', :mid, 'contains', 'prop', 'human', 1)"
+                ),
+                {"cid": week4, "mid": target["market_id"]},
+            )
+        else:
+            await s.execute(
+                text("UPDATE futures_markets SET name = 'renamed' WHERE id = :id"),
+                {"id": target["market_id"]},
+            )
+        await s.commit()
+        edges = await _market_edge_ids(s, week4)
+        revision = await _revision(s, week4)
+        ledger = await _ledger_count(s)
+        doc, code = await run_members(
+            _member_apply(backup, posts, "readmit-members"), w.factory
+        )
+        assert code == 1 and doc["status"] == "refused" and doc["committed_hubs"] == []
+        refused = next(h for h in doc["hubs"] if h["container_id"] == week4)
+        expected = {
+            "intervening_correction": "revision",
+            "silent_ledger_row": "intervening correction",
+            "edge_reinserted": "already exists",
+            "identity": "name is 'renamed'",
+        }[drift]
+        assert expected in refused["error"] + " ".join(refused["errors"]), refused
+        assert await _market_edge_ids(s, week4) == edges
+        assert await _revision(s, week4) == revision
+        assert await _ledger_count(s) == ledger
+
+
+# #10020 review P1. Matching and polling write futures_markets directly and
+# never take the container chain lock, so the chain lock cannot keep a market's
+# identity still. These interleave a real second session at the operator's
+# mutation point and before its market lock.
+
+
+async def _repoint(factory, market_id, event_id):
+    """An outside identity writer. Returns 'committed' or the lock error text."""
+    async with factory() as external:
+        try:
+            await external.execute(text("SET LOCAL lock_timeout = '500ms'"))
+            await external.execute(
+                text("UPDATE futures_markets SET event_id = :e WHERE id = :m"),
+                {"e": event_id, "m": market_id},
+            )
+            await external.commit()
+            return "committed"
+        except Exception as exc:  # the lock timeout is the expected answer
+            await external.rollback()
+            return str(exc)
+
+
+async def _market_event(session, market_id):
+    value = (
+        await session.execute(
+            text("SELECT event_id FROM futures_markets WHERE id = :m"),
+            {"m": market_id},
+        )
+    ).scalar()
+    await session.rollback()
+    return value
+
+
+def _foreign_game(w, container_id):
+    return next(ev for cid, evs in w.games.items() if cid != container_id for ev in evs)
+
+
+class TestTheTargetMarketsAreHeldUntilCommit:
+    async def test_an_identity_writer_cannot_land_between_withdraw_checks_and_writes(
+        self, week_hubs, monkeypatch
+    ):
+        import json
+
+        from app.utils import container_corrections as cc
+        from scripts.collection_publication import run_members
+
+        w = week_hubs
+        week4 = w.hubs["nfl-2026-week-4"]
+        target = next(t for t in w.targets if t["container_id"] == week4)
+        real = cc.withdraw_member
+        outcome = []
+
+        async def interleave(session, **kwargs):
+            if not outcome:
+                outcome.append(
+                    await _repoint(
+                        w.factory, target["market_id"], _foreign_game(w, week4)
+                    )
+                )
+            return await real(session, **kwargs)
+
+        monkeypatch.setattr(cc, "withdraw_member", interleave)
+        doc, code = await run_members(
+            _member_apply(w.manifest, _revisions(w)), w.factory
+        )
+        assert "lock timeout" in outcome[0], outcome
+        assert code == 0 and doc["status"] == "applied", doc
+        assert await _market_event(w.session, target["market_id"]) == target["event_id"]
+        evidence = (
+            await w.session.execute(
+                text(
+                    "SELECT evidence FROM container_corrections WHERE scope = 'member' "
+                    "AND child_id = :m"
+                ),
+                {"m": target["market_id"]},
+            )
+        ).scalar()
+        evidence = json.loads(evidence) if isinstance(evidence, str) else evidence
+        assert evidence["identity"]["event_id"] == target["event_id"]
+        # The hold ends at commit: the same writer lands once the hub is done.
+        assert (
+            await _repoint(w.factory, target["market_id"], _foreign_game(w, week4))
+            == "committed"
+        )
+
+    async def test_an_identity_writer_cannot_land_between_restore_checks_and_insert(
+        self, week_hubs, monkeypatch
+    ):
+        """The reviewer's control: before the hold this committed edge -> event of
+        the other hub and the restore still reported applied."""
+        from scripts import collection_publication as op
+
+        w = week_hubs
+        withdrawn, backup, posts = await TestExactRestore()._withdrawn(w)
+        target = withdrawn["hubs"][0]["targets"][0]
+        cid = target["preimage"]["parent_id"]
+        real = op._insert_preimage
+        outcome = []
+
+        async def interleave(session, preimage, columns):
+            if not outcome:
+                outcome.append(
+                    await _repoint(
+                        w.factory, target["market_id"], _foreign_game(w, int(cid))
+                    )
+                )
+            await real(session, preimage, columns)
+
+        monkeypatch.setattr(op, "_insert_preimage", interleave)
+        doc, code = await op.run_members(
+            _member_apply(backup, posts, "readmit-members"), w.factory
+        )
+        assert "lock timeout" in outcome[0], outcome
+        assert code == 0 and doc["status"] == "applied", doc
+        joined = (
+            await w.session.execute(
+                text(
+                    "SELECT fm.event_id FROM event_edges e JOIN futures_markets fm "
+                    "ON e.child_id = fm.id WHERE e.id = :edge"
+                ),
+                {"edge": target["edge_id"]},
+            )
+        ).scalar()
+        await w.session.rollback()
+        assert joined == target["event_id"]
+
+    @pytest.mark.parametrize("operation", ["withdraw-members", "readmit-members"])
+    async def test_a_change_committed_before_the_lock_refuses_that_whole_hub(
+        self, week_hubs, monkeypatch, operation
+    ):
+        from scripts import collection_publication as op
+
+        w = week_hubs
+        s = w.session
+        week4, week5 = w.hubs["nfl-2026-week-4"], w.hubs["nfl-2026-week-5"]
+        source, revisions = w.manifest, _revisions(w)
+        if operation == "readmit-members":
+            _, source, revisions = await TestExactRestore()._withdrawn(w)
+        target = next(t for t in w.targets if t["container_id"] == week5)
+        real = op._lock_markets
+        landed = []
+
+        async def drift_first(session, market_ids):
+            # After the read-only preflight passed, before week 5's hold.
+            if target["market_id"] in market_ids and not landed:
+                landed.append(
+                    await _repoint(
+                        w.factory, target["market_id"], _foreign_game(w, week5)
+                    )
+                )
+            await real(session, market_ids)
+
+        monkeypatch.setattr(op, "_lock_markets", drift_first)
+        edges = await _market_edge_ids(s, week5)
+        revision = await _revision(s, week5)
+        ledger = await _ledger_count(s)
+        doc, code = await op.run_members(
+            _member_apply(source, revisions, operation), w.factory
+        )
+        assert landed == ["committed"]
+        assert code == 1 and doc["status"] == "partial", doc
+        assert doc["committed_hubs"] == [week4] and doc["commit_unknown_hubs"] == []
+        refused = doc["hubs"][1]
+        assert refused["status"] == "refused" and refused["committed"] is False
+        assert "event_id" in " ".join(refused["errors"]), refused
+        assert await _market_edge_ids(s, week5) == edges
+        assert await _revision(s, week5) == revision
+        week4_writes = len([t for t in w.targets if t["container_id"] == week4])
+        assert await _ledger_count(s) == ledger + week4_writes
