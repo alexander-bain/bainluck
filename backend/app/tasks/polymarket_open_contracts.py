@@ -109,9 +109,12 @@ def _open_market_clauses() -> list:
 def open_contract_markets_stmt():
     """Every unsettled Polymarket market with its persisted token keys.
 
-    ``(market_id, clob_token_ids, clobTokenIds, clob_yes_token_by_outcome)`` —
-    the three keys only, never the whole metadata blob. No event join and no
-    event window: that is the point.
+    ``(market_id, clob_token_ids, clobTokenIds, clob_yes_token_by_outcome,
+    event_id, name, external_id)`` — the three token keys only, never the whole
+    metadata blob. No event join and no event window: that is the point. The
+    last three are the market's own row, read so a game winner can be bridged
+    to its event's blend (:func:`open_contract_event_candidates`, #10091)
+    without re-imposing the window.
     """
     from sqlalchemy import select
 
@@ -123,6 +126,9 @@ def open_contract_markets_stmt():
         meta["clob_token_ids"],
         meta["clobTokenIds"],
         meta[OUTCOME_TOKEN_METADATA_KEY],
+        FuturesMarket.event_id,
+        FuturesMarket.name,
+        FuturesMarket.external_id,
     ).where(*_open_market_clauses())
 
 
@@ -321,7 +327,8 @@ def open_contract_asset_map(
     #: markets with no usable tokens, for the by-condition pass below
     tokenless: list[int] = []
 
-    for market_id, tokens_a, tokens_b, by_outcome in market_rows:
+    for row in market_rows:
+        market_id, tokens_a, tokens_b, by_outcome = row[:4]
         counts["markets"] += 1
         if market_id in excluded:
             counts["markets_on_game_slate"] += 1
@@ -457,6 +464,65 @@ def complement_pairs(
             continue
         out[a] = b
         out[b] = a
+    return out
+
+
+# ── the event bridge (#10091, existing cohort → event blend) ─────────────────
+#
+# Twin of the Kalshi arm's (#9484, `ws_open_contracts`). Admitted for prices
+# only, an open game-winner contract on an event more than 6 h out wrote its
+# stored price and then stopped: the flush re-stamps the event blend from
+# `event_id_by_outcome`, which only the linked slate fed, so the number on the
+# card — `Event.win_probability_sources`, not the outcome row — waited for the
+# REST poll. The bridge hands the flush the event behind the legs this arm is
+# ALREADY carrying. It adds no token to any subscription.
+#
+# Only game winners: `live_blend._class_says_game_winner` is the class rule the
+# blend itself asks of every Polymarket speaker, primary or fallback
+# (`admissible_as_blend_speaker`), so a spread, total or prop moving can never
+# cost an event a refresh it cannot change. It is necessary, not sufficient —
+# the blend's other admission clauses still decide what speaks; the bridge only
+# decides which events are worth asking. Only events still to be decided: the
+# caller reads the candidates' state (`ws_open_contracts.
+# open_contract_bridge_event_stmt` — scheduled or live, no `completed_at`).
+
+
+def open_contract_event_candidates(
+    market_rows: Iterable[tuple], admission: OpenContractAdmission,
+) -> dict[int, int]:
+    """outcome_id → event_id for the admitted legs of game-winner markets.
+
+    A leg is admitted (it owns a token or mirrors one) only when it is
+    ungraded and its market is off the game slate (:func:`open_contract_asset_map`),
+    so those exclusions carry over unchanged. Each leg is bridged to ITS OWN
+    market's event — never a sibling's, never one inferred from the token.
+    A row without the bridge columns (or without an event) bridges nothing.
+    """
+    from types import SimpleNamespace
+
+    from app.utils.live_blend import _class_says_game_winner
+
+    event_by_winner_market: dict[int, int] = {}
+    for row in market_rows:
+        if len(row) < 7:
+            continue
+        market_id, event_id, name, external_id = row[0], row[4], row[5], row[6]
+        if event_id is None or not name:
+            continue
+        if not _class_says_game_winner(
+            SimpleNamespace(name=name, external_id=external_id)
+        ):
+            continue
+        event_by_winner_market[market_id] = event_id
+
+    out: dict[int, int] = {}
+    for token, outcome_id in admission.asset_to_outcome.items():
+        market_id = admission.asset_to_market.get(token)
+        if market_id in event_by_winner_market:
+            out[outcome_id] = event_by_winner_market[market_id]
+    for outcome_id, market_id in admission.mirrored_outcomes().items():
+        if market_id in event_by_winner_market:
+            out.setdefault(outcome_id, event_by_winner_market[market_id])
     return out
 
 
