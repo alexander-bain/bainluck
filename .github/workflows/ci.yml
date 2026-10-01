@@ -4671,6 +4671,22 @@ jobs:
             exit 1
           fi
 
+      - name: "'oscars' lists no fighter named Oscar as a game, on the page or the dropdown (real Postgres)"
+        # PILLAR: DISCOVER. SHIP: searching `oscars` shows the Oscars and its
+        # award markets, not Sandoval v Oscar Collazo under Games or a tennis
+        # match (`%oscar%` inside "Boscardin") as the dropdown's second row. The
+        # ILIKE and the `oscars` -> `oscar` stem are Postgres facts. The in-rig
+        # strawman proves the cases measure the fix.
+        if: matrix.group == 'shared'
+        run: |
+          set -o pipefail
+          python -m pytest tests/integration/test_search_award_plural_event_arm_pg.py \
+            -v -rs 2>&1 | tee /tmp/awardplural.txt
+          if grep -qiE "[0-9]+ skipped" /tmp/awardplural.txt; then
+            echo "::error::award-plural event-arm contract SKIPPED — the gate did not run"
+            exit 1
+          fi
+
       - name: "#9897 'chicago' puts Sunday's Bears game with the week's games (real Postgres)"
         # PILLAR: MATCHING. SHIP: typing `chicago`, `los angeles` or `new york`
         # shows this Sunday's Bears/Rams/Giants/Jets game with the week's games,
