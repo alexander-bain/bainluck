@@ -247,3 +247,35 @@ async def test_without_the_split_arms_the_dropdown_has_no_board(search, monkeypa
     monkeypatch.setattr(ev, "_split_futures_arms", lambda expanded: [])
     names = _dropdown_futures(await search("dodgers world series", "typeahead"))
     assert WORLD_SERIES not in names, names
+
+
+async def _seed_chennai(maker) -> None:
+    from app.models.models import Sport, Team
+
+    async with maker() as session:
+        sport = Sport(key="cricket_ipl", name="IPL")
+        session.add(sport)
+        await session.flush()
+        session.add(Team(sport_id=sport.id, name="Chennai Super Kings"))
+        await session.commit()
+
+
+def _dropdown_teams(payload: dict) -> list[str]:
+    return [s["text"] for s in payload["suggestions"] if s.get("type") == "team"]
+
+
+async def test_a_board_the_split_arms_found_gets_no_spelling_guess(search, maker):
+    """Production 10:41Z 10/1: `chiefs super bowl` offered the Super Bowl board
+    and then "Chennai Super Kings" — the did-you-mean arm guessing at the whole
+    phrase after the split arms had already read it as team plus competition."""
+    await _seed_chennai(maker)
+    payload = await search("chiefs super bowl", "typeahead")
+    assert SUPER_BOWL in _dropdown_futures(payload), payload["suggestions"]
+    assert "Chennai Super Kings" not in _dropdown_teams(payload), payload["suggestions"]
+
+
+async def test_a_misspelt_team_still_gets_the_spelling_guess(search, maker):
+    """Control: no board answers `chenai super kings`, so the guess still runs."""
+    await _seed_chennai(maker)
+    payload = await search("chenai super kings", "typeahead")
+    assert "Chennai Super Kings" in _dropdown_teams(payload), payload["suggestions"]

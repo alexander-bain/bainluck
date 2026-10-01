@@ -48,6 +48,7 @@ Behaviour on real rows needs a real Postgres and lives in
 from __future__ import annotations
 
 import inspect
+import re
 
 import pytest
 
@@ -321,8 +322,13 @@ def test_the_fuzzy_corrector_cannot_fire_for_a_curated_nickname() -> None:
     spelling neighbour again, on the dropdown this time.
     """
 
-    source = inspect.getsource(typeahead_search)
-    assert "if not team_pool and not event_pool and len(futures_pool) < 2:" in source, (
+    # Whitespace-collapsed: #10024 added a fourth, narrowing clause
+    # (`and not _ta_split_answered`) and the trigger now wraps over lines.
+    source = " ".join(inspect.getsource(typeahead_search).split())
+    assert re.search(
+        r"if \(? ?not team_pool and not event_pool and len\(futures_pool\) < 2\b",
+        source,
+    ), (
         "the typeahead fuzzy corrector's trigger changed. If it can now fire "
         "while a team row exists, a curated nickname can be 'corrected' to a "
         "spelling neighbour and #4809's suppression clause is owed here too"
