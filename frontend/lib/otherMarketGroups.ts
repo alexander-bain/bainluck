@@ -625,6 +625,46 @@ export function isScoringRaceMarket(marketName: string | null | undefined): bool
 }
 
 /**
+ * #1627 — the score a scoring race runs to (`…: Race to 21 Points` → 21), or
+ * null when the market is not one. Same pattern as `isScoringRaceMarket`, so
+ * the two can never disagree about which markets are races.
+ */
+export function scoringRaceTarget(marketName: string | null | undefined): number | null {
+  const m = /\brace to\s+(\d+(?:\.\d+)?)\s+points?\b/i.exec(marketName ?? "");
+  return m ? Number(m[1]) : null;
+}
+
+/**
+ * #1627 — a category's cards in page order, with its scoring races read as ONE
+ * ladder: gathered at the slot of the first race the wire sent, lowest target
+ * first. Every other card keeps the wire's order and its slot.
+ *
+ * On Browns @ Steelers (`/events/14780550`, pregame, 2026-10-01 ~09:50Z) Kalshi
+ * sent `Race to 35 / 21 / 14 / 10 Points` and then, after twenty unrelated
+ * markets, `Race to 28 Points` — so the card read 35, 21, 14, 10 and the 28 sat
+ * behind `+12 more`. A ladder read backwards with a rung missing is not a
+ * ladder. Two races to the same score keep their wire order (stable sort).
+ */
+export function orderScoringRaces<T>(cards: T[], targetOf: (card: T) => number | null): T[] {
+  const races = cards
+    .map((card) => ({ card, target: targetOf(card) }))
+    .filter((r): r is { card: T; target: number } => r.target !== null);
+  if (races.length < 2) return cards;
+  const ladder = races.sort((a, b) => a.target - b.target).map((r) => r.card);
+  const raceSet = new Set(ladder);
+  const out: T[] = [];
+  let placed = false;
+  for (const card of cards) {
+    if (!raceSet.has(card)) out.push(card);
+    else if (!placed) {
+      out.push(...ladder);
+      placed = true;
+    }
+  }
+  return out;
+}
+
+/**
  * A total scoped to ONE PERIOD — `Philadelphia vs Atlanta: 1st Inning Total`,
  * `Set 1 Total Games`, `Map 2 Total Rounds`. No market map draws these: the maps
  * draw the game total and the sport's first half (`First 5 innings`, `1st half`),
@@ -1521,6 +1561,8 @@ export function buildMarketSection(
     cards: Map<string, LabeledRow[]>;
     cardMarketIds: Map<string, Set<number>>;
     cardTitles: Map<string, string>;
+    /** #1627: the score each scoring-race card runs to; see `orderScoringRaces`. */
+    cardRaceTargets: Map<string, number>;
   }
   const drafts = new Map<string, Draft>();
   const draftOrder: string[] = [];
@@ -1602,6 +1644,7 @@ export function buildMarketSection(
         cards: new Map(),
         cardMarketIds: new Map(),
         cardTitles: new Map(),
+        cardRaceTargets: new Map(),
       };
       drafts.set(title, draft);
       draftOrder.push(title);
@@ -1613,6 +1656,10 @@ export function buildMarketSection(
       draft.cards.set(cardName, card);
       draft.cardOrder.push(cardName);
       if (cardTitle) draft.cardTitles.set(cardName, cardTitle);
+      // Only a card keyed by its own wire name is that market's card; a player
+      // prop or a composed period-winner card merely contains it.
+      const raceTarget = cardName === row.market_name ? scoringRaceTarget(row.market_name) : null;
+      if (raceTarget !== null) draft.cardRaceTargets.set(cardName, raceTarget);
     }
     if (typeof row._market_id === "number") {
       let ids = draft.cardMarketIds.get(cardName);
@@ -1784,7 +1831,10 @@ export function buildMarketSection(
     withheld += categoryWithheld;
     // A card can be emptied entirely by withholding; it must not render as a
     // headed card with no bars.
-    const drawnCards = cards.filter((c) => c.outcomes.length > 0);
+    const drawnCards = orderScoringRaces(
+      cards.filter((c) => c.outcomes.length > 0),
+      (c) => draft.cardRaceTargets.get(c.name) ?? null,
+    );
     for (const c of drawnCards) {
       for (const id of draft.cardMarketIds.get(c.name) ?? []) drawnMarketIds.add(id);
     }
