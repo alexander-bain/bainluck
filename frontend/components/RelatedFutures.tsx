@@ -2945,9 +2945,15 @@ export default function RelatedFutures({
                                   {o.probability_change_24h > 0 ? "↑" : "↓"} {(Math.abs(o.probability_change_24h) * 100).toFixed(1)}%
                                 </span>
                               )}
-                              <span className="font-mono tabular-nums text-sm font-bold">
-                                {o.probability != null ? `${Math.round(o.probability * 100)}%` : "---"}
-                              </span>
+                              {/* #10005: an unpriced, unanswered leg leaves its space empty
+                                  (notice 34) — `---` beside a Lost read as three broken rows on
+                                  CHC@SD. A price goes through the shared formatter, so 0.995 on an
+                                  open series reads `>99%`, never `100%`. */}
+                              {o.probability != null && (
+                                <span className="font-mono tabular-nums text-sm font-bold">
+                                  {formatProbabilityPercent(o.probability)}
+                                </span>
+                              )}
                             </>
                           )}
                         </div>
@@ -2988,9 +2994,12 @@ export default function RelatedFutures({
                         {change > 0 ? "↑" : "↓"} {(Math.abs(change) * 100).toFixed(1)}%
                       </span>
                     )}
-                    <span className="font-mono tabular-nums text-sm font-bold">
-                      {prob != null ? `${Math.round(prob * 100)}%` : "---"}
-                    </span>
+                    {/* #10005: same rule as the served block above. */}
+                    {prob != null && (
+                      <span className="font-mono tabular-nums text-sm font-bold">
+                        {formatProbabilityPercent(prob)}
+                      </span>
+                    )}
                   </div>
                 </div>
               );

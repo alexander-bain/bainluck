@@ -103,18 +103,20 @@ describe("#9919 SHIP: the ruled-out leg reads Lost", () => {
 });
 
 describe("#9919 CONTROLS", () => {
-  it("an OLDER payload (no grade keys) renders exactly as before: the dash stays", () => {
+  // #10005: an unpriced, unanswered leg now leaves its space EMPTY instead of printing `---`
+  // (notice 34). What these controls guard is unchanged: no grade keys ⇒ never Lost.
+  it("an OLDER payload (no grade keys) never reads Lost: the leg's space is empty", () => {
     const old = leg(4, "BOS wins 2-0", null);
     const t = text(render([...LIVE, old]));
-    expect(t).toContain("|BOS wins 2-0|---|");
+    expect(t).toContain("|BOS wins 2-0|kalshi|");
     expect(t).not.toContain("Lost");
   });
 
-  it("an unpriced leg the server did NOT settle keeps its dash, never Lost", () => {
+  it("an unpriced leg the server did NOT settle is left empty, never Lost", () => {
     // `is_winner: false` alone is the column's default, not a grade (#3617 / CERT-2222).
     const unlicensed = leg(4, "BOS wins 2-0", null, { settled: false, is_winner: false });
     const t = text(render([...LIVE, unlicensed]));
-    expect(t).toContain("|BOS wins 2-0|---|");
+    expect(t).toContain("|BOS wins 2-0|kalshi|");
     expect(t).not.toContain("Lost");
   });
 });
