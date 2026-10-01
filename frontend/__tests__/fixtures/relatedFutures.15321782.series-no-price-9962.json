@@ -1,0 +1,562 @@
+{
+ "event_id": 15321782,
+ "home_team": "Atlanta Braves",
+ "away_team": "Philadelphia Phillies",
+ "home_team_futures": [],
+ "away_team_futures": [],
+ "series_markets": [
+  {
+   "market_id": 62898792,
+   "market_name": "Series Exact Score: Philadelphia vs Atlanta",
+   "source": "kalshi",
+   "status": "open",
+   "resolution_date": "2026-10-14T18:00:00+00:00",
+   "outcomes": [
+    {
+     "outcome_id": 237333174,
+     "name": "PHI wins 2-1",
+     "probability": 0.525,
+     "probability_change_24h": null,
+     "settled": false,
+     "is_winner": null
+    },
+    {
+     "outcome_id": 237333173,
+     "name": "ATL wins 2-1",
+     "probability": 0.475,
+     "probability_change_24h": null,
+     "settled": false,
+     "is_winner": null
+    },
+    {
+     "outcome_id": 237333175,
+     "name": "PHI wins 2-0",
+     "probability": null,
+     "probability_change_24h": null,
+     "settled": true,
+     "is_winner": false
+    },
+    {
+     "outcome_id": 237333172,
+     "name": "ATL wins 2-0",
+     "probability": null,
+     "probability_change_24h": null,
+     "settled": true,
+     "is_winner": false
+    }
+   ]
+  },
+  {
+   "market_id": 62898793,
+   "market_name": "Series Total Games: Philadelphia vs Atlanta",
+   "source": "kalshi",
+   "status": "open",
+   "resolution_date": "2026-10-14T18:00:00+00:00",
+   "outcomes": [
+    {
+     "outcome_id": 237333176,
+     "name": "Over 2.5 total games",
+     "probability": 0.99,
+     "probability_change_24h": null,
+     "settled": false,
+     "is_winner": null
+    }
+   ]
+  },
+  {
+   "market_id": 62898794,
+   "market_name": "Series Winner: Philadelphia vs Atlanta",
+   "source": "kalshi",
+   "status": "open",
+   "resolution_date": "2026-10-14T18:00:00+00:00",
+   "outcomes": [
+    {
+     "outcome_id": 237333178,
+     "name": "Philadelphia",
+     "probability": 0.52,
+     "probability_change_24h": null,
+     "settled": false,
+     "is_winner": null
+    },
+    {
+     "outcome_id": 237333177,
+     "name": "Atlanta",
+     "probability": 0.485,
+     "probability_change_24h": null,
+     "settled": false,
+     "is_winner": null
+    }
+   ]
+  },
+  {
+   "market_id": 63348823,
+   "market_name": "MLB Playoffs: Who Will Win Series? - Braves vs. Phillies",
+   "source": "polymarket",
+   "status": "open",
+   "resolution_date": "2026-10-03T03:59:00+00:00",
+   "outcomes": [
+    {
+     "outcome_id": 238779088,
+     "name": "Phillies",
+     "probability": null,
+     "probability_change_24h": null,
+     "settled": false,
+     "is_winner": null
+    },
+    {
+     "outcome_id": 238779087,
+     "name": "Braves",
+     "probability": null,
+     "probability_change_24h": null,
+     "settled": false,
+     "is_winner": null
+    }
+   ]
+  }
+ ],
+ "total_count": 0,
+ "summary": null,
+ "event_status": "completed",
+ "box_score": {
+  "Alec Bohm": {
+   "hits": 2.0,
+   "rbis": 1.0,
+   "runs": 1.0,
+   "walks": 1.0,
+   "at bats": 4.0,
+   "home runs": 1.0,
+   "strikeouts": 0.0,
+   "pitches seen": 13.0,
+   "batting average": 0.375,
+   "on base percentage": 0.444,
+   "slugging percentage": 0.875
+  },
+  "Dylan Lee": {
+   "era": 10.8,
+   "earned runs": 2.0,
+   "pitch count": 15.0,
+   "innings pitched": 0.2,
+   "pitching strikeouts": 1.0,
+   "pitching hits allowed": 2.0,
+   "pitching runs allowed": 2.0,
+   "pitching walks allowed": 0.0,
+   "pitching home runs allowed": 2.0
+  },
+  "Derek Hill": {
+   "hits": 0.0,
+   "rbis": 0.0,
+   "runs": 0.0,
+   "walks": 0.0,
+   "at bats": 1.0,
+   "home runs": 0.0,
+   "strikeouts": 1.0,
+   "pitches seen": 4.0,
+   "batting average": 0.0,
+   "on base percentage": 0.0,
+   "slugging percentage": 0.0
+  },
+  "Matt Olson": {
+   "hits": 1.0,
+   "rbis": 2.0,
+   "runs": 0.0,
+   "walks": 0.0,
+   "at bats": 4.0,
+   "home runs": 0.0,
+   "strikeouts": 2.0,
+   "pitches seen": 30.0,
+   "batting average": 0.125,
+   "on base percentage": 0.111,
+   "slugging percentage": 0.125
+  },
+  "Sean Murphy": {
+   "hits": 1.0,
+   "rbis": 0.0,
+   "runs": 1.0,
+   "walks": 1.0,
+   "at bats": 3.0,
+   "home runs": 0.0,
+   "strikeouts": 0.0,
+   "pitches seen": 19.0,
+   "batting average": 0.333,
+   "on base percentage": 0.5,
+   "slugging percentage": 0.667
+  },
+  "Trea Turner": {
+   "hits": 1.0,
+   "rbis": 0.0,
+   "runs": 1.0,
+   "walks": 0.0,
+   "at bats": 5.0,
+   "home runs": 0.0,
+   "strikeouts": 1.0,
+   "pitches seen": 14.0,
+   "batting average": 0.125,
+   "on base percentage": 0.222,
+   "slugging percentage": 0.25
+  },
+  "Tyler Mahle": {
+   "era": 1.29,
+   "earned runs": 1.0,
+   "pitch count": 95.0,
+   "innings pitched": 7.0,
+   "pitching strikeouts": 6.0,
+   "pitching hits allowed": 6.0,
+   "pitching runs allowed": 1.0,
+   "pitching walks allowed": 1.0,
+   "pitching home runs allowed": 0.0
+  },
+  "Austin Riley": {
+   "hits": 1.0,
+   "rbis": 0.0,
+   "runs": 0.0,
+   "walks": 1.0,
+   "at bats": 4.0,
+   "home runs": 0.0,
+   "strikeouts": 1.0,
+   "pitches seen": 14.0,
+   "batting average": 0.286,
+   "on base percentage": 0.444,
+   "slugging percentage": 0.714
+  },
+  "Bryce Harper": {
+   "hits": 2.0,
+   "rbis": 2.0,
+   "runs": 1.0,
+   "walks": 0.0,
+   "at bats": 5.0,
+   "home runs": 1.0,
+   "strikeouts": 1.0,
+   "pitches seen": 12.0,
+   "batting average": 0.222,
+   "on base percentage": 0.222,
+   "slugging percentage": 0.556
+  },
+  "Bryson Stott": {
+   "hits": 1.0,
+   "rbis": 0.0,
+   "runs": 0.0,
+   "walks": 0.0,
+   "at bats": 5.0,
+   "home runs": 0.0,
+   "strikeouts": 1.0,
+   "pitches seen": 23.0,
+   "batting average": 0.222,
+   "on base percentage": 0.222,
+   "slugging percentage": 0.222
+  },
+  "Edmundo Sosa": {
+   "hits": 1.0,
+   "rbis": 0.0,
+   "runs": 0.0,
+   "walks": 0.0,
+   "at bats": 4.0,
+   "home runs": 0.0,
+   "strikeouts": 0.0,
+   "pitches seen": 8.0,
+   "batting average": 0.333,
+   "on base percentage": 0.333,
+   "slugging percentage": 0.5
+  },
+  "Ha-Seong Kim": {
+   "hits": 0.0,
+   "rbis": 0.0,
+   "runs": 1.0,
+   "walks": 1.0,
+   "at bats": 1.0,
+   "home runs": 0.0,
+   "strikeouts": 0.0,
+   "pitches seen": 11.0,
+   "batting average": 0.0,
+   "on base percentage": 0.25,
+   "slugging percentage": 0.0
+  },
+  "Ozzie Albies": {
+   "hits": 1.0,
+   "rbis": 0.0,
+   "runs": 0.0,
+   "walks": 1.0,
+   "at bats": 4.0,
+   "home runs": 0.0,
+   "strikeouts": 0.0,
+   "pitches seen": 7.0,
+   "batting average": 0.333,
+   "on base percentage": 0.556,
+   "slugging percentage": 0.667
+  },
+  "Brandon Marsh": {
+   "hits": 1.0,
+   "rbis": 0.0,
+   "runs": 0.0,
+   "walks": 0.0,
+   "at bats": 3.0,
+   "home runs": 0.0,
+   "strikeouts": 1.0,
+   "pitches seen": 16.0,
+   "batting average": 0.5,
+   "on base percentage": 0.5,
+   "slugging percentage": 0.5
+  },
+  "Dominic Smith": {
+   "hits": 0.0,
+   "rbis": 0.0,
+   "runs": 0.0,
+   "walks": 0.0,
+   "at bats": 1.0,
+   "home runs": 0.0,
+   "strikeouts": 1.0,
+   "pitches seen": 3.0,
+   "batting average": 0.0,
+   "on base percentage": 0.0,
+   "slugging percentage": 0.0
+  },
+  "Drake Baldwin": {
+   "hits": 2.0,
+   "rbis": 1.0,
+   "runs": 0.0,
+   "walks": 0.0,
+   "at bats": 5.0,
+   "home runs": 0.0,
+   "strikeouts": 2.0,
+   "pitches seen": 20.0,
+   "batting average": 0.222,
+   "on base percentage": 0.222,
+   "slugging percentage": 0.333
+  },
+  "J.T. Realmuto": {
+   "hits": 1.0,
+   "rbis": 0.0,
+   "runs": 0.0,
+   "walks": 0.0,
+   "at bats": 4.0,
+   "home runs": 0.0,
+   "strikeouts": 1.0,
+   "pitches seen": 9.0,
+   "batting average": 0.286,
+   "on base percentage": 0.286,
+   "slugging percentage": 0.571
+  },
+  "Alex McFarlane": {
+   "era": 6.75,
+   "earned runs": 0.0,
+   "pitch count": 4.0,
+   "innings pitched": 0.1,
+   "pitching strikeouts": 0.0,
+   "pitching hits allowed": 0.0,
+   "pitching runs allowed": 0.0,
+   "pitching walks allowed": 0.0,
+   "pitching home runs allowed": 0.0
+  },
+  "Andrew Painter": {
+   "era": 0.0,
+   "earned runs": 0.0,
+   "pitch count": 37.0,
+   "innings pitched": 3.0,
+   "pitching strikeouts": 3.0,
+   "pitching hits allowed": 3.0,
+   "pitching runs allowed": 0.0,
+   "pitching walks allowed": 1.0,
+   "pitching home runs allowed": 0.0
+  },
+  "Didier Fuentes": {
+   "era": 4.5,
+   "earned runs": 1.0,
+   "pitch count": 21.0,
+   "innings pitched": 1.1,
+   "pitching strikeouts": 2.0,
+   "pitching hits allowed": 3.0,
+   "pitching runs allowed": 1.0,
+   "pitching walks allowed": 0.0,
+   "pitching home runs allowed": 1.0
+  },
+  "Kyle Schwarber": {
+   "hits": 1.0,
+   "rbis": 1.0,
+   "runs": 1.0,
+   "walks": 0.0,
+   "at bats": 5.0,
+   "home runs": 1.0,
+   "strikeouts": 3.0,
+   "pitches seen": 24.0,
+   "batting average": 0.25,
+   "on base percentage": 0.333,
+   "slugging percentage": 0.625
+  },
+  "Mauricio Dubon": {
+   "hits": 2.0,
+   "rbis": 0.0,
+   "runs": 0.0,
+   "walks": 0.0,
+   "at bats": 5.0,
+   "home runs": 0.0,
+   "strikeouts": 0.0,
+   "pitches seen": 15.0,
+   "batting average": 0.333,
+   "on base percentage": 0.333,
+   "slugging percentage": 0.444
+  },
+  "Justin Crawford": {
+   "hits": 1.0,
+   "rbis": 0.0,
+   "runs": 0.0,
+   "walks": 0.0,
+   "at bats": 4.0,
+   "home runs": 0.0,
+   "strikeouts": 0.0,
+   "pitches seen": 12.0,
+   "batting average": 0.2,
+   "on base percentage": 0.2,
+   "slugging percentage": 0.2
+  },
+  "Raisel Iglesias": {
+   "era": 0.0,
+   "earned runs": 0.0,
+   "pitch count": 9.0,
+   "innings pitched": 1.0,
+   "pitching strikeouts": 0.0,
+   "pitching hits allowed": 1.0,
+   "pitching runs allowed": 0.0,
+   "pitching walks allowed": 0.0,
+   "pitching home runs allowed": 0.0
+  },
+  "Bryan De La Cruz": {
+   "hits": 1.0,
+   "rbis": 0.0,
+   "runs": 0.0,
+   "walks": 0.0,
+   "at bats": 2.0,
+   "home runs": 0.0,
+   "strikeouts": 0.0,
+   "pitches seen": 5.0,
+   "batting average": 0.2,
+   "on base percentage": 0.333,
+   "slugging percentage": 0.2
+  },
+  "Mike Yastrzemski": {
+   "hits": 0.0,
+   "rbis": 0.0,
+   "runs": 0.0,
+   "walks": 0.0,
+   "at bats": 1.0,
+   "home runs": 0.0,
+   "strikeouts": 0.0,
+   "pitches seen": 3.0,
+   "batting average": 0.2,
+   "on base percentage": 0.2,
+   "slugging percentage": 0.2
+  },
+  "Ronald Acuna Jr.": {
+   "hits": 0.0,
+   "rbis": 0.0,
+   "runs": 1.0,
+   "walks": 2.0,
+   "at bats": 3.0,
+   "home runs": 0.0,
+   "strikeouts": 2.0,
+   "pitches seen": 17.0,
+   "batting average": 0.0,
+   "on base percentage": 0.333,
+   "slugging percentage": 0.0
+  },
+  "Michael Harris II": {
+   "hits": 1.0,
+   "rbis": 0.0,
+   "runs": 0.0,
+   "walks": 0.0,
+   "at bats": 5.0,
+   "home runs": 0.0,
+   "strikeouts": 1.0,
+   "pitches seen": 18.0,
+   "batting average": 0.5,
+   "on base percentage": 0.5,
+   "slugging percentage": 0.5
+  },
+  "Cristopher Sanchez": {
+   "era": 4.05,
+   "earned runs": 3.0,
+   "pitch count": 116.0,
+   "innings pitched": 6.2,
+   "pitching strikeouts": 6.0,
+   "pitching hits allowed": 6.0,
+   "pitching runs allowed": 3.0,
+   "pitching walks allowed": 5.0,
+   "pitching home runs allowed": 0.0
+  }
+ },
+ "game_period": "Final/10",
+ "game_clock": "0:00",
+ "league_context": {
+  "league_slug": "mlb",
+  "league_name": "MLB Playoffs 2026",
+  "columns": [
+   {
+    "key": "make_playoffs",
+    "label": "Make Playoffs"
+   },
+   {
+    "key": "division",
+    "label": "Division"
+   },
+   {
+    "key": "pennant",
+    "label": "AL / NL Champ"
+   },
+   {
+    "key": "championship",
+    "label": "World Series"
+   }
+  ],
+  "league_page_url": "/baseball/mlb",
+  "home_team": {
+   "cells": {
+    "pennant": 0.105,
+    "championship": 0.04
+   },
+   "changes_24h": {
+    "pennant": -0.03,
+    "championship": -0.033
+   },
+   "states": {
+    "make_playoffs": "won",
+    "division": "won",
+    "pennant": "live",
+    "championship": "live"
+   },
+   "record": "94-68",
+   "conference": "National League",
+   "sources_available": [
+    "kalshi",
+    "odds_api",
+    "polymarket"
+   ],
+   "team_id": 11626,
+   "short_name": "ATL",
+   "logo_url": "https://a.espncdn.com/i/teamlogos/mlb/500/scoreboard/atl.png"
+  },
+  "away_team": {
+   "cells": {
+    "pennant": 0.0602,
+    "championship": 0.0435
+   },
+   "changes_24h": {
+    "pennant": 0.0397,
+    "championship": 0.0185
+   },
+   "states": {
+    "make_playoffs": "won",
+    "division": "eliminated",
+    "pennant": "live",
+    "championship": "live"
+   },
+   "record": "88-74",
+   "conference": "National League",
+   "sources_available": [
+    "kalshi",
+    "odds_api",
+    "polymarket"
+   ],
+   "team_id": 10746,
+   "short_name": "PHI",
+   "logo_url": "https://a.espncdn.com/i/teamlogos/mlb/500/scoreboard/phi.png"
+  }
+ }
+}
