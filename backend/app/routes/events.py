@@ -29379,6 +29379,70 @@ def _finished_event_end_cap(completed_at, commence_time, commence_cap):
     return commence_cap
 
 
+def _observed_play_end(
+    completed_at,
+    commence_time,
+    max_game_hours: float,
+    reading_series,
+    score_history,
+):
+    """When play visibly ended, if ``completed_at`` cannot be that moment; else None.
+
+    #1833 (END side). ``completed_at`` is when WE wrote the result, not when the
+    game ended (Alex 9/14: a capture timestamp is not automatically the finish).
+    Specimen `/events/15292394`, Real Madrid 77–78 Dubai: tip-off 16:00Z, last
+    real reading 17:52Z, ``completed_at`` 21:23Z — so the settlement point and the
+    final-score write sat 3.5 h to the right of the line, across an empty chart.
+
+    Distrusted only when it CANNOT be the finish: later than kickoff plus the
+    sport's longest plausible game (`SPORT_MAX_DURATIONS`, the table the
+    commence-based cap already reads). A prompt ``completed_at`` is the best end
+    we have, and replacing it with the last reading would cut short the chart of
+    a game whose readings stopped early.
+
+    The answer is the last real reading + 1 minute — the rule this route already
+    used when ``completed_at`` was null, and the one the iPhone applies (native's
+    half of #1833), so a phone reading this payload moves nothing. Readings are
+    every point of every probability series, plus score captures inside the
+    plausible game window; the completion write itself lies outside it by
+    construction, which is what keeps it from vouching for its own timestamp.
+    None (keep ``completed_at``) when no reading lands after kickoff, or when one
+    already lands at or after ``completed_at``.
+    """
+    if commence_time is None or not _completed_at_is_authoritative(
+        completed_at, commence_time
+    ):
+        return None
+    plausible_end = commence_time + timedelta(hours=max_game_hours)
+    if completed_at <= plausible_end:
+        return None
+
+    def _stamp(point):
+        try:
+            ts = datetime.fromisoformat(point["timestamp"])
+        except (KeyError, TypeError, ValueError):
+            return None
+        return ts if ts.tzinfo else ts.replace(tzinfo=timezone.utc)
+
+    readings = [
+        ts
+        for series in reading_series
+        for ts in map(_stamp, series or ())
+        if ts is not None
+    ]
+    readings.extend(
+        ts
+        for ts in map(_stamp, score_history or ())
+        if ts is not None and ts <= plausible_end
+    )
+    if not readings:
+        return None
+    play_end = max(readings) + timedelta(minutes=1)
+    if play_end <= commence_time or play_end >= completed_at:
+        return None
+    return play_end
+
+
 async def _end_cap_hides_every_point(db, event_id: int, end_cap) -> bool:
     """True when the end cap excludes EVERY snapshot the event has.
 
@@ -31907,6 +31971,37 @@ async def get_event_odds_history(
         served_blend=served_blend,
     )
 
+    # #1833: a `completed_at` later than any game of this sport could last is
+    # when we wrote the result, not when play ended. Measured before the
+    # terminal point below is appended, so the settlement point cannot vouch for
+    # its own timestamp. None keeps every pre-#1833 behaviour.
+    observed_play_end = None
+    if is_finished:
+        from app.tasks.odds_polling import get_max_duration_for_sport
+
+        observed_play_end = _observed_play_end(
+            event.completed_at,
+            event.commence_time,
+            get_max_duration_for_sport(event.sport.key if event.sport else ""),
+            (
+                history,
+                espn_history,
+                aggregate_line,
+                *win_prob_history.values(),
+                *bookmaker_history.values(),
+            ),
+            score_history,
+        )
+    if observed_play_end is not None:
+        # The final score was captured when the result was written; it was the
+        # score when play ended. Same instant as the settlement point, so the
+        # score chart and the probability chart end together.
+        _play_end_iso = observed_play_end.replace(second=0, microsecond=0).isoformat()
+        for point in score_history:
+            stamp = datetime.fromisoformat(point["timestamp"])
+            if (stamp if stamp.tzinfo else stamp.replace(tzinfo=timezone.utc)) > observed_play_end:
+                point["timestamp"] = _play_end_iso
+
     # ── Inject terminal "final result" data point for completed events ──
     # Without this, the chart's last data point is whatever the last
     # polled value was (e.g., 92%/8%), which can mislead users about
@@ -31937,9 +32032,12 @@ async def get_event_odds_history(
         resolved_away_prob = 0.0 if home_won else 1.0
 
         # Determine terminal timestamp: completed_at if available,
-        # otherwise last data point + 1 minute.
+        # otherwise last data point + 1 minute. #1833: a completed_at no game
+        # could last until gives way to the moment play visibly ended.
         terminal_ts = None
-        if event.completed_at:
+        if observed_play_end is not None:
+            terminal_ts = observed_play_end
+        elif event.completed_at:
             terminal_ts = event.completed_at
         else:
             # Find the latest timestamp across all data sources
@@ -32068,6 +32166,10 @@ async def get_event_odds_history(
         _domain_start = datetime.fromisoformat(history[0]["timestamp"])
     if is_finished:
         _domain_end = end_cap or event.completed_at
+        if observed_play_end is not None:
+            # #1833: the axis ends where the chart now ends, not 30 minutes
+            # after a result we wrote hours late.
+            _domain_end = observed_play_end.replace(second=0, microsecond=0)
         if not _domain_end and history:
             _domain_end = datetime.fromisoformat(history[-1]["timestamp"])
     else:
