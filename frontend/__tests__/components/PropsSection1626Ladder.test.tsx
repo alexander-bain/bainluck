@@ -54,7 +54,9 @@ const rungs = (subject: string, values: Array<[number, number | null]>): PropMar
 
 describe("#1626 SHIP: on the served Browns @ Steelers page, a player's ladder is one row", () => {
   const html = render(served);
-  const summaries = ladderSummaries(html);
+  // Slice 5's O/U ladders share the row markup; this slice counts its own,
+  // the `N+` ladders.
+  const summaries = ladderSummaries(html).filter((s) => s[1].endsWith("+"));
 
   test("Aaron Rodgers' passing yards read as one row: 200+, 58%, the other seven behind it", () => {
     expect(summaries).toContainEqual(["Aaron Rodgers", "200+", "58%", "+7 more"]);

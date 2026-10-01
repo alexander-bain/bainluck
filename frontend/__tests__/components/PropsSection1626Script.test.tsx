@@ -44,6 +44,23 @@ function familyRows(html: string, family: string): string[] {
   return [...familyChunk(html, family).matchAll(/line-clamp-2">([^<]+)<\/span>/g)].map((m) => m[1]);
 }
 
+/** The legs printed for one O/U question: in its own family, or — slice 5 — as
+ *  "Under 274.5" in the player's merged `… O/U` family, whose disclosure lists
+ *  every line. */
+function questionRows(html: string, family: string): string[] {
+  const own = familyRows(html, family);
+  if (own.length > 0) return own;
+  const m = /^(.+ O\/U) (\d+(?:\.\d+)?)$/.exec(family);
+  if (!m) return [];
+  const at = html.indexOf(`${HEADER}${m[1]}<`);
+  if (at === -1) return [];
+  const next = html.indexOf(HEADER, at + HEADER.length);
+  const block = html.slice(at, next === -1 ? undefined : next);
+  return [...block.matchAll(/line-clamp-2">([^<]+)<\/span>/g)]
+    .map((r) => r[1])
+    .filter((label) => label.endsWith(` ${m[2]}`));
+}
+
 const pair = (fam: string, over: number | null, under: number | null): PropMark[] => [
   { key: `P: ${fam}|Over`, label: "Over", pregame_mark: over, current: over },
   { key: `P: ${fam}|Under`, label: "Under", pregame_mark: under, current: under },
@@ -53,8 +70,8 @@ describe("#1626 SHIP: on the served Browns @ Steelers page, THE SCRIPT prints on
   const html = render(served);
 
   test("AARON RODGERS: PASSING YARDS O/U 274.5 prints Under only — 89%, the side the script favours", () => {
-    expect(familyRows(html, "Aaron Rodgers: Passing Yards O/U 274.5")).toEqual(["Under"]);
-    expect(familyChunk(html, "Aaron Rodgers: Passing Yards O/U 274.5")).toContain(">89%<");
+    expect(questionRows(html, "Aaron Rodgers: Passing Yards O/U 274.5")).toEqual(["Under 274.5"]);
+    expect(familyChunk(html, "Aaron Rodgers: Passing Yards O/U")).toContain(">89%<");
   });
 
   test("every complement O/U and Yes/No family prints exactly one row", () => {
@@ -75,7 +92,7 @@ describe("#1626 SHIP: on the served Browns @ Steelers page, THE SCRIPT prints on
       );
     });
     expect(twoSided.length).toBe(48);
-    const printed = twoSided.map(([fam]) => familyRows(html, fam));
+    const printed = twoSided.map(([fam]) => questionRows(html, fam));
     const located = printed.filter((rows) => rows.length > 0);
     expect(located.length).toBeGreaterThan(40);
     for (const rows of located) expect(rows).toHaveLength(1);
