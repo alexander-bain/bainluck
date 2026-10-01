@@ -382,6 +382,14 @@ export interface Event {
    */
   started_without_result?: boolean | null;
   /**
+   * #9968 — present (and `true`) only when this `scheduled` row's listed start
+   * has passed and ESPN stamped "not begun" within the last 15 minutes. Absent
+   * means not established, never "it has started". Served by `/api/events/{id}`,
+   * `/api/events` and search; not on the feed. Read through
+   * `serverHeldPastKickoff` only.
+   */
+  authority_not_started?: boolean;
+  /**
    * #8515 — the provider's own doubleheader flag and 1-based game number (MLB
    * Stats API `doubleHeader` / `gameNumber`), under the names
    * `TeamGameBrief` already declares. Read through `providerGameNumber` and

@@ -169,7 +169,7 @@ describe("#9634 · the hero badge says Pregame, not Started, for a held row", ()
       "utf8",
     );
     expect(page).toMatch(
-      /startBadgeLabel\(\s*hasStarted,\s*gameCountdown,[\s\S]{0,120}?serverHeldPastKickoff\(\s*event\?\.status,\s*event\?\.commence_time,\s*undefined,\s*event\?\.started_without_result,?\s*\)/,
+      /startBadgeLabel\(\s*hasStarted,\s*gameCountdown,[\s\S]{0,200}?serverHeldPastKickoff\(\s*event\?\.status,\s*event\?\.commence_time,\s*undefined,\s*event\?\.started_without_result,(?:\s*event\?\.authority_not_started,?)?\s*\)/,
     );
   });
 });

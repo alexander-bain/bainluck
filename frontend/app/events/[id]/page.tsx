@@ -2150,11 +2150,13 @@ export default function EventPage({ params }: EventPageProps) {
                     hasStarted,
                     gameCountdown,
                     // #9634 — held by the server: "Pregame", not "Started".
+                    // #9968 — and inside the grace, ESPN still reads pregame.
                     serverHeldPastKickoff(
                       event?.status,
                       event?.commence_time,
                       undefined,
                       event?.started_without_result,
+                      event?.authority_not_started,
                     ),
                     playedBeforeClock,
                   )}
