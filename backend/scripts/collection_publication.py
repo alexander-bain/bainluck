@@ -190,10 +190,10 @@ def _hub_revision(value: str) -> tuple:
     try:
         container_id, revision = value.split(":")
         return int(container_id), int(revision)
-    except ValueError as exc:
+    except ValueError as malformed:
         raise argparse.ArgumentTypeError(
             f"hub-revision must be CONTAINER_ID:REVISION, got {value!r}"
-        ) from exc
+        ) from malformed
 
 
 def parse_args(argv: list[str] | None = None) -> Options:
