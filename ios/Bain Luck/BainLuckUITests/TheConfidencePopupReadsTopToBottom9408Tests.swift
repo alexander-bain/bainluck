@@ -11,7 +11,8 @@ import XCTest
 /// presentation's, not the view's — so the guard is a real tap on a real page.
 ///
 /// Knobs (`TEST_RUNNER_` environment):
-///   `BL_9408_ROUTE` default `bainluck://events/15320240` (CHC @ SD, Alex's game)
+///   `BL_9408_ROUTE` default `bainluck://events/15320240` (CHC @ SD, Alex's game;
+///                   final since 9/30, so the default SKIPS — pass a live game)
 ///   `BL_9408_SIZE`  default `UICTContentSizeCategoryXXXL` (measured: renders
 ///                   pixel-identical to Alex's IMG2365 on an iPhone 17 Pro Max)
 ///   `BL_9408_ALLOW_SCROLL=1` for sizes where the popup cannot fit on screen
@@ -29,8 +30,17 @@ final class TheConfidencePopupReadsTopToBottom9408Tests: XCTestCase {
                                                   "-UIPreferredContentSizeCategoryName", size])
         let opener = app.buttons.matching(NSPredicate(
             format: "label BEGINSWITH %@", "Probability confidence and update details")).firstMatch
-        XCTAssertTrue(opener.waitForExistence(timeout: UITestLaunch.launchTimeout + UITestLaunch.contentTimeout),
-                      "no Win Probability details button on \(route)")
+        guard opener.waitForExistence(timeout: UITestLaunch.launchTimeout + UITestLaunch.contentTimeout) else {
+            // The default route rots: Alex's game went final, and a finished
+            // game (or a pre-game opening line, #9470) correctly has no Win
+            // Probability button. That is a missing precondition, not the
+            // defect, so it skips by name (JourneyPreconditions.swift).
+            for marker in ["Final", "Opening line"] where app.staticTexts[marker].exists {
+                throw XCTSkip("NOT WALKED: \(route) reads '\(marker)', which correctly has no Win "
+                    + "Probability button. Set TEST_RUNNER_BL_9408_ROUTE to a game in progress and re-run.")
+            }
+            return XCTFail("no Win Probability details button on \(route), and the page is neither final nor an opening line")
+        }
         opener.tap()
 
         let last = app.staticTexts[Self.lastLine]
