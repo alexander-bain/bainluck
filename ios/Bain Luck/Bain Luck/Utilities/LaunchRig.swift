@@ -333,6 +333,72 @@ enum LaunchRig {
         return count
     }
 
+    // MARK: - Serving Discover from one fixed, pinned deck
+
+    /// Launch-argument key carrying the path, RELATIVE TO THE APP'S OWN
+    /// CONTAINER, of a fixed Discover feed file (#9648).
+    ///
+    /// `xcrun simctl launch <sim> <bundle> -launch_fixed_feed "Library/Application Support/BL9648/fixed-feed.json"`.
+    ///
+    /// The #9648 journey needs a Red Sox card and two unrelated MLB games on a
+    /// signed-in phone; live supply had neither on Oct 1, so it SKIPPED. This
+    /// serves the reviewed 36-card deck through the real view model instead.
+    ///
+    /// ⚠️ Like ``changedRefreshKey`` it changes what the reader is SHOWN, so its
+    /// one call site (`DiscoverView.makeViewModel`) and its implementation
+    /// (`FixedDiscoverFeed`) are `#if DEBUG`: a Release/TestFlight binary does not
+    /// contain the code that honours it. The key is read unconditionally so the
+    /// contract test exercises the same function the app calls.
+    static let fixedFeedKey = "launch_fixed_feed"
+
+    /// Launch-argument key carrying the container-relative path of the seed
+    /// profile/dismiss state. Passed ONLY on the launches that start an arm
+    /// (control, treatment); the cold relaunch omits it and so writes nothing.
+    static let fixedFeedSeedKey = "launch_fixed_feed_seed"
+
+    /// Launch-argument key carrying the run anchor, in Unix seconds, that the
+    /// seed's timestamps are materialized against. One value for the whole run.
+    static let fixedFeedAnchorKey = "launch_fixed_feed_anchor"
+
+    /// The fixed feed file the rig asked for, or `nil` when it asked for none.
+    static func fixedFeedURL(defaults: UserDefaults = .standard, home: URL) -> URL? {
+        containerURL(defaults.string(forKey: fixedFeedKey), home: home)
+    }
+
+    /// The seed file the rig asked for, or `nil` when this launch must not seed.
+    static func fixedFeedSeedURL(defaults: UserDefaults = .standard, home: URL) -> URL? {
+        containerURL(defaults.string(forKey: fixedFeedSeedKey), home: home)
+    }
+
+    /// The run anchor, or `nil`. Read through `object(forKey:)` for
+    /// ``changedRefreshDrop``'s reason: the argument domain can hand back an
+    /// `NSNumber` where the command line passed text. Refuses non-positive and
+    /// non-finite values rather than anchoring a seed at 1970.
+    static func fixedFeedAnchor(defaults: UserDefaults = .standard) -> TimeInterval? {
+        let text: String
+        switch defaults.object(forKey: fixedFeedAnchorKey) {
+        case let value as String: text = value
+        case let value as NSNumber: text = value.stringValue
+        default: return nil
+        }
+        guard let seconds = Double(text.trimmingCharacters(in: .whitespacesAndNewlines)),
+              seconds.isFinite, seconds > 0
+        else { return nil }
+        return seconds
+    }
+
+    /// A path that stays inside `home`: relative, non-empty, no `..` component.
+    /// Anything else is refused rather than resolved, so the affordance can only
+    /// ever read a file the harness put in this app's own container.
+    static func containerURL(_ raw: String?, home: URL) -> URL? {
+        guard let raw = raw?.trimmingCharacters(in: .whitespacesAndNewlines),
+              !raw.isEmpty, !raw.hasPrefix("/"), !raw.hasPrefix("~")
+        else { return nil }
+        let parts = raw.split(separator: "/", omittingEmptySubsequences: true)
+        guard !parts.isEmpty, !parts.contains("..") else { return nil }
+        return parts.reduce(home) { $0.appendingPathComponent(String($1)) }
+    }
+
     /// How long to wait AFTER the route before scrolling.
     ///
     /// Longer than ``routeDelay`` and additional to it, because the two waits
