@@ -140,13 +140,22 @@ export function hasNoReportedResult(
  * or a StatPal later-session hold (#9613). Only the served `false` PAST the
  * grace says that — inside the grace the server's `false` is the same clock,
  * so it proves nothing and #6031's "Started" stands.
+ *
+ * #9968 — `authorityNotStarted` is the payload's `authority_not_started`, and
+ * it is what speaks INSIDE the grace. BOS@NYY read "Started" at 00:07Z with
+ * first pitch ≈00:15Z: the listed time had passed, ESPN still read `pre`, and
+ * the served `false` could not say so because it is the clock there. The key
+ * is served only when TRUE (ESPN stamped "not begun" within 15 min); absent is
+ * "not established" — tennis and unanchored rows — and keeps "Started".
  */
 export function serverHeldPastKickoff(
   status: string | null | undefined,
   commenceTime: string | null | undefined,
   now: number = Date.now(),
   served?: boolean | null,
+  authorityNotStarted?: boolean | null,
 ): boolean {
+  if (status === "scheduled" && authorityNotStarted === true) return true;
   return served === false && startedWithoutResult(status, commenceTime, now);
 }
 
