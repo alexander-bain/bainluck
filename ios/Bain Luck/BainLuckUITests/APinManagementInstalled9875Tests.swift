@@ -54,19 +54,42 @@ final class APinManagementInstalled9875Tests: XCTestCase {
         image.lifetime = .keepAlways
         add(image)
     }
-    private func reachable(_ app: XCUIApplication, id: String) -> XCUIElement? {
-        for _ in 0..<20 {
-            let candidates = app.descendants(matching: .any).matching(identifier: id).allElementsBoundByIndex
-            if let found = candidates.last(where: { $0.exists && $0.isHittable && $0.frame.minY > 90 && $0.frame.maxY < app.frame.height - 50 }) {
+    private func reachableRemove(_ app: XCUIApplication, key: String) -> XCUIElement? {
+        // Run1 drew Remove controls but never exposed removePin.<key> to the
+        // query. SwiftUI can give a child the row's savedPin.<key> identifier.
+        // Require BOTH exact pin identity and the removal label; never choose
+        // a generic Remove button by its position or fixture-title availability.
+        let predicate = NSPredicate(
+            format: "(identifier == %@ OR identifier == %@) AND label BEGINSWITH %@",
+            "removePin.\(key)", "savedPin.\(key)", "Remove "
+        )
+        for step in 0..<19 {
+            let candidates = app.buttons.matching(predicate).allElementsBoundByIndex
+            let top = app.navigationBars["Manage pins"].frame.maxY + 8
+            let controls = app.buttons.matching(identifier: "pin9875Controls").allElementsBoundByIndex
+                .last(where: { $0.exists && $0.isHittable })
+            let bottom = min(app.frame.maxY - 40, controls.map { $0.frame.minY - 8 } ?? app.frame.maxY - 40)
+            if let found = candidates.last(where: {
+                $0.exists && $0.isHittable && $0.isEnabled && $0.frame.minY > top && $0.frame.maxY < bottom
+            }) {
                 return found
             }
-            let frame = candidates.last(where: { $0.exists })?.frame
-            let down = frame.map { $0.maxY < 90 } ?? false
-            let a = app.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: down ? 0.4 : 0.7))
-            let b = app.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: down ? 0.65 : 0.45))
+            guard step < 18 else { break }
+            let frame = candidates.last(where: { $0.exists && $0.frame.width > 0 && $0.frame.height > 0 })?.frame
+            // If a lazy row is absent, sweep up, down, then up (six drags each).
+            // Run1's absent-selector helper only moved toward the bottom.
+            let towardTop = frame.map { $0.midY < (top + bottom) / 2 } ?? (step < 6 || step >= 12)
+            let upper = (top + (bottom - top) * 0.30 - app.frame.minY) / app.frame.height
+            let lower = (top + (bottom - top) * 0.75 - app.frame.minY) / app.frame.height
+            let a = app.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: towardTop ? upper : lower))
+            let b = app.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: towardTop ? lower : upper))
             a.press(forDuration: 0.05, thenDragTo: b)
             Thread.sleep(forTimeInterval: 0.25)
         }
+        let hierarchy = XCTAttachment(string: app.debugDescription)
+        hierarchy.name = "9875-unreachable-remove-\(key)"
+        hierarchy.lifetime = .keepAlways
+        add(hierarchy)
         return nil
     }
     private func control(_ app: XCUIApplication, _ label: String) throws {
@@ -85,7 +108,7 @@ final class APinManagementInstalled9875Tests: XCTestCase {
         XCTAssertTrue(app.navigationBars["Manage pins"].waitForExistence(timeout: 10))
     }
     private func remove(_ app: XCUIApplication, _ key: String) throws {
-        let button = try XCTUnwrap(reachable(app, id: "removePin.\(key)"), "known pin must remain individually removable")
+        let button = try XCTUnwrap(reachableRemove(app, key: key), "known pin \(key) must remain individually removable")
         button.tap()
     }
     private func toolbarPin(_ app: XCUIApplication, _ label: String) -> XCUIElement {
@@ -111,7 +134,7 @@ final class APinManagementInstalled9875Tests: XCTestCase {
             XCTAssertEqual(try receipt(app)["seed"] as? String, "retained")
             XCTAssertEqual(try saved(app), before, "cold offline restore keeps last-confirmed IDs")
             XCTAssertTrue(app.staticTexts["Couldn't refresh your saved pins. Known pins are shown below; you can still remove them."].exists)
-            XCTAssertNotNil(reachable(app, id: "removePin.\(key)"))
+            XCTAssertNotNil(reachableRemove(app, key: key))
             try record(app, "cold-offline-\(key)")
             try remove(app, key)
             XCTAssertTrue(wait { (try? self.saved(app))?.contains(key) == false })
@@ -166,7 +189,7 @@ final class APinManagementInstalled9875Tests: XCTestCase {
 
     func testLimitManageFromAlreadyOpenMyStuffStackAndSheetRemovesThenAdds() throws {
         try arm()
-        for (setup, presented) in [("pin9875StackedDetail", false), ("pin9875SheetDetail", true)] {
+        for setup in ["pin9875StackedDetail", "pin9875SheetDetail"] {
             let suite = newSuite()
             var app = try launch(suite, seed: true)
             JourneyPrecondition.tabBar(of: app).buttons["My Stuff"].tap()
@@ -177,15 +200,13 @@ final class APinManagementInstalled9875Tests: XCTestCase {
             XCTAssertTrue(pin.waitForExistence(timeout: 65), "read-only existing #9495 detail must load")
             try record(app, "already-open-\(setup)")
             pin.tap()
-            if presented {
-                let action = app.alerts.buttons["Manage pins"]
-                XCTAssertTrue(action.waitForExistence(timeout: 10))
-                action.tap()
-            } else {
-                let action = app.buttons["pinLimitManagePins"]
-                XCTAssertTrue(action.waitForExistence(timeout: 10))
-                action.tap()
-            }
+            // Run1's stacked detail uses this real alert too; the toast-only
+            // pinLimitManagePins identifier is not this reader action.
+            let alert = app.alerts["Pin limit reached"]
+            XCTAssertTrue(alert.waitForExistence(timeout: 10), "\(setup) must show the actual pin-limit alert")
+            let action = alert.buttons["Manage pins"]
+            XCTAssertTrue(action.waitForExistence(timeout: 10))
+            action.tap()
             XCTAssertTrue(app.navigationBars["Manage pins"].waitForExistence(timeout: 10), "Manage must open actual list in one reader action")
             XCTAssertEqual(try saved(app).filter { $0.hasPrefix("event:") }.count, 6)
             XCTAssertEqual(try saved(app).filter { $0.hasPrefix("future:") }.count, 6)
