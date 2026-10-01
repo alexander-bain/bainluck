@@ -46,6 +46,10 @@ def _array_on_sqlite(type_, compiler, **kw):  # pragma: no cover - DDL shim
 from app.models import Event, Sport  # noqa: E402
 from app.models.models import Base  # noqa: E402
 from app.services.anchor_channel import duplicate_tag  # noqa: E402
+from app.utils.sports_first_page_rails import (  # noqa: E402
+    CLIENT_COMPLETED_MAX_AGE_HOURS,
+    CLIENT_MARQUEE_FINAL_MAX_AGE_HOURS,
+)
 from app.utils.feed_event_candidates import (  # noqa: E402
     EVENT_CANDIDATE_BUDGET,
     TIER_LIVE,
@@ -1309,4 +1313,234 @@ def test_the_suspended_anchor_key_leads_the_tier_ordering():
     ]
     assert window.index("suspended_anchor_rank ASC") < window.index(
         "commence_time DESC"
+    )
+
+# ---------------------------------------------------------------------------
+# #10001 — a scoreless suspended card lives no longer than the Final it stands
+# in for
+# ---------------------------------------------------------------------------
+#
+# Both iPhone Sports requests — main (`mode=sports&limit=50`) and the events
+# backfill (`limit=200&include_futures=false`) — reach `_score_events` with
+# `my_teams_only=False`, so both select on the anonymous windows
+# `_candidate_conditions` builds here, through the one predicate
+# (`test_suspended_is_reachable_cert_786` asserts the route still calls it). A
+# row refused here can enter neither request, and so cannot come back through
+# the backfill.
+
+KBO_STALE_ID = 15321661  # NC Dinos @ Doosan Bears, 2026-10-01 06:04Z specimen
+PAUSE_ID = 400_001
+LIVE_OLD_ID = 400_002
+FINAL_OLD_ID = 400_003
+SCORED_PAUSE_ID = 400_004
+BOUNDARY_ID = 400_005
+PAST_BOUNDARY_ID = 400_006
+SCORELESS_HORIZON = timedelta(hours=CLIENT_COMPLETED_MAX_AGE_HOURS)
+
+
+def _suspended(id, age, sport_id=S_MLB, home_score=None, away_score=None):
+    return _event(
+        id,
+        sport_id,
+        f"H{id}",
+        f"A{id}",
+        NOW - age,
+        "suspended",
+        home_score=home_score,
+        away_score=away_score,
+    )
+
+
+def _sports_tab_slate():
+    """The production shape: a ~20h-old scoreless suspended KBO row beside a
+    recent pause, a genuinely live game that started long ago, and a Final as
+    old as the KBO row."""
+    return [
+        _suspended(KBO_STALE_ID, timedelta(hours=21, minutes=27)),
+        _suspended(PAUSE_ID, timedelta(hours=3)),
+        _event(LIVE_OLD_ID, S_MLB, "HL", "AL", NOW - timedelta(hours=20), "live"),
+        _event(
+            FINAL_OLD_ID,
+            S_MLB,
+            "HF",
+            "AF",
+            NOW - timedelta(hours=20),
+            "completed",
+            home_score=4,
+            away_score=2,
+        ),
+        _suspended(
+            SCORED_PAUSE_ID,
+            timedelta(hours=15),
+            sport_id=S_LIGUE1,
+            home_score=1,
+            away_score=2,
+        ),
+    ]
+
+
+@pytest.fixture()
+def sports_tab(engine):
+    with Session(engine) as s:
+        _seed(s, _sports_tab_slate())
+        yield s
+
+
+def test_10001_the_stale_suspended_row_was_admitted_before_the_fix(sports_tab):
+    """RED-FIRST. The pre-#10001 suspended arm, written out as the strawman it
+    is: on the same corpus it admits the KBO row, so the corpus reproduces the
+    defect rather than merely sitting beside it."""
+    pre_fix_arm = and_(
+        Event.status == "suspended",
+        Event.commence_time >= NOW - timedelta(hours=24),
+    )
+    ids = {
+        r[0]
+        for r in sports_tab.execute(
+            select(Event.id).join(Sport, Event.sport_id == Sport.id).where(pre_fix_arm)
+        ).all()
+    }
+    assert KBO_STALE_ID in ids
+
+
+def test_10001_the_stale_scoreless_suspended_row_is_refused(sports_tab):
+    assert KBO_STALE_ID not in _admitted(sports_tab)
+
+
+def test_10001_it_is_refused_with_a_sport_filter_too(sports_tab):
+    """`sport=` appends to the same list; it can only narrow, never re-admit."""
+    conditions = _candidate_conditions() + [Sport.key.ilike("%baseball%")]
+    assert KBO_STALE_ID not in _admitted(sports_tab, conditions)
+
+
+def test_10001_the_healthy_states_are_untouched(sports_tab):
+    """Both directions (gotcha #43): a recent pause, a long live game, an old
+    Final and a scored suspension all keep their place."""
+    assert {PAUSE_ID, LIVE_OLD_ID, FINAL_OLD_ID, SCORED_PAUSE_ID} <= _admitted(
+        sports_tab
+    )
+
+
+def test_10001_the_horizon_is_inclusive_at_exactly_the_threshold(engine):
+    """The client's comparison is strict `>`, so a card at exactly 8h is still
+    painted, and the server must still admit it. One second past is refused."""
+    rows = [
+        _suspended(BOUNDARY_ID, SCORELESS_HORIZON),
+        _suspended(PAST_BOUNDARY_ID, SCORELESS_HORIZON + timedelta(seconds=1)),
+    ]
+    with Session(engine) as s:
+        _seed(s, rows)
+        admitted = _admitted(s)
+        assert BOUNDARY_ID in admitted
+        assert PAST_BOUNDARY_ID not in admitted
+
+
+def test_10001_the_horizon_is_the_shared_client_constant(engine, monkeypatch):
+    """The horizon is READ from the client mirror, not restated. Move the
+    constant and the boundary moves with it; a hard-coded 8 would not."""
+    import app.utils.feed_event_candidates as candidates
+
+    monkeypatch.setattr(candidates, "CLIENT_COMPLETED_MAX_AGE_HOURS", 4)
+    rows = [
+        _suspended(PAUSE_ID, timedelta(hours=3)),
+        _suspended(BOUNDARY_ID, timedelta(hours=5)),
+    ]
+    with Session(engine) as s:
+        _seed(s, rows)
+        admitted = _admitted(s)
+        assert PAUSE_ID in admitted
+        assert BOUNDARY_ID not in admitted
+
+
+def test_10001_it_is_the_ordinary_horizon_not_the_marquee_final_one(engine):
+    """A suspended card is never a kept marquee final, so the 14h window must
+    not apply, however big the sport. 10h sits between the two numbers."""
+    assert CLIENT_COMPLETED_MAX_AGE_HOURS < 10 < CLIENT_MARQUEE_FINAL_MAX_AGE_HOURS
+    with Session(engine) as s:
+        _seed(s, [_suspended(BOUNDARY_ID, timedelta(hours=10))])
+        assert BOUNDARY_ID not in _admitted(s)
+
+
+@pytest.mark.parametrize(
+    "scores", [(1, 2), (0, 0), (3, None), (None, 0)], ids=["1-2", "0-0", "home", "away"]
+)
+def test_10001_a_scored_suspension_keeps_the_recent_window(engine, scores):
+    """CERT-752's shape: play happened and stopped. Either recorded score,
+    zero included, is that evidence, so the row keeps its 24h window."""
+    home, away = scores
+    with Session(engine) as s:
+        _seed(
+            s,
+            [
+                _suspended(
+                    SCORED_PAUSE_ID,
+                    timedelta(hours=15),
+                    home_score=home,
+                    away_score=away,
+                )
+            ],
+        )
+        assert SCORED_PAUSE_ID in _admitted(s)
+
+
+def test_10001_a_scored_suspension_still_ages_out_at_the_recent_window(engine):
+    """The scored arm is the OLD arm, not an open floor."""
+    with Session(engine) as s:
+        _seed(
+            s,
+            [
+                _suspended(
+                    SCORED_PAUSE_ID, timedelta(hours=25), home_score=1, away_score=2
+                )
+            ],
+        )
+        assert SCORED_PAUSE_ID not in _admitted(s)
+
+
+def test_10001_my_teams_wider_window_does_not_revive_it(engine):
+    """`my_teams_only` widens the recent window to 72h for results. A scoreless
+    suspended row is not a result: it still stops at the horizon, and a scored
+    one keeps the wider window as before."""
+    conditions = candidate_window_conditions(
+        now=NOW,
+        live_start_cutoff=NOW + timedelta(hours=1),
+        upcoming_cutoff=NOW + timedelta(days=7),
+        recent_cutoff=NOW - timedelta(hours=72),
+    )
+    rows = [
+        _suspended(KBO_STALE_ID, timedelta(hours=21, minutes=27)),
+        _suspended(SCORED_PAUSE_ID, timedelta(hours=40), home_score=1, away_score=2),
+        _suspended(PAUSE_ID, timedelta(hours=3)),
+    ]
+    with Session(engine) as s:
+        _seed(s, rows)
+        admitted = _admitted(s, conditions)
+        assert KBO_STALE_ID not in admitted
+        assert {SCORED_PAUSE_ID, PAUSE_ID} <= admitted
+
+
+def test_10001_stale_rows_take_no_suspended_quota(engine):
+    """Refused rows are refused BEFORE the quota pass, so a flood of stale
+    scoreless rows cannot cost a recent pause its slot."""
+    stale = [
+        _suspended(500_000 + i, SCORELESS_HORIZON + timedelta(minutes=1 + i))
+        for i in range(TIER_QUOTAS[TIER_SUSPENDED] + 10)
+    ]
+    with Session(engine) as s:
+        _seed(s, stale + [_suspended(PAUSE_ID, timedelta(hours=3))])
+        assert _admitted(s) == {PAUSE_ID}
+
+
+def test_10001_the_suspended_arm_compiles_for_postgresql():
+    """Postgres shape: the score gate is parenthesised INSIDE the suspended arm,
+    ANDed with the recent window, and carries the 8h-from-start cutoff."""
+    sql = _pg_sql()
+    arm = sql[sql.index("events.status = 'suspended' AND") :]
+    arm = arm[: arm.index(")) AND (events.event_tags") + 1]
+    recent = (NOW - timedelta(hours=24)).isoformat(sep=" ")
+    horizon = (NOW - SCORELESS_HORIZON).isoformat(sep=" ")
+    assert arm == (
+        f"events.status = 'suspended' AND events.commence_time >= '{recent}' "
+        "AND (events.home_score IS NOT NULL OR events.away_score IS NOT NULL "
+        f"OR events.commence_time >= '{horizon}')"
     )

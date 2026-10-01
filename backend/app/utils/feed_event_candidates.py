@@ -59,11 +59,14 @@ SQLAlchemy but not Postgres would otherwise pass every gate.
 
 from __future__ import annotations
 
+from datetime import timedelta
+
 from sqlalchemy import Select, String, and_, case, func, or_, select
 
 from app.models import Event, Sport
 from app.utils.event_completion import EVENT_SUSPENDED
 from app.utils.proven_duplicates import not_a_proven_duplicate
+from app.utils.sports_first_page_rails import CLIENT_COMPLETED_MAX_AGE_HOURS
 
 # Status tiers.  These integers are PARTITION LABELS and quota keys, not a
 # display order — the caller applies its own `ORDER BY` after this pass — which
@@ -156,7 +159,49 @@ def candidate_window_conditions(
     * ``completed`` / ``closed`` — recently finished.
     * ``suspended`` — recently *not* finished, on the same window as the Final
       it replaced.  See the route-side comment for why it shares that window
-      rather than the live arm's open floor.
+      rather than the live arm's open floor.  A suspended row with NO SCORE is
+      also cut off at the finished-card horizon; see below.
+
+    ── WHY A SCORELESS SUSPENDED ROW STOPS AT THE FINISHED-CARD HORIZON (#10001) ──
+
+    The route-side comment promised that a suspended card "ages out where that
+    Final would have".  It did not.  The arm used ``recent_cutoff`` (24h), and
+    the Final it stands in for leaves the page sooner: both clients delete a
+    finished card :data:`CLIENT_COMPLETED_MAX_AGE_HOURS` (8h) after it ended,
+    and neither client ever ages out a ``suspended`` card, so the server's 24h
+    was the card's whole life.  Measured 2026-10-01 06:04Z: KBO NC Dinos @
+    Doosan Bears 15321661 (first pitch 09:33Z the day before, no score, still
+    ``suspended``) came in through the iPhone's events backfill and sat second
+    in "Live & Paused", the top section of the Sports tab, above every one of
+    the night's MLB playoff finals.
+
+    The clock is the KNOWN START, ``commence_time``.  A suspended row has no
+    honest finish: ``events`` stores no pause time, and a suspension is not an
+    end.  The clients' own rule for a finished card with no ``ended_at`` falls
+    back to ``commence_time`` too.  So the cutoff is 8h from first pitch, kept
+    with ``>=`` because the client's strict ``>`` still paints a card at
+    exactly the threshold.  It is the ordinary 8h, never the 14h marquee-final
+    window: that one belongs to a card Discover kept as a final, which a
+    suspended card cannot be, and it is not a bonus for the sport.
+
+    IT BINDS ONLY THE ROW WITH NO SCORE.  A recorded score (either side, 0
+    included) is the evidence that play happened and stopped, and that row is
+    the one live/048 built this state for.  CERT-752's De Jong v Passaro, 1-2 in
+    sets, suspended ~15h after its start with a resumption scheduled, is still a
+    true "paused" card at 15h, and ``test_suspended_is_reachable_cert_786``
+    holds it on the page.  A scoreless suspended row makes no such claim.  It is
+    a stand-in for a game nobody recorded, like the esports rows whose only
+    source went dark, and it gets no longer than the Final it stands in for.
+    The scored arm keeps exactly the window it had, so a scored row that never
+    resumes still ages out at ``recent_cutoff`` as before.
+
+    This only ever TIGHTENS: both arms are also bounded by ``recent_cutoff``,
+    so a caller's narrower window still wins.  A scoreless pause inside 8h of
+    first pitch (a rain delay before the first pitch, an id-anchored row #5602
+    lifts within the tier) is admitted as before.  A row that resumes goes back
+    to ``live`` and gets the live arm's open floor.  ``completed``/``closed``
+    aging is untouched, and so is the stored row: nothing here grades,
+    relabels or clears it.  Why the row stays ``suspended`` is #5711's question.
 
     ── WHY THE SCHEDULED ARM IS TWO ARMS (#6690, live/346) ──
 
@@ -183,6 +228,7 @@ def candidate_window_conditions(
     continues to use.
     """
     marquee_keys = tuple(marquee_sport_keys or ())
+    scoreless_suspended_cutoff = now - timedelta(hours=CLIENT_COMPLETED_MAX_AGE_HOURS)
     scheduled_arms = [
         and_(
             Event.status == "scheduled",
@@ -214,6 +260,11 @@ def candidate_window_conditions(
             and_(
                 Event.status == EVENT_SUSPENDED,
                 Event.commence_time >= recent_cutoff,
+                or_(
+                    Event.home_score.isnot(None),
+                    Event.away_score.isnot(None),
+                    Event.commence_time >= scoreless_suspended_cutoff,
+                ),
             ),
         )
     ]
