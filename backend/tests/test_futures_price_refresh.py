@@ -1427,6 +1427,10 @@ class _RunHarness:
         # A no-op here; #8718's subclass records it.
         return None
 
+    def _attempt_skips(self, ids):
+        # Nothing read inside its window here; #9543's subclass overrides it.
+        return set()
+
     async def run(self, monkeypatch):
         import contextlib
 
@@ -1454,7 +1458,7 @@ class _RunHarness:
         monkeypatch.setattr(
             "app.utils.feed_served_markets.note_served_signal_healthy", _note
         )
-        monkeypatch.setattr(mod, "_load_attempt_skips", lambda ids: set())
+        monkeypatch.setattr(mod, "_load_attempt_skips", self._attempt_skips)
         monkeypatch.setattr(mod, "_mark_attempted", self._mark)
 
         class _Service:

@@ -396,10 +396,15 @@ class _ReachHarness(_RunHarness):
     task's own: attribution, ordering, the cap, rotation, both markers.
     """
 
-    def __init__(self, *, label_rows, class_rows=(), skips=(), per_run=None):
+    def __init__(
+        self, *, label_rows, class_rows=(), skips=(), per_run=None, read_elsewhere=()
+    ):
         super().__init__(signal=_signal(), class_rows=list(class_rows))
         self.label_rows = list(label_rows)
         self.skips = set(skips)
+        # Ids holding the PRICE-attempt marker: another arm read them inside
+        # its own window.
+        self.read_elsewhere = set(read_elsewhere)
         self.per_run = per_run
         self.fetched: list[str] = []
         self.label_writes: list[tuple[int, str]] = []
@@ -419,6 +424,9 @@ class _ReachHarness(_RunHarness):
 
     def _mark(self, ids, ttl_seconds):
         self.marks[tuple(ids)] = ttl_seconds
+
+    def _attempt_skips(self, ids):
+        return {i for i in ids if i in self.read_elsewhere}
 
     async def run(self, monkeypatch):
         outer = self
@@ -539,6 +547,54 @@ class TestTheArmReachesWhatTheValueArmsCannot:
         # Skips are looked up over the pool BEFORE the cap, so a skipped head
         # cannot starve the rows behind it.
         assert sorted(h.label_skip_asked) == [r[0] for r in rows]
+
+    @pytest.mark.asyncio
+    async def test_a_head_read_by_another_arm_does_not_spend_the_cap(
+        self, monkeypatch
+    ):
+        """Production 2026-10-01: 60 candidates, 4 attempted, no budget hit.
+        The head of the id order had been read by the class arm inside its 6h
+        window, so `eligible` dropped it AFTER the cap — and with no label
+        marker it was the head again next beat. The rotation never moved and
+        60481264 (rank 729 of 932) settled still printing "Yes".
+        """
+        head = [
+            (82000000 + i, "kalshi", f"KXHEAD-{i}", 20_000, None, None)
+            for i in range(3)
+        ]
+        h = _ReachHarness(
+            label_rows=head + [POKEMON_ROW, COWAGE_ROW],
+            read_elsewhere={r[0] for r in head},
+            per_run=2,
+        )
+        stats = await h.run(monkeypatch)
+
+        assert h.fetched == ["KXPOKEMON-26SEPCELULTPR", "KXCOWAGE-2027"]
+        assert stats["threshold_label_candidates"] == 2
+        assert stats["threshold_label_attempted"] == 2
+        assert stats["threshold_label_read_elsewhere"] == 3
+        assert h.label_writes == [
+            (60481264, "Above $1237.81"),
+            (61461638, "Above 4.00 pp"),
+        ]
+        # The rows read elsewhere keep only their own marker: no label slot.
+        assert sorted(h.label_marks) == [60481264, 61461638]
+
+    @pytest.mark.asyncio
+    async def test_read_elsewhere_counts_only_rows_not_already_label_skipped(
+        self, monkeypatch
+    ):
+        rows = [
+            (83000000 + i, "kalshi", f"KXBOTH-{i}", 10, None, None) for i in range(3)
+        ]
+        h = _ReachHarness(
+            label_rows=rows,
+            skips={83000000},
+            read_elsewhere={83000000, 83000001},
+        )
+        stats = await h.run(monkeypatch)
+        assert h.fetched == ["KXBOTH-2"]
+        assert stats["threshold_label_read_elsewhere"] == 1
 
     @pytest.mark.asyncio
     async def test_a_pool_at_the_ceiling_says_so(self, monkeypatch):

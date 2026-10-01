@@ -94,7 +94,9 @@ unlabelled rows were never selected: ``/futures/60481264`` (tier 2, volume
 5,170) fails every value and identity arm. So an unlabelled one-``Yes`` Kalshi
 row is its own identity arm (:data:`_THRESHOLD_LABEL_CANDIDATE_SQL`). It is
 capped at :data:`THRESHOLD_LABEL_PER_RUN` per run and rotated through its own
-marker, which reaches the whole measured population inside a day.
+marker, which reaches the whole measured population inside a day — provided
+the cap is spent on rows this run will actually read, so rows another arm
+read inside its window are taken out before the cap, not after it.
 
 THREE ARMS, BECAUSE THERE ARE THREE KINDS OF WORTH REFRESHING
 --------------------------------------------------------------
@@ -3514,6 +3516,9 @@ async def _refresh_stale_futures_prices(
         "threshold_label_pool_capped": False,
         "threshold_label_candidates": 0,
         "threshold_label_attempted": 0,
+        # Pool rows skipped because another arm read them inside its own
+        # window (they had their label chance off that read).
+        "threshold_label_read_elsewhere": 0,
         # Served ids this task structurally cannot refresh: an `odds_api` row
         # (LIVE_MARKET_SQL is Kalshi/Polymarket only) or a market the liveness
         # bounds retired. Counted so a page-one card that stays wrong has a
@@ -3640,9 +3645,21 @@ async def _refresh_stale_futures_prices(
             for m in threshold_label_pool
             if m["id"] not in priority_ids and m["id"] not in class_ids
         ]
-        label_skips = _load_label_attempt_skips([m["id"] for m in threshold_label_pool])
+        # The price-attempt marker is applied HERE as well as to `scan` below,
+        # and before the cap. A row another arm read inside its window is
+        # dropped from `eligible` after the slice, without ever taking this
+        # arm's 20h marker — so on 10/01 the same id-ordered head took 56 of
+        # the 60 slots on every beat (55 of the first 60 had been read by the
+        # class arm in the last 6h), the run attempted 4, and the rotation
+        # never reached rank 729 (/futures/60481264, settled unlabelled).
+        label_pool_ids = [m["id"] for m in threshold_label_pool]
+        label_skips = _load_label_attempt_skips(label_pool_ids)
+        label_read_elsewhere = _load_attempt_skips(label_pool_ids) - label_skips
+        stats["threshold_label_read_elsewhere"] = len(label_read_elsewhere)
         threshold_label_scan = [
-            m for m in threshold_label_pool if m["id"] not in label_skips
+            m
+            for m in threshold_label_pool
+            if m["id"] not in label_skips and m["id"] not in label_read_elsewhere
         ][: max(0, threshold_label_per_run)]
         priority_ids |= {m["id"] for m in threshold_label_scan}
         scan = (
