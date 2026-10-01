@@ -1348,10 +1348,16 @@ export function matchScoreStillReachable(
   const parsed = parseMatchScoreOutcome(label);
   if (!parsed) return true;
 
-  const isHome = sideMatchesTeam(parsed.side, sets.homeTeam);
-  const isAway = sideMatchesTeam(parsed.side, sets.awayTeam);
-  // Exactly one, or this view cannot say whose finish this is.
-  if (isHome === isAway) return true;
+  // #3703 — either way round. The event can name the players by surname
+  // (`Alcaraz` / `Michelsen`, /events/15320475, 2026-10-01) while Kalshi's
+  // ladder writes `Alex Michelsen wins 2-0`; a one-way containment test placed
+  // neither side, failed open, and left both 2-0 rows priced at 1% at one set
+  // all. `eventSideForLabel` is the both-ways door #5528 already uses, and it
+  // keeps the collision door: a side matching both competitors or neither is
+  // null, which is "cannot say whose finish this is".
+  const side = eventSideForLabel(parsed.side, sets.homeTeam, sets.awayTeam);
+  if (side === null) return true;
+  const isHome = side === "home";
 
   const finalHome = isHome ? parsed.won : parsed.lost;
   const finalAway = isHome ? parsed.lost : parsed.won;
