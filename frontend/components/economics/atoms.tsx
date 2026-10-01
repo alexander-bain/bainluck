@@ -1,5 +1,6 @@
 "use client";
 
+import Link from "next/link";
 import { useState } from "react";
 
 export function probColor(p: number): string {
@@ -223,12 +224,18 @@ export function Histogram({ buckets, color }: {
   );
 }
 
-export function MarketRow({ q, prob, src, delta, leader }: {
+export function MarketRow({ q, prob, src, delta, leader, marketId }: {
   q: string; prob: number; src: string; delta?: number | null; leader?: string | null;
+  /** The market this row prices. Present ⇒ the row opens `/futures/{id}`, the
+   *  same destination the identical card has on /politics and /entertainment
+   *  (#8039: all 346 /economics rows were inert). Absent ⇒ the row stays a
+   *  plain row — some payload rows (index "today" moves, WTI brackets) carry
+   *  no market id, and a link to `/futures/undefined` is worse than none. */
+  marketId?: number | null;
 }) {
   const col = probColor(prob);
-  return (
-    <div className="py-2.5 border-t border-surface-secondary">
+  const body = (
+    <>
       <div className="flex items-center justify-between gap-2">
         <div className="flex-1 text-[13px] text-text-secondary leading-snug min-w-0">{q}</div>
         <div className="flex items-center gap-2 shrink-0">
@@ -260,7 +267,19 @@ export function MarketRow({ q, prob, src, delta, leader }: {
           </span>
         ) : null}
       </div>
-    </div>
+    </>
+  );
+  const rowClass = "block py-2.5 border-t border-surface-secondary";
+  return marketId != null ? (
+    <Link
+      href={`/futures/${marketId}`}
+      data-testid="econ-market-row-link"
+      className={`${rowClass} hover:bg-surface-secondary/60 transition-colors`}
+    >
+      {body}
+    </Link>
+  ) : (
+    <div className={rowClass}>{body}</div>
   );
 }
 
