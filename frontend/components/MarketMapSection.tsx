@@ -1006,7 +1006,7 @@ export default function MarketMapSection({
     // #3240: the selection lives in `marketMapUtils` so the Score Differential
     // note can ask whether THIS card renders instead of guessing from whether
     // the page happens to hold a played count.
-    const gameTotals = selectGameTotalRungs(gameMarkets.totals, eventStatus);
+    const gameTotals = selectGameTotalRungs(gameMarkets.totals, eventStatus, vocab);
 
     if (gameTotals.length === 0) return null;
 

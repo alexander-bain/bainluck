@@ -121,6 +121,8 @@ describe("#9798 a voided match", () => {
   test("the event page does not mount the games/margin maps on a voided match", () => {
     expect(page).toContain("{gameMarkets && !venueVoided && marketMapSectionMounts(gameMarkets) && (");
     // #3240: the note that points at the map must agree the map is not there.
-    expect(page).toContain("totalsMapPresent={!venueVoided && totalsMapRenders(gameMarkets, event.status)}");
+    expect(page).toContain(
+      "totalsMapPresent={!venueVoided && totalsMapRenders(gameMarkets, event.status, sportVocab(event.sport || undefined))}",
+    );
   });
 });
