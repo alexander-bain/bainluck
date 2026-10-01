@@ -31,8 +31,10 @@ folds those at serve time by name and minute) cannot get in — it is reported,
 and if it holds questions the collection is short them and says so.
 
 A MARKET IS A MEMBER BECAUSE ITS EVENT IS (`futures_markets.event_id`, gotcha
-#15). Kalshi's and Polymarket's markets on one game are two questions, and both
-stay.
+#15) — except the game's own winner market. Kalshi's and Polymarket's "who wins
+Game 1" markets are the game card's blended number, not two more questions, so
+they are reported under `EXCLUDED_GAME_WINNER_MARKET`, never edged
+(`container_game_winner`). Every other question on the game stays.
 
 NOT EVERY LISTED GAME IS A GAME. ESPN lists "Game 3 If Necessary" before the
 series decides whether it happens. `postseason_series.certain_to_be_played` is
@@ -55,6 +57,10 @@ from datetime import datetime
 from typing import Any, Iterable, Optional
 
 from app.utils.container_class import MemberEvidence
+from app.utils.container_game_winner import (
+    EXCLUDED_GAME_WINNER_MARKET,
+    is_the_games_own_winner_market,
+)
 from app.utils.postseason_series import certain_to_be_played
 
 #: Our `sports.key` for MLB.
@@ -408,7 +414,14 @@ def resolve_postseason_members(
         if market.id in seen_markets:
             continue
         seen_markets.add(market.id)
-        if market.event_id in member_events:
+        if market.event_id in member_events and is_the_games_own_winner_market(
+            market.market_type, market.name, market.external_id
+        ):
+            members.exclude(
+                EXCLUDED_GAME_WINNER_MARKET,
+                {"market_id": market.id, "event_id": market.event_id, "source": market.source},
+            )
+        elif market.event_id in member_events:
             members.candidates.append(
                 Candidate(
                     child_type="market",

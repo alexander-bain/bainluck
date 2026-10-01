@@ -36,6 +36,7 @@ from app.tasks.container_nfl_assembly import (
 from app.utils.container_nfl import (
     EXCLUDED_CONFLICTING_IDENTITY,
     EXCLUDED_DUPLICATE_EVENT_ROWS,
+    EXCLUDED_GAME_WINNER_MARKET,
     EXCLUDED_MARKET_ON_DUPLICATE,
     EXCLUDED_NO_WEEK_IDENTITY,
     EXCLUDED_OTHER_WEEK,
@@ -326,7 +327,9 @@ def test_members_are_one_row_per_contest_and_gaps_stay_visible(real):
     assert gap["reason"] == UNAVAILABLE_NO_EVENT_ROW
 
 
-def test_markets_follow_their_event_and_both_venues_stay(real):
+def test_markets_follow_their_event(real):
+    # "binary" is a test double, not a `market_shape` value, so these rows run
+    # as questions; the game-winner rule is graded on real shapes below.
     selection = select_week_contests(real, WEEK_1)
     rows = _week_rows(real)
     seahawks = _event_id(rows, "280445")
@@ -346,6 +349,34 @@ def test_markets_follow_their_event_and_both_venues_stay(real):
     assert members.excluded[EXCLUDED_MARKET_ON_DUPLICATE] == [
         {"market_id": 4, "event_id": dup_event, "source": "kalshi"}
     ]
+
+
+def test_the_games_winner_markets_are_the_game_card_not_three_more_questions(real):
+    # DERIVED from REAL rows: Steelers at Browns (event 14780550, NFL 2026 Week 4)
+    # as stored on 2026-09-30 — ids, names, external ids and `market_type` read
+    # through `/api/admin/db-query`; the published `nfl-2026-week-4` hub served
+    # all three of 59369584 / 61894632 / 62784863 under that game. The 1H
+    # Moneyline name/external id are real but its id is not; the spread row is
+    # a control shaped like the real Polymarket spread duels. `event_id` is
+    # re-pointed at this corpus's Patriots at Seahawks row.
+    selection = select_week_contests(real, WEEK_1)
+    rows = _week_rows(real)
+    game = _event_id(rows, "280445")
+    markets = [
+        MarketRow(59369584, game, "Steelers vs. Browns", "885112", "polymarket", "field", "open"),
+        MarketRow(61894632, game, "PIT Steelers vs CLE Browns", "KXNFLGAME-26OCT01PITCLE", "kalshi", "duel", "open"),
+        MarketRow(62784863, game, "Steelers vs. Browns", "0x8a9f8be5bef9bc8d36c7895707a4f256", "polymarket", "duel", "open"),
+        MarketRow(62784864, game, "Steelers vs. Browns: 1H Moneyline", "0xaf5b520fb30ba7a72e51019b197b", "polymarket", "duel", "open"),
+        MarketRow(62784865, game, "Spread: Steelers (-1.5)", "0x0000000000000000000000000000", "polymarket", "duel", "open"),
+    ]
+    members = resolve_week_members(selection, rows, markets)
+    kept = {c.child_id for c in members.candidates if c.child_type == "market"}
+    assert kept == {59369584, 62784864, 62784865}
+    assert members.excluded[EXCLUDED_GAME_WINNER_MARKET] == [
+        {"market_id": 61894632, "event_id": game, "source": "kalshi"},
+        {"market_id": 62784863, "event_id": game, "source": "polymarket"},
+    ]
+    assert game in {c.child_id for c in members.candidates if c.child_type == "event"}
 
 
 def test_an_unavailable_week_has_no_members_even_with_rows(real):
