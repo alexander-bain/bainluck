@@ -436,6 +436,7 @@ def feed_page_base_cache_key(
     my_teams_only: bool = False,
     mode: Optional[str] = None,
     category: Optional[str] = None,
+    collections: Optional[str] = None,
 ) -> str:
     """Key for one stored, offset-independent Discover build.
 
@@ -464,6 +465,11 @@ def feed_page_base_cache_key(
         # for the same two reasons. Here the docstring's warning is literal:
         # omitting `category` would serve page 2 of another category's list.
         parts = f"cat={len(category)}:{category}|{parts}"
+    if collections:
+        # #10003: the published-collection fingerprint is a build input — the
+        # base carries the hubs `add_feed_collections` inserted. Same form and
+        # same reason as on ``feed_response_cache_key``.
+        parts = f"col={len(collections)}:{collections}|{parts}"
     return f"{FEED_PAGE_BASE_CACHE_PREFIX}:{hashlib.md5(parts.encode()).hexdigest()}"
 
 
@@ -697,6 +703,7 @@ def feed_response_cache_key(
     mode: Optional[str] = None,
     category: Optional[str] = None,
     edition: Optional[str] = None,
+    collections: Optional[str] = None,
 ) -> str:
     """Build the Redis response-cache key for one ``GET /api/feed`` shape.
 
@@ -748,6 +755,17 @@ def feed_response_cache_key(
         # never learns about editions — hashes the byte-identical string it
         # always did, so this does not cold-start the response cache on deploy.
         parts = f"ed={len(edition)}:{edition}|{parts}"
+    if collections:
+        # #10003. A collection-bearing Discover page inserts published hubs,
+        # and publication is live authority: a withdrawn hub must not outlive
+        # its withdrawal in a cached page. The fingerprint names the published
+        # root hubs and their ``membership_revision`` — bumped on every publish,
+        # withdrawal and membership change, and never reused — so a page built
+        # under one publication state can only be read back under that same
+        # state. Any change is a miss by construction, with no invalidation
+        # step to forget. Flag-off requests pass None and hash the
+        # byte-identical string they always did.
+        parts = f"col={len(collections)}:{collections}|{parts}"
     return f"{FEED_RESPONSE_CACHE_PREFIX}:{hashlib.md5(parts.encode()).hexdigest()}"
 
 

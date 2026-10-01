@@ -4027,20 +4027,33 @@ async def get_feed(
 
     from app.utils.feed_collections import (
         add_feed_collections,
+        feed_collections_cache_fingerprint,
         feed_collections_enabled,
     )
 
     _collections_enabled = feed_collections_enabled(
         mode=mode,
         include_events=include_events,
+        include_futures=include_futures,
         my_teams_only=my_teams_only,
         debug=debug or exclude_reviewed,
     )
-    # Publication/revocation is live authority. A collection-bearing page must
-    # never be served from response, stale, last-good or page-base caches.
-    # Flag-off requests retain all existing cache behavior. Shared scoring
-    # artifacts remain available to the flag-on build.
-    if not debug and not exclude_reviewed and not _collections_enabled:
+    # Publication/revocation is live authority. A collection-bearing page is
+    # cached ONLY under the publication state it was built from (#10003): the
+    # fingerprint joins the cache shape, so every tier keyed from it —
+    # response, stale, last-good, page base, the LAT-P089 shared key — misses
+    # the moment a hub is published, withdrawn or re-membered. When the
+    # fingerprint cannot be read the page is not cached at all, which is what
+    # every collection-bearing page got before #10003 (1.4–2.3 s per Discover
+    # open). Flag-off requests pass None and keep byte-identical keys.
+    _collections_fingerprint = None
+    if _collections_enabled and not debug and not exclude_reviewed:
+        _collections_fingerprint = await feed_collections_cache_fingerprint(db)
+    if (
+        not debug
+        and not exclude_reviewed
+        and (not _collections_enabled or _collections_fingerprint is not None)
+    ):
         _cache_status = "miss"
         # LAT-P089: the request SHAPE, held once. The private key and the
         # principal-independent key differ only in the principal, so deriving
@@ -4058,6 +4071,7 @@ async def get_feed(
             mode=mode,
             category=category,
             edition=_edition_request,
+            collections=_collections_fingerprint,
         )
         # LAT-P001: shared key builder — the pre-warm beat writes through the
         # SAME function, so a warmed key can never drift from the read key.

@@ -263,3 +263,72 @@ class TestBounded:
         counting = _Counting(pg_session)
         await discovery.discover_collections(counting, event_ids=list(ev.values()))
         assert counting.count == 2
+
+
+class TestFeedCacheFingerprint10003:
+    """#10003: the publication fingerprint a cached Discover page is keyed on.
+
+    What only a server can say: which rows the statement actually reads, that
+    ``bump_revision``'s ancestor walk is what moves it for a change inside a
+    draw, and that a failed read inside the SAVEPOINT leaves the request's
+    transaction and its loaded rows usable.
+    """
+
+    async def _fp(self, session):
+        from app.utils.feed_collections import feed_collections_cache_fingerprint
+
+        return await feed_collections_cache_fingerprint(session)
+
+    async def _set(self, session, hub_id, **cols):
+        sets = ", ".join(f"{k} = :{k}" for k in cols)
+        await session.execute(
+            text(f"UPDATE containers SET {sets} WHERE id = :id"), {"id": hub_id, **cols}
+        )
+
+    async def test_moves_only_for_what_a_reader_of_a_published_root_would_see(
+        self, pg_session
+    ):
+        from app.utils.container_corrections import bump_revision
+
+        hubs, _ = await _seed(pg_session)
+        base = await self._fp(pg_session)
+        assert isinstance(base, str) and base
+
+        # Rows no Discover reader is offered do not move it.
+        await self._set(pg_session, hubs["unpub"], membership_revision=50)
+        await self._set(pg_session, hubs["wrong"], membership_revision=50)
+        await self._set(pg_session, hubs["season"], membership_revision=50)
+        await self._set(pg_session, hubs["nested"], membership_revision=50)
+        assert await self._fp(pg_session) == base
+
+        # A change inside a published root's draw moves it — via the ancestor
+        # bump, which is the only reason a child change is visible here.
+        await bump_revision(pg_session, hubs["nested"])
+        bumped = await self._fp(pg_session)
+        assert bumped != base
+
+        # Withdrawing a published root moves it; re-publishing at a NEW
+        # revision moves it again and never returns to an old value.
+        await self._set(pg_session, hubs["wk6"], publication_state="withdrawn")
+        withdrawn = await self._fp(pg_session)
+        assert withdrawn not in (base, bumped)
+        await self._set(pg_session, hubs["wk6"], publication_state="published")
+        await bump_revision(pg_session, hubs["wk6"])
+        republished = await self._fp(pg_session)
+        assert republished not in (base, bumped, withdrawn)
+
+    async def test_a_failed_read_keeps_the_transaction_and_its_rows(self, pg_session):
+        from app.models.models import Container
+
+        hubs, _ = await _seed(pg_session)
+        loaded = await pg_session.get(Container, hubs["wk5"])
+        await pg_session.execute(text("ALTER TABLE containers RENAME COLUMN membership_revision TO mr_10003"))
+        try:
+            assert await self._fp(pg_session) is None
+            # The transaction is not aborted ...
+            assert (await pg_session.execute(text("SELECT 1"))).scalar() == 1
+            # ... and the row loaded before the failure was not expired (an
+            # expired attribute would lazy-load and raise under asyncio).
+            assert loaded.slug == "nfl-2026-week-5"
+        finally:
+            await pg_session.execute(text("ALTER TABLE containers RENAME COLUMN mr_10003 TO membership_revision"))

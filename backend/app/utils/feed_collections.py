@@ -6,25 +6,84 @@ No reserved slot, score bonus, assembly, or publication decision lives here.
 """
 
 import asyncio
+import hashlib
 import logging
 
+from sqlalchemy import text
+
 from app.services import container_discovery
+from app.utils.container_corrections import PUBLICATION_COLUMN, REVISION_COLUMN
 
 logger = logging.getLogger(__name__)
 COLLECTION_READ_BUDGET_SECONDS = 0.25
 
+#: #10003: what a cached collection-bearing page is keyed on. One row per
+#: discoverable published root hub, as ``id:membership_revision``. The revision
+#: moves on the hub and every ancestor whenever anything its reader would see
+#: changes — publish, withdraw, member correction, assembly — and never moves
+#: back, so two different publication states can never share a fingerprint.
+_FINGERPRINT_SQL = (
+    "SELECT COALESCE(string_agg("
+    f"id::text || ':' || {REVISION_COLUMN}::text, ',' ORDER BY id), '') "
+    "FROM containers "
+    f"WHERE {PUBLICATION_COLUMN} = 'published' "
+    "AND parent_container_id IS NULL "
+    "AND slug ~ :slug_pattern"
+)
 
-def feed_collections_enabled(*, mode, include_events, my_teams_only, debug=False):
+
+def feed_collections_enabled(
+    *, mode, include_events, my_teams_only, debug=False, include_futures=True
+):
     from app.routes.containers import containers_read_enabled
 
+    # ``include_futures``: collections are a Discover ship, and every Discover
+    # request carries futures. An events-only request (the native Sports tab's
+    # Live Now / Upcoming backfill, the web Sports finished lookup) renders no
+    # collection card on any client, so admitting it only cost it its cache
+    # (#10003: 33 ms shared hit → 0.6–3.3 s cold build).
     return (
         (mode or "discover").lower() == "discover"
         and include_events
+        and include_futures
         and not my_teams_only
         and not debug
         and container_discovery.container_discovery_enabled()
         and containers_read_enabled()
     )
+
+
+async def feed_collections_cache_fingerprint(db):
+    """The publication state a collection-bearing page may be cached under, or None.
+
+    #10003. ``add_feed_collections`` reads publication on every BUILD; this
+    lets a built page be reused only while that publication state still holds,
+    so revocation stays live without disabling the cache. One statement over
+    the few published root hubs.
+
+    ``None`` means "could not tell" and the caller must not cache — which is
+    the pre-#10003 behaviour, so a failure here costs speed, never truth. The
+    read runs in a SAVEPOINT so a failed statement (an un-migrated database
+    has no ``membership_revision``) rolls back alone instead of aborting the
+    request's transaction or expiring its loaded rows.
+    """
+    try:
+        async with db.begin_nested():
+            raw = (
+                await db.execute(
+                    text(_FINGERPRINT_SQL),
+                    {"slug_pattern": container_discovery.DISCOVERABLE_SLUG_PATTERN},
+                )
+            ).scalar()
+    except Exception:
+        logger.warning(
+            "Discover collection fingerprint read failed; serving uncached",
+            exc_info=True,
+        )
+        return None
+    if not isinstance(raw, str):
+        return None
+    return hashlib.sha256(f"v1|{raw}".encode()).hexdigest()[:16]
 
 
 async def add_feed_collections(
