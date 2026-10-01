@@ -71,9 +71,17 @@ class TestTheBuildersRenderTheArrayForm:
         assert sql.count(ANY_ARRAY) == 2 and not IN_FORM.search(sql), sql
 
     def test_a_short_term_anchored_on_a_long_one(self):
-        # `us recession`: one arm per long term plus the anchored subquery.
+        # `us recession`: one long term, so the anchored subquery is the whole arm
+        # (#1619 — the long term's own subquery is implied by the anchor).
         sql = _sql(events_route._multi_term_outcome_match([("us", None), ("recession", None)]))
-        assert sql.count(ANY_ARRAY) == 2 and not IN_FORM.search(sql), sql
+        assert sql.count(ANY_ARRAY) == 1 and not IN_FORM.search(sql), sql
+
+    def test_a_short_term_anchored_on_two_long_ones(self):
+        # `us fed rates`: one arm per long term plus the anchored subquery.
+        sql = _sql(events_route._multi_term_outcome_match(
+            [("us", None), ("fed", None), ("rates", None)]
+        ))
+        assert sql.count(ANY_ARRAY) == 3 and not IN_FORM.search(sql), sql
 
     def test_the_single_term_arm_inside_the_route(self):
         """`_outcome_id_match` is nested in `search_events`; read its body."""

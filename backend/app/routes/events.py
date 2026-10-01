@@ -7039,6 +7039,15 @@ def _multi_term_outcome_match(expanded: list[tuple[str, str | None]]):
         or_(*[_build_expanded_ilike(FuturesOutcome.name, t, e) for t, e in long_terms]),
         *[_build_expanded_ilike(FuturesOutcome.name, t, e) for t, e in short_terms],
     )
+    # #1619: with ONE long term the anchored subquery already requires an outcome
+    # matching it, so that term's own subquery is implied and is pure cost. For
+    # `f1 champion` it is every market holding a `%champion%`/`%winner%` outcome
+    # (67,215 outcomes, 31,531 markets), built into an ARRAY and probed per row.
+    # Production row-path 2026-10-01, three interleaved pairs, same count:
+    # 894-1,389 ms with it, 609-797 ms without. Two or more long terms keep
+    # theirs: the anchor ORs them, so it implies none of them alone.
+    if len(long_terms) == 1:
+        return anchored
     return and_(
         *[_some_outcome(t, e) for t, e in long_terms],
         anchored,
