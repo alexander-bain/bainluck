@@ -6262,9 +6262,17 @@ def _team_nickname_futures_arms(terms: list[str]) -> list:
 
 
 # #10024: the largest query the split arms below are built for. Two runs per cut
-# and len-1 cuts, so 4 terms is 6 arms; a longer query is a sentence, not a
+# and len-1 cuts, so 5 terms is 8 arms; a longer query is a sentence, not a
 # team-plus-competition pair, and the arms would multiply for no reader.
-_SPLIT_FUTURES_MAX_TERMS = 4
+# 5, not 4: a team's FULL name is often three words and a competition two, and at
+# 4 `kansas city chiefs super bowl` / `los angeles dodgers world series` built no
+# arm and showed the team's games with no board (production 2026-10-01 11:5xZ,
+# `futures_split_arm: absent`). The 8-arm union, production `EXPLAIN ANALYZE`
+# same hour, 2-3 reads each: `kansas city chiefs super bowl` 132-356 ms,
+# `los angeles dodgers world series` 189 ms, `new york yankees world series`
+# 197-638 ms, `golden state warriors nba finals` 297-380 ms, each finding its
+# board — inside the 1 s split bound, and read only when tier<=1 comes back short.
+_SPLIT_FUTURES_MAX_TERMS = 5
 
 
 def _is_single_trigram_term(term: str) -> bool:

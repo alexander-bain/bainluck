@@ -156,6 +156,9 @@ def _split_state(payload: dict) -> str:
         ("Yankees World Series", WORLD_SERIES),
         ("red sox world series", WORLD_SERIES),
         ("chiefs super bowl", SUPER_BOWL),
+        # the team's full name: five terms (production 11:5xZ 10/1 built no arm)
+        ("los angeles dodgers world series", WORLD_SERIES),
+        ("kansas city chiefs super bowl", SUPER_BOWL),
     ],
 )
 async def test_a_team_plus_its_competition_reaches_the_board(search, typed, board):
@@ -215,6 +218,7 @@ def _dropdown_futures(payload: dict) -> list[str]:
         ("dodgers world series", WORLD_SERIES),
         ("red sox world series", WORLD_SERIES),
         ("chiefs super bowl", SUPER_BOWL),
+        ("kansas city chiefs super bowl", SUPER_BOWL),
     ],
 )
 async def test_the_dropdown_offers_the_board(search, typed, board):
