@@ -23,7 +23,7 @@ final class AnExtraInningsPaceProjectsNothing9930Tests: XCTestCase {
         let tenth = pace(scored: 6, projected: 6, elapsed: 1.0)
         XCTAssertTrue(LivePaceStanding.agrees(tenth, scoreboardHome: 3, scoreboardAway: 3))
         XCTAssertTrue(LivePaceStanding.clockRanOut(tenth))
-        XCTAssertNil(LivePaceStanding.projection(tenth, scoreboardHome: 3, scoreboardAway: 3))
+        XCTAssertNil(LivePaceStanding.projection(tenth, openingTotal: nil, scoreboardHome: 3, scoreboardAway: 3))
     }
 
     /// Decoded from the served snake_case body, not built by hand, so a key
@@ -34,14 +34,14 @@ final class AnExtraInningsPaceProjectsNothing9930Tests: XCTestCase {
         decoder.keyDecodingStrategy = .convertFromSnakeCase
         let served = try decoder.decode(GameMarketPace.self, from: Data(body.utf8))
         XCTAssertEqual(served.fractionElapsed, 1.0)
-        XCTAssertNil(LivePaceStanding.projection(served, scoreboardHome: 3, scoreboardAway: 3))
+        XCTAssertNil(LivePaceStanding.projection(served, openingTotal: nil, scoreboardHome: 3, scoreboardAway: 3))
     }
 
     /// No scoreboard on the page leaves only the pace's own evidence — still
     /// no time to run forward.
     func testWithoutAScoreboardAnOvertimePaceStillProjectsNothing() {
         XCTAssertNil(LivePaceStanding.projection(pace(scored: 44, projected: 44, elapsed: 1.0),
-                                                 scoreboardHome: nil, scoreboardAway: nil))
+                                                 openingTotal: nil, scoreboardHome: nil, scoreboardAway: nil))
     }
 
     // MARK: - Controls: what still draws
@@ -51,7 +51,7 @@ final class AnExtraInningsPaceProjectsNothing9930Tests: XCTestCase {
     /// also kills `> 1` via the photographed test above.
     func testCONTROLALateRegulationPaceStillProjects() throws {
         let ninth = try XCTUnwrap(LivePaceStanding.projection(pace(scored: 6, projected: 6.3, elapsed: 0.95),
-                                                              scoreboardHome: 3, scoreboardAway: 3))
+                                                              openingTotal: nil, scoreboardHome: 3, scoreboardAway: 3))
         XCTAssertEqual(ninth.projected, 6.3)
         XCTAssertEqual(ninth.scored, 6)
     }
@@ -62,7 +62,7 @@ final class AnExtraInningsPaceProjectsNothing9930Tests: XCTestCase {
         let unfractioned = pace(scored: 3, projected: 7, elapsed: nil)
         XCTAssertFalse(LivePaceStanding.clockRanOut(unfractioned))
         let live = try XCTUnwrap(LivePaceStanding.projection(unfractioned,
-                                                             scoreboardHome: 2, scoreboardAway: 1))
+                                                             openingTotal: nil, scoreboardHome: 2, scoreboardAway: 1))
         XCTAssertEqual(live.projected, 7)
     }
 }

@@ -392,8 +392,11 @@ struct TotalPointsSpectrumView: View {
 
     /// #9708 — the served pace, only when it has standing against the header's
     /// score (``LivePaceStanding``): never a scoreless 0, never an older score.
+    /// #9944 — anchored to `pregameTotal`, so the strip's PRE-GAME and PACE
+    /// read one opening number, never five runs in the 1st run forward to 90.
     private var liveProjection: (projected: Double, scored: Int)? {
-        LivePaceStanding.projection(gameMarkets.pace, scoreboardHome: homeScore, scoreboardAway: awayScore)
+        LivePaceStanding.projection(gameMarkets.pace, openingTotal: pregameTotal,
+                                    scoreboardHome: homeScore, scoreboardAway: awayScore)
     }
 
     private var strip: ProjectionTense? {

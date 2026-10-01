@@ -192,9 +192,11 @@ struct MarketMapView: View {
     /// standing against the header's score (``LivePaceStanding``): a scoreless
     /// 0 projects nothing, and a pace from an older score would put an ACTUAL
     /// on this rail that the header above it contradicts. Both readers (the
-    /// markers and the empty-chrome predicate) take it from here.
+    /// markers and the empty-chrome predicate) take it from here. #9944 — the
+    /// early game is anchored to the same opening the Pre-game marker draws.
     private var liveProjection: (projected: Double, scored: Int)? {
-        LivePaceStanding.projection(scoredPace, scoreboardHome: homeScore, scoreboardAway: awayScore)
+        LivePaceStanding.projection(scoredPace, openingTotal: fullGameOpeningTotal(fullTotalUnit),
+                                    scoreboardHome: homeScore, scoreboardAway: awayScore)
     }
 
     /// The sentence a suppressed map owes the reader, once the match is under

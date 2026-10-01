@@ -18,7 +18,7 @@ import XCTest
 /// views that draw a live pace are pinned to it.
 final class ALivePaceAgreesWithTheHeader9708Tests: XCTestCase {
 
-    private func pace(scored: Int?, projected: Double?, elapsed: Double? = 0.44) -> GameMarketPace {
+    private func pace(scored: Int?, projected: Double?, elapsed: Double? = 0.5) -> GameMarketPace {
         GameMarketPace(totalScored: scored, projectedTotal: projected,
                        fractionElapsed: elapsed, timeRemainingDisplay: nil)
     }
@@ -28,7 +28,7 @@ final class ALivePaceAgreesWithTheHeader9708Tests: XCTestCase {
     /// The card's pace (0 scored, pace 0) under the header's 1–0.
     func testThePhotographedPaceUnderAOneNilHeaderProjectsNothing() {
         XCTAssertNil(LivePaceStanding.projection(pace(scored: 0, projected: 0),
-                                                 scoreboardHome: 1, scoreboardAway: 0))
+                                                 openingTotal: nil, scoreboardHome: 1, scoreboardAway: 0))
     }
 
     /// The same stale body, even had it scored: a pace at 1 under a 2–1
@@ -37,7 +37,7 @@ final class ALivePaceAgreesWithTheHeader9708Tests: XCTestCase {
     func testAPaceFromAnOlderNonZeroScoreProjectsNothing() {
         let older = pace(scored: 1, projected: 2)
         XCTAssertFalse(LivePaceStanding.agrees(older, scoreboardHome: 2, scoreboardAway: 1))
-        XCTAssertNil(LivePaceStanding.projection(older, scoreboardHome: 2, scoreboardAway: 1))
+        XCTAssertNil(LivePaceStanding.projection(older, openingTotal: nil, scoreboardHome: 2, scoreboardAway: 1))
     }
 
     /// Web #6831's arm: a scoreless game whose header agrees (0–0) still has no
@@ -45,17 +45,19 @@ final class ALivePaceAgreesWithTheHeader9708Tests: XCTestCase {
     func testAScorelessPaceProjectsNothingEvenWhenTheHeaderAgrees() {
         let scoreless = pace(scored: 0, projected: 0)
         XCTAssertTrue(LivePaceStanding.agrees(scoreless, scoreboardHome: 0, scoreboardAway: 0))
-        XCTAssertNil(LivePaceStanding.projection(scoreless, scoreboardHome: 0, scoreboardAway: 0))
+        XCTAssertNil(LivePaceStanding.projection(scoreless, openingTotal: nil, scoreboardHome: 0, scoreboardAway: 0))
     }
 
     // MARK: - Controls: what still draws
 
-    /// What `_estimate_game_pace` would have served at 1–0 in the top of the
-    /// 5th (24 of 54 model minutes): 1 scored, pace 2. Kills the
-    /// "withhold every live pace" mutant.
+    /// What `_estimate_game_pace` would have served at 1–0 at the middle of the
+    /// 5th (27 of 54 model minutes): 1 scored, pace 2. Kills the
+    /// "withhold every live pace" mutant. Half the game is the earliest a bare
+    /// run-forward stands with no opening total (#9944), so the controls sit
+    /// there.
     func testCONTROLAPaceAtTheHeadersScoreProjects() throws {
         let live = try XCTUnwrap(LivePaceStanding.projection(pace(scored: 1, projected: 2),
-                                                             scoreboardHome: 1, scoreboardAway: 0))
+                                                             openingTotal: nil, scoreboardHome: 1, scoreboardAway: 0))
         XCTAssertEqual(live.scored, 1)
         XCTAssertEqual(live.projected, 2)
     }
@@ -63,19 +65,19 @@ final class ALivePaceAgreesWithTheHeader9708Tests: XCTestCase {
     /// With no scoreboard on the page there is nothing to contradict; the pace
     /// stands on its own score (the pre-#9708 behaviour, minus the scoreless 0).
     func testCONTROLNoScoreboardLeavesAScoredPaceStanding() throws {
-        let live = try XCTUnwrap(LivePaceStanding.projection(pace(scored: 3, projected: 7),
-                                                             scoreboardHome: nil, scoreboardAway: nil))
-        XCTAssertEqual(live.projected, 7)
+        let live = try XCTUnwrap(LivePaceStanding.projection(pace(scored: 3, projected: 6),
+                                                             openingTotal: nil, scoreboardHome: nil, scoreboardAway: nil))
+        XCTAssertEqual(live.projected, 6)
         XCTAssertNil(LivePaceStanding.projection(pace(scored: 0, projected: 0),
-                                                 scoreboardHome: nil, scoreboardAway: 0))
+                                                 openingTotal: nil, scoreboardHome: nil, scoreboardAway: 0))
     }
 
     func testAnIncompletePaceProjectsNothing() {
-        XCTAssertNil(LivePaceStanding.projection(nil, scoreboardHome: 1, scoreboardAway: 0))
+        XCTAssertNil(LivePaceStanding.projection(nil, openingTotal: nil, scoreboardHome: 1, scoreboardAway: 0))
         XCTAssertNil(LivePaceStanding.projection(pace(scored: 1, projected: nil),
-                                                 scoreboardHome: 1, scoreboardAway: 0))
+                                                 openingTotal: nil, scoreboardHome: 1, scoreboardAway: 0))
         XCTAssertNil(LivePaceStanding.projection(pace(scored: nil, projected: 2),
-                                                 scoreboardHome: nil, scoreboardAway: nil))
+                                                 openingTotal: nil, scoreboardHome: nil, scoreboardAway: nil))
     }
 
     // MARK: - The wiring: every view that draws a live pace asks the rule
@@ -102,7 +104,7 @@ final class ALivePaceAgreesWithTheHeader9708Tests: XCTestCase {
     func testTheSpectrumStripDrawsOnlyAStandingPace() throws {
         let src = try code("TotalPointsSpectrumView")
         XCTAssertTrue(src.contains(
-            "LivePaceStanding.projection(gameMarkets.pace,scoreboardHome:homeScore,scoreboardAway:awayScore)"))
+            "LivePaceStanding.projection(gameMarkets.pace,openingTotal:pregameTotal,scoreboardHome:homeScore,scoreboardAway:awayScore)"))
         XCTAssertTrue(src.contains("ifisLive,countsTheUnit,liveProjection!=nil{return.live}"),
                       "the live tense is back on a presence-only pace guard")
         XCTAssertTrue(src.contains("ifletlive=liveProjection{liveStrip(pregameTotal:pregame,paceTotal:live.projected,scored:live.scored)"))
@@ -115,7 +117,7 @@ final class ALivePaceAgreesWithTheHeader9708Tests: XCTestCase {
     func testTheTotalsMapDrawsOnlyAStandingPace() throws {
         let src = try code("MarketMapView")
         XCTAssertTrue(src.contains(
-            "LivePaceStanding.projection(scoredPace,scoreboardHome:homeScore,scoreboardAway:awayScore)"))
+            "LivePaceStanding.projection(scoredPace,openingTotal:fullGameOpeningTotal(fullTotalUnit),scoreboardHome:homeScore,scoreboardAway:awayScore)"))
         XCTAssertTrue(src.contains("hasProjectedTotal:scoreboardIsComparable&&liveProjection!=nil"))
         XCTAssertTrue(src.contains("letproj=liveProjection?.projected{"))
         XCTAssertFalse(src.contains("pace.projectedTotal"),
