@@ -36,6 +36,7 @@ from app.utils.cross_source_matching import (
 from app.utils.feed_market_quality import hard_excluded_family
 from app.utils.futures_liveness import market_reads_settled
 from app.utils.kalshi_retention import PROVABLY_PURGED_AGE_DAYS
+from app.utils.market_display_name import clean_served_questions
 from app.utils.market_staleness import (
     expired_ladder_rungs,
     should_exclude_from_featured,
@@ -2047,10 +2048,11 @@ async def get_politics(db: AsyncSession, stage_ms: dict | None = None):
     }
     _mark("sections", _t)
 
-    return {
+    # #10084 — the question a card asks is the one its market page asks.
+    return clean_served_questions({
         "total_markets": total,
         "updated_at": now.isoformat(),
         "themes": themes,
         "cross_source": cross_source,
         "by_source": by_source,
-    }
+    })

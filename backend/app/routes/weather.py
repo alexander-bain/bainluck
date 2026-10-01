@@ -21,6 +21,7 @@ from app.models import FuturesMarket, FuturesOddsSnapshot, FuturesOutcome
 from app.services import get_db
 from app.utils.cross_source_matching import group_markets_by_group_id
 from app.utils.ladder_headline import ladder_median_row
+from app.utils.market_display_name import clean_served_questions
 from app.utils.market_staleness import should_exclude_from_featured, is_title_implied_stale
 
 logger = logging.getLogger(__name__)
@@ -865,7 +866,7 @@ async def get_cross_source(db: AsyncSession):
     all_markets: list[FuturesMarket] = list(result.scalars().unique().all())
     # Collapse Polymarket sub-markets sharing a group_id (BR62 / #487).
     all_markets = group_markets_by_group_id(all_markets)
-    return _find_cross_source(all_markets)
+    return clean_served_questions(_find_cross_source(all_markets))
 
 
 # ============================================================================
@@ -1028,7 +1029,7 @@ async def get_featured(db: AsyncSession):
             "closes": _format_closes(m.resolution_date),
             "market_id": m.id,
         })
-    return items
+    return clean_served_questions(items)
 
 
 # ============================================================================
@@ -1821,7 +1822,7 @@ async def get_events(db: AsyncSession):
         for item in group:
             item.pop("_res_date", None)
 
-    return groups
+    return clean_served_questions(groups)
 
 
 # ============================================================================
@@ -1925,7 +1926,7 @@ async def get_climate(db: AsyncSession):
     for item in items:
         item.pop("_res_date", None)
 
-    return items
+    return clean_served_questions(items)
 
 
 # The first column reads "2026 · Next 12 months"; a market settling later
@@ -2021,4 +2022,4 @@ async def get_wildcards(db: AsyncSession):
         })
 
     items.sort(key=lambda x: x["prob"], reverse=True)
-    return items
+    return clean_served_questions(items)
