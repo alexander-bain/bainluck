@@ -24,10 +24,30 @@ struct Bain_LuckApp: App {
     #endif
     @StateObject private var authManager = AuthManager()
     @StateObject private var navCoordinator = NavigationCoordinator()
+    #if DEBUG
+    @StateObject private var pinManager = Bain_LuckApp.makePinManager()
+
+    private static func makePinManager() -> PinManager {
+        if let runtime = PinManagementRuntime9875.shared { return runtime.makeManager() }
+        return PinManager(
+            allowLegacyGuestPins: APIClient.persistedLastKnownUserId() == nil,
+            initialBinding: PinAccountBinding(userID: APIClient.persistedLastKnownUserId(), authenticated: false)
+        )
+    }
+
+    private func bindPins(_ identity: PinAccountBinding) {
+        if let runtime = PinManagementRuntime9875.shared {
+            runtime.bindRealIdentity(identity, to: pinManager)
+            return
+        }
+        pinManager.bindAccount(identity)
+    }
+    #else
     @StateObject private var pinManager = PinManager(
         allowLegacyGuestPins: APIClient.persistedLastKnownUserId() == nil,
         initialBinding: PinAccountBinding(userID: APIClient.persistedLastKnownUserId(), authenticated: false)
     )
+    #endif
     /// Whether the consent ask is showing. Seeded from the authority: `true`
     /// only when no choice has ever been recorded.
     @State private var showTelemetryConsent = TelemetryConsent.shared.needsChoice
@@ -93,6 +113,13 @@ struct Bain_LuckApp: App {
                     PinFeedbackToast()
                         .environmentObject(pinManager)
                 }
+                #if DEBUG
+                .overlay(alignment: .topLeading) {
+                    if let runtime = PinManagementRuntime9875.shared {
+                        PinRuntime9875Setup(runtime: runtime, manager: pinManager, navigation: navCoordinator)
+                    }
+                }
+                #endif
                 // The consent ask (Queue 311 A3 / #1632). Presented when no
                 // choice has been recorded — and only then, so it never
                 // re-nags someone who declined. Nothing is collected while it
@@ -109,7 +136,11 @@ struct Bain_LuckApp: App {
                 #endif
                 .onChange(of: PinAccountBinding(userID: authManager.activeFeedUserId, authenticated: authManager.isAuthenticated)) { _, identity in
                     let isAuth = identity.authenticated
+                    #if DEBUG
+                    bindPins(identity)
+                    #else
                     pinManager.bindAccount(identity)
+                    #endif
                     NotificationManager.shared.setUser(id: isAuth ? authManager.user?.id : nil)
                     AnalyticsService.setCrashReportingUserId(
                         isAuth ? ((authManager.user?.id).map { String($0) } ?? "") : ""
@@ -119,7 +150,11 @@ struct Bain_LuckApp: App {
                     }
                 }
                 .task {
+                    #if DEBUG
+                    bindPins(PinAccountBinding(userID: authManager.activeFeedUserId, authenticated: authManager.isAuthenticated))
+                    #else
                     pinManager.bindAccount(PinAccountBinding(userID: authManager.activeFeedUserId, authenticated: authManager.isAuthenticated))
+                    #endif
                     await pinManager.loadPins()
                     // Wire up notification deep linking and request permission
                     NotificationManager.shared.navCoordinator = navCoordinator

@@ -3,7 +3,18 @@ import SwiftUI
 struct PinManagementView: View {
     @EnvironmentObject private var pinManager: PinManager
     @Environment(\.dismiss) private var dismiss
+    #if DEBUG
+    @StateObject private var vm = PinManagementView.makeViewModel()
+
+    private static func makeViewModel() -> PinManagementViewModel {
+        if let runtime = PinManagementRuntime9875.shared {
+            return PinManagementViewModel(lookup: { pin in await runtime.lookup(pin) })
+        }
+        return PinManagementViewModel()
+    }
+    #else
     @StateObject private var vm = PinManagementViewModel()
+    #endif
     var focusType: String? = nil
 
     private var orderedTypes: [String] {
@@ -49,6 +60,13 @@ struct PinManagementView: View {
             }
             .navigationDestination(for: Route.self) { RouteDestination(route: $0) }
         }
+        #if DEBUG
+        .safeAreaInset(edge: .bottom) {
+            if let runtime = PinManagementRuntime9875.shared {
+                PinRuntime9875Controls(runtime: runtime, manager: pinManager)
+            }
+        }
+        #endif
         .task { await pinManager.loadPins() }
         .task(id: pinManager.savedPins) { await vm.load(pinManager.savedPins) }
         .onChange(of: pinManager.identityGeneration) { _, _ in dismiss() }
