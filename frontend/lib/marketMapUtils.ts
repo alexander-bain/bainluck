@@ -649,20 +649,23 @@ export function gameTotalUnitOf(marketName: string | null | undefined): string |
 }
 
 /**
- * Does a full-game totals row belong on a match rail counted in `railUnit`?
- * A row scoped to one set is never the match's total; a row that states a
- * different unit is refused; a row that states none is kept (every points
- * sport), as is everything on a rail with no declared unit — the same three
- * cases as `spreadRungMatchesRail`.
+ * Does a full-game totals row belong on this sport's match rail?
+ *
+ * A row scoped to one set is never the match's total. A row that states a
+ * unit other than the rail's is refused only where the sport is quoted in TWO
+ * units — its scoreboard counts one (`scoreboardUnit`, tennis's sets) and its
+ * rail another — because that is where a venue's two kinds of line land in one
+ * pool. A single-unit sport keeps every row, exactly as before; a row that
+ * states no unit is always kept.
  */
 export function gameTotalFitsMatchRail(
   marketName: string | null | undefined,
-  railUnit?: string
+  rail?: Pick<SportScoringVocab, "unit" | "scoreboardUnit">
 ): boolean {
   if (SCOPES_ONE_SET_RE.test(marketName || "")) return false;
-  if (!railUnit) return true;
+  if (!rail?.scoreboardUnit || !rail.unit) return true;
   const unit = gameTotalUnitOf(marketName);
-  return unit == null || unit === railUnit;
+  return unit == null || unit === rail.unit;
 }
 
 /** A period totals row as `GameMarketsResponse.period_markets` serves it. */
@@ -723,15 +726,15 @@ export function marketMapIsGraded(eventStatus?: string | null): boolean {
 export function selectGameTotalRungs<T extends GameTotalRow>(
   totals: T[] | null | undefined,
   eventStatus?: string | null,
-  /** #2555: the rail's unit (`SportScoringVocab.unit`); see `gameTotalFitsMatchRail`. */
-  railUnit?: string
+  /** #2555: the sport's vocab; see `gameTotalFitsMatchRail`. */
+  rail?: Pick<SportScoringVocab, "unit" | "scoreboardUnit">
 ): T[] {
   const rawTotals = (totals || [])
     .filter(
       (t) =>
         t.market_type === "game_total" &&
         isGameTotal(t.outcome_name) &&
-        gameTotalFitsMatchRail(t.market_name, railUnit)
+        gameTotalFitsMatchRail(t.market_name, rail)
     )
     .sort((a, b) => a.threshold - b.threshold);
 
@@ -1271,12 +1274,12 @@ export function totalsMapRenders(
    * said it did not, which is exactly the divergence #3240 exists to prevent.
    */
   eventStatus?: string | null,
-  /** #2555: the same rail unit the card selects with, for the same reason. */
-  railUnit?: string
+  /** #2555: the same vocab the card selects with, for the same reason. */
+  rail?: Pick<SportScoringVocab, "unit" | "scoreboardUnit">
 ): boolean {
   if (!gameMarkets) return false;
   if (!marketMapSectionMounts(gameMarkets)) return false;
-  if (selectGameTotalRungs(gameMarkets.totals, eventStatus, railUnit).length > 0) return true;
+  if (selectGameTotalRungs(gameMarkets.totals, eventStatus, rail).length > 0) return true;
   return TOTAL_MAP_HALVES.some(
     (half) => selectHalfTotalRungs(gameMarkets.period_markets, half).length > 0
   );

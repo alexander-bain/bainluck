@@ -100,6 +100,11 @@ function markets() {
     totals: [
       { threshold: 1.0, over_probability: 0.0005, source: "polymarket", market_type: "game_total", market_name: "Wu vs. Alcaraz: Set 1 Games O/U 10.5", outcome_name: "Under", is_winner: true, resolution_source: "clean_resolution", movement: 0.2395, period: null },
       { threshold: 3.5, over_probability: 0.0005, source: "polymarket", market_type: "game_total", market_name: "Yibing Wu vs. Carlos Alcaraz: Total Sets O/U 3.5", outcome_name: "Under", is_winner: null, resolution_source: null, movement: 0.4845, period: null },
+      // #2555: the two rows above are a first-set line and a SETS line, so
+      // neither is the match's game count and the card no longer draws them.
+      // This suite is about the card's tense and heading, not its rungs, so it
+      // carries one match games line beside them to keep the card on the page.
+      { threshold: 28.5, over_probability: 0.0005, source: "polymarket", market_type: "game_total", market_name: "Yibing Wu vs. Carlos Alcaraz: Total Games O/U 28.5", outcome_name: "Over", is_winner: null, resolution_source: null, movement: 0, period: null },
     ],
   };
 }

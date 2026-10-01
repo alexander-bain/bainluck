@@ -22,8 +22,13 @@ import {
   gameTotalFitsMatchRail,
   gameTotalUnitOf,
   selectGameTotalRungs,
+  sportVocab,
   totalsMapRenders,
 } from "@/lib/marketMapUtils";
+
+const TENNIS = sportVocab("tennis_atp_challenger");
+const NBA = sportVocab("basketball_nba");
+const MLB = sportVocab("baseball_mlb");
 
 /** Verbatim from production `/api/events/15322596/game-markets`, 20:34Z. */
 const SPECIMEN_TOTALS = [
@@ -82,22 +87,27 @@ describe("#2555 the tennis Games map draws only match game lines", () => {
     expect(gameTotalUnitOf(undefined)).toBeNull();
   });
 
-  it("refuses a single-set row and a row in another unit; keeps unstated and matching rows", () => {
-    expect(gameTotalFitsMatchRail("Bonding vs. Mesarovic: Set 1 Games O/U 8.5", "games")).toBe(false);
-    expect(gameTotalFitsMatchRail("Sinner vs Alcaraz: 2nd Set Total Games", "games")).toBe(false);
-    expect(gameTotalFitsMatchRail("Bonding vs. Mesarovic: Total Sets O/U 2.5", "games")).toBe(false);
-    expect(gameTotalFitsMatchRail("Bonding vs. Mesarovic: Total Games O/U 21.5", "games")).toBe(true);
-    expect(gameTotalFitsMatchRail("Match O/U 21.5", "games")).toBe(true);
-    expect(gameTotalFitsMatchRail("Dodgers vs Padres Game 3: Total Runs O/U 7.5", "runs")).toBe(true);
-    expect(gameTotalFitsMatchRail("Chiefs vs Bills: O/U 47.5", "points")).toBe(true);
-    expect(gameTotalFitsMatchRail(null, "points")).toBe(true);
-    // A rail with no declared unit keeps every unit a venue quoted.
-    expect(gameTotalFitsMatchRail("Total Sets O/U 3.5", "")).toBe(true);
+  it("refuses a single-set row and, on a two-unit sport, a row in the other unit", () => {
+    expect([TENNIS.unit, TENNIS.scoreboardUnit]).toEqual(["games", "sets"]);
+    expect(gameTotalFitsMatchRail("Bonding vs. Mesarovic: Set 1 Games O/U 8.5", TENNIS)).toBe(false);
+    expect(gameTotalFitsMatchRail("Sinner vs Alcaraz: 2nd Set Total Games", TENNIS)).toBe(false);
+    expect(gameTotalFitsMatchRail("Bonding vs. Mesarovic: Total Sets O/U 2.5", TENNIS)).toBe(false);
+    expect(gameTotalFitsMatchRail("Bonding vs. Mesarovic: Total Games O/U 21.5", TENNIS)).toBe(true);
+    expect(gameTotalFitsMatchRail("Match O/U 21.5", TENNIS)).toBe(true);
+  });
+
+  it("a single-unit sport keeps every row it kept before", () => {
+    expect(NBA.scoreboardUnit).toBe("");
+    expect(gameTotalFitsMatchRail("Dodgers vs Padres Game 3: Total Runs O/U 7.5", MLB)).toBe(true);
+    expect(gameTotalFitsMatchRail("Chiefs vs Bills: O/U 47.5", NBA)).toBe(true);
+    expect(gameTotalFitsMatchRail("Lakers vs Celtics: Total Games", NBA)).toBe(true);
+    expect(gameTotalFitsMatchRail(null, NBA)).toBe(true);
+    expect(gameTotalFitsMatchRail("Total Sets O/U 3.5", undefined)).toBe(true);
   });
 
   it("selects none of the specimen's four rows, and only the match line when one is served", () => {
-    expect(selectGameTotalRungs(SPECIMEN_TOTALS, "live", "games")).toEqual([]);
-    const withMatch = selectGameTotalRungs([...SPECIMEN_TOTALS, MATCH_GAMES], "live", "games");
+    expect(selectGameTotalRungs(SPECIMEN_TOTALS, "live", TENNIS)).toEqual([]);
+    const withMatch = selectGameTotalRungs([...SPECIMEN_TOTALS, MATCH_GAMES], "live", TENNIS);
     expect(withMatch.map((t) => t.threshold)).toEqual([21.5]);
   });
 
@@ -111,7 +121,7 @@ describe("#2555 the tennis Games map draws only match game lines", () => {
     expect(html).not.toMatch(/Over (2|8|9|10)\.5/);
     // The games handicap's own map stays; its caption is true there.
     expect(html).toContain("Game margin map");
-    expect(totalsMapRenders(markets(SPECIMEN_TOTALS) as never, "live", "games")).toBe(false);
+    expect(totalsMapRenders(markets(SPECIMEN_TOTALS) as never, "live", TENNIS)).toBe(false);
   });
 
   it("with a real match line the card draws it alone, and the predicate agrees", () => {
@@ -119,6 +129,6 @@ describe("#2555 the tennis Games map draws only match game lines", () => {
     expect(html).toContain("Games map");
     expect(html).toContain("Over 21.5");
     expect(html).not.toMatch(/Over (2|8|9|10)\.5/);
-    expect(totalsMapRenders(markets([...SPECIMEN_TOTALS, MATCH_GAMES]) as never, "live", "games")).toBe(true);
+    expect(totalsMapRenders(markets([...SPECIMEN_TOTALS, MATCH_GAMES]) as never, "live", TENNIS)).toBe(true);
   });
 });
