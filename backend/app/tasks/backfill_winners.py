@@ -804,7 +804,7 @@ async def _select_kalshi_status_sync_tickers(
 async def _select_kalshi_retracted_open_tickers(
     session, limit: int, cursor: str
 ) -> list[str]:
-    """Band 6 — every leg is a retraction and our status still says open.
+    """Band 6 — every leg is a retraction or never graded, and our status still says open.
 
     #7000. A market whose every leg carries `ungradeable_result` is refused by
     each of the five bands above on one clause apiece:
@@ -838,9 +838,20 @@ async def _select_kalshi_retracted_open_tickers(
     with a fixed budget and not a sort: most members are re-asked and correctly
     left alone, and a date sort would re-probe the same permanent head forever.
 
-    Disjoint from bands 1-5 by construction (gotcha #34): a fully retracted
-    market has no leg band 1 can qualify on and no authoritative leg for bands
-    3-5, and `status <> 'resolved'` keeps it off band 2. The grader writes the
+    NEVER-GRADED LEGS RIDE ALONG (stage A of the after-check, 2026-09-30 23:35Z).
+    Band 6 reached `KXLEADERMLB*` and graded 5 of 13 boards. The other 8 were
+    finalized at Kalshi but each carried 1-6 legs with `resolution_source IS
+    NULL` beside 27-72 retractions (a leg listed after the retraction pass), so
+    "every leg is a retraction" kept the whole board out. The Cubs' page still
+    served "WAR Leader 99.5%" for a race that had ended on 09-28. So the cohort is: at
+    least one retraction, and no leg carrying any OTHER stamp. A NULL leg asks
+    nothing new of the grader (bands 1-4 feed it NULL legs every cycle), and an
+    all-NULL board with no retraction stays out: nothing was ever read for it.
+    Measured the same evening: 3,740 members before, +455 with this rule.
+
+    Disjoint from bands 1-5 by construction (gotcha #34): a member has no
+    authoritative leg for bands 3-5, `status <> 'resolved'` keeps it off band 2,
+    and band 1 requires `status = 'resolved'` too. The grader writes the
     venue's `api_settlement` over the retraction (tier 3 over tier 1, an
     upgrade) only where the venue declared a side, and the #7870 status flip in
     the same pass closes the board only when every nested market is terminal.
@@ -858,11 +869,13 @@ async def _select_kalshi_retracted_open_tickers(
               AND EXISTS (
                   SELECT 1 FROM futures_outcomes fo
                   WHERE fo.market_id = fm.id
+                    AND fo.resolution_source = :retraction
               )
               AND NOT EXISTS (
                   SELECT 1 FROM futures_outcomes fo
                   WHERE fo.market_id = fm.id
-                    AND COALESCE(fo.resolution_source, '') <> :retraction
+                    AND fo.resolution_source IS NOT NULL
+                    AND fo.resolution_source <> :retraction
               )
             GROUP BY fm.external_id
             ORDER BY fm.external_id ASC
