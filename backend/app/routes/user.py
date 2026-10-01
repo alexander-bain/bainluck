@@ -1330,34 +1330,99 @@ def _strict_team_name_matches(user_team: str, candidate: str) -> bool:
 # crowd out a team's coherent odds_api championship field.
 _TEAM_ODDS_COHERENT_FIELD_SUM_MAX = 1.60
 
+# #10078 — A SUM PAST 100% IS NOT ILLIQUIDITY. A many-winner board sums to its
+# winner count: Kalshi's College Football Playoff Qualifiers (12 slots) summed
+# 11.30, past the band, so Miami's 0.83/0.84 leg — and every NFL/NBA/NHL
+# playoff-qualifier leg — was dropped from every team page as an "illiquid
+# ladder". #237's own specimen (market 479, the Championship MVP board) quotes
+# bid 0.00 / ask 1.00 on every leg; THAT is the illiquid class. So an over-sum
+# board is illiquid only when the leg being served has no two-sided quote this
+# tight. Measured 2026-10-01: 715 team-bound over-sum legs at <= 0.05.
+_TEAM_ODDS_LIQUID_LEG_SPREAD_MAX = 0.05
+# ...and a liquid leg priced near-certain stays suppressed: it is a ladder's
+# bottom rung, not news. Without this, Miami's list would have opened with
+# eight "Top 25 Ranked Teams" rows at 96-98% (one per poll date) above its
+# 83.5% playoff leg; the board path that matters sits in the uncertain middle.
+_TEAM_ODDS_LIQUID_LEG_PROB_MAX = 0.95
 
-def _is_illiquid_binary_field(source: str | None, field_prob_sum) -> bool:
+
+def _is_illiquid_binary_field(
+    source: str | None, field_prob_sum, yes_bid=None, yes_ask=None, probability=None
+) -> bool:
     """True for a Kalshi independent-binary award/prop field whose outcome
-    probabilities sum well past 100% (the overrounded, illiquid ladder class).
+    probabilities sum well past 100% (the overrounded, illiquid ladder class)
+    AND whose served leg has no tight two-sided quote, or is priced at or past
+    ``_TEAM_ODDS_LIQUID_LEG_PROB_MAX`` (#10078).
     Source-scoped to Kalshi because odds_api fields are single coherent markets;
-    a missing/None sum fails open (treated as coherent)."""
+    a missing/None sum fails open (treated as coherent). A missing or zero bid
+    is no quote — the leg stays illiquid."""
     if source != "kalshi" or field_prob_sum is None:
         return False
     try:
-        return float(field_prob_sum) > _TEAM_ODDS_COHERENT_FIELD_SUM_MAX
+        if float(field_prob_sum) <= _TEAM_ODDS_COHERENT_FIELD_SUM_MAX:
+            return False
     except (TypeError, ValueError):
         return False
+    try:
+        bid = float(yes_bid) if yes_bid is not None else None
+        ask = float(yes_ask) if yes_ask is not None else None
+        prob = float(probability) if probability is not None else None
+    except (TypeError, ValueError):
+        return True
+    if prob is not None and prob >= _TEAM_ODDS_LIQUID_LEG_PROB_MAX:
+        return True
+    if bid is None or ask is None or bid <= 0 or ask < bid:
+        return True
+    return round(ask - bid, 4) > _TEAM_ODDS_LIQUID_LEG_SPREAD_MAX
+
+
+def _many_winner_series_key(
+    source: str | None, external_id: str | None, field_prob_sum, illiquid: bool
+) -> str | None:
+    """#10078: the Kalshi series of an over-sum board whose leg was SERVED (liquid,
+    not near-certain), else None. One series can hold many such boards — dated
+    poll ladders ("Top 25 on Oct 4 / Oct 11 AP Poll"), per-position fantasy
+    top-10s — and one NFL page would otherwise gain 12 fantasy rows."""
+    if illiquid or source != "kalshi" or not external_id or field_prob_sum is None:
+        return None
+    try:
+        if float(field_prob_sum) <= _TEAM_ODDS_COHERENT_FIELD_SUM_MAX:
+            return None
+    except (TypeError, ValueError):
+        return None
+    return external_id.split("-", 1)[0] or None
 
 
 def _prefer_coherent_team_items(per_team_items: dict[int, list[dict]]) -> None:
     """#237 Item 3, in place: when a team has at least one coherent candidate, drop
     its illiquid-binary ones (keyed on the private ``_illiquid_binary`` flag); keep
     the illiquid ones only when that is ALL the team has, so a followed team is
-    never emptied. Strips the private flag from every surviving item afterward.
+    never emptied. Strips the private flags from every surviving item afterward.
     Both directions matter: illiquid Kalshi is suppressed when a coherent field
-    exists, and the coherent field always survives."""
+    exists, and the coherent field always survives.
+
+    #10078: a served over-sum leg (private ``_many_winner_series``) keeps only the
+    first — highest-priced, the list's own order — leg of its Kalshi series per
+    team. Single-winner boards carry no key and are never capped here."""
     for tid, tid_items in per_team_items.items():
         coherent = [it for it in tid_items if not it.get("_illiquid_binary")]
         if coherent and len(coherent) < len(tid_items):
             per_team_items[tid] = coherent
+    for tid, tid_items in per_team_items.items():
+        seen_series: set[str] = set()
+        kept = []
+        for it in tid_items:
+            series = it.get("_many_winner_series")
+            if series:
+                if series in seen_series:
+                    continue
+                seen_series.add(series)
+            kept.append(it)
+        per_team_items[tid] = kept
     for tid_items in per_team_items.values():
         for it in tid_items:
             it.pop("_illiquid_binary", None)
+            it.pop("_many_winner_series", None)
 
 
 async def _query_team_futures(
@@ -1820,6 +1885,13 @@ async def _query_team_futures(
         # BR52: Extract season/year for card subtitle display.
         season_year = _extract_season_year(market.canonical_market_key, market.name)
 
+        _illiquid = _is_illiquid_binary_field(
+            market.source,
+            field_prob_sum,
+            getattr(outcome, "current_yes_bid", None),
+            getattr(outcome, "current_yes_ask", None),
+            outcome.current_probability,
+        )
         per_team_items.setdefault(matched["id"], []).append({
             "outcome_id": outcome.id,
             # #2142 — THE CLUB IS SPELLED THE SAME WAY EVERYWHERE ON ONE PAGE.
@@ -1876,7 +1948,15 @@ async def _query_team_futures(
             "season_year": season_year,
             # #237 Item 3 (private, stripped before return): illiquid Kalshi
             # independent-binary award/prop ladder whose field sums far past 100%.
-            "_illiquid_binary": _is_illiquid_binary_field(market.source, field_prob_sum),
+            "_illiquid_binary": _illiquid,
+            # #10078 (private, stripped before return): the series of a served
+            # over-sum leg, capped to one leg per series per team.
+            "_many_winner_series": _many_winner_series_key(
+                market.source,
+                getattr(market, "external_id", None),
+                field_prob_sum,
+                _illiquid,
+            ),
         })
 
     # #237 Item 3: prefer coherent fields. An illiquid Kalshi independent-binary
