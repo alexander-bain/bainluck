@@ -93,9 +93,11 @@ describe("#1626 CONTROLS", () => {
     expect(familyRows(render(three), "M: Result")).toHaveLength(3);
   });
 
-  test("THE SCRIPT still prints both sides", () => {
+  test("THE SCRIPT prints one side too since slice 3 — the favourite by its printed number", () => {
+    // Moved by #1626 slice 3 (PropsSection1626Script). THE SCRIPT prints
+    // `current` (#9131), 0.72 / 0.28, so it keeps Over.
     const html = render(pair("Hits O/U 0.5", [0.6, 0.72], [0.4, 0.28]), "script");
     expect(html).toContain(">Over<");
-    expect(html).toContain(">Under<");
+    expect(html).not.toContain(">Under<");
   });
 });

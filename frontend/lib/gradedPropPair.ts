@@ -8,8 +8,9 @@
  * carried one fact printed twice, and the board was half red by construction
  * whatever the script had said.
  *
- * THE SCRIPT needs both legs: `Under 94% / Over 6%` is two numbers. WHAT HIT is
- * "the pregame script, graded", and the script's claim about a two-sided question
+ * (THE SCRIPT and THE DIVERGENCE now print one leg of a complement pair too,
+ * #1626 — the same leg, so a reader follows one row from pregame to graded.)
+ * WHAT HIT is "the pregame script, graded", and the script's claim about a two-sided question
  * is the side it favoured. So the row that survives is the leg with the HIGHER
  * pregame mark, and it prints that mark beside its verdict — `Under 94% · 0.0 —
  * hit`, and an upset reads `Over 60% · … — miss`. That is a result per question
