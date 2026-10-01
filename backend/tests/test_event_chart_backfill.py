@@ -1056,6 +1056,126 @@ async def test_the_suffixed_condition_id_resolves_to_its_clob_token():
 
 
 # ---------------------------------------------------------------------------
+# #10009: the leg's suffix picks the CLOB token, never its price rank
+# ---------------------------------------------------------------------------
+
+#: Phillies at Braves, Wild Card Game 3 (event 15322407), market 63069860 as
+#: stored 2026-10-01 05:4xZ: condition 0x56843c39…14dc, token 0 = Phillies (Yes),
+#: token 1 = Braves (No). Both legs sat at 0.50, so BOTH carried rank 1.
+_PHIATL_CONDITION = "0x56843c39ee842fae25c33d55a160628192506e5a4d3df922ebd7f1faee8114dc"
+_PHIATL_TOKENS = ["PHILLIES_TOKEN_0", "BRAVES_TOKEN_1"]
+
+
+def _phiatl_market(**metadata):
+    return SimpleNamespace(
+        market_metadata=metadata,
+        group_id="polymarket:ev-phiatl",
+        external_id=_PHIATL_CONDITION,
+    )
+
+
+def _rank_strawman(token_ids, outcome):
+    """The picker #10009 replaced: `token_ids[rank - 1]`."""
+    index = 0
+    if outcome.rank is not None and 0 <= outcome.rank - 1 < len(token_ids):
+        index = outcome.rank - 1
+    return token_ids[index]
+
+
+async def test_a_no_leg_ranked_first_fetches_the_second_token():
+    """The specimen: the Braves `_no` leg at rank 1 is token 1, not token 0."""
+    from app.tasks.event_chart_backfill import _polymarket_token_id
+
+    market = _phiatl_market(clob_token_ids=_PHIATL_TOKENS)
+    braves = SimpleNamespace(external_id=f"{_PHIATL_CONDITION}_no", rank=1)
+    phillies = SimpleNamespace(external_id=f"{_PHIATL_CONDITION}_yes", rank=1)
+    service = SimpleNamespace(get_event_by_id=AsyncMock(side_effect=AssertionError))
+
+    assert await _polymarket_token_id(service, market, braves) == "BRAVES_TOKEN_1"
+    assert await _polymarket_token_id(service, market, phillies) == "PHILLIES_TOKEN_0"
+    # The strawman answers the Phillies' book for the Braves' leg — the bug.
+    assert _rank_strawman(_PHIATL_TOKENS, braves) == "PHILLIES_TOKEN_0"
+
+
+async def test_a_yes_leg_ranked_second_still_fetches_the_first_token():
+    """The mirror: rank is price order, so a `_yes` underdog at rank 2 used to
+    fetch the `_no` book. The suffix keeps it on token 0."""
+    from app.tasks.event_chart_backfill import _polymarket_token_id
+
+    market = _phiatl_market(clob_token_ids=_PHIATL_TOKENS)
+    phillies = SimpleNamespace(external_id=f"{_PHIATL_CONDITION}_yes", rank=2)
+
+    assert await _polymarket_token_id(
+        SimpleNamespace(), market, phillies
+    ) == "PHILLIES_TOKEN_0"
+    assert _rank_strawman(_PHIATL_TOKENS, phillies) == "BRAVES_TOKEN_1"
+
+
+async def test_a_named_two_sided_game_reads_side1_as_the_second_token():
+    """`{condition}` / `{condition}_side1` — the socket's #8403 shape."""
+    from app.tasks.event_chart_backfill import _polymarket_token_id
+
+    market = _phiatl_market(clob_token_ids=_PHIATL_TOKENS)
+    side0 = SimpleNamespace(external_id=_PHIATL_CONDITION, rank=2)
+    side1 = SimpleNamespace(external_id=f"{_PHIATL_CONDITION}_side1", rank=1)
+
+    assert await _polymarket_token_id(SimpleNamespace(), market, side0) == "PHILLIES_TOKEN_0"
+    assert await _polymarket_token_id(SimpleNamespace(), market, side1) == "BRAVES_TOKEN_1"
+
+
+async def test_the_gamma_fallback_gives_a_no_leg_the_second_token():
+    """No stamped ids: the Gamma path used to answer `ids[0]` for every leg."""
+    from app.tasks.event_chart_backfill import _polymarket_token_id
+
+    market = _phiatl_market(polymarket_event_id="ev-phiatl")
+    braves = SimpleNamespace(external_id=f"{_PHIATL_CONDITION}_no", rank=1)
+    service = SimpleNamespace(
+        get_event_by_id=AsyncMock(
+            return_value={
+                "markets": [
+                    {
+                        "conditionId": _PHIATL_CONDITION,
+                        "clobTokenIds": '["PHILLIES_TOKEN_0", "BRAVES_TOKEN_1"]',
+                    }
+                ]
+            }
+        )
+    )
+
+    assert await _polymarket_token_id(service, market, braves) == "BRAVES_TOKEN_1"
+
+
+async def test_a_leg_whose_suffix_says_nothing_keeps_the_rank_fallback():
+    """Nothing that was not a suffixed leg moves: an id the socket's rule cannot
+    place (`_token_index` → None) is still picked by rank, as before."""
+    from app.tasks.event_chart_backfill import _polymarket_token_id
+    from app.tasks.polymarket_ws import _token_index
+
+    unplaced = SimpleNamespace(external_id="legacy_leg_b", rank=2)
+    assert _token_index(unplaced.external_id) is None
+
+    market = _phiatl_market(clob_token_ids=_PHIATL_TOKENS)
+    assert await _polymarket_token_id(SimpleNamespace(), market, unplaced) == "BRAVES_TOKEN_1"
+
+
+async def test_the_braves_series_is_fetched_from_the_braves_book():
+    """End to end through `fetch_polymarket_series`: the history request names
+    the Braves' token, so the stored YES price is the Braves' own."""
+    from app.tasks.event_chart_backfill import fetch_polymarket_series
+
+    market = _phiatl_market(clob_token_ids=_PHIATL_TOKENS)
+    braves = SimpleNamespace(external_id=f"{_PHIATL_CONDITION}_no", rank=1)
+    service = SimpleNamespace(
+        get_prices_history=AsyncMock(return_value=[{"t": 1759209600, "p": 0.555}])
+    )
+
+    points = await fetch_polymarket_series(service, market, braves, stats={})
+
+    assert service.get_prices_history.await_args.kwargs["token_id"] == "BRAVES_TOKEN_1"
+    assert points == [{"t": 1759209600, "yes_price": 0.555}]
+
+
+# ---------------------------------------------------------------------------
 # CERT-726 strike one, defect 1: the nightly sweep must WALK, not re-read
 # ---------------------------------------------------------------------------
 
