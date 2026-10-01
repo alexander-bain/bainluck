@@ -5472,7 +5472,9 @@ def _regex_escape(term: str) -> str:
     return _REGEX_METACHAR_RE.sub(r"\\\1", term)
 
 
-def _build_word_start_ilike(column, term: str, expansion: str | None):
+def _build_word_start_ilike(
+    column, term: str, expansion: str | None, *, indexable: bool = True
+):
     """`_build_expanded_ilike`, restricted to matches that START a word (#7381).
 
     The ILIKE half is byte-identical to `_build_expanded_ilike`'s and is AND-ed,
@@ -5535,10 +5537,19 @@ def _build_word_start_ilike(column, term: str, expansion: str | None):
     alias, not a looser WHERE clause, and `_event_name_match` reached that same
     conclusion for `yank`/`milan` on `/search` and shipped it.
     """
+    # #1619: `indexable=False` spells the SAME two tests on `lower(column)`, which
+    # no index serves, so they run as a plain filter. Postgres's ILIKE on a
+    # multibyte database IS `lower(text) LIKE lower(pattern)`, and `~*` ignores
+    # case on either side, so the rows are identical. Read
+    # `_futures_name_match_term` for when a caller wants it.
+    subject = column if indexable else func.lower(column)
+
     def _one(t: str):
         return and_(
-            column.ilike(f"%{t}%"),
-            column.op("~*")(f"(^|[^[:alnum:]]){_regex_escape(t)}"),
+            column.ilike(f"%{t}%")
+            if indexable
+            else subject.like(func.lower(literal(f"%{t}%"))),
+            subject.op("~*")(f"(^|[^[:alnum:]]){_regex_escape(t)}"),
         )
 
     if expansion:
@@ -7054,7 +7065,9 @@ def _multi_term_outcome_match(expanded: list[tuple[str, str | None]]):
     )
 
 
-def _futures_name_match_term(term: str, exp: str | None):
+def _futures_name_match_term(
+    term: str, exp: str | None, *, fragment_drives_scan: bool = True
+):
     """One term against a market NAME: substring RECALL and word ABOUT-NESS.
 
     LAT-P035/#1758 — the futures half of the `_event_name_match` judgment,
@@ -7188,7 +7201,21 @@ def _futures_name_match_term(term: str, exp: str | None):
         # measured on production 2026-09-25. `ts_rank_cd` could not sink them:
         # `us` is a stopword, so every name with "Open" tied. Same rule the team
         # arm took in #7381; the ILIKE half is unchanged and still drives the scan.
-        return _build_word_start_ilike(FuturesMarket.name, term, exp)
+        #
+        # #1619: ...unless a SIBLING term can drive it. A fragment has no trigram,
+        # so `ix_futures_name_trgm` cannot narrow on it, but the planner still
+        # prices its ILIKE as selective and multiplies that into the bitmap's
+        # estimate. For `f1 champion` the bitmap looked like a handful of rows,
+        # so the planner skipped ANDing it with an open-markets index and
+        # rechecked 83,000 candidates of every status on the heap — 52,435
+        # blocks for 6 open answers. Spelled as a filter (`fragment_drives_scan=
+        # False`), the fragment stops lying about the bitmap and the plan ANDs
+        # with `ix_futures_name_fts_open`. Production 2026-10-01, the compiled
+        # tier-1 name arm, three interleaved pairs: 766-1,750 ms -> 255-664 ms,
+        # 3,890 heap blocks, the same 6 ids (count + md5).
+        return _build_word_start_ilike(
+            FuturesMarket.name, term, exp, indexable=fragment_drives_scan
+        )
     return and_(
         _build_expanded_ilike(FuturesMarket.name, term, exp),
         or_(
@@ -7196,6 +7223,24 @@ def _futures_name_match_term(term: str, exp: str | None):
             _build_expanded_fts(FuturesMarket.name, term, exp),
         ),
     )
+
+
+def _futures_multi_term_name_conditions(expanded: list[tuple[str, str | None]]) -> list:
+    """The multi-term futures NAME arm, one condition per term (#1619).
+
+    A fragment WITHOUT an expansion is spelled as a filter when another term has a
+    trigram to drive the scan (`_futures_name_match_term` has the measurement).
+    All-fragment queries and fragments carrying an expansion keep the shape they
+    had: with no sibling to drive, the fragment's ILIKE is the only scan there is,
+    and an expansion (`la` -> `los angeles`) is a term the index CAN narrow on.
+    """
+    a_term_has_trigram = any(_has_extractable_trigram(t) for t, _ in expanded)
+    return [
+        _futures_name_match_term(
+            term, exp, fragment_drives_scan=not (a_term_has_trigram and not exp)
+        )
+        for term, exp in expanded
+    ]
 
 
 def _team_prefix_tsquery(q: str):
@@ -11458,10 +11503,7 @@ async def search_events(
         )
 
     if len(terms) > 1:
-        futures_name_conditions = [
-            _futures_name_match_term(term, exp)
-            for term, exp in expanded
-        ]
+        futures_name_conditions = _futures_multi_term_name_conditions(expanded)
         futures_name_ilike = and_(*futures_name_conditions)
         futures_outcome_match = _multi_term_outcome_match(expanded)
     else:
