@@ -2729,8 +2729,17 @@ export default function RelatedFutures({
     visibleHomeGames.length + visibleAwayGames.length;
   // Series markets come as a dedicated top-level array from the API.
   // Fall back to the old home/away filter for backward compatibility.
-  const seriesMarkets = safeData.series_markets ?? [];
-  const legacySeries = [...homeCats.series, ...awayCats.series]
+  //
+  // #9962 — A SERIES MARKET WITH NOTHING TO SAY ON ANY LEG IS NOT DRAWN. Since #9934 withholds
+  // a Polymarket price its own book rules out, /events/15321782 (2026-09-30 23:20Z) drew a whole
+  // card of `Phillies --- / Braves ---`. A leg with a price or a result keeps its card; when no
+  // served market survives, the SERIES card is absent (notice 34) — and the legacy list is NOT
+  // consulted, because it exists for payloads that carry no `series_markets` at all.
+  const servedSeries = safeData.series_markets ?? [];
+  const seriesMarkets = servedSeries.filter((sm) =>
+    sm.outcomes.some((o) => o.probability != null || isSettledOutcome(o)),
+  );
+  const legacySeries = servedSeries.length > 0 ? [] : [...homeCats.series, ...awayCats.series]
     .filter((f, i, arr) => arr.findIndex((x) => x.market_id === f.market_id && x.outcome_id === f.outcome_id) === i)
     .sort((a, b) => (b.probability || 0) - (a.probability || 0));
   const hasSeriesData = seriesMarkets.length > 0 || legacySeries.length > 0;
