@@ -1063,3 +1063,48 @@ async def test_a_pre_floor_memo_falls_through_to_an_admissible_recalled_copy(sto
     out = await _serve(store)
 
     assert out["total_outcomes"] == 1_001_000
+
+
+# ---------------------------------------------------------------------------
+# Overlapping selection reads (Sol, f0b040f826): a slow read never wins late
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    "slow_status", [sel.READ_OK, sel.READ_MISSING, sel.READ_UNAVAILABLE, sel.READ_MALFORMED]
+)
+async def test_a_slow_read_that_resumes_after_q272_was_verified_does_not_regress_the_process(
+    monkeypatch, slow_status
+):
+    """Request A's durable read is in flight (it saw q271, or no record, or
+    failed). Request B reads committed q272 and verifies it. A resumes. Neither
+    A's answer nor the next request's may be q271 — and an unreadable A must
+    serve the q272 this process already verified, not a needless refusal."""
+    import asyncio
+
+    entered, release = asyncio.Event(), asyncio.Event()
+    old = sel.ActiveSelection(Q271, 1, sel.ORIGIN_BOOTSTRAP, record_generation=100)
+    new = sel.ActiveSelection(Q272, 2, sel.ORIGIN_ACTIVATION, record_generation=200)
+
+    async def _read(db):
+        if db == "slow":
+            entered.set()
+            await release.wait()
+            if slow_status == sel.READ_OK:
+                return sel.SelectionRead(status=sel.READ_OK, selection=old, generation=100)
+            return sel.SelectionRead(status=slow_status)
+        return sel.SelectionRead(status=sel.READ_OK, selection=new, generation=200)
+
+    monkeypatch.setattr(sel, "read_active_selection", _read)
+    slow = asyncio.create_task(sel.resolve_for_route("slow", now=1000.0))
+    await entered.wait()
+    fast = await sel.resolve_for_route("fast", now=1001.0)
+    release.set()
+    late = await slow
+    following = await sel.resolve_for_route("fast", now=1002.0)
+
+    assert [r[0].version for r in (fast, late, following)] == [Q272, Q272, Q272], (
+        fast, late, following,
+    )
+    assert sel._last_verified["selection"].version == Q272
+    assert sel._route_cache["selection"].version == Q272

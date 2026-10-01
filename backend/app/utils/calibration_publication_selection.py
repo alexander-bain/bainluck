@@ -662,8 +662,14 @@ async def resolve_for_route(
             _last_verified["selection"] = selection
         return selection, source
 
-    verified: Optional[ActiveSelection] = _last_verified.get("selection")
     durable = await read_active_selection(db)
+    # Read what this process has verified AFTER the await, never before it:
+    # another request may have verified a newer record while this read was in
+    # flight, and comparing against the pre-await value would let a slow read
+    # of q271 (or of "no record") overwrite a q272 that is already verified.
+    # From here to every return there is no await, so the comparison and the
+    # cache write are one step on the event loop.
+    verified: Optional[ActiveSelection] = _last_verified.get("selection")
     if durable.ok:
         if not _supersedes(durable.selection, verified):
             logger.warning(
