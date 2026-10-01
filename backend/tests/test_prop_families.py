@@ -636,6 +636,16 @@ class TestKeyStabilityOverProduction6630:
         "Pro Football Championship MVP?": "championship game mvp",
     }
 
+    #: #10017 (2026-10-01), declared beside the others: a generic "Teams" /
+    #: "Players" subject is a FIELD market, not an entity, so these titles key
+    #: to no family instead of a card with a row named "Players".
+    MOVED_10017 = {
+        "Pro Basketball Finals: Players to Record 1+ Three Pointers in Every Game": None,
+        "Pro Basketball Finals: Players to Record 2+ Three Pointers in Every Game": None,
+        "Pro Basketball Finals: Players to Record 15+ Points in Every Game": None,
+        "Pro Basketball Finals: Players to Record 20+ Points in Every Game": None,
+    }
+
     @staticmethod
     def _fixture():
         path = (
@@ -655,11 +665,12 @@ class TestKeyStabilityOverProduction6630:
         assert sum(1 for t in keys if "of the year" in t.lower()) >= 200
         assert set(self.MOVED) <= set(keys)
         assert set(self.MOVED_8385) <= set(keys)
+        assert set(self.MOVED_10017) <= set(keys)
 
     def test_only_the_named_titles_changed_key(self):
         keys = self._fixture()
         moved, drifted = [], []
-        declared = {**self.MOVED, **self.MOVED_8385}
+        declared = {**self.MOVED, **self.MOVED_8385, **self.MOVED_10017}
         for title, before in keys.items():
             now = family_key(title)
             if title in declared:
@@ -675,7 +686,7 @@ class TestKeyStabilityOverProduction6630:
         # titles MUST disagree with it. If they did not, the corpus would be
         # an AFTER snapshot and would prove nothing.
         keys = self._fixture()
-        declared = {**self.MOVED, **self.MOVED_8385}
+        declared = {**self.MOVED, **self.MOVED_8385, **self.MOVED_10017}
         stale = [t for t in declared if keys[t] == declared[t]]
         assert not stale, f"fixture already carries the fixed key for {stale}"
 
