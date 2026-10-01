@@ -387,7 +387,9 @@ def test_the_inherited_scope_filters_still_run_inside_this_rig():
                 category="championship", llm_sport_category="baseball", status="open",
             ),
             FuturesMarket(
-                id=11, source="kalshi", external_id="epl", name="EPL Winner",
+                # #10067: soccer title boards on a venue whose id can name a
+                # league are in scope now; an Odds API board is not.
+                id=11, source="odds_api", external_id="epl", name="EPL Winner",
                 category="championship", llm_sport_category="soccer", status="open",
             ),
         ])
@@ -397,7 +399,7 @@ def test_the_inherited_scope_filters_still_run_inside_this_rig():
             # only the regex can exclude it.
             FuturesOutcome(id=1, market_id=10, external_id="s", name="Over"),
             FuturesOutcome(id=2, market_id=10, external_id="t", name="Boston Red Sox"),
-            # Out of _US_SPORTS.
+            # Out of _US_SPORTS, and not a league-scoped soccer board (#10067).
             FuturesOutcome(id=3, market_id=11, external_id="u", name="Manchester City"),
         ])
         session.commit()

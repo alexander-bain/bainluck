@@ -55,6 +55,24 @@ def _short_name(name: str | None) -> bool:
 # Skip golf — individual sport, no team rosters to match against.
 _US_SPORTS = ("basketball", "baseball", "football", "hockey")
 
+# #10067 — soccer title boards, bound ONLY inside the league their ticker names.
+# Soccer used to be out of scope entirely, so no open soccer leg outside the
+# Odds API World Cup board carried a team_id (0 of ~1,800 on tier-1 boards on
+# 2026-10-01). Search's headline gate admits a club priced under 5% only through
+# its anchor, so 17 of 20 Premier League clubs could not reach their own title
+# board by name. The category-wide, roster and LLM steps stay closed to soccer:
+# a club name recurs across dozens of soccer sport keys (Arsenal is a team row in
+# the EPL, the FA Cup and the Champions League), so only Step 0, the ticker's
+# league, may decide. Only open, tier-1, non-event boards are selected (the title
+# boards search ranks), on the venues whose id can name a league.
+_LEAGUE_ONLY_SPORTS = ("soccer",)
+
+# Sport keys that are not a league: ``soccer_other`` is a catch-all of ~800 clubs
+# from every country, and the ticker maps file a few title series under it
+# (Eredivisie, Ecuador, Korea). Step 0 read inside it bound the Eredivisie's
+# "Sparta" (Rotterdam) to Sparta Lichtenberg in the 2026-10-01 replay.
+_NOT_A_LEAGUE = frozenset({"soccer_other"})
+
 # #7307 — THE SELECTOR HAS TO ADVANCE. The Phase 2 query used to be
 # ``... WHERE team_id IS NULL ... ORDER BY market_id LIMIT :limit`` with no
 # memory of where the last run stopped. There is no attempted marker on
@@ -152,6 +170,19 @@ def _read_cursor(rc, key: str) -> int:
         return 0
 
 
+def _league_only_board():
+    """The soccer boards Phase 2 selects (#10067): open, tier 1, no event, a league-naming venue."""
+    from app.models import FuturesMarket
+
+    return and_(
+        FuturesMarket.llm_sport_category.in_(_LEAGUE_ONLY_SPORTS),
+        FuturesMarket.status == "open",
+        FuturesMarket.market_tier == 1,
+        FuturesMarket.event_id.is_(None),
+        FuturesMarket.source.in_(_LEAGUE_NAMING_VENUES),
+    )
+
+
 def unlinked_outcomes_query(*, open_markets: bool, cursor: int, batch: int):
     """The Phase 2 selector for one pass. Exposed so a guard test can drive it.
 
@@ -178,7 +209,10 @@ def unlinked_outcomes_query(*, open_markets: bool, cursor: int, batch: int):
                 func.length(FuturesOutcome.name) >= _MIN_NAME_CHARS,
                 FuturesMarket.source == "kalshi",
             ),
-            FuturesMarket.llm_sport_category.in_(_US_SPORTS),  # US sports only
+            or_(
+                FuturesMarket.llm_sport_category.in_(_US_SPORTS),
+                _league_only_board(),
+            ),
             status_clause,
             FuturesOutcome.id > cursor,
         )
@@ -223,6 +257,21 @@ async def _load_teams_by_sport(
 _LEAGUE_NAMING_VENUES = ("kalshi", "polymarket")
 
 
+def _ticker_league(market) -> Optional[str]:
+    """The league Step 0 binds inside: the one the market's venue id names, else None.
+
+    ``None`` too for a sport key that is no league (:data:`_NOT_A_LEAGUE`, #10067).
+    """
+    from app.utils.market_team_sport import market_event_slug, market_league_sport_key
+
+    if market is None or market.source not in _LEAGUE_NAMING_VENUES:
+        return None
+    league = market_league_sport_key(
+        market.source, market.external_id, market_event_slug(market.market_metadata)
+    )
+    return None if league in _NOT_A_LEAGUE else league
+
+
 def _match_in_ticker_league(outcome, teams: list[dict]) -> Optional[int]:
     """Bind a Kalshi outcome inside the league its ticker names, else None (#9617).
 
@@ -233,22 +282,25 @@ def _match_in_ticker_league(outcome, teams: list[dict]) -> Optional[int]:
     The league is the same read Phase 3 rebinds into and the league check refuses
     on (#9663): read off the bare ticker map, the FCS title board is FBS, so this
     bound "San Diego" to San Diego State and Phase 3 cleared it again every run.
-    """
-    from app.utils.market_team_sport import market_event_slug, market_league_sport_key
-    from app.utils.team_linking import match_outcome_to_league_team
 
-    market = outcome.market
-    if market is None or market.source not in _LEAGUE_NAMING_VENUES:
-        return None
-    league = market_league_sport_key(
-        market.source, market.external_id, market_event_slug(market.market_metadata)
-    )
+    A soccer leg the matcher reads as ambiguous gets one more read (#10067): the
+    league's duplicate rows for one club ("Brighton" ×4, "Tottenham" beside
+    "Tottenham Hotspur") resolve to that club.
+    """
+    from app.utils.team_linking import match_outcome_to_league_team, match_outcome_to_one_club
+
+    league = _ticker_league(outcome.market)
     if not league:
         return None
     league_teams = [t for t in teams if t.get("sport_key") == league]
     if not league_teams:
         return None
-    return match_outcome_to_league_team(outcome.name, league_teams)
+    team_id = match_outcome_to_league_team(outcome.name, league_teams)
+    if team_id is None and (
+        getattr(outcome.market, "llm_sport_category", None) in _LEAGUE_ONLY_SPORTS
+    ):
+        team_id = match_outcome_to_one_club(outcome.name, league_teams)
+    return team_id
 
 
 async def _ticker_league_teams(
@@ -261,14 +313,7 @@ async def _ticker_league_teams(
     The league's rows are loaded once per run, whatever the market's category,
     as Phase 3 already does when it rebinds a stored link into that league.
     """
-    from app.utils.market_team_sport import market_event_slug, market_league_sport_key
-
-    market = outcome.market
-    if market is None or market.source not in _LEAGUE_NAMING_VENUES:
-        return teams
-    league = market_league_sport_key(
-        market.source, market.external_id, market_event_slug(market.market_metadata)
-    )
+    league = _ticker_league(outcome.market)
     if not league:
         return teams
     if any(t.get("sport_key") == league for t in teams):
@@ -1073,6 +1118,9 @@ async def _backfill_team_links(limit: int = 200, use_llm: bool = True):
                                 continue
                             if _short_name(outcome.name):
                                 # #9687: Step 0 is the only reader of a short name.
+                                continue
+                            if category in _LEAGUE_ONLY_SPORTS:
+                                # #10067: ...and of a soccer leg.
                                 continue
 
                             # Step 1: Try name matching first (no LLM)
