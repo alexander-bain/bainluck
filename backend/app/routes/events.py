@@ -37371,6 +37371,11 @@ def _format_futures_for_search(
             )
             or _TIER_LABELS_SEARCH.get(market.market_tier, market.market_type or "Market")
         ),
+        # #10100: the stored shape (duel | field | claim | … | null), verbatim.
+        # `market_type_label` above is a display word and cannot tell an NFL
+        # hub's game-winner duel from the spread or a field listing; Discover
+        # #10089 keys on this. Null stays null — never inferred from the name.
+        "market_type": market.market_type,
         "status": market.status,
         "source": market.source,
         "resolution_date": market.resolution_date.isoformat() if market.resolution_date else None,
