@@ -49,6 +49,9 @@ logger = logging.getLogger(__name__)
 # Base URLs for ESPN API
 ESPN_API_BASE = "https://site.api.espn.com/apis/site/v2/sports"
 ESPN_CORE_API = "https://sports.core.api.espn.com/v2/sports"
+# #10103: sports whose box scores keep each athlete's ESPN id, team and picture
+# (`box_score_data.player_identities`). Widen this only together with a reader.
+BOX_SCORE_IDENTITY_SPORTS = frozenset({"americanfootball_nfl"})
 # Standings live on the `apis/v2` host, NOT under `apis/site/v2`. Its own
 # constant because the wrong one does not fail: measured 2026-09-21,
 # `apis/site/v2/sports/baseball/mlb/standings` answers **200** with the body
@@ -1380,7 +1383,81 @@ class ESPNAPIService:
             "box_score": box_score,
             "scoring_plays": scoring_plays,
             "scores": scores,
+            # #10103: NFL only in this slice — the one sport whose prop reader
+            # consumes it. Every other sport's stored box stays byte-identical.
+            "box_score_player_identities": (
+                self._parse_boxscore_player_identities(data)
+                if sport_key in BOX_SCORE_IDENTITY_SPORTS
+                else []
+            ),
         }
+
+    @staticmethod
+    def _parse_boxscore_player_identities(summary_data: dict) -> list[dict]:
+        """Who actually played in THIS game, by ESPN's own ids (#10103).
+
+        ``_parse_boxscore`` keys the numeric box by display name and drops the
+        athlete's id, his team and his picture. A prop page then had to borrow
+        all three from today's ``teams.roster_players``, so a player traded
+        after the game would be shown in his new colours on the old game.
+        ESPN's box already says which team each athlete played for in this
+        game, so that is kept here, in a list beside the numeric box, which is
+        left unchanged.
+
+        One entry per (athlete id, team id):
+        ``{"name", "athlete_id", "team_id", "side", "headshot"?}``. ``side`` is
+        ESPN's own ``homeAway`` for that team in this game's header, and
+        ``None`` if the header does not name the team. Nothing is resolved
+        here. A reader decides whether a name is unique, and refuses one that
+        is not.
+        """
+        boxscore = summary_data.get("boxscore") or {}
+        if not isinstance(boxscore, dict):
+            return []
+        side_by_team: dict[str, str] = {}
+        competitions = (summary_data.get("header") or {}).get("competitions") or []
+        if competitions and isinstance(competitions[0], dict):
+            for comp in competitions[0].get("competitors") or []:
+                if not isinstance(comp, dict):
+                    continue
+                team_id = str((comp.get("team") or {}).get("id") or "").strip()
+                if team_id and comp.get("homeAway") in ("home", "away"):
+                    side_by_team[team_id] = comp["homeAway"]
+
+        identities: list[dict] = []
+        seen: set[tuple[str, str]] = set()
+        for team_group in boxscore.get("players") or []:
+            if not isinstance(team_group, dict):
+                continue
+            team_id = str((team_group.get("team") or {}).get("id") or "").strip()
+            if not team_id:
+                continue
+            for stat_group in team_group.get("statistics") or []:
+                if not isinstance(stat_group, dict):
+                    continue
+                for athlete_entry in stat_group.get("athletes") or []:
+                    athlete = (athlete_entry or {}).get("athlete") or {}
+                    if not isinstance(athlete, dict):
+                        continue
+                    name = (athlete.get("displayName") or "").strip()
+                    athlete_id = str(athlete.get("id") or "").strip()
+                    if not name or not athlete_id:
+                        continue
+                    if (athlete_id, team_id) in seen:
+                        continue
+                    seen.add((athlete_id, team_id))
+                    entry = {
+                        "name": name,
+                        "athlete_id": athlete_id,
+                        "team_id": team_id,
+                        "side": side_by_team.get(team_id),
+                    }
+                    headshot = athlete.get("headshot")
+                    href = headshot.get("href") if isinstance(headshot, dict) else None
+                    if href:
+                        entry["headshot"] = href
+                    identities.append(entry)
+        return identities
 
     @staticmethod
     def _parse_header_scores(data: dict) -> dict:

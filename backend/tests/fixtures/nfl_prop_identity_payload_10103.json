@@ -1,0 +1,47 @@
+{
+  "_provenance": "#10103 golden. Produced by backend/tests/test_nfl_prop_subject_provider_bridge_9483.py::test_THE_SHIP_ingestion_to_served_prop_keeps_the_games_own_team_and_picture from the SOURCE-RETAINED ESPN summary for 401872660 (our 14780141, Bills @ Texans) through get_event_context -> fetch_completed_box_scores -> GET /api/events/14780141/game-markets, with a REPRESENTATIVE post-game transfer on today's roster (Montgomery listed on Buffalo). Read by frontend/__tests__/nflPropIdentityReachesTheCard10103.test.ts. Prices are the rig's 0.55, not a production price.",
+  "home_team": "Houston Texans",
+  "away_team": "Buffalo Bills",
+  "player_props": [
+    {
+      "market_name": "Buffalo vs Houston: Passing Yards",
+      "outcome_name": "C.J. Stroud: 225+",
+      "threshold": 225.0,
+      "over_probability": 0.55,
+      "player_team": "home",
+      "player_headshot": "https://a.espncdn.com/i/headshots/nfl/players/full/4432577.png",
+      "player_entity_key": "espn:athlete:4432577",
+      "player_team_entity_key": "espn:team:34"
+    },
+    {
+      "market_name": "Buffalo vs Houston: Passing Yards",
+      "outcome_name": "Josh Allen: 250+",
+      "threshold": 250.0,
+      "over_probability": 0.55,
+      "player_team": "away",
+      "player_headshot": "https://a.espncdn.com/i/headshots/nfl/players/full/3918298.png",
+      "player_entity_key": "espn:athlete:3918298",
+      "player_team_entity_key": "espn:team:2"
+    },
+    {
+      "market_name": "Buffalo vs Houston: Rushing Yards",
+      "outcome_name": "David Montgomery: 50+",
+      "threshold": 50.0,
+      "over_probability": 0.55,
+      "player_team": "home",
+      "player_headshot": "https://a.espncdn.com/i/headshots/nfl/players/full/4035538.png",
+      "player_entity_key": "espn:athlete:4035538",
+      "player_team_entity_key": "espn:team:34"
+    },
+    {
+      "market_name": "Buffalo vs Houston: Receiving Yards",
+      "outcome_name": "Jackson Hawes: 25+",
+      "threshold": 25.0,
+      "over_probability": 0.55,
+      "player_team": "away",
+      "player_headshot": "https://example.invalid/roster-today/hawes.png",
+      "player_entity_key": null,
+      "player_team_entity_key": null
+    }
+  ]
+}

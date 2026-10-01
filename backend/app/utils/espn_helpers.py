@@ -2985,6 +2985,11 @@ async def fetch_completed_box_scores(session, stats):
                         bsd["away_period_scores"] = scores.get(
                             "away_period_scores", []
                         )
+                    # #10103: this pass REPLACES the whole box, so the athletes'
+                    # game identities must ride it or the first settled fetch
+                    # wipes what the live pass stored.
+                    if context.get("box_score_player_identities"):
+                        bsd["player_identities"] = context["box_score_player_identities"]
                     settled_over_live = had_live_box
                 elif had_live_box:
                     # #8970: ESPN answered with nothing for a game we already
@@ -3179,6 +3184,9 @@ async def fetch_live_box_scores(session, stats):
                         bsd["away_period_scores"] = scores.get(
                             "away_period_scores", []
                         )
+                    # #10103: the same sibling key as the two settled writers.
+                    if context.get("box_score_player_identities"):
+                        bsd["player_identities"] = context["box_score_player_identities"]
                     to_write.append((ev, bsd))
             except Exception as e:
                 logger.error(f"Live box score error for event {ev.id}: {e}")
