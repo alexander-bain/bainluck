@@ -325,7 +325,10 @@ final class OddsChartViewModel: ObservableObject {
         guard history == nil else { return }  // Skip if preloaded
         loading = true
         do {
-            history = try await APIClient.shared.fetchEventHistory(id: eventId, hours: 168)
+            // #1833 — the page's own payload arrives confined; this direct
+            // fetch must take the same settlement stamp (`TerminalStamp`).
+            history = TerminalStamp.confined(
+                try await APIClient.shared.fetchEventHistory(id: eventId, hours: 168))
             error = nil
             loading = false
         } catch {

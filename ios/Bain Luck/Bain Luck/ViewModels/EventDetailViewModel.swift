@@ -268,7 +268,9 @@ final class EventDetailViewModel: ObservableObject {
         // Await secondary fetches — only update if successful AND non-empty
         // (preserve existing data when a refresh returns nil or empty results)
         if let h = await historyTask.value {
-            history = h
+            // #1833 — a finished game's settlement point sits at its last real
+            // reading, not at `completed_at`; see `TerminalStamp`.
+            history = TerminalStamp.confined(h)
             requestChartRevisionRefreshIfNeeded()
         }
         if let related = await relatedFuturesTask.value {
@@ -461,7 +463,7 @@ final class EventDetailViewModel: ObservableObject {
                 requestedGeneration == deliveryGeneration && streamRefetchGeneration == requestedGeneration
             )
             adopt(fetched, recordsPriceActivity: recordsActivity)
-            history = h
+            history = TerminalStamp.confined(h)
             if recordsActivity { pricePairRefreshFailed = false }
             // An opening/consensus hero first becomes a stream-proven blend
             // through this pair. Require its own revision to cover the frame

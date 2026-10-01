@@ -9,11 +9,11 @@ nonisolated struct EventHistoryResponse: Decodable, Sendable {
     let awayTeam: String
     let completedAt: String?
     let status: String?
-    let history: [HistoryPoint]
+    var history: [HistoryPoint]
     let bookmakerHistory: [String: [BookmakerHistoryPoint]]?
-    let scoreHistory: [ScoreHistoryPoint]?
-    let espnHistory: [ESPNHistoryPoint]?
-    let winProbHistory: [String: [WinProbHistoryPoint]]?
+    var scoreHistory: [ScoreHistoryPoint]?
+    var espnHistory: [ESPNHistoryPoint]?
+    var winProbHistory: [String: [WinProbHistoryPoint]]?
     let winProbSources: [String: WinProbSourceInfo]?
     let scoringPlays: [ScoringPlay]?
     /// The server's period boundaries with their provenance (#3348). Optional
@@ -24,7 +24,7 @@ nonisolated struct EventHistoryResponse: Decodable, Sendable {
     /// The Moments Engine's confident subset (#1168 consumer 3, #3196). Optional
     /// because it is additive: an older cached payload has no key at all.
     let moments: [GameMomentPoint]?
-    let aggregateLine: [AggregateLinePoint]?
+    var aggregateLine: [AggregateLinePoint]?
     /// `false` when `commence_time` is the venue's expected RESOLUTION hour and
     /// not a start (#7878 / #8215 — Kalshi publishes no kick-off, so a tennis row
     /// clocked from it holds the far end of the match). The chart may not cut
@@ -93,7 +93,7 @@ nonisolated struct PMSpreadData: Decodable, Sendable {
 
 /// Aggregated odds history point for an event.
 nonisolated struct HistoryPoint: Decodable, Sendable {
-    let timestamp: String
+    var timestamp: String
     let homeProbability: Double?
     let awayProbability: Double?
     let bookmakerCount: Int?
@@ -114,14 +114,14 @@ nonisolated struct BookmakerHistoryPoint: Decodable, Sendable {
 
 /// Score snapshot captured during an event.
 nonisolated struct ScoreHistoryPoint: Decodable, Sendable {
-    let timestamp: String
+    var timestamp: String
     let homeScore: Int
     let awayScore: Int
 }
 
 /// ESPN win-probability and game-state snapshot.
 nonisolated struct ESPNHistoryPoint: Decodable, Sendable {
-    let timestamp: String
+    var timestamp: String
     let homeProbability: Double?
     let gameClock: String?
     let period: String?
@@ -131,7 +131,7 @@ nonisolated struct ESPNHistoryPoint: Decodable, Sendable {
 
 /// Source-specific win-probability snapshot with optional game state.
 nonisolated struct WinProbHistoryPoint: Decodable, Sendable {
-    let timestamp: String
+    var timestamp: String
     let homeProbability: Double?
     let gameState: WinProbGameState?
     /// `true` on the ONE point the backend synthesises at "now" on a live game,
@@ -360,7 +360,7 @@ nonisolated struct GameMomentPoint: Decodable, Sendable {
 
 /// Aggregated home and away probability point for charting.
 nonisolated struct AggregateLinePoint: Decodable, Sendable {
-    let timestamp: String
+    var timestamp: String
     let homeProbability: Double
     let awayProbability: Double?
 }
