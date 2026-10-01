@@ -12,7 +12,13 @@ from collections import namedtuple
 
 import pytest
 
-from app.tasks.polymarket_ws import _apply_ws_resolution
+from app.tasks.polymarket_ws import (
+    WS_RESOLUTION_UNCONFIRMED,
+    WS_RESOLUTION_VOID,
+    WS_RESOLUTION_WINNER,
+    _apply_ws_resolution,
+    ws_resolution_verdict,
+)
 
 _Row = namedtuple("_Row", ["id", "resolution_source"])
 
@@ -48,7 +54,7 @@ async def test_resolution_never_writes_calibration_probability():
     written = await _apply_ws_resolution(
         session, market_id=10,
         outcomes=[(1, "0xabc_yes"), (2, "0xabc_no")],
-        winning_outcome="yes",
+        verdict=(WS_RESOLUTION_WINNER, 1),
     )
     assert written == 2
     texts = _stmts_text(captured)
@@ -75,7 +81,7 @@ async def test_winner_write_stamps_authoritative_source_atomically():
     written = await _apply_ws_resolution(
         session, market_id=10,
         outcomes=[(1, "0xabc_yes"), (2, "0xabc_no")],
-        winning_outcome="yes",
+        verdict=(WS_RESOLUTION_WINNER, 1),
     )
     assert written == 2
 
@@ -109,7 +115,7 @@ async def test_authoritative_existing_resolution_is_not_rewritten():
     written = await _apply_ws_resolution(
         session, market_id=10,
         outcomes=[(1, "0xabc_yes"), (2, "0xabc_no")],
-        winning_outcome="no",
+        verdict=(WS_RESOLUTION_WINNER, 2),
     )
     assert written == 1  # only the unresolved outcome
     texts = _stmts_text(captured)
@@ -125,8 +131,177 @@ async def test_price_derived_existing_is_regradable_but_still_no_scalar():
     written = await _apply_ws_resolution(
         session, market_id=10,
         outcomes=[(1, "0xabc_yes")],
-        winning_outcome="yes",
+        verdict=(WS_RESOLUTION_WINNER, 1),
     )
     # settlement_sync is authoritative → skipped.
     assert written == 0
     assert all("calibration_probability" not in str(s) for s in captured)
+
+
+# ── #9418: the winner is the CLOB-confirmed TOKEN, never the push's label ─────
+#
+# Production 2026-09-30/10-01: 2,471 of 2,618 markets this socket settled in a
+# day were stored with EVERY leg `is_winner=False` under `clob_authoritative`,
+# because the venue's `winning_outcome` is a display word ("Over", "Stefan
+# Kozlov") and the old writer graded only a literal yes/no on a `_yes`/`_no`
+# leg. The payloads below are the venue's own, captured from the public CLOB
+# socket and `/markets/{condition}` on 2026-10-01.
+
+_OVER = "1099789015" + "0" * 66   # BOS@NYY "O/U 3.5" Over token (shape only)
+_UNDER = "2688334074" + "0" * 66
+_COND = "0x" + "ab" * 32
+
+
+def _push(winning_asset_id=_OVER, label="Over"):
+    return {
+        "event_type": "market_resolved",
+        "market": _COND,
+        "assets_ids": [_OVER, _UNDER],
+        "winning_asset_id": winning_asset_id,
+        "winning_outcome": label,
+    }
+
+
+def _clob(over_winner, under_winner, over_price, under_price, closed=True):
+    return {
+        "closed": closed,
+        "tokens": [
+            {"token_id": _OVER, "outcome": "Over", "winner": over_winner, "price": over_price},
+            {"token_id": _UNDER, "outcome": "Under", "winner": under_winner, "price": under_price},
+        ],
+    }
+
+
+_ASSETS = {_OVER: 101, _UNDER: 102}
+_LEGS = [101, 102]
+
+
+def _verdict(push, clob, legs=_LEGS, assets=_ASSETS):
+    return ws_resolution_verdict(push.get("winning_asset_id"), clob, legs, assets)
+
+
+def test_specimen_over_label_grades_the_over_leg():
+    """BOS@NYY O/U 3.5 (market 63530124): venue paid Over 1/0, label "Over".
+    The old writer stored both legs lost; the token names leg 101."""
+    assert _verdict(_push(), _clob(True, False, 1, 0)) == (WS_RESOLUTION_WINNER, 101)
+
+
+def test_second_token_names_the_second_leg_whatever_its_name():
+    """A named side (`{condition}_side1`, "Aidan Kim") is graded by its token —
+    the label and the leg's suffix are never consulted."""
+    v = _verdict(_push(_UNDER, "Aidan Kim"), _clob(False, True, 0, 1))
+    assert v == (WS_RESOLUTION_WINNER, 102)
+
+
+def test_label_is_never_read():
+    """A label contradicting the token changes nothing: the token decides."""
+    assert _verdict(_push(_OVER, "No"), _clob(True, False, 1, 0)) == (
+        WS_RESOLUTION_WINNER,
+        101,
+    )
+
+
+def test_specimen_void_is_a_void_not_two_losers():
+    """Kozlov v Kim (15320860, market 62715379): closed, both tokens
+    `winner: false` at 0.5. Stored before as two `clob_authoritative` losers."""
+    assert _verdict(_push(None, ""), _clob(False, False, 0.5, 0.5)) == (
+        WS_RESOLUTION_VOID,
+        None,
+    )
+
+
+@pytest.mark.parametrize(
+    "clob",
+    [
+        None,                                        # CLOB unreachable / 404
+        {"closed": True},                            # no tokens
+        _clob(False, False, 1, 0),                   # closed, winner not flipped yet
+        _clob(False, False, 0.5, 0.5, closed=False),  # not closed: no void yet
+        _clob(False, False, 0.5, 0.49),              # not the void payout
+        _clob(True, True, 1, 1),                     # two winners
+    ],
+)
+def test_anything_short_of_a_confirmed_result_is_unconfirmed(clob):
+    assert _verdict(_push(), clob) == (WS_RESOLUTION_UNCONFIRMED, None)
+
+
+def test_push_token_disagreeing_with_clob_is_unconfirmed():
+    assert _verdict(_push(_UNDER), _clob(True, False, 1, 0)) == (
+        WS_RESOLUTION_UNCONFIRMED,
+        None,
+    )
+
+
+def test_push_without_a_token_takes_the_clob_winner():
+    """`winning_asset_id` is optional in the venue schema; the CLOB still names it."""
+    assert _verdict(_push(None), _clob(True, False, 1, 0)) == (WS_RESOLUTION_WINNER, 101)
+
+
+def test_winning_token_that_is_not_a_leg_of_this_market_is_unconfirmed():
+    """A token mapped to another market's leg (a mirror) never grades this one."""
+    assert _verdict(_push(), _clob(True, False, 1, 0), legs=[102, 103]) == (
+        WS_RESOLUTION_UNCONFIRMED,
+        None,
+    )
+    assert _verdict(_push(), _clob(True, False, 1, 0), assets={_UNDER: 102}) == (
+        WS_RESOLUTION_UNCONFIRMED,
+        None,
+    )
+
+
+def _outcome_writes(captured):
+    return [
+        s for s in captured
+        if "futures_outcomes" in str(s) and "is_winner" in str(s)
+        and not str(s).strip().upper().startswith("SELECT")
+    ]
+
+
+@pytest.mark.asyncio
+async def test_specimen_end_to_end_over_leg_is_the_winner():
+    """Push + CLOB → verdict → write: the Over leg is True, Under False."""
+    session, captured = _make_session([_Row(101, None), _Row(102, None)])
+    verdict = _verdict(_push(), _clob(True, False, 1, 0))
+    written = await _apply_ws_resolution(
+        session, market_id=63530124,
+        outcomes=[(101, _COND + "_yes"), (102, _COND + "_no")],
+        verdict=verdict,
+    )
+    assert written == 2
+    graded = {}
+    for stmt in _outcome_writes(captured):
+        params = stmt.compile().params
+        graded[params["id_1"]] = params["is_winner"]
+        assert params["resolution_source"] == "clob_authoritative"
+    assert graded == {101: True, 102: False}
+
+
+@pytest.mark.asyncio
+async def test_void_writes_the_venue_void_and_grades_nothing():
+    from app.tasks.kalshi_resolution_sweep import VOID_UPDATE_SQL
+
+    session, captured = _make_session([_Row(101, None), _Row(102, None)])
+    written = await _apply_ws_resolution(
+        session, market_id=62715379,
+        outcomes=[(101, _COND + "_yes"), (102, _COND + "_no")],
+        verdict=(WS_RESOLUTION_VOID, None),
+    )
+    assert written == 0
+    assert _outcome_writes(captured) == []
+    texts = [str(s) for s in captured]
+    assert any(t == VOID_UPDATE_SQL for t in texts), texts
+    assert any("futures_markets" in t and "status" in t for t in texts)
+    assert all("calibration_probability" not in t for t in texts)
+
+
+@pytest.mark.asyncio
+async def test_unconfirmed_resolves_the_market_and_grades_nothing():
+    session, captured = _make_session([_Row(101, None), _Row(102, None)])
+    written = await _apply_ws_resolution(
+        session, market_id=10,
+        outcomes=[(101, _COND + "_yes"), (102, _COND + "_no")],
+        verdict=(WS_RESOLUTION_UNCONFIRMED, None),
+    )
+    assert written == 0
+    assert _outcome_writes(captured) == []
+    assert any("futures_markets" in str(s) and "status" in str(s) for s in captured)
