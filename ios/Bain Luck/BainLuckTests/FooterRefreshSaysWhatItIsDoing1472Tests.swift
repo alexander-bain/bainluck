@@ -454,6 +454,59 @@ final class FooterRefreshSaysWhatItIsDoing1472Tests: XCTestCase {
         )
     }
 
+    /// #7074, installed 1.0.2 (33): the page collapses only once a refresh has
+    /// SUCCEEDED, in the same arm as the return to the top.
+    ///
+    /// MEASURED on a simulator journey of Alex's footer flow before this existed:
+    /// `visibleCount = 20` ran before the load, so the instant the reader pressed
+    /// Refresh the ~130-card page collapsed under them — the next frame was
+    /// mid-feed, the end card and its "Refreshing…" control off screen for the
+    /// whole wait. Alex: "after 1–2 seconds returned to the top… no indication
+    /// that refresh had worked." Kept until the answer lands, the end card is the
+    /// in-progress feedback; a failed refresh never moves the reader at all.
+    func testThePageCollapsesOnlyAfterASuccessfulLoad() throws {
+        let source = Self.codeText(of: "Bain Luck/Views/DiscoverView.swift")
+        let body = try XCTUnwrap(
+            source.range(of: "private func refreshFeed("),
+            "refreshFeed has been renamed or moved; move this test with it."
+        )
+        let scope = String(source[body.upperBound...].prefix(3000))
+
+        let load = try XCTUnwrap(scope.range(of: "await vm.load()"), "refreshFeed no longer loads; move this test with it.")
+        let collapse = try XCTUnwrap(
+            scope.range(of: "visibleCount = 20"),
+            "refreshFeed no longer resets the page, so a refreshed feed keeps the old depth — re-read #1472 before "
+            + "accepting that."
+        )
+        XCTAssertEqual(
+            scope.components(separatedBy: "visibleCount = 20").count - 1, 1,
+            "refreshFeed resets the page more than once; the early copy is the one that strands the footer reader."
+        )
+        XCTAssertGreaterThan(
+            collapse.lowerBound, load.upperBound,
+            "the page collapses BEFORE the load returns — the reader on the end card is moved mid-feed the "
+            + "moment they press Refresh and loses the only control saying a refresh is underway."
+        )
+
+        let scroll = try XCTUnwrap(scope.range(of: "proxy.scrollTo(Self.feedTopAnchor"))
+        XCTAssertLessThan(
+            collapse.lowerBound, scroll.lowerBound,
+            "the page collapses after the scroll-to-top, so the scroll resolves against the old page's geometry."
+        )
+        let lines = String(scope[..<collapse.lowerBound])
+            .split(separator: "\n", omittingEmptySubsequences: false)
+            .map { $0.trimmingCharacters(in: .whitespaces) }
+        let successArm = try XCTUnwrap(
+            lines.lastIndex(where: { $0.hasPrefix("if ") && $0.hasSuffix("{") && $0.contains(".refreshed") }),
+            "the page collapse is not inside the success arm, so a failed refresh collapses the reader's page "
+            + "and strands them away from the 'Couldn't refresh' notice."
+        )
+        XCTAssertFalse(
+            lines[successArm...].contains { $0.hasPrefix("}") },
+            "a block closes between the success test and the page collapse, so the collapse is not in that arm."
+        )
+    }
+
     // MARK: - Reading source as source
 
     /// A file's lines with comments and blank lines removed.

@@ -203,6 +203,53 @@ final class AReaderCanSeeTheFooterRefreshWorking1472Tests: XCTestCase {
         }
         wait(for: [movedOn], timeout: 1)
 
+        // ── 2b. And the reader who was moved is TOLD it worked ──────────────
+        //
+        // #7074, Alex on installed 1.0.2 (33): "returned to the top… no
+        // indication that refresh had worked." MEASURED on this journey before
+        // the repair: the notice existed, with the right label, at minY 64pt —
+        // behind the collapsed navigation bar's title — and decayed 4s later
+        // without ever being on screen. Existence is not the claim; being BELOW
+        // the bar is. Read promptly: success decays after
+        // `DiscoverView.refreshConfirmationWindow` (4s).
+        let notice = app.descendants(matching: .any).matching(identifier: "discover-refresh-notice").firstMatch
+        XCTAssertTrue(
+            notice.waitForExistence(timeout: 3),
+            "A footer refresh moved the reader to the top and nothing there says it finished."
+        )
+        add(Self.shot(app, "2b-notice"))
+        // THE WITNESS IS THE TITLE TEXT, NOT THE BAR'S FRAME. Measured: a
+        // first draft compared against `navigationBars.firstMatch.frame.maxY` and
+        // PASSED on master, where the notice sits visibly behind the inline title —
+        // the bar's accessibility frame does not cover the glass the content scrolls
+        // under. The "Discover" title is what the notice was hidden behind, so the
+        // notice's top edge must clear the lowest drawn copy of it (inline and large
+        // titles are both in the tree; the larger maxY is the one on screen when the
+        // title is large, and the only one when it is inline).
+        let noticeFrame = notice.frame
+        let titles = app.navigationBars.staticTexts.matching(identifier: "Discover").allElementsBoundByIndex
+            .map(\.frame).filter { !$0.isEmpty }
+        let bar = app.navigationBars.firstMatch
+        let diagnostics = "notice \(noticeFrame), bar \(bar.exists ? bar.frame : .zero), titles \(titles)"
+        print("FOOTER-NOTICE-GEOMETRY \(diagnostics)")
+        XCTAssertEqual(
+            notice.label, "Feed refreshed. Checked just now.",
+            "The notice after a successful footer refresh does not say it succeeded."
+        )
+        let titleBottom = try XCTUnwrap(
+            titles.map(\.maxY).max(),
+            "No 'Discover' title in the navigation bar, so there is nothing to measure the notice against: \(diagnostics)"
+        )
+        XCTAssertGreaterThanOrEqual(
+            noticeFrame.minY, titleBottom - 0.5,
+            "The refresh notice is drawn UNDER the navigation bar's title, so the reader moved to the top "
+            + "cannot see it — the build-33 defect. \(diagnostics)"
+        )
+        XCTAssertLessThan(
+            notice.frame.maxY, scrollView.frame.maxY,
+            "The refresh notice is below the visible feed (maxY \(notice.frame.maxY))."
+        )
+
         add(Self.shot(app, "3-after"))
 
         XCTAssertTrue(
