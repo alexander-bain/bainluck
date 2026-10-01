@@ -9741,14 +9741,12 @@ async def _run_calibration_main_build(runner=None):
                 active_read=active_read,
             )
         if activation["status"] == _sel.ACTIVATED:
-            accelerated = _sel.accelerate_selection(
-                rc, activation["selection"], activation["generation"]
-            )
+            # Readers learn of it from the durable record alone (no Redis copy
+            # of the selection exists to lag behind this commit).
             logger.warning(
-                "calibration publish: ACTIVATED %s (generation %s) replacing %s; "
-                "selection accelerator %s",
+                "calibration publish: ACTIVATED %s (generation %s) replacing %s",
                 CALIBRATION_POPULATION_VERSION, envelope.generation,
-                runner.outcome["active_version"], accelerated,
+                runner.outcome["active_version"],
             )
         else:
             logger.error(
@@ -9757,10 +9755,6 @@ async def _run_calibration_main_build(runner=None):
                 CALIBRATION_POPULATION_VERSION, envelope.generation,
                 activation.get("reason"), runner.outcome["active_version"],
             )
-    elif durable_ok and active_read.ok:
-        # Refresh the selection accelerator from durable truth every beat, so a
-        # failed post-activation SET is bounded by the key's TTL, not by luck.
-        _sel.accelerate_selection(rc, active_sel, active_read.generation)
     runner.outcome["activation"] = {
         k: v for k, v in activation.items() if k != "selection"
     }

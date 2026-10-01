@@ -492,15 +492,23 @@ async def _read_published_payload() -> tuple[dict, Optional[str], dict]:
         )
         meta["pretouch_status"] = getattr(ping, "status", "error")
 
-        # #6317: grade the ACTIVE artifact. A version after q271 publishes to
-        # its own keys; the legacy pair is the answer only when it is active.
+        # #6317: grade the ACTIVE artifact, named by the durable selection. A
+        # version after q271 publishes to its own keys; the legacy pair is the
+        # answer only when no selection record exists. An unreadable record is
+        # reported, never graded as the legacy pair — after an activation that
+        # is not the published artifact.
         from app.utils.calibration_publication_selection import (
-            resolve_namespace_for_worker,
+            resolve_namespace_standalone,
         )
 
-        active_ns, meta["selection_source"] = await resolve_namespace_for_worker(
-            deadline_ms=TWIN_REDIS_DEADLINE_MS
-        )
+        active_ns, meta["selection_source"] = await resolve_namespace_standalone()
+        if active_ns is None:
+            return (
+                {},
+                "published_read_failed: active selection unreadable "
+                f"({meta['selection_source']})",
+                meta,
+            )
         main_key, last_good_key = active_ns.main_key, active_ns.last_good_key
 
         payload, main_status, attempts = await _read_one_key(

@@ -223,12 +223,10 @@ def _calibration_steady_state_selection(request, monkeypatch):
     monkeypatch.setattr(sel, "namespace_for", _namespace_for)
     monkeypatch.setattr(sel, "resolve_for_route", _resolve_for_route)
     monkeypatch.setattr(sel, "resolve_for_build", _resolve_for_build)
-    async def _resolve_namespace_for_worker(*, deadline_ms=5000):
+    async def _resolve_namespace_standalone():
         return _namespace_for(_code_version()), "test_steady_state"
 
-    monkeypatch.setattr(sel, "accelerate_selection", lambda *a, **k: "test_steady_state")
-    monkeypatch.setattr(sel, "active_namespace_sync", lambda rc: _namespace_for(_code_version()))
-    monkeypatch.setattr(sel, "resolve_namespace_for_worker", _resolve_namespace_for_worker)
+    monkeypatch.setattr(sel, "resolve_namespace_standalone", _resolve_namespace_standalone)
     yield
 
 

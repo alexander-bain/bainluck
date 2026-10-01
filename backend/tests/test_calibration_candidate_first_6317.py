@@ -272,28 +272,34 @@ async def _serve(store):
     return await calibration.public_calibration(db=store.session())
 
 
-def _bootstrap(store, redis, legacy_payload, *, accelerate=True):
+def _bootstrap(store, redis, legacy_payload):
     row = store.put_artifact(legacy_payload)
     selection = sel.ActiveSelection(
         version=Q271, min_generation=row["generation"], origin=sel.ORIGIN_BOOTSTRAP,
         predicate_fingerprint=FP_Q271,
     )
     gen = store.put_selection(selection)
-    if accelerate:
-        sel.accelerate_selection(redis, selection, gen)
     return selection, gen
 
 
-def _activate_in_store(store, redis, candidate_payload, *, floor=None, accelerate=True):
+def _activate_in_store(store, redis, candidate_payload, *, floor=None):
     row = store.put_artifact(candidate_payload)
     selection = sel.ActiveSelection(
         version=Q272, min_generation=floor if floor is not None else row["generation"],
         origin=sel.ORIGIN_ACTIVATION, predicate_fingerprint=FP_Q272,
     )
     gen = store.put_selection(selection, at=_ago(minutes=1))
-    if accelerate:
-        sel.accelerate_selection(redis, selection, gen)
     return selection, gen
+
+
+#: The key the draft once cached the selection under (6599014230). Nothing may
+#: write or trust it now; the tests plant valid-looking copies there to prove so.
+FORMER_SELECTION_REDIS_KEY = "bainluck:calibration:active_selection"
+
+
+def _plant_selection_copy(redis, selection: sel.ActiveSelection, record_generation: int):
+    body = dict(selection.to_payload(), record_generation=record_generation)
+    redis.data[FORMER_SELECTION_REDIS_KEY] = json.dumps(body)
 
 
 def _redis_artifact(redis, ns, payload, *, last_good=True, main=True):
@@ -431,8 +437,7 @@ async def test_a_q271_process_copy_cannot_seed_the_q272_page(store, redis, healt
 
     # Activation lands, but no q272 copy is readable anywhere yet.
     selection = sel.ActiveSelection(version=Q272, min_generation=1, origin=sel.ORIGIN_ACTIVATION)
-    gen = store.put_selection(selection, at=_ago(minutes=1))
-    sel.accelerate_selection(redis, selection, gen)
+    store.put_selection(selection, at=_ago(minutes=1))
     _new_request()
 
     out = await _serve(store)
@@ -467,30 +472,110 @@ async def test_an_unreadable_record_fails_closed_to_the_last_verified_selection(
     _redis_artifact(redis, Q272_NS, cand)
     assert (await _serve(store))["population_version"] == Q272
 
-    # Redis copy garbled AND the durable record torn (checksum no longer matches).
-    redis.data[sel.SELECTION_REDIS_KEY] = "{not json"
+    # The durable record torn (checksum no longer matches).
     store.rows[sel.SELECTION_IDENTITY]["checksum"] = "torn"
     _new_request()
     selection, source = await sel.resolve_for_route(store.session())
     assert selection.version == Q272
     assert source == "last_verified_after_malformed"
 
-    # A process that never verified one gets the legacy incumbent, never a candidate.
+    # A process that never verified one cannot know q272 activated: unknown is
+    # not "no record", so it is neither the legacy default nor a candidate.
     sel._reset_route_cache_for_tests()
     selection, source = await sel.resolve_for_route(store.session())
-    assert selection.version == Q271 and selection.origin == sel.ORIGIN_DEFAULT
-    assert source == "default_after_malformed"
+    assert selection is None
+    assert source == "unknown_after_malformed"
 
 
-async def test_a_garbled_redis_selection_falls_to_the_durable_record(store, redis):
+@pytest.mark.parametrize("status", [sel.READ_UNAVAILABLE, sel.READ_MALFORMED])
+async def test_a_cold_process_that_cannot_read_the_selection_refuses_instead_of_serving_q271(
+    store, redis, healthy_staged_bank, monkeypatch, status
+):
+    """Sol P1-2 (6599014230): durable q272 is active, the q271 copies are all
+    still readable, and a restarted dyno's selection read times out. Serving
+    q271 as ``fresh`` there is a guess presented as truth."""
+    legacy = _payload(Q271, at=_ago(hours=2))
+    _bootstrap(store, redis, legacy)
+    _redis_artifact(redis, Q271_NS, legacy)
+    store.put_artifact(legacy)
     cand = _payload(Q272, at=_ago(minutes=10))
-    _activate_in_store(store, redis, cand, accelerate=False)
-    redis.data[sel.SELECTION_REDIS_KEY] = json.dumps(
-        {**sel.ActiveSelection(version=Q272, min_generation=1, origin="activation").to_payload(),
-         "artifact_identity": "calibration:main"}
-    )
+    _activate_in_store(store, redis, cand)
+    _redis_artifact(redis, Q272_NS, cand)
+
+    async def _fails(db):
+        return sel.SelectionRead(status=status, error="selection read timeout")
+
+    real_read = sel.read_active_selection
+    monkeypatch.setattr(sel, "read_active_selection", _fails)
+    out = await _serve(store)
+
+    assert isinstance(out, JSONResponse) and out.status_code == 503
+    body = json.loads(out.body)
+    assert body["reason"] == "active_selection_unavailable"
+    # Cautious advice: no timing promised (CAL-P1191 keeps "shortly" for the budget).
+    assert body["retry_after_s"] >= 900
+
+    # Once the record reads, the same process serves the active q272.
+    monkeypatch.setattr(sel, "read_active_selection", real_read)
+    out = await _serve(store)
+    assert out["population_version"] == Q272
+
+
+async def test_positively_no_record_still_serves_the_legacy_incumbent(store, redis, healthy_staged_bank):
+    """The other direction: only a CONFIRMED absence means 'no rollover yet'."""
+    legacy = _payload(Q271, at=_ago(minutes=20))
+    store.put_artifact(legacy)
+    _redis_artifact(redis, Q271_NS, legacy)
+    out = await _serve(store)
+    assert out["population_version"] == Q271 and out["availability"] == "fresh"
+    assert sel._route_cache["source"] == "default_no_record"
+
+
+async def test_a_valid_redis_selection_copy_is_never_consulted(store, redis, healthy_staged_bank):
+    """Sol P1-1 (6599014230): activation committed q272, then the process
+    crashed before refreshing a Redis copy that still names q271. A cold
+    reader must follow the durable record, not the copy."""
+    legacy = _payload(Q271, at=_ago(hours=2))
+    q271_sel, q271_gen = _bootstrap(store, redis, legacy)
+    _redis_artifact(redis, Q271_NS, legacy)
+    _plant_selection_copy(redis, q271_sel, q271_gen)
+    cand = _payload(Q272, at=_ago(minutes=10))
+    _activate_in_store(store, redis, cand)
+    _redis_artifact(redis, Q272_NS, cand)
+
+    out = await _serve(store)
+
+    assert out["population_version"] == Q272, out.get("population_version")
+    assert sel._route_cache["source"] == "durable"
+
+
+async def test_a_process_that_verified_q272_never_regresses_to_an_older_record(store, redis, healthy_staged_bank):
+    """Sol P1-1, the warm half: q272 verified, memo expires, and the next read
+    returns an OLDER record (a lagging read, a restored row). Not news."""
+    legacy = _payload(Q271, at=_ago(hours=2))
+    q271_sel, _ = _bootstrap(store, redis, legacy)
+    older_row = dict(store.rows[sel.SELECTION_IDENTITY])
+    _redis_artifact(redis, Q271_NS, legacy)
+    cand = _payload(Q272, at=_ago(minutes=10))
+    _activate_in_store(store, redis, cand)
+    _redis_artifact(redis, Q272_NS, cand)
+    assert (await _serve(store))["population_version"] == Q272
+
+    store.rows[sel.SELECTION_IDENTITY] = older_row
+    _plant_selection_copy(redis, q271_sel, older_row["generation"])
+    _new_request()
+    from app.routes import calibration
+
+    calibration._cache.update(data=None, source=None, namespace=None)
+    out = await _serve(store)
+    assert out["population_version"] == Q272
+    assert sel._route_cache["source"] == "last_verified_newer_than_read"
+
+    # A record that vanishes after this process verified one is not "no rollover".
+    del store.rows[sel.SELECTION_IDENTITY]
+    _new_request()
     selection, source = await sel.resolve_for_route(store.session())
-    assert (selection.version, source) == (Q272, "durable")
+    assert (selection.version, source) == (Q272, "last_verified_after_missing")
 
 
 # ---------------------------------------------------------------------------
@@ -574,8 +659,9 @@ async def test_a_gated_q272_build_stages_beside_q271_then_activates(monkeypatch,
     assert (sel.SELECTION_IDENTITY, "update") in store.locks
     assert (Q271_NS.identity, "share") in store.locks
     assert (Q272_NS.identity, "share") in store.locks
-    # The accelerator was written after the durable commit.
-    assert json.loads(redis.data[sel.SELECTION_REDIS_KEY])["active_version"] == Q272
+    # Readers learn of it from durable alone: no Redis copy of the selection.
+    assert not [k for k in redis.sets if "active_selection" in k]
+    assert FORMER_SELECTION_REDIS_KEY not in redis.data
     pub = summary["publication"]
     assert pub["role"] == "candidate" and pub["live"] is True
     assert pub["activation"]["status"] == sel.ACTIVATED
@@ -830,16 +916,20 @@ async def test_the_twin_grades_the_active_artifact_not_the_frozen_legacy_copy(mo
     cand = _payload(Q272, at=_ago(minutes=5))
     _activate_in_store(store, redis, cand)
     _redis_artifact(redis, Q272_NS, cand)
+    _plant_selection_copy(  # a lagging copy naming q271 is not read
+        redis, sel.ActiveSelection(version=Q271, min_generation=1, origin="bootstrap"), 1
+    )
     payload, err, meta = await worker._read_published_payload()
     assert payload["population_version"] == Q272
     assert meta["payload_source"] == Q272_NS.main_key
-    assert meta["selection_source"] == "redis"
-
-    # Selection accelerator gone: the durable record still answers.
-    del redis.data[sel.SELECTION_REDIS_KEY]
-    payload, err, meta = await worker._read_published_payload()
-    assert payload["population_version"] == Q272
     assert meta["selection_source"] == "durable"
+
+    # An unreadable record is reported, never graded as the legacy pair.
+    store.rows[sel.SELECTION_IDENTITY]["checksum"] = "torn"
+    payload, err, meta = await worker._read_published_payload()
+    assert payload == {}
+    assert err.startswith("published_read_failed: active selection unreadable")
+    assert meta["payload_source"] is None
 
 
 def test_the_publish_age_watchdog_reads_the_active_artifact():
@@ -855,27 +945,121 @@ def test_the_publish_age_watchdog_reads_the_active_artifact():
     ] == Q272_NS.identity
 
 
-def test_synchronous_readers_resolve_the_active_namespace_from_redis():
-    r = Redis()
-    assert sel.active_namespace_sync(r) == Q271_NS
-    sel.accelerate_selection(r, sel.ActiveSelection(version=Q272, min_generation=1, origin="activation"), 9)
-    assert sel.active_namespace_sync(r) == Q272_NS
-    r.data[sel.SELECTION_REDIS_KEY] = "garbage"
-    assert sel.active_namespace_sync(r) == Q271_NS
+async def test_the_admin_mce_view_reads_the_active_namespace_or_refuses(monkeypatch, store, redis):
+    from fastapi import HTTPException
+
+    from app.routes import admin_data_quality as adq
+
+    monkeypatch.setattr(adq, "_check_admin_secret", lambda *a, **k: True)
+    legacy = _payload(Q271, at=_ago(hours=3))
+    _bootstrap(store, redis, legacy)
+    _redis_artifact(redis, Q271_NS, legacy)
+    cand = _payload(Q272, outcomes=980_000, at=_ago(minutes=5))
+    _activate_in_store(store, redis, cand)
+    _redis_artifact(redis, Q272_NS, cand)
+
+    async def _mce():
+        return await adq.calibration_mce_summary(request=None, secret=None, bust=False, threshold=5.0)
+
+    out = await _mce()
+    assert out is not None
+    assert redis.data[Q272_NS.main_key]  # the key it was pointed at
+
+    store.rows[sel.SELECTION_IDENTITY]["checksum"] = "torn"
+    with pytest.raises(HTTPException) as refused:
+        await _mce()
+    assert refused.value.status_code == 503
 
 
-def test_a_selection_copy_that_cannot_be_replaced_is_deleted():
-    class _SetFails(Redis):
-        def set(self, key, value, ex=None):
-            raise ConnectionError("write refused")
+async def test_out_of_request_readers_resolve_from_durable_only(store, redis):
+    assert await sel.resolve_namespace_standalone() == (Q271_NS, "default_no_record")
+    _plant_selection_copy(redis, sel.ActiveSelection(version=Q272, min_generation=1, origin="activation"), 9)
+    assert await sel.resolve_namespace_standalone() == (Q271_NS, "default_no_record")
+    _activate_in_store(store, redis, _payload(Q272, at=_ago(minutes=5)))
+    assert await sel.resolve_namespace_standalone() == (Q272_NS, "durable")
+    store.rows[sel.SELECTION_IDENTITY]["checksum"] = "torn"
+    assert await sel.resolve_namespace_standalone() == (None, "unavailable_malformed")
 
-        def delete(self, key):
-            self.data.pop(key, None)
 
-    r = _SetFails()
-    r.data[sel.SELECTION_REDIS_KEY] = json.dumps(
-        sel.ActiveSelection(version=Q271, min_generation=1, origin="bootstrap").to_payload()
+def test_the_selection_module_has_no_redis_copy_to_lag():
+    """The contract is structural: no reader can trust a copy that does not exist."""
+    for gone in ("SELECTION_REDIS_KEY", "accelerate_selection", "active_namespace_sync",
+                 "resolve_namespace_for_worker"):
+        assert not hasattr(sel, gone), gone
+
+
+# ---------------------------------------------------------------------------
+# Process tiers obey the generation floor (Sol P2, 6599014230)
+# ---------------------------------------------------------------------------
+
+
+async def test_a_pre_floor_process_memo_is_not_served(store, redis, healthy_staged_bank):
+    from app.routes import calibration
+
+    cand = _payload(Q272, at=_ago(minutes=10))
+    _activate_in_store(store, redis, cand)
+    old = _payload(Q272, outcomes=555_555, at=_ago(hours=2))
+    _redis_artifact(redis, Q272_NS, old, last_good=False)
+    calibration._cache.update(
+        data=old,
+        source=calibration.main_artifact_fingerprint(redis.data[Q272_NS.main_key]),
+        namespace=Q272_NS.identity,
     )
-    out = sel.accelerate_selection(r, sel.ActiveSelection(version=Q272, min_generation=2, origin="activation"), 3)
-    assert out == "error_deleted"
-    assert sel.SELECTION_REDIS_KEY not in r.data
+
+    out = await _serve(store)
+
+    assert out["total_outcomes"] != 555_555
+    assert out["total_outcomes"] == 1_000_000  # the activated artifact, from durable
+
+
+@pytest.mark.parametrize("where", ["memo", "recalled_last_good"])
+async def test_tier_four_refuses_a_pre_floor_process_copy(store, redis, healthy_staged_bank, where):
+    from app.routes import calibration
+
+    cand = _payload(Q272, at=_ago(minutes=10))
+    _activate_in_store(store, redis, cand)
+    del store.rows[Q272_NS.identity]  # nothing above tier 4 can answer
+    old = _payload(Q272, outcomes=555_555, at=_ago(hours=2))
+    if where == "memo":
+        calibration._cache.update(data=old, source=None, namespace=Q272_NS.identity)
+    else:
+        rc.remember_last_good(Q272_NS.identity, old)
+
+    out = await _serve(store)
+
+    assert isinstance(out, JSONResponse) and out.status_code == 503, out
+    assert json.loads(out.body)["reason"] == "no_trustworthy_snapshot"
+
+
+async def test_tier_four_still_serves_a_later_same_version_process_copy(store, redis, healthy_staged_bank):
+    """The floor is a minimum, not an equality: a newer q272 copy still serves."""
+    from app.routes import calibration
+
+    cand = _payload(Q272, at=_ago(minutes=30))
+    _activate_in_store(store, redis, cand)
+    del store.rows[Q272_NS.identity]
+    later = _payload(Q272, outcomes=1_001_000, at=_ago(minutes=5))
+    calibration._cache.update(data=later, source=None, namespace=Q272_NS.identity)
+
+    out = await _serve(store)
+
+    assert out["total_outcomes"] == 1_001_000
+    assert out["cache"]["status"] == "stale"
+
+
+async def test_a_pre_floor_memo_falls_through_to_an_admissible_recalled_copy(store, redis, healthy_staged_bank):
+    """Refusing the stale memo must not also discard a good recalled q272 copy."""
+    from app.routes import calibration
+
+    cand = _payload(Q272, at=_ago(minutes=30))
+    _activate_in_store(store, redis, cand)
+    del store.rows[Q272_NS.identity]
+    calibration._cache.update(
+        data=_payload(Q272, outcomes=555_555, at=_ago(hours=2)), source=None,
+        namespace=Q272_NS.identity,
+    )
+    rc.remember_last_good(Q272_NS.identity, _payload(Q272, outcomes=1_001_000, at=_ago(minutes=5)))
+
+    out = await _serve(store)
+
+    assert out["total_outcomes"] == 1_001_000

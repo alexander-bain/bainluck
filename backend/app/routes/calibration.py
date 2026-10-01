@@ -1503,14 +1503,23 @@ async def public_calibration(
     coverage_cursor = _staged_cache.get("identity")
 
     # 0a'. #6317 — WHICH artifact is active, resolved before any tier reads one.
-    #      Process-memoised (60s) over the selection's Redis copy, falling to its
-    #      durable record; never raises, and an unreadable record fails closed to
-    #      the last selection this process verified. Every tier below reads the
+    #      From the durable record (process-memoised 60s); never raises. An
+    #      unreadable record fails closed to the last selection this process
+    #      verified, and when it has none the answer is a refusal: a cold
+    #      process cannot know whether q272 already activated, so serving the
+    #      legacy artifact as fresh would be a guess. Every tier below reads the
     #      selected namespace, enforces the selected version, and refuses an
-    #      artifact older than the selection's generation floor.
+    #      artifact older than the selection's generation floor — process
+    #      tiers included.
     from app.utils import calibration_publication_selection as _pubsel
 
     _active, _active_source = await _pubsel.resolve_for_route(db)
+    if _active is None:
+        # Deliberately unmapped in UNAVAILABLE_ADVICE: the cautious default
+        # promises no timing, and a process whose durable reads fail cannot
+        # promise one either (CAL-P1191).
+        logger.warning("calibration: active selection unknown (%s) — refusing", _active_source)
+        return _unavailable("active_selection_unavailable")
     _ns = _active.namespace
     _lg_key = _ns.identity
 
@@ -1563,7 +1572,7 @@ async def public_calibration(
     # even if (impossibly) the bytes matched. A memo with no namespace was
     # written before #6317, which only ever served the legacy keys.
     _memo_ns = _cache.get("namespace") or _pubsel.LEGACY_IDENTITY
-    _memo_ours = _memo_ns == _ns.identity
+    _memo_ours = _memo_ns == _ns.identity and _active.admits_payload(_cache["data"])
     if _memo_ours and _memo_may_answer(
         _cache["data"],
         current_fingerprint=current_fingerprint,
@@ -1877,14 +1886,18 @@ async def public_calibration(
     #    a clean miss would 503 past a perfectly serviceable dated copy.
     stale = (
         _cache["data"]
-        if isinstance(_cache["data"], dict) and _memo_ns == _ns.identity
+        if isinstance(_cache["data"], dict)
+        and (_cache.get("namespace") or _pubsel.LEGACY_IDENTITY) == _ns.identity
+        and _active.admits_payload(_cache["data"])
         # Queue 297: age-bound the process-local copy too. Its SHAPE is not the
         # risk (this process served it earlier), but a long-lived dyno could
         # otherwise keep serving a week-old curve as though Redis were merely
         # blipping.
         else _rc.recall_last_good(_lg_key, max_age_s=SERVE_MAX_AGE_S)
     )
-    if isinstance(stale, dict):
+    # #6317: the generation floor binds process copies exactly as it binds the
+    # shared tiers — a copy that predates the activation is not the active one.
+    if isinstance(stale, dict) and _active.admits_payload(stale):
         return _degraded(stale, "redis_unavailable" if _redis_failed else "cache_miss")
 
     # 5. LAST RESORT: the newest durable snapshot at ANY age, dated and labelled.

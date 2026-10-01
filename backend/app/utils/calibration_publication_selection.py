@@ -34,10 +34,21 @@ THE MODEL — one coherent rule, not a mix:
   outside it. A ``cas-miss`` is NOT activation, whatever the independent
   snapshot write's ``superseded`` means elsewhere.
 
-Durable is the truth and Redis is an accelerator, here as everywhere in this
-pipeline: the selection's Redis copy is written only after the durable commit,
-carries a short TTL so a failed refresh cannot pin readers for long, and is
-re-written from durable on every build.
+THE SELECTION HAS NO REDIS COPY, and the absence is the contract. Every reader
+asks the durable record, which only a compare-and-swap moves, so its generation
+only grows. A Redis copy can lag that record (a crash between the commit and
+the SET, an old key outliving a newer write), and a reader that trusts a copy
+without reading durable cannot tell a lagging copy from a current one — it
+would serve q271 after q272 committed and call it fresh. The read it would save
+is one primary-key lookup per process per :data:`SELECTION_PROCESS_TTL_S`. The
+ARTIFACTS keep their Redis accelerators; only "which artifact" is durable-only.
+
+Missing and unknown are different answers. A durable read that positively
+finds no record means no rollover has started, so the legacy incumbent is
+active. A read that FAILS cannot say that: a cold process cannot know whether
+q272 already activated. Unknown therefore fails closed to a selection this
+process verified, and to a refusal when it has none — never to the legacy
+default.
 
 The predicate fingerprint is PINNED as provenance (which method was accepted at
 activation) and is re-checked between the staged row and the build that wrote
@@ -48,7 +59,6 @@ Hash equality here would turn every non-bump predicate edit into an outage.
 
 from __future__ import annotations
 
-import json
 import logging
 import re
 import time
@@ -64,14 +74,9 @@ logger = logging.getLogger(__name__)
 SELECTION_IDENTITY = "calibration:active_selection"
 SELECTION_SCHEMA = "calibration-active-selection/v1"
 
-#: The selection's accelerator. Bounded TTL on purpose: every build re-writes it
-#: from durable, and if the post-activation write fails the old copy is deleted
-#: (and in any case expires), so readers fall back to the durable record instead
-#: of following an old selection for the life of the key.
-SELECTION_REDIS_KEY = "bainluck:calibration:active_selection"
-SELECTION_REDIS_TTL_S = 3900  # one hourly beat + margin; every build re-writes it
-
-#: How long a route process may reuse a selection it resolved.
+#: How long a route process may reuse a selection it read from durable. A bounded
+#: propagation lag after an activation commits, never a regression: the memo only
+#: ever holds a durable answer, and a newer durable answer always replaces it.
 SELECTION_PROCESS_TTL_S = 60.0
 
 #: The version the legacy shared keys hold. Permanent: q271 is the last version
@@ -305,57 +310,31 @@ def selection_envelope(selection: ActiveSelection, *, now: Optional[datetime] = 
     )
 
 
-def accelerate_selection(rc, selection: ActiveSelection, record_generation: int) -> str:
-    """Write the selection's Redis copy. Call ONLY after the durable commit."""
-    body = dict(selection.to_payload())
-    body["record_generation"] = int(record_generation)
-    try:
-        rc.set(SELECTION_REDIS_KEY, json.dumps(body), ex=SELECTION_REDIS_TTL_S)
-        return "ok"
-    except Exception as exc:  # noqa: BLE001 — accelerator only; durable is the truth
-        logger.warning("calibration selection: Redis accelerator SET failed: %s", exc)
-    try:
-        # A copy we could not replace must not outlive the record it described.
-        rc.delete(SELECTION_REDIS_KEY)
-        return "error_deleted"
-    except Exception:  # noqa: BLE001
-        return "error"
+def _supersedes(candidate: ActiveSelection, held: Optional[ActiveSelection]) -> bool:
+    """May ``candidate`` replace ``held``? Never backwards: a record whose
+    generation orders before one already verified is an older copy, not news."""
+    if held is None or held.record_generation is None:
+        return True
+    return (
+        candidate.record_generation is not None
+        and candidate.record_generation >= held.record_generation
+    )
 
 
-def active_namespace_sync(rc) -> Namespace:
-    """For synchronous out-of-request readers (admin views): the selection's
-    Redis copy, else the legacy namespace. No database work."""
-    try:
-        raw = rc.get(SELECTION_REDIS_KEY)
-        parsed = parse_selection(json.loads(raw)) if raw else None
-        if parsed is not None:
-            return parsed.namespace
-    except Exception:  # noqa: BLE001
-        pass
-    return default_selection().namespace
+async def resolve_namespace_standalone() -> tuple[Optional[Namespace], str]:
+    """For readers outside the request path (the twin, admin views): the active
+    namespace and how it was known. Never raises.
 
-
-async def resolve_namespace_for_worker(*, deadline_ms: int = 5000) -> tuple[Namespace, str]:
-    """For async workers that grade the PUBLISHED artifact (the twin): the
-    active namespace and where it came from — Redis copy, durable record, or
-    the legacy default when neither can be read. Never raises."""
-    from app.utils import request_cache as _rc
-
-    try:
-        rc = await _rc.get_shared_async_redis()
-        res = await _rc.bounded_redis_call(
-            lambda: rc.get(SELECTION_REDIS_KEY), deadline_ms=deadline_ms
-        )
-        if res.is_ok and res.value:
-            parsed = parse_selection(json.loads(res.value))
-            if parsed is not None:
-                return parsed.namespace, "redis"
-    except Exception:  # noqa: BLE001
-        pass
+    Durable only. ``None`` when the record cannot be read: the caller reports
+    the selection unreadable rather than grading or showing the legacy
+    artifact, which after an activation is not the published one.
+    """
     read = await read_active_selection_standalone()
     if read.ok:
         return read.selection.namespace, "durable"
-    return default_selection().namespace, f"default_{read.status}"
+    if read.status == READ_MISSING:
+        return default_selection().namespace, "default_no_record"
+    return None, f"unavailable_{read.status}"
 
 
 def candidate_first_protection_problems(current_version: str, outgoing_version: str) -> list[str]:
@@ -656,21 +635,22 @@ def _reset_route_cache_for_tests() -> None:
     _last_verified["selection"] = None
 
 
-async def resolve_for_route(db, *, now: Optional[float] = None) -> tuple[ActiveSelection, str]:
+async def resolve_for_route(
+    db, *, now: Optional[float] = None
+) -> tuple[Optional[ActiveSelection], str]:
     """The selection a request serves, and where it came from. Never raises.
 
-    Order: process (≤ :data:`SELECTION_PROCESS_TTL_S`) → Redis accelerator →
-    durable record → the last selection this process verified → the legacy
-    default. Read-only: the route never writes any of these stores.
+    Order: process memo (≤ :data:`SELECTION_PROCESS_TTL_S`, only ever a durable
+    answer) → durable record → the last selection this process verified.
+    Read-only: the route never writes the record.
 
-    ``missing`` everywhere means no rollover has started, so the legacy
-    incumbent is the answer. Unknown or malformed fails closed to the last
-    VERIFIED active selection, and only to the default when this process has
-    never verified one. The default is the legacy incumbent and carries its own
-    version, never an unactivated candidate.
+    * ``ok`` serves the record — unless it orders BEFORE one this process
+      already verified, which then keeps serving.
+    * ``missing`` (positively no record) is the legacy incumbent, unless this
+      process has verified a record, which a missing read cannot un-happen.
+    * unknown or malformed serves the last VERIFIED selection, and ``None``
+      when this process has none: the caller refuses rather than guess.
     """
-    from app.utils import request_cache as _rc
-
     t = time.monotonic() if now is None else now
     cached = _route_cache.get("selection")
     if cached is not None and t - _route_cache.get("resolved_at", 0.0) < SELECTION_PROCESS_TTL_S:
@@ -682,31 +662,25 @@ async def resolve_for_route(db, *, now: Optional[float] = None) -> tuple[ActiveS
             _last_verified["selection"] = selection
         return selection, source
 
-    try:
-        rc = await _rc.get_shared_async_redis()
-        res = await _rc.bounded_redis_call(lambda: rc.get(SELECTION_REDIS_KEY))
-        if res.is_ok and res.value:
-            raw = json.loads(res.value)
-            rec_gen = raw.get("record_generation") if isinstance(raw, dict) else None
-            parsed = parse_selection(raw, record_generation=rec_gen if isinstance(rec_gen, int) else None)
-            if parsed is not None:
-                return _keep(parsed, "redis")
-            logger.warning("calibration selection: Redis copy failed validation — reading durable")
-    except Exception:  # noqa: BLE001 — accelerator only
-        logger.warning("calibration selection: Redis read failed — reading durable", exc_info=True)
-
+    verified: Optional[ActiveSelection] = _last_verified.get("selection")
     durable = await read_active_selection(db)
     if durable.ok:
+        if not _supersedes(durable.selection, verified):
+            logger.warning(
+                "calibration selection: durable record generation %s orders before "
+                "the verified %s — keeping the verified selection",
+                durable.selection.record_generation, verified.record_generation,
+            )
+            return _keep(verified, "last_verified_newer_than_read")
         return _keep(durable.selection, "durable")
-    if durable.status == READ_MISSING:
+    if durable.status == READ_MISSING and verified is None:
         return _keep(default_selection(), "default_no_record")
 
     logger.warning(
         "calibration selection: durable record %s (%s) — failing closed to the "
         "last verified selection", durable.status, durable.error,
     )
-    verified = _last_verified.get("selection")
     if verified is not None:
         # Not re-cached: an unreadable record is re-tried on the next request.
         return verified, f"last_verified_after_{durable.status}"
-    return default_selection(), f"default_after_{durable.status}"
+    return None, f"unknown_after_{durable.status}"
