@@ -300,7 +300,10 @@ final class APinManagement9875Tests: XCTestCase {
         let button = try String(contentsOf: root.appendingPathComponent("Components/PinButton.swift"), encoding: .utf8)
         let list = try String(contentsOf: root.appendingPathComponent("Views/PinManagementView.swift"), encoding: .utf8)
         XCTAssertTrue(myStuff.contains("myStuffManagePins"))
-        XCTAssertTrue(myStuff.contains("private var pinnedItems: [FeedItem]"), "pins in the feed keep their existing live cards")
+        // #10011 superseded the feed-only `pinnedItems`: every saved pin now has
+        // content, and a pin the feed carries still keeps its live feed card
+        // (`testAPinTheFeedAlreadyCarriesKeepsItsFeedCard`).
+        XCTAssertTrue(myStuff.contains("SavedPinContent.section(pins: pinManager.savedPins, feed: vm.items"), "pins in the feed keep their existing live cards")
         XCTAssertTrue(myStuff.contains("feedSection(title: \"Pinned\""))
         XCTAssertTrue(button.contains("if isPresented, let feedback"))
         XCTAssertTrue(button.contains("Button(\"Manage pins\") { showPinManagement = true }"))

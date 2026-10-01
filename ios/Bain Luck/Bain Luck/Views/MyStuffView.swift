@@ -10,6 +10,7 @@ struct MyStuffView: View {
     @EnvironmentObject private var navCoordinator: NavigationCoordinator
     @EnvironmentObject private var pinManager: PinManager
     @StateObject private var vm = MyStuffViewModel()
+    @StateObject private var pinContent = SavedPinContentViewModel()
     @State private var predictionStats: PredictionStats?
     @State private var path = NavigationPath()
     @State private var showOnboarding = false
@@ -100,6 +101,13 @@ struct MyStuffView: View {
         .sheet(isPresented: $showPinManagement) {
             PinManagementView().environmentObject(pinManager)
         }
+        // #10011 — pinned content is read from the saved IDs themselves, so it
+        // never depends on the team feed, onboarding or sign-in state.
+        .task(id: pinManager.savedPins) { await pinContent.load(pinManager.savedPins) }
+        .onChange(of: pinManager.identityGeneration) { _, _ in
+            pinContent.reset()
+            Task { await pinContent.load(pinManager.savedPins) }
+        }
         .onAppear {
             AnalyticsService.trackScreen(name: "my_stuff", type: "my_stuff")
         }
@@ -156,6 +164,8 @@ struct MyStuffView: View {
     private var signInView: some View {
         ScrollView {
             VStack(spacing: 32) {
+                pinnedStack
+                    .padding(.top, 16)
                 VStack(spacing: 12) {
                     Text("🍀")
                         .font(.system(size: 48))
@@ -259,9 +269,41 @@ struct MyStuffView: View {
     // MARK: - State 2: Onboarding Prompt
 
     private var onboardingPromptView: some View {
-        VStack(spacing: 20) {
-            Spacer()
+        Group {
+            if hasPins {
+                // #10011 — saved pins are shown before onboarding finishes.
+                ScrollView {
+                    VStack(spacing: 32) {
+                        pinnedStack
+                            .padding(.top, 16)
+                        onboardingPromptContent
+                            .padding(.bottom, 40)
+                    }
+                }
+            } else {
+                VStack(spacing: 20) {
+                    Spacer()
+                    onboardingPromptContent
+                    Spacer()
+                }
+            }
+        }
+        #if os(iOS)
+        .fullScreenCover(isPresented: $showOnboarding) {
+            OnboardingView()
+                .environmentObject(authManager)
+        }
+        #else
+        .sheet(isPresented: $showOnboarding) {
+            OnboardingView()
+                .environmentObject(authManager)
+                .frame(minWidth: 500, minHeight: 400)
+        }
+        #endif
+    }
 
+    private var onboardingPromptContent: some View {
+        VStack(spacing: 20) {
             Image(systemName: "heart.circle.fill")
                 .font(.system(size: 56))
                 .foregroundStyle(.blue)
@@ -294,28 +336,18 @@ struct MyStuffView: View {
                     .clipShape(RoundedRectangle(cornerRadius: 12))
             }
             .padding(.horizontal, 40)
-
-            Spacer()
         }
-        #if os(iOS)
-        .fullScreenCover(isPresented: $showOnboarding) {
-            OnboardingView()
-                .environmentObject(authManager)
-        }
-        #else
-        .sheet(isPresented: $showOnboarding) {
-            OnboardingView()
-                .environmentObject(authManager)
-                .frame(minWidth: 500, minHeight: 400)
-        }
-        #endif
     }
 
     // MARK: - State 3: Team Feed
 
     private var teamFeedView: some View {
         Group {
-            if vm.loading {
+            if hasPins {
+                // #10011 — the Pinned section stays reachable while the team
+                // feed loads, fails or is empty; that state becomes a row.
+                teamFeedList
+            } else if vm.loading {
                 SkeletonFeedView()
             } else if let error = vm.error, vm.items.isEmpty {
                 ContentUnavailableView(
@@ -374,14 +406,116 @@ struct MyStuffView: View {
         }
     }
 
-    private var pinnedItems: [FeedItem] {
-        vm.items.filter { item in
-            if item.type == "event", let event = item.event {
-                return pinManager.pinnedEventIDs.contains(event.id)
-            } else if item.type == "futures", let futures = item.futures {
-                return pinManager.pinnedFuturesIDs.contains(futures.id)
+    private var hasPins: Bool { !pinManager.savedPins.isEmpty }
+
+    /// #10011 — every saved pin, not only the ones the team feed happens to
+    /// carry. Build 33 drew `vm.items.filter(savedIDs)`, so a pinned market or
+    /// another sport's game was invisible in My Stuff.
+    private var pinnedSection: (items: [FeedItem], fallbacks: [SavedPin]) {
+        SavedPinContent.section(pins: pinManager.savedPins, feed: vm.items, content: pinContent.content)
+    }
+
+    /// The Pinned section for a `List`: real cards first, then any pin whose
+    /// content has not loaded, is gone, or failed — each still removable.
+    @ViewBuilder
+    private var pinnedListSections: some View {
+        let pinned = pinnedSection
+        if !pinned.items.isEmpty {
+            feedSection(title: "Pinned", systemImage: "bookmark.fill", imageColor: .orange,
+                        items: pinned.items, count: pinManager.savedPins.count)
+        }
+        if !pinned.fallbacks.isEmpty {
+            Section {
+                ForEach(pinned.fallbacks) { pin in pinFallbackRow(pin) }
+            } header: {
+                if pinned.items.isEmpty {
+                    Label("Pinned", systemImage: "bookmark.fill")
+                        .foregroundStyle(.orange)
+                        .font(.subheadline.weight(.semibold))
+                        .textCase(nil)
+                }
             }
-            return false
+        }
+    }
+
+    /// The same Pinned content for the signed-out and onboarding screens, which
+    /// are scroll views rather than lists.
+    @ViewBuilder
+    private var pinnedStack: some View {
+        let pinned = pinnedSection
+        if hasPins {
+            VStack(alignment: .leading, spacing: 12) {
+                Label("Pinned", systemImage: "bookmark.fill")
+                    .foregroundStyle(.orange)
+                    .font(.subheadline.weight(.semibold))
+                ForEach(pinned.items) { item in
+                    feedRow(item)
+                        .padding(12)
+                        .background(Color.cardBackgroundDark)
+                        .clipShape(RoundedRectangle(cornerRadius: 12))
+                        .contextMenu { pinContextMenu(item) }
+                }
+                ForEach(pinned.fallbacks) { pin in
+                    pinFallbackRow(pin)
+                        .padding(12)
+                        .background(Color.secondary.opacity(0.06), in: RoundedRectangle(cornerRadius: 12))
+                }
+            }
+            .padding(.horizontal, 16)
+            .accessibilityIdentifier("myStuffPinnedContent")
+        }
+    }
+
+    private func pinFallbackRow(_ pin: SavedPin) -> some View {
+        let metadata = pinContent.content[pin]?.metadata
+        return HStack(spacing: 12) {
+            VStack(alignment: .leading, spacing: 4) {
+                Text(pin.displayTitle(for: metadata)).font(.subheadline.weight(.medium))
+                switch metadata {
+                case .unavailable:
+                    Text("You can remove this pin.")
+                        .font(.caption).foregroundStyle(.secondary)
+                case .failed:
+                    Text("Couldn't load this pin.")
+                        .font(.caption).foregroundStyle(.secondary)
+                    Button("Retry") { Task { await pinContent.load(pinManager.savedPins, retryFailed: true) } }
+                        .font(.caption)
+                        .buttonStyle(.borderless)
+                default:
+                    Text("Loading…").font(.caption).foregroundStyle(.secondary)
+                }
+            }
+            Spacer(minLength: 0)
+            Button {
+                pinManager.togglePin(type: pin.type, id: pin.value)
+            } label: {
+                if pinManager.isSaving(type: pin.type, id: pin.value) {
+                    ProgressView().controlSize(.small)
+                } else {
+                    Text("Remove")
+                }
+            }
+            .buttonStyle(.bordered)
+            .disabled(pinManager.isSaving(type: pin.type, id: pin.value))
+            .accessibilityLabel(pin.removeLabel(for: metadata))
+        }
+        .accessibilityIdentifier("pinnedFallback.\(pin.id)")
+    }
+
+    /// With pins on screen, an unloaded / failed / empty team feed is one row
+    /// under them instead of a full-screen state that would hide them.
+    @ViewBuilder
+    private var teamFeedStatusRow: some View {
+        if vm.items.isEmpty {
+            Section {
+                if vm.loading {
+                    HStack(spacing: 8) { ProgressView(); Text("Loading your teams…").foregroundStyle(.secondary) }
+                } else if vm.error != nil {
+                    Text("Couldn't load your teams' games. Pull down to refresh.").foregroundStyle(.secondary)
+                } else {
+                    Text("Your teams don't have any games coming up.").foregroundStyle(.secondary)
+                }
+            }
         }
     }
 
@@ -432,9 +566,8 @@ struct MyStuffView: View {
                 }
             }
 
-            if !pinnedItems.isEmpty {
-                feedSection(title: "Pinned", systemImage: "bookmark.fill", imageColor: .orange, items: pinnedItems)
-            }
+            pinnedListSections
+            teamFeedStatusRow
             if !vm.liveNow.isEmpty {
                 // live/048 — the header reads the bucket. See `EventState`.
                 feedSection(title: EventState.liveSectionTitle(hasSuspended: vm.liveNowHasSuspended), systemImage: "circle.fill", imageColor: .red, items: vm.liveNow)
@@ -467,7 +600,9 @@ struct MyStuffView: View {
         .listStyle(.insetGrouped)
         #endif
         .refreshable {
+            async let pins: Void = pinContent.load(pinManager.savedPins, refresh: true)
             await vm.startLoad()
+            await pins
             #if os(iOS)
             UIImpactFeedbackGenerator(style: .light).impactOccurred()
             #endif
@@ -476,7 +611,7 @@ struct MyStuffView: View {
 
     // MARK: - Section Builder
 
-    private func feedSection(title: String, systemImage: String, imageColor: Color, items: [FeedItem]) -> some View {
+    private func feedSection(title: String, systemImage: String, imageColor: Color, items: [FeedItem], count: Int? = nil) -> some View {
         Section {
             if sizeClass == .regular {
                 // iPad: multi-column masonry with context menu for pin.
@@ -556,7 +691,7 @@ struct MyStuffView: View {
                     .font(.subheadline)
                     .fontWeight(.semibold)
                     .textCase(nil)
-                Text("\(items.count)")
+                Text("\(count ?? items.count)")
                     .font(.caption2)
                     .fontWeight(.medium)
                     .foregroundStyle(.secondary)
