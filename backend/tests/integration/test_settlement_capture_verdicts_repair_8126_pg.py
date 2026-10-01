@@ -1,12 +1,10 @@
 """#8126 — the capture-verdict apply, backup, re-run, undo and refusals, against a real PostgreSQL.
 
-READY TO WIRE, NOT YET WIRED. This file is staged here, outside ``backend/tests``,
-because a ``*_DATABASE_URL``-gated file under ``tests/integration`` must be named
-by a ci.yml step (``test_pg_gated_tests_are_named_in_ci.py``), and ci.yml,
-``.github/ci-postgres-groups.json`` and ``test_pg_gate_seed_completeness.py``'s
-``COVERED`` are outside #8126's initial write scope. The scope extension that
-moves it to ``backend/tests/integration/`` and names it is requested in the
-handoff. Until then it runs locally only, and that run is the proof quoted.
+WIRED. ci.yml runs this file as its own skip-refusing step in the
+``database-integration`` job's ``shared`` group (named in
+``.github/ci-postgres-groups.json``), and ``test_pg_gate_seed_completeness.py``
+lists it in ``COVERED``. It was staged under ``artifacts/`` until the scope
+extension that promoted it here was approved.
 
 What only a real server proves:
 
@@ -27,14 +25,10 @@ Run (from ``backend/``)::
     psql -d postgres -c "CREATE DATABASE bl_8126_gate"
     SEARCH_TEST_DATABASE_URL="postgresql+asyncpg://$(whoami)@localhost:5432/bl_8126_gate" \\
       python3 -m pytest -c pytest.ini \\
-      ../artifacts/calibration-8126-consumer/test_settlement_capture_verdicts_repair_8126_pg.py -v -rs
+      tests/integration/test_settlement_capture_verdicts_repair_8126_pg.py -v -rs
 
-Source-ready for promotion: ``git mv`` to
-``backend/tests/integration/test_settlement_capture_verdicts_repair_8126_pg.py``
-needs no edit here — ``_BACKEND`` resolves from either directory, and every
-seed INSERT already supplies each NOT NULL column
-``test_pg_gate_seed_completeness.py`` requires. Promoted, the path in the run
-line above becomes ``tests/integration/test_settlement_capture_verdicts_repair_8126_pg.py``.
+Every seed INSERT supplies each NOT NULL column
+``test_pg_gate_seed_completeness.py`` requires.
 """
 
 from __future__ import annotations

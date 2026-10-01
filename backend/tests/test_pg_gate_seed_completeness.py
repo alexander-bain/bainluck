@@ -578,6 +578,11 @@ COVERED = (
     # `futures_markets.mutually_exclusive` is the Python-side default the seed
     # names.
     "test_repair_9850_trammell_seeded_opening_pg.py",
+    # #8126 (settled Kalshi legs graded from their captured verdicts). Seeds
+    # `futures_markets`, `futures_outcomes` and `settlement_captures` by raw
+    # INSERT, in a private schema, to drive the capture-verdict apply, re-run,
+    # `--restore`, `--restore-undrifted` and refusals.
+    "test_settlement_capture_verdicts_repair_8126_pg.py",
 )
 
 INTEGRATION_DIR = Path(__file__).parent / "integration"

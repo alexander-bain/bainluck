@@ -14,7 +14,7 @@ SHIP: A settled Kalshi board whose venue declared each leg stops showing a blank
 | `backend/scripts/restore_settlement_capture_verdicts_8126.py` | undo one `run_id` from its backup; drift refuses; `--restore-undrifted` leaves drifted rows standing |
 | `backend/tests/test_settlement_capture_consumer_8126.py` | 64 tests; captures PRODUCED via `classify_kalshi` → `_capture_row` |
 | `backend/tests/test_settlement_capture_verdicts_repair_8126.py` | 34 server-less guards (prod-app refusal, bounds, two-column write surface, purity) |
-| `artifacts/calibration-8126-consumer/test_settlement_capture_verdicts_repair_8126_pg.py` | 12 real-Postgres tests: apply/bank/re-run/undo/drift/race/lock — **staged, not wired into CI** |
+| `backend/tests/integration/test_settlement_capture_verdicts_repair_8126_pg.py` | 19 real-Postgres tests: apply/bank/re-run/undo/drift/race/lock/repointed-leg — **wired**: its own skip-refusing `database-integration`/`shared` step (requires `19 passed`), named in `.github/ci-postgres-groups.json`, listed in `COVERED` (promoted from `artifacts/` under the approved #8126 CI-promotion scope) |
 
 ## What writes, what never does
 

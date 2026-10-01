@@ -6328,6 +6328,28 @@ jobs:
             exit 1
           }
 
+      - name: "#8126 a settled Kalshi leg's captured verdict reaches its grade, and the undo round-trips (real Postgres)"
+        # #8126. The capture-verdict apply reads `raw_response->'_derived'` back
+        # from jsonb, banks the pre-image from rows locked FOR UPDATE, and grades
+        # through a four-array `unnest` compare-and-swap that also pins the
+        # banked market and exact ticker. Restore refuses drift whole, and
+        # `--restore-undrifted` leaves a repointed leg and its backup standing.
+        # Locks, jsonb, null-safe binds and rowcount are a server's answers; a
+        # session double reads green on all of them. 19 cases.
+        if: matrix.group == 'shared'
+        run: |
+          set -o pipefail
+          python -m pytest tests/integration/test_settlement_capture_verdicts_repair_8126_pg.py \
+            -v -rs 2>&1 | tee /tmp/captureverdicts8126.txt
+          if grep -qiE "[0-9]+ skipped" /tmp/captureverdicts8126.txt; then
+            echo "::error::#8126 capture-verdict gate SKIPPED — the gate did not run"
+            exit 1
+          fi
+          grep -qE "[^0-9]19 passed[,[:space:]]" /tmp/captureverdicts8126.txt || {
+            echo "::error::#8126 capture-verdict gate did not run all nineteen cases"
+            exit 1
+          }
+
       - name: "#8910 a newer WebSocket stamp survives the two-minute poll (real Postgres)"
         # #8910 / CERT-3585's required guard. The REAL live poll against real
         # Postgres, paused after its compared read, while a second session sends
