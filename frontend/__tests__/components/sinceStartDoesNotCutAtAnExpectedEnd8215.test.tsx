@@ -185,9 +185,10 @@ describe("#8215 — a 'Since Start' window is not cut at an expected END", () =>
       const props = chart.slice(0, chart.indexOf("/>"));
       expect(props).toContain("commenceTimeIsKickoff={commenceTimeIsKickoff}");
     }
-    // #8810 — the page's one flag: the served value, except `false` for a match nobody played.
+    // #8810 — the page's one flag: the served value, except `false` for a match nobody played
+    // (and, #6158, for a game the authority still reads pregame past its listed hour).
     expect(source).toMatch(
-      /const commenceTimeIsKickoff = heroScoreIsStoppageFiller\s*\?\s*false\s*:\s*historyData\?\.commence_time_is_kickoff;/,
+      /const commenceTimeIsKickoff = heroScoreIsStoppageFiller(?:\s*\|\|\s*authorityHasNotStarted)?\s*\?\s*false\s*:\s*historyData\?\.commence_time_is_kickoff;/,
     );
   });
 });
