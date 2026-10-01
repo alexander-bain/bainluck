@@ -248,7 +248,10 @@ def _expanded(q):
         ("dodgers world series", 4),       # 2 cuts x 2 orientations
         ("chiefs super bowl", 4),
         ("red sox world series", 6),       # 3 cuts x 2
-        ("los angeles dodgers world series", 0),  # 5 terms: past the cap
+        # a three-word team plus a two-word competition: 4 cuts x 2
+        ("los angeles dodgers world series", 8),
+        ("kansas city chiefs super bowl", 8),
+        ("los angeles dodgers world series 2026", 0),  # 6 terms: past the cap
         ("us open", 0),                    # `us` cannot use a trigram index
         ("f1 world championship", 0),
         # every term one trigram: the planner drives from outcomes and `%red%`
