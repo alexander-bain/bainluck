@@ -403,7 +403,11 @@ export default function TeamPage() {
 
       {/* Prop Races — cohort-compare cards (Next Team, awards, ladders). Renders
           nothing on sparse teams (component hides when no >=2-entity family). */}
-      <TeamPropFamilies families={propFamilies} teamColor={team.primary_color} />
+      <TeamPropFamilies
+        families={propFamilies}
+        teamColor={team.primary_color}
+        teamName={team.name}
+      />
 
       {/* Season Futures — championship-path progression + props/awards. */}
       {(championship_path.length > 0 || futures.length > 0) && (

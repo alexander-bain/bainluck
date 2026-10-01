@@ -3,6 +3,7 @@
 import Link from "next/link";
 import EntityImage from "@/components/EntityImage";
 import { formatProbabilityPercent, NO_READING } from "@/lib/probabilityDisplay";
+import { labelNamesSide } from "@/lib/eventOwnMoneyline";
 import type { PropFamily, PropFamilyRow } from "@/lib/api";
 
 // ---------------------------------------------------------------------------
@@ -82,13 +83,43 @@ function WhatHitBadge({ result }: { result: "won" | "lost" | null }) {
   );
 }
 
+// #10050 — a row's outcome that names THIS page's team is the question, not the player.
+//
+// Production, 390px, 2026-10-01 10:38Z, the Yankees page's "Next Team" race: all 13 rows
+// (`KXMLBNEXTTEAM-27*`) carry `top_outcome: "New York Y"`, Kalshi's cut-off name for the
+// Yankees, and the grey line printed it under every player — "Mike Trout / New York Y", which
+// reads as Trout's team. The 1% is the chance his next team IS the Yankees. When every live row
+// answers with the page's own team, that team moves into the card heading once and the grey
+// lines go; a row whose outcome is another club (#6622's Celtics rows) keeps its line.
+// `labelNamesSide` is the one reading of a venue's team label, Kalshi's city-plus-initials
+// form included (#8344).
+function namesPageTeam(row: PropFamilyRow, teamName: string | null): boolean {
+  return Boolean(row.top_outcome) && labelNamesSide(row.top_outcome, teamName);
+}
+
+function familyAnswersWithPageTeam(family: PropFamily, teamName: string | null): boolean {
+  const live = family.rows.filter((row) => !row.settled && row.top_outcome);
+  return live.length > 0 && live.every((row) => namesPageTeam(row, teamName));
+}
+
 function PropFamilyRowLine({
   row,
   teamColor,
+  teamName,
+  teamInHeading,
 }: {
   row: PropFamilyRow;
   teamColor: string | null;
+  teamName: string | null;
+  teamInHeading: boolean;
 }) {
+  const ownTeam = namesPageTeam(row, teamName);
+  const outcomeLine =
+    row.top_outcome && !row.settled && !(teamInHeading && ownTeam)
+      ? ownTeam && teamName
+        ? teamName
+        : row.top_outcome
+      : null;
   // #9456 — the bar is the row's OWN probability, against 100%.
   //
   // It used to fill relative to the family leader, so the leader was always
@@ -131,8 +162,8 @@ function PropFamilyRowLine({
           </span>
           {row.settled && <WhatHitBadge result={row.result} />}
         </div>
-        {row.top_outcome && !row.settled && (
-          <div className="text-[11px] text-text-muted truncate">{row.top_outcome}</div>
+        {outcomeLine && (
+          <div className="text-[11px] text-text-muted truncate">{outcomeLine}</div>
         )}
         <div className="mt-1 h-1.5 w-full rounded-full bg-surface-border/40 overflow-hidden">
           <div
@@ -164,15 +195,20 @@ function PropFamilyRowLine({
 function PropFamilyCard({
   family,
   teamColor,
+  teamName,
 }: {
   family: PropFamily;
   teamColor: string | null;
+  teamName: string | null;
 }) {
+  const teamInHeading = Boolean(teamName) && familyAnswersWithPageTeam(family, teamName);
   return (
     <div className="bg-surface-card border border-surface-border rounded-card overflow-hidden">
       <div className="flex items-center justify-between px-4 py-2.5 border-b border-surface-border">
-        <span className="text-[13px] font-semibold text-text-primary">{family.label}</span>
-        <span className="text-[10px] font-semibold uppercase tracking-wide text-text-muted">
+        <span className="text-[13px] font-semibold text-text-primary min-w-0 truncate">
+          {teamInHeading ? `${family.label}: ${teamName}` : family.label}
+        </span>
+        <span className="text-[10px] font-semibold uppercase tracking-wide text-text-muted flex-shrink-0 ml-2">
           {family.entity_count} in the mix
         </span>
       </div>
@@ -182,6 +218,8 @@ function PropFamilyCard({
             key={`${row.market_id ?? "m"}-${row.outcome_id ?? row.entity}`}
             row={row}
             teamColor={teamColor}
+            teamName={teamName}
+            teamInHeading={teamInHeading}
           />
         ))}
       </div>
@@ -192,9 +230,11 @@ function PropFamilyCard({
 export function TeamPropFamilies({
   families,
   teamColor,
+  teamName = null,
 }: {
   families: PropFamily[];
   teamColor: string | null;
+  teamName?: string | null;
 }) {
   // Defensive: the backend only emits >=2-entity families, but never render a
   // degenerate card if a stale/sparse payload slips a single-entity family through.
@@ -208,7 +248,12 @@ export function TeamPropFamilies({
       </h2>
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-3">
         {shown.map((family) => (
-          <PropFamilyCard key={family.family_key} family={family} teamColor={teamColor} />
+          <PropFamilyCard
+            key={family.family_key}
+            family={family}
+            teamColor={teamColor}
+            teamName={teamName}
+          />
         ))}
       </div>
     </section>
