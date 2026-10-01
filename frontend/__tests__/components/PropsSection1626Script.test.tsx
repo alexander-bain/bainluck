@@ -129,7 +129,10 @@ describe("#1626 slice 3 CONTROLS", () => {
       { key: "M: Passing Yards|A: 150+", label: "A: 150+", pregame_mark: 0.8, current: 0.8 },
       { key: "M: Passing Yards|A: 175+", label: "A: 175+", pregame_mark: 0.2, current: 0.2 },
     ];
-    expect(familyRows(render(ladder), "M: Passing Yards")).toHaveLength(2);
+    // AMENDED by #1626 slice 6 (2026-10-01): two rungs are now a ladder, so the
+    // family prints one ladder row ("A") with both rungs behind it. What this
+    // test is FOR is unchanged: this rule drops neither rung.
+    expect(familyRows(render(ladder), "M: Passing Yards")).toEqual(["A", "A: 150+", "A: 175+"]);
   });
 
   test("WHAT HIT and THE DIVERGENCE are unchanged by this rule (their own one-leg rules still decide)", () => {

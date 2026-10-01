@@ -620,10 +620,21 @@ function scriptOneSide(
  * A ladder the script favours at no rung shows its lowest rung — the likeliest.
  *
  * Only marked, unsettled, unpending rungs join a ladder; anything else stays
- * its own row exactly as before, and so does a subject with fewer than three.
+ * its own row exactly as before.
+ *
+ * Slice 6 — TWO RUNGS ARE A LADDER, AND A LONE RUNG BESIDE LADDERS WEARS THEIR
+ * SHAPE. Slice 4 asked for three, so on the same page TOUCHDOWNS read
+ * `Jaylen Warren: 1+ 49%` over `Jaylen Warren: 2+ 12%` while RECEIVING YARDS
+ * read `Darnell Washington · 15+ · 56% · +4 more` a section above, and
+ * `Blake Whiteheart: 15+` / `25+` sat as two `Name: N+` rows inside a list of
+ * ladder rows (Browns @ Steelers, `/events/14780550`, 390px, 2026-10-01 22:55Z).
+ * Two rungs are the same "how far does he get?" question, so they ladder too.
+ * And once a family holds a ladder, its remaining single marked rungs print as
+ * `subject · N+ · percent` with no disclosure, so one list does not speak in
+ * two row shapes. A family with no ladder at all is untouched.
  */
 const LADDER_RUNG = /^(.+?):\s*(\d+(?:\.\d+)?)\+$/;
-const LADDER_MIN_RUNGS = 3;
+const LADDER_MIN_RUNGS = 2;
 
 export type ScriptLadder = {
   subject: string;
@@ -647,8 +658,12 @@ export function scriptLadders(items: PropMark[]): Array<PropMark | ScriptLadder>
     bySubject.set(m[1], rungs);
   }
   const ladderOf = new Map<PropMark["key"], ScriptLadder>();
+  const lone: Array<[string, { item: PropMark; n: string }]> = [];
   for (const [subject, rungs] of bySubject) {
-    if (rungs.length < LADDER_MIN_RUNGS) continue;
+    if (rungs.length < LADDER_MIN_RUNGS) {
+      lone.push([subject, rungs[0]]);
+      continue;
+    }
     const byThreshold = [...rungs].sort((a, b) => a.at - b.at);
     const favoured = byThreshold.filter((r) => (scriptNumber(r.item) ?? 0) >= 0.5);
     const pick = favoured.length > 0 ? favoured[favoured.length - 1] : byThreshold[0];
@@ -661,6 +676,9 @@ export function scriptLadders(items: PropMark[]): Array<PropMark | ScriptLadder>
     for (const r of rungs) ladderOf.set(r.item.key, ladder);
   }
   if (ladderOf.size === 0) return items;
+  for (const [subject, r] of lone) {
+    ladderOf.set(r.item.key, { subject, rungs: [r.item], headline: r.item, threshold: r.n });
+  }
   const out: Array<PropMark | ScriptLadder> = [];
   const placed = new Set<ScriptLadder>();
   for (const item of items) {
@@ -1378,16 +1396,32 @@ function ScriptLadderRow({
   ladder: ScriptLadder;
   renderRow: (item: PropMark) => ReactNode;
 }) {
+  const cells = (
+    <>
+      <span className="flex-1 min-w-0 text-sm text-text-primary line-clamp-2">
+        {ladder.subject}
+      </span>
+      <span className="text-xs text-text-secondary tabular-nums shrink-0">
+        {`${ladder.threshold}${ladder.suffix ?? "+"}`}
+      </span>
+      <ScriptValue item={ladder.headline} pairedPercent={ladder.pairedPercent} />
+    </>
+  );
+  // Slice 6: a lone rung has nothing behind it, so it is a row, not a disclosure.
+  if (ladder.rungs.length === 1) {
+    return (
+      <div
+        data-testid="script-lone-rung"
+        className="flex items-center gap-3 py-2 border-b border-surface-elevated last:border-0"
+      >
+        {cells}
+      </div>
+    );
+  }
   return (
     <details className="border-b border-surface-elevated last:border-0">
       <summary className="flex items-center gap-3 py-2 cursor-pointer select-none">
-        <span className="flex-1 min-w-0 text-sm text-text-primary line-clamp-2">
-          {ladder.subject}
-        </span>
-        <span className="text-xs text-text-secondary tabular-nums shrink-0">
-          {`${ladder.threshold}${ladder.suffix ?? "+"}`}
-        </span>
-        <ScriptValue item={ladder.headline} pairedPercent={ladder.pairedPercent} />
+        {cells}
         <span className="text-[11px] text-text-muted tabular-nums shrink-0">
           +{ladder.rungs.length - 1} more
         </span>
