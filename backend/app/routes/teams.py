@@ -13,6 +13,7 @@ from app.utils.event_rails import (
 )
 from app.utils.event_twin_fold import fold_twin_events, team_name_fold_key
 from app.utils.aggregation import compute_aggregate_probability
+from app.utils.game_state import authority_stoppage_label
 from app.utils.lifecycle import served_event_status
 from app.utils.market_team_sport import (
     link_crosses_league,
@@ -896,6 +897,8 @@ def _format_event_brief(
     # exactly "what we had them at" before the game; completed_at dates the result.
     pre = event.opening_home_probability if is_home else event.opening_away_probability
 
+    status = served_event_status(event.status, event.commence_time, datetime.now(timezone.utc))
+
     return {
         "id": event.id,
         "home_team": event.home_team_name,
@@ -903,9 +906,7 @@ def _format_event_brief(
         "home_score": event.home_score,
         "away_score": event.away_score,
         # #1779 family: never render live before the row's own start time.
-        "status": served_event_status(
-            event.status, event.commence_time, datetime.now(timezone.utc)
-        ),
+        "status": status,
         "commence_time": event.commence_time.isoformat() if event.commence_time else None,
         # #8841: a placeholder start the venue has not announced yet.
         "start_is_tbd": start_is_tbd(
@@ -917,6 +918,17 @@ def _format_event_brief(
         "win_probability": round(wp, 3) if wp is not None else None,
         "pregame_win_probability": round(float(pre), 3) if pre is not None else None,
         "completed_at": event.completed_at.isoformat() if event.completed_at else None,
+        # #9208 — ESPN's word for a game called off ("Canceled", "Postponed"),
+        # on a suspended row only. Orioles @ Yankees 15319530 read "Canceled"
+        # on its own page and on the search card, and "No result reported" on
+        # the Yankees' Recent Results: this brief carried no period, so the
+        # card had nothing to read. Exact allowlist, so a live period left on
+        # a row that went dark can never print as a stoppage.
+        "stoppage": (
+            authority_stoppage_label(getattr(event, "period", None))
+            if status == "suspended"
+            else None
+        ),
     }
 
 

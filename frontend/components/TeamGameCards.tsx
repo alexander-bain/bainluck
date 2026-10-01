@@ -3,11 +3,11 @@
 import Link from "next/link";
 import type { TeamGameBrief } from "@/lib/api";
 import { cn } from "@/lib/utils";
-import { SUSPENDED_LABEL } from "@/lib/eventState";
-import { isGameLive, teamLastScore, teamResult } from "@/lib/teamGames";
+import { suspendedSummary } from "@/lib/eventState";
+import { isGameLive, teamResult } from "@/lib/teamGames";
 import { teamShortNames } from "@/lib/teamShortName";
 import { teamTextColor } from "@/lib/teamColors";
-import { formatTbdStartLabel } from "@/lib/gameTimeLabel";
+import { authorityStoppageLabel, formatTbdStartLabel } from "@/lib/gameTimeLabel";
 
 // ---------------------------------------------------------------------------
 // Team-page game cards (L2-158). Extracted from the team page so the
@@ -193,8 +193,20 @@ export function RecentGameCard({
   // added upstream) lands on the honest side instead of inheriting the claim.
   // It is the same shape as `event_is_playable`'s allowlist one layer down, and
   // the same rule #3780 applied to the league rail by removing the rows.
-  const noResult = result === null;
-  const lastScore = noResult ? teamLastScore(game) : null;
+  // #9208 — ESPN's word for a called-off game outranks "No result reported", the way
+  // the search card and the event page already read it (#8810). Orioles @ Yankees
+  // 15319530 said "Canceled" on both and "No result reported" here, because the
+  // brief carried no period until `stoppage`. `suspendedSummary` is the one sentence
+  // every card prints for this state; the order argument keeps it team-first.
+  const noResultSentence =
+    result === null
+      ? suspendedSummary(
+          game.away_score,
+          game.home_score,
+          game.is_home ? "home-away" : "away-home",
+          authorityStoppageLabel(game.stoppage),
+        )
+      : null;
 
   const pre = game.pregame_win_probability;
   const teamWon = result?.char === "W";
@@ -241,14 +253,10 @@ export function RecentGameCard({
           // the pair is the whole honest statement (lib/eventState). Printed
           // team-relative because every other number on this card is — the
           // shared string takes its order from the surface (#2786), and this
-          // surface speaks from the team's side. `teamLastScore` returns null
-          // unless BOTH sides are present, so a scoreless row prints the badge
-          // alone rather than half a line.
-          <span className="text-sm font-medium text-text-secondary">
-            {lastScore
-              ? `${SUSPENDED_LABEL} · last score ${lastScore.teamScore}-${lastScore.oppScore}`
-              : SUSPENDED_LABEL}
-          </span>
+          // surface speaks from the team's side. `suspendedSummary` prints a last
+          // score only when BOTH sides are present, so a scoreless row prints the
+          // badge alone rather than half a line.
+          <span className="text-sm font-medium text-text-secondary">{noResultSentence}</span>
         )}
       </div>
 

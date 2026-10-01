@@ -722,6 +722,9 @@ export interface TeamGameBrief {
   win_probability: number | null; // 0-1, team-relative, current aggregate
   pregame_win_probability?: number | null; // 0-1, team-relative, pre-game/closing (backend gap)
   completed_at?: string | null;
+  // #9208 — ESPN's stoppage word ("Canceled", "Postponed") on a suspended row only;
+  // read it through `authorityStoppageLabel`, never print it raw.
+  stoppage?: string | null;
   // #2866 — the ONLY thing a G1/G2 chip may be drawn from. Both are the
   // provider's own words: MLB Stats API's `doubleHeader` and `gameNumber`,
   // already parsed into `TruthGame` by `backend/app/tasks/schedule_sentinel.py`
