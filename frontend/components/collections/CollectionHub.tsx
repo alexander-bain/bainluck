@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
 import { CollectionMemberCard } from "./CollectionMemberCard";
 import {
   acceptedCollection, collectionMemberDomId, collectionRefreshInterval, fetchCollection, reconcileCollectionContext, settleCollectionRead,
@@ -17,6 +17,7 @@ export default function CollectionHub({ slug }: { slug: string }) {
   const [expanded, setExpanded] = useState<Set<string>>(new Set());
   const request = useRef<AbortController | null>(null);
   const restored = useRef(false);
+  const pendingScroll = useRef<CollectionReadingContext | null>(null);
 
   const load = useCallback(async () => {
     request.current?.abort();
@@ -42,7 +43,7 @@ export default function CollectionHub({ slug }: { slug: string }) {
   }, [slug]);
 
   useEffect(() => {
-    restored.current = false;
+    restored.current = false; pendingScroll.current = null;
     setHub(acceptedCollection(slug)); setError(null); setExpanded(new Set());
     void load();
     const freshRead = () => { if (document.visibilityState !== "hidden") void load(); };
@@ -66,14 +67,19 @@ export default function CollectionHub({ slug }: { slug: string }) {
     let context: CollectionReadingContext | null = null;
     try { context = reconcileCollectionContext(JSON.parse(sessionStorage.getItem(storageKey(slug)) ?? "null"), shown); } catch { /* blocked/corrupt storage never stops browsing */ }
     if (!context) return;
+    pendingScroll.current = context;
     setExpanded(new Set(context.expanded));
-    const frame = requestAnimationFrame(() => {
-      if (!context?.memberKey) return;
-      const element = document.getElementById(collectionMemberDomId(context.memberKey));
-      if (element) window.scrollTo({ top: Math.max(0, window.scrollY + element.getBoundingClientRect().top - context.offset), behavior: "instant" });
-    });
-    return () => cancelAnimationFrame(frame);
   }, [shown, slug]);
+
+  // Scroll only once the restored disclosures are committed, so the saved
+  // offset is measured against the layout the reader left (#9982).
+  useLayoutEffect(() => {
+    const context = pendingScroll.current;
+    if (!context || !shown) return;
+    pendingScroll.current = null;
+    const element = context.memberKey ? document.getElementById(collectionMemberDomId(context.memberKey)) : null;
+    if (element) window.scrollTo({ top: Math.max(0, window.scrollY + element.getBoundingClientRect().top - context.offset), behavior: "instant" });
+  }, [expanded, shown]);
 
   const remember = (key: string) => {
     const element = document.getElementById(collectionMemberDomId(key));
