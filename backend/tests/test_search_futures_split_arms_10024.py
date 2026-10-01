@@ -263,3 +263,56 @@ def test_split_rows_are_ranked_between_the_inferences_and_outcome_rows():
     src = inspect.getsource(ev.search_events)
     assert "_futures_tier_whens.append((or_(*_futures_split_arms), 1.5))" in src
     assert "split_arms=_futures_split_arms," in src
+
+
+# --- the dropdown's bounded read --------------------------------------------
+
+
+class _TADB:
+    def __init__(self, *, cancel=False, rows=(1, 2)):
+        self.cancel = cancel
+        self.rows = list(rows)
+        self.savepoints: list[str] = []
+
+    async def execute(self, stmt):
+        if self.cancel:
+            raise QueryCanceledError("canceling statement due to statement timeout")
+        return _Result(self.rows)
+
+    async def begin_nested(self):
+        self.savepoints.append("begin")
+        return _Savepoint(self)
+
+
+async def test_the_dropdown_read_merges_inside_a_released_savepoint(_timeouts):
+    db = _TADB()
+    rows, state = await ev._typeahead_split_rows(db, "STMT", None)
+    assert (rows, state) == ([1, 2], "merged")
+    assert db.savepoints == ["begin", "release"]
+    assert _timeouts == [ev._TYPEAHEAD_OUTCOME_ARM_TIMEOUT_MS, None]
+
+
+async def test_the_dropdown_read_over_its_bound_answers_without_it(_timeouts):
+    db = _TADB(cancel=True)
+    rows, state = await ev._typeahead_split_rows(db, "STMT", None)
+    assert (rows, state) == ([], "budget_exceeded")
+    assert db.savepoints == ["begin", "rollback"]
+    assert _timeouts[-1] is None, "the request deadline was not re-armed"
+
+
+async def test_the_dropdown_read_is_shed_without_time_to_start(_timeouts):
+    import time
+
+    db = _TADB()
+    rows, state = await ev._typeahead_split_rows(db, "STMT", time.monotonic() + 0.5)
+    assert (rows, state) == ([], "shed")
+    assert db.savepoints == [] and _timeouts == []
+
+
+async def test_a_real_error_in_the_dropdown_read_is_not_swallowed():
+    class _Boom(_TADB):
+        async def execute(self, stmt):
+            raise RuntimeError("not a timeout")
+
+    with pytest.raises(RuntimeError):
+        await ev._typeahead_split_rows(_Boom(), "STMT", None)

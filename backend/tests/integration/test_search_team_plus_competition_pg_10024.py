@@ -99,7 +99,7 @@ async def maker():
 
 @pytest.fixture
 async def search(maker):
-    """`GET /api/events/search` against the real app and database.
+    """`GET /api/events/search` (or `typeahead`) against the real app and database.
 
     Redis raises, so every ask is a cache miss — the strawman asks the same
     query the ship case asks, and a live cache would answer it from the fixed run.
@@ -128,11 +128,10 @@ async def search(maker):
             transport=ASGITransport(app=app), base_url="http://test"
         ) as http:
 
-            async def _search(q: str) -> dict:
-                resp = await http.get(
-                    "/api/events/search", params={"q": q, "debug_timing": 1}
-                )
-                assert resp.status_code == 200, f"search {q!r} -> {resp.status_code}"
+            async def _search(q: str, path: str = "search") -> dict:
+                params = {"q": q, "debug_timing": 1} if path == "search" else {"q": q}
+                resp = await http.get(f"/api/events/{path}", params=params)
+                assert resp.status_code == 200, f"{path} {q!r} -> {resp.status_code}"
                 return resp.json()
 
             yield _search
@@ -189,3 +188,51 @@ async def test_without_the_split_arms_the_page_is_empty_again(search, monkeypatc
     payload = await search("dodgers world series")
     assert WORLD_SERIES not in _futures(payload), _futures(payload)
     assert _split_state(payload) == "absent", payload["debug_timing"]
+
+
+# --- the dropdown: /api/events/typeahead -------------------------------------
+
+
+def _dropdown_futures(payload: dict) -> list[str]:
+    assert "suggestions" in payload, f"no `suggestions` key; got {sorted(payload)}"
+    return [s["text"] for s in payload["suggestions"] if s.get("type") == "futures"]
+
+
+@pytest.mark.parametrize(
+    "typed, board",
+    [
+        ("dodgers world series", WORLD_SERIES),
+        ("red sox world series", WORLD_SERIES),
+        ("chiefs super bowl", SUPER_BOWL),
+    ],
+)
+async def test_the_dropdown_offers_the_board(search, typed, board):
+    names = _dropdown_futures(await search(typed, "typeahead"))
+    assert board in names, names
+    assert WORLD_CUP not in names and POKER not in names, names
+
+
+async def test_a_dropdown_with_futures_never_reads_the_split_arms(search, monkeypatch):
+    """Per keystroke: `red sox` already has boards, so the split read never runs."""
+    from app.routes import events as ev
+
+    calls = []
+    real = ev._typeahead_split_rows
+
+    async def _spy(*args, **kwargs):
+        calls.append(args)
+        return await real(*args, **kwargs)
+
+    monkeypatch.setattr(ev, "_typeahead_split_rows", _spy)
+    assert _dropdown_futures(await search("red sox", "typeahead"))
+    assert calls == []
+    await search("dodgers world series", "typeahead")
+    assert len(calls) == 1, "the spy never saw the read it exists to count"
+
+
+async def test_without_the_split_arms_the_dropdown_has_no_board(search, monkeypatch):
+    from app.routes import events as ev
+
+    monkeypatch.setattr(ev, "_split_futures_arms", lambda expanded: [])
+    names = _dropdown_futures(await search("dodgers world series", "typeahead"))
+    assert WORLD_SERIES not in names, names
