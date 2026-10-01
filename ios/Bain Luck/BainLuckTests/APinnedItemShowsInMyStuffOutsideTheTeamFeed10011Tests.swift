@@ -78,6 +78,29 @@ final class APinnedItemShowsInMyStuffOutsideTheTeamFeed10011Tests: XCTestCase {
         XCTAssertTrue(section.fallbacks.isEmpty)
     }
 
+    /// Acceptance 4 (Sol's bug bash, 10/1): the feed still carried event 801
+    /// after its detail answered 410, and the section drew the stale feed card
+    /// with no removable fallback.
+    func testAGoneAnswerOutranksTheFeedCardForTheSameItem() async throws {
+        let pin = SavedPin(type: "event", value: 801)
+        let vm = SavedPinContentViewModel { _ in .unavailable }
+        await vm.load([pin])
+        let section = SavedPinContent.section(
+            pins: [pin], feed: [try feedItem(eventID: 801)], content: vm.content)
+        XCTAssertTrue(section.items.isEmpty)
+        XCTAssertEqual(section.fallbacks, [pin])
+    }
+
+    func testAFailedOrFreshReadKeepsTheFeedCard() throws {
+        for answer in [SavedPinContent.failed, .event(FeedEventData(savedPinDetail: try eventDetail(77)))] {
+            let section = SavedPinContent.section(
+                pins: [teamGame], feed: [try feedItem(eventID: 77)], content: [teamGame: answer])
+            XCTAssertEqual(section.items.map(\.id), ["event-77"])
+            XCTAssertEqual(section.items.first?.reason, "Your team")
+            XCTAssertTrue(section.fallbacks.isEmpty)
+        }
+    }
+
     func testUnloadedGoneAndFailedPinsStayListedAsFallbacks() {
         let gone = SavedPin(type: "event", value: 3)
         let section = SavedPinContent.section(

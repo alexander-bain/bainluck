@@ -33,7 +33,10 @@ nonisolated enum SavedPinContent: Sendable {
     /// carries keeps that feed card (it has the reason/headline); every other
     /// pin with loaded content becomes the same card family built from its
     /// detail payload. Pins with nothing to draw yet are `fallbacks` — they stay
-    /// listed and removable rather than disappearing.
+    /// listed and removable rather than disappearing. A confirmed gone answer
+    /// (404/410) outranks a feed card for the same item: the feed can still
+    /// carry a deleted row, and that card would read as a live game. A failed
+    /// read says nothing about the item, so it never displaces the feed card.
     static func section(
         pins: [SavedPin],
         feed: [FeedItem],
@@ -42,6 +45,10 @@ nonisolated enum SavedPinContent: Sendable {
         var items: [FeedItem] = []
         var fallbacks: [SavedPin] = []
         for pin in pins {
+            if case .unavailable = content[pin] {
+                fallbacks.append(pin)
+                continue
+            }
             if let fed = feed.first(where: { matches($0, pin) }) {
                 items.append(fed)
                 continue
