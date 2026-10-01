@@ -207,10 +207,14 @@ nonisolated struct SearchFuturesMarket: Decodable, Identifiable, Sendable {
 
     /// #9963: date-ordered search outcomes are a ladder, not a ranked field.
     /// Name the earliest date at or above even, using Discover's existing rule.
-    /// Unrecognized/mixed labels, settled markets and no crossover keep the
+    /// Unrecognized/mixed labels, called leaders and no crossover keep the
     /// row's existing fallback; neither array position nor rank proves a date.
     @MainActor var dateLadderAnswer: SearchFuturesOutcome? {
         guard status != "resolved", let outcomes = topOutcomes, outcomes.count > 1 else { return nil }
+        // Each row keeps its existing called-result leader, including a called
+        // leg on an open market. Flat rows can show its grade without a quote.
+        guard outcomes.first?.verdict(in: self) == nil,
+              outcomes.first(where: { $0.probability != nil })?.verdict(in: self) == nil else { return nil }
         let dated = outcomes.compactMap { outcome -> (SearchFuturesOutcome, Double)? in
             Self.dateRungValue(outcome.name).map { (outcome, $0) }
         }

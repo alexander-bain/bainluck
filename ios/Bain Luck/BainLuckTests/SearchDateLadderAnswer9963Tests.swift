@@ -114,6 +114,27 @@ import XCTest
         XCTAssertEqual(result.dateLadderAnswer?.verdict(in: result), .won)
     }
 
+    func testDateSortingCannotReplaceACalledLeaderOnAnOpenMarket() {
+        var winner = outcome("November 30, 2026", 0.99)
+        winner.isWinner = true
+        winner.resolutionSource = "api_settlement"
+        let result = market([winner, outcome("October 31, 2026", 0.6)])
+        XCTAssertNil(result.dateLadderAnswer)
+        XCTAssertEqual(SearchGrouping.leaderOutcome(result)?.name, "November 30, 2026")
+        XCTAssertEqual(SearchGrouping.leaderOutcome(result)?.verdict(in: result), .won)
+        XCTAssertEqual(result.topOutcomes?.first?.verdict(in: result), .won)
+    }
+
+    func testAFlatRowsCalledLeaderDoesNotNeedAQuoteToKeepItsGrade() {
+        var winner = outcome("November 30, 2026", nil)
+        winner.isWinner = true
+        winner.resolutionSource = "api_settlement"
+        let result = market([winner, outcome("October 31, 2026", 0.6)])
+        XCTAssertNil(result.dateLadderAnswer)
+        XCTAssertEqual(result.topOutcomes?.first?.verdict(in: result), .won)
+        XCTAssertEqual(SearchGrouping.leaderOutcome(result)?.name, "October 31, 2026")
+    }
+
     func testBothSearchRowsUseTheDateAnswerBeforeTheirExistingFallback() throws {
         let root = URL(fileURLWithPath: #filePath)
             .deletingLastPathComponent().deletingLastPathComponent()
