@@ -41,7 +41,7 @@ router = APIRouter()
 #: decoded from — the memo's link back to the shared store, added by the
 #: CERT-2299 repair. Only the main tier sets it; every other writer stores a
 #: stale-marked copy, which tier 1 refuses on its own account.
-_cache: dict = {"data": None, "timestamp": 0, "source": None}
+_cache: dict = {"data": None, "timestamp": 0, "source": None, "namespace": None}
 
 #: THE TIER-1 MEMO NO LONGER HAS A CLOCK, and the absence is the fix (#4072).
 #:
@@ -1205,7 +1205,11 @@ async def public_calibration(
         unmeasured as _staged_unmeasured,
     )
 
+    # #6317: the process last-good is keyed by the ACTIVE artifact's identity
+    # (assigned once the selection resolves below), so a copy of one version can
+    # never seed another's cache. The legacy identity is the pre-#6317 key.
     _lg_key = "calibration:main"
+    _active = None
 
     # #2007. Populated below, before any tier can answer. Until then it is an
     # explicit "not read", never an empty dict — an absent disclosure and a
@@ -1223,12 +1227,15 @@ async def public_calibration(
         return _rc.CALIBRATION_ROUTE_BUDGET_MS - (time.monotonic() - _started) * 1000
 
     def _expected_version():
-        try:
-            from app.tasks.precompute_calibration import CALIBRATION_POPULATION_VERSION
+        """The ACTIVE selection's version (#6317) — never the code's own.
 
-            return CALIBRATION_POPULATION_VERSION
-        except Exception:  # noqa: BLE001 — a version we can't read isn't a mismatch
-            return None
+        Before #6317 this imported ``CALIBRATION_POPULATION_VERSION``, so
+        deploying a bump to the web before an artifact of it existed made the
+        live artifact ``wrong_version`` at every tier. The version a reader may
+        be served is the one a gated activation committed; with no record yet it
+        is the legacy incumbent's.
+        """
+        return _active.version if _active is not None else None
 
     def _compatible_versions() -> tuple[str, ...]:
         """The operator's explicit rollover declaration, or nothing.
@@ -1495,6 +1502,18 @@ async def public_calibration(
     coverage_published = await _read_published_coverage_census(now=now)
     coverage_cursor = _staged_cache.get("identity")
 
+    # 0a'. #6317 — WHICH artifact is active, resolved before any tier reads one.
+    #      Process-memoised (60s) over the selection's Redis copy, falling to its
+    #      durable record; never raises, and an unreadable record fails closed to
+    #      the last selection this process verified. Every tier below reads the
+    #      selected namespace, enforces the selected version, and refuses an
+    #      artifact older than the selection's generation floor.
+    from app.utils import calibration_publication_selection as _pubsel
+
+    _active, _active_source = await _pubsel.resolve_for_route(db)
+    _ns = _active.namespace
+    _lg_key = _ns.identity
+
     # 0b. The shared store's CURRENT ``main`` bytes, read ONCE and used twice:
     #     by the memo gate immediately below, and by the main tier at step 2.
     #
@@ -1512,7 +1531,7 @@ async def public_calibration(
     _redis_failed = False
     try:
         rc = await _rc.get_shared_async_redis()
-        res = await _rc.bounded_redis_call(lambda: rc.get("bainluck:calibration:main"))
+        res = await _rc.bounded_redis_call(lambda: rc.get(_ns.main_key))
         main_raw = res.value if res.is_ok else None
         _redis_failed = res.is_failure
     except Exception:
@@ -1540,7 +1559,12 @@ async def public_calibration(
     #    Age only — no shape re-check, for the reason recorded at the main tier
     #    below.
     memo_age = payload_age_s(_cache["data"])
-    if _memo_may_answer(
+    # #6317: a memo decoded under another selection is never this one's answer,
+    # even if (impossibly) the bytes matched. A memo with no namespace was
+    # written before #6317, which only ever served the legacy keys.
+    _memo_ns = _cache.get("namespace") or _pubsel.LEGACY_IDENTITY
+    _memo_ours = _memo_ns == _ns.identity
+    if _memo_ours and _memo_may_answer(
         _cache["data"],
         current_fingerprint=current_fingerprint,
         memo_fingerprint=_cache.get("source"),
@@ -1584,6 +1608,15 @@ async def public_calibration(
                 )
                 data = None
         else:
+            data = None
+
+        if isinstance(data, dict) and not _active.admits_payload(data):
+            # #6317: older than the generation the selection activated — a stale
+            # accelerator write, never the active artifact.
+            logger.warning(
+                "calibration: main key predates the active selection's floor — "
+                "falling back to last-good",
+            )
             data = None
 
         if isinstance(data, dict):
@@ -1630,6 +1663,7 @@ async def public_calibration(
                     _cache["data"] = degraded
                     _cache["timestamp"] = now
                     _cache["source"] = None
+                    _cache["namespace"] = _ns.identity
                     _rc.remember_last_good(_lg_key, degraded)
                     return degraded
                 # Queue 300C: same guard as the stale tiers. A ``main`` key
@@ -1658,6 +1692,7 @@ async def public_calibration(
                 # from. Every other writer below stores a stale-marked copy,
                 # which tier 1 refuses on its own account (Queue #284 Item 3).
                 _cache["source"] = current_fingerprint
+                _cache["namespace"] = _ns.identity
                 _rc.remember_last_good(_lg_key, data)
                 return data
             logger.warning(
@@ -1683,11 +1718,11 @@ async def public_calibration(
     if not _redis_failed:
         try:
             rc = await _rc.get_shared_async_redis()
-            lg = await _rc.bounded_redis_call(
-                lambda: rc.get("bainluck:calibration:main:last_good")
-            )
+            lg = await _rc.bounded_redis_call(lambda: rc.get(_ns.last_good_key))
             if lg.is_ok:
                 data = _json.loads(lg.value)
+                if not _active.admits_payload(data):
+                    raise ValueError("last_good predates the active selection's floor")
                 # Queue 297 Item 1: only a TRUSTWORTHY last-good may be served. A
                 # cross-process durable key can be malformed, written by an older
                 # population version, or simply ancient — serving any of those as
@@ -1712,6 +1747,7 @@ async def public_calibration(
                     _cache["data"] = degraded
                     _cache["timestamp"] = now
                     _cache["source"] = None
+                    _cache["namespace"] = _ns.identity
                     _rc.remember_last_good(_lg_key, degraded)
                     return degraded
                 logger.warning(
@@ -1747,10 +1783,19 @@ async def public_calibration(
 
             durable = await read_snapshot(
                 db,
-                "calibration:main",
+                _ns.identity,
                 expected_version=_expected_version(),
                 max_age_s=SERVE_MAX_AGE_S,
             )
+            if durable.envelope is not None and not _active.admits_generation(
+                durable.envelope.generation
+            ):
+                from app.utils.durable_state import EnvelopeRead
+
+                durable = EnvelopeRead(
+                    status="stale", tier=durable.tier, envelope=None,
+                    error="generation predates the active selection's floor",
+                )
             # CAL-P070: a durable row the ENVELOPE refused on version may still
             # be a declared-compatible predecessor. Nothing is relaxed to find
             # out — the envelope's own check keeps biting, and this branch serves
@@ -1808,6 +1853,7 @@ async def public_calibration(
                     _cache["data"] = degraded
                     _cache["timestamp"] = now
                     _cache["source"] = None
+                    _cache["namespace"] = _ns.identity
                     _rc.remember_last_good(_lg_key, degraded)
                     return degraded
                 logger.warning(
@@ -1831,7 +1877,7 @@ async def public_calibration(
     #    a clean miss would 503 past a perfectly serviceable dated copy.
     stale = (
         _cache["data"]
-        if isinstance(_cache["data"], dict)
+        if isinstance(_cache["data"], dict) and _memo_ns == _ns.identity
         # Queue 297: age-bound the process-local copy too. Its SHAPE is not the
         # risk (this process served it earlier), but a long-lived dyno could
         # otherwise keep serving a week-old curve as though Redis were merely
@@ -1880,7 +1926,7 @@ async def public_calibration(
 
             aged = await read_snapshot(
                 db,
-                "calibration:main",
+                _ns.identity,
                 expected_version=_expected_version(),
                 # NOT None: both read_snapshot and snapshot_verdict compare
                 # ``age_s > max_age_s`` numerically, so None would raise a
@@ -1890,7 +1936,11 @@ async def public_calibration(
                 # and the version check both still bite.
                 max_age_s=float("inf"),
             )
-            if aged.ok and isinstance(aged.envelope.payload, dict):
+            if (
+                aged.ok
+                and isinstance(aged.envelope.payload, dict)
+                and _active.admits_generation(aged.envelope.generation)
+            ):
                 payload = aged.envelope.payload
                 verdict = snapshot_verdict(
                     payload,

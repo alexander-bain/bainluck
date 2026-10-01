@@ -137,7 +137,7 @@ score follows it by construction.
 
 ## q272 — a field whose winner has no usable forecast is not scored (prepared 2026-10-01, #6317)
 
-**Status: PREPARED, NOT DEPLOYED.** Root and the integrator own the rollover; Alex owns the dark window.
+**Status: PREPARED, NOT DEPLOYED.** Root and the integrator own the rollover. No dark window is asked for (see below).
 
 **What changes.** A settled field with exactly one winner (a race stage, an award, a draft slot) is
 scored only when that winner is one of the outcomes the curve would publish. Before, a winner that
@@ -154,9 +154,20 @@ whose winner *is* priced publishes as before however low its prices sum.
 of the curve. The shipped declaration is "nothing" (inside the ordinary ±5% band), so the move is
 measured on the published population before deploy; a move past the band needs a declaration first.
 
-**Dark window: NOT accepted for q272.** `POPULATION_VERSION_DARK_WINDOW_ACCEPTED` still names q271, so
-two guards fail closed until Alex accepts a dark /calibration for q272 by name (the q271 acceptance
-does not carry over) — or the change rides a bump that is being spent anyway.
+**Rollover: candidate-first, no dark window.** `POPULATION_VERSION_DARK_WINDOW_ACCEPTED` still names
+q271 and is deliberately not moved. q272 instead publishes to its OWN keys (`calibration:main:q272`
+and its own Redis pair; q271 keeps the shared `calibration:main` keys). The page serves whatever a
+durable active-selection record (`calibration:active_selection`) names, and with no record that is
+the q271 artifact under its own version, age and method. The record moves to q272 only when a
+complete q272 build has passed the publish gate against the live q271 artifact and an activation
+transaction re-checks it under a row lock and compare-and-swaps the record. Until then readers see
+q271, dated honestly; after it every tier serves q272 together. A refused, incomplete or racing
+candidate changes nothing readers see. `POPULATION_VERSION_CANDIDATE_FIRST = "q272"` names this
+disposition for this version only; the rollover guards accept it only when the namespaces are
+disjoint and the route's no-record answer is the outgoing version.
+
+The move measurement above is still owed before production deployment: an undeclared move past the
+band is refused by the gate, so q271 would keep serving, but every beat would rebuild and refuse.
 
 ## q271 — D112, the symmetric settlement channels (2026-09-13)
 

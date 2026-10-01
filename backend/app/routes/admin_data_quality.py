@@ -4019,8 +4019,11 @@ async def calibration_mce_summary(
 
     payload = None
     try:
+        from app.utils.calibration_publication_selection import active_namespace_sync
+
         _rc = get_redis_client()
-        cached = _rc.get("bainluck:calibration:main")
+        # #6317: the ACTIVE version's key, not always the legacy one.
+        cached = _rc.get(active_namespace_sync(_rc).main_key)
         if cached:
             payload = _json.loads(cached)
     except Exception:

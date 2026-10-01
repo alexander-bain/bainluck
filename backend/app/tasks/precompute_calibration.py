@@ -1126,6 +1126,26 @@ PREVIOUS_PUBLISHED_POPULATION_VERSION = "q271"
 #: two. It is a window measured in hours, not the ~26 h first estimated.
 POPULATION_VERSION_DARK_WINDOW_ACCEPTED: str | None = "q271"
 
+#: #6317: the version whose rollover is CANDIDATE-FIRST — the third disposition
+#: beside "declare a compatible predecessor" and "accept a dark window".
+#:
+#: q272 publishes to its OWN namespace (``calibration:main:q272`` and its own
+#: Redis pair; :mod:`app.utils.calibration_publication_selection`). The route
+#: serves whatever a durable active-selection record names, and with no record
+#: that is the q271 incumbent under its own version. The q271 artifact
+#: therefore stays served, dated and labelled q271, until a complete q272 build
+#: passes the publish gate against it and an activation transaction swaps the
+#: record. No compatibility entry is needed: q271's numbers are never served
+#: under a q272 label. No dark window is needed either, which is why
+#: :data:`POPULATION_VERSION_DARK_WINDOW_ACCEPTED` is deliberately NOT moved to
+#: q272.
+#:
+#: Named by version for the same reason the dark-window acceptance is: it must
+#: not be inherited. The rollover guards accept it only for the CURRENT version,
+#: and only when the namespaces are provably disjoint and the route's no-record
+#: answer is the outgoing version.
+POPULATION_VERSION_CANDIDATE_FIRST: str | None = "q272"
+
 #: Queue 300D Item 1 — the REPRESENTATIVE TIE AUTHORITY, versioned separately
 #: from the population.
 #:
@@ -8766,8 +8786,13 @@ def _build_truth_evidence(
     }
 
 
-def _read_published_baseline(rc) -> Any:
+def _read_published_baseline(rc, namespace=None) -> Any:
     """The artifact a candidate must be judged against, or ``None``.
+
+    #6317: ``namespace`` is the ACTIVE selection's namespace — the incumbent a
+    candidate replaces, which during a rollover is not the namespace this build
+    publishes to. ``None`` keeps the legacy keys (callers and tests that predate
+    the selection).
 
     Prefers the fresh ``main`` key and falls back to the durable ``last_good``.
     The fallback matters: on a 50MB ``allkeys-lru`` instance ``main`` (2h TTL) is
@@ -8778,7 +8803,12 @@ def _read_published_baseline(rc) -> Any:
     Every failure here is non-fatal and degrades to ``None`` (publish allowed) —
     an unreadable cache is a cache problem, never a reason to stop publishing.
     """
-    for key in (_MAIN_KEY, _MAIN_LAST_GOOD_KEY):
+    keys = (
+        (namespace.main_key, namespace.last_good_key)
+        if namespace is not None
+        else (_MAIN_KEY, _MAIN_LAST_GOOD_KEY)
+    )
+    for key in keys:
         try:
             raw = rc.get(key)
         except Exception as exc:  # noqa: BLE001 — baseline is best-effort
@@ -8831,7 +8861,7 @@ def _file_publish_gate_rejection(verdict, *, marker: str = "calibration-publish-
         return {"action": "error", "error": str(exc)[:200]}
 
 
-def _publish_calibration_main(rc, payload_json: str) -> dict:
+def _publish_calibration_main(rc, payload_json: str, namespace=None) -> dict:
     """Publish the serialized main payload to the durable + fresh keys (Queue 272).
 
     Writes the durable ``last_good`` key FIRST (the survivor) then the fresh
@@ -8840,11 +8870,16 @@ def _publish_calibration_main(rc, payload_json: str) -> dict:
     the heavy worker to its hard limit) and both are SET-only (never DEL), so a
     failed write can never destroy a usable prior payload. Returns per-key stage
     results so the terminal task metric can distinguish a compute success from a
-    publication failure (Item 1)."""
+    publication failure (Item 1).
+
+    #6317: ``namespace`` is the version namespace this build publishes to, so a
+    staged candidate never writes the incumbent's keys. ``None`` = legacy keys."""
     stages: dict = {}
+    main_key = namespace.main_key if namespace is not None else _MAIN_KEY
+    last_good_key = namespace.last_good_key if namespace is not None else _MAIN_LAST_GOOD_KEY
     for label, key, ttl in (
-        ("last_good", _MAIN_LAST_GOOD_KEY, _MAIN_LAST_GOOD_TTL),
-        ("main", _MAIN_KEY, _MAIN_CACHE_TTL),
+        ("last_good", last_good_key, _MAIN_LAST_GOOD_TTL),
+        ("main", main_key, _MAIN_CACHE_TTL),
     ):
         try:
             rc.set(key, payload_json, ex=ttl)
@@ -9468,8 +9503,44 @@ async def _run_calibration_main_build(runner=None):
     # because a declaration judged but not published is a number on the page
     # whose justification is nowhere. Serialising last satisfies both, and is
     # the stronger form anyway: what publishes is exactly what was judged.
+    # #6317 CANDIDATE-FIRST. Which artifact is ACTIVE decides two things that
+    # used to be the same: the baseline this candidate is judged against (the
+    # incumbent readers are being served), and where it publishes (its own
+    # version's namespace). During a rollover they differ, and the incumbent's
+    # keys are never touched until the activation below has committed. An
+    # unreadable selection is a refusal, never a guess: nothing publishes and
+    # the incumbent keeps serving.
+    from app.utils import calibration_publication_selection as _sel
+
+    with runner.stage("active_selection"):
+        active_read = await _sel.resolve_for_build()
+    if active_read.status not in (_sel.READ_OK, _sel.READ_MISSING):
+        raise RuntimeError(
+            f"calibration publish: active selection {active_read.status} "
+            f"({active_read.error}) — nothing published, incumbent preserved"
+        )
+    active_sel = active_read.selection
+    own_ns = _sel.namespace_for(CALIBRATION_POPULATION_VERSION)
+    active_ns = active_sel.namespace if active_sel is not None else None
+    candidate_first = active_sel is None or active_sel.version != CALIBRATION_POPULATION_VERSION
+    runner.outcome["active_version"] = active_sel.version if active_sel is not None else None
+    runner.outcome["publication_role"] = "candidate" if candidate_first else "active"
+
     with runner.stage("baseline_read"):
-        baseline = _read_published_baseline(rc)
+        if active_ns is None:
+            baseline = None
+        elif active_ns.identity == _sel.LEGACY_IDENTITY:
+            baseline = _read_published_baseline(rc)
+        else:
+            baseline = _read_published_baseline(rc, active_ns)
+    # The durable fallback must read the SAME incumbent; the legacy identity is
+    # the gate's own default, so that path is unchanged.
+    gate_probe: dict = {}
+    if active_ns is not None and active_ns.identity != _sel.LEGACY_IDENTITY:
+        from app.utils.calibration_durable_baseline import probe_durable_baseline
+
+        _probe_identity = active_ns.identity
+        gate_probe["durable_probe"] = lambda: probe_durable_baseline(identity=_probe_identity)
 
     # Queue 297 Item 3: the ATOMIC PUBLISH GATE. Everything above built a
     # *candidate*; nothing published yet. Compare it against the currently
@@ -9492,6 +9563,7 @@ async def _run_calibration_main_build(runner=None):
             response,
             baseline,
             declaration_for_baseline=_declaration_for_baseline,
+            **gate_probe,
         )
 
     t1 = time.monotonic()
@@ -9611,7 +9683,10 @@ async def _run_calibration_main_build(runner=None):
     from app.utils.durable_state import DurableEnvelope, evaluate_publication
 
     envelope = DurableEnvelope.build(
-        identity=_DURABLE_IDENTITY,
+        # #6317: this build's OWN version namespace. For the legacy version it
+        # is ``_DURABLE_IDENTITY``; for any later one it is a separate row, so a
+        # staged candidate can never replace the artifact readers are served.
+        identity=own_ns.identity,
         schema_version=CALIBRATION_POPULATION_VERSION,
         payload=response,
         # Generation is derived from the build's OWN stamp, so ordering survives
@@ -9630,7 +9705,10 @@ async def _run_calibration_main_build(runner=None):
     stages: dict = {}
     if durable_ok:
         with runner.stage("redis_accelerate"):
-            stages = _publish_calibration_main(rc, payload_json)
+            if own_ns.identity == _sel.LEGACY_IDENTITY:
+                stages = _publish_calibration_main(rc, payload_json)
+            else:
+                stages = _publish_calibration_main(rc, payload_json, own_ns)
     else:
         logger.error(
             "calibration publish: durable write FAILED (%s) — skipping the Redis "
@@ -9649,8 +9727,48 @@ async def _run_calibration_main_build(runner=None):
         else "not_attempted" if "main" not in stages
         else "error"
     )
-    runner.outcome["published"] = bool(durable_ok)
-    runner.outcome["artifact_generation"] = envelope.generation if durable_ok else None
+    # #6317: STAGED and ACTIVE are recorded separately. A candidate on disk has
+    # changed nothing a reader sees, so it never reports ``published`` — only an
+    # activation that committed does. A run that staged without activating ends
+    # ``partial`` and banks its phases, so the next beat re-gates cheaply.
+    activation: dict = {"status": "not_attempted"}
+    if durable_ok and candidate_first:
+        runner.outcome["staged_generation"] = envelope.generation
+        with runner.stage("activate"):
+            activation = await _activate_staged_candidate(
+                response=response,
+                staged_generation=envelope.generation,
+                active_read=active_read,
+            )
+        if activation["status"] == _sel.ACTIVATED:
+            accelerated = _sel.accelerate_selection(
+                rc, activation["selection"], activation["generation"]
+            )
+            logger.warning(
+                "calibration publish: ACTIVATED %s (generation %s) replacing %s; "
+                "selection accelerator %s",
+                CALIBRATION_POPULATION_VERSION, envelope.generation,
+                runner.outcome["active_version"], accelerated,
+            )
+        else:
+            logger.error(
+                "calibration publish: %s STAGED at generation %s but NOT activated "
+                "(%s) — readers keep the incumbent %s",
+                CALIBRATION_POPULATION_VERSION, envelope.generation,
+                activation.get("reason"), runner.outcome["active_version"],
+            )
+    elif durable_ok and active_read.ok:
+        # Refresh the selection accelerator from durable truth every beat, so a
+        # failed post-activation SET is bounded by the key's TTL, not by luck.
+        _sel.accelerate_selection(rc, active_sel, active_read.generation)
+    runner.outcome["activation"] = {
+        k: v for k, v in activation.items() if k != "selection"
+    }
+    live = bool(durable_ok) and (
+        not candidate_first or activation["status"] == _sel.ACTIVATED
+    )
+    runner.outcome["published"] = live
+    runner.outcome["artifact_generation"] = envelope.generation if live else None
 
     summary = {
         "buckets": len(response["buckets"]),
@@ -9686,6 +9804,11 @@ async def _run_calibration_main_build(runner=None):
         "errors": outcome.errors,
         "durable": durable_stage["status"],
         "durable_generation": envelope.generation,
+        "role": runner.outcome["publication_role"],
+        "identity": own_ns.identity,
+        "active_version": runner.outcome["active_version"],
+        "activation": runner.outcome["activation"],
+        "live": live,
     }
     outcome.raise_if_failed("calibration publish")
 
@@ -9720,6 +9843,56 @@ async def _run_calibration_main_build(runner=None):
 
     summary["status"] = "ok"
     return summary
+
+
+async def _activate_staged_candidate(*, response: dict, staged_generation: int, active_read) -> dict:
+    """#6317: promote the staged candidate, or say why not. Never raises.
+
+    The gate is re-run INSIDE the activation transaction against the incumbent
+    row as it stands under its lock, because the baseline this build was judged
+    against may have moved since (a concurrent incumbent publish). Same gate,
+    same declaration lookup; the durable probe is never consulted, because the
+    incumbent is passed in hand.
+    """
+    from app.utils import calibration_publication_selection as _sel
+    from app.utils.calibration_durable_baseline import (
+        COLD_START,
+        INDETERMINATE,
+        BaselineProbe,
+    )
+    from app.utils.calibration_publish_gate import evaluate_publish
+
+    def _recheck(incumbent_payload):
+        # The probe answers only when the incumbent in hand is unusable. A row
+        # exists (we just read it under the lock), so that is INDETERMINATE —
+        # a refusal — never the cold start a first publish would be. Only a true
+        # cold start (no incumbent at all) passes ``None`` here.
+        probe = (
+            BaselineProbe(COLD_START, detail="activation recheck: no incumbent exists")
+            if incumbent_payload is None
+            else BaselineProbe(
+                INDETERMINATE, detail="activation recheck: incumbent row is not a usable artifact"
+            )
+        )
+        verdict = evaluate_publish(
+            response,
+            incumbent_payload,
+            durable_probe=lambda: probe,
+            declaration_for_baseline=_declaration_for_baseline,
+        )
+        return verdict.ok, ", ".join(verdict.codes) or "ok"
+
+    try:
+        return await _sel.activate_candidate(
+            candidate_version=CALIBRATION_POPULATION_VERSION,
+            candidate_generation=staged_generation,
+            predicate_fingerprint=response.get("population_predicate_fingerprint"),
+            expected=active_read,
+            recheck=_recheck,
+        )
+    except Exception as exc:  # noqa: BLE001 — a failed activation preserves the incumbent
+        logger.warning("calibration activation raised: %s", exc)
+        return {"status": _sel.NOT_ACTIVATED, "reason": "activation_error", "error": str(exc)[:200]}
 
 
 async def _precompute_calibration_main():

@@ -424,6 +424,7 @@ class TestTheRolloverDeclarationKeepsThePageLit:
         assert verdict.is_servable
         assert not verdict.is_previous_version
 
+    @pytest.mark.candidate_first
     def test_the_shipped_declaration_covers_the_last_published_artifact(self):
         """The invariant that decides whether THIS deploy goes dark.
 
@@ -457,7 +458,30 @@ class TestTheRolloverDeclarationKeepsThePageLit:
             expected_version=pc.CALIBRATION_POPULATION_VERSION,
             compatible_versions=tuple(pc.COMPATIBLE_PREVIOUS_POPULATION_VERSIONS),
         )
-        if pc.COMPATIBLE_PREVIOUS_POPULATION_VERSIONS:
+        if pc.POPULATION_VERSION_CANDIDATE_FIRST == pc.CALIBRATION_POPULATION_VERSION:
+            # #6317: candidate-first. The route expects the ACTIVE version, and
+            # with no selection record that is the outgoing one — so the outgoing
+            # artifact is plain ``ok`` under its own label, not a predecessor and
+            # not refused. Judged against what the route actually expects.
+            from app.utils.calibration_publication_selection import (
+                candidate_first_protection_problems,
+                default_selection,
+            )
+
+            assert not candidate_first_protection_problems(
+                pc.CALIBRATION_POPULATION_VERSION, outgoing
+            )
+            served = snapshot_verdict(
+                _payload(outcomes=PUBLISHED_POP, version=outgoing),
+                expected_version=default_selection().version,
+                compatible_versions=tuple(pc.COMPATIBLE_PREVIOUS_POPULATION_VERSIONS),
+            )
+            assert served.status == "ok", served.status
+            # And the code's own version is NOT what a reader is held to yet:
+            # the same artifact under the code's version is still refused,
+            # which is exactly the dark window candidate-first avoids.
+            assert verdict.status == "wrong_version"
+        elif pc.COMPATIBLE_PREVIOUS_POPULATION_VERSIONS:
             assert verdict.status in ("ok", "previous_version"), (
                 f"a {outgoing} artifact is {verdict.status!r} under the shipped "
                 "constants — /api/calibration 503s from the moment this deploys "
