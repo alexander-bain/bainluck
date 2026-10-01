@@ -289,6 +289,55 @@ def _own_name_over_aliases(outcome_name: str, league_teams: list[dict]) -> Optio
     return min(own)
 
 
+def match_outcome_to_one_club(outcome_name: str, league_teams: list[dict]) -> Optional[int]:
+    """The club behind several rows of one league that all answer to the outcome (#10067).
+
+    ``soccer_epl`` holds four rows for Brighton ("Brighton and Hove Albion" 1876,
+    "Brighton" 14419, "Brighton & Hove Albion" 14748, "... FC" 19931), each
+    claiming the others' names, and "Tottenham" 14545 beside "Tottenham Hotspur"
+    146. :func:`match_outcome_to_league_team` reads every such set as ambiguous
+    (several exact hits, or a sibling whose name the outcome shortens), so
+    Kalshi's "Brighton" and "Tottenham" title legs never bound.
+
+    The rows the outcome touches — every exact hit, every row it shortens — are
+    taken as one club only when each is chained to the others by a name claim (a
+    row's own name among another row's names). Two clubs that share a word are
+    not: "New York" touches the Knicks and the Liberty, and neither lists the
+    other. The lowest id is taken, the convention of :func:`_own_name_over_aliases`;
+    on the 2026-10-01 rows that is the one carrying the club's games (146, 1876).
+
+    Not called by :func:`match_outcome_to_league_team`: Phase 3d re-decides every
+    stored link with that matcher, and a new answer there would move links between
+    twin rows in every sport. Only Step 0's soccer bind reads this.
+    """
+    candidate = _normalize_name(outcome_name)
+    if not candidate:
+        return None
+    names_by_team = {team["id"]: _normalized_names(team) for team in league_teams}
+    own_name = {team["id"]: _normalize_name(team["name"]) for team in league_teams}
+
+    if not any(candidate in names for names in names_by_team.values()):
+        return None
+    club = {
+        team_id
+        for team_id, names in names_by_team.items()
+        if any(candidate in n for n in names)
+    }
+
+    def _claims(a, b) -> bool:
+        return bool(own_name[b]) and own_name[b] in names_by_team[a]
+
+    reached = {min(club)}
+    frontier = [min(club)]
+    while frontier:
+        here = frontier.pop()
+        for other in club - reached:
+            if _claims(here, other) or _claims(other, here):
+                reached.add(other)
+                frontier.append(other)
+    return min(club) if reached == club else None
+
+
 def _match_league_team_by_city_initials(outcome_name: str, league_teams: list[dict]) -> Optional[int]:
     """A two-club city written with the nickname's initials: "Los Angeles L" (#9617).
 

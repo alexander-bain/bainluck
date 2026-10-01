@@ -105,6 +105,11 @@ _SERIES_LEAGUE_SUPPLEMENT: dict[str, str] = {
     "kxwmarmad": "basketball_wncaab",
     "kxwmarmadround": "basketball_wncaab",
     "kxncaambuac": "basketball_ncaab",
+    # #10067: Kalshi's EPL title board. ``kxepl`` is mapped, but this series does
+    # not start with it, so the board named no league and no step could bind its
+    # clubs: 0 of 20 legs linked on 2026-10-01, and 17 clubs could not reach the
+    # board from search.
+    "kxpremierleague": "soccer_epl",
 }
 
 # Every open NFL series the ticker maps did not carry on 2026-09-30 (#9761). With
