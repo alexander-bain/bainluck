@@ -170,6 +170,19 @@ def _read_cursor(rc, key: str) -> int:
         return 0
 
 
+def _league_only_board():
+    """The soccer boards Phase 2 selects (#10067): open, tier 1, no event, a league-naming venue."""
+    from app.models import FuturesMarket
+
+    return and_(
+        FuturesMarket.llm_sport_category.in_(_LEAGUE_ONLY_SPORTS),
+        FuturesMarket.status == "open",
+        FuturesMarket.market_tier == 1,
+        FuturesMarket.event_id.is_(None),
+        FuturesMarket.source.in_(_LEAGUE_NAMING_VENUES),
+    )
+
+
 def unlinked_outcomes_query(*, open_markets: bool, cursor: int, batch: int):
     """The Phase 2 selector for one pass. Exposed so a guard test can drive it.
 
@@ -198,13 +211,7 @@ def unlinked_outcomes_query(*, open_markets: bool, cursor: int, batch: int):
             ),
             or_(
                 FuturesMarket.llm_sport_category.in_(_US_SPORTS),
-                and_(
-                    FuturesMarket.llm_sport_category.in_(_LEAGUE_ONLY_SPORTS),
-                    FuturesMarket.status == "open",
-                    FuturesMarket.market_tier == 1,
-                    FuturesMarket.event_id.is_(None),
-                    FuturesMarket.source.in_(_LEAGUE_NAMING_VENUES),
-                ),
+                _league_only_board(),
             ),
             status_clause,
             FuturesOutcome.id > cursor,
@@ -289,7 +296,9 @@ def _match_in_ticker_league(outcome, teams: list[dict]) -> Optional[int]:
     if not league_teams:
         return None
     team_id = match_outcome_to_league_team(outcome.name, league_teams)
-    if team_id is None and outcome.market.llm_sport_category in _LEAGUE_ONLY_SPORTS:
+    if team_id is None and (
+        getattr(outcome.market, "llm_sport_category", None) in _LEAGUE_ONLY_SPORTS
+    ):
         team_id = match_outcome_to_one_club(outcome.name, league_teams)
     return team_id
 
