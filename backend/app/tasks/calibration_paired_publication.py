@@ -506,8 +506,8 @@ async def build_paired_accuracy(*, generated_at: Any = None, as_of: Optional[dat
             collected_at=as_of,
             collection_ms=elapsed(),
         )
-    except Exception as exc:  # noqa: BLE001 — typed absence; logged loudly below
-        timed_out = isinstance(exc, asyncio.TimeoutError) or _is_timeout(exc)
+    except Exception as error:  # noqa: BLE001 — typed absence; logged loudly below
+        timed_out = isinstance(error, asyncio.TimeoutError) or _is_timeout(error)
         reason = REASON_TIMEOUT if timed_out else REASON_FAILED
         logger.exception("calibration paired_accuracy unavailable (%s)", reason)
         return unavailable(
@@ -515,5 +515,5 @@ async def build_paired_accuracy(*, generated_at: Any = None, as_of: Optional[dat
             generated_at=generated_at,
             collected_at=as_of,
             collection_ms=elapsed(),
-            detail=f"{type(exc).__name__}: {exc}",
+            detail=f"{type(error).__name__}: {error}",
         )
