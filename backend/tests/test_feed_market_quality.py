@@ -23,6 +23,7 @@ from app.utils.feed_market_quality import (
     diversify_discover_first_page,
     diversify_quality_families,
     editorial_archetype,
+    national_presidential_election_story_key,
     book_has_a_buyer,
     classify_fabricated_book,
     has_no_real_price,
@@ -2842,6 +2843,160 @@ class TestQualityFamilyDiversity:
         ]
         assert len(regional) == 1
         assert len(niche) == 1
+
+
+
+class TestOneNationalPresidentialRaceIsOneStory9877:
+    """#9877 — one national presidential race reaches the opening feed as one card.
+
+    Alex's September 30 feed (production, 390px, `artifacts/discover-9642/`)
+    served "Brazil Presidential Election First Round Winner" at slot 7 and
+    "Brazil Presidential Election" at slot 16; he read the second as a duplicate
+    of the first. Rows, ids and PERSISTED `futures_markets.story_key` values below
+    are read from production 2026-09-30 ~23:30Z, not written for the test: the
+    first row stores no key, the second stores its own one-member slug, so the
+    story cap saw two families.
+    """
+
+    # (market id, source, name, persisted story_key) — production 2026-09-30.
+    FIRST_ROUND = (
+        59934255,
+        "polymarket",
+        "Brazil Presidential Election First Round Winner",
+        None,
+    )
+    WINNER_POLY = (
+        112996,
+        "polymarket",
+        "Brazil Presidential Election",
+        "story:brazil_presidential_election",
+    )
+    WINNER_KALSHI = (
+        109952,
+        "kalshi",
+        "Brazil Presidential election winner?",
+        "story:brazil_presidential_election_winner",
+    )
+    FRANCE = (
+        113364,
+        "polymarket",
+        "Next French Presidential Election",
+        "story:next-french-presidential-election",
+    )
+
+    @staticmethod
+    def _item(row, score):
+        market_id, source, name, persisted = row
+        quality = classify_market_quality(
+            name, "politics", persisted_story_key=persisted
+        )
+        return {
+            "score": score,
+            "_quality_class": quality.quality_class,
+            "_quality_family_key": quality.family_key,
+            "_quality_story_key": quality.story_key,
+            "data": {"id": market_id, "name": name, "source": source},
+        }
+
+    def test_the_september_30_pair_is_one_story(self):
+        first = self._item(self.FIRST_ROUND, 90)
+        winner = self._item(self.WINNER_POLY, 80)
+        # Two different questions, so the exact-family key must still differ —
+        # the fold is a story fold, never a claim that the questions are equal.
+        assert first["_quality_family_key"] != winner["_quality_family_key"]
+        assert first["_quality_story_key"] == "story:brazil_presidential_election"
+        assert winner["_quality_story_key"] == "story:brazil_presidential_election"
+
+    def test_the_pair_serves_one_card_and_reserves_the_other(self):
+        items = [
+            self._item(self.FIRST_ROUND, 90),
+            self._item(self.FRANCE, 85),
+            self._item(self.WINNER_POLY, 80),
+        ]
+        capped = diversify_quality_families(
+            items, exact_family_cap=1, story_family_cap=5
+        )
+        names = [i["data"]["name"] for i in capped]
+        assert names == [
+            "Brazil Presidential Election First Round Winner",
+            "Next French Presidential Election",
+        ]
+        # Not hidden: the second question rides the #7426 reserve into the
+        # race's bundle if one forms.
+        reserve = capped[0]["_story_overflow_members"]
+        assert [m["data"]["name"] for m in reserve] == ["Brazil Presidential Election"]
+
+    def test_the_4170_cross_venue_pair_is_the_same_story(self):
+        poly = self._item(self.WINNER_POLY, 80)
+        kalshi = self._item(self.WINNER_KALSHI, 79)
+        assert poly["_quality_story_key"] == kalshi["_quality_story_key"]
+        capped = diversify_quality_families(
+            [poly, kalshi], exact_family_cap=1, story_family_cap=5
+        )
+        assert [i["data"]["id"] for i in capped] == [112996]
+
+    def test_a_different_country_is_a_different_story(self):
+        brazil = self._item(self.WINNER_POLY, 80)
+        france = self._item(self.FRANCE, 80)
+        assert france["_quality_story_key"] == "story:france_presidential_election"
+        assert brazil["_quality_story_key"] != france["_quality_story_key"]
+        # Real open titles for another race, both venues' spellings.
+        assert (
+            national_presidential_election_story_key("Bulgaria Presidential Election")
+            == national_presidential_election_story_key(
+                "Bulgarian presidential election winner?"
+            )
+            == "story:bulgaria_presidential_election"
+        )
+
+    def test_an_explicit_edition_keys_its_year(self):
+        assert (
+            national_presidential_election_story_key(
+                "2027 French Presidential Election: who will be on the ballot?"
+            )
+            == "story:2027_france_presidential_election"
+        )
+        assert (
+            national_presidential_election_story_key(
+                "Who will win the 2026 Costa Rican Presidential election?"
+            )
+            == "story:2026_costa_rica_presidential_election"
+        )
+
+    def test_us_races_and_earlier_arms_keep_their_keys(self):
+        for name, expected in [
+            ("2028 U.S. Presidential Election winner?", "story:us_2028_election"),
+            ("Presidential Election Winner 2028", "story:us_2028_election"),
+            ("US Presidential Elections Winner", None),
+            ("Which party will win the 2032 Presidential Election?", None),
+            ("When will Ukraine hold a presidential election?", None),
+        ]:
+            assert classify_market_quality(name, "politics").story_key == expected, name
+
+    def test_the_new_key_caps_at_one_and_other_stories_are_untouched(self):
+        items = [
+            {
+                "score": 100 - i,
+                "_quality_class": "normal",
+                "_quality_family_key": f"brazil question {i}",
+                "_quality_story_key": "story:brazil_presidential_election",
+            }
+            for i in range(3)
+        ] + [
+            {
+                "score": 90 - i,
+                "_quality_class": "normal",
+                "_quality_family_key": f"ai question {i}",
+                "_quality_story_key": "story:ai",
+            }
+            for i in range(3)
+        ]
+        capped = diversify_quality_families(
+            items, exact_family_cap=1, story_family_cap=5
+        )
+        stories = [i["_quality_story_key"] for i in capped]
+        assert stories.count("story:brazil_presidential_election") == 1
+        assert stories.count("story:ai") == 2  # its authored cap, unchanged
 
 
 class TestDiscoverFirstPageMixer:
