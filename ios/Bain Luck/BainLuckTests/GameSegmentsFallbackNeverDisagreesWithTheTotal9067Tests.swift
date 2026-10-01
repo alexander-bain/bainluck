@@ -79,7 +79,7 @@ final class GameSegmentsFallbackNeverDisagreesWithTheTotal9067Tests: XCTestCase 
             source.range(of: "guard let espnHistory = history?.espnHistory else { return nil }"),
             "the espn_history fallback moved; move this test with it"
         )
-        let end = try XCTUnwrap(source.range(of: "self.hasUnknownSegments = sawUnknown", range: fallback.upperBound..<source.endIndex))
+        let end = try XCTUnwrap(source.range(of: "self.awayTotal = resolvedAway\n    }", range: fallback.upperBound..<source.endIndex))
         let body = source[fallback.upperBound..<end.lowerBound]
         XCTAssertTrue(body.contains("StoredLineScore.squared("), "the fallback no longer squares its rows with the total")
         XCTAssertTrue(body.contains("segments = segments.indices.map"), "the squared cells are computed but never drawn")

@@ -188,6 +188,18 @@ nonisolated enum StoredLineScore {
         return (home, away)
     }
 
+    /// #9067 (rage #165, Alex on build 32: Red Sox @ Yankees drew
+    /// `NYY 0 · · 0 · · 0 | 4` under a wrapped "Score by period · · = not
+    /// recorded", which he circled as "all messed up") — the card is drawn only
+    /// when it can print every played period. A `·` is honest arithmetic and
+    /// still a broken-looking scoreboard: the reader sees a row that does not add
+    /// up and a caption explaining why. Notice 34: when a number cannot be shown
+    /// honestly, leave the space empty. `.notPlayed` (a live game's innings still
+    /// to come) and `.notNeeded` (the home team's unneeded 9th) are not gaps.
+    static func isDrawable(home: [LineScoreCell], away: [LineScoreCell]) -> Bool {
+        !home.contains(.unknown) && !away.contains(.unknown)
+    }
+
     /// `false` when the row cannot be squared with its total at all.
     private static func reconcile(_ cells: inout [LineScoreCell], total: Int?, lastPlayed: Int) -> Bool {
         guard let total else { return true }
