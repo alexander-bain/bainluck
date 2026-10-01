@@ -124,3 +124,89 @@ def test_the_relink_is_bounded_by_the_run_limit():
     assert stats["outcomes_relinked_in_league"] == 1
     assert links[1] == NC_STATE[0]  # lowest id first
     assert links[2] == NW_STATE[0]
+
+
+# ── Polymarket (#9952 after-check, 2026-10-01) ───────────────────────────────
+# With the Kalshi legs moved, UNC's page still printed NC State's playoff, title,
+# quarter, semi and top-4-seed odds: five Polymarket "North Carolina St." legs
+# (slug ``ncaa-football-…``, which names no league) sat on team 6. Replay over all
+# 5,695 open Polymarket links: 7 contradictions, every one the wrong school.
+
+NFL = (3, "americanfootball_nfl")
+COMMANDERS = (300, 3, "Washington Commanders", ["Washington", "Commanders"])
+
+# id, external_id, event slug
+PM_MARKETS = [
+    (2001, "948140", "ncaa-football-team-to-make-college-football-playoffs-20260803190433067"),
+    # A pro-football- slug names the NFL: a college team under it is Phase 3's row.
+    (2002, "777001", "pro-football-2026-27-nfc-champion"),
+]
+
+PM_OUTCOMES = [
+    (11, 2001, "North Carolina St.", UNC[0]),   # -> NC State
+    (12, 2001, "North Carolina", UNC[0]),       # already right: untouched
+    (13, 2001, "North Carolina 4.5+", UNC[0]),  # no answer: untouched
+    (14, 2002, "Northwestern", NW_STATE[0]),    # crosses the league: not 3d's
+]
+
+
+def _seed_polymarket(session: Session, outcomes=PM_OUTCOMES) -> None:
+    session.add_all([Sport(id=i, key=k, name=k, active=True) for i, k in SPORTS + [NFL]])
+    for i, s, n, a in TEAMS + [COMMANDERS]:
+        session.add(Team(id=i, sport_id=s, name=n, alternate_names=a))
+    for mid, ext, slug in PM_MARKETS:
+        session.add(FuturesMarket(
+            id=mid, source="polymarket", external_id=ext, name=slug,
+            category="championship", llm_sport_category="football",
+            status="open", market_tier=1,
+            market_metadata={"polymarket_event_slug": slug},
+        ))
+    session.flush()
+    for oid, mid, name, team_id in outcomes:
+        session.add(FuturesOutcome(
+            id=oid, market_id=mid, external_id=f"o{oid}", name=name, team_id=team_id,
+        ))
+    session.commit()
+
+
+def test_a_polymarket_leg_on_the_wrong_school_moves_to_the_school_its_name_is():
+    with Session(_make_engine()) as session:
+        _seed_polymarket(session)
+        stats = _drain(session)
+        links = _links(session)
+
+    assert stats["errors"] == []
+    assert stats["units_rolled_back"] == []
+    assert links[11] == NC_STATE[0]
+    assert links[12] == UNC[0]
+    assert links[13] == UNC[0]
+    assert stats["links_contradicted_in_league"] == 1
+    assert stats["outcomes_relinked_in_league"] == 1
+
+
+def test_a_polymarket_board_whose_slug_names_another_league_is_left_to_phase_3():
+    with Session(_make_engine()) as session:
+        _seed_polymarket(session)
+        stats = _drain(session)
+        links = _links(session)
+
+    # Phase 3 reads the pro-football- slug and finds no NFL "Northwestern": it
+    # clears the link. 3d never counted it as an in-league contradiction.
+    assert links[14] is None
+    assert stats["links_contradicted_in_league"] == 1
+
+
+def test_the_slug_keeps_a_crossing_polymarket_leg_out_of_3d_when_phase_3_has_not_reached_it():
+    # limit=1: Phase 3 clears only its lowest crossing id (14); 15 is still
+    # crossing when 3d reads. Without the slug 3d would see an NCAAF board and
+    # move 15 to the Northwestern Wildcats.
+    outcomes = PM_OUTCOMES + [(15, 2002, "Northwestern", NW_STATE[0])]
+    with Session(_make_engine()) as session:
+        _seed_polymarket(session, outcomes)
+        stats = _drain(session, limit=1)
+        links = _links(session)
+
+    assert stats["errors"] == []
+    assert links[14] is None
+    assert links[15] == NW_STATE[0]
+    assert stats["links_contradicted_in_league"] == 1
