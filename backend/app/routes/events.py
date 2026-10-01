@@ -4923,8 +4923,9 @@ async def _fetch_futures_window(
     # #10024: the split arms (`_split_futures_arms`) rank tier 1.5, between the
     # tier<=1 arms and outcome-only rows, and are read only when tier<=1 comes back
     # SHORT. On a page tier<=1 fills, no split row can reach it (tier is the first
-    # sort key), and `red sox` / `new york` paid 1.5-3.4 s for the split arms there
-    # for no row. A short tier<=1 read is the COMPLETE tier<=1 set, so re-reading it
+    # sort key), and `new york` paid 1.5-3.4 s for the split arms there for no row.
+    # (`red sox` does NOT fill in production; it is refused by the arm builder,
+    # see `_is_single_trigram_term`.) A short tier<=1 read is the COMPLETE tier<=1 set, so re-reading it
     # WITH the split arms is the exact tier<2 page of the full order, and every
     # proof below (outcome-only rows score 2) reads the rows it always read.
     # Bounded like the outcome arm; over its bound, the page is the rows in hand.
@@ -6266,6 +6267,16 @@ def _team_nickname_futures_arms(terms: list[str]) -> list:
 _SPLIT_FUTURES_MAX_TERMS = 4
 
 
+def _is_single_trigram_term(term: str) -> bool:
+    """True when pg_trgm extracts at most ONE trigram from ``%term%`` (#10024).
+
+    Its longest alphanumeric run is exactly three characters (`red`, `sox`, `nfl`),
+    split on the same separators as `_has_extractable_trigram`. Pure.
+    """
+    runs = re.findall(r"[^\W_]+", term or "", re.UNICODE)
+    return max((len(run) for run in runs), default=0) <= _SEARCH_MIN_OUTCOME_MATCH_CHARS
+
+
 def _split_futures_arms(expanded: list[tuple[str, str | None]]) -> list:
     """Futures arms for a query that names a competition AND one of its options (#10024).
 
@@ -6302,12 +6313,27 @@ def _split_futures_arms(expanded: list[tuple[str, str | None]]) -> list:
 
     Same rows in both forms on every query.
 
+    The EXISTS is a hint, not a plan: Postgres pulls it up into a semi-join and
+    may drive from `futures_outcomes`. It does exactly that when EVERY term is
+    one trigram long (`red sox`, `nfl mvp`), because a lone trigram's ILIKE is
+    estimated at ~15 rows however common it is. Production 2026-10-01 09:5xZ,
+    after #10030 went live: `sox` name + `red` outcome read 256,954 index hits
+    for `%red%` and took 2.6-4.8 s, so `red sox` (top multi-word query, 38/7d)
+    spent its 1 s split budget on most requests for no row. Such a query builds
+    no arms. One longer term anywhere is enough to drive the plan: `sox world
+    series` 285 ms, `usa world cup` and `psg champions league` merged, each
+    finding its board through a three-letter option. An `OFFSET 0` fence was
+    measured and is worse: `dodgers world series` 0.2 -> 5.6 s and `lakers
+    championship` past 8 s, driven from the broad name side.
+
     UNION arms like the alias and nickname arms, so recall can only grow and a
     one-term query (returns ``[]``) compiles byte-identical SQL.
     """
     if not 2 <= len(expanded) <= _SPLIT_FUTURES_MAX_TERMS:
         return []
     if not all(_has_extractable_trigram(t) for t, _e in expanded):
+        return []
+    if all(_is_single_trigram_term(t) for t, _e in expanded):
         return []
     arms = []
     for cut in range(1, len(expanded)):
