@@ -18,6 +18,7 @@ import {
   SETTLED_QUOTE_PREFIX,
 } from "@/lib/settledQuote";
 import { formatProbabilityPercent } from "@/lib/probabilityDisplay";
+import { renderedOutcomeRowPercents } from "@/lib/renderedPercent";
 import { PriceAgeMark } from "@/components/event/PriceAgeMark";
 import { oldestSourceStamp, sourceIsStale } from "@/lib/sourceAge";
 import { outcomeRowVerdict } from "@/components/futures/OutcomeRow";
@@ -173,9 +174,15 @@ function OutcomeBar({
    */
   showAge = false,
   voided = false,
+  rendered = null,
 }: {
   outcome: MarketCard["outcomes"][0];
   rank: number;
+  /**
+   * #1627 — the integer this row prints when the CARD rounds its two rows
+   * together. See `PropMiniCard`. Null keeps the row's own rounding.
+   */
+  rendered?: number | null;
   /** #2086: the game is over, so this number is a frozen quote, not a chance. */
   settled: boolean;
   showAge?: boolean;
@@ -223,7 +230,7 @@ function OutcomeBar({
   // survives the merge, so this line formats a price only when there is one —
   // and the branch below is what a reader sees when there is not.
   const percentText =
-    outcome.prob === null ? null : formatProbabilityPercent(outcome.prob);
+    outcome.prob === null ? null : formatProbabilityPercent(outcome.prob, { rendered });
   // A finished GAME settles every row; a finished SET settles only the rows
   // that asked about it. Both end in the same render, because both are the same
   // statement to a reader: this number stopped being a chance.
@@ -440,6 +447,19 @@ function PropMiniCard({
 
   // K10: cap the bars a single card can stack. Live MLB games put 34–61 props
   // under one heading; the overflow is DISCLOSED, never dropped (gotcha #43).
+  // #1627 — A TWO-ROW CARD IS ONE QUESTION, SO IT IS ROUNDED ONCE. Each row
+  // used to round on its own, and a venue's half-cent complement rounds both
+  // halves up: "Will there be a run scored in the first inning? No 53% · Yes 48%"
+  // (Phillies @ Braves, /events/15322407, served 0.525 / 0.475) and "Safety?
+  // No 94% · Yes 7%" on the same night's NFL page. The pair contract (#2831)
+  // prints 53 / 47, and leaves a pair outside the complement band on exactly
+  // the two roundings it printed before. Atomic: both rows or neither.
+  const pairPercents =
+    item.outcomes.length === 2 ? renderedOutcomeRowPercents(item.outcomes.map((o) => o.prob)) : [];
+  const pairRendered = pairPercents.length === 2 && pairPercents.every((p) => p !== null);
+  const renderedFor = (index: number): number | null =>
+    pairRendered ? pairPercents[index] : null;
+
   const shown = item.outcomes.slice(0, MAX_OUTCOMES_PER_CARD);
   const rest = item.outcomes.slice(MAX_OUTCOMES_PER_CARD);
 
@@ -471,6 +491,7 @@ function PropMiniCard({
             settled={settled}
             showAge={live && !cardSpeaksForAll}
             voided={voided}
+            rendered={renderedFor(i)}
           />
         ))}
       </div>
