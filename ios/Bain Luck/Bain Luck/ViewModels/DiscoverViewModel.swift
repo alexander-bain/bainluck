@@ -942,6 +942,12 @@ final class DiscoverViewModel: ObservableObject {
                 // one non-generation terminal that leaves `error` untouched, so
                 // under the old `error == nil` read it was indistinguishable from
                 // the success five lines above.
+                //
+                // #7074: only the CURRENT generation may end the load. A cancelled
+                // older load whose transport terminal lands after a newer cold load
+                // started would otherwise clear THAT load's `loading` while its
+                // request is still out — no spinner, no error, no cards.
+                guard generation == loadGeneration else { return .superseded }
                 loading = false
                 return .cancelled
             } catch {

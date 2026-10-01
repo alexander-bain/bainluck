@@ -88,6 +88,51 @@ final class DiscoverViewModelDeadlineTests: XCTestCase {
         }
     }
 
+    /// #7074 — every call parks until the test releases it, and IGNORES task
+    /// cancellation while parked: a cancelled caller's transport keeps running
+    /// until its own terminal arrives (the held cancellation acknowledgment).
+    /// Arrivals are counted so the test can order "A arrived → A cancelled →
+    /// B arrived → A's cancellation lands" exactly.
+    private nonisolated final class GatedFake: DiscoverFeedProviding, @unchecked Sendable {
+        private let lock = NSLock()
+        private var n = 0
+        private var parked: [Int: CheckedContinuation<Result<FeedResponse, Error>, Never>] = [:]
+        private var early: [Int: Result<FeedResponse, Error>] = [:]
+        var arrivals: Int { lock.withLock { n } }
+
+        nonisolated func fetchDiscoverFeed(
+            limit: Int, offset: Int, eventPct: Double?, cacheTTL: TimeInterval?
+        ) async throws -> FeedResponse {
+            let call = lock.withLock { () -> Int in n += 1; return n }
+            let result = await withCheckedContinuation { (c: CheckedContinuation<Result<FeedResponse, Error>, Never>) in
+                let ready = lock.withLock { () -> Result<FeedResponse, Error>? in
+                    if let r = early.removeValue(forKey: call) { return r }
+                    parked[call] = c
+                    return nil
+                }
+                if let ready { c.resume(returning: ready) }
+            }
+            return try result.get()
+        }
+
+        func release(_ call: Int, _ result: Result<FeedResponse, Error>) {
+            let c = lock.withLock { () -> CheckedContinuation<Result<FeedResponse, Error>, Never>? in
+                if let c = parked.removeValue(forKey: call) { return c }
+                early[call] = result
+                return nil
+            }
+            c?.resume(returning: result)
+        }
+    }
+
+    private func waitForArrivals(_ fake: GatedFake, _ count: Int) async {
+        let until = Date().addingTimeInterval(3)
+        while fake.arrivals < count, Date() < until { try? await Task.sleep(for: .milliseconds(5)) }
+        XCTAssertEqual(fake.arrivals, count, "request \(count) reached the client")
+    }
+
+    private static let wrappedCancel = APIError.networkError(underlying: URLError(.cancelled))
+
     private func markerResponse() throws -> FeedResponse {
         let json = """
         {"items":[\(futuresJSON(999))],"total":1,"limit":50,"offset":0,"has_more":false}
@@ -237,5 +282,60 @@ final class DiscoverViewModelDeadlineTests: XCTestCase {
         XCTAssertTrue(vm.items.isEmpty)
         XCTAssertEqual(vm.error, "Couldn't load feed")
         XCTAssertFalse(vm.loading)
+    }
+
+    // MARK: - #7074: an older load's cancellation never ends a newer load
+
+    /// RED BEFORE THE FIX. A fast double refresh on an empty Discover: load A is
+    /// cancelled while its request is in flight, load B starts and its request is
+    /// out, THEN A's (wrapped) cancellation lands. Pre-fix the cancellation catch
+    /// set `loading = false` with no generation check, so the newer load B looked
+    /// finished — no spinner, no error, no cards — while its request was still
+    /// pending. The fix refuses that terminal for a superseded generation.
+    func testOlderCancellationArrivingAfterNewerColdRequestKeepsNewerLoading() async throws {
+        let fake = GatedFake()
+        let vm = DiscoverViewModel(client: fake, lastGood: FakeLastGood(nil),
+                                   telemetry: nil, retryBudget: 30, retryBackoff: 0)
+
+        let a = Task { await vm.load() }
+        await waitForArrivals(fake, 1)
+        a.cancel()
+        let b = Task { await vm.load() }
+        await waitForArrivals(fake, 2)
+        XCTAssertTrue(vm.loading, "B's cold request is out")
+
+        fake.release(1, .failure(Self.wrappedCancel))
+        let aOutcome = await a.value
+
+        XCTAssertEqual(aOutcome, .superseded, "the older load no longer speaks for the screen")
+        XCTAssertTrue(vm.loading, "B is still loading — A's cancellation must not end it")
+        XCTAssertTrue(vm.items.isEmpty)
+        XCTAssertNil(vm.error)
+
+        fake.release(2, .success(try markerResponse()))
+        let bOutcome = await b.value
+        XCTAssertEqual(bOutcome, .published)
+        XCTAssertEqual(vm.items.map { $0.futures?.id }, [999])
+        XCTAssertFalse(vm.loading)
+    }
+
+    /// CONTROL — the CURRENT generation's cancellation is unchanged: quiet to the
+    /// screen (no error), loading cleared, reported to the caller as `.cancelled`
+    /// (#7170). Green on both sides of the fix.
+    func testCurrentGenerationCancellationStillEndsQuietly() async throws {
+        let fake = GatedFake()
+        let vm = DiscoverViewModel(client: fake, lastGood: FakeLastGood(nil),
+                                   telemetry: nil, retryBudget: 30, retryBackoff: 0)
+
+        let a = Task { await vm.load() }
+        await waitForArrivals(fake, 1)
+        a.cancel()
+        fake.release(1, .failure(Self.wrappedCancel))
+        let outcome = await a.value
+
+        XCTAssertEqual(outcome, .cancelled)
+        XCTAssertFalse(vm.loading)
+        XCTAssertNil(vm.error, "a cancellation never shows an error")
+        XCTAssertTrue(vm.items.isEmpty)
     }
 }
