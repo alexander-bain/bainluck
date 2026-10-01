@@ -89,6 +89,7 @@
     "CREATE-wave INSERT bind contract (real Postgres)",
     "Calibration mode-price source scope (real Postgres)",
     "Calibration threshold-ladder collapse (real Postgres)",
+    "Calibration unpriced field winner (real Postgres)",
     "Calibration DataGolf symmetric exclusion (real Postgres)",
     "Calibration mode-price source scope, peer sites (real Postgres)",
     "Calibration vm-variant join, one outcome one row (real Postgres)",

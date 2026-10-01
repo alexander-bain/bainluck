@@ -272,10 +272,9 @@ async def read_active_selection(db) -> SelectionRead:
     """The durable selection, classified. Never raises."""
     from app.services.durable_snapshots import read_snapshot
 
+    bounds = {"expected_version": SELECTION_SCHEMA, "max_age_s": float("inf")}
     try:
-        read = await read_snapshot(
-            db, SELECTION_IDENTITY, expected_version=SELECTION_SCHEMA, max_age_s=float("inf")
-        )
+        read = await read_snapshot(db, SELECTION_IDENTITY, **bounds)
     except Exception as exc:  # noqa: BLE001 — classified, never raised
         return SelectionRead(status=READ_UNAVAILABLE, error=str(exc)[:200])
     return classify_selection_envelope(read)
@@ -372,8 +371,8 @@ def candidate_first_protection_problems(current_version: str, outgoing_version: 
     problems: list[str] = []
     try:
         cur, out = namespace_for(current_version), namespace_for(outgoing_version)
-    except ValueError as exc:
-        return [str(exc)]
+    except ValueError as bad_version:
+        return [str(bad_version)]
     if current_version == outgoing_version:
         problems.append("a rollover needs two versions")
     shared = {cur.identity, cur.main_key, cur.last_good_key} & {
