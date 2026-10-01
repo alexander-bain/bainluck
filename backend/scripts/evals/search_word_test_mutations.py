@@ -193,19 +193,16 @@ MUTANTS: list[tuple[str, Path, str, str, str, str]] = [
         EVENTS,
         # The `def` line is load-bearing: #9646's `_some_outcome` carries this same
         # body, so without it the anchor matches twice and scores UNAPPLIED.
+        # #9947: the arm now routes through `_market_has_outcome` (ANY(ARRAY(...))).
         """    def _outcome_id_match(term, exp):
-        return FuturesMarket.id.in_(
-            select(FuturesOutcome.market_id).where(
-                _build_expanded_ilike(FuturesOutcome.name, term, exp)
-            )
+        return _market_has_outcome(
+            _build_expanded_ilike(FuturesOutcome.name, term, exp)
         )""",
         """    def _outcome_id_match(term, exp):
-        return FuturesMarket.id.in_(
-            select(FuturesOutcome.market_id).where(
-                and_(
-                    _build_expanded_ilike(FuturesOutcome.name, term, exp),
-                    _build_expanded_fts(FuturesOutcome.name, term, exp),
-                )
+        return _market_has_outcome(
+            and_(
+                _build_expanded_ilike(FuturesOutcome.name, term, exp),
+                _build_expanded_fts(FuturesOutcome.name, term, exp),
             )
         )""",
         SHAPE_ORACLE,
