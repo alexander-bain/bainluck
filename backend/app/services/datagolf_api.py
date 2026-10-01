@@ -10,6 +10,7 @@ Plan: Scratch Plus ($30/mo)
 
 import logging
 import os
+import re
 import unicodedata
 from datetime import datetime, timezone
 from typing import Optional
@@ -20,6 +21,27 @@ from app.services.base_api import BaseAPIClient
 from pydantic import BaseModel
 
 logger = logging.getLogger(__name__)
+
+
+# #10114: DataGolf authenticates with ``?key=`` in the query string, and httpx
+# puts the full request URL in every ``HTTPStatusError`` message. A bare
+# ``str(e)`` therefore carried the key into Redis task summaries, the
+# task-metrics admin payload, a public debug route and the dyno log. Every
+# DataGolf exception that is written down goes through this first.
+_KEY_PARAM_RE = re.compile(r"(?i)(key=)[^&\s'\"]+")
+
+
+def redact_api_key(text: object, api_key: Optional[str] = None) -> str:
+    """``text`` as a string with the DataGolf key removed.
+
+    Strips the configured key value wherever it appears, then any surviving
+    ``key=`` query value (a key passed to one instance, or a rotated one).
+    """
+    out = str(text)
+    key = api_key or os.getenv("DATAGOLF_API_KEY") or ""
+    if len(key) >= 6:
+        out = out.replace(key, "***")
+    return _KEY_PARAM_RE.sub(r"\1***", out)
 
 
 # #994: some tour codes our external_ids carry as ingestion aliases are rejected

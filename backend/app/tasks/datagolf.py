@@ -21,6 +21,7 @@ from typing import Optional
 
 from sqlalchemy import func as sa_func, select, and_, null, or_, update
 
+from app.services.datagolf_api import redact_api_key
 from app.tasks.base import get_task_session
 from app.utils.futures_rank import rerank_market_field_stmt  # #6598
 from app.utils.golf_event_format import is_team_match_play_name  # #7985
@@ -734,8 +735,9 @@ async def _poll_datagolf_markets() -> dict:
                     stats["tours_polled"] += 1
 
                 except Exception as e:
-                    logger.warning("DataGolf poll error for tour=%s: %s", tour, e)
-                    stats["debug"][f"{tour}_error"] = str(e)[:300]
+                    err = redact_api_key(e)  # #10114: httpx errors carry ?key=
+                    logger.warning("DataGolf poll error for tour=%s: %s", tour, err)
+                    stats["debug"][f"{tour}_error"] = err[:300]
                     continue
 
     finally:
@@ -1174,7 +1176,9 @@ async def _poll_datagolf_live() -> dict:
                     stats["tours_polled"] += 1
 
                 except Exception as e:
-                    logger.warning("DataGolf live poll error for tour=%s: %s", tour, e)
+                    logger.warning(
+                        "DataGolf live poll error for tour=%s: %s", tour, redact_api_key(e)
+                    )
                     continue
 
         # #7958 — PUBLISH OWNERSHIP, AFTER THE COMMIT.
@@ -1379,7 +1383,9 @@ async def _snapshot_leaderboard() -> dict:
                     )
 
                 except Exception as e:
-                    logger.error("Leaderboard snapshot error for tour=%s: %s", tour, e)
+                    logger.error(
+                        "Leaderboard snapshot error for tour=%s: %s", tour, redact_api_key(e)
+                    )
                     continue
                 finally:
                     await asyncio.sleep(1.5)

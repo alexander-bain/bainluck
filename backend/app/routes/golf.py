@@ -4999,12 +4999,15 @@ _LEADERBOARD_CACHE_TTL = 120  # 2 minutes
 @router.get("/leaderboard/debug")
 async def get_golf_leaderboard_debug():
     """Debug: return raw DataGolf in-play response to diagnose field names."""
-    from app.services.datagolf_api import DataGolfAPIService
+    from app.services.datagolf_api import DataGolfAPIService, redact_api_key
     service = DataGolfAPIService()
     try:
         data = await service._get("preds/in-play", {"tour": "pga"})
     except Exception as e:
-        return {"error": str(e)}
+        # #10114: a PUBLIC route. httpx error text carries the ?key= URL, so the
+        # detail goes to the log (redacted) and the caller gets a fixed string.
+        logger.warning("golf leaderboard debug: DataGolf error: %s", redact_api_key(e))
+        return {"error": "datagolf_request_failed"}
     finally:
         await service.close()
     # Return raw response with first 3 player entries
