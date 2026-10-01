@@ -11,6 +11,7 @@ Two APIs used:
 
 import json
 import logging
+import math
 import time
 from datetime import datetime
 from typing import Optional
@@ -847,7 +848,7 @@ class PolymarketAPIService:
                 ),
                 neg_risk=event_data.get("negRisk", False),
                 markets=markets,
-                volume=self._safe_float(event_data.get("volume")),
+                volume=self._parse_activity_amount(event_data),
                 liquidity=self._safe_float(event_data.get("liquidity")),
             )
         except Exception as e:
@@ -887,7 +888,9 @@ class PolymarketAPIService:
                 ),
                 best_bid=self._safe_float(market_data.get("bestBid")),
                 best_ask=self._safe_float(market_data.get("bestAsk")),
-                volume=self._safe_float(market_data.get("volume")),
+                # #1870: primary `volume` wins whenever Gamma sends it — a
+                # recorded "0" included; `volumeNum` only when it is absent.
+                volume=self._parse_activity_amount(market_data),
                 volume_24h=self._safe_float(market_data.get("volume24hr")),
                 liquidity=self._safe_float(market_data.get("liquidity")),
                 neg_risk=market_data.get("negRisk", False),
@@ -943,6 +946,23 @@ class PolymarketAPIService:
             except (ValueError, OSError):
                 pass
         return None
+
+    def _parse_activity_amount(self, data: dict) -> Optional[float]:
+        """Gamma's traded amount for an event or market, or None for unknown (#1870).
+
+        ``volume`` is the primary field and wins whenever it is present and not
+        null — INCLUDING ``"0"``, which is the venue saying nothing traded.
+        ``volumeNum`` is read only when ``volume`` is absent or null; a malformed
+        primary is unknown, never silently replaced by a different number.
+        A non-finite or negative amount is not an amount: None.
+        """
+        raw = data.get("volume")
+        if raw is None:
+            raw = data.get("volumeNum")
+        amount = self._safe_float(raw)
+        if amount is None or not math.isfinite(amount) or amount < 0:
+            return None
+        return amount
 
     @staticmethod
     def _safe_float(value) -> Optional[float]:

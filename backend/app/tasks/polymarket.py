@@ -7,9 +7,10 @@ with source="polymarket".
 """
 
 import logging
+import math
 import re
 from datetime import date, datetime, timezone
-from typing import Optional
+from typing import NamedTuple, Optional
 
 from sqlalchemy import func, select, text
 
@@ -31,6 +32,7 @@ from app.utils.content_understanding import (  # CU-1 clause (2), #5273
     build_content_understanding,
 )
 from app.utils.price_change_stamp import price_changed_at_value  # #2024
+from app.utils.polymarket_evidence import PMEvidence  # #1870
 from app.utils.settled_price import (  # #5246 / #7767
     SETTLED_NO_PRICE,
     SETTLED_YES_PRICE,
@@ -507,6 +509,69 @@ def _opening_book_is_empty(
     if best_bid is None:
         return False
     return book_bounds_nothing(best_bid, 1.0 if best_ask is None else best_ask)
+
+
+class PolymarketActivityVolume(NamedTuple):
+    """One Gamma traded amount, in the shape the writers store it (#1870)."""
+
+    #: The ``volume`` integer column's value. 0 is a confirmed zero; None is
+    #: either unknown or a positive amount the integer column cannot hold.
+    scalar: Optional[int]
+    #: Whether Gamma reported an amount at all. False ⇒ an upsert must leave
+    #: the stored value and receipt alone rather than overwrite them.
+    observed: bool
+    #: The ``market_metadata['volume_evidence']`` receipt, when observed.
+    receipt: Optional[dict]
+
+
+POLYMARKET_CONDITION_VOLUME_PROBE = "gamma:events:condition-volume"
+_FO_VOLUME_CAP = 2_000_000_000  # fo.volume is Integer
+
+
+def polymarket_activity_volume(
+    amount: Optional[float], *, observed_at: datetime
+) -> PolymarketActivityVolume:
+    """Classify Gamma's traded amount into scalar + receipt (#1870).
+
+    The writers used ``int(x) if x else None``, which stored two wrong facts:
+    Gamma's recorded ``"0"`` became NULL (zero is falsy), so "nothing traded" and
+    "we never asked" were stored identically — Polymarket had exactly 0 rows at
+    ``volume = 0`` against Kalshi's 5% — and a positive ``0.25`` became integer
+    0, which ``calibration_trade_evidence`` reads as untraded.
+
+    * 0 → scalar 0, receipt ``confirmed_zero``.
+    * ≥ 1 → the capped integer (an approximation that keeps positivity),
+      receipt ``traded`` carrying the exact amount.
+    * between 0 and 1 → scalar NULL, receipt ``traded`` carrying the exact
+      amount. NULL here is the integer column's honest limit; never 0, never
+      rounded up to an invented 1.
+    * None / non-finite / negative → unknown: nothing to write, no receipt.
+
+    The amount is Gamma's CONDITION-level total, copied to both legs; it is not
+    a per-outcome trade count, and the receipt names that grain. The probe is
+    the poll's own Gamma read only — this path makes no CLOB or trades call, so
+    it must not claim ``build_evidence_receipt``'s three-probe default.
+    """
+    try:
+        amount = float(amount) if amount is not None else None
+    except (TypeError, ValueError):
+        amount = None
+    if amount is None or not math.isfinite(amount) or amount < 0:
+        return PolymarketActivityVolume(None, False, None)
+    if amount == 0:
+        scalar: Optional[int] = 0
+        verdict = PMEvidence.CONFIRMED_ZERO
+    else:
+        scalar = min(int(amount), _FO_VOLUME_CAP) if amount >= 1 else None
+        verdict = PMEvidence.TRADED
+    receipt = {
+        "verdict": verdict.value,
+        "fetched_at": observed_at.isoformat(),
+        "gamma_volume": amount,
+        "probe": POLYMARKET_CONDITION_VOLUME_PROBE,
+        "grain": "condition",
+    }
+    return PolymarketActivityVolume(scalar, True, receipt)
 
 
 def sub_market_metadata(
@@ -2706,7 +2771,10 @@ async def _process_event_batch(
                         poly_metadata["matchup_title"] = _group_matchup_title
 
                 # Aggregate volume/liquidity from event + markets
-                poly_volume = int(event.volume) if event.volume else None
+                # #1870: `if event.volume` dropped a recorded zero to NULL.
+                poly_volume = polymarket_activity_volume(
+                    event.volume, observed_at=now
+                ).scalar
                 poly_liquidity = float(event.liquidity) if event.liquidity else None
                 poly_volume_24h = sum(
                     int(m.volume_24h or 0) for m in event.markets
@@ -2959,6 +3027,18 @@ async def _process_event_batch(
                             if market.volume_24h is not None
                             else None
                         )
+                        # #1870: the condition's traded amount, classified once
+                        # for both legs below. Its receipt rides this row's
+                        # metadata merge; an unobserved amount adds none, so a
+                        # prior genuine receipt survives.
+                        sub_activity = polymarket_activity_volume(
+                            getattr(market, "volume", None), observed_at=now
+                        )
+                        if sub_activity.receipt is not None:
+                            sub_meta_insert = {
+                                **(sub_meta_insert or {}),
+                                "volume_evidence": sub_activity.receipt,
+                            }
                         # #6734: this row IS `market`, so its openness is the
                         # market's own — not the parent event's `active`. See
                         # `submarket_is_open`; the two insert/update sites below
@@ -3218,13 +3298,11 @@ async def _process_event_batch(
 
                         # Forward-capture per-outcome volume so the traded/untraded
                         # calibration tag stays populated without a re-backfill.
-                        # fo.volume is Integer — cap to avoid overflow on the
-                        # multi-billion-dollar markets.
-                        sub_vol = (
-                            min(int(market.volume), 2_000_000_000)
-                            if getattr(market, "volume", None)
-                            else None
-                        )
+                        # #1870: a confirmed 0 is written as 0; an unobserved
+                        # amount is omitted from the conflict update so it never
+                        # overwrites a prior reading. See
+                        # `polymarket_activity_volume`.
+                        sub_vol = sub_activity.scalar
 
                         over_update: dict = {
                             "current_probability": sub_over_price,
@@ -3232,9 +3310,10 @@ async def _process_event_batch(
                             "current_yes_bid": market.best_bid,
                             "current_yes_ask": market.best_ask,
                             "rank": 1,
-                            "volume": sub_vol,
                             "last_updated": func.now(),
                         }
+                        if sub_activity.observed:
+                            over_update["volume"] = sub_vol
                         # #6793: a move and a change-stamp are claims ABOUT a price.
                         # Computing either against a refused leg would subtract from
                         # NULL (silently nulling the delta) and, worse, advance
@@ -3397,9 +3476,10 @@ async def _process_event_batch(
                                 "current_yes_bid": under_best_bid,
                                 "current_yes_ask": under_best_ask,
                                 "rank": 2,
-                                "volume": sub_vol,
                                 "last_updated": func.now(),
                             }
+                            if sub_activity.observed:
+                                under_update["volume"] = sub_vol
                             if sub_price_ok:
                                 under_update["price_changed_at"] = price_changed_at_value(  # #2024
                                     FuturesOutcome.current_probability,
