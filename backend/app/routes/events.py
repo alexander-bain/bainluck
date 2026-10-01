@@ -35633,8 +35633,21 @@ def _search_query_matched_leg(market, board: list, top: list, query_terms, withh
     of legs the card can print a number for: a withheld or unpriced leg would
     pin a dash, which names the player but tells the reader nothing. Of several
     matches, the highest-priced one.
+
+    #10024: the leg must name the terms the market NAME does not carry, not every
+    term. `chiefs super bowl` reaches `NFL Super Bowl Winner` through the split
+    arms (`super bowl` in the name, `chiefs` in a leg), and production's card
+    (390px, 2026-10-01 ~10:00Z) showed Bills, Rams, 49ers, Ravens, Seahawks — the
+    team typed was nowhere, because "Kansas City Chiefs" does not spell `super
+    bowl`. For `ohtani` the name carries nothing, so the remainder is the whole
+    query and the rule is the one above, unchanged.
     """
-    if not query_terms or _query_name_match(market, query_terms):
+    if not query_terms:
+        return None
+    remainder = [
+        (t, e) for t, e in query_terms if not _text_names_every_term(market.name, [(t, e)])
+    ]
+    if not remainder:
         return None
     shown = {id(o) for o in top}
     matched = [
@@ -35642,7 +35655,7 @@ def _search_query_matched_leg(market, board: list, top: list, query_terms, withh
         if id(o) not in shown
         and o.id not in withheld
         and _outcome_prints_a_price(o)
-        and _text_names_every_term(o.name, query_terms)
+        and _text_names_every_term(o.name, remainder)
     ]
     if not matched:
         return None
