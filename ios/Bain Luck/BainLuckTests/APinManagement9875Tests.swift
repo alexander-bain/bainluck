@@ -79,6 +79,83 @@ final class APinManagement9875Tests: XCTestCase {
         XCTAssertFalse(m.isPinned(type: "event", id: 1))
         XCTAssertEqual(m.savedPins.count, 6)
     }
+    /// Sol's paid bug bash (artifact `sol-pin-bugbash-9875-20261001T134928Z`): the
+    /// stored cache already dropped pin 1 while its removal was unconfirmed, so a
+    /// cold restart whose first load failed lost a pin the server still held.
+    func testAnUnconfirmedRemovalSurvivesColdOfflineRestoreForEachType() async {
+        for type in ["event", "future"] {
+            var release: CheckedContinuation<Void, Never>?
+            let warm = PinManager(defaults: defaults,
+                initialBinding: PinAccountBinding(userID: "fake-A", authenticated: true),
+                serverLoad: { PinsResponse(events: type == "event" ? Array(1...6) : [],
+                                           futures: type == "future" ? Array(1...6) : []) },
+                serverSync: { _, _, _ in await withCheckedContinuation { release = $0 }; throw Failed() })
+            await warm.loadPins()
+            let removal = warm.togglePin(type: type, id: 1)
+            while release == nil { await Task.yield() }
+            XCTAssertTrue(warm.savedPins.contains(SavedPin(type: type, value: 1)))
+            let cold = PinManager(defaults: defaults, allowLegacyGuestPins: false,
+                initialBinding: PinAccountBinding(userID: "fake-A", authenticated: true),
+                serverLoad: { throw Failed() }, serverSync: { _, _, _ in })
+            await cold.loadPins()
+            XCTAssertEqual(cold.loadState, .failed)
+            XCTAssertTrue(cold.savedPins.contains(SavedPin(type: type, value: 1)),
+                          "\(type): an unconfirmed removal hid the last-confirmed pin after a cold failed restore")
+            XCTAssertTrue(cold.isPinned(type: type, id: 1), "\(type): the known pin stays removable")
+            XCTAssertFalse(cold.canPin(type: type), "\(type): a pending removal must not free the slot")
+            release?.resume()
+            await removal?.value
+            XCTAssertTrue(warm.isPinned(type: type, id: 1), "\(type): warm failed-remove control")
+            XCTAssertEqual(warm.feedback?.message, "Couldn't remove pin. Try again.")
+            defaults.removePersistentDomain(forName: suite)
+        }
+    }
+    func testAConfirmedRemovalIsWhatAColdOfflineRestoreRemembers() async {
+        for type in ["event", "future"] {
+            let warm = PinManager(defaults: defaults,
+                initialBinding: PinAccountBinding(userID: "fake-A", authenticated: true),
+                serverLoad: { PinsResponse(events: type == "event" ? Array(1...6) : [],
+                                           futures: type == "future" ? Array(1...6) : []) },
+                serverSync: { _, _, _ in })
+            await warm.loadPins()
+            await warm.togglePin(type: type, id: 1)?.value
+            XCTAssertEqual(warm.feedback?.message, "Removed from My Stuff")
+            let cold = PinManager(defaults: defaults, allowLegacyGuestPins: false,
+                initialBinding: PinAccountBinding(userID: "fake-A", authenticated: true),
+                serverLoad: { throw Failed() }, serverSync: { _, _, _ in })
+            await cold.loadPins()
+            XCTAssertEqual(Set(cold.savedPins.map(\.value)), Set(2...6), "\(type): the confirmed removal is persisted")
+            XCTAssertTrue(cold.canPin(type: type))
+            defaults.removePersistentDomain(forName: suite)
+        }
+    }
+    func testAPendingRemovalInAccountAIsNeitherWrittenToBNorReplayedThere() async {
+        var release: CheckedContinuation<Void, Never>?
+        var syncs: [Int] = []
+        let m = PinManager(defaults: defaults, serverLoad: { PinsResponse(events: [1, 2], futures: []) }, serverSync: { _, id, _ in
+            syncs.append(id)
+            if id == 1 { await withCheckedContinuation { release = $0 } }
+        })
+        bind(m, "A")
+        await m.loadPins()
+        let oldRemove = m.togglePin(type: "event", id: 1)
+        while release == nil { await Task.yield() }
+        bind(m, "B")
+        release?.resume()
+        await oldRemove?.value
+        XCTAssertEqual(syncs, [1])
+        XCTAssertNil(defaults.data(forKey: "bainluck_pins.user.B.Events"))
+        let coldB = PinManager(defaults: defaults, allowLegacyGuestPins: false,
+            initialBinding: PinAccountBinding(userID: "B", authenticated: true),
+            serverLoad: { throw Failed() }, serverSync: { _, _, _ in })
+        await coldB.loadPins()
+        XCTAssertTrue(coldB.savedPins.isEmpty)
+        let coldA = PinManager(defaults: defaults, allowLegacyGuestPins: false,
+            initialBinding: PinAccountBinding(userID: "A", authenticated: true),
+            serverLoad: { throw Failed() }, serverSync: { _, _, _ in })
+        await coldA.loadPins()
+        XCTAssertEqual(coldA.pinnedEventIDs, [1, 2], "A's answer arrived after the switch, so A keeps its last confirmed pins")
+    }
     func testDelayedLoadFromAccountACannotPublishIntoB() async {
         var release: CheckedContinuation<PinsResponse, Never>?
         var calls = 0
