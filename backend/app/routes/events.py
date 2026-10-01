@@ -13319,6 +13319,8 @@ async def search_events(
                     search_response_ttl_seconds(
                         _futures_outcome_arm,
                         warmer_rebuild=_force_search_cache_rebuild.get(),
+                        # #10024: a team + competition answer is the split arm's.
+                        futures_split_arm=_futures_split_report["state"],
                     ),
                     json.dumps(_payload, default=str),
                 )
