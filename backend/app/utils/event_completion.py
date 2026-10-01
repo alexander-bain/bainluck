@@ -1057,6 +1057,40 @@ def started_without_result(status, commence_time, now, sources=None) -> bool:
         return False
 
 
+def authority_not_started_past_schedule(status, commence_time, now, sources=None) -> bool:
+    """The scheduled start has passed AND the authority still says play has not begun.
+
+    #9968. BOS @ NYY 15321907, Wild Card G2, 2026-10-01: listed 00:00Z, read
+    "Started" at 00:07Z, first pitch ≈00:15Z. The web badge
+    knows only that the listed time passed (#6031), and inside
+    :data:`UPCOMING_GRACE` ``started_without_result`` is ``false`` whether or
+    not ESPN has spoken, so the served payload could not tell "late" from
+    "under way". The fact already exists on the row: ESPN's live pass stamps
+    :data:`ESPN_NOT_STARTED_KEY` every 60 s on a past-kickoff row it still reads
+    ``pre`` (#5324, refreshed per CERT-2782). This publishes it.
+
+    The same stamp, horizon and fail-closed reader the #9195 clause of
+    :func:`started_without_result` spends, so the two keys can never disagree:
+    past the grace this is True exactly where that hold makes the row's
+    ``started_without_result`` False.
+
+    Only a ``scheduled`` row whose start has PASSED: the stamp is also written
+    on future-dated rows (tennis, measured 2026-10-01 00:51Z), and "not started"
+    before the start is no news. Fails CLOSED on every unreadable input, so a
+    bad value can only leave the page on the word the clock alone gives it.
+    """
+    if status != "scheduled" or commence_time is None or now is None:
+        return False
+    try:
+        return (
+            now - AUTHORITY_NOT_STARTED_HORIZON <= commence_time <= now
+            and authority_not_started_fresh(sources, now)
+        )
+    except TypeError:
+        # #6057's naive-vs-aware comparison: an uncomparable time proves nothing.
+        return False
+
+
 #: RETIRED. The row is still in the table and is still addressable by anything
 #: that keys on its id — an admin page, a backfill, a foreign key — and it is
 #: NOT part of the schedule any reader should be shown.
