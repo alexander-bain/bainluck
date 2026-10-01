@@ -881,10 +881,60 @@ def cached_family_key(market: dict) -> str | None:
     return None
 
 
+# An Olympic tournament award is not the league's season award.  Kalshi's
+# "Winter Olympics Men's Hockey MVP" (KXWOMHOCKEYMVP-26, resolved 2026-02-23)
+# keyed to the bare "mvp" family and headed the Leafs page as "MVP · Matthews
+# OUT 2%" beside his live 8% Hart Trophy price (#9983).  The competition, the
+# edition and the draw are part of the question, so they are part of the key.
+_OLYMPIC_RE = re.compile(r"\b(?:(?P<season>winter|summer)\s+)?olympics?(?:\s+games)?\b")
+_OLYMPIC_DRAW_RE = re.compile(r"\b(?P<draw>men|women)['’]?s\b")
+_EDITION_YEAR_RE = re.compile(r"\b(?P<year>(?:19|20)\d{2})\b")
+
+
+def _competition_key(market: dict, fk: str) -> str:
+    """Qualify ``fk`` with an Olympic competition named by the title or hint.
+
+    Returns ``fk`` unchanged for every market that names no Olympics.  The
+    qualifier is rebuilt from scratch whichever path produced ``fk``, so a
+    cached hint of ``"mvp"``, ``"winter olympics mvp"`` or ``"2026 winter
+    olympics mvp"`` lands on the SAME key as the title — a hint can never
+    file an Olympic result into the league's season-award card.
+    """
+    name = re.sub(r"\s+", " ", market.get("name") or market.get("market_name") or "").lower()
+    title_hit = _OLYMPIC_RE.search(name)
+    hint_hit = _OLYMPIC_RE.search(fk)
+    if not (title_hit or hint_hit):
+        return fk
+
+    season = (title_hit and title_hit.group("season")) or (hint_hit and hint_hit.group("season"))
+    draw = _OLYMPIC_DRAW_RE.search(name) or _OLYMPIC_DRAW_RE.search(fk)
+    base = _OLYMPIC_DRAW_RE.sub(" ", _EDITION_YEAR_RE.sub(" ", _OLYMPIC_RE.sub(" ", fk)))
+    base = " ".join(base.split())
+    if not base:
+        return fk
+
+    # The edition: a year the title or hint names, else the year the venue
+    # resolves it.  None of the three ⇒ no edition, never a guessed one.
+    year_hit = _EDITION_YEAR_RE.search(name) or _EDITION_YEAR_RE.search(fk)
+    year = year_hit.group("year") if year_hit else None
+    if year is None:
+        resolves = _parse_resolution(market.get("resolution_date"))
+        year = str(resolves.year) if resolves else None
+
+    parts = [
+        year,
+        f"{season} olympics" if season else "olympics",
+        f"{draw.group('draw')}'s" if draw else None,
+        base,
+    ]
+    return " ".join(p for p in parts if p)
+
+
 def resolve_family_key(market: dict) -> str | None:
     """Family key for a market dict — cached LLM hint first, then pattern."""
     name = market.get("name") or market.get("market_name") or ""
-    return cached_family_key(market) or family_key(name)
+    fk = cached_family_key(market) or family_key(name)
+    return _competition_key(market, fk) if fk else None
 
 
 def family_scope(market: dict) -> str | None:
