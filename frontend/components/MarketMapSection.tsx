@@ -1648,7 +1648,16 @@ export default function MarketMapSection({
       // a tile labelled "Pre-game" is a claim about what was expected. The card
       // keeps its FINAL below, which is the half's real score and the whole
       // reason #5013 let a finished game keep the card at all.
-      if (quotesAPreGameLine) {
+      //
+      // #9975: and while the game is in play the tile has nothing to quote.
+      // `ouLine` is the CURRENT ladder's nearest-to-even rung, and no half row
+      // carries a frozen pre-game value (`pregame_mark`/`opening_probability`
+      // are null on every served `half_total` row), so on BOS@NYY
+      // (`/events/15321907`) the First 5 card read `PRE-GAME 4` at first pitch
+      // and `PRE-GAME 3` in the Top 3rd — the live line, relabelled. The
+      // headline already prints that line (`O/U 3`). Pre-game and settled keep
+      // the tile.
+      if (quotesAPreGameLine && !isLive) {
         halfTotalMarkers.push({
           key: "pre",
           value: ouLine.threshold,
