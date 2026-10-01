@@ -33,8 +33,18 @@ THE FROZEN INITIAL POLICY (issue body, "October 1")
   ``incomplete``. Truncating by outcome id instead would score half of a game,
   which is a selection rule nobody chose.
 * **Its own session**, every statement bounded at
-  :data:`STATEMENT_TIMEOUT_MS`, one ``REPEATABLE READ READ ONLY`` snapshot so
-  the event pick, the candidate count and the legs describe the same rows.
+  :data:`STATEMENT_TIMEOUT_MS` and the whole collection at
+  :data:`WALL_BUDGET_S`, inside ONE ``REPEATABLE READ READ ONLY`` transaction.
+  That one snapshot is what makes the block coherent: the event pick, the
+  per-event candidate counts (the denominator), the refusal tally, the pair
+  set and both legs' scores are all read from the same rows, and the collector
+  refuses to publish if the legs disagree with the count it admitted. Event ids
+  are materialised first, so the expensive per-outcome lateral seeks only ever
+  run over the admitted events.
+* **Its own clock.** ``collected_at`` is when THIS sample was read. It is not
+  the main curve's ``generated_at`` (recorded beside it as
+  ``published_with_generated_at``, the artifact that carries the block) and it
+  shares nothing with the staged futures bank's older ``staged_at``.
 * **No pairs, a timeout, or any failure is a typed ``unavailable``** — never a
   zero score and never a fabricated pair. The main payload publishes either way:
   this block can only ever describe its own absence, never block the curve.
@@ -50,7 +60,9 @@ move.
 
 from __future__ import annotations
 
+import asyncio
 import logging
+import time
 from datetime import datetime, timezone
 from typing import Any, Iterable, Mapping, Optional, Sequence
 
@@ -80,6 +92,13 @@ SCHEMA = "paired-accuracy/v1"
 EVENT_LIMIT = 100
 CANDIDATE_CAP = 2000
 STATEMENT_TIMEOUT_MS = 5000
+#: The whole collection — three statements plus session setup and teardown.
+#: Each statement is already bounded server-side; this bounds the WAIT, so a
+#: connect stall or a slow teardown cannot hold the publish phase either.
+WALL_BUDGET_S = 15.0
+
+#: How the collection's reads were made consistent, stated in the artifact.
+CONSISTENCY = "one_repeatable_read_read_only_transaction"
 
 #: The event terminal set every other completed-event reader uses.
 _TERMINAL_STATUSES = ("completed", "closed")
@@ -126,14 +145,32 @@ def _policy() -> dict[str, Any]:
     }
 
 
-def unavailable(reason: str, *, generated_at: Any = None, detail: Optional[str] = None) -> dict:
+def _collector(collected_at: Any, collection_ms: Optional[int]) -> dict[str, Any]:
+    """When and how THIS sample was read — its own clock, not the curve's."""
+    return {
+        "collected_at": _iso(collected_at),
+        "collection_ms": collection_ms,
+        "consistency": CONSISTENCY,
+        "statement_timeout_ms": STATEMENT_TIMEOUT_MS,
+        "wall_budget_s": WALL_BUDGET_S,
+    }
+
+
+def unavailable(
+    reason: str,
+    *,
+    generated_at: Any = None,
+    collected_at: Any = None,
+    collection_ms: Optional[int] = None,
+    detail: Optional[str] = None,
+) -> dict:
     """The typed absence. Carries no score at all — never a zero standing in."""
     block = {
         "schema": SCHEMA,
         "status": STATUS_UNAVAILABLE,
         "reason": reason,
-        "generation_generated_at": generated_at,
-        "computed_at": _now_iso(),
+        "published_with_generated_at": generated_at,
+        "collector": _collector(collected_at, collection_ms),
         "policy": _policy(),
         "sample": None,
         "exclusions": [],
@@ -239,10 +276,6 @@ def _iso(value: Any) -> Optional[str]:
     return str(value)
 
 
-def _now_iso() -> str:
-    return datetime.now(timezone.utc).isoformat()
-
-
 def _kind_block(rows: Sequence[Mapping[str, Any]]) -> dict[str, Any]:
     """One forecast kind's coverage and, when it exists, its paired result.
 
@@ -318,12 +351,19 @@ def assemble(
     rows: Iterable[Mapping[str, Any]],
     *,
     generated_at: Any = None,
+    collected_at: Any = None,
+    collection_ms: Optional[int] = None,
 ) -> dict[str, Any]:
     """Fold the selection and the kernel's per-outcome rows into the block."""
     rows = list(rows)
     if not admission["admitted"]:
         reason = REASON_CANDIDATE_CAP if admission["skipped"] else REASON_NO_ELIGIBLE_EVENTS
-        block = unavailable(reason, generated_at=generated_at)
+        block = unavailable(
+            reason,
+            generated_at=generated_at,
+            collected_at=collected_at,
+            collection_ms=collection_ms,
+        )
         block["sample"] = _sample(admission, rows)
         return block
 
@@ -353,8 +393,8 @@ def assemble(
         "schema": SCHEMA,
         "status": status,
         "reason": reason,
-        "generation_generated_at": generated_at,
-        "computed_at": _now_iso(),
+        "published_with_generated_at": generated_at,
+        "collector": _collector(collected_at, collection_ms),
         "policy": _policy(),
         "sample": _sample(admission, rows),
         "exclusions": [
@@ -391,35 +431,30 @@ def _is_timeout(exc: BaseException) -> bool:
     return is_statement_timeout(exc)
 
 
-async def build_paired_accuracy(*, generated_at: Any = None, as_of: Optional[datetime] = None) -> dict:
-    """Compute the block on its own bounded session. Never raises an ``Exception``.
-
-    Every failure becomes a typed ``unavailable`` and is logged at ERROR with its
-    traceback, so a broken producer is loud in Sentry while the curve still
-    publishes. ``BaseException`` (cancellation, a worker kill) is not caught:
-    the build that owns this call is the one that must see it.
-    """
+async def _collect(as_of: datetime) -> tuple[list, dict, list]:
+    """The three reads, in one read-only snapshot on a session of their own."""
     from app.tasks.base import get_task_session
 
-    as_of = as_of or datetime.now(timezone.utc)
-    try:
-        async with get_task_session(statement_timeout_ms=STATEMENT_TIMEOUT_MS) as db:
-            # First statement of the transaction: one snapshot for all three
-            # reads, and a write is impossible even by mistake.
-            await db.execute(text("SET TRANSACTION ISOLATION LEVEL REPEATABLE READ READ ONLY"))
-            events = (
+    async with get_task_session(statement_timeout_ms=STATEMENT_TIMEOUT_MS) as db:
+        # First statement of the transaction: one snapshot for all three
+        # reads, and a write is impossible even by mistake.
+        await db.execute(text("SET TRANSACTION ISOLATION LEVEL REPEATABLE READ READ ONLY"))
+        events = list(
+            (
                 await db.execute(
                     text(event_selection_sql()),
                     {"as_of": as_of, "event_limit": EVENT_LIMIT + 1},
                 )
             ).mappings().all()
-            admission = admit_events(events)
-            rows: list = []
-            if admission["admitted"]:
-                stmt = text(
-                    paired_legs_sql(event_ids=":event_ids")
-                ).bindparams(bindparam("event_ids", expanding=True))
-                rows = (
+        )
+        admission = admit_events(events)
+        rows: list = []
+        if admission["admitted"]:
+            stmt = text(paired_legs_sql(event_ids=":event_ids")).bindparams(
+                bindparam("event_ids", expanding=True)
+            )
+            rows = list(
+                (
                     await db.execute(
                         stmt,
                         {
@@ -429,16 +464,56 @@ async def build_paired_accuracy(*, generated_at: Any = None, as_of: Optional[dat
                         },
                     )
                 ).mappings().all()
-                if len(rows) > CANDIDATE_CAP:
-                    # Unreachable inside one snapshot (the admitted counts sum
-                    # to <= the cap); refused rather than scored if it happens.
-                    return unavailable(
-                        REASON_FAILED,
-                        generated_at=generated_at,
-                        detail=f"legs returned {len(rows)} rows over a cap of {CANDIDATE_CAP}",
-                    )
-        return assemble(events, admission, rows, generated_at=generated_at)
+            )
+    return events, admission, rows
+
+
+class _Incoherent(RuntimeError):
+    """The legs disagree with the denominator admitted from the same snapshot."""
+
+
+async def build_paired_accuracy(*, generated_at: Any = None, as_of: Optional[datetime] = None) -> dict:
+    """Compute the block on its own bounded session. Never raises an ``Exception``.
+
+    Every failure becomes a typed ``unavailable`` and is logged at ERROR with its
+    traceback, so a broken producer is loud in Sentry while the curve still
+    publishes. A wall-budget expiry cancels the collection — the session's
+    ``finally`` closes it (rolling the read-only transaction back) and disposes
+    its engine — and reports ``timeout``. A cancellation of the CALLER is not
+    caught: the build that owns this call is the one that must see it.
+    """
+    as_of = as_of or datetime.now(timezone.utc)
+    started = time.monotonic()
+
+    def elapsed() -> int:
+        return round((time.monotonic() - started) * 1000)
+
+    try:
+        events, admission, rows = await asyncio.wait_for(_collect(as_of), WALL_BUDGET_S)
+        if len(rows) != admission["candidates"]:
+            # Unreachable inside one snapshot: the legs statement carries the
+            # count statement's WHERE plus the admitted ids, one row per outcome.
+            # Refused rather than scored, because a pair set that is not the
+            # admitted denominator is not the sample the block describes.
+            raise _Incoherent(
+                f"legs returned {len(rows)} rows for {admission['candidates']} admitted candidates"
+            )
+        return assemble(
+            events,
+            admission,
+            rows,
+            generated_at=generated_at,
+            collected_at=as_of,
+            collection_ms=elapsed(),
+        )
     except Exception as exc:  # noqa: BLE001 — typed absence; logged loudly below
-        reason = REASON_TIMEOUT if _is_timeout(exc) else REASON_FAILED
+        timed_out = isinstance(exc, asyncio.TimeoutError) or _is_timeout(exc)
+        reason = REASON_TIMEOUT if timed_out else REASON_FAILED
         logger.exception("calibration paired_accuracy unavailable (%s)", reason)
-        return unavailable(reason, generated_at=generated_at, detail=type(exc).__name__)
+        return unavailable(
+            reason,
+            generated_at=generated_at,
+            collected_at=as_of,
+            collection_ms=elapsed(),
+            detail=f"{type(exc).__name__}: {exc}",
+        )

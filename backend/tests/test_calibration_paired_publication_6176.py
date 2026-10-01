@@ -21,6 +21,7 @@ than a hand-written imitation of them.
 
 from __future__ import annotations
 
+import asyncio
 import inspect
 import json
 from datetime import datetime, timedelta, timezone
@@ -229,6 +230,28 @@ class TestExclusionsAreNamed:
         assert "ORDER BY ev.commence_time DESC, ev.id DESC" in sql
 
 
+class TestTheKernelBoundariesHold:
+    def test_an_in_game_price_is_never_the_final_leg(self):
+        snaps = _two_leg(0.55, 0.60) + [_snap(T0, 0.97), _snap(T0 + H, 0.99)]
+        row = _row(1, 1000, snaps, is_winner=True)
+        assert row["pair_class"] == kernel.PAIR_PAIRED
+        assert row["final_probability"] == 0.60
+
+    def test_no_opening_or_stored_close_can_pose_as_a_leg(self):
+        sql = kernel.paired_legs_sql(event_ids=":event_ids")
+        assert "opening_probability" not in sql
+        assert "calibration_probability" not in sql
+        assert "FROM futures_odds_snapshots" in sql
+
+    def test_a_stand_in_start_refuses_before_any_leg_is_read(self):
+        row = _row(1, 1000, _two_leg(0.5, 0.9), is_winner=True)
+        ticker = kernel.classify_pair(
+            _two_leg(0.5, 0.9), event=_Event(source="kalshi_ticker"), is_winner=True
+        )
+        assert row["pair_class"] == kernel.PAIR_PAIRED
+        assert ticker == (kernel.PAIR_START_NOT_REPORTED, None, None)
+
+
 class TestModelForecastsStaySeparate:
     def test_datagolf_gets_its_own_block_and_never_enters_the_market_number(self):
         market_only = _assemble(_events(4), _improving_rows(4))
@@ -365,7 +388,58 @@ class TestTheBoundedSession:
         assert legs_params["event_ids"] == [1000, 1001]
         assert legs_params["scan"] == 2001 and legs_params["cursor"] == 0
         assert block["status"] == cpp.STATUS_INCOMPLETE
-        assert block["generation_generated_at"] == "GEN"
+        assert block["published_with_generated_at"] == "GEN"
+        collector = block["collector"]
+        assert collector["collected_at"] == (T0 + 48 * H).isoformat()
+        assert collector["consistency"] == "one_repeatable_read_read_only_transaction"
+        assert collector["statement_timeout_ms"] == 5000 and collector["wall_budget_s"] == 15.0
+        assert isinstance(collector["collection_ms"], int)
+
+    @pytest.mark.asyncio
+    async def test_legs_that_disagree_with_the_admitted_denominator_are_refused(self, monkeypatch):
+        import app.tasks.base as base
+
+        session = _Session([[], _events(2), _improving_rows(2)[:3]])
+        monkeypatch.setattr(base, "get_task_session", _session_factory(session, {}))
+        block = await cpp.build_paired_accuracy()
+        assert block["status"] == cpp.STATUS_UNAVAILABLE and block["reason"] == cpp.REASON_FAILED
+        assert "3 rows for 4 admitted" in block["detail"]
+        assert block["market"] is None
+
+    @pytest.mark.asyncio
+    async def test_the_wall_budget_cancels_closes_and_reports_timeout(self, monkeypatch):
+        import app.tasks.base as base
+
+        class _Slow(_Session):
+            async def execute(self, statement, params=None):
+                if len(self.calls) == 1:
+                    await asyncio.sleep(5)
+                return await super().execute(statement, params)
+
+        seen: dict = {}
+        monkeypatch.setattr(base, "get_task_session", _session_factory(_Slow([[], []]), seen))
+        monkeypatch.setattr(cpp, "WALL_BUDGET_S", 0.05)
+
+        block = await cpp.build_paired_accuracy(generated_at="GEN")
+
+        assert seen["exit_exc"] is asyncio.CancelledError, "the session was not closed on the wall"
+        assert block["status"] == cpp.STATUS_UNAVAILABLE and block["reason"] == cpp.REASON_TIMEOUT
+        assert block["market"] is None and block["sample"] is None
+
+    @pytest.mark.asyncio
+    async def test_a_cancelled_caller_is_not_swallowed(self, monkeypatch):
+        import app.tasks.base as base
+
+        class _Hang(_Session):
+            async def execute(self, statement, params=None):
+                await asyncio.sleep(5)
+
+        monkeypatch.setattr(base, "get_task_session", _session_factory(_Hang([]), {}))
+        task = asyncio.ensure_future(cpp.build_paired_accuracy())
+        await asyncio.sleep(0.01)
+        task.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await task
 
     @pytest.mark.asyncio
     async def test_no_events_runs_no_legs_query(self, monkeypatch):
@@ -397,7 +471,7 @@ class TestTheBoundedSession:
         assert seen["exit_exc"] is type(exc), "the session never saw the failure"
         assert block["status"] == cpp.STATUS_UNAVAILABLE and block["reason"] == reason
         assert block["market"] is None and block["model"] is None and block["sample"] is None
-        assert block["generation_generated_at"] == "GEN"
+        assert block["published_with_generated_at"] == "GEN"
 
 
 # ---------------------------------------------------------------------------
@@ -472,15 +546,12 @@ def wrapper(monkeypatch):
 
     monkeypatch.setattr(gate, "evaluate_publish", fake_gate)
     monkeypatch.setattr(gate, "gate_ledger_record", lambda v: {})
-    monkeypatch.setattr(gate, "_parse_generated_at", lambda s: None)
 
-    def fake_envelope(**kw):
-        captured["durable_payload"] = json.loads(json.dumps(kw["payload"]))
-        return SimpleNamespace(generation=1)
-
-    monkeypatch.setattr(dstate, "DurableEnvelope", SimpleNamespace(build=fake_envelope))
-
+    # The REAL DurableEnvelope and generation stamp: the block has to survive
+    # the envelope the durable store actually receives, checksum and all.
     async def fake_publish(envelope):
+        captured["envelope"] = envelope
+        captured["durable_payload"] = json.loads(json.dumps(envelope.payload))
         return {"status": "ok"}
 
     monkeypatch.setattr(ds, "publish_snapshot_standalone", fake_publish)
@@ -500,7 +571,7 @@ class TestSameGenerationPublication:
 
         async def fake_build(*, generated_at=None, as_of=None):
             calls.append(generated_at)
-            return _assemble(_events(3), _improving_rows(3)) | {"generation_generated_at": generated_at}
+            return _assemble(_events(3), _improving_rows(3)) | {"published_with_generated_at": generated_at}
 
         monkeypatch.setattr(cpp, "build_paired_accuracy", fake_build)
         summary = await pc._run_calibration_main_build()
@@ -511,8 +582,37 @@ class TestSameGenerationPublication:
         for payload in (captured["gate_saw"], captured["durable_payload"], redis_payload):
             block = payload["paired_accuracy"]
             assert block["schema"] == cpp.SCHEMA
-            assert block["generation_generated_at"] == payload["generated_at"]
+            assert block["published_with_generated_at"] == payload["generated_at"]
         assert captured["durable_payload"] == redis_payload
+        envelope = captured["envelope"]
+        from app.utils import durable_state as dstate
+
+        assert envelope.checksum == dstate.checksum_payload(envelope.payload)
+        assert envelope.generated_at == datetime(2026, 10, 1, 17, tzinfo=timezone.utc)
+
+    @pytest.mark.asyncio
+    async def test_the_samples_own_clock_is_not_the_curves(self, wrapper, monkeypatch):
+        """The real builder over a stubbed session: collected_at is its own instant."""
+        import app.tasks.base as base
+
+        pc, captured = wrapper
+        build_ctx = base.get_task_session
+        session = _Session([[], _events(3), _improving_rows(3)])
+
+        def factory(**kw):
+            if kw.get("statement_timeout_ms") == cpp.STATEMENT_TIMEOUT_MS:
+                return _session_factory(session, {})(**kw)
+            return build_ctx(**kw)
+
+        monkeypatch.setattr(base, "get_task_session", factory)
+        await pc._run_calibration_main_build()
+
+        payload = json.loads(captured["redis_json"])
+        block = payload["paired_accuracy"]
+        assert block["status"] == cpp.STATUS_AVAILABLE
+        assert block["published_with_generated_at"] == payload["generated_at"]
+        assert block["collector"]["collected_at"] != payload["generated_at"]
+        assert "staged_at" not in json.dumps(block)
 
     @pytest.mark.asyncio
     async def test_a_broken_producer_cannot_block_the_curve(self, wrapper, monkeypatch):
@@ -556,10 +656,15 @@ class TestTheBankAndTheRouteAreUntouched:
     def test_the_build_input_fingerprint_does_not_move(self):
         from app.tasks import precompute_calibration as pc
 
-        before = pc._main_input_fingerprint()
+        prints = (
+            pc._main_input_fingerprint,
+            pc.population_predicate_fingerprint,
+            pc.staged_unit_fingerprint,
+        )
+        before = [fn() for fn in prints]
         cpp.event_selection_sql()
         kernel.paired_legs_sql(event_ids=":event_ids")
-        assert pc._main_input_fingerprint() == before
+        assert [fn() for fn in prints] == before
 
         hashed = "".join(
             inspect.getsource(fn)
@@ -581,3 +686,52 @@ class TestTheBankAndTheRouteAreUntouched:
         source = inspect.getsource(route)
         assert "calibration_paired_publication" not in source
         assert "paired_legs_sql" not in source
+
+
+class TestTheRouteServesTheBlockFromTheCacheOnly:
+    """GET never computes; whatever tier answers carries the block verbatim."""
+
+    @pytest.fixture(autouse=True)
+    def _fresh_route_process(self):
+        from tests.test_calibration_availability_envelope_324 import _fresh_process
+
+        yield from _fresh_process.__wrapped__()
+
+    def _payload_with_block(self):
+        from tests.test_calibration_availability_envelope_324 import _payload
+
+        payload = _payload()
+        payload["paired_accuracy"] = _assemble(_events(3), _improving_rows(3)) | {
+            "published_with_generated_at": payload["generated_at"]
+        }
+        return payload
+
+    @pytest.mark.asyncio
+    async def test_the_redis_main_tier(self, monkeypatch, healthy_staged_bank):
+        from app.routes import calibration
+        from tests.test_calibration_availability_envelope_324 import _FakeRedis, _no_compute, _use
+
+        payload = self._payload_with_block()
+        _use(monkeypatch, _FakeRedis(main=json.dumps(payload)))
+        _no_compute(monkeypatch)
+
+        out = await calibration.public_calibration(db=object())
+        assert out["paired_accuracy"] == json.loads(json.dumps(payload["paired_accuracy"]))
+
+    @pytest.mark.asyncio
+    async def test_the_durable_tier(self, monkeypatch):
+        from app.routes import calibration
+        from tests.test_calibration_availability_envelope_324 import (
+            _DeadRedis,
+            _durable_db,
+            _no_compute,
+            _use,
+        )
+
+        payload = self._payload_with_block()
+        _use(monkeypatch, _DeadRedis())
+        _no_compute(monkeypatch)
+
+        out = await calibration.public_calibration(db=_durable_db(payload))
+        assert out["provenance"]["source"] == "durable"
+        assert out["paired_accuracy"] == payload["paired_accuracy"]
