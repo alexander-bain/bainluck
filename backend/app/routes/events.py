@@ -24940,6 +24940,82 @@ async def folded_market_read_filters(
     return market_event_ids, filters
 
 
+#: #10103 — the one sport whose player props resolve their subject through
+#: the game's own ESPN box (`box_score_data.player_identities`). Widened only
+#: together with `espn_api.BOX_SCORE_IDENTITY_SPORTS`, which decides what is
+#: stored.
+_PROP_IDENTITY_SPORT = "americanfootball_nfl"
+
+
+def _game_player_identity_index(
+    box_score_data, home_espn_team_id, away_espn_team_id
+) -> dict[str, dict]:
+    """The game's athletes by exact full name, only where the name is unique.
+
+    #10103: a prop's team and picture were borrowed from today's
+    ``teams.roster_players``, so a player traded after the game moved teams on
+    the old game's page. The box ESPN wrote for THIS game records which team
+    each athlete played for, by ESPN id. This turns it into a lookup and
+    refuses anything it cannot vouch for:
+
+    - PROVIDER MISMATCH refuses the whole map. Every entry's team must be one
+      of this game's two teams by OUR ``Team.espn_id``, on the side ESPN's own
+      header gave it. A box naming a third team, or with home and away swapped
+      against our row, is not evidence about this page.
+    - A DUPLICATE name (two athletes, or one athlete under two teams) refuses
+      that name.
+    - A MALFORMED entry (no digit athlete id, no team) refuses its name rather
+      than being skipped, so a dropped twin cannot make a shared name look
+      unique.
+
+    Keys are ``name.casefold()``. Nothing partial: the caller looks up the
+    complete prop subject or nothing.
+    """
+    if not isinstance(box_score_data, dict) or box_score_data.get("source") != "espn":
+        return {}
+    entries = box_score_data.get("player_identities")
+    if not isinstance(entries, list) or not entries:
+        return {}
+    home = str(home_espn_team_id or "").strip()
+    away = str(away_espn_team_id or "").strip()
+    if not home or not away or home == away:
+        return {}
+    side_of_team = {home: "home", away: "away"}
+
+    by_name: dict[str, list[dict]] = {}
+    refused: set[str] = set()
+    for entry in entries:
+        if not isinstance(entry, dict):
+            continue
+        name = str(entry.get("name") or "").strip()
+        if not name:
+            continue
+        key = name.casefold()
+        athlete_id = str(entry.get("athlete_id") or "").strip()
+        team_id = str(entry.get("team_id") or "").strip()
+        if not athlete_id.isdigit() or not team_id:
+            refused.add(key)
+            continue
+        side = side_of_team.get(team_id)
+        if side is None or entry.get("side") != side:
+            return {}
+        by_name.setdefault(key, []).append({
+            "athlete_id": athlete_id,
+            "team_id": team_id,
+            "side": side,
+            "headshot": entry.get("headshot") or None,
+        })
+
+    index: dict[str, dict] = {}
+    for key, group in by_name.items():
+        if key in refused:
+            continue
+        if len({(g["athlete_id"], g["team_id"]) for g in group}) != 1:
+            continue
+        index[key] = group[0]
+    return index
+
+
 async def _build_game_markets(
     event_id: int,
     db: AsyncSession,
@@ -26762,6 +26838,63 @@ async def _build_game_markets(
                             break
                     if "player_team" in prop:
                         break
+
+    # 10b. #10103 — an NFL prop's athlete, team and picture come from the box
+    # ESPN wrote for THIS game, when the complete subject names exactly one
+    # athlete in it. The roster pass above stays as the fallback for every prop
+    # this cannot vouch for (pregame, no box, duplicate name, provider
+    # mismatch), and those props carry no provider identity.
+    _bsd = event.box_score_data
+    if (
+        player_props
+        and sport_key == _PROP_IDENTITY_SPORT
+        and isinstance(_bsd, dict)
+        and _bsd.get("player_identities")
+    ):
+        identity_index: dict[str, dict] = {}
+        try:
+            _team_espn = dict((await db.execute(
+                select(Team.id, Team.espn_id).where(
+                    Team.id.in_([event.home_team_id, event.away_team_id])
+                )
+            )).all())
+            identity_index = _game_player_identity_index(
+                _bsd,
+                _team_espn.get(event.home_team_id),
+                _team_espn.get(event.away_team_id),
+            )
+        except Exception as exc:
+            logger.warning(
+                "game-markets %s: game identity map refused on error, roster "
+                "fallback (%s)", event_id, exc,
+            )
+            identity_index = {}
+        if identity_index:
+            for prop in player_props:
+                name = prop.get("market_name", "")
+                colon_idx = name.find(":")
+                after_colon = name[colon_idx + 1:].strip() if colon_idx >= 0 else ""
+                outcome = prop.get("outcome_name", "")
+                outcome_colon = outcome.find(":")
+                outcome_player = outcome[:outcome_colon].strip() if outcome_colon > 0 else ""
+                for candidate in (after_colon, outcome_player):
+                    who = identity_index.get(candidate.casefold()) if candidate else None
+                    if who is None:
+                        continue
+                    prop["player_team"] = who["side"]
+                    # The game's own picture or none: a roster headshot found
+                    # by name may be someone else's.
+                    if who["headshot"]:
+                        prop["player_headshot"] = who["headshot"]
+                    else:
+                        prop.pop("player_headshot", None)
+                    prop["player_entity_key"] = f"espn:athlete:{who['athlete_id']}"
+                    # D55: ESPN team ids collide across sports ('2' is the
+                    # Bills, the Celtics, the Red Sox...), so the key names it.
+                    prop["player_team_entity_key"] = (
+                        f"espn:team:{_PROP_IDENTITY_SPORT}:{who['team_id']}"
+                    )
+                    break
 
     # #1588 — a window-bounded prop must not quote a probability once its window
     # has closed. Alex saw "Will there be a run scored in the first inning?" at

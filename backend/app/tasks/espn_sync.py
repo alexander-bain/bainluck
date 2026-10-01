@@ -4225,6 +4225,11 @@ async def _backfill_box_scores(
                             if scores.get("home_period_scores"):
                                 box_data["home_period_scores"] = scores["home_period_scores"]
                                 box_data["away_period_scores"] = scores.get("away_period_scores", [])
+                            # #10103: who played for whom in THIS game, by ESPN
+                            # id, beside the name-keyed numbers. Rides the same
+                            # whole-dict write as the rest of the box.
+                            if context.get("box_score_player_identities"):
+                                box_data["player_identities"] = context["box_score_player_identities"]
                             event.box_score_data = box_data
                             stats["fetched"] += 1
                         elif event.box_score_data is None:
