@@ -39,6 +39,7 @@ from app.utils.kalshi_retention import PROVABLY_PURGED_AGE_DAYS
 from app.utils.market_staleness import (
     expired_ladder_rungs,
     should_exclude_from_featured,
+    stale_observation_keys,
 )
 
 logger = logging.getLogger(__name__)
@@ -587,7 +588,8 @@ def _market_row(market: FuturesMarket, *, now: datetime) -> dict | None:
     `expired_ladder_rungs` is IMPORTED, not re-derived. It already carries the
     parsing this needs and the two judgements that make it safe: a year-less
     rung more than `_BARE_DATE_LOOKBACK_DAYS` past reads as NEXT year's and is
-    treated as live ("Before February" on this page today), and a past-dated
+    treated as live ("Before February" on this page today — whose stale PRICE
+    is withheld separately since #10079), and a past-dated
     rung at or above `EXPIRED_RUNG_MAX_PROBABILITY` is the ladder's ANSWER
     rather than a ghost and keeps its place. Unparseable ⇒ live, in every arm.
 
@@ -661,7 +663,33 @@ def _market_row(market: FuturesMarket, *, now: datetime) -> dict | None:
     # expired PRICED one. Filtering first lets a real price take the slot that
     # a NULL would otherwise have spent. `outcome_count` below still reads the
     # full `outcomes` list, so the ladder's arity does not move.
-    priced = [o for o in outcomes if o.current_probability is not None]
+    #
+    # #10079 — AND A RUNG ITS BOARD STOPPED OBSERVING IS NOT PRICED EITHER.
+    # `expired_ladder_rungs` deliberately spares a year-less rung more than
+    # `_BARE_DATE_LOOKBACK_DAYS` past (see the docstring), so on 2026-10-01 the
+    # Walz card printed "Before February 1%" — Kalshi `…-TWAL-26FEB01`, a Feb 1
+    # 2026 deadline, last written 2026-04-13 while its siblings were written
+    # that morning. `/api/futures/108678` serves that leg as `probability: null`
+    # through `stale_observation_keys` (#7537), the same rule read here over the
+    # same `(id, last_updated)` pairs: relative to the board's newest stamp,
+    # never the clock, so our own outage withholds nothing. Open boards only,
+    # as on the page; the query above is open-only, so the default is "open".
+    if getattr(market, "status", "open") == "open":
+        unobserved = stale_observation_keys(
+            (o.id, getattr(o, "last_updated", None)) for o in outcomes
+        )
+    else:
+        unobserved = set()
+    priced = [
+        o
+        for o in outcomes
+        if o.current_probability is not None and o.id not in unobserved
+    ]
+    # The newest leg is never stale, but it may be the unpriced one: nothing
+    # the page prices is left to serve, and a card is withdrawn rather than
+    # headlining a number its page refuses (#8083's rule on /entertainment).
+    if not priced:
+        return None
     expired = expired_ladder_rungs(
         # #7784: the stamp rides along with the price. The exemption this
         # docstring names — a past-dated rung at or above
@@ -698,6 +726,18 @@ def _market_row(market: FuturesMarket, *, now: datetime) -> dict | None:
     # NAME, and never the whole board. The page's query is open markets only,
     # so the page's `status == "open"` gate is already true here.
     live = [o for o in priced if o.name not in expired]
+    # #10079 — "never the whole board" below means a ladder whose rungs have ALL
+    # passed keeps them; it does not license a passed rung standing in for live
+    # ones the page withholds. Measured 2026-10-01: `Natalie Harp White House
+    # departure announced?` (59693666) holds four live rungs last written
+    # 2026-09-10 beside a settled `Before Sep 1, 2026` written that day, so the
+    # page prices none of the four, and without this the card headlined
+    # "Before Sep 1, 2026 0%". Nothing live the page prices ⇒ no card.
+    if not live and unobserved and any(
+        o.current_probability is not None and o.name not in expired
+        for o in outcomes
+    ):
+        return None
     ranked = sorted(
         live or priced,
         key=lambda o: (o.name in expired, -float(o.current_probability)),
