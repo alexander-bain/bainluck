@@ -1,0 +1,684 @@
+{
+ "_source": "GET /api/events/14780550/game-markets, 2026-10-01 ~22:57Z, props_script rows of the Receiving Yards and Touchdowns families only (#1626 slice 6)",
+ "props_script": [
+  {
+   "key": "Pittsburgh vs Cleveland: Receiving Yards|Darnell Washington: 15+",
+   "label": "Darnell Washington: 15+",
+   "pregame_mark": 0.515,
+   "current": 0.555,
+   "settled": false
+  },
+  {
+   "key": "Pittsburgh vs Cleveland: Receiving Yards|Darnell Washington: 25+",
+   "label": "Darnell Washington: 25+",
+   "pregame_mark": 0.31,
+   "current": 0.335,
+   "settled": false
+  },
+  {
+   "key": "Pittsburgh vs Cleveland: Receiving Yards|Darnell Washington: 40+",
+   "label": "Darnell Washington: 40+",
+   "pregame_mark": 0.14,
+   "current": 0.1,
+   "settled": false
+  },
+  {
+   "key": "Pittsburgh vs Cleveland: Receiving Yards|Darnell Washington: 50+",
+   "label": "Darnell Washington: 50+",
+   "pregame_mark": 0.065,
+   "current": 0.095,
+   "settled": false
+  },
+  {
+   "key": "Pittsburgh vs Cleveland: Receiving Yards|Darnell Washington: 60+",
+   "label": "Darnell Washington: 60+",
+   "pregame_mark": 0.04,
+   "current": 0.065,
+   "settled": false
+  },
+  {
+   "key": "Pittsburgh vs Cleveland: Receiving Yards|Michael Pittman Jr.: 15+",
+   "label": "Michael Pittman Jr.: 15+",
+   "pregame_mark": 0.785,
+   "current": 0.775,
+   "settled": false
+  },
+  {
+   "key": "Pittsburgh vs Cleveland: Receiving Yards|Michael Pittman Jr.: 25+",
+   "label": "Michael Pittman Jr.: 25+",
+   "pregame_mark": 0.635,
+   "current": 0.635,
+   "settled": false
+  },
+  {
+   "key": "Pittsburgh vs Cleveland: Receiving Yards|Michael Pittman Jr.: 40+",
+   "label": "Michael Pittman Jr.: 40+",
+   "pregame_mark": 0.415,
+   "current": 0.405,
+   "settled": false
+  },
+  {
+   "key": "Pittsburgh vs Cleveland: Receiving Yards|Michael Pittman Jr.: 50+",
+   "label": "Michael Pittman Jr.: 50+",
+   "pregame_mark": 0.3,
+   "current": 0.295,
+   "settled": false
+  },
+  {
+   "key": "Pittsburgh vs Cleveland: Receiving Yards|Michael Pittman Jr.: 60+",
+   "label": "Michael Pittman Jr.: 60+",
+   "pregame_mark": 0.215,
+   "current": 0.125,
+   "settled": false
+  },
+  {
+   "key": "Pittsburgh vs Cleveland: Receiving Yards|Michael Pittman Jr.: 70+",
+   "label": "Michael Pittman Jr.: 70+",
+   "pregame_mark": 0.115,
+   "current": 0.09,
+   "settled": false
+  },
+  {
+   "key": "Pittsburgh vs Cleveland: Receiving Yards|Michael Pittman Jr.: 80+",
+   "label": "Michael Pittman Jr.: 80+",
+   "pregame_mark": 0.085,
+   "current": 0.065,
+   "settled": false
+  },
+  {
+   "key": "Pittsburgh vs Cleveland: Receiving Yards|Michael Pittman Jr.: 90+",
+   "label": "Michael Pittman Jr.: 90+",
+   "pregame_mark": 0.06,
+   "current": 0.055,
+   "settled": false
+  },
+  {
+   "key": "Pittsburgh vs Cleveland: Receiving Yards|DK Metcalf: 15+",
+   "label": "DK Metcalf: 15+",
+   "pregame_mark": 0.825,
+   "current": 0.855,
+   "settled": false
+  },
+  {
+   "key": "Pittsburgh vs Cleveland: Receiving Yards|DK Metcalf: 25+",
+   "label": "DK Metcalf: 25+",
+   "pregame_mark": 0.7,
+   "current": 0.755,
+   "settled": false
+  },
+  {
+   "key": "Pittsburgh vs Cleveland: Receiving Yards|DK Metcalf: 40+",
+   "label": "DK Metcalf: 40+",
+   "pregame_mark": 0.515,
+   "current": 0.585,
+   "settled": false
+  },
+  {
+   "key": "Pittsburgh vs Cleveland: Receiving Yards|DK Metcalf: 50+",
+   "label": "DK Metcalf: 50+",
+   "pregame_mark": 0.4,
+   "current": 0.455,
+   "settled": false
+  },
+  {
+   "key": "Pittsburgh vs Cleveland: Receiving Yards|DK Metcalf: 60+",
+   "label": "DK Metcalf: 60+",
+   "pregame_mark": 0.305,
+   "current": 0.345,
+   "settled": false
+  },
+  {
+   "key": "Pittsburgh vs Cleveland: Receiving Yards|DK Metcalf: 70+",
+   "label": "DK Metcalf: 70+",
+   "pregame_mark": 0.225,
+   "current": 0.265,
+   "settled": false
+  },
+  {
+   "key": "Pittsburgh vs Cleveland: Receiving Yards|DK Metcalf: 80+",
+   "label": "DK Metcalf: 80+",
+   "pregame_mark": 0.16,
+   "current": 0.125,
+   "settled": false
+  },
+  {
+   "key": "Pittsburgh vs Cleveland: Receiving Yards|DK Metcalf: 90+",
+   "label": "DK Metcalf: 90+",
+   "pregame_mark": 0.11,
+   "current": 0.09,
+   "settled": false
+  },
+  {
+   "key": "Pittsburgh vs Cleveland: Receiving Yards|DK Metcalf: 100+",
+   "label": "DK Metcalf: 100+",
+   "pregame_mark": 0.07,
+   "current": 0.09,
+   "settled": false
+  },
+  {
+   "key": "Pittsburgh vs Cleveland: Receiving Yards|DK Metcalf: 110+",
+   "label": "DK Metcalf: 110+",
+   "pregame_mark": 0.045,
+   "current": 0.065,
+   "settled": false
+  },
+  {
+   "key": "Pittsburgh vs Cleveland: Receiving Yards|Harold Fannin Jr.: 15+",
+   "label": "Harold Fannin Jr.: 15+",
+   "pregame_mark": 0.875,
+   "current": 0.865,
+   "settled": false
+  },
+  {
+   "key": "Pittsburgh vs Cleveland: Receiving Yards|Harold Fannin Jr.: 25+",
+   "label": "Harold Fannin Jr.: 25+",
+   "pregame_mark": 0.74,
+   "current": 0.725,
+   "settled": false
+  },
+  {
+   "key": "Pittsburgh vs Cleveland: Receiving Yards|Harold Fannin Jr.: 40+",
+   "label": "Harold Fannin Jr.: 40+",
+   "pregame_mark": 0.515,
+   "current": 0.515,
+   "settled": false
+  },
+  {
+   "key": "Pittsburgh vs Cleveland: Receiving Yards|Harold Fannin Jr.: 50+",
+   "label": "Harold Fannin Jr.: 50+",
+   "pregame_mark": 0.375,
+   "current": 0.365,
+   "settled": false
+  },
+  {
+   "key": "Pittsburgh vs Cleveland: Receiving Yards|Harold Fannin Jr.: 60+",
+   "label": "Harold Fannin Jr.: 60+",
+   "pregame_mark": 0.26,
+   "current": 0.255,
+   "settled": false
+  },
+  {
+   "key": "Pittsburgh vs Cleveland: Receiving Yards|Harold Fannin Jr.: 70+",
+   "label": "Harold Fannin Jr.: 70+",
+   "pregame_mark": 0.165,
+   "current": 0.11,
+   "settled": false
+  },
+  {
+   "key": "Pittsburgh vs Cleveland: Receiving Yards|Harold Fannin Jr.: 80+",
+   "label": "Harold Fannin Jr.: 80+",
+   "pregame_mark": 0.105,
+   "current": 0.075,
+   "settled": false
+  },
+  {
+   "key": "Pittsburgh vs Cleveland: Receiving Yards|Harold Fannin Jr.: 90+",
+   "label": "Harold Fannin Jr.: 90+",
+   "pregame_mark": 0.06,
+   "current": 0.06,
+   "settled": false
+  },
+  {
+   "key": "Pittsburgh vs Cleveland: Receiving Yards|Denzel Boston: 15+",
+   "label": "Denzel Boston: 15+",
+   "pregame_mark": 0.795,
+   "current": 0.795,
+   "settled": false
+  },
+  {
+   "key": "Pittsburgh vs Cleveland: Receiving Yards|Denzel Boston: 25+",
+   "label": "Denzel Boston: 25+",
+   "pregame_mark": 0.65,
+   "current": 0.665,
+   "settled": false
+  },
+  {
+   "key": "Pittsburgh vs Cleveland: Receiving Yards|Denzel Boston: 40+",
+   "label": "Denzel Boston: 40+",
+   "pregame_mark": 0.445,
+   "current": 0.465,
+   "settled": false
+  },
+  {
+   "key": "Pittsburgh vs Cleveland: Receiving Yards|Denzel Boston: 50+",
+   "label": "Denzel Boston: 50+",
+   "pregame_mark": 0.325,
+   "current": 0.355,
+   "settled": false
+  },
+  {
+   "key": "Pittsburgh vs Cleveland: Receiving Yards|Denzel Boston: 60+",
+   "label": "Denzel Boston: 60+",
+   "pregame_mark": 0.235,
+   "current": 0.265,
+   "settled": false
+  },
+  {
+   "key": "Pittsburgh vs Cleveland: Receiving Yards|Denzel Boston: 70+",
+   "label": "Denzel Boston: 70+",
+   "pregame_mark": 0.16,
+   "current": 0.115,
+   "settled": false
+  },
+  {
+   "key": "Pittsburgh vs Cleveland: Receiving Yards|Denzel Boston: 80+",
+   "label": "Denzel Boston: 80+",
+   "pregame_mark": 0.105,
+   "current": 0.095,
+   "settled": false
+  },
+  {
+   "key": "Pittsburgh vs Cleveland: Receiving Yards|Denzel Boston: 90+",
+   "label": "Denzel Boston: 90+",
+   "pregame_mark": 0.065,
+   "current": 0.065,
+   "settled": false
+  },
+  {
+   "key": "Pittsburgh vs Cleveland: Receiving Yards|Denzel Boston: 100+",
+   "label": "Denzel Boston: 100+",
+   "pregame_mark": 0.04,
+   "current": 0.065,
+   "settled": false
+  },
+  {
+   "key": "Pittsburgh vs Cleveland: Receiving Yards|Denzel Boston: 110+",
+   "label": "Denzel Boston: 110+",
+   "pregame_mark": 0.03,
+   "current": 0.055,
+   "settled": false
+  },
+  {
+   "key": "Pittsburgh vs Cleveland: Receiving Yards|Pat Freiermuth: 15+",
+   "label": "Pat Freiermuth: 15+",
+   "pregame_mark": 0.765,
+   "current": 0.745,
+   "settled": false
+  },
+  {
+   "key": "Pittsburgh vs Cleveland: Receiving Yards|Pat Freiermuth: 25+",
+   "label": "Pat Freiermuth: 25+",
+   "pregame_mark": 0.58,
+   "current": 0.545,
+   "settled": false
+  },
+  {
+   "key": "Pittsburgh vs Cleveland: Receiving Yards|Pat Freiermuth: 40+",
+   "label": "Pat Freiermuth: 40+",
+   "pregame_mark": 0.33,
+   "current": 0.305,
+   "settled": false
+  },
+  {
+   "key": "Pittsburgh vs Cleveland: Receiving Yards|Pat Freiermuth: 50+",
+   "label": "Pat Freiermuth: 50+",
+   "pregame_mark": 0.215,
+   "current": 0.125,
+   "settled": false
+  },
+  {
+   "key": "Pittsburgh vs Cleveland: Receiving Yards|Pat Freiermuth: 60+",
+   "label": "Pat Freiermuth: 60+",
+   "pregame_mark": 0.125,
+   "current": 0.08,
+   "settled": false
+  },
+  {
+   "key": "Pittsburgh vs Cleveland: Receiving Yards|Pat Freiermuth: 70+",
+   "label": "Pat Freiermuth: 70+",
+   "pregame_mark": 0.075,
+   "current": 0.055,
+   "settled": false
+  },
+  {
+   "key": "Pittsburgh vs Cleveland: Receiving Yards|Pat Freiermuth: 80+",
+   "label": "Pat Freiermuth: 80+",
+   "pregame_mark": 0.045,
+   "current": 0.05,
+   "settled": false
+  },
+  {
+   "key": "Pittsburgh vs Cleveland: Receiving Yards|Jaylen Warren: 15+",
+   "label": "Jaylen Warren: 15+",
+   "pregame_mark": 0.65,
+   "current": 0.715,
+   "settled": false
+  },
+  {
+   "key": "Pittsburgh vs Cleveland: Receiving Yards|Jaylen Warren: 25+",
+   "label": "Jaylen Warren: 25+",
+   "pregame_mark": 0.435,
+   "current": 0.525,
+   "settled": false
+  },
+  {
+   "key": "Pittsburgh vs Cleveland: Receiving Yards|Jaylen Warren: 40+",
+   "label": "Jaylen Warren: 40+",
+   "pregame_mark": 0.22,
+   "current": 0.285,
+   "settled": false
+  },
+  {
+   "key": "Pittsburgh vs Cleveland: Receiving Yards|Jaylen Warren: 50+",
+   "label": "Jaylen Warren: 50+",
+   "pregame_mark": 0.115,
+   "current": 0.165,
+   "settled": false
+  },
+  {
+   "key": "Pittsburgh vs Cleveland: Receiving Yards|Jaylen Warren: 60+",
+   "label": "Jaylen Warren: 60+",
+   "pregame_mark": 0.065,
+   "current": 0.105,
+   "settled": false
+  },
+  {
+   "key": "Pittsburgh vs Cleveland: Receiving Yards|Jaylen Warren: 70+",
+   "label": "Jaylen Warren: 70+",
+   "pregame_mark": 0.045,
+   "current": 0.065,
+   "settled": false
+  },
+  {
+   "key": "Pittsburgh vs Cleveland: Receiving Yards|Roman Wilson: 15+",
+   "label": "Roman Wilson: 15+",
+   "pregame_mark": 0.65,
+   "current": 0.605,
+   "settled": false
+  },
+  {
+   "key": "Pittsburgh vs Cleveland: Receiving Yards|Roman Wilson: 25+",
+   "label": "Roman Wilson: 25+",
+   "pregame_mark": 0.465,
+   "current": 0.405,
+   "settled": false
+  },
+  {
+   "key": "Pittsburgh vs Cleveland: Receiving Yards|Roman Wilson: 40+",
+   "label": "Roman Wilson: 40+",
+   "pregame_mark": 0.245,
+   "current": 0.225,
+   "settled": false
+  },
+  {
+   "key": "Pittsburgh vs Cleveland: Receiving Yards|Roman Wilson: 50+",
+   "label": "Roman Wilson: 50+",
+   "pregame_mark": 0.15,
+   "current": 0.105,
+   "settled": false
+  },
+  {
+   "key": "Pittsburgh vs Cleveland: Receiving Yards|Roman Wilson: 60+",
+   "label": "Roman Wilson: 60+",
+   "pregame_mark": 0.095,
+   "current": 0.07,
+   "settled": false
+  },
+  {
+   "key": "Pittsburgh vs Cleveland: Receiving Yards|Roman Wilson: 70+",
+   "label": "Roman Wilson: 70+",
+   "pregame_mark": 0.065,
+   "current": 0.065,
+   "settled": false
+  },
+  {
+   "key": "Pittsburgh vs Cleveland: Receiving Yards|Jerry Jeudy: 15+",
+   "label": "Jerry Jeudy: 15+",
+   "pregame_mark": 0.465,
+   "current": 0.495,
+   "settled": false
+  },
+  {
+   "key": "Pittsburgh vs Cleveland: Receiving Yards|Jerry Jeudy: 25+",
+   "label": "Jerry Jeudy: 25+",
+   "pregame_mark": 0.29,
+   "current": 0.315,
+   "settled": false
+  },
+  {
+   "key": "Pittsburgh vs Cleveland: Receiving Yards|Jerry Jeudy: 40+",
+   "label": "Jerry Jeudy: 40+",
+   "pregame_mark": 0.12,
+   "current": 0.165,
+   "settled": false
+  },
+  {
+   "key": "Pittsburgh vs Cleveland: Receiving Yards|Jerry Jeudy: 50+",
+   "label": "Jerry Jeudy: 50+",
+   "pregame_mark": 0.065,
+   "current": 0.095,
+   "settled": false
+  },
+  {
+   "key": "Pittsburgh vs Cleveland: Receiving Yards|Jerry Jeudy: 60+",
+   "label": "Jerry Jeudy: 60+",
+   "pregame_mark": 0.04,
+   "current": 0.07,
+   "settled": false
+  },
+  {
+   "key": "Pittsburgh vs Cleveland: Receiving Yards|Raheim Sanders: 15+",
+   "label": "Raheim Sanders: 15+",
+   "pregame_mark": 0.425,
+   "current": 0.435,
+   "settled": false
+  },
+  {
+   "key": "Pittsburgh vs Cleveland: Receiving Yards|Raheim Sanders: 25+",
+   "label": "Raheim Sanders: 25+",
+   "pregame_mark": 0.255,
+   "current": 0.235,
+   "settled": false
+  },
+  {
+   "key": "Pittsburgh vs Cleveland: Receiving Yards|Raheim Sanders: 40+",
+   "label": "Raheim Sanders: 40+",
+   "pregame_mark": 0.095,
+   "current": 0.095,
+   "settled": false
+  },
+  {
+   "key": "Pittsburgh vs Cleveland: Receiving Yards|Quinshon Judkins: 15+",
+   "label": "Quinshon Judkins: 15+",
+   "pregame_mark": 0.45,
+   "current": 0.405,
+   "settled": false
+  },
+  {
+   "key": "Pittsburgh vs Cleveland: Receiving Yards|Quinshon Judkins: 25+",
+   "label": "Quinshon Judkins: 25+",
+   "pregame_mark": 0.265,
+   "current": 0.225,
+   "settled": false
+  },
+  {
+   "key": "Pittsburgh vs Cleveland: Receiving Yards|Quinshon Judkins: 40+",
+   "label": "Quinshon Judkins: 40+",
+   "pregame_mark": 0.105,
+   "current": 0.075,
+   "settled": false
+  },
+  {
+   "key": "Pittsburgh vs Cleveland: Receiving Yards|Germie Bernard: 15+",
+   "label": "Germie Bernard: 15+",
+   "pregame_mark": 0.39,
+   "current": 0.345,
+   "settled": false
+  },
+  {
+   "key": "Pittsburgh vs Cleveland: Receiving Yards|Germie Bernard: 25+",
+   "label": "Germie Bernard: 25+",
+   "pregame_mark": 0.205,
+   "current": 0.205,
+   "settled": false
+  },
+  {
+   "key": "Pittsburgh vs Cleveland: Receiving Yards|Germie Bernard: 40+",
+   "label": "Germie Bernard: 40+",
+   "pregame_mark": 0.09,
+   "current": 0.095,
+   "settled": false
+  },
+  {
+   "key": "Pittsburgh vs Cleveland: Receiving Yards|Germie Bernard: 50+",
+   "label": "Germie Bernard: 50+",
+   "pregame_mark": 0.05,
+   "current": 0.055,
+   "settled": false
+  },
+  {
+   "key": "Pittsburgh vs Cleveland: Receiving Yards|Blake Whiteheart: 15+",
+   "label": "Blake Whiteheart: 15+",
+   "pregame_mark": 0.21,
+   "current": 0.185,
+   "settled": false
+  },
+  {
+   "key": "Pittsburgh vs Cleveland: Receiving Yards|Blake Whiteheart: 25+",
+   "label": "Blake Whiteheart: 25+",
+   "pregame_mark": 0.105,
+   "current": 0.085,
+   "settled": false
+  },
+  {
+   "key": "Pittsburgh vs Cleveland: Touchdowns|Jaylen Warren: 1+",
+   "label": "Jaylen Warren: 1+",
+   "pregame_mark": 0.475,
+   "current": 0.485,
+   "settled": false
+  },
+  {
+   "key": "Pittsburgh vs Cleveland: Touchdowns|Jaylen Warren: 2+",
+   "label": "Jaylen Warren: 2+",
+   "pregame_mark": 0.11,
+   "current": 0.115,
+   "settled": false
+  },
+  {
+   "key": "Pittsburgh vs Cleveland: Touchdowns|Quinshon Judkins: 1+",
+   "label": "Quinshon Judkins: 1+",
+   "pregame_mark": 0.405,
+   "current": 0.395,
+   "settled": false
+  },
+  {
+   "key": "Pittsburgh vs Cleveland: Touchdowns|Quinshon Judkins: 2+",
+   "label": "Quinshon Judkins: 2+",
+   "pregame_mark": 0.075,
+   "current": 0.085,
+   "settled": false
+  },
+  {
+   "key": "Pittsburgh vs Cleveland: Touchdowns|DK Metcalf: 1+",
+   "label": "DK Metcalf: 1+",
+   "pregame_mark": 0.275,
+   "current": 0.295,
+   "settled": false
+  },
+  {
+   "key": "Pittsburgh vs Cleveland: Touchdowns|Harold Fannin Jr.: 1+",
+   "label": "Harold Fannin Jr.: 1+",
+   "pregame_mark": 0.225,
+   "current": 0.235,
+   "settled": false
+  },
+  {
+   "key": "Pittsburgh vs Cleveland: Touchdowns|Denzel Boston: 1+",
+   "label": "Denzel Boston: 1+",
+   "pregame_mark": 0.205,
+   "current": 0.215,
+   "settled": false
+  },
+  {
+   "key": "Pittsburgh vs Cleveland: Touchdowns|Michael Pittman Jr.: 1+",
+   "label": "Michael Pittman Jr.: 1+",
+   "pregame_mark": 0.18,
+   "current": 0.195,
+   "settled": false
+  },
+  {
+   "key": "Pittsburgh vs Cleveland: Touchdowns|Pat Freiermuth: 1+",
+   "label": "Pat Freiermuth: 1+",
+   "pregame_mark": 0.195,
+   "current": 0.195,
+   "settled": false
+  },
+  {
+   "key": "Pittsburgh vs Cleveland: Touchdowns|Deshaun Watson: 1+",
+   "label": "Deshaun Watson: 1+",
+   "pregame_mark": 0.105,
+   "current": 0.185,
+   "settled": false
+  },
+  {
+   "key": "Pittsburgh vs Cleveland: Touchdowns|Roman Wilson: 1+",
+   "label": "Roman Wilson: 1+",
+   "pregame_mark": 0.145,
+   "current": 0.155,
+   "settled": false
+  },
+  {
+   "key": "Pittsburgh vs Cleveland: Touchdowns|CLE Browns D/ST: 1+",
+   "label": "CLE Browns D/ST: 1+",
+   "pregame_mark": 0.085,
+   "current": 0.15,
+   "settled": false
+  },
+  {
+   "key": "Pittsburgh vs Cleveland: Touchdowns|PIT Steelers D/ST: 1+",
+   "label": "PIT Steelers D/ST: 1+",
+   "pregame_mark": 0.095,
+   "current": 0.145,
+   "settled": false
+  },
+  {
+   "key": "Pittsburgh vs Cleveland: Touchdowns|Darnell Washington: 1+",
+   "label": "Darnell Washington: 1+",
+   "pregame_mark": 0.105,
+   "current": 0.125,
+   "settled": false
+  },
+  {
+   "key": "Pittsburgh vs Cleveland: Touchdowns|Raheim Sanders: 1+",
+   "label": "Raheim Sanders: 1+",
+   "pregame_mark": 0.11,
+   "current": 0.095,
+   "settled": false
+  },
+  {
+   "key": "Pittsburgh vs Cleveland: Touchdowns|Germie Bernard: 1+",
+   "label": "Germie Bernard: 1+",
+   "pregame_mark": 0.065,
+   "current": 0.085,
+   "settled": false
+  },
+  {
+   "key": "Pittsburgh vs Cleveland: Touchdowns|Jerry Jeudy: 1+",
+   "label": "Jerry Jeudy: 1+",
+   "pregame_mark": 0.085,
+   "current": 0.085,
+   "settled": false
+  },
+  {
+   "key": "Pittsburgh vs Cleveland: Touchdowns|Blake Whiteheart: 1+",
+   "label": "Blake Whiteheart: 1+",
+   "pregame_mark": 0.06,
+   "current": 0.065,
+   "settled": false
+  },
+  {
+   "key": "Pittsburgh vs Cleveland: Touchdowns|Travis Homer: 1+",
+   "label": "Travis Homer: 1+",
+   "pregame_mark": 0.06,
+   "current": 0.055,
+   "settled": false
+  },
+  {
+   "key": "Pittsburgh vs Cleveland: Touchdowns|Aaron Rodgers: 1+",
+   "label": "Aaron Rodgers: 1+",
+   "pregame_mark": 0.045,
+   "current": 0.055,
+   "settled": false
+  }
+ ]
+}

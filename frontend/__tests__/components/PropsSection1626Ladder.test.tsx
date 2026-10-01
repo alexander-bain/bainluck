@@ -64,14 +64,24 @@ describe("#1626 SHIP: on the served Browns @ Steelers page, a player's ladder is
     expect(visibleRowLabels(html)).not.toContain("Aaron Rodgers: 325+");
   });
 
-  test("22 ladders print 22 rows where they printed 138, and every rung is still on the page", () => {
-    expect(summaries).toHaveLength(22);
+  // AMENDED by slice 6 (2026-10-01): two-rung ladders join, so the count is 24
+  // ladders over 142 rungs — slice 4's 22 / 138 plus Jaylen Warren's and
+  // Quinshon Judkins' Touchdowns 1+ / 2+.
+  test("24 ladders print 24 rows where they printed 142, and every rung is still on the page", () => {
+    expect(summaries).toHaveLength(24);
     const hidden = summaries.reduce((n, s) => n + Number(s[3].replace(/\D/g, "")) + 1, 0);
-    expect(hidden).toBe(138);
+    expect(hidden).toBe(142);
     for (const m of served) {
       if (/^.+: \d+(\.\d+)?\+$/.test(m.label) && m.pregame_mark != null) {
         // #9148 rewrites "PIT Steelers D/ST" before any rule reads a label.
-        expect(html).toContain(`>${propLabelDisplay(m.label)}<`);
+        // AMENDED by slice 6: a lone rung beside ladders prints as its own
+        // `subject · N+` row, so its label is the subject and the rung.
+        const shown = propLabelDisplay(m.label);
+        const lone = /^(.+): (\d+(?:\.\d+)?\+)$/.exec(shown)!;
+        const asLoneRow = new RegExp(
+          `data-testid="script-lone-rung"[^>]*><span[^>]*>${lone[1].replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}</span><span[^>]*>${lone[2].replace("+", "\\+")}<`,
+        );
+        expect(html.includes(`>${shown}<`) || asLoneRow.test(html)).toBe(true);
       }
     }
   });
@@ -93,10 +103,13 @@ describe("#1626 slice 4 CONTROLS", () => {
     expect((entry as ScriptLadder).threshold).toBe("200");
   });
 
-  test("two rungs stay two rows (slice 3's ladder control)", () => {
-    const html = render(rungs("A", [[150, 0.8], [175, 0.2]]));
+  // AMENDED by slice 6: this was "two rungs stay two rows". Slice 6 reverses it
+  // on purpose — see `PropsSection1626TwoRungLadder.test.tsx`. One rung is
+  // still one row.
+  test("one rung stays one row", () => {
+    const html = render(rungs("A", [[150, 0.8]]));
     expect(ladderSummaries(html)).toHaveLength(0);
-    expect(visibleRowLabels(html)).toEqual(["A: 150+", "A: 175+"]);
+    expect(visibleRowLabels(html)).toEqual(["A: 150+"]);
   });
 
   test("an unmarked rung does not join the ladder — it folds as before (D102)", () => {

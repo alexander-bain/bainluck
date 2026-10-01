@@ -43,10 +43,14 @@ import React from "react";
 import PropsSection from "../../components/event/PropsSection";
 import type { PropMark } from "../../components/event/PropsSection";
 
-/** Two rows with a mark, two without — the shape of every real family. */
+/** Two rows with a mark, two without — the shape of every real family.
+ *  AMENDED by #1626 slice 6 (2026-10-01): the two marked rows were `A: 20+` and
+ *  `A: 30+`, which THE SCRIPT now prints as one two-rung ladder (itself a
+ *  `<details>`). They belong to two subjects now so this file keeps measuring the
+ *  D102 fold and nothing else; the numbers are unchanged. */
 const MIXED: PropMark[] = [
   { key: "Rushing Yards|A: 20+", label: "A: 20+", pregame_mark: 0.73, current: 0.75 },
-  { key: "Rushing Yards|A: 30+", label: "A: 30+", pregame_mark: 0.31, current: 0.33 },
+  { key: "Rushing Yards|C: 30+", label: "C: 30+", pregame_mark: 0.31, current: 0.33 },
   { key: "Rushing Yards|B: 65+", label: "B: 65+", pregame_mark: null, current: 0.31 },
   { key: "Rushing Yards|B: 90+", label: "B: 90+", pregame_mark: null, current: 0.15 },
 ];
@@ -73,7 +77,7 @@ describe("#4530 THE SCRIPT folds the rows it has no opening price for", () => {
   // fix — falling back to `current` — not this diff's behaviour.
   test("a folded row never prints its live price as the pregame mark", () => {
     const html = script(MIXED);
-    // 0.31 appears as BOTH a real mark (row A: 30+) and a live price (row B:
+    // 0.31 appears as BOTH a real mark (row C: 30+) and a live price (row B:
     // 65+), so 31% alone proves nothing. 15% is only ever row B's `current`.
     expect(html).not.toContain("15%");
   });
