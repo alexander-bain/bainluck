@@ -67,6 +67,23 @@ NEGATIVE_SENTINEL = "404"
 # it cannot wedge the key for long.
 REFRESH_LOCK_TTL = 120
 
+# #10114: how old a LIVE payload's mirror may be and still be handed over without
+# first trying to rebuild it. `STALE_TTL` says how long the mirror may exist; it
+# says nothing about how old a live leaderboard may be when it reaches a reader,
+# and nothing else did either. Nothing warms a non-major golf tournament, so the
+# first reader after a quiet spell was handed whatever the last reader left behind:
+# on 2026-10-01 `event:golf:bank-of-utah-championship` served a 17:41Z envelope at
+# 18:34Z ("not updating · 53m ago") with zero refresh runs in between, and the
+# refresh that read dispatched then waited ~2 min behind 69 background jobs.
+# Two primary TTLs: an actively-read live page never crosses it while its
+# refresh-behind keeps up.
+LIVE_STALE_SERVE_CEILING = 120
+
+# Past the ceiling the request builds inline, bounded by this. The measured
+# live-golf refresh is 3-5s (up to ~17s); a build that overruns is cancelled and
+# the mirror is served with a refresh behind it, exactly as before this existed.
+LIVE_INLINE_REBUILD_BUDGET = 8.0
+
 # Envelope `generation` (contract field 1). BUMP THIS when the payload shape
 # changes: a cached payload built by a generation that is no longer deployed is
 # refused on read and rebuilt, which is also what makes the very first deploy of
@@ -361,6 +378,24 @@ def payload_age_seconds(payload: dict[str, Any], now: datetime | None = None) ->
     if created is None:
         return None
     return ((now or _utcnow()) - created).total_seconds()
+
+
+def is_live_payload(payload: Any) -> bool:
+    """True when the stored payload says its event was in play when it was built."""
+    event = payload.get("event") if isinstance(payload, dict) else None
+    return isinstance(event, dict) and event.get("status") == "live"
+
+
+def live_mirror_past_ceiling(payload: dict[str, Any], now: datetime | None = None) -> bool:
+    """True when `payload` is a live one too old to serve without a rebuild attempt.
+
+    Only live payloads: a settled or upcoming page's content does not age by the
+    minute, and for those the mirror-first serve stays unconditional (LAT-P021).
+    """
+    if not is_live_payload(payload):
+        return False
+    age = payload_age_seconds(payload, now)
+    return age is not None and age > LIVE_STALE_SERVE_CEILING
 
 
 # ---------------------------------------------------------------------------
