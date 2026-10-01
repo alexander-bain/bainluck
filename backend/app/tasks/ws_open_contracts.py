@@ -21,13 +21,28 @@ Measured once to size this (production 2026-09-29 04:5xZ): 4,941 such Kalshi
 markets outside the event link, 48,051 tickers, 5,104 of which moved price in
 the previous 24 h — a write load well under the linked slate's.
 
-**Prices only, never settlement.** ``handle_lifecycle`` treats a market as a
-two-sided game line: when one ticker settles it marks the whole market
-``resolved`` and writes the OPPOSITE ``is_winner`` onto every other outcome.
-On a multi-candidate future one candidate settling "no" would crown every
-other candidate. So these tickers join the price map only; the lifecycle map
-(``market_id_by_ext``) stays the linked slate, and they ride connections that
-subscribe to the ``ticker`` channel alone.
+**Never the two-sided settlement handler.** ``handle_lifecycle`` treats a
+market as a two-sided game line: when one ticker settles it marks the whole
+market ``resolved`` and writes the OPPOSITE ``is_winner`` onto every other
+outcome. On a multi-candidate future one candidate settling "no" would crown
+every other candidate. So these tickers never join the lifecycle map
+(``market_id_by_ext``), which stays the linked slate.
+
+**#10022 — but their settlement is graded PER LEG, from the socket.** Shipped
+prices-only, the arm streamed a contract right up to its close and then left
+its result to the REST sweep — hours to a day. Production 2026-10-01: Kalshi
+finalized all seven CHC–SD Wild Card series contracts at 05:11Z; 80 minutes
+later the finished series still printed ``SD wins 2-1 12%`` and ``Over 2.5
+total games 38%``, and the one leg the sweep had graded (``CHC20``) took 23 h.
+The open-contract connections now also subscribe ``market_lifecycle_v2``, and
+:func:`grade_open_contract_leg` writes exactly what the REST grader writes for
+the same declaration (``backfill_winners``: ``kms.gradeable_winner`` →
+``api_settlement`` + the settled price) onto the ONE leg the frame names. It
+never touches a sibling: every Kalshi ticker carries its own ``result``, so a
+sibling is graded by its own frame. The market becomes ``resolved`` only when
+no leg is left without a venue-authoritative grade — a stricter rule than the
+poller's ``all_terminal``, so the socket can never close a board the sweep
+would have left open.
 
 **Their own connections, so the live game never pays for them.** The linked
 slate's socket is unchanged. The admitted tickers are fanned over separate
@@ -38,7 +53,8 @@ rejected or throttled open-contract subscribe cannot take the game slate's
 prices down with it.
 
 ``WS_OPEN_CONTRACT_PRICES=0`` turns the whole arm off at the next recycle with
-no deploy — the undo line.
+no deploy — the undo line. ``WS_OPEN_CONTRACT_SETTLEMENT=0`` turns off only the
+per-leg grading (the connections go back to ``ticker`` alone).
 """
 
 import os
@@ -54,6 +70,136 @@ OPEN_CONTRACT_TICKERS_PER_CONNECTION = int(
 def open_contract_prices_enabled() -> bool:
     """False only when ``WS_OPEN_CONTRACT_PRICES`` is set to ``0``."""
     return os.getenv("WS_OPEN_CONTRACT_PRICES", "1").strip() != "0"
+
+
+def open_contract_settlement_enabled() -> bool:
+    """False only when ``WS_OPEN_CONTRACT_SETTLEMENT`` is set to ``0``."""
+    return os.getenv("WS_OPEN_CONTRACT_SETTLEMENT", "1").strip() != "0"
+
+
+def open_contract_channels() -> list[str]:
+    """The channels an open-contract connection subscribes to."""
+    if open_contract_settlement_enabled():
+        return ["ticker", "market_lifecycle_v2"]
+    return ["ticker"]
+
+
+def lifecycle_state(msg: Mapping) -> str | None:
+    """The venue state a lifecycle frame declares: ``status``, else ``event_type``."""
+    return msg.get("status") or msg.get("event_type")
+
+
+def lifecycle_verdict(msg: Mapping) -> tuple[str, bool] | None:
+    """``(TICKER, is_winner)`` for a lifecycle frame that declares a side, else None.
+
+    The venue's state is read from ``status`` or, failing that, ``event_type``:
+    the v2 lifecycle channel names the transition (``determined``) in
+    ``event_type``, and the repo's existing frames and fakes spell it
+    ``status``. Either way the judgment is the shared three-state
+    :func:`~app.utils.kalshi_market_status.gradeable_winner` — ``yes``/``no`` on a
+    result-carrying state only; ``scalar``, ``""`` and a ``closed`` market grade
+    nothing (#5304, #7987, CAL-P053).
+    """
+    from app.utils.kalshi_market_status import gradeable_winner
+
+    if not isinstance(msg, Mapping):
+        return None
+    ticker = str(msg.get("market_ticker") or "").upper()
+    if not ticker:
+        return None
+    won = gradeable_winner(lifecycle_state(msg), msg.get("result"))
+    if won is None:
+        return None
+    return ticker, won
+
+
+async def grade_open_contract_leg(session, *, market_id: int, outcome_id: int,
+                                  state: str | None, result: str | None):
+    """Grade ONE open-contract leg from a venue declaration; maybe resolve its market.
+
+    ``state``/``result`` are the frame's own (``lifecycle_state``); the grade is
+    :func:`~app.utils.kalshi_market_status.graded_columns` of them, the pair
+    every Kalshi grader writes — so a declaration it cannot read writes nothing,
+    and the settlement-writer census (#5246) discovers this site by that call.
+
+    Returns ``(graded, resolved)``: ``graded`` is the outcome's
+    ``(id, last_updated)`` row or None when nothing changed, ``resolved`` the
+    market's ``(id, settled_at)`` row or None.
+
+    * The leg write mirrors ``backfill_winners``' Kalshi grader column for
+      column, so the socket and the sweep are one writer to every reader.
+    * It never overwrites a leg that already carries a venue-authoritative
+      source — a re-delivered frame (one per connection) writes 0 rows, and a
+      grade the venue already gave is never downgraded or flipped by a stray
+      frame.
+    * No sibling is written. The market flips to ``resolved`` only when no leg
+      is left without an authoritative grade.
+    """
+    from sqlalchemy import exists, func, or_, select, update
+
+    from app.models.models import FuturesMarket, FuturesOutcome
+    from app.utils.kalshi_market_status import graded_columns
+    from app.utils.market_settlement import settled_values
+    from app.utils.price_change_stamp import price_changed_at_value
+    from app.utils.resolution_authority import AUTHORITATIVE_SOURCES
+    from app.utils.settled_price import settled_price_values
+
+    def _not_authoritative(col):
+        return or_(col.is_(None), col.notin_(sorted(AUTHORITATIVE_SOURCES)))
+
+    grade = graded_columns(state, result)
+    if not grade:
+        return None, None
+    is_winner = grade["is_winner"]
+
+    graded = (
+        await session.execute(
+            update(FuturesOutcome)
+            .execution_options(synchronize_session=False)
+            .where(
+                FuturesOutcome.id == outcome_id,
+                FuturesOutcome.market_id == market_id,
+                _not_authoritative(FuturesOutcome.resolution_source),
+            )
+            .values(
+                **grade,
+                last_updated=func.now(),
+                **settled_price_values(is_winner),
+                price_changed_at=price_changed_at_value(
+                    FuturesOutcome.current_probability,
+                    FuturesOutcome.price_changed_at,
+                    1.0 if is_winner else 0.0,
+                ),
+            )
+            .returning(FuturesOutcome.id, FuturesOutcome.last_updated)
+        )
+    ).first()
+    if graded is None:
+        return None, None
+
+    sibling = FuturesOutcome.__table__.alias("sibling")
+    resolved = (
+        await session.execute(
+            update(FuturesMarket)
+            .execution_options(synchronize_session=False)
+            .where(
+                FuturesMarket.id == market_id,
+                or_(
+                    FuturesMarket.status.is_(None),
+                    FuturesMarket.status != "resolved",
+                ),
+                ~exists(
+                    select(sibling.c.id).where(
+                        sibling.c.market_id == market_id,
+                        _not_authoritative(sibling.c.resolution_source),
+                    )
+                ),
+            )
+            .values(status="resolved", **settled_values(FuturesMarket.settled_at))
+            .returning(FuturesMarket.id, FuturesMarket.settled_at)
+        )
+    ).first()
+    return graded, resolved
 
 
 def kalshi_open_contract_stmt():

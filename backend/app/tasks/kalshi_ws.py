@@ -103,7 +103,9 @@ async def _run_kalshi_ws_consumer():
     )
     from app.tasks.ws_liveness import report as _report_liveness
     from app.tasks.ws_open_contracts import (  # #9484
-        kalshi_open_contract_stmt, open_contract_prices_enabled,
+        grade_open_contract_leg, kalshi_open_contract_stmt,  # #10022
+        lifecycle_state, lifecycle_verdict, open_contract_channels,
+        open_contract_prices_enabled, open_contract_settlement_enabled,
         open_contract_ticker_map, shard_tickers,
     )
     from app.utils.futures_rank import rerank_market_fields_stmt  # #6598
@@ -249,6 +251,13 @@ async def _run_kalshi_ws_consumer():
         "open_contract_connections": 0,
         "open_contract_admission_error": False,
         "open_contract_prices_written": 0,
+        # #10022: open-contract legs the socket GRADED from a lifecycle frame,
+        # and boards that grade closed. Frames for an open contract that
+        # declared no gradeable side (scalar, "", closed) are counted, not
+        # silently skipped — they stay with the REST sweep.
+        "open_contract_settlements": 0,
+        "open_contract_markets_resolved": 0,
+        "open_contract_lifecycle_unverdicted": 0,
     }
 
     # -- Buffered price updates --
@@ -580,10 +589,76 @@ async def _run_kalshi_ws_consumer():
         async with buffer_lock:
             price_buffer[outcome_id] = (prob, yes_bid, yes_ask)
 
+    async def handle_open_contract_lifecycle(ticker: str, msg: dict):
+        """#10022: one open-contract leg, graded by its own frame — never the
+        two-sided write below (see `ws_open_contracts`)."""
+        if not open_contract_settlement_enabled():
+            return  # the undo line: prices only, settlement left to REST
+        verdict = lifecycle_verdict(msg)
+        if verdict is None:
+            stats["open_contract_lifecycle_unverdicted"] += 1
+            return
+        market_id, outcome_id = open_contract_ids[ticker]
+        try:
+            async with get_task_session() as session:
+                graded, resolved = await grade_open_contract_leg(
+                    session, market_id=market_id, outcome_id=outcome_id,
+                    state=lifecycle_state(msg), result=msg.get("result"),
+                )
+                if graded is not None:
+                    queue_market_change(
+                        session,
+                        market_id=market_id,
+                        source="kalshi",
+                        outcome_observed_at={graded.id: graded.last_updated},
+                    )
+                if resolved is not None:
+                    queue_market_change(
+                        session,
+                        market_id=resolved.id,
+                        source="kalshi",
+                        outcome_observed_at={},
+                        terminal=True,
+                        updated_at=resolved.settled_at,
+                    )
+            if graded is None:
+                return
+            # A tick still buffered for this leg would be refused by the
+            # #5411 guard anyway; dropping it keeps the count honest.
+            async with buffer_lock:
+                price_buffer.pop(outcome_id, None)
+            stats["open_contract_settlements"] += 1
+            if resolved is not None:
+                stats["open_contract_markets_resolved"] += 1
+            await blend_refresher.publish_market_changes(session)
+            logger.info(
+                "Kalshi WS: open contract %s graded (won=%s, market %d%s)",
+                ticker, verdict[1], market_id,
+                " resolved" if resolved is not None else "",
+            )
+        except Exception:
+            stats["errors"] += 1
+            logger.exception("Kalshi WS: open-contract settlement error for %s", ticker)
+
+    async def handle_shard_lifecycle(msg: dict):
+        """An open-contract connection grades its own legs and nothing else: a
+        linked-slate frame is the game socket's to handle, exactly once."""
+        ticker = (msg.get("market_ticker") or "").upper()
+        if ticker in open_contract_ids and ticker not in ticker_to_ids:
+            await handle_open_contract_lifecycle(ticker, msg)
+
     async def handle_lifecycle(msg: dict):
         ticker = (msg.get("market_ticker") or "").upper()
         status = msg.get("status", "")
         result = msg.get("result")
+
+        # #10022: an open contract is never in the lifecycle map (its event
+        # ticker is not the linked slate's), so it is routed before the
+        # two-sided handler can see it. `open_contract_ids` already excludes
+        # every ticker the linked slate carries.
+        if ticker in open_contract_ids and ticker not in ticker_to_ids:
+            await handle_open_contract_lifecycle(ticker, msg)
+            return
 
         # CAL-P049 (#1818): this writes FuturesMarket.status='resolved', so it is
         # the same class as the poll's inverted tuple — it missed ``determined``.
@@ -718,9 +793,10 @@ async def _run_kalshi_ws_consumer():
     flush_task = asyncio.create_task(flush_loop())
     stats_task = asyncio.create_task(stats_loop())
 
-    # #9484: the open-contract connections — `ticker` channel only (never
-    # lifecycle, see `ws_open_contracts`), admitted beside the game socket and
-    # torn down in the `finally` on every exit path.
+    # #9484: the open-contract connections, admitted beside the game socket and
+    # torn down in the `finally` on every exit path. #10022: they also carry
+    # `market_lifecycle_v2`, routed to the PER-LEG grader (never the two-sided
+    # handler — see `ws_open_contracts`).
     open_contract_sockets = []
     open_contract_tasks = []
 
@@ -739,10 +815,11 @@ async def _run_kalshi_ws_consumer():
         for shard in shards:
             sock = KalshiWebSocket()
             sock.on_ticker = handle_ticker
+            sock.on_lifecycle = handle_shard_lifecycle
             open_contract_sockets.append(sock)
             open_contract_tasks.append(
                 asyncio.create_task(
-                    sock.run(market_tickers=shard, channels=["ticker"])
+                    sock.run(market_tickers=shard, channels=open_contract_channels())
                 )
             )
         if ids:

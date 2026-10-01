@@ -5891,6 +5891,27 @@ jobs:
             exit 1
           }
 
+      - name: "#10022 an open-contract leg the socket sees finalize is graded alone (real Postgres)"
+        # A finished CHC–SD series kept pricing scorelines that could no longer
+        # happen because the socket left open contracts' results to the REST
+        # sweep. The per-leg grader's safety is an authority guard on the leg
+        # and a NOT EXISTS over its siblings read in the same transaction —
+        # only Postgres can answer either. Reuses the #7617 database: this
+        # file drops and creates its own tables.
+        if: matrix.group == 'isolated'
+        run: |
+          set -o pipefail
+          python -m pytest tests/integration/test_open_contract_leg_grade_pg_10022.py \
+            -v -rs 2>&1 | tee /tmp/openleg10022.txt
+          if grep -qiE "[0-9]+ skipped" /tmp/openleg10022.txt; then
+            echo "::error::#10022 open-contract leg-grade contract SKIPPED — the gate did not run"
+            exit 1
+          fi
+          grep -qE "[^0-9]8 passed," /tmp/openleg10022.txt || {
+            echo "::error::#10022 open-contract leg-grade contract did not run all eight cases"
+            exit 1
+          }
+
       - name: "#7878 win-prob evidence collapse — provision the disposable database"
         # Its own database for the reason the #7617 step above gives: the file
         # drops and creates the five tables it touches.

@@ -222,6 +222,14 @@ POLL_STAMP_COUNTS = {
     # the socket kept freshest read to it as the deadest on the board.
     "app/tasks/kalshi_ws.py": 1,
     "app/tasks/polymarket_ws.py": 1,
+    # #10022. `grade_open_contract_leg` stamps `last_updated` on the ONE leg a
+    # venue lifecycle frame graded, with the settled price and the conditional
+    # `price_changed_at` beside it — the same three columns `backfill_winners`'
+    # Kalshi grader writes for the same declaration. Consumers re-checked: the
+    # stamp lands only on a row that has just become GRADED, which every
+    # settled reader shows as a result rather than a price, and a fresher stamp
+    # can only make `routes/playoffs.py`'s stale-row drop more permissive.
+    "app/tasks/ws_open_contracts.py": 1,
 }
 
 
@@ -703,6 +711,9 @@ PRICE_CHANGE_STAMPERS = {
     # this one counts the files that call the helper, that one finds the write
     # sites that need it and do not have it (nine remain, filed as #5192).
     "app/tasks/datagolf.py": 4,
+    # #10022: the open-contract per-leg grader writes the settled price (1.0 /
+    # 0.0) the way `backfill_winners`' Kalshi grader does, stamp included.
+    "app/tasks/ws_open_contracts.py": 1,
 }
 
 
