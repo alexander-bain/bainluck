@@ -13,6 +13,7 @@ import UIKit
 /// The header is measured here, not described: one line where it fits, the
 /// caption on its own line where it does not. The last two tests are source
 /// guards on the call sites, because a correct header nobody draws is inert.
+@MainActor
 final class PropsStatNameIsNeverClipped10076Tests: XCTestCase {
 
     /// One column of the paired layout on an iPhone 17 (402 pt wide), measured
@@ -23,7 +24,7 @@ final class PropsStatNameIsNeverClipped10076Tests: XCTestCase {
     private let caption = "chance of hitting"
 
     private func size(_ view: some View, width: CGFloat) -> CGSize {
-        let host = UIHostingController(rootView: view)
+        let host = hostForMeasurement(view)
         return host.sizeThatFits(in: CGSize(width: width, height: .greatestFiniteMagnitude))
     }
 
