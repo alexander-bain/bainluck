@@ -625,8 +625,11 @@ d("iOS team short names have exactly one implementation", () => {
       return code.includes("TeamLogoView(") && code.includes("awayTeam") && code.includes("homeTeam");
     });
 
+    // #6866 — PlayerPropsCardView joined: a team's own prop ladder draws that
+    // team's crest, and the scan above holds it to passing the other side.
     expect(twoSided.map((p) => p.slice(IOS_ROOT.length + 1)).sort()).toEqual([
       "Components/EventCardView.swift",
+      "Components/PlayerPropsCardView.swift",
       "Views/EventDetailView.swift",
     ]);
   });
