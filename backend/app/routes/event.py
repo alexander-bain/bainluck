@@ -12,6 +12,7 @@ names it as the contract's first customer. The route is the serve decision and
 nothing else.
 """
 
+import asyncio
 import logging
 
 from fastapi import APIRouter, Depends, HTTPException
@@ -22,12 +23,14 @@ from app.utils.event_concept import get_adapter, parse_event_key
 from app.utils.event_concept_cache import (
     AVAILABILITY_LIVE,
     AVAILABILITY_STALE_OK,
+    LIVE_INLINE_REBUILD_BUDGET,
     ConceptCacheKeys,
     acquire_refresh_lock,
     build_and_cache,
     cache_keys,
     get_client,
     has_negative,
+    live_mirror_past_ceiling,
     read_slot,
     release_refresh_lock,
     with_availability,
@@ -69,6 +72,44 @@ def _schedule_refresh(rc, keys: ConceptCacheKeys, key: str) -> None:
         release_refresh_lock(rc, keys, token)
 
 
+async def _rebuild_past_ceiling(rc, keys: ConceptCacheKeys, key: str, db, adapter, stale: dict):
+    """#10114: a live mirror past `LIVE_STALE_SERVE_CEILING` is rebuilt before it is served.
+
+    Single-flight on the same lock as the refresh-behind: if any producer already
+    holds it, a rebuild is in flight and the mirror is served as before. Otherwise
+    this request builds inline for at most `LIVE_INLINE_REBUILD_BUDGET`; an overrun
+    is cancelled (so it never writes) and falls back to mirror + refresh-behind, and
+    a build that raises falls back to the mirror, as step 4 does.
+    """
+    token = acquire_refresh_lock(rc, keys)
+    if not token:
+        return with_availability(stale, AVAILABILITY_STALE_OK)
+    try:
+        built = await asyncio.wait_for(
+            build_and_cache(key, db, rc, adapter=adapter),
+            timeout=LIVE_INLINE_REBUILD_BUDGET,
+        )
+    except asyncio.TimeoutError:
+        logger.warning(
+            "event-concept: live rebuild for %s overran %ss — serving stale",
+            key,
+            LIVE_INLINE_REBUILD_BUDGET,
+        )
+        release_refresh_lock(rc, keys, token)
+        token = None
+        _schedule_refresh(rc, keys, key)
+        return with_availability(stale, AVAILABILITY_STALE_OK)
+    except Exception:
+        logger.warning("event-concept: live rebuild failed for %s — serving stale", key, exc_info=True)
+        return with_availability(stale, AVAILABILITY_STALE_OK)
+    finally:
+        release_refresh_lock(rc, keys, token)
+
+    if built is None:
+        raise HTTPException(status_code=404, detail=f"Event '{key}' not found")
+    return with_availability(built, AVAILABILITY_LIVE)
+
+
 @router.get("/{key}")
 async def get_event_concept(key: str, db: AsyncSession = Depends(get_db)):
     """Return the generic event envelope for `key` (event:<domain>:<slug>)."""
@@ -97,6 +138,8 @@ async def get_event_concept(key: str, db: AsyncSession = Depends(get_db)):
     #    snapshot into an 18.5s rebuild, and The Open past a 30s H12 503.
     stale = read_slot(rc, keys.stale)
     if stale is not None:
+        if live_mirror_past_ceiling(stale):
+            return await _rebuild_past_ceiling(rc, keys, key, db, adapter, stale)
         _schedule_refresh(rc, keys, key)
         return with_availability(stale, AVAILABILITY_STALE_OK)
 
