@@ -785,6 +785,49 @@ describe("matchScoreStillReachable", () => {
   });
 });
 
+describe("matchScoreStillReachable — a surname-only event (#3703, 2026-10-01)", () => {
+  // Production, verbatim: /events/15320475 serves `home_team: "Alcaraz"`,
+  // `away_team: "Michelsen"`, sets 1-1, and Kalshi's Exact Match Score ladder
+  // in full names. Both 2-0 rows printed `1%` at 10:12Z.
+  const ALCARAZ_MICHELSEN_SETS = { home: 1, away: 1, homeTeam: "Alcaraz", awayTeam: "Michelsen" };
+
+  test("the full-name label places against the surname event, so both 2-0s are struck", () => {
+    expect(matchScoreStillReachable("Alex Michelsen wins 2-0", ALCARAZ_MICHELSEN_SETS)).toBe(false);
+    expect(matchScoreStillReachable("Carlos Alcaraz wins 2-0", ALCARAZ_MICHELSEN_SETS)).toBe(false);
+  });
+
+  test("the two finishes still on the table survive", () => {
+    expect(matchScoreStillReachable("Carlos Alcaraz wins 2-1", ALCARAZ_MICHELSEN_SETS)).toBe(true);
+    expect(matchScoreStillReachable("Alex Michelsen wins 2-1", ALCARAZ_MICHELSEN_SETS)).toBe(true);
+  });
+
+  test("the collision door still fails open when a surname event shares the name", () => {
+    expect(
+      matchScoreStillReachable("Mike Bryan 2-0", { home: 1, away: 1, homeTeam: "Bryan", awayTeam: "Bryan" }),
+    ).toBe(true);
+    // A full name naming neither surname competitor stays open too.
+    expect(matchScoreStillReachable("Jannik Sinner wins 2-0", ALCARAZ_MICHELSEN_SETS)).toBe(true);
+  });
+
+  test("the served card: the live finish leads and both 2-0 rows are struck to the bottom", () => {
+    const Q = "Carlos Alcaraz vs Alex Michelsen: Exact Match Score";
+    const wire = [
+      { market_name: Q, outcome_name: "Carlos Alcaraz wins 2-1", probability: 0.9703, source: "kalshi" },
+      { market_name: Q, outcome_name: "Alex Michelsen wins 2-1", probability: 0.0099, source: "kalshi" },
+      { market_name: Q, outcome_name: "Alex Michelsen wins 2-0", probability: 0.0099, source: "kalshi" },
+      { market_name: Q, outcome_name: "Carlos Alcaraz wins 2-0", probability: 0.0099, source: "kalshi" },
+    ];
+    const cards = buildMarketSection(wire, { setsWon: ALCARAZ_MICHELSEN_SETS }).categories.flatMap((c) => c.cards);
+    expect(cards).toHaveLength(1);
+    const rows = cards[0].outcomes.map((o) => [o.label, o.unreachable === true]);
+    expect(rows.slice(0, 2)).toEqual([
+      ["Carlos Alcaraz wins 2-1", false],
+      ["Alex Michelsen wins 2-1", false],
+    ]);
+    expect(rows.slice(2).map(([, struck]) => struck)).toEqual([true, true]);
+  });
+});
+
 describe("buildMarketSection — the struck exact-score row (#3703)", () => {
   const cardOf = (opts: Parameters<typeof buildMarketSection>[1]) => {
     const section = buildMarketSection(EXACT_SCORE_WIRE, opts);
