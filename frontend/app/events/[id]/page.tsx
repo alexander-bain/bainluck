@@ -3089,6 +3089,9 @@ export default function EventPage({ params }: EventPageProps) {
                 eventStatus={event.status}
                 homeTeam={event.home_team}
                 awayTeam={event.away_team}
+                homeTeamAbbrev={event.home_team_data?.abbreviation}
+                awayTeamAbbrev={event.away_team_data?.abbreviation}
+                sport={event.sport_key ?? event.sport}
                 homeColor={event.home_team_data?.primary_color || undefined}
                 awayColor={event.away_team_data?.primary_color || undefined}
                 boxScore={event.box_score_data}
