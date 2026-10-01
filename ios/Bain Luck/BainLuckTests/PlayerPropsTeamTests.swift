@@ -100,4 +100,66 @@ final class PlayerPropsTeamTests: XCTestCase {
         XCTAssertNotEqual(PlayerPropsTeam.side(for: "away"), .unknown)
         XCTAssertEqual(PlayerPropsTeam.side(for: "neutral"), .unknown)
     }
+
+    // MARK: - #6866 — a team's own ladders
+
+    /// Served verbatim on `/api/events/14780550/game-markets` (Steelers at
+    /// Browns, 2026-10-01), every row `player_team: null`.
+    private let home = "Cleveland Browns"
+    private let away = "Pittsburgh Steelers"
+
+    private func side(_ subject: String, _ market: String,
+                      home: String? = nil, away: String? = nil) -> PlayerPropsTeam.Side {
+        PlayerPropsTeam.teamSubjectSide(
+            subject: subject, marketName: market,
+            homeTeam: home ?? self.home, awayTeam: away ?? self.away
+        )
+    }
+
+    /// The specimen: both teams' ladders land on their own side, so the crest,
+    /// the word and the Steelers/Browns filter can all name them.
+    func testTheSpecimensTeamLaddersNameTheirSide() {
+        XCTAssertEqual(side("Pittsburgh", "Pittsburgh vs Cleveland: Team Sacks"), .away)
+        XCTAssertEqual(side("Pittsburgh", "Pittsburgh vs Cleveland: Team Total Yards"), .away)
+        XCTAssertEqual(side("Cleveland", "Pittsburgh vs Cleveland: Team Sacks"), .home)
+        XCTAssertEqual(side("Cleveland", "Pittsburgh vs Cleveland: Team Total Yards"), .home)
+        XCTAssertEqual(side("Cleveland", "Pittsburgh vs. Cleveland: Team Field Goals"), .home)
+        // A whole-name subject is the team too.
+        XCTAssertEqual(side("Cleveland Browns", "Pittsburgh Steelers vs Cleveland Browns: Team Touchdowns"), .home)
+    }
+
+    /// 🔴 The no-claim arms. Each is one clause of the rule failing on its own,
+    /// with the other two still true — so a rule that dropped any clause fails
+    /// exactly one of these.
+    func testEveryClauseRefusesOnItsOwn() {
+        // Clause 1 — not a `Team ` phrase: a player's ladder, even if the
+        // subject happened to be a city.
+        XCTAssertEqual(side("Pittsburgh", "Pittsburgh vs Cleveland: Total Yards"), .unknown)
+        XCTAssertEqual(side("Deshaun Watson", "Pittsburgh vs Cleveland: Passing Yards"), .unknown)
+        // Clause 2 — the subject is not one of THIS market's two names.
+        XCTAssertEqual(side("Pittsburgh", "Cincinnati vs Cleveland: Team Sacks"), .unknown)
+        XCTAssertEqual(side("Pittsburgh", "Team Sacks"), .unknown, "no colon, no matchup")
+        // Esports organisations, measured on production in #6866, where "Team"
+        // is part of the club's name: a row that reaches the wrong game names
+        // neither of ITS teams, so it claims nothing…
+        XCTAssertEqual(side("Team Liquid", "Team Liquid vs Karmine Corp: Team Kills"), .unknown)
+        // …and on its own game it is honestly that club's ladder.
+        XCTAssertEqual(side("Team Liquid", "Team Liquid vs Karmine Corp: Team Kills",
+                            home: "Karmine Corp", away: "Team Liquid"), .away)
+        // Clause 3 — a name that answers BOTH clubs proves neither.
+        XCTAssertEqual(side("Los Angeles", "Los Angeles vs Los Angeles: Team Sacks",
+                            home: "Los Angeles Rams", away: "Los Angeles Chargers"), .unknown)
+        // …and a name that answers NEITHER (a word prefix, not a whole word).
+        XCTAssertEqual(side("Pitt", "Pitt vs Cleveland: Team Sacks"), .unknown)
+    }
+
+    /// The team rule feeds the same three outputs the served side does, so a
+    /// proven team gets the word, the colour and the filter — not just a crest.
+    func testAProvenTeamAnswersItsOwnFilter() {
+        let s = side("Pittsburgh", "Pittsburgh vs Cleveland: Team Sacks")
+        XCTAssertEqual(PlayerPropsTeam.label(for: s), "Away")
+        XCTAssertEqual(PlayerPropsTeam.filterValue(for: s), "away")
+        XCTAssertEqual(PlayerPropsTeam.color(for: s, home: .red, away: .blue), .blue)
+    }
 }
+
