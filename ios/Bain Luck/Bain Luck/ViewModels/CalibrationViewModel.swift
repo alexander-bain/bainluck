@@ -713,7 +713,14 @@ final class CalibrationViewModel: ObservableObject {
     // The on-device warning bites here too and is the reason this entry ships
     // with the backend rather than after it: a build already on a phone carries
     // the old set and will read q271 as `.incompatible` until it is updated.
-    static let compatiblePopulationVersions: Set<String> = ["q267", "q268", "q269", "q270", "q271", "q1530"]
+    //
+    // #6317 2026-10-01: "q272" added — a settled field whose winner has no usable
+    // forecast is no longer scored. Native renders no exclusions list and decodes
+    // no filter block, so as with q270/q271 the version token is all it needs.
+    // The server keeps serving q271 until a complete q272 build activates
+    // (candidate-first), but a build already on a phone still carries the old set
+    // and will read q272 as `.incompatible` once it does, until it is updated.
+    static let compatiblePopulationVersions: Set<String> = ["q267", "q268", "q269", "q270", "q271", "q272", "q1530"]
 
     var populationVersion: String? { data?.populationVersion }
 

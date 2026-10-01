@@ -157,6 +157,22 @@
 //     or `price_derived_excluded` exists in `page.tsx` or `lib/api.ts`), so it
 //     reaches no reader and owes no copy.
 //
+// #6317 2026-10-01: "q272" added — a proved single-winner field whose winner
+// has no usable forecast is not scored (its priced legs were losses by
+// construction). It NARROWS, but adds no exclusion class this page has a field
+// for: the backend folds those fields into the coverage census's existing
+// `field_incomplete` rung (rung set unchanged; `RUNG_LABELS` already words it),
+// and the per-field counts ride `mex_normalization.field_completeness`, which
+// this page does not render. The corrections log carries the reader sentence
+// ("Races and contests are scored only when we priced the winner"). No caption
+// names a population rule and no cell changes identity, so the version token is
+// all this surface owes.
+//
+// It ships WITH the backend, and that order is safe this time by construction:
+// q272 is candidate-first (`app/utils/calibration_publication_selection.py`), so
+// the server keeps serving q271 until a complete q272 build activates on the
+// heavy app, hours after this list is live on the web.
+//
 // Kept ADDITIVE for the reason above: the list accepts the old payload and the
 // new one, so neither deploy order can open a window where the page reads a
 // live payload as incompatible and blanks itself.
@@ -166,6 +182,7 @@ export const COMPATIBLE_POPULATION_VERSIONS: readonly string[] = [
   "q269",
   "q270",
   "q271",
+  "q272",
   "q1530",
 ];
 
