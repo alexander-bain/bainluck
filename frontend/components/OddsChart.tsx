@@ -17,6 +17,7 @@ import { format, parseISO } from "date-fns";
 import {
   makeEnsurePoint,
   fillMinuteGaps,
+  toMinuteKey,
   CATEGORY_LABEL_FORMAT,
 } from "@/lib/chartTimeline";
 // #1003 guard: the single 0–1 ⇄ 0–100 axis conversion (see eventKeyStats).
@@ -440,6 +441,49 @@ interface ChartDataPoint {
   _scoreApprox?: boolean;
   _scoringPlay?: ScoringPlay | null;
   [key: string]: string | number | boolean | null | undefined | ScoringPlay;
+}
+
+/**
+ * #10093 — the range one minute of a series actually covered, where it covered
+ * one.
+ *
+ * The axis is categorical with one category per minute (`makeEnsurePoint`), so
+ * every observation inside a minute writes the same point and the last one
+ * wins. That is the right number for the line to pass through — it is what the
+ * hero is showing — but it erases the excursion: a live .42 → .55 → .43 inside
+ * one minute drew a flat .43 while the headline above had just shown 55%.
+ *
+ * Adding sub-minute categories is not the fix: it would give that one minute
+ * three columns of width (time stops reading linearly) and break the category
+ * set the score chart below shares (#3419). At the true time scale a minute is
+ * ~2px on a phone, so a vertical stroke from the minute's low to its high IS
+ * what the exact-time ink would look like. This returns that low and high, on
+ * the 0–100 axis, for every minute holding two or more different observations.
+ * A minute with one reading, or several of the same value, gets nothing; only
+ * real observations count — no interpolation, nothing carried in from the
+ * minute before.
+ */
+export function intraMinuteRanges(
+  points: ReadonlyArray<{ timestamp: string; home_probability: number | null }>,
+): Map<string, { lo: number; hi: number }> {
+  const byMinute = new Map<string, { lo: number; hi: number }>();
+  for (const point of points) {
+    const p = point.home_probability;
+    if (typeof p !== "number" || !Number.isFinite(p) || !Number.isFinite(Date.parse(point.timestamp))) continue;
+    const v = homeProbToChartAxis(p);
+    const key = toMinuteKey(point.timestamp);
+    const range = byMinute.get(key);
+    if (range) {
+      range.lo = Math.min(range.lo, v);
+      range.hi = Math.max(range.hi, v);
+    } else {
+      byMinute.set(key, { lo: v, hi: v });
+    }
+  }
+  for (const [key, range] of byMinute) {
+    if (!(range.hi > range.lo)) byMinute.delete(key);
+  }
+  return byMinute;
 }
 
 /** Resolved source info used for rendering */
@@ -1739,6 +1783,42 @@ export default function OddsChart({
   // #9906: each series' LAST value is passed as `mustShow`, so the end of every
   // drawn line — the callout's number, and a settled chart's result — is inside
   // the axis even when the percentile zoom would treat it as an outlier.
+  // #10093 — the primary line's within-minute ranges, while the game is live.
+  // Read off the SAME input series `chartData` wrote the primary key from, so a
+  // range is never wider than what that line's own observations covered. Only
+  // live: the held tail is where push frames land several to a minute, and a
+  // settled chart's ending (#9906) is not this change's to redraw.
+  const primaryMinuteRanges = useMemo((): Map<string, { lo: number; hi: number }> => {
+    if (!isLive || isClosed) return new Map();
+    if (primarySeriesKey === "bainLuckDelta") return intraMinuteRanges(filteredAggregateLine);
+    if (primarySeriesKey === "homeDelta") return intraMinuteRanges(filteredHistory);
+    const source = nonBettingSources.find((s) => s.dataKey === primarySeriesKey);
+    return source ? intraMinuteRanges(filteredWinProbHistory[source.key] ?? []) : new Map();
+  }, [isLive, isClosed, primarySeriesKey, filteredAggregateLine, filteredHistory, nonBettingSources, filteredWinProbHistory]);
+
+  // Stamped onto the chartData points, the same way `crossingDelta` and
+  // `calloutDelta` are (a separate data array would break the categorical
+  // domain). Every ranged minute holds two real observations of the primary
+  // series, so the line is drawn there: #7878 withdraws only unobserved
+  // minutes, and the inputs are already cut to the chart window.
+  const primaryLineColor = primarySeriesKey === "bainLuckDelta"
+    ? BAIN_LUCK_CONFIG.color
+    : resolvedSources.find((s) => s.dataKey === primarySeriesKey)?.color ?? sourceHex("betting");
+
+  const drawnMinuteRanges = useMemo(() => {
+    const drawn: Array<{ lo: number; hi: number }> = [];
+    for (const pt of chartData) {
+      delete pt.minuteRangeHi;
+      delete pt.minuteRangeLo;
+      const range = primaryMinuteRanges.get(pt.timestamp);
+      if (!range) continue;
+      pt.minuteRangeHi = range.hi;
+      pt.minuteRangeLo = range.lo;
+      drawn.push(range);
+    }
+    return drawn;
+  }, [chartData, primaryMinuteRanges]);
+
   const { domain: yDomain, ticks: yTicks } = useMemo(() => {
     const values: number[] = [];
     const lastByKey = new Map<string, number>();
@@ -1751,8 +1831,11 @@ export default function OddsChart({
         }
       }
     }
-    return computeWinProbYAxis(values, [...lastByKey.values()]);
-  }, [chartData, plottedProbKeys]);
+    // #10093 — a live minute's high and low are inked, so they are inside the
+    // axis too: a spike the zoom treated as an outlier would run off the frame.
+    const rangeEnds = drawnMinuteRanges.flatMap((r) => [r.lo, r.hi]);
+    return computeWinProbYAxis(values, [...lastByKey.values(), ...rangeEnds]);
+  }, [chartData, plottedProbKeys, drawnMinuteRanges]);
 
   /**
    * #7940 — which end of the plot the period-label strip is painted at.
@@ -2915,6 +2998,45 @@ export default function OddsChart({
               />
             )}
             {!isMultiSource && gapConnector("homeDelta", sourceHex("betting"), 1.5, 0.5)}
+
+            {/* #10093 — a live minute's real low-to-high, inked at that minute
+                in the primary line's own colour (see `intraMinuteRanges`). The
+                line still passes through the minute's last reading, which is
+                the number the hero and callout print. Static: nothing animates
+                while the price is quiet, and a quiet minute draws nothing. */}
+            {drawnMinuteRanges.length > 0 && (
+              <Scatter
+                dataKey="minuteRangeHi"
+                fill="none"
+                isAnimationActive={false}
+                legendType="none"
+                tooltipType="none"
+                shape={(props: {
+                  cx?: number;
+                  cy?: number;
+                  payload?: Record<string, unknown>;
+                  yAxis?: { scale?: (v: number) => number };
+                }) => {
+                  const hi = props.payload?.minuteRangeHi;
+                  const lo = props.payload?.minuteRangeLo;
+                  const scale = props.yAxis?.scale;
+                  if (typeof hi !== "number" || typeof lo !== "number" || typeof scale !== "function") return <g />;
+                  const { cx = 0, cy = 0 } = props;
+                  const y2 = scale(lo);
+                  if (!Number.isFinite(cx) || !Number.isFinite(cy) || !Number.isFinite(y2)) return <g />;
+                  return (
+                    <line
+                      data-minute-range-lo={lo}
+                      data-minute-range-hi={hi}
+                      x1={cx} x2={cx} y1={cy} y2={y2}
+                      stroke={primaryLineColor}
+                      strokeWidth={2.5}
+                      strokeLinecap="round"
+                    />
+                  );
+                }}
+              />
+            )}
 
 
 

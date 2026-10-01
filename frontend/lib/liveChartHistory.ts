@@ -155,7 +155,8 @@ function extendServedBettingHistory(
  * Add actual publications received while this page was open. Polls can be
  * coarser than push; retaining the session's observations preserves a real
  * spike and reversal in the input series between polls. The main chart still
- * buckets by minute; preserving subminute ink is a separate renderer change.
+ * buckets by minute; on a live page it inks each minute's real low-to-high
+ * (`intraMinuteRanges`, #10093), so the excursion stays visible there.
  * Persisted history wins exact-time ties.
  * Never move an old endpoint to a new value or manufacture a timestamp.
  *

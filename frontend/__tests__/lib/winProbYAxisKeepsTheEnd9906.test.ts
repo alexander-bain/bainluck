@@ -75,11 +75,12 @@ describe("#9906 — an end inside the core moves nothing", () => {
 describe("#9906 — OddsChart hands the axis every series' last value", () => {
   const src = readFileSync(join(__dirname, "..", "..", "components", "OddsChart.tsx"), "utf8");
   const memo = src.slice(src.indexOf("const { domain: yDomain, ticks: yTicks } = useMemo("));
-  const body = memo.slice(0, memo.indexOf("}, [chartData, plottedProbKeys]);"));
+  const body = memo.slice(0, memo.indexOf("}, [chartData, plottedProbKeys, drawnMinuteRanges]);"));
 
   test("the axis call passes the per-key last values", () => {
     expect(body).toContain("lastByKey.set(key, v);");
-    expect(body).toContain("return computeWinProbYAxis(values, [...lastByKey.values()]);");
+    // #10093 appends a live minute's inked high/low after the per-key ends.
+    expect(body).toContain("return computeWinProbYAxis(values, [...lastByKey.values(), ...rangeEnds]);");
   });
 
   test("the last value is taken from the same plotted keys that size the axis", () => {
