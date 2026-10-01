@@ -369,10 +369,26 @@ export function periodWinnerParts(
   const suffix = SUFFIX_SCOPED_WINNER_MARKET.exec(name);
   if (suffix) {
     const [, first, second, scope] = suffix;
-    return winnerParts(scope, first, second);
+    return winnerParts(scope.replace(SET_SCOPE_THEN_WINNER, "$1"), first, second);
   }
   return null;
 }
+
+/**
+ * #10038 — Kalshi writes the set question `Carlos Alcaraz vs Alex Michelsen: Set
+ * 1 Winner`: scope last, as esports does, but with the `Winner` the esports form
+ * leaves out. `PERIOD_SCOPE` has no room for that word, so the name parsed as no
+ * period at all, the `winner` rule took both Kalshi set markets for the hero's
+ * moneyline, and only Polymarket's `Set 2 Winner: …` reached the card — one leg
+ * of it, Michelsen 24%, with no Alcaraz row (`/events/15320475`, 2026-10-01).
+ *
+ * SETS ONLY. Production (2026-10-01, open, event-linked) carries this tail as
+ * `set 1 winner` (12) and `set 2 winner` (18) — and as `1st half winner` (115)
+ * and `1st`–`4th quarter winner` (50 each). A half or a quarter can be drawn, so
+ * those markets carry a third answer that `scopedWinnerLabel` cannot name and the
+ * card would drop it; they stay filtered, as before. A set always has a winner.
+ */
+const SET_SCOPE_THEN_WINNER = /^(set\s*\d+)\s+winner$/i;
 
 /** The shared tail of both grammars: a period scope and two named sides. */
 function winnerParts(

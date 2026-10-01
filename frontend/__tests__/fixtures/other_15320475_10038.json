@@ -1,0 +1,189 @@
+{
+ "_source": "GET /api/events/15320475/game-markets, production, 2026-10-01 (Alcaraz v Michelsen, Japan Open, live)",
+ "home_team": "Alcaraz",
+ "away_team": "Michelsen",
+ "other": [
+  {
+   "market_name": "Carlos Alcaraz vs Alex Michelsen: Set 1 Winner",
+   "outcome_name": "Carlos Alcaraz",
+   "observed_at": "2026-10-01T09:00:12.387990+00:00",
+   "contributor_outcome_ids": [
+    237555848
+   ],
+   "probability": 0.995,
+   "source": "kalshi",
+   "is_winner": null,
+   "resolution_source": null,
+   "_market_id": 62972818
+  },
+  {
+   "market_name": "Carlos Alcaraz vs Alex Michelsen: Set 1 Winner",
+   "outcome_name": "Alex Michelsen",
+   "observed_at": "2026-10-01T09:00:12.387990+00:00",
+   "contributor_outcome_ids": [
+    237555849
+   ],
+   "probability": 0.01,
+   "source": "kalshi",
+   "is_winner": null,
+   "resolution_source": null,
+   "_market_id": 62972818
+  },
+  {
+   "market_name": "Carlos Alcaraz vs Alex Michelsen: Set 2 Winner",
+   "outcome_name": "Carlos Alcaraz",
+   "observed_at": "2026-10-01T09:05:27.965530+00:00",
+   "contributor_outcome_ids": [
+    237555846
+   ],
+   "probability": 0.52,
+   "source": "kalshi",
+   "is_winner": null,
+   "resolution_source": null,
+   "_market_id": 62972817
+  },
+  {
+   "market_name": "Carlos Alcaraz vs Alex Michelsen: Set 2 Winner",
+   "outcome_name": "Alex Michelsen",
+   "observed_at": "2026-10-01T09:05:27.965530+00:00",
+   "contributor_outcome_ids": [
+    237555847
+   ],
+   "probability": 0.445,
+   "source": "kalshi",
+   "is_winner": null,
+   "resolution_source": null,
+   "_market_id": 62972817
+  },
+  {
+   "market_name": "Alcaraz vs Michelsen",
+   "outcome_name": "Carlos Alcaraz",
+   "observed_at": "2026-10-01T09:05:27.965530+00:00",
+   "contributor_outcome_ids": [
+    237473916
+   ],
+   "probability": 0.845,
+   "source": "kalshi",
+   "is_winner": null,
+   "resolution_source": null,
+   "_market_id": 62945761
+  },
+  {
+   "market_name": "Alcaraz vs Michelsen",
+   "outcome_name": "Alex Michelsen",
+   "observed_at": "2026-10-01T09:05:27.965530+00:00",
+   "contributor_outcome_ids": [
+    237473917
+   ],
+   "probability": 0.155,
+   "source": "kalshi",
+   "is_winner": null,
+   "resolution_source": null,
+   "_market_id": 62945761
+  },
+  {
+   "market_name": "Set 2 Winner: Carlos Alcaraz vs Alex Michelsen",
+   "outcome_name": "Carlos Alcaraz",
+   "observed_at": "2026-10-01T09:05:29.027805+00:00",
+   "contributor_outcome_ids": [
+    237712869
+   ],
+   "probability": 0.515,
+   "source": "polymarket",
+   "is_winner": null,
+   "resolution_source": null,
+   "_market_id": 63017189
+  },
+  {
+   "market_name": "Set 2 Winner: Carlos Alcaraz vs Alex Michelsen",
+   "outcome_name": "Alex Michelsen",
+   "observed_at": "2026-10-01T09:05:29.027805+00:00",
+   "contributor_outcome_ids": [
+    237712870
+   ],
+   "probability": 0.485,
+   "source": "polymarket",
+   "is_winner": null,
+   "resolution_source": null,
+   "_market_id": 63017189
+  },
+  {
+   "market_name": "Set 1 Winner: Carlos Alcaraz vs Alex Michelsen",
+   "outcome_name": "Carlos Alcaraz",
+   "observed_at": "2026-10-01T08:58:37.188280+00:00",
+   "contributor_outcome_ids": [
+    238074391
+   ],
+   "probability": 0.9995,
+   "source": "polymarket",
+   "is_winner": null,
+   "resolution_source": null,
+   "_market_id": 63141879
+  },
+  {
+   "market_name": "Set 1 Winner: Carlos Alcaraz vs Alex Michelsen",
+   "outcome_name": "Alex Michelsen",
+   "observed_at": "2026-10-01T09:02:06.853593+00:00",
+   "contributor_outcome_ids": [
+    238074392
+   ],
+   "probability": 0.0005,
+   "source": "polymarket",
+   "is_winner": null,
+   "resolution_source": null,
+   "_market_id": 63141879
+  },
+  {
+   "market_name": "Carlos Alcaraz vs Alex Michelsen: Exact Match Score",
+   "outcome_name": "Carlos Alcaraz wins 2-0",
+   "observed_at": "2026-10-01T09:05:27.965530+00:00",
+   "contributor_outcome_ids": [
+    237473970
+   ],
+   "probability": 0.495,
+   "source": "kalshi",
+   "is_winner": null,
+   "resolution_source": null,
+   "_market_id": 62945776
+  },
+  {
+   "market_name": "Carlos Alcaraz vs Alex Michelsen: Exact Match Score",
+   "outcome_name": "Carlos Alcaraz wins 2-1",
+   "observed_at": "2026-10-01T09:05:27.965530+00:00",
+   "contributor_outcome_ids": [
+    237473971
+   ],
+   "probability": 0.3416,
+   "source": "kalshi",
+   "is_winner": null,
+   "resolution_source": null,
+   "_market_id": 62945776
+  },
+  {
+   "market_name": "Carlos Alcaraz vs Alex Michelsen: Exact Match Score",
+   "outcome_name": "Alex Michelsen wins 2-1",
+   "observed_at": "2026-10-01T09:05:27.965530+00:00",
+   "contributor_outcome_ids": [
+    237473972
+   ],
+   "probability": 0.1535,
+   "source": "kalshi",
+   "is_winner": null,
+   "resolution_source": null,
+   "_market_id": 62945776
+  },
+  {
+   "market_name": "Carlos Alcaraz vs Alex Michelsen: Exact Match Score",
+   "outcome_name": "Alex Michelsen wins 2-0",
+   "observed_at": "2026-10-01T09:01:59.724760+00:00",
+   "contributor_outcome_ids": [
+    237473973
+   ],
+   "probability": 0.0099,
+   "source": "kalshi",
+   "is_winner": null,
+   "resolution_source": null,
+   "_market_id": 62945776
+  }
+ ]
+}
