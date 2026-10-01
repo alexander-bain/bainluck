@@ -40,6 +40,7 @@ from app.utils.economics_headline import (
     select_mortgage_ladder,
     select_recession_headline,
 )
+from app.utils.market_display_name import clean_served_questions
 from app.utils.market_staleness import (
     CUMULATIVE_THRESHOLD_PREFIXES,
     featured_leader_probability,
@@ -1943,7 +1944,8 @@ async def get_economics(db: AsyncSession):
     # fail loudly in the guard rather than quietly shrink the hero.
     total = sum(t["count"] for t in themes.values())
 
-    return {
+    # #10084 — the question a card asks is the one its market page asks.
+    return clean_served_questions({
         "total_markets": total,
         "updated_at": now.isoformat(),
         "cross_source": cross_source,
@@ -1952,4 +1954,4 @@ async def get_economics(db: AsyncSession):
             "kalshi": sum(1 for m in all_markets if _source(m) == "kalshi"),
             "polymarket": sum(1 for m in all_markets if _source(m) == "polymarket"),
         },
-    }
+    })

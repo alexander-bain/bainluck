@@ -384,3 +384,32 @@ def elided_trailing_preposition(name: str | None) -> str | None:
         return None
     parts = _trailing_blank_parts(name)
     return None if parts is None else parts[1]
+
+
+def clean_served_questions(payload):
+    """Apply :func:`clean_market_display_name` to every ``"q"`` in a category payload.
+
+    #10084: the market page (``routes/futures.py``) and Discover
+    (``routes/feed.py``) already serve the cleaned title, but the politics,
+    economics and weather category pages served ``market.name`` raw as ``q``,
+    so the card asked "Will US withdraw from NATO by...?" while the page it
+    opens asked "Will US withdraw from NATO?". Nine rows across the three
+    pages, measured 2026-10-01 15:58Z.
+
+    Applied once, to the FINISHED response, on purpose: every internal step
+    that keys on ``q`` (the economics/weather dedup, the politics headline
+    pick) still sees the stored name byte-identical, so this changes the words
+    a reader sees and no decision about which rows appear. ``q`` in these
+    payloads is only ever a market question; any other key is untouched.
+    Mutates in place and returns ``payload`` so a builder can ``return`` it.
+    """
+    if isinstance(payload, dict):
+        for key, value in payload.items():
+            if key == "q" and isinstance(value, str):
+                payload[key] = clean_market_display_name(value)
+            else:
+                clean_served_questions(value)
+    elif isinstance(payload, list):
+        for item in payload:
+            clean_served_questions(item)
+    return payload
