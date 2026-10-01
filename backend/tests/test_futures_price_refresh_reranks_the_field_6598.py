@@ -342,7 +342,7 @@ class TestTheRetirementPathReRanksBeforeItReturns:
         assert "rerank" not in session.log
 
 
-# ── The wiring, by AST: the three boundaries inside the hourly sweep ─────────
+# ── The wiring, by AST: the four boundaries inside the hourly sweep ──────────
 
 
 def _refresh_function():
@@ -411,7 +411,7 @@ def test_every_re_rank_in_the_sweep_is_inside_a_try_that_commits_after_it():
 
     A re-rank issued AFTER the commit would still produce the right numbers most
     of the time and would silently leave the board ranked against prices a
-    rollback took away. Each of the sweep's three boundaries therefore has to
+    rollback took away. Each of the sweep's four boundaries therefore has to
     live in the same `try` as the commit that follows it — which is a property of
     the tree, so it is asserted on the tree.
     """
@@ -432,9 +432,10 @@ def test_every_re_rank_in_the_sweep_is_inside_a_try_that_commits_after_it():
             f"{max(commits)} — it is not in the write's transaction"
         )
 
-    assert guarded == 3, (
-        "the hourly sweep re-derives the field at three boundaries — the "
-        "Polymarket write+retire, the Kalshi write, and the pre-kick-off "
+    assert guarded == 4, (
+        "the hourly sweep re-derives the field at four boundaries — the "
+        "Polymarket write+retire, the Polymarket closed-leg retire when nothing "
+        "priced (#1826), the Kalshi write, and the pre-kick-off "
         f"withdrawal — but {guarded} were found. The fourth call is inside "
         "`_retire_delisted_kalshi_legs`, which has its own executed control."
     )
