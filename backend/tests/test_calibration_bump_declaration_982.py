@@ -68,6 +68,24 @@ Q270_CANDIDATE = Q269_PUBLISHED - Q270_REMOVED
 Q271_ADMITTED = 3_046
 Q271_CANDIDATE = Q270_CANDIDATE + Q271_ADMITTED
 
+# The SHIPPED transition now (#6317): q271 -> q272. ``Q271_PUBLISHED`` is what
+# /api/calibration was serving when the bump was prepared (read 2026-10-01
+# 17:09Z, ``generated_at`` 16:33:01Z). The move is NOT measured: the issue's
+# order-of-magnitude ceiling is ~4.4% of the curve, inside the gate's ordinary
+# band, so the shipped arm declares nothing and these tests hold it to that band
+# at the ceiling and refuse it at twice the ceiling.
+Q271_PUBLISHED = 1_031_394
+Q272_CEILING_DROP_PCT = 4.4
+
+#: The q271-era arms, kept as the worked example for the per-baseline mechanism
+#: (TestTheDeclarationArmMatchesTheBaselineBeingReplaced). The shipped dict now
+#: carries only the q272 arm; the mechanism is unchanged and is still tested on
+#: the one real transition that needed two arms.
+Q271_ERA_DECLARATIONS = {
+    "q269": {"from_version": "q269", "expected_drop_pct": 11.2, "tolerance_pct": 5.0},
+    "q270": None,
+}
+
 
 def declared(
     *,
@@ -416,6 +434,16 @@ def test_the_producer_declares_the_bump_it_is_currently_shipping():
     declaration = pc._declaration_for_baseline(
         pc.PREVIOUS_PUBLISHED_POPULATION_VERSION
     )
+    if declaration is None:
+        # #6317 (q272): declaring nothing is legitimate for a move inside the
+        # gate's ordinary band — the two tests below hold the shipped arm to that
+        # band. But it must be an EXPLICIT arm for the published baseline, never
+        # the default a forgotten baseline would also fall to.
+        assert (
+            pc.PREVIOUS_PUBLISHED_POPULATION_VERSION
+            in pc.CALIBRATION_POPULATION_DECLARATIONS
+        ), "declare-nothing must be an explicit arm for the published baseline"
+        return
     assert declaration is not None, (
         "the shipped build bumps the population version away from the artifact "
         "that is actually published, so it must declare the move it expects"
@@ -451,22 +479,25 @@ def test_the_shipped_declaration_admits_the_measured_rebuild():
     """
     import app.tasks.precompute_calibration as pc
 
+    # #6317: re-aimed at q271 -> q272. Its arm declares nothing, so "admits the
+    # rebuild" means "a move at the issue's ceiling stays inside the ordinary
+    # band and publishes without using the escape".
     verdict = evaluate_publish(
         candidate(
-            outcomes=Q271_CANDIDATE,
+            outcomes=round(Q271_PUBLISHED * (1 - Q272_CEILING_DROP_PCT / 100)),
             version=pc.CALIBRATION_POPULATION_VERSION,
             declaration=pc._declaration_for_baseline(
                 pc.PREVIOUS_PUBLISHED_POPULATION_VERSION
             ),
         ),
         published(
-            outcomes=Q269_PUBLISHED,
+            outcomes=Q271_PUBLISHED,
             version=pc.PREVIOUS_PUBLISHED_POPULATION_VERSION,
         ),
     )
 
     assert verdict.ok, verdict.summary()
-    assert "version_bump_within_declaration" in verdict.observation_codes
+    assert "version_bump_used_no_escape" in verdict.observation_codes
 
 
 def test_the_shipped_declaration_still_refuses_a_move_it_did_not_declare():
@@ -478,22 +509,24 @@ def test_the_shipped_declaration_still_refuses_a_move_it_did_not_declare():
     """
     import app.tasks.precompute_calibration as pc
 
+    # #6317: twice the ceiling is past the ordinary band, and an arm that
+    # declared nothing gets the strict rule — refused BY NAME, not waved through.
     verdict = evaluate_publish(
         candidate(
-            outcomes=Q269_PUBLISHED - (Q270_REMOVED * 2),
+            outcomes=round(Q271_PUBLISHED * (1 - 2 * Q272_CEILING_DROP_PCT / 100)),
             version=pc.CALIBRATION_POPULATION_VERSION,
             declaration=pc._declaration_for_baseline(
                 pc.PREVIOUS_PUBLISHED_POPULATION_VERSION
             ),
         ),
         published(
-            outcomes=Q269_PUBLISHED,
+            outcomes=Q271_PUBLISHED,
             version=pc.PREVIOUS_PUBLISHED_POPULATION_VERSION,
         ),
     )
 
     assert not verdict.ok, verdict.summary()
-    assert "version_bump_exceeds_declaration" in verdict.codes
+    assert "version_bump_undeclared" in verdict.codes
 
 
 def test_the_declaration_is_stamped_before_the_payload_is_serialised():
@@ -617,7 +650,18 @@ class TestTheDeclarationArmMatchesTheBaselineBeingReplaced:
     DECLARATION_MAX_TOLERANCE_PCT. And guessing is the expensive way to be
     wrong — a mis-declaration is refused, and a refusal CLEARS THE CHECKPOINT,
     binning every later rebuild until another deploy.
+
+    #6317: the shipped dict now holds only q272's arm, so this class pins the
+    module to the q271-era arms and version for its duration. It tests the
+    MECHANISM — late-bound arm selection — on the one transition that needed it.
     """
+
+    @pytest.fixture(autouse=True)
+    def _q271_era_arms(self, monkeypatch):
+        import app.tasks.precompute_calibration as pc
+
+        monkeypatch.setattr(pc, "CALIBRATION_POPULATION_DECLARATIONS", Q271_ERA_DECLARATIONS)
+        monkeypatch.setattr(pc, "CALIBRATION_POPULATION_VERSION", "q271")
 
     def test_replacing_the_version_that_is_actually_published_is_admitted(self):
         import app.tasks.precompute_calibration as pc

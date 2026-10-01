@@ -64,6 +64,12 @@ COVERED = (
     # arm's, and it is what stops the NEXT raw INSERT added to this file from
     # reaching a runner unchecked.
     "test_calibration_threshold_ladder_pg.py",
+    # #6317 (q272). Same seed shape as the ladder gate above — a two-sided book
+    # on every priced leg (the writer bar), `category` constant and
+    # `llm_sport_category` as the cell key — plus `market_metadata.shape`, the
+    # persisted exclusivity proof without which no market reaches
+    # `mex_field_candidates` and the defect arm would read the multi pool.
+    "test_calibration_unpriced_field_winner_6317_pg.py",
     # #6211 (CAL-P1310). Seeds three DataGolf markets and their boards by raw
     # INSERT to prove `market_info` withholds an unverified market WHOLE —
     # winners and losers together. Two seeding hazards worth naming here rather

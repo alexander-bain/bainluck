@@ -842,7 +842,27 @@ def _main_payload_is_publishable(response: Any) -> bool:
 # in scope at the population scan, and the scan acquires one only WITH q270 —
 # `mrs_lad`, the `market_result_shape` join #5305 added for the ladder arm. On
 # q270's parent there was nothing for the shape half to read.
-CALIBRATION_POPULATION_VERSION = "q271"
+#
+# ---------------------------------------------------------------------------
+# q271 -> q272 (#6317, prepared 2026-10-01): A FIELD WHOSE WINNER HAS NO
+# PUBLISHABLE FORECAST IS UNKNOWN TRUTH. A proved single-winner field whose one
+# winner was never priced (or priced only by a quote the curve refuses) used to
+# publish every priced leg below the normalization threshold — all losers by
+# construction. ``is_field_winner_unpublished`` now drops the whole field.
+#
+# THIS BUMP NARROWS, by an amount NOT YET MEASURED. The only measured figure is
+# historical (2026-09-15: 32 markets / 144 published rows, 0.02% of q271), and it
+# predates #6110's rail (PR #6306, merged 2026-09-15), which mints the champion of
+# a settled field we ingested without one and so converts winnerless fields —
+# excluded whole by rung 1 — into exactly this shape. The issue's order-of-
+# magnitude ceiling for that conversion is ~4.4% of the curve. That is inside the
+# gate's ordinary ±5% band, which is why no arm below declares a number — but it
+# is a ceiling, not a measurement, so the rollover owner measures the move on the
+# published population BEFORE deploying (the q270 method,
+# ``scripts/calibration_population_move_5401.py``). A move past the band needs a
+# declaration here first; an undeclared one is refused and the refusal clears the
+# checkpoint.
+CALIBRATION_POPULATION_VERSION = "q272"
 
 #: What THIS bump expects to do to the population, stated up front so the publish
 #: gate can hold it to its word (CAL-P982, #1978). ``None`` on any build that is
@@ -962,13 +982,15 @@ CALIBRATION_POPULATION_VERSION = "q271"
 #: before the deploy, two interacting rules). q270's realised move was
 #: independently measured at 11.88-12.68%, so this arm expects 11.12-11.92 and
 #: has ~5pp of room on either side.
+#: #6317 (q272): ONE arm, against the artifact actually published (q271), and it
+#: declares nothing — the expected narrowing sits inside the ordinary ±5% band
+#: (see the q271 -> q272 note above CALIBRATION_POPULATION_VERSION), so the gate
+#: holds this bump to that band rather than to a borrowed number. The q269/q270
+#: arms are retired with the transitions they described: a q269 or q270 baseline
+#: now falls to the DEFAULT (declare nothing, strict band), never to an old
+#: declaration measured for a different move.
 CALIBRATION_POPULATION_DECLARATIONS: "dict[str, dict | None]" = {
-    "q269": {
-        "from_version": "q269",
-        "expected_drop_pct": 11.2,
-        "tolerance_pct": 5.0,
-    },
-    "q270": None,
+    "q271": None,
 }
 
 #: The arm that applies when the baseline's version is not one this bump
@@ -1055,15 +1077,18 @@ COMPATIBLE_PREVIOUS_POPULATION_VERSIONS: tuple[str, ...] = ()
 
 #: The version carried by the artifact /calibration is ACTUALLY serving — the
 #: one a rollover has to keep servable to stay lit. Measured, not assumed:
-#: ``GET /api/calibration`` returned ``population_version: "q269"`` with
-#: ``generated_at 2026-09-12T22:16:25.849594+00:00`` and ``total_outcomes``
-#: 798,292, read at 2026-09-12 22:44:48Z (3:44PM PT).
+#: ``GET /api/calibration`` returned ``population_version: "q271"`` with
+#: ``generated_at 2026-10-01T16:33:01.531653+00:00`` and ``total_outcomes``
+#: 1,031,394, read at 2026-10-01 17:09Z (10:09AM PT) — the payload saved as
+#: ``artifacts/calibration/sol-original-ship-diagnosis-20261001T1714Z/served-calibration.json``.
+#: (#6317 / q272. The q269 reading of 2026-09-12 22:44:48Z that stood here
+#: described the q270/q271 rollovers.)
 #:
 #: It is separate from :data:`CALIBRATION_POPULATION_VERSION` because the two
 #: genuinely differ during a rollover — that gap IS the dark window — and the
 #: guard that checks the lit path needs to name the outgoing version without
 #: hard-coding a literal that goes stale one bump later.
-PREVIOUS_PUBLISHED_POPULATION_VERSION = "q269"
+PREVIOUS_PUBLISHED_POPULATION_VERSION = "q271"
 
 #: The population version for which an EMPTY
 #: :data:`COMPATIBLE_PREVIOUS_POPULATION_VERSIONS` — and therefore a DELIBERATE,
@@ -1324,6 +1349,22 @@ CALIBRATION_CORRECTIONS = [
                        "adds questions back rather than removing them, so "
                        "earlier numbers here were incomplete rather than "
                        "wrong.",
+    },
+    {
+        "date": "2026-10-01",
+        # Web prints date + title + rows only (#4067), so the title has to say
+        # what changed by itself.
+        "title": "Races and contests are scored only when we priced the winner",
+        # #6317. None until the first rebuild under the new rule measures it —
+        # this panel states published counts or nothing (same as D112 above).
+        "rows": None,
+        "description": "When a race, award or other one-winner contest is "
+                       "scored, the winner has to be one of the outcomes we "
+                       "had a price for. Sometimes the winner was never priced, "
+                       "and then every outcome we did price was a loss by "
+                       "definition — scoring those would count a run of misses "
+                       "that no forecast ever made. Those contests are now left "
+                       "out until their winner has a price of its own.",
     },
 ]
 
@@ -1833,6 +1874,46 @@ def field_is_complete_for_normalization(
         and survivor_win_n == 1
         and survivor_n >= 3
     )
+
+
+# #6317 — a field whose ONE winner has no publishable forecast is unknown truth.
+#
+# ``survivor_win_n == 1`` above already says "normalizing losers when the winner
+# was excluded would be fiction", but it only ever runs for a field whose price
+# sum clears MEX_NORMALIZE_THRESHOLD. A field missing its winner's price mass sums
+# LOW, so below the threshold the same field flowed to the multi pool and
+# published every priced leg — all of them losers, because the leg that is
+# missing is missing precisely because it won. That is a sample censored on the
+# outcome, and no exclusion upstream could see it: ``no_winner_markets`` counts
+# winners over ALL outcomes (the unpriced winner clears it) and
+# ``mex_field_candidates`` counts priced members only (the winner is not one).
+#
+# The rung therefore asks the survivor question for EVERY proved field, with no
+# sum gate: is the winner among the rows this price expression would publish? A
+# winner with no price, or a price the curve refuses (never bid, below the writer
+# bar, a placeholder), answers no, and the whole field leaves the curve. Nothing
+# is synthesized: the winner is not priced, and no loser is re-graded.
+FIELD_WINNER_UNPUBLISHED_RULE_TEXT = (
+    "A settled field with exactly one winner is scored only when that winner has "
+    "a usable forecast of its own. If the winning outcome was never priced, or its "
+    "only price is one the curve does not accept, every outcome left in the field "
+    "is a loss by construction — so the whole field is left out rather than "
+    "counted as a run of confident misses. Read-side only; never mutates "
+    "resolutions."
+)
+
+
+def field_winner_is_unpublished(is_field_candidate: bool, survivor_win_n: int) -> bool:
+    """True if a proved field's single winner has no publishable forecast (#6317).
+
+    Canonical mirror of ``is_field_winner_unpublished`` in ``normalized``.
+    ``is_field_candidate`` is membership of ``mex_field_candidates`` (proved
+    exclusive, exactly one winner over all outcomes, >=3 priced members);
+    ``survivor_win_n`` is ``field_completeness``'s count of winners surviving every
+    published per-outcome exclusion at this price expression. Deliberately
+    independent of the price sum — see the block comment above.
+    """
+    return is_field_candidate and survivor_win_n == 0
 
 
 # Queue #259 Item 1 — the sum-to-1 INVARIANT for a published normalized field.
@@ -4945,6 +5026,17 @@ def _calibration_population_ctes(
                      AND NOT (fc.survivor_n = fc.eligible_n
                               AND fc.survivor_win_n = 1
                               AND fc.survivor_n >= 3)) AS is_field_incomplete,
+                    -- #6317: a proved single-winner field whose ONE winner has no
+                    -- publishable forecast at this price expression — never
+                    -- priced, or priced but refused by a published exclusion.
+                    -- Its surviving legs are all losers BY CONSTRUCTION: the
+                    -- sample is censored on the outcome itself. Deliberately NOT
+                    -- gated on ``mnm_cp_sum``: a field missing its winner's mass
+                    -- sums LOW, so the sum-gated survivor test above is weakest
+                    -- exactly where this censoring is guaranteed. Mirrors
+                    -- field_winner_is_unpublished(). Read-side only (gotcha #21).
+                    (ro.candidate_market_id IS NOT NULL
+                     AND COALESCE(fc.survivor_win_n, 0) = 0) AS is_field_winner_unpublished,
                     CASE WHEN ro.candidate_market_id IS NOT NULL
                               AND ro.mnm_cp_sum > {MEX_NORMALIZE_THRESHOLD}
                               AND fc.survivor_n = fc.eligible_n
@@ -5004,6 +5096,9 @@ def _calibration_population_ctes(
                 FROM normalized
                 WHERE is_multi AND eligible >= 3 AND is_liquid
                   AND NOT is_mex_normalized AND NOT is_field_incomplete
+                  -- #6317: rows that ``deduped`` drops whole never vote on a
+                  -- grouped sibling's modal placeholder price.
+                  AND NOT is_field_winner_unpublished
                 GROUP BY vm_id, source, adj_opening_probability, eligible
                 HAVING COUNT(*) > GREATEST(eligible * 0.5, 2)
             ),
@@ -5044,6 +5139,10 @@ def _calibration_population_ctes(
                     -- that makes the page's "not graded, not counted" copy true.
                     AND NOT ro.is_identity_disputed
                     AND NOT ro.is_field_incomplete
+                    -- #6317: a field whose winner has no publishable forecast
+                    -- is unknown truth, not a set of confident losses — the
+                    -- same doctrine as Queue 299 rung 1. Dropped, never re-graded.
+                    AND NOT ro.is_field_winner_unpublished
                     AND
                     CASE
                         -- Queue #259 Item 1 INVARIANT FIX: a COMPLETE normalized
@@ -5238,7 +5337,14 @@ _COVERAGE_RUNG_PREDICATES: tuple[tuple[str, str], ...] = (
         "OR COALESCE(n.is_kalshi_prop_threshold, false) "
         "OR COALESCE(n.is_weather_wide_spread, false)",
     ),
-    ("field_incomplete", "COALESCE(n.is_field_incomplete, false)"),
+    # #6317 rides this rung rather than adding one: a field whose one winner has
+    # no publishable forecast is a partition that cannot sum to one over what it
+    # publishes, and a new rung would change the ratified contract's rung set.
+    (
+        "field_incomplete",
+        "COALESCE(n.is_field_incomplete, false) "
+        "OR COALESCE(n.is_field_winner_unpublished, false)",
+    ),
     # No predicate: the terminal ELSE. A row that reached ``normalized``, was
     # refused by none of the rungs above, and still did not reach ``deduped``
     # was dropped by the representative rules (rn != 1, modal placeholder price,
@@ -5525,6 +5631,14 @@ def _main_futures_sql(*, frozen: bool = False) -> str:
                     COUNT(DISTINCT market_id) FILTER (WHERE is_mex_normalized) AS mex_normalized_markets,
                     COUNT(DISTINCT market_id) FILTER (WHERE is_field_incomplete) AS field_incomplete_markets,
                     COUNT(*) FILTER (WHERE is_field_incomplete) AS field_incomplete_outcomes,
+                    -- #6317: fields dropped because their one winner has no
+                    -- publishable forecast. Overlaps field_incomplete wherever a
+                    -- field is both (a sum > threshold field that lost its
+                    -- winner), so the two are disclosed side by side, never summed.
+                    COUNT(DISTINCT market_id) FILTER (WHERE is_field_winner_unpublished)
+                        AS field_winner_unpublished_markets,
+                    COUNT(*) FILTER (WHERE is_field_winner_unpublished)
+                        AS field_winner_unpublished_outcomes,
                     -- Queue #159: esports match-bundle exclusion count (eligible
                     -- outcomes flagged in ranked_outcomes that the filter drops).
                     COUNT(*) FILTER (WHERE is_esports_bundle) AS esports_bundle_excluded,
@@ -5655,6 +5769,8 @@ def _main_futures_sql(*, frozen: bool = False) -> str:
                 MAX(ls.mex_normalized_markets) AS mex_normalized_markets,
                 MAX(ls.field_incomplete_markets) AS field_incomplete_markets,
                 MAX(ls.field_incomplete_outcomes) AS field_incomplete_outcomes,
+                MAX(ls.field_winner_unpublished_markets) AS field_winner_unpublished_markets,
+                MAX(ls.field_winner_unpublished_outcomes) AS field_winner_unpublished_outcomes,
                 MAX(ls.esports_bundle_excluded) AS esports_bundle_excluded,
                 -- CAL-P168 (#1978) rank 1: the same carry for K''s totals. A
                 -- column emitted by the inner scan and dropped here reads as a
@@ -7198,6 +7314,8 @@ async def compute_calibration_payload(db, *, runner=None) -> dict:
         mex_normalized_markets = _int0("mex_normalized_markets")
         field_incomplete_markets = _int0("field_incomplete_markets")
         field_incomplete_outcomes = _int0("field_incomplete_outcomes")
+        field_winner_unpublished_markets = _int0("field_winner_unpublished_markets")
+        field_winner_unpublished_outcomes = _int0("field_winner_unpublished_outcomes")
         # Queue #259 Item 1 (C14 P2): PUBLISHED (post-dedup) normalized markets —
         # the ones that actually reach the curve, vs the candidate/normalized
         # counts above which are computed pre-dedup over ``normalized``. With the
@@ -8267,6 +8385,12 @@ async def compute_calibration_payload(db, *, runner=None) -> dict:
                 "published_normalized_outcomes_post_dedup": mex_published_outcomes,
                 "field_incomplete_excluded_markets": field_incomplete_markets,
                 "field_incomplete_excluded_outcomes": field_incomplete_outcomes,
+                # #6317: fields whose one winner has no publishable forecast.
+                # Disclosed beside the partial-field counts, not added to them —
+                # a field can be both.
+                "winner_unpublished_rule": FIELD_WINNER_UNPUBLISHED_RULE_TEXT,
+                "winner_unpublished_excluded_markets": field_winner_unpublished_markets,
+                "winner_unpublished_excluded_outcomes": field_winner_unpublished_outcomes,
             },
         },
         "esports_multi_bundle_filter": {  # Queue #159 (#1010)

@@ -242,7 +242,11 @@ class TestTheBankSurvives:
 
 
 #: (CALIBRATION_POPULATION_VERSION, population_predicate_fingerprint()) on this tree.
-PINNED_PREDICATE = ("q271", CANDIDATE_PREDICATE)
+#: #6317 moved it on purpose and bumped the version with it (q271 -> q272): the
+#: population drops a proved field whose one winner has no publishable forecast.
+#: ``CANDIDATE_PREDICATE`` above stays the #8458 production pair it was measured as.
+Q272_PREDICATE = "25b7d769c3d64eca6a667ef39aae34dd"
+PINNED_PREDICATE = ("q272", Q272_PREDICATE)
 
 
 def test_population_predicate_is_pinned_8458():

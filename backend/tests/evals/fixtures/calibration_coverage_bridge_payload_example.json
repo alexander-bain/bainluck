@@ -84,7 +84,7 @@
           "unit": "futures_outcome",
           "outcomes": 2216,
           "checked": true,
-          "rule": "The outcome belongs to a normalization field that lost a member to an exclusion above, so the partition no longer sums to one and is dropped whole rather than normalized over its survivors."
+          "rule": "The outcome belongs to a normalization field that lost a member to an exclusion above, or whose one winner has no usable forecast (#6317), so the partition no longer sums to one and is dropped whole rather than normalized over its survivors."
         },
         {
           "key": "representative_not_selected",

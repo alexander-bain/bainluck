@@ -9,7 +9,7 @@ Two ids, and they are independent:
 
 | id | what it versions | where it lives |
 |---|---|---|
-| `population_version` (`q271`) | **which rows** are scored | `precompute_calibration.py` |
+| `population_version` (`q272`, prepared; `q271` published) | **which rows** are scored | `precompute_calibration.py` |
 | `SCORING_POLICY_VERSION` (`m1`) | **how a cell is judged** — bars, `MIN_CELL_N`, `SIGMA_GATE` | `calibration_scoring.py` |
 
 Entries that CHANGED a published number are in `CALIBRATION_CORRECTIONS`, served on
@@ -134,6 +134,29 @@ key `calibration:min_category_outcomes` with no deploy. Move the page's disclosu
 score follows it by construction.
 
 ---
+
+## q272 — a field whose winner has no usable forecast is not scored (prepared 2026-10-01, #6317)
+
+**Status: PREPARED, NOT DEPLOYED.** Root and the integrator own the rollover; Alex owns the dark window.
+
+**What changes.** A settled field with exactly one winner (a race stage, an award, a draft slot) is
+scored only when that winner is one of the outcomes the curve would publish. Before, a winner that
+was never priced — or priced only by a quote the curve refuses — left its priced legs publishing as
+confident losses whenever the field's prices summed to 1.15 or less. Those legs are losses by
+construction (the missing leg is missing *because* it won), so the sample was censored on the outcome.
+
+**What it does not change.** No price is synthesized for the winner, no loser is re-graded, a winner
+priced only by its opening still counts (`COALESCE(calibration, opening)` is unchanged), and a field
+whose winner *is* priced publishes as before however low its prices sum.
+
+**Size: unmeasured.** Historical: 32 markets / 144 published rows (0.02%, 2026-09-15). #6110's rail
+(PR #6306, merged 2026-09-15) can turn winnerless fields into this shape; the issue's ceiling is ~4.4%
+of the curve. The shipped declaration is "nothing" (inside the ordinary ±5% band), so the move is
+measured on the published population before deploy; a move past the band needs a declaration first.
+
+**Dark window: NOT accepted for q272.** `POPULATION_VERSION_DARK_WINDOW_ACCEPTED` still names q271, so
+two guards fail closed until Alex accepts a dark /calibration for q272 by name (the q271 acceptance
+does not carry over) — or the change rides a bump that is being spent anyway.
 
 ## q271 — D112, the symmetric settlement channels (2026-09-13)
 

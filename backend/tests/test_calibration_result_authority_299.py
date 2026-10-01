@@ -556,17 +556,23 @@ class TestPublishOrPark:
         `docs/calibration-methodology-ledger.md` as an open question for Alex,
         since what /calibration shows during a rollover is a reader-visible
         call.
+
+        #6317 moves it to q272, and it NARROWS again: a proved single-winner
+        field whose one winner has no publishable forecast leaves the curve. A
+        q271 artifact publishes exactly those all-loser legs, so serving it under
+        a q272 label would re-publish what the bump removes — the q269/q270
+        argument for the empty list applies in full. Whether the dark window that
+        follows is accepted is NOT asserted here: that is Alex's call by name,
+        and ``test_a_version_bump_carries_its_own_rollover_declaration`` above is
+        the one guard that holds it.
         """
-        assert pc.CALIBRATION_POPULATION_VERSION == "q271"
+        assert pc.CALIBRATION_POPULATION_VERSION == "q272"
         assert pc.COMPATIBLE_PREVIOUS_POPULATION_VERSIONS == ()
-        assert pc.POPULATION_VERSION_DARK_WINDOW_ACCEPTED == "q271"
-        assert pc.PREVIOUS_PUBLISHED_POPULATION_VERSION == "q269", (
-            "q269 is the version the live artifact carries; if this moves, the "
+        assert pc.PREVIOUS_PUBLISHED_POPULATION_VERSION == "q271", (
+            "q271 is the version the live artifact carries; if this moves, the "
             "lit-path arm above is checking the wrong predecessor. MEASURED "
-            "2026-09-13 04:57Z and still true at the time of writing: "
-            "/api/calibration returns 503 no_trustworthy_snapshot, because q270 "
-            "merged and went live on the web but `bainluck-heavy` has not taken "
-            "the sha, so the last PUBLISHED artifact is still q269."
+            "2026-10-01 17:09Z: /api/calibration served population_version q271, "
+            "generated_at 2026-10-01T16:33:01Z, 1,031,394 outcomes."
         )
 
 

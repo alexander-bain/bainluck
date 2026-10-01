@@ -275,7 +275,17 @@ from app.tasks.calibration_main_build import UNIT_PLAN_CACHE_MODE
 #: The version is NOT bumped, and the reason is the strongest of any anchor
 #: here: the rows are provably the same rows. A reader is told nothing because
 #: nothing about the population changed — only how long it takes to compute.
-LIVE_INPUT_FINGERPRINT = "8bb7895222dddc7749b5052a43fcdb5e"
+#:
+#: RE-ANCHORED for #6317 (q271 -> q272, a field whose one winner has no
+#: publishable forecast leaves the curve): ``8bb78952…`` -> ``67559a47…``. Unlike
+#: every anchor above, this one MOVES THE POPULATION and bumps the version, so
+#: the re-key is the point rather than a side effect: a q271 bank counts rows
+#: q272 refuses, and the version is one of ``_main_input_fingerprint``'s inputs.
+#: WHAT THIS RE-KEY COSTS: the staged bank and a dark /calibration until the
+#: first q272 build publishes — which is why the rollover is root's and the
+#: integrator's to schedule, and why POPULATION_VERSION_DARK_WINDOW_ACCEPTED is
+#: not set for q272 by the builder.
+LIVE_INPUT_FINGERPRINT = "67559a47e4bd40ab191234ef2ee80c8b"
 
 
 class _Db:

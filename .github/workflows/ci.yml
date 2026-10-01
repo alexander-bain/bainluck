@@ -2692,6 +2692,24 @@ jobs:
             exit 1
           fi
 
+      - name: Calibration unpriced field winner (real Postgres)
+        # #6317 / q272. A proved single-winner field whose one winner has no
+        # publishable forecast used to publish every priced leg below the
+        # normalization threshold — all losers by construction. Executes the
+        # real `_calibration_population_ctes` on seeded rows: two defect arms
+        # (never-priced winner, refused winner) must publish nothing, and three
+        # controls (priced thin field, opening-only winner, complete normalized
+        # field) must keep publishing. Same skip-detection as every gate here.
+        if: matrix.group == 'shared'
+        run: |
+          set -o pipefail
+          python -m pytest tests/integration/test_calibration_unpriced_field_winner_6317_pg.py \
+            -v -s -rs 2>&1 | tee /tmp/unpriced_winner.txt
+          if grep -qiE "[0-9]+ skipped" /tmp/unpriced_winner.txt; then
+            echo "::error::calibration unpriced-field-winner contract SKIPPED — the gate did not run"
+            exit 1
+          fi
+
       - name: Calibration DataGolf symmetric exclusion (real Postgres)
         # #6211. `market_info` withholds a DataGolf market whose field we cannot
         # establish, WHOLE — winners and losers together. Its comment said that
