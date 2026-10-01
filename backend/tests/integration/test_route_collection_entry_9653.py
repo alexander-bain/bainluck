@@ -11,6 +11,7 @@ import pytest
 
 from app.services import container_discovery as producer
 from app.utils import request_cache as cache
+from app.utils.feed_cache import FEED_RESPONSE_CACHE_PREFIX
 
 
 @pytest.fixture
@@ -169,7 +170,7 @@ async def test_discover_paginate_full_deck_and_recheck_revocation(
     editions = []
     for offset in (0, 10, 20):
         response = await client.get(
-            f"/api/feed?include_futures=false&limit=10&offset={offset}"
+            f"/api/feed?limit=10&offset={offset}"
         )
         assert response.status_code == 200
         body = response.json()
@@ -186,12 +187,18 @@ async def test_discover_paginate_full_deck_and_recheck_revocation(
     assert collection["data"] == card
     assert not any(key.startswith("_") for item in pages for key in item)
     # Principal-independent scoring artifacts are still usable; public page
-    # responses, stale mirrors and page bases must not be read.
-    assert all(key.startswith("feed:pic:") for key in redis.keys), redis.keys
+    # responses, stale mirrors and page bases must not be read. #10003: this
+    # session double cannot answer the publication fingerprint, and a
+    # collection-bearing page with no fingerprint is never served from cache.
+    # (Discover shape — `include_futures=false` no longer offers collections.)
+    assert redis.keys
+    assert not any(key.startswith(FEED_RESPONSE_CACHE_PREFIX) for key in redis.keys), (
+        redis.keys
+    )
     assert list(read.await_args.kwargs["event_ids"]) == list(range(501, 521))
 
     read.return_value = SimpleNamespace(collections=[])
-    withdrawn = await client.get("/api/feed?include_futures=false&limit=10")
+    withdrawn = await client.get("/api/feed?limit=10")
     assert withdrawn.json()["total"] == 25
     assert all(item["type"] != "collection" for item in withdrawn.json()["items"])
 
