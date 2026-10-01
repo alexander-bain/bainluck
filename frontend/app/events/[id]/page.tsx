@@ -139,6 +139,7 @@ import TeamNameLink from "@/components/TeamNameLink";
 import { PinIcon } from "@/components/PinButton";
 import { teamShortNames, shippableCrestBadge } from "@/lib/teamShortName";
 import EventHeroProbabilityPair from "@/components/EventHeroProbabilityPair";
+import SlashBreakableName from "@/components/SlashBreakableName";
 import { SignalBars } from "@/components/discover/shared";
 import { confidenceFromSources, countProbabilitySources } from "@/lib/confidence";
 import { pinChartEdgeToHero } from "@/lib/chartEdgePin";
@@ -2291,7 +2292,7 @@ export default function EventPage({ params }: EventPageProps) {
                 sportKey={event.sport}
                 className="text-xs font-semibold text-text-primary text-center hover:underline"
               >
-                {heroShortNames.home}
+                <SlashBreakableName text={heroShortNames.home} />
               </TeamNameLink>
               {/* #5720 — `recordReadsAsRecord`, computed once beside the scores. */}
               {recordReadsAsRecord &&
@@ -2640,7 +2641,7 @@ export default function EventPage({ params }: EventPageProps) {
                 sportKey={event.sport}
                 className="text-xs font-semibold text-text-primary text-center hover:underline"
               >
-                {heroShortNames.away}
+                <SlashBreakableName text={heroShortNames.away} />
               </TeamNameLink>
               {/* #5720 — same gate as the home side; see `recordReadsAsRecord`. */}
               {recordReadsAsRecord &&
