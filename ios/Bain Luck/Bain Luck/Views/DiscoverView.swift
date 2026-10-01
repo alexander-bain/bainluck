@@ -1509,29 +1509,6 @@ struct DiscoverView: View {
                     .frame(height: 0)
                     .id(Self.feedTopAnchor)
                     .accessibilityHidden(true)
-                // #7074, the pull arm. THE READER WHO PULLED IS STANDING HERE,
-                // and until this row existed every outcome of their gesture
-                // rendered byte-identically to not having pulled: the three
-                // readers of `footerRefreshPhase` are all in the footer region,
-                // a screen-and-a-half below, and both of this body's error
-                // surfaces are gated on `vm.items.isEmpty` — so a pull that
-                // FAILS on a full feed says nothing and a pull that SUCCEEDS
-                // says nothing. Alex, build 15: "Pull gesture briefly shows
-                // activity with no apparent change."
-                //
-                // This is #1472's repair given its second reader. Nothing new is
-                // decided here and no new state is introduced: the same phase
-                // the end card reads, through a rule that borrows the end card's
-                // own words. `.refreshing` is deliberately silent — it is the
-                // one phase this reader can already see, under their finger.
-                if let notice = DiscoverPullRefreshNotice.forPhase(footerRefreshPhase) {
-                    DiscoverPullRefreshNoticeRow(notice: notice) {
-                        Task { await refreshFeed() }
-                    }
-                    .padding(.horizontal)
-                    .padding(.bottom, 8)
-                    .transition(.opacity)
-                }
                 // Compute the eligible, grouped feed once per body pass — reused
                 // by the card grid, pagination trigger, and the empty-eligible
                 // end state below (L2-191).
@@ -1822,7 +1799,9 @@ struct DiscoverView: View {
                         // only thing on this half of the page that can tell them
                         // what happened. `.failed` is included for the same
                         // reason — a pagination spinner must never swallow the
-                        // one notice a failed refresh gets.
+                        // one notice a failed refresh gets. (Since #7074's build-33
+                        // repair the reset waits for a successful load, so this is
+                        // now the guard rather than the only defence.)
                         NativeFeedEndCard(
                             onRefresh: { Task { await refreshFeed(returningToTopWith: feedProxy) } },
                             phase: footerRefreshPhase
@@ -1850,6 +1829,49 @@ struct DiscoverView: View {
             }
             .frame(maxWidth: contentMaxWidth)
             .frame(maxWidth: .infinity)
+        }
+        // #7074. HOW A REFRESH ENDED, drawn where the reader is looking whichever
+        // end of the feed they started it from.
+        //
+        // Pull arm (build 15): until this notice existed every outcome of a pull
+        // rendered byte-identically to not having pulled — the three readers of
+        // `footerRefreshPhase` are in the footer region and both of this body's
+        // error surfaces are gated on `vm.items.isEmpty`. `.refreshing` stays
+        // silent: it is the one phase the pull reader can already see, under
+        // their finger.
+        //
+        // Footer arm (Alex, installed 1.0.2 (33)): "scrolled to the bottom, tapped
+        // Refresh, after 1–2 seconds returned to the top… no indication that
+        // refresh had worked." MEASURED on a simulator journey of the same flow:
+        // the notice WAS raised — and it was drawn as the first row of the scroll
+        // content, which `scrollTo(feedTopAnchor, anchor: .top)` parks under the
+        // collapsed navigation bar (notice minY 64pt, behind the "Discover" title;
+        // decayed 4s later without ever being on screen). So the reader who was
+        // moved got the confirmation exactly where they could not see it.
+        //
+        // A top SAFE-AREA INSET is laid out below the navigation bar at any scroll
+        // offset, so the notice no longer depends on where a scroll lands. Same
+        // phase, same rule, same words; only its seat changed.
+        //
+        // 🪤 NOT ANIMATED, deliberately. A first cut gave the inset a
+        // move+opacity transition under `.animation(value: footerRefreshPhase)`;
+        // after a PULL the app then never reported its animations complete
+        // (XCUITest's idle wait timed out at 60s, the pull-notice journey went
+        // red), while master settled at once. Changing the scroll view's inset
+        // under an animation while `.refreshable`'s control is retracting is the
+        // suspect; the plain insertion settles like master and is what ships.
+        .safeAreaInset(edge: .top, spacing: 0) {
+            VStack(spacing: 0) {
+                if let notice = DiscoverPullRefreshNotice.forPhase(footerRefreshPhase) {
+                    DiscoverPullRefreshNoticeRow(notice: notice) {
+                        Task { await refreshFeed() }
+                    }
+                    .shadow(color: .black.opacity(0.08), radius: 6, y: 2)
+                    .frame(maxWidth: contentMaxWidth)
+                    .padding(.horizontal)
+                    .padding(.vertical, 6)
+                }
+            }
         }
         .overlay(alignment: .bottom) { debugCountsBadge }
         }
@@ -2099,7 +2121,16 @@ struct DiscoverView: View {
         let generation = footerRefreshGeneration
         footerRefreshPhase = .refreshing
 
-        visibleCount = 20
+        // #7074 (installed 1.0.2 (33)): `visibleCount = 20` USED to be here, before
+        // the load. It collapsed a ~130-card page under a reader standing on the end
+        // card the instant they pressed Refresh — measured on a simulator journey:
+        // the frame after the tap is mid-feed (an election card, the Super Bowl
+        // futures), the end card and its "Refreshing…" control gone from the screen
+        // for the whole wait. That is Alex's "after 1–2 seconds returned to the top"
+        // with nothing on screen saying a refresh was underway. The collapse now
+        // happens in the success arm below, in the same update as the return to the
+        // top, so the reader watches their own press work until the answer lands —
+        // and a refresh that fails never moves them at all.
         // A refresh AGES the dismiss store; it does not empty it (#5951).
         dismissedAt = Self.dismissStoreAfterRefresh(dismissedAt)
         dismissVersion &+= 1
@@ -2142,44 +2173,13 @@ struct DiscoverView: View {
             // refresh leaves the reader's own content untouched, and yanking
             // them away from it would destroy their place to report a failure.
             //
-            // 🪤 #7074's END-CARD ARM — STILL OPEN, AND ITS EVIDENCE NEEDS REDOING.
-            // Alex, build 15: "Hitting the refresh button at the bottom of the feed
-            // took me instantly about halfway up the page. Confusingly I could see
-            // that I was in the middle of the feed, not the top, but the content was
-            // new."
-            //
-            // Two corrections to what used to be written here, neither of them a
-            // finding about `scrollTo`:
-            //
-            //   1. THE WITNESS WAS BAD. The prior note reported the navigation bar
-            //      measuring 54pt after the press against 108pt at the top of
-            //      Discover, and read that as "the reader does not arrive". That
-            //      witness is refuted (native/240) — a collapsed navigation bar is
-            //      not a scroll offset. Measure the arrival from the actual frames
-            //      of the first card and the swipe hint, which are the things a
-            //      reader's eye is on.
-            //   2. EVERY RUN BEHIND IT WAS RUN ON A CANCELLED LOAD. #7170, measured
-            //      this session: until the line above was made unstructured, the
-            //      load under this branch ended at `load()`'s cancellation terminal
-            //      and NEVER REPUBLISHED (`OUTCOME cancelled`, `FEED 1 → 1`). So all
-            //      three hypotheses below were falsified against a page that had
-            //      just collapsed from ~150 cards to 20 STALE ones and then received
-            //      nothing — which is not the experiment any of them meant to run.
-            //
-            // The three, kept because the mechanics are still worth not re-spending
-            // (#7074 carries the logs), but now UNSOUND as falsifications:
-            //   1. the animation interpolating against unmounted `LazyVStack`
-            //      geometry — removing `withAnimation` changed nothing;
-            //   2. the scroll racing the new content's layout — moving it to
-            //      `DispatchQueue.main.async` changed nothing;
-            //   3. the target having no area to resolve an anchor against —
-            //      `frame(height: 0)` to `frame(height: 1)` changed nothing.
-            //
-            // n240's best remaining reading — the offset is simply CLAMPED when
-            // `visibleCount = 20` collapses the page — is now MORE likely, not less:
-            // a collapse with no republication is precisely a short page. Whoever
-            // takes the arm re-measures here first, on a build that publishes.
-            // NOT re-measured this session: #7170 is the pull, this is the end card.
+            // The page collapses HERE, with the scroll, not before the load (see
+            // the top of this function). The return-to-top itself is accepted on
+            // installed 1.0.2 (33) (#7074, Alex's phone); its history — a bad
+            // navigation-bar witness and runs on a cancelled load (#7170) — is on
+            // the issue. The confirmation for a reader moved by this scroll is the
+            // top safe-area notice in `body`, which no scroll offset can hide.
+            visibleCount = 20
             if let proxy {
                 withAnimation { proxy.scrollTo(Self.feedTopAnchor, anchor: .top) }
             }

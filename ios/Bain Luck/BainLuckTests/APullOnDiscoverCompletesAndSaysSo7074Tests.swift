@@ -403,26 +403,32 @@ final class APullOnDiscoverCompletesAndSaysSo7074Tests: XCTestCase {
             source.range(of: "DiscoverPullRefreshNoticeRow("),
             "the notice is computed and never rendered."
         )
-        let anchor = try XCTUnwrap(
-            source.range(of: ".id(Self.feedTopAnchor)"),
-            "the top-of-feed anchor has moved; move this test with it."
-        )
-        XCTAssertTrue(
-            anchor.upperBound < row.lowerBound,
-            "the notice renders BEFORE the top anchor, so it is outside the feed's top."
-        )
 
-        // Above the first card, not merely above the anchor's file position.
-        // `grouped` is computed immediately after the anchor and every card the
-        // feed draws comes after it; a notice below that is a notice the reader
-        // has to scroll to in order to learn that they no longer need to.
-        let grouped = try XCTUnwrap(
-            source.range(of: "let grouped = groupedItems"),
-            "the grouped-feed computation has moved; move this test with it."
+        // #7074, installed 1.0.2 (33): the top of the feed is not one place. This
+        // test used to pin the row as the first row of the scroll CONTENT (after
+        // the top anchor, before `let grouped`), and that seat is exactly what hid
+        // it from the footer reader: `scrollTo(feedTopAnchor, anchor: .top)` parks
+        // the first content row under the collapsed navigation bar (measured minY
+        // 64pt, behind the title). The seat that is below the bar at EVERY scroll
+        // offset is a top safe-area inset, so that is what is pinned now.
+        let inset = try XCTUnwrap(
+            source.range(of: ".safeAreaInset(edge: .top"),
+            "Discover has no top safe-area inset, so the notice can only be drawn inside the scroll "
+            + "content — where a footer refresh's scroll-to-top leaves it under the navigation bar."
         )
         XCTAssertTrue(
-            row.upperBound < grouped.lowerBound,
-            "the notice renders below the card grid's own input, so it is not at the top of the feed."
+            inset.upperBound < row.lowerBound,
+            "the notice row is drawn before the top safe-area inset, i.e. not inside it."
+        )
+        let insetBody = source[inset.upperBound..<row.lowerBound]
+        XCTAssertLessThan(
+            insetBody.count, 260,
+            "the notice row is far from the inset's opening — it is probably not inside it. Between them:\n"
+            + String(insetBody)
+        )
+        XCTAssertEqual(
+            source.components(separatedBy: "DiscoverPullRefreshNoticeRow(").count - 1, 1,
+            "the notice is drawn twice; one copy is still inside the scroll content."
         )
     }
 
