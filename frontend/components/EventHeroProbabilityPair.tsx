@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useRef, useState } from 'react';
+import React, { useEffect, useRef } from 'react';
 
 import {
   NO_READING,
@@ -21,13 +21,10 @@ import { teamTextColor } from '../lib/teamColors';
  * A side with no reading keeps its em dash: `homeProb` null is "we are
  * withholding this", which is not a probability and has no marker.
  *
- * EXPORTED AND PURE for the same reason `shownPair` below is, and the reason is
- * stated there: the harness renders with `renderToStaticMarkup`, effects never
- * run, and `useCountTo` seeds its state from the target — so no tween frame is
- * EVER observable through the DOM. A test that rendered and asserted would only
- * re-check the settled state. Testing this function across the frames
- * `shownPair` produces tests the real decision; the call site is then the
- * one-line read that it passes `shownHome`, not `homePct`.
+ * EXPORTED AND PURE for the same reason `shownPair` below is: it is the real
+ * decision, testable for any integer a frame could print. Since #10092 the hero
+ * prints only accepted values (no count), so the call site passes `shownHome`,
+ * which is `homePct`.
  */
 export function sideParts(prob: number | null, shown: number | null): ProbabilityParts {
   if (prob === null || shown === null) return { marker: null, digits: NO_READING };
@@ -69,7 +66,9 @@ interface EventHeroProbabilityPairProps {
   awayColor?: string | null;
   probSourceLabel?: string | null;
   /**
-   * live/034 S2 — count the number to its new value instead of swapping it.
+   * live/034 S2 — mark a pushed change. Since #10092 the new number is printed
+   * at once and only a short crossfade marks it (see `useChangeCue`); it never
+   * counts through values no venue priced.
    *
    * Ruling (RULINGS-BATCH-2026-08-30, LIVE UPDATES 2): a live look is an
    * animated number. Off by default, so every non-pushed caller renders exactly
@@ -164,66 +163,82 @@ interface EventHeroProbabilityPairProps {
   stopped?: boolean;
 }
 
-/** How long the count takes. Comfortably under the 5s minimum between updates. */
-const TWEEN_MS = 600;
+/**
+ * How long the change cue lasts. Short, and never long enough to overlap the 5s
+ * minimum between pushed updates.
+ */
+const CUE_MS = 320;
 
 /**
- * Count `target` from wherever it was, in whole percents.
+ * #10092 — THE NEW NUMBER IS PRINTED AT ONCE; ONLY THE CUE MOVES.
  *
- * NOT smoothing (the ruling forbids it): this interpolates only between two
- * values the server actually sent, and always lands exactly on the newer one.
- * It never invents a reading, and it never lags behind the latest value — a new
- * target mid-flight retargets from where the count currently is rather than
- * queueing, so the number cannot fall behind a fast-moving market.
+ * This used to be `useCountTo`, a 600ms easeOutCubic count from the old whole
+ * percent to the new one (live/034 S2). Every number it printed in between —
+ * 22, 31, 37 on the way from 9 to 42 — was a probability no venue ever priced,
+ * shown in the biggest type on the page, for 600ms after the accepted frame had
+ * already reached the hero input and the chart in under a millisecond (replayed
+ * at e5b9fc77e7, #10092). The chart beside it showed the real point while the
+ * hero was still counting toward it.
+ *
+ * Now the digits are the prop, in the same render the frame arrives in, so the
+ * only numbers that ever reach the screen are the old accepted value and the
+ * new one. The real change is marked by a short opacity crossfade on the digits
+ * — no colour, no arrow, nothing that could read as a second source's reading
+ * — driven through the Web Animations API on the DOM node, so it causes no
+ * extra React render and cannot hold the value back:
+ *
+ *   * first paint, an unchanged value, or a value appearing/disappearing: no cue
+ *     (there is no "change" to mark, and animating a number that never moved
+ *     would claim one);
+ *   * `prefers-reduced-motion: reduce`: no cue, value already exact;
+ *   * a new frame mid-cue: the running cue is CANCELLED and restarted — the
+ *     value is already the newest one, so there is nothing to queue.
+ *
+ * `enabled` is the page's `streamConnected` (the `animate` prop): on the 32s
+ * poll a plain swap is the honest rendering, exactly as before.
  */
-function useCountTo(target: number | null, enabled: boolean): number | null {
-  const [shown, setShown] = useState<number | null>(target);
-  const frame = useRef<number | null>(null);
-  // What is currently on screen, readable without re-subscribing the effect.
-  const shownRef = useRef<number | null>(target);
-  shownRef.current = shown;
+function useChangeCue(
+  target: number | null,
+  enabled: boolean,
+): React.RefObject<HTMLDivElement> {
+  const container = useRef<HTMLDivElement>(null);
+  const previous = useRef<number | null>(target);
+  const running = useRef<Animation[]>([]);
 
   useEffect(() => {
-    if (target === null) {
-      setShown(null);
-      return;
-    }
-    // First paint, or animation off: land immediately. Counting up from nothing
-    // on load would animate a number that never moved.
-    if (!enabled || shownRef.current === null) {
-      setShown(target);
-      return;
-    }
-    const from = shownRef.current;
-    if (from === target) return;
-
-    // Respect the OS setting. An animated number is a nicety; motion sickness
-    // is not.
+    const from = previous.current;
+    previous.current = target;
+    if (!enabled || from === null || target === null || from === target) return;
     if (
       typeof window !== 'undefined' &&
       window.matchMedia?.('(prefers-reduced-motion: reduce)').matches
     ) {
-      setShown(target);
       return;
     }
-
-    const started = performance.now();
-    const step = (nowMs: number) => {
-      const t = Math.min(1, (nowMs - started) / TWEEN_MS);
-      // easeOutCubic — fast off the mark, settles gently.
-      const eased = 1 - Math.pow(1 - t, 3);
-      setShown(Math.round(from + (target - from) * eased));
-      if (t < 1) frame.current = requestAnimationFrame(step);
-      else setShown(target); // land EXACTLY on the served value, never near it
-    };
-    frame.current = requestAnimationFrame(step);
-    return () => {
-      if (frame.current !== null) cancelAnimationFrame(frame.current);
-      frame.current = null;
-    };
+    const root = container.current;
+    if (!root) return;
+    for (const a of running.current) a.cancel();
+    running.current = [];
+    root.dataset.changeCue = target > from ? 'up' : 'down';
+    root.querySelectorAll<HTMLElement>('[data-hero-digits]').forEach((el) => {
+      if (typeof el.animate !== 'function') return;
+      running.current.push(
+        el.animate([{ opacity: 0.55 }, { opacity: 1 }], {
+          duration: CUE_MS,
+          easing: 'ease-out',
+        }),
+      );
+    });
   }, [target, enabled]);
 
-  return shown;
+  useEffect(
+    () => () => {
+      for (const a of running.current) a.cancel();
+    },
+    [],
+  );
+
+  return container;
 }
 
 /**
@@ -283,13 +298,12 @@ export default function EventHeroProbabilityPair({
   const home = teamTextColor(homeColor) || "#111827";
   const away = teamTextColor(awayColor) || "var(--text-secondary)";
 
-  // The pair is ONE decision (#2085), so only ONE side is counted and the other
-  // is derived from it. Tweening the two independently would let them disagree
-  // mid-flight and print 101 — the exact defect this component exists to
-  // delete, reintroduced one frame at a time.
-  const countedHome = useCountTo(homePct, animate);
+  // #10092 — no count: the printed pair IS the accepted pair, this render.
+  // `shownPair` is still the one place the pair is decided (#2085); with no
+  // in-between frame it returns the served pair unchanged.
+  const cueRef = useChangeCue(homePct, animate);
   const { home: shownHome, away: shownAway } = shownPair(
-    homePct, awayPct, countedHome, animate,
+    homePct, awayPct, homePct, animate,
   );
 
   // #6064 — the clamp the whole rest of the site applies, finally applied here.
@@ -354,6 +368,7 @@ export default function EventHeroProbabilityPair({
     // and fails if they disagree. It stays the PROBABILITY, not the printed
     // percent — #2085 changed what is drawn, not what is asserted.
     <div
+      ref={cueRef}
       className="flex items-baseline"
       data-testid="event-hero-probability"
       data-probability={homeProb ?? ""}
@@ -378,6 +393,7 @@ export default function EventHeroProbabilityPair({
       <span
         className="text-[34px] min-[360px]:text-[48px] sm:text-[52px] font-black tracking-tight leading-none tabular-nums"
         style={{ color: home }}
+        data-hero-digits=""
       >
         {homeParts.digits}
       </span>
@@ -407,6 +423,7 @@ export default function EventHeroProbabilityPair({
       <span
         className="text-[34px] min-[360px]:text-[48px] sm:text-[52px] font-black tracking-tight leading-none tabular-nums"
         style={{ color: away }}
+        data-hero-digits=""
       >
         {awayParts.digits}
       </span>
