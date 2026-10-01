@@ -33,6 +33,7 @@ keying), and it does not enable any CDN/edge rewrite.
 
 from __future__ import annotations
 
+import re
 from typing import Optional
 
 from starlette.requests import Request
@@ -53,6 +54,20 @@ CACHE_RULES: list[tuple[str, int]] = [
     ("/api/entertainment", 120),
     ("/api/categories", 120),
 ]
+
+#: How long a browser may keep handing back an expired public response while it
+#: refetches in the background.
+STALE_WHILE_REVALIDATE_S = 60
+
+#: One event and its sub-resources (`/history`, `/game-markets`, ...) — the reads
+#: the event page POLLS, every 32 s on a live game and 60 s for the winner chart.
+#: Both cadences fall inside `max-age` + `STALE_WHILE_REVALIDATE_S`, so with the
+#: stale window a poll is answered from the browser's disk cache with the PREVIOUS
+#: poll's body and the fresh one is fetched only in the background, unread
+#: (measured in Chromium against production, 2026-10-01: the 32.7 s poll returned
+#: the 0 s body). These reads keep `max-age` and lose the stale window; a poll
+#: costs the same one request either way, it just lands in the poll.
+POLLED_EVENT_READ = re.compile(r"^/api/events/\d+(?:/|$)")
 
 # Non-storable, non-shared directive for protected/personalized responses.
 PRIVATE_DIRECTIVE = "private, no-store"
@@ -102,7 +117,9 @@ def cache_control_for(
     # Public, anonymous, identity-independent routes keep their short TTLs.
     for prefix, max_age in CACHE_RULES:
         if path.startswith(prefix):
-            return f"public, max-age={max_age}, stale-while-revalidate=60"
+            if POLLED_EVENT_READ.match(path):
+                return f"public, max-age={max_age}"
+            return f"public, max-age={max_age}, stale-while-revalidate={STALE_WHILE_REVALIDATE_S}"
 
     return None
 
