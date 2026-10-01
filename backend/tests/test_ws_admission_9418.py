@@ -155,6 +155,14 @@ def _poly(_monkeypatch):
 ARMS = pytest.mark.parametrize("arm", [_kalshi, _poly], ids=["kalshi", "polymarket"])
 
 
+#: The fewest rereads that prove the watcher compared at all: its baseline, then
+#: one check after it. A wall-clock count (">= 5") is a bet on the runner — the
+#: consumer's startup runs on the same clock as the timer and the floor, and on
+#: a loaded CI runner it ate a 0.4 s floor whole (int1650b, run 36813841512:
+#: 2 calls). The interval behaviour itself is pinned on fake clocks.
+_AT_LEAST_ONE_COMPARISON = 2
+
+
 def _timing(monkeypatch, module, *, refresh, check, floor):
     monkeypatch.setattr(module, "SUBSCRIPTION_REFRESH_SECONDS", refresh)
     monkeypatch.setattr(admission, "ADMISSION_CHECK_SECONDS", check)
@@ -216,8 +224,9 @@ class TestACompleteSubscriptionDoesNotRecycle:
 
         assert stats["status"] == "resubscribe"
         assert "recycle_reason" not in stats
-        # Non-vacuity: the reread really ran, many times, and was satisfied.
-        assert state["reread_calls"] >= 5, state["reread_calls"]
+        # Non-vacuity: the reread ran past its baseline and was satisfied. Two
+        # calls is the count-independent floor (_AT_LEAST_ONE_COMPARISON).
+        assert state["reread_calls"] >= _AT_LEAST_ONE_COMPARISON, state["reread_calls"]
         assert connects["n"] == 1
 
     @ARMS
@@ -246,8 +255,13 @@ class TestTheThrashFloorHolds:
 
         assert stats["recycle_reason"] == "admission"
         assert elapsed >= 0.4, elapsed
-        # The missing event was SEEN well before the floor and held back.
-        assert state["reread_calls"] >= 5, state["reread_calls"]
+        # Non-vacuity: the watcher took its baseline AND compared again — the
+        # reread that named 901 and ended the run. How many pre-floor rereads
+        # were held back depends on how much of the floor the consumer's own
+        # startup spent (`run_started_at` is stamped before the slate read), so
+        # it is not counted here; the held-back path is pinned on a fake clock
+        # by test_the_watcher_never_returns_before_the_floor below.
+        assert state["reread_calls"] >= _AT_LEAST_ONE_COMPARISON, state["reread_calls"]
 
     async def test_the_watcher_never_returns_before_the_floor(self):
         now = {"t": 0.0}
@@ -298,7 +312,7 @@ class TestAFailedRereadNeverRecycles:
 
         assert stats["status"] == "resubscribe"
         assert "recycle_reason" not in stats
-        assert state["reread_calls"] >= 5
+        assert state["reread_calls"] >= _AT_LEAST_ONE_COMPARISON, state["reread_calls"]
         assert connects["n"] == 1
 
     async def test_a_failure_then_a_missing_event_still_recycles(self):
