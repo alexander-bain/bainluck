@@ -90,9 +90,9 @@ async def _rebuild_past_ceiling(rc, keys: ConceptCacheKeys, key: str, db, adapte
             timeout=LIVE_INLINE_REBUILD_BUDGET,
         )
     except asyncio.TimeoutError:
+        # No `key` in these two lines: it is the request path (CodeQL py/log-injection).
         logger.warning(
-            "event-concept: live rebuild for %s overran %ss — serving stale",
-            key,
+            "event-concept: live rebuild overran %ss — serving stale",
             LIVE_INLINE_REBUILD_BUDGET,
         )
         release_refresh_lock(rc, keys, token)
@@ -100,7 +100,7 @@ async def _rebuild_past_ceiling(rc, keys: ConceptCacheKeys, key: str, db, adapte
         _schedule_refresh(rc, keys, key)
         return with_availability(stale, AVAILABILITY_STALE_OK)
     except Exception:
-        logger.warning("event-concept: live rebuild failed for %s — serving stale", key, exc_info=True)
+        logger.warning("event-concept: live rebuild failed — serving stale", exc_info=True)
         return with_availability(stale, AVAILABILITY_STALE_OK)
     finally:
         release_refresh_lock(rc, keys, token)
