@@ -4999,12 +4999,12 @@ _LEADERBOARD_CACHE_TTL = 120  # 2 minutes
 @router.get("/leaderboard/debug")
 async def get_golf_leaderboard_debug():
     """Debug: return raw DataGolf in-play response to diagnose field names."""
-    from app.services.datagolf_api import DataGolfAPIService
+    from app.services.datagolf_api import DataGolfAPIService, redact_api_key
     service = DataGolfAPIService()
     try:
         data = await service._get("preds/in-play", {"tour": "pga"})
     except Exception as e:
-        return {"error": str(e)}
+        return {"error": redact_api_key(e)}  # #10114: public route; errors carry ?key=
     finally:
         await service.close()
     # Return raw response with first 3 player entries
