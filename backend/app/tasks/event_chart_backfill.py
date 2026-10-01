@@ -814,12 +814,28 @@ async def _polymarket_token_id(service: Any, market: Any, outcome: Any) -> Optio
 
     Prefers the ids Q460 now stamps on the market at ingest; falls back to the
     Gamma event payload, which is the only place they existed before that.
+
+    🔴 THE LEG'S OWN SUFFIX PICKS THE TOKEN, NOT ITS RANK (#10009). ``rank`` is
+    PRICE order — favourite first — not token order, so ``token_ids[rank - 1]``
+    handed a ``…_no`` leg ranked 1 the YES token: Phillies at Braves, Wild Card
+    Game 3 (``/events/15322407``) stored the Phillies' price as the Braves' line
+    for two days and the chart drew a solid block against the matcher's correct
+    points. The socket already attributes every price tick by suffix
+    (``polymarket_ws._token_index``: ``_yes`` or a bare condition id is token 0,
+    ``_no`` / ``_side1`` token 1, #8403), and this asks that same function, so
+    the chart and the live number cannot disagree about which book is which.
+    Rank is consulted only for a leg whose suffix says nothing.
     """
+    from app.tasks.polymarket_ws import _token_index
+
+    leg_index = _token_index(outcome.external_id or "")
     metadata = market.market_metadata or {}
     token_ids = metadata.get("clob_token_ids") or metadata.get("clobTokenIds")
     if token_ids:
         index = 0
-        if outcome.rank is not None and 0 <= (outcome.rank - 1) < len(token_ids):
+        if leg_index is not None:
+            index = leg_index
+        elif outcome.rank is not None and 0 <= (outcome.rank - 1) < len(token_ids):
             index = outcome.rank - 1
         if index < len(token_ids):
             return str(token_ids[index])
@@ -849,8 +865,11 @@ async def _polymarket_token_id(service: Any, market: Any, outcome: Any) -> Optio
             ids = _json.loads(raw) if isinstance(raw, str) else raw
         except (ValueError, TypeError):
             ids = []
-        if ids:
-            return str(ids[0])
+        # Same rule as above: a `_no` / `_side1` leg is the condition's SECOND
+        # token. `ids[0]` here was the identical blind spot.
+        index = leg_index or 0
+        if index < len(ids):
+            return str(ids[index])
     return None
 
 
