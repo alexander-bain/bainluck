@@ -1,0 +1,1638 @@
+{
+"_source": "GET /api/events/14780550/game-markets (production, 2026-10-01 ~08:20Z), `other` verbatim less contributor_outcome_ids",
+"home_team": "Cleveland Browns",
+"away_team": "Pittsburgh Steelers",
+"status": "scheduled",
+"other": [
+{
+"market_name": "Aaron Rodgers: Anytime Touchdown",
+"outcome_name": "No",
+"observed_at": "2026-10-01T08:15:42.909997+00:00",
+"probability": 0.96,
+"source": "polymarket",
+"is_winner": null,
+"resolution_source": null,
+"_market_id": 63339321
+},
+{
+"market_name": "Aaron Rodgers: Anytime Touchdown",
+"outcome_name": "Yes",
+"observed_at": "2026-10-01T08:15:42.909997+00:00",
+"probability": 0.04,
+"source": "polymarket",
+"is_winner": null,
+"resolution_source": null,
+"_market_id": 63339321
+},
+{
+"market_name": "Deshaun Watson: Anytime Touchdown",
+"outcome_name": "No",
+"observed_at": "2026-10-01T07:27:43.275142+00:00",
+"probability": 0.85,
+"source": "polymarket",
+"is_winner": null,
+"resolution_source": null,
+"_market_id": 63159153
+},
+{
+"market_name": "Deshaun Watson: Anytime Touchdown",
+"outcome_name": "Yes",
+"observed_at": "2026-10-01T07:27:43.275142+00:00",
+"probability": 0.15,
+"source": "polymarket",
+"is_winner": null,
+"resolution_source": null,
+"_market_id": 63159153
+},
+{
+"market_name": "KC Concepcion Jr.: Anytime Touchdown",
+"outcome_name": "No",
+"observed_at": "2026-10-01T05:49:04.367698+00:00",
+"probability": 0.8,
+"source": "polymarket",
+"is_winner": null,
+"resolution_source": null,
+"_market_id": 63280333
+},
+{
+"market_name": "KC Concepcion Jr.: Anytime Touchdown",
+"outcome_name": "Yes",
+"observed_at": "2026-10-01T05:49:04.367698+00:00",
+"probability": 0.2,
+"source": "polymarket",
+"is_winner": null,
+"resolution_source": null,
+"_market_id": 63280333
+},
+{
+"market_name": "Tylan Wallace: Anytime Touchdown",
+"outcome_name": "No",
+"observed_at": "2026-09-30T22:43:34.825339+00:00",
+"probability": 0.959,
+"source": "polymarket",
+"is_winner": null,
+"resolution_source": null,
+"_market_id": 63339340
+},
+{
+"market_name": "Tylan Wallace: Anytime Touchdown",
+"outcome_name": "Yes",
+"observed_at": "2026-09-30T22:43:34.825339+00:00",
+"probability": 0.041,
+"source": "polymarket",
+"is_winner": null,
+"resolution_source": null,
+"_market_id": 63339340
+},
+{
+"market_name": "Pittsburgh vs Cleveland: Race to 35 Points",
+"outcome_name": "Neither team",
+"observed_at": "2026-10-01T07:31:40.737908+00:00",
+"probability": 0.8538,
+"source": "kalshi",
+"is_winner": null,
+"resolution_source": null,
+"_market_id": 63152876
+},
+{
+"market_name": "Pittsburgh vs Cleveland: Race to 35 Points",
+"outcome_name": "Cleveland",
+"observed_at": "2026-10-01T07:31:40.737908+00:00",
+"probability": 0.0896,
+"source": "kalshi",
+"is_winner": null,
+"resolution_source": null,
+"_market_id": 63152876
+},
+{
+"market_name": "Pittsburgh vs Cleveland: Race to 35 Points",
+"outcome_name": "Pittsburgh",
+"observed_at": "2026-10-01T07:30:03.001283+00:00",
+"probability": 0.0566,
+"source": "kalshi",
+"is_winner": null,
+"resolution_source": null,
+"_market_id": 63152876
+},
+{
+"market_name": "Pittsburgh vs Cleveland: Race to 21 Points",
+"outcome_name": "Pittsburgh",
+"observed_at": "2026-10-01T07:31:40.785034+00:00",
+"probability": 0.345,
+"source": "kalshi",
+"is_winner": null,
+"resolution_source": null,
+"_market_id": 63152878
+},
+{
+"market_name": "Pittsburgh vs Cleveland: Race to 21 Points",
+"outcome_name": "Neither team",
+"observed_at": "2026-10-01T08:01:03.867422+00:00",
+"probability": 0.31,
+"source": "kalshi",
+"is_winner": null,
+"resolution_source": null,
+"_market_id": 63152878
+},
+{
+"market_name": "Pittsburgh vs Cleveland: Race to 21 Points",
+"outcome_name": "Cleveland",
+"observed_at": "2026-10-01T07:31:40.785034+00:00",
+"probability": 0.225,
+"source": "kalshi",
+"is_winner": null,
+"resolution_source": null,
+"_market_id": 63152878
+},
+{
+"market_name": "Pittsburgh vs Cleveland: Race to 14 Points",
+"outcome_name": "Pittsburgh",
+"observed_at": "2026-10-01T07:31:40.810828+00:00",
+"probability": 0.48,
+"source": "kalshi",
+"is_winner": null,
+"resolution_source": null,
+"_market_id": 63152879
+},
+{
+"market_name": "Pittsburgh vs Cleveland: Race to 14 Points",
+"outcome_name": "Cleveland",
+"observed_at": "2026-10-01T07:31:40.810828+00:00",
+"probability": 0.37,
+"source": "kalshi",
+"is_winner": null,
+"resolution_source": null,
+"_market_id": 63152879
+},
+{
+"market_name": "Pittsburgh vs Cleveland: Race to 14 Points",
+"outcome_name": "Neither team",
+"observed_at": "2026-10-01T07:31:40.810828+00:00",
+"probability": 0.05,
+"source": "kalshi",
+"is_winner": null,
+"resolution_source": null,
+"_market_id": 63152879
+},
+{
+"market_name": "Pittsburgh vs Cleveland: Race to 10 Points",
+"outcome_name": "Pittsburgh",
+"observed_at": "2026-10-01T07:30:03.001283+00:00",
+"probability": 0.5023,
+"source": "kalshi",
+"is_winner": null,
+"resolution_source": null,
+"_market_id": 63152880
+},
+{
+"market_name": "Pittsburgh vs Cleveland: Race to 10 Points",
+"outcome_name": "Cleveland",
+"observed_at": "2026-10-01T07:31:40.833633+00:00",
+"probability": 0.4326,
+"source": "kalshi",
+"is_winner": null,
+"resolution_source": null,
+"_market_id": 63152880
+},
+{
+"market_name": "Pittsburgh vs Cleveland: Race to 10 Points",
+"outcome_name": "Neither team",
+"observed_at": "2026-10-01T07:31:40.833633+00:00",
+"probability": 0.0651,
+"source": "kalshi",
+"is_winner": null,
+"resolution_source": null,
+"_market_id": 63152880
+},
+{
+"market_name": "Carsen Ryan: Anytime Touchdown",
+"outcome_name": "No",
+"observed_at": "2026-10-01T07:54:03.706146+00:00",
+"probability": 0.984,
+"source": "polymarket",
+"is_winner": null,
+"resolution_source": null,
+"_market_id": 63339324
+},
+{
+"market_name": "Carsen Ryan: Anytime Touchdown",
+"outcome_name": "Yes",
+"observed_at": "2026-10-01T07:54:03.706146+00:00",
+"probability": 0.016,
+"source": "polymarket",
+"is_winner": null,
+"resolution_source": null,
+"_market_id": 63339324
+},
+{
+"market_name": "Travis Homer: Anytime Touchdown",
+"outcome_name": "No",
+"observed_at": "2026-10-01T08:02:03.913816+00:00",
+"probability": 0.9615,
+"source": "polymarket",
+"is_winner": null,
+"resolution_source": null,
+"_market_id": 63339339
+},
+{
+"market_name": "Travis Homer: Anytime Touchdown",
+"outcome_name": "Yes",
+"observed_at": "2026-10-01T08:02:03.913816+00:00",
+"probability": 0.0385,
+"source": "polymarket",
+"is_winner": null,
+"resolution_source": null,
+"_market_id": 63339339
+},
+{
+"market_name": "Ben Skowronek: Anytime Touchdown",
+"outcome_name": "No",
+"observed_at": "2026-10-01T08:10:04.512033+00:00",
+"probability": 0.965,
+"source": "polymarket",
+"is_winner": null,
+"resolution_source": null,
+"_market_id": 63339322
+},
+{
+"market_name": "Ben Skowronek: Anytime Touchdown",
+"outcome_name": "Yes",
+"observed_at": "2026-10-01T08:10:04.512033+00:00",
+"probability": 0.035,
+"source": "polymarket",
+"is_winner": null,
+"resolution_source": null,
+"_market_id": 63339322
+},
+{
+"market_name": "Blake Whiteheart: Anytime Touchdown",
+"outcome_name": "No",
+"observed_at": "2026-10-01T05:53:04.468476+00:00",
+"probability": 0.945,
+"source": "polymarket",
+"is_winner": null,
+"resolution_source": null,
+"_market_id": 63339323
+},
+{
+"market_name": "Blake Whiteheart: Anytime Touchdown",
+"outcome_name": "Yes",
+"observed_at": "2026-10-01T05:53:04.468476+00:00",
+"probability": 0.055,
+"source": "polymarket",
+"is_winner": null,
+"resolution_source": null,
+"_market_id": 63339323
+},
+{
+"market_name": "Denzel Boston: Anytime Touchdown",
+"outcome_name": "No",
+"observed_at": "2026-10-01T08:15:46.024608+00:00",
+"probability": 0.8,
+"source": "polymarket",
+"is_winner": null,
+"resolution_source": null,
+"_market_id": 63339326
+},
+{
+"market_name": "Denzel Boston: Anytime Touchdown",
+"outcome_name": "Yes",
+"observed_at": "2026-10-01T08:15:46.024608+00:00",
+"probability": 0.2,
+"source": "polymarket",
+"is_winner": null,
+"resolution_source": null,
+"_market_id": 63339326
+},
+{
+"market_name": "Germie Bernard: Anytime Touchdown",
+"outcome_name": "No",
+"observed_at": "2026-10-01T07:06:01.953940+00:00",
+"probability": 0.95,
+"source": "polymarket",
+"is_winner": null,
+"resolution_source": null,
+"_market_id": 63339328
+},
+{
+"market_name": "Germie Bernard: Anytime Touchdown",
+"outcome_name": "Yes",
+"observed_at": "2026-10-01T07:06:01.953940+00:00",
+"probability": 0.05,
+"source": "polymarket",
+"is_winner": null,
+"resolution_source": null,
+"_market_id": 63339328
+},
+{
+"market_name": "Isaiah Bond: Anytime Touchdown",
+"outcome_name": "No",
+"observed_at": "2026-10-01T05:49:04.367698+00:00",
+"probability": 0.9775,
+"source": "polymarket",
+"is_winner": null,
+"resolution_source": null,
+"_market_id": 63339329
+},
+{
+"market_name": "Isaiah Bond: Anytime Touchdown",
+"outcome_name": "Yes",
+"observed_at": "2026-10-01T05:49:04.367698+00:00",
+"probability": 0.0225,
+"source": "polymarket",
+"is_winner": null,
+"resolution_source": null,
+"_market_id": 63339329
+},
+{
+"market_name": "Jaleel McLaughlin: Anytime Touchdown",
+"outcome_name": "No",
+"observed_at": "2026-10-01T07:49:53.121225+00:00",
+"probability": 0.965,
+"source": "polymarket",
+"is_winner": null,
+"resolution_source": null,
+"_market_id": 63339330
+},
+{
+"market_name": "Jaleel McLaughlin: Anytime Touchdown",
+"outcome_name": "Yes",
+"observed_at": "2026-10-01T07:49:53.121225+00:00",
+"probability": 0.035,
+"source": "polymarket",
+"is_winner": null,
+"resolution_source": null,
+"_market_id": 63339330
+},
+{
+"market_name": "Malachi Corley: Anytime Touchdown",
+"outcome_name": "No",
+"observed_at": "2026-10-01T05:49:04.367698+00:00",
+"probability": 0.977,
+"source": "polymarket",
+"is_winner": null,
+"resolution_source": null,
+"_market_id": 63339334
+},
+{
+"market_name": "Malachi Corley: Anytime Touchdown",
+"outcome_name": "Yes",
+"observed_at": "2026-10-01T05:49:04.367698+00:00",
+"probability": 0.023,
+"source": "polymarket",
+"is_winner": null,
+"resolution_source": null,
+"_market_id": 63339334
+},
+{
+"market_name": "Robert Tonyan: Anytime Touchdown",
+"outcome_name": "No",
+"observed_at": "2026-10-01T08:02:47.143135+00:00",
+"probability": 0.977,
+"source": "polymarket",
+"is_winner": null,
+"resolution_source": null,
+"_market_id": 63339337
+},
+{
+"market_name": "Robert Tonyan: Anytime Touchdown",
+"outcome_name": "Yes",
+"observed_at": "2026-10-01T08:02:47.143135+00:00",
+"probability": 0.023,
+"source": "polymarket",
+"is_winner": null,
+"resolution_source": null,
+"_market_id": 63339337
+},
+{
+"market_name": "DK Metcalf: Anytime Touchdown",
+"outcome_name": "No",
+"observed_at": "2026-10-01T07:21:58.301242+00:00",
+"probability": 0.74,
+"source": "polymarket",
+"is_winner": null,
+"resolution_source": null,
+"_market_id": 63509386
+},
+{
+"market_name": "DK Metcalf: Anytime Touchdown",
+"outcome_name": "Yes",
+"observed_at": "2026-10-01T07:21:58.301242+00:00",
+"probability": 0.26,
+"source": "polymarket",
+"is_winner": null,
+"resolution_source": null,
+"_market_id": 63509386
+},
+{
+"market_name": "Harold Fannin Jr.: Anytime Touchdown",
+"outcome_name": "No",
+"observed_at": "2026-10-01T05:49:04.367698+00:00",
+"probability": 0.785,
+"source": "polymarket",
+"is_winner": null,
+"resolution_source": null,
+"_market_id": 63556052
+},
+{
+"market_name": "Harold Fannin Jr.: Anytime Touchdown",
+"outcome_name": "Yes",
+"observed_at": "2026-10-01T05:49:04.367698+00:00",
+"probability": 0.215,
+"source": "polymarket",
+"is_winner": null,
+"resolution_source": null,
+"_market_id": 63556052
+},
+{
+"market_name": "Quinshon Judkins: Anytime Touchdown",
+"outcome_name": "No",
+"observed_at": "2026-10-01T05:59:47.170272+00:00",
+"probability": 0.605,
+"source": "polymarket",
+"is_winner": null,
+"resolution_source": null,
+"_market_id": 63556060
+},
+{
+"market_name": "Quinshon Judkins: Anytime Touchdown",
+"outcome_name": "Yes",
+"observed_at": "2026-10-01T05:59:47.170272+00:00",
+"probability": 0.395,
+"source": "polymarket",
+"is_winner": null,
+"resolution_source": null,
+"_market_id": 63556060
+},
+{
+"market_name": "Steelers vs. Browns",
+"outcome_name": "Steelers",
+"observed_at": "2026-10-01T07:54:30.304208+00:00",
+"probability": 0.575,
+"source": "polymarket",
+"is_winner": null,
+"resolution_source": null,
+"_market_id": 62784863
+},
+{
+"market_name": "Steelers vs. Browns",
+"outcome_name": "Browns",
+"observed_at": "2026-10-01T07:54:30.304208+00:00",
+"probability": 0.425,
+"source": "polymarket",
+"is_winner": null,
+"resolution_source": null,
+"_market_id": 62784863
+},
+{
+"market_name": "Steelers vs. Browns: Safety?",
+"outcome_name": "No",
+"observed_at": "2026-10-01T00:21:10.838861+00:00",
+"probability": 0.935,
+"source": "polymarket",
+"is_winner": null,
+"resolution_source": null,
+"_market_id": 63339287
+},
+{
+"market_name": "Steelers vs. Browns: Safety?",
+"outcome_name": "Yes",
+"observed_at": "2026-10-01T00:21:10.838861+00:00",
+"probability": 0.065,
+"source": "polymarket",
+"is_winner": null,
+"resolution_source": null,
+"_market_id": 63339287
+},
+{
+"market_name": "Jerry Jeudy: Anytime Touchdown",
+"outcome_name": "No",
+"observed_at": "2026-10-01T07:12:58.836762+00:00",
+"probability": 0.94,
+"source": "polymarket",
+"is_winner": null,
+"resolution_source": null,
+"_market_id": 63339331
+},
+{
+"market_name": "Jerry Jeudy: Anytime Touchdown",
+"outcome_name": "Yes",
+"observed_at": "2026-10-01T07:12:58.836762+00:00",
+"probability": 0.06,
+"source": "polymarket",
+"is_winner": null,
+"resolution_source": null,
+"_market_id": 63339331
+},
+{
+"market_name": "Kaden Wetjen: Anytime Touchdown",
+"outcome_name": "No",
+"observed_at": "2026-10-01T08:02:58.902737+00:00",
+"probability": 0.968,
+"source": "polymarket",
+"is_winner": null,
+"resolution_source": null,
+"_market_id": 63339332
+},
+{
+"market_name": "Kaden Wetjen: Anytime Touchdown",
+"outcome_name": "Yes",
+"observed_at": "2026-10-01T08:02:58.902737+00:00",
+"probability": 0.032,
+"source": "polymarket",
+"is_winner": null,
+"resolution_source": null,
+"_market_id": 63339332
+},
+{
+"market_name": "Pittsburgh vs Cleveland: Receptions Escalator",
+"outcome_name": "Harold Fannin Jr.",
+"observed_at": "2026-09-29T23:34:58.647810+00:00",
+"probability": 0.0651,
+"source": "kalshi",
+"is_winner": null,
+"resolution_source": null,
+"_market_id": 63152894
+},
+{
+"market_name": "Pittsburgh vs Cleveland: Receptions Escalator",
+"outcome_name": "DK Metcalf",
+"observed_at": "2026-09-29T23:05:13.206204+00:00",
+"probability": 0.0491,
+"source": "kalshi",
+"is_winner": null,
+"resolution_source": null,
+"_market_id": 63152894
+},
+{
+"market_name": "Pittsburgh vs Cleveland: Receptions Escalator",
+"outcome_name": "Jaylen Warren",
+"observed_at": "2026-09-29T22:58:15.013586+00:00",
+"probability": 0.0389,
+"source": "kalshi",
+"is_winner": null,
+"resolution_source": null,
+"_market_id": 63152894
+},
+{
+"market_name": "Pittsburgh vs Cleveland: Receptions Escalator",
+"outcome_name": "Michael Pittman Jr.",
+"observed_at": "2026-09-29T23:18:17.483113+00:00",
+"probability": 0.0387,
+"source": "kalshi",
+"is_winner": null,
+"resolution_source": null,
+"_market_id": 63152894
+},
+{
+"market_name": "Pittsburgh vs Cleveland: Receptions Escalator",
+"outcome_name": "Denzel Boston",
+"observed_at": "2026-09-29T23:44:11.960087+00:00",
+"probability": 0.0261,
+"source": "kalshi",
+"is_winner": null,
+"resolution_source": null,
+"_market_id": 63152894
+},
+{
+"market_name": "Pittsburgh vs Cleveland: Receptions Escalator",
+"outcome_name": "Quinshon Judkins",
+"observed_at": "2026-09-30T01:31:18.517473+00:00",
+"probability": 0.0169,
+"source": "kalshi",
+"is_winner": null,
+"resolution_source": null,
+"_market_id": 63152894
+},
+{
+"market_name": "Pittsburgh vs Cleveland: Race to 28 Points",
+"outcome_name": "Neither team",
+"observed_at": "2026-10-01T07:31:40.764624+00:00",
+"probability": 0.68,
+"source": "kalshi",
+"is_winner": null,
+"resolution_source": null,
+"_market_id": 63152877
+},
+{
+"market_name": "Pittsburgh vs Cleveland: Race to 28 Points",
+"outcome_name": "Pittsburgh",
+"observed_at": "2026-10-01T07:53:34.059884+00:00",
+"probability": 0.15,
+"source": "kalshi",
+"is_winner": null,
+"resolution_source": null,
+"_market_id": 63152877
+},
+{
+"market_name": "Pittsburgh vs Cleveland: Race to 28 Points",
+"outcome_name": "Cleveland",
+"observed_at": "2026-10-01T08:01:03.867422+00:00",
+"probability": 0.115,
+"source": "kalshi",
+"is_winner": null,
+"resolution_source": null,
+"_market_id": 63152877
+},
+{
+"market_name": "Both teams to score",
+"outcome_name": "Yes",
+"observed_at": "2026-10-01T07:00:10.128067+00:00",
+"probability": 0.34,
+"source": "kalshi",
+"is_winner": null,
+"resolution_source": null,
+"_market_id": 63152899
+},
+{
+"market_name": "Darnell Washington: Anytime Touchdown",
+"outcome_name": "No",
+"observed_at": "2026-10-01T08:01:31.859417+00:00",
+"probability": 0.915,
+"source": "polymarket",
+"is_winner": null,
+"resolution_source": null,
+"_market_id": 63159152
+},
+{
+"market_name": "Darnell Washington: Anytime Touchdown",
+"outcome_name": "Yes",
+"observed_at": "2026-10-01T08:01:31.859417+00:00",
+"probability": 0.085,
+"source": "polymarket",
+"is_winner": null,
+"resolution_source": null,
+"_market_id": 63159152
+},
+{
+"market_name": "Roman Wilson: Anytime Touchdown",
+"outcome_name": "No",
+"observed_at": "2026-10-01T08:16:44.677336+00:00",
+"probability": 0.9,
+"source": "polymarket",
+"is_winner": null,
+"resolution_source": null,
+"_market_id": 63159154
+},
+{
+"market_name": "Roman Wilson: Anytime Touchdown",
+"outcome_name": "Yes",
+"observed_at": "2026-10-01T08:16:44.677336+00:00",
+"probability": 0.1,
+"source": "polymarket",
+"is_winner": null,
+"resolution_source": null,
+"_market_id": 63159154
+},
+{
+"market_name": "Raheim Sanders: Anytime Touchdown",
+"outcome_name": "No",
+"observed_at": "2026-10-01T08:16:14.024548+00:00",
+"probability": 0.925,
+"source": "polymarket",
+"is_winner": null,
+"resolution_source": null,
+"_market_id": 63217822
+},
+{
+"market_name": "Raheim Sanders: Anytime Touchdown",
+"outcome_name": "Yes",
+"observed_at": "2026-10-01T08:16:14.024548+00:00",
+"probability": 0.075,
+"source": "polymarket",
+"is_winner": null,
+"resolution_source": null,
+"_market_id": 63217822
+},
+{
+"market_name": "Pat Freiermuth: Anytime Touchdown",
+"outcome_name": "No",
+"observed_at": "2026-10-01T08:03:44.923573+00:00",
+"probability": 0.82,
+"source": "polymarket",
+"is_winner": null,
+"resolution_source": null,
+"_market_id": 63280334
+},
+{
+"market_name": "Pat Freiermuth: Anytime Touchdown",
+"outcome_name": "Yes",
+"observed_at": "2026-10-01T08:03:44.923573+00:00",
+"probability": 0.18,
+"source": "polymarket",
+"is_winner": null,
+"resolution_source": null,
+"_market_id": 63280334
+},
+{
+"market_name": "Michael Pittman Jr.: Anytime Touchdown",
+"outcome_name": "No",
+"observed_at": "2026-10-01T05:49:04.367698+00:00",
+"probability": 0.83,
+"source": "polymarket",
+"is_winner": null,
+"resolution_source": null,
+"_market_id": 63280337
+},
+{
+"market_name": "Michael Pittman Jr.: Anytime Touchdown",
+"outcome_name": "Yes",
+"observed_at": "2026-10-01T05:49:04.367698+00:00",
+"probability": 0.17,
+"source": "polymarket",
+"is_winner": null,
+"resolution_source": null,
+"_market_id": 63280337
+},
+{
+"market_name": "Jaylen Warren: Anytime Touchdown",
+"outcome_name": "No",
+"observed_at": "2026-10-01T08:04:03.955435+00:00",
+"probability": 0.55,
+"source": "polymarket",
+"is_winner": null,
+"resolution_source": null,
+"_market_id": 63556065
+},
+{
+"market_name": "Jaylen Warren: Anytime Touchdown",
+"outcome_name": "Yes",
+"observed_at": "2026-10-01T08:04:03.955435+00:00",
+"probability": 0.45,
+"source": "polymarket",
+"is_winner": null,
+"resolution_source": null,
+"_market_id": 63556065
+},
+{
+"market_name": "Pittsburgh vs Cleveland: 1st Touchdown",
+"outcome_name": "Jaylen Warren",
+"observed_at": "2026-10-01T07:30:03.001283+00:00",
+"probability": 0.165,
+"source": "kalshi",
+"is_winner": null,
+"resolution_source": null,
+"_market_id": 62688141
+},
+{
+"market_name": "Pittsburgh vs Cleveland: 1st Touchdown",
+"outcome_name": "Quinshon Judkins",
+"observed_at": "2026-10-01T07:30:03.001283+00:00",
+"probability": 0.135,
+"source": "kalshi",
+"is_winner": null,
+"resolution_source": null,
+"_market_id": 62688141
+},
+{
+"market_name": "Pittsburgh vs Cleveland: 1st Touchdown",
+"outcome_name": "DK Metcalf",
+"observed_at": "2026-10-01T07:30:03.001283+00:00",
+"probability": 0.085,
+"source": "kalshi",
+"is_winner": null,
+"resolution_source": null,
+"_market_id": 62688141
+},
+{
+"market_name": "Pittsburgh vs Cleveland: 1st Touchdown",
+"outcome_name": "Harold Fannin Jr.",
+"observed_at": "2026-10-01T07:30:03.001283+00:00",
+"probability": 0.075,
+"source": "kalshi",
+"is_winner": null,
+"resolution_source": null,
+"_market_id": 62688141
+},
+{
+"market_name": "Pittsburgh vs Cleveland: 1st Touchdown",
+"outcome_name": "Deshaun Watson",
+"observed_at": "2026-10-01T07:30:03.001283+00:00",
+"probability": 0.055,
+"source": "kalshi",
+"is_winner": null,
+"resolution_source": null,
+"_market_id": 62688141
+},
+{
+"market_name": "Pittsburgh vs Cleveland: 1st Touchdown",
+"outcome_name": "Denzel Boston",
+"observed_at": "2026-10-01T07:30:03.001283+00:00",
+"probability": 0.055,
+"source": "kalshi",
+"is_winner": null,
+"resolution_source": null,
+"_market_id": 62688141
+},
+{
+"market_name": "Pittsburgh vs Cleveland: 1st Touchdown",
+"outcome_name": "Roman Wilson",
+"observed_at": "2026-10-01T07:30:03.001283+00:00",
+"probability": 0.045,
+"source": "kalshi",
+"is_winner": null,
+"resolution_source": null,
+"_market_id": 62688141
+},
+{
+"market_name": "Pittsburgh vs Cleveland: 1st Touchdown",
+"outcome_name": "Michael Pittman Jr.",
+"observed_at": "2026-10-01T07:30:03.001283+00:00",
+"probability": 0.045,
+"source": "kalshi",
+"is_winner": null,
+"resolution_source": null,
+"_market_id": 62688141
+},
+{
+"market_name": "Pittsburgh vs Cleveland: 1st Touchdown",
+"outcome_name": "Pat Freiermuth",
+"observed_at": "2026-10-01T07:30:03.001283+00:00",
+"probability": 0.045,
+"source": "kalshi",
+"is_winner": null,
+"resolution_source": null,
+"_market_id": 62688141
+},
+{
+"market_name": "Pittsburgh vs Cleveland: 1st Touchdown",
+"outcome_name": "Raheim Sanders",
+"observed_at": "2026-10-01T07:30:03.001283+00:00",
+"probability": 0.035,
+"source": "kalshi",
+"is_winner": null,
+"resolution_source": null,
+"_market_id": 62688141
+},
+{
+"market_name": "Pittsburgh vs Cleveland: 1st Touchdown",
+"outcome_name": "CLE Browns D/ST",
+"observed_at": "2026-10-01T07:30:03.001283+00:00",
+"probability": 0.035,
+"source": "kalshi",
+"is_winner": null,
+"resolution_source": null,
+"_market_id": 62688141
+},
+{
+"market_name": "Pittsburgh vs Cleveland: 1st Touchdown",
+"outcome_name": "PIT Steelers D/ST",
+"observed_at": "2026-10-01T07:30:03.001283+00:00",
+"probability": 0.035,
+"source": "kalshi",
+"is_winner": null,
+"resolution_source": null,
+"_market_id": 62688141
+},
+{
+"market_name": "Pittsburgh vs Cleveland: 1st Touchdown",
+"outcome_name": "Darnell Washington",
+"observed_at": "2026-10-01T07:30:03.001283+00:00",
+"probability": 0.035,
+"source": "kalshi",
+"is_winner": null,
+"resolution_source": null,
+"_market_id": 62688141
+},
+{
+"market_name": "Pittsburgh vs Cleveland: 1st Touchdown",
+"outcome_name": "Germie Bernard",
+"observed_at": "2026-10-01T07:30:03.001283+00:00",
+"probability": 0.025,
+"source": "kalshi",
+"is_winner": null,
+"resolution_source": null,
+"_market_id": 62688141
+},
+{
+"market_name": "Pittsburgh vs Cleveland: 1st Touchdown",
+"outcome_name": "Jerry Jeudy",
+"observed_at": "2026-10-01T07:30:03.001283+00:00",
+"probability": 0.025,
+"source": "kalshi",
+"is_winner": null,
+"resolution_source": null,
+"_market_id": 62688141
+},
+{
+"market_name": "Pittsburgh vs Cleveland: 1st Touchdown",
+"outcome_name": "Kaden Wetjen",
+"observed_at": "2026-10-01T07:30:03.001283+00:00",
+"probability": 0.02,
+"source": "kalshi",
+"is_winner": null,
+"resolution_source": null,
+"_market_id": 62688141
+},
+{
+"market_name": "Pittsburgh vs Cleveland: 1st Touchdown",
+"outcome_name": "Travis Homer",
+"observed_at": "2026-10-01T07:30:03.001283+00:00",
+"probability": 0.02,
+"source": "kalshi",
+"is_winner": null,
+"resolution_source": null,
+"_market_id": 62688141
+},
+{
+"market_name": "Pittsburgh vs Cleveland: 1st Touchdown",
+"outcome_name": "No Touchdown",
+"observed_at": "2026-10-01T07:30:03.001283+00:00",
+"probability": 0.02,
+"source": "kalshi",
+"is_winner": null,
+"resolution_source": null,
+"_market_id": 62688141
+},
+{
+"market_name": "Pittsburgh vs Cleveland: 1st Touchdown",
+"outcome_name": "Blake Whiteheart",
+"observed_at": "2026-10-01T07:30:03.001283+00:00",
+"probability": 0.015,
+"source": "kalshi",
+"is_winner": null,
+"resolution_source": null,
+"_market_id": 62688141
+},
+{
+"market_name": "Pittsburgh vs Cleveland: 1st Touchdown",
+"outcome_name": "Aaron Rodgers",
+"observed_at": "2026-10-01T07:30:03.001283+00:00",
+"probability": 0.015,
+"source": "kalshi",
+"is_winner": null,
+"resolution_source": null,
+"_market_id": 62688141
+},
+{
+"market_name": "Pittsburgh vs Cleveland: 1st Touchdown",
+"outcome_name": "Jaleel McLaughlin",
+"observed_at": "2026-10-01T07:30:03.001283+00:00",
+"probability": 0.015,
+"source": "kalshi",
+"is_winner": null,
+"resolution_source": null,
+"_market_id": 62688141
+},
+{
+"market_name": "Pittsburgh vs Cleveland: 1st Touchdown",
+"outcome_name": "Ben Skowronek",
+"observed_at": "2026-10-01T07:30:03.001283+00:00",
+"probability": 0.015,
+"source": "kalshi",
+"is_winner": null,
+"resolution_source": null,
+"_market_id": 62688141
+},
+{
+"market_name": "Pittsburgh vs Cleveland: 1st Touchdown",
+"outcome_name": "Riley Nowakowski",
+"observed_at": "2026-10-01T07:30:03.001283+00:00",
+"probability": 0.01,
+"source": "kalshi",
+"is_winner": null,
+"resolution_source": null,
+"_market_id": 62688141
+},
+{
+"market_name": "Pittsburgh vs Cleveland: 1st Touchdown",
+"outcome_name": "Isaiah Bond",
+"observed_at": "2026-10-01T07:30:03.001283+00:00",
+"probability": 0.01,
+"source": "kalshi",
+"is_winner": null,
+"resolution_source": null,
+"_market_id": 62688141
+},
+{
+"market_name": "Pittsburgh vs Cleveland: 1st Touchdown",
+"outcome_name": "Robert Tonyan",
+"observed_at": "2026-10-01T07:30:03.001283+00:00",
+"probability": 0.01,
+"source": "kalshi",
+"is_winner": null,
+"resolution_source": null,
+"_market_id": 62688141
+},
+{
+"market_name": "Pittsburgh vs Cleveland: Safety",
+"outcome_name": "Safety",
+"observed_at": "2026-10-01T07:55:26.950772+00:00",
+"probability": 0.05,
+"source": "kalshi",
+"is_winner": null,
+"resolution_source": null,
+"_market_id": 63152870
+},
+{
+"market_name": "Pittsburgh vs Cleveland: Receptions Ladder",
+"outcome_name": "Harold Fannin Jr.",
+"observed_at": null,
+"probability": 0.225,
+"source": "kalshi",
+"is_winner": null,
+"resolution_source": null,
+"_market_id": 63152887
+},
+{
+"market_name": "Pittsburgh vs Cleveland: Receptions Ladder",
+"outcome_name": "Jaylen Warren",
+"observed_at": "2026-10-01T07:50:47.499004+00:00",
+"probability": 0.19,
+"source": "kalshi",
+"is_winner": null,
+"resolution_source": null,
+"_market_id": 63152887
+},
+{
+"market_name": "Pittsburgh vs Cleveland: Receptions Ladder",
+"outcome_name": "DK Metcalf",
+"observed_at": null,
+"probability": 0.185,
+"source": "kalshi",
+"is_winner": null,
+"resolution_source": null,
+"_market_id": 63152887
+},
+{
+"market_name": "Pittsburgh vs Cleveland: Receptions Ladder",
+"outcome_name": "Michael Pittman Jr.",
+"observed_at": null,
+"probability": 0.185,
+"source": "kalshi",
+"is_winner": null,
+"resolution_source": null,
+"_market_id": 63152887
+},
+{
+"market_name": "Pittsburgh vs Cleveland: Receptions Ladder",
+"outcome_name": "Denzel Boston",
+"observed_at": null,
+"probability": 0.165,
+"source": "kalshi",
+"is_winner": null,
+"resolution_source": null,
+"_market_id": 63152887
+},
+{
+"market_name": "Pittsburgh vs Cleveland: Receptions Ladder",
+"outcome_name": "Quinshon Judkins",
+"observed_at": null,
+"probability": 0.125,
+"source": "kalshi",
+"is_winner": null,
+"resolution_source": null,
+"_market_id": 63152887
+},
+{
+"market_name": "Pittsburgh vs Cleveland: Fantasy Ladder",
+"outcome_name": "Jaylen Warren",
+"observed_at": null,
+"probability": 0.165,
+"source": "kalshi",
+"is_winner": null,
+"resolution_source": null,
+"_market_id": 63152890
+},
+{
+"market_name": "Pittsburgh vs Cleveland: Fantasy Ladder",
+"outcome_name": "Deshaun Watson",
+"observed_at": "2026-09-29T21:38:41.078385+00:00",
+"probability": 0.135,
+"source": "kalshi",
+"is_winner": null,
+"resolution_source": null,
+"_market_id": 63152890
+},
+{
+"market_name": "Pittsburgh vs Cleveland: Fantasy Ladder",
+"outcome_name": "DK Metcalf",
+"observed_at": null,
+"probability": 0.125,
+"source": "kalshi",
+"is_winner": null,
+"resolution_source": null,
+"_market_id": 63152890
+},
+{
+"market_name": "Pittsburgh vs Cleveland: Fantasy Ladder",
+"outcome_name": "Harold Fannin Jr.",
+"observed_at": null,
+"probability": 0.115,
+"source": "kalshi",
+"is_winner": null,
+"resolution_source": null,
+"_market_id": 63152890
+},
+{
+"market_name": "Pittsburgh vs Cleveland: Fantasy Ladder",
+"outcome_name": "Quinshon Judkins",
+"observed_at": null,
+"probability": 0.115,
+"source": "kalshi",
+"is_winner": null,
+"resolution_source": null,
+"_market_id": 63152890
+},
+{
+"market_name": "Pittsburgh vs Cleveland: Fantasy Ladder",
+"outcome_name": "Michael Pittman Jr.",
+"observed_at": null,
+"probability": 0.095,
+"source": "kalshi",
+"is_winner": null,
+"resolution_source": null,
+"_market_id": 63152890
+},
+{
+"market_name": "Pittsburgh vs Cleveland: Fantasy Ladder",
+"outcome_name": "Denzel Boston",
+"observed_at": null,
+"probability": 0.095,
+"source": "kalshi",
+"is_winner": null,
+"resolution_source": null,
+"_market_id": 63152890
+},
+{
+"market_name": "Both teams to score",
+"outcome_name": "Yes",
+"observed_at": "2026-10-01T06:20:00.064669+00:00",
+"probability": 0.065,
+"source": "kalshi",
+"is_winner": null,
+"resolution_source": null,
+"_market_id": 63152895
+},
+{
+"market_name": "Both teams to score",
+"outcome_name": "Yes",
+"observed_at": "2026-10-01T07:30:19.504234+00:00",
+"probability": 0.53,
+"source": "kalshi",
+"is_winner": null,
+"resolution_source": null,
+"_market_id": 63152898
+},
+{
+"market_name": "Both teams to score",
+"outcome_name": "Yes",
+"observed_at": "2026-10-01T05:11:53.642559+00:00",
+"probability": 0.59,
+"source": "kalshi",
+"is_winner": null,
+"resolution_source": null,
+"_market_id": 63152900
+},
+{
+"market_name": "Both teams to score",
+"outcome_name": "Yes",
+"observed_at": "2026-10-01T06:02:48.367107+00:00",
+"probability": 0.325,
+"source": "kalshi",
+"is_winner": null,
+"resolution_source": null,
+"_market_id": 63152901
+},
+{
+"market_name": "Pittsburgh vs Cleveland: D/ST Touchdown",
+"outcome_name": "D/ST touchdown",
+"observed_at": "2026-10-01T05:49:08.958075+00:00",
+"probability": 0.265,
+"source": "kalshi",
+"is_winner": null,
+"resolution_source": null,
+"_market_id": 63152896
+},
+{
+"market_name": "Pittsburgh vs Cleveland: 1st Cleveland Touchdown",
+"outcome_name": "Harold Fannin Jr.",
+"observed_at": "2026-10-01T07:30:03.001283+00:00",
+"probability": 0.15,
+"source": "kalshi",
+"is_winner": null,
+"resolution_source": null,
+"_market_id": 63152869
+},
+{
+"market_name": "Pittsburgh vs Cleveland: 1st Cleveland Touchdown",
+"outcome_name": "Quinshon Judkins",
+"observed_at": "2026-10-01T07:31:39.463864+00:00",
+"probability": 0.14,
+"source": "kalshi",
+"is_winner": null,
+"resolution_source": null,
+"_market_id": 63152869
+},
+{
+"market_name": "Pittsburgh vs Cleveland: 1st Cleveland Touchdown",
+"outcome_name": "No Touchdown",
+"observed_at": "2026-10-01T07:30:03.001283+00:00",
+"probability": 0.13,
+"source": "kalshi",
+"is_winner": null,
+"resolution_source": null,
+"_market_id": 63152869
+},
+{
+"market_name": "Pittsburgh vs Cleveland: 1st Cleveland Touchdown",
+"outcome_name": "Deshaun Watson",
+"observed_at": "2026-10-01T07:30:03.001283+00:00",
+"probability": 0.11,
+"source": "kalshi",
+"is_winner": null,
+"resolution_source": null,
+"_market_id": 63152869
+},
+{
+"market_name": "Pittsburgh vs Cleveland: 1st Cleveland Touchdown",
+"outcome_name": "Denzel Boston",
+"observed_at": "2026-10-01T07:31:39.463864+00:00",
+"probability": 0.08,
+"source": "kalshi",
+"is_winner": null,
+"resolution_source": null,
+"_market_id": 63152869
+},
+{
+"market_name": "Pittsburgh vs Cleveland: 1st Cleveland Touchdown",
+"outcome_name": "Raheim Sanders",
+"observed_at": "2026-10-01T07:30:03.001283+00:00",
+"probability": 0.08,
+"source": "kalshi",
+"is_winner": null,
+"resolution_source": null,
+"_market_id": 63152869
+},
+{
+"market_name": "Pittsburgh vs Cleveland: 1st Cleveland Touchdown",
+"outcome_name": "CLE Browns D/ST",
+"observed_at": "2026-10-01T07:30:03.001283+00:00",
+"probability": 0.06,
+"source": "kalshi",
+"is_winner": null,
+"resolution_source": null,
+"_market_id": 63152869
+},
+{
+"market_name": "Pittsburgh vs Cleveland: 1st Cleveland Touchdown",
+"outcome_name": "Blake Whiteheart",
+"observed_at": "2026-10-01T07:30:03.001283+00:00",
+"probability": 0.05,
+"source": "kalshi",
+"is_winner": null,
+"resolution_source": null,
+"_market_id": 63152869
+},
+{
+"market_name": "Pittsburgh vs Cleveland: 1st Cleveland Touchdown",
+"outcome_name": "Jerry Jeudy",
+"observed_at": "2026-10-01T07:30:03.001283+00:00",
+"probability": 0.05,
+"source": "kalshi",
+"is_winner": null,
+"resolution_source": null,
+"_market_id": 63152869
+},
+{
+"market_name": "Pittsburgh vs Cleveland: 1st Cleveland Touchdown",
+"outcome_name": "Isaiah Bond",
+"observed_at": "2026-10-01T07:30:03.001283+00:00",
+"probability": 0.03,
+"source": "kalshi",
+"is_winner": null,
+"resolution_source": null,
+"_market_id": 63152869
+},
+{
+"market_name": "Pittsburgh vs Cleveland: 1st Cleveland Touchdown",
+"outcome_name": "Jaleel McLaughlin",
+"observed_at": "2026-10-01T07:30:03.001283+00:00",
+"probability": 0.03,
+"source": "kalshi",
+"is_winner": null,
+"resolution_source": null,
+"_market_id": 63152869
+},
+{
+"market_name": "Eli Heidenreich: Anytime Touchdown",
+"outcome_name": "No",
+"observed_at": "2026-10-01T05:49:04.367698+00:00",
+"probability": 0.9775,
+"source": "polymarket",
+"is_winner": null,
+"resolution_source": null,
+"_market_id": 63450111
+},
+{
+"market_name": "Eli Heidenreich: Anytime Touchdown",
+"outcome_name": "Yes",
+"observed_at": "2026-10-01T05:49:04.367698+00:00",
+"probability": 0.0225,
+"source": "polymarket",
+"is_winner": null,
+"resolution_source": null,
+"_market_id": 63450111
+},
+{
+"market_name": "Pittsburgh vs Cleveland: Tie",
+"outcome_name": "Yes",
+"observed_at": "2026-10-01T07:30:03.001283+00:00",
+"probability": 0.04,
+"source": "kalshi",
+"is_winner": null,
+"resolution_source": null,
+"_market_id": 63303080
+},
+{
+"market_name": "Pittsburgh vs Cleveland: 1st Pittsburgh Touchdown",
+"outcome_name": "DK Metcalf",
+"observed_at": "2026-10-01T07:30:03.001283+00:00",
+"probability": 0.17,
+"source": "kalshi",
+"is_winner": null,
+"resolution_source": null,
+"_market_id": 63152868
+},
+{
+"market_name": "Pittsburgh vs Cleveland: 1st Pittsburgh Touchdown",
+"outcome_name": "Jaylen Warren",
+"observed_at": "2026-10-01T07:31:39.372142+00:00",
+"probability": 0.165,
+"source": "kalshi",
+"is_winner": null,
+"resolution_source": null,
+"_market_id": 63152868
+},
+{
+"market_name": "Pittsburgh vs Cleveland: 1st Pittsburgh Touchdown",
+"outcome_name": "Pat Freiermuth",
+"observed_at": "2026-10-01T07:30:03.001283+00:00",
+"probability": 0.12,
+"source": "kalshi",
+"is_winner": null,
+"resolution_source": null,
+"_market_id": 63152868
+},
+{
+"market_name": "Pittsburgh vs Cleveland: 1st Pittsburgh Touchdown",
+"outcome_name": "No Touchdown",
+"observed_at": "2026-10-01T07:30:03.001283+00:00",
+"probability": 0.11,
+"source": "kalshi",
+"is_winner": null,
+"resolution_source": null,
+"_market_id": 63152868
+},
+{
+"market_name": "Pittsburgh vs Cleveland: 1st Pittsburgh Touchdown",
+"outcome_name": "PIT Steelers D/ST",
+"observed_at": "2026-10-01T07:30:03.001283+00:00",
+"probability": 0.09,
+"source": "kalshi",
+"is_winner": null,
+"resolution_source": null,
+"_market_id": 63152868
+},
+{
+"market_name": "Pittsburgh vs Cleveland: 1st Pittsburgh Touchdown",
+"outcome_name": "Roman Wilson",
+"observed_at": "2026-10-01T07:30:03.001283+00:00",
+"probability": 0.085,
+"source": "kalshi",
+"is_winner": null,
+"resolution_source": null,
+"_market_id": 63152868
+},
+{
+"market_name": "Pittsburgh vs Cleveland: 1st Pittsburgh Touchdown",
+"outcome_name": "Darnell Washington",
+"observed_at": "2026-10-01T07:30:03.001283+00:00",
+"probability": 0.08,
+"source": "kalshi",
+"is_winner": null,
+"resolution_source": null,
+"_market_id": 63152868
+},
+{
+"market_name": "Pittsburgh vs Cleveland: 1st Pittsburgh Touchdown",
+"outcome_name": "Michael Pittman Jr.",
+"observed_at": "2026-10-01T07:31:39.372142+00:00",
+"probability": 0.07,
+"source": "kalshi",
+"is_winner": null,
+"resolution_source": null,
+"_market_id": 63152868
+},
+{
+"market_name": "Pittsburgh vs Cleveland: 1st Pittsburgh Touchdown",
+"outcome_name": "Germie Bernard",
+"observed_at": "2026-10-01T07:30:03.001283+00:00",
+"probability": 0.05,
+"source": "kalshi",
+"is_winner": null,
+"resolution_source": null,
+"_market_id": 63152868
+},
+{
+"market_name": "Pittsburgh vs Cleveland: 1st Pittsburgh Touchdown",
+"outcome_name": "Travis Homer",
+"observed_at": "2026-10-01T07:30:03.001283+00:00",
+"probability": 0.04,
+"source": "kalshi",
+"is_winner": null,
+"resolution_source": null,
+"_market_id": 63152868
+},
+{
+"market_name": "Pittsburgh vs Cleveland: 1st Pittsburgh Touchdown",
+"outcome_name": "Ben Skowronek",
+"observed_at": "2026-10-01T07:30:03.001283+00:00",
+"probability": 0.04,
+"source": "kalshi",
+"is_winner": null,
+"resolution_source": null,
+"_market_id": 63152868
+},
+{
+"market_name": "Pittsburgh vs Cleveland: 1st Pittsburgh Touchdown",
+"outcome_name": "Aaron Rodgers",
+"observed_at": "2026-10-01T07:30:03.001283+00:00",
+"probability": 0.04,
+"source": "kalshi",
+"is_winner": null,
+"resolution_source": null,
+"_market_id": 63152868
+},
+{
+"market_name": "Pittsburgh vs Cleveland: 1st Pittsburgh Touchdown",
+"outcome_name": "Riley Nowakowski",
+"observed_at": "2026-10-01T07:30:03.001283+00:00",
+"probability": 0.02,
+"source": "kalshi",
+"is_winner": null,
+"resolution_source": null,
+"_market_id": 63152868
+},
+{
+"market_name": "Pittsburgh vs Cleveland: First Team to Score a TD",
+"outcome_name": "Pittsburgh",
+"observed_at": "2026-10-01T07:31:42.835129+00:00",
+"probability": 0.46,
+"source": "kalshi",
+"is_winner": null,
+"resolution_source": null,
+"_market_id": 63152888
+},
+{
+"market_name": "Pittsburgh vs Cleveland: First Team to Score a TD",
+"outcome_name": "Cleveland",
+"observed_at": "2026-10-01T07:31:42.835129+00:00",
+"probability": 0.455,
+"source": "kalshi",
+"is_winner": null,
+"resolution_source": null,
+"_market_id": 63152888
+},
+{
+"market_name": "Pittsburgh vs Cleveland: First Team to Score a TD",
+"outcome_name": "No team",
+"observed_at": "2026-10-01T07:30:03.001283+00:00",
+"probability": 0.015,
+"source": "kalshi",
+"is_winner": null,
+"resolution_source": null,
+"_market_id": 63152888
+},
+{
+"market_name": "Pittsburgh vs Cleveland: 1st Half / Fulltime Result",
+"outcome_name": "Pittsburgh 1H / Pittsburgh game",
+"observed_at": "2026-10-01T06:40:29.288512+00:00",
+"probability": 0.39,
+"source": "kalshi",
+"is_winner": null,
+"resolution_source": null,
+"_market_id": 62733774
+},
+{
+"market_name": "Pittsburgh vs Cleveland: 1st Half / Fulltime Result",
+"outcome_name": "Cleveland 1H / Cleveland game",
+"observed_at": "2026-10-01T07:00:10.128067+00:00",
+"probability": 0.26,
+"source": "kalshi",
+"is_winner": null,
+"resolution_source": null,
+"_market_id": 62733774
+},
+{
+"market_name": "Pittsburgh vs Cleveland: 1st Half / Fulltime Result",
+"outcome_name": "Cleveland 1H / Pittsburgh game",
+"observed_at": "2026-10-01T07:00:10.128067+00:00",
+"probability": 0.12,
+"source": "kalshi",
+"is_winner": null,
+"resolution_source": null,
+"_market_id": 62733774
+},
+{
+"market_name": "Pittsburgh vs Cleveland: 1st Half / Fulltime Result",
+"outcome_name": "Pittsburgh 1H / Cleveland game",
+"observed_at": "2026-10-01T07:19:22.655894+00:00",
+"probability": 0.095,
+"source": "kalshi",
+"is_winner": null,
+"resolution_source": null,
+"_market_id": 62733774
+},
+{
+"market_name": "Pittsburgh vs Cleveland: 1st Half / Fulltime Result",
+"outcome_name": "Tie 1H / Cleveland game",
+"observed_at": "2026-10-01T04:46:18.709904+00:00",
+"probability": 0.055,
+"source": "kalshi",
+"is_winner": null,
+"resolution_source": null,
+"_market_id": 62733774
+},
+{
+"market_name": "Pittsburgh vs Cleveland: 1st Half / Fulltime Result",
+"outcome_name": "Tie 1H / Pittsburgh game",
+"observed_at": "2026-10-01T06:01:18.818662+00:00",
+"probability": 0.04,
+"source": "kalshi",
+"is_winner": null,
+"resolution_source": null,
+"_market_id": 62733774
+},
+{
+"market_name": "Pittsburgh vs Cleveland: 1st Half / Fulltime Result",
+"outcome_name": "Pittsburgh 1H / Tie game",
+"observed_at": "2026-09-30T10:20:00.148233+00:00",
+"probability": 0.01,
+"source": "kalshi",
+"is_winner": null,
+"resolution_source": null,
+"_market_id": 62733774
+},
+{
+"market_name": "Pittsburgh vs Cleveland: 1st Half / Fulltime Result",
+"outcome_name": "Tie 1H / Tie game",
+"observed_at": "2026-09-30T10:20:00.148233+00:00",
+"probability": 0.01,
+"source": "kalshi",
+"is_winner": null,
+"resolution_source": null,
+"_market_id": 62733774
+},
+{
+"market_name": "Pittsburgh vs Cleveland: 1st Half / Fulltime Result",
+"outcome_name": "Cleveland 1H / Tie game",
+"observed_at": "2026-09-30T10:20:00.148233+00:00",
+"probability": 0.01,
+"source": "kalshi",
+"is_winner": null,
+"resolution_source": null,
+"_market_id": 62733774
+},
+{
+"market_name": "Both teams to score",
+"outcome_name": "14+ points",
+"observed_at": "2026-10-01T07:00:10.128067+00:00",
+"probability": 0.555,
+"source": "kalshi",
+"is_winner": null,
+"resolution_source": null,
+"_market_id": 63152897
+},
+{
+"market_name": "Both teams to score",
+"outcome_name": "21+ points",
+"observed_at": "2026-10-01T06:33:39.656381+00:00",
+"probability": 0.19,
+"source": "kalshi",
+"is_winner": null,
+"resolution_source": null,
+"_market_id": 63152897
+},
+{
+"market_name": "Both teams to score",
+"outcome_name": "28+ points",
+"observed_at": "2026-10-01T07:00:10.128067+00:00",
+"probability": 0.04,
+"source": "kalshi",
+"is_winner": null,
+"resolution_source": null,
+"_market_id": 63152897
+},
+{
+"market_name": "Both teams to score",
+"outcome_name": "35+ points",
+"observed_at": "2026-09-30T20:25:57.779575+00:00",
+"probability": 0.02,
+"source": "kalshi",
+"is_winner": null,
+"resolution_source": null,
+"_market_id": 63152897
+}
+]
+}
