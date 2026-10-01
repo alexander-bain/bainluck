@@ -33,6 +33,24 @@ def _at(stamp: str) -> datetime:
     return datetime.fromisoformat(stamp).replace(tzinfo=timezone.utc)
 
 
+#: The minute the rows below were read. The served card is a function of the
+#: clock — the route retires markets by title month and resolution date — so
+#: these tests run AT it, not at whatever day CI happens to run (#9970: the
+#: real clock crossing Oct 1 hid three of the six slots).
+CAPTURED_AT = _at("2026-09-27T06:50")
+
+
+def pin_route_clock(monkeypatch, instant: datetime) -> None:
+    """Make `get_economics` read `instant` as now."""
+
+    class _Clock(datetime):
+        @classmethod
+        def now(cls, tz=None):
+            return instant if tz is None else instant.astimezone(tz)
+
+    monkeypatch.setattr(econ, "datetime", _Clock)
+
+
 # (market_id, source, name, resolution_date, volume) as stored.
 ARG_POLY = (60760395, "polymarket", "Argentina Monthly Inflation - September", "2026-10-13T15:59", 12680)
 ARG_KALSHI = (60775221, "kalshi", "Argentina inflation rate MoM for September", "2026-10-13T18:59", 7855)
@@ -211,6 +229,10 @@ class TestFold:
 
 
 class TestTheServedCard:
+    @pytest.fixture(autouse=True)
+    def _at_capture(self, monkeypatch):
+        pin_route_clock(monkeypatch, CAPTURED_AT)
+
     async def test_argentina_is_served_once_from_the_more_traded_venue(self, client, mock_db):
         ids = [b["market_id"] for b in await _blocks(client, mock_db)]
         assert ARG_POLY[0] in ids

@@ -1464,17 +1464,36 @@ async def get_economics(db: AsyncSession):
                    "jul": 7, "aug": 8, "sep": 9, "oct": 10, "nov": 11, "dec": 12}
     _DATE_RE = re.compile(r"\b(jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec)\w*\s+(\d{4})\b", re.I)
 
-    def _is_past_date(name: str) -> bool:
-        m = _DATE_RE.search(name.lower())
+    # #9970: the title's month is the month a statistic DESCRIBES, not the day
+    # it settles. "Inflation in September 2026 (CPI YoY)" resolves 2026-10-14,
+    # so the title arm alone hid every September print from Oct 1 — 13 days
+    # before it settled, with the slots falling to lower-volume twins. A
+    # market whose own `resolution_date` is still ahead is not past, whatever
+    # its title says. The title arm stays the retirement for everything else:
+    # settled Kalshi rows sit at `status='open'` (gotcha #33), and a row with
+    # no resolution date has nothing sharper to offer. Measured 2026-10-01:
+    # every open past-title-month market with a future `resolution_date`
+    # settles by 10-14 — none carries a far-future expiry in that column.
+    def _resolves_after_now(market) -> bool:
+        resolves = getattr(market, "resolution_date", None)
+        if resolves is None:
+            return False
+        if resolves.tzinfo is None:
+            resolves = resolves.replace(tzinfo=timezone.utc)
+        return resolves > now
+
+    def _is_past_date(market) -> bool:
+        m = _DATE_RE.search((market.name or "").lower())
         if not m:
             return False
         m_num = _MONTH_NUMS.get(m.group(1)[:3], 0)
         m_year = int(m.group(2))
-        return (m_year < _current_year) or (m_year == _current_year and m_num < _current_month)
+        title_past = (m_year < _current_year) or (m_year == _current_year and m_num < _current_month)
+        return title_past and not _resolves_after_now(market)
 
     # Filter past-date markets from ALL themed sections
     for theme_key, theme_markets in list(themed.items()):
-        themed[theme_key] = [m for m in theme_markets if not _is_past_date(m.name or "")]
+        themed[theme_key] = [m for m in theme_markets if not _is_past_date(m)]
 
     # Re-read filtered lists
     fed_markets = themed.get("fed", [])
