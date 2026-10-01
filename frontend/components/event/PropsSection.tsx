@@ -565,6 +565,45 @@ function divergenceOneSide(
 }
 
 /**
+ * #1626 slice 3 — THE SCRIPT prints one row per two-sided question too.
+ *
+ * Before kickoff the board is the same pair twice: `AARON RODGERS: PASSING
+ * YARDS O/U 274.5` as `Under 89%` over `Over 11%` (Browns @ Steelers,
+ * `/events/14780550`, 390px, 2026-10-01) — 48 such pairs on one page that is
+ * 20,059px tall. When the two printed numbers are a complement, the second row
+ * is `100 − first` and tells the reader nothing the first did not.
+ *
+ * The kept leg is the one the script favours by the number it PRINTS
+ * (`scriptNumber`, #9131), which is the leg THE DIVERGENCE keeps once the
+ * commence-time pin lands and the leg WHAT HIT grades at the end — one row per
+ * question, followed through the whole game.
+ *
+ * Only where nothing is lost: both legs carry a printed number (a leg with no
+ * mark folds, D102, and its family is left whole), the two numbers are a
+ * complement, and no leg is settled or `pending_label`.
+ */
+function scriptOneSide(
+  groups: ReadonlyArray<{ name: string | null; items: PropMark[] }>,
+  state: PropsState,
+): ReadonlySet<PropMark["key"]> {
+  if (state !== "script") return EMPTY_DROP;
+  const drop = new Set<PropMark["key"]>();
+  for (const group of groups) {
+    if (group.name == null) continue;
+    const legs = group.items;
+    if (legs.length !== 2) continue;
+    if (legs.some((i) => i.settled || i.pending_label?.trim())) continue;
+    const printed = legs.map(scriptNumber);
+    if (!isComplementPair(printed)) continue;
+    const decision = gradedPairDecision(
+      legs.map((i, n) => ({ key: i.key, label: i.label, pregame_mark: printed[n] })),
+    );
+    if (decision) drop.add(decision.drop);
+  }
+  return drop.size === 0 ? EMPTY_DROP : drop;
+}
+
+/**
  * Absolute movement of a prop from its pregame mark to the current number, or
  * null when either endpoint is missing (a forward-only mark that can't yet
  * diverge). Used to rank THE DIVERGENCE biggest-mover-first.
@@ -855,9 +894,13 @@ export default function PropsSection({
 
   // #8230: a graded two-sided question keeps one leg. Decided on the whole
   // families; every per-family decision below still reads the full `groups`.
-  // #1626: and so does a live one in THE DIVERGENCE — see `divergenceOneSide`.
+  // #1626: and so does a live one in THE DIVERGENCE — see `divergenceOneSide` —
+  // and a pregame one in THE SCRIPT — see `scriptOneSide`.
   const graded = gradedPairs(groups, activeState);
-  const oneSide = divergenceOneSide(groups, activeState, divergencePairs);
+  const oneSide =
+    activeState === "script"
+      ? scriptOneSide(groups, activeState)
+      : divergenceOneSide(groups, activeState, divergencePairs);
   const shownGroups =
     graded.drop.size === 0 && oneSide.size === 0
       ? groups

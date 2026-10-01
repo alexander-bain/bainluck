@@ -49,10 +49,14 @@ const ALBIES: PropMark[] = [
 const ALBIES_SCRIPT: PropMark[] = ALBIES.map((i) => ({ ...i, current: i.pregame_mark }));
 
 describe("#5240 THE SCRIPT's two legs stop summing to 101%", () => {
-  test("THE SHIP: the pair prints 92% / 8%, not 92% / 9%", () => {
+  test("THE SHIP: the pair cannot print 92% / 9% — since #1626 slice 3 it prints its favourite, 92%, alone", () => {
+    // #1626 slice 3 moved this control: a complement pair in THE SCRIPT prints
+    // one leg, the favourite, whose number the pair rule never touched (see the
+    // headline CONTROL below). The derived 8% leg is the row that is dropped.
     const html = script(ALBIES_SCRIPT);
+    expect(html).toContain(">Under<");
     expect(html).toContain("92%");
-    expect(html).toContain("8%");
+    expect(html).not.toContain(">Over<");
   });
 
   test("THE SHIP: the leg that used to round up on its own no longer does", () => {

@@ -63,12 +63,14 @@ describe("#9131 THE SCRIPT prints the live price before kickoff", () => {
   test("THE SHIP: Mahomes 300+ and O/U 299.5 · Over stop disagreeing by six points", () => {
     const html = render(SPECIMEN, "script");
     const ladder = parseInt(valueOf(html, "Patrick Mahomes: 300+") ?? "", 10);
-    const over = parseInt(valueOf(html, "Over") ?? "", 10);
-    // Both read 0.095. The O/U leg is half of a pair and takes #5240's pair
-    // rounding (0.905 → 91, so Over prints 9), the lone ladder rung rounds on its
-    // own (10). One point of rounding remains; the 16-vs-10 gap was the opening.
+    // #1626 slice 3: the pair now prints one leg, the favourite (Under 91%), so
+    // the Over it implies is 100 − 91. Both read 0.095. The O/U leg takes #5240's
+    // pair rounding (0.905 → 91), the lone ladder rung rounds on its own (10).
+    // One point of rounding remains; the 16-vs-10 gap was the opening.
+    const under = parseInt(valueOf(html, "Under") ?? "", 10);
+    expect(valueOf(html, "Over")).toBeNull();
     expect(ladder).toBe(10);
-    expect(Math.abs(ladder - over)).toBeLessThanOrEqual(1);
+    expect(Math.abs(ladder - (100 - under))).toBeLessThanOrEqual(1);
     expect(html).not.toContain("16%");
   });
 

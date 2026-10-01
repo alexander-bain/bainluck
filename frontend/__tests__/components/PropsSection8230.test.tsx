@@ -146,11 +146,16 @@ describe("#8230 WHAT HIT: one row per two-sided question", () => {
 });
 
 describe("#8230 controls — both legs MUST survive", () => {
-  it("THE SCRIPT prints both sides (two real numbers)", () => {
+  it("THE SCRIPT prints both sides of a pair that is not a complement (two real numbers)", () => {
     // FRY alone: a markless family (TOLLE_35) folds whole in THE SCRIPT (#5241)
     // and has no header div for `familyRows` to stop at.
+    // #1626 slice 3 made THE SCRIPT print one leg of a complement pair (see
+    // PropsSection1626Script) — FRY's 0.94 / 0.06 now prints `Under | 94%` alone.
+    // A pair whose printed legs do not sum to 1 is two numbers, and both stay.
     const pre = SPECIMEN.slice(0, 2).map((m) => ({ ...m, settled: false, graded_result: null, graded_label: null }));
-    expect(familyRows(render(pre, "script"), FRY)).toEqual(["Under | 94%", "Over | 6%"]);
+    expect(familyRows(render(pre, "script"), FRY)).toEqual(["Under | 94%"]);
+    const wide = pre.map((m, i) => ({ ...m, current: i === 0 ? 0.94 : 0.1 }));
+    expect(familyRows(render(wide, "script"), FRY)).toEqual(["Under | 94%", "Over | 10%"]);
   });
 
   it("THE DIVERGENCE prints both sides of a pair that is not a complement", () => {
