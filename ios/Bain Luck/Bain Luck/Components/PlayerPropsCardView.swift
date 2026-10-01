@@ -422,35 +422,18 @@ struct PlayerPropsCardView: View {
         }
 
         return VStack(alignment: .leading, spacing: 3) {
-            HStack(spacing: 4) {
-                Text(cleanStatLabel(group.type, player: card.name).uppercased())
-                    .font(.system(size: 8, weight: .bold))
-                    .tracking(0.5)
-                    .foregroundStyle(.tertiary)
-                    .lineLimit(1)
-                Text(EventState.propsChanceCaption(
+            // #4959 — WHAT THE STAT ACTUALLY FINISHED ON, once per group, the
+            // way the totals ladder prints "Final total N" above its rungs
+            // (`TotalPointsSpectrumView.finalStrip`) rather than on every row.
+            // #10076 — the header never clips the stat name for the caption: in
+            // a narrow paired column the caption drops to its own line.
+            PropsStatGroupHeader(
+                label: cleanStatLabel(group.type, player: card.name).uppercased(),
+                caption: EventState.propsChanceCaption(
                     eventStatus, commenceTime: commenceTime, hasGradedRung: hasGradedRung
-                ))
-                    .font(.system(size: 8))
-                    .foregroundStyle(.quaternary)
-                    .lineLimit(1)
-                // #4959 — WHAT THE STAT ACTUALLY FINISHED ON, once per group, the
-                // way the totals ladder prints "Final total N" above its rungs
-                // (`TotalPointsSpectrumView.finalStrip`) rather than on every row.
-                // It takes layout priority over the caption because it is the fact
-                // and the caption is the boilerplate: in a narrow paired column the
-                // caption truncates first.
-                if isDone, let final = group.finalValue {
-                    Spacer(minLength: 2)
-                    Text("Final \(Self.formatStatValue(final))")
-                        .font(.system(size: 8, weight: .semibold))
-                        .monospacedDigit()
-                        .foregroundStyle(.secondary)
-                        .lineLimit(1)
-                        .fixedSize(horizontal: true, vertical: false)
-                        .layoutPriority(1)
-                }
-            }
+                ),
+                finalText: isDone ? group.finalValue.map { "Final \(Self.formatStatValue($0))" } : nil
+            )
             ForEach(Array(group.rungs.enumerated()), id: \.offset) { _, rung in
                 rungRow(rung, card: card, statType: group.type)
             }
@@ -470,21 +453,14 @@ struct PlayerPropsCardView: View {
         let hiddenCount = field.candidates.count - PlayerPropsField.visibleCount
 
         return VStack(alignment: .leading, spacing: 3) {
-            HStack(spacing: 4) {
-                Text(field.title.uppercased())
-                    .font(.system(size: 8, weight: .bold))
-                    .tracking(0.5)
-                    .foregroundStyle(.tertiary)
-                    .lineLimit(1)
-                Text(PlayerPropsField.caption(
+            PropsStatGroupHeader(
+                label: field.title.uppercased(),
+                caption: PlayerPropsField.caption(
                     eventStatus: eventStatus,
                     commenceTime: commenceTime,
                     isGraded: field.isGraded
-                ))
-                    .font(.system(size: 8))
-                    .foregroundStyle(.quaternary)
-                    .lineLimit(1)
-            }
+                )
+            )
             ForEach(shown, id: \.name) { candidate in
                 fieldRow(candidate)
             }
