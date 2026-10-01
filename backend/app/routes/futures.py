@@ -15,7 +15,7 @@ from sqlalchemy import select, and_, or_, func, exists
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import joinedload, selectinload
 
-from app.models import FuturesMarket, FuturesOutcome, FuturesOddsSnapshot, Sport, Team
+from app.models import Event, FuturesMarket, FuturesOutcome, FuturesOddsSnapshot, Sport, Team
 from app.services import get_db, OddsAPIService
 from app.utils import movement_pool, probability_to_american
 from app.utils.durable_venue_receipt import log_durable_venue_serve
@@ -61,6 +61,7 @@ from app.utils.event_rails import live_scheduled_settled_order
 from app.utils.event_twin_fold import fold_twin_events
 from app.utils.lifecycle import served_event_status
 from app.utils.resolution_authority import CALIBRATION_TRUTH_ELIGIBLE_SOURCES
+from app.utils.settled_hero import FINISHED_STATUSES
 from app.utils.settlement_stamp import (
     last_charted_timestamp as _last_charted_timestamp,
     settled_point_timestamp,
@@ -3091,6 +3092,20 @@ async def grouped_feed(
             FuturesMarket.resolution_date.is_(None),
             FuturesMarket.resolution_date >= datetime.now(timezone.utc),
         ),
+        # #10064: a game prop whose match is over. Kalshi keeps these rows
+        # `open` (gotcha #33) with an expiration two weeks out and a mid-range
+        # last price, so neither clause above nor #9899's >99% rule can see
+        # them — Safiullin vs Cobolli "Total Games 61% / 47% / 36%" was served
+        # 4.5 h after the match ended. The fact lives on the linked event. A
+        # status used to WITHHOLD (settled_hero's note): `voided`/`merged`
+        # rows are not in the set, since their markets may await a relink.
+        or_(
+            FuturesMarket.event_id.is_(None),
+            ~exists().where(
+                Event.id == FuturesMarket.event_id,
+                Event.status.in_(FINISHED_STATUSES),
+            ),
+        ),
     ]
     if category:
         filters.append(FuturesMarket.category == category)
@@ -3379,6 +3394,11 @@ async def grouped_feed(
             continue
         for o in outcomes:
             grouped_outcome_ids.add(o["id"])
+        # #10064: the ladder CONSUMES its markets, as the exact-score card does
+        # (#9844). Claiming only the outcome ids let "Safiullin vs Cobolli:
+        # Total Games" come back lower in the strip as a plain market card
+        # with the same three numbers.
+        grouped_market_ids.update(o["market_id"] for o in outcomes)
         feed_items.append({
             "type": "threshold",
             "kind": "threshold",
