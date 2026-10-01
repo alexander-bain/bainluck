@@ -14875,6 +14875,7 @@ async def typeahead_search(
     # 1.5-3.4 s for them with nothing gained. A timed-out futures stage is not
     # empty-by-answer, so it is not retried here.
     _ta_split_arms = _split_futures_arms(ta_expanded)
+    _ta_split_market_ids: set = set()
     if _ta_split_arms and futures_result is not None and not _ta_futures_rows:
         _split_selects = [
             select(FuturesMarket.id).where(arm, *_ta_open_now)
@@ -14895,6 +14896,7 @@ async def typeahead_search(
             _ta_deadline,
         )
         _ta_mark(f"futures_split_arms_{_ta_split_state}")
+        _ta_split_market_ids = {m.id for m in _ta_futures_rows}
     _ta_team_sport_category = _typeahead_team_sport_category(team_pool)
     ta_futures_ranked = _rerank_search_futures(
         _ta_futures_rows,
@@ -15388,7 +15390,18 @@ async def typeahead_search(
     # --- Fuzzy fallback: trigram search when ILIKE finds too few results ---
     _ta_mark("futures_assemble")
     did_you_mean: str | None = None
-    if not team_pool and not event_pool and len(futures_pool) < 2:
+    # #10024: a board the split arms found already read the query as team plus
+    # competition. Spelling-guessing the whole phrase after that offered
+    # "Chennai Super Kings" under the Super Bowl board for `chiefs super bowl`.
+    _ta_split_answered = any(
+        f["market_id"] in _ta_split_market_ids for f in futures_pool
+    )
+    if (
+        not team_pool
+        and not event_pool
+        and len(futures_pool) < 2
+        and not _ta_split_answered
+    ):
         try:
             from sqlalchemy import text as sql_text
             # LAT-P135/#1866: the WHERE uses the `%` OPERATOR, which the
