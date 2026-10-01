@@ -11,7 +11,7 @@
       "player_team": "home",
       "player_headshot": "https://a.espncdn.com/i/headshots/nfl/players/full/4432577.png",
       "player_entity_key": "espn:athlete:4432577",
-      "player_team_entity_key": "espn:team:34"
+      "player_team_entity_key": "espn:team:americanfootball_nfl:34"
     },
     {
       "market_name": "Buffalo vs Houston: Passing Yards",
@@ -21,7 +21,7 @@
       "player_team": "away",
       "player_headshot": "https://a.espncdn.com/i/headshots/nfl/players/full/3918298.png",
       "player_entity_key": "espn:athlete:3918298",
-      "player_team_entity_key": "espn:team:2"
+      "player_team_entity_key": "espn:team:americanfootball_nfl:2"
     },
     {
       "market_name": "Buffalo vs Houston: Rushing Yards",
@@ -31,7 +31,7 @@
       "player_team": "home",
       "player_headshot": "https://a.espncdn.com/i/headshots/nfl/players/full/4035538.png",
       "player_entity_key": "espn:athlete:4035538",
-      "player_team_entity_key": "espn:team:34"
+      "player_team_entity_key": "espn:team:americanfootball_nfl:34"
     },
     {
       "market_name": "Buffalo vs Houston: Receiving Yards",

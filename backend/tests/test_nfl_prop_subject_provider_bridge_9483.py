@@ -12,7 +12,7 @@ played for, by ESPN id, with his picture. `get_event_context` now keeps that as
 `box_score_player_identities`. The three box writers store it as
 `box_score_data.player_identities` beside the unchanged numeric `players`, and
 step 10b resolves a prop's COMPLETE subject against it. Provider identity
-(`espn:athlete:<id>`, `espn:team:<id>`) rides the prop row. The roster pass stays
+(`espn:athlete:<id>`, `espn:team:americanfootball_nfl:<id>`) rides the prop row. The roster pass stays
 as the fallback for everything the bridge cannot vouch for.
 
 FIXTURES. `espn_summary_nfl_401872660_bills_at_texans_10103.json` is SOURCE-
@@ -475,7 +475,7 @@ async def test_THE_SHIP_ingestion_to_served_prop_keeps_the_games_own_team_and_pi
         assert row["player_team"] == side, (outcome, row)
         assert row["player_headshot"] == HEADSHOT.format(athlete_id)
         assert row["player_entity_key"] == f"espn:athlete:{athlete_id}"
-        assert row["player_team_entity_key"] == f"espn:team:{team_id}"
+        assert row["player_team_entity_key"] == f"espn:team:{NFL}:{team_id}"
 
     # TRANSFER CONTROL, stated directly: the roster's side and picture lost.
     assert props["David Montgomery: 50+"]["player_team"] == "home"

@@ -26863,7 +26863,11 @@ async def _build_game_markets(
                 _team_espn.get(event.home_team_id),
                 _team_espn.get(event.away_team_id),
             )
-        except Exception:
+        except Exception as exc:
+            logger.warning(
+                "game-markets %s: game identity map refused on error, roster "
+                "fallback (%s)", event_id, exc,
+            )
             identity_index = {}
         if identity_index:
             for prop in player_props:
@@ -26885,7 +26889,11 @@ async def _build_game_markets(
                     else:
                         prop.pop("player_headshot", None)
                     prop["player_entity_key"] = f"espn:athlete:{who['athlete_id']}"
-                    prop["player_team_entity_key"] = f"espn:team:{who['team_id']}"
+                    # D55: ESPN team ids collide across sports ('2' is the
+                    # Bills, the Celtics, the Red Sox...), so the key names it.
+                    prop["player_team_entity_key"] = (
+                        f"espn:team:{_PROP_IDENTITY_SPORT}:{who['team_id']}"
+                    )
                     break
 
     # #1588 — a window-bounded prop must not quote a probability once its window
