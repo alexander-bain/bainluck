@@ -3175,6 +3175,55 @@ def _is_teamless_sport(m, team_categories: frozenset | None) -> bool:
     return cat in _SEARCH_SPORT_LLM_CATEGORIES and cat not in team_categories
 
 
+def _is_marquee_team_sport_key(sport_key: str | None) -> bool:
+    """#9987: a marquee league's key, its preseason/postseason rows included
+    (`basketball_nba_preseason` is the Lakers too)."""
+    key = (sport_key or "").strip().lower()
+    return any(key == mk or key.startswith(mk + "_") for mk in _MARQUEE_TEAM_SPORT_KEYS)
+
+
+def _marquee_club_sport_categories(
+    team_categories: frozenset | None, team_rows
+) -> frozenset | None:
+    """#9987: #7355's club sports, minus the ones only a minor club holds once a
+    marquee club has matched. FUTURES ONLY — the games list keeps its own key.
+
+    `lakers` on production 2026-10-01: the TEAMS card led with the Los Angeles
+    Lakers and the ANSWERS card was headed `NL: Lugano vs. Rapperswil-Jona
+    Lakers` (Swiss hockey), above Bronny James and the Lakers' conference
+    markets. #7355 could not sink it: `Växjö Lakers` (SHL) is a real club, so
+    hockey reads as a club sport and every hockey row called Lakers rides along.
+    `rangers` carried `West Ham vs. Queens Park Rangers` the same way.
+
+    A sport stays a club sport when ANY of its matched clubs is marquee
+    (`_MARQUEE_TEAM_SPORT_KEYS`) or college (a key holding `ncaa`). So this never
+    chooses between two real clubs a reader could mean — `jets`, `cardinals`,
+    `kings` and `giants` have a marquee club in both sports and are unchanged —
+    and `texas` keeps the Longhorns. It only drops a sport whose every club is a
+    minor professional one, and only when the same query matched a marquee club:
+    with no marquee club there is no one the reader more plausibly meant.
+
+    None stays None (#7355's evidence disarmed, e.g. a full window), so this can
+    only narrow an armed set, and an emptied set would disarm rather than sink
+    every sport — it never comes to that, the marquee club's sport is kept.
+    """
+    if not team_categories or not team_rows:
+        return team_categories
+    if not any(_is_marquee_team_sport_key(getattr(r, "sport_key", None)) for r in team_rows):
+        return team_categories
+    major: set[str] = set()
+    for row in team_rows:
+        key = (getattr(row, "sport_key", None) or "").strip().lower()
+        if not (_is_marquee_team_sport_key(key) or "ncaa" in key):
+            continue
+        prefix = key.split("_", 1)[0]
+        cat = SPORT_PREFIX_TO_LLM_CATEGORY.get(prefix) or _TEAM_PREFIX_EXTRA_LLM_CATEGORY.get(prefix)
+        if cat:
+            major.add(cat)
+    narrowed = frozenset(c for c in team_categories if c in major)
+    return narrowed or team_categories
+
+
 # #8697: an EVENT's sport category, read from its sport key's prefix — the same
 # two maps `_team_evidence_sport_categories` reads a TEAM's with, so a game and
 # a club are judged in one vocabulary.
@@ -11768,8 +11817,15 @@ async def search_events(
         else:
             await _teams_savepoint.commit()
     _mark("teams")
+    # #9987: a sport only a minor club holds is no club's sport once a marquee
+    # club matched (`lakers`: Växjö's hockey stops carrying a Swiss game onto
+    # the Lakers card). Every reader of this set below is the futures list or
+    # the ANSWERS card; the games list reads its own evidence above.
     _team_sport_categories = _team_evidence_sport_categories(
         _team_result_rows, _SEARCH_TEAM_WINDOW
+    )
+    _team_sport_categories = _marquee_club_sport_categories(
+        _team_sport_categories, _team_result_rows
     )
 
     # Re-rank FIRST (name-match priority + volume + wrong-league), THEN dedup —
