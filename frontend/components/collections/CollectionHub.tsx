@@ -87,10 +87,10 @@ export default function CollectionHub({ slug }: { slug: string }) {
     try { sessionStorage.setItem(storageKey(slug), JSON.stringify(context)); } catch { /* browser Back remains available without storage */ }
   };
 
-  const card = (member: CollectionMember) => <div id={collectionMemberDomId(member.key)} key={member.key} data-collection-member={member.key} onClickCapture={(event) => {
+  const card = (member: CollectionMember, relatedGame?: CollectionMember) => <div id={collectionMemberDomId(member.key)} key={member.key} data-collection-member={member.key} onClickCapture={(event) => {
     const anchor = (event.target as Element).closest("a");
     if (anchor?.getAttribute("href") === member.href) remember(member.key);
-  }}><CollectionMemberCard member={member} /></div>;
+  }}><CollectionMemberCard member={member} relatedGame={relatedGame} /></div>;
 
   return <div className="mx-auto w-full max-w-4xl space-y-6" data-collection-hub={slug}>
     <div className="flex items-center justify-between gap-4">
@@ -123,7 +123,7 @@ export default function CollectionHub({ slug }: { slug: string }) {
             setExpanded((previous) => { const next = new Set(previous); if (open) next.add(member.key); else next.delete(member.key); return next; });
           }} className="rounded-card border border-surface-border bg-surface-card p-3">
             <summary className="cursor-pointer text-sm font-semibold text-text-secondary">Related questions ({shown.related[member.key].length})</summary>
-            <div className="mt-3 space-y-3">{shown.related[member.key].map(card)}</div>
+            <div className="mt-3 space-y-3">{shown.related[member.key].map((related) => card(related, member))}</div>
           </details>}
         </div>)}
       </div>
