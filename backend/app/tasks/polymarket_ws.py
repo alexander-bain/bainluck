@@ -233,7 +233,88 @@ def legs_in_token_order(pairs: list) -> list:
     return list(pairs)
 
 
-async def _apply_ws_resolution(session, market_id, outcomes, winning_outcome):
+#: #9418: what one ``market_resolved`` push may write, decided before any write.
+#:
+#: ``winner`` — the CLOB names exactly one winning token and it is a leg of this
+#: market; ``void`` — the venue closed the market and paid every token 0.5, so
+#: it named no outcome; ``unconfirmed`` — anything else (CLOB unreachable, not
+#: yet flipped, disagreeing with the push, a token we cannot place). Only
+#: ``winner`` grades; ``void`` records the void; ``unconfirmed`` grades nothing
+#: and leaves the market to the Gamma rail, which reads the venue's prices.
+WS_RESOLUTION_WINNER = "winner"
+WS_RESOLUTION_VOID = "void"
+WS_RESOLUTION_UNCONFIRMED = "unconfirmed"
+
+#: Ceiling on the CLOB read behind one resolution. The read retries a 429 at
+#: most twice with ≤10 s waits; past this the verdict is ``unconfirmed``.
+RESOLUTION_CLOB_TIMEOUT_S = 25.0
+
+#: Polymarket's payout on a void: every token settles at exactly half.
+_VOID_PAYOUT = 0.5
+
+
+def ws_resolution_verdict(
+    push_winning_asset_id, clob_market, market_outcome_ids, asset_to_outcome
+):
+    """Decide what a ``market_resolved`` push may write (#9418). Pure.
+
+    🔴 THE PUSH'S LABEL IS NEVER READ. ``winning_outcome`` is the venue's
+    display word for the winning side — ``"Over"``, ``"Stefan Kozlov"``,
+    ``"Yes"`` — and the old writer graded a leg only when that word was literally
+    yes/no AND the leg's id ended ``_yes``/``_no``. Every other market (totals,
+    named sides, and every ``{condition}``/``_side1`` leg) was written with
+    BOTH legs ``is_winner=False`` under the tier-3 ``clob_authoritative`` stamp:
+    2,471 of the 2,618 markets this socket settled on production 2026-09-30/10-01,
+    10 of 12 sampled having a real venue winner (BOS@NYY "O/U 3.5", Over paid
+    1/0, both legs stored lost). The winner is named by TOKEN instead, through
+    ``asset_to_outcome`` — the same token→leg map every price tick is routed by
+    (Q489/#8403), so a leg is graded by the contract it is, never by its
+    position or its name.
+
+    🔴 THE TOKEN IS CONFIRMED AGAINST THE CLOB BEFORE IT GRADES. The push's
+    ``winning_asset_id`` is optional in the venue's schema and a void is not
+    documented on it, so on its own it cannot tell a winner from a void. CLOB
+    ``/markets/{condition}`` can: exactly one token ``winner: true`` is a result,
+    and every token ``winner: false`` at price 0.5 on a closed market is a void
+    (Kozlov v Kim, 15320860: both 0.5, Gamma's "Completed Match" No). Anything
+    between — a CLOB that has not flipped yet, two winners, a winner that is not
+    the pushed token — is ``unconfirmed``: a wrong tier-3 grade is never
+    overwritten by the Gamma rail's void skip, so declining is the only safe
+    answer.
+
+    Returns ``(kind, winner_outcome_id)``; the id is set only for ``winner``.
+    """
+    unconfirmed = (WS_RESOLUTION_UNCONFIRMED, None)
+    if not isinstance(clob_market, dict):
+        return unconfirmed
+    tokens = clob_market.get("tokens")
+    if not isinstance(tokens, list) or len(tokens) < 2:
+        return unconfirmed
+    winners = [t for t in tokens if isinstance(t, dict) and t.get("winner") is True]
+    if not winners:
+        if clob_market.get("closed") is not True:
+            return unconfirmed
+        try:
+            prices = [float(t.get("price")) for t in tokens]
+        except (TypeError, ValueError, AttributeError):
+            return unconfirmed
+        if all(abs(p - _VOID_PAYOUT) < 1e-9 for p in prices):
+            return (WS_RESOLUTION_VOID, None)
+        return unconfirmed
+    if len(winners) != 1:
+        return unconfirmed
+    token = str(winners[0].get("token_id") or "")
+    if not token:
+        return unconfirmed
+    if push_winning_asset_id and str(push_winning_asset_id) != token:
+        return unconfirmed
+    owner = asset_to_outcome.get(token)
+    if owner is None or owner not in set(market_outcome_ids):
+        return unconfirmed
+    return (WS_RESOLUTION_WINNER, owner)
+
+
+async def _apply_ws_resolution(session, market_id, outcomes, verdict):
     """Apply a Polymarket ``market_resolved`` settlement to the DB.
 
     Queue #261 Item 2: sets ``status='resolved'`` on the market and ``is_winner``
@@ -251,12 +332,21 @@ async def _apply_ws_resolution(session, market_id, outcomes, winning_outcome):
     outcome with a NULL source (which the authority ladder treats as tier -1,
     silently overwritable by a later guess).
 
+    #9418: ``verdict`` is :func:`ws_resolution_verdict`'s ``(kind, winner_id)``.
+    Only ``winner`` writes a grade. ``void`` writes the venue's void the way the
+    Kalshi sweep does (``venue_voided`` merged into ``market_metadata``, no grade
+    — a void names NO outcome, #1852), which is what lets #5811's
+    ``venue_closed_no_winner`` speak for a match both venues cancelled.
+    ``unconfirmed`` marks the market resolved and grades nothing; the legs stay
+    eligible for the Gamma rail exactly as an ungraded resolved market is.
+
     Module-level (not a closure) so the leakage contract is unit-testable.
     Returns the number of outcome winner-writes applied.
     """
-    from sqlalchemy import select, update
+    from sqlalchemy import select, text, update
 
     from app.models.models import FuturesMarket, FuturesOutcome
+    from app.tasks.kalshi_resolution_sweep import VOID_UPDATE_SQL
     from app.utils.resolution_authority import is_authoritative
 
     # A CLOB `market_resolved` push is the venue's own settlement delivered over
@@ -266,6 +356,27 @@ async def _apply_ws_resolution(session, market_id, outcomes, winning_outcome):
     # guess-family pass can no longer silently overwrite a NULL-source winner),
     # and is calibration-truth eligible. Do NOT invent a new source string.
     _WS_RESOLUTION_SOURCE = "clob_authoritative"
+
+    kind, winner_id = verdict
+
+    await session.execute(
+        update(FuturesMarket)
+        .where(FuturesMarket.id == market_id)
+        .values(status="resolved", **settled_values(FuturesMarket.settled_at))
+    )
+
+    if kind == WS_RESOLUTION_VOID:
+        # The Kalshi sweep's own statement, unforked: merged, never assigned, so
+        # `shape` survives, and the two venues' voids are one fact to every
+        # reader (`venue_closed_without_winner`, #7035's retirement).
+        await session.execute(
+            text(VOID_UPDATE_SQL),
+            {"id": market_id, "updated_at": datetime.now(timezone.utc).isoformat()},
+        )
+        return 0
+
+    if kind != WS_RESOLUTION_WINNER or winner_id is None:
+        return 0
 
     outcome_ids = [oid for oid, _ in outcomes]
     existing_sources: dict = {}
@@ -281,20 +392,10 @@ async def _apply_ws_resolution(session, market_id, outcomes, winning_outcome):
             ).all()
         }
 
-    await session.execute(
-        update(FuturesMarket)
-        .where(FuturesMarket.id == market_id)
-        .values(status="resolved", **settled_values(FuturesMarket.settled_at))
-    )
-
     written = 0
-    for oid, ext in outcomes:
+    for oid, _ext in outcomes:
         if is_authoritative(existing_sources.get(oid)):
             continue  # venue already settled authoritatively — leave it
-        is_winner = (
-            (winning_outcome.lower() == "yes" and ext.endswith("_yes"))
-            or (winning_outcome.lower() == "no" and ext.endswith("_no"))
-        )
         # Winner AND provenance in the SAME statement (Queue #284 Item 1): an
         # atomic write means a failed/partial apply can never leave is_winner set
         # with a NULL resolution_source. Deliberately NOT setting
@@ -302,7 +403,10 @@ async def _apply_ws_resolution(session, market_id, outcomes, winning_outcome):
         await session.execute(
             update(FuturesOutcome)
             .where(FuturesOutcome.id == oid)
-            .values(is_winner=is_winner, resolution_source=_WS_RESOLUTION_SOURCE)
+            .values(
+                is_winner=(oid == winner_id),
+                resolution_source=_WS_RESOLUTION_SOURCE,
+            )
         )
         written += 1
     return written
@@ -983,6 +1087,11 @@ async def _run_polymarket_ws_consumer():
         # (`withdraw_book_refuted_prices`).
         "held_prices_withdrawn": 0,
         "resolutions": 0,
+        # #9418: what each resolution was allowed to write
+        # (`ws_resolution_verdict`). `unconfirmed` is graded by nobody here.
+        "resolutions_winner": 0,
+        "resolutions_void": 0,
+        "resolutions_unconfirmed": 0,
         "errors": 0,
         # Q491: prices a failed flush put BACK on the buffer instead of dropping.
         # `errors` alone cannot distinguish a retried batch from a lost one.
@@ -1322,6 +1431,19 @@ async def _run_polymarket_ws_consumer():
                 stranded, FINAL_FLUSH_ATTEMPTS,
             )
 
+    # #9418: one CLOB client for the consumer's resolutions, made on first use
+    # and closed with the consumer; and the in-flight resolution tasks, held so
+    # a running settle is not garbage-collected and can be cancelled at exit.
+    resolution_tasks: set = set()
+    _resolution_service: list = []
+
+    def resolution_service():
+        if not _resolution_service:
+            from app.services.polymarket_api import PolymarketAPIService
+
+            _resolution_service.append(PolymarketAPIService())
+        return _resolution_service[0]
+
     async def handle_price(msg: dict):
         """Handle best_bid_ask event."""
         asset_id = msg.get("asset_id", "")
@@ -1481,20 +1603,48 @@ async def _run_polymarket_ws_consumer():
         forecast is left to the timestamped snapshot pipeline (opening/closing
         lines). An outcome already settled by an authoritative source (tier 3) is
         left untouched — a bare websocket push must not downgrade it.
+
+        #9418: the winner is the leg owning the CLOB-confirmed winning TOKEN
+        (:func:`ws_resolution_verdict`), never the push's label. The CLOB read is
+        a network call, so it runs as its own task: the shard's reader is the
+        caller here, and a slow venue must not hold up the price frames behind
+        this one.
         """
         condition_id = msg.get("market", "")
-        winning_outcome = msg.get("winning_outcome", "")
-
         market_id = condition_to_market.get(condition_id)
         if not market_id:
             return
+        task = asyncio.create_task(_settle_resolution(msg, condition_id, market_id))
+        resolution_tasks.add(task)
+        task.add_done_callback(resolution_tasks.discard)
 
+    async def _settle_resolution(msg: dict, condition_id: str, market_id: int):
+        winning_asset_id = msg.get("winning_asset_id")
         outcomes = outcomes_by_market.get(market_id, [])
+
+        clob_market = None
+        try:
+            clob_market = await asyncio.wait_for(
+                resolution_service().get_clob_market_by_condition(condition_id),
+                timeout=RESOLUTION_CLOB_TIMEOUT_S,
+            )
+        except Exception:
+            # Unreachable venue ⇒ `unconfirmed`: resolved, graded by nobody here.
+            logger.warning(
+                "Polymarket WS: CLOB read for %s failed; resolution left ungraded",
+                condition_id[:20], exc_info=True,
+            )
+        verdict = ws_resolution_verdict(
+            winning_asset_id,
+            clob_market,
+            [oid for oid, _ in outcomes],
+            asset_to_outcome,
+        )
 
         try:
             async with get_task_session() as session:
                 written = await _apply_ws_resolution(
-                    session, market_id, outcomes, winning_outcome
+                    session, market_id, outcomes, verdict
                 )
                 # #9484: the terminal invalidation carries the `settled_at`
                 # this transaction stored, read back inside it — the market is
@@ -1517,11 +1667,13 @@ async def _run_polymarket_ws_consumer():
                         updated_at=settled_at,
                     )
             stats["resolutions"] += 1
+            stats[f"resolutions_{verdict[0]}"] += 1
             await blend_refresher.publish_market_changes(session)
             logger.info(
-                "Polymarket WS: %s resolved (winner=%s, %d/%d outcomes written, "
-                "no calibration scalar captured)",
-                condition_id[:20], winning_outcome, written, len(outcomes),
+                "Polymarket WS: %s resolved (verdict=%s, label=%s, %d/%d outcomes "
+                "written, no calibration scalar captured)",
+                condition_id[:20], verdict[0], msg.get("winning_outcome", ""),
+                written, len(outcomes),
             )
         except Exception:
             stats["errors"] += 1
@@ -1721,6 +1873,10 @@ async def _run_polymarket_ws_consumer():
     finally:
         flush_task.cancel()
         stats_task.cancel()
+        # #9418: an unfinished settle rolls back; the market stays for the
+        # Gamma rail, which is where an `unconfirmed` verdict leaves it anyway.
+        for task in list(resolution_tasks):
+            task.cancel()
         # #9484: cancelled here, awaited only after the drain below, so a
         # second cancellation landing on that await can never skip the drain.
         admission_task.cancel()
@@ -1734,6 +1890,11 @@ async def _run_polymarket_ws_consumer():
             # throttle is still owed its blend stamp. The next run adopts it.
             stats["blend_pending_carried"] = hand_off_pending(blend_refresher)
             await asyncio.gather(admission_task, return_exceptions=True)
+            # #9418: closed after the drain, never before it, so a cancellation
+            # landing on this await cannot skip a flush.
+            if _resolution_service:
+                with contextlib.suppress(Exception):
+                    await _resolution_service[0].close()
             # #837 receipt — the next run's refresher starts empty of chains,
             # so a held price still open here was never stamped by this run.
             # Said so; the stamp itself is carried above.
