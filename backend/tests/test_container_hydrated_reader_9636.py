@@ -200,7 +200,10 @@ def _event(event_id, home, away, *, hours=0, status="scheduled", sport=None, **e
     return event
 
 
-def _market(market_id, name, *, event_id=None, legs=(("Yes", 0.6), ("No", 0.4)), sport=None):
+def _market(
+    market_id, name, *, event_id=None, legs=(("Yes", 0.6), ("No", 0.4)), sport=None,
+    market_type=None, market_tier=2,
+):
     from app.models import FuturesMarket, FuturesOutcome
 
     market = FuturesMarket(
@@ -212,7 +215,8 @@ def _market(market_id, name, *, event_id=None, legs=(("Yes", 0.6), ("No", 0.4)),
         status="open",
         sport_id=1,
         event_id=event_id,
-        market_tier=2,
+        market_tier=market_tier,
+        market_type=market_type,
     )
     market.sport = sport or _sport()
     market.outcomes = [
@@ -541,6 +545,92 @@ async def test_statement_count_is_the_same_for_one_game_and_forty():
     assert counts[1] == counts[40], counts
     # probe + published read + header + event cards (5) + market cards (1..5)
     assert counts[1] <= 13, counts
+
+
+# ---------------------------------------------------------------------------
+# #10100: a question card carries the market's stored shape, verbatim
+# ---------------------------------------------------------------------------
+
+
+def _typed_week():
+    """One game, its winner duel, its spread duel, a field listing on it, a
+    standalone field and an unshaped (null) question."""
+    events = [_event(501, "Buffalo Bills", "Kansas City Chiefs", hours=53)]
+    markets = [
+        _market(9301, "Chiefs at Bills: winner", event_id=501, market_type="duel",
+                legs=(("Buffalo Bills", 0.55), ("Kansas City Chiefs", 0.45))),
+        _market(9302, "Chiefs at Bills: spread", event_id=501, market_type="duel",
+                legs=(("Bills -2.5", 0.51), ("Chiefs +2.5", 0.49))),
+        _market(9303, "Chiefs at Bills: first touchdown scorer", event_id=501,
+                market_type="field",
+                legs=(("Josh Allen", 0.18), ("Travis Kelce", 0.12), ("James Cook", 0.11))),
+        _market(9304, "2026 NFL MVP", event_id=None, market_type="field", market_tier=None,
+                legs=(("Josh Allen", 0.22), ("Patrick Mahomes", 0.18))),
+        _market(9305, "Josh Allen: 2+ passing touchdowns?", event_id=501),
+    ]
+    edges = [
+        ("match_winner", "event", 501, 70, "statpal", 1.0),
+        ("match_winner", "market", 9301, 70, "register", 1.0),
+        ("match_winner", "market", 9302, 70, "register", 1.0),
+        ("prop", "market", 9303, 70, "register", 1.0),
+        ("title", "market", 9304, 70, "register", 1.0),
+        ("prop", "market", 9305, 70, "register", 0.9),
+    ]
+    return _Hub("nfl-2026-week-5", edges=edges), events, markets
+
+
+async def test_a_question_card_serves_the_stored_market_type_verbatim():
+    hub, events, markets = _typed_week()
+    session = _Session(hub, events=events, markets=markets)
+    payload = await _get(session, hub.slug)
+    by_id = {m["id"]: m for s in payload["sections"] for m in s["members"]}
+
+    # Duel winner and duel spread both read `duel` — the raw shape, no name
+    # inference — and so do the field listing, the standalone field and null.
+    assert {mid: by_id[mid]["card"]["market_type"] for mid in (9301, 9302, 9303, 9304, 9305)} == {
+        9301: "duel", 9302: "duel", 9303: "field", 9304: "field", 9305: None,
+    }
+    # Null is served as a present key holding null, never dropped or defaulted.
+    assert "market_type" in by_id[9305]["card"] and by_id[9305]["card"]["market_type"] is None
+
+    # Everything else on the card is what it was: the display label (tier word,
+    # or the pre-#10100 market_type fallback when there is no tier), the linked
+    # game, the destination, the legs and their prices.
+    assert [by_id[m]["card"]["market_type_label"] for m in (9301, 9302, 9303, 9305)] == [
+        "Conference"] * 4
+    assert by_id[9304]["card"]["market_type_label"] == "field"
+    assert [by_id[m]["event_id"] for m in (9301, 9302, 9303, 9304, 9305)] == [
+        501, 501, 501, None, 501]
+    assert by_id[501]["question_ids"] == [9301, 9302, 9303, 9305]
+    assert by_id[9302]["destination"] == {
+        "kind": "market", "id": 9302, "web": "/futures/9302", "api": "/api/futures/9302",
+    }
+    assert [(o["name"], o["probability"]) for o in by_id[9301]["card"]["top_outcomes"]] == [
+        ("Buffalo Bills", 0.55), ("Kansas City Chiefs", 0.45),
+    ]
+
+
+async def test_the_market_type_rides_the_one_card_read_with_no_extra_statement():
+    typed_hub, events, markets = _typed_week()
+    typed = _Session(typed_hub, events=events, markets=markets)
+    await _get(typed, typed_hub.slug)
+
+    for m in markets:
+        m.market_type = None
+    untyped_hub, *_ = _typed_week()
+    untyped = _Session(untyped_hub, events=events, markets=markets)
+    await _get(untyped, untyped_hub.slug)
+
+    assert typed.statements == untyped.statements
+    assert len(_cards_hydrated(typed)) == len(_cards_hydrated(untyped))
+
+
+def test_the_search_serializer_itself_carries_the_raw_market_type():
+    from app.routes.events import _format_futures_for_search
+
+    for raw in ("duel", "field", "claim", "quantity", "container_member", "unshaped", None):
+        card = _format_futures_for_search(_market(9400, "Q", market_type=raw))
+        assert card["market_type"] == raw
 
 
 # ---------------------------------------------------------------------------

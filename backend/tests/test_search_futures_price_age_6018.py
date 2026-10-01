@@ -303,6 +303,7 @@ class TestThePayloadAndWhatMustNotChange:
             "llm_sport_category",
             "market_tier",
             "market_type_label",
+            "market_type",  # #10100: the raw stored shape, additive
             "status",
             "source",
             "resolution_date",
