@@ -59,15 +59,17 @@ CACHE_RULES: list[tuple[str, int]] = [
 #: refetches in the background.
 STALE_WHILE_REVALIDATE_S = 60
 
-#: One event and its sub-resources (`/history`, `/game-markets`, ...) — the reads
-#: the event page POLLS, every 32 s on a live game and 60 s for the winner chart.
-#: Both cadences fall inside `max-age` + `STALE_WHILE_REVALIDATE_S`, so with the
+#: The reads web pages POLL: one event and its sub-resources (`/history`,
+#: `/game-markets`, ...), every 32 s on a live game and 60 s for the winner chart,
+#: and the bare event list, every 30 s on a league page (#10095).
+#: Every cadence falls inside `max-age` + `STALE_WHILE_REVALIDATE_S`, so with the
 #: stale window a poll is answered from the browser's disk cache with the PREVIOUS
 #: poll's body and the fresh one is fetched only in the background, unread
-#: (measured in Chromium against production, 2026-10-01: the 32.7 s poll returned
-#: the 0 s body). These reads keep `max-age` and lose the stale window; a poll
-#: costs the same one request either way, it just lands in the poll.
-POLLED_EVENT_READ = re.compile(r"^/api/events/\d+(?:/|$)")
+#: (measured in Chromium against production, 2026-10-01: the event page's 32.7 s
+#: poll returned the 0 s body; the league list's 32.2 s poll a body 30 s old).
+#: These reads keep `max-age` and lose the stale window; a poll costs the same
+#: one request either way, it just lands in the poll.
+POLLED_EVENT_READ = re.compile(r"^/api/events(?:/\d+(?:/|$)|$)")
 
 # Non-storable, non-shared directive for protected/personalized responses.
 PRIVATE_DIRECTIVE = "private, no-store"
