@@ -42,6 +42,7 @@ from app.tasks.container_mlb_playoffs_assembly import (
 from app.utils.container_mlb_playoffs import (
     EXCLUDED_CONFLICTING_IDENTITY,
     EXCLUDED_DUPLICATE_EVENT_ROWS,
+    EXCLUDED_GAME_WINNER_MARKET,
     EXCLUDED_MARKET_ON_DUPLICATE,
     EXCLUDED_NO_ESPN_ID,
     EXCLUDED_NO_SEASON_TYPE,
@@ -289,6 +290,9 @@ def _rows(*, include=(G1_EVENT, G2_EVENT, CWS_HOU_G2_EVENT)):
 
 
 def _markets():
+    # "binary" is a test double, not a `market_shape` value, so these rows run
+    # the plumbing as questions. The game-winner rule (`container_game_winner`)
+    # is graded on the REAL stored shapes in `_game_one_board()` below.
     return [
         MarketRow(62924880, CWS_HOU_G2_EVENT, "White Sox at Astros", "KXMLBGAME-26SEP301700CWSHOU", "kalshi", "binary", "open"),
         MarketRow(62924881, G2_EVENT, "Phillies at Braves", "KXMLBGAME-26SEP301400PHIATL", "kalshi", "binary", "open"),
@@ -670,3 +674,49 @@ async def test_a_contradiction_outside_this_postseason_does_not_touch_it(corpus)
     report = await run_mlb_postseason_assembly(session, _Container(), boards, POST_2026)
     assert [r["espn_id"] for r in report["excluded"][EXCLUDED_CONFLICTING_IDENTITY]] == [LAST_YEAR_ESPN]
     assert report["terminal"] == "complete"
+
+
+# --- one card per game: the game's own winner market is the game card ------------
+
+
+def _game_one_board():
+    """REAL rows: PHI@ATL Game 1 (event 15320289) as stored on 2026-09-30 —
+    `futures_markets` id, name, external_id, source, `market_type` and status
+    read through `/api/admin/db-query`. Only `event_id` is the test double's."""
+    return [
+        MarketRow(62924885, G1_EVENT, "Game 1: Philadelphia vs Atlanta", "KXMLBGAME-26SEP291400PHIATL", "kalshi", "duel", "resolved"),
+        MarketRow(62932002, G1_EVENT, "Philadelphia vs Atlanta: Spread", "KXMLBSPREAD-26SEP291400PHIATL", "kalshi", "field", "resolved"),
+        MarketRow(63026431, G1_EVENT, "Philadelphia Phillies vs. Atlanta Braves", "1097824", "polymarket", "field", "resolved"),
+        MarketRow(63026432, G1_EVENT, "Philadelphia Phillies vs. Atlanta Braves", "0x4b89caf655c9602405a1c0366a1de9cc976f88d3b85ff69a808754ed2e81f36b", "polymarket", "duel", "resolved"),
+        MarketRow(63026433, G1_EVENT, "Spread: Atlanta Braves (-1.5)", "0x5c0c5cd1a9b9c329fa03076140", "polymarket", "duel", "resolved"),
+        MarketRow(63153623, G1_EVENT, "Philadelphia vs Atlanta: 9th Inning Winner", "KXMLBINNINGWIN-26SEP291400PH", "kalshi", "field", "resolved"),
+    ]
+
+
+GAME_ONE_WINNERS = {62924885, 63026432}
+GAME_ONE_QUESTIONS = {62932002, 63026431, 63026433, 63153623}
+
+
+def test_game_ones_winner_markets_are_the_game_card_not_two_more_questions(corpus):
+    selection = select_postseason_games(_boards(corpus), POST_2026)
+    members = resolve_postseason_members(selection, _rows(), _game_one_board())
+    markets = {c.child_id for c in members.candidates if c.child_type == "market"}
+    assert markets == GAME_ONE_QUESTIONS
+    assert G1_EVENT in {c.child_id for c in members.candidates if c.child_type == "event"}
+    assert members.excluded[EXCLUDED_GAME_WINNER_MARKET] == [
+        {"market_id": 62924885, "event_id": G1_EVENT, "source": "kalshi"},
+        {"market_id": 63026432, "event_id": G1_EVENT, "source": "polymarket"},
+    ]
+
+
+@pytest.mark.asyncio
+async def test_no_winner_edge_is_written_and_the_postseason_stays_complete(corpus):
+    # Through the shipped SQL row mapping: `market_type` is column 5 of
+    # MARKETS_FOR_EVENTS_SQL; a mis-mapped column would make the rule inert.
+    session = _Session(_rows(), _game_one_board())
+    report = await run_mlb_postseason_assembly(session, _Container(), _boards(corpus), POST_2026, apply=True)
+    edges = {e["child_id"] for e in _edge_rows(session) if e["child_type"] == "market"}
+    assert edges == GAME_ONE_QUESTIONS and not edges & GAME_ONE_WINNERS
+    assert {r["market_id"] for r in report["excluded"][EXCLUDED_GAME_WINNER_MARKET]} == GAME_ONE_WINNERS
+    # Deliberate, not a gap: it never makes the read partial.
+    assert report["terminal"] == "complete" and report["incomplete"] == []

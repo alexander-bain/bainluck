@@ -26,9 +26,11 @@ at the Chargers–Cardinals kickoff holds no contest id, so it cannot get in —
 it is reported instead.
 
 A MARKET IS A MEMBER BECAUSE ITS EVENT IS. `futures_markets.event_id` pointing
-at a member event is the whole test (gotcha #15: an already-linked market is
-never re-windowed). Kalshi's and Polymarket's markets on one game are two
-questions, not a duplicate, and both stay.
+at a member event is the test (gotcha #15: an already-linked market is never
+re-windowed), with one exception: the game's own winner market. Kalshi's and
+Polymarket's "who wins" markets are the game card's blended number, so they are
+reported under `EXCLUDED_GAME_WINNER_MARKET`, never edged
+(`container_game_winner`, #9650). Every other question on the game stays.
 
 EVERY NON-MEMBER IS ACCOUNTED FOR, and "the week is empty" is never the same
 shape as "we could not tell" (gotcha #53):
@@ -53,6 +55,10 @@ from datetime import datetime
 from typing import Iterable, Optional
 
 from app.utils.container_class import MemberEvidence
+from app.utils.container_game_winner import (
+    EXCLUDED_GAME_WINNER_MARKET,
+    is_the_games_own_winner_market,
+)
 
 #: Our `sports.key` for the NFL. StatPal's `nfl` id space is 1:1 with it
 #: (`provider_anchor_keys.statpal_id_space`).
@@ -425,7 +431,14 @@ def resolve_week_members(
         if market.id in seen_markets:
             continue
         seen_markets.add(market.id)
-        if market.event_id in member_events:
+        if market.event_id in member_events and is_the_games_own_winner_market(
+            market.market_type, market.name, market.external_id
+        ):
+            members.exclude(
+                EXCLUDED_GAME_WINNER_MARKET,
+                {"market_id": market.id, "event_id": market.event_id, "source": market.source},
+            )
+        elif market.event_id in member_events:
             members.candidates.append(
                 Candidate(
                     child_type="market",
