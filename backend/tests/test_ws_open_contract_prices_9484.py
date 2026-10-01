@@ -160,13 +160,18 @@ class _Result:
     def all(self):
         return list(self._rows)
 
+    def scalars(self):
+        return self
 
-def _install_session(monkeypatch, *, linked, open_rows, reread=lambda: []):
+
+def _install_session(monkeypatch, *, linked, open_rows, reread=lambda: [],
+                     events_admitted=()):
     """Answers each query by WHAT it asks, not by position, so the open-contract
     read can never be handed another query's rows."""
     import app.tasks.base as task_base
 
-    state = {"price_writes": [], "market_writes": [], "open_reads": 0}
+    state = {"price_writes": [], "market_writes": [], "open_reads": 0,
+             "bridge_reads": []}
 
     class _Session:
         async def execute(self, stmt):
@@ -186,6 +191,14 @@ def _install_session(monkeypatch, *, linked, open_rows, reread=lambda: []):
                 if asyncio.iscoroutine(rows):
                     rows = await rows
                 return _Result(rows)
+            if sql.startswith("SELECT events.id \nFROM events"):
+                # #9484 event bridge: the candidate events' state read.
+                state["bridge_reads"].append(sql)
+                admitted = (
+                    events_admitted() if callable(events_admitted)
+                    else events_admitted
+                )
+                return _Result(list(admitted))
             if "events.status = 'live'" in sql and "scheduled" not in sql:
                 return _Result(reread())
             if "FROM futures_outcomes" in sql:
@@ -233,18 +246,20 @@ def _settle(ticker, result="no"):
 
 
 async def _run(monkeypatch, *, frames_for, linked=True, open_rows=(),
-               reread=lambda: [], refresh=0.4, check=60.0):
+               reread=lambda: [], refresh=0.4, check=60.0,
+               events_admitted=(), refresher=_NoopRefresher):
     monkeypatch.setenv("KALSHI_API_KEY_ID", "test-key")
     monkeypatch.setenv("KALSHI_RSA_PRIVATE_KEY", "test-secret")
     monkeypatch.setattr(kalshi_task, "SUBSCRIPTION_REFRESH_SECONDS", refresh)
     monkeypatch.setattr(kalshi_task, "PRICE_FLUSH_SECONDS", 0.02)
     monkeypatch.setattr(admission, "ADMISSION_CHECK_SECONDS", check)
     monkeypatch.setattr(admission, "ADMISSION_MIN_RECYCLE_SECONDS", 0)
-    monkeypatch.setattr(blend_mod, "LiveBlendRefresher", _NoopRefresher)
+    monkeypatch.setattr(blend_mod, "LiveBlendRefresher", refresher)
     record = _install_socket(monkeypatch, frames_for)
     state = _install_session(
         monkeypatch, linked=linked, open_rows=list(open_rows)
         if not callable(open_rows) else open_rows, reread=reread,
+        events_admitted=events_admitted,
     )
     stats = await asyncio.wait_for(kalshi_task._run_kalshi_ws_consumer(), timeout=5)
     return stats, record, state
@@ -431,3 +446,216 @@ class TestTheArmFailsClosedOnItself:
 
         assert stats == {"status": "no_markets"}
         assert record == []
+
+
+# ------------------------------------------- the event bridge (#9484, 10/01) ----
+#
+# Production 2026-10-01 14:02:14Z: PIT @ CLE (event 14780550, kickoff 10.21 h
+# out) — its verified winner contract streamed on this arm, and the event's
+# blend did not move with it, because the flush picks the events to re-stamp
+# from `event_id_by_outcome` and the arm never added to it. These are that
+# contract's real ids.
+
+PIT_CLE_EVENT = 14780550
+PIT_CLE_MARKET = 61894632
+PIT_CLE_MARKET_TICKER = "KXNFLGAME-26OCT01PITCLE"
+CLE_TICKER = "KXNFLGAME-26OCT01PITCLE-CLE"
+PIT_TICKER = "KXNFLGAME-26OCT01PITCLE-PIT"
+CLE_OUTCOME, PIT_OUTCOME = 233493086, 233493085
+SPREAD_TICKER = "KXNFLSPREAD-26OCT01PITCLE-CLE3"
+
+PIT_CLE_ROWS = [
+    (CLE_TICKER, PIT_CLE_MARKET, CLE_OUTCOME, PIT_CLE_EVENT, PIT_CLE_MARKET_TICKER),
+    (PIT_TICKER, PIT_CLE_MARKET, PIT_OUTCOME, PIT_CLE_EVENT, PIT_CLE_MARKET_TICKER),
+]
+
+
+def _recording_refresher():
+    """A refresher that records which events each flush asked it to re-stamp."""
+    asked: list[set[int]] = []
+
+    class _Recording(_NoopRefresher):
+        async def refresh(self, event_ids):
+            asked.append(set(event_ids))
+
+    return _Recording, asked
+
+
+class TestTheBridgeIsTheGameWinnersOwnEvent:
+    def test_candidates_are_admitted_winners_with_an_event(self):
+        rows = PIT_CLE_ROWS + [
+            (SPREAD_TICKER, 62, 621, PIT_CLE_EVENT, "KXNFLSPREAD-26OCT01PITCLE"),
+            (OPEN_TICKER, 50, 501, None, "KXNBAMVP-27"),
+            (LINKED_TICKER, 7, 71, 900, LINKED_EVENT_TICKER),
+            (None, 51, 511, PIT_CLE_EVENT, PIT_CLE_MARKET_TICKER),
+            (FAR_TICKER, 9, 91, 901, None),
+        ]
+        linked = {LINKED_TICKER: (7, 71)}
+        assert oc.open_contract_event_candidates(rows, linked) == {
+            CLE_OUTCOME: PIT_CLE_EVENT, PIT_OUTCOME: PIT_CLE_EVENT,
+        }
+
+    def test_a_row_without_the_market_columns_is_never_bridged(self):
+        assert oc.open_contract_event_candidates(
+            [(CLE_TICKER, PIT_CLE_MARKET, CLE_OUTCOME)], {},
+        ) == {}
+
+    def test_the_ticker_map_is_unchanged_by_the_new_columns(self):
+        """The bridge adds no ticker: the subscription set is read from the
+        same rows exactly as before."""
+        assert oc.open_contract_ticker_map(PIT_CLE_ROWS, {}) == {
+            CLE_TICKER: (PIT_CLE_MARKET, CLE_OUTCOME),
+            PIT_TICKER: (PIT_CLE_MARKET, PIT_OUTCOME),
+        }
+
+    def test_the_event_read_admits_only_undecided_events_by_id(self):
+        sql = _sql(oc.open_contract_bridge_event_stmt([PIT_CLE_EVENT, 7, 7]))
+        assert sql.startswith("SELECT events.id \nFROM events")
+        assert "events.id IN (7, 14780550)" in sql
+        assert "events.completed_at IS NULL" in sql
+        assert "events.status IN ('scheduled', 'live')" in sql
+        assert "commence_time" not in sql, "a horizon here re-imposes the 6 h slate"
+        assert "futures" not in sql
+
+    def test_the_bridge_keeps_only_admitted_events(self):
+        cands = {CLE_OUTCOME: PIT_CLE_EVENT, 621: 777}
+        assert oc.open_contract_event_bridge(cands, [PIT_CLE_EVENT]) == {
+            CLE_OUTCOME: PIT_CLE_EVENT,
+        }
+        assert oc.open_contract_event_bridge(cands, []) == {}
+
+
+class TestABridgedWinnerReStampsItsEvent:
+    async def test_pit_cle_tick_requests_its_event_blend(self, monkeypatch):
+        refresher, asked = _recording_refresher()
+        stats, _record, state = await _run(
+            monkeypatch,
+            frames_for={CLE_TICKER: [_tick(CLE_TICKER, "0.42", "0.43", "0.43")]},
+            open_rows=PIT_CLE_ROWS, events_admitted=[PIT_CLE_EVENT],
+            refresher=refresher,
+        )
+
+        assert (CLE_OUTCOME, pytest.approx(0.425)) in state["price_writes"]
+        assert any(PIT_CLE_EVENT in ids for ids in asked)
+        assert stats["open_contract_bridged_outcomes"] == 2
+        assert stats["open_contract_bridged_events"] == 1
+        assert stats["open_contract_bridge_error"] is False
+        assert len(state["bridge_reads"]) == 1
+
+    async def test_the_bridge_adds_no_subscription(self, monkeypatch):
+        frames = {CLE_TICKER: [_tick(CLE_TICKER)]}
+        _s, bridged, _st = await _run(
+            monkeypatch, frames_for=frames, open_rows=PIT_CLE_ROWS,
+            events_admitted=[PIT_CLE_EVENT],
+        )
+        _s, unbridged, _st = await _run(
+            monkeypatch, frames_for=frames, open_rows=PIT_CLE_ROWS,
+            events_admitted=[],
+        )
+
+        assert _connections(bridged) == _connections(unbridged)
+        open_conns = [c for c in _connections(bridged) if any(
+            CLE_TICKER in (p.get("market_tickers") or []) for p in c
+        )]
+        assert len(open_conns) == 1
+        for params in open_conns[0]:
+            assert sorted(params["market_tickers"]) == sorted([CLE_TICKER, PIT_TICKER])
+
+    async def test_a_quiet_contract_requests_nothing(self, monkeypatch):
+        """No quote, no stamp: the bridge never re-stamps an event on its own."""
+        refresher, asked = _recording_refresher()
+        stats, _record, state = await _run(
+            monkeypatch, frames_for={}, open_rows=PIT_CLE_ROWS,
+            events_admitted=[PIT_CLE_EVENT], refresher=refresher,
+        )
+
+        assert stats["open_contract_bridged_events"] == 1
+        assert state["price_writes"] == []
+        assert not any(PIT_CLE_EVENT in ids for ids in asked)
+
+    async def test_a_decided_event_is_not_bridged(self, monkeypatch):
+        """The event read refused it (completed, or not scheduled/live): the
+        price still streams, the event is never asked to re-stamp."""
+        refresher, asked = _recording_refresher()
+        stats, _record, state = await _run(
+            monkeypatch,
+            frames_for={CLE_TICKER: [_tick(CLE_TICKER)]},
+            open_rows=PIT_CLE_ROWS, events_admitted=[], refresher=refresher,
+        )
+
+        assert (CLE_OUTCOME, pytest.approx(0.41)) in state["price_writes"]
+        assert not any(PIT_CLE_EVENT in ids for ids in asked)
+        assert stats["open_contract_bridged_outcomes"] == 0
+
+    async def test_a_prop_on_the_same_event_is_not_bridged(self, monkeypatch):
+        refresher, asked = _recording_refresher()
+        stats, _record, state = await _run(
+            monkeypatch,
+            frames_for={SPREAD_TICKER: [_tick(SPREAD_TICKER)]},
+            open_rows=[(SPREAD_TICKER, 62, 621, PIT_CLE_EVENT,
+                        "KXNFLSPREAD-26OCT01PITCLE")],
+            events_admitted=[PIT_CLE_EVENT], refresher=refresher,
+        )
+
+        assert (621, pytest.approx(0.41)) in state["price_writes"]
+        assert state["bridge_reads"] == []
+        assert not any(PIT_CLE_EVENT in ids for ids in asked)
+
+    async def test_a_winner_with_no_event_is_not_bridged(self, monkeypatch):
+        """A game winner the matcher has not linked yet streams its price and
+        asks for no event read: there is no event to re-stamp."""
+        refresher, asked = _recording_refresher()
+        _stats, _record, state = await _run(
+            monkeypatch,
+            frames_for={FAR_TICKER: [_tick(FAR_TICKER)]},
+            open_rows=[(FAR_TICKER, 9, 91, None, "KXNFLGAME-26OCT04BUFKC")],
+            refresher=refresher,
+        )
+
+        assert (91, pytest.approx(0.41)) in state["price_writes"]
+        assert state["bridge_reads"] == []
+        assert all(ids <= {900} for ids in asked)
+
+    async def test_a_failed_bridge_read_costs_the_stamp_never_the_price(
+        self, monkeypatch,
+    ):
+        def _boom():
+            raise RuntimeError("simulated statement_timeout")
+
+        refresher, asked = _recording_refresher()
+        stats, record, state = await _run(
+            monkeypatch,
+            frames_for={CLE_TICKER: [_tick(CLE_TICKER)]},
+            open_rows=PIT_CLE_ROWS, events_admitted=_boom, refresher=refresher,
+        )
+
+        assert stats["open_contract_bridge_error"] is True
+        assert stats["open_contract_admission_error"] is False
+        assert stats["open_contract_tickers"] == 2
+        assert (CLE_OUTCOME, pytest.approx(0.41)) in state["price_writes"]
+        assert not any(PIT_CLE_EVENT in ids for ids in asked)
+
+    async def test_a_slate_leg_keeps_its_own_event(self, monkeypatch):
+        """A ticker the slate carries is excluded from the bridge, so the
+        slate's outcome → event entry is never overwritten."""
+        refresher, asked = _recording_refresher()
+        _stats, _record, state = await _run(
+            monkeypatch,
+            frames_for={LINKED_TICKER: [_tick(LINKED_TICKER)]},
+            open_rows=[(LINKED_TICKER, 7, 71, 999, LINKED_EVENT_TICKER)],
+            events_admitted=[999], refresher=refresher,
+        )
+
+        assert state["bridge_reads"] == []
+        assert any(900 in ids for ids in asked)
+        assert not any(999 in ids for ids in asked)
+
+    async def test_the_undo_switch_reads_no_bridge(self, monkeypatch):
+        monkeypatch.setenv("WS_OPEN_CONTRACT_PRICES", "0")
+        stats, _record, state = await _run(
+            monkeypatch, frames_for={}, open_rows=PIT_CLE_ROWS,
+            events_admitted=[PIT_CLE_EVENT],
+        )
+
+        assert state["bridge_reads"] == []
+        assert stats["open_contract_bridged_outcomes"] == 0

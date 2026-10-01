@@ -104,9 +104,11 @@ async def _run_kalshi_ws_consumer():
     from app.tasks.ws_liveness import report as _report_liveness
     from app.tasks.ws_open_contracts import (  # #9484
         grade_open_contract_leg, kalshi_open_contract_stmt,  # #10022
-        lifecycle_state, lifecycle_verdict, open_contract_channels,
-        open_contract_prices_enabled, open_contract_settlement_enabled,
-        open_contract_ticker_map, shard_tickers,
+        lifecycle_state, lifecycle_verdict, open_contract_bridge_event_stmt,
+        open_contract_channels, open_contract_event_bridge,
+        open_contract_event_candidates, open_contract_prices_enabled,
+        open_contract_settlement_enabled, open_contract_ticker_map,
+        shard_tickers,
     )
     from app.utils.futures_rank import rerank_market_fields_stmt  # #6598
     from app.utils.price_change_stamp import price_changed_at_value
@@ -183,21 +185,46 @@ async def _run_kalshi_ws_consumer():
     # `market_id_by_ext` (the lifecycle map) or to `ticker_to_ids` (which the
     # #9418 admission watcher reads as "this event is subscribed"). A failed read
     # costs the arm, never the game slate.
-    async def read_open_contracts() -> tuple[dict[str, tuple[int, int]], bool]:
+    #
+    # Also returns the #9484 EVENT BRIDGE — outcome → event for the admitted
+    # game winners whose event is still to be decided (`ws_open_contracts`), so
+    # the flush re-stamps their event blend like a slate leg's. Its own read
+    # fails on its own: a failed bridge costs the blend re-stamp, never the
+    # prices.
+    async def read_open_contracts() -> tuple[
+        dict[str, tuple[int, int]], dict[int, int], bool, bool,
+    ]:
         if not open_contract_prices_enabled():
-            return {}, False
+            return {}, {}, False, False
         try:
             async with get_task_session() as session:
                 open_rows = (
                     await session.execute(kalshi_open_contract_stmt())
                 ).all()
-            return open_contract_ticker_map(open_rows, ticker_to_ids), False
         except Exception:
             logger.exception(
                 "Kalshi WS: open-contract admission read failed; "
                 "streaming the linked slate only this run"
             )
-            return {}, True
+            return {}, {}, True, False
+        ids = open_contract_ticker_map(open_rows, ticker_to_ids)
+        candidates = open_contract_event_candidates(open_rows, ticker_to_ids)
+        if not candidates:
+            return ids, {}, False, False
+        try:
+            async with get_task_session() as session:
+                admitted = (
+                    await session.execute(
+                        open_contract_bridge_event_stmt(candidates.values())
+                    )
+                ).scalars().all()
+        except Exception:
+            logger.exception(
+                "Kalshi WS: open-contract event-bridge read failed; "
+                "streaming their prices without the event blend this run"
+            )
+            return ids, {}, False, True
+        return ids, open_contract_event_bridge(candidates, admitted), False, False
 
     # Read up front ONLY when there is no game slate for the read to delay:
     # production's read takes ~2.8 s, and on the recycle path that would be
@@ -258,6 +285,12 @@ async def _run_kalshi_ws_consumer():
         "open_contract_settlements": 0,
         "open_contract_markets_resolved": 0,
         "open_contract_lifecycle_unverdicted": 0,
+        # #9484 event bridge: admitted game-winner outcomes (and their distinct
+        # events) whose flushed price re-stamps the event blend. 0 with no
+        # error is "no such contract this run", not a failure.
+        "open_contract_bridged_outcomes": 0,
+        "open_contract_bridged_events": 0,
+        "open_contract_bridge_error": False,
     }
 
     # -- Buffered price updates --
@@ -801,8 +834,18 @@ async def _run_kalshi_ws_consumer():
     open_contract_tasks = []
 
     async def admit_open_contracts():
-        ids, failed = preread if preread is not None else await read_open_contracts()
+        ids, bridge, failed, bridge_failed = (
+            preread if preread is not None else await read_open_contracts()
+        )
         stats["open_contract_admission_error"] = failed
+        stats["open_contract_bridge_error"] = bridge_failed
+        # #9484: their event is re-stamped after a flush exactly like a slate
+        # leg's (`event_ids_for_outcomes` in `flush_prices`). Never overwrites a
+        # slate entry — the map excluded every ticker the slate carries.
+        for outcome_id, event_id in bridge.items():
+            event_id_by_outcome.setdefault(outcome_id, event_id)
+        stats["open_contract_bridged_outcomes"] = len(bridge)
+        stats["open_contract_bridged_events"] = len(set(bridge.values()))
         # An open contract's field is re-ranked like a linked one's.
         market_id_by_outcome.update(
             (outcome_id, market_id) for market_id, outcome_id in ids.values()
