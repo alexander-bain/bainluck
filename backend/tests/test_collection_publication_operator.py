@@ -10,6 +10,7 @@ import json
 import sys
 from dataclasses import replace
 from datetime import datetime, timezone
+from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
@@ -1297,7 +1298,7 @@ async def test_receipt_files_are_exclusive_and_a_write_failure_keeps_the_commit(
         member_apply(path, {7: 2, 8: 2}, receipt_dir=str(receipts)), world.factory
     )
     assert code == 0 and len(list(receipts.iterdir())) == 2
-    saved = json.loads(open(doc["hubs"][0]["receipt_file"]).read())
+    saved = json.loads(Path(doc["hubs"][0]["receipt_file"]).read_text())
     assert saved["committed"] is True and saved["targets"]
 
     second = tmp_path / "second"
@@ -1402,7 +1403,7 @@ async def test_restore_refuses_any_drift_before_a_write(tmp_path, drift, match):
     elif drift == "schema":
         world.columns["note"] = "text"
     elif drift == "receipt":
-        doc = json.loads(open(backup).read())
+        doc = json.loads(Path(backup).read_text())
         hub = doc["hubs"][0]
         hub["targets"][0]["preimage"]["receipt_id"] = "777"
         hub["backup_sha256"] = operator.preimage_fingerprint(

@@ -1492,6 +1492,8 @@ async def _run_member_hub(
                 try:
                     await session.rollback()
                 except Exception:
+                    # The hub's own failure is the receipt; a rollback that also
+                    # fails leaves the transaction uncommitted all the same.
                     pass
                 return _hub_failure(plan, hub, exc, committing), False
     except Exception as exc:
