@@ -448,7 +448,14 @@ export function FuturesCard({ item, data, liked, setLiked, onDismiss, trending, 
               Cannot double-navigate: `handleTap` returns early on a click that
               lands inside an `a` (`DiscoverCard.tsx:118`). */}
           <Link href={detailHref} onClick={onDetailClick} className="block group">
-            <h3 className="text-base font-bold leading-tight text-text-primary line-clamp-2 group-hover:text-accent-brand transition-colors">{data.name}</h3>
+            {/* #10059 — the title is the question and is never clipped, the same as
+                the heatmap, A and B titles above and below. Two lines cut
+                "Which company has #1 AI model end of November? (Style Control
+                On)" to its first half, which is word for word a different
+                market's question, and a trailing qualifier ("(Men's)",
+                "(9/28-10/4)") is where a title carries its scope. Feed titles
+                run to 65 characters, so the cost is at most a third line. */}
+            <h3 className="text-base font-bold leading-tight text-text-primary break-words group-hover:text-accent-brand transition-colors">{data.name}</h3>
           </Link>
 
           {/* UX-P248 / Alex D-D — why this card is in front of THIS reader.
@@ -1275,6 +1282,11 @@ export function FuturesCompactRow({ item, data }: { item: FeedItem; data: FeedFu
   const rowCaption =
     captionRepeatsBoldAnswer || captionIsAboutAnotherLeg(context, answerLabel, data.top_outcomes) ? "" : context;
   const rowCue = forYouCue(item);
+  // #10059 — the question line wraps instead of clamping, on both returns. A
+  // group puts sibling markets one above the other, and the words that tell two
+  // siblings apart are usually the LAST ones ("… end of November? (Style
+  // Control On)" beside "… end of November?"), which a clamp drops first. The
+  // caption below keeps its two-line limit: it is the why-now, not the question.
   const conceptKey = marketEventKey(data);
   const detailHref = conceptKey ? eventPath(conceptKey) : `/futures/${data.id}`;
   const result = assignedFuturesResult(data);
@@ -1282,7 +1294,7 @@ export function FuturesCompactRow({ item, data }: { item: FeedItem; data: FeedFu
     return (
       <Link href={detailHref} className="flex items-center gap-3 group" aria-label={`${data.name} — resolved`}>
         <div className="flex-1 min-w-0">
-          <div className="text-sm font-semibold line-clamp-2 group-hover:text-accent-brand transition-colors">{data.name}</div>
+          <div className="text-sm font-semibold break-words group-hover:text-accent-brand transition-colors" data-testid="compact-row-title">{data.name}</div>
           <div className="text-xs text-text-secondary mt-0.5" data-testid="compact-row-assigned-result">
             {data.winner?.trim() ? `Resolved · ${result}` : "Resolved"}
           </div>
@@ -1294,7 +1306,7 @@ export function FuturesCompactRow({ item, data }: { item: FeedItem; data: FeedFu
   return (
     <Link href={detailHref} className="flex items-center gap-3 group">
       <div className="flex-1 min-w-0">
-        <div className="text-sm font-semibold line-clamp-2 group-hover:text-accent-brand transition-colors">{data.name}</div>
+        <div className="text-sm font-semibold break-words group-hover:text-accent-brand transition-colors" data-testid="compact-row-title">{data.name}</div>
         {/* UX-P248 / CERT-678 repair — a path the BLOCK did not name and this
             queue found anyway. `_public_member_item` (backend/app/utils/
             discover_bundles.py) strips only underscore-prefixed keys, so a

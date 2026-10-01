@@ -1,0 +1,929 @@
+{
+ "_source": "GET https://api.bainluck.com/api/feed?limit=40, 2026-10-01 ~11:30Z, edition 95a268f7aec2cf82",
+ "bundle": {
+  "type": "bundle",
+  "score": 98.0,
+  "reason": "What happens next in AI?",
+  "headline": "AI",
+  "data": {
+   "id": "theme:story:ai:109596-61329160-61329163-59133748-58918649-60607595",
+   "title": "AI",
+   "kind": "theme",
+   "story_key": "story:ai",
+   "shared_question": "What happens next in AI?",
+   "item_count": 6,
+   "member_ids": [
+    109596,
+    61329160,
+    61329163,
+    59133748,
+    58918649,
+    60607595
+   ],
+   "items": [
+    {
+     "type": "futures",
+     "score": 98,
+     "reason": "Claude (57%) leads Best AI at the end of 2026?",
+     "headline": "Claude leads at 57%",
+     "context_summary": "Claude leads at 57%",
+     "data": {
+      "id": 109596,
+      "name": "Best AI at the end of 2026?",
+      "sport": null,
+      "sport_name": null,
+      "llm_sport_category": "tech",
+      "source": "kalshi",
+      "source_count": 1,
+      "sources": [
+       "kalshi"
+      ],
+      "market_tier": 2,
+      "market_type": "field",
+      "status": "open",
+      "resolution_date": "2026-12-31T15:00:00+00:00",
+      "price_observed_at": "2026-10-01T11:10:33+00:00",
+      "top_outcomes": [
+       {
+        "id": 1599086,
+        "name": "Claude",
+        "probability": 0.5655,
+        "rank": 1,
+        "movement": null,
+        "rendered_percent": 57
+       },
+       {
+        "id": 1599085,
+        "name": "Gemini",
+        "probability": 0.359,
+        "rank": 2,
+        "movement": null,
+        "rendered_percent": 36
+       },
+       {
+        "id": 1599087,
+        "name": "ChatGPT",
+        "probability": 0.0695,
+        "rank": 3,
+        "movement": null,
+        "rendered_percent": 7
+       }
+      ],
+      "card_sum_reason": null,
+      "outcome_count": 8,
+      "canonical_market_key": "tech::championship:2026",
+      "group_id": "kalshi:KXLLM1-26DEC31",
+      "group_type": "kalshi_event",
+      "discover_card": {
+       "suggested_format": "outcome_distribution",
+       "bundle_candidate": false,
+       "comparison_theme": null,
+       "threshold_points": [],
+       "ladder_treatment_refused": false,
+       "field_is_a_race": true,
+       "distribution_outcomes": [
+        {
+         "label": "Claude",
+         "probability": 0.5655,
+         "movement": null
+        },
+        {
+         "label": "Gemini",
+         "probability": 0.359,
+         "movement": null
+        },
+        {
+         "label": "ChatGPT",
+         "probability": 0.0695,
+         "movement": null
+        },
+        {
+         "label": "Grok",
+         "probability": 0.0255,
+         "movement": null
+        },
+        {
+         "label": "Kimi",
+         "probability": 0.01,
+         "movement": null
+        },
+        {
+         "label": "Muse Spark",
+         "probability": 0.0095,
+         "movement": null
+        },
+        {
+         "label": "Qwen",
+         "probability": 0.0045,
+         "movement": null
+        },
+        {
+         "label": "Ernie",
+         "probability": 0.0015,
+         "movement": null
+        }
+       ],
+       "remaining_outcome_count": 0,
+       "qa_signals": [],
+       "public_source_disagreement": false,
+       "reasons": [
+        "multi_outcome_distribution"
+       ]
+      },
+      "image_url": "https://images.pexels.com/photos/32417524/pexels-photo-32417524.jpeg?auto=compress&cs=tinysrgb&h=350",
+      "image_width": 525,
+      "image_height": 350,
+      "hook_description": null,
+      "temporal_badge": null,
+      "confidence_tier": "low",
+      "confidence_score": 0.3529,
+      "confidence_signals": {
+       "has_closing_line": false
+      },
+      "discover_llm": {
+       "topic": "tech",
+       "subtopic": "ai",
+       "archetype": "other",
+       "audience_scope": "mainstream",
+       "salience_score": 4,
+       "junk_flags": [],
+       "comparison_axes": []
+      },
+      "market_tags": [
+       "category:conference",
+       "market_status:open",
+       "source:kalshi",
+       "tier:2"
+      ]
+     }
+    },
+    {
+     "type": "futures",
+     "score": 95,
+     "reason": "New favorite: Google (46%) now leads Which company has #1 AI model end of November? (Style Control On)",
+     "headline": "New favorite: Google (46%)",
+     "context_summary": "New favorite: Google (46%)",
+     "data": {
+      "id": 61329160,
+      "name": "Which company has #1 AI model end of November? (Style Control On)",
+      "sport": null,
+      "sport_name": null,
+      "llm_sport_category": "tech",
+      "source": "polymarket",
+      "source_count": 1,
+      "sources": [
+       "polymarket"
+      ],
+      "market_tier": 2,
+      "market_type": "field",
+      "status": "open",
+      "resolution_date": "2026-12-01T04:59:00+00:00",
+      "price_observed_at": "2026-10-01T10:46:05+00:00",
+      "top_outcomes": [
+       {
+        "id": 231000599,
+        "name": "Google",
+        "probability": 0.455,
+        "rank": 1,
+        "movement": 0.36,
+        "rendered_percent": 46
+       },
+       {
+        "id": 231020488,
+        "name": "Anthropic",
+        "probability": 0.45,
+        "rank": 2,
+        "movement": -0.315,
+        "rendered_percent": 45
+       },
+       {
+        "id": 231020490,
+        "name": "Meta",
+        "probability": 0.04,
+        "rank": 3,
+        "movement": null,
+        "rendered_percent": 4
+       }
+      ],
+      "card_sum_reason": null,
+      "outcome_count": 21,
+      "canonical_market_key": null,
+      "group_id": "polymarket:1040635",
+      "group_type": "negrisk",
+      "discover_card": {
+       "suggested_format": "outcome_distribution",
+       "bundle_candidate": false,
+       "comparison_theme": null,
+       "threshold_points": [],
+       "ladder_treatment_refused": false,
+       "field_is_a_race": true,
+       "distribution_outcomes": [
+        {
+         "label": "Google",
+         "probability": 0.455,
+         "movement": 0.36
+        },
+        {
+         "label": "Anthropic",
+         "probability": 0.45,
+         "movement": -0.315
+        },
+        {
+         "label": "Meta",
+         "probability": 0.04,
+         "movement": null
+        },
+        {
+         "label": "Moonshot",
+         "probability": 0.0105,
+         "movement": null
+        },
+        {
+         "label": "Z.ai",
+         "probability": 0.0055,
+         "movement": null
+        },
+        {
+         "label": "DeepSeek",
+         "probability": 0.0055,
+         "movement": null
+        },
+        {
+         "label": "Amazon",
+         "probability": 0.0055,
+         "movement": null
+        },
+        {
+         "label": "StepFun",
+         "probability": 0.005,
+         "movement": null
+        }
+       ],
+       "remaining_outcome_count": 13,
+       "qa_signals": [],
+       "public_source_disagreement": false,
+       "reasons": [
+        "multi_outcome_distribution"
+       ]
+      },
+      "image_url": "https://images.pexels.com/photos/6804612/pexels-photo-6804612.jpeg?auto=compress&cs=tinysrgb&h=650&w=940",
+      "image_width": 940,
+      "image_height": 626,
+      "hook_description": null,
+      "temporal_badge": null,
+      "confidence_tier": "moderate",
+      "confidence_score": 0.6471,
+      "confidence_signals": {
+       "has_closing_line": false
+      },
+      "market_tags": [
+       "category:conference",
+       "market_status:open",
+       "source:polymarket",
+       "tier:2"
+      ]
+     }
+    },
+    {
+     "type": "futures",
+     "score": 95,
+     "reason": "New favorite: Google (48%) now leads Which company has the best AI model end of November?",
+     "headline": "New favorite: Google (48%)",
+     "context_summary": "New favorite: Google (48%)",
+     "data": {
+      "id": 61329163,
+      "name": "Which company has the best AI model end of November?",
+      "sport": null,
+      "sport_name": null,
+      "llm_sport_category": "tech",
+      "source": "polymarket",
+      "source_count": 1,
+      "sources": [
+       "polymarket"
+      ],
+      "market_tier": 2,
+      "market_type": "field",
+      "status": "open",
+      "resolution_date": "2026-12-01T04:59:00+00:00",
+      "price_observed_at": "2026-10-01T10:46:05+00:00",
+      "top_outcomes": [
+       {
+        "id": 230895238,
+        "name": "Google",
+        "probability": 0.475,
+        "rank": 1,
+        "movement": null,
+        "rendered_percent": 48
+       },
+       {
+        "id": 230864005,
+        "name": "Anthropic",
+        "probability": 0.445,
+        "rank": 2,
+        "movement": -0.39999999999999997,
+        "rendered_percent": 45
+       },
+       {
+        "id": 231009141,
+        "name": "OpenAI",
+        "probability": 0.0445,
+        "rank": 3,
+        "movement": null,
+        "rendered_percent": 4
+       }
+      ],
+      "card_sum_reason": null,
+      "outcome_count": 21,
+      "canonical_market_key": null,
+      "group_id": "polymarket:1040632",
+      "group_type": "negrisk",
+      "discover_card": {
+       "suggested_format": "outcome_distribution",
+       "bundle_candidate": false,
+       "comparison_theme": null,
+       "threshold_points": [],
+       "ladder_treatment_refused": false,
+       "field_is_a_race": true,
+       "distribution_outcomes": [
+        {
+         "label": "Google",
+         "probability": 0.475,
+         "movement": null
+        },
+        {
+         "label": "Anthropic",
+         "probability": 0.445,
+         "movement": -0.39999999999999997
+        },
+        {
+         "label": "OpenAI",
+         "probability": 0.0445,
+         "movement": null
+        },
+        {
+         "label": "Z.ai",
+         "probability": 0.0255,
+         "movement": null
+        },
+        {
+         "label": "Meta",
+         "probability": 0.0075,
+         "movement": null
+        },
+        {
+         "label": "SpaceXAI",
+         "probability": 0.0075,
+         "movement": null
+        },
+        {
+         "label": "Alibaba",
+         "probability": 0.006,
+         "movement": null
+        },
+        {
+         "label": "DeepSeek",
+         "probability": 0.0055,
+         "movement": null
+        }
+       ],
+       "remaining_outcome_count": 13,
+       "qa_signals": [],
+       "public_source_disagreement": false,
+       "reasons": [
+        "multi_outcome_distribution"
+       ]
+      },
+      "image_url": "https://images.pexels.com/photos/6805161/pexels-photo-6805161.jpeg?auto=compress&cs=tinysrgb&h=650&w=940",
+      "image_width": 940,
+      "image_height": 626,
+      "hook_description": null,
+      "temporal_badge": null,
+      "confidence_tier": "moderate",
+      "confidence_score": 0.6471,
+      "confidence_signals": {
+       "has_closing_line": false
+      },
+      "market_tags": [
+       "category:conference",
+       "market_status:open",
+       "source:polymarket",
+       "tier:2"
+      ]
+     }
+    },
+    {
+     "type": "futures",
+     "score": 89,
+     "reason": "No release by November 1 moved up 62 points today in When will the next Google Gemini Pro model be released?",
+     "headline": "No release by November 1 up 62 points today",
+     "context_summary": "No release by November 1 up 62 points today",
+     "data": {
+      "id": 59133748,
+      "name": "When will the next Google Gemini Pro model be released?",
+      "sport": null,
+      "sport_name": null,
+      "llm_sport_category": "tech",
+      "source": "polymarket",
+      "source_count": 1,
+      "sources": [
+       "polymarket"
+      ],
+      "market_tier": 2,
+      "market_type": "field",
+      "status": "open",
+      "resolution_date": "2026-11-01T23:59:00+00:00",
+      "price_observed_at": "2026-10-01T11:09:53+00:00",
+      "top_outcomes": [
+       {
+        "id": 219577294,
+        "name": "No release by November 1",
+        "probability": 0.765,
+        "rank": 1,
+        "movement": 0.62,
+        "rendered_percent": 77
+       },
+       {
+        "id": 231017902,
+        "name": "October 19\u2013October 25",
+        "probability": 0.1195,
+        "rank": 2,
+        "movement": null,
+        "rendered_percent": 12
+       },
+       {
+        "id": 231017901,
+        "name": "October 5\u2013October 11",
+        "probability": 0.0595,
+        "rank": 3,
+        "movement": -0.02550000000000001,
+        "rendered_percent": 6
+       }
+      ],
+      "card_sum_reason": null,
+      "outcome_count": 11,
+      "canonical_market_key": null,
+      "group_id": "polymarket:868080",
+      "group_type": "negrisk",
+      "discover_card": {
+       "suggested_format": "outcome_distribution",
+       "bundle_candidate": false,
+       "comparison_theme": null,
+       "threshold_points": [],
+       "ladder_treatment_refused": false,
+       "field_is_a_race": true,
+       "distribution_outcomes": [
+        {
+         "label": "No release by November 1",
+         "probability": 0.765,
+         "movement": 0.62
+        },
+        {
+         "label": "October 19\u2013October 25",
+         "probability": 0.1195,
+         "movement": null
+        },
+        {
+         "label": "October 5\u2013October 11",
+         "probability": 0.0595,
+         "movement": -0.02550000000000001
+        },
+        {
+         "label": "October 12\u2013October 18",
+         "probability": 0.0435,
+         "movement": null
+        },
+        {
+         "label": "October 26\u2013November 1",
+         "probability": 0.0345,
+         "movement": null
+        },
+        {
+         "label": "September 28\u2013October 4",
+         "probability": 0.0075,
+         "movement": null
+        }
+       ],
+       "remaining_outcome_count": 0,
+       "qa_signals": [],
+       "public_source_disagreement": false,
+       "reasons": [
+        "multi_outcome_distribution"
+       ]
+      },
+      "image_url": "https://images.pexels.com/photos/218717/pexels-photo-218717.jpeg?auto=compress&cs=tinysrgb&h=650&w=940",
+      "image_width": 940,
+      "image_height": 628,
+      "hook_description": null,
+      "temporal_badge": null,
+      "confidence_tier": "moderate",
+      "confidence_score": 0.6471,
+      "confidence_signals": {
+       "has_closing_line": false
+      },
+      "market_tags": [
+       "category:conference",
+       "market_status:open",
+       "source:polymarket",
+       "tier:2"
+      ]
+     }
+    },
+    {
+     "type": "futures",
+     "score": 86,
+     "reason": "Google odds shifted up 60.3 points today in Which company has the best AI model end of October?",
+     "headline": "Google up 60.3 points today",
+     "context_summary": "Google up 60.3 points today",
+     "data": {
+      "id": 58918649,
+      "name": "Which company has the best AI model end of October?",
+      "sport": null,
+      "sport_name": null,
+      "llm_sport_category": "tech",
+      "source": "polymarket",
+      "source_count": 1,
+      "sources": [
+       "polymarket"
+      ],
+      "market_tier": 2,
+      "market_type": "field",
+      "status": "open",
+      "resolution_date": "2026-10-31T16:00:00+00:00",
+      "price_observed_at": "2026-10-01T10:07:43+00:00",
+      "top_outcomes": [
+       {
+        "id": 231007407,
+        "name": "Google",
+        "probability": 0.715,
+        "rank": 1,
+        "movement": 0.603,
+        "rendered_percent": 72
+       },
+       {
+        "id": 218636640,
+        "name": "Anthropic",
+        "probability": 0.28,
+        "rank": 2,
+        "movement": null,
+        "rendered_percent": 28
+       },
+       {
+        "id": 218669788,
+        "name": "OpenAI",
+        "probability": 0.0145,
+        "rank": 3,
+        "movement": null,
+        "rendered_percent": 1
+       }
+      ],
+      "card_sum_reason": null,
+      "outcome_count": 21,
+      "canonical_market_key": null,
+      "group_id": "polymarket:841230",
+      "group_type": "negrisk",
+      "discover_card": {
+       "suggested_format": "outcome_distribution",
+       "bundle_candidate": false,
+       "comparison_theme": null,
+       "threshold_points": [],
+       "ladder_treatment_refused": false,
+       "field_is_a_race": true,
+       "distribution_outcomes": [
+        {
+         "label": "Google",
+         "probability": 0.715,
+         "movement": 0.603
+        },
+        {
+         "label": "Anthropic",
+         "probability": 0.28,
+         "movement": null
+        },
+        {
+         "label": "OpenAI",
+         "probability": 0.0145,
+         "movement": null
+        },
+        {
+         "label": "Meta",
+         "probability": 0.0035,
+         "movement": null
+        },
+        {
+         "label": "SpaceXAI",
+         "probability": 0.003,
+         "movement": null
+        },
+        {
+         "label": "StepFun",
+         "probability": 0.0005,
+         "movement": null
+        },
+        {
+         "label": "Alibaba",
+         "probability": 0.0005,
+         "movement": null
+        },
+        {
+         "label": "Moonshot",
+         "probability": 0.0005,
+         "movement": null
+        }
+       ],
+       "remaining_outcome_count": 13,
+       "qa_signals": [],
+       "public_source_disagreement": false,
+       "reasons": [
+        "multi_outcome_distribution"
+       ]
+      },
+      "image_url": "https://images.pexels.com/photos/7464721/pexels-photo-7464721.jpeg?auto=compress&cs=tinysrgb&h=650&w=940",
+      "image_width": 940,
+      "image_height": 627,
+      "hook_description": null,
+      "temporal_badge": null,
+      "confidence_tier": "moderate",
+      "confidence_score": 0.6471,
+      "confidence_signals": {
+       "has_closing_line": false
+      },
+      "market_tags": [
+       "category:conference",
+       "market_status:open",
+       "source:polymarket",
+       "tier:2"
+      ]
+     }
+    },
+    {
+     "type": "futures",
+     "score": 86,
+     "reason": "",
+     "headline": null,
+     "context_summary": "",
+     "data": {
+      "id": 60607595,
+      "name": "OpenAI announces another Millennium Prize solution?",
+      "sport": null,
+      "sport_name": null,
+      "llm_sport_category": "tech",
+      "source": "polymarket",
+      "source_count": 1,
+      "sources": [
+       "polymarket"
+      ],
+      "market_tier": 2,
+      "market_type": "field",
+      "status": "open",
+      "resolution_date": "2028-01-01T04:59:00+00:00",
+      "price_observed_at": "2026-10-01T11:09:54+00:00",
+      "top_outcomes": [
+       {
+        "id": 231092696,
+        "name": "December 31, 2027",
+        "probability": 0.565,
+        "rank": 1,
+        "movement": null,
+        "rendered_percent": 57
+       },
+       {
+        "id": 226774493,
+        "name": "December 31, 2026",
+        "probability": 0.245,
+        "rank": 2,
+        "movement": null,
+        "rendered_percent": 25
+       },
+       {
+        "id": 226771758,
+        "name": "September 30, 2026",
+        "probability": 0.002,
+        "rank": 3,
+        "movement": null,
+        "rendered_percent": 0
+       }
+      ],
+      "card_sum_reason": null,
+      "outcome_count": 3,
+      "canonical_market_key": null,
+      "group_id": "polymarket:994461",
+      "group_type": "polymarket_event",
+      "discover_card": {
+       "suggested_format": "threshold_heatmap",
+       "bundle_candidate": false,
+       "comparison_theme": null,
+       "threshold_points": [
+        {
+         "source": "date_bucket",
+         "label": "September 30, 2026",
+         "value": 20260930,
+         "unit": "date",
+         "direction": "before",
+         "probability": 0.002,
+         "movement": null
+        },
+        {
+         "source": "date_bucket",
+         "label": "December 31, 2026",
+         "value": 20261231,
+         "unit": "date",
+         "direction": "before",
+         "probability": 0.245,
+         "movement": null
+        },
+        {
+         "source": "date_bucket",
+         "label": "December 31, 2027",
+         "value": 20271231,
+         "unit": "date",
+         "direction": "before",
+         "probability": 0.565,
+         "movement": null
+        }
+       ],
+       "ladder_treatment_refused": false,
+       "field_is_a_race": true,
+       "distribution_outcomes": [
+        {
+         "label": "December 31, 2027",
+         "probability": 0.565,
+         "movement": null
+        },
+        {
+         "label": "December 31, 2026",
+         "probability": 0.245,
+         "movement": null
+        },
+        {
+         "label": "September 30, 2026",
+         "probability": 0.002,
+         "movement": null
+        }
+       ],
+       "remaining_outcome_count": 0,
+       "qa_signals": [],
+       "public_source_disagreement": false,
+       "reasons": [
+        "threshold_values"
+       ]
+      },
+      "image_url": "https://images.pexels.com/photos/20870797/pexels-photo-20870797.jpeg?auto=compress&cs=tinysrgb&h=650&w=940",
+      "image_width": 940,
+      "image_height": 626,
+      "hook_description": null,
+      "temporal_badge": null,
+      "confidence_tier": "low",
+      "confidence_score": 0.3529,
+      "confidence_signals": {
+       "has_closing_line": false
+      },
+      "market_tags": [
+       "category:conference",
+       "market_status:open",
+       "source:polymarket",
+       "tier:2"
+      ]
+     }
+    }
+   ],
+   "debug_bundles": {
+    "grouped_by": "story_key",
+    "story_key": "story:ai",
+    "title_source": "authored",
+    "question_source": "authored",
+    "member_ids": [
+     109596,
+     61329160,
+     61329163,
+     59133748,
+     58918649,
+     60607595
+    ],
+    "member_names": [
+     "Best AI at the end of 2026?",
+     "Which company has #1 AI model end of November? (Style Control On)",
+     "Which company has the best AI model end of November?",
+     "When will the next Google Gemini Pro model be released?",
+     "Which company has the best AI model end of October?",
+     "OpenAI announces another Millennium Prize solution?"
+    ]
+   }
+  }
+ },
+ "leaderboard": {
+  "type": "futures",
+  "score": 38,
+  "reason": "Christian Alshon moved up 12.3 points today in PPA 2026-27 End of Year Rankings: Player to be Number 1 (Men's)",
+  "headline": "Christian Alshon up 12.3 points today",
+  "context_summary": "Christian Alshon up 12.3 points today; Ben Johns leads at 63%",
+  "data": {
+   "id": 61076597,
+   "name": "PPA 2026-27 End of Year Rankings: Player to be Number 1 (Men's)",
+   "sport": null,
+   "sport_name": null,
+   "llm_sport_category": "pickleball",
+   "source": "polymarket",
+   "source_count": 1,
+   "sources": [
+    "polymarket"
+   ],
+   "market_tier": 5,
+   "market_type": "field",
+   "status": "open",
+   "resolution_date": "2027-05-16T23:59:00+00:00",
+   "price_observed_at": "2026-10-01T09:51:15+00:00",
+   "top_outcomes": [
+    {
+     "id": 231093934,
+     "name": "Ben Johns",
+     "probability": 0.6338,
+     "rank": 1,
+     "movement": null,
+     "rendered_percent": 63
+    },
+    {
+     "id": 232134347,
+     "name": "Christian Alshon",
+     "probability": 0.2066,
+     "rank": 2,
+     "movement": null,
+     "rendered_percent": 21
+    },
+    {
+     "id": 232134348,
+     "name": "Federico Staksrud",
+     "probability": 0.0986,
+     "rank": 3,
+     "movement": null,
+     "rendered_percent": 10
+    }
+   ],
+   "card_sum_reason": null,
+   "outcome_count": 6,
+   "canonical_market_key": null,
+   "group_id": "polymarket:1024939",
+   "group_type": "negrisk",
+   "discover_card": {
+    "suggested_format": "outcome_distribution",
+    "bundle_candidate": false,
+    "comparison_theme": null,
+    "threshold_points": [],
+    "ladder_treatment_refused": false,
+    "field_is_a_race": true,
+    "distribution_outcomes": [
+     {
+      "label": "Ben Johns",
+      "probability": 0.6338,
+      "movement": null
+     },
+     {
+      "label": "Christian Alshon",
+      "probability": 0.2066,
+      "movement": null
+     },
+     {
+      "label": "Federico Staksrud",
+      "probability": 0.0986,
+      "movement": null
+     },
+     {
+      "label": "JW Johnson",
+      "probability": 0.0479,
+      "movement": null
+     },
+     {
+      "label": "Gabriel Tardio",
+      "probability": 0.0113,
+      "movement": null
+     },
+     {
+      "label": "Hayden Patriquin",
+      "probability": 0.0019,
+      "movement": null
+     }
+    ],
+    "remaining_outcome_count": 0,
+    "qa_signals": [],
+    "public_source_disagreement": false,
+    "reasons": [
+     "multi_outcome_distribution"
+    ]
+   },
+   "image_url": null,
+   "image_width": null,
+   "image_height": null,
+   "hook_description": null,
+   "temporal_badge": null,
+   "confidence_tier": "moderate",
+   "confidence_score": 0.6471,
+   "confidence_signals": {
+    "has_closing_line": false
+   },
+   "market_tags": [
+    "category:championship",
+    "market_status:open",
+    "source:polymarket"
+   ]
+  }
+ }
+}
