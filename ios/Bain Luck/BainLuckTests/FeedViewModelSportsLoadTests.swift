@@ -335,7 +335,7 @@ final class FeedViewModelSportsLoadTests: XCTestCase {
             main: .success(try feed([eventJSON(1, status: "scheduled"), futuresJSON(10)])),
             backfill: .success(try feed([
                 eventJSON(1, status: "scheduled"),   // dup of main → excluded
-                eventJSON(3, status: "live"),         // live → excluded
+                eventJSON(3, status: "live"),         // new live event → appended (#10001)
                 eventJSON(2, status: "scheduled"),    // new non-live event → appended
                 futuresJSON(11),                       // futures in backfill → excluded (events-only)
             ])),
@@ -345,8 +345,60 @@ final class FeedViewModelSportsLoadTests: XCTestCase {
 
         await vm.load()
 
-        XCTAssertEqual(vm.items.map(\.id), ["event-1", "futures-10", "event-2"],
-                       "main order preserved; only the new non-live event appended; dup/live/futures excluded")
+        XCTAssertEqual(vm.items.map(\.id), ["event-1", "futures-10", "event-3", "event-2"],
+                       "main order preserved; new events appended in backfill order; dup/futures excluded")
+    }
+
+    // MARK: - #10001: a live game outside main's 50 still reaches the phone
+
+    /// Main is the first 50 of `mode=sports`; the server hoists at most 10 priced
+    /// live games into its first 20 slots, so on a busy game day a live game can sit
+    /// past slot 50 and arrive only in the backfill. It must land under Live, count
+    /// on the tab badge, and arm live refresh — before #10001 it was dropped.
+    func testLiveBackfillRowReachesLiveSectionBadgeAndRefresh10001() async throws {
+        let fake = FakeSportsClient(
+            main: .success(try feed([eventJSON(1, status: "live"), eventJSON(2, status: "scheduled")])),
+            backfill: .success(try feed([eventJSON(7, status: "live")])),
+            grouped: .success(try emptyGrouped())
+        )
+        let vm = FeedViewModel(client: fake, telemetry: nil, autoRefreshEnabled: false)
+
+        await vm.load()
+
+        XCTAssertEqual(vm.liveNow.map(\.id), ["event-1", "event-7"],
+                       "main's live game first, then the live game only the backfill carried")
+        XCTAssertEqual(vm.liveCount, 2, "the tab badge counts the backfill's live game")
+    }
+
+    /// The refresh half: when the ONLY live game came from the backfill, live
+    /// refresh must still arm. Main has nothing live, so the arm comes from the
+    /// post-merge `configureAutoRefresh()`.
+    func testLiveGameOnlyInBackfillArmsAutoRefresh10001() async throws {
+        let fake = FakeSportsClient(
+            main: .success(try feed([eventJSON(1, status: "scheduled")])),
+            backfill: .success(try feed([eventJSON(7, status: "live")])),
+            grouped: .success(try emptyGrouped())
+        )
+        let vm = FeedViewModel(client: fake, telemetry: nil, autoRefreshEnabled: true)
+
+        await vm.load()
+
+        XCTAssertTrue(vm.refreshArmed, "a backfill-only live game arms live refresh")
+        vm.viewDidStop()               // stop the real timer before it can fire
+    }
+
+    /// Main's row wins a duplicate id: a backfill copy that says `live` never
+    /// replaces or doubles main's row, whatever its status.
+    func testMainRowWinsDuplicateIdOverLiveBackfillCopy10001() {
+        let decoder = Self.decoder()
+        func item(_ json: String) -> FeedItem { try! decoder.decode(FeedItem.self, from: Data(json.utf8)) }
+        let main = [item(eventJSON(5, status: "final"))]
+        let backfill = [item(eventJSON(5, status: "live")), item(eventJSON(6, status: "live"))]
+
+        let merged = FeedViewModel.mergeFeedItems(main, withEventsFrom: backfill)
+
+        XCTAssertEqual(merged.map(\.id), ["event-5", "event-6"])
+        XCTAssertEqual(merged.first?.event?.status, "final", "main's status survives the live duplicate")
     }
 
     // MARK: - Item 1: main failure is retryable, no false success

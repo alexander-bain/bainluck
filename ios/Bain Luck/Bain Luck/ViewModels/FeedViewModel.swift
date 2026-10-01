@@ -391,8 +391,8 @@ final class FeedViewModel: ObservableObject {
         inFlightSiblings = []
 
         guard generation == loadGeneration else { return }
-        // Recompute the refresh interval after the merges (belt-and-suspenders — the
-        // backfill excludes live events, so the live set is already known from main).
+        // Recompute the refresh interval after the merges: the backfill can carry a
+        // live game main did not (#10001), and that game must arm live refresh too.
         configureAutoRefresh()
     }
 
@@ -416,12 +416,12 @@ final class FeedViewModel: ObservableObject {
     }
 
     /// Merge the events-only backfill into the already-published main feed. Non-fatal:
-    /// a miss is reported honestly and leaves the main feed intact. Only NEW non-live
-    /// events are appended, in main order.
+    /// a miss is reported honestly and leaves the main feed intact. Only NEW events
+    /// are appended, in main order.
     @MainActor
     private func applyBackfill(_ backfill: FeedResponse?, start: Date) {
         if let backfill {
-            items = mergeFeedItems(items, withNonLiveEventsFrom: backfill.items)
+            items = Self.mergeFeedItems(items, withEventsFrom: backfill.items)
             total = max(total, items.count)
             liveCount = Self.tabBadgeLiveCount(items)
             emit(.eventsBackfill, start: start, count: items.count, success: true)
@@ -461,12 +461,20 @@ final class FeedViewModel: ObservableObject {
         )
     }
 
-    private func mergeFeedItems(_ rankedItems: [FeedItem], withNonLiveEventsFrom backfillItems: [FeedItem]) -> [FeedItem] {
+    /// #10001 — a LIVE backfill row is appended like any other new event. The old
+    /// rule skipped it on the premise that main already carries every live game; it
+    /// does not. Main is the first 50 of `mode=sports`, whose hoist lifts at most 10
+    /// priced live games into the first 20 slots (`live_first_page.py`), and every
+    /// other live game keeps its scored slot, below finished games. On a busy game
+    /// day a live game past slot 50 reaches the phone only through this backfill, so
+    /// dropping it left the game off the iPhone while the web paged to it. Main's
+    /// row still wins any duplicate id.
+    static func mergeFeedItems(_ rankedItems: [FeedItem], withEventsFrom backfillItems: [FeedItem]) -> [FeedItem] {
         var merged = rankedItems
         var seen = Set(rankedItems.map(\.id))
 
         for item in backfillItems {
-            guard item.type == "event", item.event?.status != "live", !seen.contains(item.id) else {
+            guard item.type == "event", !seen.contains(item.id) else {
                 continue
             }
             merged.append(item)
