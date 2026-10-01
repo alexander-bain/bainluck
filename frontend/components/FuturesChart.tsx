@@ -142,6 +142,10 @@ interface FuturesChartProps {
    *  `__tests__/components/aChartLegendStopsRepeatingTheBoard7813.test.tsx` holds
    *  both halves — the frozen no-prop legend controls and the call-site census. */
   marketName?: string | null;
+  /** #10074: the caller already prints the cadence sentence above this chart (the
+   *  futures page's range controls do, on a sparse board), so the empty state must
+   *  not print it again. Absent everywhere else: those callers render as before. */
+  cadenceNoteShown?: boolean;
 }
 
 export function FuturesChart({
@@ -166,6 +170,7 @@ export function FuturesChart({
   allowZoom = false,
   settled = false,
   marketName,
+  cadenceNoteShown = false,
 }: FuturesChartProps) {
   const effectiveShowLegend = showLegend ?? !mini;
   const effectiveShowAxes = showAxes ?? !mini;
@@ -309,9 +314,11 @@ export function FuturesChart({
           <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M7 21h10a2 2 0 002-2V9.414a1 1 0 00-.293-.707l-5.414-5.414A1 1 0 0012.586 3H7a2 2 0 00-2 2v14a2 2 0 002 2z" />
         </svg>
         <span>Limited price history available</span>
-        <span className="text-xs text-text-muted">
-          {priceCadenceNote(settled, { long: true })}
-        </span>
+        {!cadenceNoteShown && (
+          <span className="text-xs text-text-muted">
+            {priceCadenceNote(settled, { long: true })}
+          </span>
+        )}
       </div>
     );
   }
