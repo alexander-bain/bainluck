@@ -4904,6 +4904,7 @@ def diversify_quality_families(
     *,
     exact_family_cap: int = 1,
     story_family_cap: int = 5,
+    already_kept: list[dict] | None = None,
 ) -> list[dict]:
     """Cap repeated market/story families after scoring.
 
@@ -4936,6 +4937,14 @@ def diversify_quality_families(
     the same question in the same wording, which is what that cap exists to
     remove; reviving it into a bundle would put two phrasings of one question on
     one card.
+
+    ``already_kept`` (#9877): cards that are ALREADY on the page and have spent
+    their share of each cap. They are counted first and never returned, so a
+    second pool merged in after them (#1090's broadened pass) gets only the room
+    the first pool left. Without it the two pools were capped one at a time and
+    then added together: Brazil's presidential race is capped at 1, and the strict
+    pool kept the Polymarket card while the relaxed pool kept the Kalshi one, so
+    the merged page had two.
     """
     sorted_items = sorted(
         items,
@@ -4949,6 +4958,13 @@ def diversify_quality_families(
     )
     exact_counts: dict[str, int] = {}
     story_counts: dict[str, int] = {}
+    for placed in already_kept or ():
+        placed_family = placed.get("_quality_family_key")
+        placed_story = placed.get("_quality_story_key")
+        if placed_family:
+            exact_counts[placed_family] = exact_counts.get(placed_family, 0) + 1
+        if placed_story:
+            story_counts[placed_story] = story_counts.get(placed_story, 0) + 1
     kept: list[dict] = []
     per_story_caps = {
         "story:middle_east_conflict": 4,

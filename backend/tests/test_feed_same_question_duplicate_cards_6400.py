@@ -376,6 +376,19 @@ def test_the_broaden_merge_folds_once():
     assert source[start:end].count("fold_same_question_cards(") == 1
 
 
+def test_the_broaden_merge_caps_once_and_before_it_folds():
+    """#9877: the broadened cards get only the cap room the strict pool left,
+    and the fold then runs on the capped merge."""
+    source = _feed_source()
+    start, end = _merge_seam_span(source)
+    seam = source[start:end]
+    assert seam.count("diversify_quality_families(") == 1
+    assert "already_kept=primary" in seam
+    assert seam.find("diversify_quality_families(") < seam.find(
+        "fold_same_question_cards("
+    )
+
+
 def test_both_dedupe_chains_in_the_feed_route_call_the_fold():
     """Two chains exist — the fused/main `_dedupe_and_cap` and the fallback in
     `_score_futures_from_base`. #6400 was reachable through either, so a fold
@@ -423,8 +436,12 @@ def test_each_chain_runs_the_fold_after_its_name_keyed_caps():
     bounded by running on the already-capped list, and a survivor can only be
     chosen once scoring has ordered the cards."""
     source = _feed_source()
-    diversify = _call_offsets(source, "diversify_quality_families(\n")
     seam_start, seam_end = _merge_seam_span(source)
+    # #9877: the seam caps the broadened cards too; it is pinned on its own below.
+    diversify = [
+        at for at in _call_offsets(source, "diversify_quality_families(\n")
+        if not seam_start <= at < seam_end
+    ]
     folds = [
         at for at in _call_offsets(source, "fold_same_question_cards(")
         if not seam_start <= at < seam_end

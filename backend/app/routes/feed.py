@@ -355,9 +355,25 @@ def _merge_broadened_futures(
     the earlier card. That is #1090's own contract — the relaxed pass only fills
     a thin page, and existing cards keep their place — and it keeps the row that
     is still moving over the one the strict window refused as stale.
+
+    #9877 — THE MERGE ALSO HONOURS THE FAMILY AND STORY CAPS ACROSS THE POOLS.
+    Each pool was capped on its own, so a story capped at 1 could reach the page
+    once from each. Production 2026-10-01 03:20Z, ``/api/feed`` slots 8 and 9:
+    Kalshi 109952 "Brazil Presidential election winner?" (strict blocker
+    ``stale_no_movement``) beside Polymarket 59934255 "Brazil Presidential
+    Election First Round Winner" (strict-eligible), both
+    ``story:brazil_presidential_election``. A broadened card is now admitted only
+    into the room the strict cards left, with the same caps ``_dedupe_and_cap``
+    applies; the strict card keeps the slot for the reason above.
     """
     seen_ids = {(it.get("data") or {}).get("id") for it in primary}
     added = [it for it in broadened if (it.get("data") or {}).get("id") not in seen_ids]
+    added = diversify_quality_families(
+        added,
+        exact_family_cap=1,
+        story_family_cap=5,
+        already_kept=primary,
+    )
     if not added:
         return primary, []
     merged = fold_same_question_cards(list(primary) + added)
