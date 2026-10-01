@@ -199,6 +199,7 @@
     "#7617 a delay is not silence (real Postgres)",
     "#8755 a withdrawn listing is not a start (real Postgres)",
     "#9588 a venue stamp does not start a later StatPal session (real Postgres)",
+    "#10022 an open-contract leg the socket sees finalize is graded alone (real Postgres)",
     "#7878 win-prob evidence collapse — provision the disposable database",
     "#7878 win-prob retention keeps observation evidence (real Postgres)",
     "#8796 one failed statement does not discard the ESPN pass (real Postgres)",
