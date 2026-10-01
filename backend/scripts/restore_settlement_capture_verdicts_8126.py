@@ -2,18 +2,21 @@
 
 Reads ``backup_8126_capture_verdicts`` for ``--run-id`` and writes each banked
 pre-image (``is_winner``, ``resolution_source``) back — but ONLY onto a row that
-still reads exactly the post-image that run wrote. A row anything else has moved
-since is DRIFT: an incumbent change this undo must not destroy.
+still reads exactly the post-image that run wrote, on the SAME leg it wrote it to
+(the banked ``market_id`` and ``external_id``). A row anything else has moved
+since — its grade, its market or its ticker — is DRIFT: a change this undo must
+not destroy, and a repointed row's pre-image belongs to a leg it no longer is.
 
 * Default is a dry run: what would be restored and what has drifted.
 * ``--apply`` with any drift REFUSES the whole restore; nothing is written.
 * ``--apply --restore-undrifted`` restores the rows still at the post-image,
   leaves every drifted row exactly as it is, and leaves those backup rows open
   (``restored_at`` NULL) so a later decision can still reach them.
-* A row already back at its pre-image is counted and closed, not rewritten.
+* A row already back at its pre-image, on the same leg, is counted and closed,
+  not rewritten.
 
 One transaction: rows locked ``FOR UPDATE`` in id order, each UPDATE
-compare-and-swapped on the post-image, a short rowcount rolls everything back.
+compare-and-swapped on the banked identity and the post-image, a short rowcount rolls everything back.
 A run already fully restored is a no-op; an unknown run refuses.
 
     heroku run:detached -a bainluck -- python3 scripts/restore_settlement_capture_verdicts_8126.py --run-id <RUN_ID>          # dry run
@@ -55,29 +58,38 @@ def refuse_unless_production(env: dict) -> None:
         )
 
 
+Grade = tuple[bool | None, str | None]
+Identity = tuple[int, str]
+
+
 @dataclass(frozen=True)
 class Banked:
     outcome_id: int
-    pre: tuple[bool | None, str | None]
-    post: tuple[bool | None, str | None]
+    identity: Identity  # (market_id, external_id) the run wrote to
+    pre: Grade
+    post: Grade
 
 
 def classify(
-    banked: list[Banked], current: dict[int, tuple[bool | None, str | None]]
+    banked: list[Banked], current: dict[int, tuple[Identity, Grade]]
 ) -> tuple[list[Banked], list[Banked], list[tuple[Banked, Any]]]:
     """Split banked rows into ``(restorable, already_pre, drifted)``. Pure.
 
-    ``current`` maps outcome id -> ``(is_winner, resolution_source)``; an id
-    absent from it is a deleted row, which is drift.
+    ``current`` maps outcome id -> ``((market_id, external_id), (is_winner,
+    resolution_source))``. An id absent from it is a deleted row, and a row
+    whose market or ticker is not the banked one is a different leg — both are
+    drift, whatever its grade reads.
     """
     restorable: list[Banked] = []
     already: list[Banked] = []
     drifted: list[tuple[Banked, Any]] = []
     for b in banked:
         now = current.get(b.outcome_id)
-        if now == b.post:
+        if now is None or now[0] != b.identity:
+            drifted.append((b, now))
+        elif now[1] == b.post:
             restorable.append(b)
-        elif now == b.pre:
+        elif now[1] == b.pre:
             already.append(b)
         else:
             drifted.append((b, now))
@@ -103,8 +115,8 @@ async def run(
 
     rows = await session.execute(
         text(
-            f"SELECT outcome_id, pre_is_winner, pre_resolution_source, post_is_winner, "
-            f"post_resolution_source FROM {REPAIR_BACKUP_TABLE} "
+            f"SELECT outcome_id, market_id, external_id, pre_is_winner, pre_resolution_source, "
+            f"post_is_winner, post_resolution_source FROM {REPAIR_BACKUP_TABLE} "
             "WHERE run_id = :r AND restored_at IS NULL ORDER BY outcome_id"
         ),
         {"r": run_id},
@@ -112,6 +124,7 @@ async def run(
     banked = [
         Banked(
             int(r.outcome_id),
+            (int(r.market_id), r.external_id),
             (r.pre_is_winner, r.pre_resolution_source),
             (r.post_is_winner, r.post_resolution_source),
         )
@@ -129,17 +142,24 @@ async def run(
     lock = " FOR UPDATE" if apply else ""
     cur = await session.execute(
         text(
-            "SELECT id, is_winner, resolution_source FROM futures_outcomes "
-            f"WHERE id = ANY(:ids) ORDER BY id{lock}"
+            "SELECT id, market_id, external_id, is_winner, resolution_source "
+            f"FROM futures_outcomes WHERE id = ANY(:ids) ORDER BY id{lock}"
         ),
         {"ids": [b.outcome_id for b in banked]},
     )
-    current = {int(r.id): (r.is_winner, r.resolution_source) for r in cur}
+    current = {
+        int(r.id): ((int(r.market_id), r.external_id), (r.is_winner, r.resolution_source))
+        for r in cur
+    }
     restorable, already, drifted = classify(banked, current)
     out["restorable"] = len(restorable)
     out["already_pre"] = len(already)
     out["drifted"] = [
-        {"outcome_id": b.outcome_id, "post": list(b.post), "now": None if n is None else list(n)}
+        {
+            "outcome_id": b.outcome_id,
+            "post": [*b.identity, *b.post],
+            "now": None if n is None else [*n[0], *n[1]],
+        }
         for b, n in drifted
     ]
 
@@ -162,6 +182,8 @@ async def run(
                 f"FROM {REPAIR_BACKUP_TABLE} b "
                 "WHERE b.run_id = :r AND b.outcome_id = o.id AND b.restored_at IS NULL "
                 "AND o.id = ANY(:ids) "
+                "AND o.market_id = b.market_id "
+                "AND o.external_id IS NOT DISTINCT FROM b.external_id "
                 "AND o.is_winner IS NOT DISTINCT FROM b.post_is_winner "
                 "AND o.resolution_source IS NOT DISTINCT FROM b.post_resolution_source"
             ),

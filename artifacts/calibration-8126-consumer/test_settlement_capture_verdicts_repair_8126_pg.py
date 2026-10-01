@@ -17,6 +17,8 @@ What only a real server proves:
 * the pre-image banked from the LOCKED rows, in the same transaction as the write;
 * a re-run that writes nothing; an undo that writes the exact pre-image back;
 * drift refusing the undo whole, and ``--restore-undrifted`` leaving it standing;
+* a leg repointed after the run (its market or its ticker changed, its grade
+  untouched or back at the pre-image) counted as drift, never restored onto;
 * a row changed between plan and lock refusing the run with nothing written;
 * a row locked by another writer refusing on ``lock_timeout`` instead of waiting.
 
@@ -26,6 +28,13 @@ Run (from ``backend/``)::
     SEARCH_TEST_DATABASE_URL="postgresql+asyncpg://$(whoami)@localhost:5432/bl_8126_gate" \\
       python3 -m pytest -c pytest.ini \\
       ../artifacts/calibration-8126-consumer/test_settlement_capture_verdicts_repair_8126_pg.py -v -rs
+
+Source-ready for promotion: ``git mv`` to
+``backend/tests/integration/test_settlement_capture_verdicts_repair_8126_pg.py``
+needs no edit here — ``_BACKEND`` resolves from either directory, and every
+seed INSERT already supplies each NOT NULL column
+``test_pg_gate_seed_completeness.py`` requires. Promoted, the path in the run
+line above becomes ``tests/integration/test_settlement_capture_verdicts_repair_8126_pg.py``.
 """
 
 from __future__ import annotations
@@ -47,7 +56,10 @@ pytestmark = [
     pytest.mark.skipif(not DB_URL, reason="set SEARCH_TEST_DATABASE_URL (real Postgres)"),
 ]
 
-_BACKEND = Path(__file__).resolve().parents[2] / "backend"
+# Staged at ``artifacts/<dir>/`` the backend is a sibling two levels up; promoted
+# to ``backend/tests/integration/`` it IS two levels up.
+_HERE = Path(__file__).resolve()
+_BACKEND = _HERE.parents[2] if _HERE.parent.name == "integration" else _HERE.parents[2] / "backend"
 sys.path.insert(0, str(_BACKEND))
 
 
@@ -84,6 +96,7 @@ T5 = f"{BOARD}-T28999.99"
 
 CAP_BOARD = 107429
 CAP_V1_SCALAR = 59742938
+SWEEP_ID = "kalshi-2026-09-30"
 
 
 @pytest.fixture
@@ -96,7 +109,10 @@ async def engines():
         await c.execute(text(f"DROP SCHEMA IF EXISTS {SCHEMA} CASCADE"))
         await c.execute(text(f"CREATE SCHEMA {SCHEMA}"))
         for ddl in (
-            "CREATE TABLE futures_markets (id int PRIMARY KEY, source varchar(20) NOT NULL)",
+            "CREATE TABLE futures_markets (id int PRIMARY KEY, source varchar(50) NOT NULL, "
+            "external_id varchar(200) NOT NULL, name varchar(300) NOT NULL, "
+            "category varchar(50) NOT NULL, mutually_exclusive boolean NOT NULL, "
+            "status varchar(20) NOT NULL)",
             "CREATE TABLE futures_outcomes (id int PRIMARY KEY, "
             "market_id int NOT NULL REFERENCES futures_markets(id), "
             "external_id varchar(200) NOT NULL, name varchar(300) NOT NULL, "
@@ -106,6 +122,7 @@ async def engines():
             "market_id int NOT NULL REFERENCES futures_markets(id), "
             "source varchar(40) NOT NULL, external_id varchar(255) NOT NULL, "
             "disposition varchar(40) NOT NULL, winning_outcome text, raw_response jsonb, "
+            "candidate_reason varchar(40) NOT NULL, sweep_id varchar(64) NOT NULL, "
             "protocol_version int NOT NULL DEFAULT 1, captured_at timestamptz NOT NULL, "
             "CONSTRAINT ck_settlement_capture_winner_requires_settled "
             "CHECK ((disposition = 'settled') = (winning_outcome IS NOT NULL)))",
@@ -127,7 +144,7 @@ def _produced_raw(legs: list[dict]) -> tuple[str, dict]:
     row = _capture_row(
         Candidate(MID, "kalshi", BOARD, NOW - timedelta(days=40), "missing_winner"),
         out,
-        sweep_id="kalshi-2026-09-30",
+        sweep_id=SWEEP_ID,
         now=NOW,
     )
     return row["disposition"], row["raw_response"]
@@ -147,8 +164,13 @@ async def _seed(engine):
     async with async_sessionmaker(engine)() as s:
         await s.execute(
             text(
-                "INSERT INTO futures_markets (id, source) VALUES "
-                f"({MID}, 'kalshi'), ({NEIGHBOUR_MID}, 'kalshi'), ({POLY_MID}, 'polymarket')"
+                "INSERT INTO futures_markets (id, source, external_id, name, category, "
+                "mutually_exclusive, status) VALUES "
+                f"({MID}, 'kalshi', '{BOARD}', 'Nasdaq-100 on Aug 17', 'economics', false, 'open'), "
+                f"({NEIGHBOUR_MID}, 'kalshi', '{BOARD}', 'Nasdaq-100 twin board', 'economics', "
+                "false, 'open'), "
+                f"({POLY_MID}, 'polymarket', 'poly-nasdaq-aug17', 'Nasdaq-100 on Aug 17', "
+                "'economics', false, 'open')"
             )
         )
         await s.execute(
@@ -167,18 +189,36 @@ async def _seed(engine):
         await s.execute(
             text(
                 "INSERT INTO settlement_captures (id, market_id, source, external_id, "
-                "disposition, winning_outcome, raw_response, protocol_version, captured_at) "
-                "VALUES (:id, :mid, 'kalshi', :ext, :disp, NULL, CAST(:raw AS jsonb), 2, :at)"
+                "disposition, winning_outcome, raw_response, candidate_reason, sweep_id, "
+                "protocol_version, captured_at) "
+                "VALUES (:id, :mid, 'kalshi', :ext, :disp, NULL, CAST(:raw AS jsonb), "
+                "'missing_winner', :sweep, 2, :at)"
             ),
-            {"id": CAP_BOARD, "mid": MID, "ext": BOARD, "disp": disp, "raw": json.dumps(raw), "at": NOW},
+            {
+                "id": CAP_BOARD,
+                "mid": MID,
+                "ext": BOARD,
+                "disp": disp,
+                "raw": json.dumps(raw),
+                "sweep": SWEEP_ID,
+                "at": NOW,
+            },
         )
         await s.execute(
             text(
                 "INSERT INTO settlement_captures (id, market_id, source, external_id, "
-                "disposition, winning_outcome, raw_response, protocol_version, captured_at) "
-                "VALUES (:id, :mid, 'kalshi', :ext, 'settled', 'scalar', NULL, 1, :at)"
+                "disposition, winning_outcome, raw_response, candidate_reason, sweep_id, "
+                "protocol_version, captured_at) "
+                "VALUES (:id, :mid, 'kalshi', :ext, 'settled', 'scalar', NULL, "
+                "'missing_winner', :sweep, 1, :at)"
             ),
-            {"id": CAP_V1_SCALAR, "mid": NEIGHBOUR_MID, "ext": BOARD, "at": NOW - timedelta(days=9)},
+            {
+                "id": CAP_V1_SCALAR,
+                "mid": NEIGHBOUR_MID,
+                "ext": BOARD,
+                "sweep": "kalshi-2026-09-21",
+                "at": NOW - timedelta(days=9),
+            },
         )
         await s.commit()
 
@@ -410,6 +450,103 @@ class TestRestoreOnARealServer:
                 )
             ).scalars().all()
         assert open_rows == [O1]
+
+    # #8126 review P2: apply banks the leg's market_id and external_id; a row
+    # repointed after the run is a different leg, and the old leg's pre-image
+    # must never be written onto it — nor its backup closed as already_pre.
+    @pytest.mark.parametrize(
+        "field,value",
+        [("market_id", NEIGHBOUR_MID), ("external_id", "KXOTHER-LEG")],
+        ids=["market_id", "external_id"],
+    )
+    @pytest.mark.parametrize(
+        "grade", [None, (False, None)], ids=["grade_at_post", "grade_back_at_pre"]
+    )
+    async def test_a_repointed_leg_is_drift_refused_whole_then_left_open(
+        self, engines, field, value, grade
+    ):
+        await _seed(engines)
+        before = await _state(engines)
+        await _apply(engines, capture_ids=[CAP_BOARD], apply=True, run_id="8126-gate-id")
+        sets = f"{field} = :value"
+        if grade is not None:
+            sets += ", is_winner = :w, resolution_source = :src"
+        async with engines.begin() as other:
+            await other.execute(
+                text(f"UPDATE futures_outcomes SET {sets} WHERE id = :id"),
+                {"value": value, "id": O1, **({"w": grade[0], "src": grade[1]} if grade else {})},
+            )
+
+        async def o1() -> tuple:
+            async with engines.connect() as c:
+                row = (
+                    await c.execute(
+                        text(
+                            "SELECT market_id, external_id, is_winner, resolution_source "
+                            "FROM futures_outcomes WHERE id = :id"
+                        ),
+                        {"id": O1},
+                    )
+                ).one()
+            return tuple(row)
+
+        repointed = await o1()
+        assert repointed[{"market_id": 0, "external_id": 1}[field]] == value
+
+        dry = await _restore(engines, run_id="8126-gate-id")
+        assert (dry["restorable"], dry["already_pre"]) == (1, 0)
+        assert dry["drifted"] == [
+            {
+                "outcome_id": O1,
+                "post": [MID, T1, True, "api_settlement"],
+                "now": list(repointed),
+            }
+        ]
+
+        with pytest.raises(restore_m.Refused, match="drifted"):
+            await _restore(engines, run_id="8126-gate-id", apply=True)
+        assert await o1() == repointed, "a refused restore wrote onto the repointed leg"
+
+        out = await _restore(engines, run_id="8126-gate-id", apply=True, restore_undrifted=True)
+        assert out["restored"] == 1 and out["already_pre"] == 0
+        assert await o1() == repointed, "the old leg's pre-image landed on a different leg"
+        assert (await _state(engines))[O2] == before[O2]
+        async with engines.connect() as c:
+            open_rows = (
+                await c.execute(
+                    text(
+                        f"SELECT outcome_id FROM {REPAIR_BACKUP_TABLE} "
+                        "WHERE run_id = '8126-gate-id' AND restored_at IS NULL"
+                    )
+                )
+            ).scalars().all()
+        assert open_rows == [O1], "the repointed leg's backup was closed"
+
+    @pytest.mark.parametrize(
+        "field,value",
+        [
+            ("market_id", NEIGHBOUR_MID),
+            ("external_id", "KXOTHER-LEG"),
+            ("resolution_source", "settlement_sync"),
+        ],
+    )
+    async def test_the_compare_and_swap_refuses_on_its_own_when_classify_is_wrong(
+        self, engines, monkeypatch, field, value
+    ):
+        # Under the lock classify() is the gate the CAS backs up, so only a
+        # classifier that waves a moved row through can reach the CAS. Force one.
+        await _seed(engines)
+        await _apply(engines, capture_ids=[CAP_BOARD], apply=True, run_id="8126-gate-cas")
+        async with engines.begin() as other:
+            await other.execute(
+                text(f"UPDATE futures_outcomes SET {field} = :value WHERE id = :id"),
+                {"value": value, "id": O1},
+            )
+        moved = await _state(engines)
+        monkeypatch.setattr(restore_m, "classify", lambda banked, current: (list(banked), [], []))
+        with pytest.raises(restore_m.Refused, match="compare-and-swap"):
+            await _restore(engines, run_id="8126-gate-cas", apply=True)
+        assert await _state(engines) == moved, "the CAS let a moved row be written"
 
     async def test_the_restored_rows_are_held_from_classify_to_commit(self, engines, monkeypatch):
         await _seed(engines)

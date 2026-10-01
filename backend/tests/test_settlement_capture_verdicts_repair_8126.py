@@ -100,16 +100,17 @@ class TestSelectionIsBounded:
 
 class TestRestoreClassification:
     PRE, POST = (False, None), (True, "api_settlement")
+    LEG = (60534962, "KXNASDAQ100U-26AUG17H1200-T27999.99")
 
     def _b(self, oid=1):
-        return restore_m.Banked(oid, self.PRE, self.POST)
+        return restore_m.Banked(oid, self.LEG, self.PRE, self.POST)
 
     def test_a_row_still_at_the_post_image_is_restorable(self):
-        r, a, d = restore_m.classify([self._b()], {1: self.POST})
+        r, a, d = restore_m.classify([self._b()], {1: (self.LEG, self.POST)})
         assert (len(r), len(a), len(d)) == (1, 0, 0)
 
     def test_a_row_already_back_at_the_pre_image_is_closed_not_rewritten(self):
-        r, a, d = restore_m.classify([self._b()], {1: self.PRE})
+        r, a, d = restore_m.classify([self._b()], {1: (self.LEG, self.PRE)})
         assert (len(r), len(a), len(d)) == (0, 1, 0)
 
     @pytest.mark.parametrize(
@@ -117,6 +118,19 @@ class TestRestoreClassification:
         [(True, "settlement_sync"), (False, "api_settlement"), (None, None), (True, None)],
     )
     def test_any_other_state_is_drift(self, now):
+        r, a, d = restore_m.classify([self._b()], {1: (self.LEG, now)})
+        assert (len(r), len(a)) == (0, 0) and d == [(self._b(), (self.LEG, now))]
+
+    @pytest.mark.parametrize(
+        "leg",
+        [(60534963, LEG[1]), (LEG[0], "KXOTHER-LEG"), (LEG[0], LEG[1].lower())],
+        ids=["market_id", "external_id", "ticker_case"],
+    )
+    @pytest.mark.parametrize("grade", [POST, PRE], ids=["at_post", "at_pre"])
+    def test_a_repointed_leg_is_drift_whatever_its_grade_reads(self, leg, grade):
+        # #8126 review P2: the banked pre-image belongs to the leg the run wrote,
+        # so neither restoring onto a changed leg nor closing it as already_pre.
+        now = (leg, grade)
         r, a, d = restore_m.classify([self._b()], {1: now})
         assert (len(r), len(a)) == (0, 0) and d == [(self._b(), now)]
 
