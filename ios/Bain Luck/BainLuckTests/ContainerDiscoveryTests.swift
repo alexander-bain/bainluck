@@ -1,4 +1,6 @@
 import Foundation
+import SwiftUI
+import UIKit
 import XCTest
 @testable import Bain_Luck
 
@@ -253,5 +255,35 @@ final class ContainerDiscoveryViewModelTests: XCTestCase {
         await older.value
         XCTAssertTrue(vm.entries.isEmpty)
         XCTAssertTrue(vm.failedLeagues.isEmpty)
+    }
+}
+
+/// #9989 — build 33 decoded both published NFL weeks and drew neither: the
+/// section's `.task` sat on a `Group` that is empty until the first read lands,
+/// so the first read never started. This runs the real view, on screen, with no
+/// entries, and asks only whether a read begins.
+final class BrowseCollectionsViewStartsItsFirstRead9989Tests: XCTestCase {
+    @MainActor
+    func testTheFirstReadStartsWhileTheSectionHasNoEntries() async throws {
+        let started = expectation(description: "a discovery read started")
+        let service = ContainerDiscoveryDeferredService(signals: [1: started])
+        let scene = UIApplication.shared.connectedScenes.compactMap { $0 as? UIWindowScene }.first
+        let window = scene.map { UIWindow(windowScene: $0) } ?? UIWindow()
+        window.frame = CGRect(x: 0, y: 0, width: 390, height: 844)
+        // Hosted the way Browse hosts it: a sibling inside a stack. As a root view
+        // an empty `Group` still carries its modifiers, so a bare host is vacuous.
+        let browse = ScrollView {
+            VStack(alignment: .leading, spacing: 26) {
+                Text("Browse")
+                BrowseCollectionsView(service: service)
+                Text("Leagues")
+            }
+        }
+        window.rootViewController = hostForMeasurement(browse)
+        window.makeKeyAndVisible()
+        await fulfillment(of: [started], timeout: 3)
+        await service.stop()
+        window.isHidden = true
+        window.rootViewController = nil
     }
 }
