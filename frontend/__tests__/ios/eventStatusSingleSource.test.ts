@@ -705,10 +705,19 @@ describe("#4018 — a card stops forecasting a game that can never be graded", (
     // own answer, and the two `not.toMatch`es below are the point: a literal
     // `true` would restore the defect while leaving every other assertion —
     // here and in Swift — green.
+    //
+    // #10076 MOVED THE TEXT, not the rule: the caption now reaches the screen
+    // as the `caption:` argument of `PropsStatGroupHeader` (so a narrow column
+    // wraps it under the stat name instead of clipping the name), and that
+    // header draws it with `Text(caption)`. Both halves are pinned, so
+    // re-inlining a literal at either end is still red here.
     const props = read("Components/PlayerPropsCardView.swift");
     expect(props).toMatch(
-      /Text\(EventState\.propsChanceCaption\(\s*eventStatus, commenceTime: commenceTime, hasGradedRung: hasGradedRung\s*\)\)/,
+      /PropsStatGroupHeader\(\s*label: cleanStatLabel\(group\.type, player: card\.name\)\.uppercased\(\),\s*caption: EventState\.propsChanceCaption\(\s*eventStatus, commenceTime: commenceTime, hasGradedRung: hasGradedRung\s*\),/,
     );
+    const header = read("Components/PropsStatGroupHeader.swift");
+    expect(header).toMatch(/if let caption \{\s*Text\(caption\)/);
+    expect(header).not.toMatch(/Text\("chance of hitting"\)/);
     expect(props).not.toMatch(/Text\("chance of hitting"\)/);
     expect(props).not.toMatch(/hasGradedRung: (?:true|false)\b/);
     // ...and the flag is the group's, answered by the same `verdict(for:)` that
