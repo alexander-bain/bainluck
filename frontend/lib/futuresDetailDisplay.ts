@@ -1310,14 +1310,25 @@ export function sortFuturesOutcomes<T extends SortableOutcome>(
  *
  * Collapsed, never dropped (gotcha #43): the rows stay reachable, keep their
  * served `rank`, and render in the normal row presentation.
+ *
+ * #10066 — `isGraded`: a row the render prints a VERDICT on is not numberless.
+ * `OutcomeRow` prints `Won · 100% · Settled` / `Lost · 0% · Settled` off
+ * `outcomeRowVerdict` without ever reading `probability`, so the null test above
+ * stopped being the render's own the moment a settled leg could arrive priceless.
+ * `/futures/60544002` (Nocun–Staniczek, 2026-10-01 12:20Z) is that payload:
+ * `status: resolved`, both legs `probability: null`, `is_winner` true/false with
+ * `resolution_source: api_settlement` — and "Final Results" read "No current prices
+ * for this market." over a closed `More outcomes (2)` holding the winner. The
+ * caller passes the row's own verdict test, so the two can never disagree.
  */
 export function partitionOutcomesByPrice<T extends { probability: number | null }>(
   outcomes: readonly T[],
+  isGraded?: (outcome: T) => boolean,
 ): { listed: T[]; folded: T[] } {
   const listed: T[] = [];
   const folded: T[] = [];
   for (const outcome of outcomes) {
-    if (outcome.probability == null) folded.push(outcome);
+    if (outcome.probability == null && !isGraded?.(outcome)) folded.push(outcome);
     else listed.push(outcome);
   }
   return { listed, folded };
@@ -1357,7 +1368,9 @@ export function partitionOutcomesByPrice<T extends { probability: number | null 
  * resolved-specific alternative would have to say something about what was
  * recorded, and nothing on this payload supports such a claim (#6301's lesson:
  * no verdict beats a wrong one). Measured: settled markets carry `0.0`, not
- * `null`, so the reachable population here is open markets.
+ * `null`, so the reachable population here is open markets. #10066: a settled
+ * board whose priceless legs ARE graded (`api_settlement`) lists them, so it
+ * never reaches this sentence — only ungraded numberless rows still do.
  *
  * The folded rows are NOT dropped (gotcha #43) — the caller keeps them behind
  * `More outcomes (N)`, which is D102's shape for present-but-priceless rows.

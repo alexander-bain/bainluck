@@ -582,9 +582,17 @@ export default function FuturesDetailPage({ params }: FuturesDetailPageProps) {
   // about the list a reader is looking at, and folding rows out of that list
   // without moving its counters is how a "Show all 19" button comes to reveal
   // fourteen rows.
+  //
+  // #10066: a graded row prints `Won`/`Lost · 100%`/`0%` with no price at all, so
+  // it is listed by the row's own verdict test, never folded under "No current
+  // prices" on a settled board.
   const { listed: pricedOutcomes, folded: unpricedOutcomes } = useMemo(
-    () => partitionOutcomesByPrice(sortedOutcomes),
-    [sortedOutcomes],
+    () =>
+      partitionOutcomesByPrice(
+        sortedOutcomes,
+        (outcome) => outcomeRowVerdict(outcome, market?.status === "resolved") !== null,
+      ),
+    [sortedOutcomes, market?.status],
   );
 
   // Limit displayed outcomes unless "show all" is enabled
