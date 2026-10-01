@@ -100,8 +100,9 @@ def test_non_200_and_non_get_are_untouched():
 
 
 def test_polled_event_reads_carry_no_stale_window():
-    # The event page polls these; a stale window hands each poll the previous body.
+    # The event and league pages poll these; a stale window hands each poll the previous body.
     for path in (
+        "/api/events",
         "/api/events/15322176",
         "/api/events/15322176/history",
         "/api/events/15322176/game-markets",
@@ -112,7 +113,6 @@ def test_polled_event_reads_carry_no_stale_window():
 
 def test_unpolled_event_routes_keep_their_stale_window():
     for path in (
-        "/api/events",
         "/api/events/search",
         "/api/events/typeahead",
         "/api/events/live",
@@ -147,6 +147,21 @@ def test_every_event_page_poll_reaches_the_origin():
         window = _directive_window_s(_cc(path))
         for cadence_ms in (live_ms, chart_ms):
             assert window * 1000 < cadence_ms, (path, window, cadence_ms)
+
+
+def test_every_league_page_poll_reaches_the_origin():
+    """#10095 — the league page polls the bare event list; same rule as above."""
+    import pathlib
+    import re
+
+    root = pathlib.Path(__file__).resolve().parents[2] / "frontend"
+    page = (root / "app/sports/[key]/page.tsx").read_text()
+    poll = re.search(
+        r"fetchEvents\(\{ sport: sportKey, days: LEAGUE_WINDOW_DAYS[^\n]*\n\s*\{ refreshInterval: (\d+)",
+        page,
+    )
+    window = _directive_window_s(_cc("/api/events"))
+    assert window * 1000 < int(poll.group(1)), (window, poll.group(1))
 
 
 def test_unmatched_public_path_gets_no_directive():
