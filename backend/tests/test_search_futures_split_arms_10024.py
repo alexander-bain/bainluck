@@ -251,6 +251,16 @@ def _expanded(q):
         ("los angeles dodgers world series", 0),  # 5 terms: past the cap
         ("us open", 0),                    # `us` cannot use a trigram index
         ("f1 world championship", 0),
+        # every term one trigram: the planner drives from outcomes and `%red%`
+        # read 2.6-4.8 s in production for no row
+        ("red sox", 0),
+        ("nfl mvp", 0),
+        ("red sox mvp", 0),
+        # one longer term drives the plan, so a three-letter option still splits
+        ("sox world series", 4),
+        ("usa world cup", 4),
+        ("lakers championship", 2),
+        ("boston red sox", 4),
     ],
 )
 def test_the_arms_built_per_query(q, arms):
@@ -316,3 +326,14 @@ async def test_a_real_error_in_the_dropdown_read_is_not_swallowed():
 
     with pytest.raises(RuntimeError):
         await ev._typeahead_split_rows(_Boom(), "STMT", None)
+
+
+@pytest.mark.parametrize(
+    "term, single",
+    [("red", True), ("sox", True), ("nfl", True), ("mets", False),
+     ("49ers", False), ("st.louis", False), ("u.s.a", True)],
+)
+def test_single_trigram_term(term, single):
+    """The longest alphanumeric run decides, split as pg_trgm splits (`u.s.a` has
+    no trigram at all — `_has_extractable_trigram` refuses it first)."""
+    assert ev._is_single_trigram_term(term) is single

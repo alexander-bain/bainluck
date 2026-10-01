@@ -173,11 +173,22 @@ async def test_the_outcome_run_must_be_one_option(search):
 
 
 async def test_a_full_window_never_reads_the_split_arms(search):
-    """`red sox` fills its window from the name arm, so the split arms are not
-    paid for: production measured them at 1.5-2.7 s on this query for no row."""
-    payload = await search("red sox")
+    """`boston red sox` builds split arms and fills its window from the name arm
+    here, so the split arms are not paid for."""
+    payload = await search("boston red sox")
     assert len(_futures(payload)) >= 1
     assert _split_state(payload) == "skipped", payload["debug_timing"]
+
+
+async def test_an_all_single_trigram_query_builds_no_split_arms(search):
+    """`red sox` does NOT fill its window in production — this fixture's 25 props
+    are why #10030 believed it would. Live, its split read hit the 1 s budget on
+    most requests (`%red%` driving from outcomes, 2.6-4.8 s alone). Every term is
+    one trigram, so no arm is built: `absent`, never a read. The rows it shows
+    are the name arm's, unchanged."""
+    payload = await search("red sox")
+    assert _split_state(payload) == "absent", payload["debug_timing"]
+    assert any("Red Sox" in n for n in _futures(payload)), _futures(payload)
 
 
 async def test_without_the_split_arms_the_page_is_empty_again(search, monkeypatch):
