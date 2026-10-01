@@ -54,6 +54,12 @@ _AUTHORITY_STOPPAGE_WORDS = {
 }
 
 
+def authority_stoppage_label(value: str | None) -> str | None:
+    """ESPN's word for a game called off ("Postponed", "Canceled") when that is
+    exactly what ``value`` holds, else None. Never a period of play."""
+    return _AUTHORITY_STOPPAGE_WORDS.get(str(value or "").strip().lower())
+
+
 def _ordinal_inning(value: str) -> str | None:
     try:
         inning = int(value)
@@ -111,7 +117,7 @@ def normalize_live_game_state(
     # `authorityStoppageLabel` (#8810) printed "No result reported" over a
     # "Start" line for Orioles @ Yankees 15319530, stored `Postponed`. The same
     # exact words the web allowlists; ESPN's "0:00" filler clock stays dropped.
-    stoppage = _AUTHORITY_STOPPAGE_WORDS.get(str(period or "").strip().lower())
+    stoppage = authority_stoppage_label(period)
     if stoppage:
         return stoppage, None
 

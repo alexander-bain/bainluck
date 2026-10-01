@@ -19,6 +19,7 @@ from app.utils.event_completion import authority_may_settle, play_resumes
 from app.utils.game_state import (
     WALL_CLOCK_SLACK_SECONDS,
     _sanitize_period,
+    authority_stoppage_label,
     clock_outruns_wall_time,
     game_seconds_elapsed_at_least,
     live_write_would_revert,
@@ -269,6 +270,15 @@ def espn_pregame_filler(
     writer (``mlb_sync``'s ``"Top 1st"``, StatPal's countdown) differs from
     the board's and stays evidence, which is the point of the refusal.
 
+    One stored period is withdrawn without matching the board: ESPN's own
+    stoppage word ("Postponed", "Canceled") left over from the date the fixture
+    was called off (#9959). A board that now says ``scheduled`` has re-dated it,
+    and the word is a statement that nobody played, never a period of play —
+    but :func:`play_evidence` counts any period, so on 15314000 (RBNY v St.
+    Louis, postponed 26 Sep, re-dated 30 Sep 23:30Z) it refused the demotion
+    and the promoter's hold, and search drew a green ``Postponed 0'`` live pill
+    over a match ESPN still read ``pre``.
+
     Empty unless the board says ``scheduled`` with no score of its own, and a
     stored score is withdrawn only when it is zero — a non-zero score is play
     and the caller never reaches a demotion on it. Pure.
@@ -276,7 +286,10 @@ def espn_pregame_filler(
     if espn_status != "scheduled" or play_evidence(espn_home_score, espn_away_score):
         return {}
     withdrawn: dict = {}
-    if period is not None and espn_period is not None and period == espn_period:
+    if period is not None and (
+        (espn_period is not None and period == espn_period)
+        or authority_stoppage_label(period)
+    ):
         withdrawn["period"] = None
     if game_clock is not None and espn_clock is not None and game_clock == espn_clock:
         withdrawn["game_clock"] = None
