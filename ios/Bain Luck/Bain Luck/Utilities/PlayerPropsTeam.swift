@@ -82,4 +82,55 @@ enum PlayerPropsTeam {
         case .unknown: return nil
         }
     }
+
+    /// #6866 (native half) — THE TEAM'S OWN LADDERS ARE FILED AS A PLAYER'S.
+    ///
+    /// The server classifies `Pittsburgh vs Cleveland: Team Sacks` as a player
+    /// prop and serves its rows with `player_team: null` (measured on
+    /// `/api/events/14780550/game-markets`, 2026-10-01: every `Team Sacks` and
+    /// `Team Total Yards` row). So the subject `Pittsburgh` drew as a grey
+    /// letter **P** with no side, and the Steelers filter hid the Steelers'
+    /// own sacks ladder. Moving these rows server-side is a trap (#6866: the
+    /// points range guard deletes 38 of 42 rungs), so the client names the
+    /// side it can PROVE and leaves the rows where they are.
+    ///
+    /// A subject is a team only when all three hold — any miss is `.unknown`,
+    /// the no-claim state above, never a guess:
+    ///
+    /// 1. the stat phrase after the colon starts with the word `Team `;
+    /// 2. the subject is, verbatim, one of the two names in THIS market's own
+    ///    `A vs B` prefix — which is what keeps esports organisations
+    ///    (`Team Liquid vs Karmine Corp`) and players out;
+    /// 3. the subject is the whole name or the leading words of exactly ONE of
+    ///    this game's two teams. Two clubs that share a city (`Los Angeles`)
+    ///    answer both, and a name that answers both proves neither.
+    static func teamSubjectSide(
+        subject: String,
+        marketName: String,
+        homeTeam: String,
+        awayTeam: String
+    ) -> Side {
+        let subject = subject.trimmingCharacters(in: .whitespaces)
+        guard !subject.isEmpty,
+              let colon = marketName.firstIndex(of: ":") else { return .unknown }
+        let matchup = marketName[..<colon].trimmingCharacters(in: .whitespaces)
+        let phrase = marketName[marketName.index(after: colon)...]
+            .trimmingCharacters(in: .whitespaces)
+        guard phrase.hasPrefix("Team ") else { return .unknown }
+
+        let names = matchup
+            .replacingOccurrences(of: " vs. ", with: " vs ")
+            .components(separatedBy: " vs ")
+            .map { $0.trimmingCharacters(in: .whitespaces) }
+        guard names.count == 2, names.contains(subject) else { return .unknown }
+
+        func isNamed(_ team: String) -> Bool {
+            team == subject || team.hasPrefix(subject + " ")
+        }
+        switch (isNamed(homeTeam), isNamed(awayTeam)) {
+        case (true, false): return .home
+        case (false, true): return .away
+        default: return .unknown
+        }
+    }
 }

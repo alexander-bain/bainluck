@@ -523,7 +523,11 @@ struct EventDetailView: View {
                             awayColor: teamColors(event).away,
                             eventStatus: event.status,
                             commenceTime: event.commenceTime?.asDate,
-                            boxScore: vm.relatedFutures?.boxScore
+                            boxScore: vm.relatedFutures?.boxScore,
+                            // #6866 — the same crests the hero draws.
+                            homeLogoURL: event.homeTeamData?.logoLarge ?? event.homeTeamData?.logoSmall,
+                            awayLogoURL: event.awayTeamData?.logoLarge ?? event.awayTeamData?.logoSmall,
+                            sportKey: event.sport
                         )
                     }
                     // Special Event Markets (game props, novelty, MVP)

@@ -13,6 +13,13 @@ struct PlayerPropsCardView: View {
     /// clock, so the clock has to travel.
     var commenceTime: Date?
     var boxScore: [String: [String: Double]]?
+    /// #6866 — the crests a TEAM's own ladder card draws (`Team Sacks`,
+    /// `Team Total Yards`), in place of the letter a player without a photo
+    /// gets. nil keeps the old letter: `TeamLogoView` still climbs its ESPN
+    /// rung by name, so an absent url is not an absent crest.
+    var homeLogoURL: String? = nil
+    var awayLogoURL: String? = nil
+    var sportKey: String? = nil
 
     @State private var teamFilter: String = "all"
     @State private var expandedCards: Set<String> = []
@@ -48,6 +55,11 @@ struct PlayerPropsCardView: View {
         let name: String
         let initials: String
         let headshotURL: URL?
+        /// #6866 — set only when the card's subject is PROVEN to be one of this
+        /// game's two teams (``PlayerPropsTeam/teamSubjectSide(subject:marketName:homeTeam:awayTeam:)``):
+        /// that team's full name, so the header draws its crest. nil for every
+        /// player and for any team name the rule could not pin to one side.
+        let crestTeam: String?
         /// #4919 — both optional, and both nil together: a card that cannot
         /// name its side prints no label and answers only the "All" filter.
         let team: String?
@@ -139,7 +151,24 @@ struct PlayerPropsCardView: View {
             // measured fixture is rescued this way, and no player's rows
             // disagree — but this is the same shape the headshot above uses,
             // and `first` would throw away an answer we were handed.)
-            let side = PlayerPropsTeam.side(for: props.compactMap({ $0.prop.playerTeam }).first)
+            let servedSide = PlayerPropsTeam.side(for: props.compactMap({ $0.prop.playerTeam }).first)
+            // #6866 — a team's own ladders arrive with no `player_team` at all.
+            // Only consulted when the server named no side, so a served side is
+            // never overruled; the first row that PROVES a team wins, like above.
+            let subjectSide: PlayerPropsTeam.Side = props.lazy
+                .map { PlayerPropsTeam.teamSubjectSide(
+                    subject: player,
+                    marketName: $0.prop.marketName,
+                    homeTeam: homeTeam,
+                    awayTeam: awayTeam
+                ) }
+                .first { $0 != .unknown } ?? .unknown
+            let side = servedSide != .unknown ? servedSide : subjectSide
+            let crestTeam: String? = switch subjectSide {
+            case .home: homeTeam
+            case .away: awayTeam
+            case .unknown: nil
+            }
             let teamLabel = PlayerPropsTeam.label(for: side)
             let color = PlayerPropsTeam.color(for: side, home: homeColor, away: awayColor)
 
@@ -180,6 +209,7 @@ struct PlayerPropsCardView: View {
                 name: player,
                 initials: initials,
                 headshotURL: headshotURL,
+                crestTeam: crestTeam,
                 team: PlayerPropsTeam.filterValue(for: side),
                 teamLabel: teamLabel,
                 color: color,
@@ -287,7 +317,16 @@ struct PlayerPropsCardView: View {
         VStack(alignment: .leading, spacing: 6) {
             // Header: headshot + name + team label
             HStack(spacing: 8) {
-                if let url = card.headshotURL {
+                if let crestTeam = card.crestTeam {
+                    TeamLogoView(
+                        url: crestTeam == homeTeam ? homeLogoURL : awayLogoURL,
+                        teamName: crestTeam,
+                        color: card.color,
+                        size: 36,
+                        sportKey: sportKey,
+                        opponentName: crestTeam == homeTeam ? awayTeam : homeTeam
+                    )
+                } else if let url = card.headshotURL {
                     AsyncImage(url: url) { phase in
                         switch phase {
                         case .success(let image):
