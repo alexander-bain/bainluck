@@ -4851,6 +4851,8 @@ async def _fetch_futures_window(
     outcome_arm,
     deadline: float,
     tier1_limit: int | None = None,
+    split_arms: Sequence = (),
+    split_report: dict | None = None,
 ) -> tuple[list, str]:
     """The futures window, fetched TIER-ORDERED instead of all at once.
 
@@ -4916,6 +4918,46 @@ async def _fetch_futures_window(
         )
     else:  # pragma: no cover - the name arm is always built
         tier1_rows = []
+
+    # #10024: the split arms (`_split_futures_arms`) rank tier 1.5, between the
+    # tier<=1 arms and outcome-only rows, and are read only when tier<=1 comes back
+    # SHORT. On a page tier<=1 fills, no split row can reach it (tier is the first
+    # sort key), and `red sox` / `new york` paid 1.5-3.4 s for the split arms there
+    # for no row. A short tier<=1 read is the COMPLETE tier<=1 set, so re-reading it
+    # WITH the split arms is the exact tier<2 page of the full order, and every
+    # proof below (outcome-only rows score 2) reads the rows it always read.
+    # Bounded like the outcome arm; over its bound, the page is the rows in hand.
+    _split_state = "absent"
+    if split_arms and len(tier1_rows) >= _SEARCH_FUTURES_WINDOW:
+        _split_state = "skipped"
+    elif split_arms:
+        _split_state = "shed"
+        split_bound_ms = _search_outcome_arm_bound_ms(deadline)
+        if split_bound_ms is not None:
+            await _apply_search_statement_timeout(db, deadline, bound_ms=split_bound_ms)
+            _split_stmt = window_query(candidates_in([*tier1_arms, *split_arms]))
+            if tier1_limit is not None:
+                _split_stmt = _split_stmt.limit(tier1_limit)
+            split_savepoint = await db.begin_nested()
+            try:
+                tier1_rows = list(
+                    (await db.execute(_split_stmt)).scalars().unique().all()
+                )
+            except Exception as exc:  # noqa: BLE001 — re-raised unless it is the bound
+                await split_savepoint.rollback()
+                if not _is_query_timeout(exc):
+                    raise
+                logger.warning(
+                    "search futures split arms exceeded their %d ms budget — "
+                    "keeping the %d tier<=1 rows", split_bound_ms, len(tier1_rows),
+                )
+                _split_state = "budget_exceeded"
+            else:
+                await split_savepoint.commit()
+                _split_state = "merged"
+            await _apply_search_statement_timeout(db, deadline)
+    if split_report is not None:
+        split_report["state"] = _split_state
 
     if outcome_arm is None:
         # Nothing was split: the tier<=1 arms ARE the whole arm set.
@@ -6214,6 +6256,73 @@ def _team_nickname_futures_arms(terms: list[str]) -> list:
                 *[_build_expanded_ilike(FuturesMarket.name, t, e) for t, e in expanded],
             )
         )
+    return arms
+
+
+# #10024: the largest query the split arms below are built for. Two runs per cut
+# and len-1 cuts, so 4 terms is 6 arms; a longer query is a sentence, not a
+# team-plus-competition pair, and the arms would multiply for no reader.
+_SPLIT_FUTURES_MAX_TERMS = 4
+
+
+def _split_futures_arms(expanded: list[tuple[str, str | None]]) -> list:
+    """Futures arms for a query that names a competition AND one of its options (#10024).
+
+    `dodgers world series` returned an empty page on 2026-10-01, mid-postseason,
+    with `MLB World Series Champion 2026` open and `Los Angeles Dodgers` one of
+    its outcomes. Every recall arm wants the WHOLE query in one field — all of
+    it in the market name, or all of it in the outcomes — and a reader naming
+    the board and the team they care about splits it across the two. The same
+    held for `yankees world series`, `chiefs super bowl`; `phillies` alone and
+    `world series` alone each found the board.
+
+    One arm per contiguous cut of the query, each orientation: the run on one
+    side matches the market NAME (``_futures_name_match_term``, the primary
+    arm's own recall-and-about-ness test, so `nba` cannot ride in on
+    Zhiyenbayeva), and the run on the other side is spelled as whole words in
+    ONE outcome (`red sox` must be one option, not `Red Bull` and `Sox` apart).
+
+    Every term must be trigram-servable (`_has_extractable_trigram`), on both
+    sides, or no arm is built: a `%us%` pattern seq-scans, the LAT-P006 reason
+    `_multi_term_outcome_match` records, and `us open` measured 0.3-1.9 s here
+    for zero rows. Contiguous cuts only, and only up to
+    `_SPLIT_FUTURES_MAX_TERMS`, so 3 terms cost 4 arms rather than every subset.
+
+    The outcome test is a correlated EXISTS, NOT `_market_has_outcome`'s ARRAY
+    InitPlan, because here the NAME run is the selective side. The InitPlan
+    resolves every outcome spelling `series` before it looks at a single name;
+    the EXISTS probes only the markets the name run returned, by `market_id`.
+    Production 2026-10-01, the union of a query's arms, two reads each:
+
+        red sox world series   ARRAY 1,892-3,710 ms   EXISTS 44-90 ms
+        new york yankees       ARRAY   699-965 ms     EXISTS 125-245 ms
+        chiefs super bowl      ARRAY    99-289 ms     EXISTS 30-47 ms
+        lebron james           ARRAY   160-395 ms     EXISTS 53-72 ms
+
+    Same rows in both forms on every query.
+
+    UNION arms like the alias and nickname arms, so recall can only grow and a
+    one-term query (returns ``[]``) compiles byte-identical SQL.
+    """
+    if not 2 <= len(expanded) <= _SPLIT_FUTURES_MAX_TERMS:
+        return []
+    if not all(_has_extractable_trigram(t) for t, _e in expanded):
+        return []
+    arms = []
+    for cut in range(1, len(expanded)):
+        head, tail = expanded[:cut], expanded[cut:]
+        for name_run, outcome_run in ((head, tail), (tail, head)):
+            arms.append(
+                and_(
+                    *[_futures_name_match_term(t, e) for t, e in name_run],
+                    select(FuturesOutcome.id)
+                    .where(
+                        FuturesOutcome.market_id == FuturesMarket.id,
+                        *[_outcome_whole_word(t) for t, _e in outcome_run],
+                    )
+                    .exists(),
+                )
+            )
     return arms
 
 
@@ -11435,6 +11544,12 @@ async def search_events(
     _futures_nickname_arms = _team_nickname_futures_arms(terms)
     _futures_where_or.extend(_futures_nickname_arms)
 
+    # #10024: a team-plus-competition query (`dodgers world series`) splits across
+    # the market name and one outcome. NOT a `_futures_where_or` arm: it is read
+    # only when the tier<=1 window comes back short (`_fetch_futures_window`), and
+    # ranked tier 1.5 in `_futures_tier_whens`.
+    _futures_split_arms = _split_futures_arms(expanded)
+
     # LAT-P006/#1494: the recall arms are combined with UNION, not OR.
     #
     # MEASURED in production 2026-08-08 (3.2M-row `futures_outcomes`, 3 GB), not
@@ -11664,6 +11779,13 @@ async def search_events(
     # market-quality prior happens to sit above it.
     if _futures_nickname_arms:
         _futures_tier_whens.append((or_(*_futures_nickname_arms), 1))
+    # #10024: half the query in the name and the rest naming one option — a
+    # tier of its own, BELOW the tier-1 inferences and above outcome-only rows.
+    # The window reads these arms only when tier<=1 comes back short, and that
+    # skip is exact only if no split row can outrank a tier-1 row; as a tier-1
+    # row itself it could (the property suite found it on 5 of 40 corpora).
+    if _futures_split_arms:
+        _futures_tier_whens.append((or_(*_futures_split_arms), 1.5))
     _futures_name_tier = case(*_futures_tier_whens, else_=2)
     # #8805: the named year, inside the tier and above the rank. `[]` without one.
     _futures_season_key = _futures_season_order_key(_intent)
@@ -11759,6 +11881,8 @@ async def search_events(
     # A stage that never ran and a stage that ran and skipped the arm are
     # different facts (gotcha #53).
     _futures_outcome_arm = "not_reached"
+    # #10024: the split arms' state, beside the outcome arm's (gotcha #53).
+    _futures_split_report: dict = {"state": "not_reached"}
     # #8704: tier<=1 rows ranked 21-60, fetched by the window's own statement.
     # See `_futures_refill_in_hand` for when they ARE the collapse refill.
     _futures_spare_rows: list = []
@@ -11779,6 +11903,8 @@ async def search_events(
                 futures_outcome_match,
                 _deadline,
                 tier1_limit=_SEARCH_FUTURES_WINDOW + _SEARCH_FUTURES_REFILL,
+                split_arms=_futures_split_arms,
+                split_report=_futures_split_report,
             )
             _futures_spare_rows = futures_markets_raw[_SEARCH_FUTURES_WINDOW:]
             futures_markets_raw = futures_markets_raw[:_SEARCH_FUTURES_WINDOW]
@@ -13043,7 +13169,8 @@ async def search_events(
                              "total_ms": sum(_stage_ms.values()),
                              "futures_outcome_arm": _futures_outcome_arm,
                              "futures_refill_source": _futures_refill_source,
-                             "futures_sunk_slot_arm": _futures_sunk_slot_arm}}
+                             "futures_sunk_slot_arm": _futures_sunk_slot_arm,
+                             "futures_split_arm": _futures_split_report["state"]}}
            if debug_timing else {}),
     }
 
