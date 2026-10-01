@@ -115,6 +115,25 @@ describe("decidedSetResult", () => {
     expect(decidedSetResult({ scope: "Set 1", first: "Kostyuk", second: "Rybakina" }, AWAY_UP)).toBeNull();
   });
 
+  test("#10048: a full-name market pairs with a SURNAME-only event, either order", () => {
+    // /events/15320811, 2026-10-01: the event names `Zverev` / `Norrie`, and
+    // Polymarket writes `Set 2 Winner: Alexander Zverev vs Cameron Norrie`. A
+    // one-way containment test placed neither side.
+    const surnames = { side: "home" as const, homeTeam: "Zverev", awayTeam: "Norrie" };
+    expect(decidedSetResult({ scope: "Set 2", first: "Alexander Zverev", second: "Cameron Norrie" }, surnames))
+      .toBe("Alexander Zverev won Set 2");
+    expect(decidedSetResult({ scope: "Set 2", first: "Cameron Norrie", second: "Alexander Zverev" }, surnames))
+      .toBe("Alexander Zverev won Set 2");
+  });
+
+  test("#10048: on a surname event two players sharing it still refuse", () => {
+    const zverevs = { side: "home" as const, homeTeam: "Zverev", awayTeam: "Zverev" };
+    expect(decidedSetResult({ scope: "Set 1", first: "Alexander Zverev", second: "Mischa Zverev" }, zverevs)).toBeNull();
+    // And a full-name market from another match still places nobody.
+    const surnames = { side: "home" as const, homeTeam: "Zverev", awayTeam: "Norrie" };
+    expect(decidedSetResult({ scope: "Set 1", first: "Jannik Sinner", second: "Cameron Norrie" }, surnames)).toBeNull();
+  });
+
   test("no parts and no winner both refuse", () => {
     expect(decidedSetResult(null, AWAY_UP)).toBeNull();
     expect(decidedSetResult({ scope: "Set 1", first: "Kostyuk", second: "Noskova" }, null)).toBeNull();

@@ -1468,18 +1468,21 @@ export function decidedSetResult(
 ): string | null {
   if (!parts || !winner) return null;
   const { first, second } = parts;
-  const firstHome = sideMatchesTeam(first, winner.homeTeam);
-  const firstAway = sideMatchesTeam(first, winner.awayTeam);
-  const secondHome = sideMatchesTeam(second, winner.homeTeam);
-  const secondAway = sideMatchesTeam(second, winner.awayTeam);
+  // #10048 — either way round, through the door #3703 and #5528 already use.
+  // The event can name the players by surname (`Zverev` / `Norrie`,
+  // /events/15320811, 2026-10-01) while Polymarket writes `Set 2 Winner:
+  // Alexander Zverev vs Cameron Norrie`; a one-way containment test placed
+  // neither side and left set 2 reading `last quote >99%` on a 2–0 final.
+  // `eventSideForLabel` is null for a side matching BOTH teams or neither,
+  // which is what keeps door 3: two Bryans place no side, so no pairing forms
+  // and the row keeps its frozen quote.
+  const firstSide = eventSideForLabel(first, winner.homeTeam, winner.awayTeam);
+  const secondSide = eventSideForLabel(second, winner.homeTeam, winner.awayTeam);
 
-  // A clean pairing, in one direction or the other. Each clause demands that
-  // its side match ONE team and not the other, which is what closes door 3: two
-  // Bryans make `firstHome` and `firstAway` both true, so neither pairing forms
-  // and the row keeps its frozen quote. (The two clauses cannot both hold —
-  // they disagree on `firstAway` — so this is an either, not an exclusive or.)
-  const straight = firstHome && !firstAway && secondAway && !secondHome;
-  const swapped = firstAway && !firstHome && secondHome && !secondAway;
+  // A clean pairing, in one direction or the other: each side placed, and on
+  // different teams.
+  const straight = firstSide === "home" && secondSide === "away";
+  const swapped = firstSide === "away" && secondSide === "home";
   if (!straight && !swapped) return null;
 
   const homeSide = straight ? first : second;
