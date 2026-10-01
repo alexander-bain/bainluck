@@ -203,10 +203,13 @@ async def grade_open_contract_leg(session, *, market_id: int, outcome_id: int,
 
 
 def kalshi_open_contract_stmt():
-    """Every unsettled Kalshi outcome with a ticker: (ticker, market_id, outcome_id).
+    """Every unsettled Kalshi outcome with a ticker:
+    (ticker, market_id, outcome_id, market event_id, market ticker).
 
     No event join and no event window — that is the point. The caller removes
-    the tickers the linked slate already carries.
+    the tickers the linked slate already carries. The last two columns are the
+    market's own row, read so a game winner can be bridged to its event's blend
+    (:func:`open_contract_event_candidates`) without re-imposing the window.
     """
     from sqlalchemy import or_, select, text
 
@@ -217,6 +220,8 @@ def kalshi_open_contract_stmt():
             FuturesOutcome.external_id,
             FuturesOutcome.market_id,
             FuturesOutcome.id,
+            FuturesMarket.event_id,
+            FuturesMarket.external_id,
         )
         .join(FuturesMarket, FuturesOutcome.market_id == FuturesMarket.id)
         .where(
@@ -246,7 +251,8 @@ def open_contract_ticker_map(
     already carries is never subscribed twice.
     """
     out: dict[str, tuple[int, int]] = {}
-    for ext_id, market_id, outcome_id in rows:
+    for row in rows:
+        ext_id, market_id, outcome_id = row[0], row[1], row[2]
         if not ext_id:
             continue
         ticker = ext_id.upper()
@@ -254,6 +260,78 @@ def open_contract_ticker_map(
             continue
         out[ticker] = (market_id, outcome_id)
     return out
+
+
+# ── the event bridge (#9484, existing cohort → event blend) ──────────────────
+#
+# Admitted for prices only, an open game-winner contract on an event more than
+# 6 h out streamed its stored price and then stopped: the flush re-stamps the
+# event blend from `event_id_by_outcome`, which was built from the linked slate
+# alone, so the number on the card — `Event.win_probability_sources`, not the
+# outcome row — waited for the REST poll. Production 2026-10-01 14:02Z: PIT @
+# CLE (event 14780550, kickoff 10.2 h out) had its winner contract
+# `KXNFLGAME-26OCT01PITCLE` subscribed on this arm and its event stream refused
+# `not_live`. The bridge hands the flush the event behind the contracts it is
+# ALREADY carrying. It adds no ticker to any subscription.
+#
+# Only game winners: `feeds_win_prob_blend` on the market ticker is the rule the
+# blend itself applies to every Kalshi speaker (`live_blend._reading_for_entry`),
+# so a spread, total or prop moving can never cost an event a refresh it cannot
+# change. Only events still to be decided: scheduled or live, no
+# `completed_at` — what the slate's own window admits, minus its horizon.
+
+#: Event statuses whose blend the bridge may re-stamp. Suspended events keep
+#: their own slate arm (`ws_slate.suspended_open_market_arm`).
+BRIDGE_EVENT_STATUSES = ("scheduled", "live")
+
+
+def open_contract_event_candidates(
+    rows: Iterable[tuple],
+    linked: Mapping[str, tuple[int, int]],
+) -> dict[int, int]:
+    """outcome_id → event_id for admitted open contracts that are game winners.
+
+    Same exclusions as :func:`open_contract_ticker_map` (no ticker, or a ticker
+    the linked slate carries), plus: the market has an event and its ticker
+    feeds the win-probability blend. The event's own state is checked by the
+    caller (:func:`open_contract_bridge_event_stmt`).
+    """
+    from app.utils.prediction_market_matching import feeds_win_prob_blend
+
+    out: dict[int, int] = {}
+    for row in rows:
+        if len(row) < 5:
+            continue
+        ext_id, _market_id, outcome_id, event_id, market_ticker = row[:5]
+        if not ext_id or event_id is None or not market_ticker:
+            continue
+        if ext_id.upper() in linked:
+            continue
+        if not feeds_win_prob_blend(market_ticker):
+            continue
+        out[outcome_id] = event_id
+    return out
+
+
+def open_contract_bridge_event_stmt(event_ids: Iterable[int]):
+    """The candidate events still to be decided: id only, by primary key."""
+    from sqlalchemy import select
+
+    from app.models.models import Event
+
+    return select(Event.id).where(
+        Event.id.in_(sorted(set(event_ids))),
+        Event.completed_at.is_(None),
+        Event.status.in_(BRIDGE_EVENT_STATUSES),
+    )
+
+
+def open_contract_event_bridge(
+    candidates: Mapping[int, int], admitted_event_ids: Iterable[int],
+) -> dict[int, int]:
+    """The candidates whose event the state read admitted."""
+    admitted = set(admitted_event_ids)
+    return {oid: eid for oid, eid in candidates.items() if eid in admitted}
 
 
 def shard_tickers(

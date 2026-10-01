@@ -127,6 +127,34 @@ async def _event_status(db: AsyncSession, event_id: int) -> Optional[str]:
     ).scalar_one_or_none()
 
 
+def _in_kalshi_open_contract_bridge(market, now: datetime) -> bool:
+    """A Kalshi game winner the open-contract arm carries AND bridges to its
+    event's blend (#9484, `tasks/ws_open_contracts`), read from the row alone.
+
+    Mirrors the arm's admission (unresolved — checked by the caller — no
+    `settled_at`, not past `expiration_time`, no graded leg) and its bridge
+    (the market ticker feeds the blend). `WS_OPEN_CONTRACT_PRICES=0` turns the
+    arm off, so it turns this off too: a stream nobody publishes to is a
+    connection that only ever heartbeats.
+    """
+    from app.tasks.ws_open_contracts import open_contract_prices_enabled
+    from app.utils.prediction_market_matching import feeds_win_prob_blend
+
+    if market.source != "kalshi" or not open_contract_prices_enabled():
+        return False
+    if not feeds_win_prob_blend(market.external_id):
+        return False
+    if market.settled_at is not None:
+        return False
+    expires = market.expiration_time
+    if expires is not None:
+        if expires.tzinfo is None:
+            expires = expires.replace(tzinfo=timezone.utc)
+        if expires <= now:
+            return False
+    return all(o.is_winner is None for o in market.outcomes)
+
+
 def _market_in_quote_cohort(event, market, now: datetime) -> bool:
     """Current #9499 producer coverage, not a permanent venue-hours policy."""
     if event.completed_at is not None or market.source not in {"kalshi", "polymarket"}:
@@ -143,9 +171,11 @@ def _market_in_quote_cohort(event, market, now: datetime) -> bool:
     if event.status == "suspended":
         return start >= now - timedelta(hours=24)
     if event.status == "scheduled":
-        return start <= now + timedelta(hours=6) and (
-            market.source == "kalshi" or start >= now - timedelta(hours=24)
-        )
+        if start > now + timedelta(hours=6):
+            # #9484: beyond the slate's horizon only the open-contract arm's
+            # bridged game winner publishes this event's blend.
+            return _in_kalshi_open_contract_bridge(market, now)
+        return market.source == "kalshi" or start >= now - timedelta(hours=24)
     return False
 
 

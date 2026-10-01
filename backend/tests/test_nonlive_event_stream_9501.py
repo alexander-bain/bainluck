@@ -157,7 +157,10 @@ def test_nonlive_requires_an_unsettled_mapped_moneyline(source, change):
 
 
 @pytest.mark.parametrize("status,age,source,expected", [
-    ("scheduled", 6, "kalshi", True), ("scheduled", 6.01, "kalshi", False),
+    # #9484: past 6 h a Kalshi game winner is carried by the open-contract
+    # arm's event bridge; Polymarket has no bridge, so its horizon holds.
+    ("scheduled", 6, "kalshi", True), ("scheduled", 6.01, "kalshi", True),
+    ("scheduled", 6.01, "polymarket", False),
     ("scheduled", -25, "kalshi", True), ("scheduled", -25, "polymarket", False),
     ("scheduled", -24, "polymarket", True),
     ("suspended", -24, "kalshi", True), ("suspended", -24.01, "kalshi", False),
@@ -234,3 +237,120 @@ async def test_fold_connect_uses_publishable_contributor_but_never_overrides_can
     db.execute = AsyncMock(side_effect=responses)
     assert await route._nonlive_stream_eligible(db, 1, [1, 2]) is expected
     assert db.execute.await_count == (1 if canonical_status == "completed" or completed else 2)
+
+
+# ── #9484: the open-contract arm's event bridge, past the slate's 6 h ────────
+#
+# Production 2026-10-01 14:02:14Z: PIT @ CLE (event 14780550, kickoff 00:15Z,
+# 10.21 h out) answered 409 `not_live` while its verified winner contract
+# `KXNFLGAME-26OCT01PITCLE` streamed on the open-contract arm. The specimen is
+# that row as read: open, `settled_at` NULL, expiring 2026-10-04 00:15Z.
+
+PIT_CLE_SEEN = datetime(2026, 10, 1, 14, 2, 14, 491825, tzinfo=timezone.utc)
+
+
+def pit_cle_event(**overrides):
+    values = dict(id=14780550, status="scheduled", completed_at=None,
+                  commence_time=datetime(2026, 10, 2, 0, 15, tzinfo=timezone.utc),
+                  home_team_name="Cleveland Browns",
+                  away_team_name="Pittsburgh Steelers")
+    values.update(overrides)
+    return Event(**values)
+
+
+def pit_cle_market(**overrides):
+    values = dict(id=61894632, event_id=14780550, source="kalshi", status="open",
+                  external_id="KXNFLGAME-26OCT01PITCLE",
+                  name="PIT Steelers vs CLE Browns", market_metadata={},
+                  settled_at=None,
+                  expiration_time=datetime(2026, 10, 4, 0, 15, tzinfo=timezone.utc),
+                  outcomes=[
+                      FuturesOutcome(id=233493085, market_id=61894632, name="Pittsburgh",
+                                     external_id="KXNFLGAME-26OCT01PITCLE-PIT",
+                                     current_probability=.575, rank=1),
+                      FuturesOutcome(id=233493086, market_id=61894632, name="Cleveland",
+                                     external_id="KXNFLGAME-26OCT01PITCLE-CLE",
+                                     current_probability=.425, rank=2),
+                  ])
+    values.update(overrides)
+    return FuturesMarket(**values)
+
+
+def test_pit_cle_ten_hours_out_is_enrolled_by_its_bridged_winner(monkeypatch):
+    monkeypatch.delenv("WS_OPEN_CONTRACT_PRICES", raising=False)
+    event = pit_cle_event()
+    assert (event.commence_time - PIT_CLE_SEEN) > timedelta(hours=10)
+    assert route._has_mapped_winner(event, [pit_cle_market()], PIT_CLE_SEEN)
+
+
+def test_pit_cle_inside_the_slate_horizon_is_unchanged(monkeypatch):
+    """Positive control: 5 h out it was already admitted by the slate rule."""
+    event = pit_cle_event()
+    assert route._has_mapped_winner(
+        event, [pit_cle_market()], event.commence_time - timedelta(hours=5),
+    )
+
+
+@pytest.mark.parametrize("change", [
+    "switch_off", "settled_at", "expired", "graded_leg", "resolved", "prop",
+    "unmapped", "completed", "suspended", "no_start", "wrong_match",
+])
+def test_the_bridge_refuses_what_the_arm_does_not_carry(monkeypatch, change):
+    monkeypatch.delenv("WS_OPEN_CONTRACT_PRICES", raising=False)
+    event, market = pit_cle_event(), pit_cle_market()
+    if change == "switch_off":
+        # The arm's undo line: nobody would publish to this stream.
+        monkeypatch.setenv("WS_OPEN_CONTRACT_PRICES", "0")
+    elif change == "settled_at":
+        market.settled_at = PIT_CLE_SEEN
+    elif change == "expired":
+        market.expiration_time = PIT_CLE_SEEN - timedelta(seconds=1)
+    elif change == "graded_leg":
+        market.outcomes[0].is_winner = False
+    elif change == "resolved":
+        market.status = "resolved"
+    elif change == "prop":
+        # A non-winner ticker is not bridged even when its name reads as a
+        # matchup: only the winner can move the blend the stream publishes.
+        market.external_id = "KXNFLSPREAD-26OCT01PITCLE"
+    elif change == "unmapped":
+        for outcome in market.outcomes:
+            outcome.external_id = ""
+    elif change == "completed":
+        event.completed_at = PIT_CLE_SEEN
+    elif change == "suspended":
+        # Suspended keeps its own 24 h-back arm; the bridge never widens it.
+        event.status = "suspended"
+        event.commence_time = PIT_CLE_SEEN - timedelta(hours=25)
+    elif change == "no_start":
+        event.commence_time = None
+    else:
+        market.name = "NYJ Jets vs MIA Dolphins"
+        market.outcomes[0].name, market.outcomes[1].name = "New York", "Miami"
+    assert not route._has_mapped_winner(event, [market], PIT_CLE_SEEN)
+
+
+def test_a_naive_expiration_is_read_as_utc(monkeypatch):
+    monkeypatch.delenv("WS_OPEN_CONTRACT_PRICES", raising=False)
+    live = pit_cle_market(expiration_time=datetime(2026, 10, 4, 0, 15))
+    gone = pit_cle_market(expiration_time=datetime(2026, 10, 1, 14, 2))
+    assert route._has_mapped_winner(pit_cle_event(), [live], PIT_CLE_SEEN)
+    assert not route._has_mapped_winner(pit_cle_event(), [gone], PIT_CLE_SEEN)
+
+
+def test_polymarket_has_no_bridge_past_the_horizon():
+    market = market_fixture("polymarket")
+    event = event_fixture(commence_time=NOW + timedelta(hours=10))
+    assert not route._has_mapped_winner(event, [market], NOW)
+
+
+def test_the_route_mirror_refuses_a_non_winner_itself(monkeypatch):
+    """`live_blend` refuses a non-winner speaker too, so through
+    `_has_mapped_winner` the prop case above cannot tell which rule refused it.
+    The mirror carries the arm's own rule and must refuse on its own."""
+    monkeypatch.delenv("WS_OPEN_CONTRACT_PRICES", raising=False)
+    assert route._in_kalshi_open_contract_bridge(pit_cle_market(), PIT_CLE_SEEN)
+    spread = pit_cle_market(external_id="KXNFLSPREAD-26OCT01PITCLE")
+    assert not route._in_kalshi_open_contract_bridge(spread, PIT_CLE_SEEN)
+    poly = pit_cle_market(source="polymarket")
+    assert not route._in_kalshi_open_contract_bridge(poly, PIT_CLE_SEEN)
