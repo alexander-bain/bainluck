@@ -1449,7 +1449,8 @@ async def row_position_first_seen_at(session, event_id, period):
     of wall time to cover, and must not be refused for it.
 
     None — no evidence — when no snapshot in the look-back carries the string
-    (StatPal wrote the position, or ESPN published no win probability that pass).
+    (StatPal wrote the position). Since #9991 a pass with no ESPN win probability
+    still appends its position, so a decided game keeps its anchor.
     """
     from app.models.models import ESPNSnapshot
 
@@ -2103,6 +2104,45 @@ async def update_event_fields_from_espn(
 # ESPN win probability + snapshot writing
 # ---------------------------------------------------------------------------
 
+def espn_history_row_without_probability(event, ee, now):
+    """The `espn_snapshots` row for a live reading that carries NO probability, or None.
+
+    #9991. ESPN's scoreboard drops `situation.lastPlay.probability` once a game
+    is decided (BOS@NYY 15321907, Top 9th at 9–2: `probability = None` while
+    the `/summary` series sat at 0.999). Both writers appended the history row
+    only inside their probability branch, so the score and inning stopped being
+    recorded at 02:46Z; the page dates the score from the newest history row,
+    and the chip read "25m ago" and the readout "Bottom 7th" under a hero that
+    said Top 9th. The probability is genuinely absent, so its columns stay NULL
+    (both clients read them as optional) and nothing else is written — no blend
+    source, no `win_prob_snapshots` row.
+
+    The same refusals as the probability arm, so this can only record what that
+    arm would have recorded had ESPN sent a number: live readings only, never on
+    a row we resolved completed/closed (#922), never before the start (#1207),
+    and a position the row refused as outrunning the wall clock stays withheld
+    (#9020).
+    """
+    from app.models.models import ESPNSnapshot
+
+    if ee.status != "in":
+        return None
+    if getattr(event, "status", None) in ("completed", "closed"):
+        return None
+    if espn_live_write_is_premature(event.commence_time, now):
+        return None
+    _refused = bool(getattr(ee, "position_outran_wall", False))
+    return ESPNSnapshot(
+        event_id=event.id,
+        home_win_probability=None,
+        away_win_probability=None,
+        home_score=ee.home_score,
+        away_score=ee.away_score,
+        game_clock=None if _refused else ee.clock,
+        period=None if _refused else _sanitize_period(ee.status_detail),
+    )
+
+
 async def write_espn_win_probability(session, event, ee, match_method, claimed_espn_ids, stats):
     """Write ESPN win probability to event and create ESPN + win_prob snapshots.
 
@@ -2116,6 +2156,13 @@ async def write_espn_win_probability(session, event, ee, match_method, claimed_e
     ee = orient_espn_event_to_row(event, ee)
 
     if ee.home_win_probability is None:
+        # #9991: no number to write, but the score and position still are.
+        _row = espn_history_row_without_probability(event, ee, datetime.now(timezone.utc))
+        if _row is not None:
+            session.add(_row)
+            stats["espn_history_without_probability"] = (
+                stats.get("espn_history_without_probability", 0) + 1
+            )
         return False
 
     # #1207 premature-live guard: ESPN publishes a pregame win-probability hours
@@ -2588,6 +2635,14 @@ async def create_events_from_unmatched_espn(session, our_events, espn_events, sp
                     period=_sanitize_period(ee.status_detail),  # #5390
                 )
                 session.add(snapshot)
+            elif ee.home_win_probability is None:
+                # #9991: the same score-and-position row the update path writes.
+                _row = espn_history_row_without_probability(event, ee, _now)
+                if _row is not None:
+                    session.add(_row)
+                    stats["espn_history_without_probability"] = (
+                        stats.get("espn_history_without_probability", 0) + 1
+                    )
 
             if ee.status in ("post", "final"):
                 _completed_vals: dict = {}
