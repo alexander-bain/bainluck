@@ -3,11 +3,19 @@ import SwiftUI
 /// No heading, placeholder or spinner when discovery is unavailable/disabled.
 /// The ordinary Browse destinations continue rendering during this fresh read.
 struct BrowseCollectionsView: View {
-    @StateObject private var vm = ContainerDiscoveryViewModel()
+    @StateObject private var vm: ContainerDiscoveryViewModel
     @Environment(\.scenePhase) private var scenePhase
 
+    init(service: any ContainerDiscoveryLoading = ContainerDiscoveryService()) {
+        _vm = StateObject(wrappedValue: ContainerDiscoveryViewModel(service: service))
+    }
+
     var body: some View {
-        Group {
+        // #9989 — the load modifiers need a container that exists while entries
+        // are empty. A `Group` has no view of its own: with its `if` false it
+        // resolves to nothing, `.task` attaches to nothing, and the first read
+        // that would fill it never starts.
+        VStack(alignment: .leading, spacing: 0) {
             if !vm.entries.isEmpty {
                 VStack(alignment: .leading, spacing: 10) {
                     Text("Collections")
