@@ -71,6 +71,15 @@ STALE_WHILE_REVALIDATE_S = 60
 #: one request either way, it just lands in the poll.
 POLLED_EVENT_READ = re.compile(r"^/api/events(?:/\d+(?:/|$)|$)")
 
+#: The two reads a golf tournament page polls every 60 s — the leaderboard and
+#: the tournament itself (#10105). Under `/api/golf`'s 300 s max-age a poll was
+#: answered from disk for five minutes (measured in Chromium against production,
+#: 2026-10-01, round 1 live: the 62.8 s leaderboard poll returned the 0 s body).
+#: Same rule as the events above, with a max-age shorter than the poll; the bare
+#: `/api/golf` listing keeps its window (the UX-P271 card mirrors it).
+POLLED_GOLF_READ = re.compile(r"^/api/golf/(?:leaderboard(?:/[^/]+)?|tournaments/[^/]+)$")
+POLLED_GOLF_MAX_AGE_S = 30
+
 # Non-storable, non-shared directive for protected/personalized responses.
 PRIVATE_DIRECTIVE = "private, no-store"
 
@@ -121,6 +130,8 @@ def cache_control_for(
         if path.startswith(prefix):
             if POLLED_EVENT_READ.match(path):
                 return f"public, max-age={max_age}"
+            if POLLED_GOLF_READ.match(path):
+                return f"public, max-age={POLLED_GOLF_MAX_AGE_S}"
             return f"public, max-age={max_age}, stale-while-revalidate={STALE_WHILE_REVALIDATE_S}"
 
     return None

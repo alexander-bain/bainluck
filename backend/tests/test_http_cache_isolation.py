@@ -164,6 +164,44 @@ def test_every_league_page_poll_reaches_the_origin():
     assert window * 1000 < int(poll.group(1)), (window, poll.group(1))
 
 
+def test_polled_golf_reads_carry_no_stale_window():
+    # #10105 — the golf tournament pages poll these every 60 s.
+    for path in (
+        "/api/golf/leaderboard",
+        "/api/golf/leaderboard/euro",
+        "/api/golf/tournaments/bank-of-utah-championship",
+    ):
+        assert _cc(path) == "public, max-age=30", path
+
+
+def test_unpolled_golf_routes_keep_their_window():
+    for path in (
+        "/api/golf",
+        "/api/golf/tournaments",
+        "/api/golf/tournaments/bank-of-utah-championship/history",
+    ):
+        assert _cc(path) == "public, max-age=300, stale-while-revalidate=60", path
+
+
+def test_every_golf_tournament_page_poll_reaches_the_origin():
+    """#10105 — both golf tournament pages poll the leaderboard and the tournament."""
+    import pathlib
+    import re
+
+    root = pathlib.Path(__file__).resolve().parents[2] / "frontend"
+    pages = (
+        "app/categories/golf/tournaments/[slug]/page.tsx",
+        "app/sport/[sport]/[league]/[slug]/page.tsx",
+    )
+    for rel in pages:
+        page = (root / rel).read_text()
+        assert "fetchGolfLeaderboard(" in page and "fetchGolfTournament(" in page, rel
+        cadence_ms = int(re.search(r"setInterval\(load, ([\d_]+)\)", page).group(1).replace("_", ""))
+        for path in ("/api/golf/leaderboard", "/api/golf/tournaments/x"):
+            window = _directive_window_s(_cc(path))
+            assert window * 1000 < cadence_ms, (rel, path, window, cadence_ms)
+
+
 def test_unmatched_public_path_gets_no_directive():
     assert _cc("/api/me/profile") is None  # not identity-bearing, not a cache prefix
     assert _cc("/api/me/profile", identity=True) == PRIVATE_DIRECTIVE
