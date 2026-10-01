@@ -332,15 +332,14 @@ final class UnrelatedMLBSwipesKeepTheRedSoxStory9648Tests: XCTestCase {
     }
 
     private func findAndReveal(_ app: XCUIApplication, naming teams: [String]) -> XCUIElement? {
+        let isTarget: (XCUIElement) -> Bool = { card in
+            let text = Self.fullText(of: card)
+            return teams.allSatisfy { text.contains($0) } && Self.isGame(card)
+        }
         for _ in 0..<Self.scanScreens {
-            for card in JourneyPrecondition.cards(in: app).allElementsBoundByIndex where card.exists {
-                let text = Self.fullText(of: card)
-                let named = teams.allSatisfy { text.contains($0) }
-                if named || text.contains(teams[0]) {
-                    log("find \(teams[0]): named=\(named) game=\(Self.isGame(card)) frame=\(card.frame) text=\(text.prefix(200))")
-                }
-                guard named, Self.isGame(card) else { continue }
-                if bringIntoBand(card, in: app) { return card }
+            if let card = bringIntoBand(in: app, where: isTarget) {
+                log("find \(teams[0]): reachable frame=\(card.frame) text=\(Self.fullText(of: card).prefix(160))")
+                return card
             }
             app.swipeUp()
             Thread.sleep(forTimeInterval: 1.0)
@@ -348,21 +347,27 @@ final class UnrelatedMLBSwipesKeepTheRedSoxStory9648Tests: XCTestCase {
         return nil
     }
 
-    /// Lifts a card that sits BELOW the band in as many bounded steps as it
-    /// takes. One `liftContent` travels at most ~357 pt on this window, and run 2
-    /// measured the Cubs–Marlins card at y 978 needing 548: a single lift left it
-    /// half under the tab bar, the next `swipeUp` flung it off the top, and the
-    /// hunt reported a card that was one more lift away as unreachable.
-    private func bringIntoBand(_ card: XCUIElement, in app: XCUIApplication) -> Bool {
-        for _ in 0..<4 {
-            if card.frame.minY < 60 { return false }
-            if JourneyPrecondition.isReachable(card, in: app) { return true }
+    /// Lifts the matching card into the reachable band in bounded steps,
+    /// RE-FINDING it after every lift. Two measured traps, run 2 and run 3 on
+    /// DD0DC456: one `liftContent` travels at most ~357 pt, and the Cubs–Marlins
+    /// card at y 978 needed 548, so a single lift left it under the tab bar and
+    /// the next `swipeUp` flung it off the top; and an `allElementsBoundByIndex`
+    /// element is bound to its INDEX, so after a lift re-materialises the lazy
+    /// list "Element at index 6" can name nothing and the next `frame` read fails
+    /// the test. Returns nil when no card matches or it sits above the band.
+    private func bringIntoBand(in app: XCUIApplication, where isTarget: (XCUIElement) -> Bool) -> XCUIElement? {
+        for _ in 0..<5 {
+            guard let card = JourneyPrecondition.cards(in: app).allElementsBoundByIndex
+                .first(where: { $0.exists && isTarget($0) })
+            else { return nil }
+            if card.frame.minY < 60 { return nil }
+            if JourneyPrecondition.isReachable(card, in: app) { return card }
             let lift = JourneyPrecondition.liftNeeded(for: card, in: app)
-            guard lift > 0 else { return false }
+            guard lift > 0 else { return nil }
             JourneyPrecondition.liftContent(app, by: lift + 20)
             Thread.sleep(forTimeInterval: 0.5)
         }
-        return JourneyPrecondition.isReachable(card, in: app) && card.frame.minY >= 60
+        return nil
     }
 
     /// Scrolls the named card into the reachable band and photographs it; a
@@ -371,9 +376,9 @@ final class UnrelatedMLBSwipesKeepTheRedSoxStory9648Tests: XCTestCase {
         topSignature = nil
         scrollToTop(app)
         for _ in 0..<Self.scanScreens {
-            if let card = JourneyPrecondition.cards(in: app).allElementsBoundByIndex
-                .first(where: { $0.exists && Self.fullText(of: $0).contains(name) && Self.isGame($0) }) {
-                if bringIntoBand(card, in: app) { snap(snapAs); return }
+            if bringIntoBand(in: app, where: { Self.fullText(of: $0).contains(name) && Self.isGame($0) }) != nil {
+                snap(snapAs)
+                return
             }
             app.swipeUp()
             Thread.sleep(forTimeInterval: 1.0)
