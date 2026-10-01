@@ -280,3 +280,66 @@ describe("#10048: a surname-only event still says who won the set", () => {
     expect(withWinner).not.toBe(withoutWinner);
   });
 });
+
+/**
+ * #10048, second half — ONE sentence per decided set. The guard above asked
+ * `toContain`, which a doubled row passes. Production 10:5xZ 2026-10-01, after
+ * the first half went live, /events/15320811 read
+ *
+ *     Alexander Zverev won Set 1
+ *     Alexander Zverev won Set 1
+ *     Alexander Zverev won Set 2
+ *     Alexander Zverev won Set 2
+ *
+ * because each set market arrives as one row per player and both rows carried
+ * the market's sentence. The wire below is the full served `other` block
+ * (Kalshi's set 2 legs included), verbatim at 10:5xZ.
+ */
+describe("#10048: a decided set is said once", () => {
+  const SERVED = [
+    { market_name: "Set 2 Winner: Alexander Zverev vs Cameron Norrie", outcome_name: "Alexander Zverev", probability: 0.9955, source: "polymarket", is_winner: true },
+    { market_name: "Set 2 Winner: Alexander Zverev vs Cameron Norrie", outcome_name: "Cameron Norrie", probability: 0.0045, source: "polymarket", is_winner: false },
+    { market_name: "Alexander Zverev vs Cameron Norrie: Set 2 Winner", outcome_name: "Alexander Zverev", probability: 1.0, source: "kalshi", is_winner: true },
+    { market_name: "Alexander Zverev vs Cameron Norrie: Set 2 Winner", outcome_name: "Cameron Norrie", probability: null, source: "kalshi", is_winner: false },
+    { market_name: "Alexander Zverev vs Cameron Norrie: Set 1 Winner", outcome_name: "Alexander Zverev", probability: 0.99, source: "kalshi", is_winner: true },
+    { market_name: "Alexander Zverev vs Cameron Norrie: Set 1 Winner", outcome_name: "Cameron Norrie", probability: 0.01, source: "kalshi", is_winner: false },
+  ];
+  const final = () =>
+    payload({
+      event_id: 15320811,
+      home_team: "Zverev",
+      away_team: "Norrie",
+      home_score: 2,
+      away_score: 0,
+      status: "completed",
+      other: SERVED,
+    } as unknown as Partial<GameMarketsResponse>);
+
+  test("THE SHIP: each set's result is one row, in set order", () => {
+    const html = renderAsPage(final(), "tennis_atp_china_open");
+    expect(resultRows(html)).toEqual([
+      "Alexander Zverev won Set 1",
+      "Alexander Zverev won Set 2",
+    ]);
+  });
+
+  test("control: rows the score cannot decide are not folded — both legs keep their rows", () => {
+    const html = renderAsPage(
+      payload({
+        event_id: 15320811,
+        home_team: "Zverev",
+        away_team: "Norrie",
+        home_score: 1,
+        away_score: 1,
+        status: "live",
+        other: SERVED.filter((r) => r.market_name.includes("Set 1")),
+      } as unknown as Partial<GameMarketsResponse>),
+      "tennis_atp_china_open",
+    );
+    // A 1–1 board cannot name set 1's winner from the score, so nothing is folded
+    // and both legs keep their own rows.
+    expect(resultRows(html)).toEqual([]);
+    expect(visible(html)).toContain("Alexander Zverev wins Set 1");
+    expect(visible(html)).toContain("Cameron Norrie wins Set 1");
+  });
+});
