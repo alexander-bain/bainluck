@@ -631,10 +631,21 @@ async def _relink_contradicted_in_league(
     alone (event-linked and roster links are names the matcher cannot read), and an
     answer 3b would move back across a conference is skipped, so no pass undoes
     another.
+
+    Polymarket links are re-decided the same way (#9952 after-check, 2026-10-01):
+    with the Kalshi legs moved, UNC's page still printed NC State's playoff, title,
+    quarter, semi and top-4-seed odds from five Polymarket "North Carolina St."
+    legs. Replay over all 5,695 open Polymarket links: 7 contradictions, every one
+    the wrong school ("Los Angeles Angels" on the Dodgers, "Georgia Southern
+    Eagles" on Southern University). The event slug goes to the league check so a
+    ``pro-football-`` board stays Phase 3's row.
     """
     from app.models import FuturesMarket, FuturesOutcome, Sport, Team
     from app.utils.market_team_sport import link_crosses_conference, link_crosses_league
     from app.utils.team_linking import match_outcome_to_league_team
+    from app.utils.venue_competition import POLYMARKET_EVENT_SLUG_KEY
+
+    slug = FuturesMarket.market_metadata[POLYMARKET_EVENT_SLUG_KEY].as_string()
 
     rows = (
         await session.execute(
@@ -644,12 +655,16 @@ async def _relink_contradicted_in_league(
                 FuturesOutcome.team_id,
                 FuturesMarket.source,
                 FuturesMarket.external_id,
+                slug.label("event_slug"),
                 Sport.key,
             )
             .join(FuturesMarket, FuturesOutcome.market_id == FuturesMarket.id)
             .join(Team, Team.id == FuturesOutcome.team_id)
             .join(Sport, Sport.id == Team.sport_id)
-            .where(FuturesMarket.source == "kalshi", FuturesMarket.status == "open")
+            .where(
+                FuturesMarket.source.in_(("kalshi", "polymarket")),
+                FuturesMarket.status == "open",
+            )
             .order_by(FuturesOutcome.id)
         )
     ).all()
@@ -658,7 +673,7 @@ async def _relink_contradicted_in_league(
     answers: dict[tuple[str, str], Optional[int]] = {}
     decisions: dict[int, int] = {}
     for row in rows:
-        if link_crosses_league(row.source, row.external_id, row.key):
+        if link_crosses_league(row.source, row.external_id, row.key, row.event_slug):
             continue  # Phase 3's row
         if row.key not in league_teams:
             league_teams[row.key] = await _load_teams_by_sport(session, [row.key])
