@@ -2544,12 +2544,10 @@ private struct GameSegmentsView: View {
                         .font(.subheadline)
                         .fontWeight(.semibold)
                     Spacer()
-                    // Ruling 5: say what the reader is looking at. When some
-                    // splits are unknown the caption must admit it, otherwise a
-                    // `·` reads as a rendering glitch rather than a known gap.
-                    Text(breakdown.hasUnknownSegments
-                         ? "Score by period · · = not recorded"
-                         : "Score by period")
+                    // #9067 — a card with a `·` is no longer drawn
+                    // (`StoredLineScore.isDrawable`), so the caption no longer
+                    // explains one.
+                    Text("Score by period")
                         .font(.caption2)
                         .foregroundStyle(.secondary)
                 }
@@ -2609,7 +2607,9 @@ private struct GameSegmentsView: View {
 ///    `cumulative(N) - cumulative(N-1)`, so both must have been observed. With a
 ///    gap the runs belong to the *span*, not to the inning that closed it —
 ///    attributing them to N is what put four Red Sox runs in the 8th. An
-///    unknowable split renders `·`, never `0`.
+///    unknowable split is never printed as `0`, and since #9067 (rage #165) it
+///    is not printed as `·` either: a ladder with any unknown split is not
+///    drawn (`StoredLineScore.isDrawable`).
 /// 2. **The totals come from the scoreboard**, not from summing observed
 ///    segments, so this card cannot contradict the hero above it.
 ///
@@ -2618,12 +2618,12 @@ private struct GameSegmentsView: View {
 /// instead: the inference above broke its "never wrong" promise on every live
 /// game whose scoreboard ran ahead of the last polled row (rage #159). What
 /// follows is the fallback for a payload without the arrays.
-private struct SegmentBreakdown {
+/// Internal (not private) so the #9067 tests can build the real card from a
+/// decoded payload rather than reading this file as text.
+struct SegmentBreakdown {
     let segments: [GameSegment]
     let homeTotal: Int
     let awayTotal: Int
-    /// True when at least one rendered segment's split could not be determined.
-    let hasUnknownSegments: Bool
 
     init?(
         history: EventHistoryResponse?,
@@ -2640,7 +2640,7 @@ private struct SegmentBreakdown {
             homeTotal: finalHomeScore,
             awayTotal: finalAwayScore,
             isFinished: isFinished
-        ) {
+        ), StoredLineScore.isDrawable(home: columns.map(\.home), away: columns.map(\.away)) {
             let segments = columns.map {
                 GameSegment(label: $0.label, home: $0.home, away: $0.away)
             }
@@ -2651,9 +2651,6 @@ private struct SegmentBreakdown {
             self.segments = segments
             self.homeTotal = homeTotal
             self.awayTotal = awayTotal
-            self.hasUnknownSegments = segments.contains {
-                $0.home == .unknown || $0.away == .unknown
-            }
             return
         }
 
@@ -2681,7 +2678,8 @@ private struct SegmentBreakdown {
                     home: rows.home, away: rows.away,
                     homeTotal: finalHomeScore, awayTotal: finalAwayScore,
                     lastObserved: rows.lastObserved
-                ) else { return nil }
+                ), StoredLineScore.isDrawable(home: squared.home, away: squared.away)
+                else { return nil }
                 let segments = squared.home.indices.map {
                     GameSegment(label: String($0 + 1), home: squared.home[$0], away: squared.away[$0])
                 }
@@ -2693,7 +2691,6 @@ private struct SegmentBreakdown {
                 self.segments = segments
                 self.homeTotal = resolvedHome
                 self.awayTotal = resolvedAway
-                self.hasUnknownSegments = segments.contains { $0.home == .unknown || $0.away == .unknown }
                 return
             }
         }
@@ -2745,7 +2742,6 @@ private struct SegmentBreakdown {
 
         var previousCumulative: (home: Int, away: Int)? = (0, 0)
         var segments: [GameSegment] = []
-        var sawUnknown = false
         var lastObserved: CumulativeSegment?
 
         for label in renderedLabels {
@@ -2753,7 +2749,6 @@ private struct SegmentBreakdown {
                 // Never observed. The split is unknown, and so is the split of
                 // whichever segment closes the gap — reset the baseline.
                 segments.append(GameSegment(label: label, homeScore: nil, awayScore: nil))
-                sawUnknown = true
                 previousCumulative = nil
                 continue
             }
@@ -2767,7 +2762,6 @@ private struct SegmentBreakdown {
                 // Observed, but the preceding segment was not, so the runs since
                 // then cannot be attributed to this one alone.
                 segments.append(GameSegment(label: label, homeScore: nil, awayScore: nil))
-                sawUnknown = true
                 continue
             }
 
@@ -2789,28 +2783,36 @@ private struct SegmentBreakdown {
         let resolvedHome = finalHomeScore ?? lastObserved?.homeScore ?? 0
         let resolvedAway = finalAwayScore ?? lastObserved?.awayScore ?? 0
 
+        // #9067 — on a live game the baseball ladder's innings after the last
+        // observed one have not been played yet: blank, the way the stored
+        // line score draws them, not a `·` gap that would hide the card.
+        let lastObservedIndex = renderedLabels.lastIndex { latestByLabel[$0] != nil } ?? -1
+        if !isFinished {
+            for index in segments.indices where index > lastObservedIndex {
+                segments[index] = GameSegment(label: segments[index].label, home: .notPlayed, away: .notPlayed)
+            }
+        }
+
         // #9067 — and the segments may not add up to something those totals
         // disagree with (`StoredLineScore.squared`).
         guard let squared = StoredLineScore.squared(
             home: segments.map(\.home), away: segments.map(\.away),
             homeTotal: finalHomeScore, awayTotal: finalAwayScore,
-            lastObserved: renderedLabels.lastIndex { latestByLabel[$0] != nil } ?? -1
+            lastObserved: lastObservedIndex
         ) else { return nil }
         segments = segments.indices.map {
             GameSegment(label: segments[$0].label, home: squared.home[$0], away: squared.away[$0])
         }
-        sawUnknown = sawUnknown || squared.home.contains(.unknown) || squared.away.contains(.unknown)
 
-        // A ladder in which nothing is knowable is a row of dots — it tells the
-        // reader nothing and occupies the space where a scoreboard should be.
-        let knownSegments = segments.filter { $0.home != .unknown }
-        guard !segments.isEmpty, !knownSegments.isEmpty else { return nil }
-        guard resolvedHome + resolvedAway > 0 else { return nil }
+        // #9067 (rage #165) — a ladder with any unknown split is not drawn.
+        guard StoredLineScore.isDrawable(home: squared.home, away: squared.away),
+              segments.contains(where: { $0.home.points != nil || $0.away.points != nil }),
+              resolvedHome + resolvedAway > 0
+        else { return nil }
 
         self.segments = segments
         self.homeTotal = resolvedHome
         self.awayTotal = resolvedAway
-        self.hasUnknownSegments = sawUnknown
     }
 
     /// #3273. The card used to run its OWN period parser, and that parser read
@@ -2845,10 +2847,10 @@ private struct SegmentBreakdown {
     }
 }
 
-private struct GameSegment: Identifiable {
+struct GameSegment: Identifiable {
     let label: String
-    /// `.unknown` when this segment's split was never observed — rendered `·`,
-    /// never `0`.
+    /// `.unknown` when this segment's split was never observed — never `0`, and
+    /// since #9067 a card holding one is not drawn at all.
     let home: LineScoreCell
     let away: LineScoreCell
 
