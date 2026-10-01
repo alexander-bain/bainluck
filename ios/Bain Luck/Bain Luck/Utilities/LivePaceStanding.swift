@@ -21,6 +21,12 @@ import Foundation
 ///    Top 10th at 3–3) printed "PACE 6 · 6 scored" — a total a tied game cannot
 ///    finish on. Web refuses on the same evidence (`>= 1`, PR #9932); a pace
 ///    that omits the fraction reads as it always did.
+/// 4. **Too little of the game to run forward.** #9944 (CHW @ HOU, 15321836,
+///    bottom of the 1st at 4–1) printed "PROJECTED 90": five runs over 0.056 of
+///    the game. With a served opening total the early game is anchored to it —
+///    `scored + (1 − elapsed) × opening`, 12 there against a sportsbook live
+///    total of 12.5. With none, the bare run-forward stands only from half the
+///    game on. Web's `liveProjectedTotal` (PR #9945) is the same rule.
 ///
 /// The scoreboard is the page's own (the header's numbers). When the page has no
 /// scoreboard there is nothing for the pace to contradict, so rule 2 does not
@@ -40,14 +46,31 @@ nonisolated enum LivePaceStanding {
         return elapsed >= 1
     }
 
-    /// A projection with standing: served, something scored, scored at the
-    /// scoreboard's score, and regulation time still left to run it over.
-    static func projection(_ pace: GameMarketPace?, scoreboardHome: Int?, scoreboardAway: Int?) -> (projected: Double, scored: Int)? {
-        guard let pace, let projected = pace.projectedTotal, let scored = pace.totalScored,
+    /// #9944 — the bare run-forward is only drawn from half the game on (web's
+    /// `RUN_FORWARD_MIN_ELAPSED`).
+    static let runForwardMinElapsed = 0.5
+
+    /// A projection with standing: something scored, scored at the scoreboard's
+    /// score, regulation time still left, and enough of the game behind it to
+    /// project from — anchored to the pre-game total where one is served
+    /// (`openingTotal`, in the scoreboard's unit), otherwise the served
+    /// run-forward from half the game on. A pace that omits the fraction reads
+    /// as served.
+    static func projection(_ pace: GameMarketPace?, openingTotal: Double?, scoreboardHome: Int?, scoreboardAway: Int?) -> (projected: Double, scored: Int)? {
+        guard let pace, let scored = pace.totalScored,
               scored > 0,
               !clockRanOut(pace),
               agrees(pace, scoreboardHome: scoreboardHome, scoreboardAway: scoreboardAway)
         else { return nil }
-        return (projected, scored)
+        let runForward = pace.projectedTotal.flatMap { $0 > 0 ? $0 : nil }
+        guard let elapsed = pace.fractionElapsed, elapsed.isFinite else {
+            return runForward.map { ($0, scored) }
+        }
+        guard elapsed > 0 else { return nil }
+        if let opening = openingTotal, opening > 0 {
+            return (Double(scored) + (1 - elapsed) * opening, scored)
+        }
+        guard elapsed >= runForwardMinElapsed else { return nil }
+        return runForward.map { ($0, scored) }
     }
 }
