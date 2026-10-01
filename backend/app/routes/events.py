@@ -6672,6 +6672,33 @@ def _is_finished_club_word(term: str, team_rows) -> bool:
     return finished
 
 
+def _market_has_outcome(*outcome_where):
+    """#9947: `futures_markets.id = ANY(ARRAY(SELECT market_id FROM futures_outcomes WHERE ...))`.
+
+    Set-identical to `FuturesMarket.id.in_(select(FuturesOutcome.market_id)...)`,
+    which is what every /search outcome arm used to say. The IN form leaves the
+    planner free to pull the subquery up into the window's join, and whether it
+    does turns on the sampled selectivity of the trigram ILIKE — which moves with
+    every autoanalyze of `futures_outcomes` (5.8M rows). Production 2026-10-01:
+    from at least 00:06Z to 00:22Z `ohtani`'s arm walked every open market
+    (~50,500 loops) probing each one's outcomes, 4,640-6,345 ms against its
+    1,000 ms bound, so every read served two title-only boards instead of the
+    World Series / Championship Series MVP markets; `futures_outcomes` was
+    autoanalyzed at 00:26:21Z and the SAME statement ran in 68-142 ms from 00:27Z.
+    ARRAY(...) is an InitPlan, so that choice is gone: the trigram index resolves
+    the match set once (3,196 outcomes in ~25 ms) and markets are read by primary
+    key — 57-146 ms inside the slow window, the same twenty ids in the same
+    order, and level with the IN form outside it (eight queries, identical rows).
+    An `OFFSET 0` fence was measured too and rejected: 781-1,547 ms, most of it
+    JIT compiling a hash join over the same 50k scan.
+    """
+    return FuturesMarket.id == any_(
+        func.array(
+            select(FuturesOutcome.market_id).where(*outcome_where).scalar_subquery()
+        )
+    )
+
+
 def _outcome_whole_word(term: str):
     """An outcome NAME carrying `term` as a whole word, never inside one.
 
@@ -6702,9 +6729,7 @@ def _resolved_club_outcome_match(term: str, exp: str | None, club_words: list[st
     arms.append(_outcome_whole_word(term))
     if exp:
         arms.append(FuturesOutcome.name.ilike(f"%{exp}%"))
-    return FuturesMarket.id.in_(
-        select(FuturesOutcome.market_id).where(or_(*arms))
-    )
+    return _market_has_outcome(or_(*arms))
 
 
 def _multi_term_outcome_match(expanded: list[tuple[str, str | None]]):
@@ -6737,10 +6762,8 @@ def _multi_term_outcome_match(expanded: list[tuple[str, str | None]]):
     """
 
     def _some_outcome(term: str, exp: str | None):
-        return FuturesMarket.id.in_(
-            select(FuturesOutcome.market_id).where(
-                _build_expanded_ilike(FuturesOutcome.name, term, exp)
-            )
+        return _market_has_outcome(
+            _build_expanded_ilike(FuturesOutcome.name, term, exp)
         )
 
     long_terms = [(t, e) for t, e in expanded if _has_extractable_trigram(t)]
@@ -6749,13 +6772,13 @@ def _multi_term_outcome_match(expanded: list[tuple[str, str | None]]):
         return and_(*[_some_outcome(t, e) for t, e in expanded])
     # The long-term ILIKE is AND-ed inside the one subquery, so the trigram
     # index drives it and the short term is a recheck on the rows it returned.
-    anchored = select(FuturesOutcome.market_id).where(
+    anchored = _market_has_outcome(
         or_(*[_build_expanded_ilike(FuturesOutcome.name, t, e) for t, e in long_terms]),
         *[_build_expanded_ilike(FuturesOutcome.name, t, e) for t, e in short_terms],
     )
     return and_(
         *[_some_outcome(t, e) for t, e in long_terms],
-        FuturesMarket.id.in_(anchored),
+        anchored,
     )
 
 
@@ -11118,10 +11141,8 @@ async def search_events(
     # Set-identical to the old .any(), so recall is unchanged (person queries
     # that match an outcome name still resolve).
     def _outcome_id_match(term, exp):
-        return FuturesMarket.id.in_(
-            select(FuturesOutcome.market_id).where(
-                _build_expanded_ilike(FuturesOutcome.name, term, exp)
-            )
+        return _market_has_outcome(
+            _build_expanded_ilike(FuturesOutcome.name, term, exp)
         )
 
     if len(terms) > 1:
