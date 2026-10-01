@@ -576,6 +576,7 @@ class World:
         self.schema = True
         self.commit_error_on = None
         self.on_lock = None
+        self.market_locks = []
         self.committed = None
 
     def edge(self, edge_id, parent_id, child_type, child_id, klass):
@@ -706,6 +707,9 @@ class MemberSession:
                     for k, v in e.items()
                 ]
             )
+        if sql.startswith("SELECT id FROM futures_markets") and "FOR SHARE" in sql:
+            self.world.market_locks.append(list(params["ids"]))
+            return Result([(i,) for i in params["ids"] if i in s["markets"]])
         if "LEFT JOIN futures_markets fm" in sql:
             rows = []
             for edge_id in params["ids"]:
@@ -1076,6 +1080,7 @@ async def test_default_member_preview_is_read_only_and_never_a_backup(tmp_path):
     assert world.commits == 0 and _no_writes(world)
     assert sum("READ ONLY" in sql for sql, _ in world.statements) == 2
     assert not any("FOR UPDATE" in sql for sql, _ in world.statements)
+    assert not any("FOR SHARE" in sql for sql, _ in world.statements)
     backup = _write(tmp_path, "preview.json", doc)
     with pytest.raises(operator.OperatorRefused, match="preview"):
         operator.load_member_plan(
@@ -1237,6 +1242,90 @@ async def test_apply_withdraws_each_target_and_composes_revisions(tmp_path):
             assert evidence["identity"]["admitted_event_edge_id"] is not None
             assert evidence["source"]["sha256"] == doc["source"]["sha256"]
             assert row["revision"] == t["revision_after"]
+
+
+def _apply_order(world, market_read):
+    """Per locked hub: chain lock, market lock, then the identity read."""
+    hubs, current = [], None
+    for sql, params in world.statements:
+        if "FOR UPDATE OF c" in sql:
+            # withdraw_member/readmit_member re-take the held chain per target.
+            if current is None or current["cid"] != params["cid"]:
+                current = {"cid": params["cid"], "order": ["chain"]}
+                hubs.append(current)
+        elif current is not None and "FOR SHARE" in sql:
+            current["order"].append("markets")
+            current["ids"] = list(params["ids"])
+        elif current is not None and market_read in sql:
+            current["order"].append("identity")
+    return hubs
+
+
+@pytest.mark.asyncio
+async def test_apply_locks_every_target_market_before_reading_its_identity(tmp_path):
+    """#10020 review P1: matching writers update futures_markets without the
+    chain lock, so withdraw holds the market rows from before the identity and
+    classifier read until commit, in ascending id order."""
+    world, manifest, path = _week_world(tmp_path)
+    doc, code = await operator.run_members(
+        member_apply(path, {7: 2, 8: 2}), world.factory
+    )
+    assert code == 0 and doc["status"] == "applied"
+    hubs = _apply_order(world, "LEFT JOIN futures_markets fm")
+    assert [h["cid"] for h in hubs] == [7, 8]
+    for hub in hubs:
+        assert hub["order"] == ["chain", "markets", "identity"], hub
+        wanted = sorted(
+            t["market_id"]
+            for t in manifest["targets"]
+            if t["container_id"] == hub["cid"]
+        )
+        assert hub["ids"] == wanted
+
+
+@pytest.mark.asyncio
+async def test_restore_locks_every_target_market_before_reading_its_identity(
+    tmp_path,
+):
+    world, withdrawn, backup = await _applied_backup(tmp_path)
+    world.statements.clear()
+    doc, code = await operator.run_members(
+        member_apply(backup, {7: 6, 8: 5}, operator.MEMBER_RESTORE), world.factory
+    )
+    assert code == 0 and doc["status"] == "applied", doc
+    hubs = _apply_order(world, "FROM futures_markets fm")
+    assert [h["cid"] for h in hubs] == [7, 8]
+    for hub, receipt in zip(hubs, withdrawn["hubs"]):
+        assert hub["order"] == ["chain", "markets", "identity"], hub
+        assert hub["ids"] == sorted(t["market_id"] for t in receipt["targets"])
+
+
+@pytest.mark.asyncio
+async def test_the_configured_runner_operates_the_plan_main_already_read(
+    tmp_path, monkeypatch
+):
+    """#10020 review P2: the fingerprinted plan is the one applied; the file is
+    never read a second time, so changed bytes cannot replace the reviewed plan."""
+    _, _, path = _week_world(tmp_path)
+    options = member_options(manifest=str(path))
+    supplied = operator.load_member_plan(options)
+    received = []
+
+    def reread(_options):
+        pytest.fail("the configured runner re-read the manifest")
+
+    async def capture(_options, _factory, plan):
+        received.append(plan)
+        return {"status": "preview"}, 0
+
+    monkeypatch.setenv("DATABASE_URL", "postgresql+asyncpg://u@localhost/never")
+    monkeypatch.setattr(operator, "load_member_plan", reread)
+    monkeypatch.setattr(operator, "run_members", capture)
+    assert await operator._run_configured(options, supplied) == (
+        {"status": "preview"},
+        0,
+    )
+    assert received == [supplied] and received[0] is supplied
 
 
 @pytest.mark.asyncio

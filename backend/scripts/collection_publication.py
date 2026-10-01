@@ -853,6 +853,19 @@ LEFT JOIN event_edges admitted
 WHERE e.id = ANY(CAST(:ids AS BIGINT[]))
 """
 
+# Matching and polling writers update futures_markets directly and never take
+# the container chain lock, so an apply holds a row lock on every target market
+# (ascending id, after the root-first chain) from before it reads identity and
+# classifier inputs until the hub commits. SHARE blocks every UPDATE/DELETE of
+# those rows and leaves FK KEY SHARE (outcome inserts) alone. A change that
+# committed before the lock is read by the checks that follow it and refuses.
+# The admitted game edges need no lock of their own: every writer of a
+# container's edges (assembly, corrections, this operator) holds the chain lock.
+LOCK_MARKETS_SQL = (
+    "SELECT id FROM futures_markets WHERE id = ANY(CAST(:ids AS BIGINT[])) "
+    "ORDER BY id FOR SHARE"
+)
+
 RESTORE_MARKETS_SQL = """
 SELECT fm.id AS market_id, fm.source, fm.external_id, fm.name, fm.market_type,
        fm.event_id, admitted.id AS admitted_edge_id
@@ -898,6 +911,11 @@ async def _begin_member_hub(session, options: Options, hub: HubPlan) -> None:
         locked = await corrections.lock_container_chain(session, hub.container_id)
         if locked is None:
             raise OperatorRefused(f"container {hub.container_id} does not exist")
+
+
+async def _lock_markets(session, market_ids) -> None:
+    """Apply only: a READ ONLY preview cannot lock and has nothing to protect."""
+    await session.execute(text(LOCK_MARKETS_SQL), {"ids": sorted(set(market_ids))})
 
 
 async def _hub_facts(session, hub: HubPlan) -> dict:
@@ -1006,6 +1024,8 @@ async def withdraw_hub(
             errors.append(f"{name} drift: {facts[name]}, manifest pinned {pin[name]}")
     columns = await _edge_columns(session)
     edge_ids = [t["edge_id"] for t in hub.targets]
+    if options.apply:
+        await _lock_markets(session, [t["market_id"] for t in hub.targets])
     lock = " FOR UPDATE OF e" if options.apply else ""
     rows = (
         (
@@ -1220,6 +1240,8 @@ async def restore_hub(
     await _begin_member_hub(session, options, hub)
     facts = await _hub_facts(session, hub)
     backup, errors = hub.pin, []
+    if options.apply:
+        await _lock_markets(session, [t["market_id"] for t in hub.targets])
     ledger = await _ledger(session, hub.container_id)
     by_id = {int(r["id"]): r for r in ledger}
     withdrawals = [t["ledger_id"] for t in hub.targets]
@@ -1603,9 +1625,11 @@ async def _run_configured(
     from app.services.database import async_session_maker
 
     if options.operation in MEMBER_OPERATIONS:
-        return await run_members(
-            options, async_session_maker, load_member_plan(options)
-        )
+        # main() already read and fingerprinted the file; a second read could
+        # swap in bytes nobody reviewed.
+        if plan is None:
+            plan = load_member_plan(options)
+        return await run_members(options, async_session_maker, plan)
     return await run(options, async_session_maker)
 
 

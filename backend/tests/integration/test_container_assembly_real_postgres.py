@@ -2037,3 +2037,174 @@ class TestExactRestore:
         assert await _market_edge_ids(s, week4) == edges
         assert await _revision(s, week4) == revision
         assert await _ledger_count(s) == ledger
+
+
+# #10020 review P1. Matching and polling write futures_markets directly and
+# never take the container chain lock, so the chain lock cannot keep a market's
+# identity still. These interleave a real second session at the operator's
+# mutation point and before its market lock.
+
+
+async def _repoint(factory, market_id, event_id):
+    """An outside identity writer. Returns 'committed' or the lock error text."""
+    async with factory() as external:
+        try:
+            await external.execute(text("SET LOCAL lock_timeout = '500ms'"))
+            await external.execute(
+                text("UPDATE futures_markets SET event_id = :e WHERE id = :m"),
+                {"e": event_id, "m": market_id},
+            )
+            await external.commit()
+            return "committed"
+        except Exception as exc:  # the lock timeout is the expected answer
+            await external.rollback()
+            return str(exc)
+
+
+async def _market_event(session, market_id):
+    value = (
+        await session.execute(
+            text("SELECT event_id FROM futures_markets WHERE id = :m"),
+            {"m": market_id},
+        )
+    ).scalar()
+    await session.rollback()
+    return value
+
+
+def _foreign_game(w, container_id):
+    return next(ev for cid, evs in w.games.items() if cid != container_id for ev in evs)
+
+
+class TestTheTargetMarketsAreHeldUntilCommit:
+    async def test_an_identity_writer_cannot_land_between_withdraw_checks_and_writes(
+        self, week_hubs, monkeypatch
+    ):
+        import json
+
+        from app.utils import container_corrections as cc
+        from scripts.collection_publication import run_members
+
+        w = week_hubs
+        week4 = w.hubs["nfl-2026-week-4"]
+        target = next(t for t in w.targets if t["container_id"] == week4)
+        real = cc.withdraw_member
+        outcome = []
+
+        async def interleave(session, **kwargs):
+            if not outcome:
+                outcome.append(
+                    await _repoint(
+                        w.factory, target["market_id"], _foreign_game(w, week4)
+                    )
+                )
+            return await real(session, **kwargs)
+
+        monkeypatch.setattr(cc, "withdraw_member", interleave)
+        doc, code = await run_members(
+            _member_apply(w.manifest, _revisions(w)), w.factory
+        )
+        assert "lock timeout" in outcome[0], outcome
+        assert code == 0 and doc["status"] == "applied", doc
+        assert await _market_event(w.session, target["market_id"]) == target["event_id"]
+        evidence = (
+            await w.session.execute(
+                text(
+                    "SELECT evidence FROM container_corrections WHERE scope = 'member' "
+                    "AND child_id = :m"
+                ),
+                {"m": target["market_id"]},
+            )
+        ).scalar()
+        evidence = json.loads(evidence) if isinstance(evidence, str) else evidence
+        assert evidence["identity"]["event_id"] == target["event_id"]
+        # The hold ends at commit: the same writer lands once the hub is done.
+        assert (
+            await _repoint(w.factory, target["market_id"], _foreign_game(w, week4))
+            == "committed"
+        )
+
+    async def test_an_identity_writer_cannot_land_between_restore_checks_and_insert(
+        self, week_hubs, monkeypatch
+    ):
+        """The reviewer's control: before the hold this committed edge -> event of
+        the other hub and the restore still reported applied."""
+        from scripts import collection_publication as op
+
+        w = week_hubs
+        withdrawn, backup, posts = await TestExactRestore()._withdrawn(w)
+        target = withdrawn["hubs"][0]["targets"][0]
+        cid = target["preimage"]["parent_id"]
+        real = op._insert_preimage
+        outcome = []
+
+        async def interleave(session, preimage, columns):
+            if not outcome:
+                outcome.append(
+                    await _repoint(
+                        w.factory, target["market_id"], _foreign_game(w, int(cid))
+                    )
+                )
+            await real(session, preimage, columns)
+
+        monkeypatch.setattr(op, "_insert_preimage", interleave)
+        doc, code = await op.run_members(
+            _member_apply(backup, posts, "readmit-members"), w.factory
+        )
+        assert "lock timeout" in outcome[0], outcome
+        assert code == 0 and doc["status"] == "applied", doc
+        joined = (
+            await w.session.execute(
+                text(
+                    "SELECT fm.event_id FROM event_edges e JOIN futures_markets fm "
+                    "ON e.child_id = fm.id WHERE e.id = :edge"
+                ),
+                {"edge": target["edge_id"]},
+            )
+        ).scalar()
+        await w.session.rollback()
+        assert joined == target["event_id"]
+
+    @pytest.mark.parametrize("operation", ["withdraw-members", "readmit-members"])
+    async def test_a_change_committed_before_the_lock_refuses_that_whole_hub(
+        self, week_hubs, monkeypatch, operation
+    ):
+        from scripts import collection_publication as op
+
+        w = week_hubs
+        s = w.session
+        week4, week5 = w.hubs["nfl-2026-week-4"], w.hubs["nfl-2026-week-5"]
+        source, revisions = w.manifest, _revisions(w)
+        if operation == "readmit-members":
+            _, source, revisions = await TestExactRestore()._withdrawn(w)
+        target = next(t for t in w.targets if t["container_id"] == week5)
+        real = op._lock_markets
+        landed = []
+
+        async def drift_first(session, market_ids):
+            # After the read-only preflight passed, before week 5's hold.
+            if target["market_id"] in market_ids and not landed:
+                landed.append(
+                    await _repoint(
+                        w.factory, target["market_id"], _foreign_game(w, week5)
+                    )
+                )
+            await real(session, market_ids)
+
+        monkeypatch.setattr(op, "_lock_markets", drift_first)
+        edges = await _market_edge_ids(s, week5)
+        revision = await _revision(s, week5)
+        ledger = await _ledger_count(s)
+        doc, code = await op.run_members(
+            _member_apply(source, revisions, operation), w.factory
+        )
+        assert landed == ["committed"]
+        assert code == 1 and doc["status"] == "partial", doc
+        assert doc["committed_hubs"] == [week4] and doc["commit_unknown_hubs"] == []
+        refused = doc["hubs"][1]
+        assert refused["status"] == "refused" and refused["committed"] is False
+        assert "event_id" in " ".join(refused["errors"]), refused
+        assert await _market_edge_ids(s, week5) == edges
+        assert await _revision(s, week5) == revision
+        week4_writes = len([t for t in w.targets if t["container_id"] == week4])
+        assert await _ledger_count(s) == ledger + week4_writes
