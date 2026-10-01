@@ -189,6 +189,15 @@ _SHORTLIST_RE = re.compile(
 _TO_VERB_RE = re.compile(
     r"^(?P<entity>.+?)\s+to\s+(?P<rest>(?:" + "|".join(_QUANTITY_VERBS) + r")\b.*)$"
 )
+#: A generic plural role noun in the subject slot is a FIELD market, not an
+#: entity.  Polymarket's "NHL: Teams to Record 80+ Points" (one outcome per
+#: club) and "NHL: Players to Record 80+ Points" (one per skater) matched
+#: ``_TO_VERB_RE`` with the subject "Teams" / "Players", so the Leafs page grew
+#: a "To Record Points" card whose rows were named "Teams" and "Players" —
+#: and Nylander's 61%, already in Season Points, printed twice (#10017).
+#: Compared against the WHOLE cleaned subject, so a named club or player
+#: ("Toronto Maple Leafs", "William Nylander") never trips it.
+_FIELD_SUBJECTS = frozenset({"teams", "players"})
 #: A season-total rung: "Will Travis Kelce have 874.5+ receiving yards in the
 #: 2026-27 NFL regular season?" — Polymarket's shape for a player's season
 #: ladder, one binary market per line (#2311: sixteen open Kelce/Worthy rungs
@@ -413,6 +422,8 @@ def _parse(market_name: str | None) -> tuple[str | None, str | None]:
     m = _TO_VERB_RE.match(low)
     if m:
         entity = _entity_span(cleaned, low, m)
+        if entity and entity.lower() in _FIELD_SUBJECTS:
+            return None, None
         desc = _family_descriptor(m.group("rest"))
         if entity and desc:
             return f"to {desc}", entity
