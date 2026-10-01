@@ -141,6 +141,230 @@ final class UnrelatedMLBSwipesKeepTheRedSoxStory9648Tests: XCTestCase {
             + "BEFORE survivors \(survivors.count)/\(before.seen.count); dismissed resurrected \(resurrected.count)")
     }
 
+    // MARK: - The fixed-deck arm (reviewed DEBUG seam)
+
+    /// The reviewed deck's role ids (packet `fixture-manifest.json`).
+    private enum Role {
+        static let redSox = "event-15317515"
+        static let mariners = "event-15316875"
+        static let cubsMarlins = "event-15317023"
+        static let dodgersPadres = "event-15316961"
+        static let hockey = "futures-52755659"
+        static let health = "futures-13792418"
+        static let politics = "futures-112996"
+        static let initialDismissal = "futures-27594131"
+        static let fixtureSHA = "7363267d966cd5f040a7f92765f46c811a4a543b5cad94ac4c07019013dc93e9"
+        static let profileKey = "discover_interaction_profile_native_v2"
+        static let legacyProfileKey = "discover_interaction_profile_native_v1"
+        static let dismissKey = "discover_dismissed_v2"
+        static let legacyDismissKey = "discover_dismissed"
+    }
+
+    /// The same journey on the pinned 36-card deck: CONTROL (seeded) → TREATMENT
+    /// (re-seeded to the identical state; swipe ONLY Cubs–Marlins and
+    /// Dodgers–Padres) → COLD RELAUNCH (no seed). Supply cannot be missing here,
+    /// so nothing in this arm SKIPS for supply: a missing input, an unseeded
+    /// store or a signed-out account is a FAILURE of the harness, said by name.
+    ///
+    /// Armed only when the harness copied the deck and seed into the app's
+    /// container and named them (`TEST_RUNNER_BL_9648_FIXED_FEED`,
+    /// `TEST_RUNNER_BL_9648_FIXED_SEED`, optional `TEST_RUNNER_BL_9648_FIXED_ANCHOR`).
+    func testFixedDeckTwoUnrelatedMLBSwipesKeepTheProtectedStoriesAcrossARelaunch() throws {
+        let env = ProcessInfo.processInfo.environment
+        guard let feed = env["BL_9648_FIXED_FEED"], !feed.isEmpty,
+              let seed = env["BL_9648_FIXED_SEED"], !seed.isEmpty
+        else {
+            throw XCTSkip("NOT ARMED: the fixed-deck arm runs only when the harness names the deck and seed it placed in the container.")
+        }
+        let anchor = env["BL_9648_FIXED_ANCHOR"].flatMap { $0.isEmpty ? nil : $0 }
+            ?? String(Int(Date().timeIntervalSince1970))
+        let fixedArgs = ["-launch_fixed_feed", feed, "-launch_fixed_feed_anchor", anchor]
+        let seedArgs = ["-launch_fixed_feed_seed", seed]
+        log("FIXED run anchor \(anchor) feed \(feed) seed \(seed)")
+
+        // ═══ A. CONTROL ═══
+        var app = UITestLaunch.launchApp(extra: fixedArgs + seedArgs)
+        try requireSignedIn(app, arm: "control")
+        let control = try receipt(app, arm: "control", seeded: true, anchor: anchor)
+        let roles = [Role.redSox, Role.mariners, Role.cubsMarlins, Role.dodgersPadres, Role.hockey, Role.health, Role.politics]
+        let controlIds = control.renderedIds
+        let missing = roles.filter { !controlIds.contains($0) }
+        XCTAssertTrue(missing.isEmpty, "HARNESS: role cards not rendered on the fixed deck: \(missing)")
+        XCTAssertFalse(controlIds.contains(Role.initialDismissal), "the seeded exact dismissal must stay hidden")
+        log("CONTROL served \(control.served) eligible \(control.eligible) drawn \(control.drawn)")
+        logRendered(control, arm: "control")
+        for name in ["Red Sox", "Mariners"] { reveal(name, in: app, snapAs: "9648F-01-CONTROL-\(name)") }
+        app.terminate()
+
+        // ═══ B. TREATMENT ═══
+        app = UITestLaunch.launchApp(extra: fixedArgs + seedArgs)
+        try requireSignedIn(app, arm: "treatment")
+        let before = try receipt(app, arm: "treatment-before", seeded: true, anchor: anchor)
+        XCTAssertEqual(before.stores, control.stores, "control and treatment must start from byte-identical stores")
+        XCTAssertEqual(before.renderedIds, controlIds, "control and treatment must start from the same rendered deck")
+        snap("9648F-02-TREATMENT-before")
+        let armStart = Date().timeIntervalSince1970
+        topSignature = nil
+        for (n, teams) in [["Cubs", "Marlins"], ["Dodgers", "Padres"]].enumerated() {
+            scrollToTop(app)
+            guard let card = findAndReveal(app, naming: teams) else {
+                return XCTFail("HARNESS: the \(teams.joined(separator: "–")) game card could not be reached on the fixed deck")
+            }
+            let sig = Self.signature(of: card)
+            snap("9648F-03\(n == 0 ? "a" : "c")-swipe-\(teams[0])")
+            card.swipeLeft()
+            XCTAssertTrue(waitGone(sig, in: app), "the left swipe on \(teams.joined(separator: "–")) did not remove it")
+            XCTAssertTrue(app.navigationBars["Discover"].exists, "a swipe must not open the game page")
+            snap("9648F-03\(n == 0 ? "b" : "d")-gone-\(teams[0])")
+        }
+        let after = try receipt(app, arm: "treatment-after", seeded: true, anchor: anchor)
+        let armEnd = Date().timeIntervalSince1970
+        XCTAssertEqual(
+            Set(after.renderedIds), Set(before.renderedIds).subtracting([Role.cubsMarlins, Role.dodgersPadres]),
+            "exactly the two swiped cards leave the deck")
+        for key in [Role.profileKey, Role.legacyProfileKey, Role.legacyDismissKey] {
+            XCTAssertEqual(after.stores[key], before.stores[key], "\(key) must stay byte-equal through two sports swipes")
+        }
+        let dismissBefore = try decodeDismiss(before.stores[Role.dismissKey])
+        let dismissAfter = try decodeDismiss(after.stores[Role.dismissKey])
+        XCTAssertEqual(Set(dismissAfter.keys), Set(dismissBefore.keys).union([Role.cubsMarlins, Role.dodgersPadres]),
+                       "the dismiss map gains ONLY the two swiped games")
+        XCTAssertEqual(dismissAfter[Role.initialDismissal], dismissBefore[Role.initialDismissal],
+                       "the initial exact dismissal keeps its timestamp")
+        for key in [Role.cubsMarlins, Role.dodgersPadres] {
+            let at = dismissAfter[key] ?? 0
+            XCTAssertTrue(at >= armStart - 1 && at <= armEnd + 1, "\(key) dismissed at \(at), outside the run interval \(armStart)–\(armEnd)")
+        }
+        for id in [Role.redSox, Role.mariners, Role.hockey] {
+            XCTAssertGreaterThan(after.adjustment(id) ?? 0, 0, "\(id) must keep its positive profile adjustment")
+        }
+        XCTAssertLessThan(after.adjustment(Role.politics) ?? 0, 0, "the non-sports negative control keeps its penalty")
+        logRendered(after, arm: "treatment-after")
+        for name in ["Red Sox", "Mariners"] { reveal(name, in: app, snapAs: "9648F-04-TREATMENT-\(name)") }
+        app.terminate()
+
+        // ═══ C. COLD RELAUNCH — same container, same deck, NO seed ═══
+        app = UITestLaunch.launchApp(extra: fixedArgs)
+        try requireSignedIn(app, arm: "relaunch")
+        let relaunch = try receipt(app, arm: "relaunch", seeded: false, anchor: nil)
+        XCTAssertEqual(relaunch.stores, after.stores, "the cold relaunch must read the treatment's stores unchanged")
+        XCTAssertEqual(Set(relaunch.renderedIds), Set(after.renderedIds), "same deck after relaunch")
+        for id in [Role.redSox, Role.mariners, Role.hockey, Role.health, Role.politics] {
+            XCTAssertTrue(relaunch.renderedIds.contains(id), "\(id) missing after relaunch")
+        }
+        XCTAssertGreaterThan(relaunch.adjustment(Role.redSox) ?? 0, 0)
+        XCTAssertGreaterThan(relaunch.adjustment(Role.mariners) ?? 0, 0)
+        logRendered(relaunch, arm: "relaunch")
+        for name in ["Red Sox", "Mariners"] { reveal(name, in: app, snapAs: "9648F-05-RELAUNCH-\(name)") }
+    }
+
+    private struct Receipt {
+        let raw: String
+        let served: Int
+        let eligible: Int
+        let drawn: Int
+        let rendered: [[String: Any]]
+        let stores: [String: String]
+        var renderedIds: [String] { rendered.compactMap { $0["id"] as? String } }
+        func adjustment(_ id: String) -> Double? {
+            rendered.first { ($0["id"] as? String) == id }?["adjustment"] as? Double
+        }
+    }
+
+    /// A signed-out or unresolved account is a harness failure here, not a skip.
+    private func requireSignedIn(_ app: XCUIApplication, arm: String) throws {
+        let signedIn = try AReaderCanSwipeAndRefreshDiscoverTests.isSignedInForFeedback(in: app)
+        if !signedIn { XCTFail("HARNESS (\(arm)): the restored account is signed OUT; guest swipes write nothing (#9644).") }
+        try XCTSkipUnless(signedIn, "stopped: \(arm) is not signed in")
+    }
+
+    /// Reads the app's own read-only receipt once the deck is served to the
+    /// signed-in principal, and checks the launch's fixture and seed identity.
+    private func receipt(_ app: XCUIApplication, arm: String, seeded: Bool, anchor: String?) throws -> Receipt {
+        let element = app.descendants(matching: .any)["discover-fixed-feed-receipt"]
+        let deadline = Date().addingTimeInterval(30)
+        var last = ""
+        while Date() < deadline {
+            if element.exists, let text = element.value as? String, !text.isEmpty {
+                last = text
+                if let body = try? JSONSerialization.jsonObject(with: Data(text.utf8)) as? [String: Any],
+                   body["signed_in"] as? Bool == true, (body["served"] as? Int ?? 0) > 0,
+                   !((body["rendered"] as? [Any]) ?? []).isEmpty {
+                    let fixture = body["fixture"] as? [String: Any] ?? [:]
+                    let seed = body["seed"] as? [String: Any] ?? [:]
+                    XCTAssertNil(fixture["failure"], "HARNESS (\(arm)): \(fixture["failure"] ?? "")")
+                    XCTAssertEqual(fixture["sha256"] as? String, Role.fixtureSHA, "HARNESS (\(arm)): not the reviewed deck")
+                    XCTAssertEqual(fixture["cards"] as? Int, 36)
+                    XCTAssertEqual(seed["state"] as? String, seeded ? "seeded" : "not_requested", "HARNESS (\(arm)): seed state")
+                    if let anchor, let value = seed["anchor"] as? Double {
+                        XCTAssertEqual(value, Double(anchor) ?? -1, "HARNESS (\(arm)): seed anchor")
+                    }
+                    log("RECEIPT \(arm) " + text)
+                    let r = Receipt(
+                        raw: text,
+                        served: body["served"] as? Int ?? 0,
+                        eligible: body["eligible"] as? Int ?? 0,
+                        drawn: body["drawn"] as? Int ?? 0,
+                        rendered: body["rendered"] as? [[String: Any]] ?? [],
+                        stores: body["stores"] as? [String: String] ?? [:])
+                    let a = XCTAttachment(string: text)
+                    a.name = "9648F-receipt-\(arm).json"
+                    a.lifetime = .keepAlways
+                    add(a)
+                    return r
+                }
+            }
+            Thread.sleep(forTimeInterval: 0.5)
+        }
+        XCTFail("HARNESS (\(arm)): no signed-in fixed-feed receipt within 30 s. Last: \(last.prefix(400))")
+        throw XCTSkip("stopped: no receipt for \(arm)")
+    }
+
+    private func decodeDismiss(_ text: String?) throws -> [String: Double] {
+        guard let text, text != "null" else { return [:] }
+        return try XCTUnwrap(try JSONSerialization.jsonObject(with: Data(text.utf8)) as? [String: Double])
+    }
+
+    private func logRendered(_ r: Receipt, arm: String) {
+        for (i, card) in r.rendered.enumerated() {
+            log("\(arm) #\(i) \(card["id"] ?? "") \(card["category"] ?? "") score \(card["score"] ?? "") adj \(card["adjustment"] ?? "")")
+        }
+    }
+
+    private func findAndReveal(_ app: XCUIApplication, naming teams: [String]) -> XCUIElement? {
+        for _ in 0..<Self.scanScreens {
+            for card in JourneyPrecondition.cards(in: app).allElementsBoundByIndex where card.exists {
+                let text = Self.fullText(of: card)
+                guard teams.allSatisfy({ text.contains($0) }), Self.isGame(card) else { continue }
+                let lift = JourneyPrecondition.liftNeeded(for: card, in: app)
+                if lift > 0 { JourneyPrecondition.liftContent(app, by: lift + 20) }
+                if card.frame.minY < 60 { continue }
+                if JourneyPrecondition.isReachable(card, in: app) { return card }
+            }
+            app.swipeUp()
+            Thread.sleep(forTimeInterval: 1.0)
+        }
+        return nil
+    }
+
+    /// Scrolls the named card into the reachable band and photographs it; a
+    /// card that cannot be reached is a failure on a deck that contains it.
+    private func reveal(_ name: String, in app: XCUIApplication, snapAs: String) {
+        topSignature = nil
+        scrollToTop(app)
+        for _ in 0..<Self.scanScreens {
+            if let card = JourneyPrecondition.cards(in: app).allElementsBoundByIndex
+                .first(where: { $0.exists && Self.fullText(of: $0).contains(name) && Self.isGame($0) }) {
+                let lift = JourneyPrecondition.liftNeeded(for: card, in: app)
+                if lift > 0 { JourneyPrecondition.liftContent(app, by: lift + 20) }
+                if JourneyPrecondition.isReachable(card, in: app) { snap(snapAs); return }
+            }
+            app.swipeUp()
+            Thread.sleep(forTimeInterval: 1.0)
+        }
+        XCTFail("the \(name) game card is on the fixed deck but could not be reached on screen")
+    }
+
     // MARK: - Scanning
 
     private struct Scan {

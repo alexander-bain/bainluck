@@ -107,7 +107,21 @@ enum NativeDiscoverDebugState {
 }
 
 struct DiscoverView: View {
-    @StateObject private var vm = DiscoverViewModel()
+    @StateObject private var vm = DiscoverView.makeViewModel()
+
+    /// The view model this launch runs. Production: the ordinary client, network
+    /// feed and last-good cache. A DEBUG launch passing `-launch_fixed_feed`
+    /// (#9648's controlled acceptance) gets `FixedDiscoverFeed` with no last-good
+    /// and no price client instead; the `#if` makes that branch absent from a
+    /// Release binary, not merely unreached.
+    private static func makeViewModel() -> DiscoverViewModel {
+        #if DEBUG
+        if let fixed = FixedDiscoverFeed.launchClient() {
+            return DiscoverViewModel(client: fixed, lastGood: nil)
+        }
+        #endif
+        return DiscoverViewModel()
+    }
     @Environment(\.scenePhase) private var priceScenePhase
     @State private var priceViewVisible = false
     @EnvironmentObject private var authManager: AuthManager
@@ -1297,6 +1311,51 @@ struct DiscoverView: View {
         }
     }
 
+    #if DEBUG
+    /// #9648: names the fixed deck on every frame of a fixed-feed launch, and
+    /// carries the read-only receipt (fixture hash, seed, signed-in, rendered
+    /// order with each card's profile adjustment, the four raw local stores) as
+    /// its accessibility value for the journey to read. Absent unless
+    /// `-launch_fixed_feed` was passed, and absent from Release builds.
+    @ViewBuilder
+    private var fixedFeedReceiptBadge: some View {
+        if let launch = FixedDiscoverFeedReceipt.launch {
+            let rendered = groupedItems.map { grouped -> FixedDiscoverFeedReceipt.RenderedCard in
+                let item = primaryItem(grouped)
+                let category = item.map(itemCategory) ?? ""
+                return FixedDiscoverFeedReceipt.RenderedCard(
+                    id: grouped.id,
+                    category: category,
+                    score: item?.score ?? 0,
+                    adjustment: interactionProfile?.adjustment(for: category) ?? 0)
+            }
+            let signedIn: Bool = { if case .signedIn = feedbackAuthState { return true }; return false }()
+            let receipt = FixedDiscoverFeedReceipt.json(
+                launch: launch,
+                signedIn: signedIn,
+                served: vm.items.count,
+                eligible: Self.eligibleItems(Self.sanitizedFeedItems(vm.items)).count,
+                rendered: rendered)
+            let word: String = {
+                switch launch.fixture {
+                case .success(let f): return "FIXTURE \(f.sha256.prefix(8)) · \(f.cards) CARDS · DEBUG"
+                case .failure(let failure): return "FIXTURE FAILED · \(failure)"
+                }
+            }()
+            Text(word)
+                .font(.system(size: 9, weight: .bold).monospacedDigit())
+                .foregroundStyle(.white)
+                .padding(.horizontal, 6)
+                .padding(.vertical, 2)
+                .background(Capsule().fill(Color.black.opacity(0.7)))
+                .padding(.leading, 6)
+                .allowsHitTesting(false)
+                .accessibilityIdentifier("discover-fixed-feed-receipt")
+                .accessibilityValue(receipt)
+        }
+    }
+    #endif
+
     /// One badge-safe word per `load()` terminal (#7170).
     ///
     /// Pure and `static` so the badge's vocabulary can be pinned by a unit test
@@ -1874,6 +1933,9 @@ struct DiscoverView: View {
             }
         }
         .overlay(alignment: .bottom) { debugCountsBadge }
+        #if DEBUG
+        .overlay(alignment: .topLeading) { fixedFeedReceiptBadge }
+        #endif
         }
         }
         .navigationTitle("Discover")
