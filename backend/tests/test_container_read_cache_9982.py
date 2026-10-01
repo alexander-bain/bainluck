@@ -15,7 +15,8 @@ with the #9636 session double and hubs:
 * **stale is served at once and rebuilt once, in the background**; past its
   servable window an entry is never served;
 * **two workers share one build** through Redis; concurrent cold readers on one
-  worker share one build;
+  worker share one build; a slow owner stays the ONLY build (waiters answer 503
+  "building"), and a failed owner's waiters elect one retry between them (#9984);
 * **fails open** — a broken Redis is a slower hub, never an error;
 * **the policy** — the feed's live / idle windows, capped by a scheduled
   game's kickoff, imported rather than copied.
@@ -418,3 +419,115 @@ async def test_a_failed_background_rebuild_keeps_the_stale_copy_and_frees_the_sl
     assert len(failed) == 1
     # No request-supplied text in the log line (CodeQL py/log-injection).
     assert "nfl-2026-week-5" not in failed[0].getMessage()
+
+
+# ---------------------------------------------------------------------------
+# A slow or failed owner (#9984): a waiter never starts a second hydration
+# ---------------------------------------------------------------------------
+
+
+def _held_builds(monkeypatch, *, fail_first=False):
+    """Count ``_build_entry`` starts; the FIRST one waits on ``gate`` (and
+    raises after it, if ``fail_first``). Later ones run the real build."""
+    real = route._build_entry
+    starts = []
+    gate = asyncio.Event()
+
+    async def _build(db, published, include_children):
+        starts.append(db)
+        if len(starts) == 1:
+            await gate.wait()
+            if fail_first:
+                raise RuntimeError("owner failed")
+        return await real(db, published, include_children)
+
+    monkeypatch.setattr(route, "_build_entry", _build)
+    return starts, gate
+
+
+async def _until(predicate):
+    for _ in range(200):
+        if predicate():
+            return
+        await asyncio.sleep(0)
+    raise AssertionError("condition never reached")
+
+
+async def test_a_slow_live_owner_stays_the_only_build_and_waiters_get_a_503(
+    monkeypatch, redis, clock
+):
+    monkeypatch.setattr(route, "_COALESCE_WAIT_S", 0.01)
+    starts, gate = _held_builds(monkeypatch)
+    owner = asyncio.ensure_future(_get(_session()))
+    await _until(lambda: len(starts) == 1)
+
+    waiters = [_session() for _ in range(3)]
+    responses = await asyncio.gather(*(_get(s) for s in waiters))
+    for resp in responses:
+        assert resp.status_code == 503
+        assert json.loads(resp.body) == {"detail": {"state": "building"}}
+        assert resp.headers["X-Feed-Cache"] == "unavailable"
+        assert resp.headers["Retry-After"] == "2"
+        assert resp.headers["Cache-Control"] == "no-store"
+    # The pre-fix branch started one hydration per waiter here (3 builds, 1 owner).
+    assert len(starts) == 1
+    assert all(_cards_hydrated(s) == [] for s in waiters)
+    assert request_cache.inflight_count() == 1
+
+    gate.set()
+    assert (await owner).headers["X-Feed-Cache"] == "miss"
+    assert request_cache.inflight_count() == 0
+    assert (await _get(_session())).headers["X-Feed-Cache"] == "hit"
+    assert len(starts) == 1
+
+
+async def test_a_failed_owner_leaves_its_waiters_one_retry_between_them(
+    monkeypatch, redis, clock
+):
+    starts, gate = _held_builds(monkeypatch, fail_first=True)
+    owner = asyncio.ensure_future(_get(_session()))
+    await _until(lambda: len(starts) == 1)
+    waiters = [asyncio.ensure_future(_get(_session(cls=_YieldingSession))) for _ in range(3)]
+    await _until(lambda: all(not w.done() for w in waiters) and request_cache.inflight_count() == 1)
+    for _ in range(5):
+        await asyncio.sleep(0)
+
+    gate.set()
+    with pytest.raises(RuntimeError, match="owner failed"):
+        await owner
+    responses = await asyncio.gather(*waiters)
+    labels = sorted(r.headers["X-Feed-Cache"] for r in responses)
+    assert labels == ["coalesced", "coalesced", "miss"]
+    assert len(starts) == 2, "the failed owner plus exactly ONE retry"
+    assert len({r.body for r in responses}) == 1
+    assert request_cache.inflight_count() == 0
+
+
+async def test_a_cancelled_owner_frees_the_slot_and_a_cancelled_waiter_leaves_the_owner(
+    monkeypatch, redis, clock
+):
+    starts, gate = _held_builds(monkeypatch)
+    owner = asyncio.ensure_future(_get(_session()))
+    await _until(lambda: len(starts) == 1)
+
+    # A waiter that disconnects is cancelled itself; the owner is untouched.
+    quitter = asyncio.ensure_future(_get(_session()))
+    for _ in range(5):
+        await asyncio.sleep(0)
+    quitter.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await quitter
+    assert not owner.done() and request_cache.inflight_count() == 1
+
+    # The owner itself is cancelled: its slot resolves, and the waiter behind
+    # it takes the slot and builds once — no orphaned slot, no herd.
+    waiter = asyncio.ensure_future(_get(_session(cls=_YieldingSession)))
+    for _ in range(5):
+        await asyncio.sleep(0)
+    owner.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await owner
+    resp = await waiter
+    assert resp.headers["X-Feed-Cache"] == "miss"
+    assert len(starts) == 2
+    assert request_cache.inflight_count() == 0

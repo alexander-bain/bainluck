@@ -455,7 +455,8 @@ _LOCAL_MAX_ENTRIES = 4
 _local_entries: dict = {}
 
 #: How long a request waits on another request's in-flight build of the same
-#: key before building itself — well under the web client's 12 s abort.
+#: key before answering 503 "building" — well under the web client's 12 s
+#: abort. A waiter never starts a second build while the owner is live.
 _COALESCE_WAIT_S = 8.0
 
 
@@ -545,6 +546,30 @@ async def _build_entry(db: AsyncSession, published, include_children: bool) -> C
     )
 
 
+#: Sent with a waiter's 503: by then the owner's build is seconds from landing.
+_NOT_READY_RETRY_AFTER_S = 2
+
+
+def _not_ready_response(state: Literal["building", "unavailable"]) -> Response:
+    """A waiter's answer when it cannot be handed an entry within ``_COALESCE_WAIT_S``.
+
+    ``building``: the owner is still hydrating, and stays the only build.
+    ``unavailable``: the owner failed and the wait is spent; the next request
+    takes the slot. Never a second concurrent hydration of the same key, and
+    never an empty hub that would read as a collection with no games.
+    """
+    return Response(
+        content=json.dumps({"detail": {"state": state}}, separators=(",", ":")).encode(),
+        status_code=503,
+        media_type="application/json",
+        headers={
+            "Retry-After": str(_NOT_READY_RETRY_AFTER_S),
+            "Cache-Control": "no-store",
+            "X-Feed-Cache": "unavailable",
+        },
+    )
+
+
 def _cached_response(entry: CachedRead, label: str) -> Response:
     # `X-Feed-Cache` is the header the latency middleware buckets every route's
     # cache outcome by; the labels are from its allowlist.
@@ -616,25 +641,49 @@ async def _serve_cached(db: AsyncSession, slug: str, published, include_children
         return _cached_response(entry, "shared_stale_hit" if from_shared else "stale_hit")
 
     leader, future = begin_build(key)
-    if not leader:
+    loop = asyncio.get_running_loop()
+    deadline = loop.time() + _COALESCE_WAIT_S
+    while not leader:
+        joined = None
         try:
-            joined = await asyncio.wait_for(asyncio.shield(future), timeout=_COALESCE_WAIT_S)
+            joined = await asyncio.wait_for(
+                asyncio.shield(future), timeout=max(0.0, deadline - loop.time())
+            )
+        except asyncio.TimeoutError:
+            # The owner is still building: it stays the ONLY build. A second
+            # hydration here is what stacked 3 builds behind 1 owner (#9984).
+            if not future.done():
+                return _not_ready_response("building")
         except asyncio.CancelledError:
-            raise
-        except Exception:  # noqa: BLE001 — a timed-out or failed leader: build here
-            joined = None
+            # Our own cancellation propagates; an owner whose future was
+            # cancelled under us is a failed owner, not a reason to die.
+            task = asyncio.current_task()
+            if not future.cancelled() or (task is not None and task.cancelling()):
+                raise
+        except Exception:  # noqa: BLE001 — the owner failed: retry below
+            pass
+        if joined is None and future.done() and not future.cancelled():
+            if future.exception() is None:
+                joined = future.result()  # landed in the same tick the wait expired
         if isinstance(joined, CachedRead):
             return _cached_response(joined, "coalesced")
-        entry = await _build_entry(db, published, include_children)
-        _store_entry(key, entry)
-        return _cached_response(entry, "miss")
+        # The owner finished without an entry for us. A waiter woken after a
+        # new owner already landed serves that, rather than building again.
+        landed = _local_entries.get(key)
+        if landed is not None and landed.is_fresh(time.time()):
+            return _cached_response(landed, "coalesced")
+        if loop.time() >= deadline:
+            return _not_ready_response("unavailable")
+        # Retry only by taking the slot, so the waiters a failed owner left
+        # behind elect ONE new owner and the rest join it.
+        leader, future = begin_build(key)
 
     entry = None
     try:
         entry = await _build_entry(db, published, include_children)
     finally:
         # Resolved on EVERY exit (request_cache's single-owner invariant); a
-        # failed build hands waiters None and each builds for itself.
+        # failed or cancelled build hands waiters None and they elect a new owner.
         finish_build(key, future, result=entry)
     _store_entry(key, entry)
     return _cached_response(entry, "miss")
