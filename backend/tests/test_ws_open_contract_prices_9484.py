@@ -269,7 +269,12 @@ class TestAnOpenContractStreamsOnItsOwnConnection:
         assert stats["open_contract_connections"] == 1
         assert stats["open_contract_messages"] >= 1
 
-    async def test_that_connection_asks_for_prices_only(self, monkeypatch):
+    async def test_that_connection_asks_for_prices_and_its_own_settlement(
+        self, monkeypatch,
+    ):
+        """#10022 amended this: the connection also carries lifecycle, which it
+        routes to the PER-LEG grader (`test_ws_open_contract_settlement_10022`),
+        never to the two-sided handler."""
         _stats, record, _state = await _run(
             monkeypatch, frames_for={}, open_rows=[(OPEN_TICKER, 50, 501)],
         )
@@ -279,10 +284,20 @@ class TestAnOpenContractStreamsOnItsOwnConnection:
             OPEN_TICKER in (p.get("market_tickers") or []) for p in c
         )]
         assert len(open_conns) == 1
-        assert [p["channels"] for p in open_conns[0]] == [["ticker"]], (
-            "an open contract on the lifecycle channel reaches the two-sided "
-            "settlement handler"
+        assert [p["channels"] for p in open_conns[0]] == [
+            ["ticker"], ["market_lifecycle_v2"],
+        ]
+
+    async def test_the_settlement_undo_switch_is_prices_only(self, monkeypatch):
+        monkeypatch.setenv("WS_OPEN_CONTRACT_SETTLEMENT", "0")
+        _stats, record, _state = await _run(
+            monkeypatch, frames_for={}, open_rows=[(OPEN_TICKER, 50, 501)],
         )
+
+        open_conns = [c for c in _connections(record) if any(
+            OPEN_TICKER in (p.get("market_tickers") or []) for p in c
+        )]
+        assert [p["channels"] for p in open_conns[0]] == [["ticker"]]
 
     async def test_the_game_connection_is_unchanged(self, monkeypatch):
         _stats, record, _state = await _run(
@@ -320,9 +335,20 @@ class TestTheGameSocketNeverWaitsForTheRead:
 
 
 class TestAnOpenContractNeverReachesSettlementOrAdmission:
-    async def test_a_lifecycle_frame_for_it_writes_no_market(self, monkeypatch):
-        """Delivered on the GAME socket, where the lifecycle handler listens:
-        the open contract's event ticker is not in the lifecycle map."""
+    async def test_a_lifecycle_frame_for_it_never_reaches_the_two_sided_write(
+        self, monkeypatch,
+    ):
+        """Delivered on the GAME socket, where the two-sided handler listens:
+        the open contract's event ticker is not in the lifecycle map, so no
+        market-wide write happens there. #10022: the frame is graded per leg
+        instead — that one leg, and no sibling."""
+        graded = []
+
+        async def _grade(_session, *, market_id, outcome_id, state, result):
+            graded.append((market_id, outcome_id, state, result))
+            return None, None
+
+        monkeypatch.setattr(oc, "grade_open_contract_leg", _grade)
         _stats, _record, state = await _run(
             monkeypatch,
             frames_for={LINKED_TICKER: [_settle(OPEN_TICKER)]},
@@ -330,6 +356,7 @@ class TestAnOpenContractNeverReachesSettlementOrAdmission:
         )
 
         assert state["market_writes"] == []
+        assert graded == [(50, 501, "determined", "no")]
 
     async def test_a_far_game_turning_live_still_recycles(self, monkeypatch):
         """Market 9 is streaming as an open contract. When its event goes live
@@ -378,7 +405,8 @@ class TestTheArmFailsClosedOnItself:
     ):
         """`KalshiWebSocket.run(market_tickers=[])` subscribes EVERY market on
         both channels. With open contracts and no game slate, only the
-        prices-only connections open."""
+        open-contract connections open, each filtered to its own tickers on
+        every channel it asks for (#10022 added lifecycle to them)."""
         stats, record, state = await _run(
             monkeypatch,
             frames_for={OPEN_TICKER: [_tick(OPEN_TICKER)]},
@@ -390,7 +418,9 @@ class TestTheArmFailsClosedOnItself:
         assert len(conns) == 1
         for params in conns[0]:
             assert params["market_tickers"] == [OPEN_TICKER]
-            assert params["channels"] == ["ticker"]
+        assert [p["channels"] for p in conns[0]] == [
+            ["ticker"], ["market_lifecycle_v2"],
+        ]
         assert (501, pytest.approx(0.41)) in state["price_writes"]
         assert stats.get("status") != "no_markets"
 

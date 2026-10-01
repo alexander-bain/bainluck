@@ -249,6 +249,10 @@ LIVE_KALSHI_SETTLEMENT_WRITERS = {
     # back on the `api_settlement` rung; the retraction branch moves only
     # `resolution_source` and is not a settlement write.
     "app/tasks/repair_kalshi_fabricated_loss.py": {"_apply_reviewed_plan"},
+    # #10022: the socket's per-leg grader for open contracts (a lifecycle frame
+    # the venue declared). Grades through `graded_columns` and writes the
+    # settled price in the same `.values()`.
+    "app/tasks/ws_open_contracts.py": {"grade_open_contract_leg"},
 }
 
 #: Settlement writers in the same files that are NOT Kalshi and are NOT fixed
