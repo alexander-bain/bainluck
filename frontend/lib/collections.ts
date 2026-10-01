@@ -144,6 +144,29 @@ export async function fetchCollection(slug: string, signal?: AbortSignal): Promi
   return parseCollection(await response.json(), slug);
 }
 
+// #9982: the last accepted (published) hub per slug, held in memory across
+// client-side navigation. Back from a game and in-place refreshes redraw it at
+// once instead of "Loading collection…"; a transient failure keeps it with an
+// honest error. An authoritative non-published answer (404, withdrawn,
+// unpublished, empty) replaces it, so a real withdrawal never stays visible.
+const acceptedHubs = new Map<string, CollectionHub>();
+const ACCEPTED_HUB_LIMIT = 4;
+export const acceptedCollection = (slug: string): CollectionHub | null => acceptedHubs.get(slug) ?? null;
+export const forgetAcceptedCollections = (): void => acceptedHubs.clear();
+export function settleCollectionRead(slug: string, read: { hub: CollectionHub } | { failed: true }): { hub: CollectionHub | null; error: string | null } {
+  if ("hub" in read) {
+    acceptedHubs.delete(slug);
+    if (read.hub.slug === slug && read.hub.state === "published") {
+      acceptedHubs.set(slug, read.hub);
+      for (const oldest of acceptedHubs.keys()) { if (acceptedHubs.size <= ACCEPTED_HUB_LIMIT) break; acceptedHubs.delete(oldest); }
+    }
+    return { hub: read.hub, error: null };
+  }
+  const retained = acceptedCollection(slug);
+  return retained ? { hub: retained, error: "Couldn't refresh this collection. Showing the last update." }
+    : { hub: null, error: "Couldn't load this collection. Please try again." };
+}
+
 export function reconcileCollectionContext(context: CollectionReadingContext | null, hub: CollectionHub): CollectionReadingContext | null {
   if (!context || context.slug !== hub.slug || hub.state !== "published" || !Number.isFinite(context.offset) || !Array.isArray(context.expanded)) return null;
   const keys = new Set(hub.members.map((m) => m.key).concat(hub.children.map((c) => c.key)));
