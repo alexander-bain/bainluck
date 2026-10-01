@@ -9,6 +9,12 @@
 //
 // Rounds 1–2 only (a cut is only live before it's made); suppressed otherwise by
 // the parent's mount gate. Probability-only, light tokens.
+//
+// #10109: the rows split on make_cut_prob (≥ 50 above the line), so the line
+// is a PROBABILITY line, and its labels say "projected", never "safe". A cut
+// SCORE is printed only when the field's posted scores agree with that split
+// (see projectedCutScore) — in round 1 half the field hasn't teed off, and a
+// median-row score put 51% golfers at E above a "-2" cut and 49% golfers at -1.
 
 import type { EventConceptCompetitor } from "@/lib/types";
 import EntityImage from "@/components/EntityImage";
@@ -25,6 +31,43 @@ interface BubbleWatchProps {
 function makeCutPct(c: EventConceptCompetitor): number | null {
   const v = (c as Record<string, unknown>).make_cut_prob;
   return typeof v === "number" ? v : null;
+}
+
+/** True when the golfer's score_to_par is a posted score: they hold a
+ *  leaderboard position or have played a hole. A round-1 golfer who hasn't teed
+ *  off reads "E" with position "--" — that E is not a score. */
+function hasPostedScore(c: EventConceptCompetitor): boolean {
+  if (typeof c.score_to_par !== "number") return false;
+  if (/\d/.test(c.position ?? "")) return true;
+  const thru = String(c.thru ?? "").trim();
+  return thru.toUpperCase() === "F" || Number(thru) > 0;
+}
+
+/** The cut score S ("S or better makes it") that agrees with the probability
+ *  split, or null. S is the worst posted score among golfers projected to make
+ *  the cut (≥ 50%); it is printed only when every golfer projected to miss has
+ *  a strictly worse posted score. Otherwise the scores and the probabilities
+ *  disagree, and no single score is the cut — so none is shown. Exported for
+ *  the guard test. */
+export function projectedCutScore(competitors: EventConceptCompetitor[]): number | null {
+  let worstMaker: number | null = null;
+  let bestMisser: number | null = null;
+  for (const c of competitors) {
+    const mc = makeCutPct(c);
+    if (mc == null || !hasPostedScore(c)) continue;
+    const score = c.score_to_par as number;
+    if (projectedToMake(mc)) worstMaker = worstMaker == null ? score : Math.max(worstMaker, score);
+    else bestMisser = bestMisser == null ? score : Math.min(bestMisser, score);
+  }
+  if (worstMaker == null || bestMisser == null) return null;
+  return bestMisser > worstMaker ? worstMaker : null;
+}
+
+/** Above the line = the row's PRINTED percent is ≥ 50. The split reads the
+ *  same rounded number the row shows, so a golfer printed at "50%" is never
+ *  listed as projected to miss (raw 49.6). */
+function projectedToMake(mc: number): boolean {
+  return Math.round(mc) >= 50;
 }
 
 /** Score-to-par display: E / -N / +N. */
@@ -50,12 +93,11 @@ export default function BubbleWatch({
 
   if (bubblePlayers.length === 0) return null;
 
-  // Projected cut ≈ the median bubble player's score.
-  const midIdx = Math.floor(bubblePlayers.length / 2);
-  const projectedCut = fmtToPar(bubblePlayers[midIdx]?.c.score_to_par);
+  const cutScore = projectedCutScore(competitors);
+  const projectedCut = cutScore == null ? null : fmtToPar(cutScore);
 
-  const safe = bubblePlayers.filter((x) => x.mc >= 50).slice(-3);
-  const bubble = bubblePlayers.filter((x) => x.mc < 50).slice(0, 3);
+  const safe = bubblePlayers.filter((x) => projectedToMake(x.mc)).slice(-3);
+  const bubble = bubblePlayers.filter((x) => !projectedToMake(x.mc)).slice(0, 3);
 
   return (
     <section
@@ -67,9 +109,11 @@ export default function BubbleWatch({
           ✂️
         </span>
         <h2 className="text-title-3 font-semibold text-text-primary">Bubble Watch</h2>
-        <span className="text-[11px] font-semibold px-2 py-0.5 rounded-full bg-accent-brand/10 text-accent-brand">
-          Projected cut: {projectedCut}
-        </span>
+        {projectedCut != null && (
+          <span className="text-[11px] font-semibold px-2 py-0.5 rounded-full bg-accent-brand/10 text-accent-brand">
+            Projected cut: {projectedCut}
+          </span>
+        )}
         {currentRound != null && (
           <span className="text-[11px] px-2 py-0.5 rounded-full bg-surface-elevated text-text-secondary">
             Round {currentRound} in progress
@@ -78,26 +122,32 @@ export default function BubbleWatch({
       </div>
 
       <div className="px-6 py-4 space-y-1">
-        <div className="text-[10px] uppercase tracking-wide font-semibold text-text-muted px-1 mb-0.5">
-          Safe — will make cut
-        </div>
+        {safe.length > 0 && (
+          <div className="text-[10px] uppercase tracking-wide font-semibold text-text-muted px-1 mb-0.5">
+            Projected to make the cut
+          </div>
+        )}
         {safe.map(({ c, mc }) => (
           <BubbleRow key={`safe-${c.name}`} c={c} mc={mc} avatar={avatar} />
         ))}
 
-        {/* Cut line */}
-        <div className="relative my-3">
+        {/* Cut line — the pill hangs half its height below the dash, so the
+            heading under it needs clearance. Padding, not margin: the parent's
+            space-y-1 zeroes a child's bottom margin. */}
+        <div className="relative pt-3 pb-4">
           <div className="border-t-2 border-dashed border-accent-brand/50" />
           <div className="absolute left-1/2 -translate-x-1/2 -translate-y-1/2 px-3 py-0.5 bg-surface-card border border-accent-brand/40 rounded-full">
             <span className="text-[10px] font-bold text-accent-brand">
-              ✂️ CUT LINE · {projectedCut}
+              ✂️ CUT LINE{projectedCut != null ? ` · ${projectedCut}` : ""}
             </span>
           </div>
         </div>
 
-        <div className="text-[10px] uppercase tracking-wide font-semibold text-text-muted px-1 mb-0.5">
-          On the bubble
-        </div>
+        {bubble.length > 0 && (
+          <div className="text-[10px] uppercase tracking-wide font-semibold text-text-muted px-1 mb-0.5">
+            Projected to miss the cut
+          </div>
+        )}
         {bubble.map(({ c, mc }) => (
           <BubbleRow key={`bubble-${c.name}`} c={c} mc={mc} bubble avatar={avatar} />
         ))}
