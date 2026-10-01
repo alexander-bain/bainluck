@@ -1215,7 +1215,7 @@ struct SearchView: View {
 
             Spacer(minLength: 4)
 
-            if let leader = SearchGrouping.leaderOutcome(market),
+            if let leader = market.dateLadderAnswer ?? SearchGrouping.leaderOutcome(market),
                let probability = leader.probability {
                 HStack(spacing: 4) {
                     Text(leader.name)
@@ -1286,7 +1286,7 @@ struct SearchView: View {
                 }
             }
 
-            if let outcomes = market.topOutcomes, let top = outcomes.first {
+            if let top = market.dateLadderAnswer ?? market.topOutcomes?.first {
                 HStack(spacing: 4) {
                     Text(top.name)
                         .font(.caption)
