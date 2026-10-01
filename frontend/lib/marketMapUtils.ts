@@ -618,6 +618,51 @@ export interface GameTotalRow {
   market_type: string;
   outcome_name: string;
   bookmaker_count?: number;
+  /** #2555: the venue's title, the only place a Polymarket row states its unit. */
+  market_name?: string | null;
+}
+
+/**
+ * #2555: WHAT A TOTALS ROW COUNTS, READ FROM THE VENUE'S OWN TITLE.
+ *
+ * Polymarket serves a tennis match's `Total Sets O/U 2.5` and its
+ * `Set 1 Games O/U 9.5` as `game_total` rows with `outcome_name` "Over"/"Under"
+ * and `period: null`, so nothing but the title says either is not the match's
+ * game count. On `/events/15322596` (2026-10-01) the Games map drew all four
+ * — a sets line and three first-set lines — as one ladder headed "PRE-GAME 3".
+ *
+ * The unit is the word in front of `O/U` or after `Total`, never a unit word
+ * found anywhere in the title: a postseason `Game 3: Total Runs O/U 7.5`
+ * carries "game" and counts runs.
+ */
+const TOTAL_UNIT_BEFORE_OU_RE = /\b(games?|sets?|points?|runs?|goals?)\s+o\/u\b/i;
+const TOTAL_UNIT_AFTER_TOTAL_RE = /\btotal\s+(games?|sets?|points?|runs?|goals?)\b/i;
+const SCOPES_ONE_SET_RE =
+  /\bset\s*\d+\b|\b(?:1st|2nd|3rd|4th|5th|first|second|third|fourth|fifth)\s+set\b/i;
+
+export function gameTotalUnitOf(marketName: string | null | undefined): string | null {
+  const name = marketName || "";
+  const m = TOTAL_UNIT_BEFORE_OU_RE.exec(name) ?? TOTAL_UNIT_AFTER_TOTAL_RE.exec(name);
+  if (!m) return null;
+  const word = m[1].toLowerCase();
+  return word.endsWith("s") ? word : `${word}s`;
+}
+
+/**
+ * Does a full-game totals row belong on a match rail counted in `railUnit`?
+ * A row scoped to one set is never the match's total; a row that states a
+ * different unit is refused; a row that states none is kept (every points
+ * sport), as is everything on a rail with no declared unit — the same three
+ * cases as `spreadRungMatchesRail`.
+ */
+export function gameTotalFitsMatchRail(
+  marketName: string | null | undefined,
+  railUnit?: string
+): boolean {
+  if (SCOPES_ONE_SET_RE.test(marketName || "")) return false;
+  if (!railUnit) return true;
+  const unit = gameTotalUnitOf(marketName);
+  return unit == null || unit === railUnit;
 }
 
 /** A period totals row as `GameMarketsResponse.period_markets` serves it. */
@@ -677,10 +722,17 @@ export function marketMapIsGraded(eventStatus?: string | null): boolean {
 
 export function selectGameTotalRungs<T extends GameTotalRow>(
   totals: T[] | null | undefined,
-  eventStatus?: string | null
+  eventStatus?: string | null,
+  /** #2555: the rail's unit (`SportScoringVocab.unit`); see `gameTotalFitsMatchRail`. */
+  railUnit?: string
 ): T[] {
   const rawTotals = (totals || [])
-    .filter((t) => t.market_type === "game_total" && isGameTotal(t.outcome_name))
+    .filter(
+      (t) =>
+        t.market_type === "game_total" &&
+        isGameTotal(t.outcome_name) &&
+        gameTotalFitsMatchRail(t.market_name, railUnit)
+    )
     .sort((a, b) => a.threshold - b.threshold);
 
   if (rawTotals.length === 0) return [];
@@ -1218,11 +1270,13 @@ export function totalsMapRenders(
    * whose rungs are ALL 0% — a final below every line — would render while this
    * said it did not, which is exactly the divergence #3240 exists to prevent.
    */
-  eventStatus?: string | null
+  eventStatus?: string | null,
+  /** #2555: the same rail unit the card selects with, for the same reason. */
+  railUnit?: string
 ): boolean {
   if (!gameMarkets) return false;
   if (!marketMapSectionMounts(gameMarkets)) return false;
-  if (selectGameTotalRungs(gameMarkets.totals, eventStatus).length > 0) return true;
+  if (selectGameTotalRungs(gameMarkets.totals, eventStatus, railUnit).length > 0) return true;
   return TOTAL_MAP_HALVES.some(
     (half) => selectHalfTotalRungs(gameMarkets.period_markets, half).length > 0
   );
