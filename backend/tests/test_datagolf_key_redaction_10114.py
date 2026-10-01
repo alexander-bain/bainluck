@@ -88,13 +88,16 @@ async def test_poll_datagolf_debug_errors_hold_no_key(datagolf_403, no_db, caplo
     assert SENTINEL_KEY not in caplog.text
 
 
-async def test_public_leaderboard_debug_route_returns_no_key(datagolf_403):
-    from app.routes.golf import get_golf_leaderboard_debug
+async def test_public_leaderboard_debug_route_returns_no_error_text(datagolf_403, caplog):
+    """Public route: the caller gets a fixed string, the log gets the redacted detail."""
+    from app.routes import golf
+    caplog.set_level(logging.WARNING, logger=golf.logger.name)
 
-    body = await get_golf_leaderboard_debug()
+    body = await golf.get_golf_leaderboard_debug()
 
-    assert "403" in body["error"]
-    assert SENTINEL_KEY not in body["error"]
+    assert body == {"error": "datagolf_request_failed"}
+    assert "403" in caplog.text
+    assert SENTINEL_KEY not in caplog.text
 
 
 class TestRedactApiKey:

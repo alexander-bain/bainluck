@@ -5004,7 +5004,10 @@ async def get_golf_leaderboard_debug():
     try:
         data = await service._get("preds/in-play", {"tour": "pga"})
     except Exception as e:
-        return {"error": redact_api_key(e)}  # #10114: public route; errors carry ?key=
+        # #10114: a PUBLIC route. httpx error text carries the ?key= URL, so the
+        # detail goes to the log (redacted) and the caller gets a fixed string.
+        logger.warning("golf leaderboard debug: DataGolf error: %s", redact_api_key(e))
+        return {"error": "datagolf_request_failed"}
     finally:
         await service.close()
     # Return raw response with first 3 player entries
