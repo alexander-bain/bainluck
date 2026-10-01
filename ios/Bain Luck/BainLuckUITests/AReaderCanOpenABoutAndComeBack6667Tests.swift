@@ -43,8 +43,12 @@ final class AReaderCanOpenABoutAndComeBack6667Tests: XCTestCase {
         guard bouts.firstMatch.waitForExistence(timeout: UITestLaunch.contentTimeout) else {
             // Distinguish "the card is gone" (fine, skip) from "the card loaded
             // and drew no rows" (a real failure, and the one worth a red).
+            // `.matching`, not `.containing`: `containing` asks for a text with a
+            // DESCENDANT that matches, and a static text has none, so the skip
+            // could never fire (shopper, build 33: the app read "UFC isn't
+            // available" and the test still went red).
             let unavailable = app.staticTexts
-                .containing(NSPredicate(format: "label CONTAINS[c] %@", "isn't available"))
+                .matching(NSPredicate(format: "label CONTAINS[c] %@", "isn't available"))
             if unavailable.firstMatch.exists {
                 throw XCTSkip(
                     "\(Self.cardKey) no longer resolves — the server 404s a card whose markets have "
