@@ -152,13 +152,16 @@ describe("#8833 controls: what the bound must NOT touch", () => {
     expect(html).not.toContain("<details");
   });
 
-  it("THE DIVERGENCE gets no new fold from the same flood", () => {
+  it("THE DIVERGENCE gets no section-level fold from the same flood", () => {
     // Every row moved, so its own "N unchanged" fold has nothing to take.
+    // #1626 slice 8 gave THE DIVERGENCE its own per-family bound (5 rows), so
+    // the 30-rung ladder now folds 25; the 40 families all stay in sight.
     const items = flood({ graded_result: null, graded_label: null, settled: null }).map((m) => ({
       ...m,
       current: (m.pregame_mark ?? 0) + 0.1,
     }));
     const html = render(items, "divergence");
-    expect(html).not.toContain("<details");
+    expect(summaries(html)).toEqual(["More props (25)"]);
+    expect(closed(html)).toContain(ouFamily(39));
   });
 });

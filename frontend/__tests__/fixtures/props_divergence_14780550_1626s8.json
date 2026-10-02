@@ -1,0 +1,4074 @@
+{
+ "_note": "GET /api/events/14780550/game-markets, live Steelers @ Browns Q1, banked 2026-10-02 00:23:14Z for #1626 slice 8. props_script only.",
+ "status": "live",
+ "props_script": [
+  {
+   "key": "Aaron Rodgers: Passing Yards O/U 199.5|Under",
+   "label": "Under",
+   "pregame_mark": 0.395,
+   "current": 0.405,
+   "graded_result": null,
+   "graded_label": null,
+   "settled": false
+  },
+  {
+   "key": "Aaron Rodgers: Passing Yards O/U 274.5|Under",
+   "label": "Under",
+   "pregame_mark": 0.8,
+   "current": 0.8,
+   "graded_result": null,
+   "graded_label": null,
+   "settled": false
+  },
+  {
+   "key": "Aaron Rodgers: Passing Yards O/U 299.5|Under",
+   "label": "Under",
+   "pregame_mark": 0.92,
+   "current": 0.92,
+   "graded_result": null,
+   "graded_label": null,
+   "settled": false
+  },
+  {
+   "key": "Pittsburgh vs Cleveland: Passing Yards|Aaron Rodgers: 150+",
+   "label": "Aaron Rodgers: 150+",
+   "pregame_mark": 0.835,
+   "current": 0.905,
+   "graded_result": null,
+   "graded_label": null,
+   "settled": false
+  },
+  {
+   "key": "Pittsburgh vs Cleveland: Passing Yards|Aaron Rodgers: 175+",
+   "label": "Aaron Rodgers: 175+",
+   "pregame_mark": 0.735,
+   "current": 0.795,
+   "graded_result": null,
+   "graded_label": null,
+   "settled": false
+  },
+  {
+   "key": "Aaron Rodgers: Passing Yards O/U 199.5|Over",
+   "label": "Over",
+   "pregame_mark": 0.61,
+   "current": 0.595,
+   "graded_result": null,
+   "graded_label": null,
+   "settled": false
+  },
+  {
+   "key": "Pittsburgh vs Cleveland: Passing Yards|Aaron Rodgers: 200+",
+   "label": "Aaron Rodgers: 200+",
+   "pregame_mark": 0.605,
+   "current": 0.595,
+   "graded_result": null,
+   "graded_label": null,
+   "settled": false
+  },
+  {
+   "key": "Pittsburgh vs Cleveland: Passing Yards|Aaron Rodgers: 225+",
+   "label": "Aaron Rodgers: 225+",
+   "pregame_mark": 0.445,
+   "current": 0.515,
+   "graded_result": null,
+   "graded_label": null,
+   "settled": false
+  },
+  {
+   "key": "Pittsburgh vs Cleveland: Passing Yards|Aaron Rodgers: 250+",
+   "label": "Aaron Rodgers: 250+",
+   "pregame_mark": 0.305,
+   "current": 0.345,
+   "graded_result": null,
+   "graded_label": null,
+   "settled": false
+  },
+  {
+   "key": "Aaron Rodgers: Passing Yards O/U 274.5|Over",
+   "label": "Over",
+   "pregame_mark": 0.2,
+   "current": 0.2,
+   "graded_result": null,
+   "graded_label": null,
+   "settled": false
+  },
+  {
+   "key": "Pittsburgh vs Cleveland: Passing Yards|Aaron Rodgers: 275+",
+   "label": "Aaron Rodgers: 275+",
+   "pregame_mark": 0.195,
+   "current": 0.2,
+   "graded_result": null,
+   "graded_label": null,
+   "settled": false
+  },
+  {
+   "key": "Aaron Rodgers: Passing Yards O/U 299.5|Over",
+   "label": "Over",
+   "pregame_mark": 0.08,
+   "current": 0.08,
+   "graded_result": null,
+   "graded_label": null,
+   "settled": false
+  },
+  {
+   "key": "Pittsburgh vs Cleveland: Passing Yards|Aaron Rodgers: 300+",
+   "label": "Aaron Rodgers: 300+",
+   "pregame_mark": 0.125,
+   "current": 0.08,
+   "graded_result": null,
+   "graded_label": null,
+   "settled": false
+  },
+  {
+   "key": "Pittsburgh vs Cleveland: Passing Yards|Aaron Rodgers: 325+",
+   "label": "Aaron Rodgers: 325+",
+   "pregame_mark": 0.075,
+   "current": 0.075,
+   "graded_result": null,
+   "graded_label": null,
+   "settled": false
+  },
+  {
+   "key": "Michael Pittman Jr.: Receiving Yards O/U 59.5|Under",
+   "label": "Under",
+   "pregame_mark": 0.885,
+   "current": 0.885,
+   "graded_result": null,
+   "graded_label": null,
+   "settled": false
+  },
+  {
+   "key": "Michael Pittman Jr.: Receiving Yards O/U 69.5|Under",
+   "label": "Under",
+   "pregame_mark": 0.91,
+   "current": 0.91,
+   "graded_result": null,
+   "graded_label": null,
+   "settled": false
+  },
+  {
+   "key": "Michael Pittman Jr.: Receiving Yards O/U 79.5|Under",
+   "label": "Under",
+   "pregame_mark": 0.935,
+   "current": 0.935,
+   "graded_result": null,
+   "graded_label": null,
+   "settled": false
+  },
+  {
+   "key": "Pittsburgh vs Cleveland: Receiving Yards|Michael Pittman Jr.: 15+",
+   "label": "Michael Pittman Jr.: 15+",
+   "pregame_mark": 0.775,
+   "current": 0.775,
+   "graded_result": null,
+   "graded_label": null,
+   "settled": false
+  },
+  {
+   "key": "Pittsburgh vs Cleveland: Receiving Yards|Michael Pittman Jr.: 25+",
+   "label": "Michael Pittman Jr.: 25+",
+   "pregame_mark": 0.635,
+   "current": 0.615,
+   "graded_result": null,
+   "graded_label": null,
+   "settled": false
+  },
+  {
+   "key": "Pittsburgh vs Cleveland: Receiving Yards|Michael Pittman Jr.: 40+",
+   "label": "Michael Pittman Jr.: 40+",
+   "pregame_mark": 0.405,
+   "current": 0.415,
+   "graded_result": null,
+   "graded_label": null,
+   "settled": false
+  },
+  {
+   "key": "Pittsburgh vs Cleveland: Receiving Yards|Michael Pittman Jr.: 50+",
+   "label": "Michael Pittman Jr.: 50+",
+   "pregame_mark": 0.295,
+   "current": 0.265,
+   "graded_result": null,
+   "graded_label": null,
+   "settled": false
+  },
+  {
+   "key": "Michael Pittman Jr.: Receiving Yards O/U 59.5|Over",
+   "label": "Over",
+   "pregame_mark": 0.115,
+   "current": 0.115,
+   "graded_result": null,
+   "graded_label": null,
+   "settled": false
+  },
+  {
+   "key": "Pittsburgh vs Cleveland: Receiving Yards|Michael Pittman Jr.: 60+",
+   "label": "Michael Pittman Jr.: 60+",
+   "pregame_mark": 0.185,
+   "current": 0.115,
+   "graded_result": null,
+   "graded_label": null,
+   "settled": false
+  },
+  {
+   "key": "Michael Pittman Jr.: Receiving Yards O/U 69.5|Over",
+   "label": "Over",
+   "pregame_mark": 0.09,
+   "current": 0.09,
+   "graded_result": null,
+   "graded_label": null,
+   "settled": false
+  },
+  {
+   "key": "Pittsburgh vs Cleveland: Receiving Yards|Michael Pittman Jr.: 70+",
+   "label": "Michael Pittman Jr.: 70+",
+   "pregame_mark": 0.135,
+   "current": 0.09,
+   "graded_result": null,
+   "graded_label": null,
+   "settled": false
+  },
+  {
+   "key": "Michael Pittman Jr.: Receiving Yards O/U 79.5|Over",
+   "label": "Over",
+   "pregame_mark": 0.065,
+   "current": 0.065,
+   "graded_result": null,
+   "graded_label": null,
+   "settled": false
+  },
+  {
+   "key": "Pittsburgh vs Cleveland: Receiving Yards|Michael Pittman Jr.: 80+",
+   "label": "Michael Pittman Jr.: 80+",
+   "pregame_mark": 0.085,
+   "current": 0.065,
+   "graded_result": null,
+   "graded_label": null,
+   "settled": false
+  },
+  {
+   "key": "Pittsburgh vs Cleveland: Receiving Yards|Michael Pittman Jr.: 90+",
+   "label": "Michael Pittman Jr.: 90+",
+   "pregame_mark": 0.06,
+   "current": 0.055,
+   "graded_result": null,
+   "graded_label": null,
+   "settled": false
+  },
+  {
+   "key": "Jaylen Warren: Rushing Yards O/U 59.5|Under",
+   "label": "Under",
+   "pregame_mark": 0.36,
+   "current": 0.355,
+   "graded_result": null,
+   "graded_label": null,
+   "settled": false
+  },
+  {
+   "key": "Jaylen Warren: Rushing Yards O/U 69.5|Under",
+   "label": "Under",
+   "pregame_mark": 0.42,
+   "current": 0.7,
+   "graded_result": null,
+   "graded_label": null,
+   "settled": false
+  },
+  {
+   "key": "Jaylen Warren: Rushing Yards O/U 79.5|Under",
+   "label": "Under",
+   "pregame_mark": 0.54,
+   "current": 0.7,
+   "graded_result": null,
+   "graded_label": null,
+   "settled": false
+  },
+  {
+   "key": "Jaylen Warren: Rushing Yards O/U 109.5|Under",
+   "label": "Under",
+   "pregame_mark": 0.82,
+   "current": 0.815,
+   "graded_result": null,
+   "graded_label": null,
+   "settled": false
+  },
+  {
+   "key": "Pittsburgh vs Cleveland: Rushing Yards|Jaylen Warren: 40+",
+   "label": "Jaylen Warren: 40+",
+   "pregame_mark": 0.855,
+   "current": 0.875,
+   "graded_result": null,
+   "graded_label": null,
+   "settled": false
+  },
+  {
+   "key": "Pittsburgh vs Cleveland: Rushing Yards|Jaylen Warren: 50+",
+   "label": "Jaylen Warren: 50+",
+   "pregame_mark": 0.765,
+   "current": 0.815,
+   "graded_result": null,
+   "graded_label": null,
+   "settled": false
+  },
+  {
+   "key": "Jaylen Warren: Rushing Yards O/U 59.5|Over",
+   "label": "Over",
+   "pregame_mark": 0.69,
+   "current": 0.645,
+   "graded_result": null,
+   "graded_label": null,
+   "settled": false
+  },
+  {
+   "key": "Pittsburgh vs Cleveland: Rushing Yards|Jaylen Warren: 60+",
+   "label": "Jaylen Warren: 60+",
+   "pregame_mark": 0.675,
+   "current": 0.645,
+   "graded_result": null,
+   "graded_label": null,
+   "settled": false
+  },
+  {
+   "key": "Jaylen Warren: Rushing Yards O/U 69.5|Over",
+   "label": "Over",
+   "pregame_mark": 0.58,
+   "current": 0.3,
+   "graded_result": null,
+   "graded_label": null,
+   "settled": false
+  },
+  {
+   "key": "Pittsburgh vs Cleveland: Rushing Yards|Jaylen Warren: 70+",
+   "label": "Jaylen Warren: 70+",
+   "pregame_mark": 0.565,
+   "current": 0.3,
+   "graded_result": null,
+   "graded_label": null,
+   "settled": false
+  },
+  {
+   "key": "Jaylen Warren: Rushing Yards O/U 79.5|Over",
+   "label": "Over",
+   "pregame_mark": 0.465,
+   "current": 0.3,
+   "graded_result": null,
+   "graded_label": null,
+   "settled": false
+  },
+  {
+   "key": "Pittsburgh vs Cleveland: Rushing Yards|Jaylen Warren: 80+",
+   "label": "Jaylen Warren: 80+",
+   "pregame_mark": 0.455,
+   "current": 0.3,
+   "graded_result": null,
+   "graded_label": null,
+   "settled": false
+  },
+  {
+   "key": "Pittsburgh vs Cleveland: Rushing Yards|Jaylen Warren: 90+",
+   "label": "Jaylen Warren: 90+",
+   "pregame_mark": 0.335,
+   "current": 0.3,
+   "graded_result": null,
+   "graded_label": null,
+   "settled": false
+  },
+  {
+   "key": "Pittsburgh vs Cleveland: Rushing Yards|Jaylen Warren: 100+",
+   "label": "Jaylen Warren: 100+",
+   "pregame_mark": 0.255,
+   "current": 0.3,
+   "graded_result": null,
+   "graded_label": null,
+   "settled": false
+  },
+  {
+   "key": "Jaylen Warren: Rushing Yards O/U 109.5|Over",
+   "label": "Over",
+   "pregame_mark": 0.18,
+   "current": 0.185,
+   "graded_result": null,
+   "graded_label": null,
+   "settled": false
+  },
+  {
+   "key": "Pittsburgh vs Cleveland: Rushing Yards|Jaylen Warren: 110+",
+   "label": "Jaylen Warren: 110+",
+   "pregame_mark": 0.195,
+   "current": 0.185,
+   "graded_result": null,
+   "graded_label": null,
+   "settled": false
+  },
+  {
+   "key": "Pittsburgh vs Cleveland: Rushing Yards|Jaylen Warren: 120+",
+   "label": "Jaylen Warren: 120+",
+   "pregame_mark": 0.135,
+   "current": 0.115,
+   "graded_result": null,
+   "graded_label": null,
+   "settled": false
+  },
+  {
+   "key": "Pittsburgh vs Cleveland: Rushing Yards|Jaylen Warren: 130+",
+   "label": "Jaylen Warren: 130+",
+   "pregame_mark": 0.095,
+   "current": 0.105,
+   "graded_result": null,
+   "graded_label": null,
+   "settled": false
+  },
+  {
+   "key": "Pittsburgh vs Cleveland: Rushing Yards|Jaylen Warren: 140+",
+   "label": "Jaylen Warren: 140+",
+   "pregame_mark": 0.065,
+   "current": 0.07,
+   "graded_result": null,
+   "graded_label": null,
+   "settled": false
+  },
+  {
+   "key": "Travis Homer: Rushing Yards O/U 19.5|Under",
+   "label": "Under",
+   "pregame_mark": 0.91,
+   "current": 0.9,
+   "graded_result": null,
+   "graded_label": null,
+   "settled": false
+  },
+  {
+   "key": "Travis Homer: Rushing Yards O/U 24.5|Under",
+   "label": "Under",
+   "pregame_mark": 0.925,
+   "current": 0.93,
+   "graded_result": null,
+   "graded_label": null,
+   "settled": false
+  },
+  {
+   "key": "Travis Homer: Rushing Yards O/U 29.5|Under",
+   "label": "Under",
+   "pregame_mark": 0.935,
+   "current": 0.945,
+   "graded_result": null,
+   "graded_label": null,
+   "settled": false
+  },
+  {
+   "key": "Travis Homer: Rushing Yards O/U 39.5|Under",
+   "label": "Under",
+   "pregame_mark": 0.93,
+   "current": 0.945,
+   "graded_result": null,
+   "graded_label": null,
+   "settled": false
+  },
+  {
+   "key": "Travis Homer: Rushing Yards O/U 44.5|Under",
+   "label": "Under",
+   "pregame_mark": 0.93,
+   "current": 0.945,
+   "graded_result": null,
+   "graded_label": null,
+   "settled": false
+  },
+  {
+   "key": "Pittsburgh vs Cleveland: Rushing Yards|Travis Homer: 10+",
+   "label": "Travis Homer: 10+",
+   "pregame_mark": 0.365,
+   "current": 0.395,
+   "graded_result": null,
+   "graded_label": null,
+   "settled": false
+  },
+  {
+   "key": "Pittsburgh vs Cleveland: Rushing Yards|Travis Homer: 15+",
+   "label": "Travis Homer: 15+",
+   "pregame_mark": 0.225,
+   "current": 0.195,
+   "graded_result": null,
+   "graded_label": null,
+   "settled": false
+  },
+  {
+   "key": "Travis Homer: Rushing Yards O/U 19.5|Over",
+   "label": "Over",
+   "pregame_mark": 0.09,
+   "current": 0.1,
+   "graded_result": null,
+   "graded_label": null,
+   "settled": false
+  },
+  {
+   "key": "Pittsburgh vs Cleveland: Rushing Yards|Travis Homer: 20+",
+   "label": "Travis Homer: 20+",
+   "pregame_mark": 0.155,
+   "current": 0.1,
+   "graded_result": null,
+   "graded_label": null,
+   "settled": false
+  },
+  {
+   "key": "Travis Homer: Rushing Yards O/U 24.5|Over",
+   "label": "Over",
+   "pregame_mark": 0.075,
+   "current": 0.07,
+   "graded_result": null,
+   "graded_label": null,
+   "settled": false
+  },
+  {
+   "key": "Pittsburgh vs Cleveland: Rushing Yards|Travis Homer: 25+",
+   "label": "Travis Homer: 25+",
+   "pregame_mark": 0.105,
+   "current": 0.07,
+   "graded_result": null,
+   "graded_label": null,
+   "settled": false
+  },
+  {
+   "key": "Travis Homer: Rushing Yards O/U 29.5|Over",
+   "label": "Over",
+   "pregame_mark": 0.065,
+   "current": 0.055,
+   "graded_result": null,
+   "graded_label": null,
+   "settled": false
+  },
+  {
+   "key": "Pittsburgh vs Cleveland: Rushing Yards|Travis Homer: 30+",
+   "label": "Travis Homer: 30+",
+   "pregame_mark": 0.075,
+   "current": 0.055,
+   "graded_result": null,
+   "graded_label": null,
+   "settled": false
+  },
+  {
+   "key": "Travis Homer: Rushing Yards O/U 39.5|Over",
+   "label": "Over",
+   "pregame_mark": 0.07,
+   "current": 0.055,
+   "graded_result": null,
+   "graded_label": null,
+   "settled": false
+  },
+  {
+   "key": "Pittsburgh vs Cleveland: Rushing Yards|Travis Homer: 40+",
+   "label": "Travis Homer: 40+",
+   "pregame_mark": 0.035,
+   "current": 0.05,
+   "graded_result": null,
+   "graded_label": null,
+   "settled": false
+  },
+  {
+   "key": "Travis Homer: Rushing Yards O/U 44.5|Over",
+   "label": "Over",
+   "pregame_mark": 0.07,
+   "current": 0.05,
+   "graded_result": null,
+   "graded_label": null,
+   "settled": false
+  },
+  {
+   "key": "Quinshon Judkins: Rushing Yards O/U 89.5|Under",
+   "label": "Under",
+   "pregame_mark": 0.83,
+   "current": 0.925,
+   "graded_result": null,
+   "graded_label": null,
+   "settled": false
+  },
+  {
+   "key": "Quinshon Judkins: Rushing Yards O/U 99.5|Under",
+   "label": "Under",
+   "pregame_mark": 0.925,
+   "current": 0.945,
+   "graded_result": null,
+   "graded_label": null,
+   "settled": false
+  },
+  {
+   "key": "Pittsburgh vs Cleveland: Rushing Yards|Quinshon Judkins: 30+",
+   "label": "Quinshon Judkins: 30+",
+   "pregame_mark": 0.805,
+   "current": 0.805,
+   "graded_result": null,
+   "graded_label": null,
+   "settled": false
+  },
+  {
+   "key": "Pittsburgh vs Cleveland: Rushing Yards|Quinshon Judkins: 40+",
+   "label": "Quinshon Judkins: 40+",
+   "pregame_mark": 0.705,
+   "current": 0.665,
+   "graded_result": null,
+   "graded_label": null,
+   "settled": false
+  },
+  {
+   "key": "Pittsburgh vs Cleveland: Rushing Yards|Quinshon Judkins: 50+",
+   "label": "Quinshon Judkins: 50+",
+   "pregame_mark": 0.555,
+   "current": 0.525,
+   "graded_result": null,
+   "graded_label": null,
+   "settled": false
+  },
+  {
+   "key": "Pittsburgh vs Cleveland: Rushing Yards|Quinshon Judkins: 60+",
+   "label": "Quinshon Judkins: 60+",
+   "pregame_mark": 0.435,
+   "current": 0.385,
+   "graded_result": null,
+   "graded_label": null,
+   "settled": false
+  },
+  {
+   "key": "Pittsburgh vs Cleveland: Rushing Yards|Quinshon Judkins: 70+",
+   "label": "Quinshon Judkins: 70+",
+   "pregame_mark": 0.315,
+   "current": 0.285,
+   "graded_result": null,
+   "graded_label": null,
+   "settled": false
+  },
+  {
+   "key": "Pittsburgh vs Cleveland: Rushing Yards|Quinshon Judkins: 80+",
+   "label": "Quinshon Judkins: 80+",
+   "pregame_mark": 0.225,
+   "current": 0.195,
+   "graded_result": null,
+   "graded_label": null,
+   "settled": false
+  },
+  {
+   "key": "Quinshon Judkins: Rushing Yards O/U 89.5|Over",
+   "label": "Over",
+   "pregame_mark": 0.17,
+   "current": 0.075,
+   "graded_result": null,
+   "graded_label": null,
+   "settled": false
+  },
+  {
+   "key": "Pittsburgh vs Cleveland: Rushing Yards|Quinshon Judkins: 90+",
+   "label": "Quinshon Judkins: 90+",
+   "pregame_mark": 0.165,
+   "current": 0.075,
+   "graded_result": null,
+   "graded_label": null,
+   "settled": false
+  },
+  {
+   "key": "Quinshon Judkins: Rushing Yards O/U 99.5|Over",
+   "label": "Over",
+   "pregame_mark": 0.075,
+   "current": 0.055,
+   "graded_result": null,
+   "graded_label": null,
+   "settled": false
+  },
+  {
+   "key": "Pittsburgh vs Cleveland: Rushing Yards|Quinshon Judkins: 100+",
+   "label": "Quinshon Judkins: 100+",
+   "pregame_mark": 0.115,
+   "current": 0.055,
+   "graded_result": null,
+   "graded_label": null,
+   "settled": false
+  },
+  {
+   "key": "Pittsburgh vs Cleveland: Rushing Yards|Quinshon Judkins: 110+",
+   "label": "Quinshon Judkins: 110+",
+   "pregame_mark": 0.075,
+   "current": 0.055,
+   "graded_result": null,
+   "graded_label": null,
+   "settled": false
+  },
+  {
+   "key": "DK Metcalf: Receiving Yards O/U 39.5|Under",
+   "label": "Under",
+   "pregame_mark": 0.4,
+   "current": 0.4,
+   "graded_result": null,
+   "graded_label": null,
+   "settled": false
+  },
+  {
+   "key": "DK Metcalf: Receiving Yards O/U 69.5|Under",
+   "label": "Under",
+   "pregame_mark": 0.72,
+   "current": 0.72,
+   "graded_result": null,
+   "graded_label": null,
+   "settled": false
+  },
+  {
+   "key": "DK Metcalf: Receiving Yards O/U 79.5|Under",
+   "label": "Under",
+   "pregame_mark": 0.875,
+   "current": 0.88,
+   "graded_result": null,
+   "graded_label": null,
+   "settled": false
+  },
+  {
+   "key": "DK Metcalf: Receiving Yards O/U 89.5|Under",
+   "label": "Under",
+   "pregame_mark": 0.91,
+   "current": 0.91,
+   "graded_result": null,
+   "graded_label": null,
+   "settled": false
+  },
+  {
+   "key": "Pittsburgh vs Cleveland: Receiving Yards|DK Metcalf: 25+",
+   "label": "DK Metcalf: 25+",
+   "pregame_mark": 0.755,
+   "current": 0.835,
+   "graded_result": null,
+   "graded_label": null,
+   "settled": false
+  },
+  {
+   "key": "DK Metcalf: Receiving Yards O/U 39.5|Over",
+   "label": "Over",
+   "pregame_mark": 0.6,
+   "current": 0.6,
+   "graded_result": null,
+   "graded_label": null,
+   "settled": false
+  },
+  {
+   "key": "Pittsburgh vs Cleveland: Receiving Yards|DK Metcalf: 40+",
+   "label": "DK Metcalf: 40+",
+   "pregame_mark": 0.585,
+   "current": 0.6,
+   "graded_result": null,
+   "graded_label": null,
+   "settled": false
+  },
+  {
+   "key": "Pittsburgh vs Cleveland: Receiving Yards|DK Metcalf: 50+",
+   "label": "DK Metcalf: 50+",
+   "pregame_mark": 0.455,
+   "current": 0.565,
+   "graded_result": null,
+   "graded_label": null,
+   "settled": false
+  },
+  {
+   "key": "Pittsburgh vs Cleveland: Receiving Yards|DK Metcalf: 60+",
+   "label": "DK Metcalf: 60+",
+   "pregame_mark": 0.345,
+   "current": 0.45,
+   "graded_result": null,
+   "graded_label": null,
+   "settled": false
+  },
+  {
+   "key": "DK Metcalf: Receiving Yards O/U 69.5|Over",
+   "label": "Over",
+   "pregame_mark": 0.28,
+   "current": 0.28,
+   "graded_result": null,
+   "graded_label": null,
+   "settled": false
+  },
+  {
+   "key": "Pittsburgh vs Cleveland: Receiving Yards|DK Metcalf: 70+",
+   "label": "DK Metcalf: 70+",
+   "pregame_mark": 0.265,
+   "current": 0.28,
+   "graded_result": null,
+   "graded_label": null,
+   "settled": false
+  },
+  {
+   "key": "DK Metcalf: Receiving Yards O/U 79.5|Over",
+   "label": "Over",
+   "pregame_mark": 0.125,
+   "current": 0.125,
+   "graded_result": null,
+   "graded_label": null,
+   "settled": false
+  },
+  {
+   "key": "Pittsburgh vs Cleveland: Receiving Yards|DK Metcalf: 80+",
+   "label": "DK Metcalf: 80+",
+   "pregame_mark": 0.195,
+   "current": 0.125,
+   "graded_result": null,
+   "graded_label": null,
+   "settled": false
+  },
+  {
+   "key": "DK Metcalf: Receiving Yards O/U 89.5|Over",
+   "label": "Over",
+   "pregame_mark": 0.09,
+   "current": 0.09,
+   "graded_result": null,
+   "graded_label": null,
+   "settled": false
+  },
+  {
+   "key": "Pittsburgh vs Cleveland: Receiving Yards|DK Metcalf: 90+",
+   "label": "DK Metcalf: 90+",
+   "pregame_mark": 0.145,
+   "current": 0.09,
+   "graded_result": null,
+   "graded_label": null,
+   "settled": false
+  },
+  {
+   "key": "Pittsburgh vs Cleveland: Receiving Yards|DK Metcalf: 100+",
+   "label": "DK Metcalf: 100+",
+   "pregame_mark": 0.105,
+   "current": 0.09,
+   "graded_result": null,
+   "graded_label": null,
+   "settled": false
+  },
+  {
+   "key": "Pittsburgh vs Cleveland: Receiving Yards|DK Metcalf: 110+",
+   "label": "DK Metcalf: 110+",
+   "pregame_mark": 0.065,
+   "current": 0.085,
+   "graded_result": null,
+   "graded_label": null,
+   "settled": false
+  },
+  {
+   "key": "Deshaun Watson: Passing Touchdowns O/U 2.5|Under",
+   "label": "Under",
+   "pregame_mark": 0.94,
+   "current": 0.95,
+   "graded_result": null,
+   "graded_label": null,
+   "settled": false
+  },
+  {
+   "key": "Pittsburgh vs Cleveland: Passing Touchdowns|Deshaun Watson: 1+",
+   "label": "Deshaun Watson: 1+",
+   "pregame_mark": 0.645,
+   "current": 0.64,
+   "graded_result": null,
+   "graded_label": null,
+   "settled": false
+  },
+  {
+   "key": "Pittsburgh vs Cleveland: Passing Touchdowns|Deshaun Watson: 2+",
+   "label": "Deshaun Watson: 2+",
+   "pregame_mark": 0.275,
+   "current": 0.245,
+   "graded_result": null,
+   "graded_label": null,
+   "settled": false
+  },
+  {
+   "key": "Deshaun Watson: Passing Touchdowns O/U 2.5|Over",
+   "label": "Over",
+   "pregame_mark": 0.06,
+   "current": 0.05,
+   "graded_result": null,
+   "graded_label": null,
+   "settled": false
+  },
+  {
+   "key": "Pittsburgh vs Cleveland: Passing Touchdowns|Deshaun Watson: 3+",
+   "label": "Deshaun Watson: 3+",
+   "pregame_mark": 0.075,
+   "current": 0.05,
+   "graded_result": null,
+   "graded_label": null,
+   "settled": false
+  },
+  {
+   "key": "Deshaun Watson: Passing Yards O/U 199.5|Under",
+   "label": "Under",
+   "pregame_mark": null,
+   "current": 0.58,
+   "graded_result": null,
+   "graded_label": null,
+   "settled": false
+  },
+  {
+   "key": "Deshaun Watson: Passing Yards O/U 249.5|Under",
+   "label": "Under",
+   "pregame_mark": 0.89,
+   "current": 0.905,
+   "graded_result": null,
+   "graded_label": null,
+   "settled": false
+  },
+  {
+   "key": "Deshaun Watson: Passing Yards O/U 274.5|Under",
+   "label": "Under",
+   "pregame_mark": 0.93,
+   "current": 0.94,
+   "graded_result": null,
+   "graded_label": null,
+   "settled": false
+  },
+  {
+   "key": "Pittsburgh vs Cleveland: Passing Yards|Deshaun Watson: 125+",
+   "label": "Deshaun Watson: 125+",
+   "pregame_mark": 0.825,
+   "current": 0.795,
+   "graded_result": null,
+   "graded_label": null,
+   "settled": false
+  },
+  {
+   "key": "Pittsburgh vs Cleveland: Passing Yards|Deshaun Watson: 150+",
+   "label": "Deshaun Watson: 150+",
+   "pregame_mark": 0.725,
+   "current": 0.725,
+   "graded_result": null,
+   "graded_label": null,
+   "settled": false
+  },
+  {
+   "key": "Pittsburgh vs Cleveland: Passing Yards|Deshaun Watson: 175+",
+   "label": "Deshaun Watson: 175+",
+   "pregame_mark": 0.575,
+   "current": 0.555,
+   "graded_result": null,
+   "graded_label": null,
+   "settled": false
+  },
+  {
+   "key": "Deshaun Watson: Passing Yards O/U 199.5|Over",
+   "label": "Over",
+   "pregame_mark": 0.42,
+   "current": 0.42,
+   "graded_result": null,
+   "graded_label": null,
+   "settled": false
+  },
+  {
+   "key": "Pittsburgh vs Cleveland: Passing Yards|Deshaun Watson: 200+",
+   "label": "Deshaun Watson: 200+",
+   "pregame_mark": 0.415,
+   "current": 0.38,
+   "graded_result": null,
+   "graded_label": null,
+   "settled": false
+  },
+  {
+   "key": "Pittsburgh vs Cleveland: Passing Yards|Deshaun Watson: 225+",
+   "label": "Deshaun Watson: 225+",
+   "pregame_mark": 0.285,
+   "current": 0.245,
+   "graded_result": null,
+   "graded_label": null,
+   "settled": false
+  },
+  {
+   "key": "Deshaun Watson: Passing Yards O/U 249.5|Over",
+   "label": "Over",
+   "pregame_mark": 0.19,
+   "current": 0.095,
+   "graded_result": null,
+   "graded_label": null,
+   "settled": false
+  },
+  {
+   "key": "Pittsburgh vs Cleveland: Passing Yards|Deshaun Watson: 250+",
+   "label": "Deshaun Watson: 250+",
+   "pregame_mark": 0.175,
+   "current": 0.095,
+   "graded_result": null,
+   "graded_label": null,
+   "settled": false
+  },
+  {
+   "key": "Deshaun Watson: Passing Yards O/U 274.5|Over",
+   "label": "Over",
+   "pregame_mark": 0.07,
+   "current": 0.06,
+   "graded_result": null,
+   "graded_label": null,
+   "settled": false
+  },
+  {
+   "key": "Pittsburgh vs Cleveland: Passing Yards|Deshaun Watson: 275+",
+   "label": "Deshaun Watson: 275+",
+   "pregame_mark": 0.105,
+   "current": 0.06,
+   "graded_result": null,
+   "graded_label": null,
+   "settled": false
+  },
+  {
+   "key": "Pittsburgh vs Cleveland: Passing Yards|Deshaun Watson: 300+",
+   "label": "Deshaun Watson: 300+",
+   "pregame_mark": 0.055,
+   "current": 0.05,
+   "graded_result": null,
+   "graded_label": null,
+   "settled": false
+  },
+  {
+   "key": "Jerry Jeudy: Receptions O/U 1.5|Under",
+   "label": "Under",
+   "pregame_mark": 0.565,
+   "current": 0.555,
+   "graded_result": null,
+   "graded_label": null,
+   "settled": false
+  },
+  {
+   "key": "Jerry Jeudy: Receptions O/U 2.5|Under",
+   "label": "Under",
+   "pregame_mark": 0.88,
+   "current": 0.88,
+   "graded_result": null,
+   "graded_label": null,
+   "settled": false
+  },
+  {
+   "key": "Jerry Jeudy: Receptions O/U 3.5|Under",
+   "label": "Under",
+   "pregame_mark": 0.945,
+   "current": 0.95,
+   "graded_result": null,
+   "graded_label": null,
+   "settled": false
+  },
+  {
+   "key": "Jerry Jeudy: Receptions O/U 1.5|Over",
+   "label": "Over",
+   "pregame_mark": 0.435,
+   "current": 0.445,
+   "graded_result": null,
+   "graded_label": null,
+   "settled": false
+  },
+  {
+   "key": "Pittsburgh vs Cleveland: Receptions|Jerry Jeudy: 2+",
+   "label": "Jerry Jeudy: 2+",
+   "pregame_mark": null,
+   "current": 0.4,
+   "graded_result": null,
+   "graded_label": null,
+   "settled": false
+  },
+  {
+   "key": "Jerry Jeudy: Receptions O/U 2.5|Over",
+   "label": "Over",
+   "pregame_mark": 0.125,
+   "current": 0.125,
+   "graded_result": null,
+   "graded_label": null,
+   "settled": false
+  },
+  {
+   "key": "Pittsburgh vs Cleveland: Receptions|Jerry Jeudy: 3+",
+   "label": "Jerry Jeudy: 3+",
+   "pregame_mark": null,
+   "current": 0.125,
+   "graded_result": null,
+   "graded_label": null,
+   "settled": false
+  },
+  {
+   "key": "Jerry Jeudy: Receptions O/U 3.5|Over",
+   "label": "Over",
+   "pregame_mark": 0.055,
+   "current": 0.05,
+   "graded_result": null,
+   "graded_label": null,
+   "settled": false
+  },
+  {
+   "key": "Pittsburgh vs Cleveland: Receptions|Jerry Jeudy: 4+",
+   "label": "Jerry Jeudy: 4+",
+   "pregame_mark": null,
+   "current": 0.05,
+   "graded_result": null,
+   "graded_label": null,
+   "settled": false
+  },
+  {
+   "key": "Pat Freiermuth: Receiving Yards O/U 29.5|Under",
+   "label": "Under",
+   "pregame_mark": 0.53,
+   "current": 0.53,
+   "graded_result": null,
+   "graded_label": null,
+   "settled": false
+  },
+  {
+   "key": "Pat Freiermuth: Receiving Yards O/U 49.5|Under",
+   "label": "Under",
+   "pregame_mark": 0.88,
+   "current": 0.88,
+   "graded_result": null,
+   "graded_label": null,
+   "settled": false
+  },
+  {
+   "key": "Pat Freiermuth: Receiving Yards O/U 59.5|Under",
+   "label": "Under",
+   "pregame_mark": 0.92,
+   "current": 0.925,
+   "graded_result": null,
+   "graded_label": null,
+   "settled": false
+  },
+  {
+   "key": "Pat Freiermuth: Receiving Yards O/U 69.5|Under",
+   "label": "Under",
+   "pregame_mark": 0.94,
+   "current": 0.95,
+   "graded_result": null,
+   "graded_label": null,
+   "settled": false
+  },
+  {
+   "key": "Pittsburgh vs Cleveland: Receiving Yards|Pat Freiermuth: 15+",
+   "label": "Pat Freiermuth: 15+",
+   "pregame_mark": 0.745,
+   "current": 0.715,
+   "graded_result": null,
+   "graded_label": null,
+   "settled": false
+  },
+  {
+   "key": "Pittsburgh vs Cleveland: Receiving Yards|Pat Freiermuth: 25+",
+   "label": "Pat Freiermuth: 25+",
+   "pregame_mark": 0.545,
+   "current": 0.525,
+   "graded_result": null,
+   "graded_label": null,
+   "settled": false
+  },
+  {
+   "key": "Pat Freiermuth: Receiving Yards O/U 29.5|Over",
+   "label": "Over",
+   "pregame_mark": 0.47,
+   "current": 0.47,
+   "graded_result": null,
+   "graded_label": null,
+   "settled": false
+  },
+  {
+   "key": "Pittsburgh vs Cleveland: Receiving Yards|Pat Freiermuth: 40+",
+   "label": "Pat Freiermuth: 40+",
+   "pregame_mark": 0.305,
+   "current": 0.295,
+   "graded_result": null,
+   "graded_label": null,
+   "settled": false
+  },
+  {
+   "key": "Pat Freiermuth: Receiving Yards O/U 49.5|Over",
+   "label": "Over",
+   "pregame_mark": 0.12,
+   "current": 0.12,
+   "graded_result": null,
+   "graded_label": null,
+   "settled": false
+  },
+  {
+   "key": "Pittsburgh vs Cleveland: Receiving Yards|Pat Freiermuth: 50+",
+   "label": "Pat Freiermuth: 50+",
+   "pregame_mark": 0.195,
+   "current": 0.12,
+   "graded_result": null,
+   "graded_label": null,
+   "settled": false
+  },
+  {
+   "key": "Pat Freiermuth: Receiving Yards O/U 59.5|Over",
+   "label": "Over",
+   "pregame_mark": 0.08,
+   "current": 0.075,
+   "graded_result": null,
+   "graded_label": null,
+   "settled": false
+  },
+  {
+   "key": "Pittsburgh vs Cleveland: Receiving Yards|Pat Freiermuth: 60+",
+   "label": "Pat Freiermuth: 60+",
+   "pregame_mark": 0.125,
+   "current": 0.075,
+   "graded_result": null,
+   "graded_label": null,
+   "settled": false
+  },
+  {
+   "key": "Pat Freiermuth: Receiving Yards O/U 69.5|Over",
+   "label": "Over",
+   "pregame_mark": 0.06,
+   "current": 0.05,
+   "graded_result": null,
+   "graded_label": null,
+   "settled": false
+  },
+  {
+   "key": "Pittsburgh vs Cleveland: Receiving Yards|Pat Freiermuth: 70+",
+   "label": "Pat Freiermuth: 70+",
+   "pregame_mark": 0.075,
+   "current": 0.05,
+   "graded_result": null,
+   "graded_label": null,
+   "settled": false
+  },
+  {
+   "key": "Germie Bernard: Receptions O/U 2.5|Under",
+   "label": "Under",
+   "pregame_mark": 0.9,
+   "current": 0.905,
+   "graded_result": null,
+   "graded_label": null,
+   "settled": false
+  },
+  {
+   "key": "Germie Bernard: Receptions O/U 3.5|Under",
+   "label": "Under",
+   "pregame_mark": 0.945,
+   "current": 0.95,
+   "graded_result": null,
+   "graded_label": null,
+   "settled": false
+  },
+  {
+   "key": "Germie Bernard: Receptions O/U 2.5|Over",
+   "label": "Over",
+   "pregame_mark": 0.1,
+   "current": 0.095,
+   "graded_result": null,
+   "graded_label": null,
+   "settled": false
+  },
+  {
+   "key": "Germie Bernard: Receptions O/U 3.5|Over",
+   "label": "Over",
+   "pregame_mark": 0.055,
+   "current": 0.05,
+   "graded_result": null,
+   "graded_label": null,
+   "settled": false
+  },
+  {
+   "key": "Denzel Boston: Receiving Yards O/U 39.5|Under",
+   "label": "Under",
+   "pregame_mark": null,
+   "current": 0.52,
+   "graded_result": null,
+   "graded_label": null,
+   "settled": false
+  },
+  {
+   "key": "Denzel Boston: Receiving Yards O/U 69.5|Under",
+   "label": "Under",
+   "pregame_mark": 0.885,
+   "current": 0.89,
+   "graded_result": null,
+   "graded_label": null,
+   "settled": false
+  },
+  {
+   "key": "Denzel Boston: Receiving Yards O/U 79.5|Under",
+   "label": "Under",
+   "pregame_mark": 0.905,
+   "current": 0.905,
+   "graded_result": null,
+   "graded_label": null,
+   "settled": false
+  },
+  {
+   "key": "Denzel Boston: Receiving Yards O/U 89.5|Under",
+   "label": "Under",
+   "pregame_mark": 0.93,
+   "current": 0.93,
+   "graded_result": null,
+   "graded_label": null,
+   "settled": false
+  },
+  {
+   "key": "Pittsburgh vs Cleveland: Receiving Yards|Denzel Boston: 15+",
+   "label": "Denzel Boston: 15+",
+   "pregame_mark": 0.795,
+   "current": 0.835,
+   "graded_result": null,
+   "graded_label": null,
+   "settled": false
+  },
+  {
+   "key": "Pittsburgh vs Cleveland: Receiving Yards|Denzel Boston: 25+",
+   "label": "Denzel Boston: 25+",
+   "pregame_mark": 0.665,
+   "current": 0.695,
+   "graded_result": null,
+   "graded_label": null,
+   "settled": false
+  },
+  {
+   "key": "Denzel Boston: Receiving Yards O/U 39.5|Over",
+   "label": "Over",
+   "pregame_mark": 0.48,
+   "current": 0.48,
+   "graded_result": null,
+   "graded_label": null,
+   "settled": false
+  },
+  {
+   "key": "Pittsburgh vs Cleveland: Receiving Yards|Denzel Boston: 40+",
+   "label": "Denzel Boston: 40+",
+   "pregame_mark": 0.465,
+   "current": 0.48,
+   "graded_result": null,
+   "graded_label": null,
+   "settled": false
+  },
+  {
+   "key": "Pittsburgh vs Cleveland: Receiving Yards|Denzel Boston: 50+",
+   "label": "Denzel Boston: 50+",
+   "pregame_mark": 0.365,
+   "current": 0.375,
+   "graded_result": null,
+   "graded_label": null,
+   "settled": false
+  },
+  {
+   "key": "Pittsburgh vs Cleveland: Receiving Yards|Denzel Boston: 60+",
+   "label": "Denzel Boston: 60+",
+   "pregame_mark": 0.265,
+   "current": 0.275,
+   "graded_result": null,
+   "graded_label": null,
+   "settled": false
+  },
+  {
+   "key": "Denzel Boston: Receiving Yards O/U 69.5|Over",
+   "label": "Over",
+   "pregame_mark": 0.115,
+   "current": 0.11,
+   "graded_result": null,
+   "graded_label": null,
+   "settled": false
+  },
+  {
+   "key": "Pittsburgh vs Cleveland: Receiving Yards|Denzel Boston: 70+",
+   "label": "Denzel Boston: 70+",
+   "pregame_mark": 0.195,
+   "current": 0.11,
+   "graded_result": null,
+   "graded_label": null,
+   "settled": false
+  },
+  {
+   "key": "Denzel Boston: Receiving Yards O/U 79.5|Over",
+   "label": "Over",
+   "pregame_mark": 0.095,
+   "current": 0.095,
+   "graded_result": null,
+   "graded_label": null,
+   "settled": false
+  },
+  {
+   "key": "Pittsburgh vs Cleveland: Receiving Yards|Denzel Boston: 80+",
+   "label": "Denzel Boston: 80+",
+   "pregame_mark": 0.145,
+   "current": 0.095,
+   "graded_result": null,
+   "graded_label": null,
+   "settled": false
+  },
+  {
+   "key": "Denzel Boston: Receiving Yards O/U 89.5|Over",
+   "label": "Over",
+   "pregame_mark": 0.07,
+   "current": 0.07,
+   "graded_result": null,
+   "graded_label": null,
+   "settled": false
+  },
+  {
+   "key": "Pittsburgh vs Cleveland: Receiving Yards|Denzel Boston: 90+",
+   "label": "Denzel Boston: 90+",
+   "pregame_mark": 0.105,
+   "current": 0.07,
+   "graded_result": null,
+   "graded_label": null,
+   "settled": false
+  },
+  {
+   "key": "Pittsburgh vs Cleveland: Receiving Yards|Denzel Boston: 100+",
+   "label": "Denzel Boston: 100+",
+   "pregame_mark": 0.075,
+   "current": 0.065,
+   "graded_result": null,
+   "graded_label": null,
+   "settled": false
+  },
+  {
+   "key": "Harold Fannin Jr.: Receiving Yards O/U 69.5|Under",
+   "label": "Under",
+   "pregame_mark": 0.885,
+   "current": 0.905,
+   "graded_result": null,
+   "graded_label": null,
+   "settled": false
+  },
+  {
+   "key": "Harold Fannin Jr.: Receiving Yards O/U 79.5|Under",
+   "label": "Under",
+   "pregame_mark": 0.92,
+   "current": 0.935,
+   "graded_result": null,
+   "graded_label": null,
+   "settled": false
+  },
+  {
+   "key": "Harold Fannin Jr.: Receiving Yards O/U 89.5|Under",
+   "label": "Under",
+   "pregame_mark": 0.945,
+   "current": 0.95,
+   "graded_result": null,
+   "graded_label": null,
+   "settled": false
+  },
+  {
+   "key": "Pittsburgh vs Cleveland: Receiving Yards|Harold Fannin Jr.: 15+",
+   "label": "Harold Fannin Jr.: 15+",
+   "pregame_mark": 0.865,
+   "current": 0.855,
+   "graded_result": null,
+   "graded_label": null,
+   "settled": false
+  },
+  {
+   "key": "Pittsburgh vs Cleveland: Receiving Yards|Harold Fannin Jr.: 25+",
+   "label": "Harold Fannin Jr.: 25+",
+   "pregame_mark": 0.725,
+   "current": 0.725,
+   "graded_result": null,
+   "graded_label": null,
+   "settled": false
+  },
+  {
+   "key": "Pittsburgh vs Cleveland: Receiving Yards|Harold Fannin Jr.: 40+",
+   "label": "Harold Fannin Jr.: 40+",
+   "pregame_mark": 0.515,
+   "current": 0.475,
+   "graded_result": null,
+   "graded_label": null,
+   "settled": false
+  },
+  {
+   "key": "Pittsburgh vs Cleveland: Receiving Yards|Harold Fannin Jr.: 50+",
+   "label": "Harold Fannin Jr.: 50+",
+   "pregame_mark": 0.365,
+   "current": 0.325,
+   "graded_result": null,
+   "graded_label": null,
+   "settled": false
+  },
+  {
+   "key": "Pittsburgh vs Cleveland: Receiving Yards|Harold Fannin Jr.: 60+",
+   "label": "Harold Fannin Jr.: 60+",
+   "pregame_mark": 0.265,
+   "current": 0.215,
+   "graded_result": null,
+   "graded_label": null,
+   "settled": false
+  },
+  {
+   "key": "Harold Fannin Jr.: Receiving Yards O/U 69.5|Over",
+   "label": "Over",
+   "pregame_mark": 0.115,
+   "current": 0.095,
+   "graded_result": null,
+   "graded_label": null,
+   "settled": false
+  },
+  {
+   "key": "Pittsburgh vs Cleveland: Receiving Yards|Harold Fannin Jr.: 70+",
+   "label": "Harold Fannin Jr.: 70+",
+   "pregame_mark": 0.185,
+   "current": 0.095,
+   "graded_result": null,
+   "graded_label": null,
+   "settled": false
+  },
+  {
+   "key": "Harold Fannin Jr.: Receiving Yards O/U 79.5|Over",
+   "label": "Over",
+   "pregame_mark": 0.08,
+   "current": 0.065,
+   "graded_result": null,
+   "graded_label": null,
+   "settled": false
+  },
+  {
+   "key": "Pittsburgh vs Cleveland: Receiving Yards|Harold Fannin Jr.: 80+",
+   "label": "Harold Fannin Jr.: 80+",
+   "pregame_mark": 0.115,
+   "current": 0.065,
+   "graded_result": null,
+   "graded_label": null,
+   "settled": false
+  },
+  {
+   "key": "Harold Fannin Jr.: Receiving Yards O/U 89.5|Over",
+   "label": "Over",
+   "pregame_mark": 0.055,
+   "current": 0.05,
+   "graded_result": null,
+   "graded_label": null,
+   "settled": false
+  },
+  {
+   "key": "Pittsburgh vs Cleveland: Receiving Yards|Harold Fannin Jr.: 90+",
+   "label": "Harold Fannin Jr.: 90+",
+   "pregame_mark": 0.075,
+   "current": 0.05,
+   "graded_result": null,
+   "graded_label": null,
+   "settled": false
+  },
+  {
+   "key": "Aaron Rodgers: Passing Touchdowns O/U 1.5|Under",
+   "label": "Under",
+   "pregame_mark": 0.605,
+   "current": 0.61,
+   "graded_result": null,
+   "graded_label": null,
+   "settled": false
+  },
+  {
+   "key": "Aaron Rodgers: Passing Touchdowns O/U 2.5|Under",
+   "label": "Under",
+   "pregame_mark": 0.92,
+   "current": 0.925,
+   "graded_result": null,
+   "graded_label": null,
+   "settled": false
+  },
+  {
+   "key": "Pittsburgh vs Cleveland: Passing Touchdowns|Aaron Rodgers: 1+",
+   "label": "Aaron Rodgers: 1+",
+   "pregame_mark": 0.745,
+   "current": 0.76,
+   "graded_result": null,
+   "graded_label": null,
+   "settled": false
+  },
+  {
+   "key": "Aaron Rodgers: Passing Touchdowns O/U 1.5|Over",
+   "label": "Over",
+   "pregame_mark": 0.395,
+   "current": 0.39,
+   "graded_result": null,
+   "graded_label": null,
+   "settled": false
+  },
+  {
+   "key": "Pittsburgh vs Cleveland: Passing Touchdowns|Aaron Rodgers: 2+",
+   "label": "Aaron Rodgers: 2+",
+   "pregame_mark": 0.395,
+   "current": 0.385,
+   "graded_result": null,
+   "graded_label": null,
+   "settled": false
+  },
+  {
+   "key": "Aaron Rodgers: Passing Touchdowns O/U 2.5|Over",
+   "label": "Over",
+   "pregame_mark": 0.08,
+   "current": 0.075,
+   "graded_result": null,
+   "graded_label": null,
+   "settled": false
+  },
+  {
+   "key": "Pittsburgh vs Cleveland: Passing Touchdowns|Aaron Rodgers: 3+",
+   "label": "Aaron Rodgers: 3+",
+   "pregame_mark": 0.125,
+   "current": 0.075,
+   "graded_result": null,
+   "graded_label": null,
+   "settled": false
+  },
+  {
+   "key": "Quinshon Judkins: Receptions O/U 3.5|Under",
+   "label": "Under",
+   "pregame_mark": 0.88,
+   "current": 0.905,
+   "graded_result": null,
+   "graded_label": null,
+   "settled": false
+  },
+  {
+   "key": "Quinshon Judkins: Receptions O/U 4.5|Under",
+   "label": "Under",
+   "pregame_mark": 0.93,
+   "current": 0.945,
+   "graded_result": null,
+   "graded_label": null,
+   "settled": false
+  },
+  {
+   "key": "Pittsburgh vs Cleveland: Receptions|Quinshon Judkins: 2+",
+   "label": "Quinshon Judkins: 2+",
+   "pregame_mark": null,
+   "current": 0.555,
+   "graded_result": null,
+   "graded_label": null,
+   "settled": false
+  },
+  {
+   "key": "Pittsburgh vs Cleveland: Receptions|Quinshon Judkins: 3+",
+   "label": "Quinshon Judkins: 3+",
+   "pregame_mark": null,
+   "current": 0.3,
+   "graded_result": null,
+   "graded_label": null,
+   "settled": false
+  },
+  {
+   "key": "Quinshon Judkins: Receptions O/U 3.5|Over",
+   "label": "Over",
+   "pregame_mark": 0.12,
+   "current": 0.095,
+   "graded_result": null,
+   "graded_label": null,
+   "settled": false
+  },
+  {
+   "key": "Pittsburgh vs Cleveland: Receptions|Quinshon Judkins: 4+",
+   "label": "Quinshon Judkins: 4+",
+   "pregame_mark": null,
+   "current": 0.095,
+   "graded_result": null,
+   "graded_label": null,
+   "settled": false
+  },
+  {
+   "key": "Quinshon Judkins: Receptions O/U 4.5|Over",
+   "label": "Over",
+   "pregame_mark": 0.07,
+   "current": 0.055,
+   "graded_result": null,
+   "graded_label": null,
+   "settled": false
+  },
+  {
+   "key": "Pittsburgh vs Cleveland: Receptions|Quinshon Judkins: 5+",
+   "label": "Quinshon Judkins: 5+",
+   "pregame_mark": null,
+   "current": 0.055,
+   "graded_result": null,
+   "graded_label": null,
+   "settled": false
+  },
+  {
+   "key": "Michael Pittman Jr.: Receptions O/U 5.5|Under",
+   "label": "Under",
+   "pregame_mark": 0.905,
+   "current": 0.89,
+   "graded_result": null,
+   "graded_label": null,
+   "settled": false
+  },
+  {
+   "key": "Pittsburgh vs Cleveland: Receptions|Michael Pittman Jr.: 2+",
+   "label": "Michael Pittman Jr.: 2+",
+   "pregame_mark": null,
+   "current": 0.82,
+   "graded_result": null,
+   "graded_label": null,
+   "settled": false
+  },
+  {
+   "key": "Pittsburgh vs Cleveland: Receptions|Michael Pittman Jr.: 3+",
+   "label": "Michael Pittman Jr.: 3+",
+   "pregame_mark": null,
+   "current": 0.625,
+   "graded_result": null,
+   "graded_label": null,
+   "settled": false
+  },
+  {
+   "key": "Pittsburgh vs Cleveland: Receptions|Michael Pittman Jr.: 4+",
+   "label": "Michael Pittman Jr.: 4+",
+   "pregame_mark": null,
+   "current": 0.4,
+   "graded_result": null,
+   "graded_label": null,
+   "settled": false
+  },
+  {
+   "key": "Pittsburgh vs Cleveland: Receptions|Michael Pittman Jr.: 5+",
+   "label": "Michael Pittman Jr.: 5+",
+   "pregame_mark": null,
+   "current": 0.235,
+   "graded_result": null,
+   "graded_label": null,
+   "settled": false
+  },
+  {
+   "key": "Michael Pittman Jr.: Receptions O/U 5.5|Over",
+   "label": "Over",
+   "pregame_mark": 0.095,
+   "current": 0.11,
+   "graded_result": null,
+   "graded_label": null,
+   "settled": false
+  },
+  {
+   "key": "Pittsburgh vs Cleveland: Receptions|Michael Pittman Jr.: 6+",
+   "label": "Michael Pittman Jr.: 6+",
+   "pregame_mark": null,
+   "current": 0.11,
+   "graded_result": null,
+   "graded_label": null,
+   "settled": false
+  },
+  {
+   "key": "Pittsburgh vs Cleveland: Receptions|Michael Pittman Jr.: 7+",
+   "label": "Michael Pittman Jr.: 7+",
+   "pregame_mark": null,
+   "current": 0.065,
+   "graded_result": null,
+   "graded_label": null,
+   "settled": false
+  },
+  {
+   "key": "Jaylen Warren: 2+ Touchdowns|No",
+   "label": "No",
+   "pregame_mark": 0.915,
+   "current": 0.925,
+   "graded_result": null,
+   "graded_label": null,
+   "settled": false
+  },
+  {
+   "key": "Jaylen Warren: 2+ Touchdowns|Yes",
+   "label": "Yes",
+   "pregame_mark": 0.085,
+   "current": 0.14,
+   "graded_result": null,
+   "graded_label": null,
+   "settled": false
+  },
+  {
+   "key": "Pat Freiermuth: Receptions O/U 5.5|Under",
+   "label": "Under",
+   "pregame_mark": 0.915,
+   "current": 0.9,
+   "graded_result": null,
+   "graded_label": null,
+   "settled": false
+  },
+  {
+   "key": "Pittsburgh vs Cleveland: Receptions|Pat Freiermuth: 2+",
+   "label": "Pat Freiermuth: 2+",
+   "pregame_mark": null,
+   "current": 0.815,
+   "graded_result": null,
+   "graded_label": null,
+   "settled": false
+  },
+  {
+   "key": "Pittsburgh vs Cleveland: Receptions|Pat Freiermuth: 3+",
+   "label": "Pat Freiermuth: 3+",
+   "pregame_mark": null,
+   "current": 0.59,
+   "graded_result": null,
+   "graded_label": null,
+   "settled": false
+  },
+  {
+   "key": "Pittsburgh vs Cleveland: Receptions|Pat Freiermuth: 4+",
+   "label": "Pat Freiermuth: 4+",
+   "pregame_mark": null,
+   "current": 0.385,
+   "graded_result": null,
+   "graded_label": null,
+   "settled": false
+  },
+  {
+   "key": "Pittsburgh vs Cleveland: Receptions|Pat Freiermuth: 5+",
+   "label": "Pat Freiermuth: 5+",
+   "pregame_mark": null,
+   "current": 0.195,
+   "graded_result": null,
+   "graded_label": null,
+   "settled": false
+  },
+  {
+   "key": "Pat Freiermuth: Receptions O/U 5.5|Over",
+   "label": "Over",
+   "pregame_mark": 0.085,
+   "current": 0.1,
+   "graded_result": null,
+   "graded_label": null,
+   "settled": false
+  },
+  {
+   "key": "Pittsburgh vs Cleveland: Receptions|Pat Freiermuth: 6+",
+   "label": "Pat Freiermuth: 6+",
+   "pregame_mark": null,
+   "current": 0.095,
+   "graded_result": null,
+   "graded_label": null,
+   "settled": false
+  },
+  {
+   "key": "Pittsburgh vs Cleveland: Receptions|Pat Freiermuth: 7+",
+   "label": "Pat Freiermuth: 7+",
+   "pregame_mark": null,
+   "current": 0.05,
+   "graded_result": null,
+   "graded_label": null,
+   "settled": false
+  },
+  {
+   "key": "Quinshon Judkins: Receiving Yards O/U 29.5|Under",
+   "label": "Under",
+   "pregame_mark": 0.915,
+   "current": 0.93,
+   "graded_result": null,
+   "graded_label": null,
+   "settled": false
+  },
+  {
+   "key": "Pittsburgh vs Cleveland: Receiving Yards|Quinshon Judkins: 15+",
+   "label": "Quinshon Judkins: 15+",
+   "pregame_mark": 0.375,
+   "current": 0.345,
+   "graded_result": null,
+   "graded_label": null,
+   "settled": false
+  },
+  {
+   "key": "Pittsburgh vs Cleveland: Receiving Yards|Quinshon Judkins: 25+",
+   "label": "Quinshon Judkins: 25+",
+   "pregame_mark": 0.195,
+   "current": 0.17,
+   "graded_result": null,
+   "graded_label": null,
+   "settled": false
+  },
+  {
+   "key": "Quinshon Judkins: Receiving Yards O/U 29.5|Over",
+   "label": "Over",
+   "pregame_mark": 0.085,
+   "current": 0.07,
+   "graded_result": null,
+   "graded_label": null,
+   "settled": false
+  },
+  {
+   "key": "Pittsburgh vs Cleveland: Receiving Yards|Quinshon Judkins: 40+",
+   "label": "Quinshon Judkins: 40+",
+   "pregame_mark": 0.075,
+   "current": 0.065,
+   "graded_result": null,
+   "graded_label": null,
+   "settled": false
+  },
+  {
+   "key": "Pittsburgh vs Cleveland: Rushing Yards Ladder|Jaylen Warren",
+   "label": "Jaylen Warren",
+   "pregame_mark": 0.205,
+   "current": 0.225,
+   "graded_result": null,
+   "graded_label": null,
+   "settled": false
+  },
+  {
+   "key": "Pittsburgh vs Cleveland: Rushing Yards Ladder|Quinshon Judkins",
+   "label": "Quinshon Judkins",
+   "pregame_mark": 0.145,
+   "current": 0.165,
+   "graded_result": null,
+   "graded_label": null,
+   "settled": false
+  },
+  {
+   "key": "Pittsburgh vs Cleveland: Rushing Yards Ladder|Deshaun Watson",
+   "label": "Deshaun Watson",
+   "pregame_mark": 0.085,
+   "current": 0.085,
+   "graded_result": null,
+   "graded_label": null,
+   "settled": false
+  },
+  {
+   "key": "Pittsburgh vs Cleveland: Receiving Yards Ladder|DK Metcalf",
+   "label": "DK Metcalf",
+   "pregame_mark": 0.125,
+   "current": 0.145,
+   "graded_result": null,
+   "graded_label": null,
+   "settled": false
+  },
+  {
+   "key": "Pittsburgh vs Cleveland: Receiving Yards Ladder|Harold Fannin Jr.",
+   "label": "Harold Fannin Jr.",
+   "pregame_mark": 0.115,
+   "current": 0.115,
+   "graded_result": null,
+   "graded_label": null,
+   "settled": false
+  },
+  {
+   "key": "Pittsburgh vs Cleveland: Receiving Yards Ladder|Denzel Boston",
+   "label": "Denzel Boston",
+   "pregame_mark": 0.115,
+   "current": 0.095,
+   "graded_result": null,
+   "graded_label": null,
+   "settled": false
+  },
+  {
+   "key": "Pittsburgh vs Cleveland: Receiving Yards Ladder|Jaylen Warren",
+   "label": "Jaylen Warren",
+   "pregame_mark": 0.075,
+   "current": 0.095,
+   "graded_result": null,
+   "graded_label": null,
+   "settled": false
+  },
+  {
+   "key": "Pittsburgh vs Cleveland: Receiving Yards Ladder|Michael Pittman Jr.",
+   "label": "Michael Pittman Jr.",
+   "pregame_mark": 0.095,
+   "current": 0.075,
+   "graded_result": null,
+   "graded_label": null,
+   "settled": false
+  },
+  {
+   "key": "Pittsburgh vs Cleveland: Touchdowns|Jaylen Warren: 1+",
+   "label": "Jaylen Warren: 1+",
+   "pregame_mark": 0.475,
+   "current": 0.475,
+   "graded_result": null,
+   "graded_label": null,
+   "settled": false
+  },
+  {
+   "key": "Pittsburgh vs Cleveland: Touchdowns|Jaylen Warren: 2+",
+   "label": "Jaylen Warren: 2+",
+   "pregame_mark": 0.115,
+   "current": 0.105,
+   "graded_result": null,
+   "graded_label": null,
+   "settled": false
+  },
+  {
+   "key": "Pittsburgh vs Cleveland: Touchdowns|Quinshon Judkins: 1+",
+   "label": "Quinshon Judkins: 1+",
+   "pregame_mark": 0.395,
+   "current": 0.335,
+   "graded_result": null,
+   "graded_label": null,
+   "settled": false
+  },
+  {
+   "key": "Pittsburgh vs Cleveland: Touchdowns|Quinshon Judkins: 2+",
+   "label": "Quinshon Judkins: 2+",
+   "pregame_mark": 0.085,
+   "current": 0.055,
+   "graded_result": null,
+   "graded_label": null,
+   "settled": false
+  },
+  {
+   "key": "Pittsburgh vs Cleveland: Touchdowns|DK Metcalf: 1+",
+   "label": "DK Metcalf: 1+",
+   "pregame_mark": 0.295,
+   "current": 0.295,
+   "graded_result": null,
+   "graded_label": null,
+   "settled": false
+  },
+  {
+   "key": "Pittsburgh vs Cleveland: Touchdowns|Harold Fannin Jr.: 1+",
+   "label": "Harold Fannin Jr.: 1+",
+   "pregame_mark": 0.235,
+   "current": 0.215,
+   "graded_result": null,
+   "graded_label": null,
+   "settled": false
+  },
+  {
+   "key": "Pittsburgh vs Cleveland: Touchdowns|Denzel Boston: 1+",
+   "label": "Denzel Boston: 1+",
+   "pregame_mark": 0.215,
+   "current": 0.215,
+   "graded_result": null,
+   "graded_label": null,
+   "settled": false
+  },
+  {
+   "key": "Pittsburgh vs Cleveland: Touchdowns|Pat Freiermuth: 1+",
+   "label": "Pat Freiermuth: 1+",
+   "pregame_mark": 0.205,
+   "current": 0.205,
+   "graded_result": null,
+   "graded_label": null,
+   "settled": false
+  },
+  {
+   "key": "Pittsburgh vs Cleveland: Touchdowns|Michael Pittman Jr.: 1+",
+   "label": "Michael Pittman Jr.: 1+",
+   "pregame_mark": 0.195,
+   "current": 0.195,
+   "graded_result": null,
+   "graded_label": null,
+   "settled": false
+  },
+  {
+   "key": "Pittsburgh vs Cleveland: Touchdowns|Deshaun Watson: 1+",
+   "label": "Deshaun Watson: 1+",
+   "pregame_mark": 0.185,
+   "current": 0.185,
+   "graded_result": null,
+   "graded_label": null,
+   "settled": false
+  },
+  {
+   "key": "Pittsburgh vs Cleveland: Touchdowns|CLE Browns D/ST: 1+",
+   "label": "CLE Browns D/ST: 1+",
+   "pregame_mark": 0.135,
+   "current": 0.185,
+   "graded_result": null,
+   "graded_label": null,
+   "settled": false
+  },
+  {
+   "key": "Pittsburgh vs Cleveland: Touchdowns|PIT Steelers D/ST: 1+",
+   "label": "PIT Steelers D/ST: 1+",
+   "pregame_mark": 0.145,
+   "current": 0.185,
+   "graded_result": null,
+   "graded_label": null,
+   "settled": false
+  },
+  {
+   "key": "Pittsburgh vs Cleveland: Touchdowns|Roman Wilson: 1+",
+   "label": "Roman Wilson: 1+",
+   "pregame_mark": 0.155,
+   "current": 0.125,
+   "graded_result": null,
+   "graded_label": null,
+   "settled": false
+  },
+  {
+   "key": "Pittsburgh vs Cleveland: Touchdowns|Darnell Washington: 1+",
+   "label": "Darnell Washington: 1+",
+   "pregame_mark": 0.125,
+   "current": 0.125,
+   "graded_result": null,
+   "graded_label": null,
+   "settled": false
+  },
+  {
+   "key": "Pittsburgh vs Cleveland: Touchdowns|Raheim Sanders: 1+",
+   "label": "Raheim Sanders: 1+",
+   "pregame_mark": 0.095,
+   "current": 0.095,
+   "graded_result": null,
+   "graded_label": null,
+   "settled": false
+  },
+  {
+   "key": "Pittsburgh vs Cleveland: Touchdowns|Jerry Jeudy: 1+",
+   "label": "Jerry Jeudy: 1+",
+   "pregame_mark": 0.085,
+   "current": 0.075,
+   "graded_result": null,
+   "graded_label": null,
+   "settled": false
+  },
+  {
+   "key": "Pittsburgh vs Cleveland: Touchdowns|Germie Bernard: 1+",
+   "label": "Germie Bernard: 1+",
+   "pregame_mark": 0.085,
+   "current": 0.065,
+   "graded_result": null,
+   "graded_label": null,
+   "settled": false
+  },
+  {
+   "key": "Pittsburgh vs Cleveland: Touchdowns|Aaron Rodgers: 1+",
+   "label": "Aaron Rodgers: 1+",
+   "pregame_mark": 0.055,
+   "current": 0.055,
+   "graded_result": null,
+   "graded_label": null,
+   "settled": false
+  },
+  {
+   "key": "Pittsburgh vs Cleveland: Touchdowns|Travis Homer: 1+",
+   "label": "Travis Homer: 1+",
+   "pregame_mark": 0.055,
+   "current": 0.055,
+   "graded_result": null,
+   "graded_label": null,
+   "settled": false
+  },
+  {
+   "key": "Pittsburgh vs Cleveland: Touchdowns|Ben Skowronek: 1+",
+   "label": "Ben Skowronek: 1+",
+   "pregame_mark": 0.045,
+   "current": 0.055,
+   "graded_result": null,
+   "graded_label": null,
+   "settled": false
+  },
+  {
+   "key": "Pittsburgh vs Cleveland: Team Sacks|Pittsburgh: 2+",
+   "label": "Pittsburgh: 2+",
+   "pregame_mark": 0.825,
+   "current": 0.7,
+   "graded_result": null,
+   "graded_label": null,
+   "settled": false
+  },
+  {
+   "key": "Pittsburgh vs Cleveland: Team Sacks|Pittsburgh: 3+",
+   "label": "Pittsburgh: 3+",
+   "pregame_mark": 0.63,
+   "current": 0.625,
+   "graded_result": null,
+   "graded_label": null,
+   "settled": false
+  },
+  {
+   "key": "Pittsburgh vs Cleveland: Team Sacks|Pittsburgh: 4+",
+   "label": "Pittsburgh: 4+",
+   "pregame_mark": 0.435,
+   "current": 0.42,
+   "graded_result": null,
+   "graded_label": null,
+   "settled": false
+  },
+  {
+   "key": "Pittsburgh vs Cleveland: Team Sacks|Pittsburgh: 5+",
+   "label": "Pittsburgh: 5+",
+   "pregame_mark": 0.3,
+   "current": 0.32,
+   "graded_result": null,
+   "graded_label": null,
+   "settled": false
+  },
+  {
+   "key": "Pittsburgh vs Cleveland: Team Sacks|Pittsburgh: 6+",
+   "label": "Pittsburgh: 6+",
+   "pregame_mark": 0.135,
+   "current": 0.125,
+   "graded_result": null,
+   "graded_label": null,
+   "settled": false
+  },
+  {
+   "key": "Pittsburgh vs Cleveland: Team Sacks|Cleveland: 2+",
+   "label": "Cleveland: 2+",
+   "pregame_mark": 0.65,
+   "current": 0.675,
+   "graded_result": null,
+   "graded_label": null,
+   "settled": false
+  },
+  {
+   "key": "Pittsburgh vs Cleveland: Team Sacks|Cleveland: 3+",
+   "label": "Cleveland: 3+",
+   "pregame_mark": 0.405,
+   "current": 0.555,
+   "graded_result": null,
+   "graded_label": null,
+   "settled": false
+  },
+  {
+   "key": "Pittsburgh vs Cleveland: Team Sacks|Cleveland: 4+",
+   "label": "Cleveland: 4+",
+   "pregame_mark": 0.185,
+   "current": 0.32,
+   "graded_result": null,
+   "graded_label": null,
+   "settled": false
+  },
+  {
+   "key": "Pittsburgh vs Cleveland: Team Sacks|Cleveland: 5+",
+   "label": "Cleveland: 5+",
+   "pregame_mark": 0.075,
+   "current": 0.21,
+   "graded_result": null,
+   "graded_label": null,
+   "settled": false
+  },
+  {
+   "key": "Pittsburgh vs Cleveland: Team Sacks|Cleveland: 6+",
+   "label": "Cleveland: 6+",
+   "pregame_mark": 0.06,
+   "current": 0.06,
+   "graded_result": null,
+   "graded_label": null,
+   "settled": false
+  },
+  {
+   "key": "Pittsburgh vs Cleveland: Rushing + Receiving Yards|Jaylen Warren: 90+",
+   "label": "Jaylen Warren: 90+",
+   "pregame_mark": 0.645,
+   "current": 0.635,
+   "graded_result": null,
+   "graded_label": null,
+   "settled": false
+  },
+  {
+   "key": "Pittsburgh vs Cleveland: Rushing + Receiving Yards|Jaylen Warren: 115+",
+   "label": "Jaylen Warren: 115+",
+   "pregame_mark": 0.425,
+   "current": 0.445,
+   "graded_result": null,
+   "graded_label": null,
+   "settled": false
+  },
+  {
+   "key": "Pittsburgh vs Cleveland: Rushing + Receiving Yards|Jaylen Warren: 140+",
+   "label": "Jaylen Warren: 140+",
+   "pregame_mark": 0.225,
+   "current": 0.165,
+   "graded_result": null,
+   "graded_label": null,
+   "settled": false
+  },
+  {
+   "key": "Pittsburgh vs Cleveland: Rushing + Receiving Yards|Raheim Sanders: 20+",
+   "label": "Raheim Sanders: 20+",
+   "pregame_mark": 0.545,
+   "current": 0.545,
+   "graded_result": null,
+   "graded_label": null,
+   "settled": false
+  },
+  {
+   "key": "Pittsburgh vs Cleveland: Rushing + Receiving Yards|Raheim Sanders: 45+",
+   "label": "Raheim Sanders: 45+",
+   "pregame_mark": 0.185,
+   "current": 0.165,
+   "graded_result": null,
+   "graded_label": null,
+   "settled": false
+  },
+  {
+   "key": "Pittsburgh vs Cleveland: Rushing + Receiving Yards|Quinshon Judkins: 70+",
+   "label": "Quinshon Judkins: 70+",
+   "pregame_mark": 0.505,
+   "current": 0.435,
+   "graded_result": null,
+   "graded_label": null,
+   "settled": false
+  },
+  {
+   "key": "Pittsburgh vs Cleveland: Rushing + Receiving Yards|Quinshon Judkins: 95+",
+   "label": "Quinshon Judkins: 95+",
+   "pregame_mark": 0.275,
+   "current": 0.21,
+   "graded_result": null,
+   "graded_label": null,
+   "settled": false
+  },
+  {
+   "key": "Pittsburgh vs Cleveland: Rushing + Receiving Yards|Quinshon Judkins: 120+",
+   "label": "Quinshon Judkins: 120+",
+   "pregame_mark": 0.125,
+   "current": 0.1,
+   "graded_result": null,
+   "graded_label": null,
+   "settled": false
+  },
+  {
+   "key": "Pittsburgh vs Cleveland: Receptions|DK Metcalf: 2+",
+   "label": "DK Metcalf: 2+",
+   "pregame_mark": null,
+   "current": 0.945,
+   "graded_result": null,
+   "graded_label": null,
+   "settled": false
+  },
+  {
+   "key": "Pittsburgh vs Cleveland: Receptions|DK Metcalf: 3+",
+   "label": "DK Metcalf: 3+",
+   "pregame_mark": null,
+   "current": 0.87,
+   "graded_result": null,
+   "graded_label": null,
+   "settled": false
+  },
+  {
+   "key": "Pittsburgh vs Cleveland: Receptions|DK Metcalf: 4+",
+   "label": "DK Metcalf: 4+",
+   "pregame_mark": null,
+   "current": 0.655,
+   "graded_result": null,
+   "graded_label": null,
+   "settled": false
+  },
+  {
+   "key": "Pittsburgh vs Cleveland: Receptions|DK Metcalf: 5+",
+   "label": "DK Metcalf: 5+",
+   "pregame_mark": null,
+   "current": 0.52,
+   "graded_result": null,
+   "graded_label": null,
+   "settled": false
+  },
+  {
+   "key": "Pittsburgh vs Cleveland: Receptions|DK Metcalf: 6+",
+   "label": "DK Metcalf: 6+",
+   "pregame_mark": null,
+   "current": 0.345,
+   "graded_result": null,
+   "graded_label": null,
+   "settled": false
+  },
+  {
+   "key": "Pittsburgh vs Cleveland: Receptions|DK Metcalf: 7+",
+   "label": "DK Metcalf: 7+",
+   "pregame_mark": null,
+   "current": 0.205,
+   "graded_result": null,
+   "graded_label": null,
+   "settled": false
+  },
+  {
+   "key": "Pittsburgh vs Cleveland: Receptions|DK Metcalf: 8+",
+   "label": "DK Metcalf: 8+",
+   "pregame_mark": null,
+   "current": 0.11,
+   "graded_result": null,
+   "graded_label": null,
+   "settled": false
+  },
+  {
+   "key": "Pittsburgh vs Cleveland: Receptions|DK Metcalf: 9+",
+   "label": "DK Metcalf: 9+",
+   "pregame_mark": null,
+   "current": 0.055,
+   "graded_result": null,
+   "graded_label": null,
+   "settled": false
+  },
+  {
+   "key": "Pittsburgh vs Cleveland: Receptions|Harold Fannin Jr.: 2+",
+   "label": "Harold Fannin Jr.: 2+",
+   "pregame_mark": null,
+   "current": 0.905,
+   "graded_result": null,
+   "graded_label": null,
+   "settled": false
+  },
+  {
+   "key": "Pittsburgh vs Cleveland: Receptions|Harold Fannin Jr.: 3+",
+   "label": "Harold Fannin Jr.: 3+",
+   "pregame_mark": null,
+   "current": 0.785,
+   "graded_result": null,
+   "graded_label": null,
+   "settled": false
+  },
+  {
+   "key": "Pittsburgh vs Cleveland: Receptions|Harold Fannin Jr.: 4+",
+   "label": "Harold Fannin Jr.: 4+",
+   "pregame_mark": null,
+   "current": 0.625,
+   "graded_result": null,
+   "graded_label": null,
+   "settled": false
+  },
+  {
+   "key": "Pittsburgh vs Cleveland: Receptions|Harold Fannin Jr.: 5+",
+   "label": "Harold Fannin Jr.: 5+",
+   "pregame_mark": null,
+   "current": 0.42,
+   "graded_result": null,
+   "graded_label": null,
+   "settled": false
+  },
+  {
+   "key": "Pittsburgh vs Cleveland: Receptions|Harold Fannin Jr.: 6+",
+   "label": "Harold Fannin Jr.: 6+",
+   "pregame_mark": null,
+   "current": 0.255,
+   "graded_result": null,
+   "graded_label": null,
+   "settled": false
+  },
+  {
+   "key": "Harold Fannin Jr.: Receptions O/U 6.5|Over",
+   "label": "Over",
+   "pregame_mark": 0.115,
+   "current": 0.115,
+   "graded_result": null,
+   "graded_label": null,
+   "settled": false
+  },
+  {
+   "key": "Pittsburgh vs Cleveland: Receptions|Harold Fannin Jr.: 7+",
+   "label": "Harold Fannin Jr.: 7+",
+   "pregame_mark": null,
+   "current": 0.115,
+   "graded_result": null,
+   "graded_label": null,
+   "settled": false
+  },
+  {
+   "key": "Pittsburgh vs Cleveland: Receptions|Harold Fannin Jr.: 8+",
+   "label": "Harold Fannin Jr.: 8+",
+   "pregame_mark": null,
+   "current": 0.065,
+   "graded_result": null,
+   "graded_label": null,
+   "settled": false
+  },
+  {
+   "key": "Pittsburgh vs Cleveland: Receptions|Harold Fannin Jr.: 9+",
+   "label": "Harold Fannin Jr.: 9+",
+   "pregame_mark": null,
+   "current": 0.05,
+   "graded_result": null,
+   "graded_label": null,
+   "settled": false
+  },
+  {
+   "key": "Pittsburgh vs Cleveland: Receptions|Jaylen Warren: 2+",
+   "label": "Jaylen Warren: 2+",
+   "pregame_mark": null,
+   "current": 0.845,
+   "graded_result": null,
+   "graded_label": null,
+   "settled": false
+  },
+  {
+   "key": "Pittsburgh vs Cleveland: Receptions|Jaylen Warren: 3+",
+   "label": "Jaylen Warren: 3+",
+   "pregame_mark": null,
+   "current": 0.66,
+   "graded_result": null,
+   "graded_label": null,
+   "settled": false
+  },
+  {
+   "key": "Jaylen Warren: Receptions O/U 3.5|Over",
+   "label": "Over",
+   "pregame_mark": 0.49,
+   "current": 0.49,
+   "graded_result": null,
+   "graded_label": null,
+   "settled": false
+  },
+  {
+   "key": "Pittsburgh vs Cleveland: Receptions|Jaylen Warren: 4+",
+   "label": "Jaylen Warren: 4+",
+   "pregame_mark": null,
+   "current": 0.46,
+   "graded_result": null,
+   "graded_label": null,
+   "settled": false
+  },
+  {
+   "key": "Pittsburgh vs Cleveland: Receptions|Jaylen Warren: 5+",
+   "label": "Jaylen Warren: 5+",
+   "pregame_mark": null,
+   "current": 0.275,
+   "graded_result": null,
+   "graded_label": null,
+   "settled": false
+  },
+  {
+   "key": "Jaylen Warren: Receptions O/U 5.5|Over",
+   "label": "Over",
+   "pregame_mark": 0.12,
+   "current": 0.105,
+   "graded_result": null,
+   "graded_label": null,
+   "settled": false
+  },
+  {
+   "key": "Pittsburgh vs Cleveland: Receptions|Jaylen Warren: 6+",
+   "label": "Jaylen Warren: 6+",
+   "pregame_mark": null,
+   "current": 0.105,
+   "graded_result": null,
+   "graded_label": null,
+   "settled": false
+  },
+  {
+   "key": "Pittsburgh vs Cleveland: Receptions|Jaylen Warren: 7+",
+   "label": "Jaylen Warren: 7+",
+   "pregame_mark": null,
+   "current": 0.06,
+   "graded_result": null,
+   "graded_label": null,
+   "settled": false
+  },
+  {
+   "key": "Pittsburgh vs Cleveland: Receptions|Denzel Boston: 2+",
+   "label": "Denzel Boston: 2+",
+   "pregame_mark": null,
+   "current": 0.835,
+   "graded_result": null,
+   "graded_label": null,
+   "settled": false
+  },
+  {
+   "key": "Denzel Boston: Receptions O/U 2.5|Over",
+   "label": "Over",
+   "pregame_mark": null,
+   "current": 0.61,
+   "graded_result": null,
+   "graded_label": null,
+   "settled": false
+  },
+  {
+   "key": "Pittsburgh vs Cleveland: Receptions|Denzel Boston: 3+",
+   "label": "Denzel Boston: 3+",
+   "pregame_mark": null,
+   "current": 0.61,
+   "graded_result": null,
+   "graded_label": null,
+   "settled": false
+  },
+  {
+   "key": "Pittsburgh vs Cleveland: Receptions|Denzel Boston: 4+",
+   "label": "Denzel Boston: 4+",
+   "pregame_mark": null,
+   "current": 0.545,
+   "graded_result": null,
+   "graded_label": null,
+   "settled": false
+  },
+  {
+   "key": "Denzel Boston: Receptions O/U 4.5|Over",
+   "label": "Over",
+   "pregame_mark": 0.12,
+   "current": 0.12,
+   "graded_result": null,
+   "graded_label": null,
+   "settled": false
+  },
+  {
+   "key": "Pittsburgh vs Cleveland: Receptions|Denzel Boston: 5+",
+   "label": "Denzel Boston: 5+",
+   "pregame_mark": null,
+   "current": 0.12,
+   "graded_result": null,
+   "graded_label": null,
+   "settled": false
+  },
+  {
+   "key": "Pittsburgh vs Cleveland: Receptions|Denzel Boston: 6+",
+   "label": "Denzel Boston: 6+",
+   "pregame_mark": null,
+   "current": 0.12,
+   "graded_result": null,
+   "graded_label": null,
+   "settled": false
+  },
+  {
+   "key": "Pittsburgh vs Cleveland: Receptions|Denzel Boston: 7+",
+   "label": "Denzel Boston: 7+",
+   "pregame_mark": null,
+   "current": 0.095,
+   "graded_result": null,
+   "graded_label": null,
+   "settled": false
+  },
+  {
+   "key": "Pittsburgh vs Cleveland: Receptions|Denzel Boston: 8+",
+   "label": "Denzel Boston: 8+",
+   "pregame_mark": null,
+   "current": 0.055,
+   "graded_result": null,
+   "graded_label": null,
+   "settled": false
+  },
+  {
+   "key": "Pittsburgh vs Cleveland: Receptions|Roman Wilson: 2+",
+   "label": "Roman Wilson: 2+",
+   "pregame_mark": null,
+   "current": 0.625,
+   "graded_result": null,
+   "graded_label": null,
+   "settled": false
+  },
+  {
+   "key": "Roman Wilson: Receptions O/U 2.5|Over",
+   "label": "Over",
+   "pregame_mark": 0.385,
+   "current": 0.41,
+   "graded_result": null,
+   "graded_label": null,
+   "settled": false
+  },
+  {
+   "key": "Pittsburgh vs Cleveland: Receptions|Roman Wilson: 3+",
+   "label": "Roman Wilson: 3+",
+   "pregame_mark": null,
+   "current": 0.405,
+   "graded_result": null,
+   "graded_label": null,
+   "settled": false
+  },
+  {
+   "key": "Roman Wilson: Receptions O/U 3.5|Over",
+   "label": "Over",
+   "pregame_mark": 0.125,
+   "current": 0.125,
+   "graded_result": null,
+   "graded_label": null,
+   "settled": false
+  },
+  {
+   "key": "Pittsburgh vs Cleveland: Receptions|Roman Wilson: 4+",
+   "label": "Roman Wilson: 4+",
+   "pregame_mark": null,
+   "current": 0.125,
+   "graded_result": null,
+   "graded_label": null,
+   "settled": false
+  },
+  {
+   "key": "Roman Wilson: Receptions O/U 4.5|Over",
+   "label": "Over",
+   "pregame_mark": 0.075,
+   "current": 0.065,
+   "graded_result": null,
+   "graded_label": null,
+   "settled": false
+  },
+  {
+   "key": "Pittsburgh vs Cleveland: Receptions|Roman Wilson: 5+",
+   "label": "Roman Wilson: 5+",
+   "pregame_mark": null,
+   "current": 0.065,
+   "graded_result": null,
+   "graded_label": null,
+   "settled": false
+  },
+  {
+   "key": "Pittsburgh vs Cleveland: Receptions|Roman Wilson: 6+",
+   "label": "Roman Wilson: 6+",
+   "pregame_mark": null,
+   "current": 0.05,
+   "graded_result": null,
+   "graded_label": null,
+   "settled": false
+  },
+  {
+   "key": "Pittsburgh vs Cleveland: Receptions|Darnell Washington: 2+",
+   "label": "Darnell Washington: 2+",
+   "pregame_mark": null,
+   "current": 0.585,
+   "graded_result": null,
+   "graded_label": null,
+   "settled": false
+  },
+  {
+   "key": "Pittsburgh vs Cleveland: Receptions|Darnell Washington: 3+",
+   "label": "Darnell Washington: 3+",
+   "pregame_mark": null,
+   "current": 0.295,
+   "graded_result": null,
+   "graded_label": null,
+   "settled": false
+  },
+  {
+   "key": "Darnell Washington: Receptions O/U 3.5|Over",
+   "label": "Over",
+   "pregame_mark": 0.105,
+   "current": 0.105,
+   "graded_result": null,
+   "graded_label": null,
+   "settled": false
+  },
+  {
+   "key": "Pittsburgh vs Cleveland: Receptions|Darnell Washington: 4+",
+   "label": "Darnell Washington: 4+",
+   "pregame_mark": null,
+   "current": 0.105,
+   "graded_result": null,
+   "graded_label": null,
+   "settled": false
+  },
+  {
+   "key": "Darnell Washington: Receptions O/U 4.5|Over",
+   "label": "Over",
+   "pregame_mark": 0.06,
+   "current": 0.06,
+   "graded_result": null,
+   "graded_label": null,
+   "settled": false
+  },
+  {
+   "key": "Pittsburgh vs Cleveland: Receptions|Darnell Washington: 5+",
+   "label": "Darnell Washington: 5+",
+   "pregame_mark": null,
+   "current": 0.055,
+   "graded_result": null,
+   "graded_label": null,
+   "settled": false
+  },
+  {
+   "key": "Pittsburgh vs Cleveland: Receptions|Raheim Sanders: 2+",
+   "label": "Raheim Sanders: 2+",
+   "pregame_mark": null,
+   "current": 0.55,
+   "graded_result": null,
+   "graded_label": null,
+   "settled": false
+  },
+  {
+   "key": "Pittsburgh vs Cleveland: Receptions|Raheim Sanders: 3+",
+   "label": "Raheim Sanders: 3+",
+   "pregame_mark": null,
+   "current": 0.355,
+   "graded_result": null,
+   "graded_label": null,
+   "settled": false
+  },
+  {
+   "key": "Pittsburgh vs Cleveland: Receptions|Raheim Sanders: 4+",
+   "label": "Raheim Sanders: 4+",
+   "pregame_mark": null,
+   "current": 0.13,
+   "graded_result": null,
+   "graded_label": null,
+   "settled": false
+  },
+  {
+   "key": "Pittsburgh vs Cleveland: Passing Completions|Aaron Rodgers: 17+",
+   "label": "Aaron Rodgers: 17+",
+   "pregame_mark": null,
+   "current": 0.76,
+   "graded_result": null,
+   "graded_label": null,
+   "settled": false
+  },
+  {
+   "key": "Pittsburgh vs Cleveland: Passing Completions|Aaron Rodgers: 22+",
+   "label": "Aaron Rodgers: 22+",
+   "pregame_mark": null,
+   "current": 0.55,
+   "graded_result": null,
+   "graded_label": null,
+   "settled": false
+  },
+  {
+   "key": "Pittsburgh vs Cleveland: Passing Completions|Aaron Rodgers: 27+",
+   "label": "Aaron Rodgers: 27+",
+   "pregame_mark": null,
+   "current": 0.2,
+   "graded_result": null,
+   "graded_label": null,
+   "settled": false
+  },
+  {
+   "key": "Pittsburgh vs Cleveland: Passing Completions|Deshaun Watson: 14+",
+   "label": "Deshaun Watson: 14+",
+   "pregame_mark": null,
+   "current": 0.755,
+   "graded_result": null,
+   "graded_label": null,
+   "settled": false
+  },
+  {
+   "key": "Pittsburgh vs Cleveland: Passing Completions|Deshaun Watson: 19+",
+   "label": "Deshaun Watson: 19+",
+   "pregame_mark": null,
+   "current": 0.545,
+   "graded_result": null,
+   "graded_label": null,
+   "settled": false
+  },
+  {
+   "key": "Pittsburgh vs Cleveland: Passing Completions|Deshaun Watson: 24+",
+   "label": "Deshaun Watson: 24+",
+   "pregame_mark": null,
+   "current": 0.165,
+   "graded_result": null,
+   "graded_label": null,
+   "settled": false
+  },
+  {
+   "key": "Pittsburgh vs Cleveland: Team Field Goals|Pittsburgh: 1+",
+   "label": "Pittsburgh: 1+",
+   "pregame_mark": 0.845,
+   "current": 0.905,
+   "graded_result": null,
+   "graded_label": null,
+   "settled": false
+  },
+  {
+   "key": "Pittsburgh vs Cleveland: Team Field Goals|Pittsburgh: 2+",
+   "label": "Pittsburgh: 2+",
+   "pregame_mark": 0.595,
+   "current": 0.62,
+   "graded_result": null,
+   "graded_label": null,
+   "settled": false
+  },
+  {
+   "key": "Pittsburgh vs Cleveland: Team Field Goals|Pittsburgh: 3+",
+   "label": "Pittsburgh: 3+",
+   "pregame_mark": 0.3,
+   "current": 0.375,
+   "graded_result": null,
+   "graded_label": null,
+   "settled": false
+  },
+  {
+   "key": "Pittsburgh vs Cleveland: Team Field Goals|Pittsburgh: 4+",
+   "label": "Pittsburgh: 4+",
+   "pregame_mark": 0.095,
+   "current": 0.22,
+   "graded_result": null,
+   "graded_label": null,
+   "settled": false
+  },
+  {
+   "key": "Pittsburgh vs Cleveland: Team Field Goals|Cleveland: 1+",
+   "label": "Cleveland: 1+",
+   "pregame_mark": 0.81,
+   "current": 0.81,
+   "graded_result": null,
+   "graded_label": null,
+   "settled": false
+  },
+  {
+   "key": "Pittsburgh vs Cleveland: Team Field Goals|Cleveland: 2+",
+   "label": "Cleveland: 2+",
+   "pregame_mark": 0.495,
+   "current": 0.55,
+   "graded_result": null,
+   "graded_label": null,
+   "settled": false
+  },
+  {
+   "key": "Pittsburgh vs Cleveland: Team Field Goals|Cleveland: 3+",
+   "label": "Cleveland: 3+",
+   "pregame_mark": 0.22,
+   "current": 0.33,
+   "graded_result": null,
+   "graded_label": null,
+   "settled": false
+  },
+  {
+   "key": "Pittsburgh vs Cleveland: Team Field Goals|Cleveland: 4+",
+   "label": "Cleveland: 4+",
+   "pregame_mark": 0.08,
+   "current": 0.07,
+   "graded_result": null,
+   "graded_label": null,
+   "settled": false
+  },
+  {
+   "key": "Pittsburgh vs Cleveland: Fantasy Points|Chris Boswell: Over 7.6",
+   "label": "Chris Boswell: Over 7.6",
+   "pregame_mark": 0.555,
+   "current": 0.72,
+   "graded_result": null,
+   "graded_label": null,
+   "settled": false
+  },
+  {
+   "key": "Pittsburgh vs Cleveland: Fantasy Points|Andre Szmyt: Over 6.8",
+   "label": "Andre Szmyt: Over 6.8",
+   "pregame_mark": 0.595,
+   "current": 0.68,
+   "graded_result": null,
+   "graded_label": null,
+   "settled": false
+  },
+  {
+   "key": "Pittsburgh vs Cleveland: Fantasy Points|KC Concepcion Jr.: Over 8.5",
+   "label": "KC Concepcion Jr.: Over 8.5",
+   "pregame_mark": 0.565,
+   "current": 0.58,
+   "graded_result": null,
+   "graded_label": null,
+   "settled": false
+  },
+  {
+   "key": "Pittsburgh vs Cleveland: Fantasy Points|Quinshon Judkins: Over 8.7",
+   "label": "Quinshon Judkins: Over 8.7",
+   "pregame_mark": 0.64,
+   "current": 0.545,
+   "graded_result": null,
+   "graded_label": null,
+   "settled": false
+  },
+  {
+   "key": "Pittsburgh vs Cleveland: Fantasy Points|Aaron Rodgers: Over 13.5",
+   "label": "Aaron Rodgers: Over 13.5",
+   "pregame_mark": 0.49,
+   "current": 0.545,
+   "graded_result": null,
+   "graded_label": null,
+   "settled": false
+  },
+  {
+   "key": "Pittsburgh vs Cleveland: Fantasy Points|CLE Browns D/ST: Over 7.9",
+   "label": "CLE Browns D/ST: Over 7.9",
+   "pregame_mark": 0.42,
+   "current": 0.5,
+   "graded_result": null,
+   "graded_label": null,
+   "settled": false
+  },
+  {
+   "key": "Pittsburgh vs Cleveland: Fantasy Points|PIT Steelers D/ST: Over 8.7",
+   "label": "PIT Steelers D/ST: Over 8.7",
+   "pregame_mark": 0.485,
+   "current": 0.49,
+   "graded_result": null,
+   "graded_label": null,
+   "settled": false
+  },
+  {
+   "key": "Pittsburgh vs Cleveland: Fantasy Points|DK Metcalf: Over 9.8",
+   "label": "DK Metcalf: Over 9.8",
+   "pregame_mark": 0.55,
+   "current": 0.485,
+   "graded_result": null,
+   "graded_label": null,
+   "settled": false
+  },
+  {
+   "key": "Pittsburgh vs Cleveland: Fantasy Points|Michael Pittman Jr.: Over 9.4",
+   "label": "Michael Pittman Jr.: Over 9.4",
+   "pregame_mark": 0.37,
+   "current": 0.38,
+   "graded_result": null,
+   "graded_label": null,
+   "settled": false
+  },
+  {
+   "key": "Pittsburgh vs Cleveland: Fantasy Points|Denzel Boston: Over 10.7",
+   "label": "Denzel Boston: Over 10.7",
+   "pregame_mark": 0.355,
+   "current": 0.375,
+   "graded_result": null,
+   "graded_label": null,
+   "settled": false
+  },
+  {
+   "key": "Pittsburgh vs Cleveland: Fantasy Points|Deshaun Watson: Over 15.6",
+   "label": "Deshaun Watson: Over 15.6",
+   "pregame_mark": 0.43,
+   "current": 0.315,
+   "graded_result": null,
+   "graded_label": null,
+   "settled": false
+  },
+  {
+   "key": "Pittsburgh vs Cleveland: Fantasy Points|Harold Fannin Jr.: Over 11.8",
+   "label": "Harold Fannin Jr.: Over 11.8",
+   "pregame_mark": 0.375,
+   "current": 0.285,
+   "graded_result": null,
+   "graded_label": null,
+   "settled": false
+  },
+  {
+   "key": "Pittsburgh vs Cleveland: Fantasy Points|Jaylen Warren: Over 14.8",
+   "label": "Jaylen Warren: Over 14.8",
+   "pregame_mark": 0.61,
+   "current": 0.22,
+   "graded_result": null,
+   "graded_label": null,
+   "settled": false
+  },
+  {
+   "key": "Steelers vs. Browns: Both Teams to Score Points - 3Q|No",
+   "label": "No",
+   "pregame_mark": null,
+   "current": 0.38,
+   "graded_result": null,
+   "graded_label": null,
+   "settled": false
+  },
+  {
+   "key": "Steelers vs. Browns: Both Teams to Score Points - 3Q|Yes",
+   "label": "Yes",
+   "pregame_mark": null,
+   "current": 0.38,
+   "graded_result": null,
+   "graded_label": null,
+   "settled": false
+  },
+  {
+   "key": "Steelers vs. Browns: Both Teams to Score Points - 2Q|Yes",
+   "label": "Yes",
+   "pregame_mark": null,
+   "current": 0.63,
+   "graded_result": null,
+   "graded_label": null,
+   "settled": false
+  },
+  {
+   "key": "Steelers vs. Browns: Both Teams to Score Points - 2Q|No",
+   "label": "No",
+   "pregame_mark": null,
+   "current": 0.63,
+   "graded_result": null,
+   "graded_label": null,
+   "settled": false
+  },
+  {
+   "key": "Steelers vs. Browns: Both Teams to Score Points - 1Q|No",
+   "label": "No",
+   "pregame_mark": null,
+   "current": 0.36,
+   "graded_result": null,
+   "graded_label": null,
+   "settled": false
+  },
+  {
+   "key": "Steelers vs. Browns: Both Teams to Score Points - 1Q|Yes",
+   "label": "Yes",
+   "pregame_mark": null,
+   "current": 0.36,
+   "graded_result": null,
+   "graded_label": null,
+   "settled": false
+  },
+  {
+   "key": "Pittsburgh vs Cleveland: Passing Attempts|Aaron Rodgers: 30+",
+   "label": "Aaron Rodgers: 30+",
+   "pregame_mark": null,
+   "current": 0.81,
+   "graded_result": null,
+   "graded_label": null,
+   "settled": false
+  },
+  {
+   "key": "Aaron Rodgers: Passing Attempts O/U 31.5|Over",
+   "label": "Over",
+   "pregame_mark": 0.72,
+   "current": 0.72,
+   "graded_result": null,
+   "graded_label": null,
+   "settled": false
+  },
+  {
+   "key": "Pittsburgh vs Cleveland: Passing Attempts|Aaron Rodgers: 35+",
+   "label": "Aaron Rodgers: 35+",
+   "pregame_mark": null,
+   "current": 0.525,
+   "graded_result": null,
+   "graded_label": null,
+   "settled": false
+  },
+  {
+   "key": "Pittsburgh vs Cleveland: Passing Attempts|Aaron Rodgers: 40+",
+   "label": "Aaron Rodgers: 40+",
+   "pregame_mark": null,
+   "current": 0.26,
+   "graded_result": null,
+   "graded_label": null,
+   "settled": false
+  },
+  {
+   "key": "Aaron Rodgers: Passing Attempts O/U 31.5|Under",
+   "label": "Under",
+   "pregame_mark": 0.28,
+   "current": 0.28,
+   "graded_result": null,
+   "graded_label": null,
+   "settled": false
+  },
+  {
+   "key": "Denzel Boston: Receptions O/U 2.5|Under",
+   "label": "Under",
+   "pregame_mark": 0.44,
+   "current": 0.41,
+   "graded_result": null,
+   "graded_label": null,
+   "settled": false
+  },
+  {
+   "key": "Denzel Boston: Receptions O/U 4.5|Under",
+   "label": "Under",
+   "pregame_mark": 0.88,
+   "current": 0.88,
+   "graded_result": null,
+   "graded_label": null,
+   "settled": false
+  },
+  {
+   "key": "Darnell Washington: Receiving Yards O/U 14.5|Over",
+   "label": "Over",
+   "pregame_mark": 0.56,
+   "current": 0.56,
+   "graded_result": null,
+   "graded_label": null,
+   "settled": false
+  },
+  {
+   "key": "Pittsburgh vs Cleveland: Receiving Yards|Darnell Washington: 15+",
+   "label": "Darnell Washington: 15+",
+   "pregame_mark": 0.575,
+   "current": 0.545,
+   "graded_result": null,
+   "graded_label": null,
+   "settled": false
+  },
+  {
+   "key": "Pittsburgh vs Cleveland: Receiving Yards|Darnell Washington: 25+",
+   "label": "Darnell Washington: 25+",
+   "pregame_mark": 0.335,
+   "current": 0.345,
+   "graded_result": null,
+   "graded_label": null,
+   "settled": false
+  },
+  {
+   "key": "Darnell Washington: Receiving Yards O/U 39.5|Over",
+   "label": "Over",
+   "pregame_mark": 0.1,
+   "current": 0.1,
+   "graded_result": null,
+   "graded_label": null,
+   "settled": false
+  },
+  {
+   "key": "Pittsburgh vs Cleveland: Receiving Yards|Darnell Washington: 40+",
+   "label": "Darnell Washington: 40+",
+   "pregame_mark": 0.165,
+   "current": 0.1,
+   "graded_result": null,
+   "graded_label": null,
+   "settled": false
+  },
+  {
+   "key": "Pittsburgh vs Cleveland: Receiving Yards|Darnell Washington: 50+",
+   "label": "Darnell Washington: 50+",
+   "pregame_mark": 0.095,
+   "current": 0.085,
+   "graded_result": null,
+   "graded_label": null,
+   "settled": false
+  },
+  {
+   "key": "Pittsburgh vs Cleveland: Receiving Yards|Darnell Washington: 60+",
+   "label": "Darnell Washington: 60+",
+   "pregame_mark": 0.065,
+   "current": 0.055,
+   "graded_result": null,
+   "graded_label": null,
+   "settled": false
+  },
+  {
+   "key": "Darnell Washington: Receiving Yards O/U 14.5|Under",
+   "label": "Under",
+   "pregame_mark": 0.44,
+   "current": 0.44,
+   "graded_result": null,
+   "graded_label": null,
+   "settled": false
+  },
+  {
+   "key": "Darnell Washington: Receiving Yards O/U 39.5|Under",
+   "label": "Under",
+   "pregame_mark": 0.9,
+   "current": 0.9,
+   "graded_result": null,
+   "graded_label": null,
+   "settled": false
+  },
+  {
+   "key": "Jaylen Warren: Receptions O/U 3.5|Under",
+   "label": "Under",
+   "pregame_mark": 0.5,
+   "current": 0.5,
+   "graded_result": null,
+   "graded_label": null,
+   "settled": false
+  },
+  {
+   "key": "Jaylen Warren: Receptions O/U 5.5|Under",
+   "label": "Under",
+   "pregame_mark": 0.88,
+   "current": 0.895,
+   "graded_result": null,
+   "graded_label": null,
+   "settled": false
+  },
+  {
+   "key": "Deshaun Watson: Rushing Yards O/U 29.5|Under",
+   "label": "Under",
+   "pregame_mark": null,
+   "current": 0.53,
+   "graded_result": null,
+   "graded_label": null,
+   "settled": false
+  },
+  {
+   "key": "Deshaun Watson: Rushing Yards O/U 49.5|Under",
+   "label": "Under",
+   "pregame_mark": 0.89,
+   "current": 0.915,
+   "graded_result": null,
+   "graded_label": null,
+   "settled": false
+  },
+  {
+   "key": "Deshaun Watson: Rushing Yards O/U 54.5|Under",
+   "label": "Under",
+   "pregame_mark": 0.875,
+   "current": 0.915,
+   "graded_result": null,
+   "graded_label": null,
+   "settled": false
+  },
+  {
+   "key": "Pittsburgh vs Cleveland: Rushing Yards|Deshaun Watson: 15+",
+   "label": "Deshaun Watson: 15+",
+   "pregame_mark": 0.775,
+   "current": 0.755,
+   "graded_result": null,
+   "graded_label": null,
+   "settled": false
+  },
+  {
+   "key": "Pittsburgh vs Cleveland: Rushing Yards|Deshaun Watson: 20+",
+   "label": "Deshaun Watson: 20+",
+   "pregame_mark": 0.675,
+   "current": 0.645,
+   "graded_result": null,
+   "graded_label": null,
+   "settled": false
+  },
+  {
+   "key": "Pittsburgh vs Cleveland: Rushing Yards|Deshaun Watson: 25+",
+   "label": "Deshaun Watson: 25+",
+   "pregame_mark": 0.565,
+   "current": 0.565,
+   "graded_result": null,
+   "graded_label": null,
+   "settled": false
+  },
+  {
+   "key": "Deshaun Watson: Rushing Yards O/U 29.5|Over",
+   "label": "Over",
+   "pregame_mark": 0.47,
+   "current": 0.47,
+   "graded_result": null,
+   "graded_label": null,
+   "settled": false
+  },
+  {
+   "key": "Pittsburgh vs Cleveland: Rushing Yards|Deshaun Watson: 30+",
+   "label": "Deshaun Watson: 30+",
+   "pregame_mark": 0.455,
+   "current": 0.41,
+   "graded_result": null,
+   "graded_label": null,
+   "settled": false
+  },
+  {
+   "key": "Pittsburgh vs Cleveland: Rushing Yards|Deshaun Watson: 40+",
+   "label": "Deshaun Watson: 40+",
+   "pregame_mark": 0.305,
+   "current": 0.25,
+   "graded_result": null,
+   "graded_label": null,
+   "settled": false
+  },
+  {
+   "key": "Deshaun Watson: Rushing Yards O/U 49.5|Over",
+   "label": "Over",
+   "pregame_mark": 0.11,
+   "current": 0.085,
+   "graded_result": null,
+   "graded_label": null,
+   "settled": false
+  },
+  {
+   "key": "Pittsburgh vs Cleveland: Rushing Yards|Deshaun Watson: 50+",
+   "label": "Deshaun Watson: 50+",
+   "pregame_mark": 0.185,
+   "current": 0.085,
+   "graded_result": null,
+   "graded_label": null,
+   "settled": false
+  },
+  {
+   "key": "Deshaun Watson: Rushing Yards O/U 54.5|Over",
+   "label": "Over",
+   "pregame_mark": 0.125,
+   "current": 0.085,
+   "graded_result": null,
+   "graded_label": null,
+   "settled": false
+  },
+  {
+   "key": "Pittsburgh vs Cleveland: Rushing Yards|Deshaun Watson: 60+",
+   "label": "Deshaun Watson: 60+",
+   "pregame_mark": 0.105,
+   "current": 0.065,
+   "graded_result": null,
+   "graded_label": null,
+   "settled": false
+  },
+  {
+   "key": "Roman Wilson: Receptions O/U 2.5|Under",
+   "label": "Under",
+   "pregame_mark": 0.615,
+   "current": 0.59,
+   "graded_result": null,
+   "graded_label": null,
+   "settled": false
+  },
+  {
+   "key": "Roman Wilson: Receptions O/U 3.5|Under",
+   "label": "Under",
+   "pregame_mark": 0.88,
+   "current": 0.88,
+   "graded_result": null,
+   "graded_label": null,
+   "settled": false
+  },
+  {
+   "key": "Roman Wilson: Receptions O/U 4.5|Under",
+   "label": "Under",
+   "pregame_mark": 0.925,
+   "current": 0.935,
+   "graded_result": null,
+   "graded_label": null,
+   "settled": false
+  },
+  {
+   "key": "Pittsburgh vs Cleveland: Rushing Yards|Raheim Sanders: 10+",
+   "label": "Raheim Sanders: 10+",
+   "pregame_mark": 0.335,
+   "current": 0.28,
+   "graded_result": null,
+   "graded_label": null,
+   "settled": false
+  },
+  {
+   "key": "Pittsburgh vs Cleveland: Rushing Yards|Raheim Sanders: 15+",
+   "label": "Raheim Sanders: 15+",
+   "pregame_mark": 0.205,
+   "current": 0.17,
+   "graded_result": null,
+   "graded_label": null,
+   "settled": false
+  },
+  {
+   "key": "Pittsburgh vs Cleveland: Rushing Yards|Raheim Sanders: 20+",
+   "label": "Raheim Sanders: 20+",
+   "pregame_mark": 0.125,
+   "current": 0.105,
+   "graded_result": null,
+   "graded_label": null,
+   "settled": false
+  },
+  {
+   "key": "Pittsburgh vs Cleveland: Rushing Yards|Raheim Sanders: 25+",
+   "label": "Raheim Sanders: 25+",
+   "pregame_mark": 0.075,
+   "current": 0.065,
+   "graded_result": null,
+   "graded_label": null,
+   "settled": false
+  },
+  {
+   "key": "Pittsburgh vs Cleveland: Rushing Yards|Aaron Rodgers: 10+",
+   "label": "Aaron Rodgers: 10+",
+   "pregame_mark": 0.205,
+   "current": 0.205,
+   "graded_result": null,
+   "graded_label": null,
+   "settled": false
+  },
+  {
+   "key": "Pittsburgh vs Cleveland: Rushing Yards|Aaron Rodgers: 15+",
+   "label": "Aaron Rodgers: 15+",
+   "pregame_mark": 0.115,
+   "current": 0.115,
+   "graded_result": null,
+   "graded_label": null,
+   "settled": false
+  },
+  {
+   "key": "Pittsburgh vs Cleveland: Rushing Yards|Aaron Rodgers: 20+",
+   "label": "Aaron Rodgers: 20+",
+   "pregame_mark": 0.075,
+   "current": 0.085,
+   "graded_result": null,
+   "graded_label": null,
+   "settled": false
+  },
+  {
+   "key": "Pittsburgh vs Cleveland: Rushing Yards|Aaron Rodgers: 25+",
+   "label": "Aaron Rodgers: 25+",
+   "pregame_mark": 0.045,
+   "current": 0.055,
+   "graded_result": null,
+   "graded_label": null,
+   "settled": false
+  },
+  {
+   "key": "Pittsburgh vs Cleveland: Team Total Yards|Pittsburgh: 250+",
+   "label": "Pittsburgh: 250+",
+   "pregame_mark": 0.82,
+   "current": 0.79,
+   "graded_result": null,
+   "graded_label": null,
+   "settled": false
+  },
+  {
+   "key": "Pittsburgh vs Cleveland: Team Total Yards|Pittsburgh: 300+",
+   "label": "Pittsburgh: 300+",
+   "pregame_mark": 0.565,
+   "current": 0.625,
+   "graded_result": null,
+   "graded_label": null,
+   "settled": false
+  },
+  {
+   "key": "Pittsburgh vs Cleveland: Team Total Yards|Pittsburgh: 350+",
+   "label": "Pittsburgh: 350+",
+   "pregame_mark": 0.325,
+   "current": 0.455,
+   "graded_result": null,
+   "graded_label": null,
+   "settled": false
+  },
+  {
+   "key": "Pittsburgh vs Cleveland: Team Total Yards|Pittsburgh: 400+",
+   "label": "Pittsburgh: 400+",
+   "pregame_mark": 0.155,
+   "current": 0.3,
+   "graded_result": null,
+   "graded_label": null,
+   "settled": false
+  },
+  {
+   "key": "Pittsburgh vs Cleveland: Team Total Yards|Pittsburgh: 450+",
+   "label": "Pittsburgh: 450+",
+   "pregame_mark": 0.22,
+   "current": 0.24,
+   "graded_result": null,
+   "graded_label": null,
+   "settled": false
+  },
+  {
+   "key": "Pittsburgh vs Cleveland: Team Total Yards|Cleveland: 250+",
+   "label": "Cleveland: 250+",
+   "pregame_mark": 0.775,
+   "current": 0.7,
+   "graded_result": null,
+   "graded_label": null,
+   "settled": false
+  },
+  {
+   "key": "Pittsburgh vs Cleveland: Team Total Yards|Cleveland: 300+",
+   "label": "Cleveland: 300+",
+   "pregame_mark": 0.42,
+   "current": 0.37,
+   "graded_result": null,
+   "graded_label": null,
+   "settled": false
+  },
+  {
+   "key": "Pittsburgh vs Cleveland: Team Total Yards|Cleveland: 350+",
+   "label": "Cleveland: 350+",
+   "pregame_mark": 0.29,
+   "current": 0.335,
+   "graded_result": null,
+   "graded_label": null,
+   "settled": false
+  },
+  {
+   "key": "Pittsburgh vs Cleveland: Rushing Attempts|Jaylen Warren: 13+",
+   "label": "Jaylen Warren: 13+",
+   "pregame_mark": null,
+   "current": 0.865,
+   "graded_result": null,
+   "graded_label": null,
+   "settled": false
+  },
+  {
+   "key": "Pittsburgh vs Cleveland: Rushing Attempts|Jaylen Warren: 16+",
+   "label": "Jaylen Warren: 16+",
+   "pregame_mark": null,
+   "current": 0.715,
+   "graded_result": null,
+   "graded_label": null,
+   "settled": false
+  },
+  {
+   "key": "Pittsburgh vs Cleveland: Rushing Attempts|Jaylen Warren: 19+",
+   "label": "Jaylen Warren: 19+",
+   "pregame_mark": null,
+   "current": 0.49,
+   "graded_result": null,
+   "graded_label": null,
+   "settled": false
+  },
+  {
+   "key": "Pittsburgh vs Cleveland: Rushing Attempts|Deshaun Watson: 3+",
+   "label": "Deshaun Watson: 3+",
+   "pregame_mark": null,
+   "current": 0.775,
+   "graded_result": null,
+   "graded_label": null,
+   "settled": false
+  },
+  {
+   "key": "Pittsburgh vs Cleveland: Rushing Attempts|Deshaun Watson: 6+",
+   "label": "Deshaun Watson: 6+",
+   "pregame_mark": null,
+   "current": 0.575,
+   "graded_result": null,
+   "graded_label": null,
+   "settled": false
+  },
+  {
+   "key": "Pittsburgh vs Cleveland: Rushing Attempts|Deshaun Watson: 9+",
+   "label": "Deshaun Watson: 9+",
+   "pregame_mark": null,
+   "current": 0.215,
+   "graded_result": null,
+   "graded_label": null,
+   "settled": false
+  },
+  {
+   "key": "Pittsburgh vs Cleveland: Rushing Attempts|Quinshon Judkins: 14+",
+   "label": "Quinshon Judkins: 14+",
+   "pregame_mark": null,
+   "current": 0.64,
+   "graded_result": null,
+   "graded_label": null,
+   "settled": false
+  },
+  {
+   "key": "Pittsburgh vs Cleveland: Rushing Attempts|Quinshon Judkins: 17+",
+   "label": "Quinshon Judkins: 17+",
+   "pregame_mark": null,
+   "current": 0.395,
+   "graded_result": null,
+   "graded_label": null,
+   "settled": false
+  },
+  {
+   "key": "Pittsburgh vs Cleveland: Rushing Attempts|Quinshon Judkins: 20+",
+   "label": "Quinshon Judkins: 20+",
+   "pregame_mark": null,
+   "current": 0.21,
+   "graded_result": null,
+   "graded_label": null,
+   "settled": false
+  },
+  {
+   "key": "Pittsburgh vs Cleveland: Passing Interceptions|Deshaun Watson: 1+",
+   "label": "Deshaun Watson: 1+",
+   "pregame_mark": null,
+   "current": 0.51,
+   "graded_result": null,
+   "graded_label": null,
+   "settled": false
+  },
+  {
+   "key": "Pittsburgh vs Cleveland: Passing Interceptions|Deshaun Watson: 2+",
+   "label": "Deshaun Watson: 2+",
+   "pregame_mark": null,
+   "current": 0.165,
+   "graded_result": null,
+   "graded_label": null,
+   "settled": false
+  },
+  {
+   "key": "Pittsburgh vs Cleveland: Passing Interceptions|Deshaun Watson: 3+",
+   "label": "Deshaun Watson: 3+",
+   "pregame_mark": null,
+   "current": 0.05,
+   "graded_result": null,
+   "graded_label": null,
+   "settled": false
+  },
+  {
+   "key": "Pittsburgh vs Cleveland: Passing Interceptions|Aaron Rodgers: 1+",
+   "label": "Aaron Rodgers: 1+",
+   "pregame_mark": null,
+   "current": 0.455,
+   "graded_result": null,
+   "graded_label": null,
+   "settled": false
+  },
+  {
+   "key": "Pittsburgh vs Cleveland: Passing Interceptions|Aaron Rodgers: 2+",
+   "label": "Aaron Rodgers: 2+",
+   "pregame_mark": null,
+   "current": 0.145,
+   "graded_result": null,
+   "graded_label": null,
+   "settled": false
+  },
+  {
+   "key": "Pittsburgh vs Cleveland: Passing Attempts|Deshaun Watson: 24+",
+   "label": "Deshaun Watson: 24+",
+   "pregame_mark": null,
+   "current": 0.875,
+   "graded_result": null,
+   "graded_label": null,
+   "settled": false
+  },
+  {
+   "key": "Pittsburgh vs Cleveland: Passing Attempts|Deshaun Watson: 29+",
+   "label": "Deshaun Watson: 29+",
+   "pregame_mark": null,
+   "current": 0.57,
+   "graded_result": null,
+   "graded_label": null,
+   "settled": false
+  },
+  {
+   "key": "Pittsburgh vs Cleveland: Passing Attempts|Deshaun Watson: 34+",
+   "label": "Deshaun Watson: 34+",
+   "pregame_mark": null,
+   "current": 0.255,
+   "graded_result": null,
+   "graded_label": null,
+   "settled": false
+  },
+  {
+   "key": "Pittsburgh vs Cleveland: Rushing Yards Escalator|Jaylen Warren",
+   "label": "Jaylen Warren",
+   "pregame_mark": 0.1096,
+   "current": 0.08,
+   "graded_result": null,
+   "graded_label": null,
+   "settled": false
+  },
+  {
+   "key": "Pittsburgh vs Cleveland: Rushing Yards Escalator|Quinshon Judkins",
+   "label": "Quinshon Judkins",
+   "pregame_mark": 0.0541,
+   "current": 0.0629,
+   "graded_result": null,
+   "graded_label": null,
+   "settled": false
+  },
+  {
+   "key": "Steelers vs. Browns: Both Teams to Score Points - 4Q|Yes",
+   "label": "Yes",
+   "pregame_mark": null,
+   "current": 0.56,
+   "graded_result": null,
+   "graded_label": null,
+   "settled": false
+  },
+  {
+   "key": "Steelers vs. Browns: Both Teams to Score Points - 4Q|No",
+   "label": "No",
+   "pregame_mark": null,
+   "current": 0.56,
+   "graded_result": null,
+   "graded_label": null,
+   "settled": false
+  },
+  {
+   "key": "Pittsburgh vs Cleveland: Receiving Yards|Jaylen Warren: 15+",
+   "label": "Jaylen Warren: 15+",
+   "pregame_mark": 0.715,
+   "current": 0.695,
+   "graded_result": null,
+   "graded_label": null,
+   "settled": false
+  },
+  {
+   "key": "Pittsburgh vs Cleveland: Receiving Yards|Jaylen Warren: 25+",
+   "label": "Jaylen Warren: 25+",
+   "pregame_mark": 0.525,
+   "current": 0.495,
+   "graded_result": null,
+   "graded_label": null,
+   "settled": false
+  },
+  {
+   "key": "Pittsburgh vs Cleveland: Receiving Yards|Jaylen Warren: 40+",
+   "label": "Jaylen Warren: 40+",
+   "pregame_mark": 0.285,
+   "current": 0.25,
+   "graded_result": null,
+   "graded_label": null,
+   "settled": false
+  },
+  {
+   "key": "Pittsburgh vs Cleveland: Receiving Yards|Jaylen Warren: 50+",
+   "label": "Jaylen Warren: 50+",
+   "pregame_mark": 0.165,
+   "current": 0.145,
+   "graded_result": null,
+   "graded_label": null,
+   "settled": false
+  },
+  {
+   "key": "Pittsburgh vs Cleveland: Receiving Yards|Jaylen Warren: 60+",
+   "label": "Jaylen Warren: 60+",
+   "pregame_mark": 0.1,
+   "current": 0.095,
+   "graded_result": null,
+   "graded_label": null,
+   "settled": false
+  },
+  {
+   "key": "Pittsburgh vs Cleveland: Receiving Yards|Jaylen Warren: 70+",
+   "label": "Jaylen Warren: 70+",
+   "pregame_mark": 0.065,
+   "current": 0.055,
+   "graded_result": null,
+   "graded_label": null,
+   "settled": false
+  },
+  {
+   "key": "Pittsburgh vs Cleveland: Receiving Yards|Roman Wilson: 15+",
+   "label": "Roman Wilson: 15+",
+   "pregame_mark": 0.605,
+   "current": 0.605,
+   "graded_result": null,
+   "graded_label": null,
+   "settled": false
+  },
+  {
+   "key": "Roman Wilson: Receiving Yards O/U 19.5|Over",
+   "label": "Over",
+   "pregame_mark": 0.53,
+   "current": 0.53,
+   "graded_result": null,
+   "graded_label": null,
+   "settled": false
+  },
+  {
+   "key": "Roman Wilson: Receiving Yards O/U 24.5|Over",
+   "label": "Over",
+   "pregame_mark": 0.435,
+   "current": 0.445,
+   "graded_result": null,
+   "graded_label": null,
+   "settled": false
+  },
+  {
+   "key": "Pittsburgh vs Cleveland: Receiving Yards|Roman Wilson: 25+",
+   "label": "Roman Wilson: 25+",
+   "pregame_mark": 0.415,
+   "current": 0.405,
+   "graded_result": null,
+   "graded_label": null,
+   "settled": false
+  },
+  {
+   "key": "Pittsburgh vs Cleveland: Receiving Yards|Roman Wilson: 40+",
+   "label": "Roman Wilson: 40+",
+   "pregame_mark": 0.225,
+   "current": 0.22,
+   "graded_result": null,
+   "graded_label": null,
+   "settled": false
+  },
+  {
+   "key": "Roman Wilson: Receiving Yards O/U 49.5|Over",
+   "label": "Over",
+   "pregame_mark": 0.1,
+   "current": 0.095,
+   "graded_result": null,
+   "graded_label": null,
+   "settled": false
+  },
+  {
+   "key": "Pittsburgh vs Cleveland: Receiving Yards|Roman Wilson: 50+",
+   "label": "Roman Wilson: 50+",
+   "pregame_mark": 0.155,
+   "current": 0.095,
+   "graded_result": null,
+   "graded_label": null,
+   "settled": false
+  },
+  {
+   "key": "Roman Wilson: Receiving Yards O/U 59.5|Over",
+   "label": "Over",
+   "pregame_mark": 0.07,
+   "current": 0.06,
+   "graded_result": null,
+   "graded_label": null,
+   "settled": false
+  },
+  {
+   "key": "Pittsburgh vs Cleveland: Receiving Yards|Roman Wilson: 60+",
+   "label": "Roman Wilson: 60+",
+   "pregame_mark": 0.095,
+   "current": 0.06,
+   "graded_result": null,
+   "graded_label": null,
+   "settled": false
+  },
+  {
+   "key": "Pittsburgh vs Cleveland: Receiving Yards|Roman Wilson: 70+",
+   "label": "Roman Wilson: 70+",
+   "pregame_mark": 0.065,
+   "current": 0.055,
+   "graded_result": null,
+   "graded_label": null,
+   "settled": false
+  },
+  {
+   "key": "Pittsburgh vs Cleveland: Receiving Yards|Jerry Jeudy: 15+",
+   "label": "Jerry Jeudy: 15+",
+   "pregame_mark": 0.495,
+   "current": 0.485,
+   "graded_result": null,
+   "graded_label": null,
+   "settled": false
+  },
+  {
+   "key": "Pittsburgh vs Cleveland: Receiving Yards|Jerry Jeudy: 25+",
+   "label": "Jerry Jeudy: 25+",
+   "pregame_mark": 0.315,
+   "current": 0.295,
+   "graded_result": null,
+   "graded_label": null,
+   "settled": false
+  },
+  {
+   "key": "Pittsburgh vs Cleveland: Receiving Yards|Jerry Jeudy: 40+",
+   "label": "Jerry Jeudy: 40+",
+   "pregame_mark": 0.165,
+   "current": 0.145,
+   "graded_result": null,
+   "graded_label": null,
+   "settled": false
+  },
+  {
+   "key": "Pittsburgh vs Cleveland: Receiving Yards|Jerry Jeudy: 50+",
+   "label": "Jerry Jeudy: 50+",
+   "pregame_mark": 0.105,
+   "current": 0.085,
+   "graded_result": null,
+   "graded_label": null,
+   "settled": false
+  },
+  {
+   "key": "Pittsburgh vs Cleveland: Receiving Yards|Jerry Jeudy: 60+",
+   "label": "Jerry Jeudy: 60+",
+   "pregame_mark": 0.065,
+   "current": 0.065,
+   "graded_result": null,
+   "graded_label": null,
+   "settled": false
+  },
+  {
+   "key": "Pittsburgh vs Cleveland: Receiving Yards|Raheim Sanders: 15+",
+   "label": "Raheim Sanders: 15+",
+   "pregame_mark": 0.435,
+   "current": 0.405,
+   "graded_result": null,
+   "graded_label": null,
+   "settled": false
+  },
+  {
+   "key": "Pittsburgh vs Cleveland: Receiving Yards|Raheim Sanders: 25+",
+   "label": "Raheim Sanders: 25+",
+   "pregame_mark": 0.235,
+   "current": 0.195,
+   "graded_result": null,
+   "graded_label": null,
+   "settled": false
+  },
+  {
+   "key": "Pittsburgh vs Cleveland: Receiving Yards|Raheim Sanders: 40+",
+   "label": "Raheim Sanders: 40+",
+   "pregame_mark": 0.095,
+   "current": 0.075,
+   "graded_result": null,
+   "graded_label": null,
+   "settled": false
+  },
+  {
+   "key": "Pittsburgh vs Cleveland: Receiving Yards|Germie Bernard: 15+",
+   "label": "Germie Bernard: 15+",
+   "pregame_mark": 0.345,
+   "current": 0.355,
+   "graded_result": null,
+   "graded_label": null,
+   "settled": false
+  },
+  {
+   "key": "Pittsburgh vs Cleveland: Receiving Yards|Germie Bernard: 25+",
+   "label": "Germie Bernard: 25+",
+   "pregame_mark": 0.205,
+   "current": 0.195,
+   "graded_result": null,
+   "graded_label": null,
+   "settled": false
+  },
+  {
+   "key": "Germie Bernard: Receiving Yards O/U 29.5|Over",
+   "label": "Over",
+   "pregame_mark": 0.105,
+   "current": 0.095,
+   "graded_result": null,
+   "graded_label": null,
+   "settled": false
+  },
+  {
+   "key": "Pittsburgh vs Cleveland: Receiving Yards|Germie Bernard: 40+",
+   "label": "Germie Bernard: 40+",
+   "pregame_mark": 0.095,
+   "current": 0.095,
+   "graded_result": null,
+   "graded_label": null,
+   "settled": false
+  },
+  {
+   "key": "Pittsburgh vs Cleveland: Receiving Yards|Germie Bernard: 50+",
+   "label": "Germie Bernard: 50+",
+   "pregame_mark": 0.065,
+   "current": 0.05,
+   "graded_result": null,
+   "graded_label": null,
+   "settled": false
+  },
+  {
+   "key": "Pittsburgh vs Cleveland: Receiving Yards|Blake Whiteheart: 15+",
+   "label": "Blake Whiteheart: 15+",
+   "pregame_mark": 0.185,
+   "current": 0.14,
+   "graded_result": null,
+   "graded_label": null,
+   "settled": false
+  },
+  {
+   "key": "Pittsburgh vs Cleveland: Receiving Yards|Blake Whiteheart: 25+",
+   "label": "Blake Whiteheart: 25+",
+   "pregame_mark": 0.085,
+   "current": 0.08,
+   "graded_result": null,
+   "graded_label": null,
+   "settled": false
+  },
+  {
+   "key": "Darnell Washington: Receptions O/U 3.5|Under",
+   "label": "Under",
+   "pregame_mark": 0.895,
+   "current": 0.895,
+   "graded_result": null,
+   "graded_label": null,
+   "settled": false
+  },
+  {
+   "key": "Darnell Washington: Receptions O/U 4.5|Under",
+   "label": "Under",
+   "pregame_mark": 0.94,
+   "current": 0.94,
+   "graded_result": null,
+   "graded_label": null,
+   "settled": false
+  },
+  {
+   "key": "Germie Bernard: Receiving Yards O/U 29.5|Under",
+   "label": "Under",
+   "pregame_mark": 0.895,
+   "current": 0.905,
+   "graded_result": null,
+   "graded_label": null,
+   "settled": false
+  },
+  {
+   "key": "Roman Wilson: Receiving Yards O/U 19.5|Under",
+   "label": "Under",
+   "pregame_mark": 0.47,
+   "current": 0.47,
+   "graded_result": null,
+   "graded_label": null,
+   "settled": false
+  },
+  {
+   "key": "Roman Wilson: Receiving Yards O/U 24.5|Under",
+   "label": "Under",
+   "pregame_mark": 0.565,
+   "current": 0.555,
+   "graded_result": null,
+   "graded_label": null,
+   "settled": false
+  },
+  {
+   "key": "Roman Wilson: Receiving Yards O/U 49.5|Under",
+   "label": "Under",
+   "pregame_mark": 0.9,
+   "current": 0.905,
+   "graded_result": null,
+   "graded_label": null,
+   "settled": false
+  },
+  {
+   "key": "Roman Wilson: Receiving Yards O/U 59.5|Under",
+   "label": "Under",
+   "pregame_mark": 0.93,
+   "current": 0.94,
+   "graded_result": null,
+   "graded_label": null,
+   "settled": false
+  },
+  {
+   "key": "KC Concepcion Jr.: Receiving Yards O/U 69.5|Under",
+   "label": "Under",
+   "pregame_mark": 0.9,
+   "current": 0.92,
+   "graded_result": null,
+   "graded_label": null,
+   "settled": false
+  },
+  {
+   "key": "KC Concepcion Jr.: Receiving Yards O/U 79.5|Under",
+   "label": "Under",
+   "pregame_mark": 0.925,
+   "current": 0.94,
+   "graded_result": null,
+   "graded_label": null,
+   "settled": false
+  },
+  {
+   "key": "KC Concepcion Jr.: Receiving Yards O/U 69.5|Over",
+   "label": "Over",
+   "pregame_mark": 0.1,
+   "current": 0.08,
+   "graded_result": null,
+   "graded_label": null,
+   "settled": false
+  },
+  {
+   "key": "KC Concepcion Jr.: Receiving Yards O/U 79.5|Over",
+   "label": "Over",
+   "pregame_mark": 0.075,
+   "current": 0.06,
+   "graded_result": null,
+   "graded_label": null,
+   "settled": false
+  },
+  {
+   "key": "Harold Fannin Jr.: Receptions O/U 6.5|Under",
+   "label": "Under",
+   "pregame_mark": 0.885,
+   "current": 0.88,
+   "graded_result": null,
+   "graded_label": null,
+   "settled": false
+  }
+ ]
+}
