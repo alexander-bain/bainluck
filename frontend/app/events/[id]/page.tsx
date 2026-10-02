@@ -2803,8 +2803,9 @@ export default function EventPage({ params }: EventPageProps) {
           the fullscreen modal below carries a second "Win Probability" h2 — and
           a class selector would be a test about styling (ux/1192). */}
       <div className="bg-surface-card rounded-card shadow-card overflow-hidden" data-testid="win-probability-card">
-        {/* Chart Header — v2: title + freshness */}
-        <div className="px-4 sm:px-5 py-3 flex items-center justify-between">
+        {/* Chart Header — v2: title + freshness. `relative`: the status's tap
+            details hang from this row (#10200). */}
+        <div className="relative px-4 sm:px-5 py-3 flex items-center justify-between">
           <div className="flex min-w-0 items-center gap-3">
             <h2 className="shrink-0 text-[13px] font-semibold text-text-primary">Win Probability</h2>
             {/* #10200 — the page's one freshness answer now lives here, beside
@@ -3473,9 +3474,9 @@ export default function EventPage({ params }: EventPageProps) {
       {/* Fullscreen Chart Modal */}
       {chartFullscreen && (
         <div className="fixed inset-0 z-50 bg-surface-card flex flex-col">
-          <div className="flex items-center justify-between px-4 py-3 border-b border-surface-border">
-            <div className="flex items-center gap-3">
-              <h2 className="text-sm font-semibold text-text-primary">Win Probability</h2>
+          <div className="relative flex items-center justify-between px-4 py-3 border-b border-surface-border">
+            <div className="flex min-w-0 items-center gap-3">
+              <h2 className="shrink-0 text-sm font-semibold text-text-primary">Win Probability</h2>
               {/* #8336/#10200 — the fullscreen view covers the card, so it carries
                   the same status model, not a copy of its own. Silent to screen
                   readers: the card's copy, still mounted beneath, does the

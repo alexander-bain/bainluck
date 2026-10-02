@@ -42,6 +42,12 @@ interface LiveConnectionStatusProps {
   now?: number;
 }
 
+// THE DETAILS HANG FROM THE ROW, NOT THE BUTTON. Anchored to the button, the
+// panel started wherever "Win Probability" ended and ran off the card at 390px
+// (photographed on Kazakhstan v Moldova, 2026-10-02). So this component is not
+// positioned itself: the caller's header row is (`relative`), and the panel
+// spans that row's width beneath it, whatever the phone.
+
 const DOT_TONE: Record<ConnectionTone, string> = {
   live: 'bg-accent-live',
   steady: 'bg-accent-live',
@@ -115,7 +121,7 @@ export default function LiveConnectionStatus({
   const { label, tone, breathes, announcement } = presentation;
 
   return (
-    <div ref={root} className="relative min-w-0" data-testid="live-connection-status" data-status={label}>
+    <div ref={root} className="min-w-0" data-testid="live-connection-status" data-status={label}>
       <button
         ref={button}
         type="button"
@@ -141,7 +147,7 @@ export default function LiveConnectionStatus({
       <div
         id={detailsId}
         hidden={!open}
-        className="absolute left-0 top-full z-20 mt-1 w-64 max-w-[calc(100vw-2rem)] rounded-lg border border-surface-border bg-surface-card p-3 text-xs text-text-secondary shadow-card"
+        className="absolute inset-x-3 top-full z-20 rounded-lg border border-surface-border bg-surface-card p-3 text-xs text-text-secondary shadow-card"
       >
         <dl className="space-y-1.5">
           <div>

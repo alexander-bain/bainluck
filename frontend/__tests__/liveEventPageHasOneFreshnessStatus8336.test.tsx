@@ -205,8 +205,18 @@ describe("#8336 a live event page shows one freshness status", () => {
     const modalHeader = modal.slice(0, modal.indexOf("</h2>") + 400);
     expect(modalHeader).toContain("connectionStatus(false)");
     expect(modalHeader).not.toContain("{ageBadge}");
-    const cardHeader = source.slice(source.indexOf("{/* Chart Header — v2: title + freshness */}"));
+    const cardHeader = source.slice(source.indexOf("{/* Chart Header — v2: title + freshness."));
     expect(cardHeader.slice(0, cardHeader.indexOf('title="Fullscreen"'))).toContain("connectionStatus(true)");
+  });
+
+  it("both header rows are positioned, so the tap details hang from the row and fit a phone", () => {
+    // The status is deliberately unpositioned (its panel ran off the card at
+    // 390px when it hung from the button); the row it sits in must be.
+    const source = readFileSync(join(process.cwd(), "app/events/[id]/page.tsx"), "utf8");
+    const card = source.slice(source.indexOf("{/* Chart Header — v2: title + freshness."));
+    expect(card).toMatch(/^[\s\S]{0,200}<div className="relative px-4 sm:px-5 py-3 flex items-center justify-between">/);
+    const modal = source.slice(source.indexOf("{/* Fullscreen Chart Modal */}"));
+    expect(modal).toMatch(/^[\s\S]{0,200}<div className="relative flex items-center justify-between px-4 py-3 border-b border-surface-border">/);
   });
 
   it("a page with NO chart card keeps the header's age admission", () => {
