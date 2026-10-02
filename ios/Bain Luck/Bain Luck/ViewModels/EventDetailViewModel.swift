@@ -211,8 +211,19 @@ final class EventDetailViewModel: ObservableObject {
     @MainActor private lazy var marketDelivery = GameMarketsPriceDelivery(
         eventID: eventId,
         fetch: { [client] id in try await client.fetchFreshGameMarkets(eventId: id) },
-        publish: { [weak self] body in self?.gameMarkets = body }
+        publish: { [weak self] body in self?.receiveGameMarkets(body) }
     )
+
+    /// #8651 — an unchanged reread publishes nothing. A live game rereads its
+    /// markets every ~2 s, and every write to a `@Published` property rebuilds
+    /// the whole event page even when the value is identical — measured on
+    /// 14780550, that was most of the page's per-update freeze on a quiet
+    /// stretch. A body that differs in any field still publishes.
+    @MainActor
+    func receiveGameMarkets(_ body: GameMarketsResponse) {
+        guard gameMarkets != body else { return }
+        gameMarkets = body
+    }
 
     @MainActor
     func setMarketPageVisible(_ visible: Bool) {
