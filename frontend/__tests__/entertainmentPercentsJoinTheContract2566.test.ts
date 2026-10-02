@@ -207,7 +207,8 @@ describe("#2566 the page is actually wired to the rules", () => {
   });
 
   it("ProbPct prints through the UX-P046 split seam", () => {
-    expect(PAGE).toMatch(/probabilityParts\(value \/ 100\)/);
+    // #10195 passes a pair's jointly-rounded integer through the same seam.
+    expect(PAGE).toMatch(/probabilityParts\(value \/ 100(, \{ rendered \})?\)/);
   });
 
   it("the bar decides both sides together", () => {

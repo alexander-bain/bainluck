@@ -117,3 +117,27 @@ export function twoLegCardPair(
 
   return { first, second: null, oneQuestion: false };
 }
+
+/**
+ * THE WORDS A TWO-LEG CARD PRINTS FOR ITS TWO ENDS — #10195.
+ *
+ * `oneQuestion` licenses the full YES/NO bar on the PRICES, and a pair of named
+ * answers passes it: "Anne Hathaway baby: Boy or Girl?" serves `Boy` 50.5 and
+ * `Girl` 49.5 — one question, exactly — and `/entertainment` printed it as
+ * `YES 51% NO 49%` in one card and `51% · Yes likely` in another. Neither word
+ * answers the question, and the reader could not tell which answer was 51%.
+ *
+ * So the NAMES are read the way #6766 reads the second price: where both legs are
+ * served and they are not the Yes/No pair, these are the words. `null` means the
+ * card's own Yes/No wording is true — a Yes/No pair, or a one-outcome contract
+ * whose No is implicit — and the caller keeps it.
+ */
+export function namedPairLabels(row: TwoLegCardRow): [string, string] | null {
+  const legs = row.top_outcomes ?? [];
+  if (legs.length < 2) return null;
+  const a = legs[0].name.trim();
+  const b = legs[1].name.trim();
+  const lower = new Set([a.toLowerCase(), b.toLowerCase()]);
+  if (lower.has("yes") && lower.has("no")) return null;
+  return [a, b];
+}
