@@ -22,8 +22,9 @@ final class AGamePageReadsAgainWhenTheAppReturns1833Tests: XCTestCase {
     // MARK: - Fakes
 
     private final class FakeHandle: LiveStreamHandle, @unchecked Sendable {
+        var isClosed = false
         func on(_ event: String, _ handler: @escaping @MainActor (String) -> Void) {}
-        func close() {}
+        func close() { isClosed = true }
     }
 
     /// Serves `script` in order, then repeats its last entry, counting detail
