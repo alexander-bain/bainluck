@@ -67,7 +67,13 @@ export function fixtureOrderedTeams(
 /**
  * Compact row for a related event on the futures detail page
  */
-export function RelatedEventRow({ event }: { event: RelatedEvent }) {
+export function RelatedEventRow({
+  event,
+  showOdds = true,
+}: {
+  event: RelatedEvent;
+  showOdds?: boolean;
+}) {
   const isLive = event.status === "live";
   const isFinished = event.status === "completed" || event.status === "closed";
   const hasScore = event.home_score !== null && event.away_score !== null;
@@ -95,7 +101,7 @@ export function RelatedEventRow({ event }: { event: RelatedEvent }) {
     }
   }
 
-  const oddsTeams = fixtureOrderedTeams(event.linked_teams);
+  const oddsTeams = showOdds ? fixtureOrderedTeams(event.linked_teams) : [];
 
   return (
     <Link
@@ -214,28 +220,48 @@ export function oddsCaption(events: RelatedEvent[]): string {
  * settled in March — listed "Tomorrow · Pittsburgh Penguins at Columbus Blue
  * Jackets · Columbus Blue Jackets >99%". So on a resolved market the section
  * is withheld, silently (notice 34): no heading, no explanation, no hole.
+ *
+ * #2553 — A DUEL'S PRICE IS ONE CONTEST'S PRICE, NOT A TEAM'S ODDS THIS WEEK.
+ * Production 2026-10-02 ~01:40Z, `/futures/61226191` — *Sabres vs. Canadiens*,
+ * `market_type: "duel"` — listed four Sabres games, each printed "Buffalo Sabres
+ * 42%": beside the live Sabres at Blue Jackets game, and beside three more
+ * against Chicago, Minnesota and Dallas. 42% is the Sabres' price to beat
+ * Montreal. `/futures/63481323` (*1H Spread: Saints (-5.5)*) printed "New
+ * Orleans Saints 34%" beside Falcons at Saints, a first-half spread price read
+ * as a chance of winning. A field's per-team number is a title price and the
+ * caption says so; a duel's two numbers belong to its one contest, so beside
+ * any fixture they are a different game's price. On a duel the rows keep their
+ * fixtures and links and print no number, and with no number there is no
+ * caption to make a claim about one.
  */
 export default function GamesThisWeek({
   events,
   marketResolved = false,
+  marketIsDuel = false,
 }: {
   events: RelatedEvent[];
   marketResolved?: boolean;
+  marketIsDuel?: boolean;
 }) {
   if (marketResolved || events.length === 0) return null;
+  const showOdds = !marketIsDuel;
 
   return (
     <div className="bg-surface-card rounded-card shadow-card p-6">
-      <h2 className="text-title-3 font-semibold text-text-primary mb-1 flex items-center gap-2">
+      <h2
+        className={`text-title-3 font-semibold text-text-primary flex items-center gap-2 ${showOdds ? "mb-1" : "mb-4"}`}
+      >
         <span>📅</span>
         Games This Week
       </h2>
-      <p className="text-sm text-text-secondary mb-4">
-        {oddsCaption(events)}
-      </p>
+      {showOdds && (
+        <p className="text-sm text-text-secondary mb-4">
+          {oddsCaption(events)}
+        </p>
+      )}
       <div className="space-y-2">
         {events.map((event) => (
-          <RelatedEventRow key={event.event_id} event={event} />
+          <RelatedEventRow key={event.event_id} event={event} showOdds={showOdds} />
         ))}
       </div>
     </div>

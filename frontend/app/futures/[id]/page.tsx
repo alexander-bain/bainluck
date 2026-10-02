@@ -72,7 +72,7 @@ import {
 } from "@/lib/futuresDetailDisplay";
 import type { FuturesSortField, FuturesSortDirection } from "@/lib/futuresDetailDisplay";
 import { PinButton } from "@/components/PinButton";
-import { resolveShape, SHAPE_QUANTITY } from "@/lib/marketShape";
+import { resolveShape, SHAPE_DUEL, SHAPE_QUANTITY } from "@/lib/marketShape";
 import {
   buildOutcomeLadderRungs,
   buildSettledOutcomeLadderRungs,
@@ -1333,8 +1333,13 @@ export default function FuturesDetailPage({ params }: FuturesDetailPageProps) {
         </div>
       )}
 
-      {/* Games This Week — withheld on a settled market (#8282) */}
-      <GamesThisWeek events={relatedEvents} marketResolved={isResolved} />
+      {/* Games This Week — withheld on a settled market (#8282); a duel's
+          price is its one contest's, so its rows print none (#2553) */}
+      <GamesThisWeek
+        events={relatedEvents}
+        marketResolved={isResolved}
+        marketIsDuel={marketShape === SHAPE_DUEL}
+      />
 
       {/* More from this category */}
       {market?.llm_sport_category && (
