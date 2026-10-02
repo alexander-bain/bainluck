@@ -1,12 +1,13 @@
 "use client";
 
 import { format, isSameDay, parseISO } from "date-fns";
+import { PLAY_ATTACH_WINDOW_MS } from "@/lib/chartGameState";
 import { trustedLiveClock } from "@/lib/gameTimeLabel";
 import { formatProbabilityPercent } from "@/lib/probabilityDisplay";
 import { renderedComplementPercents, renderedDuelPercents } from "@/lib/renderedPercent";
 import { teamShortNames } from "@/lib/teamShortName";
 import { teamTextColor } from "@/lib/teamColors";
-import type { ActiveChartPoint } from "@/lib/types";
+import type { ActiveChartPoint, ScoringPlay } from "@/lib/types";
 
 interface GamePlayCardProps {
   activePoint: ActiveChartPoint | null;
@@ -89,6 +90,38 @@ function formatPeriod(period?: string | null): string {
 }
 
 /**
+ * #10150 — WHEN a play happened, if it did not happen at the badge's moment.
+ *
+ * At rest the card shows the latest scoring play (L2-163) under the CURRENT
+ * period, clock and time, so the row reads "this play happened now". On
+ * production `/events/14780550` (TNF, 3rd quarter) it read `5:30 - 3rd Quarter
+ * · 7:29 PM · Chris Boswell 31 Yd Field Goal` for a kick made at Q2 0:08, 38
+ * minutes earlier. #8967 checks the play's SCORE against the row's, and both
+ * were 21–10, so nothing caught the TIME.
+ *
+ * A play is this point's play when its stamp is within the window the chart
+ * itself uses to pin plays to points (`attachScoringPlays`), so a scrubbed
+ * point, which carries its play by that rule, never gets a label. Otherwise the
+ * play names its own moment, through the same trust rules as the badge. Returns
+ * "" when the play is this point's, or when it names no moment we can print.
+ */
+function playMomentIfNotThisPoint(
+  play: ScoringPlay,
+  pointTimestamp: string,
+  sportKey?: string | null,
+): string {
+  const playMs = play.timestamp ? parseISO(play.timestamp).getTime() : NaN;
+  const pointMs = pointTimestamp ? parseISO(pointTimestamp).getTime() : NaN;
+  if (Number.isFinite(playMs) && Number.isFinite(pointMs) && Math.abs(pointMs - playMs) < PLAY_ATTACH_WINDOW_MS) {
+    return "";
+  }
+  const own = trustedLiveClock(formatPeriod(play.period), play.clock, sportKey);
+  const moment = [own.period, own.gameClock].filter(Boolean).join(" ");
+  if (moment) return moment;
+  return Number.isFinite(playMs) ? format(playMs, "h:mm a") : "";
+}
+
+/**
  * ESPN-style game play card displayed below the odds chart.
  * Updates as the user hovers/scrubs across the chart, showing:
  * - Score (team-colored)
@@ -130,6 +163,9 @@ export default function GamePlayCard({
      NOT have worked: 2 x 159px = 318px still clips the 418px specimen. */
   const scoringPlayText = point.scoringPlay
     ? point.scoringPlay.description || point.scoringPlay.short_text || ""
+    : "";
+  const playMoment = point.scoringPlay
+    ? playMomentIfNotThisPoint(point.scoringPlay, point.timestamp, sportKey)
     : "";
   /* #3295 — THE NINTH INSTANCE OF THE #2452 SHAPE, on the live event page.
      Seen on production during US Open R32, event 15304209, while Fritz was in
@@ -345,6 +381,12 @@ export default function GamePlayCard({
             <div>
               <p className="text-xs font-semibold text-red-600 flex items-center gap-1">
                 <span className="inline-block w-1.5 h-1.5 rounded-full bg-red-500 shrink-0" />
+                {/* #10150 — with no sentence below to carry it, the play's own moment rides here. */}
+                {playMoment && !scoringPlayText && (
+                  <span className="text-text-muted font-normal tabular-nums" data-testid="game-play-card-play-moment">
+                    {playMoment}{point.scoringPlay!.type ? " ·" : ""}
+                  </span>
+                )}
                 {point.scoringPlay!.type && (
                   <span className="text-text-muted font-normal">
                     {point.scoringPlay!.type}
@@ -411,6 +453,12 @@ export default function GamePlayCard({
           className="text-xs text-text-primary mt-1 line-clamp-2"
           data-testid="game-play-card-description"
         >
+          {/* #10150 — a play from earlier names when it happened, so the badge's moment is not read as its own. */}
+          {playMoment && (
+            <span className="text-text-muted tabular-nums" data-testid="game-play-card-play-moment">
+              {playMoment}{" · "}
+            </span>
+          )}
           {scoringPlayText}
         </p>
       )}
