@@ -1,5 +1,6 @@
 import type { ApiError } from './api';
 import type { FuturesMarketDetailResponse, FuturesHistoryResponse } from './types';
+import { effectiveRepresentation } from './verifiedTitleDetail';
 
 // PostgreSQL observation clocks retain microseconds. Date.parse alone truncates
 // distinct observations within the same millisecond into an apparent tie.
@@ -15,11 +16,13 @@ export function futuresDetailSettled(market: FuturesMarketDetailResponse): boole
   return market.status === 'resolved' || market.status === 'closed' || market.outcomes.some(row => row.is_winner === true);
 }
 
+const withdrawalsOf = (market: FuturesMarketDetailResponse) =>
+  new Map(market.outcomes.filter(row => row.probability === null).map(row => [row.id, instant(row.last_updated)]));
+
 /** Private absence watermarks never become a fabricated wire observation clock. */
 export function createFuturesDetailReconciler(initial: FuturesMarketDetailResponse) {
   let held = initial;
-  let withdrawals = new Map(initial.outcomes.filter(row => row.probability === null)
-    .map(row => [row.id, instant(row.last_updated)]));
+  let withdrawals = withdrawalsOf(initial);
   return {
     current: () => held,
     adopt(incoming: FuturesMarketDetailResponse): FuturesMarketDetailResponse {
@@ -28,6 +31,18 @@ export function createFuturesDetailReconciler(initial: FuturesMarketDetailRespon
         if (!futuresDetailSettled(incoming)) return held;
         const winners = held.outcomes.filter(row => row.is_winner).map(row => row.id).sort().join(',');
         if (winners && incoming.outcomes.filter(row => row.is_winner).map(row => row.id).sort().join(',') !== winners) return held;
+      }
+      // #10224: the per-row clock fence below is a SOURCE rule. A verified value
+      // moves when a sibling venue quotes, under an unchanged `last_updated`, and
+      // its `observed_at` is the oldest included observation — not a revision
+      // clock. So a verified response, or any change of representation, is one
+      // composite answer: adopted whole, never merged row-by-row with the other
+      // estimator's retained values. Reads are serial (one inflight), so order of
+      // adoption is order of dispatch.
+      if (effectiveRepresentation(incoming) !== 'source' || effectiveRepresentation(held) !== 'source') {
+        withdrawals = withdrawalsOf(incoming);
+        held = incoming;
+        return held;
       }
       const before = new Map(held.outcomes.map(row => [row.id, row]));
       // Mutually exclusive fields are normalized against the WHOLE raw vector:

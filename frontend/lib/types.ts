@@ -917,6 +917,16 @@ export interface FuturesOutcome {
   query_match?: boolean;
   matched_rank?: number;
   last_updated: string | null;
+  /**
+   * #9387/#10224 — `representation=verified_title` only. This outcome's actual
+   * current contributors (`odds_api` · `kalshi` · `polymarket`), the oldest
+   * included observation, and the resolver rule that produced `probability`.
+   * Absent on every source-mode payload; read through `lib/verifiedTitleDetail`,
+   * which refuses malformed values rather than trusting them.
+   */
+  contributing_sources?: string[];
+  observed_at?: string | null;
+  aggregation_rule?: string | null;
 }
 
 export interface FuturesMarket {
@@ -1204,6 +1214,30 @@ export interface FuturesMarketDetailResponse extends FuturesMarket {
    *  the page sends the reader there. Null everywhere else; absent on builds
    *  before #10173. */
   container_of_event_id?: number | null;
+  /** #9387/#10224 — the EFFECTIVE representation, present only when the caller
+   *  opted in. Absent ⇒ source (old server, or a caller that did not ask). */
+  representation?: FuturesRepresentation;
+  question_identity?: FuturesQuestionIdentity | null;
+  /** Market-wide union of the outcomes' contributors — metadata only. */
+  contributing_sources?: string[];
+  /** Why an opted-in response is source mode (`anchor_missing`, …). */
+  representation_fallback?: string;
+}
+
+/** #9387 — `/api/futures/{id}` and `/probability-timeline` opt-in vocabulary. */
+export type FuturesRepresentation = "source" | "verified_title";
+
+export interface FuturesQuestionIdentity {
+  competition: string;
+  edition: string;
+  question: string;
+}
+
+/** #9387 — whose history an opted-in timeline draws. Always one source. */
+export interface FuturesHistoryBasis {
+  kind: "single_source";
+  source: string;
+  market_id: number;
 }
 
 export interface FuturesHistoryPoint {
@@ -2621,6 +2655,10 @@ export interface TimelineOutcomeMeta {
   record?: string | null;
   location?: string | null;
   espn_id?: string | null;
+  /** #9387/#10224 — opted-in timelines only; same meaning as on FuturesOutcome. */
+  contributing_sources?: string[];
+  observed_at?: string | null;
+  aggregation_rule?: string | null;
 }
 
 export interface TimelineEntry {
@@ -2642,6 +2680,14 @@ export interface ProbabilityTimelineResponse {
   bucket_seconds: number;
   timeline: TimelineEntry[];
   outcomes: TimelineOutcomeMeta[];
+  /** #9387/#10224 — present only when the caller opted in. `history_basis`
+   *  names the single source whose history `timeline` is; the current column
+   *  (`outcomes[].current_probability`) follows `representation`. */
+  representation?: FuturesRepresentation;
+  question_identity?: FuturesQuestionIdentity | null;
+  contributing_sources?: string[];
+  representation_fallback?: string;
+  history_basis?: FuturesHistoryBasis;
 }
 
 // ============================================================================

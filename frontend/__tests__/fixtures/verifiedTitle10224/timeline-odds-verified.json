@@ -1,0 +1,182 @@
+{
+  "actual_hours": 168,
+  "bucket_seconds": 3600,
+  "contributing_sources": [
+    "odds_api",
+    "kalshi",
+    "polymarket"
+  ],
+  "coverage_end": "2026-10-02T15:00:00+00:00",
+  "coverage_hours": 4.0,
+  "coverage_start": "2026-10-02T11:00:00+00:00",
+  "history_basis": {
+    "kind": "single_source",
+    "market_id": 86832,
+    "source": "odds_api"
+  },
+  "hours": 168,
+  "market_id": 86832,
+  "market_name": "NFL Super Bowl Winner",
+  "observation_times": 3,
+  "outcomes": [
+    {
+      "aggregation_rule": "weighted_median",
+      "contributing_sources": [
+        "odds_api",
+        "kalshi",
+        "polymarket"
+      ],
+      "current_probability": 0.13,
+      "id": 1309486,
+      "name": "Buffalo Bills",
+      "observed_at": "2026-10-02T07:54:47.255493+00:00",
+      "opening_probability": null,
+      "probability_change_24h": null,
+      "rank": null,
+      "team_id": null
+    },
+    {
+      "aggregation_rule": "weighted_median",
+      "contributing_sources": [
+        "odds_api",
+        "kalshi",
+        "polymarket"
+      ],
+      "current_probability": 0.105,
+      "id": 1309485,
+      "name": "Los Angeles Rams",
+      "observed_at": "2026-10-02T07:54:47.255493+00:00",
+      "opening_probability": null,
+      "probability_change_24h": null,
+      "rank": null,
+      "team_id": null
+    },
+    {
+      "aggregation_rule": "weighted_median",
+      "contributing_sources": [
+        "odds_api",
+        "kalshi",
+        "polymarket"
+      ],
+      "current_probability": 0.0865,
+      "id": 1309494,
+      "name": "San Francisco 49ers",
+      "observed_at": "2026-10-02T07:54:47.255493+00:00",
+      "opening_probability": null,
+      "probability_change_24h": null,
+      "rank": null,
+      "team_id": null
+    },
+    {
+      "aggregation_rule": "weighted_median",
+      "contributing_sources": [
+        "odds_api",
+        "kalshi",
+        "polymarket"
+      ],
+      "current_probability": 0.085,
+      "id": 1309490,
+      "name": "Kansas City Chiefs",
+      "observed_at": "2026-10-02T07:54:47.255493+00:00",
+      "opening_probability": null,
+      "probability_change_24h": null,
+      "rank": null,
+      "team_id": null
+    },
+    {
+      "aggregation_rule": "weighted_median",
+      "contributing_sources": [
+        "odds_api",
+        "kalshi",
+        "polymarket"
+      ],
+      "current_probability": 0.03,
+      "id": 1309499,
+      "name": "Los Angeles Chargers",
+      "observed_at": "2026-10-02T07:54:47.255493+00:00",
+      "opening_probability": null,
+      "probability_change_24h": null,
+      "rank": null,
+      "team_id": null
+    },
+    {
+      "aggregation_rule": "weighted_median",
+      "contributing_sources": [
+        "odds_api",
+        "kalshi",
+        "polymarket"
+      ],
+      "current_probability": 0.02,
+      "id": 1309501,
+      "name": "New York Giants",
+      "observed_at": "2026-10-02T07:54:47.255493+00:00",
+      "opening_probability": null,
+      "probability_change_24h": null,
+      "rank": null,
+      "team_id": null
+    },
+    {
+      "aggregation_rule": "weighted_median",
+      "contributing_sources": [
+        "odds_api",
+        "kalshi",
+        "polymarket"
+      ],
+      "current_probability": 0.015,
+      "id": 1309502,
+      "name": "New York Jets",
+      "observed_at": "2026-10-02T07:54:47.255493+00:00",
+      "opening_probability": null,
+      "probability_change_24h": null,
+      "rank": null,
+      "team_id": null
+    }
+  ],
+  "question_identity": {
+    "competition": "NFL",
+    "edition": "2027",
+    "question": "league_championship_winner"
+  },
+  "representation": "verified_title",
+  "source": "odds_api",
+  "sport_category": "football",
+  "timeline": [
+    {
+      "outcomes": {
+        "Buffalo Bills": 0.101622,
+        "Kansas City Chiefs": 0.072,
+        "Los Angeles Chargers": 0.027,
+        "Los Angeles Rams": 0.096625,
+        "New York Giants": 0.018,
+        "New York Jets": 0.0135,
+        "San Francisco 49ers": 0.075331
+      },
+      "timestamp": "2026-10-02T11:00:00+00:00"
+    },
+    {
+      "outcomes": {
+        "Buffalo Bills": 0.107267,
+        "Kansas City Chiefs": 0.076,
+        "Los Angeles Chargers": 0.0285,
+        "Los Angeles Rams": 0.101993,
+        "New York Giants": 0.019,
+        "New York Jets": 0.01425,
+        "San Francisco 49ers": 0.079516
+      },
+      "timestamp": "2026-10-02T13:00:00+00:00"
+    },
+    {
+      "outcomes": {
+        "Buffalo Bills": 0.112913,
+        "Kansas City Chiefs": 0.08,
+        "Los Angeles Chargers": 0.03,
+        "Los Angeles Rams": 0.107361,
+        "New York Giants": 0.02,
+        "New York Jets": 0.015,
+        "San Francisco 49ers": 0.083701
+      },
+      "timestamp": "2026-10-02T15:00:00+00:00"
+    }
+  ],
+  "top": 50
+}

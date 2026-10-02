@@ -5,6 +5,13 @@ import Link from "next/link";
 import { useSearchParams } from "next/navigation";
 import useSWR from "swr";
 import { useFuturesDetailStream } from "@/hooks/useFuturesDetailStream";
+import { useVerifiedTitleChart } from "@/hooks/useVerifiedTitleChart";
+import {
+  VERIFIED_TITLE,
+  heroContributorLabels,
+  heroValueIsSourceOwn,
+  isVerifiedTitle,
+} from "@/lib/verifiedTitleDetail";
 import {
   fetchFuturesMarket,
   fetchFuturesHistory,
@@ -159,8 +166,12 @@ export default function FuturesDetailPage({ params }: FuturesDetailPageProps) {
     isLoading: marketLoading,
     mutate: refreshMarket,
   } = useSWR(
-    isValidId ? ["futures-market", marketId] : null,
-    () => fetchFuturesMarket(marketId),
+    // #10224: this page opts in to `verified_title`. Its own key, so a source
+    // caller sharing `["futures-market", id]` (EvolutionView) never reads a
+    // verified body from cache, nor this page a source one. An ineligible or
+    // old-server response is source mode and renders exactly as before.
+    isValidId ? ["futures-market", marketId, VERIFIED_TITLE] : null,
+    () => fetchFuturesMarket(marketId, { representation: VERIFIED_TITLE }),
     { refreshInterval: 0, keepPreviousData: true, revalidateOnFocus: false, revalidateOnReconnect: false }
   );
 
@@ -203,13 +214,17 @@ export default function FuturesDetailPage({ params }: FuturesDetailPageProps) {
     window.history.replaceState(window.history.state, "", url.toString());
   };
 
+  // #10224: a verified detail draws the opted-in timeline instead (see
+  // `useVerifiedTitleChart` below), so the source history is fetched only for a
+  // source-mode detail — never both, never the wrong one for the hero.
+  const detailIsVerified = isVerifiedTitle(market);
   const {
-    data: historyData,
-    error: historyError,
-    isLoading: historyLoading,
+    data: sourceHistoryData,
+    error: sourceHistoryError,
+    isLoading: sourceHistoryLoading,
     mutate: refreshHistory,
   } = useSWR(
-    market ? ["futures-history", marketId, historyHours] : null,
+    market && !detailIsVerified ? ["futures-history", marketId, historyHours] : null,
     () => fetchFuturesHistory(marketId, historyHours),
     // #7545 — hold the previous rung's chart on screen while the next one loads.
     // Without this the card unmounts on every chip tap, which takes the CHIPS
@@ -219,14 +234,6 @@ export default function FuturesDetailPage({ params }: FuturesDetailPageProps) {
     // already-loaded rung is served from cache with no flash at all.
     { keepPreviousData: true, revalidateOnFocus: false, revalidateOnReconnect: false }
   );
-  useFuturesDetailStream({
-    marketId, market, history: historyData, historyHours,
-    setMarket: next => refreshMarket(next, { revalidate: false }),
-    setHistory: next => refreshHistory(next, { revalidate: false }),
-  });
-  const historyOutcomes = Array.isArray(historyData?.outcomes)
-    ? historyData.outcomes
-    : [];
 
   // L2-175 Item 3a: a UFC/boxing fight belongs to its CARD. Fetch the card concept
   // (combat only) so the breadcrumb can name it ("← UFC Fight Night · Aug 2") and we
@@ -485,6 +492,34 @@ export default function FuturesDetailPage({ params }: FuturesDetailPageProps) {
     )[0];
   }, [market?.outcomes, leadOutcome]);
 
+  // #10224 — the hero's outcome, decided by the same rule the hero uses below,
+  // so the chart reconciles against the number actually printed.
+  const chartHeroId = market?.outcomes
+    ? (leadOutcome ??
+        pickHeroOutcome(market.outcomes, leader, market.status === "resolved", market.mutually_exclusive))?.id ?? null
+    : null;
+  const verifiedChart = useVerifiedTitleChart({
+    marketId,
+    market,
+    hours: historyHours,
+    heroId: chartHeroId,
+  });
+  // Every consumer below (chips, seeds, caption, cadence, empty state) reads one
+  // history: the verified timeline's for a verified detail, the source one else.
+  const historyData = verifiedChart.active ? verifiedChart.history : sourceHistoryData;
+  const historyError = verifiedChart.active ? verifiedChart.error : sourceHistoryError;
+  const historyLoading = verifiedChart.active ? verifiedChart.isLoading : sourceHistoryLoading;
+  useFuturesDetailStream({
+    marketId, market, history: sourceHistoryData, historyHours,
+    setMarket: next => refreshMarket(next, { revalidate: false }),
+    setHistory: next => refreshHistory(next, { revalidate: false }),
+    representation: VERIFIED_TITLE,
+    setTimeline: verifiedChart.adopt,
+  });
+  const historyOutcomes = Array.isArray(historyData?.outcomes)
+    ? historyData.outcomes
+    : [];
+
   // L2-156 Item 2 — the chart is never an empty "select outcomes below" state.
   // Default to the top 2-3 outcomes; on a settled market default to the WINNER
   // (is_winner, which may not be the highest current probability) + runner-up.
@@ -690,7 +725,8 @@ export default function FuturesDetailPage({ params }: FuturesDetailPageProps) {
               ? "This market ID is invalid. It may have been removed or the link is incorrect."
               : marketError?.message || "Unable to load this market. It may have been removed or is temporarily unavailable."
           }
-          onRetry={isValidId ? () => refreshMarket() : undefined}
+          // #10224: a refresh reloads the detail AND its chart, never one alone.
+          onRetry={isValidId ? () => void Promise.all([refreshMarket(), verifiedChart.refresh()]) : undefined}
         />
       </div>
     );
@@ -847,7 +883,11 @@ export default function FuturesDetailPage({ params }: FuturesDetailPageProps) {
   const heroNamesNobody = isResolved && gradedChampion === null;
   // L2-161 Hero C: the hero outcome's own 7-day curve, drawn as ambient texture
   // behind the numeral. Empty ⇒ the hero falls back to a plain numeral.
-  const ambientPoints = buildAmbientPoints(historyOutcomes, heroOutcome?.id ?? null);
+  // #10224 — the ambient curve is the requested source's history, so it draws
+  // behind a verified numeral only when that numeral IS the source's own value.
+  const ambientPoints = heroValueIsSourceOwn(market, heroOutcome)
+    ? buildAmbientPoints(historyOutcomes, heroOutcome?.id ?? null)
+    : [];
 
   // lane1-Q479 (defect 13). Counted off `market.outcomes`, not `outcome_count`:
   // the note is a claim about the rows the reader can actually see and add up,
@@ -959,6 +999,10 @@ export default function FuturesDetailPage({ params }: FuturesDetailPageProps) {
         // `movementWindowLabel` for why the payload disproves that word.
         movementLabel={movementWindowLabel(leader?.last_updated)}
         sourceCount={market.source_count ?? undefined}
+        // #10224 — on a verified title page, the shown outcome's own contributors
+        // (never the market's union; bookmakers stay provenance). Undefined in
+        // source mode or on an unlabellable value ⇒ the footer above, unchanged.
+        sourceLabels={heroNamesNobody ? undefined : heroContributorLabels(market, heroOutcome)}
         // UX-P054 (#1719) — the third copy of the "Resolves <date>" rule, and the
         // one the authority guard could not see: it named this line as its blind
         // spot because it sits outside `components/` and `lib/`.
@@ -1106,6 +1150,14 @@ export default function FuturesDetailPage({ params }: FuturesDetailPageProps) {
                 <span>📈</span>
                 Probability Trend
               </h2>
+              {/* #10224 — whose history the lines are, from the timeline response
+                  itself. The current number above may blend venues; this history
+                  is one source's and says so. */}
+              {verifiedChart.active && verifiedChart.label && (
+                <p data-testid="futures-trend-history-basis" className="text-[12px] text-text-muted mt-1">
+                  {verifiedChart.label}
+                </p>
+              )}
               {/* #7545 — the rung the reader is on, and one line reconciling it
                   with what came back. This replaces two captions that could only
                   describe a window the reader never chose ("Extended to 30 days
