@@ -65,6 +65,13 @@ nonisolated struct ContainerHubPresentation: Sendable {
         return members.filter { $0.type == "market" && ids.contains($0.memberId) && $0.eventId == member.memberId }
     }
 
+    /// #10146: a game with questions gets one quiet "More on this game" row that opens
+    /// the same game page its card opens. No count (the game page applies its own display
+    /// rules, so a hub number would overclaim) and no short list (no ranking to back one).
+    func moreOnGameRoute(for member: ContainerHubMember) -> Route? {
+        relatedQuestions(for: member).isEmpty ? nil : .eventDetail(id: member.memberId)
+    }
+
     static func questionNeedsVerdictRows(_ market: SearchFuturesMarket) -> Bool {
         market.status == "resolved" || market.topOutcomes?.contains { $0.verdict(in: market) != nil } == true
     }
