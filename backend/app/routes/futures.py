@@ -4959,7 +4959,65 @@ async def get_futures_market(
     )
     if len(bookmakers) > 1 and source_breakdown:
         detail["source_breakdown"] = source_breakdown
+    # #10165: the game this board is the Polymarket container OF, so the page can
+    # send the reader to the game instead of drawing the container as a field.
+    detail["container_of_event_id"] = await _game_container_of_event_id(db, market)
     return detail
+
+
+async def _game_container_of_event_id(
+    db: AsyncSession, market: FuturesMarket
+) -> int | None:
+    """The ``event_id`` of the game this board is the Polymarket container of, else ``None`` (#10165).
+
+    WHAT A READER SAW. ``/futures/63612402`` at 390px, 2026-10-02 04:45Z —
+    "New York Yankees vs. Tampa Bay Rays". The hero read "46% · New York Yankees
+    — New York Yankees", Games This Week printed all three ALDS games at that one
+    price, and All Outcomes ranked 1–9 as one field: "O/U 6.5 54%", "New York
+    Yankees 46%", "NRFI 43%", four spreads. Those are the lead legs of nine
+    different questions, and each one is already its own row on
+    ``polymarket:1113712``. The row is Polymarket event 1113712's EVENT row,
+    linked to game 15322539.
+
+    THE TEST IS SEARCH'S, IMPORTED AND NOT RE-SPELLED: #8375's linked arm
+    (`_search_container_parent_candidates`, then `_search_container_parents_among`
+    over one indexed read of the candidate's legs). That is the arm that already
+    withholds this row from ``/search`` and, since #10165, from the dropdown, so
+    the page and the search box cannot disagree about what a container is. Only a
+    LINKED container is named: an unlinked one has no game to send the reader to,
+    and #8664's side labels stay its page treatment.
+
+    Additive and display-only: nothing else in the payload moves, and a board
+    that is not a candidate (another venue, a one-winner board, no game, a leg
+    with no id) issues no read at all.
+    """
+    # events.py imports this module at load time, so the reverse import is lazy.
+    from app.routes.events import (
+        _search_container_parent_candidates,
+        _search_container_parents_among,
+    )
+
+    # Read with getattr first, as `_game_container_leg_sides` does: the thin
+    # serializer fixtures across the suite carry no `group_id` or `source`.
+    if not getattr(market, "group_id", None) or getattr(market, "source", None) != "polymarket":
+        return None
+    candidates = _search_container_parent_candidates([market])
+    if not candidates:
+        return None
+    _group_id, legs = candidates[market.id]
+    rows = (
+        await db.execute(
+            select(
+                FuturesMarket.id, FuturesMarket.group_id, FuturesMarket.external_id
+            ).where(
+                FuturesMarket.source == "polymarket",
+                FuturesMarket.external_id.in_(legs),
+            )
+        )
+    ).all()
+    if market.id not in _search_container_parents_among(candidates, rows):
+        return None
+    return market.event_id
 
 
 #: How many cards "Games This Week" shows. Was the bare `.limit(20)` on the
