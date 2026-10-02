@@ -1196,6 +1196,10 @@ export interface FuturesMarketDetailResponse extends FuturesMarket {
   /** #8892: on a game container, the id of the match-winner outcome a hero leads
    *  with. Null everywhere else; absent on builds before #8894. */
   lead_outcome_id?: number | null;
+  /** #10165: on a Polymarket game container, the game it is the container OF —
+   *  the page sends the reader there. Null everywhere else; absent on builds
+   *  before #10173. */
+  container_of_event_id?: number | null;
 }
 
 export interface FuturesHistoryPoint {
