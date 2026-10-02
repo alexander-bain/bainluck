@@ -200,8 +200,12 @@ MUTANTS: list[tuple[str, str, str, str]] = [
     (
         "M11-BOUND-IGNORES-THE-REQUEST-DEADLINE",
         "an arm budget that can outlive the request deadline protects nothing",
-        "    bound_ms = min(_TYPEAHEAD_OUTCOME_ARM_TIMEOUT_MS, remaining_ms)",
-        "    bound_ms = _TYPEAHEAD_OUTCOME_ARM_TIMEOUT_MS",
+        # #10225 re-target: the budget is now chosen by
+        # `_typeahead_outcome_arm_budget_ms()` (the warmer's 5 s under
+        # `_force_cache_rebuild`, else the reader's 2 s); the mutant still drops
+        # the deadline clamp.
+        "    bound_ms = min(_typeahead_outcome_arm_budget_ms(), remaining_ms)",
+        "    bound_ms = _typeahead_outcome_arm_budget_ms()",
     ),
     (
         "M12-NO-FLOOR-CHECK",
