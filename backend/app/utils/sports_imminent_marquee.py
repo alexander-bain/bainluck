@@ -24,8 +24,9 @@ score. It changes which upcoming game sits in which upcoming slot.
 WHAT IT DOES
 ------------
 The slots on the page that currently hold a not-yet-started game are refilled:
-first every **imminent marquee** game (not started, ``tier:1``, kickoff strictly
-ahead and within ``IMMINENT_KICKOFF_HOURS``), then every other not-started game,
+first every **imminent marquee** game (not started, ``tier:1`` or a ``tier:2``
+playoff game, kickoff strictly ahead and within ``IMMINENT_KICKOFF_HOURS``),
+then every other not-started game,
 each group in its original served order. So:
 
 * **Nothing but upcoming games moves.** Live, finished, futures, tournament and
@@ -37,11 +38,27 @@ each group in its original served order. So:
   another, so the pass is bounded by construction: on an NFL Sunday with twelve
   marquee kickoffs inside the window, Upcoming leads with the day's games and
   holds exactly as many cards as it did.
-* **Minor games are not promoted.** Only ``tier:1`` qualifies, so a next-day
-  playoff game still sits above an imminent Challenger match or an MLS fixture —
-  the second direction of #9489's done-when.
+* **Minor games are not promoted.** ``tier:1`` qualifies, and so does a
+  ``tier:2`` game tagged ``importance:playoff`` or ``importance:championship``
+  (#10222, below); nothing else does. A next-day playoff game still sits above
+  an imminent Challenger match or a regular-season MLS fixture — the second
+  direction of #9489's done-when.
 * **A marquee pin keeps its exact slot** (``MARQUEE_PIN_KEY``, C185), the same
   guarantee the live hoist gives.
+
+WHY A ``tier:2`` PLAYOFF GAME COUNTS (#10222)
+--------------------------------------------
+Seen on production 2026-10-02 18:52Z: Dallas Wings @ Golden State Valkyries
+(``15322555``, WNBA playoffs, tip-off 01:00Z) served at slot 36, below
+tomorrow's regular-season NHL and NCAAF games. Every WNBA game is ``tier:2``,
+so the ``tier:1``-only rule could never move it, however close tip-off got. A
+postseason game in a tier-2 league is tonight's marquee game for that league;
+a regular-season tier-2 game is not, and stays where it was served.
+
+Tier 3 and below stay out on purpose. The tagger reads any knockout round as
+``importance:playoff`` — the EFL Cup carries it (#8942) — and a tier-4 cup tie
+is not a reason to move one game above another. The tag is read from the
+served ``event_tags``, the same list the tier comes from, so no new field.
 
 WHY SIX HOURS
 -------------
@@ -81,6 +98,18 @@ IMMINENT_KICKOFF_HOURS = 6
 UPCOMING_STATUSES = frozenset({"scheduled", "upcoming", "pre", ""})
 
 
+#: A ``tier:2`` game counts as marquee only when it carries one of these
+#: (#10222). ``tier:1`` needs neither — see the module docstring.
+PLAYOFF_IMPORTANCE_TAGS = frozenset({"importance:playoff", "importance:championship"})
+
+
+def _is_marquee_tier(tags: list) -> bool:
+    """``tier:1``, or a ``tier:2`` playoff/championship game (#10222)."""
+    if "tier:1" in tags:
+        return True
+    return "tier:2" in tags and any(t in PLAYOFF_IMPORTANCE_TAGS for t in tags)
+
+
 def _is_upcoming_event(item: object) -> bool:
     if not isinstance(item, dict) or item.get("type") != "event":
         return False
@@ -92,11 +121,14 @@ def _is_upcoming_event(item: object) -> bool:
 def is_imminent_marquee_game(
     item: dict, now: datetime, *, hours: int = IMMINENT_KICKOFF_HOURS
 ) -> bool:
-    """A not-started ``tier:1`` game whose kickoff is ahead and within ``hours``."""
+    """A not-started marquee game whose kickoff is ahead and within ``hours``.
+
+    Marquee is ``tier:1``, or ``tier:2`` with a playoff/championship tag.
+    """
     if not _is_upcoming_event(item):
         return False
     data = item.get("data") or {}
-    if "tier:1" not in (data.get("event_tags") or []):
+    if not _is_marquee_tier(data.get("event_tags") or []):
         return False
     commence = _parse_dt(data.get("commence_time"))
     if commence is None:
