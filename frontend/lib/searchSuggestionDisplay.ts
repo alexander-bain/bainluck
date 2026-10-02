@@ -16,6 +16,7 @@
 import type { TypeaheadSuggestion, TypeaheadOutcome, TeamSeasonAnswer } from "@/lib/api";
 import { getEmojiForLeague, getLeagueDisplay } from "@/lib/sportCategories";
 import { hasNoReportedResult, SUSPENDED_LABEL, venueSettledSummary } from "@/lib/eventState";
+import { authorityStoppageLabel } from "@/lib/gameTimeLabel";
 
 /**
  * How many season facts a team row shows (T2-1 / #5058). Two, because two is
@@ -253,10 +254,15 @@ export function suggestionSubtitle(
     // #9550: unless the venue has graded it — then the row says the event
     // page's "Settled · Pereira wins", not a denial one tap from the answer.
     // Same conjunction as EventCard / eventSectionKey (#7112), inside this arm.
+    // #9208: ungraded but called off — ESPN's "Canceled" / "Postponed", read
+    // through the cards' allowlist, says why there is no result.
     if (hasNoReportedResult(s.status, s.commence_time, now?.getTime())) {
       return {
         kind: "event-time",
-        text: venueSettledSummary(s.venue_settled, s.venue_settled_result, s.venue_closed_no_winner) ?? SUSPENDED_LABEL,
+        text:
+          venueSettledSummary(s.venue_settled, s.venue_settled_result, s.venue_closed_no_winner) ??
+          authorityStoppageLabel(s.stoppage) ??
+          SUSPENDED_LABEL,
       };
     }
     return {

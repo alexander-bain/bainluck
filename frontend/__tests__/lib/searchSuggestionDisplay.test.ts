@@ -463,6 +463,69 @@ describe("suggestionSubtitle", () => {
     });
   });
 
+  // #9208: the typeahead serves ESPN's stoppage word on a `suspended` row
+  // (backend `_typeahead_stoppage`, live at ee80e5b97c). The dropdown printed
+  // "No result reported" for a called-off game while the team page and cards
+  // said "Canceled". Fixtures are the served shape: the key is present only on
+  // a suspended row, and carries the word ESPN's period held.
+  describe("a called-off match says why it has no result (#9208)", () => {
+    const served = (over: Record<string, unknown>) =>
+      suggestionSubtitle(
+        JSON.parse(
+          JSON.stringify({
+            type: "event",
+            text: "New York Yankees at Baltimore Orioles",
+            event_id: 15319530,
+            status: "suspended",
+            sport: "baseball_mlb",
+            commence_time: "2026-08-09T15:00:00+00:00",
+            ...over,
+          })
+        ) as TypeaheadSuggestion,
+        NOW
+      );
+
+    test("a canceled game says 'Canceled', not 'No result reported'", () => {
+      expect(served({ stoppage: "Canceled" })).toEqual({ kind: "event-time", text: "Canceled" });
+    });
+
+    test("a postponed game says 'Postponed'", () => {
+      expect(served({ stoppage: "Postponed" })).toEqual({ kind: "event-time", text: "Postponed" });
+    });
+
+    // The allowlist, not the raw string: a word the cards do not know keeps
+    // the badge, so a stray live period can never print as a stoppage.
+    test("an unlisted word is never printed raw — the badge stays", () => {
+      for (const word of ["Delayed", "End 9th", "", "   "]) {
+        expect(served({ stoppage: word })).toEqual({ kind: "event-time", text: SUSPENDED_LABEL });
+      }
+      expect(served({ stoppage: null })).toEqual({ kind: "event-time", text: SUSPENDED_LABEL });
+      expect(served({})).toEqual({ kind: "event-time", text: SUSPENDED_LABEL });
+    });
+
+    // A venue grade is the answer; the stoppage only explains its absence.
+    test("a venue-graded row keeps 'Settled · …' over the stoppage word", () => {
+      expect(
+        served({ stoppage: "Canceled", venue_settled: true, venue_settled_result: "Yankees win" })
+      ).toEqual({ kind: "event-time", text: "Settled · Yankees win" });
+    });
+
+    // The word cannot move a row outside the no-result arm.
+    test("a live, finished or on-time row ignores a stray stoppage", () => {
+      expect(served({ status: "live", stoppage: "Canceled" })).toEqual({
+        kind: "event-time",
+        text: "Live now",
+      });
+      expect(served({ status: "completed", stoppage: "Canceled" })).toEqual({
+        kind: "event-time",
+        text: "Final",
+      });
+      expect(
+        served({ status: "scheduled", commence_time: "2026-08-09T17:00:00+00:00", stoppage: "Canceled" })
+      ).toEqual({ kind: "event-time", text: "Recently" });
+    });
+  });
+
   test("a priced futures row leads with the answer", () => {
     const sub = suggestionSubtitle(
       suggestion({
