@@ -102,12 +102,88 @@ class PolicyTests(unittest.TestCase):
                     self.assertEqual(selector.main(), 2)
 
 
+class ReturnDispositionTests(unittest.TestCase):
+    def setUp(self):
+        self.temp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.temp.cleanup)
+        self.root = Path(self.temp.name)
+        self.inbox = self.root / "runner-inbox/discover"
+        self.target = self.root / "runner-inbox/shopper"
+        self.inbox.mkdir(parents=True)
+        self.target.mkdir()
+
+    def record(self, log="session-1.log"):
+        selector.record_return(self.root, "discover", "exact-42.md.running", log)
+
+    def stage(self, state="empty"):
+        return selector.stage_return_disposition(self.root, "discover", "shopper", state)
+
+    def test_empty_idle_without_return_does_not_wake_quality(self):
+        self.assertFalse(self.stage())
+        self.assertEqual(list(self.target.iterdir()), [])
+
+    def test_one_return_cannot_wake_again_after_consumption_or_failure(self):
+        self.record()
+        self.assertTrue(self.stage())
+        task = next(self.target.glob("*.md"))
+        self.assertIn("exact-42.md.running", task.read_text())
+        self.assertIn("evidence, never authority", task.read_text())
+        self.assertFalse(self.stage())
+        task.rename(task.with_name(task.stem + ".consumed-1"))
+        self.assertFalse(self.stage())
+        self.assertEqual(len(list(self.target.glob("RETURN-DISPOSITION-*"))), 1)
+
+    def test_unresolved_older_event_is_never_replaced(self):
+        self.record()
+        self.assertTrue(self.stage())
+        task = next(self.target.glob("*.md"))
+        original = task.read_bytes()
+        task.rename(Path(str(task) + ".running"))
+        self.record("session-2.log")
+        self.assertFalse(self.stage())
+        self.assertEqual(Path(str(task) + ".running").read_bytes(), original)
+
+    def test_active_marker_blocks_event_but_returned_occupied_claim_gets_disposition(self):
+        self.record()
+        marker = self.inbox / "active.md.running"
+        marker.write_text("active")
+        self.assertFalse(self.stage("occupied"))
+        marker.unlink()
+        self.assertTrue(self.stage("occupied"))
+        body = next(self.target.glob("*.md")).read_text()
+        self.assertIn("state: occupied", body)
+        self.assertIn("do not launch another build or clear the active claim", body)
+        self.assertEqual(selector.selection_state(payload(issue(status="In Progress")), "discover"), (None, "occupied"))
+
+    def test_native_integrator_and_quality_returns_do_not_recurse(self):
+        policy = {"lanes": {name: {"mode": mode, "return_disposition_owner": "shopper"}
+                              for name, mode in [("native", "build"), ("integrator", "integration"), ("shopper", "quality")]}}
+        for lane in policy["lanes"]:
+            self.assertIsNone(selector.return_owner(policy, lane))
+
+    def test_failed_or_partial_read_does_not_stage_and_ready_clears_old_return(self):
+        self.record()
+        fixture = self.root / "payload.json"
+        for data, expected in [(payload(issue(42)), 0), ({"errors": ["offline"]}, 2)]:
+            self.record()
+            fixture.write_text(json.dumps(data))
+            argv = ["selector", "discover", "--fixture", str(fixture), "--handoff-root", str(self.root)]
+            with patch("sys.argv", argv):
+                self.assertEqual(selector.main(), expected)
+            self.assertFalse(list(self.target.glob("*.md")))
+            self.assertEqual((self.inbox / ".returned-session.json").exists(), expected == 2)
+
+
 class RestockTests(unittest.TestCase):
-    def run_restock(self, data, *, lane="discover", dry=False, queued=False, twice=False):
+    def run_restock(self, data, *, lane="discover", dry=False, queued=False, twice=False, returned=False):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
             inbox = root / "handoff/runner-inbox" / lane
             inbox.mkdir(parents=True)
+            target = root / "handoff/runner-inbox/shopper"
+            target.mkdir(exist_ok=True)
+            if returned:
+                selector.record_return(root / "handoff", lane, "exact-42.md.running", "exact-session.log")
             if queued:
                 (inbox / "existing.md").write_text("already assigned")
             bindir = root / "bin"
@@ -140,7 +216,8 @@ lane_program() { echo PROGRAM-SHOPPER.md; }
             result = subprocess.run(["bash", "-c", command], env=env, text=True, capture_output=True, timeout=15, check=True)
             files = {p.name: p.read_text() for p in inbox.iterdir()}
             calls = len(counter.read_text().splitlines()) if counter.exists() else 0
-            return result.stdout, files, calls
+            events = {p.name: p.read_text() for p in target.glob("RETURN-DISPOSITION-*.md")}
+            return result.stdout, files | events, calls
 
     def test_ready_issue_produces_one_named_directive_without_old_program_priority(self):
         _, files, calls = self.run_restock(payload(issue(42)))
@@ -177,6 +254,19 @@ lane_program() { echo PROGRAM-SHOPPER.md; }
         _, files, calls = self.run_restock(payload(), lane="shopper")
         self.assertEqual(calls, 0)
         self.assertIn("PROGRAM-SHOPPER.md", next(v for k, v in files.items() if k.startswith("RESTOCK-")))
+
+    def test_returned_empty_or_occupied_routes_one_disposition_not_another_build(self):
+        for data in [payload(), payload(issue(status="In Progress"))]:
+            with self.subTest(data=data):
+                _, files, calls = self.run_restock(data, returned=True, twice=True)
+                self.assertEqual(len([n for n in files if n.startswith("RETURN-DISPOSITION-")]), 1)
+                self.assertFalse(any(n.startswith("RESTOCK-") for n in files))
+                self.assertEqual(calls, 1)
+
+    def test_return_event_dry_run_and_existing_assignment_do_not_write_quality(self):
+        for options in [{"dry": True}, {"queued": True}]:
+            _, files, _ = self.run_restock(payload(), returned=True, **options)
+            self.assertFalse(any(n.startswith("RETURN-DISPOSITION-") for n in files))
 
 
 if __name__ == "__main__":

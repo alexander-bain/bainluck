@@ -734,7 +734,11 @@ maybe_restock () {
     # The timer throttles cheap API reads as well as successful dispatches.
     # An empty/failed read never starts a model session. --dry-run writes nothing.
     [ "$DRYRUN" -eq 1 ] || echo "$NOW" > "$LASTF"
-    READY_ISSUE=$(python3 "$BL_REPO/scripts/lane_ready_issue.py" "$L")
+    if [ "$DRYRUN" -eq 1 ]; then
+      READY_ISSUE=$(python3 "$BL_REPO/scripts/lane_ready_issue.py" "$L")
+    else
+      READY_ISSUE=$(python3 "$BL_REPO/scripts/lane_ready_issue.py" "$L" --handoff-root "$HANDOFF")
+    fi
     READY_RC=$?
     if [ "$READY_RC" -ne 0 ]; then
       if [ "$READY_RC" -eq 1 ]; then
@@ -1004,6 +1008,12 @@ while true; do
       # the session's real code so the caller can gate on it.
       exit "${PIPESTATUS[0]}" )
     RC=$?
+    # A successful return records one context pointer for its quality owner.
+    # Failed sessions and non-opted-in service/Native lanes create no event.
+    if [ "$RC" -eq 0 ]; then
+      python3 "$BL_REPO/scripts/lane_ready_issue.py" "$L" --handoff-root "$HANDOFF" \
+        --record-return "$RUN" "$LOG" || echo "[runner:$L] return receipt unavailable; preserve owner handoff"
+    fi
     # Consume ONLY a session that exited clean. Anything else — timeout 124,
     # auth/network failure, crash — restores the queue name so the directive
     # stays visible to the glob. mv preserves mtime, so a retry stays at the head
