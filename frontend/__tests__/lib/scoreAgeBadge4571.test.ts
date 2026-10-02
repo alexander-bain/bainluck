@@ -523,6 +523,37 @@ describe("#4571 a newer read of the SAME whole score dates a history-derived pai
     );
     expect(pt!.scoreStamp).toBe(ESPN_T);
   });
+
+  test("FINAL: an EMPTY completed_at is present and malformed, not absent, so history keeps its clock", () => {
+    // Kills a falsiness test (`!completedAt`), which reads "" as no final at all.
+    const pt = computeLastChartPoint(
+      hist({
+        espn_history: [espnRow()] as never,
+        win_prob_history: priceOnlyWinProb,
+        completed_at: "",
+      }),
+      21,
+      17,
+      EVENT_T,
+    );
+    expect(pt!.scoreStamp).toBe(ESPN_T);
+  });
+
+  test("not final: a null or absent completed_at leaves the live rule, so the newer read dates the pair", () => {
+    for (const partial of [{ completed_at: null }, {}] as Partial<EventHistoryResponse>[]) {
+      const pt = computeLastChartPoint(
+        hist({
+          espn_history: [espnRow()] as never,
+          win_prob_history: priceOnlyWinProb,
+          ...partial,
+        }),
+        21,
+        17,
+        EVENT_T,
+      );
+      expect(pt!.scoreStamp).toBe(EVENT_T);
+    }
+  });
 });
 
 describe("#4571 the page hands the badge the score it actually rendered", () => {

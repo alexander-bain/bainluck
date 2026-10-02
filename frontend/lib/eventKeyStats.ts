@@ -2437,6 +2437,8 @@ export function computeLastChartPoint(
   //   - for a finished game (`completed_at` present) the stamp is not after
   //     `completed_at`. A read after the whistle does not re-date a final (#7315's
   //     boundary), and an unparseable `completed_at` is a final we cannot bound.
+  //     Present means not null/undefined: an empty string is a malformed final,
+  //     not an absent one, so it keeps the history clock too.
   // The value pick above does not change. `scoreFrom` stays `"history"`.
   if (
     scoreFrom === "history" &&
@@ -2448,9 +2450,10 @@ export function computeLastChartPoint(
   ) {
     const confirmedMs = eventStamp ? Date.parse(eventStamp) : NaN;
     const completedAt = historyData.completed_at;
-    const completedMs = completedAt ? Date.parse(completedAt) : NaN;
+    const completedMs = completedAt != null ? Date.parse(completedAt) : NaN;
     const withinFinal =
-      !completedAt || (!Number.isNaN(completedMs) && confirmedMs <= completedMs);
+      completedAt == null ||
+      (!Number.isNaN(completedMs) && confirmedMs <= completedMs);
     if (
       !Number.isNaN(confirmedMs) &&
       confirmedMs > Date.parse(scoreStamp) &&
