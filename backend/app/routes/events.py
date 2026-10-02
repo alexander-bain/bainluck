@@ -22147,6 +22147,19 @@ def _withhold_redundant_parent_futures(
     )
 
 
+def _is_kalshi_game_winner_series(external_id: Optional[str]) -> bool:
+    """True for a Kalshi ticker whose SERIES token ends in GAME (`KXMLBGAME-…`).
+
+    The whole series token, never a substring of the ticker: `game` appears
+    inside other series names and team codes, which is how a loose ticker read
+    goes wrong (see the btts note in `app/utils/game_market_class.py`).
+    """
+    if not external_id:
+        return False
+    series = external_id.split("-", 1)[0].upper()
+    return series.startswith("KX") and series.endswith("GAME")
+
+
 def _classify_game_market(name: str, external_id: Optional[str] = None) -> str:
     """Classify a game-level market name into a type.
 
@@ -22269,8 +22282,18 @@ def _classify_game_market(name: str, external_id: Optional[str] = None) -> str:
     # Team-level stat markets: "Team at Team: Points" (no player name)
     if _is_team_stat_market(name):
         return "team_total"
-    # Player props without over/under (e.g., "Trae Young Points")
-    if _PLAYER_PROP_RE.search(name):
+    # Player props without over/under (e.g., "Trae Young Points").
+    #
+    # …EXCEPT A KALSHI GAME-WINNER SERIES (#10180). `_PLAYER_PROP_RE` has no
+    # leading word boundary, so its `PA|RA` arms match the end of a team name —
+    # "Game 1: New York Y vs Tampa Bay" (`KXMLBGAME-…`) read Tam-PA as a stat and
+    # was served as a prop: "…vs Tampa Bay: 1+ — 55%", the hero's own number. A
+    # series token ending in GAME is the game's winner on every one of the 80
+    # such series measured (2026-10-02); falling through lets the arms below
+    # classify it exactly as they classify "Game 1: Chicago WS vs Cleveland".
+    # The regex itself is NOT changed here: tests for #1588/#1735/#5088/#4189
+    # reach their subject only through that same Tampa/Mirra match (see #10180).
+    if _PLAYER_PROP_RE.search(name) and not _is_kalshi_game_winner_series(external_id):
         return "player_prop"
     if "moneyline" in lower or "winner" in lower or "win" in lower:
         if _SINGLE_INNING_RE.search(lower):
@@ -26159,11 +26182,15 @@ async def _build_game_markets(
                 # `scoring_race` and this branch puts it straight back — the
                 # market name still matches `_PLAYER_PROP_RE` on "Points" and is
                 # still not a lone-stat-word team market (#5133 defect A).
+                # The game-winner series exemption is repeated for the same
+                # reason (#10180): the classifier letting `KXMLBGAME` fall
+                # through is inert if this rescue reads Tam-PA again.
                 if (
                     prob is not None
                     and _PLAYER_PROP_RE.search(market.name)
                     and not _is_team_stat_market(market.name)
                     and not _is_scoring_race_market(market.name)
+                    and not _is_kalshi_game_winner_series(market.external_id)
                 ):
                     threshold = _extract_threshold(o.name)
                     name_lower = o.name.lower().strip()
