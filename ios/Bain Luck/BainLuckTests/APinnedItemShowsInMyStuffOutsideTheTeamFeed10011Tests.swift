@@ -91,6 +91,22 @@ final class APinnedItemShowsInMyStuffOutsideTheTeamFeed10011Tests: XCTestCase {
         XCTAssertEqual(section.fallbacks, [pin])
     }
 
+    /// Sol's review of b16dea19: a failed refresh overwrote the confirmed gone
+    /// answer, and the section then revived the stale feed card.
+    func testAFailedRefreshKeepsTheGoneAnswerSoTheFeedCardStaysDown() async throws {
+        let pin = SavedPin(type: "event", value: 801)
+        let offline = Flag()
+        let vm = SavedPinContentViewModel { _ in await offline.value ? .failed : .unavailable }
+        await vm.load([pin])
+        await offline.set(true)
+        await vm.load([pin], refresh: true)
+        XCTAssertEqual(vm.content[pin]?.metadata, .unavailable)
+        let section = SavedPinContent.section(
+            pins: [pin], feed: [try feedItem(eventID: 801)], content: vm.content)
+        XCTAssertTrue(section.items.isEmpty)
+        XCTAssertEqual(section.fallbacks, [pin])
+    }
+
     func testAFailedOrFreshReadKeepsTheFeedCard() throws {
         for answer in [SavedPinContent.failed, .event(FeedEventData(savedPinDetail: try eventDetail(77)))] {
             let section = SavedPinContent.section(

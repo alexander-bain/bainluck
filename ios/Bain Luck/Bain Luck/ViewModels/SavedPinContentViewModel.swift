@@ -29,6 +29,13 @@ nonisolated enum SavedPinContent: Sendable {
         }
     }
 
+    /// The server said something about the item — a card or "gone". A failed
+    /// read said nothing, so it never replaces one of these.
+    var isAnswer: Bool {
+        if case .failed = self { return false }
+        return true
+    }
+
     /// The Pinned section, in saved-pin order. A pin the team feed already
     /// carries keeps that feed card (it has the reason/headline); every other
     /// pin with loaded content becomes the same card family built from its
@@ -116,8 +123,9 @@ final class SavedPinContentViewModel: ObservableObject {
                     group.cancelAll()
                     return
                 }
-                if case .failed = result, content[pin]?.hasCard == true {
-                    // keep the last good card
+                if case .failed = result, let known = content[pin], known.isAnswer {
+                    // keep the last good card, or the confirmed gone answer
+                    // that keeps a stale feed card from coming back
                 } else {
                     content[pin] = result
                 }
