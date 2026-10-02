@@ -28,8 +28,8 @@ def _case(case_id: str) -> dict:
 def test_committed_corpus_is_complete_and_matches_oracles() -> None:
     corpus = load_corpus(FIXTURE)
     report = evaluate_corpus(corpus)
-    assert report["total"] == 23
-    assert report["passed"] == 23, [row for row in report["cases"] if not row["ok"]]
+    assert report["total"] == 24
+    assert report["passed"] == 24, [row for row in report["cases"] if not row["ok"]]
     ids = {row["id"] for row in corpus["cases"]}
     # Every class the ruling names has to be represented, or the corpus is
     # asserting reconciliation over a population it never exercised.
@@ -47,6 +47,9 @@ def test_committed_corpus_is_complete_and_matches_oracles() -> None:
         # not exercise is a rung nobody notices going wrong, and this one
         # was PLOTTING its rows until #6275.
         "identity-disputed-is-its-own-rung",
+        # #5355: a DataGolf opening first read after the tournament started.
+        # Those rows were PLOTTED as forecasts until this rung existed.
+        "datagolf-opening-after-start-is-its-own-rung",
     } <= ids
 
 

@@ -83,6 +83,12 @@ COVERED = (
     # NULL) and non-object JSONB — so a seed that dropped the column would
     # classify every row by its scalar and the twin oracle would pass vacuously.
     "test_calibration_trade_evidence_receipt_1870_pg.py",
+    # #5355. Seeds `futures_markets`, `futures_outcomes` and
+    # `futures_odds_snapshots` by raw INSERT. `commence_time` and each
+    # snapshot's `captured_at` ARE the subject — the rule compares one to the
+    # other — so both are named on every row, and `reading_count` (NOT NULL, no
+    # server default) is named on every snapshot.
+    "test_calibration_datagolf_post_start_opening_pg.py",
     # #2927. Added the same night this check would have saved the trip: the
     # containers gate seeded `INSERT INTO sports (key, name)` and died on
     # `NotNullViolation: null value in column "active"` in CI, because

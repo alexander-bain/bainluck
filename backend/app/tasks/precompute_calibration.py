@@ -1527,6 +1527,17 @@ KALSHI_LIQUIDITY_RULE_TEXT = (
     "prices. Applied to Kalshi only; never mutates resolutions."
 )
 
+#: #5355. The SQL is written inside ``_calibration_population_ctes`` (so the
+#: fingerprints hash it); this is the disclosure sentence that rides beside its
+#: count on the payload.
+DATAGOLF_OPENING_TIMING_RULE_TEXT = (
+    "Excludes DataGolf model outcomes priced at their opening when no DataGolf "
+    "reading of that opening value was captured before the tournament's start "
+    "date: the outcome was first read while the tournament was being played, or "
+    "at a time that cannot be placed before it. A price moved to a pre-start "
+    "closing line is kept. Applied to DataGolf only; never mutates resolutions."
+)
+
 # L2-76 (#151/#997): curve-side exclusion of the Polymarket no-bid PLACEHOLDER
 # class. Gamma stamps synthetic `outcomePrices` at ~0.50 with no orderbook, so an
 # illiquid poly outcome sits near 0.50 but is not a real 50/50. #151's census
@@ -3685,7 +3696,7 @@ def _futures_generation_sql() -> str:
 
 def _calibration_population_ctes(
     *,
-    curve_price: str = "COALESCE(fo.calibration_probability, fo.opening_probability)",
+    curve_price: str | None = None,
     curve_price_join: str = "",
     rn_order: str = "ABS(fo.opening_probability - 0.5)",
     market_info_extra: str = "",
@@ -3703,6 +3714,9 @@ def _calibration_population_ctes(
     invariant are preserved; existing tests pin that behavior.
 
       * ``curve_price``      — SQL expression for the bucketed/normalized price.
+                               ``None`` (the default) is the headline: terminal
+                               cp with the opening as its fallback, written in
+                               the body below so every fingerprint hashes it.
                                Headline: terminal cp. Horizon: the snapshot value.
       * ``curve_price_join`` — extra INNER JOIN injected into the price-bearing CTEs
                                (``ranked_outcomes`` + ``mex_field_divisor``); for a
@@ -3831,6 +3845,56 @@ def _calibration_population_ctes(
     # Kept as the historical name for the one site CAL-P039/P040 measured, so
     # that measurement stays greppable from the code it describes.
     vm_stats_roster_predicate = vm_roster_predicate
+    # #5355: a DataGolf opening first read after the tournament started is not
+    # a forecast. Written here, not in a helper, so all three fingerprints hash
+    # it (``inspect.getsource`` never covers a callee — see
+    # ``population_predicate_fingerprint``).
+    #
+    # The in-play beat creates any outcome it has not seen with
+    # ``opening_probability`` = the IN-PLAY probability, and both A1-dg (cp :=
+    # opening) and the COALESCE above then score it. DataGolf never stamps
+    # ``opening_captured_at``; the evidence is the outcome's own
+    # ``datagolf_model`` snapshots, written in the pass that creates it. The
+    # boundary is ``futures_markets.commence_time`` — 00:00 UTC on DataGolf's
+    # start date, written once at market creation. It is NOT the first tee time.
+    # It is the line the in-play writer refuses to cross
+    # (``commence_time > now`` -> skip, #191, 2026-07-14), so a ``datagolf_model``
+    # reading strictly before it can only be the pre-tournament poll's.
+    #
+    # FAILS CLOSED. An opening is a forecast only when such a reading carries
+    # the opening's own value. No snapshot, another bookmaker's snapshot, a
+    # NULL commence_time, or a pre-start reading of a different value is
+    # UNKNOWN timing and is withheld — never assumed to be "now", never assumed
+    # fine. Only rows whose price IS the opening are judged (the negation of
+    # ``price_moved`` below); a row Part A/A2 moved to a pre-start closing line
+    # keeps its price. A horizon caller prices on a snapshot, never the opening,
+    # so the rule is off there. Read-side only (gotcha #21): ``is_winner`` and
+    # ``calibration_probability`` are never touched.
+    #
+    # ``None`` is the headline and nothing else is, so the rule's scope is a
+    # fact of the call, not a string comparison against an expression. The
+    # literal lives HERE, inside this function, so the source hash of every
+    # fingerprint covers it (gotcha #144 / ruling 103: a coalesce, not an
+    # exclusion).
+    if curve_price is None:
+        curve_price = "COALESCE(fo.calibration_probability, fo.opening_probability)"
+        datagolf_opening_after_start = """(CASE
+                        WHEN cv.source = 'datagolf'
+                         AND (fo.calibration_probability IS NULL
+                              OR fo.calibration_probability = fo.opening_probability)
+                        THEN NOT EXISTS (
+                            SELECT 1
+                            FROM futures_markets fm_dgo
+                            JOIN futures_odds_snapshots fos_dgo
+                              ON fos_dgo.outcome_id = fo.id
+                             AND fos_dgo.bookmaker = 'datagolf_model'
+                             AND fos_dgo.captured_at < fm_dgo.commence_time
+                             AND fos_dgo.probability = fo.opening_probability
+                            WHERE fm_dgo.id = fo.market_id)
+                        ELSE false
+                    END)"""
+    else:
+        datagolf_opening_after_start = "false"
     return f"""{leading_ctes}market_info AS (
                 SELECT fm.id AS market_id, fm.source, fm.event_id, fm.group_id,
                     fm.commence_time,
@@ -4634,6 +4698,9 @@ def _calibration_population_ctes(
                     -- writer itself would have refused to record. Strictly
                     -- stronger than is_liquid above; read-side only.
                     (NOT {KALSHI_WRITER_BAR_MET}) AS is_below_writer_bar,
+                    -- #5355: a DataGolf opening with no pre-start reading of
+                    -- its own value is not a forecast (rule above the return).
+                    {datagolf_opening_after_start} AS is_datagolf_opening_after_start,
                     {POLY_PLACEHOLDER_EXCLUDE} AS is_poly_placeholder,
                     -- Queue #220/221 Item 3: all-bands poly never-traded flag (for
                     -- the exclusion-symmetry census; does NOT gate the curve).
@@ -4890,6 +4957,10 @@ def _calibration_population_ctes(
                           -- readable as the same list rather than agreeing by
                           -- luck of another rung.
                           AND NOT ro.is_identity_disputed
+                          -- #5355: a DataGolf win field that lost a member to
+                          -- the opening-timing rule cannot be normalized over
+                          -- its survivors; it is dropped whole like any other.
+                          AND NOT ro.is_datagolf_opening_after_start
                     ) AS survivor_n,
                     COUNT(*) FILTER (
                         WHERE ro.is_winner
@@ -4911,6 +4982,7 @@ def _calibration_population_ctes(
                           -- readable as the same list rather than agreeing by
                           -- luck of another rung.
                           AND NOT ro.is_identity_disputed
+                          AND NOT ro.is_datagolf_opening_after_start
                     ) AS survivor_win_n
                 FROM ranked_outcomes ro
                 JOIN mex_field_candidates mfc ON mfc.market_id = ro.market_id
@@ -5043,6 +5115,10 @@ def _calibration_population_ctes(
                     -- re-graded, and `is_winner` is untouched. This is the line
                     -- that makes the page's "not graded, not counted" copy true.
                     AND NOT ro.is_identity_disputed
+                    -- #5355: a DataGolf opening first read after the start (or
+                    -- whose timing cannot be proved) is not a forecast.
+                    -- Read-side only (gotcha #21) — dropped, never re-graded.
+                    AND NOT ro.is_datagolf_opening_after_start
                     AND NOT ro.is_field_incomplete
                     AND
                     CASE
@@ -5230,6 +5306,16 @@ _COVERAGE_RUNG_PREDICATES: tuple[tuple[str, str], ...] = (
     (
         "opening_below_writer_bar",
         "COALESCE(n.is_below_writer_bar, false)",
+    ),
+    # #5355. Its own rung, for #5401's reason: the reader's sentence differs
+    # ("first read after the tournament started", not "never really traded"),
+    # and folding it into a neighbour would restate that neighbour's count.
+    # Ordered after the Kalshi price rungs, which never claim a DataGolf row,
+    # and before structural_artifact, whose golf-placeholder arm could
+    # otherwise claim a DataGolf row the curve dropped for its timing.
+    (
+        "datagolf_opening_after_start",
+        "COALESCE(n.is_datagolf_opening_after_start, false)",
     ),
     (
         "structural_artifact",
@@ -5570,6 +5656,14 @@ def _main_futures_sql(*, frozen: bool = False) -> str:
                     COUNT(*) FILTER (WHERE is_identity_disputed) AS identity_disputed_excluded,
                     COUNT(DISTINCT market_id) FILTER (WHERE is_identity_disputed)
                         AS identity_disputed_markets,
+                    -- #5355: the DataGolf opening-timing rule's own size. The
+                    -- publish gate reads it to admit the predicate move this
+                    -- rule makes (its declared succession, #5355), so it is the
+                    -- disclosure, not bookkeeping.
+                    COUNT(*) FILTER (WHERE is_datagolf_opening_after_start)
+                        AS datagolf_opening_after_start_excluded,
+                    COUNT(DISTINCT market_id) FILTER (WHERE is_datagolf_opening_after_start)
+                        AS datagolf_opening_after_start_markets,
                     COUNT(*) FILTER (WHERE is_draw_authority_missing) AS draw_authority_excluded,
                     COUNT(DISTINCT market_id) FILTER (WHERE is_draw_authority_missing) AS draw_authority_markets,
                     COUNT(*) FILTER (WHERE is_orphan_partition) AS orphan_partition_excluded,
@@ -5679,6 +5773,10 @@ def _main_futures_sql(*, frozen: bool = False) -> str:
                 MAX(ls.no_winner_markets) AS no_winner_markets,
                 MAX(ls.identity_disputed_excluded) AS identity_disputed_excluded,
                 MAX(ls.identity_disputed_markets) AS identity_disputed_markets,
+                MAX(ls.datagolf_opening_after_start_excluded)
+                    AS datagolf_opening_after_start_excluded,
+                MAX(ls.datagolf_opening_after_start_markets)
+                    AS datagolf_opening_after_start_markets,
                 MAX(ls.draw_authority_excluded) AS draw_authority_excluded,
                 MAX(ls.draw_authority_markets) AS draw_authority_markets,
                 MAX(ls.orphan_partition_excluded) AS orphan_partition_excluded,
@@ -7187,6 +7285,12 @@ async def compute_calibration_payload(db, *, runner=None) -> dict:
         no_winner_markets_count = _int0("no_winner_markets")
         identity_disputed_excluded = _int0("identity_disputed_excluded")
         identity_disputed_markets_count = _int0("identity_disputed_markets")
+        datagolf_opening_after_start_excluded = _int0(
+            "datagolf_opening_after_start_excluded"
+        )
+        datagolf_opening_after_start_markets = _int0(
+            "datagolf_opening_after_start_markets"
+        )
         draw_authority_excluded = _int0("draw_authority_excluded")
         draw_authority_markets_count = _int0("draw_authority_markets")
         orphan_partition_excluded = _int0("orphan_partition_excluded")
@@ -8416,6 +8520,20 @@ async def compute_calibration_payload(db, *, runner=None) -> dict:
             "excluded_cells": [
                 list(cell) for cell in sorted(IDENTITY_QUARANTINE_DISCLOSED_CELLS)
             ],
+        },
+        # #5355: a DataGolf opening first read after the tournament started is
+        # not a forecast. The publish gate reads `excluded` to admit the
+        # predicate move this rule makes (its declared succession), and
+        # `excluded_cells` so a golf cell that shrinks is a disclosed exclusion
+        # rather than an unexplained collapse. The rule's SQL keys on
+        # `cv.source = 'datagolf'`, and DataGolf ingests only golf, so this is
+        # the one cell it can take rows out of.
+        "datagolf_opening_timing_filter": {
+            "applies_to": "datagolf",
+            "rule": DATAGOLF_OPENING_TIMING_RULE_TEXT,
+            "excluded": datagolf_opening_after_start_excluded,
+            "excluded_markets": datagolf_opening_after_start_markets,
+            "excluded_cells": [["datagolf", "golf"]],
         },
         # Queue 299 rung 1 (#1012): result authority before anything else.
         "no_winner_filter": {

@@ -158,12 +158,42 @@ DECLARATION_MAX_TOLERANCE_PCT = 5.0
 #: Kalshi's 43.8% share of the published population. The quarantine is
 #: Kalshi-only, so losing that whole cohort is the gross failure this cap exists
 #: to refuse.
+#:
+#: #5355. The DataGolf opening-timing rule withholds a DataGolf model outcome
+#: priced at its opening when no DataGolf reading of that value was captured
+#: before the tournament's start date (Alex's #5355 acceptance: zero
+#: post-answer observations scored as predictions). It moves the digest from
+#: ``27b49126…`` — the predicate the served artifact of 2026-09-26 22:17Z states
+#: (``artifacts-calibration-2839/cal.json``) and master's pin since #8458 — to
+#: ``3944c947…``, unbumped, for #8458's reason: a bump discards the bank and
+#: would fold the rebuild's growth into a "methodology move".
+#:
+#: Stated ONCE (``"listed": False``). The quarantine is checked against a
+#: reader-facing list carrying the same count; this rule has no such list in the
+#: main payload (its reader-facing half is the coverage-bridge rung, which is a
+#: separate artifact), so there is no second statement to compare and inventing
+#: one would make the check agree with itself.
+#:
+#: ``max_narrowing_pct`` is BOUNDED, not measured — the affected mass is unknown.
+#: The rule's SQL keys on ``cv.source = 'datagolf'``, so it can only remove
+#: DataGolf rows, and DataGolf was 23,816 of 942,284 published outcomes (2.53%)
+#: on that same served artifact. ``excluded`` is counted over ``normalized``
+#: (before the tail and representative filters), so it can exceed the published
+#: share; 6.0% is a little over twice DataGolf's whole published share. A
+#: narrowing past it is not this rule.
 DECLARED_PREDICATE_SUCCESSIONS: dict[tuple[str, str], dict] = {
     ("e67d771bbd7a92dfd8d1a0f4bd79b4c2", "27b49126ac461fce9d5f078b471bb17f"): {
         "cause": "#6275 identity quarantine (Alex ruling; 22a99a734d, heavy v27)",
         "issue": 8458,
         "narrowing": "identity_quarantine",
         "max_narrowing_pct": 15.0,
+    },
+    ("27b49126ac461fce9d5f078b471bb17f", "3944c947edb78d220ed3bef7defcc526"): {
+        "cause": "#5355 DataGolf opening first read after the tournament start",
+        "issue": 5355,
+        "narrowing": "datagolf_opening_timing",
+        "max_narrowing_pct": 6.0,
+        "listed": False,
     },
 }
 
@@ -606,6 +636,7 @@ def census(payload: Any) -> dict:
             "version_declaration": None,
             "excluded_cells": {},
             "identity_quarantine": None,
+            "datagolf_opening_timing": None,
         }
 
     buckets = payload.get("buckets") if isinstance(payload.get("buckets"), list) else []
@@ -678,6 +709,8 @@ def census(payload: Any) -> dict:
         # states it. Raw, like the declaration: judged only where a declared
         # predicate succession needs it (`_judge_succession`).
         "identity_quarantine": _identity_quarantine_census(payload),
+        # #5355: the DataGolf opening-timing rule's size, stated once.
+        "datagolf_opening_timing": _datagolf_opening_timing_census(payload),
     }
 
 
@@ -708,6 +741,22 @@ def _identity_quarantine_census(payload: dict) -> dict:
         "listed_outcomes": listed_outcomes,
         "section_present": isinstance(section, dict),
         "list_present": isinstance(listed, list),
+    }
+
+
+def _datagolf_opening_timing_census(payload: dict) -> dict:
+    """The DataGolf opening-timing rule's size, unvalidated (#5355).
+
+    One statement, ``datagolf_opening_timing_filter.excluded``. There is no
+    reader-facing list beside it in the main payload, so ``listed_outcomes`` is
+    ``None`` rather than a copy of the same figure — and its succession entry
+    says ``"listed": False`` so :func:`_judge_succession` does not ask for one.
+    """
+    section = payload.get("datagolf_opening_timing_filter")
+    return {
+        "excluded": section.get("excluded") if isinstance(section, dict) else None,
+        "listed_outcomes": None,
+        "section_present": isinstance(section, dict),
     }
 
 
@@ -968,7 +1017,9 @@ def _judge_succession(
             "the succession declares is absent from this artifact, so the "
             "predicate moved for some other reason"
         )
-    if listed != excluded:
+    # A rule that states its size once (``"listed": False``) has no second
+    # statement to disagree with; every other entry keeps the cross-check.
+    if entry.get("listed", True) and listed != excluded:
         return record, (
             f"the candidate states the narrowing twice and they disagree "
             f"(filter {excluded:,}, reader-facing list {listed!r})"
