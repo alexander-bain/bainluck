@@ -1072,3 +1072,57 @@ export function boutDateLabel(
     ...(renderedYear(d) !== renderedYear(now) ? { year: "numeric" as const } : {}),
   });
 }
+
+/** The words `_concept_headline` uses to count down to a card. */
+const CONCEPT_COUNTDOWN_WORDS = new Set(["Today", "Tomorrow", "This week"]);
+
+/** "2026-10-01" for an instant, as a calendar in `timeZone` (default: the reader's). */
+function calendarDayKey(at: Date, timeZone?: string): string {
+  return new Intl.DateTimeFormat("en-CA", {
+    timeZone,
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+  }).format(at);
+}
+
+/**
+ * A concept card's countdown pill, counted on the READER's calendar (#10161).
+ *
+ * The server's `headline` is `(start.date() - now.date()).days` on UTC dates, so
+ * from 5 PM Pacific every "Today / Tomorrow / This week" runs a day ahead in the
+ * Americas. On `/sports` at 9:05 PM PT on Thu 10/1 the Fahmi–El Sisy card read
+ * "Today · Fri, Oct 2" four cards above its own game card reading
+ * "Tomorrow 8:00 AM", and UFC 332 (Saturday) read "Tomorrow". The date line on
+ * the same card (`boutDateLabel`) and every game card already speak the reader's
+ * zone; this pill was the one clock that did not.
+ *
+ * Same instant as the server (`start_date` is the card's `opens_at` — #6747), same
+ * thresholds, only the calendar moves. Anything that is not one of the three
+ * countdown words ("Live", null) and any card without a parseable start keeps
+ * the server's value: with no instant there is nothing to re-count.
+ *
+ * `timeZone` exists for the guard: jest pins `TZ=UTC`, where the reader's zone
+ * and the server's are the same and the defect cannot be seen. Production passes
+ * nothing and gets the reader's own zone.
+ */
+export function conceptCountdownHeadline(
+  headline: string | null | undefined,
+  startDate: string | null | undefined,
+  now: Date = new Date(),
+  timeZone?: string,
+): string | null {
+  const served = headline ?? null;
+  if (!served || !CONCEPT_COUNTDOWN_WORDS.has(served) || !startDate) return served;
+  const start = new Date(startDate);
+  if (Number.isNaN(start.getTime())) return served;
+  const MS_PER_DAY = 24 * 60 * 60 * 1000;
+  const days = Math.round(
+    (Date.parse(calendarDayKey(start, timeZone)) - Date.parse(calendarDayKey(now, timeZone))) /
+      MS_PER_DAY,
+  );
+  if (days <= 0) return "Today";
+  if (days === 1) return "Tomorrow";
+  if (days <= 7) return "This week";
+  return null;
+}

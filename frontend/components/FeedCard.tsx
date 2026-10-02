@@ -17,7 +17,11 @@ import { headlineEchoesReason } from "@/lib/headlineEcho";
 import { renderedDuelPercents, renderedCardPercents, cardSumReason, renderedLeaderPercent, renderedPercent } from "@/lib/renderedPercent";
 import { cardSumExplanation } from "@/lib/cardSum";
 import { eventPath } from "@/lib/eventKey";
-import { conceptDomainEmoji, conceptHeadlineBout } from "@/lib/eventConceptDisplay";
+import {
+  conceptCountdownHeadline,
+  conceptDomainEmoji,
+  conceptHeadlineBout,
+} from "@/lib/eventConceptDisplay";
 import { leaderFirstSlice } from "@/lib/discover/leaderOrder";
 import { boardRowRanks, futuresBoardRemainderLabel, futuresDistributionBoard } from "@/lib/discover/futuresBoard";
 import { heroOutcome } from "@/lib/discover/heroOutcome";
@@ -1600,6 +1604,8 @@ function ConceptFeedCard({ item, data }: { item: FeedItem; data: FeedConceptData
       ? data.leader
       : null;
   const movementLabel = formatConceptMovement(leader?.movement_24h);
+  // #10161: the server counts "Today/Tomorrow" on UTC dates; the reader's calendar decides.
+  const countdown = conceptCountdownHeadline(item.headline, data.start_date);
   return (
     <Link
       href={eventPath(data.key)}
@@ -1638,9 +1644,12 @@ function ConceptFeedCard({ item, data }: { item: FeedItem; data: FeedConceptData
               </span>
             )}
             {/* WHAT-HIT suppresses the live/countdown headline — the result is the story. */}
-            {item.headline && !isLive && !whatHit && (
-              <span className="bg-accent-warning/15 text-accent-warning px-2 py-0.5 rounded text-[11px] font-semibold flex-shrink-0">
-                {item.headline}
+            {countdown && !isLive && !whatHit && (
+              <span
+                data-testid="concept-countdown-pill"
+                className="bg-accent-warning/15 text-accent-warning px-2 py-0.5 rounded text-[11px] font-semibold flex-shrink-0"
+              >
+                {countdown}
               </span>
             )}
             {/* UX-1052 item 1: the glyph follows the DOMAIN. It used to be a
