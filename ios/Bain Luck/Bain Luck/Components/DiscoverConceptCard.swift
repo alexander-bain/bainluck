@@ -75,8 +75,11 @@ struct NativeConceptDiscoverCard: View {
 
                         // The countdown/live headline is suppressed once settled —
                         // the result carries the card instead.
-                        if let headline, !headline.isEmpty, !isLive, !whatHit {
-                            badge(headline, background: .white.opacity(0.15))
+                        // #10161: the day word is re-counted on the reader's
+                        // calendar — see `conceptCountdownHeadline`.
+                        if let shown = conceptCountdownHeadline(headline, startDate: data.startDate, now: Date()),
+                           !shown.isEmpty, !isLive, !whatHit {
+                            badge(shown, background: .white.opacity(0.15))
                         }
 
                         Spacer(minLength: 0)
@@ -240,4 +243,39 @@ struct NativeConceptDiscoverCard: View {
         ) else { return }
         navigationPath.append(route)
     }
+}
+
+/// The concept card's countdown pill, counted on the READER's calendar (#10161).
+///
+/// The server words `headline` ("Today" / "Tomorrow" / "This week") from UTC
+/// dates, so from 5 PM Pacific a fight card said "Today" for a bout that is
+/// tomorrow for the reader — Fahmi–El Sisy, `start_date` 2026-10-02T15:00Z,
+/// read "Today" at 04:05Z while its own game card said "Tomorrow 8:00 AM".
+///
+/// Only those three words are re-counted, from `start_date` (the same instant
+/// the server counted from) with the server's thresholds: ≤0 days Today, 1
+/// Tomorrow, ≤7 This week, else no pill. Anything else — "Live", nil, a start
+/// that is missing or does not parse — is shown exactly as served. Mirrors
+/// web's `conceptCountdownHeadline` (`frontend/lib/eventConceptDisplay.ts`).
+///
+/// `now` and `calendar` are parameters so a test pins the reader's day and
+/// zone instead of reading the clock (gotcha #44).
+nonisolated func conceptCountdownHeadline(
+    _ served: String?,
+    startDate: String?,
+    now: Date,
+    calendar: Calendar = .current
+) -> String? {
+    guard let served, ["Today", "Tomorrow", "This week"].contains(served),
+          let start = parseFlexibleDate(startDate)
+    else { return served }
+    let days = calendar.dateComponents(
+        [.day],
+        from: calendar.startOfDay(for: now),
+        to: calendar.startOfDay(for: start)
+    ).day ?? 0
+    if days <= 0 { return "Today" }
+    if days == 1 { return "Tomorrow" }
+    if days <= 7 { return "This week" }
+    return nil
 }
