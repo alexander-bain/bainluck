@@ -136,3 +136,32 @@ def test_the_route_marks_a_shed_refusal_degraded_so_it_is_never_cached():
     assert src.count("_search_withheld_price_ids(") == 2
     assert src.count("_withheld_shed") >= 4
     assert 'degraded.append("price_refusal")' in src
+
+
+@pytest.mark.asyncio
+async def test_after_one_timeout_later_markets_fail_closed_without_a_query(monkeypatch):
+    """One timeout per request: the next market does not run into the spent deadline."""
+    calls = []
+
+    async def _boom(_db, market):
+        calls.append(market.id)
+        raise QueryCanceledError("timeout")
+
+    monkeypatch.setattr(events_module, "_withheld_price_outcome_ids", _boom)
+    db, shed = _DB(), []
+    first, second = _market(), _market()
+    second.id = 60099002
+    assert await _search_withheld_price_ids(db, first, shed) == {1, 2}
+    assert await _search_withheld_price_ids(db, second, shed) == {1, 2}
+    assert calls == [60099001]  # the second market never queried
+    assert shed == [60099001, 60099002]
+    assert db.log == ["begin_nested", "rollback"]  # no second savepoint
+
+
+@pytest.mark.asyncio
+async def test_an_empty_shed_list_still_runs_the_check(monkeypatch):
+    async def _two(_db, _market):
+        return {2}
+
+    monkeypatch.setattr(events_module, "_withheld_price_outcome_ids", _two)
+    assert await _search_withheld_price_ids(_DB(), _market(), []) == {2}

@@ -36692,7 +36692,23 @@ async def _search_withheld_price_ids(
     degraded and does not cache it: the next reader gets the full check.
     A session double with no ``begin_nested`` runs without the savepoint, which
     is what every caller here did before: a real ``AsyncSession`` always has one.
+    ONE TIMEOUT PER REQUEST: once ``shed`` holds a market, the deadline that
+    cancelled it is spent, and every later market's check would run into the
+    same cancellation one at a time (a 500 turned into a 20 s page). So a later
+    market fails closed at once, without a query, and joins ``shed`` too.
     """
+
+    def _fail_closed() -> set[int]:
+        if shed is not None:
+            shed.append(getattr(market, "id", None))
+        return {
+            o.id
+            for o in (getattr(market, "outcomes", None) or [])
+            if getattr(o, "resolution_source", None) is None
+        }
+
+    if shed:
+        return _fail_closed()
     savepoint = (
         await db.begin_nested() if hasattr(db, "begin_nested") else None
     )
@@ -36748,13 +36764,7 @@ async def _search_withheld_price_ids(
             "its ungraded prices and marking the answer degraded",
             getattr(market, "id", None),
         )
-        if shed is not None:
-            shed.append(getattr(market, "id", None))
-        return {
-            o.id
-            for o in (getattr(market, "outcomes", None) or [])
-            if getattr(o, "resolution_source", None) is None
-        }
+        return _fail_closed()
 
 
 def _search_owned_outcome_names(market: "FuturesMarket") -> tuple[str, ...]:
