@@ -131,6 +131,12 @@ struct NativeEventDiscoverCard: View {
     /// also `isSuspended`, so this only changes the WORDS that arm prints
     /// ("Paused", "No result reported"), never which arm draws: the bar and
     /// the live number stay suppressed for exactly the reason they are now.
+    /// #9208 — the suspended corner chip's word: the authority's stoppage
+    /// word when it gave one, else PAUSED.
+    private var suspendedCornerWord: String {
+        EventState.authorityStoppageLabel(event.espn?.period)?.uppercased() ?? "PAUSED"
+    }
+
     private var closedNoWinner: Bool {
         EventState.showsVenueClosedNoWinner(
             event.status, venueSettled: nil,
@@ -256,7 +262,9 @@ struct NativeEventDiscoverCard: View {
                 if isSuspended {
                     Text(closedNoWinner
                          ? EventState.venueClosedNoWinnerLabel
-                         : EventState.suspendedSummary(away: event.awayScore, home: event.homeScore))
+                         : EventState.suspendedSummary(
+                            away: event.awayScore, home: event.homeScore,
+                            authorityPeriod: event.espn?.period))
                         .font(.caption2.weight(.semibold))
                         .foregroundStyle(.secondary)
                         .lineLimit(2)
@@ -546,8 +554,9 @@ struct NativeEventDiscoverCard: View {
                 } else if isSuspended {
                     // The corner that says FINAL or LIVE has to say something
                     // here too — leaving it empty is how the state stayed
-                    // invisible (live/048).
-                    Text(closedNoWinner ? "ENDED" : "PAUSED")
+                    // invisible (live/048). #9208 — a game its authority
+                    // called off is not paused: it says POSTPONED / CANCELED.
+                    Text(closedNoWinner ? "ENDED" : suspendedCornerWord)
                         .font(.caption2.weight(.heavy))
                         .foregroundStyle(.white.opacity(0.78))
                         .padding(.horizontal, 8)
@@ -740,7 +749,9 @@ struct NativeEventDiscoverCard: View {
             homeScore: event.homeScore,
             awayScore: event.awayScore,
             // #4044 — the same reading this card's own `isSuspended` uses above.
-            commenceTime: event.commenceTime?.asDate
+            commenceTime: event.commenceTime?.asDate,
+            // #9208 — the stoppage word the card's own summary reads.
+            authorityPeriod: event.espn?.period
         )
     }
 

@@ -257,7 +257,9 @@ d("iOS reads one event-status vocabulary", () => {
     // written where it is defined: the same status covers a rain delay and a
     // source going dark, and only one of those is a stoppage anybody reported.
     expect(badge()).toMatch(/EventState\.isSuspendedAndStarted\(status, commenceTime: commenceTime\?\.asDate\)/);
-    expect(badge()).toMatch(/Text\(EventState\.suspendedLabel\)/);
+    // #9208 — through `suspendedLabel(authorityPeriod:)`, which returns the
+    // constant unless the authority said Postponed / Canceled.
+    expect(badge()).toMatch(/Text\(EventState\.suspendedLabel\(authorityPeriod: period\)\)/);
     expect(stripComments(badge())).not.toMatch(/Text\("Suspended"\)/);
   });
 
@@ -849,7 +851,7 @@ describe("#6381 — the hero stops denying a result the venue already gave us", 
     // Handing the flag to only one of them would fix 426 rows and leave 889.
     const code = read(DETAIL);
     expect(code).toMatch(
-      /StatusBadge\(\s*status: "suspended",\s*commenceTime: event\.commenceTime,\s*venueSettled: event\.venueSettled == true(,\s*venueClosedNoWinner: event\.venueClosedNoWinner == true)?\)/,
+      /StatusBadge\(\s*status: "suspended",\s*commenceTime: event\.commenceTime,(\s*period: event\.espn\?\.period,)?\s*venueSettled: event\.venueSettled == true(,\s*venueClosedNoWinner: event\.venueClosedNoWinner == true)?\)/,
     );
     // #8841 — the pregame arm also hands on `start_is_tbd`, AFTER the flag
     // this test is about; the served venue flag must still be passed verbatim.
@@ -982,7 +984,7 @@ describe("#5811 — the phone says a no-winner contest ended", () => {
     );
     const discover = read("Components/DiscoverEventCard.swift");
     expect(discover).toMatch(/EventState\.venueClosedNoWinnerLabel/);
-    expect(discover).toMatch(/closedNoWinner \? "ENDED" : "PAUSED"/);
+    expect(discover).toMatch(/closedNoWinner \? "ENDED" : suspendedCornerWord/);
   });
 
   it("no bucket reads the bare status any more", () => {
@@ -997,5 +999,69 @@ describe("#5811 — the phone says a no-winner contest ended", () => {
     }
     expect(bare).toEqual([]);
     expect(routed).toBe(11);
+  });
+});
+
+/**
+ * #9208 — a called-off game says "Canceled" / "Postponed" on the phone.
+ *
+ * Orioles @ Yankees (15319530, Sep 27) is `suspended` and serves
+ * `espn.period = "Canceled"` (search, event page) and `stoppage: "Canceled"`
+ * (team brief, no `espn` block). Web read it through `authorityStoppageLabel`
+ * (#8810, ux #10052); the phone printed the constant "No result reported".
+ * `BainLuckTests/SuspendedStoppageWord9208Tests.swift` proves the helper and the
+ * decode; these assertions pin the table to web's and prove every SwiftUI body
+ * that draws the suspended words hands the helper a period.
+ */
+describe("#9208 — the phone says the authority's stoppage word", () => {
+  const read = (rel: string) => stripComments(readFileSync(join(IOS_ROOT, rel), "utf8"));
+  const pairs = (src: string, re: RegExp) =>
+    Array.from(src.matchAll(re), (m) => `${m[1]}=${m[2]}`).sort();
+
+  it("the Swift allowlist is web's table, entry for entry", () => {
+    const webSrc = readFileSync(join(__dirname, "../../lib/gameTimeLabel.ts"), "utf8");
+    const webTable = /const AUTHORITY_STOPPAGE_WORDS[^{]*\{([^}]*)\}/.exec(webSrc);
+    const swiftTable = /static let authorityStoppageWords:[^=]*=\s*\[([^\]]*)\]/.exec(
+      stripComments(readFileSync(CANONICAL, "utf8")),
+    );
+    expect(webTable).not.toBeNull();
+    expect(swiftTable).not.toBeNull();
+    const web = pairs(webTable![1], /(\w+):\s*"([^"]+)"/g);
+    const swift = pairs(swiftTable![1], /"(\w+)":\s*"([^"]+)"/g);
+    expect(web.length).toBeGreaterThan(0);
+    expect(swift).toEqual(web);
+  });
+
+  it("every badge caller that holds a period hands it over", () => {
+    // Search + team rows (a raw `event.status`), the hero's suspended arm and
+    // the feed card. The typeahead suggestion is the one badge left without:
+    // `/api/events/typeahead` serves no period or stoppage (handed to live).
+    expect(read("Views/SearchView.swift")).toMatch(/period: event\.authorityPeriod,/);
+    expect(read("Views/TeamDetailView.swift")).toMatch(/period: event\.authorityPeriod,/);
+    expect(read("Views/EventDetailView.swift")).toMatch(
+      /status: "suspended",\s*commenceTime: event\.commenceTime,\s*period: event\.espn\?\.period,/,
+    );
+    expect(read("Components/EventCardView.swift")).toMatch(/period: event\.espn\?\.period,/);
+  });
+
+  it("the cards and the share image read the same helper", () => {
+    const discover = read("Components/DiscoverEventCard.swift");
+    expect(discover).toMatch(/authorityPeriod: event\.espn\?\.period\)\)/); // summary
+    expect(discover).toMatch(
+      /EventState\.authorityStoppageLabel\(event\.espn\?\.period\)\?\.uppercased\(\) \?\? "PAUSED"/,
+    );
+    expect(discover).toMatch(/authorityPeriod: event\.espn\?\.period\n\s*\)/); // share call
+    expect(read("Components/EventCardView.swift")).toMatch(
+      /date: formattedDateString,\s*authorityPeriod: event\.espn\?\.period\)/,
+    );
+    const share = read("Utilities/ShareCardRenderer.swift");
+    expect(share).toMatch(/EventState\.suspendedLabel\(authorityPeriod: authorityPeriod\)\.uppercased\(\)/);
+    expect(stripComments(share)).not.toMatch(/EventState\.suspendedLabel\.uppercased\(\)/);
+  });
+
+  it("the team row reads the brief's `stoppage` when it has no espn block", () => {
+    expect(read("Models/SearchModels.swift")).toMatch(
+      /var authorityPeriod: String\? \{ espn\?\.period \?\? stoppage \}/,
+    );
   });
 });

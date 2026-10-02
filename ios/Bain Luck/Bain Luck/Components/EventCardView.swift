@@ -269,7 +269,8 @@ struct EventCardView: View {
                 // Finished: Show date only "Mar 5"
                 formattedDate
             } else if isSuspended, let detail = EventState.suspendedCardDetail(
-                away: event.awayScore, home: event.homeScore, date: formattedDateString) {
+                away: event.awayScore, home: event.homeScore, date: formattedDateString,
+                authorityPeriod: event.espn?.period) {
                 // live/048: no start time, no Final. The words themselves now sit
                 // in the `StatusBadge` six points to the left — this slot carried
                 // a verbatim second copy of them on 1,786 of 1,788 suspended rows

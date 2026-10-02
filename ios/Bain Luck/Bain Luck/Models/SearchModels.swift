@@ -188,6 +188,16 @@ nonisolated struct SearchEvent: Decodable, Identifiable, Sendable {
     /// payload states the answer outright.
     let isHome: Bool?
     let opponent: String?
+    /// #9208 — the team brief's `stoppage` ("Canceled", "Postponed"), the
+    /// server's own run of the authority-stoppage allowlist (ux #10052). The
+    /// team door serves no `espn` block, so this is the only place that row
+    /// carries the word. Absent on search rows, which carry `espn.period`.
+    let stoppage: String?
+
+    /// The authority's word for a suspended row, whichever door served it:
+    /// `espn.period` (search, feed) or the team brief's `stoppage`. Read by the
+    /// badge through ``EventState/suspendedLabel(authorityPeriod:)``.
+    var authorityPeriod: String? { espn?.period ?? stoppage }
 }
 
 /// Futures market result returned by search endpoints.

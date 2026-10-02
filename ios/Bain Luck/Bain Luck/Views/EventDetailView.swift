@@ -1631,6 +1631,8 @@ struct EventDetailView: View {
             StatusBadge(
                 status: "suspended",
                 commenceTime: event.commenceTime,
+                // #9208 — "Canceled"/"Postponed" when ESPN said so.
+                period: event.espn?.period,
                 venueSettled: event.venueSettled == true,
                 // #5811 — both arms again, for the same reason as the flag
                 // above: each one claims the contest is unplayed.
