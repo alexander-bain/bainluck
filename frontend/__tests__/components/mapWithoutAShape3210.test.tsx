@@ -247,7 +247,9 @@ describe("#3210 · the card Alex photographed", () => {
     // fixture proves it is the card he photographed and not one like it.
     const text = visibleText(render(PAUL_ALCARAZ));
     expect(text).toContain("Projected 37");
-    expect(text).toContain("33 39 44+");
+    // #10171: the mid tick in Alex's shot read `39` at the centre of 33…44,
+    // which is 38.5; it now says the value it sits on.
+    expect(text).toContain("33 38.5 44+");
   });
 
   it("prints the ladder once, not twice", () => {

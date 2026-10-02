@@ -121,7 +121,7 @@ describe("#5013 a half card whose book has stopped", () => {
     expect(text).toContain("2nd half points map");
     // 24.5 is the crossing on both ladders, so both cards say 25 — and
     // 25 + 25 is the game's own projected 48 to within a rounding step.
-    expect(text).toContain("O/U 25");
+    expect(text).toContain("O/U 24.5"); // #10171: the line, not rounded
     expect(text).toContain("Projected 48");
   });
 
@@ -136,7 +136,7 @@ describe("#5013 a half card whose book has stopped", () => {
     const text = renderMaps(DEAD_2H);
 
     expect(text).toContain("1st half points map");
-    expect(text).toContain("O/U 25");
+    expect(text).toContain("O/U 24.5"); // #10171: the line, not rounded
     expect(text).toContain("Projected 48");
   });
 });

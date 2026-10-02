@@ -307,7 +307,8 @@ describe("#5414 — the totals rail on the same card, fixed in the same pass", (
     // leaving the other is worse than the bug, so this rail is here too.
     const text = renderZverev({ openingOverUnder: 38.5, overUnder: 44 });
     expect(text).toContain("Games map");
-    expect(text).toMatch(/Pre-game\s+39/);
+    // #10171: the 38.5 line as drawn, not rounded to 39.
+    expect(text).toMatch(/Pre-game\s+38\.5/);
     expect(text).not.toMatch(/Pre-game\s+44/);
   });
 
@@ -325,7 +326,7 @@ describe("#5414 — the totals rail on the same card, fixed in the same pass", (
 
   it("the totals marker returns the moment there IS an opening total", () => {
     const text = renderZverev({ overUnder: 44, openingOverUnder: 38.5 });
-    expect(text).toMatch(/Pre-game\s+39/);
+    expect(text).toMatch(/Pre-game\s+38\.5/);
   });
 
   it("the opening total is read by presence, so `??` cannot decay into `||`", () => {
