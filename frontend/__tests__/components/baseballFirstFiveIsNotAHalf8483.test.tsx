@@ -129,7 +129,7 @@ describe("#8483 the first-five-innings card on a baseball page", () => {
     const text = renderBraves(rows((t) => `Cincinnati Reds vs. Atlanta Braves: 1st 5 Innings O/U ${t}`));
 
     expect(text).toContain("First 5 innings runs map");
-    expect(text).toContain("O/U 5");
+    expect(text).toContain("O/U 4.5"); // #10171: the line, not rounded
     expect(text).not.toMatch(/1st half|2nd half/i);
   });
 

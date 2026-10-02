@@ -6,6 +6,18 @@ export function posOnRail(value: number, min: number, max: number): number {
 }
 
 /**
+ * #10171: a number printed ON the rail — a quoted line, an axis tick — says the
+ * value it is drawn at. Totals lines are almost always half-points, and
+ * `Math.round` printed the 7.5 line as `PRE-GAME 8` beside `FINAL 8 runs`
+ * (`/events/15322407`, PHI@ATL 6–2), which reads as a game that landed on its
+ * line when it went over. Whole values stay whole; anything else keeps one
+ * decimal, as the ladder's own `Over 7.5` does.
+ */
+export function railNumber(value: number): string {
+  return value % 1 === 0 ? String(value) : value.toFixed(1);
+}
+
+/**
  * Float slack on the tolerance comparison, matching `otherMarketGroups`:
  * `0.52 - 0.5` is `0.020000000000000018` in IEEE 754, so a bare `>` would
  * withhold a pair sitting EXACTLY at tolerance.

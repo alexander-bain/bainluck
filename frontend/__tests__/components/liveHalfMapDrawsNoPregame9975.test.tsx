@@ -109,7 +109,7 @@ describe("#9975 a live First 5 runs map draws no Pre-game tile", () => {
     const text = visibleText(html);
 
     expect(text).toContain("First 5 innings runs map");
-    expect(text).toContain("O/U 3");
+    expect(text).toContain("O/U 2.5"); // #10171: the line, not rounded
     expect(tileCount(html, "pre")).toBe(0);
     expect(text).not.toMatch(/pre-game/i);
   });

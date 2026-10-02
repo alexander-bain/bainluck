@@ -37,6 +37,7 @@ import {
   probabilitiesQuoteASettledLine,
   TOTAL_MAP_HALVES,
   liveProjectedTotal,
+  railNumber,
 } from "@/lib/marketMapUtils";
 import { formatProbability } from "@/lib/api";
 import { isNonDistinctiveTrailingWord, teamShortName, teamShortNames } from "@/lib/teamShortName";
@@ -1161,7 +1162,9 @@ export default function MarketMapSection({
         type: noForecast ? "pre" : "proj",
         // #5206: past tense for a match nobody reported — see `noForecast`.
         label: noForecast ? "Pre-game" : "Projection",
-        displayValue: String(Math.round(preVal)),
+        // #10171: a `Pre-game` tile quotes the line as drawn; a projection
+        // keeps its whole-number rounding.
+        displayValue: noForecast ? railNumber(preVal) : String(Math.round(preVal)),
         // #3360: the ring carries its own number. `hideTile: true` means this
         // marker draws NO tile underneath, so the dot was the only mark on the
         // rail and it was empty — a 26px ring with nothing in it, which reads
@@ -1195,7 +1198,7 @@ export default function MarketMapSection({
           value: ouVal,
           type: "pre",
           label: "Pre-game",
-          displayValue: String(Math.round(ouVal)),
+          displayValue: railNumber(ouVal),
         });
       }
       if (projected != null) {
@@ -1227,7 +1230,7 @@ export default function MarketMapSection({
           value: ouVal,
           type: "pre",
           label: "Pre-game",
-          displayValue: String(Math.round(ouVal)),
+          displayValue: railNumber(ouVal),
         });
       }
       if (scored != null) {
@@ -1259,7 +1262,7 @@ export default function MarketMapSection({
       outcome: gradeRung(t.threshold),
     }));
 
-    const midLabel = String(Math.round((rangeMin + rangeMax) / 2));
+    const midLabel = railNumber((rangeMin + rangeMax) / 2);
 
     return {
       // L2-131 Item 4: settled totals grade expected vs final, same as margins.
@@ -1677,7 +1680,7 @@ export default function MarketMapSection({
         outcome: gradeRung(t.threshold),
       }));
 
-      const midLabel = String(Math.round((rangeMin + rangeMax) / 2));
+      const midLabel = railNumber((rangeMin + rangeMax) / 2);
       const label = halfLabel(halfKey, vocab);
 
       const halfTotalMarkers: MarketMapMarker[] = [];
@@ -1720,7 +1723,7 @@ export default function MarketMapSection({
           value: ouLine.threshold,
           type: "pre",
           label: "Pre-game",
-          displayValue: String(Math.round(ouLine.threshold)),
+          displayValue: railNumber(ouLine.threshold),
         });
       }
 
@@ -1752,9 +1755,9 @@ export default function MarketMapSection({
       // graded ladder behind a tap. Live keeps `quotesALine`, already true here.
       const bandDrawsShape =
         quotesAPreGameLine && densityDrawsShape(effectiveDensity, TOTAL_ACCENT);
-      const effectiveMid = String(Math.round((effectiveMin + effectiveMax) / 2));
+      const effectiveMid = railNumber((effectiveMin + effectiveMax) / 2);
 
-      const headlineVal = isDone ? "" : `O/U ${Math.round(ouLine.threshold)}`;
+      const headlineVal = isDone ? "" : `O/U ${railNumber(ouLine.threshold)}`;
 
       maps.push({
         key: `total-${halfKey}`,

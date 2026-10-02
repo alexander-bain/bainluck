@@ -123,6 +123,7 @@ describe("#9064 control: an unreported match keeps no forecast even with a hero 
     );
     // the past-tense mark is the quoted line, never the hero's forecast
     expect(card).not.toContain("Projected");
-    expect(card).toContain("Pre-game 45");
+    // #10171: as drawn — the 44.8 line, not rounded to 45.
+    expect(card).toContain("Pre-game 44.8");
   });
 });
