@@ -415,7 +415,7 @@ class TestTheMixedParentGuardSelectsTheRightRows:
     found, and the reason a token was withheld.
     """
 
-    async def _run(self, pg_session):
+    async def _run(self, pg_session, open_event_ids=()):
         settled = ["0xsettled"]
         extended = ["0xsettled", "0xsettled_yes", "0xsettled_no"]
         open_raw = ["0xtrading"]
@@ -429,6 +429,7 @@ class TestTheMixedParentGuardSelectsTheRightRows:
                 "terminal_raw": settled,
                 "open_cids": open_extended,
                 "open_raw": open_raw,
+                "open_event_ids": list(open_event_ids),
                 "proof_stamp": '{"proof": "winner"}',
                 "reason_stamp": '{"reason": "closed_without_terminal_price"}',
             },
@@ -469,6 +470,149 @@ class TestTheMixedParentGuardSelectsTheRightRows:
             "the settled child of a mixed event was withheld, so the guard is "
             f"over-refusing and the ship does nothing. statuses={status}"
         )
+
+
+_PARTIAL_SCHEMA = "poly_partial_field_gate_10182"
+
+
+@pytest.fixture
+async def partial_field_rows(pg_session):
+    """#10182's specimen, `/futures/63490287`, reduced to two legs.
+
+    A negRisk PARENT keyed by the Gamma event id, holding only legs the venue
+    closed — we stored 16 of World Series Exact Matchup's 37, all eliminated —
+    while the event itself trades on. The still-open legs are NOT in our table,
+    so the CERT-751 children guard (which reads our outcomes) has nothing to
+    see. Beside it, a decomposed CHILD of the same event keyed by its condition
+    id, which must still resolve alone.
+    """
+    await pg_session.execute(text(f"DROP SCHEMA IF EXISTS {_PARTIAL_SCHEMA} CASCADE"))
+    await pg_session.execute(text(f"CREATE SCHEMA {_PARTIAL_SCHEMA}"))
+    await pg_session.execute(text(f"SET search_path TO {_PARTIAL_SCHEMA}, public"))
+    await pg_session.execute(
+        text(
+            """
+            CREATE TABLE futures_markets (
+                id serial PRIMARY KEY,
+                source varchar(50) NOT NULL,
+                external_id varchar(200) NOT NULL,
+                name varchar(300) NOT NULL,
+                category varchar(50) NOT NULL,
+                mutually_exclusive boolean NOT NULL,
+                status varchar(20) NOT NULL,
+                settled_at timestamptz,
+                market_metadata jsonb
+            )
+            """
+        )
+    )
+    await pg_session.execute(
+        text(
+            """
+            CREATE TABLE futures_outcomes (
+                id serial PRIMARY KEY,
+                market_id integer NOT NULL,
+                external_id varchar(200) NOT NULL,
+                name varchar(300) NOT NULL
+            )
+            """
+        )
+    )
+    await pg_session.execute(
+        text(
+            """
+            INSERT INTO futures_markets
+                (source, external_id, name, category, mutually_exclusive,
+                 status, market_metadata)
+            VALUES
+                ('polymarket', '1110298', 'World Series Exact Matchup',
+                 'championship', true, 'open', '{}'::jsonb),
+                ('polymarket', '0xyankscubs', 'Yankees vs Cubs', 'prop',
+                 true, 'open', '{}'::jsonb)
+            """
+        )
+    )
+    await pg_session.execute(
+        text(
+            """
+            INSERT INTO futures_outcomes (market_id, external_id, name)
+            VALUES
+                ((SELECT id FROM futures_markets WHERE external_id = '1110298'),
+                 '0xyankscubs', 'Yankees vs Cubs'),
+                ((SELECT id FROM futures_markets WHERE external_id = '1110298'),
+                 '0xsoxbrewers', 'Red Sox vs Brewers'),
+                ((SELECT id FROM futures_markets WHERE external_id = '0xyankscubs'),
+                 '0xyankscubs', 'Yankees vs Cubs')
+            """
+        )
+    )
+    await pg_session.commit()
+    yield
+    await pg_session.execute(text("SET search_path TO public"))
+    await pg_session.execute(text(f"DROP SCHEMA IF EXISTS {_PARTIAL_SCHEMA} CASCADE"))
+    await pg_session.commit()
+
+
+class TestAPartialFieldOfAnOpenEventIsNotResolved:
+    """#10182, executed. The venue's open legs never reached our table, so the
+    only witness that the event is live is the event id the sweep just read."""
+
+    async def _run(self, pg_session, open_event_ids):
+        settled = ["0xyankscubs", "0xsoxbrewers"]
+        extended = [c for s in settled for c in (s, f"{s}_yes", f"{s}_no")]
+        # The venue's open legs: condition ids we never stored.
+        open_raw = ["0xyanksdodgers"]
+        open_extended = ["0xyanksdodgers", "0xyanksdodgers_yes", "0xyanksdodgers_no"]
+        await pg_session.execute(
+            text(_resolve_sql()),
+            {
+                "cids": extended,
+                "raw_cids": settled,
+                "terminal_cids": extended,
+                "terminal_raw": settled,
+                "open_cids": open_extended,
+                "open_raw": open_raw,
+                "open_event_ids": list(open_event_ids),
+                "proof_stamp": '{"proof": "winner"}',
+                "reason_stamp": '{"reason": "closed_without_terminal_price"}',
+            },
+        )
+        rows = (
+            await pg_session.execute(
+                text("SELECT external_id, status FROM futures_markets")
+            )
+        ).fetchall()
+        return {r[0]: r[1] for r in rows}
+
+    async def test_the_parent_of_an_open_event_stays_open(
+        self, pg_session, partial_field_rows
+    ):
+        status = await self._run(pg_session, ["1110298"])
+
+        assert status["1110298"] == "open", (
+            "a World Series board the venue still trades was marked settled "
+            "because every leg WE hold is closed; "
+            f"statuses={status}"
+        )
+
+    async def test_the_settled_child_of_that_event_still_resolves(
+        self, pg_session, partial_field_rows
+    ):
+        status = await self._run(pg_session, ["1110298"])
+
+        assert status["0xyankscubs"] == "resolved", (
+            "the event-level guard over-reached onto a sub-market keyed by its "
+            f"own condition id; statuses={status}"
+        )
+
+    async def test_control_without_the_event_witness_the_parent_resolves(
+        self, pg_session, partial_field_rows
+    ):
+        """The control: the children guard alone cannot hold this row, so the
+        new clause — not the old one — is what keeps it open above."""
+        status = await self._run(pg_session, [])
+
+        assert status["1110298"] == "resolved", status
 
 
 # --- #7767: the settling UPDATEs, EXECUTED -----------------------------------

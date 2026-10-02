@@ -583,6 +583,45 @@ class TestItResolvesOnlyWhatTheVenueClosed:
 
         assert stats["open_legs_seen"] == 1, stats
 
+    async def test_a_partial_field_of_an_open_event_is_withheld(
+        self, monkeypatch
+    ):
+        """#10182. `/futures/63490287` holds 16 of World Series Exact Matchup's
+        37 legs, all of them closed; the 17 the venue still trades were never
+        stored, so the children guard (which reads OUR outcomes) is blind and
+        the board read "This market has been settled · all Lost". The event id
+        is the witness, and it must reach BOTH the write and the held count.
+        """
+        h = _Harness([MIXED_EVENT]).install(monkeypatch)
+
+        await poly_mod._sync_polymarket_resolved_status()
+
+        resolve = [
+            (s, p) for s, p in h.statements
+            if "UPDATE futures_markets" in s and "status = 'resolved'" in s
+        ]
+        assert resolve, "nothing was resolved at all"
+        sql, params = resolve[0]
+        assert params.get("open_event_ids") == ["92611"], (
+            "an event the venue still trades did not reach the resolve guard "
+            f"as a witness; params={params}"
+        )
+        assert "NOT (external_id = ANY(:open_event_ids))" in sql, sql
+
+    async def test_a_closed_event_with_a_lingering_open_leg_is_no_witness(
+        self, monkeypatch
+    ):
+        """Control: an event the venue itself closed still resolves its
+        parent even if a placeholder leg ("Other") never flipped `closed`.
+        The witness is "event open AND a leg open", never a leg alone."""
+        closed_event = {**MIXED_EVENT, "id": "92612", "closed": True}
+        h = _Harness([closed_event]).install(monkeypatch)
+
+        await poly_mod._sync_polymarket_resolved_status()
+
+        assert h.resolve_params, "nothing was resolved at all"
+        assert h.resolve_params[0]["open_event_ids"] == [], h.resolve_params[0]
+
     async def test_the_withheld_parents_are_counted_not_inferred(
         self, monkeypatch
     ):

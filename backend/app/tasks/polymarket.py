@@ -6714,11 +6714,22 @@ async def _sync_polymarket_resolved_status():
             # is a one-way write, so the guard fails closed: a condition id seen
             # open anywhere in this batch withholds the market that carries it.
             open_cids: list[str] = []
+            # #10182. The guard above reads "its legs" as the outcomes WE store,
+            # so a parent holding only the closed slice of a partial negRisk
+            # field (16 of World Series Exact Matchup's 37, all eliminated) is
+            # blind to the 17 the venue still trades and resolved as settled.
+            # A parent keyed by the event id itself withholds while the venue
+            # says the event is open AND still lists an open leg. Event-level
+            # on purpose for the parent only: a sub-market is keyed by its
+            # condition id and still resolves alone (#2637's correct half).
+            open_event_ids: list[str] = []
             for raw in raw_events:
                 legs = settled_legs(raw)
                 if legs is None:
                     continue
                 open_cids.extend(legs.open_condition_ids)
+                if legs.open_condition_ids and not legs.event_closed:
+                    open_event_ids.append(legs.event_id)
                 if not legs.settled_condition_ids:
                     stats["events_fully_open"] += 1
                     continue
@@ -6831,6 +6842,8 @@ async def _sync_polymarket_resolved_status():
                                     AND fo_open.external_id = ANY(:open_cids)
                               )
                               AND NOT (external_id = ANY(:open_raw))
+                              -- #10182: the venue's open legs we never stored.
+                              AND NOT (external_id = ANY(:open_event_ids))
                         """),
                         {
                             "cids": extended_cids,
@@ -6839,6 +6852,7 @@ async def _sync_polymarket_resolved_status():
                             "terminal_raw": terminal_cids,
                             "open_cids": _open_extended,
                             "open_raw": open_cids,
+                            "open_event_ids": open_event_ids,
                             "proof_stamp": _proof_stamp,
                             "reason_stamp": _reason_stamp,
                         },
@@ -6874,6 +6888,7 @@ async def _sync_polymarket_resolved_status():
                                         AND fo_open.external_id = ANY(:open_cids)
                                   )
                                   OR external_id = ANY(:open_raw)
+                                  OR external_id = ANY(:open_event_ids)
                               )
                         """),
                         {
@@ -6881,6 +6896,7 @@ async def _sync_polymarket_resolved_status():
                             "raw_cids": settled_cids,
                             "open_cids": _open_extended,
                             "open_raw": open_cids,
+                            "open_event_ids": open_event_ids,
                         },
                     )
                     stats["markets_held_mixed_children"] += held.scalar() or 0
