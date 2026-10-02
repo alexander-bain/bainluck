@@ -18,6 +18,18 @@ from app.utils.start_placeholder import (
 )
 
 
+#: ``event_tags`` minus every string element starting with ``:prefix`` (length
+#: ``:plen``), as the database holds it at write time.
+_TAGS_WITHOUT_PREFIX_SQL = (
+    "COALESCE(("
+    "  SELECT jsonb_agg(t) FROM jsonb_array_elements("
+    "    COALESCE(event_tags, '[]'::jsonb)) AS t"
+    "  WHERE NOT (jsonb_typeof(t) = 'string'"
+    "             AND left(t #>> '{}', :plen) = :prefix)"
+    "), '[]'::jsonb)"
+)
+
+
 async def write_start_placeholder_tags(
     session,
     event_id: int,
@@ -38,13 +50,8 @@ async def write_start_placeholder_tags(
     """
     await session.execute(
         text(
-            "UPDATE events SET event_tags = COALESCE(("
-            "  SELECT jsonb_agg(t) FROM jsonb_array_elements("
-            "    COALESCE(event_tags, '[]'::jsonb)) AS t"
-            "  WHERE NOT (jsonb_typeof(t) = 'string'"
-            "             AND left(t #>> '{}', :plen) = :prefix)"
-            "), '[]'::jsonb) || CAST(:add AS jsonb) "
-            "WHERE id = :eid"
+            "UPDATE events SET event_tags = " + _TAGS_WITHOUT_PREFIX_SQL
+            + " || CAST(:add AS jsonb) WHERE id = :eid"
         ),
         {
             "plen": len(prefix),
@@ -84,5 +91,35 @@ async def write_announced_start(session, event_id: int, placeholder, announced) 
             "AND status = 'scheduled'"
         ),
         {"announced": announced, "placeholder": placeholder, "eid": event_id},
+    )
+    return (getattr(result, "rowcount", 0) or 0) == 1
+
+
+async def confirm_announced_placeholder(
+    session, event_id: int, instant, *, take_source: bool
+) -> bool:
+    """Retire StatPal's mark on a row whose stamp ESPN announced to the minute (#8841).
+
+    Compare-and-write: lands only while the row is still scheduled at
+    ``instant``, so a rail that moved it between the read and this write keeps
+    its answer. ``take_source`` stamps ``commence_time_source = 'espn'`` (where
+    the registry ranking lets ESPN), which is also what stops StatPal's schedule
+    pass writing the mark back. Returns whether the row was written.
+    """
+    result = await session.execute(
+        text(
+            "UPDATE events SET event_tags = " + _TAGS_WITHOUT_PREFIX_SQL + ", "
+            "commence_time_source = CASE WHEN :take THEN 'espn' "
+            "ELSE commence_time_source END "
+            "WHERE id = :eid AND commence_time = :instant "
+            "AND status = 'scheduled'"
+        ),
+        {
+            "plen": len(START_PLACEHOLDER_TAG_PREFIX),
+            "prefix": START_PLACEHOLDER_TAG_PREFIX,
+            "take": bool(take_source),
+            "instant": instant,
+            "eid": event_id,
+        },
     )
     return (getattr(result, "rowcount", 0) or 0) == 1
