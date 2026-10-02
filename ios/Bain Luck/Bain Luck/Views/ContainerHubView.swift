@@ -62,7 +62,7 @@ struct ContainerHubView: View {
                     .id("container:\(child.slug)")
                 }
                 // Standalone cards retain published section order. Questions
-                // linked to a rendered event appear once, in that event below.
+                // linked to a rendered event are reached through that game's page.
                 ForEach(presentation.displaySections) { section in
                     Section {
                         ForEach(section.members) { member in
@@ -96,21 +96,25 @@ struct ContainerHubView: View {
                 }
                 .buttonStyle(.plain)
                 .simultaneousGesture(TapGesture().onEnded { vm.opened(member) })
-                let related = presentation.relatedQuestions(for: member)
-                if !related.isEmpty {
-                    DisclosureGroup("Related questions (\(related.count))") {
-                        VStack(alignment: .leading, spacing: 8) {
-                            ForEach(related) { question in
-                                if case .question(let feed, let search) = question.card {
-                                    questionCard(question, feed: feed, search: search)
-                                        .id(question.id)
-                                }
-                            }
+                // #10146: the game page is the fuller view of its questions; the hub
+                // no longer expands hundreds of contracts inline under each card.
+                if let route = presentation.moreOnGameRoute(for: member) {
+                    NavigationLink(value: route) {
+                        HStack {
+                            Text("More on this game")
+                            Spacer()
+                            Image(systemName: "chevron.right").font(.caption.weight(.semibold))
                         }
-                        .scrollTargetLayout()
+                        .font(.subheadline.weight(.semibold))
+                        .foregroundStyle(DS.textSecondary)
+                        .padding(.vertical, 10)
+                        .padding(.horizontal, 12)
+                        .background(DS.surface, in: RoundedRectangle(cornerRadius: 8))
+                        .contentShape(Rectangle())
                     }
-                    .font(.subheadline)
-                    .tint(DS.textSecondary)
+                    .buttonStyle(.plain)
+                    .simultaneousGesture(TapGesture().onEnded { vm.opened(member) })
+                    .accessibilityIdentifier("hub.moreOnGame.\(member.memberId)")
                 }
             }
             .padding(14)
@@ -123,8 +127,8 @@ struct ContainerHubView: View {
         }
     }
 
-    /// Related and standalone questions share the familiar hydrated card and
-    /// ordinary destination; moving one never turns it into an opaque text link.
+    /// Standalone questions keep the familiar hydrated card and ordinary
+    /// destination; never an opaque text link.
     private func questionCard(_ member: ContainerHubMember, feed: FeedFuturesData, search: SearchFuturesMarket) -> some View {
         NavigationLink(value: Route.futuresDetail(id: member.memberId)) {
             VStack(alignment: .leading, spacing: 8) {
