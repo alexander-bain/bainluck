@@ -15250,6 +15250,23 @@ async def typeahead_search(
         _ta_headline_ids.discard(None)
         _ta_mark("headline_contenders")
 
+    # #10165: the search page's #8375/#8664 container withholding, which never
+    # reached this loop. Production 2026-10-02 04:45Z, `yankees` at 390px: the
+    # dropdown's sixth row read "New York Yankees vs. Tampa Bay Rays — O/U 6.5
+    # 54% · New York Yankees 46%" — 63612402, the Polymarket EVENT row for ALDS
+    # game 1, whose nine "outcomes" are the lead legs of its own nine sub-markets
+    # (a runs total, a moneyline, NRFI, four spreads), each already its own row
+    # on `polymarket:1113712`. `/search?q=yankees` withheld it the same minute.
+    # Tapping it opened /futures/63612402 as a ranked field of unrelated
+    # questions. Same helper, same fail-open: a spent deadline or a timed-out
+    # read returns the empty set and the dropdown ships as before. Asked over
+    # the whole ranked pool (≤ `_TYPEAHEAD_FUTURES_POOL` + contenders) because
+    # the loop below skips rows, so which five it keeps is not known up front.
+    _ta_container_ids = await _search_container_parent_ids(
+        db, ta_futures_ranked, _ta_deadline
+    )
+    _ta_mark("futures_containers")
+
     futures_pool = []
     seen_futures_keys: set[str] = set()
     # #9404: the search page's per-row repeat decision, bookkeeping included.
@@ -15301,6 +15318,10 @@ async def typeahead_search(
         # so its row is a stale claim, not an honest title. Asked before the
         # dedup key so a live row sharing the key can take it.
         if _search_market_is_past_and_frozen(market):
+            continue
+        # #10165: before the dedup key, for #8852's reason — the container must
+        # not claim a key a real row would otherwise take.
+        if market.id in _ta_container_ids:
             continue
         # #9404: the SAME per-row decision the search page makes, not the tiered
         # key alone. Production 2026-09-28 16:05Z, `world series` at 390px: the
