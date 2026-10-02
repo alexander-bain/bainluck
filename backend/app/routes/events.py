@@ -191,6 +191,7 @@ from app.utils.search_headline_contender import (
     MIN_CONTENDER_VOLUME,
     contender_patterns,
     contender_word_pattern,
+    is_traded_contender_market,
     on_page_contender_candidates,
     promote_headline_contenders,
     reserve_headline_slot,
@@ -4042,6 +4043,43 @@ def _interior_outcome_hits_last(markets: list, low: list[tuple[str, str]]) -> li
     ]
 
 
+def _traded_contenders_before_thin_names(
+    ordered: list,
+    expanded: list[tuple[str, str | None]],
+) -> list:
+    """#10230: each traded contender market moves to just ahead of the first thin name match.
+
+    "Thin" is volume below `MIN_CONTENDER_VOLUME`, the floor the contender itself
+    must clear, so one bar is applied to both sides: a market people trade where
+    the reader's words are a real option beats a market that only carries the
+    words in its name and that nobody trades. Only those two classes swap. Traded
+    name matches keep every slot they had, and every other pair keeps the order
+    it came in with, #8726's decided-board partition included. With no contender,
+    or no thin name match ahead of one, the list comes back unchanged.
+    """
+    contenders = [
+        m for m in ordered
+        if not _query_name_match(m, expanded) and is_traded_contender_market(m, expanded)
+    ]
+    if not contenders:
+        return ordered
+    thin_at = next(
+        (
+            i for i, m in enumerate(ordered)
+            if _query_name_match(m, expanded) and _market_volume(m) < MIN_CONTENDER_VOLUME
+        ),
+        None,
+    )
+    if thin_at is None:
+        return ordered
+    moving = [m for m in contenders if ordered.index(m) > thin_at]
+    if not moving:
+        return ordered
+    moved = {id(m) for m in moving}
+    rest = [m for m in ordered if id(m) not in moved]
+    return rest[:thin_at] + moving + rest[thin_at:]
+
+
 def _rerank_search_futures(
     markets: list,
     expanded: list[tuple[str, str | None]],
@@ -4094,9 +4132,17 @@ def _rerank_search_futures(
     # #8689 r2: "US job openings" is not a name match for `us open` in any sense
     # a reader means, so it yields to the rows that hold the query tightly.
     name_matches = _scattered_terms_last(name_matches, low)
+    # #10230: a name match nobody trades yields to a traded market where the typed
+    # words are a real contender. Production 2026-10-02, `judge`: nine county-judge
+    # races (volume NULL or $4k) and an $8k impeachment question filled the
+    # dropdown, and "MLB The Show 27: Cover Athlete" (Aaron Judge 8.5%, $21.8k)
+    # sat behind all of them. The contender rule is the headline lane's own
+    # (whole-word outcome, >=5%, >=$10k) minus its tier clause, so `lebron` keeps
+    # its name matches over the presidential fields that list him at 0.05%.
     # #8726: a board with no open question left yields to one that has one,
     # inside each partition so a name match still leads every outcome-only row.
     ordered = _decided_boards_last(name_matches) + _decided_boards_last(outcome_only)
+    ordered = _traded_contenders_before_thin_names(ordered, expanded)
     # Item 2 (L2-44): for a bare award query, headline the season/full award over
     # a narrower sub-award ("Eastern Conf Finals MVP"). Applied to the FULL list,
     # not just name_matches — award markets often reach results via league-ticker
@@ -15245,11 +15291,18 @@ async def typeahead_search(
     # the stage floor — the gate passes, the value comes back `None`, and the
     # arming line raises `TypeError` on the rarest request in the system.
     _ta_headline_bound_ms = _typeahead_headline_bound_ms(_ta_deadline)
+    # #10230: a traded contender counts as a name match for this gate. The
+    # reranker now lifts one above thin name matches, so the winner market can be
+    # INSIDE the five; without this the lane stops firing, nothing is reserved,
+    # and the scorer sinks the winner (MC4) under the props (MC1) — `Alcaraz`
+    # shipping its answer last instead of first.
     if (
         _ta_headline_patterns
         and ta_futures_ranked
         and all(
-            _query_name_match(m, ta_expanded) for m in ta_futures_ranked[:5]
+            _query_name_match(m, ta_expanded)
+            or is_traded_contender_market(m, ta_expanded)
+            for m in ta_futures_ranked[:5]
         )
         and _ta_headline_bound_ms is not None
     ):

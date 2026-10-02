@@ -325,6 +325,49 @@ def is_contender_outcome(probability, volume, *, team_anchored: bool = False) ->
     return probability >= MIN_CONTENDER_PROBABILITY
 
 
+def _word_regex(term: str):
+    """The Python twin of :func:`contender_word_pattern`, for rows already in memory.
+
+    Same reduction (alphanumeric runs joined by whitespace) and the same None for a
+    term with no 3-character run, so the SQL lane and this one cannot disagree on
+    which terms are searchable. `\\m`/`\\M` become look-arounds on Postgres's word
+    characters.
+    """
+    if contender_word_pattern(term) is None:
+        return None
+    words = [w for w in re.split(r"[^0-9A-Za-z]+", term) if w]
+    return re.compile(
+        r"(?<![0-9A-Za-z_])" + r"\s+".join(words) + r"(?![0-9A-Za-z_])",
+        re.IGNORECASE,
+    )
+
+
+def is_traded_contender_market(market, expanded: list[tuple[str, str | None]]) -> bool:
+    """#10230 — the typed words name a real contender in a market people trade.
+
+    Clauses 2-4 of the module rule, on a market already fetched: ONE outcome holds
+    every typed term as a whole word (the expansion ignored, as in
+    :func:`contender_patterns`), and :func:`is_contender_outcome` passes on that
+    outcome's price and the market's volume. Clause 1 (tier 1) is NOT asked: this
+    is not the headline lane and promises no slot above anything a reader resolved.
+    It only lets such a market stand level with the name matches in
+    `_rerank_search_futures` — see that call site for the ordering it buys.
+    """
+    if not expanded:
+        return False
+    regexes = [_word_regex(term) for term, _expansion in expanded]
+    if any(r is None for r in regexes):
+        return False
+    volume = getattr(market, "volume", None)
+    for outcome in getattr(market, "outcomes", None) or ():
+        name = getattr(outcome, "name", None) or ""
+        if all(r.search(name) for r in regexes) and is_contender_outcome(
+            getattr(outcome, "current_probability", None), volume
+        ):
+            return True
+    return False
+
+
 def on_page_contender_candidates(page: list, is_name_match) -> list:
     """Ids of page rows that could be a headline contender and are not at row 0.
 
