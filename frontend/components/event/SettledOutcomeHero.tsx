@@ -52,6 +52,9 @@ export interface SettledOutcomeHeroProps {
   loserPregamePercent?: number | null;
 }
 
+/** #10159 — `CLOSE_MATCHUP_MIN` in backend/app/utils/highlights.py (#2753). */
+export const CLOSE_MATCHUP_MIN = 0.4;
+
 /**
  * #9490 — an upset is the winner priced BELOW the side it beat, on the pair
  * this hero prints. It used to be a fixed cut (`winner < 0.40`) on the winner
@@ -69,7 +72,17 @@ export function pregameUpset(args: {
 }): boolean {
   const winner = args.winnerPercent ?? renderedPercent(args.winnerProb);
   const loser = args.loserPercent ?? renderedPercent(args.loserProb);
-  return winner !== null && loser !== null && winner < loser;
+  if (winner === null || loser === null || !(winner < loser)) return false;
+  // #10159 — and the winner opened beneath the close-matchup line, the bar the
+  // game's cards already hold (#2753, `winner_opened_as_a_real_underdog` in
+  // backend/app/utils/highlights.py): a side priced as half of a close matchup
+  // is not an underdog. Without it TNF's Browns at 0.405 / 0.595 read "Upset ·
+  // 40% pregame" on the page while the Sports and Discover cards one tap away
+  // said nothing. The winner's SHARE of the two legs, as the server takes it, so
+  // a draw-priced board is judged on its two-way split (34 over 43 is 44 / 56).
+  // Taken on the printed percents, like the comparison above, so the label
+  // never disagrees with the number beside it: "40% pregame" is never an upset.
+  return winner / (winner + loser) < CLOSE_MATCHUP_MIN;
 }
 
 export default function SettledOutcomeHero({
