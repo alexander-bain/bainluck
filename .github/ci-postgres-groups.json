@@ -57,6 +57,7 @@
     "#5869 a vanished futures leg retires to NULL (real Postgres)",
     "Polymarket price-crown venue re-grade (real Postgres)",
     "Polymarket settlement sweep SQL (real Postgres)",
+    "Polymarket false-settled reopen repair apply/drift/restore (real Postgres)",
     "Movement window contract (real Postgres)",
     "Unpriced-opening statement contract (real Postgres)",
     "#3026 restore round-trip (real Postgres)",
