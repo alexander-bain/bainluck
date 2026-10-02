@@ -359,6 +359,9 @@ struct EventDetailView: View {
                                      pageAxisPlotWidth: pageAxisPlotWidth,
                                      selectedRange: $chartRange,
                                      preloadedHistory: vm.history,
+                                     // #8651 — its live edge, read once per
+                                     // payload rather than on every rebuild.
+                                     preloadedHistoryEdge: vm.historyDigest.map(\.edge),
                                      // #920 — the pushed blends the hero is
                                      // already showing, so the chart's right
                                      // edge reaches the same moment it does.
@@ -2371,10 +2374,9 @@ struct EventDetailView: View {
         // Get probability from the best available source
         // Sorted by source so a tie on the latest time resolves the same way on
         // every open, not by Dictionary order (#8509).
-        let wpHistory = history.winProbHistory?.sorted { $0.key < $1.key }.flatMap(\.value)
-        let lastWp = wpHistory?.max(by: {
-            ($0.timestamp.asDate ?? .distantPast) < ($1.timestamp.asDate ?? .distantPast)
-        })
+        // #8651 — read once per payload (`EventHistoryDigest`); this runs on
+        // every page rebuild.
+        let lastWp = vm.historyDigest?.latestWinProb
         let lastHist = history.history.last
 
         let homeProb = lastWp?.homeProbability

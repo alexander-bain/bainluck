@@ -379,6 +379,13 @@ struct OddsChartView: View {
     /// `init`, because `init` runs once and this keeps arriving. `historyEdge`
     /// watches it; `OddsChartViewModel.adopt` decides.
     var preloadedHistory: EventHistoryResponse?
+    /// #8651 — `preloadedHistory`'s live edge, when the caller has already read
+    /// it (the event page reads it once per payload, `EventHistoryDigest`). The
+    /// outer `nil` means "not supplied" and this view reads the edge itself; an
+    /// inner `nil` is a payload with no readings. This body re-runs on every
+    /// update the page takes in, and reading the edge parses every stamp in the
+    /// payload — ~300 ms a rebuild on a full NFL game, measured.
+    var preloadedHistoryEdge: Date??
     /// #925 — the scrubbed moment's readout (clock, score, point time, "as
     /// of", probabilities), drawn between the chart's header and its plot.
     ///
@@ -521,6 +528,7 @@ struct OddsChartView: View {
          pageAxisPlotWidth: CGFloat = 0,
          selectedRange: Binding<OddsTimeRange> = .constant(.sinceStart),
          preloadedHistory: EventHistoryResponse? = nil,
+         preloadedHistoryEdge: Date?? = nil,
          liveFrames: [LiveBlendPoint] = [],
          readout: GamePlayCardView? = nil,
          model: OddsChartViewModel? = nil,
@@ -545,6 +553,7 @@ struct OddsChartView: View {
         self.pageAxisPlotWidth = pageAxisPlotWidth
         self.liveFrames = liveFrames
         self.preloadedHistory = preloadedHistory
+        self.preloadedHistoryEdge = preloadedHistoryEdge
         self.readout = readout
         _selectedRange = selectedRange
         _selection = State(initialValue: selection ?? OddsChartSelection())
@@ -654,7 +663,8 @@ struct OddsChartView: View {
     /// The live edge of the payload the PAGE holds, which is not necessarily the
     /// one this chart is drawing. `nil` until the page has any reading at all.
     private var historyEdge: Date? {
-        preloadedHistory.flatMap(EventHistoryFreshness.lastReading(in:))
+        if let preloadedHistoryEdge { return preloadedHistoryEdge }
+        return preloadedHistory.flatMap(EventHistoryFreshness.lastReading(in:))
     }
 
     var body: some View {
