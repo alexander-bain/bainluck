@@ -115,20 +115,23 @@ describe("#9490 — a three-way favourite's win is not an upset", () => {
     expect(line).toBe("38% pregame");
   });
 
-  it("A REAL THREE-WAY UPSET still reads Upset: away 0.335 over home 0.425", () => {
+  // #10159 moved this from 0.335 over 0.425: that pair is a 44 / 56 two-way,
+  // inside the close-matchup band the cards hold (#2753), so it is no longer an
+  // upset — see settledUpsetNeedsTheCloseMatchupBar10159.
+  it("A REAL THREE-WAY UPSET still reads Upset: away 0.22 over home 0.53", () => {
     const html = hero({
       winnerName: "Portugal",
       winnerSide: "away",
       prematch: {
-        home_probability: 0.425,
-        away_probability: 0.335,
-        home_rendered_percent: 43,
-        away_rendered_percent: 34,
+        home_probability: 0.53,
+        away_probability: 0.22,
+        home_rendered_percent: 53,
+        away_rendered_percent: 22,
         source: "kalshi",
       },
       sport: SOCCER,
     });
-    expect(pregameLine(html)).toBe("Upset · 34% pregame");
+    expect(pregameLine(html)).toBe("Upset · 22% pregame");
     expect(html).toContain("text-amber-600");
   });
 
@@ -194,7 +197,8 @@ describe("#9490 — the label agrees with the number printed beside it", () => {
     ).toBe(false);
     // Without served percents it rounds both locally, the same way.
     expect(pregameUpset({ winnerProb: 0.502, loserProb: 0.504 })).toBe(false);
-    expect(pregameUpset({ winnerProb: 0.44, loserProb: 0.56 })).toBe(true);
+    // #10159: 0.44 / 0.56 became a close matchup; 0.34 / 0.66 is still an upset.
+    expect(pregameUpset({ winnerProb: 0.34, loserProb: 0.66 })).toBe(true);
   });
 
   it("no loser number, no comparison, no label — however low the winner", () => {

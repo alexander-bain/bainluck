@@ -212,15 +212,17 @@ describe("#8315 — what the hero prints from it", () => {
   });
 
   it("names the sportsbooks rung the way the card does", () => {
+    // #10159: 40 / 60 is inside the close-matchup band and no longer an upset;
+    // this case is about the label, so it uses a winner beneath the line.
     const html = hero({
-      prob: 0.3993,
-      percent: 40,
+      prob: 0.3493,
+      percent: 35,
       label: "sportsbooks",
       source: "books",
-      loserProb: 0.6007,
-      loserPercent: 60,
+      loserProb: 0.6507,
+      loserPercent: 65,
     });
-    expect(visibleText(html)).toContain("Upset · 40% pregame sportsbooks");
+    expect(visibleText(html)).toContain("Upset · 35% pregame sportsbooks");
     // Its own line, not a suffix on the pregame span (the 390px column).
     expect(html).toMatch(/data-testid="event-hero-pregame-label"[^>]*>sportsbooks</);
     expect(html).toContain('data-prematch-source="books"');
