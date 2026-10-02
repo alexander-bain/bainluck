@@ -35656,10 +35656,19 @@ def _search_leg_copy_board_legs(m) -> Optional[tuple[str, set[str]]]:
     whose every leg carries an id, else ``None``. The three conditions #8375's
     candidates share with #8664's; the event arm is the callers' to add, and
     they read ``event_id`` only AFTER this passes — #8375's order, which a thin
-    non-Polymarket row with no ``event_id`` attribute relies on (#6447's test)."""
-    if m.source != "polymarket" or not m.group_id or m.mutually_exclusive is not False:
+    non-Polymarket row with no ``event_id`` attribute relies on (#6447's test).
+
+    #10165: read with ``getattr`` because the typeahead now asks this too, and
+    its route rigs (`tests/integration/test_route_typeahead_*`) build thin rows
+    with no ``source`` at all. A row that cannot say it is Polymarket is not a
+    candidate — the same answer an ORM row with another source gets."""
+    if (
+        getattr(m, "source", None) != "polymarket"
+        or not getattr(m, "group_id", None)
+        or getattr(m, "mutually_exclusive", None) is not False
+    ):
         return None
-    legs = [o.external_id for o in (m.outcomes or [])]
+    legs = [getattr(o, "external_id", None) for o in (getattr(m, "outcomes", None) or [])]
     if not legs or not all(isinstance(e, str) and e for e in legs):
         return None
     return (m.group_id, set(legs))
