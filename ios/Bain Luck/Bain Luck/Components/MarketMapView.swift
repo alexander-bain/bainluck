@@ -550,8 +550,11 @@ struct MarketMapView: View {
             // #3763 — the card stops promising a distribution it has not got.
             // Asked of the density this card is about to draw, not of `parsed`,
             // so the sentence cannot disagree with the rail above it.
+            // #10149 — and the tense comes from the same gate as the PROJECTION
+            // marker above, so a canceled game is not captioned a forecast.
             subtitle: MarketMapRail.fullMarginSubtitle(
                 isDone: isDone,
+                canStillBeGraded: canStillBeGraded,
                 hasDistribution: MarketMapRail.marginRailHasDistribution(density: density)
             ),
             headline: headline,

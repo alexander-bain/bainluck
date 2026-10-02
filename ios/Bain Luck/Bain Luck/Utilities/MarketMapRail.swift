@@ -1703,8 +1703,33 @@ enum MarketMapRail {
     /// the eight single-rung cards include live US Open matches and a completed
     /// MLB game (15305471) — so a settled-only gate would have fixed under half
     /// of them.
-    static func fullMarginSubtitle(isDone: Bool, hasDistribution: Bool) -> String {
-        let noun = isDone ? "Final margin" : "Projected margin"
+    ///
+    /// #10149 — THE NOUN HAS THREE TENSES, NOT TWO. On `15319530` (Orioles @
+    /// Yankees, `status=suspended`, ESPN period `Canceled`) the hero read
+    /// **Canceled** and one scroll down this card read **Projected margin**. A
+    /// suspended-and-started row is not done, so `isDone` alone handed it the
+    /// forward-looking noun over a game that will never be played. The marker on
+    /// the same card had been gated on #4018's `canStillBeGraded` since
+    /// ``drawsPregameMarker``; the sentence above it never was.
+    ///
+    /// So the order is the marker's: settled first (`Final margin` — a canceled
+    /// game is never handed a fabricated final), then a forecast only where a
+    /// final can still arrive (`Projected margin`), and otherwise the neutral
+    /// `Last quoted margin` — the same words ``EventState`` uses for a prop's
+    /// "last quoted chance" in the same state. It reads the gate, not the
+    /// status: a suspended row whose start is still ahead stays `Projected`,
+    /// because #4021's clock says it can still be played.
+    static func fullMarginSubtitle(
+        isDone: Bool, canStillBeGraded: Bool, hasDistribution: Bool
+    ) -> String {
+        let noun: String
+        if isDone {
+            noun = "Final margin"
+        } else if canStillBeGraded {
+            noun = "Projected margin"
+        } else {
+            noun = "Last quoted margin"
+        }
         return hasDistribution ? "\(noun) distribution" : noun
     }
 
