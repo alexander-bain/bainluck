@@ -566,6 +566,10 @@ export interface TypeaheadSuggestion {
   venue_settled_result?: string | null;
   // #5811 @see Event.venue_closed_no_winner
   venue_closed_no_winner?: boolean;
+  // #9208: ESPN's word for a called-off match ("Canceled" / "Postponed"),
+  // served only on a `suspended` row. Read through authorityStoppageLabel —
+  // never printed raw.
+  stoppage?: string | null;
   // Event concept fields (#999 L2-65: tournament pages)
   event_key?: string;
   // Hub fields (L2-88: competition-hub landing shortcut)
