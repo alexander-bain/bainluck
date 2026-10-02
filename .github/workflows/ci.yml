@@ -1862,6 +1862,22 @@ jobs:
             exit 1
           fi
 
+      - name: Polymarket false-settled reopen repair apply/drift/restore (real Postgres)
+        # #10182. The repair for boards the resolve sync closed while the venue
+        # still traded them (fixed going forward by the sibling gate above).
+        # Savepoint-per-board, the compare-and-swap's drift count, `jsonb -` on
+        # the gate and the undo round trip are server behaviour; the unit file
+        # cannot see them. Same skip-detection as its neighbours.
+        if: matrix.group == 'shared'
+        run: |
+          set -o pipefail
+          python -m pytest tests/integration/test_repair_polymarket_false_parent_settlements_10182_pg.py \
+            -v -s -rs 2>&1 | tee /tmp/poly_reopen_10182.txt
+          if grep -qiE "[0-9]+ skipped" /tmp/poly_reopen_10182.txt; then
+            echo "::error::#10182 reopen repair gate SKIPPED — the gate did not run"
+            exit 1
+          fi
+
       - name: Movement window contract (real Postgres)
         # item 12 / lane1 Q482. `probability_change_24h` froze: all four writers
         # store a PER-WRITE delta and nothing recomputed it over a window, so a

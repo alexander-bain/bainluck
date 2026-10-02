@@ -191,6 +191,9 @@ COVERED = (
     # named, as in #6215's seed.
     "test_foreign_espn_id_apply_cas_9017_pg.py",
     "test_polymarket_resolved_candidate_sql_pg.py",
+    # #10182. Seeds narrow `futures_markets` / `futures_outcomes` in a private
+    # schema and drives the reopen repair's own run(): apply, drift, restore.
+    "test_repair_polymarket_false_parent_settlements_10182_pg.py",
     # #9394. Seeds `futures_markets` and `futures_outcomes` by raw INSERT into a
     # private schema and drives the real Gamma winner rail over them.
     "test_price_crowned_pm_winner_venue_regrade_9394_pg.py",
