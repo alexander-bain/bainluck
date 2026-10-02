@@ -298,6 +298,9 @@ struct EventDetailView: View {
             }
             .onChange(of: scenePhase) { _, phase in
                 vm.setMarketPageVisible(marketPageVisible && phase == .active)
+                // #1833: a page brought back from the background reads the game
+                // again now, rather than whenever the suspended poll gets to it.
+                vm.scenePhaseChanged(to: phase, pageVisible: marketPageVisible)
             }
             .onDisappear {
                 marketPageVisible = false
