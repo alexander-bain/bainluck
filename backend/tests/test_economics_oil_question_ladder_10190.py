@@ -190,7 +190,7 @@ class TestTheWiring:
 
     def test_oil_row_asks_the_widened_ladder_gate(self):
         body = self.SRC.split("def _oil_row(", 1)[1].split("\ndef ", 1)[0]
-        assert re.search(r"\bif _oil_is_ladder\(market\):", body)
+        assert re.search(r"\bif _oil_is_ladder\(market(?:, legs)?\):", body)
         assert re.search(r"\b_with_question_comparator\(", body)
 
     def test_the_gate_asks_the_question_grammar(self):

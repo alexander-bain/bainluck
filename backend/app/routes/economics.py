@@ -663,12 +663,34 @@ _QUESTION_COMPARATOR_RE = re.compile(r"\b(above|below)\s*(?:_{2,}|\.{2,})", re.I
 _BARE_PRICE_RE = re.compile(r"^\s*\$?\d[\d,]*(?:\.\d+)?\s*$")
 
 
-def _oil_is_ladder(market: FuturesMarket) -> bool:
+def _oil_is_ladder(market: FuturesMarket, legs: list | None = None) -> bool:
     """True when a crude-oil market's rows are cumulative rungs of one price."""
     if _is_cumulative_ladder(market):
         return True
-    rows = [{"name": o.name} for o in market.outcomes]
+    rows = [{"name": o.name} for o in (market.outcomes if legs is None else legs)]
     return cumulative_outcome_ladder(rows, question=market.name) is not None
+
+
+# #10190, second half — THE FOLD PUT A SIBLING'S YES/NO ON THE LADDER. The
+# first half went live (13:16Z 10/2) and the card did not move: production
+# reaches `_oil_row` only after `group_markets_by_group_id`, and Polymarket
+# lists "closes above ___ on October 2?" as a wrapper (11 bare-price legs) plus
+# one Yes/No binary per rung, all under `polymarket:1113496`. The fold keeps
+# the wrapper as representative and merges every leg name it lacks, so the
+# binaries' "Yes" and "No" land on it: `$87 … $97, Yes, No`. That is not a
+# price ladder, so the grammar refused it and the rescale printed
+# "WTI $87 · 35.4%" again (.831 / 2.348). A bare Yes/No carried in from
+# ANOTHER market prices that market's question, not a rung of this one, so the
+# ladder reading ignores it. The market's OWN Yes/No (#3004's contaminated
+# binary) has this market's id and is untouched.
+def _folded_sibling_binary_legs(market: FuturesMarket) -> set[int]:
+    """``id()`` of each bare Yes/No leg the group fold carried in from a sibling."""
+    return {
+        id(o)
+        for o in market.outcomes
+        if getattr(o, "market_id", None) not in (None, market.id)
+        and _UNINFORMATIVE_LEADER_RE.match((o.name or "").strip())
+    }
 
 
 def _with_question_comparator(market: FuturesMarket, leader: str | None) -> str | None:
@@ -732,8 +754,14 @@ def _oil_row(market: FuturesMarket) -> dict | None:
     if "gas" in (market.name or "").lower():
         return None
     outcomes = _clean_outcomes(list(market.outcomes))
-    if _oil_is_ladder(market):
-        rung = _ladder_rung(market)
+    folded = _folded_sibling_binary_legs(market)
+    legs = [o for o in market.outcomes if id(o) not in folded]
+    if _oil_is_ladder(market, legs):
+        # `_ladder_rung`'s own rule over the same ordering, minus folded legs.
+        rung = _pick_rung([
+            o for o in _outcomes_sorted(market)
+            if id(o) not in folded and o.current_probability is not None
+        ])
         if rung is None:
             return None
         return {
