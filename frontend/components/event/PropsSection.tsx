@@ -916,6 +916,19 @@ const WHAT_HIT_FAMILIES = 6;
 const WHAT_HIT_FAMILY_ROWS = 3;
 
 /**
+ * #1626 slice 8 — THE DIVERGENCE's per-family bound, the same shape as WHAT HIT's.
+ *
+ * Live Steelers @ Browns (`/events/14780550`, 390px, 2026-10-02 00:2xZ, Q1):
+ * the moved rows alone were ~230, RUSHING YARDS 42 of them, and the page was
+ * ~24,000px — the section that answers "what moved?" buried its own answer.
+ * Rows are already ranked biggest mover first (`rankByDivergence`), so a family
+ * prints its first DIVERGENCE_FAMILY_ROWS moved rows and the rest fold behind
+ * THE SCRIPT's "More props (N)" disclosure, above the family's "N unchanged".
+ * Nothing is dropped (gotcha #43); a fold of one row is never drawn.
+ */
+const DIVERGENCE_FAMILY_ROWS = 5;
+
+/**
  * #9914 — THE DIVERGENCE's section-level fold for families that moved nothing.
  *
  * UX-P036 folds a family's unchanged rows inside that family, which leaves the
@@ -1284,9 +1297,12 @@ function PropFamilyBlock({
   // #8833: WHAT HIT's per-family bound. `moved` is the whole family outside THE
   // DIVERGENCE, and THE SCRIPT's fold is empty in WHAT HIT, so the overflow and
   // `folded` are never both non-empty.
-  const boundRows = state === "graded" && moved.length > WHAT_HIT_FAMILY_ROWS + 1;
-  const head = boundRows ? moved.slice(0, WHAT_HIT_FAMILY_ROWS) : moved;
-  const overflow = boundRows ? moved.slice(WHAT_HIT_FAMILY_ROWS) : [];
+  // Slice 8: THE DIVERGENCE takes the same bound, outside the unchanged fold.
+  const familyRows = collapsible ? DIVERGENCE_FAMILY_ROWS : WHAT_HIT_FAMILY_ROWS;
+  const boundRows =
+    (state === "graded" || collapsible) && moved.length > familyRows + 1;
+  const head = boundRows ? moved.slice(0, familyRows) : moved;
+  const overflow = boundRows ? moved.slice(familyRows) : [];
 
   // #5241: when the fold takes the WHOLE family — the common case for a two-leg
   // O/U family with no baseline on either leg, 27 of 110 families across three
@@ -1325,6 +1341,14 @@ function PropFamilyBlock({
             : head.map(renderRow)}
         </div>
       )}
+      {/* Slice 8: the fold holds rows that MOVED, so it sits above the drawer
+          of rows that did not. THE SCRIPT and WHAT HIT never have both. */}
+      <ScriptFold
+        items={overflow.length > 0 ? overflow : folded}
+        renderRow={renderRow}
+        className={moved.length > 0 ? "mt-1.5" : ""}
+        familyName={foldIsWholeFamily ? group.name : null}
+      />
       {unchanged.length > 0 && (
         <details className={moved.length > 0 ? "mt-1.5" : ""}>
           <summary className="cursor-pointer select-none py-1 text-[11px] text-text-muted">
@@ -1333,12 +1357,6 @@ function PropFamilyBlock({
           <div className="mt-1 space-y-2">{unchanged.map(renderRow)}</div>
         </details>
       )}
-      <ScriptFold
-        items={overflow.length > 0 ? overflow : folded}
-        renderRow={renderRow}
-        className={moved.length > 0 || unchanged.length > 0 ? "mt-1.5" : ""}
-        familyName={foldIsWholeFamily ? group.name : null}
-      />
     </div>
   );
 }
