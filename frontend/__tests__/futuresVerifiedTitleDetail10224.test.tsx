@@ -56,9 +56,21 @@ function render(market: unknown): string {
   KEYS.length = 0;
   return renderToStaticMarkup(<FuturesDetailPage params={{ id: "86832" }} />);
 }
+/** Tags stripped by a character scan, not a regex replace (CodeQL's
+ * incomplete-sanitization rule — same helper as futuresBaselineRender.test). */
+function stripTags(html: string): string {
+  let out = "";
+  let inTag = false;
+  for (const ch of html) {
+    if (ch === "<") inTag = true;
+    else if (ch === ">") inTag = false;
+    else if (!inTag) out += ch;
+  }
+  return out;
+}
 const text = (html: string, testid: string) => {
   const m = html.match(new RegExp(`data-testid="${testid}"[^>]*>([\\s\\S]*?)</(?:div|p|span)>`));
-  return m ? m[1].replace(/<[^>]+>/g, "") : null;
+  return m ? stripTags(m[1]) : null;
 };
 /** The hero footer's label: the span after its dots row. */
 const heroContributors = (html: string) => {
@@ -66,7 +78,7 @@ const heroContributors = (html: string) => {
   if (at < 0) return null;
   const rest = html.slice(at);
   const afterDots = rest.slice(rest.indexOf("</div>") + "</div>".length);
-  return afterDots.slice(0, afterDots.indexOf("</div>")).replace(/<[^>]+>/g, "");
+  return stripTags(afterDots.slice(0, afterDots.indexOf("</div>")));
 };
 
 describe("#10224 verified title detail", () => {
