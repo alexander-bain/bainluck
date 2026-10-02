@@ -80,8 +80,8 @@ enum VerifiedTitlePresentation {
         return "\(name) history"
     }
 
-    /// "Current blend" is earned only by a current outcome that really has more
-    /// than one contributor.
+    /// "All sources now" (never the internal word "blend", notice 34) is earned
+    /// only by a current outcome that really has more than one contributor.
     static func isCurrentBlend(_ meta: TimelineOutcomeMeta) -> Bool {
         (nameable(meta.contributingSources)?.count ?? 0) > 1
     }
@@ -92,7 +92,7 @@ enum VerifiedTitlePresentation {
     /// Verified context = the response is verified, OR the detail is and the
     /// chart could not agree with it (then the lines keep their own label and
     /// the current column is withheld). The label comes from THIS response's
-    /// `history_basis`; "current blend" is added only while the current column
+    /// `history_basis`; "all sources now" is added only while the current column
     /// is shown and a drawn row really has more than one contributor.
     static func chartCaption(_ response: ProbabilityTimelineResponse,
                              expected: VerifiedTitleChartExpectation?,
@@ -103,7 +103,7 @@ enum VerifiedTitlePresentation {
         guard verifiedContext, let history = historyLabel(response.historyBasis) else { return nil }
         guard !withholdsCurrent, response.effectiveRepresentation == .verifiedTitle,
               displayed.contains(where: isCurrentBlend) else { return history }
-        return "\(history) · Prob: current blend"
+        return "\(history) · Prob: all sources now"
     }
 
     private static func nameable(_ keys: [String]?) -> [String]? {

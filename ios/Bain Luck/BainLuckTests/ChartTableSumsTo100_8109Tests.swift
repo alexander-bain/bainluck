@@ -352,8 +352,14 @@ final class ChartTableSumsTo100_8109Tests: XCTestCase {
              1, "the list stopped feeding the rows their decision"),
             ("at: dynamicTypeSize, renderedPercents: percents)",
              1, "the COLUMN is sized without the decision — #4373 clips a digit"),
-            ("renderedPercents(forServedField: data?.outcomes ?? [])",
+            // #9387 routes the decision through `servedOutcomes`, which is the
+            // served list itself unless the agreement policy withheld the current
+            // column. Both halves are pinned: the call reads that property, and
+            // that property reads `data.outcomes` — not the rows on screen.
+            ("renderedPercents(forServedField: servedOutcomes)",
              1, "the decision moved off the SERVED field onto the rows on screen"),
+            ("let outcomes = data?.outcomes ?? []",
+             1, "`servedOutcomes` stopped reading the served field"),
             ("servedRenderedPercents[row.servedIndex]",
              1, "the lookup stopped using the served index"),
         ]

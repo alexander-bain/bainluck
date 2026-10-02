@@ -258,7 +258,7 @@ final class VerifiedTitleConsumer9387Tests: XCTestCase {
         let expected = VerifiedTitleChartExpectation(market: detail, hero: futuresDetailHeroOutcome(detail))
         XCTAssertEqual(VerifiedTitlePresentation.chartCaption(
             verified, expected: expected, displayed: verified.outcomes, withholdsCurrent: false),
-            "Sportsbooks history · Prob: current blend")
+            "Sportsbooks history · Prob: all sources now")
         XCTAssertEqual(VerifiedTitlePresentation.chartCaption(
             verified, expected: expected,
             displayed: VerifiedTitleChartPolicy.withholdingCurrent(verified.outcomes), withholdsCurrent: true),
