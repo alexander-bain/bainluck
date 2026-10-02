@@ -177,6 +177,30 @@ export function pickLiveLeader<
 }
 
 /**
+ * #10165 — where a Polymarket game container sends its reader, or `null`.
+ *
+ * Production `/futures/63612402` at 390px, 2026-10-02 04:45Z, "New York Yankees
+ * vs. Tampa Bay Rays": hero "46% · New York Yankees — New York Yankees", the same
+ * 46% printed on all three ALDS games, and All Outcomes ranking "O/U 6.5 54%",
+ * "NRFI 43%" and four spreads as one field. Those are the lead legs of nine
+ * different questions; the board is Polymarket's container for the game, and
+ * the game's own page already draws every one of them in its place.
+ *
+ * The server decides what a container is (`container_of_event_id`, the same
+ * test that keeps the row out of search) and names the game only when one is
+ * linked. Anything that is not a positive integer — null, absent on older
+ * builds, a malformed value — leaves the board page exactly as it was.
+ */
+export function gameContainerRedirectPath(
+  market: { container_of_event_id?: unknown },
+): string | null {
+  const eventId = market.container_of_event_id;
+  return typeof eventId === "number" && Number.isInteger(eventId) && eventId > 0
+    ? `/events/${eventId}`
+    : null;
+}
+
+/**
  * #8892 — A GAME CONTAINER LEADS WITH WHO WINS, NOT WITH ITS MOST LOPSIDED LEG.
  *
  * A Polymarket game container carries legs that answer DIFFERENT questions, so

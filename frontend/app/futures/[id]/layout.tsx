@@ -1,4 +1,5 @@
 import type { Metadata } from "next";
+import { redirect } from "next/navigation";
 import type { FuturesMarketDetailResponse, FuturesOutcome } from "@/lib/types";
 import {
   buildShareUrl,
@@ -11,6 +12,7 @@ import {
   leaderLabel,
   futuresBoardPrice,
   futuresTitleText,
+  gameContainerRedirectPath,
   servedLeadOutcome,
 } from "@/lib/futuresDetailDisplay";
 import {
@@ -236,10 +238,19 @@ export async function generateMetadata({
   };
 }
 
-export default function FuturesDetailLayout({
+export default async function FuturesDetailLayout({
   children,
+  params,
 }: {
   children: React.ReactNode;
+  params: Promise<{ id: string }>;
 }) {
+  // Same URL and options as `generateMetadata`, so Next serves both from one
+  // fetch. A miss or a bad minute renders the page as before: the redirect is
+  // only ever taken on a market the server has positively named as a container.
+  const { id } = await params;
+  const lookup = await fetchMarket(id);
+  const target = lookup.ok ? gameContainerRedirectPath(lookup.market) : null;
+  if (target) redirect(target);
   return <>{children}</>;
 }
