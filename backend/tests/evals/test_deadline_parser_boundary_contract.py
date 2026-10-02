@@ -7,7 +7,7 @@ def _case(case_id):
 
 def test_committed_corpus_matches_oracle():
     result = evaluate(load())
-    assert result["total"] == 25
+    assert result["total"] == 27
     assert result["passed"] == result["total"], result["cases"]
 
 

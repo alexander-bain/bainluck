@@ -18,6 +18,7 @@ from datetime import datetime, timezone
 from types import SimpleNamespace
 
 from app.routes.politics import _market_row
+from app.utils.market_staleness import expired_ladder_rungs, stale_observation_keys
 
 NOW = datetime(2026, 10, 1, 14, 5, 0, tzinfo=timezone.utc)
 
@@ -82,8 +83,18 @@ def test_the_withheld_rung_still_counts_toward_the_pages_more_badge():
 
 
 def test_control_a_board_observed_together_keeps_every_shown_rung():
-    row = _market_row(_market(GALLEGO), now=NOW)
-    assert _names(row) == ["Before Nov 3, 2026", "Before Oct 1, 2026"]
+    market = _market(GALLEGO)
+    row = _market_row(market, now=NOW)
+    # #10137: "Before Oct 1" closed at the START of Oct 1 (Kalshi 03:59Z), so
+    # at 14:05Z it is gone by its DEADLINE. This control was written while that
+    # rung still wrongly showed; what it guards is that the STAMP rule withholds
+    # neither rung the board wrote together.
+    assert _names(row) == ["Before Nov 3, 2026"]
+    assert expired_ladder_rungs(
+        [(o.name, o.current_probability) for o in market.outcomes], NOW
+    ) >= {"Before Oct 1, 2026"}
+    withheld = stale_observation_keys((o.id, o.last_updated) for o in market.outcomes)
+    assert withheld.isdisjoint({1, 2})
 
 
 def test_a_settled_board_is_a_result_and_withholds_nothing():

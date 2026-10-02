@@ -65,7 +65,8 @@ def parse_deadline(label: str, now: datetime) -> tuple[datetime, bool] | None:
         match, exclusive = chosen
         if kind == "day":
             year = int(match.group(3)) if match.group(3) else now.year
-            return datetime(year, MONTHS[match.group(1).lower().rstrip(".")], int(match.group(2)), 23, 59, 59, tzinfo=timezone.utc), bool(match.group(3))
+            day_end = datetime(year, MONTHS[match.group(1).lower().rstrip(".")], int(match.group(2)), 23, 59, 59, tzinfo=timezone.utc)
+            return day_end - timedelta(days=1 if exclusive else 0), bool(match.group(3))
         if kind == "month_year":
             return _month_end(int(match.group(2)), MONTHS[match.group(1).lower().rstrip(".")], exclusive), True
         if kind == "month":

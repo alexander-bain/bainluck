@@ -394,6 +394,18 @@ def _named_deadline(
             deadline = datetime(year, month, day, 23, 59, 59, tzinfo=timezone.utc)
         except ValueError:
             return None
+        # #10137: "Before Oct 1" ends when Oct 1 BEGINS, the same reading the
+        # day-less arm gives "Before July". Kalshi closed KXGALLEGOOUT-26OCT01 at
+        # 03:59Z Oct 1, but read as the END of Oct 1 its rung stayed on /politics
+        # until 12:00Z Oct 2. A range rung is dated by its closing day and keeps
+        # it; "by" / "on or before" stay inclusive, and "Not before Oct 1" names
+        # no deadline at all, so it is never moved earlier.
+        if (
+            day_range is None
+            and _deadline_context(name, match) is True
+            and not re.search(r"\bnot\s+before\s*$", name[: match.start()], re.IGNORECASE)
+        ):
+            deadline -= timedelta(days=1)
         had_explicit_year = explicit_year is not None
     else:
         day_less = _day_less_deadline(name, now)

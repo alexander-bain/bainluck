@@ -24,6 +24,8 @@
     {"id":"percent-scale-refusal","kind":"outcome","label":"Before July","now":"2026-08-07T17:00:00Z","probability":50,"expected":{"verdict":"refuse","reason":"invalid_probability"}},
     {"id":"string-probability-refusal","kind":"outcome","label":"Before July","now":"2026-08-07T17:00:00Z","probability":"0.03","expected":{"verdict":"refuse","reason":"invalid_probability"}},
     {"id":"future-rung-kept","kind":"outcome","label":"Before September","now":"2026-08-07T17:00:00Z","probability":0.01,"expected":{"verdict":"keep","reason":"deadline_live"}},
+    {"id":"before-day-is-exclusive","kind":"outcome","label":"Before Oct 1, 2026","now":"2026-10-01T13:00:00Z","probability":0.0,"expected":{"verdict":"drop","reason":"expired_deadline"}},
+    {"id":"by-day-is-inclusive","kind":"outcome","label":"By Oct 1, 2026","now":"2026-10-01T13:00:00Z","probability":0.0,"expected":{"verdict":"keep","reason":"deadline_live"}},
     {"id":"trace-serving-drift","kind":"parity","diagnostic_action":"keep","serving_action":"drop","expected":{"verdict":"drifted","reason":"diagnostic_serving_mismatch"}},
     {"id":"shared-authority-target","kind":"parity","diagnostic_action":"drop","serving_action":"drop","expected":{"verdict":"shared","reason":"same_authority"}}
   ]
