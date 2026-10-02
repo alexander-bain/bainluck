@@ -92,7 +92,7 @@ from app.utils.prematch_reading import (
 from app.utils.period_window_grade import grade_period_window, window_outcome_label
 from app.utils.served_period_scores import served_period_scores
 from app.utils.final_score_margin import margin_verdict_from_final_score
-from app.utils.resolution_authority import authority_tier
+from app.utils.resolution_authority import authority_tier, is_authoritative
 from app.utils.box_score_capture import BOX_SCORE_SOURCES, box_is_live_capture
 from app.utils.prop_window import prop_window_closed, prop_window_span
 from app.utils.event_rails import (
@@ -37483,6 +37483,36 @@ def _search_team_evidence(row: dict, query: str | None = None) -> "_SearchEviden
     )
 
 
+def _search_row_prints_a_verdict(outcome, market_resolved: bool) -> bool:
+    """Does FuturesCard draw this served search row as `Won`/`Lost` (no price)?
+
+    #9819. A line-for-line mirror of `outcomeRowVerdict` in
+    `frontend/components/futures/OutcomeRow.tsx`, applied to the two grade fields
+    the search serializer serves verbatim (`is_winner`, `resolution_source`).
+    The search payload always carries both keys, so a `None` here is the served
+    `null`, which the card reads as "no grader" and prints the price.
+
+    * a retraction (`ungradeable_result`) never prints a verdict;
+    * no source, or no `is_winner`, prints no verdict;
+    * an OPEN market prints only `Won`, and only on a tier-3 source (#6082). A
+      graded loser on an open board keeps its number;
+    * a resolved market prints `Won`/`Lost` for any graded row.
+
+    `test_search_settled_leg_does_not_age_card_9819.py` pins the cases.
+    """
+    from app.utils.kalshi_fabricated_loss import RETRACTION_SOURCE
+
+    source = getattr(outcome, "resolution_source", None)
+    if source == RETRACTION_SOURCE or source is None:
+        return False
+    is_winner = getattr(outcome, "is_winner", None)
+    if is_winner is None:
+        return False
+    if not market_resolved:
+        return is_winner is True and is_authoritative(source)
+    return True
+
+
 def _served_prices_as_of(
     market: FuturesMarket,
     served: list[dict],
@@ -37565,17 +37595,34 @@ def _served_prices_as_of(
     served_ids -= withheld or set()
     if not served_ids:
         return None
+    # The card's own `isResolved` (`FuturesCard`: `market.status === "resolved"`).
+    resolved = getattr(market, "status", None) == "resolved"
     # `getattr` with a default, which is this module's house idiom for reading a
     # row inside the search formatters (`_build_search_top_outcomes` does it for
     # `mutually_exclusive` and `status`). The attribute is a mapped column and is
     # always there on a real row; the doubles that reach this path are not, and a
     # serializer must not be the thing that 500s a search page. A double that
     # cannot say lands in the None branch, which is the designed answer.
+    # #9819 — A ROW THE CARD PRINTS AS A RESULT DOES NOT AGE THE CARD. The mark
+    # answers "how old are the PRICES you can see?", and a row FuturesCard draws
+    # as `Won`/`Lost` shows no price: its stamp is when it was graded, not the age
+    # of a number on screen. Left in the `min`, it ages the card to its first
+    # grade. Measured: `?q=cubs` read "18h ago" over legs written 1-5 minutes
+    # earlier because two authoritative `Won` legs on the OPEN NLDS board
+    # (60087232) were graded the day before.
+    #
+    # The test is `_search_row_prints_a_verdict`, the card's own rule, and NOT
+    # "the venue settled it". On the open ALCS board (60087229) Toronto is
+    # `is_winner=false, api_settlement` at 0%, and the card prints it as a numeric
+    # 0%: an open market crowns only authoritative winners (`outcomeRowVerdict`,
+    # #6082). A 0% on screen is a price, so its stamp keeps its vote. Dropping it
+    # would freshen the footer over a row that still shows the old number.
     stamps = [
         stamp
         for o in market.outcomes
         if o.id in served_ids
         and _outcome_prints_a_price(o)
+        and not _search_row_prints_a_verdict(o, resolved)
         and (stamp := getattr(o, "last_updated", None)) is not None
     ]
     if not stamps:

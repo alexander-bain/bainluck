@@ -1,0 +1,110 @@
+{
+  "alcs": {
+    "id": 60087229,
+    "name": "MLB Playoffs: Team to advance to ALCS",
+    "prices_updated_at": "2026-09-23T10:31:12+00:00",
+    "status": "open",
+    "top_outcomes": [
+      {
+        "id": 224051327,
+        "is_winner": false,
+        "name": "Cleveland Guardians",
+        "probability": 0.58,
+        "resolution_source": null
+      },
+      {
+        "id": 231082156,
+        "is_winner": false,
+        "name": "New York Yankees",
+        "probability": 0.52,
+        "resolution_source": null
+      },
+      {
+        "id": 231082155,
+        "is_winner": false,
+        "name": "Tampa Bay Rays",
+        "probability": 0.465,
+        "resolution_source": null
+      },
+      {
+        "id": 232072952,
+        "is_winner": false,
+        "name": "Chicago White Sox",
+        "probability": 0.42,
+        "resolution_source": null
+      },
+      {
+        "id": 232072954,
+        "is_winner": false,
+        "name": "Toronto Blue Jays",
+        "probability": 0.0,
+        "resolution_source": "api_settlement"
+      }
+    ]
+  },
+  "nlds": {
+    "id": 60087232,
+    "name": "MLB Playoffs: Team to advance to NLCS",
+    "prices_updated_at": "2026-09-30T11:48:14+00:00",
+    "status": "open",
+    "top_outcomes": [
+      {
+        "id": 3,
+        "is_winner": false,
+        "name": "San Diego Padres",
+        "probability": 0.79,
+        "resolution_source": null
+      },
+      {
+        "id": 4,
+        "is_winner": false,
+        "name": "Atlanta Braves",
+        "probability": 0.75,
+        "resolution_source": null
+      },
+      {
+        "id": 5,
+        "is_winner": false,
+        "name": "Chicago Cubs",
+        "probability": 0.21,
+        "resolution_source": null
+      },
+      {
+        "id": 1,
+        "is_winner": true,
+        "name": "Los Angeles Dodgers",
+        "probability": 1.0,
+        "resolution_source": "api_settlement"
+      },
+      {
+        "id": 2,
+        "is_winner": true,
+        "name": "Milwaukee Brewers",
+        "probability": 1.0,
+        "resolution_source": "api_settlement"
+      }
+    ]
+  },
+  "resolved": {
+    "id": 60087111,
+    "name": "MLB Playoffs: AL West winner",
+    "prices_updated_at": null,
+    "status": "resolved",
+    "top_outcomes": [
+      {
+        "id": 11,
+        "is_winner": true,
+        "name": "Seattle Mariners",
+        "probability": 1.0,
+        "resolution_source": "api_settlement"
+      },
+      {
+        "id": 12,
+        "is_winner": false,
+        "name": "Houston Astros",
+        "probability": 0.0,
+        "resolution_source": "api_settlement"
+      }
+    ]
+  }
+}
