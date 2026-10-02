@@ -245,6 +245,16 @@ _FUTURES_SEEDS = [
      ["Volodymyr Zelenskyy", "Vladimir Putin"]),
     # `award d'or` in ONE outcome: the multi-term no-trigram arm still serves it.
     ("kalshi-golden-ball-9646", "Golden Ball 2026", ["Award of the d'Or"]),
+    # ---- #10163: two LONG terms split across outcomes must be whole words. -----
+    #
+    # Transcribed from production 2026-10-02, `wild card`: the college board was
+    # reached by `wild` in Kentucky Wildcats and `card` in Louisville Cardinals.
+    # Its name carries neither term, so only the OUTCOME arm can admit it.
+    ("kalshi-ncaab-title-10163", "NCAAB Men's Basketball Title 2027",
+     ["Kentucky Wildcats", "Louisville Cardinals"]),
+    # The control that must survive: both terms inside ONE outcome, by substring.
+    ("polymarket-r6-major-10163", "Rainbow Six Major: Grand Final",
+     ["Wildcard Gaming", "M80"]),
 ]
 
 # LAT-P053 Item 5 — the seeded futures corpus, carried FIVE times and ruled into
@@ -930,6 +940,22 @@ async def test_two_long_terms_still_reach_a_board_across_its_outcomes(search):
     names = _futures_names(await search("zelenskyy putin"))
     assert "Who visits the White House first?" in names, (
         f"got {names!r} — the #9646 anchor leaked onto long terms"
+    )
+
+
+async def test_two_long_terms_inside_two_longer_words_no_longer_attest(search):
+    """#10163: `wild card` served the NCAAB board through Wild·cats + Card·inals.
+
+    Split across outcomes, each term must be a WHOLE word in its outcome
+    (`zelenskyy putin` above still passes). One outcome holding every term keeps
+    the substring match, so "Wildcard Gaming" still reaches its board.
+    """
+    names = _futures_names(await search("wild card"))
+    assert "NCAAB Men's Basketball Title 2027" not in names, (
+        f"got {names!r} — `wild` and `card` matched inside two different outcomes again"
+    )
+    assert "Rainbow Six Major: Grand Final" in names, (
+        f"got {names!r} — the one-outcome substring control was dropped with the scatter"
     )
 
 

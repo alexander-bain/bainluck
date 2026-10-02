@@ -274,7 +274,14 @@ async def test_the_regular_season_meeting_is_not_a_wild_card_game(get):
 
 
 async def test_without_the_round_map_wild_card_is_the_old_answer(get, monkeypatch):
-    """Strawman: the fixture reproduces production's empty games list."""
+    """Strawman: the fixture reproduces production's empty games list.
+
+    #10163: the old answer's futures were the two college boards, reached by
+    `wild` and `card` inside two different outcomes (Wild·cats, Card·inals).
+    The outcome arm now refuses that split on its own, so without the round map
+    the futures list is empty too; the round map is still what brings the games
+    and the series markets.
+    """
     from app.routes import events as events_module
 
     monkeypatch.setattr(events_module, "_POSTSEASON_ROUND_ALIASES", {})
@@ -282,7 +289,8 @@ async def test_without_the_round_map_wild_card_is_the_old_answer(get, monkeypatc
     assert _search_games(payload) == []
     futures = _search_futures(payload)
     assert not {n for n in futures if n.startswith("Series ")}, futures
-    assert set(futures) == set(COLLEGE_MARKETS), futures
+    assert not set(futures) & set(COLLEGE_MARKETS), futures
+    assert futures == [], futures
 
 
 # #9333 dropdown half, production 2026-09-28 on `7cb0bae4`: both typed words sit

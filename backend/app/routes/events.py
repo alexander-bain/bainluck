@@ -6993,6 +6993,13 @@ def _market_has_outcome(*outcome_where):
     )
 
 
+def _outcome_whole_word_regex(term: str):
+    """The `~*` half of `_outcome_whole_word`: `term` bounded by non-alphanumerics."""
+    return FuturesOutcome.name.op("~*")(
+        f"(^|[^[:alnum:]]){_regex_escape(term)}([^[:alnum:]]|$)"
+    )
+
+
 def _outcome_whole_word(term: str):
     """An outcome NAME carrying `term` as a whole word, never inside one.
 
@@ -7001,9 +7008,7 @@ def _outcome_whole_word(term: str):
     """
     return and_(
         FuturesOutcome.name.ilike(f"%{term}%"),
-        FuturesOutcome.name.op("~*")(
-            f"(^|[^[:alnum:]]){_regex_escape(term)}([^[:alnum:]]|$)"
-        ),
+        _outcome_whole_word_regex(term),
     )
 
 
@@ -7052,7 +7057,23 @@ def _multi_term_outcome_match(expanded: list[tuple[str, str | None]]):
     outcomes). An OR onto the name would put an unservable `%cy%` subquery
     under a top-level OR, the LAT-P006 plan that timed out.
 
-    Every term short, or every term long: unchanged.
+    Every term short: unchanged.
+
+    #10163, every term long: the terms may still sit in different outcomes
+    (`falcons packers`), but then each must be a WHOLE word in its outcome. A
+    substring split across two outcomes put three boards on `wild card`, read on
+    production 2026-10-02:
+
+        NCAAB / NCAAF Championship Winner   Kentucky Wildcats / Louisville Cardinals
+        Goias Governor Election Winner      Wilder Morais     / Vanderlan Cardoso
+
+    One outcome holding every term still matches by substring, so a prefix typed
+    inside one name keeps working. Sized on production before the change: over
+    the 26 most-searched multi-word queries of 30 days, the open markets reached
+    only through outcomes lose exactly those three, all on `wild card`
+    (`falcons packers` keeps 14, `taylor swift` 83, `ohio state` 60). The cost,
+    named: two whole words in two outcomes still pass, so `world series` keeps
+    three Netflix boards listing "A Different World" and "Limited Series".
     """
 
     def _some_outcome(term: str, exp: str | None):
@@ -7062,8 +7083,45 @@ def _multi_term_outcome_match(expanded: list[tuple[str, str | None]]):
 
     long_terms = [(t, e) for t, e in expanded if _has_extractable_trigram(t)]
     short_terms = [(t, e) for t, e in expanded if not _has_extractable_trigram(t)]
-    if not long_terms or not short_terms:
+    if not long_terms:
         return and_(*[_some_outcome(t, e) for t, e in expanded])
+    if not short_terms:
+        # The substring arm still drives (two trigram arrays, unchanged), and the
+        # rule judges only the markets it returned, through correlated EXISTS by
+        # `market_id`. Under an OR Postgres cannot pull an EXISTS up into a
+        # semi-join, so each probe reads one candidate's own outcomes. A second
+        # trigram scan instead (all terms in one outcome, then each whole word)
+        # read 2-2.7x the substring arm on production 2026-10-02: `aaron rodgers`
+        # 435 ms median against 207 ms.
+        def _in_one_outcome(*where):
+            return (
+                select(FuturesOutcome.id)
+                .where(FuturesOutcome.market_id == FuturesMarket.id, *where)
+                .exists()
+            )
+
+        whole_words = and_(
+            *[
+                _in_one_outcome(
+                    or_(_outcome_whole_word_regex(t), _outcome_whole_word_regex(e))
+                    if e
+                    else _outcome_whole_word_regex(t)
+                )
+                for t, e in expanded
+            ]
+        )
+        return and_(
+            *[_some_outcome(t, e) for t, e in expanded],
+            or_(
+                _in_one_outcome(
+                    *[
+                        _build_expanded_ilike(FuturesOutcome.name, t, e)
+                        for t, e in expanded
+                    ]
+                ),
+                whole_words,
+            ),
+        )
     # The long-term ILIKE is AND-ed inside the one subquery, so the trigram
     # index drives it and the short term is a recheck on the rows it returned.
     anchored = _market_has_outcome(
