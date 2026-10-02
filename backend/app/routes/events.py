@@ -487,7 +487,7 @@ from app.utils.kalshi_occurrence_start import (
     recover_kalshi_occurrence_starts,
 )
 from app.utils.event_taxonomy import compute_event_tags, validate_tag
-from app.utils.game_state import normalize_live_game_state
+from app.utils.game_state import authority_stoppage_label, normalize_live_game_state
 from app.utils.sport_keys import (
     SPORT_PREFIX_TO_LLM_CATEGORY as _SPORT_PREFIX_TO_LLM_CATEGORY,
     get_sport_key_from_ticker as _get_sport_key_from_ticker,
@@ -14612,6 +14612,8 @@ async def typeahead_search(
                 getattr(event, "home_score", None),
                 getattr(event, "away_score", None),
             ),
+            # #9208: a called-off row carries ESPN's word, as the team brief does.
+            **_typeahead_stoppage(_ta_served_status, getattr(event, "period", None)),
             "sport_key": event.sport.key if event.sport else None,
             "commence_time": event.commence_time.isoformat() if event.commence_time else None,
             "home_logo": home.logo_url_small if home else None,
@@ -36925,6 +36927,23 @@ def _typeahead_final_score(served_status: str | None, home_score, away_score) ->
     if home_score is None or away_score is None:
         return {}
     return {"home_score": home_score, "away_score": away_score}
+
+
+def _typeahead_stoppage(served_status: str | None, period) -> dict:
+    """#9208: ESPN's word for a game called off, on a suspended dropdown row only.
+
+    The team brief already serves it (``routes/teams.py``, Orioles @ Yankees
+    15319530); this dropdown served ``status`` alone, so a suspended suggestion
+    could only print "No result reported" one tap before a page saying
+    "Canceled". Same exact allowlist, so a live period left on a row that went
+    dark can never print as a stoppage, and the same gate: only a row served as
+    ``suspended`` gets the key. A rain delay holds a period, not a stoppage
+    word, and carries nothing.
+    """
+    if served_status != "suspended":
+        return {}
+    word = authority_stoppage_label(period)
+    return {"stoppage": word} if word else {}
 
 
 #: #9550: the row columns :func:`_typeahead_settlement_facts` copies.
