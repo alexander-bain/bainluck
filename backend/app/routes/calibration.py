@@ -981,38 +981,37 @@ async def calibration_rescue(
     secret: str = Query(""),
     limit: int = Query(50000),
 ):
-    """Run Part C rescue directly — admin only."""
+    """Run Part C rescue directly — admin only.
+
+    Executes the task's OWN Part C statement (``_part_c_calibration_sql``), so
+    this route and the beat cannot disagree about what a calibration price is.
+
+    It used to carry a private copy that had drifted from Part C in all three
+    places that matter: no event link, no closing-line boundary, no source scope.
+    It wrote the LAST snapshot ever recorded onto every resolved row whose price
+    still equalled its opening — DataGolf model legs, elections, weather — so a
+    DataGolf winner forecast at 0.10 before the tournament was rewritten to its
+    final-round 0.95, and nothing downstream would ever revisit it, because the
+    row no longer equals its opening. A price captured after the answer is not a
+    forecast (ruling 103). Part C's docstring says why non-event markets are out:
+    for them opening is the honest price and a later quote is the settlement.
+    """
     _check_admin_secret(secret, request=request)
 
-    result = await db.execute(text("""
-        WITH stuck AS (
-            SELECT fo.id AS outcome_id, fo.opening_probability
-            FROM futures_outcomes fo
-            JOIN futures_markets fm ON fm.id = fo.market_id
-            WHERE fm.status = 'resolved'
-              AND fo.calibration_probability IS NOT NULL
-              AND fo.opening_probability IS NOT NULL
-              AND fo.calibration_probability = fo.opening_probability
-            LIMIT :limit
-        ),
-        last_snap AS (
-            SELECT DISTINCT ON (s.outcome_id)
-                s.outcome_id,
-                fos.probability
-            FROM stuck s
-            JOIN futures_odds_snapshots fos ON fos.outcome_id = s.outcome_id
-            WHERE fos.probability > 0 AND fos.probability < 1
-            ORDER BY s.outcome_id, fos.captured_at DESC
-        )
-        UPDATE futures_outcomes fo
-        SET calibration_probability = ls.probability
-        FROM last_snap ls
-        WHERE fo.id = ls.outcome_id
-          AND ls.probability != fo.opening_probability
-    """), {"limit": limit})
-    await db.commit()
+    from app.tasks.backfill_winners import _part_c_calibration_sql
 
-    return {"rescued": result.rowcount, "limit": limit}
+    # Part C selects at most 2,000 stuck rows per statement and the beat loops
+    # until a statement changes nothing; the route does the same, bounded by
+    # ``limit`` instead of by the beat's wall clock.
+    rescued = 0
+    while rescued < limit:
+        batch = await db.execute(text(_part_c_calibration_sql()))
+        await db.commit()
+        if batch.rowcount == 0:
+            break
+        rescued += batch.rowcount
+
+    return {"rescued": rescued, "limit": limit}
 
 
 async def _read_staged_disclosure(db: AsyncSession, *, now: float) -> dict:
