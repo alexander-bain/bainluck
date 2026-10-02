@@ -971,15 +971,31 @@ actor APIClient {
 
     /// Fetches a futures market detail page by backend market ID.
     func fetchFuturesDetail(id: Int) async throws -> FuturesMarketDetail {
-        return try await fetch("/api/futures/\(id)", requiresNetwork: true, revalidationQuery: ["fresh": "true"])
+        return try await fetchFuturesDetail(id: id, representation: .source)
+    }
+
+    /// #9387 — `representation: .verifiedTitle` asks for one current number per
+    /// outcome across venues that provably ask the same title question; the
+    /// response says which mode it actually served. `.source` sends no parameter,
+    /// so the default request is byte-for-byte what it was.
+    func fetchFuturesDetail(id: Int, representation: FuturesRepresentation) async throws -> FuturesMarketDetail {
+        return try await fetch("/api/futures/\(id)", query: Self.representationQuery(representation),
+                               requiresNetwork: true, revalidationQuery: ["fresh": "true"])
     }
 
     /// Fetches outcome probability history for a futures market.
-    func fetchProbabilityTimeline(marketId: Int, top: Int = 50, hours: Int = 168) async throws -> ProbabilityTimelineResponse {
+    func fetchProbabilityTimeline(marketId: Int, top: Int = 50, hours: Int = 168,
+                                  representation: FuturesRepresentation = .source) async throws -> ProbabilityTimelineResponse {
         return try await fetch("/api/futures/\(marketId)/probability-timeline", query: [
             "top": "\(top)",
             "hours": "\(hours)",
-        ], requiresNetwork: true, revalidationQuery: ["fresh": "true"])
+        ].merging(Self.representationQuery(representation)) { current, _ in current },
+            requiresNetwork: true, revalidationQuery: ["fresh": "true"])
+    }
+
+    /// The opt-in is a query parameter only when it is not the default.
+    nonisolated static func representationQuery(_ representation: FuturesRepresentation) -> [String: String] {
+        representation == .source ? [:] : ["representation": representation.rawValue]
     }
 
     // MARK: - EI Rankings

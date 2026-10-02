@@ -59,6 +59,12 @@ enum EvolutionRangeVocabulary {
 
 // MARK: - Chart Point
 
+/// What restarts the chart's load: a detail refresh or a new hero reading (#9387).
+private struct ChartLoadKey: Equatable {
+    let refreshToken: Int
+    let expectation: VerifiedTitleChartExpectation?
+}
+
 private struct EvolutionPoint: Identifiable {
     let id = UUID()
     let date: Date
@@ -199,8 +205,16 @@ struct EvolutionChartView: View {
     var tournamentStart: String?
     var tournamentEnd: String?
     var refreshToken: Int = 0
+    /// #9387 — the mode to ask for, and what the detail's hero says now. With no
+    /// expectation the chart behaves exactly as it always has.
+    var representation: FuturesRepresentation = .source
+    var expectation: VerifiedTitleChartExpectation? = nil
 
     @State private var data: ProbabilityTimelineResponse?
+    /// #9387 — one refetch per detail/range generation, then withhold the
+    /// current column rather than print a second, contradictory number.
+    @State private var agreement = VerifiedTitleChartPolicy()
+    @State private var withholdsCurrent = false
     @State private var requestGeneration = 0
     @State private var loading = true
     @State private var error: String?
@@ -315,6 +329,7 @@ struct EvolutionChartView: View {
                 case .sparse(let copy):
                     VStack(spacing: 0) {
                         controlBar
+                        historyCaptionRow
                         emptyState(copy.note, hint: copy.hint)
                     }
                     .background(Color.cardBackground)
@@ -322,6 +337,7 @@ struct EvolutionChartView: View {
                 case .plot:
                     VStack(spacing: 0) {
                         controlBar
+                        historyCaptionRow
                         chartSection
                         if let note = Self.coverageNote(
                             coverageHours: data?.coverageHours,
@@ -349,7 +365,7 @@ struct EvolutionChartView: View {
                 }
             }
         }
-        .task(id: refreshToken) {
+        .task(id: ChartLoadKey(refreshToken: refreshToken, expectation: expectation)) {
             if data == nil, hasTournamentDates, let start = parsedTournamentStart, start <= Date() {
                 selectedRange = .tournament
             }
@@ -426,9 +442,18 @@ struct EvolutionChartView: View {
                 fetchHours = 24
             }
             let result = try await APIClient.shared.fetchProbabilityTimeline(
-                marketId: marketId, top: 50, hours: fetchHours
+                marketId: marketId, top: 50, hours: fetchHours, representation: representation
             )
             guard !Task.isCancelled, generation == requestGeneration else { return }
+            switch agreement.step(result, generation: .init(
+                refreshToken: refreshToken, range: selectedRange.rawValue, expectation: expectation)) {
+            case .refetch:
+                // Discarded, never drawn: one more read for this generation.
+                await loadData()
+                return
+            case .adopt(let withholds):
+                withholdsCurrent = withholds
+            }
             data = result
             requestedHours = fetchHours
             if selectedNames.isEmpty {
@@ -496,8 +521,8 @@ struct EvolutionChartView: View {
     /// `ForEach`, `colorForOutcome`) and is one served duplicate away from handing
     /// two rows one number.
     private var displayedRows: [(servedIndex: Int, outcome: TimelineOutcomeMeta)] {
-        guard let data else { return [] }
-        let filtered = data.outcomes.enumerated()
+        guard data != nil else { return [] }
+        let filtered = servedOutcomes.enumerated()
             .filter { $0.element.name != "Field" }
             .map { (servedIndex: $0.offset, outcome: $0.element) }
         if topFilter >= filtered.count { return filtered }
@@ -510,7 +535,35 @@ struct EvolutionChartView: View {
     /// field, not the rows on screen. See `EvolutionLeaderboardGeometry
     /// .renderedPercents(forServedField:)` for why the distinction is the fix.
     private var servedRenderedPercents: [Int?] {
-        EvolutionLeaderboardGeometry.renderedPercents(forServedField: data?.outcomes ?? [])
+        EvolutionLeaderboardGeometry.renderedPercents(forServedField: servedOutcomes)
+    }
+
+    /// The served metadata list the TABLE reads — the list itself, in its own
+    /// order with its own names, unless #9387's agreement policy withheld the
+    /// current column. History keys, colours and the Sum gate read `data`.
+    private var servedOutcomes: [TimelineOutcomeMeta] {
+        let outcomes = data?.outcomes ?? []
+        return withholdsCurrent ? VerifiedTitleChartPolicy.withholdingCurrent(outcomes) : outcomes
+    }
+
+    /// #9387 — the verified-context caption, from this response's own basis.
+    private var historyCaption: String? {
+        guard let data else { return nil }
+        return VerifiedTitlePresentation.chartCaption(
+            data, expected: expectation, displayed: displayedOutcomes,
+            withholdsCurrent: withholdsCurrent)
+    }
+
+    @ViewBuilder
+    private var historyCaptionRow: some View {
+        if let caption = historyCaption {
+            Text(caption)
+                .font(.caption2)
+                .foregroundStyle(.secondary)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .padding(.horizontal)
+                .padding(.top, 2)
+        }
     }
 
     /// Whether adding this market's outcomes up produces a probability — decided

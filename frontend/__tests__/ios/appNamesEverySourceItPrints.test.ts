@@ -165,7 +165,12 @@ d("#4135 — the app names a source or draws none", () => {
     // Every site the tree had, discovered by grepping for the old switch. Each
     // must now ASK the resolver rather than carry its own copy of the answer.
     const sites: Array<[string, string]> = [
-      ["Views/FuturesDetailView.swift", "private func sourceLabel("],
+      // #9387 moved the futures detail's hero pill into the verified-title
+      // helper: both its arms (the hero's own contributors, and the market's one
+      // source) resolve through `labels(_:)` / `SourceLabels`. The view's half —
+      // that it still draws the pill through this helper — is asserted below.
+      ["Utilities/VerifiedTitleConsumer9387.swift", "static func labels("],
+      ["Utilities/VerifiedTitleConsumer9387.swift", "static func heroSourcePill("],
       ["Views/SearchView.swift", "private func searchSourceBadge("],
       ["Components/RelatedFuturesView.swift", "private func sourceLabel("],
       ["Components/FuturesBrowseComponents.swift", "private var label:"],
@@ -174,6 +179,13 @@ d("#4135 — the app names a source or draws none", () => {
 
     it.each(sites)("%s %s asks SourceLabels", (relPath, declaration) => {
       expect(slice(relPath, declaration)).toContain("SourceLabels.label(for:");
+    });
+
+    it("the futures detail draws its hero pill through the resolver-backed helper", () => {
+      const pill = slice("Utilities/VerifiedTitleConsumer9387.swift", "static func heroSourcePill(");
+      expect(pill).toContain("return labels(keys)");
+      const detail = stripComments(readFileSync(join(IOS_ROOT, "Views/FuturesDetailView.swift"), "utf8"));
+      expect(detail).toContain("VerifiedTitlePresentation.heroSourcePill(market, hero:");
     });
 
     it.each([

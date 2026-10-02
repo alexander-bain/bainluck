@@ -43,6 +43,23 @@ nonisolated enum FuturesPriceReconciliation {
                Set(incoming.outcomes.filter { $0.isWinner == true }.map(\.id)) != winners { return held }
         }
         guard Set(incoming.outcomes.map(\.id)).count == incoming.outcomes.count else { return held }
+        // #9387: a verified_title body is ONE composite answer per request
+        // generation. Its outcome `last_updated` is the requested origin row's
+        // clock and `observed_at` is the OLDEST contributor's, so neither orders
+        // it: an eligible sibling venue can move the blended value while both
+        // stand still, and the per-outcome rule below would refuse the newer
+        // answer forever. The caller's request generation is the order. An
+        // estimator transition (source ↔ verified) is adopted whole as well: a
+        // retained quote must never be spliced into a body that labels a
+        // different estimator. Source → source is untouched below.
+        if incoming.effectiveRepresentation == .verifiedTitle
+            || held.effectiveRepresentation == .verifiedTitle {
+            withdrawals = [:]
+            for outcome in incoming.outcomes where outcome.probability == nil {
+                withdrawals[outcome.id] = Withdrawal(lastKnownObservation: observationDate(outcome.lastUpdated))
+            }
+            return incoming
+        }
         let old = Dictionary(held.outcomes.map { ($0.id, $0) }, uniquingKeysWith: { a, _ in a })
         // Displayed probabilities in a mutually exclusive field share a divisor.
         // A newer sibling can legitimately move an unchanged-clock row; adopt
@@ -125,7 +142,10 @@ nonisolated enum FuturesPriceReconciliation {
             resolutionDate: incoming.resolutionDate, updatedAt: held.updatedAt,
             outcomeCount: outcomes.count, bookmakers: held.bookmakers, outcomes: outcomes,
             hookDescription: incoming.hookDescription, imageUrl: incoming.imageUrl,
-            leadOutcomeId: incoming.leadOutcomeId)
+            leadOutcomeId: incoming.leadOutcomeId, representation: incoming.representation,
+            questionIdentity: incoming.questionIdentity,
+            contributingSources: incoming.contributingSources,
+            representationFallback: incoming.representationFallback)
     }
 
     /// Only an accepted, dated new quote or authoritative result is activity.
