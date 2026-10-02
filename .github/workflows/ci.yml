@@ -1102,6 +1102,32 @@ jobs:
             exit 1
           fi
 
+      - name: "#9208 the search dropdown's called-off game says Canceled (real Postgres)"
+        # PILLAR: TRUTH. SHIP: a called-off game says "Canceled" in the search
+        # dropdown too, not "No result reported".
+        #
+        # The suspended row reaches the dropdown only through #9493's WHERE
+        # clause, so only a real database can observe the word riding it. The
+        # strawman case swaps the rule for an empty one and asserts production's
+        # bare row. Three refusals: a skip, a zero count, and a short count.
+        if: matrix.group == 'shared'
+        run: |
+          set -o pipefail
+          python -m pytest tests/integration/test_typeahead_stoppage_pg_9208.py \
+            -v -rs 2>&1 | tee /tmp/ta9208.txt
+          if grep -qiE "[0-9]+ skipped" /tmp/ta9208.txt; then
+            echo "::error::#9208 typeahead stoppage gate SKIPPED — the gate did not run"
+            exit 1
+          fi
+          if grep -qiE "no tests ran|collected 0 items" /tmp/ta9208.txt; then
+            echo "::error::#9208 typeahead stoppage gate collected NOTHING"
+            exit 1
+          fi
+          if ! grep -qE "^=+ 4 passed" /tmp/ta9208.txt; then
+            echo "::error::#9208 typeahead stoppage gate did not report exactly 4 passed"
+            exit 1
+          fi
+
       - name: search shows one award race once, dropdown and /search (real Postgres, #9439)
         # `mvp` printed Kalshi `MVP Winner?` (Josh Allen 25%) and Polymarket
         # `Pro Football: 2026 MVP Winner` (22%) as two rows on both surfaces. The
