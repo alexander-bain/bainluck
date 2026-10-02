@@ -19,7 +19,7 @@ import re
 import time
 import unicodedata
 from collections import Counter
-from datetime import datetime, timedelta, timezone
+from datetime import date, datetime, timedelta, timezone
 from functools import lru_cache
 from typing import Any, Optional, Union
 
@@ -2482,6 +2482,10 @@ def apply_discover_display_chain(
         # Re-sort after demotion so demoted events fall below high-scoring futures
         items.sort(key=_rank_key, reverse=True)
         items = balance_discover_event_category_mix(items)
+
+    # #2620 — after the last pass that deletes event cards, so a one-fight
+    # concept only yields to an event card that is still going to be served.
+    items = _drop_single_fight_concepts_shown_as_events(items)
 
     if not my_teams_only:
         if event_pct is not None and event_pct < 0.2:
@@ -15821,6 +15825,110 @@ def _drop_duplicate_bout_concepts(items: list[dict]) -> list[dict]:
         for idx, (item, key) in enumerate(zip(items, keys))
         if key is None or winner[key] == idx
     ]
+
+
+#: How far apart a one-fight card's date and its bout's event may sit and still be
+#: the same night. Kalshi's `commence_time` is a CLOSE time (gotcha #14) and the
+#: concept token is a UTC date, so a real match differs by a day; a rematch never
+#: lands inside two.
+_SINGLE_FIGHT_CONCEPT_DATE_SLACK_DAYS = 2
+
+
+def _concept_card_date(data: dict) -> Optional[date]:
+    """The calendar date a concept card is for, or ``None`` when unreadable.
+
+    `start_date` first (an ISO date or datetime, or None); the key's own date
+    token (`event:ufc:26oct02`) is the fallback, because the lister leaves
+    `start_date` None for a card whose only time is a market opening."""
+    raw = data.get("start_date")
+    if isinstance(raw, str) and len(raw) >= 10:
+        try:
+            return date.fromisoformat(raw[:10])
+        except ValueError:
+            pass
+    token = str(data.get("key") or "").rsplit(":", 1)[-1]
+    try:
+        return datetime.strptime(token, "%y%b%d").date()
+    except ValueError:
+        return None
+
+
+def _drop_single_fight_concepts_shown_as_events(items: list[dict]) -> list[dict]:
+    """A fight card holding ONE fight yields to that fight's own event card (#2620).
+
+    Production `/sports`, 2026-10-02 12:55Z (fight day): event 15321791,
+    *Mohammad Fahmi vs Ahmed El Sisy*, Fahmi 0.5628, on page 1 — and concept
+    `event:ufc:26oct02`, `fight_count: 1`, whose `headline_bout` is the same
+    two fighters at the same 0.5628, on page 2. One question, two cards. The
+    concept is a container; with one fight in it, it contains nothing the event
+    card does not already show.
+
+    `_drop_duplicate_bout_concepts` folds concept against concept and never sees
+    an event card, so the rule lives here, in the display chain, where both card
+    types share one pool. It runs after the last pass that deletes event cards
+    (the Discover noise filter), so it only ever yields to an event card that is
+    still going to be served — a concept whose event was filtered out keeps its
+    card and the fight is still shown once.
+
+    Deliberately narrow, the same way `_concept_bout_key` is — dropping a card we
+    misread is worse than serving one twice:
+
+    * only a UFC concept with `fight_count == 1`. Two or more fights means the
+      card holds bouts the event cards may not; 0 (or absent) means we do not
+      know what it holds.
+    * only when its main event's surnames equal an MMA event card's two
+      surnames, within `_SINGLE_FIGHT_CONCEPT_DATE_SLACK_DAYS` of the card's
+      date. An unreadable date keeps the card.
+    * never a calendar-marquee concept (`is_marquee` / the pin). A marquee
+      card is a hub the edition is entitled to lead with, not a duplicate.
+
+    A filter, never a re-rank; an item that raises while being read is kept
+    (gotcha #42).
+    """
+    fights: dict[frozenset, list[date]] = {}
+    for item in items:
+        if item.get("type") != "event":
+            continue
+        try:
+            data = item.get("data") or {}
+            if not str(data.get("sport") or "").startswith("mma"):
+                continue
+            surnames = frozenset(
+                _concept_surname(data.get(side) or "")
+                for side in ("home_team", "away_team")
+            )
+            if len(surnames) != 2 or "" in surnames:
+                continue
+            fights.setdefault(surnames, []).append(
+                date.fromisoformat(str(data.get("commence_time") or "")[:10])
+            )
+        except Exception:
+            logger.debug("single-fight concept dedup: unreadable event", exc_info=True)
+    if not fights:
+        return items
+
+    def _shown_as_event(item: dict) -> bool:
+        if item.get("type") != "concept":
+            return False
+        try:
+            data = item.get("data") or {}
+            if data.get("domain") != "ufc" or data.get("fight_count") != 1:
+                return False
+            if data.get("is_marquee") or item.get(MARQUEE_PIN_KEY):
+                return False
+            key = _concept_bout_key(data)
+            card_date = _concept_card_date(data)
+            if key is None or card_date is None:
+                return False
+            return any(
+                abs((day - card_date).days) <= _SINGLE_FIGHT_CONCEPT_DATE_SLACK_DAYS
+                for day in fights.get(key[1], ())
+            )
+        except Exception:
+            logger.debug("single-fight concept dedup: unreadable concept", exc_info=True)
+            return False
+
+    return [item for item in items if not _shown_as_event(item)]
 
 
 async def _candidate_tag_counts(
