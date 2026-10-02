@@ -1158,10 +1158,24 @@ class TestSearchSkipsTheUnservableOutcomeArm:
         # branch and `tail` swallowed the whole futures block, which made the
         # "not in head" half of this test vacuous. LAT-P013 caught it by mutation —
         # leaking the gate into the multi-term futures branch stayed green.
-        assert SEARCH_CODE.count("futures_name_conditions = [") == 1
+        # #1619: the multi-term conditions are built by
+        # `_futures_multi_term_name_conditions`, which reads
+        # `_has_extractable_trigram` to RESPELL a fragment as a filter — never to
+        # drop it. That the fragment still filters is pinned by
+        # `test_search_fragment_filter_only_1619.py` and by the assertion below.
+        assert SEARCH_CODE.count("futures_name_conditions = ") == 1
         multi = SEARCH_CODE[
-            SEARCH_CODE.find("futures_name_conditions = [") : SEARCH_CODE.find("futures_name_match = futures_name_ilike")
+            SEARCH_CODE.find("futures_name_conditions = ") : SEARCH_CODE.find("futures_name_match = futures_name_ilike")
         ]
+        _us_recession = str(
+            events_route.and_(*events_route._futures_multi_term_name_conditions(
+                [("us", None), ("recession", None)]
+            )).compile(compile_kwargs={"literal_binds": True})
+        )
+        assert "%us%" in _us_recession, (
+            "a short term stopped filtering inside the multi-term AND: "
+            + _us_recession
+        )
         head, sep, tail = multi.partition("    else:")
         assert sep, "the single-term futures branch is gone — slice anchors are stale"
         assert "_has_extractable_trigram" not in head, (
@@ -1731,11 +1745,23 @@ class TestFuturesNameArmRequiresWordAboutness:
         region = region[region.index("if len(terms) > 1:"):]
         multi, sep, single = region.partition("\n    else:")
         assert sep, "the futures single/multi-term branch structure changed"
-        assert region.count("_futures_name_match_term(") == 2, (
+        # #1619: the multi-term path builds its conditions through
+        # `_futures_multi_term_name_conditions`, which must itself word-test.
+        helper = _strip_comments(
+            inspect.getsource(events_route._futures_multi_term_name_conditions)
+        )
+        assert helper.count("_futures_name_match_term(") == 1, (
+            "the multi-term conditions helper stopped word-testing its terms"
+        )
+        assert region.count("_futures_name_match_term(") + region.count(
+            "_futures_multi_term_name_conditions("
+        ) == 2, (
             "the futures name arm is built somewhere other than the two known "
             "call sites — one path is not word-tested"
         )
-        assert "_futures_name_match_term(" in multi, "the MULTI-term path lost the word test"
+        assert "_futures_multi_term_name_conditions(" in multi, (
+            "the MULTI-term path lost the word test"
+        )
         assert "_futures_name_match_term(" in single, "the SINGLE-term path lost the word test"
 
     def test_a_lexemeless_term_cannot_zero_the_conjunction(self):

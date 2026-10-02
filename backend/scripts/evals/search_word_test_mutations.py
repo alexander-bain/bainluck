@@ -129,10 +129,12 @@ MUTANTS: list[tuple[str, Path, str, str, str, str]] = [
     (
         "multi-term-path-unguarded",
         EVENTS,
-        """            _futures_name_match_term(term, exp)
-            for term, exp in expanded""",
-        """            _build_expanded_ilike(FuturesMarket.name, term, exp)
-            for term, exp in expanded""",
+        """        _futures_name_match_term(
+            term, exp, fragment_drives_scan=not (a_term_has_trigram and not exp)
+        )
+        for term, exp in expanded""",
+        """        _build_expanded_ilike(FuturesMarket.name, term, exp)
+        for term, exp in expanded""",
         SHAPE_ORACLE,
         "The inverse: single-term guarded, multi-term not — the motivating query "
         "itself stays broken.",
@@ -243,7 +245,21 @@ MUTANTS: list[tuple[str, Path, str, str, str, str]] = [
         # measured on production 2026-09-25. `ts_rank_cd` could not sink them:
         # `us` is a stopword, so every name with "Open" tied. Same rule the team
         # arm took in #7381; the ILIKE half is unchanged and still drives the scan.
-        return _build_word_start_ilike(FuturesMarket.name, term, exp)
+        #
+        # #1619: ...unless a SIBLING term can drive it. A fragment has no trigram,
+        # so `ix_futures_name_trgm` cannot narrow on it, but the planner still
+        # prices its ILIKE as selective and multiplies that into the bitmap's
+        # estimate. For `f1 champion` the bitmap looked like a handful of rows,
+        # so the planner skipped ANDing it with an open-markets index and
+        # rechecked 83,000 candidates of every status on the heap — 52,435
+        # blocks for 6 open answers. Spelled as a filter (`fragment_drives_scan=
+        # False`), the fragment stops lying about the bitmap and the plan ANDs
+        # with `ix_futures_name_fts_open`. Production 2026-10-01, the compiled
+        # tier-1 name arm, three interleaved pairs: 766-1,750 ms -> 255-664 ms,
+        # 3,890 heap blocks, the same 6 ids (count + md5).
+        return _build_word_start_ilike(
+            FuturesMarket.name, term, exp, indexable=fragment_drives_scan
+        )
     return and_(""",
         """    return and_(""",
         SHAPE_ORACLE,
