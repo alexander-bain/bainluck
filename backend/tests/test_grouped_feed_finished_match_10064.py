@@ -27,6 +27,7 @@ from types import SimpleNamespace
 import pytest
 
 from app.utils.settled_hero import FINISHED_STATUSES
+from tests._grouped_feed_slate import NO_SLATE, is_slate_read
 
 
 def leg(prob, name, oid):
@@ -61,6 +62,8 @@ class _Session:
         self.statements = []
 
     async def execute(self, stmt):
+        if is_slate_read(stmt):  # #10208: no slate in this pool
+            return NO_SLATE
         self.statements.append(stmt)
         if len(self.statements) > 1:
             raise AssertionError("second read: this pool has nothing to fold")

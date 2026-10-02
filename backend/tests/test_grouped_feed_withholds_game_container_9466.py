@@ -20,6 +20,7 @@ and is that file's to test.
 import pytest
 
 from app.routes.futures import grouped_feed
+from tests._grouped_feed_slate import NO_SLATE, is_slate_read
 
 COMPLETED_COND = "0xbe933d1cb84a9716eeaf4349251abbb00d204365f8c9718b4a80904ffd2e0894"
 WINNER_COND = "0xd9ef3f1307be591a631c427852033924687880a1c52ac31755d920ff577bf791"
@@ -64,6 +65,8 @@ class _Session:
         return _Savepoint(self)
 
     async def execute(self, _stmt):
+        if is_slate_read(_stmt):  # #10208: no slate in this pool
+            return NO_SLATE
         self.calls += 1
         if not self._results:
             raise AssertionError(f"the route made read {self.calls}; none canned")
