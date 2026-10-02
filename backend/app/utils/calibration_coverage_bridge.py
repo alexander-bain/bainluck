@@ -135,6 +135,13 @@ BRIDGE_RUNGS: tuple[tuple[str, str], ...] = (
         "bid-ask spread under 0.50, so the price was never discovered.",
     ),
     (
+        "datagolf_opening_after_start",
+        "A DataGolf model price whose scored value is its opening, with no "
+        "DataGolf reading of that value captured before the tournament's start "
+        "date: first read while the tournament was being played, or read at a "
+        "time that cannot be placed before it. It is not a forecast.",
+    ),
+    (
         "structural_artifact",
         "A measured pricing artifact rather than a genuine probability: esports "
         "match bundles, golf one-sided-ask placeholders, Kalshi player-prop "

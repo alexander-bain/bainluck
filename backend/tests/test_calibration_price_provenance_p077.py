@@ -348,12 +348,13 @@ class TestTheSqlIsRenderedNotConcatenated:
         reproducing a census of a population the curve no longer prices. If the
         curve's default moves, this fails by name and someone decides on purpose.
         """
-        import inspect
-
         from app.tasks.precompute_calibration import _calibration_population_ctes
 
-        signature = inspect.signature(_calibration_population_ctes)
-        assert signature.parameters["curve_price"].default == CURVE_PRICE
+        # #5355 moved the headline expression from the signature default
+        # (now ``None``) into the builder's body, so the comparison is made on
+        # what the headline actually RENDERS — the price the curve buckets —
+        # rather than on a default that no longer carries it.
+        assert f"{CURVE_PRICE} AS raw_cp" in _calibration_population_ctes()
 
 
 class TestTheReaderActuallyRuns:

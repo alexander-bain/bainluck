@@ -139,6 +139,10 @@ def _futures_row(**overrides):
         # `tests/evals/fixtures/calibration_coverage_bridge_contract.json`,
         # which is the fixture whose job that is.
         "cb_opening_below_writer_bar": 0,
+        # #5355. A checked zero for the same reason: this synthetic Kalshi
+        # bucket holds no DataGolf row. The rung is given a real count by the
+        # `datagolf-opening-after-start-is-its-own-rung` corpus case.
+        "cb_datagolf_opening_after_start": 0,
         "cb_structural_artifact": 4,
         "cb_field_incomplete": 2,
         "cb_representative_not_selected": 5,

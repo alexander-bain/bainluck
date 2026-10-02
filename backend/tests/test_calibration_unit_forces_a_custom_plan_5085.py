@@ -275,7 +275,26 @@ from app.tasks.calibration_main_build import UNIT_PLAN_CACHE_MODE
 #: The version is NOT bumped, and the reason is the strongest of any anchor
 #: here: the rows are provably the same rows. A reader is told nothing because
 #: nothing about the population changed — only how long it takes to compute.
-LIVE_INPUT_FINGERPRINT = "8bb7895222dddc7749b5052a43fcdb5e"
+#:
+#: RE-ANCHORED for #5355 (the DataGolf opening-timing rule): ``8bb78952…`` ->
+#: ``5c2987db…``. The moved root is ``_calibration_population_ctes`` (a new
+#: per-outcome flag, withheld in ``deduped`` and counted in the field-completeness
+#: survivor set) plus ``compute_calibration_payload`` (its disclosure section).
+#: Unlike the #6868 anchor above, the ROWS CHANGE: a DataGolf outcome priced at
+#: its opening with no pre-start DataGolf reading of that value leaves the curve.
+#: An unmoved fingerprint would mean the rule never reached the population SQL.
+#:
+#: WHAT THIS RE-KEY COSTS. NOT MEASURED — build lanes do not read the live
+#: cursor (ruling 134), so no claim is made about the bank in flight. The next
+#: ``bainluck-heavy`` release that carries this re-keys whatever bank it finds,
+#: and the rebuild is the ordinary cost of a population change; if another re-key
+#: is already owed, riding the same release costs one rebuild, not two.
+#:
+#: The version is NOT bumped: the move is declared to the publish gate as an
+#: exact predicate succession instead (#8458's mechanism), so the rebuild's
+#: growth is not folded into a "methodology move" and the bank is not discarded
+#: twice.
+LIVE_INPUT_FINGERPRINT = "5c2987db39cf5ab3fe0efd65d636720c"
 
 
 class _Db:

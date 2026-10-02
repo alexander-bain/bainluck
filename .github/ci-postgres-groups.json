@@ -128,6 +128,7 @@
     "#9083 Polymarket empty-book openings leave the page (real Postgres)",
     "#938 golf round markets stop publishing a stamp as a price (real Postgres)",
     "/api/calibration/rescue runs Part C, not a private copy (real Postgres)",
+    "#5355 a DataGolf opening first read after the start is not scored (real Postgres)",
     "#4444 the census caps do not move the numbers (real Postgres)",
     "#4482 a task's query budget survives the pool (real Postgres)",
     "#4586 restore compare-and-swap (real Postgres)",

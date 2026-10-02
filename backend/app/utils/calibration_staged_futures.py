@@ -351,6 +351,10 @@ DEFAULT_CENSUS_COLUMNS: tuple[str, ...] = (
     # UndeclaredColumnError, and no generation could publish.
     "identity_disputed_excluded",
     "identity_disputed_markets",
+    # #5355: the DataGolf opening-timing rule's disclosure counts, declared in
+    # the same commit that emits them for the reason recorded just above.
+    "datagolf_opening_after_start_excluded",
+    "datagolf_opening_after_start_markets",
     "draw_authority_excluded",
     "draw_authority_markets",
     "orphan_partition_excluded",
@@ -400,6 +404,9 @@ DISTINCT_CENSUS_COLUMNS = frozenset(
         # `identity_disputed_excluded` is a plain COUNT(*) and correctly stays
         # out of this set.
         "identity_disputed_markets",
+        # #5355: COUNT(DISTINCT market_id), the same shape; its outcome-level
+        # sibling is a plain COUNT(*) and stays out.
+        "datagolf_opening_after_start_markets",
         "nonexclusive_bundle_markets",
         "mex_published_markets",
         "published_questions",

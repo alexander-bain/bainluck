@@ -15,11 +15,11 @@
     "SUM_ARM_ONLY_EXCLUDED_CELLS"
   ],
   "hashed_root_sha16": {
-    "_calibration_population_ctes": "2a3b2bf46d7a8bf6",
-    "_main_futures_sql": "9ca68c45e08b0ecb",
+    "_calibration_population_ctes": "e18d605acfc9c5fd",
+    "_main_futures_sql": "5f399959e521e053",
     "_roster_pushdown_predicates": "9b4afb101a88cb8a",
     "_virtual_market_ctes": "d03415be9c36d5cb",
-    "compute_calibration_payload": "cded2bf3fc794c0f",
+    "compute_calibration_payload": "1a4bb1b0d246dc2b",
     "identity_quarantine_ctes": "178dd31b64f3e836"
   },
   "hashed_roots": [
@@ -30,7 +30,7 @@
     "compute_calibration_payload",
     "identity_quarantine_ctes"
   ],
-  "input_count": 79,
+  "input_count": 80,
   "inputs": [
     {
       "covered_by_value": false,
@@ -191,6 +191,17 @@
         "_coverage_census_or_disabled",
         "_main_futures_sql",
         "_run_staged_futures"
+      ]
+    },
+    {
+      "covered_by_value": false,
+      "definition_sha16": null,
+      "impact": "behavior_or_evidence",
+      "name": "DATAGOLF_OPENING_TIMING_RULE_TEXT",
+      "origin": "app.tasks.precompute_calibration:DATAGOLF_OPENING_TIMING_RULE_TEXT",
+      "sql_interpolated": false,
+      "used_in": [
+        "compute_calibration_payload"
       ]
     },
     {
@@ -868,7 +879,7 @@
     },
     {
       "covered_by_value": false,
-      "definition_sha16": "9162b7d5b65cb5f8",
+      "definition_sha16": "b540c2bd9956b4ca",
       "impact": "sql_shaping",
       "name": "_COVERAGE_RUNG_KEYS",
       "origin": "app.utils.calibration_coverage_bridge:RUNG_KEYS",
@@ -905,7 +916,7 @@
     },
     {
       "covered_by_value": false,
-      "definition_sha16": "4b34b536921b04e2",
+      "definition_sha16": "8e08a2ede90cd53c",
       "impact": "behavior_or_evidence",
       "name": "_build_coverage_census",
       "origin": "app.utils.calibration_coverage_bridge:build_coverage_census",
@@ -941,8 +952,8 @@
   ],
   "schema": "calibration-fingerprint-derived/v1",
   "source": "backend/app/tasks/precompute_calibration.py",
-  "source_sha256": "fd69c6d984a0e128b775614c65b243088ee3dd6e2aaf34b8f5e67a49308a5c86",
-  "uncovered_behavior_or_evidence": 39,
-  "uncovered_count": 66,
+  "source_sha256": "a97b74261cb1b392372ee8a8847caf309b55ce32cd7a2d25aab11fd6c140b598",
+  "uncovered_behavior_or_evidence": 40,
+  "uncovered_count": 67,
   "uncovered_sql_shaping": 27
 }

@@ -84,10 +84,10 @@ async def _seed_market(session, market_id, *, metadata: dict | None):
         text(
             "INSERT INTO futures_markets (id, external_id, name, source, status, "
             "category, mutually_exclusive, market_type, llm_sport_category, volume, "
-            "market_metadata, resolution_date) VALUES "
+            "market_metadata, commence_time, resolution_date) VALUES "
             "(:id, :xid, :nm, 'datagolf', 'resolved', 'placement', false, "
             "'participation', 'golf', 100, CAST(:meta AS jsonb), "
-            "NOW() - INTERVAL '7 days')"
+            "NOW() - INTERVAL '10 days', NOW() - INTERVAL '7 days')"
         ),
         {
             "id": market_id,
@@ -116,9 +116,15 @@ async def _seed_market(session, market_id, *, metadata: dict | None):
         )
         await session.execute(
             text(
+                # #5355: a pre-tournament reading of the opening's own value,
+                # before commence_time — the curve publishes no DataGolf
+                # opening without one, so a control lacking it would be empty
+                # for a reason unrelated to the flag under test.
                 "INSERT INTO futures_odds_snapshots (outcome_id, bookmaker, "
-                "probability, reading_count, last_price, yes_bid, yes_ask) VALUES "
-                "(:oid, 'datagolf_model', :p, 1, :p, :p, :p)"
+                "probability, reading_count, last_price, yes_bid, yes_ask, "
+                "captured_at) VALUES "
+                "(:oid, 'datagolf_model', :p, 1, :p, :p, :p, "
+                "NOW() - INTERVAL '13 days')"
             ),
             {"oid": oid, "p": prob},
         )

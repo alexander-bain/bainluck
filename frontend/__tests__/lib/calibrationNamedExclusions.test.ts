@@ -151,6 +151,24 @@ const THE_NINE = {
   },
 };
 
+/**
+ * #5355 — a listable rule the served payload does not carry yet. Same situation
+ * as `identity_quarantine_filter` above: the block ships in the build, and the
+ * page reads `api.bainluck.com` only after `bainluck-heavy` publishes a curve
+ * built by it (notice 48). It is kept OUT of `LIVE` for that reason, so the
+ * live-count expectations below stay readings rather than stand-ins; the count
+ * here is a stand-in and only its own test reads it.
+ */
+const NOT_YET_SERVED = {
+  datagolf_opening_timing_filter: {
+    applies_to: "datagolf",
+    rule: "Excludes DataGolf model outcomes priced at their opening when no DataGolf reading…",
+    excluded: 321,
+    excluded_markets: 12,
+    excluded_cells: [["datagolf", "golf"]],
+  },
+};
+
 /** The payload, near enough: the sixteen filter blocks plus noise around them. */
 const LIVE = {
   total_outcomes: 747_028,
@@ -368,7 +386,26 @@ describe("the labels are this module's words, not the payload's", () => {
   test("every listable rule has a label and every label is listable", () => {
     // Keeps the closed map closed: a label with no rule behind it is dead copy,
     // a rule with no label is the omission this whole issue is about.
-    expect(Object.keys(NAMED_EXCLUSION_LABELS).sort()).toEqual(Object.keys(THE_NINE).sort());
+    expect(Object.keys(NAMED_EXCLUSION_LABELS).sort()).toEqual(
+      Object.keys({ ...THE_NINE, ...NOT_YET_SERVED }).sort()
+    );
+  });
+
+  test("a rule the served payload does not carry yet still reads as a row once it does", () => {
+    const out = readNamedExclusions({ ...LIVE, ...NOT_YET_SERVED })!;
+    const row = out.rows.find(r => r.key === "datagolf_opening_timing_filter");
+    expect(row).toEqual({
+      key: "datagolf_opening_timing_filter",
+      label: NAMED_EXCLUSION_LABELS.datagolf_opening_timing_filter,
+      outcomes: 321,
+    });
+    expect(out.unlistedRules).toBe(0);
+    // …and it carries none of the payload's own prose (the check above, applied
+    // to the block `THE_NINE` cannot hold).
+    const words = NOT_YET_SERVED.datagolf_opening_timing_filter.rule.split(/\s+/);
+    for (let i = 0; i + 6 <= words.length; i += 1) {
+      expect(row!.label).not.toContain(words.slice(i, i + 6).join(" "));
+    }
   });
 });
 

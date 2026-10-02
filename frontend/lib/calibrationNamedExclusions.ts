@@ -109,6 +109,8 @@ export const NAMED_EXCLUSION_LABELS: Readonly<Record<string, string>> = {
   malformed_binary_filter: "Two-sided markets that marked nobody the winner, or marked both",
   weather_wide_spread_filter: "Weather prices quoted with a gap too wide to trade (Kalshi)",
   orphan_partition_filter: "One runner kept from a field whose rivals were never recorded",
+  datagolf_opening_timing_filter:
+    "Golf model readings first taken after the tournament had started (DataGolf)",
 };
 
 export interface NamedExclusionRow {

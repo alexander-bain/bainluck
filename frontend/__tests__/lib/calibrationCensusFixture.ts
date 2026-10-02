@@ -18,7 +18,7 @@
 //   * the coverage bridge reconciles ANYWAY, because it is a different unit
 //     with its own reconciliation. That is the number a reader gets.
 //
-// ONE RUNG IS NOT FROM THAT CAPTURE, and it is called out rather than blended
+// TWO RUNGS ARE NOT FROM THAT CAPTURE, and each is called out rather than blended
 // in: `identity_disputed` (#6275) is appended at `outcomes: 0`, carrying the
 // server's verbatim `rule` text. The quarantine had not run in production when
 // the block above was captured, so the serve path could not yet emit it. Zero
@@ -27,6 +27,10 @@
 // inventing a bucket and hand-balancing the other numbers to match. When a
 // production census that includes the quarantine can be captured, re-capture
 // the whole block verbatim and delete this paragraph.
+//
+// `datagolf_opening_after_start` (#5355) is appended the same way and for the
+// same reason: at `outcomes: 0` with the server's verbatim `rule` text, because
+// the rung did not exist when the block was captured.
 export const COMPLETE_CENSUS = {
   "schema_version": "calibration-coverage-bridge/v1",
   "status": "incomplete",
@@ -112,6 +116,13 @@ export const COMPLETE_CENSUS = {
         "outcomes": 18233,
         "checked": true,
         "rule": "The opening price is one our own Kalshi writer would have refused to record: no snapshot of this outcome ever showed a real bid with a bid-ask spread under 0.50, so the price was never discovered."
+      },
+      {
+        "key": "datagolf_opening_after_start",
+        "unit": "futures_outcome",
+        "outcomes": 0,
+        "checked": true,
+        "rule": "A DataGolf model price whose scored value is its opening, with no DataGolf reading of that value captured before the tournament's start date: first read while the tournament was being played, or read at a time that cannot be placed before it. It is not a forecast."
       },
       {
         "key": "structural_artifact",

@@ -242,7 +242,13 @@ class TestTheBankSurvives:
 
 
 #: (CALIBRATION_POPULATION_VERSION, population_predicate_fingerprint()) on this tree.
-PINNED_PREDICATE = ("q271", CANDIDATE_PREDICATE)
+#:
+#: #5355 moved it (the DataGolf opening-timing rule), declared as the pair
+#: ``(CANDIDATE_PREDICATE, DATAGOLF_OPENING_PREDICATE)`` in
+#: ``DECLARED_PREDICATE_SUCCESSIONS`` and exercised in
+#: ``tests/test_calibration_datagolf_opening_succession_5355.py``.
+DATAGOLF_OPENING_PREDICATE = "3944c947edb78d220ed3bef7defcc526"
+PINNED_PREDICATE = ("q271", DATAGOLF_OPENING_PREDICATE)
 
 
 def test_population_predicate_is_pinned_8458():

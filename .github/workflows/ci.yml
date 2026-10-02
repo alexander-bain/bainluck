@@ -3798,6 +3798,25 @@ jobs:
             exit 1
           fi
 
+      - name: "#5355 a DataGolf opening first read after the start is not scored (real Postgres)"
+        # The in-play beat creates an outcome it has not seen with its IN-PLAY
+        # probability as the opening, and A1-dg plus the read path's COALESCE
+        # scored it as a forecast. The curve now withholds a DataGolf opening
+        # with no pre-start datagolf_model reading of its own value. Controls:
+        # pre-start forecasts (cp = opening, cp NULL, moved to a closing line)
+        # still publish at their own prices, a Polymarket market with only
+        # post-start readings is untouched, and every withheld row lands on the
+        # new coverage rung rather than the catch-all.
+        if: matrix.group == 'shared'
+        run: |
+          set -o pipefail
+          python -m pytest tests/integration/test_calibration_datagolf_post_start_opening_pg.py \
+            -v -s -rs 2>&1 | tee /tmp/dg_post_start_opening.txt
+          if grep -qiE "[0-9]+ skipped" /tmp/dg_post_start_opening.txt; then
+            echo "::error::#5355 DataGolf post-start opening gate SKIPPED — the gate did not run"
+            exit 1
+          fi
+
       - name: "#4444 the census caps do not move the numbers (real Postgres)"
         # The two `precompute_backfill_progress` tiles ran an uncapped
         # per-outcome `COUNT(*)` over `futures_odds_snapshots` and became the two
