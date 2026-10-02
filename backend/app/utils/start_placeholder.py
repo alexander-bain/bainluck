@@ -234,6 +234,42 @@ def announced_start_over_placeholder(
     return espn_date
 
 
+def announced_at_statpal_placeholder(
+    *,
+    event_tags: Any,
+    commence_time: Optional[datetime],
+    status: Optional[str],
+    time_announced: bool,
+    espn_status: Optional[str],
+    espn_date: Optional[datetime],
+) -> bool:
+    """True when ESPN announces the very minute StatPal's placeholder sits on (#8841).
+
+    Yankees @ Rays ALDS Game 2 (row 15322663) carried
+    ``provenance:start-placeholder:statpal:2026-10-06T00:00Z`` after ESPN
+    (401907986) posted ``2026-10-06T00:00Z`` with ``timeValid: true``, read
+    2026-10-02 04:55Z. Nothing was left to write, so
+    :func:`announced_start_over_placeholder` (a different minute only) declined,
+    the mark kept vouching for the stamp, and the Yankees page printed
+    "Oct 6 · TBD" for a 5:00 PM PT Oct 5 first pitch. ESPN's own mark already
+    clears at an equal instant (:func:`desired_espn_start_placeholder_tags`);
+    this is the same answer for StatPal's.
+
+    Every clause is required: the row is TBD on StatPal's mark for the instant
+    it carries, the row is scheduled, ESPN said ``timeValid: true`` in so many
+    words for a game not started, and ESPN's start is the same UTC minute.
+    """
+    if status != "scheduled" or commence_time is None:
+        return False
+    if start_placeholder_tag(commence_time) not in start_placeholder_tags(event_tags):
+        return False
+    if not time_announced or espn_status != "scheduled" or espn_date is None:
+        return False
+    if espn_date.tzinfo is None:
+        espn_date = espn_date.replace(tzinfo=timezone.utc)
+    return _utc_minute(espn_date) == _utc_minute(commence_time)
+
+
 def desired_start_placeholder_tags(
     *,
     fixture_is_placeholder: bool,

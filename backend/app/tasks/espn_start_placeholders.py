@@ -42,6 +42,17 @@ without one is found on its board by its two team names, in its own
 orientation, and only when exactly one game on that board matches and no other
 row of ours already carries that game's id. It never writes an id.
 
+**And when ESPN announces the minute the row already carries, StatPal's mark
+goes (#8841).** Nothing is left to write, so the move above declines, and before
+this the mark kept vouching for a stamp ESPN had confirmed: Yankees @ Rays ALDS
+Game 2 (15322663) sat on ``2026-10-06T00:00Z`` with ESPN 401907986 saying
+``timeValid: true`` at that same minute, and the Yankees page read "Oct 6 · TBD"
+for a 5:00 PM PT Oct 5 first pitch. The row is found on its board exactly as
+for a move (by id, else by its two team names, never taking a game another row
+carries by id), and the mark is retired by a compare-and-write that also stamps
+the start ``espn`` where the ranking lets ESPN, so StatPal's schedule pass does
+not write it back. ESPN's own mark already cleared at an equal instant.
+
 Bounded by construction: one scoreboard read per (sport, day) among the
 candidates, capped at :data:`MAX_BOARDS`, soonest day first. On 2026-09-27
 that was 8 reads.
@@ -62,6 +73,7 @@ from sqlalchemy import String, and_, cast, extract, func, or_, select
 from app.utils.sport_keys import ESPN_SPORT_MAPPING
 from app.utils.start_placeholder import (
     EASTERN,
+    announced_at_statpal_placeholder,
     announced_start_over_placeholder,
     desired_espn_start_placeholder_tags,
     espn_start_placeholder_tags,
@@ -209,6 +221,18 @@ def plan_move(row: CandidateRow, ee: Any) -> tuple[str, Optional[datetime]]:
     return "move", announced
 
 
+def confirms_placeholder(row: CandidateRow, ee: Any) -> bool:
+    """Whether ESPN's game announces the minute the row's StatPal mark sits on."""
+    return announced_at_statpal_placeholder(
+        event_tags=row.event_tags,
+        commence_time=row.commence_time,
+        status="scheduled",
+        time_announced=getattr(ee, "time_announced", False),
+        espn_status=getattr(ee, "status", None),
+        espn_date=getattr(ee, "date", None),
+    )
+
+
 def group_by_board(rows: Iterable[CandidateRow]) -> dict[tuple[str, str], list[CandidateRow]]:
     grouped: dict[tuple[str, str], list[CandidateRow]] = defaultdict(list)
     for row in rows:
@@ -244,6 +268,7 @@ async def _run_mark_espn_start_placeholders(apply: bool = True) -> dict:
     from app.services.espn_api import ESPN_FULL_SLATE_GROUPS, ESPNAPIService
     from app.tasks.base import get_task_session
     from app.utils.start_placeholder_write import (
+        confirm_announced_placeholder,
         write_announced_start,
         write_espn_start_placeholder_tags,
     )
@@ -268,6 +293,10 @@ async def _run_mark_espn_start_placeholders(apply: bool = True) -> dict:
         "move_ambiguous": 0,
         "move_id_held_elsewhere": 0,
         "move_stale": 0,
+        "confirm": 0,
+        "confirmed_ids": [],
+        "confirm_id_held_elsewhere": 0,
+        "confirm_stale": 0,
         "errors": [],
     }
 
@@ -292,6 +321,8 @@ async def _run_mark_espn_start_placeholders(apply: bool = True) -> dict:
         writes: list[tuple[int, list[str]]] = []
         # (row, announced, how, game espn_id) — decided per board, written below.
         moves: list[tuple[CandidateRow, datetime, str, str]] = []
+        # (row, how, game espn_id) — ESPN announced the row's own minute.
+        confirms: list[tuple[CandidateRow, str, str]] = []
         try:
             ordered = sorted(groups.items(), key=lambda kv: (kv[0][1], kv[0][0]))
             for index, ((sport_key, day), day_rows) in enumerate(ordered):
@@ -322,6 +353,8 @@ async def _run_mark_espn_start_placeholders(apply: bool = True) -> dict:
                         elif move == "move":
                             moves.append((row, announced, how, str(ee.espn_id)))
                             continue
+                        elif confirms_placeholder(row, ee):
+                            confirms.append((row, how, str(ee.espn_id)))
                     if not row.espn_id:
                         continue
                     outcome, desired = plan_row(row, board_by_id)
@@ -336,7 +369,10 @@ async def _run_mark_espn_start_placeholders(apply: bool = True) -> dict:
         # A row found by its team names may not take a game another row of
         # ours already carries by id: that is two rows for one game, and
         # which one is the game is lane1's to decide, not this pass's.
-        by_teams_ids = sorted({gid for _r, _a, how, gid in moves if how == "by_teams"})
+        by_teams_ids = sorted(
+            {gid for _r, _a, how, gid in moves if how == "by_teams"}
+            | {gid for _r, how, gid in confirms if how == "by_teams"}
+        )
         held: set[str] = set()
         if by_teams_ids:
             from app.models.models import Event
@@ -378,17 +414,42 @@ async def _run_mark_espn_start_placeholders(apply: bool = True) -> dict:
                 row.commence_time_source, apply,
             )
 
+        landed_confirms = 0
+        for row, how, gid in confirms:
+            if how == "by_teams" and gid in held:
+                stats["confirm_id_held_elsewhere"] += 1
+                continue
+            landed = True
+            if apply:
+                landed = await confirm_announced_placeholder(
+                    session, row.event_id, row.commence_time,
+                    take_source=provider_may_set_start(row.commence_time_source, "espn"),
+                )
+            if not landed:
+                stats["confirm_stale"] += 1
+                continue
+            landed_confirms += 1
+            stats["confirm"] += 1
+            stats["confirmed_ids"].append(row.event_id)
+            logger.info(
+                "ESPN announced the placeholder minute (#8841): event %s %s, "
+                "StatPal mark retired, apply=%s",
+                row.event_id, row.commence_time.isoformat(), apply,
+            )
+
         if apply and writes:
             for event_id, desired in writes:
                 await write_espn_start_placeholder_tags(session, event_id, desired)
-        if apply and (writes or planned_moves):
+        if apply and (writes or planned_moves or landed_confirms):
             await session.commit()
 
     stats["status"] = "complete" if not stats["errors"] else "partial"
     logger.info(
         "ESPN start placeholders (#8981): %d candidates, %d boards (%d dark), "
-        "%d marked, %d cleared, %d unchanged, %d announced starts written, apply=%s",
+        "%d marked, %d cleared, %d unchanged, %d announced starts written, "
+        "%d StatPal marks retired at an announced minute, apply=%s",
         stats["candidates"], stats["boards_read"], stats["boards_dark"],
-        stats["mark"], stats["clear"], stats["unchanged"], stats["move"], apply,
+        stats["mark"], stats["clear"], stats["unchanged"], stats["move"],
+        stats["confirm"], apply,
     )
     return stats
