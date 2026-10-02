@@ -271,7 +271,7 @@ class TestOneSportsDatedBoardWaitsForNoWrittenRow:
                 return by_id[event.espn_id], "espn_id"
             return None, None
 
-        async def _update_fields(session, event, ee, claimed, stats):
+        async def _update_fields(session, event, ee, claimed, stats, *, observed_at=None):
             await session.execute(
                 update(Event).where(Event.id == event.id).values(period="2nd Period")
             )

@@ -28,7 +28,8 @@ from app.utils.game_state import (
 from app.utils.live_state_write import write_live_state_if_unmoved
 from app.utils.score_observation import (
     SCORE_SOURCE_ESPN,
-    score_confirmation_values,
+    clear_score_observation,
+    score_write_stamp_values,
     stamp_score_observation,
 )
 from app.utils.start_time_authority import provider_may_set_start
@@ -1884,9 +1885,12 @@ async def update_event_fields_from_espn(
     #
     # Stamped on CONFIRMATION, not on change: the 0-0 game this writer reads
     # every minute and never moves is the row that most needs an age. But only
-    # when ESPN's reading is the score the row will hold — a reading refused as
-    # stale, withheld as pre-game, or filler from a stoppage board confirms
-    # nothing, and stamping it would date a score ESPN did not say.
+    # when ESPN's FULL reading is the score the row will hold — a reading refused
+    # as stale, withheld as pre-game, or filler from a stoppage board confirms
+    # nothing, and stamping it would date a score ESPN did not say. Each side
+    # lands independently above, so half a reading can change the tuple without
+    # confirming it; the helper clears the stamp in that write rather than leave
+    # the old one dating a number nobody read whole.
     #
     # Joined to `_live_values` rather than assigned on the ORM row so the stamp
     # and the score it dates are ONE compare-and-write: if another writer moved
@@ -1894,19 +1898,18 @@ async def update_event_fields_from_espn(
     # score under that writer's stamp. `_live_change` is taken BEFORE the join so
     # a confirmation-only write never reports the row as changed.
     _live_change = bool(_live_values)
-    if (
-        ee.home_score is not None
-        and ee.away_score is not None
-        and not _live_state_is_stale
-        and not _withhold_live_state
-        and not _stoppage_scores_are_filler
-    ):
-        _live_values.update(score_confirmation_values(
-            event,
-            source=SCORE_SOURCE_ESPN,
-            observed_at=observed_at,
-            score_changed=score_changed,
-        ))
+    _live_values.update(score_write_stamp_values(
+        source=SCORE_SOURCE_ESPN,
+        observed_at=observed_at,
+        stored=(_observed_home_score, _observed_away_score),
+        writes=_live_values,
+        reading=(ee.home_score, ee.away_score),
+        may_confirm=(
+            not _live_state_is_stale
+            and not _withhold_live_state
+            and not _stoppage_scores_are_filler
+        ),
+    ))
 
     # ── #6056 / CERT-2829: THE FOUR LIVE-STATE WRITES LAND AS ONE ACT ────────
     #
@@ -3412,10 +3415,15 @@ async def backfill_missing_scores(session, stats):
                             ev.home_score = ee.home_score
                             ev.away_score = ee.away_score
                             # This rail fills rows that had NO score at all, so
-                            # the stamp is the first one they carry (#4571).
-                            stamp_score_observation(
-                                ev, source=SCORE_SOURCE_ESPN, observed_at=_observed_at,
-                            )
+                            # the stamp is the first one they carry (#4571) —
+                            # when ESPN stated both sides. Half a score is not a
+                            # tuple anyone read, so it carries no age at all.
+                            if ee.away_score is not None:
+                                stamp_score_observation(
+                                    ev, source=SCORE_SOURCE_ESPN, observed_at=_observed_at,
+                                )
+                            else:
+                                clear_score_observation(ev)
                             _bf_period = _sanitize_period(ee.status_detail)  # #5390
                             if _bf_period:
                                 ev.period = _bf_period

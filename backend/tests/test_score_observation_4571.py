@@ -523,9 +523,9 @@ def _calls_in(tree):
                 # attribute (gotcha #5) — it merges columns instead. Same rule,
                 # different verb, and it must be held to both guards below.
                 "score_observation_values",
-                # The compare-and-write spelling (#6056): a confirmation joined
-                # to the live-state UPDATE, never assigned on the ORM row.
-                "score_confirmation_values",
+                # The compare-and-write spelling (#6056): the stamp joined to
+                # the score's own UPDATE, never assigned on the ORM row.
+                "score_write_stamp_values",
             ):
                 yield node
 
@@ -583,7 +583,7 @@ def test_no_stamp_is_nested_inside_a_score_inequality(relpath):
 
 _HELPERS = {
     "stamp_score_observation", "clear_score_observation",
-    "score_observation_values", "score_confirmation_values",
+    "score_observation_values", "score_write_stamp_values",
     "SCORE_SOURCE_ESPN", "SCORE_SOURCE_STATPAL", "SCORE_SOURCE_ODDS",
 }
 
@@ -898,7 +898,7 @@ def test_the_odds_stamp_is_merged_into_the_same_update_values():
         if not isinstance(node, ast.Call):
             continue
         fn = node.func
-        # `update_values.update(score_confirmation_values(...))`
+        # `update_values.update(score_write_stamp_values(...))`
         if getattr(fn, "attr", None) != "update":
             continue
         if getattr(getattr(fn, "value", None), "id", None) != "update_values":
@@ -906,7 +906,7 @@ def test_the_odds_stamp_is_merged_into_the_same_update_values():
         for arg in node.args:
             if isinstance(arg, ast.Call) and getattr(
                 arg.func, "id", None
-            ) == "score_confirmation_values":
+            ) == "score_write_stamp_values":
                 merged = True
 
     assert merged, (
@@ -941,37 +941,32 @@ def test_the_odds_stamp_passes_the_scores_read_clock_not_a_fresh_now():
     )
 
 
-def test_the_odds_stamp_is_gated_on_the_stored_pair():
-    """The NO-SCORE / REFUSED-SCORE control, at the site.
+def test_the_odds_stamp_is_handed_the_stored_pair_the_reading_and_the_skip():
+    """The NO-SCORE / REFUSED-SCORE / HALF-SCORE control, at the site.
 
-    The stamp dates the score TUPLE the row will hold, so it needs both sides
-    read (`and`, not `or` — a one-sided payload lands on the stored other half,
-    which this read never confirmed) and it must not fire when any guard above
-    declined the write (`_skip_score_write`). Never gated on change.
+    The rule itself lives in `score_write_stamp_values` and is paid by value
+    below; what the site owes is the right inputs. The stamp dates the score
+    TUPLE the row will hold, so the helper must see the stored pair, the very
+    `update_values` the UPDATE sends, BOTH sides of the reading (a one-sided
+    payload lands on the stored other half, which this read never confirmed),
+    and `_skip_score_write` as the reason it may not confirm. Never gated on
+    change: no `if` with a score `!=` may sit around it.
     """
-    tree = _module_tree(ODDS_SITE)
-    guarded = False
-    for node in ast.walk(tree):
-        if not isinstance(node, ast.If):
-            continue
-        if not list(_calls_in(ast.Module(body=node.body, type_ignores=[]))):
-            continue
-        test_src = ast.dump(node.test)
-        if "home_score" in test_src and "away_score" in test_src:
-            assert "BoolOp" in test_src and "And()" in test_src, (
-                "the stamp must require BOTH sides — half a read does not "
-                "confirm the pair the row shows"
-            )
-            assert "_skip_score_write" in test_src, (
-                "a score a guard declined to store must not be stamped"
-            )
-            assert "NotEq" not in test_src, (
-                "the odds stamp is gated on the score having CHANGED; it must "
-                "be gated only on a score having been READ"
-            )
-            guarded = True
+    calls = _odds_stamp_calls()
+    assert len(calls) == 1, f"one stamp site expected, found {len(calls)}"
+    kwargs = {k.arg: k.value for k in calls[0].keywords}
 
-    assert guarded, "the odds stamp is not gated on a score being present"
+    assert ast.unparse(kwargs["stored"]) == (
+        "(event_obj.home_score, event_obj.away_score)"
+    )
+    assert ast.unparse(kwargs["writes"]) == "update_values", (
+        "the helper must read the same dict the UPDATE sends, or it judges a "
+        "write other than the one that lands"
+    )
+    assert ast.unparse(kwargs["reading"]) == "(home_score, away_score)"
+    assert ast.unparse(kwargs["may_confirm"]) == "not _skip_score_write", (
+        "a score a guard declined to store must not be confirmed"
+    )
 
 
 def test_a_refused_id_never_reaches_the_stamp():
@@ -1027,6 +1022,29 @@ def _straggler_harness():
     return module
 
 
+def _stamp_sent(stmt):
+    """The stamp one UPDATE carries, as `{score_source, score_observed_at}`.
+
+    Two spellings reach the wire: a changed tuple sends both columns as plain
+    values, an unchanged one sends the forward-only `CASE` whose binds are
+    `param_N`. Read both; `{}` when the statement carries no stamp.
+    """
+    compiled = stmt.compile()
+    params = dict(compiled.params)
+    if "score_observed_at" in params:
+        return {k: params[k] for k in ("score_source", "score_observed_at")}
+    if "score_observed_at=CASE" not in str(compiled).replace(" ", ""):
+        return {}
+    return {
+        "score_source": next(
+            v for v in params.values() if v in SCORE_OBSERVATION_SOURCES
+        ),
+        "score_observed_at": next(
+            v for v in params.values() if isinstance(v, datetime)
+        ),
+    }
+
+
 def _stamps_written(session):
     """Every stamp the settle door sent, one per UPDATE statement.
 
@@ -1034,10 +1052,7 @@ def _stamps_written(session):
     stamp rides that statement — so the fake session's statements, not the
     in-memory rows, are where a stamp is visible.
     """
-    return [
-        params for params in session.update_params
-        if "score_observed_at" in params
-    ]
+    return [stamp for stamp in session.update_params if stamp]
 
 
 async def _run_straggler(s, rows, **kw):
@@ -1047,7 +1062,7 @@ async def _run_straggler(s, rows, **kw):
 
     async def _execute(stmt, *args, **kwargs):
         if not str(stmt).lstrip().upper().startswith("SELECT"):
-            session.update_params.append(dict(stmt.compile().params))
+            session.update_params.append(_stamp_sent(stmt))
         return await real_execute(stmt, *args, **kwargs)
 
     session.execute = _execute
@@ -1113,3 +1128,310 @@ async def test_an_authority_dark_straggler_board_stamps_nothing():
     assert _stamps_written(session) == [], (
         "a dark board settled nothing, so it must not have stamped a score"
     )
+
+
+# ══ SOL 9ec2 FINDINGS — A STAMP DATES THE WHOLE TUPLE THE ROW HOLDS ══════════
+#
+# Finding 1: each side of a reading lands independently, and only a reading with
+# both sides confirmed — so ESPN reading (7, None) against a stored (3, 0) wrote
+# home 7 and left StatPal's stamp, taken for (3, 0), dating (7, 0). Same for a
+# whole changed score with no clock. A write that moves the tuple without
+# confirming it now CLEARS the stamp in the same statement.
+#
+# Finding 2: the "never backwards" rule was checked against the LOADED row, and
+# no compare-and-write predicate reads the stamp — so two confirmations of one
+# tuple that load in one order and commit in the other regressed it. An
+# unchanged confirmation is now a forward-only CASE the database decides.
+
+from sqlalchemy.sql.elements import ClauseElement  # noqa: E402
+
+from app.utils.score_observation import (  # noqa: E402
+    SCORE_STAMP_CLEARED,
+    score_write_stamp_values,
+)
+
+T_HELD = NOW - timedelta(seconds=60)
+
+
+def _decide(stored, writes, reading, *, observed_at=NOW, may_confirm=True):
+    return score_write_stamp_values(
+        source="espn", observed_at=observed_at, stored=stored,
+        writes=writes, reading=reading, may_confirm=may_confirm,
+    )
+
+
+def test_a_half_reading_that_moves_the_score_clears_the_stamp():
+    assert _decide((3, 0), {"home_score": 7}, (7, None)) == SCORE_STAMP_CLEARED
+
+
+def test_a_half_reading_onto_a_blank_row_is_not_a_tuple_anyone_read():
+    """The row ends (7, None), which equals the reading — but half a score is
+    not a confirmation of anything."""
+    assert _decide((None, None), {"home_score": 7}, (7, None)) == SCORE_STAMP_CLEARED
+
+
+def test_a_changed_score_with_no_clock_clears_the_stamp():
+    assert _decide(
+        (3, 0), {"home_score": 7}, (7, 0), observed_at=None,
+    ) == SCORE_STAMP_CLEARED
+
+
+def test_a_changed_confirmed_score_takes_this_readings_clock():
+    assert _decide((3, 0), {"home_score": 7}, (7, 0)) == {
+        "score_source": "espn", "score_observed_at": NOW,
+    }
+
+
+def test_a_half_reading_that_moves_nothing_keeps_the_stamp():
+    assert _decide((3, 0), {}, (3, None)) == {}
+
+
+def test_a_refused_reading_of_the_stored_tuple_confirms_nothing():
+    """A reading its writer refused (stale, withheld pre-game, stoppage filler)
+    must not date the row even when it happens to equal it."""
+    assert _decide((0, 0), {}, (0, 0), may_confirm=False) == {}
+
+
+def test_a_refused_reading_of_a_different_tuple_confirms_nothing():
+    """UX term 1: incoming 4-5 refused, stored 6-5 stays — 6-5 must not look
+    freshly confirmed."""
+    assert _decide((6, 5), {}, (4, 5), may_confirm=False) == {}
+
+
+def test_an_unchanged_confirmation_is_decided_by_the_database():
+    values = _decide((28, 20), {"home_score": 28, "away_score": 20}, (28, 20))
+    assert set(values) == {"score_source", "score_observed_at"}
+    assert all(isinstance(v, ClauseElement) for v in values.values()), (
+        "an unchanged confirmation sent a plain value: an older read that "
+        "commits after a newer one would re-date the score backwards"
+    )
+
+
+def _core_row(*, home, away, source=None, observed_at=None):
+    """One real sqlite `events` row, for the Core UPDATE the odds site sends."""
+    from sqlalchemy import create_engine
+
+    _load_6056_rails()  # sqlite compilers for JSONB / ARRAY
+    from app.models.models import Base, Event, Sport
+
+    engine = create_engine("sqlite://")
+    Base.metadata.create_all(engine, tables=[Event.__table__, Sport.__table__])
+    with engine.begin() as conn:
+        sport_id = conn.execute(
+            Sport.__table__.insert().values(key="americanfootball_nfl", name="NFL")
+        ).inserted_primary_key[0]
+        event_id = conn.execute(Event.__table__.insert().values(
+            sport_id=sport_id, home_team_name="H", away_team_name="A",
+            commence_time=NOW - timedelta(hours=1), status="live",
+            home_score=home, away_score=away, win_probability_sources={},
+            score_source=source, score_observed_at=observed_at,
+        )).inserted_primary_key[0]
+    return engine, event_id
+
+
+def _core_write(engine, event_id, values):
+    from sqlalchemy import select
+
+    from app.models.models import Event
+
+    with engine.begin() as conn:
+        conn.execute(
+            Event.__table__.update().where(Event.id == event_id).values(**values)
+        )
+        row = conn.execute(
+            select(Event.home_score, Event.away_score, Event.score_source,
+                   Event.score_observed_at).where(Event.id == event_id)
+        ).one()
+    return row[0], row[1], row[2], _aware(row[3])
+
+
+def test_odds_shaped_one_sided_payload_clears_the_old_stamp_on_a_real_row():
+    engine, event_id = _core_row(home=3, away=0, source="statpal", observed_at=T_HELD)
+    update_values = {"home_score": 7}
+    update_values.update(score_write_stamp_values(
+        source=SCORE_SOURCE_ODDS, observed_at=NOW, stored=(3, 0),
+        writes=update_values, reading=(7, None), may_confirm=True,
+    ))
+    assert _core_write(engine, event_id, update_values) == (7, 0, None, None)
+
+
+@pytest.mark.parametrize(
+    "held_source, held_at, expected",
+    [
+        (None, None, ("odds_api", NOW)),                       # first confirmation
+        ("statpal", T_HELD, ("odds_api", NOW)),                # older stamp advances
+        ("statpal", NOW + timedelta(seconds=30),               # newer stamp stands
+         ("statpal", NOW + timedelta(seconds=30))),
+    ],
+)
+def test_the_forward_only_confirmation_on_a_real_row(held_source, held_at, expected):
+    engine, event_id = _core_row(home=0, away=0, source=held_source, observed_at=held_at)
+    values = score_write_stamp_values(
+        source=SCORE_SOURCE_ODDS, observed_at=NOW, stored=(0, 0),
+        writes={}, reading=(0, 0), may_confirm=True,
+    )
+    assert _core_write(engine, event_id, values) == (0, 0, *expected)
+
+
+# ── the same rules through the REAL ESPN writer ──────────────────────────────
+
+
+@pytest.mark.asyncio
+async def test_espn_half_reading_that_moves_the_score_clears_an_old_stamp():
+    """Sol's specimen: stored (3,0) stamped StatPal@T0; ESPN reads (7, None)."""
+    row, _stats, changed = await _espn_writes(
+        row_home=3, row_away=0, board=_Board(home_score=7, away_score=None),
+        observed_at=NOW, held_stamp=T_HELD,
+    )
+    assert (row.home_score, row.away_score) == (7, 0)
+    assert (row.score_source, row.score_observed_at) == (None, None), (
+        "StatPal's stamp for (3, 0) survived onto (7, 0), a tuple nobody "
+        "read whole"
+    )
+    assert changed is True
+
+
+@pytest.mark.asyncio
+async def test_espn_half_reading_that_moves_nothing_keeps_the_stamp():
+    row, _stats, _changed = await _espn_writes(
+        row_home=3, row_away=0, board=_Board(home_score=3, away_score=None),
+        observed_at=NOW, held_stamp=T_HELD,
+    )
+    assert (row.score_source, _aware(row.score_observed_at)) == ("statpal", T_HELD)
+
+
+@pytest.mark.asyncio
+async def test_espn_changed_score_without_a_clock_clears_an_old_stamp():
+    row, _stats, _changed = await _espn_writes(
+        row_home=3, row_away=0, board=_Board(home_score=7, away_score=0),
+        observed_at=None, held_stamp=T_HELD,
+    )
+    assert (row.home_score, row.away_score) == (7, 0)
+    assert (row.score_source, row.score_observed_at) == (None, None)
+
+
+@pytest.mark.asyncio
+async def test_espn_refused_reversion_leaves_a_held_stamp_exactly_as_it_was():
+    """UX term 1, by value: incoming 28-14 refused as earlier in the game; the
+    stored 28-20 keeps its stamp — not bumped, not cleared."""
+    row, stats, _changed = await _espn_writes(
+        row_home=28, row_away=20,
+        board=_Board(home_score=28, away_score=14, clock="5:26",
+                     status_detail="5:26 - 4th Quarter"),
+        observed_at=NOW, held_stamp=T_HELD,
+    )
+    assert stats["live_state_reversions_refused"] == 1
+    assert (row.home_score, row.away_score) == (28, 20)
+    assert (row.score_source, _aware(row.score_observed_at)) == ("statpal", T_HELD)
+
+
+def _confirms_same_tuple_at(at):
+    """Another writer, in its own session, confirming the SAME tuple at the
+    SAME position with a NEWER read — committed inside our decision window, so
+    every compare-and-write predicate still matches when we write."""
+
+    def _run(engine, event_id):
+        from sqlalchemy import update
+        from sqlalchemy.orm import Session
+
+        from app.models.models import Event
+
+        other = Session(engine)
+        try:
+            other.execute(
+                update(Event).where(Event.id == event_id)
+                .values(score_source="statpal", score_observed_at=at)
+            )
+            other.commit()
+        finally:
+            other.close()
+
+    return _run
+
+
+@pytest.mark.asyncio
+async def test_an_older_confirmation_committing_after_a_newer_one_keeps_the_newer(
+    monkeypatch,
+):
+    """Finding 2's interleaving: both load an unstamped 0-0; StatPal@T+30
+    commits first; ESPN@T commits after. The stamp must stay T+30."""
+    later = NOW + timedelta(seconds=30)
+    row, stats, changed = await _espn_writes(
+        row_home=0, row_away=0, board=_Board(home_score=0, away_score=0),
+        observed_at=NOW, interloper=_confirms_same_tuple_at(later),
+        monkeypatch=monkeypatch,
+    )
+    assert (row.score_source, _aware(row.score_observed_at)) == ("statpal", later), (
+        "an older same-tuple confirmation re-dated the score backwards"
+    )
+    assert stats.get("score_confirmation_lost_race", 0) == 0
+    assert changed is False
+
+
+@pytest.mark.asyncio
+async def test_the_forward_only_stamp_never_blocks_the_position_it_rides_with(
+    monkeypatch,
+):
+    """Same interleaving, but ESPN's read also moves the clock on: the clock
+    must land while the newer stamp stands."""
+    later = NOW + timedelta(seconds=30)
+    row, stats, changed = await _espn_writes(
+        row_home=0, row_away=0,
+        board=_Board(home_score=0, away_score=0, clock="5:10",
+                     status_detail="5:10 - 4th Quarter"),
+        observed_at=NOW, interloper=_confirms_same_tuple_at(later),
+        monkeypatch=monkeypatch,
+    )
+    assert row.game_clock == "5:10" and changed is True
+    assert stats.get("live_state_write_lost_race", 0) == 0
+    assert (row.score_source, _aware(row.score_observed_at)) == ("statpal", later)
+
+
+# ── every compare-and-write site hands the helper the write it actually sends ─
+
+
+def _norm(expr):
+    return ast.unparse(ast.parse(expr, mode="eval").body)
+
+
+_CAS_STAMP_SITES = {
+    # site → (stored, writes, reading, may_confirm)
+    "app/utils/espn_helpers.py": [(
+        "(_observed_home_score, _observed_away_score)", "_live_values",
+        "(ee.home_score, ee.away_score)",
+        "not _live_state_is_stale and not _withhold_live_state"
+        " and not _stoppage_scores_are_filler",
+    )],
+    "app/tasks/statpal_sync.py": [
+        ("(_observed_home_score, _observed_away_score)", "_new_scores",
+         "(live_data.home_score, live_data.away_score)", "True"),
+        ("(_observed_home_score, _observed_away_score)", "_live_values",
+         "(fixture.home_score, fixture.away_score)", "not live_state_is_stale"),
+    ],
+    "app/tasks/espn_sync.py": [(
+        "(_observed_home, _observed_away)", "score['changes']",
+        "(score['changes'].get('home_score', _observed_home), "
+        "score['changes'].get('away_score', _observed_away))",
+        "True",
+    )],
+}
+
+
+@pytest.mark.parametrize("relpath", sorted(_CAS_STAMP_SITES))
+def test_every_cas_site_hands_the_helper_its_stored_pair_and_its_own_write(relpath):
+    """The helper judges the tuple the row will hold from `stored` + `writes`.
+    Hand it a different dict than the one the compare-and-write sends, or a
+    stored pair other than the one the predicate re-asserts, and it judges a
+    write that never happens. `may_confirm` carries the writer's own refusals;
+    dropping one there lets a refused reading date the row."""
+    found = []
+    for node in ast.walk(_module_tree(relpath)):
+        if isinstance(node, ast.Call) and getattr(
+            node.func, "id", None
+        ) == "score_write_stamp_values":
+            kw = {k.arg: ast.unparse(k.value) for k in node.keywords}
+            found.append(tuple(
+                kw[k] for k in ("stored", "writes", "reading", "may_confirm")
+            ))
+    expected = [tuple(_norm(e) for e in site) for site in _CAS_STAMP_SITES[relpath]]
+    assert sorted(found) == sorted(expected)

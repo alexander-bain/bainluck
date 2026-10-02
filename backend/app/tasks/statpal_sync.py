@@ -55,7 +55,7 @@ from app.utils.start_placeholder import (
 )
 from app.utils.score_observation import (
     SCORE_SOURCE_STATPAL,
-    score_confirmation_values,
+    score_write_stamp_values,
     stamp_score_observation,
 )
 
@@ -931,21 +931,18 @@ async def _sync_statpal_schedules(sport_key: Optional[str] = None) -> dict:
                             # #4571: the stamp rides the same compare-and-
                             # write as the score it dates. This branch has
                             # cleared the premature-live and reversion guards,
-                            # so StatPal's reading IS what the row will hold;
-                            # a lost race drops score and stamp together.
-                            if (
-                                live_data.home_score is not None
-                                and live_data.away_score is not None
-                            ):
-                                _new_scores.update(score_confirmation_values(
-                                    event,
-                                    source=SCORE_SOURCE_STATPAL,
-                                    observed_at=now,
-                                    score_changed=(
-                                        live_data.home_score != _observed_home_score
-                                        or live_data.away_score != _observed_away_score
-                                    ),
-                                ))
+                            # so a FULL StatPal reading is what the row will
+                            # hold; half a reading that moves the tuple clears
+                            # the stamp instead. A lost race drops score and
+                            # stamp together.
+                            _new_scores.update(score_write_stamp_values(
+                                source=SCORE_SOURCE_STATPAL,
+                                observed_at=now,
+                                stored=(_observed_home_score, _observed_away_score),
+                                writes=_new_scores,
+                                reading=(live_data.home_score, live_data.away_score),
+                                may_confirm=True,
+                            ))
                             if _new_scores:
                                 # One implementation of the predicate for all
                                 # three writers (CERT-2829). This path used to
@@ -2016,20 +2013,14 @@ async def _sync_statpal_livescores() -> dict:
                     # `_live_change` is taken BEFORE the join, so a
                     # confirmation-only write does not count as an update.
                     _live_change = bool(_live_values)
-                    if (
-                        fixture.home_score is not None
-                        and fixture.away_score is not None
-                        and not live_state_is_stale
-                    ):
-                        _live_values.update(score_confirmation_values(
-                            event,
-                            source=SCORE_SOURCE_STATPAL,
-                            observed_at=_read_at,
-                            score_changed=(
-                                "home_score" in _live_values
-                                or "away_score" in _live_values
-                            ),
-                        ))
+                    _live_values.update(score_write_stamp_values(
+                        source=SCORE_SOURCE_STATPAL,
+                        observed_at=_read_at,
+                        stored=(_observed_home_score, _observed_away_score),
+                        writes=_live_values,
+                        reading=(fixture.home_score, fixture.away_score),
+                        may_confirm=not live_state_is_stale,
+                    ))
 
                     _live_write_landed = await write_live_state_if_unmoved(
                         session, event, _live_values,

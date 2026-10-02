@@ -32,7 +32,7 @@ from app.utils.espn_team_spelling import apply_espn_respelling
 from app.utils.score_observation import (
     SCORE_SOURCE_ESPN,
     clear_score_observation,
-    score_confirmation_values,
+    score_write_stamp_values,
     stamp_score_observation,
 )
 from app.utils.name_normalization import (
@@ -7586,12 +7586,20 @@ async def _sync_tennis_from_espn(limit: int = 1000, dates: str | None = None) ->
                 # rows whose age a page can otherwise never state. The stamp
                 # joins the score's own compare-and-write, so a lost race drops
                 # both and never dates another writer's number with our clock.
+                #
+                # An agreement is a whole verdict — both sides — so the reading
+                # is the tuple the row holds after `changes` lands.
                 _confirm = (
-                    score_confirmation_values(
-                        event,
+                    score_write_stamp_values(
                         source=SCORE_SOURCE_ESPN,
                         observed_at=now,
-                        score_changed=bool(score["changes"]),
+                        stored=(_observed_home, _observed_away),
+                        writes=score["changes"],
+                        reading=(
+                            score["changes"].get("home_score", _observed_home),
+                            score["changes"].get("away_score", _observed_away),
+                        ),
+                        may_confirm=True,
                     )
                     if score["reason"] is None
                     else {}

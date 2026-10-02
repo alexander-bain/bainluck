@@ -34,7 +34,7 @@ from app.utils.name_normalization import names_match, normalize_name
 from app.utils.polling_config import compute_effective_interval
 from app.utils.score_observation import (
     SCORE_SOURCE_ODDS,
-    score_confirmation_values,
+    score_write_stamp_values,
 )
 from app.tasks.base import get_task_session, run_async
 from app.tasks.config import (
@@ -2362,22 +2362,21 @@ async def _poll_all_odds():
                             # actually stores — a score any guard above declined
                             # is not one this writer may date. The clock is this
                             # sport's scores READ, never the pass-entry `now`.
-                            if (
-                                home_score is not None
-                                and away_score is not None
-                                and not _skip_score_write
-                            ):
-                                update_values.update(
-                                    score_confirmation_values(
-                                        event_obj,
-                                        source=SCORE_SOURCE_ODDS,
-                                        observed_at=_scores_read_at,
-                                        score_changed=(
-                                            event_obj.home_score != home_score
-                                            or event_obj.away_score != away_score
-                                        ),
-                                    )
+                            #
+                            # The two sides land independently, so a one-sided
+                            # payload can move the tuple without confirming it:
+                            # the helper clears the stamp in that UPDATE rather
+                            # than leave another reading's age on the new pair.
+                            update_values.update(
+                                score_write_stamp_values(
+                                    source=SCORE_SOURCE_ODDS,
+                                    observed_at=_scores_read_at,
+                                    stored=(event_obj.home_score, event_obj.away_score),
+                                    writes=update_values,
+                                    reading=(home_score, away_score),
+                                    may_confirm=not _skip_score_write,
                                 )
+                            )
 
                             # Record score snapshot if scores changed.
                             #

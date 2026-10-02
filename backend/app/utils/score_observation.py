@@ -29,7 +29,9 @@ helper, and it must never be the reason one of them acquires a cycle
 """
 
 from datetime import datetime
-from typing import Any, Optional
+from typing import Any, Mapping, Optional
+
+from sqlalchemy import DateTime, String, case, column, literal, or_
 
 # The writers permitted to claim a score observation. A typo'd source is worse
 # than no source — it reads as a fourth writer in the attribution query that
@@ -117,33 +119,97 @@ def score_observation_values(
     return {"score_source": source, "score_observed_at": observed_at}
 
 
-def score_confirmation_values(
-    event: Any,
+#: The stamp columns by NAME, for the forward-only confirmation below. Named
+#: rather than imported from the model so this module stays dependency-free; an
+#: unqualified column in an UPDATE's SET clause is the target row's own value.
+_HELD_OBSERVED_AT = column("score_observed_at", DateTime(timezone=True))
+_HELD_SOURCE = column("score_source", String(_MAX_SOURCE_LEN))
+
+#: What a write that changes the score WITHOUT confirming the new tuple carries:
+#: no stamp. The previous stamp described a different number.
+SCORE_STAMP_CLEARED = {"score_source": None, "score_observed_at": None}
+
+
+def score_write_stamp_values(
     *,
     source: str,
     observed_at: Optional[datetime],
-    score_changed: bool,
+    stored: tuple,
+    writes: Mapping[str, Any],
+    reading: tuple,
+    may_confirm: bool,
 ) -> dict:
-    """The stamp as Core UPDATE columns, for a writer whose reading the row holds.
+    """The stamp columns to join to one score write. One rule for every writer.
 
-    For a compare-and-write writer (`espn_helpers`, `statpal_sync`) that has
-    decided its reading IS the score the row will carry after its write: either
-    it is writing that score now (`score_changed`), or the row already holds it.
+    A stamp dates the FULL tuple the row holds after the write, and nothing
+    else. So the answer depends on what the write does to that tuple, not on
+    what the writer read:
 
-    One extra rule over :func:`score_observation_values`, and only for the
-    unchanged case: a confirmation never moves the stamp BACKWARDS. Two writers
-    confirming the same tuple from passes that started at different moments
-    can land out of order; the earlier read must not re-date a score that a
-    later read already confirmed. A CHANGED score always takes this reading's
-    clock — the tuple is new, so no older confirmation can describe it.
+    - ``stored`` is ``(home, away)`` as the row held it when the writer decided
+      — the values its compare-and-write re-asserts. ``writes`` is the column
+      dict the write will set; the row's tuple afterwards is ``writes`` laid
+      over ``stored``.
+    - The reading CONFIRMS that tuple only when ``may_confirm`` (it cleared
+      every guard of its writer — not refused, not stale, not withheld), both
+      sides of ``reading`` are present, it equals the tuple the row will hold,
+      and there is an observation clock.
+
+    Then:
+
+    1. **The tuple changes and the reading confirms it** → this reading's
+       source and clock. The tuple is new, so no other stamp can describe it.
+    2. **The tuple changes and the reading does not confirm it** (half a score
+       landed on the stored other half, or a whole score with no clock) →
+       :data:`SCORE_STAMP_CLEARED`, in the same write. Keeping the old stamp
+       would date a number nobody confirmed with another reading's age.
+    3. **The tuple is unchanged and the reading confirms it** → the stamp moves
+       FORWARD only, decided by the database at write time. Two confirmations
+       of the same tuple can load the row in one order and commit in the other,
+       and every compare-and-write predicate (position, score) still matches —
+       so a check against the loaded row alone lets the older read re-date the
+       newer. The ``CASE`` compares against the row's value AT the write.
+    4. **The tuple is unchanged and the reading does not confirm it** → ``{}``.
+       Whatever stamp the row has still describes the tuple it holds.
+
+    The stamp joins the score in one statement, so a refused write refuses both.
+
+    Deliberately takes no row. The freshness decision in case 3 is the
+    database's alone: the loaded row can be stale in either direction (another
+    writer may have cleared or advanced the stamp since), so a Python-side
+    "already fresher" check could only skip a confirmation the row needed.
+
+    ⚠️ After an ORM-enabled UPDATE carrying case 3's ``CASE``, SQLAlchemy cannot
+    evaluate the new value in memory, so it EXPIRES ``score_source`` and
+    ``score_observed_at`` on the loaded instance. In an async session the next
+    attribute read lazy-loads and raises ``MissingGreenlet``. Nothing in a task
+    reads them after the write today; anything that starts to must re-select.
     """
-    values = score_observation_values(source=source, observed_at=observed_at)
-    if not values or score_changed:
-        return values
-    held = getattr(event, "score_observed_at", None)
-    if held is not None and held > observed_at:
+    _validate_source(source)
+    post = (
+        writes.get("home_score", stored[0]),
+        writes.get("away_score", stored[1]),
+    )
+    confirms = (
+        may_confirm
+        and observed_at is not None
+        and reading[0] is not None
+        and reading[1] is not None
+        and post == (reading[0], reading[1])
+    )
+    if post != tuple(stored):
+        if confirms:
+            return score_observation_values(source=source, observed_at=observed_at)
+        return dict(SCORE_STAMP_CLEARED)
+    if not confirms:
         return {}
-    return values
+    at = literal(observed_at, DateTime(timezone=True))
+    newer = or_(_HELD_OBSERVED_AT.is_(None), _HELD_OBSERVED_AT < at)
+    return {
+        "score_source": case(
+            (newer, literal(source, String(_MAX_SOURCE_LEN))), else_=_HELD_SOURCE
+        ),
+        "score_observed_at": case((newer, at), else_=_HELD_OBSERVED_AT),
+    }
 
 
 def stamp_score_observation(
