@@ -430,6 +430,8 @@ export interface LeagueContextData {
     record?: string | null;
     conference?: string | null;
     sources_available?: string[];
+    /** The club's tag, e.g. "LAD" (`league_context.py`). */
+    short_name?: string | null;
   };
   away_team?: {
     cells: Record<string, number>;
@@ -437,6 +439,8 @@ export interface LeagueContextData {
     record?: string | null;
     conference?: string | null;
     sources_available?: string[];
+    /** The club's tag, e.g. "LAD" (`league_context.py`). */
+    short_name?: string | null;
   };
 }
 
