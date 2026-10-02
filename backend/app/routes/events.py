@@ -8838,6 +8838,25 @@ _TYPEAHEAD_OUTCOME_ARM_TIMEOUT_MS = int(
     os.getenv("TYPEAHEAD_OUTCOME_ARM_TIMEOUT_MS", "2000")
 )
 
+# #10225: THE WARMER'S OWN BOUND for the same arm. The 2,000 ms above was sized
+# for a person waiting on a keystroke; the head warmer (`typeahead_warmer`,
+# every 30 s) has nobody waiting on it, and its whole job is to pay the cold
+# read so a reader does not. Under the reader's bound it shed instead — Sentry
+# BAINLUCK-14R, 21,231 events, **99.1% `app.tasks.warm_typeahead`** (21,044 vs
+# 187 on the reader route), 122/24h on 2026-10-02, on exactly the head terms
+# (`us open`, `sabalenka`, `fed chair`, `masters winner`). And an outcome-arm
+# shed is CACHEABLE (LAT-P241/#3399), so each one wrote the incomplete answer
+# over the complete one for every reader of that term for the next 65 s.
+#
+# 5,000 ms: still clamped to what is left of the 10 s request deadline by the
+# resolver, and it leaves the stages after the arm ≥ 4 s — a futures-stage shed
+# is `_ta_degraded`, which blocks the write and costs more than this saves.
+# Read ONLY under `_force_cache_rebuild`, which only the warmer sets: no reader
+# request ever waits longer than it did.
+_TYPEAHEAD_WARM_OUTCOME_ARM_TIMEOUT_MS = int(
+    os.getenv("TYPEAHEAD_WARM_OUTCOME_ARM_TIMEOUT_MS", "5000")
+)
+
 # LAT-P166/#2386: THE SAFETY NET ABOVE IS NOW THE LOAD-BEARING PATH FOR COMMON
 # TERMS, and the paragraph above ("after the plan flip it should essentially never
 # fire") is the claim that stopped being true. Measured on production 2026-08-31,
@@ -9188,6 +9207,16 @@ async def _typeahead_split_rows(db, stmt, deadline: float | None) -> tuple[list,
     return rows, "merged"
 
 
+def _typeahead_outcome_arm_budget_ms() -> int:
+    """The outcome arm's own bound: the warmer's under `_force_cache_rebuild`, else the reader's.
+
+    #10225 — full reasoning at :data:`_TYPEAHEAD_WARM_OUTCOME_ARM_TIMEOUT_MS`.
+    """
+    if _force_cache_rebuild.get():
+        return _TYPEAHEAD_WARM_OUTCOME_ARM_TIMEOUT_MS
+    return _TYPEAHEAD_OUTCOME_ARM_TIMEOUT_MS
+
+
 async def _resolve_typeahead_outcome_arm(
     db: AsyncSession,
     arm,
@@ -9246,7 +9275,7 @@ async def _resolve_typeahead_outcome_arm(
         if deadline is None
         else int((deadline - time.monotonic()) * 1000)
     )
-    bound_ms = min(_TYPEAHEAD_OUTCOME_ARM_TIMEOUT_MS, remaining_ms)
+    bound_ms = min(_typeahead_outcome_arm_budget_ms(), remaining_ms)
     if bound_ms < _SEARCH_MIN_STAGE_TIMEOUT_MS:
         return None
 
@@ -14934,7 +14963,8 @@ async def typeahead_search(
                 "answering without its outcome-name matches, but WITH its market "
                 "name, ticker and alias matches",
                 q,
-                _TYPEAHEAD_OUTCOME_ARM_TIMEOUT_MS,
+                # #10225: the bound that applied, not the reader's constant.
+                _typeahead_outcome_arm_budget_ms(),
             )
             # LAT-P241/#3399: the BONUS-lane flag, not the futures-stage one.
             # This branch loses outcome-NAME matches and keeps market name,
