@@ -243,7 +243,8 @@ async def test_the_arm_hands_the_permission_to_the_door_it_was_given():
     seen = []
 
     async def _recording_door(
-        session, event, matched, claimed, stats, *, allow_unstarted=False
+        session, event, matched, claimed, stats, *, allow_unstarted=False,
+        observed_at=None,
     ):
         seen.append(allow_unstarted)
 

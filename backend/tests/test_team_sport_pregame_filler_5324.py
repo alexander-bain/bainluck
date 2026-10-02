@@ -292,7 +292,7 @@ def test_THE_STRAWMAN_copying_the_board_refuses_the_demotion():
     assert stats["pregame_filler_withdrawn"] == 1
 
 
-async def _copy_everything(session, event, ee, claimed, stats):
+async def _copy_everything(session, event, ee, claimed, stats, *, observed_at=None):
     event.period = _sanitize_period(ee.status_detail)
     event.game_clock = ee.clock
     event.home_score = ee.home_score

@@ -29,6 +29,12 @@ from app.utils.event_completion import (
 from app.utils.start_time_authority import provider_may_set_start
 from app.utils.team_binding_invariant import accept_team_binding
 from app.utils.espn_team_spelling import apply_espn_respelling
+from app.utils.score_observation import (
+    SCORE_SOURCE_ESPN,
+    clear_score_observation,
+    score_confirmation_values,
+    stamp_score_observation,
+)
 from app.utils.name_normalization import (
     token_overlap_score as _team_name_match_score,
     names_match as _canonical_names_match,
@@ -835,6 +841,12 @@ async def _sync_espn_live_events():
             # ── Fetch all ESPN scoreboards ────────────────────────
             espn = ESPNAPIService()
             espn_data = {}
+            # #4571: when each sport's board was READ — the clock its scores
+            # are stamped with. Per sport and taken at the read, because every
+            # board is fetched before any is processed; a clock taken at
+            # processing time would date the last sport's scores as fresher
+            # than the payload they came off.
+            espn_read_at: dict = {}
             full_slate_boards: dict = {}
             try:
                 for key in all_fetch_keys:
@@ -851,6 +863,7 @@ async def _sync_espn_live_events():
                             )
                             continue
                         espn_data[key] = events
+                        espn_read_at[key] = datetime.now(timezone.utc)
                     except Exception as e:
                         stats["errors"].append(f"espn_fetch_{key}: {str(e)}")
                 # #8682. The pre-game pass's own board, fetched through the same
@@ -923,6 +936,7 @@ async def _sync_espn_live_events():
                                 compute_and_write_stat_model,
                                 create_events_from_unmatched_espn,
                                 dated_board_fetcher=_fetch_dated_board,
+                                observed_at=espn_read_at.get(sport_key),
                             )
                     except Exception as e:
                         stats["errors"].append(f"{sport_key}: {str(e)}")
@@ -2186,6 +2200,13 @@ async def _ask_boards_by_espn_id(
         # for every other sport (gotcha #42).
         try:
             board = await espn.get_scoreboard(sport_key, date=board_date)
+            # The observation clock for every score THIS board writes (#4571).
+            # One value per payload, taken at the read, for the same reason the
+            # ordinary pass takes one: every row settled below came off this
+            # single response, so stamping per row would call the last straggler
+            # fresher than the first. Each group is its own fetch, so each group
+            # gets its own stamp rather than sharing the pass-level `now`.
+            board_observed_at = datetime.now(timezone.utc)
         except Exception as e:
             stats["errors"].append(
                 f"{stat_prefix}_fetch_{sport_key}_{board_date}: {str(e)}"
@@ -2219,6 +2240,7 @@ async def _ask_boards_by_espn_id(
                 await update_fields_fn(
                     session, event, matched, claimed_espn_ids, stats,
                     allow_unstarted=allow_unstarted,
+                    observed_at=board_observed_at,
                 )
             except Exception as e:
                 stats["errors"].append(
@@ -2741,8 +2763,12 @@ async def _process_live_sport(
     match_event_fn, update_fields_fn, write_win_prob_fn,
     compute_stat_model_fn, create_unmatched_fn,
     dated_board_fetcher=None,
+    observed_at=None,
 ):
     """Process all live/recently-completed events for one sport.
+
+    ``observed_at`` is when ``espn_events`` was read off ESPN (#4571) — the
+    clock every score this pass confirms is stamped with. None stamps nothing.
 
     Handles event matching, field updates, win probability, stat model,
     team upsert, identity registration, and creation of new events
@@ -3036,8 +3062,15 @@ async def _process_live_sport(
             session, home_team, away_team, ee, sport_key, identity_cache,
         )
 
-        # Update clock, scores, broadcast, importance, commence_time
-        fields_changed = await update_fields_fn(session, event, ee, claimed_espn_ids, stats)
+        # Update clock, scores, broadcast, importance, commence_time.
+        # `observed_at` is THIS PASS's clock — the moment we read ESPN's
+        # scoreboard — and it is one value for the whole batch on purpose
+        # (#4571): taking `now()` per row would stamp the last event in a slow
+        # pass as fresher than the first, when both came off the same payload.
+        fields_changed = await update_fields_fn(
+            session, event, ee, claimed_espn_ids, stats,
+            observed_at=observed_at,
+        )
         if fields_changed:
             changed = True
 
@@ -4202,7 +4235,11 @@ async def _backfill_box_scores(
                         scoring_plays = context.get("scoring_plays", [])
                         scores = context.get("scores", {})
 
-                        now_str = datetime.now(timezone.utc).isoformat()
+                        # One clock, two renderings — the box-score payload
+                        # wants the string, the #4571 stamp wants the datetime.
+                        # Derived rather than re-read so they can never disagree.
+                        _observed_at = datetime.now(timezone.utc)
+                        now_str = _observed_at.isoformat()
 
                         _fix = _corrected_final_score(
                             event.home_score,
@@ -4213,6 +4250,12 @@ async def _backfill_box_scores(
                         )
                         if _fix is not None:
                             event.home_score, event.away_score = _fix
+                            # #4571 — a corrected FINAL score is still a score
+                            # this pass observed, and a settled row that shows
+                            # one should be able to say when it was read.
+                            stamp_score_observation(
+                                event, source=SCORE_SOURCE_ESPN, observed_at=_observed_at,
+                            )
                             stats["scores_backfilled"] += 1
 
                         if box_score or scoring_plays:
@@ -5822,6 +5865,9 @@ async def _transition_event_statuses_impl() -> dict:
                 event.status = "live"
             event.home_score = None
             event.away_score = None
+            # The stamp describes the score, so it goes with it (#4571) — a
+            # surviving stamp is a fresh-looking age over a NULL.
+            clear_score_observation(event)
             stats["repaired_bogus_completed"] += 1
 
         # --- Repair: SETTLED with a FUTURE commence_time → un-settle ---
@@ -5853,6 +5899,7 @@ async def _transition_event_statuses_impl() -> dict:
                 event.completed_at = None
                 event.home_score = None
                 event.away_score = None
+                clear_score_observation(event)  # #4571, as above
                 stats["unsettled_future_commence"] += 1
 
         # --- Repair: a SETTLED TENNIS row holding a score no completed match
@@ -5926,6 +5973,7 @@ async def _transition_event_statuses_impl() -> dict:
             )
             event.home_score = None
             event.away_score = None
+            clear_score_observation(event)  # #4571, as above
             stats["withdrew_illegal_tennis_score"] += 1
         if len(_illegal_rows) >= MAX_ILLEGAL_TENNIS_SCORES_PER_PASS:
             logger.warning(
@@ -7531,14 +7579,31 @@ async def _sync_tennis_from_espn(limit: int = 1000, dates: str | None = None) ->
                     our_away_score=_observed_away,
                     competition=competition,
                 )
+                # THE SET SCORE'S OWN AGE (#4571). `reason is None` means the
+                # authority READ this match's score and the row will hold it —
+                # either it is written now or the row already agrees, and the
+                # rows it agrees with produce no `changes` at all yet are the
+                # rows whose age a page can otherwise never state. The stamp
+                # joins the score's own compare-and-write, so a lost race drops
+                # both and never dates another writer's number with our clock.
+                _confirm = (
+                    score_confirmation_values(
+                        event,
+                        source=SCORE_SOURCE_ESPN,
+                        observed_at=now,
+                        score_changed=bool(score["changes"]),
+                    )
+                    if score["reason"] is None
+                    else {}
+                )
                 if score["reason"] is not None:
                     stats["score_refused"][score["reason"]] = (
                         stats["score_refused"].get(score["reason"], 0) + 1
                     )
-                elif score["changes"] and not await write_row_if_unmoved(
+                elif (score["changes"] or _confirm) and not await write_row_if_unmoved(
                     session,
                     event,
-                    score["changes"],
+                    {**score["changes"], **_confirm},
                     observed={
                         "home_score": _observed_home,
                         "away_score": _observed_away,
@@ -7552,7 +7617,12 @@ async def _sync_tennis_from_espn(limit: int = 1000, dates: str | None = None) ->
                     # next beat is five minutes away — but a refusal nobody
                     # counts is indistinguishable from a quiet beat, which is
                     # how this whole class stayed invisible.
-                    stats["score_write_lost_race"] += 1
+                    if score["changes"]:
+                        stats["score_write_lost_race"] += 1
+                    else:
+                        stats["score_confirmation_lost_race"] = (
+                            stats.get("score_confirmation_lost_race", 0) + 1
+                        )
                 elif score["changes"]:
                     # BOTH NUMBERS READ BEFORE EITHER IS WRITTEN — the log below
                     # is a before/after, and `write_row_if_unmoved` has already

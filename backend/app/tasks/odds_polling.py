@@ -32,6 +32,10 @@ from app.utils.odds_math import (
 from app.utils.book_consensus import median_invents_its_answer
 from app.utils.name_normalization import names_match, normalize_name
 from app.utils.polling_config import compute_effective_interval
+from app.utils.score_observation import (
+    SCORE_SOURCE_ODDS,
+    score_confirmation_values,
+)
 from app.tasks.base import get_task_session, run_async
 from app.tasks.config import (
     LIVE_POLL_INTERVAL,
@@ -1942,6 +1946,9 @@ async def _poll_all_odds():
                     scores_data = await service.get_scores(
                         sport_key, days_from=ODDS_SCORES_LOOKBACK.days
                     )
+                    # #4571: when THIS sport's scores were read — the clock
+                    # every score below is stamped with.
+                    _scores_read_at = datetime.now(timezone.utc)
 
                     # Track score API quota usage
                     if service.last_requests_remaining is not None:
@@ -2343,6 +2350,34 @@ async def _poll_all_odds():
                                 update_values["home_score"] = home_score
                             if away_score is not None and not _skip_score_write:
                                 update_values["away_score"] = away_score
+
+                            # #4571 — THIS WRITER STATED A SCORE, SO IT SIGNS IT.
+                            #
+                            # Merged into the SAME `update_values` as the score
+                            # itself, so the stamp and the number it describes
+                            # land in one UPDATE: no window where the row holds
+                            # an Odds API score under another writer's stamp.
+                            # Stamped on CONFIRMATION (an unchanged score is
+                            # still a read), but only for the pair this pass
+                            # actually stores — a score any guard above declined
+                            # is not one this writer may date. The clock is this
+                            # sport's scores READ, never the pass-entry `now`.
+                            if (
+                                home_score is not None
+                                and away_score is not None
+                                and not _skip_score_write
+                            ):
+                                update_values.update(
+                                    score_confirmation_values(
+                                        event_obj,
+                                        source=SCORE_SOURCE_ODDS,
+                                        observed_at=_scores_read_at,
+                                        score_changed=(
+                                            event_obj.home_score != home_score
+                                            or event_obj.away_score != away_score
+                                        ),
+                                    )
+                                )
 
                             # Record score snapshot if scores changed.
                             #

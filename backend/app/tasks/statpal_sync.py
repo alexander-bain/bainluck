@@ -53,6 +53,11 @@ from app.utils.start_placeholder import (
     desired_start_placeholder_tags,
     needs_start_placeholder_write,
 )
+from app.utils.score_observation import (
+    SCORE_SOURCE_STATPAL,
+    score_confirmation_values,
+    stamp_score_observation,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -923,6 +928,24 @@ async def _sync_statpal_schedules(sport_key: Optional[str] = None) -> dict:
                                 _new_scores["home_score"] = live_data.home_score
                             if live_data.away_score is not None:
                                 _new_scores["away_score"] = live_data.away_score
+                            # #4571: the stamp rides the same compare-and-
+                            # write as the score it dates. This branch has
+                            # cleared the premature-live and reversion guards,
+                            # so StatPal's reading IS what the row will hold;
+                            # a lost race drops score and stamp together.
+                            if (
+                                live_data.home_score is not None
+                                and live_data.away_score is not None
+                            ):
+                                _new_scores.update(score_confirmation_values(
+                                    event,
+                                    source=SCORE_SOURCE_STATPAL,
+                                    observed_at=now,
+                                    score_changed=(
+                                        live_data.home_score != _observed_home_score
+                                        or live_data.away_score != _observed_away_score
+                                    ),
+                                ))
                             if _new_scores:
                                 # One implementation of the predicate for all
                                 # three writers (CERT-2829). This path used to
@@ -1143,6 +1166,20 @@ async def _sync_statpal_schedules(sport_key: Optional[str] = None) -> dict:
                                 event.home_score = live_fix.home_score
                             if live_fix.away_score is not None:
                                 event.away_score = live_fix.away_score
+                            # #4571 — a row born live carries a score from its
+                            # first instant, so it carries an age from its first
+                            # instant too. Inside the `premature_create` guard
+                            # for the reason the comment above gives: where we
+                            # refuse the score we must refuse the stamp, or the
+                            # row claims an observation of a number it does not
+                            # hold.
+                            if (
+                                live_fix.home_score is not None
+                                and live_fix.away_score is not None
+                            ):
+                                stamp_score_observation(
+                                    event, source=SCORE_SOURCE_STATPAL, observed_at=now,
+                                )
                         logger.info(
                             "Created event from live StatPal: %s vs %s (%s) as %s",
                             live_fix.away_team, live_fix.home_team, our_key,
@@ -1637,6 +1674,10 @@ async def _sync_statpal_livescores() -> dict:
     # not be told apart from it (a doubleheader whose rows carry no usable
     # anchor and no nearest start). Always present; 0 is a reading.
     livescore_sibling_refused = 0
+    # #4571: a confirmation-only write (score unchanged, stamp only) refused
+    # because another writer moved the row first. Kept apart from the counter
+    # above so a quiet confirmation race never reads as a lost score write.
+    livescore_confirmation_lost_race = 0
     _now = datetime.now(timezone.utc)
 
     # Only poll sports that are likely to have live games right now.
@@ -1676,6 +1717,10 @@ async def _sync_statpal_livescores() -> dict:
                 seen_statpal_sports.add(statpal_sport)
 
                 live_fixtures = await service.get_live_scores(statpal_sport)
+                # #4571: when THIS board was read — the clock its scores are
+                # stamped with. Not `_now`, which is pass entry: a later sport's
+                # board is read after earlier sports were processed.
+                _read_at = datetime.now(timezone.utc)
                 if not live_fixtures:
                     continue
 
@@ -1959,6 +2004,33 @@ async def _sync_statpal_livescores() -> dict:
                     # `utils/live_state_write` for why the compare and the write
                     # are genuinely one act under READ COMMITTED rather than a
                     # narrower window.
+                    # #4571: THE SCORE'S OWN OBSERVATION STAMP, ON CONFIRMATION.
+                    #
+                    # This is the 30-second writer, so on a low-scoring game it
+                    # confirms the same number sixty times in half an hour and
+                    # changes it never — and that is the row whose age the page
+                    # could not state. Stamped whenever StatPal's reading is the
+                    # score the row will hold (not refused as a reversion), and
+                    # joined to this compare-and-write so the stamp can never
+                    # land on a score another writer put there in between.
+                    # `_live_change` is taken BEFORE the join, so a
+                    # confirmation-only write does not count as an update.
+                    _live_change = bool(_live_values)
+                    if (
+                        fixture.home_score is not None
+                        and fixture.away_score is not None
+                        and not live_state_is_stale
+                    ):
+                        _live_values.update(score_confirmation_values(
+                            event,
+                            source=SCORE_SOURCE_STATPAL,
+                            observed_at=_read_at,
+                            score_changed=(
+                                "home_score" in _live_values
+                                or "away_score" in _live_values
+                            ),
+                        ))
+
                     _live_write_landed = await write_live_state_if_unmoved(
                         session, event, _live_values,
                         observed_period=_observed_period,
@@ -1967,9 +2039,11 @@ async def _sync_statpal_livescores() -> dict:
                         observed_away_score=_observed_away_score,
                         what="StatPal livescore",
                     )
-                    if _live_values and not _live_write_landed:
+                    if _live_change and not _live_write_landed:
                         livescore_live_write_lost_race += 1
-                    updated = updated or bool(_live_values and _live_write_landed)
+                    elif _live_values and not _live_write_landed:
+                        livescore_confirmation_lost_race += 1
+                    updated = updated or bool(_live_change and _live_write_landed)
 
                     # Write ScoreSnapshot for score enrichment (feeds Score
                     # Differential chart).
@@ -2082,6 +2156,8 @@ async def _sync_statpal_livescores() -> dict:
         # was overtaken mid-pass by another queue — the race the sequential
         # guard above is structurally unable to see.
         "livescore_live_write_lost_race": livescore_live_write_lost_race,
+        # #4571 — a refused confirmation-only (stamp) write.
+        "livescore_confirmation_lost_race": livescore_confirmation_lost_race,
         # #8663 — a same-clubs sibling the writer could not separate.
         "livescore_sibling_refused": livescore_sibling_refused,
     }
