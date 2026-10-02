@@ -7598,11 +7598,14 @@ celery_app.conf.beat_schedule = {
         # miss (no entry for the current revision, or stale with < 150 s left),
         # so an idle Week 4 is rebuilt about every 2.5-3 min (~4.5 s each) and a
         # hub readers are keeping warm costs one Redis GET. Same queue as the
-        # other user-latency warmers. `expires` 120 s: a pass delivered up to two
-        # periods late still lands before an idle hub's 150 s refresh-ahead
-        # margin runs out; later than that it is skipped, not stacked.
+        # other user-latency warmers. `background` delivers late (LAT-P112: p50
+        # 138-152 s against a declared 120 s), so a late pass is still useful and
+        # `expires` is one stale window (300 s), not one period: a fire that finds
+        # nothing near expiry takes the skip path (one discovery read + one GET
+        # per hub), so fires that bunch up behind a long task cost ~nothing.
+        # Argued in `BACKGROUND_INTERVAL_FLOOR` (test_settlement_sweep_beat.py).
         "schedule": 60.0,
-        "options": {"queue": "background", "expires": 120},
+        "options": {"queue": "background", "expires": 300},
     },
     "flush-search-gin-pending-lists": {
         "task": "app.tasks.flush_search_gin_pending_lists",

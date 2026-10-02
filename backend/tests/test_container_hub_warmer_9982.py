@@ -81,9 +81,11 @@ def test_an_idle_non_live_hub_cannot_lapse_between_on_time_passes():
     assert warmer.REFRESH_AHEAD_S < CONTAINER_READ_STALE_TTL_SECONDS
 
 
-def test_a_late_message_expires_before_it_could_be_useless():
+def test_a_late_message_lives_one_stale_window():
+    """`background` delivers late; a fire is useful while an entry it could save
+    can still exist, which is one stale window — and no longer."""
     expires = _beat()["options"]["expires"]
-    assert warmer.BEAT_PERIOD_S < expires <= warmer.REFRESH_AHEAD_S
+    assert warmer.BEAT_PERIOD_S < expires <= CONTAINER_READ_STALE_TTL_SECONDS
 
 
 # --- a pass ---------------------------------------------------------------------

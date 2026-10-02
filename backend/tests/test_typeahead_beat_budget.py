@@ -1191,6 +1191,12 @@ def test_the_background_queue_carries_105_beats_and_45_are_fall_through():
     (fall-through) is replaced by eight per-sport `sync-rosters-<sport>` beats,
     each naming `background` explicitly. The census below RUN over the tree
     branched from `5c3ba39503` printed `explicit 98 implicit 42 total 140`.
+
+    🔴 **RE-DERIVED at latency (2026-10-02, #9982): 140 → 141, explicit
+    98 → 99, fall-through UNMOVED at 42.** `warm-container-hubs` names
+    `background` explicitly. The census below RUN over the tree branched from
+    `c2126222ff` printed `explicit 99 implicit 42 total 141`. The cost
+    declaration is on `BACKGROUND_BEAT_COUNT`.
     """
     from app.tasks import celery_app
     from app.utils.typeahead_beat_budget import BACKGROUND_BEAT_COUNT
@@ -1207,9 +1213,9 @@ def test_the_background_queue_carries_105_beats_and_45_are_fall_through():
         elif named is None and conf.task_default_queue == "background":
             implicit += 1
 
-    assert explicit == 98, f"explicitly-routed background beats moved: {explicit}"
+    assert explicit == 99, f"explicitly-routed background beats moved: {explicit}"
     assert implicit == 42, f"default-queue fall-through moved: {implicit}"
-    assert explicit + implicit == BACKGROUND_BEAT_COUNT == 140
+    assert explicit + implicit == BACKGROUND_BEAT_COUNT == 141
 
     # ruling 110's two movers are OFF this queue and ON heavy — asserted here
     # too, so a silent revert cannot restore the count without being noticed.

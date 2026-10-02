@@ -2040,7 +2040,16 @@ def free_background_slots(
 #: slot in total, where the old run held it 270 s and then rolled everything
 #: back. The census RUN over the tree branched from `5c3ba39503` printed
 #: `explicit 98 implicit 42 total 140`.
-BACKGROUND_BEAT_COUNT = 140
+#:
+#: 🔴 RE-DERIVED at latency (2026-10-02, #9982): 140 → 141, explicit 98 → 99,
+#: fall-through UNMOVED at 42. `warm-container-hubs` (every 60 s) names
+#: `background` explicitly. Cost: a skip-path fire is one discovery read plus one
+#: Redis GET per published hub (at most 4); a build (~4.5 s for NFL Week 4) runs
+#: only for a hub with no entry for its current revision or under 150 s of
+#: servable life — about every 2.5-3 min per idle hub, ~0 with readers present.
+#: The census RUN over the tree branched from `c2126222ff` printed
+#: `explicit 99 implicit 42 total 141`.
+BACKGROUND_BEAT_COUNT = 141
 #: 🔴 RE-DERIVED at lane1/282 (2026-09-13, #5896): 122 → **123**, explicit
 #: 79 → **80**, fall-through UNMOVED at 43. One beat added,
 #: `soccer-ghost-twin-sweep` (`crontab(minute="9,49")`) with an EXPLICIT

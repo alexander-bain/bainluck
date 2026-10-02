@@ -35,6 +35,11 @@ Cadence: the beat fires every :data:`BEAT_PERIOD_S`. An idle non-live hub
 2.5-3 minutes, never lapsing while passes arrive inside 150 s. A live hub's 60 s
 life is shorter than one beat period, so a quiet live hub can still lapse between
 passes; on live days readers keep it warm, and this does not try to.
+
+Stated, not hidden: the beat is on ``background``, which delivers late (LAT-P112
+measured p50 138-152 s against a declared 120 s, worst ~2,500 s). On-time
+passes keep an idle hub warm; a delivery gap longer than ~150 s still lets the
+next reader pay the build, as every reader did before this existed.
 """
 
 from __future__ import annotations
