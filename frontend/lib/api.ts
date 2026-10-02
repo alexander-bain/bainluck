@@ -13,6 +13,7 @@ import type {
   LiveOddsResponse,
   FuturesMarketsResponse,
   FuturesMarketDetailResponse,
+  FuturesRepresentation,
   FuturesHistoryResponse,
   FuturesMoversResponse,
   SearchResponse,
@@ -50,6 +51,7 @@ import type {
   TeamData,
 } from "./types";
 import { getDiscoverSessionId } from "./discoverInteractions";
+import { VERIFIED_TITLE, sanitizeVerifiedTitleDetail } from "./verifiedTitleDetail";
 import {
   formatProbabilityPercent,
   type ProbabilityFormatOptions,
@@ -952,9 +954,20 @@ export async function fetchFuturesMarkets(params?: {
 /**
  * Fetch a single futures market by ID
  */
-export async function fetchFuturesMarket(id: number, options?: { fresh?: boolean; signal?: AbortSignal }): Promise<FuturesMarketDetailResponse> {
-  return apiFetch<FuturesMarketDetailResponse>(`/api/futures/${id}${options?.fresh ? "?fresh=true" : ""}`,
+export async function fetchFuturesMarket(
+  id: number,
+  options?: { fresh?: boolean; signal?: AbortSignal; representation?: FuturesRepresentation }
+): Promise<FuturesMarketDetailResponse> {
+  // #9387/#10224: `representation` is sent only when a caller opts in, so every
+  // default caller's URL is byte-identical to before.
+  const params = new URLSearchParams();
+  if (options?.fresh) params.set("fresh", "true");
+  const verified = options?.representation === VERIFIED_TITLE;
+  if (verified) params.set("representation", VERIFIED_TITLE);
+  const qs = params.toString();
+  const detail = await apiFetch<FuturesMarketDetailResponse>(`/api/futures/${id}${qs ? `?${qs}` : ""}`,
     options?.fresh ? { cache: "no-store", maxRetries: 0, signal: options.signal } : undefined);
+  return verified ? sanitizeVerifiedTitleDetail(detail) : detail;
 }
 
 /**
@@ -1109,14 +1122,18 @@ export async function fetchProgression(
 export async function fetchProbabilityTimeline(
   marketId: number,
   top?: number,
-  hours?: number
+  hours?: number,
+  options?: { fresh?: boolean; signal?: AbortSignal; representation?: FuturesRepresentation }
 ): Promise<ProbabilityTimelineResponse> {
   const params = new URLSearchParams();
   if (top !== undefined) params.set("top", String(top));
   if (hours !== undefined) params.set("hours", String(hours));
+  // #9387/#10224: opt-in only; default callers' URLs are unchanged.
+  if (options?.representation === VERIFIED_TITLE) params.set("representation", VERIFIED_TITLE);
   const qs = params.toString();
   return apiFetch<ProbabilityTimelineResponse>(
-    `/api/futures/${marketId}/probability-timeline${qs ? `?${qs}` : ""}`
+    `/api/futures/${marketId}/probability-timeline${qs ? `?${qs}` : ""}`,
+    options?.fresh ? { cache: "no-store", maxRetries: 0, signal: options.signal } : undefined
   );
 }
 

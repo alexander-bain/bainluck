@@ -1,0 +1,213 @@
+{
+  "bookmakers": [
+    "BetMGM",
+    "BetRivers",
+    "Caesars",
+    "DraftKings",
+    "FanDuel",
+    "Fanatics",
+    "bet365",
+    "BetOnline.ag"
+  ],
+  "canonical_market_key": "football::championship:2027",
+  "category": "championship",
+  "category_page": null,
+  "category_tags": [
+    "football"
+  ],
+  "commence_time": null,
+  "container_of_event_id": null,
+  "contributing_sources": [
+    "odds_api",
+    "kalshi",
+    "polymarket"
+  ],
+  "created_at": null,
+  "description": null,
+  "event_concept_key": null,
+  "expired_rungs_dropped": 0,
+  "external_id": "americanfootball_nfl_super_bowl_winner",
+  "group_id": null,
+  "hook_description": null,
+  "hook_withheld": false,
+  "hub_slug": null,
+  "id": 86832,
+  "image_url": null,
+  "lead_outcome_id": null,
+  "llm_sport_category": "football",
+  "market_type": null,
+  "mutually_exclusive": true,
+  "name": "NFL Super Bowl Winner",
+  "openings_withheld": false,
+  "outcome_count": 7,
+  "outcomes": [
+    {
+      "aggregation_rule": "weighted_median",
+      "american_odds": 669,
+      "contributing_sources": [
+        "odds_api",
+        "kalshi",
+        "polymarket"
+      ],
+      "id": 1309486,
+      "is_winner": null,
+      "last_updated": "2026-10-02T12:36:27.740202+00:00",
+      "name": "Buffalo Bills",
+      "observed_at": "2026-10-02T07:54:47.255493+00:00",
+      "opening_american_odds": null,
+      "opening_probability": null,
+      "price_changed_at": null,
+      "probability": 0.13,
+      "probability_change_24h": null,
+      "rank": 1,
+      "rank_change_24h": null,
+      "resolution_source": null
+    },
+    {
+      "aggregation_rule": "weighted_median",
+      "american_odds": 852,
+      "contributing_sources": [
+        "odds_api",
+        "kalshi",
+        "polymarket"
+      ],
+      "id": 1309485,
+      "is_winner": null,
+      "last_updated": "2026-10-02T12:36:27.740202+00:00",
+      "name": "Los Angeles Rams",
+      "observed_at": "2026-10-02T07:54:47.255493+00:00",
+      "opening_american_odds": null,
+      "opening_probability": null,
+      "price_changed_at": null,
+      "probability": 0.105,
+      "probability_change_24h": null,
+      "rank": 2,
+      "rank_change_24h": null,
+      "resolution_source": null
+    },
+    {
+      "aggregation_rule": "weighted_median",
+      "american_odds": 1056,
+      "contributing_sources": [
+        "odds_api",
+        "kalshi",
+        "polymarket"
+      ],
+      "id": 1309494,
+      "is_winner": null,
+      "last_updated": "2026-10-02T12:36:27.740202+00:00",
+      "name": "San Francisco 49ers",
+      "observed_at": "2026-10-02T07:54:47.255493+00:00",
+      "opening_american_odds": null,
+      "opening_probability": null,
+      "price_changed_at": null,
+      "probability": 0.0865,
+      "probability_change_24h": null,
+      "rank": 3,
+      "rank_change_24h": null,
+      "resolution_source": null
+    },
+    {
+      "aggregation_rule": "weighted_median",
+      "american_odds": 1076,
+      "contributing_sources": [
+        "odds_api",
+        "kalshi",
+        "polymarket"
+      ],
+      "id": 1309490,
+      "is_winner": null,
+      "last_updated": "2026-10-02T12:36:27.740202+00:00",
+      "name": "Kansas City Chiefs",
+      "observed_at": "2026-10-02T07:54:47.255493+00:00",
+      "opening_american_odds": null,
+      "opening_probability": null,
+      "price_changed_at": null,
+      "probability": 0.085,
+      "probability_change_24h": null,
+      "rank": 4,
+      "rank_change_24h": null,
+      "resolution_source": null
+    },
+    {
+      "aggregation_rule": "weighted_median",
+      "american_odds": 3233,
+      "contributing_sources": [
+        "odds_api",
+        "kalshi",
+        "polymarket"
+      ],
+      "id": 1309499,
+      "is_winner": null,
+      "last_updated": "2026-10-02T12:36:27.740202+00:00",
+      "name": "Los Angeles Chargers",
+      "observed_at": "2026-10-02T07:54:47.255493+00:00",
+      "opening_american_odds": null,
+      "opening_probability": null,
+      "price_changed_at": null,
+      "probability": 0.03,
+      "probability_change_24h": null,
+      "rank": 5,
+      "rank_change_24h": null,
+      "resolution_source": null
+    },
+    {
+      "aggregation_rule": "weighted_median",
+      "american_odds": 4900,
+      "contributing_sources": [
+        "odds_api",
+        "kalshi",
+        "polymarket"
+      ],
+      "id": 1309501,
+      "is_winner": null,
+      "last_updated": "2026-10-02T12:36:27.740202+00:00",
+      "name": "New York Giants",
+      "observed_at": "2026-10-02T07:54:47.255493+00:00",
+      "opening_american_odds": null,
+      "opening_probability": null,
+      "price_changed_at": null,
+      "probability": 0.02,
+      "probability_change_24h": null,
+      "rank": 6,
+      "rank_change_24h": null,
+      "resolution_source": null
+    },
+    {
+      "aggregation_rule": "weighted_median",
+      "american_odds": 6567,
+      "contributing_sources": [
+        "odds_api",
+        "kalshi",
+        "polymarket"
+      ],
+      "id": 1309502,
+      "is_winner": null,
+      "last_updated": "2026-10-02T12:36:27.740202+00:00",
+      "name": "New York Jets",
+      "observed_at": "2026-10-02T07:54:47.255493+00:00",
+      "opening_american_odds": null,
+      "opening_probability": null,
+      "price_changed_at": null,
+      "probability": 0.015,
+      "probability_change_24h": null,
+      "rank": 7,
+      "rank_change_24h": null,
+      "resolution_source": null
+    }
+  ],
+  "prices_withheld": 0,
+  "question_identity": {
+    "competition": "NFL",
+    "edition": "2027",
+    "question": "league_championship_winner"
+  },
+  "representation": "verified_title",
+  "resolution_date": null,
+  "source": "odds_api",
+  "sport": null,
+  "sport_name": null,
+  "sport_page_key": null,
+  "status": "open",
+  "updated_at": null
+}

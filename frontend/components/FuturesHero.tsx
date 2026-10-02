@@ -28,6 +28,14 @@ interface FuturesHeroProps {
    */
   movementLabel?: string;
   sourceCount?: number;
+  /**
+   * #10224 — the displayed outcome's ACTUAL contributors, already labelled
+   * ("Sportsbooks", "Kalshi", "Polymarket"), on a verified title page. When
+   * present it replaces `sourceCount`'s "Aggregated from N sources": one label
+   * reads "From Kalshi" (never a fake aggregate), several read "Aggregated from …",
+   * none prints no footer. Absent ⇒ the source-mode footer, unchanged.
+   */
+  sourceLabels?: string[];
   resolveDate?: string;
   categoryEmoji?: string;
   categoryLabel?: string;
@@ -49,6 +57,7 @@ export function FuturesHero({
   movement,
   movementLabel,
   sourceCount,
+  sourceLabels,
   resolveDate,
   categoryEmoji,
   categoryLabel,
@@ -275,8 +284,30 @@ export function FuturesHero({
         </div>
       )}
 
+      {/* #10224 — verified title: the shown outcome's own contributors. */}
+      {sourceLabels && sourceLabels.length > 0 && (
+        <div
+          data-testid="hero-contributors"
+          className="flex items-center gap-2 mt-4 pt-3.5 border-t border-surface-border"
+        >
+          <div className="flex gap-[2px]">
+            {sourceLabels.slice(0, 5).map((label, i) => (
+              <span
+                key={label}
+                className="w-[5px] h-[5px] rounded-full bg-accent-futures"
+                style={{ opacity: 1 - i * 0.2 }}
+              />
+            ))}
+          </div>
+          <span className="text-[12px] text-text-secondary">
+            {sourceLabels.length === 1 ? "From " : "Aggregated from "}
+            <strong className="text-text-primary font-semibold">{sourceLabels.join(" · ")}</strong>
+          </span>
+        </div>
+      )}
+
       {/* Source aggregation footer */}
-      {sourceCount != null && sourceCount > 0 && (
+      {!sourceLabels && sourceCount != null && sourceCount > 0 && (
         <div className="flex items-center gap-2 mt-4 pt-3.5 border-t border-surface-border">
           <div className="flex gap-[2px]">
             {Array.from({ length: Math.min(sourceCount, 5) }).map((_, i) => (

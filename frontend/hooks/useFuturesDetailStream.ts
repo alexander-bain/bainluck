@@ -1,8 +1,11 @@
 'use client';
 
 import { useEffect, useRef } from 'react';
-import { fetchFuturesMarket, fetchFuturesHistory, type ApiError } from '@/lib/api';
-import type { FuturesMarketDetailResponse, FuturesHistoryResponse } from '@/lib/types';
+import { fetchFuturesMarket, fetchFuturesHistory, fetchProbabilityTimeline, type ApiError } from '@/lib/api';
+import type {
+  FuturesMarketDetailResponse, FuturesHistoryResponse, FuturesRepresentation, ProbabilityTimelineResponse,
+} from '@/lib/types';
+import { isVerifiedTitle, VERIFIED_TIMELINE_TOP } from '@/lib/verifiedTitleDetail';
 import { useMarketStream } from './useMarketStream';
 import {
   createFuturesDetailReconciler, createFuturesReadScheduler,
@@ -18,6 +21,13 @@ export function useFuturesDetailStream(options: {
   historyHours: number;
   setMarket: (market: FuturesMarketDetailResponse) => Promise<unknown>;
   setHistory: (history: FuturesHistoryResponse) => Promise<unknown>;
+  /** #10224: the representation this page asks for. Absent ⇒ the default
+   *  request, unchanged. */
+  representation?: FuturesRepresentation;
+  /** #10224: while the held detail is effectively verified, the chart re-read
+   *  is the opted-in timeline (the history it draws), handed here with the
+   *  range it was asked for. */
+  setTimeline?: (timeline: ProbabilityTimelineResponse, hours: number) => Promise<unknown>;
 }): void {
   const callbacks = useRef(options); callbacks.current = options;
   const reconciler = useRef<ReturnType<typeof createFuturesDetailReconciler>>();
@@ -38,12 +48,22 @@ export function useFuturesDetailStream(options: {
       read: async (signal, current) => {
         // Independent resolution: a slow chart cannot hold back a current hero.
         // One bounded pair consumes the dedicated fresh-market budget (#9526).
-        const detailRead = fetchFuturesMarket(marketId, { fresh: true, signal }).then(async next => {
+        const representation = callbacks.current.representation;
+        // #10224: which chart this read refreshes is decided by the detail the
+        // page currently holds; a mode flip in this very read re-keys the page.
+        const verifiedChart = !!callbacks.current.setTimeline && isVerifiedTitle(reconciler.current?.current());
+        const detailRead = fetchFuturesMarket(marketId, { fresh: true, signal, representation }).then(async next => {
           if (!current() || callbacks.current.marketId !== marketId || next.id !== marketId) return;
           const accepted = reconciler.current!.adopt(next);
           await callbacks.current.setMarket(accepted);
         });
-        const historyRead = fetchFuturesHistory(marketId, hours, undefined, undefined, undefined, { fresh: true, signal }).then(async next => {
+        const historyRead = verifiedChart ? fetchProbabilityTimeline(
+          marketId, VERIFIED_TIMELINE_TOP, hours, { fresh: true, signal, representation },
+        ).then(async next => {
+          await detailRead.catch(() => undefined);
+          if (!current() || callbacks.current.marketId !== marketId || callbacks.current.historyHours !== hours || next.market_id !== marketId) return;
+          await callbacks.current.setTimeline?.(next, hours);
+        }) : fetchFuturesHistory(marketId, hours, undefined, undefined, undefined, { fresh: true, signal }).then(async next => {
           // Let an authoritative final verdict authorize its final chart value,
           // while the headline itself never waits for history to download.
           await detailRead.catch(() => undefined);
