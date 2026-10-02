@@ -25,6 +25,7 @@
     "#9527/#9522 'red sox vs yankees' finds the game; a tennis row reads 'v' (real Postgres)",
     "#9211 the search dropdown offers today's final beside the next game (real Postgres)",
     "#9226 the search dropdown's finished game carries its score (real Postgres)",
+    "#9208 the search dropdown's called-off game says Canceled (real Postgres)",
     "search shows one award race once, dropdown and /search (real Postgres,",
     "#9306 typing alds shows the ALDS markets, not Byron Donalds (real Postgres)",
     "#9609 typing rays or mets shows the club's markets, not Grayson or Kimetsu (real Postgres)",
