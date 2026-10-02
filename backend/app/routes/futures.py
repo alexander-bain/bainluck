@@ -4921,13 +4921,20 @@ async def get_futures_market(
 
     Returns all outcomes with current and opening odds.
     """
-    result = await db.execute(
-        select(FuturesMarket)
-        .options(selectinload(FuturesMarket.sport))
-        .options(selectinload(FuturesMarket.outcomes))
-        .where(FuturesMarket.id == market_id)
-    )
-    market = result.scalar_one_or_none()
+    if representation == REPRESENTATION_VERIFIED_TITLE:
+        # #9387: identity and quotes in ONE statement — see the helper.
+        result = await db.execute(
+            _verified_title_market_stmt().where(FuturesMarket.id == market_id)
+        )
+        market = result.unique().scalar_one_or_none()
+    else:
+        result = await db.execute(
+            select(FuturesMarket)
+            .options(selectinload(FuturesMarket.sport))
+            .options(selectinload(FuturesMarket.outcomes))
+            .where(FuturesMarket.id == market_id)
+        )
+        market = result.scalar_one_or_none()
 
     if not market:
         raise HTTPException(status_code=404, detail="Market not found")
@@ -5074,6 +5081,23 @@ def _verified_title_facts(row) -> MarketFacts:
     )
 
 
+def _verified_title_market_stmt(*, outcome_team: bool = False):
+    """A member's identity AND its quotes, read by ONE statement.
+
+    `selectinload(outcomes)` is a second SELECT, so a poll committing between
+    the two pairs the old metadata with the new quotes — and membership
+    re-proved on that old metadata then credits the new batch's prices (the
+    refreshed quotes satisfy the old poll clock). A joined load reads both from
+    one snapshot. Sport and team carry no edition and no quote, so they stay
+    independent loads. Callers must `.unique()` the result (joined collection).
+    Opt-in only: the default routes keep their own `selectinload` statements.
+    """
+    outcomes = joinedload(FuturesMarket.outcomes)
+    if outcome_team:
+        outcomes = outcomes.selectinload(FuturesOutcome.team)
+    return select(FuturesMarket).options(outcomes, selectinload(FuturesMarket.sport))
+
+
 def _verified_title_candidates_stmt(spec, edition: str, exclude_id: int):
     """Every row a venue's OWN identity could make a member — never a key join.
 
@@ -5169,14 +5193,9 @@ async def _compose_verified_title(db: AsyncSession, market: FuturesMarket):
         m.id: m
         for m in (
             await db.execute(
-                select(FuturesMarket)
-                .options(
-                    selectinload(FuturesMarket.outcomes),
-                    selectinload(FuturesMarket.sport),
-                )
-                .where(FuturesMarket.id.in_(other_ids))
+                _verified_title_market_stmt().where(FuturesMarket.id.in_(other_ids))
             )
-        ).scalars().all()
+        ).unique().scalars().all()
     }
     loaded[market.id] = market
     if any(m.market_id not in loaded for m in members):
@@ -5185,7 +5204,9 @@ async def _compose_verified_title(db: AsyncSession, market: FuturesMarket):
     # between them: the verdicts above describe the candidate snapshot, and the
     # boards below are formatted from THESE rows. Membership — edition, instant
     # and the sportsbook batch clock — is re-proved on the rows whose quotes are
-    # served, and the venues are composed again from those verdicts alone.
+    # served, and the venues are composed again from those verdicts alone. That
+    # re-proof is only sound because each loaded row's metadata and quotes came
+    # from one statement (`_verified_title_market_stmt`).
     members = compose_members(
         spec,
         requested,
@@ -6849,16 +6870,24 @@ async def get_probability_timeline(
     # caught: 18,179 of 51,088 open futures markets carry a non-NULL `sport_id`,
     # and the rest short-circuit on `if market.sport` with no IO at all, which is
     # exactly why no fixture showed it.
-    result = await db.execute(
-        select(FuturesMarket)
-        .options(
-            selectinload(FuturesMarket.outcomes)
-            .selectinload(FuturesOutcome.team),
-            selectinload(FuturesMarket.sport),
+    if representation == REPRESENTATION_VERIFIED_TITLE:
+        # #9387: identity and quotes in ONE statement — see the helper.
+        result = await db.execute(
+            _verified_title_market_stmt(outcome_team=True)
+            .where(FuturesMarket.id == market_id)
         )
-        .where(FuturesMarket.id == market_id)
-    )
-    market = result.scalar_one_or_none()
+        market = result.unique().scalar_one_or_none()
+    else:
+        result = await db.execute(
+            select(FuturesMarket)
+            .options(
+                selectinload(FuturesMarket.outcomes)
+                .selectinload(FuturesOutcome.team),
+                selectinload(FuturesMarket.sport),
+            )
+            .where(FuturesMarket.id == market_id)
+        )
+        market = result.scalar_one_or_none()
 
     if not market:
         raise HTTPException(status_code=404, detail="Market not found")

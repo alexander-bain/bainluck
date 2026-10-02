@@ -292,8 +292,25 @@ class _Result:
     def scalars(self):
         return self
 
+    def unique(self):
+        return self
+
     def scalar_one_or_none(self):
         return self._one
+
+
+def _sql(stmt) -> str:
+    return str(stmt.compile(dialect=postgresql.dialect()))
+
+
+def _loads(stmt) -> dict[str, str]:
+    """Each eager load the statement asks for, as `outcomes.team -> selectin`."""
+    out = {}
+    for opt in getattr(stmt, "_with_options", ()):
+        for element in getattr(opt, "context", ()):
+            path = ".".join(prop.key for prop in element.path.path[1::2])
+            out[path] = dict(element.strategy)["lazy"]
+    return out
 
 
 class _DB:
@@ -309,6 +326,8 @@ class _DB:
         self.roster = roster
         self.snapshots = list(snapshots)
         self.kinds: list[str] = []
+        #: (kind, postgres SQL, {relationship path: load strategy}) per statement.
+        self.statements: list[tuple[str, str, dict[str, str]]] = []
         self.fail_on: str | None = None
 
     async def execute(self, stmt, *_a, **_k):
@@ -326,6 +345,7 @@ class _DB:
         else:
             raise AssertionError(f"unexpected statement: {stmt}")
         self.kinds.append(kind)
+        self.statements.append((kind, _sql(stmt), _loads(stmt)))
         if kind == self.fail_on:
             raise RuntimeError("database went away")
         if kind == "snapshots":
@@ -731,6 +751,95 @@ class TestMembershipIsReprovedOnTheLoadedRows:
         else:
             frozen, _ = await timeline(KALSHI_ID, trio(), VERIFIED)
         assert rolled == frozen
+
+
+# ── 3c. a member's identity and quotes are one snapshot ──────────────────────
+#
+# The re-proof above is sound only if each loaded row's metadata and outcomes
+# are one read: `selectinload(outcomes)` is a SECOND select, and a poll landing
+# between the two pairs the old metadata (which re-proves) with refreshed quotes
+# (which satisfy the old poll clock). A fake session cannot interleave inside a
+# statement, so this pins the shape instead: on every opted-in member read, the
+# market's identity columns and its outcomes' quote columns are columns of the
+# SAME select.
+
+ONE_SNAPSHOT_COLUMNS = (
+    "futures_markets.market_metadata",
+    "futures_markets.status",
+    "futures_markets.resolution_date",
+    "futures_outcomes_1.current_probability",
+    "futures_outcomes_1.last_updated",
+)
+
+
+def _one_snapshot(sql: str) -> bool:
+    return "LEFT OUTER JOIN futures_outcomes AS futures_outcomes_1" in sql and all(
+        col in sql for col in ONE_SNAPSHOT_COLUMNS
+    )
+
+
+def _member_reads(db):
+    return [(kind, sql, loads) for kind, sql, loads in db.statements
+            if kind in ("market", "members")]
+
+
+class TestIdentityAndQuotesAreOneStatement:
+    @pytest.mark.parametrize("route", ["detail", "timeline"])
+    @pytest.mark.parametrize("mid", [ODDS_ID, KALSHI_ID, PM_ID])
+    async def test_every_opted_in_member_read_joins_its_outcomes(self, route, mid):
+        if route == "detail":
+            payload, db = await detail(mid, trio(), VERIFIED)
+        else:
+            payload, db = await timeline(mid, trio(), VERIFIED)
+        assert payload["representation"] == VERIFIED, _why(payload)
+        reads = _member_reads(db)
+        # Requested AND siblings, or the guard would pass on one statement.
+        assert [kind for kind, _, _ in reads] == ["market", "members"]
+        for kind, sql, loads in reads:
+            assert _one_snapshot(sql), f"{route} {kind} read splits identity from quotes"
+            assert loads["outcomes"] == "joined", (route, kind)
+            assert loads["sport"] == "selectin", (route, kind)
+
+    async def test_the_opted_in_chart_keeps_its_team_enrichment(self):
+        _, db = await timeline(ODDS_ID, trio(), VERIFIED)
+        (requested,) = [loads for kind, _, loads in db.statements if kind == "market"]
+        # The team read carries no edition and no quote, so it may stay separate.
+        assert requested["outcomes.team"] == "selectin"
+
+    @pytest.mark.parametrize("representation", [None, "source"])
+    async def test_the_default_detail_read_is_the_original_statement(self, representation):
+        from sqlalchemy import select
+        from sqlalchemy.orm import selectinload
+
+        _, db = await detail(ODDS_ID, trio(), representation)
+        original = (
+            select(FuturesMarket)
+            .options(selectinload(FuturesMarket.sport))
+            .options(selectinload(FuturesMarket.outcomes))
+            .where(FuturesMarket.id == ODDS_ID)
+        )
+        assert db.statements == [("market", _sql(original), _loads(original))]
+        assert "futures_outcomes" not in db.statements[0][1]
+
+    @pytest.mark.parametrize("representation", [None, "source"])
+    async def test_the_default_timeline_read_is_the_original_statement(self, representation):
+        from sqlalchemy import select
+        from sqlalchemy.orm import selectinload
+
+        from app.models import FuturesOutcome
+
+        _, db = await timeline(ODDS_ID, trio(), representation)
+        original = (
+            select(FuturesMarket)
+            .options(
+                selectinload(FuturesMarket.outcomes).selectinload(FuturesOutcome.team),
+                selectinload(FuturesMarket.sport),
+            )
+            .where(FuturesMarket.id == ODDS_ID)
+        )
+        assert db.statements[0] == ("market", _sql(original), _loads(original))
+        assert [kind for kind, _, _ in _member_reads(db)] == ["market"]
+        assert "candidates" not in db.kinds
 
 
 # ── 4. wrong edition ─────────────────────────────────────────────────────────
