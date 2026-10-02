@@ -1221,8 +1221,8 @@ def test_the_background_queue_carries_105_beats_and_45_are_fall_through():
             implicit += 1
 
     assert explicit == 98, f"explicitly-routed background beats moved: {explicit}"
-    assert implicit == 42, f"default-queue fall-through moved: {implicit}"
-    assert explicit + implicit == BACKGROUND_BEAT_COUNT == 140
+    assert implicit == 40, f"default-queue fall-through moved: {implicit}"
+    assert explicit + implicit == BACKGROUND_BEAT_COUNT == 138
 
     # ruling 110's two movers are OFF this queue and ON heavy — asserted here
     # too, so a silent revert cannot restore the count without being noticed.

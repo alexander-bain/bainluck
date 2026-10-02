@@ -2056,7 +2056,14 @@ def free_background_slots(
 #: (08:49:37 → 08:53:46Z), past an idle hub's 300 s life. Its cost moves with it
 #: and is declared at the beat entry. The census RUN over the tree branched from
 #: `0a348dffd5` printed `explicit 98 implicit 42 total 140`.
-BACKGROUND_BEAT_COUNT = 140
+#:
+#: 🔴 RE-DERIVED at latency/1724 (2026-10-02, #3481): 140 → 138, explicit
+#: UNMOVED at 98, fall-through 42 → 40. `turbo-collapse-futures` and
+#: `turbo-collapse-odds` were RETIRED — both default-queue fall-through, both
+#: measured writing 0 rows per 5,000-partition pass. Cost removed, not added: up to
+#: ~35 min of one background slot each, four times a day. The census RUN over the
+#: tree branched from `81f8b97dba` printed `explicit 98 implicit 40 total 138`.
+BACKGROUND_BEAT_COUNT = 138
 #: 🔴 RE-DERIVED at lane1/282 (2026-09-13, #5896): 122 → **123**, explicit
 #: 79 → **80**, fall-through UNMOVED at 43. One beat added,
 #: `soccer-ghost-twin-sweep` (`crontab(minute="9,49")`) with an EXPLICIT

@@ -7751,16 +7751,18 @@ celery_app.conf.beat_schedule = {
         "schedule": crontab(minute=40, hour=6),  # Daily at 6:40 AM UTC
         "kwargs": {"table": "futures", "limit": 500},
     },
-    "turbo-collapse-futures": {
-        "task": "app.tasks.turbo_collapse_futures",
-        "schedule": crontab(minute=30, hour="*/6"),  # Every 6 hours — catch up on backlog
-        "kwargs": {"limit": 5000},
-    },
-    "turbo-collapse-odds": {
-        "task": "app.tasks.turbo_collapse_odds",
-        "schedule": crontab(minute=45, hour="*/6"),  # Every 6 hours
-        "kwargs": {"limit": 5000},
-    },
+    # `turbo-collapse-futures` (:30) and `turbo-collapse-odds` (:45), every 6h,
+    # were RETIRED 2026-10-02 (#3481 / #3480, latency/1724). Both wrote NOTHING:
+    # the last full runs returned `rows_deleted: 0, keepers_updated: 0,
+    # partitions_processed: 5000` (futures 12:30Z, 21.5 min; odds 07:04Z, 16 min).
+    # Their partition pick has no cursor and a collapse leaves its keepers behind,
+    # so the same already-collapsed partitions come back every pass — the defect
+    # #7878 fixed for win-prob only. Futures paid a full read of the 62 GB
+    # `futures_odds_snapshots` heap to choose them, four times a day, while search
+    # and Discover read from the same database. The tasks stay registered and the
+    # admin `/cleanup/turbo-collapse` route still runs them by hand; making a pass
+    # reach NEW partitions is a data change (calibration reads `valid_until`), so it
+    # is #3481's own ship, not a schedule. `test_turbo_collapse_retired_3481.py`.
     "matching-metrics-daily": {
         "task": "app.tasks.compute_matching_metrics",
         "schedule": crontab(minute=0, hour=10),  # Daily at 10:00 AM UTC
