@@ -83,7 +83,46 @@ export interface LiveStreamDeps {
    * open. The caller gates its polling on this.
    */
   onDeliveringChange: (delivering: boolean) => void;
+  /**
+   * #10200 — what the TRANSPORT is doing, for the reader-facing status only.
+   *
+   * OBSERVATIONAL. Nothing in here reads it back: every decision above
+   * (`onDeliveringChange`, the silence rails, the rollover, the retry give-up)
+   * is taken exactly as before and this is told afterwards. It exists because
+   * `delivering` cannot answer the reader's question — it is true on `open`
+   * before any price has been published, and false both for a socket that
+   * failed and for a healthy one whose market simply went quiet. See
+   * `LiveTransportStatus` for what each value does and does not prove.
+   */
+  onStatusChange?: (status: LiveTransportStatus) => void;
 }
+
+/**
+ * #10200 — the transport's own observations, named.
+ *
+ * - `connecting`  — a socket has been asked for and has not opened yet.
+ * - `open`        — the socket opened and nothing has outlived a silence rail.
+ *                   NOT a claim that a price is current: a heartbeat keeps this
+ *                   alive and a heartbeat proves only the socket (defect 2).
+ * - `quiet`       — the socket is open but nothing has been PUBLISHED for
+ *                   `DATA_SILENCE_TIMEOUT_MS`, so polling has resumed. A quiet
+ *                   market and a dead publisher look identical from here, so
+ *                   this is not an outage claim either.
+ * - `retrying`    — the transport actually failed and the browser is retrying.
+ * - `rollover`    — the server asked for a fresh socket (the 900s ceiling).
+ *                   Healthy, and never an interruption.
+ * - `unavailable` — push is over for this page-view: refused, given up, or a
+ *                   half-open socket retired. Polling carries the page.
+ * - `closed`      — the server said the match ended.
+ */
+export type LiveTransportStatus =
+  | 'connecting'
+  | 'open'
+  | 'quiet'
+  | 'retrying'
+  | 'rollover'
+  | 'unavailable'
+  | 'closed';
 
 /** Transport silence: three missed 20s heartbeats. The stream is dead. */
 export const SILENCE_TIMEOUT_MS = 60_000;
@@ -136,13 +175,14 @@ export interface LiveStreamController {
     stopped: boolean;
     connections: number;
     reopenAt: number | null;
+    status: LiveTransportStatus | null;
   };
 }
 
 export function createLiveStreamController(
   deps: LiveStreamDeps,
 ): LiveStreamController {
-  const { open, now, onFrame, onDeliveringChange } = deps;
+  const { open, now, onFrame, onDeliveringChange, onStatusChange } = deps;
 
   let handle: StreamHandle | null = null;
   let delivering = false;
@@ -153,6 +193,15 @@ export function createLiveStreamController(
   let lastDataAt = 0;
   let reopenAt: number | null = null;
   let consecutiveFastRollovers = 0;
+  let status: LiveTransportStatus | null = null;
+
+  // #10200 — report, never decide. Every call site sits AFTER the decision it
+  // describes, so deleting all of them changes no behaviour above.
+  const setStatus = (next: LiveTransportStatus) => {
+    if (status === next) return;
+    status = next;
+    onStatusChange?.(next);
+  };
 
   const setDelivering = (next: boolean) => {
     if (delivering === next) return;
@@ -200,6 +249,7 @@ export function createLiveStreamController(
       RECONNECT_BASE_DELAY_MS * 2 ** Math.max(0, consecutiveFastRollovers - 1),
     );
     reopenAt = now() + delay;
+    setStatus('rollover');
   };
 
   const connect = () => {
@@ -212,6 +262,7 @@ export function createLiveStreamController(
       // A transport that will not even construct is a refused connect.
       setDelivering(false);
       stopped = true;
+      setStatus('unavailable');
       return;
     }
     handle = next;
@@ -222,12 +273,14 @@ export function createLiveStreamController(
     // caller straight back to polling on every rollover.
     lastMessageAt = openedAt;
     lastDataAt = openedAt;
+    setStatus('connecting');
 
     next.addEventListener('open', () => {
       if (stopped || handle !== next) return;
       lastMessageAt = now();
       lastDataAt = now();
       setDelivering(true);
+      setStatus('open');
     });
 
     next.addEventListener('probability', (event) => {
@@ -249,6 +302,7 @@ export function createLiveStreamController(
       lastDataAt = now();
       onFrame(parsed);
       setDelivering(true);
+      setStatus('open');
     });
 
     next.addEventListener('heartbeat', () => {
@@ -265,6 +319,7 @@ export function createLiveStreamController(
     next.addEventListener('closed', () => {
       if (handle !== next) return;
       stop();
+      setStatus('closed');
     });
 
     // The connection ceiling. NOT terminal — see `rollOver`.
@@ -277,8 +332,13 @@ export function createLiveStreamController(
       if (stopped || handle !== next) return;
       // EventSource retries by itself while CONNECTING; only give up once it
       // has actually closed, so a single blip does not bounce us to polling.
-      if (next.readyState === EVENT_SOURCE_CLOSED) stop();
-      else setDelivering(false);
+      if (next.readyState === EVENT_SOURCE_CLOSED) {
+        stop();
+        setStatus('unavailable');
+      } else {
+        setDelivering(false);
+        setStatus('retrying');
+      }
     });
   };
 
@@ -307,13 +367,19 @@ export function createLiveStreamController(
       //
       // Bounded, so an unreachable server is not retried forever.
       if (handle.readyState === EVENT_SOURCE_CONNECTING) {
-        if (at - lastMessageAt > RETRY_GIVEUP_MS) stop();
+        if (at - lastMessageAt > RETRY_GIVEUP_MS) {
+          stop();
+          setStatus('unavailable');
+        } else {
+          setStatus('retrying');
+        }
         return;
       }
       // CLOSED (the browser gave up — a refused connect the server actually
       // answered) or OPEN-but-silent (a half-open socket nothing is retrying).
       // Neither will change on its own, so retire the stream as before.
       stop();
+      setStatus('unavailable');
       return;
     }
     // 2. PUBLISHER dead (or the market is quiet) — the socket is fine and
@@ -322,6 +388,8 @@ export function createLiveStreamController(
     //    keep the stream open.
     if (at - lastDataAt > DATA_SILENCE_TIMEOUT_MS) {
       setDelivering(false);
+      // Only an open socket can be quiet: a retrying one already said so.
+      if (status === 'open') setStatus('quiet');
     }
   };
 
@@ -330,7 +398,7 @@ export function createLiveStreamController(
     tick,
     stop,
     get state() {
-      return { delivering, stopped, connections, reopenAt };
+      return { delivering, stopped, connections, reopenAt, status };
     },
   };
 }
