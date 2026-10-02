@@ -9,7 +9,7 @@ import { usePageTracking, useScrollDepth, useEngagementTime } from "@/hooks";
 import { fetchEntertainment, formatProbability } from "@/lib/api";
 import { NO_READING, probabilityParts } from "@/lib/probabilityDisplay";
 import { renderedDuelPercents } from "@/lib/renderedPercent";
-import { twoLegCardPair } from "@/lib/twoLegCardPair";
+import { namedPairLabels, twoLegCardPair } from "@/lib/twoLegCardPair";
 import { eventPath } from "@/lib/eventKey";
 import { formatResolvesLabel } from "@/lib/gameTimeLabel";
 import type {
@@ -220,8 +220,17 @@ function MetaRow({
  * `value` is a PERCENT (0-100) on this page's wire; the contract takes a
  * probability, hence the divide.
  */
-function ProbPct({ value, size = 14 }: { value: number; size?: number }) {
-  const { marker, digits } = probabilityParts(value / 100);
+function ProbPct({
+  value,
+  size = 14,
+  rendered,
+}: {
+  value: number;
+  size?: number;
+  /** A pair's jointly-rounded integer (#2831), so two halves of one question print 100, not 101. */
+  rendered?: number | null;
+}) {
+  const { marker, digits } = probabilityParts(value / 100, { rendered });
   return (
     <span
       className={s.probNum}
@@ -268,13 +277,23 @@ function ProbPct({ value, size = 14 }: { value: number; size?: number }) {
  * Gotcha #23 is respected for free: the helper self-gates on the [0.99, 1.01]
  * band, and this caller's pair is an exact complement by construction.
  */
-function YesNoBar({ yes, no }: { yes: number; no: number }) {
+function YesNoBar({
+  yes,
+  no,
+  labels,
+}: {
+  yes: number;
+  no: number;
+  /** #10195: the served legs' own names where they are not Yes/No ("Boy" / "Girl"). */
+  labels?: [string, string] | null;
+}) {
   const [yesPct, noPct] = renderedDuelPercents(yes / 100, no / 100);
+  const [yesWord, noWord] = labels ?? ["YES", "NO"];
   return (
     <div className={s.ynBar}>
       <span className={s.ynFill} style={{ width: `${yes}%` }} aria-hidden="true" />
-      <span className={s.ynYes}>YES {formatProbability(yes / 100, { rendered: yesPct })}</span>
-      <span className={s.ynNo}>NO {formatProbability(no / 100, { rendered: noPct })}</span>
+      <span className={s.ynYes}>{yesWord} {formatProbability(yes / 100, { rendered: yesPct })}</span>
+      <span className={s.ynNo}>{noWord} {formatProbability(no / 100, { rendered: noPct })}</span>
     </div>
   );
 }
@@ -509,6 +528,10 @@ function CardBodyByKind({
   isLead?: boolean;
 }) {
   const outcomes = market.top_outcomes;
+  // #10195: two served legs that are named answers ("Boy" / "Girl") are printed
+  // by name — the split below when they are one question, the list when not —
+  // never under the default branch's "Yes likely".
+  const named = namedPairLabels(market);
 
   if (market.kind === "spotify" && outcomes.length >= 2) {
     return (
@@ -551,11 +574,12 @@ function CardBodyByKind({
   }
 
   if (
-    market.kind === "reality" &&
-    market.outcome_count <= 2 &&
+    ((market.kind === "reality" && market.outcome_count <= 2) ||
+      (named !== null && twoLegCardPair(market).oneQuestion)) &&
     outcomes.length >= 2
   ) {
     const aLead = outcomes[0].prob >= outcomes[1].prob;
+    const [aPct, bPct] = renderedDuelPercents(outcomes[0].prob / 100, outcomes[1].prob / 100);
     return (
       <div>
         <div
@@ -576,7 +600,7 @@ function CardBodyByKind({
             >
               {outcomes[0].name}
             </div>
-            <ProbPct value={outcomes[0].prob} size={isLead ? 24 : 18} />
+            <ProbPct value={outcomes[0].prob} size={isLead ? 24 : 18} rendered={aPct} />
           </div>
           <div style={{ textAlign: "right" }}>
             <div
@@ -588,7 +612,7 @@ function CardBodyByKind({
             >
               {outcomes[1].name}
             </div>
-            <ProbPct value={outcomes[1].prob} size={isLead ? 24 : 18} />
+            <ProbPct value={outcomes[1].prob} size={isLead ? 24 : 18} rendered={bPct} />
           </div>
         </div>
         <div className={s.splitBar}>
@@ -608,7 +632,8 @@ function CardBodyByKind({
   if (
     (market.kind === "multi" ||
       market.kind === "eurovision" ||
-      market.outcome_count > 2) &&
+      market.outcome_count > 2 ||
+      named !== null) &&
     outcomes.length >= 2
   ) {
     return (
@@ -1243,7 +1268,7 @@ function MomentCard({ market }: { market: EntMarketRow }) {
           </div>
         )}
         {yesNo ? (
-          <YesNoBar yes={pair.first.prob} no={yesNo.prob} />
+          <YesNoBar yes={pair.first.prob} no={yesNo.prob} labels={namedPairLabels(market)} />
         ) : (
           <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
             {market.top_outcomes.map((o, i) => (
@@ -1336,7 +1361,7 @@ function TechCultureSidebar({ data }: { data: EntThemeTechCulture }) {
               </div>
             )}
             {yesNo ? (
-              <YesNoBar yes={pair.first.prob} no={yesNo.prob} />
+              <YesNoBar yes={pair.first.prob} no={yesNo.prob} labels={namedPairLabels(m)} />
             ) : (
               <div
                 style={{
