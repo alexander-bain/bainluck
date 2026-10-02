@@ -39,6 +39,8 @@ struct TeamDetailView: View {
     /// #9368 — best-effort, like the web page: a failed or absent grid hides the
     /// Division Race and changes nothing else.
     @State private var race: TeamDivisionRace.Race?
+    /// #10234 — the grid fetch has finished (or was never needed).
+    @State private var raceSettled = false
 
     var body: some View {
         Group {
@@ -64,6 +66,7 @@ struct TeamDetailView: View {
                 let grid = try? await APIClient.shared.fetchChampionshipGrid(slug: gridSlug)
                 race = TeamDivisionRace.build(grid: grid, teamId: page.team.id, teamName: page.team.name)
             }
+            raceSettled = true
         } catch {
             self.error = "Could not load team"
             loading = false
@@ -116,7 +119,9 @@ struct TeamDetailView: View {
                                     Text(formatPct(prob))
                                         .font(.subheadline).bold().monospacedDigit()
                                 }
-                                if let rank = entry.rank {
+                                // #10234: the division rank agrees with the race below.
+                                if let rank = TeamDivisionRace.pathRank(
+                                    entry, race: race, raceSettled: raceSettled) {
                                     Text("#\(rank)").font(.caption).foregroundStyle(.secondary)
                                 }
                             }

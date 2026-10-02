@@ -190,6 +190,40 @@ enum TeamDivisionRace {
         return rest.isEmpty ? key : rest
     }
 
+    // MARK: - Championship Path rank
+
+    /// The served path's division tier (`routes/teams.py` `_TIER_LABELS`).
+    static let divisionPathTier = 4
+
+    /// The "#N" beside a Championship Path row.
+    ///
+    /// #10234 — seen on the Lions page (2026-10-02, sim, master `6e4afb6a49`):
+    /// "Division 37% #1" above a Division Race that shows the Vikings at 38%.
+    /// The server averages the tier's sources for the number (Kalshi 38.5% and
+    /// Polymarket 34.5%, so 36.5%) but takes the rank from the highest-probability
+    /// source's own market (Kalshi has Detroit first). That means the number and
+    /// the rank come from two different answers. Web never prints the rank.
+    ///
+    /// The division rank is therefore read off the race this page draws, the
+    /// same blended numbers the reader can check in the table. With no race, or a race
+    /// without a division column, nothing on screen contradicts the served rank,
+    /// so it stands. The championship and conference ranks are league-wide, which the race
+    /// (division peers only) cannot check, so they stay as served.
+    ///
+    /// The race arrives after the page. Until its fetch has settled, the division rank
+    /// prints nothing, never the served "#1" that flips to "#2" a moment later.
+    static func pathRank(_ entry: ChampionshipPathEntry, race: Race?, raceSettled: Bool) -> Int? {
+        guard entry.tier == divisionPathTier else { return entry.rank }
+        guard raceSettled else { return nil }
+        guard let race, race.hasDivision else { return entry.rank }
+        guard let me = race.rows.first(where: \.isTeam) else { return nil }
+        // A clinched cell sorts as certainty; no live number and no win means
+        // there is no place to print.
+        let mine = me.division.sortValue
+        guard mine >= 0 else { return nil }
+        return 1 + race.rows.filter { !$0.isTeam && $0.division.sortValue > mine }.count
+    }
+
     // MARK: - Season Futures
 
     /// A tier is not a question: seed, advancement and awards rows can carry
