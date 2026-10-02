@@ -106,8 +106,11 @@ def test_mets_puts_the_animated_film_award_below_the_mets_boards():
 
 
 def test_a_name_match_still_leads_every_option_only_row():
+    # A TRADED name match. #10230 lets a thin one (under $10k) yield to a traded
+    # board where the word is a real contender — here the NPB board, whose
+    # fixture legs price the Fukuoka Hawks at 30% on $23k.
     rows = _hawks_rows() + [
-        _Market(1, "Will the Atlanta Hawks make the playoffs?", 10, ["Yes", "No"]),
+        _Market(1, "Will the Atlanta Hawks make the playoffs?", 10_000, ["Yes", "No"]),
     ]
     assert _ids(_rank(rows, HAWKS))[0] == 1
 
@@ -126,6 +129,9 @@ def test_nets_sinks_the_hornets_board_below_the_nets_conference_boards_too():
         _Market(61380772, "Will Brooklyn Nets advance to the Eastern Conference "
                 "Semifinals in the 2027 NBA Playoffs?", None, ["Yes", "No"], market_tier=2),
     ]
+    # The Nets' production price on the champion board (2026-10-02). The fixture's
+    # 30% would make it a #10230 contender, which it is not.
+    rows[0].outcomes[0].current_probability = 0.0015
     assert _ids(_rank(rows, [("nets", None)])) == [61380772, 20569230, 3]
 
 
