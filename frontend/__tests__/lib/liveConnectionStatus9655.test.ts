@@ -146,10 +146,17 @@ describe('#10200 interruption and recovery', () => {
     expect(after.feedback?.kind).toBe('resumed');
   });
 
-  it('a rollover is never an interruption', () => {
+  it('a rollover is never an interruption — and never a connection claim, because its socket is closed', () => {
     const t = run([[0, {}], [5, { status: 'rollover' }], [6, { status: 'connecting' }], [7, { status: 'open' }]]);
     expect(t.interrupted).toBe(false);
-    expect(label(t, 5, { status: 'rollover' })).toBe('Connected · waiting');
+    const p = presentConnectionStatus(t, { ...QUIET, status: 'rollover' }, T0 + 5_000);
+    expect(p).toEqual({ label: 'Connecting', tone: 'neutral', breathes: false, announcement: '' });
+    expect(label(t, 7, { status: 'open' })).toBe('Connected · waiting');
+  });
+
+  it('a receipt landing mid-rollover is "No change", not "Connected · no change"', () => {
+    const t = run([[0, {}], [5, { status: 'rollover', priceObservedAt: at(5) }]]);
+    expect(label(t, 5, { status: 'rollover' })).toBe('No change');
   });
 });
 
@@ -158,6 +165,7 @@ describe('#10200 the words for each transport state', () => {
   it.each([
     ['connecting', 'Connecting', false],
     ['open', 'Connected · waiting', true],
+    ['rollover', 'Connecting', false],
     ['quiet', 'Connected · checking', false],
     ['unavailable', 'Checking for updates', false],
     ['closed', 'Checking for updates', false],

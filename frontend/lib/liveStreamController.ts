@@ -110,7 +110,8 @@ export interface LiveStreamDeps {
  *                   this is not an outage claim either.
  * - `retrying`    — the transport actually failed and the browser is retrying.
  * - `rollover`    — the server asked for a fresh socket (the 900s ceiling).
- *                   Healthy, and never an interruption.
+ *                   Healthy, and never an interruption — but reported AFTER
+ *                   the old socket is closed, so it is not a connection either.
  * - `unavailable` — push is over for this page-view: refused, given up, or a
  *                   half-open socket retired. Polling carries the page.
  * - `closed`      — the server said the match ended.

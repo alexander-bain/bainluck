@@ -33,6 +33,7 @@ import {
   type LiveTransportStatus,
   type StreamHandle,
 } from '@/lib/liveStreamController';
+import { EMPTY_CONNECTION_TRACKER, presentConnectionStatus } from '@/lib/event/liveConnectionStatus';
 
 /** The server's own connection ceiling, `MAX_CONNECTION_S` in the route. */
 const MAX_CONNECTION_MS = 900_000;
@@ -490,6 +491,35 @@ describe('#10200 the observational status follows the lifecycle', () => {
     expect(h.statuses.slice(-2)).toEqual(['rollover', 'connecting']);
     h.live().emit('open');
     expect(h.statuses.slice(-1)).toEqual(['open']);
+  });
+
+  it('CONTROL (Sol, 0b89d9a8b5): through a rollover the reader sees a still "Connecting" — the old socket is closed and nothing is open', () => {
+    const h = harness();
+    const words = () =>
+      presentConnectionStatus(
+        EMPTY_CONNECTION_TRACKER,
+        { status: h.statuses[h.statuses.length - 1], terminalLabel: null, priceMayBeOld: false, scoreMayBeOld: false },
+        h.at(),
+      );
+    h.controller.start();
+    h.live().emit('open');
+    h.advanceLive(MAX_CONNECTION_MS);
+    const old = h.live();
+    h.live().emit('reconnect');
+    // The truth the status must not contradict: closed, not delivering.
+    expect(old.closed).toBe(true);
+    expect(h.controller.state.delivering).toBe(false);
+    expect(words()).toMatchObject({ label: 'Connecting', breathes: false, announcement: '' });
+    // The tick before the replacement opens: still nothing connected.
+    h.advance(TICK_INTERVAL_MS);
+    expect(words()).toMatchObject({ label: 'Connecting', breathes: false });
+    // The replacement opening is what earns the connection again.
+    h.advance(RECONNECT_BASE_DELAY_MS + TICK_INTERVAL_MS);
+    expect(h.live()).not.toBe(old);
+    h.live().emit('open');
+    expect(words()).toMatchObject({ label: 'Connected · waiting', breathes: true });
+    // ...and at no point did the scheduled path read as an interruption.
+    expect(h.statuses).not.toContain('retrying');
   });
 
   it('refused (closed by the browser, or never constructed) reads unavailable; the server\'s close reads closed', () => {

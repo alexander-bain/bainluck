@@ -434,6 +434,26 @@ describe("#10200 interruption, reopen, recovery", () => {
   });
 });
 
+describe("#10200 the server's scheduled rollover (Sol's review of 0b89d9a8b5)", () => {
+  it("reads a still Connecting while the old socket is closed, never interrupted, and connected only once the next one opens", async () => {
+    const page = await mountHeldPage(held({ p: 0.6, at: T(0) }));
+    await page.emit("open");
+    const old = page.stream();
+    await page.emit("reconnect");
+    expect(old.closed).toBe(true);
+    expect(page.read()).toMatchObject({ pct: "60", label: "Connecting", announcement: "", clock: T(0) });
+    // The hook's own interval opens the replacement after the backoff.
+    await page.advance(TICK_INTERVAL_MS * 2);
+    expect(page.stream()).not.toBe(old);
+    expect(page.read().label).toBe("Connecting");
+    await page.emit("open");
+    expect(page.read()).toMatchObject({ pct: "60", label: "Connected · waiting", clock: T(0) });
+    expect(page.seen).not.toContain("Updates interrupted · reconnecting");
+    expect(page.seen.filter((l) => RECEIPTS.includes(l))).toEqual([]);
+    page.unmount();
+  });
+});
+
 describe("#10200 the finish", () => {
   it("the server's close reads checking; the adopted final reads Finished; nothing after it moves", async () => {
     const page = await mountHeldPage(held({ p: 0.6, at: T(0) }));

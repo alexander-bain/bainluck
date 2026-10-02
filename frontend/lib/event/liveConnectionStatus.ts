@@ -178,9 +178,11 @@ export interface ConnectionPresentationInput {
 const BASE: Record<LiveStreamStatus, { label: string; tone: ConnectionTone; breathes: boolean }> = {
   connecting: { label: 'Connecting', tone: 'neutral', breathes: false },
   open: { label: 'Connected · waiting', tone: 'live', breathes: true },
-  // A rollover is the server asking for a fresh socket on schedule. It is the
-  // healthy path, so it reads exactly as the connection it continues.
-  rollover: { label: 'Connected · waiting', tone: 'live', breathes: true },
+  // A rollover is the server asking for a fresh socket on schedule: healthy,
+  // never an interruption — but the old socket is already CLOSED and the next
+  // one has not opened, so nothing is connected. It reads as the connect it is,
+  // still, until the replacement actually opens (Sol's review of 0b89d9a8b5).
+  rollover: { label: 'Connecting', tone: 'neutral', breathes: false },
   quiet: { label: 'Connected · checking', tone: 'steady', breathes: false },
   retrying: { label: 'Updates interrupted · reconnecting', tone: 'attention', breathes: false },
   unavailable: { label: 'Checking for updates', tone: 'neutral', breathes: false },
@@ -219,8 +221,9 @@ export function presentConnectionStatus(
     if (fb.kind === 'updated') {
       return { label: 'Updated', tone: 'steady', breathes: false, announcement: '' };
     }
-    // "Connected" is a claim about the socket; only an open one may make it.
-    const connected = input.status === 'open' || input.status === 'rollover' || input.status === 'quiet';
+    // "Connected" is a claim about the socket; only an open one may make it
+    // (a rollover has closed its socket and not yet opened the next).
+    const connected = input.status === 'open' || input.status === 'quiet';
     return {
       label: connected ? 'Connected · no change' : 'No change',
       tone: 'steady',
