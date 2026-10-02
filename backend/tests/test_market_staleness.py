@@ -336,8 +336,9 @@ class TestDayLessRungsExpire:
         # unambiguously the START of the named period — so "Before <Month>"
         # ends the last day of the PREVIOUS month, not of the named one.
         assert outcome_deadline_expired("Before August", AUGUST_7) is True
-        # ...and it is NOT yet expired on Aug 1, inside the one-day grace.
-        aug_1 = datetime(2026, 8, 1, 12, 0, tzinfo=timezone.utc)
+        # ...and it is NOT yet expired early on Aug 1, inside the grace that
+        # lets a US-time deadline finish (12 hours since #10137, was one day).
+        aug_1 = datetime(2026, 8, 1, 9, 0, tzinfo=timezone.utc)
         assert outcome_deadline_expired("Before August", aug_1) is False
 
     def test_future_bare_month_rungs_survive(self):
