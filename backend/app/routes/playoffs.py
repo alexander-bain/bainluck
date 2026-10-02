@@ -4471,6 +4471,23 @@ _GRID_DECIDED_STATES = frozenset({"won", "eliminated", "lost"})
 _GRID_RESOLVED_COVERAGE = 0.9
 
 
+def _grid_admitted_price(current_probability, yes_bid, yes_ask) -> float | None:
+    """The price a grid leg is ADMITTED on, or ``None`` when it has none (#10209).
+
+    The stored ``current_probability`` when there is one, otherwise the bid/ask
+    midpoint (a leg whose price was never written, e.g. during an API format
+    migration). Both the admission loop and the cell builder read this, because
+    they used to disagree: admission took the midpoint, the cell re-read the
+    NULL column and called ``float()`` on it, and that one leg 500'd the whole
+    league's grid (Sentry BAINLUCK-1HG, ``/api/playoffs/nhl``, 2026-10-02).
+    """
+    if current_probability is not None:
+        return float(current_probability)
+    if yes_bid is not None and yes_ask is not None and float(yes_ask) > 0:
+        return (float(yes_bid) + float(yes_ask)) / 2
+    return None
+
+
 def _grid_leg_is_terminal(graded: bool, probability: float) -> bool:
     """A graded leg whose price is AT THE RAIL, and nothing wider (#7387).
 
@@ -6091,15 +6108,15 @@ async def get_playoff_grid(
                 ):
                     _pm_unbacked_skipped += 1
                     continue
-                if outcome.current_probability is not None:
-                    prob = float(outcome.current_probability)
-                elif (outcome.current_yes_bid is not None
-                      and outcome.current_yes_ask is not None
-                      and float(outcome.current_yes_ask) > 0):
-                    # Fallback: compute from bid/ask when current_probability
-                    # wasn't written (e.g. during API format migrations).
-                    prob = (float(outcome.current_yes_bid) + float(outcome.current_yes_ask)) / 2
-                else:
+                # Stored price, else the bid/ask midpoint. The cell builder below
+                # reads the same helper, so a leg admitted here is never asked
+                # for a number it does not have (#10209).
+                prob = _grid_admitted_price(
+                    outcome.current_probability,
+                    outcome.current_yes_bid,
+                    outcome.current_yes_ask,
+                )
+                if prob is None:
                     continue
                 # #7387. A price at the rail is junk from a market that is still
                 # trading and a RESULT from one that has been graded, and this
@@ -6302,11 +6319,21 @@ async def get_playoff_grid(
             # A terminal cell publishes no number, so a graded leg that reached
             # the loop through the bid/ask fallback (``current_probability`` NULL)
             # must not be asked for one — `float(None)` would 500 the whole grid
-            # for every league. Ungraded rows keep the existing expression
-            # exactly, including that pre-existing hazard, which is #7387's
-            # neighbour and not its business.
-            _raw_p = outcome.current_probability
-            _probability = 0.0 if graded and _raw_p is None else float(_raw_p)
+            # for every league. An UNGRADED leg admitted on its bid/ask midpoint
+            # publishes that midpoint — the price every filter above already
+            # judged it on (#10209; it was `float(None)` here, BAINLUCK-1HG).
+            # No admission path lets a priceless leg through, so the `continue`
+            # is a seatbelt, never a filter.
+            if graded and outcome.current_probability is None:
+                _probability = 0.0
+            else:
+                _probability = _grid_admitted_price(
+                    outcome.current_probability,
+                    outcome.current_yes_bid,
+                    outcome.current_yes_ask,
+                )
+                if _probability is None:
+                    continue
             source_entry = {
                 "source": market.source,
                 "probability": _probability,
