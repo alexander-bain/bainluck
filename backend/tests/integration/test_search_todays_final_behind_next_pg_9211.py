@@ -238,3 +238,82 @@ async def test_a_teamless_namesake_does_not_take_the_next_games_slot(maker, sear
     labels = _labels(payload, ids)
     assert labels[:2] == ["next", "todays_final"], labels
     assert labels[-1] == "namesake_tomorrow", labels
+
+
+# --- #10186: last night's final, the morning after ---------------------------
+#
+# Production 2026-10-02 09:55Z: `steelers` printed the TNF 27–24 final (kickoff
+# 8:15 PM ET the night before) as card 16 — the Eastern-day rule had let go at
+# midnight ET. The window now opens at the earlier of Eastern midnight and
+# `now - _RECENT_FINAL_LOOKBACK`. The lookback is pinned in
+# `tests/test_search_night_final_window_10186.py`; here it is set RELATIVE to
+# the wall clock so the row is always before Eastern midnight and inside the
+# window, whatever hour CI runs (gotcha #44: no branch on the clock).
+
+
+def _eastern_midnight_utc() -> datetime:
+    eastern = ZoneInfo("America/New_York")
+    today = datetime.now(timezone.utc).astimezone(eastern).date()
+    return datetime.combine(today, time(0, 0), tzinfo=eastern).astimezone(timezone.utc)
+
+
+async def _seed_night_final(maker, kickoff: datetime) -> dict[int, str]:
+    from app.models.models import Event, Sport
+
+    ids = await _seed(maker, SCHEDULE)
+    async with maker() as session:
+        from sqlalchemy import select
+
+        nfl = (await session.execute(select(Sport).where(Sport.key == NFL))).scalar_one()
+        row = Event(
+            sport_id=nfl.id,
+            home_team_name="Cleveland Browns",
+            away_team_name=CLUB,
+            commence_time=kickoff,
+            status="completed",
+            home_score=24,
+            away_score=27,
+            completed_at=kickoff + timedelta(hours=3),
+        )
+        session.add(row)
+        await session.commit()
+        ids[row.id] = "last_night"
+    return ids
+
+
+async def test_last_nights_final_survives_midnight_eastern(maker, search, monkeypatch):
+    from app.routes import events as events_module
+
+    midnight = _eastern_midnight_utc()
+    kickoff = midnight - timedelta(hours=1)  # 11 PM ET last night
+    monkeypatch.setattr(
+        events_module,
+        "_RECENT_FINAL_LOOKBACK",
+        datetime.now(timezone.utc) - kickoff + timedelta(hours=2),
+    )
+    ids = await _seed_night_final(maker, kickoff)
+    payload = await search(QUERY)
+    _card_leads_with_the_club(payload)
+    assert _labels(payload, ids) == [
+        "next", "last_night", "week_2", "week_3", "last_week",
+    ]
+
+
+async def test_past_the_lookback_last_nights_final_is_not_lifted(
+    maker, search, monkeypatch,
+):
+    """Control: the same row with the lookback ending after its kickoff falls
+    back to the old order (and to Eastern midnight, which is later still)."""
+    from app.routes import events as events_module
+
+    kickoff = _eastern_midnight_utc() - timedelta(hours=1)
+    monkeypatch.setattr(
+        events_module,
+        "_RECENT_FINAL_LOOKBACK",
+        datetime.now(timezone.utc) - kickoff - timedelta(hours=2),
+    )
+    ids = await _seed_night_final(maker, kickoff)
+    payload = await search(QUERY)
+    assert _labels(payload, ids) == [
+        "next", "week_2", "week_3", "last_night", "last_week",
+    ]

@@ -133,6 +133,21 @@ async def search(maker):
     app.dependency_overrides.clear()
 
 
+@pytest.fixture(autouse=True)
+def _day_only_final_lift(monkeypatch):
+    """#10186 widened #9211's lift from today's Eastern day to "today, or the
+    last 18 h" — and this fixture's "last night" is yesterday 13:00 ET, inside
+    18 h until 07:00 ET. So the lift moved these rows before 7 AM ET and not
+    after: CI 10:20Z 10/2 reddened two tests here that pass at noon (gotcha #44).
+    The lift is not what this gate measures (#9211/#10186 have their own), so
+    the lookback is zero here: the day-only window, the same at every hour."""
+    from datetime import timedelta as _td
+
+    from app.routes import events as events_module
+
+    monkeypatch.setattr(events_module, "_RECENT_FINAL_LOOKBACK", _td(0))
+
+
 async def _seed(maker) -> dict[int, str]:
     from app.models.models import Event, Sport, Team
 
