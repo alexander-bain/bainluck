@@ -12641,8 +12641,12 @@ async def search_events(
     # and it must be withdrawn BEFORE the slice so the page refills (#6327's
     # filter-then-slice rule). Same markets the map below always asked about,
     # so this moves the queries earlier and adds none.
+    # #10028: a refusal check that times out withholds instead of 500ing, and
+    # lands here so the answer is marked degraded and never cached.
+    _withheld_shed: list = []
     _withheld_by_market = {
-        m.id: await _search_withheld_price_ids(db, m) for m in deduped_futures
+        m.id: await _search_withheld_price_ids(db, m, _withheld_shed)
+        for m in deduped_futures
     }
     # #8734: the events this response serves. A game's own winner market is left
     # out of both reader lists when its game is among them (see
@@ -12960,7 +12964,11 @@ async def search_events(
     # refused leaves the page like any other withdrawn card.
     for m in futures_markets:
         if m.id not in _withheld_by_market:
-            _withheld_by_market[m.id] = await _search_withheld_price_ids(db, m)
+            _withheld_by_market[m.id] = await _search_withheld_price_ids(
+                db, m, _withheld_shed
+            )
+    if _withheld_shed:
+        degraded.append("price_refusal")
     futures_markets = [
         m for m in futures_markets
         if not _futures_market_prices_all_withheld(m, _withheld_by_market[m.id])
@@ -36630,7 +36638,9 @@ def _build_search_top_outcomes(
     return _leader_pick_order(out)  # #993 shared leader-pick (Other/Field never headlines)
 
 
-async def _search_withheld_price_ids(db, market: "FuturesMarket") -> set[int]:
+async def _search_withheld_price_ids(
+    db, market: "FuturesMarket", shed: Optional[list] = None
+) -> set[int]:
     """#6993's refusal set for one market, or an empty set if the row cannot say.
 
     A thin boundary around the shared four-arm union, and it exists for the
@@ -36662,7 +36672,35 @@ async def _search_withheld_price_ids(db, market: "FuturesMarket") -> set[int]:
     is designed to GAIN arms, and a checklist here would go quietly stale the
     first time a new arm reads a new column — the exact fifth-spelling drift the
     hook exists to prevent.
+
+    🔴 #10028 — A TIMEOUT FAILS CLOSED, THE OPPOSITE OF AN UNREADABLE ROW, AND
+    WITHOUT A 500. `?q=heisman` (2026-10-01 07:20Z, 2026-10-02 07:40:53Z) and
+    `?q=ohtani` / `freddie freeman` returned HTTP 500 (Sentry BAINLUCK-1GV, 6
+    events): `_newest_kalshi_trades`, one of the union's arms, was cancelled by
+    the search statement timeout and the `QueryCanceledError` escaped the whole
+    request. The union is read-only, so it runs inside a SAVEPOINT: a timeout
+    rolls back that statement alone, and the ORM rows the route reads afterwards
+    are not expired (gotcha #6, the headline lane's 500 on `q=Red Sox`).
+    What the card then gets is different from the `AttributeError` arm above. A
+    timeout is not a row we cannot read. It is a check we could not finish on a
+    row that may well be refusable (an empty book printing 50%, a stale board).
+    So every UNGRADED row's price is withheld: the space stays empty rather
+    than showing a number we could not vouch for (notice 34), and graded rows
+    keep their results, so nothing settled is deleted (#6532). A board left with
+    no price is withdrawn by `_futures_card_has_no_answer` and the next market
+    takes its slot. The market id goes on ``shed`` so the caller marks the answer
+    degraded and does not cache it: the next reader gets the full check.
+    A session double with no ``begin_nested`` runs without the savepoint, which
+    is what every caller here did before: a real ``AsyncSession`` always has one.
     """
+    savepoint = (
+        await db.begin_nested() if hasattr(db, "begin_nested") else None
+    )
+
+    async def _close(commit: bool) -> None:
+        if savepoint is not None:
+            await (savepoint.commit() if commit else savepoint.rollback())
+
     try:
         withheld = await _withheld_price_outcome_ids(db, market)
         # #8661 — AND THE SIXTH ARM, WHICH THE HELPER DOES NOT CARRY.
@@ -36690,8 +36728,10 @@ async def _search_withheld_price_ids(db, market: "FuturesMarket") -> set[int]:
             fleet_newest_observation=await _fleet_newest_observation(db, market),
             board_has_a_verdict=_board_has_a_verdict(outcomes),
         )
+        await _close(commit=True)
         return withheld
     except AttributeError:
+        await _close(commit=False)
         logger.warning(
             "search: could not evaluate the #6993 price refusal for market %s; "
             "serving its prices unrefused",
@@ -36699,6 +36739,22 @@ async def _search_withheld_price_ids(db, market: "FuturesMarket") -> set[int]:
             exc_info=True,
         )
         return set()
+    except Exception as exc:  # noqa: BLE001
+        await _close(commit=False)
+        if not _is_query_timeout(exc):
+            raise
+        logger.warning(
+            "search: the #6993 price refusal for market %s timed out; withholding "
+            "its ungraded prices and marking the answer degraded",
+            getattr(market, "id", None),
+        )
+        if shed is not None:
+            shed.append(getattr(market, "id", None))
+        return {
+            o.id
+            for o in (getattr(market, "outcomes", None) or [])
+            if getattr(o, "resolution_source", None) is None
+        }
 
 
 def _search_owned_outcome_names(market: "FuturesMarket") -> tuple[str, ...]:
