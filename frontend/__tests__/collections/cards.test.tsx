@@ -71,13 +71,12 @@ describe("a game's related mixed listing is a link, not a second winner number",
     expect(markup).toContain("3 questions on this game");
     expect(markup).not.toMatch(/\d%/);
   });
-  test("on the hub the game keeps its one number and the listing stays one tap away", () => {
+  test("on the hub the game keeps its one number and its questions open on the game page (#10146)", () => {
     const hub = mixedHub();
     settleCollectionRead(hub.slug, { hub });
     const page = renderToStaticMarkup(<CollectionHub slug={hub.slug} />);
-    const related = page.slice(page.indexOf("Related questions"));
-    expect(related).toContain("data-related-listing-link");
-    expect(related).toContain('href="/futures/70"');
+    expect(page).not.toContain('href="/futures/70"');
+    expect(page).toMatch(/<a href="\/events\/7" data-more-on-game="event:7"[^>]*>More on this game/);
     expect(page).not.toContain("41%");
     expect(page).toContain("40%");
   });
@@ -103,11 +102,35 @@ describe("a game's related mixed listing is a link, not a second winner number",
     expect(markup).toContain("Bills vs. Chiefs");
     expect(markup).toMatch(/\d%/);
   });
-  test("a non-field related question on the hub keeps its card", () => {
+});
+
+// #10146 (Alex, build 34): a per-game "Related questions (363)" toggle dumped
+// every ladder rung and player row inline. The hub now draws one quiet link to
+// the game page, which applies its own display rules, so the link carries no count.
+describe("a game's questions are one deliberate tap away, not an inline toggle", () => {
+  beforeEach(() => forgetAcceptedCollections());
+  const page = () => {
     const hub = parseCollection(nflHub(), "nfl-2026-week-4");
     settleCollectionRead(hub.slug, { hub });
-    const page = renderToStaticMarkup(<CollectionHub slug={hub.slug} />);
-    expect(page).not.toContain("data-related-listing-link");
-    expect(page).toContain("Josh Allen");
+    return renderToStaticMarkup(<CollectionHub slug={hub.slug} />);
+  };
+
+  test("no toggle and no related question cards on the hub", () => {
+    const html = page();
+    expect(html).not.toContain("<details");
+    expect(html).not.toContain("Related questions");
+    expect(html).not.toContain("Josh Allen");
+    expect(html).not.toContain('data-collection-member="market:70"');
+  });
+  test("the game with questions gets one link to its own game page, with no count", () => {
+    const links = page().match(/<a [^>]*data-more-on-game="[^"]+"[^>]*>More on this game<span aria-hidden="true">›<\/span><\/a>/g) ?? [];
+    expect(links).toHaveLength(1);
+    expect(links[0]).toContain('href="/events/7"');
+    expect(links[0]).toContain('data-more-on-game="event:7"');
+  });
+  test("control: games without questions draw no link, and questions no game claims keep their cards", () => {
+    const html = page();
+    for (const key of ["event:8", "event:9", "market:71", "market:72"]) expect(html).not.toContain(`data-more-on-game="${key}"`);
+    for (const key of ["event:8", "event:9", "market:71", "market:72"]) expect(html).toContain(`data-collection-member="${key}"`);
   });
 });
