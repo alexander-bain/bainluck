@@ -110,3 +110,8 @@ aeeb6fe11415997b649e57a6beee611d26d1f459:artifacts/web-event-quotes-9484/INDEPEN
 0b9fca9729d929bf86884a1866d41096360ea71f:artifacts/web-discover-stream-9525/INDEPENDENT-TRANSPORT-REVIEW.json:generic-api-key:6
 0b9fca9729d929bf86884a1866d41096360ea71f:artifacts/web-discover-stream-9525/INDEPENDENT-DISCOVER-SOURCE-REVIEW.json:generic-api-key:6
 0b9fca9729d929bf86884a1866d41096360ea71f:artifacts/web-discover-stream-9525/INDEPENDENT-DISCOVER-SOURCE-REVIEW.json:generic-api-key:9
+
+# #9875 DEBUG launch-rig UserDefaults key NAME ("launch_pin_phase_9875"), not a
+# credential: the generic API-key rule matches the identifier ending in "Key".
+# Exact fingerprint only; verified from gitleaks run 36959885230.
+4d9f365ba12b361534a91026fd2997788cc0d5a2:ios/Bain Luck/Bain Luck/Utilities/LaunchRig.swift:generic-api-key:439
