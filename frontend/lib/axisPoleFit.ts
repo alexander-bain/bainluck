@@ -92,6 +92,8 @@ export function axisLabelStyle(cap: number | null): CSSProperties {
 export interface AxisLayoutNode {
   offsetHeight: number;
   scrollHeight: number;
+  /** #10156 — which text the label is showing (the name or its code). */
+  textContent?: string | null;
   querySelector(selector: string): AxisLayoutNode | null;
 }
 
@@ -123,4 +125,72 @@ export function readAxisPoleCaps(
 ): AxisPoleCaps {
   const available = gutter.clientHeight - (paddingTop || 0) - (paddingBottom || 0);
   return allocateAxisPoles(available, axisPoleNeed(gutter.children[0]), axisPoleNeed(gutter.children[1]));
+}
+
+/**
+ * #10156 — the two served team codes, when they are fit to stand in for the
+ * names on the axis: each 2–4 capitals/digits (the chip shape #10124 uses for
+ * the props filter, which keeps out the long college names some rows store in
+ * that field) and different from each other. Otherwise `null`.
+ */
+export function axisCodePair(
+  homeCode?: string | null,
+  awayCode?: string | null,
+): { home: string; away: string } | null {
+  const chip = (code?: string | null) => {
+    const c = (code ?? "").trim();
+    return /^[A-Z0-9]{2,4}$/.test(c) ? c : "";
+  };
+  const home = chip(homeCode);
+  const away = chip(awayCode);
+  return home !== "" && away !== "" && home !== away ? { home, away } : null;
+}
+
+/** A pole's full-name length, remembered while its code is on screen instead. */
+export interface AxisPoleNeedCache {
+  home?: { label: string; need: number };
+  away?: { label: string; need: number };
+}
+
+/**
+ * #10156 — #8392's rule, with one step before the ellipsis: when either NAME
+ * would be cut and the event serves a usable code pair, BOTH poles print their
+ * codes. On the 192px Score Differential chart "Golden Hurricane / Mean Green"
+ * read "GOLDEN … / MEAN G…" (/events/15319855, 390px) while the margin maps on
+ * the same page said TLSA / UNT. Both codes, never one: a code beside a whole
+ * name reads as two different kinds of label.
+ *
+ * A name's length does not depend on the gutter, so it is remembered (`cache`)
+ * from the frame that drew it. Without that, the frame drawing the codes would
+ * measure the codes, find they fit, put the names back, find they don't, and
+ * flip forever. A resize re-decides from the remembered lengths, so a gutter
+ * that grows enough brings the names back.
+ *
+ * Names that fit, or no usable code pair: exactly `readAxisPoleCaps`.
+ */
+export function readAxisPoleLayout(
+  gutter: AxisGutterNode,
+  paddingTop: number,
+  paddingBottom: number,
+  labels: { home: string; away: string },
+  codes: { home: string; away: string } | null,
+  cache: AxisPoleNeedCache,
+): { useCodes: boolean; caps: AxisPoleCaps } {
+  const available = gutter.clientHeight - (paddingTop || 0) - (paddingBottom || 0);
+  const poles = [gutter.children[0], gutter.children[1]] as const;
+  const shown = poles.map((p) => p?.querySelector("[data-axis-label]")?.textContent ?? null);
+  (["home", "away"] as const).forEach((side, i) => {
+    if (shown[i] === labels[side]) cache[side] = { label: labels[side], need: axisPoleNeed(poles[i]) };
+  });
+  const fullNeed = (side: "home" | "away") =>
+    cache[side]?.label === labels[side] ? (cache[side]?.need ?? NaN) : NaN;
+  const fullCaps = allocateAxisPoles(available, fullNeed("home"), fullNeed("away"));
+  if (codes === null || (fullCaps.home === null && fullCaps.away === null)) {
+    return { useCodes: false, caps: fullCaps };
+  }
+  const showingCodes = shown[0] === codes.home && shown[1] === codes.away;
+  return {
+    useCodes: true,
+    caps: showingCodes ? allocateAxisPoles(available, axisPoleNeed(poles[0]), axisPoleNeed(poles[1])) : fullCaps,
+  };
 }

@@ -27,7 +27,7 @@ import { scoreDifferentialYTicks } from "@/lib/scoreDifferentialTicks";
 import { sportVocab, playedCountAbsence, playedUnits, withUnit } from "@/lib/marketMapUtils";
 import { teamShortNames } from "@/lib/teamShortName";
 import { useAxisPoleFit } from "@/hooks/useAxisPoleFit";
-import { axisPoleStyle, axisLabelStyle } from "@/lib/axisPoleFit";
+import { axisPoleStyle, axisLabelStyle, axisCodePair } from "@/lib/axisPoleFit";
 import { teamTextColor } from "@/lib/teamColors";
 import type { PlayedLinescore } from "@/lib/marketMapUtils";
 import type {
@@ -389,7 +389,14 @@ export default function ScoreDifferentialChart({
     sportKey,
   );
   // #8392 — the axis gutter gives each name the room the other does not need.
-  const { gutterRef: axisGutterRef, caps: axisPoleCaps } = useAxisPoleFit(homeShort, awayShort);
+  // #10156 — and when a name would still be cut, both poles print the served
+  // codes instead ("TLSA / UNT", not "GOLDEN … / MEAN G…").
+  const {
+    gutterRef: axisGutterRef,
+    caps: axisPoleCaps,
+    labels: axisPoleLabels,
+  } = useAxisPoleFit(homeShort, awayShort, axisCodePair(homeTeamAbbrev, awayTeamAbbrev));
+  const axisShowsCodes = axisPoleLabels.home !== homeShort || axisPoleLabels.away !== awayShort;
 
   const unitMismatchNote = (() => {
     if (scoreboardCountsTheUnit) return null;
@@ -1071,7 +1078,7 @@ export default function ScoreDifferentialChart({
             data-testid="score-diff-axis-pole"
             data-pole="home"
             data-capped={axisPoleCaps.home !== null ? "true" : undefined}
-            title={axisPoleCaps.home !== null ? homeShort : undefined}
+            title={axisPoleCaps.home !== null || axisShowsCodes ? homeShort : undefined}
           >
             {homeTeamLogo && (
               <img src={homeTeamLogo} alt="" width={12} height={12} className="object-contain shrink-0" style={{ transform: "rotate(90deg)" }} />
@@ -1081,7 +1088,7 @@ export default function ScoreDifferentialChart({
               className="text-[11px] font-bold uppercase tracking-wider"
               style={{ color: teamTextColor(homeTeamColor) || "#16a34a", ...axisLabelStyle(axisPoleCaps.home) }}
             >
-              {homeShort}
+              {axisPoleLabels.home}
             </span>
           </div>
           <div
@@ -1090,7 +1097,7 @@ export default function ScoreDifferentialChart({
             data-testid="score-diff-axis-pole"
             data-pole="away"
             data-capped={axisPoleCaps.away !== null ? "true" : undefined}
-            title={axisPoleCaps.away !== null ? awayShort : undefined}
+            title={axisPoleCaps.away !== null || axisShowsCodes ? awayShort : undefined}
           >
             {awayTeamLogo && (
               <img src={awayTeamLogo} alt="" width={12} height={12} className="object-contain shrink-0" style={{ transform: "rotate(90deg)" }} />
@@ -1100,7 +1107,7 @@ export default function ScoreDifferentialChart({
               className="text-[11px] font-bold uppercase tracking-wider"
               style={{ color: teamTextColor(awayTeamColor) || "#2563eb", ...axisLabelStyle(axisPoleCaps.away) }}
             >
-              {awayShort}
+              {axisPoleLabels.away}
             </span>
           </div>
         </div>
