@@ -630,6 +630,47 @@ def _prewarm_target_deadline(
     if remaining_targets <= 0:
         return 0.0
     return max(0.0, remaining_budget_s) / remaining_targets
+
+
+def _prewarm_feed_target_deadline(
+    remaining_budget_s: float, remaining_targets: int, floor_s: float
+) -> float:
+    """What is LEFT, minus a viable-build floor held back for each target behind.
+
+    #10221 (Sentry BAINLUCK-144): the fair share above caps the FIRST target at
+    ``PASS_BUDGET / N`` — 80 s / 7 = 11.4 s — however little the targets behind
+    it need. Production killed ``discover`` at exactly 11.4 s on passes that
+    finished the other six in ~10 s and left 55 s of the wall unspent. A killed
+    build costs the same database work as one that publishes, so the cap was
+    not protecting anyone; it was throwing the warm away.
+
+    So the feed pass reserves ``floor_s`` (the cost of one build, the same floor
+    the live republish uses to decide whether a start can pay) for every target
+    still to come, and lets the current one spend the rest:
+
+        deadline_i = max(B_i / (N - i), B_i - (N - i - 1) * floor_s)
+
+    The guarantee is weaker than the fair share's on purpose, and is stated
+    rather than implied: every target gets ``>= min(floor_s, B / N)``. Proof: a
+    target taking the reservation branch leaves exactly ``floor_s`` for each one
+    behind; a target taking the fair-share branch leaves the fair-share
+    remainder, and the induction in `_prewarm_target_deadline` carries. With
+    today's numbers discover's ceiling goes 11.4 s -> 44 s and the floor goes
+    11.4 s -> 6 s; a healthy build of every shape (0.9-6.9 s) fits the floor.
+
+    The grid warmer keeps `_prewarm_target_deadline`. Its leagues have no
+    measured per-build floor, and an allocator is right for a population, not
+    for every caller of the helper it replaces.
+    """
+    if remaining_targets <= 0:
+        return 0.0
+    budget = max(0.0, remaining_budget_s)
+    return max(
+        budget / remaining_targets,
+        budget - (remaining_targets - 1) * max(0.0, floor_s),
+    )
+
+
 FEED_PREWARM_STATUS_KEY = "bainluck:precompute:feed_prewarm:last"
 FEED_PREWARM_STATUS_TTL = 6 * 3600
 
@@ -1511,8 +1552,8 @@ async def _prewarm_discover_feed_responses():
     Bounded by ONE pass wall budget (LAT-P100), kill-switchable, and it never
     replaces a good cached payload with a degraded or empty one. Each target is
     independent: one failing must not stop the others from being warmed, and a
-    slow one must not be able to eat the budget of the ones behind it — see
-    `_prewarm_target_deadline`.
+    slow one must not be able to eat the budget of the ones behind it below one
+    build's floor — see `_prewarm_feed_target_deadline` (#10221).
     """
     import time as _time
     from datetime import datetime, timezone
@@ -1535,11 +1576,17 @@ async def _prewarm_discover_feed_responses():
     except Exception:
         logger.debug("feed pre-warm kill-switch read failed", exc_info=True)
 
+    from app.utils.feed_cache import FEED_PREWARM_MIN_VIABLE_BUILD_S
+
     targets = _prewarm_targets()
     budget_left = FEED_PREWARM_PASS_BUDGET_S
     shapes: dict[str, dict] = {}
     for index, (label, warm) in enumerate(targets):
-        deadline_s = _prewarm_target_deadline(budget_left, len(targets) - index)
+        # #10221: reserve a build's floor for each target behind, not a 1/N
+        # slice — see `_prewarm_feed_target_deadline`.
+        deadline_s = _prewarm_feed_target_deadline(
+            budget_left, len(targets) - index, FEED_PREWARM_MIN_VIABLE_BUILD_S
+        )
         started = _time.monotonic()
         shapes[label] = await warm(rc, deadline_s=deadline_s)
         budget_left = max(0.0, budget_left - (_time.monotonic() - started))

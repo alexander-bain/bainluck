@@ -562,8 +562,9 @@ def test_no_live_target_can_be_starved_by_the_ones_ahead_of_it():
     a target that cannot get that is skipped rather than started and killed.
 
     Half 2 is unchanged and still valid: `_prewarm_target_deadline` is still the
-    allocator for the 120 s host pass, and its fair-share proof is a real property
-    of that helper, tested here where it was first written down.
+    grid warmer's allocator (the 120 s host pass moved to
+    `_prewarm_feed_target_deadline` in #10221), and its fair-share proof is a real
+    property of that helper, tested here where it was first written down.
     """
     n = len(pcp.FEED_PREWARM_SHAPES)
     floor = FEED_LIVE_REPUBLISH_BUDGET_S / n
