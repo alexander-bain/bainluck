@@ -7,6 +7,7 @@ import {
   TICK_INTERVAL_MS,
   createLiveStreamController,
   type LiveStreamFrame,
+  type LiveTransportStatus,
   type StreamHandle,
 } from '@/lib/liveStreamController';
 
@@ -37,6 +38,12 @@ import {
 
 export type LiveFrame = LiveStreamFrame;
 
+/**
+ * #10200 — the transport's own observation, or `idle` when this page is not
+ * subscribing at all (not quote-eligible) and polling is the only path.
+ */
+export type LiveStreamStatus = LiveTransportStatus | 'idle';
+
 interface UseLiveEventStreamResult {
   /** Latest frame, or null until one arrives. */
   frame: LiveFrame | null;
@@ -49,6 +56,13 @@ interface UseLiveEventStreamResult {
    * reach the source's own series or the chart waits for the 32 s poll).
    */
   chartPoints: LiveChartFrame[];
+  /**
+   * #10200 — what the transport is doing, for the reader-facing status by the
+   * chart. Observational: `connected` above is still the polling gate. Keyed to
+   * `eventId` like `chartPoints`, so a client-side navigation never shows the
+   * previous event's interruption on the next one.
+   */
+  status: LiveStreamStatus;
 }
 
 export function useLiveEventStream(
@@ -60,6 +74,9 @@ export function useLiveEventStream(
   const [{ chartEventId, points }, setChart] = useState<{
     chartEventId: number | undefined; points: LiveChartFrame[];
   }>({ chartEventId: eventId, points: [] });
+  const [{ statusEventId, status }, setStatus] = useState<{
+    statusEventId: number | undefined; status: LiveStreamStatus;
+  }>({ statusEventId: eventId, status: 'idle' });
   // A ref so the controller's callbacks never close over a stale setter.
   const mounted = useRef(true);
 
@@ -73,10 +90,14 @@ export function useLiveEventStream(
   useEffect(() => {
     if (!enabled || !eventId || typeof window === 'undefined') {
       setConnected(false);
+      setStatus({ statusEventId: eventId, status: 'idle' });
       return;
     }
     // Older browsers with no EventSource simply keep polling. Nothing to do.
-    if (typeof EventSource === 'undefined') return;
+    if (typeof EventSource === 'undefined') {
+      setStatus({ statusEventId: eventId, status: 'unavailable' });
+      return;
+    }
 
     const controller = createLiveStreamController({
       open: () =>
@@ -100,6 +121,9 @@ export function useLiveEventStream(
       onDeliveringChange: (delivering) => {
         if (mounted.current) setConnected(delivering);
       },
+      onStatusChange: (next) => {
+        if (mounted.current) setStatus({ statusEventId: eventId, status: next });
+      },
     });
 
     controller.start();
@@ -115,5 +139,12 @@ export function useLiveEventStream(
     };
   }, [eventId, enabled]);
 
-  return { frame, connected, chartPoints: chartEventId === eventId ? points : [] };
+  return {
+    frame,
+    connected,
+    chartPoints: chartEventId === eventId ? points : [],
+    // Before this event's controller has said anything, it is connecting if
+    // it is going to try at all — never the last event's word.
+    status: statusEventId === eventId ? status : enabled ? 'connecting' : 'idle',
+  };
 }

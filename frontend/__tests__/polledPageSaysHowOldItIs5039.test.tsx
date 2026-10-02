@@ -35,6 +35,17 @@
 //    reachable input, which is the whole argument for deleting it;
 // 4. the badge is still rendered exactly once (#4469).
 //
+// ── #10200 MOVED THE ANSWER, IT DID NOT REMOVE IT ────────────────────────────
+//
+// On a page with a chart, the header's `live · 8s ago` gave way to ONE status
+// beside "Win Probability" (the web half of #9655). It answers this suite's
+// question in words at a glance — "Checking for updates" on a poll, "Price may
+// be old" the moment the badge's own stale rule fires — and the exact age and
+// clock are one tap away, never a seconds counter in the headline. So the render
+// arms below assert the status and its tap facts, the ring beside it, and that
+// the header no longer carries a second answer. `headerShowsAge` still decides
+// WHERE an admission is owed; the status is drawn wherever it says so.
+//
 // WHY A RENDER AND NOT ONLY THE HELPER: ux/1181's lesson — the payload said the
 // bug was gone and the pixels said it was not. `headerShowsAge` returning true
 // proves nothing about a header that never calls it.
@@ -48,8 +59,10 @@ import {
   shouldShowRefreshCountdown,
 } from "@/lib/eventKeyStats";
 
-/** The reader-facing string the whole ship exists to put back on the page. */
+/** The header badge's fresh text — #10200 moved the answer off the header on a chart page. */
 const AGE = "live ·";
+/** #10200: the chart status, drawn once, carrying the tap facts. */
+const STATUS = 'data-testid="live-connection-status"';
 /** The ring's label — present on both paths, and never the substitute for AGE. */
 const PROMISE = "Next update:";
 
@@ -149,16 +162,21 @@ function draw(): string {
 }
 
 describe("#5039 the polled live header says how old its number is", () => {
-  it("prints the age on a LIVE page whose fetches are landing", () => {
+  it("answers on a LIVE page whose fetches are landing — in words, with the exact age on tap", () => {
     // The halftime frame. Nothing is failing, nothing is stale, the stream is
     // simply not connected — and before this ship the header answered a
     // question the reader did not ask.
     eventPayload = event({ stampAgeMs: 8 * 1000 });
 
     const html = draw();
+    const status = html.slice(html.indexOf(STATUS));
 
-    expect(html).toContain(AGE);
-    expect(html).toContain("8s ago");
+    expect(html).toContain('data-status="Checking for updates"');
+    // The tap details: the real clock with its zone, and the age.
+    expect(status).toMatch(/Probability observed<\/dt><dd><span><time dateTime="[^"]+">[^<]+ UTC<\/time>/);
+    expect(status).toContain("8s ago");
+    // #10200: no seconds in the headline any more.
+    expect(html).not.toContain(AGE);
   });
 
   it("does not take the countdown away to do it", () => {
@@ -170,16 +188,17 @@ describe("#5039 the polled live header says how old its number is", () => {
     const html = draw();
 
     expect(html).toContain(PROMISE);
-    expect(html).toContain(AGE);
+    expect(html).toContain(STATUS);
   });
 
-  it("renders the badge exactly once (#4469)", () => {
-    // Two badges are two answers to "how old is this number". The merge of the
-    // badge group and the ring group into one right-hand group is where a
-    // second one could have crept in.
+  it("renders the answer exactly once (#4469)", () => {
+    // Two answers to "how old is this number" can disagree. #10200: the status
+    // by the chart is the one; the header badge must not draw beside it.
     eventPayload = event({ stampAgeMs: 8 * 1000 });
 
-    expect(draw().split(AGE).length - 1).toBe(1);
+    const html = draw();
+    expect(html.split(STATUS).length - 1).toBe(1);
+    expect(html.split(AGE).length - 1).toBe(0);
   });
 
   it("BOUNDARY: a PREGAME page on the same poll does not claim to be live", () => {
@@ -334,12 +353,15 @@ describe("#5039 the retired LIVE pill", () => {
     // would restore the duplicate claim with every helper test still green.
     //
     // `bg-emerald-500/15` is the shared class string of the two pills: the
-    // badge's and the one that was deleted. Measured at 1 on the page as it
-    // renders now; the phase badge's own "LIVE" is styled differently and is
-    // not counted here.
+    // badge's and the one that was deleted. The phase badge's own "LIVE" is
+    // styled differently and is not counted here. #10200: on a chart page the
+    // badge itself gave way to the chart status, so the count is now 0 — a
+    // re-added pill (or badge) makes it 1.
     eventPayload = event({ stampAgeMs: 8 * 1000 });
 
-    expect(draw().split("bg-emerald-500/15").length - 1).toBe(1);
+    const html = draw();
+    expect(html).toContain(STATUS);
+    expect(html.split("bg-emerald-500/15").length - 1).toBe(0);
   });
 
   it("POSITIVE CONTROL — the sweep really does visit live, ringed pages", () => {

@@ -26,11 +26,14 @@ import {
   HEALTHY_STREAM_MS,
   RECONNECT_BASE_DELAY_MS,
   RECONNECT_MAX_DELAY_MS,
+  RETRY_GIVEUP_MS,
   SILENCE_TIMEOUT_MS,
   TICK_INTERVAL_MS,
   createLiveStreamController,
+  type LiveTransportStatus,
   type StreamHandle,
 } from '@/lib/liveStreamController';
+import { EMPTY_CONNECTION_TRACKER, presentConnectionStatus } from '@/lib/event/liveConnectionStatus';
 
 /** The server's own connection ceiling, `MAX_CONNECTION_S` in the route. */
 const MAX_CONNECTION_MS = 900_000;
@@ -58,11 +61,13 @@ class FakeSource implements StreamHandle {
   }
 }
 
-function harness() {
+function harness(opts: { observe?: boolean } = { observe: true }) {
   let clock = 1_000_000;
   const sources: FakeSource[] = [];
   const delivering: boolean[] = [];
   const frames: unknown[] = [];
+  // #10200 — the observational status, recorded beside the decisions.
+  const statuses: LiveTransportStatus[] = [];
 
   const controller = createLiveStreamController({
     open: () => {
@@ -73,6 +78,7 @@ function harness() {
     now: () => clock,
     onFrame: (frame) => frames.push(frame),
     onDeliveringChange: (value) => delivering.push(value),
+    ...(opts.observe ? { onStatusChange: (value: LiveTransportStatus) => statuses.push(value) } : {}),
   });
 
   /** Advance the clock, running a `tick()` on the hook's real cadence. */
@@ -112,7 +118,7 @@ function harness() {
     });
 
   return {
-    controller, sources, delivering, frames, advance, advanceLive, live, frame,
+    controller, sources, delivering, frames, statuses, advance, advanceLive, live, frame,
     at: () => clock,
   };
 }
@@ -413,5 +419,175 @@ describe('CERT-717: what the page is entitled to assume', () => {
 
     expect(controller.state.stopped).toBe(true);
     expect(controller.state.delivering).toBe(false);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// #10200 — the transport's observations, for the reader-facing chart status.
+// OBSERVATIONAL: the arms below prove the status follows the lifecycle above,
+// and the last arm proves the decisions above are byte-for-byte the same with
+// and without anyone listening.
+// ---------------------------------------------------------------------------
+
+describe('#10200 the observational status follows the lifecycle', () => {
+  it('connecting until the socket opens, then open — before any price', () => {
+    const h = harness();
+    h.controller.start();
+    expect(h.statuses).toEqual(['connecting']);
+    h.live().emit('open');
+    // `delivering` goes true here too, which is exactly why it cannot answer
+    // "has anything been published": the status says only that the socket opened.
+    expect(h.statuses).toEqual(['connecting', 'open']);
+    expect(h.frames).toHaveLength(0);
+  });
+
+  it('a heartbeat changes nothing; publication silence reads quiet, a frame reads open again', () => {
+    const h = harness();
+    h.controller.start();
+    h.live().emit('open');
+    h.advanceLive(DATA_SILENCE_TIMEOUT_MS - 10_000);
+    expect(h.statuses).toEqual(['connecting', 'open']);
+    h.advanceLive(30_000);
+    expect(h.statuses).toEqual(['connecting', 'open', 'quiet']);
+    // The socket is still open — quiet is not an outage.
+    expect(h.live().closed).toBe(false);
+    h.live().emit('probability', h.frame(0.6));
+    expect(h.statuses).toEqual(['connecting', 'open', 'quiet', 'open']);
+  });
+
+  it('a real transport error reads retrying, and the browser\'s own reconnect reads open', () => {
+    const h = harness();
+    h.controller.start();
+    h.live().emit('open');
+    h.live().readyState = 0; // EventSource.CONNECTING: retrying by itself
+    h.live().emit('error');
+    expect(h.statuses.slice(-1)).toEqual(['retrying']);
+    h.live().readyState = 1;
+    h.live().emit('open');
+    expect(h.statuses.slice(-1)).toEqual(['open']);
+  });
+
+  it('a silent transport that is still retrying reads retrying, then unavailable at the give-up', () => {
+    const h = harness();
+    h.controller.start();
+    h.live().emit('open');
+    h.live().readyState = 0;
+    h.advance(SILENCE_TIMEOUT_MS + TICK_INTERVAL_MS);
+    expect(h.statuses.slice(-1)).toEqual(['retrying']);
+    h.advance(RETRY_GIVEUP_MS);
+    expect(h.statuses.slice(-1)).toEqual(['unavailable']);
+    expect(h.controller.state.stopped).toBe(true);
+  });
+
+  it('a rollover is its own state — never an interruption — and the next socket connects', () => {
+    const h = harness();
+    h.controller.start();
+    h.live().emit('open');
+    h.advanceLive(MAX_CONNECTION_MS);
+    h.live().emit('reconnect');
+    expect(h.statuses.slice(-1)).toEqual(['rollover']);
+    expect(h.statuses).not.toContain('retrying');
+    h.advance(RECONNECT_BASE_DELAY_MS + TICK_INTERVAL_MS);
+    expect(h.statuses.slice(-2)).toEqual(['rollover', 'connecting']);
+    h.live().emit('open');
+    expect(h.statuses.slice(-1)).toEqual(['open']);
+  });
+
+  it('CONTROL (Sol, 0b89d9a8b5): through a rollover the reader sees a still "Connecting" — the old socket is closed and nothing is open', () => {
+    const h = harness();
+    const words = () =>
+      presentConnectionStatus(
+        EMPTY_CONNECTION_TRACKER,
+        { status: h.statuses[h.statuses.length - 1], terminalLabel: null, priceMayBeOld: false, scoreMayBeOld: false },
+        h.at(),
+      );
+    h.controller.start();
+    h.live().emit('open');
+    h.advanceLive(MAX_CONNECTION_MS);
+    const old = h.live();
+    h.live().emit('reconnect');
+    // The truth the status must not contradict: closed, not delivering.
+    expect(old.closed).toBe(true);
+    expect(h.controller.state.delivering).toBe(false);
+    expect(words()).toMatchObject({ label: 'Connecting', breathes: false, announcement: '' });
+    // The tick before the replacement opens: still nothing connected.
+    h.advance(TICK_INTERVAL_MS);
+    expect(words()).toMatchObject({ label: 'Connecting', breathes: false });
+    // The replacement opening is what earns the connection again.
+    h.advance(RECONNECT_BASE_DELAY_MS + TICK_INTERVAL_MS);
+    expect(h.live()).not.toBe(old);
+    h.live().emit('open');
+    expect(words()).toMatchObject({ label: 'Connected · waiting', breathes: true });
+    // ...and at no point did the scheduled path read as an interruption.
+    expect(h.statuses).not.toContain('retrying');
+  });
+
+  it('refused (closed by the browser, or never constructed) reads unavailable; the server\'s close reads closed', () => {
+    const refused = harness();
+    refused.controller.start();
+    refused.live().readyState = 2;
+    refused.live().emit('error');
+    expect(refused.statuses).toEqual(['connecting', 'unavailable']);
+
+    const seen: LiveTransportStatus[] = [];
+    const unbuildable = createLiveStreamController({
+      open: () => { throw new Error('no'); },
+      now: () => 0,
+      onFrame: () => undefined,
+      onDeliveringChange: () => undefined,
+      onStatusChange: (s) => seen.push(s),
+    });
+    unbuildable.start();
+    expect(seen).toEqual(['unavailable']);
+
+    const finished = harness();
+    finished.controller.start();
+    finished.live().emit('open');
+    finished.live().emit('closed');
+    expect(finished.statuses.slice(-1)).toEqual(['closed']);
+  });
+
+  it('the owner\'s stop() says nothing — a teardown is not a reader-facing event', () => {
+    const h = harness();
+    h.controller.start();
+    h.live().emit('open');
+    h.controller.stop();
+    expect(h.statuses).toEqual(['connecting', 'open']);
+  });
+
+  it('CONTROL: every delivering decision is identical with and without a listener', () => {
+    // The same script, twice. If observing ever changed a decision, the two
+    // delivering logs, connection counts or reopen schedules would part.
+    const script = (h: ReturnType<typeof harness>) => {
+      h.controller.start();
+      h.live().emit('open');
+      h.live().emit('probability', h.frame(0.5));
+      h.advanceLive(DATA_SILENCE_TIMEOUT_MS + 20_000);
+      h.live().emit('probability', h.frame(0.55));
+      h.live().readyState = 0;
+      h.live().emit('error');
+      h.live().readyState = 1;
+      h.live().emit('open');
+      h.advanceLive(MAX_CONNECTION_MS);
+      h.live().emit('reconnect');
+      h.advance(RECONNECT_MAX_DELAY_MS);
+      h.live().emit('open');
+      h.live().readyState = 0;
+      h.advance(SILENCE_TIMEOUT_MS + RETRY_GIVEUP_MS + TICK_INTERVAL_MS);
+      return {
+        delivering: h.delivering,
+        frames: h.frames.length,
+        state: { ...h.controller.state, status: undefined },
+        closed: h.sources.map((s) => s.closed),
+      };
+    };
+    const observed = harness({ observe: true });
+    const silent = harness({ observe: false });
+    expect(script(observed)).toEqual(script(silent));
+    // And the observed run really did observe — the equality is not vacuous.
+    expect(observed.statuses).toEqual(
+      expect.arrayContaining(['open', 'quiet', 'retrying', 'rollover', 'unavailable']),
+    );
+    expect(silent.statuses).toEqual([]);
   });
 });

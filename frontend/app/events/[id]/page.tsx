@@ -37,6 +37,13 @@ import {
 import LiveAgeStamp, { heroStampIsStale } from "@/components/event/LiveAgeStamp";
 import { heroFreshness } from "@/lib/event/heroFreshness";
 import LiveSparkline from "@/components/event/LiveSparkline";
+import LiveConnectionStatus from "@/components/event/LiveConnectionStatus";
+import {
+  EMPTY_CONNECTION_TRACKER,
+  presentConnectionStatus,
+  stepConnectionTracker,
+  type ConnectionTracker,
+} from "@/lib/event/liveConnectionStatus";
 import {
   eventTournamentKey,
   isTournamentSportKey,
@@ -246,6 +253,9 @@ export default function EventPage({ params }: EventPageProps) {
   // #9051: the headline the page holds (written after the hook), for the poll
   // reconcile and the refuse-and-refetch checks below.
   const heldEventRef = useRef<EventDetailResponse | undefined>(undefined);
+  // #10200: the chart status's memory of what this mount has ADOPTED — advanced
+  // once per render from the held result, never from a raw frame.
+  const connectionTrackerRef = useRef<ConnectionTracker>(EMPTY_CONNECTION_TRACKER);
 
   // #7621 — ONE callback for the life of the mount, and that is the whole fix.
   //
@@ -388,11 +398,17 @@ export default function EventPage({ params }: EventPageProps) {
   // stamped at most once per event per 5s) — it was the 32s poll that made it
   // look stale on screen.
   const quoteEligible = canSubscribeEventQuotes(event);
-  const { frame: liveFrame, connected: streamConnected, chartPoints } = useLiveEventStream(
-    eventId,
-    quoteEligible,
-  );
+  const {
+    frame: liveFrame,
+    connected: streamConnected,
+    chartPoints,
+    status: reportedStreamStatus,
+  } = useLiveEventStream(eventId, quoteEligible);
   streamConnectedRef.current = streamConnected;
+  // #10200: the transport's own observation, for the chart status only — the
+  // poll above still gates on `streamConnected`. A stream that reports only
+  // `connected` (an older hook, a test double) reads as open or idle.
+  const streamStatus = reportedStreamStatus ?? (streamConnected ? "open" : "idle");
 
   // Apply a pushed frame to the SWR cache rather than holding it in a local
   // override. One source of truth: the stream writes the same cache the poller
@@ -1686,10 +1702,13 @@ export default function EventPage({ params }: EventPageProps) {
   // untouched and stays first: a games line and an integer score are different
   // renderings, `linescore.observed_at` is the clock of the one that is drawn,
   // and #4469's two guard suites pin it.
-  const heroStamp = heroFreshness({
+  // #10200: the inputs are named so the chart status's tap details read the
+  // same score clock this badge ages from — one expression, not two.
+  const heroStampInputs = {
     priceStamp: freshestSourceStamp,
     scoreStamp: liveGamesLine ? event.linescore?.observed_at : renderedScoreStamp,
-  });
+  };
+  const heroStamp = heroFreshness({ ...heroStampInputs });
 
   // L2-131 Item 1: the settled hero gains the pregame mark — the winner's
   // pre-game win probability ("were 35% pregame"). This is what makes an upset
@@ -1813,6 +1832,71 @@ export default function EventPage({ params }: EventPageProps) {
       claimWithdrawn={liveClaimUnbacked}
     />
   ) : null;
+
+  // ═══ #10200 — THE CHART'S ONE CONNECTION STATUS ═══
+  //
+  // On a page with a chart, the header's age badge and sparkline give way to
+  // one status by "Win Probability" (and the same model in fullscreen). It says
+  // what the reader can rely on — connecting, connected and quiet, an adopted
+  // change, an interruption and a real recovery, the finish — and the exact
+  // clocks are one tap away instead of a seconds counter in the headline. Pages
+  // with no chart keep the header badge: there is nowhere else for the
+  // admission to go. The words and the reasons are in
+  // `lib/event/liveConnectionStatus`; this is the wiring.
+  const connectionTerminalLabel = isFinished || venueSettledSentence
+    ? "Finished"
+    : stoppageLabel;
+  // The ACCEPTED price clock: the held result's own observation stamp, which a
+  // refused frame never moves and a heartbeat, reconnect or mount never touches.
+  const acceptedPriceClock = event.hero_probability_observed_at ?? freshestSourceStamp;
+  connectionTrackerRef.current = stepConnectionTracker(
+    connectionTrackerRef.current,
+    {
+      eventId,
+      status: streamStatus,
+      priceObservedAt: acceptedPriceClock,
+      // What the hero prints — so "Updated" lands exactly when #10092's cue does.
+      valueKey: homePct === null ? null : `${homePct}/${awayPct ?? ""}`,
+      terminal: Boolean(connectionTerminalLabel),
+    },
+    Date.now(),
+  );
+  // The warnings are the header badge's own `stale` branch, asked where that
+  // badge would have drawn — never a threshold of this status's own (#4469).
+  const ageAdmissionIsStale =
+    showsAge &&
+    heroStamp.stamp !== null &&
+    (liveClaimUnbacked || heroStampIsStale(heroStamp.stamp, heroStamp.fact));
+  const connectionPresentation = presentConnectionStatus(
+    connectionTrackerRef.current,
+    {
+      status: streamStatus,
+      terminalLabel: connectionTerminalLabel,
+      // A withdrawn claim is about the price, whichever fact is older (#5459).
+      priceMayBeOld: ageAdmissionIsStale && (liveClaimUnbacked || heroStamp.fact !== "score"),
+      scoreMayBeOld: ageAdmissionIsStale && !liveClaimUnbacked && heroStamp.fact === "score",
+    },
+    Date.now(),
+  );
+  // Where the old badge had something to say, or the page is subscribing. A
+  // finish shows only when this mount saw the match unfinished (or the badge
+  // would have drawn): on a cold finished page the hero already says Final,
+  // and L2-112 removed a second "Final" from this card at Alex's word.
+  const connectionStatusVisible = connectionTerminalLabel
+    ? connectionTrackerRef.current.sawUnfinished || showsAge
+    : quoteEligible || showsAge;
+  const connectionStatus = (announces: boolean) => (
+    <LiveConnectionStatus
+      presentation={connectionPresentation}
+      priceObservedAt={acceptedPriceClock}
+      scoreShown={Boolean(liveGamesLine) || heroScorePairPresent}
+      scoreConfirmedAt={heroStampInputs.scoreStamp}
+      oldestFact={heroStamp.fact}
+      announces={announces}
+    />
+  );
+  // The header keeps its age badge only where no chart card carries the status.
+  const headerCarriesAge = showsAge && suppressWinProbabilityCard;
 
   // L2-112 Item 4: the Score Differential card must hide when there is no
   // projected OR actual score data — otherwise ScoreDifferentialChart returns
@@ -1981,10 +2065,11 @@ export default function EventPage({ params }: EventPageProps) {
             on two ragged lines at 390px. Sharing the group's `gap-3` also means
             they wrap together, as one unit, to the line below — and #3974's
             alignment rule still reads one right-hand group with `ml-auto`. */}
-        {(showsAge || ringVisible) && (
+        {(headerCarriesAge || ringVisible) && (
           <div className="ml-auto flex items-center gap-3">
-            {pushedAge && <LiveSparkline points={sparklinePoints} />}
-            {ageBadge}
+            {/* #10200: with a chart on the page, its status carries this. */}
+            {headerCarriesAge && pushedAge && <LiveSparkline points={sparklinePoints} />}
+            {headerCarriesAge && ageBadge}
 
             {/* Visual countdown timer — #3802 gates it on proximity, not just on
                 "not finished and not pushed". #4861: and not while the page's own
@@ -2718,12 +2803,14 @@ export default function EventPage({ params }: EventPageProps) {
           the fullscreen modal below carries a second "Win Probability" h2 — and
           a class selector would be a test about styling (ux/1192). */}
       <div className="bg-surface-card rounded-card shadow-card overflow-hidden" data-testid="win-probability-card">
-        {/* Chart Header — v2: title + freshness */}
-        <div className="px-4 sm:px-5 py-3 flex items-center justify-between">
-          <div className="flex items-center gap-3">
-            <h2 className="text-[13px] font-semibold text-text-primary">Win Probability</h2>
-            {/* #8336 — no ticker here either: the header's age badge is the
-                page's one freshness answer, and this was its third copy. */}
+        {/* Chart Header — v2: title + freshness. `relative`: the status's tap
+            details hang from this row (#10200). */}
+        <div className="relative px-4 sm:px-5 py-3 flex items-center justify-between">
+          <div className="flex min-w-0 items-center gap-3">
+            <h2 className="shrink-0 text-[13px] font-semibold text-text-primary">Win Probability</h2>
+            {/* #10200 — the page's one freshness answer now lives here, beside
+                the chart it describes: a state, never a ticker (#8336). */}
+            {connectionStatusVisible && connectionStatus(true)}
             {/* L2-112 Item 1: chart-card "Final" removed — the hero phase badge +
                 winner chip already mark the game final (killed the "Final … Final"
                 dup Alex flagged). The fullscreen modal keeps its own label. */}
@@ -3387,14 +3474,15 @@ export default function EventPage({ params }: EventPageProps) {
       {/* Fullscreen Chart Modal */}
       {chartFullscreen && (
         <div className="fixed inset-0 z-50 bg-surface-card flex flex-col">
-          <div className="flex items-center justify-between px-4 py-3 border-b border-surface-border">
-            <div className="flex items-center gap-3">
-              <h2 className="text-sm font-semibold text-text-primary">Win Probability</h2>
-              {/* #8336 — the fullscreen view covers the header, so it carries the
-                  header's own age badge — the same element, not a copy — rather
-                  than a poll ticker: one freshness answer per screen. */}
-              {ageBadge}
-              {isFinished && (
+          <div className="relative flex items-center justify-between px-4 py-3 border-b border-surface-border">
+            <div className="flex min-w-0 items-center gap-3">
+              <h2 className="shrink-0 text-sm font-semibold text-text-primary">Win Probability</h2>
+              {/* #8336/#10200 — the fullscreen view covers the card, so it carries
+                  the same status model, not a copy of its own. Silent to screen
+                  readers: the card's copy, still mounted beneath, does the
+                  announcing. */}
+              {connectionStatusVisible && connectionStatus(false)}
+              {isFinished && !connectionStatusVisible && (
                 <div className="flex items-center gap-1.5">
                   <span className="w-2 h-2 rounded-full bg-text-muted" />
                   <span className="text-[10px] text-text-muted font-medium">Final</span>

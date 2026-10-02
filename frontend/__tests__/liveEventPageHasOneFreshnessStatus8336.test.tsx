@@ -16,6 +16,14 @@
 // What this does NOT touch: the header's polled-page "Next update:" ring, which
 // #5039/#4861/#5459/#6381 each guard. The polled arm below asserts it survives,
 // so a fix that deleted every countdown would fail here too.
+//
+// #10200 (web half of #9655) MOVED the one status, deliberately: on a page with
+// a chart it is the connection status beside "Win Probability" — semantic words,
+// exact clocks on tap — and the header's age badge and sparkline give way to it.
+// The fullscreen view prints the same model. A page with NO chart card keeps the
+// header badge, because there is nowhere else for the admission to go; the last
+// arms here pin that, the truth warnings, and that an open socket never turns a
+// scheduled match "Live".
 
 import React from "react";
 import { readFileSync } from "fs";
@@ -30,7 +38,7 @@ function agoIso(ms: number): string {
 }
 
 /** A live MLB game 40 minutes in, with a fresh blend and a score. */
-function event() {
+function event(over: Record<string, unknown> = {}) {
   return {
     id: 15317522,
     sport_key: "baseball_mlb",
@@ -53,6 +61,7 @@ function event() {
         updated_at: agoIso(20 * 1000),
       },
     },
+    ...over,
   };
 }
 
@@ -64,16 +73,21 @@ const REFRESH_GLYPH = "M4 4v5h.582";
 const BADGE = "live · ";
 /** The header's polled-page ring — untouched by this ship. */
 const PROMISE = "Next update:";
+/** #10200: the chart's one status. */
+const STATUS = 'data-testid="live-connection-status"';
 
 let eventPayload: unknown;
+let historyPayload: unknown;
 let streamConnected = false;
+let streamStatus: string | undefined;
 
 jest.mock("swr", () => ({
   __esModule: true,
   default: (key: unknown) => {
     const isEvent = Array.isArray(key) && key[0] === "event";
+    const isHistory = Array.isArray(key) && key[0] === "history";
     return {
-      data: isEvent ? eventPayload : undefined,
+      data: isEvent ? eventPayload : isHistory ? historyPayload : undefined,
       error: undefined,
       isLoading: false,
       mutate: () => undefined,
@@ -96,7 +110,7 @@ jest.mock("@/hooks", () => ({
 
 jest.mock("@/hooks/useLiveEventStream", () => ({
   __esModule: true,
-  useLiveEventStream: () => ({ frame: null, connected: streamConnected }),
+  useLiveEventStream: () => ({ frame: null, connected: streamConnected, chartPoints: [], status: streamStatus }),
 }));
 
 jest.mock("next/navigation", () => ({
@@ -112,9 +126,14 @@ const EventDetailPage = require("@/app/events/[id]/page").default;
 // eslint-disable-next-line @typescript-eslint/no-var-requires
 const { AnalyticsProvider } = require("@/components/Analytics");
 
-function draw(connected: boolean): string {
+function draw(
+  connected: boolean,
+  opts: { status?: string; event?: Record<string, unknown>; history?: unknown } = {},
+): string {
   streamConnected = connected;
-  eventPayload = event();
+  streamStatus = opts.status ?? (connected ? "open" : undefined);
+  eventPayload = event(opts.event);
+  historyPayload = opts.history;
   return renderToStaticMarkup(
     React.createElement(
       AnalyticsProvider,
@@ -126,25 +145,42 @@ function draw(connected: boolean): string {
 
 const count = (haystack: string, needle: string): number => haystack.split(needle).length - 1;
 
+/** The status's visible words. */
+const statusWords = (html: string): string | null =>
+  html.match(/data-testid="live-connection-status" data-status="([^"]*)"/)?.[1] ?? null;
+
 describe("#8336 a live event page shows one freshness status", () => {
-  it("a stream-fed page: the age badge, once, and no poll ticker anywhere", () => {
+  it("a stream-fed page: one chart status, no header badge, no poll ticker anywhere", () => {
     const html = draw(true);
 
-    expect(count(html, BADGE)).toBe(1);
+    expect(count(html, STATUS)).toBe(1);
+    expect(statusWords(html)).toBe("Connected · waiting");
+    // #10200: no headline seconds — the header badge gave way to the status.
+    expect(count(html, BADGE)).toBe(0);
     expect(html).not.toMatch(TICKER);
     expect(html).not.toContain(REFRESH_GLYPH);
     expect(html).not.toContain(PROMISE);
   });
 
-  it("a polled page: the age badge once, the header ring kept, no second or third ticker", () => {
+  it("a polled page: one chart status, the header ring kept, no second or third ticker", () => {
     const html = draw(false);
 
-    expect(count(html, BADGE)).toBe(1);
+    expect(count(html, STATUS)).toBe(1);
+    expect(statusWords(html)).toBe("Checking for updates");
+    expect(count(html, BADGE)).toBe(0);
     expect(html).not.toMatch(TICKER);
     expect(html).not.toContain(REFRESH_GLYPH);
     // CONTROL — the header's ring is #5039's and stays. Without this arm a
     // deletion of every countdown on the page would pass the assertions above.
     expect(count(html, PROMISE)).toBe(1);
+  });
+
+  it("the status sits in the chart card's header, beside Win Probability", () => {
+    const html = draw(true);
+    const card = html.slice(html.indexOf('data-testid="win-probability-card"'));
+    const cardHeader = card.slice(0, card.indexOf('title="Fullscreen"'));
+    expect(cardHeader).toContain("Win Probability");
+    expect(cardHeader).toContain(STATUS);
   });
 
   it("draws the live page rather than failing to render it", () => {
@@ -155,15 +191,77 @@ describe("#8336 a live event page shows one freshness status", () => {
     expect(html).toContain('data-testid="win-probability-card"');
   });
 
-  it("the fullscreen chart carries the age badge, not a ticker of its own", () => {
+  it("the fullscreen chart carries the SAME status model, not a ticker or a badge of its own", () => {
     // The modal only mounts on a tap, which a static render cannot make, so
     // this arm reads the source: no `{countdown}s` ticker survives anywhere in
-    // the page, and the modal header places the header's own `ageBadge`.
+    // the page, and the modal header places the one status builder — the same
+    // closure over the same `connectionPresentation` the card uses.
     const source = readFileSync(join(process.cwd(), "app/events/[id]/page.tsx"), "utf8");
     expect(source).not.toContain("{countdown}s<");
+    expect(count(source, "<LiveConnectionStatus")).toBe(1);
+    expect(source).toContain("presentation={connectionPresentation}");
 
     const modal = source.slice(source.indexOf("{/* Fullscreen Chart Modal */}"));
-    const modalHeader = modal.slice(0, modal.indexOf("{isFinished && ("));
-    expect(modalHeader).toContain("{ageBadge}");
+    const modalHeader = modal.slice(0, modal.indexOf("</h2>") + 400);
+    expect(modalHeader).toContain("connectionStatus(false)");
+    expect(modalHeader).not.toContain("{ageBadge}");
+    const cardHeader = source.slice(source.indexOf("{/* Chart Header — v2: title + freshness."));
+    expect(cardHeader.slice(0, cardHeader.indexOf('title="Fullscreen"'))).toContain("connectionStatus(true)");
+  });
+
+  it("both header rows are positioned, so the tap details hang from the row and fit a phone", () => {
+    // The status is deliberately unpositioned (its panel ran off the card at
+    // 390px when it hung from the button); the row it sits in must be.
+    const source = readFileSync(join(process.cwd(), "app/events/[id]/page.tsx"), "utf8");
+    const card = source.slice(source.indexOf("{/* Chart Header — v2: title + freshness."));
+    expect(card).toMatch(/^[\s\S]{0,200}<div className="relative px-4 sm:px-5 py-3 flex items-center justify-between">/);
+    const modal = source.slice(source.indexOf("{/* Fullscreen Chart Modal */}"));
+    expect(modal).toMatch(/^[\s\S]{0,200}<div className="relative flex items-center justify-between px-4 py-3 border-b border-surface-border">/);
+  });
+
+  it("a page with NO chart card keeps the header's age admission", () => {
+    // A begun game whose history holds no series: the chart card is suppressed
+    // (#3612), so the header badge is still the page's one answer.
+    const html = draw(true, {
+      history: { history: [], bookmaker_history: {}, aggregate_line: [] },
+    });
+
+    expect(html).not.toContain('data-testid="win-probability-card"');
+    expect(count(html, STATUS)).toBe(0);
+    expect(count(html, BADGE)).toBe(1);
+  });
+});
+
+describe("#10200 the status never lets a healthy socket hide old evidence", () => {
+  it("an old price is named while the socket is open — no breathing, no connection claim", () => {
+    const html = draw(true, {
+      event: {
+        win_probability_sources: {
+          kalshi: { value: 0.84, display_name: "Kalshi", type: "market", color: "#22c55e", updated_at: agoIso(5 * MINUTE) },
+        },
+      },
+    });
+    expect(statusWords(html)).toBe("Price may be old");
+    const status = html.slice(html.indexOf(STATUS));
+    expect(status.slice(0, status.indexOf("</button>"))).not.toContain("animate-");
+  });
+
+  it("an old score is named while the price is fresh, and the tap facts give its clock", () => {
+    const html = draw(true, { event: { score_observed_at: agoIso(10 * MINUTE) } });
+    expect(statusWords(html)).toBe("Score may be old");
+    const status = html.slice(html.indexOf(STATUS));
+    expect(status).toContain("Score confirmed");
+    expect(status).toContain("10m ago");
+    expect(status).toContain("Oldest on screen</dt><dd>The score");
+  });
+
+  it("an open socket never turns a scheduled match Live", () => {
+    const html = draw(true, {
+      status: "open",
+      event: { status: "scheduled", commence_time: new Date(Date.now() + 3 * 60 * MINUTE).toISOString(), home_score: null, away_score: null },
+    });
+    expect(statusWords(html)).toBe("Connected · waiting");
+    expect(statusWords(html)).not.toMatch(/live/i);
+    expect(html).not.toContain(">LIVE<");
   });
 });
