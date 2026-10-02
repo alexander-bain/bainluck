@@ -87,7 +87,7 @@ def decide(case: dict[str, Any]) -> dict[str, Any]:
     if parsed is None:
         return {"verdict": "keep", "reason": "no_authoritative_deadline"}
     deadline, explicit_year = parsed
-    expired = now > deadline + timedelta(days=case.get("grace_days", 1))
+    expired = now > deadline + timedelta(days=case.get("grace_days", 0.5))
     if not explicit_year and expired and now - deadline > timedelta(days=180):
         expired = False
     if not expired:

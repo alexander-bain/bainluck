@@ -404,11 +404,35 @@ def _named_deadline(
     return deadline, had_explicit_year
 
 
+# 🔴 #10137 — A RUNG'S DAY ENDS WHERE THE VENUE'S DAY ENDS, NOT A DAY LATER.
+#
+# Every dated rung is read as 23:59:59 UTC of its named day, and the grace was
+# one whole day on top — so "September 30" left every surface at 23:59:59 UTC on
+# OCTOBER 1, which is 4:59pm Pacific the day after. Served on production at
+# 23:52Z on Oct 1: seven Discover date ladders headlined "September 30" as their
+# first rung (Iran leadership change? · September 30 0%), and all seven dropped
+# it in the same minute the clock passed 00:00Z (re-read at 00:02Z, Oct 2). The
+# rung was never stuck — it was inside a grace that kept a passed deadline on a
+# US reader's screen for most of the next day, at every month-end, on every
+# ladder.
+#
+# The grace exists so a rung is not withdrawn while its OWN deadline is still
+# running somewhere. The venues write US-time deadlines ("by September 30,
+# 11:59 PM ET" is 03:59Z the next day); the latest US clock, Hawaii, closes the
+# day at 09:59Z. Twelve hours clears every one of them with two to spare, and
+# takes a "September 30" rung off a Pacific reader's screen by 5am on Oct 1.
+#
+# Narrowing it cannot hide an answer: a rung that RESOLVED on its day is priced
+# at or above `EXPIRED_RUNG_MAX_PROBABILITY` with a stamp on or after that day,
+# and `_price_is_the_ladders_answer` keeps it whatever the grace says.
+RUNG_GRACE_DAYS = 0.5
+
+
 def outcome_deadline_expired(
     outcome_name: str | None,
     now: datetime,
     *,
-    grace_days: int = 1,
+    grace_days: float = RUNG_GRACE_DAYS,
 ) -> bool:
     """True if a ladder rung's OWN name names a deadline that has already passed.
 
@@ -521,7 +545,7 @@ def _whole_name_date(name: str) -> tuple[int, int, int | None] | None:
 
 
 def _live_dated_twins(
-    names: list[str], now: datetime, *, grace_days: int
+    names: list[str], now: datetime, *, grace_days: float
 ) -> dict[tuple[int, int], int]:
     """``(month, day) -> year`` for each dated rung that has NOT expired.
 
@@ -587,7 +611,7 @@ def _twin_proves_expired(
     twins: dict[tuple[int, int], int],
     now: datetime,
     *,
-    grace_days: int,
+    grace_days: float,
 ) -> bool:
     """Does a live dated twin on this board prove a year-less rung is past?"""
     latest_possible = _twin_deadline(name, twins)
@@ -734,7 +758,7 @@ def expired_ladder_rungs(
     ),
     now: datetime,
     *,
-    grace_days: int = 1,
+    grace_days: float = RUNG_GRACE_DAYS,
 ) -> set[str]:
     """Names of rungs whose own deadline has passed. Empty set for undated ladders.
 
