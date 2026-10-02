@@ -31,12 +31,16 @@ struct WatchHomeView: View {
                         marqueeEmpty
                     }
                     myTeamsSection
-                    if let ago = vm.lastUpdated {
-                        Text(ago)
-                            .font(.system(size: 10))
-                            .foregroundStyle(.tertiary)
-                            .frame(maxWidth: .infinity)
-                            .padding(.top, 2)
+                    // #1739 — re-read every second from the shown data's fetch
+                    // time, so the line counts up and names a failed refresh.
+                    TimelineView(.periodic(from: .now, by: 1)) { context in
+                        if let line = vm.refresh.ageLine(now: context.date) {
+                            Text(line)
+                                .font(.system(size: 10))
+                                .foregroundStyle(.tertiary)
+                                .frame(maxWidth: .infinity)
+                                .padding(.top, 2)
+                        }
                     }
                 }
                 .padding(.horizontal, 4)
@@ -281,7 +285,7 @@ final class WatchHomeViewModel: ObservableObject {
     @Published var signedIn = WatchAuthStore.shared.isSignedIn
     @Published var loading = true
     @Published var error: String?
-    @Published var lastUpdated: String?
+    @Published private(set) var refresh = WatchRefreshState()
 
     func load(force: Bool = false) async {
         logger.info("Home load started (force=\(force))")
@@ -295,13 +299,11 @@ final class WatchHomeViewModel: ObservableObject {
             let feed = try await WatchAPIClient.shared.fetchFeed(limit: 10, forceRefresh: force)
             topStory = WatchMarquee.marquee(from: feed.items)
             logger.info("Home marquee: \(self.topStory?.title ?? "none")")
-            if let t = await WatchAPIClient.shared.lastFetchTime {
-                let ago = Int(Date().timeIntervalSince(t))
-                lastUpdated = ago < 5 ? "Just now" : "\(ago)s ago"
-            }
+            refresh.recordSuccess(fetchedAt: await WatchAPIClient.shared.lastFetchTime ?? Date())
             WKInterfaceDevice.current().play(.click)
         } catch {
             logger.error("Home load failed: \(error.localizedDescription)")
+            refresh.recordFailure()
             if topStory == nil { self.error = "Couldn't load" }
         }
 

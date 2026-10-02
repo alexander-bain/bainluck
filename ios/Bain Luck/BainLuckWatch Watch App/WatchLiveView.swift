@@ -43,12 +43,16 @@ struct WatchLiveView: View {
                     ForEach(vm.games) { game in
                         liveGameCard(game)
                     }
-                    if let ago = vm.lastUpdated {
-                        Text(ago)
-                            .font(.system(size: 9))
-                            .foregroundStyle(.tertiary)
-                            .frame(maxWidth: .infinity)
-                            .padding(.top, 4)
+                    // #1739 — re-read every second from the shown data's fetch
+                    // time, so the line counts up and names a failed refresh.
+                    TimelineView(.periodic(from: .now, by: 1)) { context in
+                        if let line = vm.list.refresh.ageLine(now: context.date) {
+                            Text(line)
+                                .font(.system(size: 9))
+                                .foregroundStyle(.tertiary)
+                                .frame(maxWidth: .infinity)
+                                .padding(.top, 4)
+                        }
                     }
                 }
                 .padding(.horizontal, 4)
@@ -132,26 +136,15 @@ struct WatchLiveView: View {
     }
 }
 
-struct WatchLiveGame: Identifiable {
-    let id: Int
-    let homeAbbrev: String
-    let awayAbbrev: String
-    let homeProb: Int
-    let awayProb: Int
-    let homeScore: Int?
-    let awayScore: Int?
-    let homeColor: String?
-    let awayColor: String?
-    let gameClock: String?
-    let sportLabel: String
-}
+// `WatchLiveGame` and the refresh rule live in `WatchRefreshState.swift` (#1739).
 
 @MainActor
 final class WatchLiveViewModel: ObservableObject {
-    @Published var games: [WatchLiveGame] = []
+    @Published private(set) var list = WatchLiveList()
     @Published var loading = true
     @Published var error: String?
-    @Published var lastUpdated: String?
+
+    var games: [WatchLiveGame] { list.games }
 
     func load(force: Bool = false) async {
         if games.isEmpty { loading = true }
@@ -160,40 +153,12 @@ final class WatchLiveViewModel: ObservableObject {
 
         do {
             let feed = try await WatchAPIClient.shared.fetchFeed(limit: 8, forceRefresh: force)
-            let newGames = feed.items.compactMap { item -> WatchLiveGame? in
-                guard let e = item.event, e.status == "live",
-                      let homeProb = e.currentOdds?.homeProbability else { return nil }
-                let homeTeam = e.homeTeam ?? "Home"
-                let awayTeam = e.awayTeam ?? "Away"
-                let awayProb = 1.0 - homeProb
-                let homeAbbrev = e.homeTeamData?.abbreviation ?? String(homeTeam.split(separator: " ").last ?? "")
-                let awayAbbrev = e.awayTeamData?.abbreviation ?? String(awayTeam.split(separator: " ").last ?? "")
-                // #4880 — see `PeriodLabel.liveStatusText`.
-                let clockText = PeriodLabel.liveStatusText(
-                    period: e.espn?.period, gameClock: e.espn?.gameClock)
-                return WatchLiveGame(
-                    id: e.id,
-                    homeAbbrev: homeAbbrev,
-                    awayAbbrev: awayAbbrev,
-                    homeProb: Int((homeProb * 100).rounded()),
-                    awayProb: Int((awayProb * 100).rounded()),
-                    homeScore: e.homeScore,
-                    awayScore: e.awayScore,
-                    homeColor: e.homeTeamData?.primaryColor,
-                    awayColor: e.awayTeamData?.primaryColor,
-                    gameClock: clockText,
-                    sportLabel: e.sportName ?? e.sport ?? ""
-                )
-            }
-            if !newGames.isEmpty || games.isEmpty {
-                games = newGames
-            }
-            if let t = await WatchAPIClient.shared.lastFetchTime {
-                let ago = Int(Date().timeIntervalSince(t))
-                lastUpdated = ago < 5 ? "Just now" : "\(ago)s ago"
-            }
+            let fetchedAt = await WatchAPIClient.shared.lastFetchTime ?? Date()
+            // #1739 — replaces the list, with nothing when nothing is live.
+            list.apply(feed.items, fetchedAt: fetchedAt)
             WKInterfaceDevice.current().play(.click)
         } catch {
+            list.applyFailure()
             if games.isEmpty {
                 self.error = "Couldn't load"
             }

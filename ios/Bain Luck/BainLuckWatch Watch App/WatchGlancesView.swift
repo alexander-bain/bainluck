@@ -46,12 +46,16 @@ struct WatchGlancesView: View {
                     ForEach(vm.markets) { market in
                         glanceRow(market)
                     }
-                    if let ago = vm.lastUpdated {
-                        Text(ago)
-                            .font(.system(size: 11))
-                            .foregroundStyle(.tertiary)
-                            .frame(maxWidth: .infinity)
-                            .padding(.top, 4)
+                    // #1739 — re-read every second from the shown data's fetch
+                    // time, so the line counts up and names a failed refresh.
+                    TimelineView(.periodic(from: .now, by: 1)) { context in
+                        if let line = vm.refresh.ageLine(now: context.date) {
+                            Text(line)
+                                .font(.system(size: 11))
+                                .foregroundStyle(.tertiary)
+                                .frame(maxWidth: .infinity)
+                                .padding(.top, 4)
+                        }
                     }
                 }
                 .padding(.horizontal, 4)
@@ -59,12 +63,13 @@ struct WatchGlancesView: View {
         }
         .navigationTitle("Trending")
         .task { await vm.load() }
-        .task(id: "auto-retry") {
+        // #1739 — refreshes while healthy too (every 30 s, like Home and
+        // Live); a failed or empty list retries sooner and skips the cache.
+        .task(id: "auto-refresh") {
             while !Task.isCancelled {
-                try? await Task.sleep(for: .seconds(15))
-                if vm.error != nil || vm.markets.isEmpty {
-                    await vm.load(force: true)
-                }
+                let retrying = vm.error != nil || vm.markets.isEmpty
+                try? await Task.sleep(for: .seconds(retrying ? 15 : 30))
+                await vm.load(force: retrying)
             }
         }
     }
@@ -135,7 +140,7 @@ final class WatchGlancesViewModel: ObservableObject {
     @Published var markets: [WatchMarket] = []
     @Published var loading = true
     @Published var error: String?
-    @Published var lastUpdated: String?
+    @Published private(set) var refresh = WatchRefreshState()
 
     func load(force: Bool = false) async {
         logger.info("Glances load started (force=\(force), existing=\(self.markets.count))")
@@ -167,13 +172,11 @@ final class WatchGlancesViewModel: ObservableObject {
                 )
             }
             logger.info("Glances: \(self.markets.count) markets from \(feed.items.count) items")
-            if let t = await WatchAPIClient.shared.lastFetchTime {
-                let ago = Int(Date().timeIntervalSince(t))
-                lastUpdated = ago < 5 ? "Just now" : "\(ago)s ago"
-            }
+            refresh.recordSuccess(fetchedAt: await WatchAPIClient.shared.lastFetchTime ?? Date())
             WKInterfaceDevice.current().play(.click)
         } catch {
             logger.error("Glances load failed: \(error.localizedDescription)")
+            refresh.recordFailure()
             if markets.isEmpty {
                 self.error = "Couldn't load"
             }
