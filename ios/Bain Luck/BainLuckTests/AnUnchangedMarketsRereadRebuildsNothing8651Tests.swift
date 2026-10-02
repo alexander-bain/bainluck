@@ -4,7 +4,7 @@ import XCTest
 
 /// #8651 (build 34) — **an unchanged markets reread does not rebuild the page.**
 ///
-/// A live game rereads its markets every ~2 s. Every write to a `@Published`
+/// The markets can be reread as often as every 2 s. Every write to a `@Published`
 /// property rebuilds the whole event page, identical value or not, so a quiet
 /// stretch of a long-open page froze on every reread for nothing. The page
 /// model now writes only a body that differs; any difference still lands.

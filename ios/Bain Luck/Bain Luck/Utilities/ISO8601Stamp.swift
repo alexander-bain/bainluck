@@ -4,7 +4,7 @@ import Foundation
 ///
 /// `String.asDate` sits under every chart, freshness check and reconciliation
 /// on a game page, and a page body re-runs on every update the page takes in.
-/// `ISO8601DateFormatter` costs ~37 µs a stamp, and the stamps the server
+/// `ISO8601DateFormatter` costs ~37 µs a stamp on a Mac, and the stamps the server
 /// actually sends (`2026-10-01T23:40:00+00:00`, no fraction, 16,419 of 18,032
 /// on Steelers–Browns 14780550's history) missed the fractional formatter
 /// first and were parsed twice. Measured on that game's two payloads, 22,984

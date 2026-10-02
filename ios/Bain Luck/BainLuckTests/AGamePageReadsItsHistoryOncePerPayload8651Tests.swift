@@ -9,8 +9,8 @@ import XCTest
 /// became unusable." Measured on build 34's own source (Release, simulator):
 /// every update the page takes in rebuilt it, and the rebuild re-parsed every
 /// timestamp in the history twice — the chart's live edge and the readout's
-/// latest win-probability reading. ~600 ms of a ~860 ms freeze per update on a
-/// full NFL game; a live game's markets reread alone updates every ~2 s.
+/// latest win-probability reading: ~600 ms of a ~860 ms freeze per update on a
+/// full NFL game's history, in a simulator.
 ///
 /// The page now holds both in `EventHistoryDigest`, built when `history` is set.
 /// These tests pin that (a) the digest picks exactly what the per-rebuild code
@@ -127,5 +127,17 @@ final class AGamePageReadsItsHistoryOncePerPayload8651Tests: XCTestCase {
         await vm.load()
         XCTAssertEqual(vm.historyDigest?.edge, at("2026-10-02T00:05:00Z"))
         XCTAssertEqual(vm.historyDigest?.latestWinProb?.homeProbability, 0.70)
+
+        // A replacement whose latest moment is UNCHANGED but whose reading at
+        // that moment is corrected must still replace the readout's reading —
+        // the digest follows every payload, not only a moving edge.
+        let corrected = try history(Self.mixedJSON
+            .replacingOccurrences(of: "2026-10-01T23:39:59Z", with: "2026-10-02T00:05:00Z")
+            .replacingOccurrences(of: "0.70", with: "0.66"))
+        client.serve(corrected)
+        await vm.load()
+        XCTAssertEqual(vm.historyDigest?.edge, at("2026-10-02T00:05:00Z"), "same edge")
+        XCTAssertEqual(vm.historyDigest?.latestWinProb?.homeProbability, 0.66,
+                       "a corrected reading at the same moment must reach the readout")
     }
 }

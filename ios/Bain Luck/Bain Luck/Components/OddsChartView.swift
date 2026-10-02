@@ -384,7 +384,7 @@ struct OddsChartView: View {
     /// outer `nil` means "not supplied" and this view reads the edge itself; an
     /// inner `nil` is a payload with no readings. This body re-runs on every
     /// update the page takes in, and reading the edge parses every stamp in the
-    /// payload — ~300 ms a rebuild on a full NFL game, measured.
+    /// payload — ~300 ms a rebuild on a full NFL game, measured in a simulator.
     var preloadedHistoryEdge: Date??
     /// #925 — the scrubbed moment's readout (clock, score, point time, "as
     /// of", probabilities), drawn between the chart's header and its plot.

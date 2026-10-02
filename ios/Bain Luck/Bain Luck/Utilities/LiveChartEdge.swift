@@ -160,15 +160,15 @@ nonisolated enum EventHistoryFreshness {
 /// Build 34 on Alex's phone (Steelers–Browns 14780550, Oct 1): a game page left
 /// open "got very, very choppy to the point where the app became unusable".
 /// Measured on build 34's own source in a Release simulator build: every update
-/// the page takes in — a game-markets reread (every ~2 s on a live game), a
-/// pushed price, a re-polled history — rebuilt the page, and the page body
+/// the page takes in — a game-markets reread (as often as every 2 s, the
+/// delivery's budget, when a game's markets keep moving), a pushed price, a
+/// re-polled history — rebuilt the page, and the page body
 /// re-parsed every timestamp in the history twice: `lastReading(in:)` for the
 /// chart's live edge (~9,500 stamps on that game) and the latest
 /// win-probability reading for the chart's readout, whose `max(by:)` parsed both
 /// sides of every comparison (~4,400 readings). ~600 ms of a ~860 ms main-thread
-/// freeze per update, on a Mac; more on a phone. Both grow with the game, which
-/// is why the page scrolled fine at kickoff and froze by the fourth quarter.
-/// Neither depends on anything but the payload, so the page holds them here.
+/// freeze per update, measured in a simulator on a Mac. Both scans grow with
+/// the game's history. Neither depends on anything but the payload, so the page holds them here.
 nonisolated struct EventHistoryDigest {
     /// `EventHistoryFreshness.lastReading(in:)` of the payload.
     let edge: Date?
