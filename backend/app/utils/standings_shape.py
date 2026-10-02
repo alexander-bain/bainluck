@@ -77,6 +77,24 @@ def standings_show_no_games_played(standings) -> bool:
             value = standings.get(key)
             if value is not None and int(value):
                 return False
+        # An NHL overtime loss is the same case with no key of its own
+        # (#10252). The board stores no OTL count, so on 2026-10-02 Carolina's
+        # first game, a 1-0 overtime loss, sat as `wins 0, losses 0, points 1,
+        # home_record "0-0-1"`, and this function called the team unplayed: the
+        # hero dropped `current_record`'s `0-0-1` for the board's `0-0` beside
+        # "1 pts". A point is only earned on the ice, and the home/road splits
+        # carry the OTL the totals omit. Measured the same minute: Carolina was
+        # the ONLY 0-0 row with either signal, so no rolled-over board carries a
+        # stale point. `> 0`, because a points deduction is not a game.
+        points = standings.get("points")
+        if points is not None and float(points) > 0:
+            return False
+        for key in ("home_record", "road_record"):
+            split = standings.get(key)
+            if isinstance(split, str) and any(
+                part.strip().isdigit() and int(part) for part in split.split("-")
+            ):
+                return False
     except (TypeError, ValueError):
         return False
     return True
