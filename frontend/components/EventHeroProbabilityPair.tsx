@@ -329,6 +329,10 @@ export default function EventHeroProbabilityPair({
   // the centre's budget is 144px and this pair's max-content was 188.5px, and
   // the shot showed "81" printed across the Chargers bolt. Trading an
   // off-screen crest for an overlapping numeral is not a fix.
+  // #10108 — 360 to 389 takes one more step, `42px`. At 360 the 48px pair is
+  // ~186px wide in a ~184px gap between the crests: production TNF
+  // (/events/14780550, 10/1) printed "41" against the Browns crest and "%"
+  // against the Steelers crest. 42px frees ~8px a side; 390 and up unchanged.
   const noReading = homeProb === null && awayProb === null;
 
   if (stopped) {
@@ -391,7 +395,7 @@ export default function EventHeroProbabilityPair({
         </span>
       )}
       <span
-        className="text-[34px] min-[360px]:text-[48px] sm:text-[52px] font-black tracking-tight leading-none tabular-nums"
+        className="text-[34px] min-[360px]:text-[42px] min-[390px]:text-[48px] sm:text-[52px] font-black tracking-tight leading-none tabular-nums"
         style={{ color: home }}
         data-hero-digits=""
       >
@@ -421,7 +425,7 @@ export default function EventHeroProbabilityPair({
       )}
       {!awayWithheld && (
       <span
-        className="text-[34px] min-[360px]:text-[48px] sm:text-[52px] font-black tracking-tight leading-none tabular-nums"
+        className="text-[34px] min-[360px]:text-[42px] min-[390px]:text-[48px] sm:text-[52px] font-black tracking-tight leading-none tabular-nums"
         style={{ color: away }}
         data-hero-digits=""
       >

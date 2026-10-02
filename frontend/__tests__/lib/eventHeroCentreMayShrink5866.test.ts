@@ -62,13 +62,14 @@ describe("#5866 the hero's centre column does not dictate the row", () => {
     expect(code).toMatch(/className="mt-1 flex items-center gap-1\.5 min-w-0"/);
   });
 
-  test("the giant pair steps down below 360px, and only below 360px", () => {
+  test("the giant pair steps down below 390px, and only below 390px", () => {
     const code = executableSource(PAIR);
     // A shrinkable column holding a pair that cannot wrap overlaps its
     // neighbours instead of pushing them off-screen — measured at 320px, "81"
-    // printed across the Chargers crest. 390 and up must not move.
+    // printed across the Chargers crest. #10108: at 360 the 48px pair still
+    // touched both crests, so 360–389 is 42px. 390 and up must not move.
     const sized = code.match(
-      /text-\[34px\] min-\[360px\]:text-\[48px\] sm:text-\[52px\]/g,
+      /text-\[34px\] min-\[360px\]:text-\[42px\] min-\[390px\]:text-\[48px\] sm:text-\[52px\]/g,
     );
     expect(sized).toHaveLength(2);
     expect(code).not.toMatch(/"text-\[48px\] sm:text-\[52px\]/);
