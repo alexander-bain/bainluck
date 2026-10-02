@@ -7597,15 +7597,23 @@ celery_app.conf.beat_schedule = {
         # test asserts they agree). A pass rebuilds only a hub a reader could soon
         # miss (no entry for the current revision, or stale with < 150 s left),
         # so an idle Week 4 is rebuilt about every 2.5-3 min (~4.5 s each) and a
-        # hub readers are keeping warm costs one Redis GET. Same queue as the
-        # other user-latency warmers. `background` delivers late (LAT-P112: p50
-        # 138-152 s against a declared 120 s), so a late pass is still useful and
-        # `expires` is one stale window (300 s), not one period: a fire that finds
-        # nothing near expiry takes the skip path (one discovery read + one GET
-        # per hub), so fires that bunch up behind a long task cost ~nothing.
-        # Argued in `BACKGROUND_INTERVAL_FLOOR` (test_settlement_sweep_beat.py).
+        # hub readers are keeping warm costs one Redis GET.
+        #
+        # `realtime`, not `background` (moved 2026-10-02). On `background` the
+        # passes arrived with ~4-minute holes (08:49:37 -> 08:53:46Z 10/2), longer
+        # than an idle hub's 300 s of servable life, so the first reader after a
+        # quiet spell still paid the 4.5 s build (2 of 3 quiet-spell reads were
+        # `miss`). LAT-P112 measured the same two queues side by side: `background`
+        # p50 152 s / max 2,511 s against a declared 120 s, `realtime` 40 s against
+        # 40 s with a 54 s max. The cost on `realtime` is bounded: a skip pass is
+        # one discovery read + one GET per hub, an idle hub's build is ~4.5 s about
+        # every 2.5-3 min (~3% of one of four slots), and a pass starts no build
+        # after `PASS_BUDGET_S` (15 s), so it cannot hold a slot beside the live
+        # price poll for long. `expires` is one period, the `_EXPIRING_WARMER_BEATS`
+        # rule: on a punctual queue a fire still waiting when its successor is
+        # published is superseded, and a restart backlog drops instead of queueing.
         "schedule": 60.0,
-        "options": {"queue": "background", "expires": 300},
+        "options": {"queue": "realtime", "expires": 60},
     },
     "flush-search-gin-pending-lists": {
         "task": "app.tasks.flush_search_gin_pending_lists",

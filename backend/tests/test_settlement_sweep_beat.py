@@ -514,12 +514,21 @@ class TestG7Routing:
 #: Why `background`: it is where the other user-latency warmers live
 #: (`warm-search-head`, `warm-typeahead`); `realtime` carries the live price poll
 #: and a 4.5 s build does not belong beside it; `heavy` is another Heroku app.
+#:
+#: 🔴 REVERSED THE SAME DAY (latency, 2026-10-02, #9982 after-check):
+#: `warm-container-hubs` LEFT this floor for `realtime`. On `background` its
+#: passes arrived with a ~4-minute hole (08:49:37 -> 08:53:46Z), longer than an
+#: idle hub's 300 s of servable life, and 2 of 3 first reads after a quiet spell
+#: were a 4.4 s `miss` — the warmer existed for exactly that reader. The
+#: "beside the live price poll" objection is answered by bounding the pass
+#: (`PASS_BUDGET_S` 15 s, ~4.5 s per build, about every 2.5-3 min per idle hub)
+#: rather than by a queue that cannot deliver the period the warmer is sized for.
+#: Argued at the beat entry in `app/tasks/__init__.py`.
 BACKGROUND_INTERVAL_FLOOR = frozenset(
     {
         "flush-search-gin-pending-lists",
         "refresh-open-commentary",
         "sync-tournament-results",
-        "warm-container-hubs",
         "warm-search-head",
         "warm-typeahead",
     }
