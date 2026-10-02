@@ -94,8 +94,20 @@ export function sportsFinishedLookupKey(userId: string | null | undefined): Spor
  * staying smaller on the wire than a 60-item pull that yields exactly the same
  * seven. Raising it buys more of the day's results, not a better chance at the
  * one that matters, and the section is capped for the reader anyway.
+ *
+ * 🔴 RAISED TO 80 (#10207, 2026-10-02) — the last sentence above stopped being
+ * true. The ranker scores this morning's tier-4 tennis above last night's
+ * majors, so on the anonymous `include_futures=false` read at ~16:40Z:
+ *
+ *     limit=40   92 KB  0.9s   6 settled  — no NFL, no MLB (TNF at position 45)
+ *     limit=60  132 KB  1.1s  14 settled  — TNF in, MLB postseason final not
+ *     limit=80  165 KB  1.7s  27 settled  — MLB postseason final at 60, WNBA at 71
+ *
+ * The section now puts headline finals first (`isHeadlineCard`), which is only
+ * worth anything if the headline finals are IN the window. Still deferred,
+ * still its own cache slot, still never on page one's wire.
  */
-export const FINISHED_LOOKUP_LIMIT = 40;
+export const FINISHED_LOOKUP_LIMIT = 80;
 
 /**
  * A stable identity token for the current key, used to detect a genuine

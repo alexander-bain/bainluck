@@ -53,6 +53,7 @@
 import type { FeedEventData, FeedItem, SportHierarchy } from "@/lib/types";
 import { feedEventSectionKey } from "@/lib/feedSections";
 import { finishedDayOffset } from "@/lib/gameTimeLabel";
+import { finishedHeadlineBand } from "@/lib/sports/headline";
 
 /**
  * How many finals the section shows before it declares a cap.
@@ -114,7 +115,8 @@ function isFinishedGame(item: FeedItem): boolean {
 }
 
 export interface FinishedSection {
-  /** The cards to render, today's first and most recent first within a day. */
+  /** The cards to render: headline finals first (#10207), then today's before
+   *  yesterday's and most recent first within a day. */
   shown: FeedItem[];
   /** Everything the window or the cap held back, with the reason it was held. */
   dropped: { item: FeedItem; reason: FinishedDropReason }[];
@@ -172,6 +174,20 @@ function finishedAtTime(data: FeedEventData): string {
  * a US Open match `tier:2 class:other`. Ranking the window would bury both the
  * final and the Slam — and #4454 pins the Slam at the top for that exact
  * reason.
+ *
+ * ═══ ONE BAND ABOVE ALL OF THAT: HEADLINE FINALS FIRST (#10207) ═══
+ *
+ * Still not the ranker's rank — the score is never read. A final is a headline
+ * by the one definition `/sports` uses for its lead (`isHeadlineCard`: tier 1,
+ * a playoff/championship, a Grand Slam, a major). Headlines take the cap's
+ * slots first, postseason headlines ahead of the rest (`finishedHeadlineBand`);
+ * day and recency then decide INSIDE each band exactly as above.
+ * So two headline finals are never reordered against each other — the Slam
+ * still competes with the ballgame on when it ended, which is #4454's
+ * contract — while a minor final can no longer spend a slot a major one needed.
+ * Production, 2026-10-02 morning: four `tier:4` China Open matches that ended
+ * after midnight filled the section and capped away last night's Thursday Night
+ * Football final and an MLB postseason final.
  */
 export function buildFinishedSection(
   finished: FeedItem[],
@@ -180,6 +196,7 @@ export function buildFinishedSection(
   const dropped: { item: FeedItem; reason: FinishedDropReason }[] = [];
   const dated: {
     item: FeedItem;
+    band: number;
     day: number;
     at: number;
     began: number;
@@ -205,6 +222,7 @@ export function buildFinishedSection(
     }
     dated.push({
       item,
+      band: finishedHeadlineBand(item),
       day,
       at: new Date(finishedAtTime(data)).getTime(),
       began: new Date(data.commence_time).getTime(),
@@ -212,6 +230,7 @@ export function buildFinishedSection(
   }
 
   dated.sort((a, b) => {
+    if (a.band !== b.band) return a.band - b.band;
     if (a.day !== b.day) return a.day - b.day;
     if (a.at !== b.at) return b.at - a.at;
     // Equal ends are a BATCH, not a coincidence — see the docblock.
