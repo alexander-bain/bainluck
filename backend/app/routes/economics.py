@@ -33,6 +33,7 @@ from app.utils.cross_source_matching import (
 )
 from app.utils.duplicate_condition_outcomes import drop_duplicate_legs
 from app.utils.inflation_release_identity import fold_same_release
+from app.utils.ladder_monotonicity import cumulative_outcome_ladder
 from app.utils.feed_market_quality import book_bounds_nothing, is_fabricated_midpoint
 from app.utils.economics_headline import (
     LadderCandidate,
@@ -643,6 +644,48 @@ def _pick_rung(priced: list):
     return max(priced, key=lambda o: float(o.current_probability))
 
 
+# #10190 — THE OIL CARD READ A LADDER OFF ITS LEG NAMES ALONE. `_oil_row` kept
+# #3004's sentence path for a ladder only when `_is_cumulative_ladder` said so,
+# and that reads the outcome NAMES alone. Two ladders on production 2026-10-02
+# 11:15Z failed it and fell through to the composite `{sym} {range}` row, which
+# prints a rescaled number nobody quoted:
+#
+#     market                                           card          venue
+#     63605723 WTI ... closes above ___ on October 2?  WTI $87  28%  $87 .865
+#     16756821 Oil Price (WTI) on Election Day ...?     WTI $96  18%  median $91+ .50
+#
+# The first writes its comparator ONCE, in the question, over a blank, and its
+# legs are bare prices (`$87`) — the shape `cumulative_outcome_ladder` has read
+# with `question=` since #7674. The second mixes `Above $59.99` with
+# `$73 or above`; that grammar reads both spellings as one ladder, and the
+# prefix-only check refuses the suffix one.
+_QUESTION_COMPARATOR_RE = re.compile(r"\b(above|below)\s*(?:_{2,}|\.{2,})", re.I)
+_BARE_PRICE_RE = re.compile(r"^\s*\$?\d[\d,]*(?:\.\d+)?\s*$")
+
+
+def _oil_is_ladder(market: FuturesMarket) -> bool:
+    """True when a crude-oil market's rows are cumulative rungs of one price."""
+    if _is_cumulative_ladder(market):
+        return True
+    rows = [{"name": o.name} for o in market.outcomes]
+    return cumulative_outcome_ladder(rows, question=market.name) is not None
+
+
+def _with_question_comparator(market: FuturesMarket, leader: str | None) -> str | None:
+    """``$89`` -> ``Above $89`` when the market question carries the comparator.
+
+    The served question is cleaned of its blank (#10084: "How high will WTI
+    Crude Oil (WTI) close on October 2?"), which removes the only "above" the
+    reader would have had, so a bare price under it reads as "closes AT $89".
+    """
+    if not leader or not _BARE_PRICE_RE.match(leader):
+        return leader
+    match = _QUESTION_COMPARATOR_RE.search(market.name or "")
+    if match is None:
+        return leader
+    return f"{match.group(1).capitalize()} {leader.strip()}"
+
+
 def _oil_row(market: FuturesMarket) -> dict | None:
     """A Crude-oil row that names its question and prints a price the venue quotes.
 
@@ -689,14 +732,16 @@ def _oil_row(market: FuturesMarket) -> dict | None:
     if "gas" in (market.name or "").lower():
         return None
     outcomes = _clean_outcomes(list(market.outcomes))
-    if _is_cumulative_ladder(market):
+    if _oil_is_ladder(market):
         rung = _ladder_rung(market)
         if rung is None:
             return None
         return {
             "q": market.name,
             "prob": round(float(rung.current_probability) * 100, 1),
-            "leader": _leader_name(market, rung, outcomes),
+            "leader": _with_question_comparator(
+                market, _leader_name(market, rung, outcomes)
+            ),
             "src": _source(market),
             "delta": None,
             "market_id": market.id,
