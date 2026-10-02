@@ -1484,7 +1484,14 @@ async def _run_polymarket_ws_consumer():
             batch_marks = {
                 oid: input_marks[oid] for oid in batch if oid in input_marks
             }
-        written: list[int] = []
+            # #10090 / #837: events a held-price withdrawal may still touch
+            # this flush. Their refresh waits for that transaction too.
+            withdraw_events = (
+                event_ids_for_outcomes(event_id_by_outcome, withdraw_buffer)
+                if batch else set()
+            )
+        # Committed this flush, refresh not yet called.
+        owed: list[int] = []
         if batch:
             # #9484: every linked row, then a bounded number of open-contract
             # chunks, oldest-dirty first (the buffer's insertion order). Open
@@ -1501,9 +1508,46 @@ async def _run_polymarket_ws_consumer():
             stats["open_contract_flush_deferred"] += len(batch) - sum(
                 len(c) for c in chunks
             )
-            for chunk_ids in chunks:
+            # #10090 / #837: an event is refreshed once per flush, right after
+            # the last transaction of this flush that can touch it. The refresh
+            # used to wait for EVERY chunk, so a committed binary pair sat
+            # unstamped behind an unrelated chunk's UPDATE (controlled replay
+            # on 6443a89023: the pair committed and published, its event
+            # waited until the later chunk's blocked row lock was released).
+            # Refreshing after the FIRST chunk that touches an event instead
+            # would stamp it half-written and leave the rest to the 2s
+            # throttle, so an event a later chunk still writes waits for that
+            # chunk, and one with a pending withdrawal waits for it.
+            last_chunk_of_event: dict[int, int] = {}
+            for index, chunk_ids in enumerate(chunks):
+                for oid in chunk_ids:
+                    event_id = event_id_by_outcome.get(oid)
+                    if event_id is not None:
+                        last_chunk_of_event[event_id] = index
+            for index, chunk_ids in enumerate(chunks):
                 if await write_chunk({oid: batch[oid] for oid in chunk_ids}):
-                    written.extend(chunk_ids)
+                    owed.extend(chunk_ids)
+                ready: list[int] = []
+                held: list[int] = []
+                for oid in owed:
+                    event_id = event_id_by_outcome.get(oid)
+                    done = event_id is None or (
+                        last_chunk_of_event.get(event_id, index) <= index
+                        and event_id not in withdraw_events
+                    )
+                    (ready if done else held).append(oid)
+                owed = held
+                if ready:
+                    # Q460 — THE SHIP: carry the committed prices through to
+                    # `Event.win_probability_sources`, the JSONB the card
+                    # renders. #837 receipt: the revisions these writes
+                    # committed ride into this refresh, and only this one.
+                    tail_receipts.stage(
+                        [batch_marks[oid] for oid in ready if oid in batch_marks]
+                    )
+                    await blend_refresher.refresh(
+                        event_ids_for_outcomes(event_id_by_outcome, ready)
+                    )
         # #9934: after the prices, so a held number is judged as it now stands.
         withdrawn = await flush_withdrawals()
         if not batch and not withdrawn:
@@ -1513,19 +1557,16 @@ async def _run_polymarket_ws_consumer():
             # nothing is queued (no session is opened).
             await blend_refresher.refresh_pending()
             return
-        if not written and not withdrawn:
+        if not owed and not withdrawn:
             return
-
-        # Q460 — THE SHIP. Carry the freshly-flushed prices through to
-        # `Event.win_probability_sources`, the JSONB the card actually renders.
-        # #837 receipt: the revisions this flush committed ride into the
-        # refresh that follows it, and only that one.
-        if written:
+        # The prices held for a withdrawal, and the withdrawal itself: one
+        # refresh, never a second for an event the chunks already refreshed.
+        if owed:
             tail_receipts.stage(
-                [batch_marks[oid] for oid in written if oid in batch_marks]
+                [batch_marks[oid] for oid in owed if oid in batch_marks]
             )
         await blend_refresher.refresh(
-            event_ids_for_outcomes(event_id_by_outcome, written + withdrawn)
+            event_ids_for_outcomes(event_id_by_outcome, owed + withdrawn)
         )
 
     async def drain_prices():
