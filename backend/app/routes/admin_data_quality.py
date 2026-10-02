@@ -4017,10 +4017,21 @@ async def calibration_mce_summary(
         from app.tasks import celery_app
         _safe_send_task("app.tasks.precompute_calibration_main", queue="heavy")
 
+    # #6317: the ACTIVE version's key, named by the durable selection record —
+    # not always the legacy one, and never a guess when the record is unreadable.
+    from app.utils.calibration_publication_selection import resolve_namespace_standalone
+
+    active_ns, selection_source = await resolve_namespace_standalone()
+    if active_ns is None:
+        raise HTTPException(
+            status_code=503,
+            detail=f"Active calibration selection unreadable ({selection_source}); retry.",
+        )
+
     payload = None
     try:
         _rc = get_redis_client()
-        cached = _rc.get("bainluck:calibration:main")
+        cached = _rc.get(active_ns.main_key)
         if cached:
             payload = _json.loads(cached)
     except Exception:

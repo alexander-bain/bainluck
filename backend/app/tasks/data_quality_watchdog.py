@@ -333,9 +333,17 @@ CHECKS: list[dict[str, Any]] = [
             "SELECT COALESCE("
             "  (SELECT EXTRACT(EPOCH FROM (NOW() - generated_at)) / 3600.0"
             "     FROM durable_state_snapshots"
-            "    WHERE identity = 'calibration:main'),"
+            "    WHERE identity = COALESCE("
+            "      (SELECT payload ->> 'artifact_identity'"
+            "         FROM durable_state_snapshots"
+            "        WHERE identity = 'calibration:active_selection'),"
+            "      'calibration:main')),"
             "  99999)"
         ),
+        # #6317: the ACTIVE artifact's age. Since the candidate-first rollover a
+        # version after q271 publishes to its own identity and the selection
+        # record names which one readers get; with no record it is the legacy
+        # ``calibration:main``. A staged candidate's row is never the witness.
         # Attached to the alert only when it fails: WHICH phase broke, so the
         # issue says "phase futures timed out at 22.5 min" rather than
         # "calibration is stale". The ledger is written by every run, including

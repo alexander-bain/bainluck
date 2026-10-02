@@ -415,11 +415,21 @@ class TestOverAgeIsServedNotRefused:
         src = inspect.getsource(route.public_calibration)
         assert '_unavailable("no_trustworthy_snapshot")' in src
         assert '_unavailable("route_budget_exhausted")' in src
-        # Exactly two refusal sites, both below the last-resort tier. Q330 turned
-        # these from ``raise`` into ``return`` (the refusal is a composed response
-        # now, so its wire shape matches the served answers) — the count is what
-        # this test was ever about, not the keyword.
-        assert src.count("return _unavailable(") == 2
+        # Exactly two AGE-ADJACENT refusal sites, both below the last-resort tier.
+        # Q330 turned these from ``raise`` into ``return`` (the refusal is a
+        # composed response now, so its wire shape matches the served answers) —
+        # the count is what this test was ever about, not the keyword.
+        #
+        # #6317 adds exactly one more, and it is not about age at all: a process
+        # that has never read the active-selection record and cannot read it now
+        # does not know WHICH artifact is live, so it refuses before any tier
+        # reads one. Pinned by name and by position (above the first tier), so it
+        # cannot become a home for an age comparison.
+        selection_refusal = '_unavailable("active_selection_unavailable")'
+        assert src.count(selection_refusal) == 1
+        assert src.index(selection_refusal) < src.index("_memo_may_answer(")
+        assert src.index("if _active is None:") < src.index(selection_refusal)
+        assert src.count("return _unavailable(") == 3
         assert "raise _unavailable(" not in src
         assert src.index("durable_over_age") < src.index(
             '_unavailable("no_trustworthy_snapshot")'

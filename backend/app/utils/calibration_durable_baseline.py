@@ -89,7 +89,7 @@ class BaselineProbe:
     generated_at: Optional[str] = None
 
 
-async def _read_durable_envelope():
+async def _read_durable_envelope(identity: str = DURABLE_IDENTITY):
     """Read the durable calibration envelope with NO serving-age cutoff.
 
     ``SERVE_MAX_AGE_S`` exists to stop an ancient snapshot being *served* as the
@@ -102,10 +102,10 @@ async def _read_durable_envelope():
     """
     from app.services.durable_snapshots import read_snapshot_standalone
 
-    return await read_snapshot_standalone(DURABLE_IDENTITY, max_age_s=float("inf"))
+    return await read_snapshot_standalone(identity, max_age_s=float("inf"))
 
 
-def _read_in_new_loop(timeout_s: float):
+def _read_in_new_loop(timeout_s: float, identity: str = DURABLE_IDENTITY):
     """Run the async durable read from a synchronous caller, bounded.
 
     ``evaluate_publish`` is sync and is called from inside a running event loop,
@@ -123,7 +123,7 @@ def _read_in_new_loop(timeout_s: float):
         max_workers=1, thread_name_prefix="cal-baseline-probe"
     )
     try:
-        future = executor.submit(lambda: asyncio.run(_read_durable_envelope()))
+        future = executor.submit(lambda: asyncio.run(_read_durable_envelope(identity)))
         return future.result(timeout=timeout_s)
     finally:
         executor.shutdown(wait=False)
@@ -133,14 +133,20 @@ def probe_durable_baseline(
     *,
     reader: Optional[Callable[[], Any]] = None,
     timeout_s: float = PROBE_TIMEOUT_S,
+    identity: str = DURABLE_IDENTITY,
 ) -> BaselineProbe:
     """Ask durable history whether a prior published generation exists.
 
     ``reader`` is the injection seam: tests supply a callable returning an
     ``EnvelopeRead`` (or raising) so the decision table can be exercised without
     a database. Production passes nothing and gets the bounded threaded read.
+
+    ``identity`` (#6317) is the ACTIVE artifact's durable identity. Since the
+    candidate-first rollover, a version other than the legacy one publishes to
+    its own identity, and the baseline is whichever one the active selection
+    names. The default is the legacy identity, so existing callers are unchanged.
     """
-    read = reader if reader is not None else (lambda: _read_in_new_loop(timeout_s))
+    read = reader if reader is not None else (lambda: _read_in_new_loop(timeout_s, identity))
 
     try:
         envelope_read = read()

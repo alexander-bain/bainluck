@@ -9,7 +9,7 @@ Two ids, and they are independent:
 
 | id | what it versions | where it lives |
 |---|---|---|
-| `population_version` (`q271`) | **which rows** are scored | `precompute_calibration.py` |
+| `population_version` (`q272`, prepared; `q271` published) | **which rows** are scored | `precompute_calibration.py` |
 | `SCORING_POLICY_VERSION` (`m1`) | **how a cell is judged** — bars, `MIN_CELL_N`, `SIGMA_GATE` | `calibration_scoring.py` |
 
 Entries that CHANGED a published number are in `CALIBRATION_CORRECTIONS`, served on
@@ -134,6 +134,40 @@ key `calibration:min_category_outcomes` with no deploy. Move the page's disclosu
 score follows it by construction.
 
 ---
+
+## q272 — a field whose winner has no usable forecast is not scored (prepared 2026-10-01, #6317)
+
+**Status: PREPARED, NOT DEPLOYED.** Root and the integrator own the rollover. No dark window is asked for (see below).
+
+**What changes.** A settled field with exactly one winner (a race stage, an award, a draft slot) is
+scored only when that winner is one of the outcomes the curve would publish. Before, a winner that
+was never priced — or priced only by a quote the curve refuses — left its priced legs publishing as
+confident losses whenever the field's prices summed to 1.15 or less. Those legs are losses by
+construction (the missing leg is missing *because* it won), so the sample was censored on the outcome.
+
+**What it does not change.** No price is synthesized for the winner, no loser is re-graded, a winner
+priced only by its opening still counts (`COALESCE(calibration, opening)` is unchanged), and a field
+whose winner *is* priced publishes as before however low its prices sum.
+
+**Size: unmeasured.** Historical: 32 markets / 144 published rows (0.02%, 2026-09-15). #6110's rail
+(PR #6306, merged 2026-09-15) can turn winnerless fields into this shape; the issue's ceiling is ~4.4%
+of the curve. The shipped declaration is "nothing" (inside the ordinary ±5% band), so the move is
+measured on the published population before deploy; a move past the band needs a declaration first.
+
+**Rollover: candidate-first, no dark window.** `POPULATION_VERSION_DARK_WINDOW_ACCEPTED` still names
+q271 and is deliberately not moved. q272 instead publishes to its OWN keys (`calibration:main:q272`
+and its own Redis pair; q271 keeps the shared `calibration:main` keys). The page serves whatever a
+durable active-selection record (`calibration:active_selection`) names, and with no record that is
+the q271 artifact under its own version, age and method. The record moves to q272 only when a
+complete q272 build has passed the publish gate against the live q271 artifact and an activation
+transaction re-checks it under a row lock and compare-and-swaps the record. Until then readers see
+q271, dated honestly; after it every tier serves q272 together. A refused, incomplete or racing
+candidate changes nothing readers see. `POPULATION_VERSION_CANDIDATE_FIRST = "q272"` names this
+disposition for this version only; the rollover guards accept it only when the namespaces are
+disjoint and the route's no-record answer is the outgoing version.
+
+The move measurement above is still owed before production deployment: an undeclared move past the
+band is refused by the gate, so q271 would keep serving, but every beat would rebuild and refuse.
 
 ## q271 — D112, the symmetric settlement channels (2026-09-13)
 

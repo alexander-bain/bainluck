@@ -144,8 +144,9 @@ BRIDGE_RUNGS: tuple[tuple[str, str], ...] = (
     (
         "field_incomplete",
         "The outcome belongs to a normalization field that lost a member to an "
-        "exclusion above, so the partition no longer sums to one and is dropped "
-        "whole rather than normalized over its survivors.",
+        "exclusion above, or whose one winner has no usable forecast (#6317), so "
+        "the partition no longer sums to one and is dropped whole rather than "
+        "normalized over its survivors.",
     ),
     (
         "representative_not_selected",

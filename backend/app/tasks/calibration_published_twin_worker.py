@@ -492,21 +492,40 @@ async def _read_published_payload() -> tuple[dict, Optional[str], dict]:
         )
         meta["pretouch_status"] = getattr(ping, "status", "error")
 
+        # #6317: grade the ACTIVE artifact, named by the durable selection. A
+        # version after q271 publishes to its own keys; the legacy pair is the
+        # answer only when no selection record exists. An unreadable record is
+        # reported, never graded as the legacy pair — after an activation that
+        # is not the published artifact.
+        from app.utils.calibration_publication_selection import (
+            resolve_namespace_standalone,
+        )
+
+        active_ns, meta["selection_source"] = await resolve_namespace_standalone()
+        if active_ns is None:
+            return (
+                {},
+                "published_read_failed: active selection unreadable "
+                f"({meta['selection_source']})",
+                meta,
+            )
+        main_key, last_good_key = active_ns.main_key, active_ns.last_good_key
+
         payload, main_status, attempts = await _read_one_key(
-            _rc, rc, PUBLISHED_MAIN_KEY, retry=True
+            _rc, rc, main_key, retry=True
         )
         meta["main_status"] = main_status
         meta["read_attempts"] = attempts
         if main_status == "ok" and payload is not None:
-            meta["payload_source"] = PUBLISHED_MAIN_KEY
+            meta["payload_source"] = main_key
             return payload, None, meta
 
         lg_payload, lg_status, _lg_attempts = await _read_one_key(
-            _rc, rc, PUBLISHED_LAST_GOOD_KEY, retry=False
+            _rc, rc, last_good_key, retry=False
         )
         meta["last_good_status"] = lg_status
         if lg_status == "ok" and lg_payload is not None:
-            meta["payload_source"] = PUBLISHED_LAST_GOOD_KEY
+            meta["payload_source"] = last_good_key
             meta["fallback_used"] = True
             return lg_payload, None, meta
     except Exception as exc:  # noqa: BLE001 — recorded, never swallowed

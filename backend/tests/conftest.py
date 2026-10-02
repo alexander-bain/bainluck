@@ -168,6 +168,68 @@ def _reset_request_cache_state():
     _reset_staged()
 
 
+def pytest_configure(config):
+    config.addinivalue_line(
+        "markers",
+        "candidate_first: run the REAL #6317 active-selection resolution instead "
+        "of the steady-state stand-in every other test gets",
+    )
+
+
+@pytest.fixture(autouse=True)
+def _calibration_steady_state_selection(request, monkeypatch):
+    """#6317: the pre-rollover world, for every test written before it.
+
+    The candidate-first rollover makes the producer and ``/api/calibration``
+    resolve WHICH artifact is active from a durable record, and gives every
+    version after q271 its own keys. The existing suite describes the steady
+    state those changes preserve: the code's own version is active and lives on
+    the shared keys. So the active version is always the code's (read at call
+    time, because tests monkeypatch it), and its namespace is the shared one.
+
+    Opt out with ``@pytest.mark.candidate_first`` — the #6317 tests do, and they
+    exercise the real resolution, keys and activation.
+    """
+    if request.node.get_closest_marker("candidate_first"):
+        yield
+        return
+    from app.utils import calibration_publication_selection as sel
+
+    def _code_version():
+        from app.tasks.precompute_calibration import CALIBRATION_POPULATION_VERSION
+
+        return CALIBRATION_POPULATION_VERSION
+
+    real_namespace_for = sel.namespace_for
+
+    def _namespace_for(version):
+        if version == _code_version():
+            return sel.Namespace(
+                version, sel.LEGACY_IDENTITY, sel.LEGACY_MAIN_KEY, sel.LEGACY_LAST_GOOD_KEY
+            )
+        return real_namespace_for(version)
+
+    def _steady():
+        return sel.ActiveSelection(
+            version=_code_version(), min_generation=0, origin=sel.ORIGIN_DEFAULT
+        )
+
+    async def _resolve_for_route(db, *, now=None):
+        return _steady(), "test_steady_state"
+
+    async def _resolve_for_build(*, now=None):
+        return sel.SelectionRead(status=sel.READ_OK, selection=_steady(), generation=None)
+
+    monkeypatch.setattr(sel, "namespace_for", _namespace_for)
+    monkeypatch.setattr(sel, "resolve_for_route", _resolve_for_route)
+    monkeypatch.setattr(sel, "resolve_for_build", _resolve_for_build)
+    async def _resolve_namespace_standalone():
+        return _namespace_for(_code_version()), "test_steady_state"
+
+    monkeypatch.setattr(sel, "resolve_namespace_standalone", _resolve_namespace_standalone)
+    yield
+
+
 @pytest.fixture
 def healthy_staged_bank():
     """#2007 / CAL-P076 — declare that the staged futures bank is fine.

@@ -287,7 +287,13 @@ class TestTheHandMapIsGoneAndTheArtifactIsAuthority:
         # still passes the same container and row refusals. No hashed root
         # moved (`hashed_root_sha16` is identical across the change), so the
         # in-flight bank survives the deploy.
-        assert artifact["input_count"] == 79
+        # #6317 (q272): 79 -> 80. `FIELD_WINNER_UNPUBLISHED_RULE_TEXT`, the
+        # sentence disclosed under `mex_normalization.field_completeness`. Same
+        # module, `behavior_or_evidence`, `sql_interpolated: false`, and
+        # `uncovered_sql_shaping` holds at 27: the PREDICATE it describes lives
+        # inside `_calibration_population_ctes`, a hashed root, and the q272 bump
+        # moves the digest anyway, so no bank can straddle it.
+        assert artifact["input_count"] == 80
         # CAL-P162: 4 -> 5. `MEX_NORMALIZE_THRESHOLD` joined the by-value set on
         # the deploy that made it decide PUBLICATION rather than only pricing.
         # CAL-P164 added no by-value input, so this stands still.
@@ -325,7 +331,8 @@ class TestTheHandMapIsGoneAndTheArtifactIsAuthority:
         # #8905: 62 -> 66, the four durable-survivor names above. Where-from,
         # not which-rows: none reaches SQL and none widens the surface this
         # census measures.
-        assert artifact["uncovered_count"] == 66
+        # #6317: 66 -> 67, the q272 rule sentence above. Prose, not a predicate.
+        assert artifact["uncovered_count"] == 67
         assert artifact["uncovered_count"] == artifact["input_count"] - len(
             artifact["covered_by_value"]
         )
@@ -648,7 +655,10 @@ class TestTheHandMapIsGoneAndTheArtifactIsAuthority:
         # identity, schema, age bound and the context variable that carries
         # the producer's read. All four are defined in this module, so they
         # land in the non-cross tier and the cross list is unchanged.
-        assert len(cross) + 54 == artifact["uncovered_count"]
+        # 54 -> 55 at #6317: `FIELD_WINNER_UNPUBLISHED_RULE_TEXT` is same-module
+        # prose, so it lands in the non-cross tier and the cross list is
+        # unchanged.
+        assert len(cross) + 55 == artifact["uncovered_count"]
 
 
 class TestInterpolationDetectionCoversNonFStringSql:

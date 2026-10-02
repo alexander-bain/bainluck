@@ -341,6 +341,10 @@ DEFAULT_CENSUS_COLUMNS: tuple[str, ...] = (
     "mex_normalized_markets",
     "field_incomplete_markets",
     "field_incomplete_outcomes",
+    # #6317: declared in the SAME commit that emits them (the CAL-P162 lesson
+    # below — an undeclared column makes every banked unit refuse to merge).
+    "field_winner_unpublished_markets",
+    "field_winner_unpublished_outcomes",
     "esports_bundle_excluded",
     "no_winner_excluded",
     "no_winner_markets",

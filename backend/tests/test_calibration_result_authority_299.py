@@ -434,6 +434,7 @@ class TestPublishOrPark:
     def test_publish_bar_is_the_shipped_sample_gate(self):
         assert pc._DEFAULT_MIN_CATEGORY_OUTCOMES == 1000
 
+    @pytest.mark.candidate_first
     def test_a_version_bump_carries_its_own_rollover_declaration(self):
         """A version bump either keeps the page lit or DECLARES that it will not.
 
@@ -469,6 +470,7 @@ class TestPublishOrPark:
         current = pc.CALIBRATION_POPULATION_VERSION
         declared = tuple(pc.COMPATIBLE_PREVIOUS_POPULATION_VERSIONS)
         accepted = pc.POPULATION_VERSION_DARK_WINDOW_ACCEPTED
+        candidate_first = pc.POPULATION_VERSION_CANDIDATE_FIRST
         assert current not in declared, (
             "the CURRENT version is not its own predecessor — listing it would "
             "make every artifact 'previous_version' and nothing 'ok'"
@@ -483,6 +485,23 @@ class TestPublishOrPark:
                 "version whose artifact was actually published. Every cached "
                 "copy becomes wrong_version on deploy and /calibration 503s "
                 "until the first build under the new version completes."
+            )
+        elif candidate_first == current:
+            # #6317, the third arm: the outgoing artifact stays served under its
+            # OWN version until a gated candidate is activated. Accepted only
+            # when the protection is real, not because the constant says so.
+            from app.utils.calibration_publication_selection import (
+                candidate_first_protection_problems,
+            )
+
+            problems = candidate_first_protection_problems(
+                current, pc.PREVIOUS_PUBLISHED_POPULATION_VERSION
+            )
+            assert not problems, problems
+            assert _route_reads_the_active_version(), (
+                "the route still expects the CODE's version, so deploying this "
+                "bump to the web makes the live artifact wrong_version at every "
+                "tier — candidate-first is declared but not wired"
             )
         else:
             assert accepted == current, (
@@ -523,6 +542,57 @@ class TestPublishOrPark:
             == _Stub.CALIBRATION_POPULATION_VERSION
         )
 
+    @pytest.mark.candidate_first
+    def test_a_candidate_first_disposition_cannot_be_inherited_or_unwired(self):
+        """#6317's arm needs the same control: it must fail when it does not hold.
+
+        Inherited (named for another version), and declared over keys that
+        collide or over a route whose no-record answer is not the outgoing
+        version: each must be refused, so the arm above is not satisfiable by
+        editing a constant.
+        """
+        from app.utils import calibration_publication_selection as sel
+
+        class _Inherited:
+            CALIBRATION_POPULATION_VERSION = "q273"
+            POPULATION_VERSION_CANDIDATE_FIRST = "q272"
+
+        # Named for q272, the code is at q273: the arm does not apply.
+        assert (
+            _Inherited.POPULATION_VERSION_CANDIDATE_FIRST
+            != _Inherited.CALIBRATION_POPULATION_VERSION
+        )
+        # A real rollover from the legacy incumbent: protected.
+        assert sel.candidate_first_protection_problems("q272", "q271") == []
+        # Outgoing is not what a missing record serves: refused.
+        assert sel.candidate_first_protection_problems("q273", "q272")
+        # Same version, i.e. shared keys: refused.
+        assert sel.candidate_first_protection_problems("q271", "q271")
+
+    def test_direct_deploy_before_candidate_without_protection_still_fails(self):
+        """The shape the guard exists for, with candidate-first ABSENT.
+
+        Neither a compatible predecessor, nor a dark window for this version, nor
+        a candidate-first disposition: the guard's condition must be false.
+        """
+
+        class _Stub:
+            CALIBRATION_POPULATION_VERSION = "q272"
+            COMPATIBLE_PREVIOUS_POPULATION_VERSIONS: tuple[str, ...] = ()
+            POPULATION_VERSION_DARK_WINDOW_ACCEPTED = "q271"
+            POPULATION_VERSION_CANDIDATE_FIRST = None
+
+        lit = bool(_Stub.COMPATIBLE_PREVIOUS_POPULATION_VERSIONS)
+        dark_accepted = (
+            _Stub.POPULATION_VERSION_DARK_WINDOW_ACCEPTED
+            == _Stub.CALIBRATION_POPULATION_VERSION
+        )
+        guarded = (
+            _Stub.POPULATION_VERSION_CANDIDATE_FIRST
+            == _Stub.CALIBRATION_POPULATION_VERSION
+        )
+        assert not (lit or dark_accepted or guarded)
+
     def test_the_shipped_bump_is_the_methodology_bump_it_says_it_is(self):
         """q270 must be a bump that the gate's version escape hatch is FOR.
 
@@ -556,17 +626,23 @@ class TestPublishOrPark:
         `docs/calibration-methodology-ledger.md` as an open question for Alex,
         since what /calibration shows during a rollover is a reader-visible
         call.
+
+        #6317 moves it to q272, and it NARROWS again: a proved single-winner
+        field whose one winner has no publishable forecast leaves the curve. A
+        q271 artifact publishes exactly those all-loser legs, so serving it under
+        a q272 label would re-publish what the bump removes — the q269/q270
+        argument for the empty list applies in full. Whether the dark window that
+        follows is accepted is NOT asserted here: that is Alex's call by name,
+        and ``test_a_version_bump_carries_its_own_rollover_declaration`` above is
+        the one guard that holds it.
         """
-        assert pc.CALIBRATION_POPULATION_VERSION == "q271"
+        assert pc.CALIBRATION_POPULATION_VERSION == "q272"
         assert pc.COMPATIBLE_PREVIOUS_POPULATION_VERSIONS == ()
-        assert pc.POPULATION_VERSION_DARK_WINDOW_ACCEPTED == "q271"
-        assert pc.PREVIOUS_PUBLISHED_POPULATION_VERSION == "q269", (
-            "q269 is the version the live artifact carries; if this moves, the "
+        assert pc.PREVIOUS_PUBLISHED_POPULATION_VERSION == "q271", (
+            "q271 is the version the live artifact carries; if this moves, the "
             "lit-path arm above is checking the wrong predecessor. MEASURED "
-            "2026-09-13 04:57Z and still true at the time of writing: "
-            "/api/calibration returns 503 no_trustworthy_snapshot, because q270 "
-            "merged and went live on the web but `bainluck-heavy` has not taken "
-            "the sha, so the last PUBLISHED artifact is still q269."
+            "2026-10-01 17:09Z: /api/calibration served population_version q271, "
+            "generated_at 2026-10-01T16:33:01Z, 1,031,394 outcomes."
         )
 
 
@@ -674,3 +750,16 @@ class TestReadSideOnly:
             lowered = text.lower()
             assert "read-side only" in lowered
             assert "never" in lowered
+
+
+def _route_reads_the_active_version() -> bool:
+    """Static: ``/api/calibration``'s expected version comes from the active
+    selection, not from the code's own ``CALIBRATION_POPULATION_VERSION``."""
+    import inspect
+
+    from app.routes import calibration as route
+
+    src = inspect.getsource(route.public_calibration)
+    start = src.index("def _expected_version")
+    body = src[start : src.index("def _compatible_versions")]
+    return "CALIBRATION_POPULATION_VERSION" not in body.split('"""')[-1] and "_active" in body
