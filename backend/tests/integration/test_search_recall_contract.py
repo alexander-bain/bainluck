@@ -255,6 +255,15 @@ _FUTURES_SEEDS = [
     # The control that must survive: both terms inside ONE outcome, by substring.
     ("polymarket-r6-major-10163", "Rainbow Six Major: Grand Final",
      ["Wildcard Gaming", "M80"]),
+    # ---- #10175: a phrase that names a market does not split across outcomes. --
+    #
+    # Transcribed from production 2026-10-02, `world series`: the Netflix board
+    # was reached by `world` and `series`, each a WHOLE word in its own outcome,
+    # so #10163's rule passed it. The MLB board's NAME holds the phrase, and that
+    # is what turns the split reading off.
+    ("polymarket-netflix-top-10175", "What will be the top US Netflix show this week?",
+     ["A Different World: Season 1", "East of Eden: Limited Series"]),
+    ("kalshi-mlb-ws-10175", "MLB World Series Champion 2026", ["Los Angeles Dodgers"]),
 ]
 
 # LAT-P053 Item 5 — the seeded futures corpus, carried FIVE times and ruled into
@@ -956,6 +965,23 @@ async def test_two_long_terms_inside_two_longer_words_no_longer_attest(search):
     )
     assert "Rainbow Six Major: Grand Final" in names, (
         f"got {names!r} — the one-outcome substring control was dropped with the scatter"
+    )
+
+
+async def test_a_phrase_that_names_a_market_does_not_split_across_outcomes(search):
+    """#10175: `world series` served a Netflix board through "A Different World"
+    + "Limited Series", two whole words in two outcomes. A market NAME holds the
+    phrase, so the split reading is off and the board is refused, while the board
+    that names it stays. `zelenskyy putin` (no name holds it) still splits; see
+    `test_two_long_terms_still_reach_a_board_across_its_outcomes`.
+    """
+    names = _futures_names(await search("world series"))
+    assert "What will be the top US Netflix show this week?" not in names, (
+        f"got {names!r} — `world` and `series` split across two outcomes while a "
+        "market name holds the phrase"
+    )
+    assert "MLB World Series Champion 2026" in names, (
+        f"got {names!r} — the market that names the phrase was dropped"
     )
 
 

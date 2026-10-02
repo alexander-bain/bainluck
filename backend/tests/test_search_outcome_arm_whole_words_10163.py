@@ -70,7 +70,11 @@ class TestEveryTermLong:
     def test_the_two_rules_are_alternatives_not_both_required(self):
         sql = _sql([("wild", None), ("card", None)])
         refinement = sql[sql.index(PROBE) - 2:]
-        assert re.search(r"\)\) OR \(EXISTS", refinement), refinement
+        # #10175 gates the whole-word side on no market NAME holding the phrase;
+        # it is still the OR's other side. See test_search_phrase_gates_split_10175.
+        assert re.search(r"\)\) OR NOT \(EXISTS \(SELECT phrase_named", refinement), (
+            refinement
+        )
 
     def test_an_expansion_is_a_whole_word_too(self):
         probes = _probes(_sql([("nfl", None), ("champion", "winner")]))
