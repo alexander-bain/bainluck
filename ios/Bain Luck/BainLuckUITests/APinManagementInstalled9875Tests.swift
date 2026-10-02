@@ -213,7 +213,8 @@ final class APinManagementInstalled9875Tests: XCTestCase {
                     return true
                 }
                 let toastAction = app.buttons["pinLimitManagePins"]
-                if toastAction.exists && toastAction.isHittable && toastAction.isEnabled {
+                let limitMessage = app.staticTexts["You already have 6 pinned games. Unpin one in My Stuff."]
+                if toastAction.exists && limitMessage.exists && toastAction.isHittable && toastAction.isEnabled {
                     surface = "toast"
                     reachedAction = toastAction
                     return true
