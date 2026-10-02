@@ -776,6 +776,99 @@ def test_no_target_can_be_starved_by_the_ones_ahead_of_it():
     assert pcp._prewarm_target_deadline(10.0, 0) == 0.0
 
 
+# --- #10221: the feed pass reserves a build's floor, not a 1/N slice ---------
+
+
+def _run_feed_pass_with_fake_targets(burn):
+    """Drive `_prewarm_discover_feed_responses` over recording fake targets.
+
+    ``burn(deadline_s)`` is how many seconds each fake build consumes on a fake
+    monotonic clock — the pass reads `time.monotonic()` to charge the budget, so
+    a fake that consumed nothing could never observe starvation (the lesson
+    `test_no_live_target_can_be_starved_by_the_ones_ahead_of_it` records).
+    """
+    import asyncio
+
+    clock = {"t": 1000.0}
+    handed: list[tuple[str, float]] = []
+
+    def _fake(label):
+        async def warm(rc, *, deadline_s):
+            handed.append((label, deadline_s))
+            clock["t"] += burn(deadline_s)
+            return {"outcome": "ok"}
+
+        return warm
+
+    targets = [(label, _fake(label)) for label, _ in pcp._prewarm_targets()]
+    rc = MagicMock()
+    rc.get.return_value = None
+    with patch("app.tasks.redis_state.get_redis_client", return_value=rc), patch.object(
+        pcp, "_prewarm_targets", return_value=targets
+    ), patch("time.monotonic", side_effect=lambda: clock["t"]):
+        asyncio.run(pcp._prewarm_discover_feed_responses())
+    return handed
+
+
+def test_the_feed_pass_does_not_cap_its_first_target_at_the_fair_share():
+    """#10221 / Sentry BAINLUCK-144: `discover` was killed at exactly 11.4 s.
+
+    11.4 s is `80 / 7`: the fair share capped the FIRST target at B/N on passes
+    where the other six finished in ~10 s and 55 s of the wall went unspent. The
+    feed pass now holds back one build's floor per target behind and lets the
+    current one spend the rest.
+    """
+    from app.utils.feed_cache import FEED_PREWARM_MIN_VIABLE_BUILD_S
+
+    budget = pcp.FEED_PREWARM_PASS_BUDGET_S
+    n = len(pcp._prewarm_targets())
+    fair_share = budget / n
+
+    # The production specimen, pinned: the old allocator's first slice IS the
+    # 11.4 s in the Sentry title, so this test is about that defect.
+    assert round(pcp._prewarm_target_deadline(budget, n), 1) == 11.4
+
+    handed = _run_feed_pass_with_fake_targets(burn=lambda deadline_s: 0.0)
+    assert [label for label, _ in handed] == [label for label, _ in pcp._prewarm_targets()]
+    first_label, first_deadline = handed[0]
+    assert first_deadline == pytest.approx(
+        budget - (n - 1) * FEED_PREWARM_MIN_VIABLE_BUILD_S
+    )
+    assert first_deadline > fair_share + 1.0, (
+        f"{first_label} was capped at {first_deadline:.1f}s — the fair share "
+        f"{fair_share:.1f}s that killed it in production"
+    )
+
+
+def test_no_feed_target_is_started_under_its_floor_when_every_one_ahead_burns_its_all():
+    """Gotcha #34 on the new allocator, adversarial case executed.
+
+    The guarantee is deliberately weaker than the fair share's and is asserted at
+    its stated value: every target gets `>= min(floor, B/N)`, and the pass never
+    spends more than its budget.
+    """
+    from app.utils.feed_cache import FEED_PREWARM_MIN_VIABLE_BUILD_S
+
+    budget = pcp.FEED_PREWARM_PASS_BUDGET_S
+    n = len(pcp._prewarm_targets())
+    guarantee = min(FEED_PREWARM_MIN_VIABLE_BUILD_S, budget / n)
+
+    handed = _run_feed_pass_with_fake_targets(burn=lambda deadline_s: deadline_s)
+    assert len(handed) == n
+    for index, (label, deadline_s) in enumerate(handed):
+        assert deadline_s >= guarantee - 1e-9, (
+            f"target {index} ({label}) got {deadline_s:.2f}s, under the "
+            f"{guarantee:.2f}s guarantee, after every target ahead burned its all"
+        )
+    assert sum(d for _, d in handed) <= budget + 1e-9
+
+    # The fair-share branch still carries when the floor cannot be honoured for
+    # everyone: 10 s over 4 targets with a 6 s floor is 2.5 s each, not 0.
+    assert pcp._prewarm_feed_target_deadline(10.0, 4, 6.0) == pytest.approx(2.5)
+    assert pcp._prewarm_feed_target_deadline(-5.0, 3, 6.0) == 0.0
+    assert pcp._prewarm_feed_target_deadline(10.0, 0, 6.0) == 0.0
+
+
 def test_every_warm_target_is_in_the_budgeted_pass():
     """A budget that only bounds SOME of the work it shares a beat with is not one.
 
