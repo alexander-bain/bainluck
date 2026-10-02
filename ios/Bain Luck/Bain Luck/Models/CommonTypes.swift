@@ -381,7 +381,19 @@ nonisolated struct BookmakerOdds: Decodable, Sendable {
 extension String {
     /// Parse an ISO 8601 date string into a Date.
     /// Handles both with and without fractional seconds.
+    ///
+    /// #8651 — the server's own shape takes `ISO8601Stamp`'s fast path (same
+    /// value, ~1,000× cheaper); anything it declines gets the formatters, as
+    /// before.
     var asDate: Date? {
+        ISO8601Stamp.date(self)
+            ?? Self.iso8601FracFormatter.date(from: self)
+            ?? Self.iso8601Formatter.date(from: self)
+    }
+
+    /// The formatters alone, without the fast path — the reference
+    /// `ISO8601Stamp` is tested against.
+    var asDateByFormatter: Date? {
         Self.iso8601FracFormatter.date(from: self)
             ?? Self.iso8601Formatter.date(from: self)
     }

@@ -151,3 +151,50 @@ nonisolated enum EventHistoryFreshness {
         return freshEdge >= currentEdge
     }
 }
+
+// MARK: - Read once per payload, not once per page
+
+/// #8651 — what the event page reads off a history payload, read ONCE when the
+/// payload arrives instead of on every page rebuild.
+///
+/// Build 34 on Alex's phone (Steelers–Browns 14780550, Oct 1): a game page left
+/// open "got very, very choppy to the point where the app became unusable".
+/// Measured on build 34's own source in a Release simulator build: every update
+/// the page takes in — a game-markets reread (as often as every 2 s, the
+/// delivery's budget, when a game's markets keep moving), a pushed price, a
+/// re-polled history — rebuilt the page, and the page body
+/// re-parsed every timestamp in the history twice: `lastReading(in:)` for the
+/// chart's live edge (~9,500 stamps on that game) and the latest
+/// win-probability reading for the chart's readout, whose `max(by:)` parsed both
+/// sides of every comparison (~4,400 readings). ~600 ms of a ~860 ms main-thread
+/// freeze per update, measured in a simulator on a Mac. Both scans grow with
+/// the game's history. Neither depends on anything but the payload, so the page holds them here.
+nonisolated struct EventHistoryDigest {
+    /// `EventHistoryFreshness.lastReading(in:)` of the payload.
+    let edge: Date?
+    /// The latest win-probability reading across every source. Sources are
+    /// walked in name order and a tie keeps the first, so a tie on the latest
+    /// time resolves the same way on every open (#8509) — the same reading the
+    /// page's `max(by:)` over the name-sorted series picked.
+    let latestWinProb: WinProbHistoryPoint?
+
+    init(_ history: EventHistoryResponse) {
+        edge = EventHistoryFreshness.lastReading(in: history)
+        latestWinProb = Self.latestWinProb(in: history)
+    }
+
+    /// Each stamp is parsed once. An unparseable stamp sorts as the distant
+    /// past, as it did in the comparator this replaces.
+    static func latestWinProb(in history: EventHistoryResponse) -> WinProbHistoryPoint? {
+        guard let series = history.winProbHistory else { return nil }
+        var latest: (point: WinProbHistoryPoint, at: Date)?
+        for (_, points) in series.sorted(by: { $0.key < $1.key }) {
+            for point in points {
+                let at = point.timestamp.asDate ?? .distantPast
+                if let current = latest, current.at >= at { continue }
+                latest = (point, at)
+            }
+        }
+        return latest?.point
+    }
+}

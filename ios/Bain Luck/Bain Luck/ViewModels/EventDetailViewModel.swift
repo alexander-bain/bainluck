@@ -44,7 +44,13 @@ final class EventDetailViewModel: ObservableObject {
     @Published private(set) var event: EventDetail?
     @Published private(set) var loading = true
     @Published private(set) var error: String?
-    @Published private(set) var history: EventHistoryResponse?
+    @Published private(set) var history: EventHistoryResponse? {
+        didSet { historyDigest = history.map(EventHistoryDigest.init) }
+    }
+    /// #8651 — the history's live edge and latest reading, read once per
+    /// payload. Not `@Published`: it changes only with `history`, which already
+    /// publishes, and the page reads it on every rebuild.
+    private(set) var historyDigest: EventHistoryDigest?
     @Published private(set) var relatedFutures: RelatedFuturesResponse?
     @Published private(set) var teamProgression: TeamProgressionResponse?
     @Published private(set) var gameMarkets: GameMarketsResponse?
@@ -205,8 +211,19 @@ final class EventDetailViewModel: ObservableObject {
     @MainActor private lazy var marketDelivery = GameMarketsPriceDelivery(
         eventID: eventId,
         fetch: { [client] id in try await client.fetchFreshGameMarkets(eventId: id) },
-        publish: { [weak self] body in self?.gameMarkets = body }
+        publish: { [weak self] body in self?.receiveGameMarkets(body) }
     )
+
+    /// #8651 — an unchanged reread publishes nothing. The markets can be
+    /// reread as often as every 2 s, and every write to a `@Published`
+    /// property rebuilds the whole event page even when the value is identical
+    /// (measured on 14780550 with rereads forced at that rate). A body that
+    /// differs in any field still publishes.
+    @MainActor
+    func receiveGameMarkets(_ body: GameMarketsResponse) {
+        guard gameMarkets != body else { return }
+        gameMarkets = body
+    }
 
     @MainActor
     func setMarketPageVisible(_ visible: Bool) {
