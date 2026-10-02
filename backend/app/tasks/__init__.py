@@ -6128,6 +6128,22 @@ def warm_search_head(self, head_size: int = None):
 
 
 @celery_app.task(
+    bind=True, soft_time_limit=90, time_limit=120, name="app.tasks.warm_container_hubs"
+)
+def warm_container_hubs(self):
+    """#9982: keep each published collection hub built ahead of its expiry.
+
+    A cold `/api/containers/nfl-2026-week-4` read is ~4.5 s; the request-path
+    cache keeps it warm only while readers keep coming. Policy, cadence and cost
+    are in `app/tasks/container_hub_warmer.py` (module name differs from the
+    task's on purpose — the shadowing trap `warm_search_head` records above).
+    """
+    from app.tasks.container_hub_warmer import _warm_container_hubs
+
+    return _tracked_run("warm_container_hubs", _warm_container_hubs())
+
+
+@celery_app.task(
     bind=True,
     soft_time_limit=90,
     time_limit=120,
@@ -7574,6 +7590,19 @@ celery_app.conf.beat_schedule = {
         # that creates is declared for Integrator review rather than discovered.
         "schedule": 20.0,
         "options": {"queue": "background"},
+    },
+    "warm-container-hubs": {
+        "task": "app.tasks.warm_container_hubs",
+        # #9982 — every 60 s (`container_hub_warmer.BEAT_PERIOD_S`; the wiring
+        # test asserts they agree). A pass rebuilds only a hub a reader could soon
+        # miss (no entry for the current revision, or stale with < 150 s left),
+        # so an idle Week 4 is rebuilt about every 2.5-3 min (~4.5 s each) and a
+        # hub readers are keeping warm costs one Redis GET. Same queue as the
+        # other user-latency warmers. `expires` 120 s: a pass delivered up to two
+        # periods late still lands before an idle hub's 150 s refresh-ahead
+        # margin runs out; later than that it is skipped, not stacked.
+        "schedule": 60.0,
+        "options": {"queue": "background", "expires": 120},
     },
     "flush-search-gin-pending-lists": {
         "task": "app.tasks.flush_search_gin_pending_lists",

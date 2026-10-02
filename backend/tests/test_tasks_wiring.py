@@ -366,6 +366,10 @@ class TestBeatScheduleCompleteness:
         # #12: this allowlist is the reason a new beat entry cannot land
         # silently.
         "warm-search-head",
+        # #9982 — keeps each published collection hub built ahead of its expiry.
+        # Gotcha #12: this allowlist is the reason a new beat entry cannot land
+        # silently.
+        "warm-container-hubs",
         # LAT-P109 (#2255) — the trigram GIN pending-list flush that keeps cold
         # `/api/events/search` off the 4 MB sawtooth. Gotcha #12: this allowlist
         # is the reason a new beat entry cannot land silently.
