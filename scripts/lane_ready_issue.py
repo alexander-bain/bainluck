@@ -48,6 +48,8 @@ def selection_state(payload: dict, lane: str) -> tuple[int | None, str]:
     ready = []
     occupied = False
     for issue in connection["nodes"]:
+        if type(issue["number"]) is not int or issue["number"] < 1:
+            raise ValueError("invalid issue identity")
         labels = issue["labels"]
         projects = issue["projectItems"]
         if labels["pageInfo"]["hasNextPage"] is not False or projects["pageInfo"]["hasNextPage"] is not False:
@@ -194,10 +196,6 @@ def main() -> int:
             if owner is not None and args.handoff_root is not None:
                 stage_return_disposition(args.handoff_root, args.lane, owner, state)
             return 1
-        if owner is not None and args.handoff_root is not None:
-            # A Ready successor already advances this return; do not later
-            # wake quality for an old receipt after that successor starts.
-            (args.handoff_root / "runner-inbox" / args.lane / ".returned-session.json").unlink(missing_ok=True)
         print(number)
         return 0
     except (KeyError, AttributeError, TypeError, ValueError, OSError, subprocess.SubprocessError) as exc:

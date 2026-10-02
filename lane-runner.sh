@@ -758,7 +758,12 @@ maybe_restock () {
     restock_text "$L" "$PROG" "$READY_ISSUE" | sed 's/^/    | /'
     return 0
   fi
-  restock_text "$L" "$PROG" "$READY_ISSUE" > "$F"
+  restock_text "$L" "$PROG" "$READY_ISSUE" > "$F" || return 1
+  # Only the actual successor directive advances this return. A selector read
+  # alone (or failed staging) must retain the successful-session pointer.
+  if [ "$PROG" = "__issue_queue__" ]; then
+    rm -f "$INBOX/.returned-session.json"
+  fi
   echo "$NOW" > "$LASTF"
   echo "[restock:$L] no due assignment — wrote $(basename "$F") (program: $PROG)"
   return 0

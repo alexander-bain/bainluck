@@ -161,7 +161,7 @@ class ReturnDispositionTests(unittest.TestCase):
         for lane in policy["lanes"]:
             self.assertIsNone(selector.return_owner(policy, lane))
 
-    def test_failed_or_partial_read_does_not_stage_and_ready_clears_old_return(self):
+    def test_failed_or_partial_read_and_ready_selection_retain_return_until_staged(self):
         self.record()
         fixture = self.root / "payload.json"
         for data, expected in [(payload(issue(42)), 0), ({"errors": ["offline"]}, 2)]:
@@ -171,7 +171,19 @@ class ReturnDispositionTests(unittest.TestCase):
             with patch("sys.argv", argv):
                 self.assertEqual(selector.main(), expected)
             self.assertFalse(list(self.target.glob("*.md")))
-            self.assertEqual((self.inbox / ".returned-session.json").exists(), expected == 2)
+            self.assertTrue((self.inbox / ".returned-session.json").exists())
+
+    def test_malformed_successor_cannot_discard_return_or_stage_work(self):
+        fixture = self.root / "payload.json"
+        for number in [0, -1, True, "42", None]:
+            with self.subTest(number=number):
+                self.record()
+                fixture.write_text(json.dumps(payload(issue(number))))
+                argv = ["selector", "discover", "--fixture", str(fixture), "--handoff-root", str(self.root)]
+                with patch("sys.argv", argv):
+                    self.assertEqual(selector.main(), 2)
+                self.assertTrue((self.inbox / ".returned-session.json").exists())
+                self.assertFalse(list(self.target.glob("*.md")))
 
 
 class RestockTests(unittest.TestCase):
@@ -267,6 +279,13 @@ lane_program() { echo PROGRAM-SHOPPER.md; }
         for options in [{"dry": True}, {"queued": True}]:
             _, files, _ = self.run_restock(payload(), returned=True, **options)
             self.assertFalse(any(n.startswith("RETURN-DISPOSITION-") for n in files))
+
+    def test_only_written_ready_directive_advances_return(self):
+        _, files, _ = self.run_restock(payload(issue(42)), returned=True)
+        self.assertTrue(any(n.startswith("RESTOCK-") for n in files))
+        self.assertNotIn(".returned-session.json", files)
+        _, files, _ = self.run_restock(payload(issue(42)), returned=True, dry=True)
+        self.assertIn(".returned-session.json", files)
 
 
 if __name__ == "__main__":
