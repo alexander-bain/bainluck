@@ -7,7 +7,11 @@ import { suspendedSummary } from "@/lib/eventState";
 import { isGameLive, teamResult } from "@/lib/teamGames";
 import { teamShortNames } from "@/lib/teamShortName";
 import { teamTextColor } from "@/lib/teamColors";
-import { authorityStoppageLabel, formatTbdStartLabel } from "@/lib/gameTimeLabel";
+import {
+  authorityStoppageLabel,
+  formatScheduledGameLabel,
+  formatTbdStartLabel,
+} from "@/lib/gameTimeLabel";
 
 // ---------------------------------------------------------------------------
 // Team-page game cards (L2-158). Extracted from the team page so the
@@ -102,7 +106,7 @@ export function UpcomingGameCard({
           </span>
         ) : (
           <span className="text-[11px] text-text-muted flex-shrink-0">
-            {upcomingStartLabel(game, true)}
+            {upcomingStartLabel(game)}
           </span>
         )}
       </div>
@@ -141,11 +145,7 @@ export function UpcomingGameCard({
             </span>
           </div>
         </>
-      ) : (
-        <div className="text-sm text-text-secondary">
-          {upcomingStartLabel(game, false)}
-        </div>
-      )}
+      ) : null}
     </Link>
   );
 }
@@ -285,39 +285,25 @@ export function RecentGameCard({
 }
 
 /**
- * The upcoming card's start line. #8841: a start the venue has not announced
- * prints its day and "TBD" ("Sep 29 · TBD") and no clock and no "Starts" —
- * "Starts Sep 29 · TBD" promises the start the flag says we do not know.
+ * The upcoming card's start line, printed ONCE, in the header. #8841: a start the
+ * venue has not announced prints its day and "TBD" ("Sep 29 · TBD") and no clock and
+ * no "Starts" — "Starts Sep 29 · TBD" promises the start the flag says we do not know.
+ *
+ * #5653: an unpriced card used to print this line a second time as its body ("Starts
+ * Tue, Sep 15, 5:05 PM" over "Tue, Sep 15, 5:05 PM"); it now ends after the header. And
+ * an announced start reads in the Discover card's words (`formatScheduledGameLabel`:
+ * "Today 4:30 PM", "Tomorrow 10:40 AM", "Wed 7:05 PM", "Oct 14 7:05 PM"). The old
+ * local clock dropped the date for anything inside 24 hours, so at 10:48 PM the
+ * nearest fixture read "Starts 10:40 AM" — a time already past today — and a start
+ * already behind us read "Starts Recently". A past start now prints nothing.
  */
-function upcomingStartLabel(game: TeamGameBrief, withVerb: boolean): string {
+function upcomingStartLabel(game: TeamGameBrief): string {
   if (!game.commence_time) return "TBD";
   if (game.start_is_tbd === true) {
     return formatTbdStartLabel(game.commence_time) || "TBD";
   }
-  const time = formatTime(game.commence_time);
-  return withVerb ? `Starts ${time}` : time;
-}
-
-function formatTime(iso: string): string {
-  const d = new Date(iso);
-  const now = new Date();
-  const diffH = (d.getTime() - now.getTime()) / 3600000;
-
-  if (diffH < 0) return "Recently";
-  if (diffH < 1) return `In ${Math.round(diffH * 60)} min`;
-  if (diffH < 24) {
-    return d.toLocaleTimeString("en-US", {
-      hour: "numeric",
-      minute: "2-digit",
-    });
-  }
-  return d.toLocaleDateString("en-US", {
-    weekday: "short",
-    month: "short",
-    day: "numeric",
-    hour: "numeric",
-    minute: "2-digit",
-  });
+  const time = formatScheduledGameLabel(game.commence_time);
+  return time ? `Starts ${time}` : "";
 }
 
 // Settled-game date. Guards the impossible future-date-beside-Final state
