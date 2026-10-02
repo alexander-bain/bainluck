@@ -3763,18 +3763,22 @@ def _todays_final_order_key(armed: bool, status_order, upcoming_order, now: date
     then the rest in their old order.
 
     `completed`/`closed` only: a `suspended` row has no result to show. Today
-    is the Eastern day, from the route's own `now` (`_intent_day_order_key`).
+    is the Eastern day, from the route's own `now` (`_intent_day_order_key`),
+    widened by #10186 to the last `_RECENT_FINAL_LOOKBACK` so a night game is
+    still "today's final" the morning after (`_recent_final_window_start`).
     Armed for a club query (the TEAMS card has a row, #8942's test); None
     otherwise, and the SQL is then unchanged.
     """
     if not armed:
         return None
-    # Today's Eastern day as two UTC instants, not a per-row `timezone()` cast:
-    # the same rows, a range the `commence_time` index can serve, and no
-    # `timezone` token for #5688's named-day guard to mistake for its own key.
+    # The window as two UTC instants, not a per-row `timezone()` cast: the same
+    # rows, a range the `commence_time` index can serve, and no `timezone` token
+    # for #5688's named-day guard to mistake for its own key. It opens at
+    # `_recent_final_window_start` (#10186: today's Eastern day OR the last
+    # `_RECENT_FINAL_LOOKBACK`, so last night's game survives midnight ET).
     eastern = ZoneInfo(_EASTERN_TZ_NAME)
     today = now.astimezone(eastern).date()
-    day_start = datetime.combine(today, datetime.min.time(), tzinfo=eastern)
+    day_start = _recent_final_window_start(now)
     day_end = datetime.combine(
         today + timedelta(days=1), datetime.min.time(), tzinfo=eastern
     )
@@ -14615,7 +14619,7 @@ async def typeahead_search(
         # game (the query's docstring has the specimen). Same gate as the line
         # above, so only a query that IS the team pays the extra ~2 ms, and it is
         # skipped when an arm above already fetched today's result.
-        _ta_day_start = _eastern_day_start(now)
+        _ta_day_start = _recent_final_window_start(now)  # #10186: same window
         if not any(
             ev.status in ("completed", "closed")
             and ev.commence_time is not None
@@ -36996,6 +37000,28 @@ def _eastern_day_start(now: datetime) -> datetime:
     return datetime.combine(now.astimezone(tz).date(), datetime.min.time(), tzinfo=tz)
 
 
+#: #10186: how far back a finished game still counts as "today's final". The
+#: Eastern calendar day alone (#9211) dropped a night game at midnight ET:
+#: Steelers at Browns, TNF, kicked off 2026-10-02 00:15Z (8:15 PM ET) and ended
+#: ~03:30Z; at 09:55Z `steelers` printed 13 upcoming games first and the 27–24
+#: result as card 16, and the dropdown left it out. 18 h keeps an 8:15 PM ET
+#: kickoff lifted until 2:15 PM ET / 11:15 AM PT the next day, the morning after
+#: in every US time zone, and lets go before that evening's games. The day rule
+#: still holds on its own, so an afternoon final is unchanged.
+_RECENT_FINAL_LOOKBACK = timedelta(hours=18)
+
+
+def _recent_final_window_start(now: datetime) -> datetime:
+    """Where "today's final" opens: Eastern midnight or `now - 18 h`, the EARLIER.
+
+    One instant shared by /search's `_todays_final_order_key` and the dropdown's
+    `_lead_team_todays_final_query`, so the two agree about which game counts.
+    The earlier of the two, so the window only ever WIDENS #9211's day: a game
+    that finished today is still lifted, and last night's game is too.
+    """
+    return min(_eastern_day_start(now), now - _RECENT_FINAL_LOOKBACK)
+
+
 def _lead_team_todays_final_query(team_id: int, team_name: str, now: datetime):
     """#9211: the RESOLVED team's games that finished TODAY, found by identity.
 
@@ -37010,7 +37036,8 @@ def _lead_team_todays_final_query(team_id: int, team_name: str, now: datetime):
 
     The `_lead_team_next_match_query` predicate (team id OR exact name, never a
     LIKE, for the reasons that docstring measured) over a window that opens at
-    midnight Eastern and closes at `now`. Priced before it was chosen: EXPLAIN
+    `_recent_final_window_start` (midnight Eastern, or 18 h back when that is
+    earlier — #10186) and closes at `now`. Priced before it was chosen: EXPLAIN
     ANALYZE on production 2026-09-27 for Kansas City Chiefs, 1.5 ms execution /
     0.5 ms planning, a BitmapAnd of `ix_events_status_commence` with the four
     team indexes. No text predicate, so #4506's generic-plan pathology does not
@@ -37035,7 +37062,7 @@ def _lead_team_todays_final_query(team_id: int, team_name: str, now: datetime):
                 Event.away_team_name == team_name,
             ),
             Event.status.in_(["completed", "closed"]),
-            Event.commence_time >= _eastern_day_start(now),
+            Event.commence_time >= _recent_final_window_start(now),
             Event.commence_time <= now,
             not_a_proven_duplicate(),
         )

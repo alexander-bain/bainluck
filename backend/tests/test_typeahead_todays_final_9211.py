@@ -72,8 +72,10 @@ class TestStatement:
     def test_finished_rows_only_inside_todays_eastern_window(self):
         sql = self._sql()
         assert "events.status IN ('completed', 'closed')" in sql
-        # Midnight Eastern (EDT, UTC-4) on the 27th, and `now` as the ceiling.
-        assert "events.commence_time >= '2026-09-27 00:00:00-04:00'" in sql
+        # #10186: the window opens at the EARLIER of midnight Eastern (04:00Z on
+        # the 27th) and `now - 18 h` (03:31Z), so here 03:31Z — the day is still
+        # inside it — and `now` is the ceiling.
+        assert "events.commence_time >= '2026-09-27 03:31:00+00:00'" in sql
         assert "events.commence_time <= '2026-09-27 21:31:00+00:00'" in sql
 
     def test_selected_by_identity_never_by_substring(self):
