@@ -110,6 +110,8 @@ def test_the_derived_event_expansions_are_exactly_these() -> None:
         "bama": ("Tide", "americanfootball_ncaaf"),
         "vols": ("Volunteers", "americanfootball_ncaaf"),
         "huskers": ("Cornhuskers", "americanfootball_ncaaf"),
+        # #1757 — the Euroleague club; `milan` is spelled inside `Milano`.
+        "milan": ("Milano", "basketball_euroleague"),
     }
 
 
@@ -142,9 +144,11 @@ def test_the_two_rails_diverge_only_where_their_matchers_do() -> None:
     # serve its markets unaided (2026-09-30: 0 Roughriders markets on `riders` —
     # the Knight Riders make it a finished club word, #9609); a sport-scoped arm
     # would add only 2 of 6, the other 4 carrying no category. Games + team card only.
+    # #1757 added `milan` inside `Milano` (Olimpia Milano, Euroleague) — the 9ers
+    # shape: the plain ILIKE futures rail reaches `%milan%` unaided.
     assert only_events == {
         "9ers", "dbacks", "nucks", "noles", "horns", "huskers", "phins", "stros",
-        "riders",
+        "riders", "milan",
     }, (
         "the rails diverge somewhere new. Only an alias spelled inside its own "
         "token (`9ers`/`49ers`, `dbacks`/`Diamondbacks`, `nucks`/`Canucks`) may be "
