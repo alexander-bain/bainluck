@@ -80,8 +80,8 @@ describe("#10224 verified title detail", () => {
   it("the hero prints the verified value with the shown outcome's contributors", () => {
     const html = render(structuredClone(oddsVerified));
     expect(text(html, "hero-percent")).toBe("13");
-    expect(heroContributors(html)).toBe("Blended from Sportsbooks · Kalshi · Polymarket");
-    expect(html).not.toContain("Aggregated from");
+    expect(heroContributors(html)).toBe("Aggregated from Sportsbooks · Kalshi · Polymarket");
+    expect(html).not.toMatch(/Aggregated from <strong[^>]*>\d+ sources/);
     // Notice 33: the sportsbook venue is "Sportsbooks", never bare "books".
     expect(html).not.toMatch(/\bbooks\b/i);
   });
@@ -97,7 +97,7 @@ describe("#10224 verified title detail", () => {
     market.outcomes[0].contributing_sources = ["kalshi"];
     const html = render(market);
     expect(heroContributors(html)).toBe("From Kalshi");
-    expect(html).not.toContain("Blended from");
+    expect(html).not.toContain("Aggregated from");
   });
 
   it("CONTROL: an opted-in page the server refused renders source mode, as before", () => {

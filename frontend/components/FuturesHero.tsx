@@ -32,7 +32,7 @@ interface FuturesHeroProps {
    * #10224 — the displayed outcome's ACTUAL contributors, already labelled
    * ("Sportsbooks", "Kalshi", "Polymarket"), on a verified title page. When
    * present it replaces `sourceCount`'s "Aggregated from N sources": one label
-   * reads "From Kalshi" (never a fake blend), several read "Blended from …",
+   * reads "From Kalshi" (never a fake aggregate), several read "Aggregated from …",
    * none prints no footer. Absent ⇒ the source-mode footer, unchanged.
    */
   sourceLabels?: string[];
@@ -300,7 +300,7 @@ export function FuturesHero({
             ))}
           </div>
           <span className="text-[12px] text-text-secondary">
-            {sourceLabels.length === 1 ? "From " : "Blended from "}
+            {sourceLabels.length === 1 ? "From " : "Aggregated from "}
             <strong className="text-text-primary font-semibold">{sourceLabels.join(" · ")}</strong>
           </span>
         </div>
