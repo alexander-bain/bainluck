@@ -98,7 +98,8 @@ describe('#10200 the status button', () => {
     expect(html).toContain('<span class="truncate whitespace-nowrap">Connected · waiting</span>');
     expect(html).toMatch(/aria-expanded="false" aria-controls="([^"]+)"/);
     const id = html.match(/aria-controls="([^"]+)"/)![1];
-    expect(html).toMatch(new RegExp(`<div id="${id.replace(/[:]/g, '\\$&')}" hidden=""`));
+    // A plain substring: the id is React's `useId` value, so no pattern is needed.
+    expect(html).toContain(`<div id="${id}" hidden=""`);
     // The label is a state, never a seconds counter.
     const visible = html.match(/truncate whitespace-nowrap">([^<]+)</)![1];
     expect(visible).not.toMatch(/\d+s\b|ago/);
