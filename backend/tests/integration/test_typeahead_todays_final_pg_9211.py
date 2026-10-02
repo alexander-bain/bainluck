@@ -7,7 +7,9 @@ futures. The result was not in the list — every arm selects `live`/`scheduled`
 and the or-LAST arm is short-circuited whenever a next fixture exists.
 
 THE TARGET: the next game, then today's final directly behind it (D107: "next
-before last"). Yesterday's final stays out.
+before last"). A final from before the window stays out; #10186 opened the
+window at the earlier of Eastern midnight and now - 18 h, so last night's game
+is offered the morning after.
 THE STRAWMAN sets the new arm's limit to 0: the dropdown then reproduces the
 production list exactly (no final), so the target case testifies.
 THE CONTROL is a club with no game today: its suggestions are identical with and
@@ -64,7 +66,10 @@ def _clock() -> tuple[datetime, datetime]:
 async def _seed(session):
     from app.models.models import Event, Sport, Team
 
+    from app.routes.events import _recent_final_window_start
+
     now, day_start = _clock()
+    window_start = _recent_final_window_start(now)
     # Inside [day_start, now] whatever the hour: the midpoint of today so far.
     earlier_today = day_start + (now - day_start) / 2
     # Doubleheader game 1, before `earlier_today` and still inside today. It was
@@ -120,12 +125,16 @@ async def _seed(session):
         _game(nfl, "Kansas City Chiefs", "Las Vegas Raiders", now + timedelta(days=5), "scheduled"),
         _game(nfl, "Kansas City Chiefs", "Miami Dolphins", earlier_today, "completed",
               home_score=10, away_score=24),
-        _game(nfl, "Denver Broncos", "Kansas City Chiefs", day_start - timedelta(hours=3),
+        # #10186: "yesterday" means BEFORE THE WINDOW, which since #10186 opens at
+        # the earlier of Eastern midnight and now - 18 h. Seeded from the route's
+        # own window start so it stays outside at any hour; `day_start - 3 h`
+        # (9 PM ET) was inside the window until 3 PM ET (gotcha #44).
+        _game(nfl, "Denver Broncos", "Kansas City Chiefs", window_start - timedelta(hours=3),
               "completed", home_score=20, away_score=17),
         _game(rugby, "Exeter Chiefs", "Bath", now + timedelta(days=2), "scheduled"),
-        # The control: next game this week, last game yesterday, nothing today.
+        # The control: next game this week, last game before the window, nothing in it.
         _game(nfl, "Pittsburgh Steelers", "Cleveland Browns", now + timedelta(days=4), "scheduled"),
-        _game(nfl, "Cincinnati Bengals", "Pittsburgh Steelers", day_start - timedelta(hours=2),
+        _game(nfl, "Cincinnati Bengals", "Pittsburgh Steelers", window_start - timedelta(hours=2),
               "completed", home_score=30, away_score=27),
         # The doubleheader: game 1 finished earlier today, game 2 is being played.
         _game(mlb, "Tampa Bay Rays", "Boston Red Sox", earliest_today,
@@ -227,6 +236,32 @@ async def test_a_club_with_no_game_today_is_unchanged(typeahead, monkeypatch):
         r["text"] for r in unarmed["suggestions"]
     ]
     assert STEELERS_NEXT in _events(armed), _events(armed)
+
+
+STEELERS_LAST_NIGHT = "Cincinnati Bengals at Pittsburgh Steelers"
+
+
+async def test_last_nights_final_is_offered_the_morning_after(typeahead, monkeypatch):
+    """#10186: production 2026-10-02 09:55Z, `steelers` the morning after TNF
+    offered the next game and no result. The Steelers' seeded final kicked off
+    2 h before the window opens, which is always before Eastern midnight, so
+    the day-only rule never offers it. Widen the lookback, RELATIVE to that
+    kickoff (no branch on the hour, gotcha #44), and the dropdown offers it
+    directly behind the next game, through the shared window."""
+    from app.routes import events as events_module
+
+    now = datetime.now(timezone.utc)
+    kickoff = events_module._recent_final_window_start(now) - timedelta(hours=2)
+    before = _events(await typeahead("steelers"))
+    assert STEELERS_LAST_NIGHT not in before, before
+    monkeypatch.setattr(
+        events_module,
+        "_RECENT_FINAL_LOOKBACK",
+        now - kickoff + timedelta(minutes=30),
+    )
+    events = _events(await typeahead("steelers"))
+    assert STEELERS_LAST_NIGHT in events, events
+    assert events.index(STEELERS_LAST_NIGHT) == events.index(STEELERS_NEXT) + 1, events
 
 
 async def test_a_live_game_leads_and_the_game_finished_today_follows(typeahead):
