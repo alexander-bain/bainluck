@@ -5,12 +5,12 @@ import Link from "next/link";
 import { useSearchParams } from "next/navigation";
 import useSWR from "swr";
 import { useFuturesDetailStream } from "@/hooks/useFuturesDetailStream";
-import { useVerifiedTitleChart } from "@/hooks/useVerifiedTitleChart";
 import {
   VERIFIED_TITLE,
   heroContributorLabels,
   heroValueIsSourceOwn,
-  isVerifiedTitle,
+  relatedEventsOnDetailScale,
+  verifiedHistoryLabel,
 } from "@/lib/verifiedTitleDetail";
 import {
   fetchFuturesMarket,
@@ -214,17 +214,20 @@ export default function FuturesDetailPage({ params }: FuturesDetailPageProps) {
     window.history.replaceState(window.history.state, "", url.toString());
   };
 
-  // #10224: a verified detail draws the opted-in timeline instead (see
-  // `useVerifiedTitleChart` below), so the source history is fetched only for a
-  // source-mode detail — never both, never the wrong one for the hero.
-  const detailIsVerified = isVerifiedTitle(market);
+  // #10244: ONE chart in both modes — this market's own `/history`, the
+  // de-vigged consensus. A verified detail briefly drew the opted-in
+  // `/probability-timeline` instead, whose sportsbook line is a median of raw,
+  // margin-inclusive prices: on /futures/86832 it ended the Bills at 13.3%
+  // under "Sportsbooks history" while the sportsbooks' own number was 11.2%.
+  // The card says whose history it is (`verifiedHistoryLabel` below); the
+  // geometry is the source page's, unchanged.
   const {
-    data: sourceHistoryData,
-    error: sourceHistoryError,
-    isLoading: sourceHistoryLoading,
+    data: historyData,
+    error: historyError,
+    isLoading: historyLoading,
     mutate: refreshHistory,
   } = useSWR(
-    market && !detailIsVerified ? ["futures-history", marketId, historyHours] : null,
+    market ? ["futures-history", marketId, historyHours] : null,
     () => fetchFuturesHistory(marketId, historyHours),
     // #7545 — hold the previous rung's chart on screen while the next one loads.
     // Without this the card unmounts on every chip tap, which takes the CHIPS
@@ -418,9 +421,12 @@ export default function FuturesDetailPage({ params }: FuturesDetailPageProps) {
     .filter((m) => m.group_position !== null && m.group_position !== undefined)
     .sort((a, b) => (a.group_position ?? 0) - (b.group_position ?? 0));
   const hasGroupProgression = progressionMarkets.length >= 2;
-  const relatedEvents = Array.isArray(relatedEventsData?.events)
-    ? relatedEventsData.events
-    : [];
+  // #10243 — on a verified page each row prints the detail's own number for its
+  // outcome id (the table's), never the route's source value beside it.
+  const relatedEvents = relatedEventsOnDetailScale(
+    market,
+    Array.isArray(relatedEventsData?.events) ? relatedEventsData.events : [],
+  );
 
   // Sort outcomes. UX-P230: the comparators live in futuresDetailDisplay so all
   // six field×direction combinations can be exercised, not just the page default.
@@ -492,30 +498,13 @@ export default function FuturesDetailPage({ params }: FuturesDetailPageProps) {
     )[0];
   }, [market?.outcomes, leadOutcome]);
 
-  // #10224 — the hero's outcome, decided by the same rule the hero uses below,
-  // so the chart reconciles against the number actually printed.
-  const chartHeroId = market?.outcomes
-    ? (leadOutcome ??
-        pickHeroOutcome(market.outcomes, leader, market.status === "resolved", market.mutually_exclusive))?.id ?? null
-    : null;
-  const verifiedChart = useVerifiedTitleChart({
-    marketId,
-    market,
-    hours: historyHours,
-    heroId: chartHeroId,
-  });
-  // Every consumer below (chips, seeds, caption, cadence, empty state) reads one
-  // history: the verified timeline's for a verified detail, the source one else.
-  const historyData = verifiedChart.active ? verifiedChart.history : sourceHistoryData;
-  const historyError = verifiedChart.active ? verifiedChart.error : sourceHistoryError;
-  const historyLoading = verifiedChart.active ? verifiedChart.isLoading : sourceHistoryLoading;
   useFuturesDetailStream({
-    marketId, market, history: sourceHistoryData, historyHours,
+    marketId, market, history: historyData, historyHours,
     setMarket: next => refreshMarket(next, { revalidate: false }),
     setHistory: next => refreshHistory(next, { revalidate: false }),
     representation: VERIFIED_TITLE,
-    setTimeline: verifiedChart.adopt,
   });
+  const historyLabel = verifiedHistoryLabel(market);
   const historyOutcomes = Array.isArray(historyData?.outcomes)
     ? historyData.outcomes
     : [];
@@ -725,8 +714,7 @@ export default function FuturesDetailPage({ params }: FuturesDetailPageProps) {
               ? "This market ID is invalid. It may have been removed or the link is incorrect."
               : marketError?.message || "Unable to load this market. It may have been removed or is temporarily unavailable."
           }
-          // #10224: a refresh reloads the detail AND its chart, never one alone.
-          onRetry={isValidId ? () => void Promise.all([refreshMarket(), verifiedChart.refresh()]) : undefined}
+          onRetry={isValidId ? () => refreshMarket() : undefined}
         />
       </div>
     );
@@ -1150,12 +1138,11 @@ export default function FuturesDetailPage({ params }: FuturesDetailPageProps) {
                 <span>📈</span>
                 Probability Trend
               </h2>
-              {/* #10224 — whose history the lines are, from the timeline response
-                  itself. The current number above may blend venues; this history
-                  is one source's and says so. */}
-              {verifiedChart.active && verifiedChart.label && (
+              {/* #10224 — whose history the lines are. The current number above
+                  may blend venues; this history is one source's and says so. */}
+              {historyLabel && (
                 <p data-testid="futures-trend-history-basis" className="text-[12px] text-text-muted mt-1">
-                  {verifiedChart.label}
+                  {historyLabel}
                 </p>
               )}
               {/* #7545 — the rung the reader is on, and one line reconciling it

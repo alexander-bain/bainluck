@@ -4,15 +4,15 @@
  * Rendered through the real page over the server's own route output for
  * 86832 (the sportsbook board) — see
  * `__tests__/lib/verifiedTitleDetail10224.test.ts` for fixture provenance.
- * Hero: the shown outcome's value and ITS contributors. Chart: the requested
- * source's history under the timeline's own label, with /history never asked.
+ * Hero: the shown outcome's value and ITS contributors. Chart: the market's own
+ * `/history` (#10244 — never the raw-median timeline) under its source's label.
+ * Games This Week: the table's verified number per outcome id (#10243).
  * Controls: an opted-in page the server refused, and a single-contributor hero.
  */
 import React from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import oddsVerified from "./fixtures/verifiedTitle10224/detail-odds-verified.json";
 import oddsRefused from "./fixtures/verifiedTitle10224/detail-odds-refused.json";
-import oddsTimeline from "./fixtures/verifiedTitle10224/timeline-odds-verified.json";
 
 jest.mock("next/navigation", () => ({
   useSearchParams: () => new URLSearchParams(""),
@@ -20,6 +20,35 @@ jest.mock("next/navigation", () => ({
 }));
 
 let MARKET: unknown = null;
+/** `/history`'s consensus series, the shape the source page has always drawn. */
+const point = (h: number, p: number) => ({
+  timestamp: new Date(Date.UTC(2026, 9, 2, h)).toISOString(), probability: p, american_odds: null, bookmaker: "consensus",
+});
+const HISTORY = {
+  market_id: 86832, market_name: "x", hours: 168, total_data_points: 24, sparse: false,
+  outcomes: [
+    { outcome_id: 1309486, name: "Buffalo Bills", history: Array.from({ length: 12 }, (_, h) => point(h, 0.1125)) },
+    { outcome_id: 1309485, name: "Los Angeles Rams", history: Array.from({ length: 12 }, (_, h) => point(h, 0.11)) },
+  ],
+};
+/** `/related-events` as production served it on 86832: SOURCE values (#10243). */
+const RELATED = {
+  market_id: 86832,
+  market_name: "x",
+  events: [
+    {
+      event_id: 1, home_team: "Los Angeles Rams", away_team: "Buffalo Bills",
+      commence_time: "2099-10-04T20:25:00Z", status: "scheduled", sport: "americanfootball_nfl",
+      home_score: null, away_score: null,
+      linked_teams: [
+        { side: "home", team_name: "Los Angeles Rams", outcome_id: 1309485, outcome_name: "Los Angeles Rams",
+          probability: 0.107361, american_odds: 831, rank: 2, outcome_is_team: true },
+        { side: "away", team_name: "Buffalo Bills", outcome_id: 1309486, outcome_name: "Buffalo Bills",
+          probability: 0.112913, american_odds: 786, rank: 1, outcome_is_team: true },
+      ],
+    },
+  ],
+};
 const KEYS: unknown[][] = [];
 jest.mock("swr", () => ({
   __esModule: true,
@@ -28,15 +57,10 @@ jest.mock("swr", () => ({
     const k = key as unknown[];
     KEYS.push(k);
     if (k[0] === "futures-market") return { data: MARKET, error: undefined, isLoading: false, mutate: () => {} };
-    if (k[0] === "futures-verified-timeline") {
-      return {
-        data: { marketId: k[1], hours: k[2], payload: structuredClone(oddsTimeline) },
-        error: undefined, isLoading: false, isValidating: false, mutate: () => {},
-      };
-    }
     if (k[0] === "futures-history") {
-      return { data: { market_id: 86832, market_name: "x", hours: 168, outcomes: [] }, error: undefined, isLoading: false, mutate: () => {} };
+      return { data: structuredClone(HISTORY), error: undefined, isLoading: false, mutate: () => {} };
     }
+    if (k[0] === "futures-related-events") return { data: RELATED, error: undefined, isLoading: false, mutate: () => {} };
     return { data: undefined, error: undefined, isLoading: false, mutate: () => {} };
   },
 }));
@@ -82,11 +106,27 @@ const heroContributors = (html: string) => {
 };
 
 describe("#10224 verified title detail", () => {
-  it("asks for verified detail under its own key, and the timeline — never /history", () => {
+  it("asks for verified detail under its own key, and draws /history — never the raw-median timeline (#10244)", () => {
     render(structuredClone(oddsVerified));
     expect(KEYS.some((k) => k[0] === "futures-market" && k[2] === "verified_title")).toBe(true);
-    expect(KEYS.some((k) => k[0] === "futures-verified-timeline" && k[1] === 86832)).toBe(true);
-    expect(KEYS.some((k) => k[0] === "futures-history")).toBe(false);
+    expect(KEYS.some((k) => k[0] === "futures-history" && k[1] === 86832)).toBe(true);
+    expect(KEYS.some((k) => String(k[0]).includes("timeline"))).toBe(false);
+  });
+
+  it("Games This Week prints the table's verified number, not the source value (#10243)", () => {
+    const html = render(structuredClone(oddsVerified));
+    const at = html.indexOf("Games This Week");
+    expect(at).toBeGreaterThan(-1);
+    const strip = stripTags(html.slice(at));
+    expect(strip).toMatch(/Buffalo Bills\s*13%/);
+    expect(strip).toMatch(/Los Angeles Rams\s*11%/);
+    expect(strip).not.toMatch(/Buffalo Bills\s*11%/);
+  });
+
+  it("CONTROL: a source-mode page's strip prints the route's own values", () => {
+    const html = render(structuredClone(oddsRefused));
+    const strip = stripTags(html.slice(html.indexOf("Games This Week")));
+    expect(strip).toMatch(/Buffalo Bills\s*11%/);
   });
 
   it("the hero prints the verified value with the shown outcome's contributors", () => {
@@ -98,7 +138,7 @@ describe("#10224 verified title detail", () => {
     expect(html).not.toMatch(/\bbooks\b/i);
   });
 
-  it("the chart names its authentic history from the timeline response", () => {
+  it("the chart names whose history it draws", () => {
     const html = render(structuredClone(oddsVerified));
     expect(text(html, "futures-trend-history-basis")).toBe("Sportsbooks history");
     expect(html).toContain("Buffalo Bills");
@@ -117,6 +157,5 @@ describe("#10224 verified title detail", () => {
     expect(html).not.toContain('data-testid="hero-contributors"');
     expect(html).not.toContain('data-testid="futures-trend-history-basis"');
     expect(KEYS.some((k) => k[0] === "futures-history" && k[1] === 86832)).toBe(true);
-    expect(KEYS.some((k) => k[0] === "futures-verified-timeline")).toBe(false);
   });
 });

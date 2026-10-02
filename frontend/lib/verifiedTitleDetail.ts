@@ -2,35 +2,31 @@
  * #9387 / #10224 — the web futures detail's reading of `representation=verified_title`.
  *
  * The server (PR #10216) answers an opted-in title page with ONE current number
- * per outcome across every venue that provably asks the same question, and its
- * timeline keeps the requested source's own history, labelled by
- * `history_basis`. Everything here is a pure reading of those two payloads:
- * no blend arithmetic, no fixture ids, no synthesized chart points.
+ * per outcome across every venue that provably asks the same question. Everything
+ * here is a pure reading of that payload: no blend arithmetic, no fixture ids, no
+ * synthesized chart points.
  *
  * Three rules carry the truth of the page:
  *   1. A hero names the contributors of the outcome it SHOWS, never the market's
  *      union; one contributor is one source, never "aggregated".
- *   2. The chart's lines are the requested source's history under that
- *      response's own `history_basis` label — geometry unchanged, nothing
- *      appended at the end to meet the current number.
- *   3. When the hero and the chart's current column disagree, the chart is
- *      asked again once; if they still disagree the history stays and the
- *      chart's current numbers go.
+ *   2. The chart is the requested source's own `/history` series — the de-vigged
+ *      consensus the source page has always drawn — labelled as that source's
+ *      history, with nothing appended at the end to meet the current number.
+ *      #10244: it was briefly the opted-in `/probability-timeline`, whose
+ *      sportsbook line is a median of raw, margin-inclusive prices (Bills 13.3%
+ *      where the sportsbooks' own number was 11.2%), so a line captioned
+ *      "Sportsbooks history" sat above the source it named.
+ *   3. Every other number on the page that restates an outcome's current value
+ *      is that outcome's row in this detail, by id (#10243).
  */
 import type {
-  FuturesHistoryResponse,
   FuturesMarketDetailResponse,
   FuturesOutcome,
-  FuturesOutcomeHistory,
   FuturesRepresentation,
-  ProbabilityTimelineResponse,
+  RelatedEvent,
 } from "./types";
 
 export const VERIFIED_TITLE: FuturesRepresentation = "verified_title";
-
-/** Up to 50 lines (the route's ceiling), so a reader's manual pick from the
- *  32-team table still has its history; the route keeps its own order. */
-export const VERIFIED_TIMELINE_TOP = 50;
 
 const CONTRIBUTORS = ["odds_api", "kalshi", "polymarket"] as const;
 export type Contributor = (typeof CONTRIBUTORS)[number];
@@ -104,12 +100,19 @@ export function heroValueIsSourceOwn(
   return !!keys && keys.length === 1 && keys[0] === detail?.source;
 }
 
-/** "Sportsbooks history" — from the timeline response itself, never the detail. */
-export function historyBasisLabel(basis: unknown): string | null {
-  if (!basis || typeof basis !== "object") return null;
-  const { kind, source, market_id } = basis as Record<string, unknown>;
-  if (kind !== "single_source" || !isContributor(source)) return null;
-  if (typeof market_id !== "number" || !Number.isInteger(market_id)) return null;
+/**
+ * "Sportsbooks history" — whose history the chart draws on a verified page.
+ *
+ * The chart is `/history` for this market, which is this market's own source
+ * by construction, so the label is that source's. `null` in source mode (the
+ * card is unchanged there) and for a source outside the vocabulary, which is
+ * never given an invented name.
+ */
+export function verifiedHistoryLabel(
+  detail: FuturesMarketDetailResponse | null | undefined,
+): string | null {
+  const source = detail?.source;
+  if (!isVerifiedTitle(detail) || !isContributor(source)) return null;
   return `${CONTRIBUTOR_LABEL[source]} history`;
 }
 
@@ -135,123 +138,32 @@ export function sanitizeVerifiedTitleDetail(
   };
 }
 
-const hasOwn = (record: object, key: string) =>
-  Object.prototype.hasOwnProperty.call(record, key);
-
 /**
- * An opted-in timeline in the shape `FuturesChart` draws.
+ * #10243 — "Games This Week" on the detail's own numbers.
  *
- * Each metadata row with an id becomes one series, in the route's own order,
- * keyed by its original outcome id; its points are exactly the buckets whose
- * dictionary carries that row's name byte-for-byte. A bucket without the name
- * is a gap and stays one. No point is added at the end: the history's last
- * value is the source's, not the current verified number.
- *
- * `withCurrent: false` drops the current-column metadata entirely — the
- * persistent-disagreement state, where the chart keeps its history and makes
- * no claim about now.
+ * `/related-events` serves each team's SOURCE value, so on a verified page its
+ * rows printed "Buffalo Bills 11%" below a hero and table reading 13%: one page,
+ * two numbers for one team. In verified mode each row's number is the detail's
+ * own row for that `outcome_id` — the number the table prints — or no number
+ * at all when the row cannot be found (an older payload with no id, or an
+ * outcome this detail does not carry). A source value is never printed beside
+ * verified ones. Source mode returns the events untouched.
  */
-export function timelineToChartHistory(
-  timeline: ProbabilityTimelineResponse,
-  options: { withCurrent: boolean },
-): FuturesHistoryResponse {
-  const basisSource =
-    timeline.history_basis && isContributor(timeline.history_basis.source)
-      ? timeline.history_basis.source
-      : typeof timeline.source === "string"
-        ? timeline.source
-        : "";
-  const entries = Array.isArray(timeline.timeline) ? timeline.timeline : [];
-  const metas = Array.isArray(timeline.outcomes) ? timeline.outcomes : [];
-  const outcomes: FuturesOutcomeHistory[] = metas
-    .filter(
-      (meta) =>
-        typeof meta?.id === "number" &&
-        Number.isInteger(meta.id) &&
-        typeof meta.name === "string",
-    )
-    .map((meta) => {
-      const history = entries.flatMap((entry) => {
-        const values = entry?.outcomes;
-        if (!values || typeof values !== "object" || !hasOwn(values, meta.name)) return [];
-        const value = values[meta.name];
-        if (typeof value !== "number" || !Number.isFinite(value)) return [];
-        return [
-          {
-            timestamp: entry.timestamp,
-            probability: value,
-            american_odds: null,
-            bookmaker: basisSource,
-          },
-        ];
-      });
-      const series: FuturesOutcomeHistory = {
-        outcome_id: meta.id as number,
-        name: meta.name,
-        history,
+export function relatedEventsOnDetailScale(
+  detail: FuturesMarketDetailResponse | null | undefined,
+  events: RelatedEvent[],
+): RelatedEvent[] {
+  if (!isVerifiedTitle(detail) || !Array.isArray(detail?.outcomes)) return events;
+  const rows = new Map(detail.outcomes.map((row) => [row.id, row]));
+  return events.map((event) => ({
+    ...event,
+    linked_teams: event.linked_teams.map((team) => {
+      const row = typeof team.outcome_id === "number" ? rows.get(team.outcome_id) : undefined;
+      return {
+        ...team,
+        probability: row?.probability ?? null,
+        american_odds: row?.american_odds ?? null,
       };
-      if (options.withCurrent) {
-        series.current_price_available = meta.current_probability != null;
-      }
-      return series;
-    });
-  const total = outcomes.reduce((sum, o) => sum + o.history.length, 0);
-  const actual = (timeline as { actual_hours?: unknown }).actual_hours;
-  return {
-    market_id: timeline.market_id,
-    market_name: timeline.market_name,
-    hours: timeline.hours,
-    ...(typeof actual === "number" ? { actual_hours: actual } : {}),
-    outcomes,
-    total_data_points: total,
-    // The /history field's own definition: fewer than 10 points in all.
-    sparse: total < 10,
-  };
-}
-
-const sameKeys = (a: Contributor[] | null, b: Contributor[] | null) =>
-  a === null || b === null ? a === b : a.length === b.length && a.every((k, i) => k === b[i]);
-
-/**
- * Do the detail's hero and the chart's current column describe one state?
- *
- * Mode first: a verified hero over a source-mode timeline (or the reverse) is
- * two estimators. In verified mode the corresponding outcome — matched by id,
- * the identity the server maps across — must carry the same value and the same
- * contributors. A hero the timeline does not list has nothing to contradict.
- */
-export function chartCurrentAgrees(
-  detail: FuturesMarketDetailResponse,
-  timeline: ProbabilityTimelineResponse,
-  heroId: number | null,
-): boolean {
-  const mode = effectiveRepresentation(detail);
-  if (mode !== effectiveRepresentation(timeline)) return false;
-  if (mode !== VERIFIED_TITLE || heroId == null) return true;
-  const hero = detail.outcomes?.find((row) => row.id === heroId);
-  const meta = (Array.isArray(timeline.outcomes) ? timeline.outcomes : []).find(
-    (row) => row.id === heroId,
-  );
-  if (!hero || !meta) return true;
-  if ((hero.probability ?? null) !== (meta.current_probability ?? null)) return false;
-  return sameKeys(
-    contributorKeys(hero.contributing_sources),
-    contributorKeys(meta.contributing_sources),
-  );
-}
-
-export type VerifiedChartVerdict = "pending" | "agree" | "retry" | "persistent";
-
-/**
- * One retry per detail/range generation. `retriedThisGeneration` is true once
- * the chart has been re-asked for exactly this detail object and range; a
- * mismatch after that is persistent until a new detail or range arrives.
- */
-export function verifiedChartVerdict(
-  agrees: boolean | null,
-  retriedThisGeneration: boolean,
-): VerifiedChartVerdict {
-  if (agrees === null) return "pending";
-  if (agrees) return "agree";
-  return retriedThisGeneration ? "persistent" : "retry";
+    }),
+  }));
 }
