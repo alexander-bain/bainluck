@@ -60,13 +60,27 @@ notice 47(c); the same shape as #5841's `bak_5841_zero_zero_scores`). One row pe
   * `REFUSED`   the authority's answer was terminal (postponed, real 0 - 0,
                 different game/date/id, scored twin) — marked so it is never
                 asked again.
-  * `NO_ANSWER` ESPN returned nothing for the anchor — marked; `--ignore-marker`
-                re-asks.
+  * `NO_ANSWER` ESPN ANSWERED that the anchor is absent (a recorded answer, no
+                recorded failure — a 404 or an empty summary) — marked;
+                `--ignore-marker` re-asks.
 
 A row is re-selected only if its marker is for a DIFFERENT `espn_id` (the anchor
 was since corrected — a new question), or it is a `WRITE` whose CAS declined
-(`written_at IS NULL`: the row moved, so nothing was decided). A transient ESPN
-exception is NOT marked; it is counted and exits 1.
+(`written_at IS NULL`: the row moved, so nothing was decided).
+
+ESPN NOT ANSWERING IS NEVER A MARK. `ESPNAPIService.get_event` turns a 503, an
+exhausted 429/403 or a transport failure (`ESPNAuthorityDark`) into the SAME
+`None` it returns for a 404. Marking that `None` would freeze the row checked on
+an outage, which is the exact defect this pass exists to undo (root's review of
+`d840bcf426`, reproduced through the real client). So a `None` is terminal only
+when `espn_authority_state()` shows the call recorded an ANSWER and no FAILURE;
+anything else is `ERROR`: unmarked, retried next run, exit 1.
+
+THE ADJUDICATED FIXTURE TRAVELS WITH THE VERDICT. The bank records the sport,
+both club names and the start the verdict was judged against, and the score
+write AND the undo re-state all four. A fixture repaired under the same anchor
+between plan and write touches 0 rows and stays retryable; an undo never puts a
+score back onto a row that has since become a different fixture.
 
 Why not a `box_score_data` key like `scores_checked_at`: the forward path
 rewrites that dict wholesale, so a merged key can be clobbered, and a JSONB
@@ -101,6 +115,7 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from sqlalchemy import DateTime, Integer, String, bindparam, text  # noqa: E402
 
+from app.services.espn_api import espn_authority_state  # noqa: E402
 from app.tasks.espn_sync import _corrected_final_score  # noqa: E402
 from app.utils.event_completion import SETTLED_STATUSES  # noqa: E402
 from scripts.repair_5841_zero_zero_finals_from_the_authority import (  # noqa: E402
@@ -206,9 +221,19 @@ def statement(sql: str, *, only_ids: bool = False):
     return text(sql).bindparams(*params)
 
 
+#: The fixture the verdict was judged against. Re-stated by the write and the
+#: undo so a same-anchor fixture repair in between makes both touch 0 rows.
+_FIXTURE_CAS = """
+   AND sport_id = :sport_id
+   AND home_team_name = :home_team_name
+   AND away_team_name = :away_team_name
+   AND commence_time = :commence_time
+"""
+
 #: The write. Re-states everything it adjudicated: still zero-total, same
-#: status, same anchor. A score arriving from any other writer between plan and
-#: write, an un-settle, or a re-anchor all make this touch 0 rows.
+#: status, same anchor, same fixture. A score arriving from any other writer
+#: between plan and write, an un-settle, a re-anchor or a fixture repair all
+#: make this touch 0 rows.
 _WRITE_SQL = """
 UPDATE events
    SET home_score = :home_score, away_score = :away_score
@@ -217,7 +242,7 @@ UPDATE events
    AND COALESCE(away_score, 0) = 0
    AND status = :status
    AND espn_id = :espn_id
-"""
+""" + _FIXTURE_CAS
 
 _MARK_WRITTEN_SQL = f"""
 UPDATE {BAK_TABLE}
@@ -234,6 +259,10 @@ CREATE TABLE IF NOT EXISTS {BAK_TABLE} (
   old_home_score integer,
   old_away_score integer,
   old_status text NOT NULL,
+  sport_id bigint NOT NULL,
+  home_team_name text NOT NULL,
+  away_team_name text NOT NULL,
+  commence_time timestamptz NOT NULL,
   new_home_score integer,
   new_away_score integer,
   checked_at timestamptz NOT NULL DEFAULT CURRENT_TIMESTAMP,
@@ -251,13 +280,17 @@ CREATE TABLE IF NOT EXISTS {BAK_TABLE} (
 _BANK_SQL = f"""
 INSERT INTO {BAK_TABLE}
        (event_id, espn_id, verdict, reason, old_home_score, old_away_score,
-        old_status, new_home_score, new_away_score)
+        old_status, sport_id, home_team_name, away_team_name, commence_time,
+        new_home_score, new_away_score)
 VALUES (:eid, :espn_id, :verdict, :reason, :old_home_score, :old_away_score,
-        :old_status, :new_home_score, :new_away_score)
+        :old_status, :sport_id, :home_team_name, :away_team_name, :commence_time,
+        :new_home_score, :new_away_score)
 ON CONFLICT (event_id, espn_id) DO UPDATE SET
        verdict = excluded.verdict, reason = excluded.reason,
        old_home_score = excluded.old_home_score, old_away_score = excluded.old_away_score,
        old_status = excluded.old_status,
+       sport_id = excluded.sport_id, home_team_name = excluded.home_team_name,
+       away_team_name = excluded.away_team_name, commence_time = excluded.commence_time,
        new_home_score = excluded.new_home_score, new_away_score = excluded.new_away_score,
        checked_at = CURRENT_TIMESTAMP, written_at = NULL, restored_at = NULL
  WHERE NOT ({BAK_TABLE}.verdict = '{VERDICT_WRITE}' AND {BAK_TABLE}.written_at IS NOT NULL)
@@ -265,6 +298,7 @@ ON CONFLICT (event_id, espn_id) DO UPDATE SET
 
 _RESTORE_PLAN_SQL = f"""
 SELECT event_id, espn_id, old_home_score, old_away_score, old_status,
+       sport_id, home_team_name, away_team_name, commence_time,
        new_home_score, new_away_score
   FROM {BAK_TABLE}
  WHERE verdict = '{VERDICT_WRITE}'
@@ -284,7 +318,7 @@ UPDATE events
    AND away_score = :new_away_score
    AND status = :old_status
    AND espn_id = :espn_id
-"""
+""" + _FIXTURE_CAS
 
 _MARK_RESTORED_SQL = f"""
 UPDATE {BAK_TABLE}
@@ -297,10 +331,22 @@ _SCORE_BINDS = ("home_score", "away_score", "old_home_score", "old_away_score",
 
 
 def typed(sql: str):
-    """Score binds typed Integer so a NULL pre-image binds on asyncpg."""
-    return text(sql).bindparams(
-        *[bindparam(name, type_=Integer) for name in _SCORE_BINDS if f":{name}" in sql]
-    )
+    """Score binds typed Integer so a NULL pre-image binds on asyncpg; the
+    fixture start typed so sqlite renders it in the column's own storage form."""
+    binds = [bindparam(name, type_=Integer) for name in _SCORE_BINDS if f":{name}" in sql]
+    if ":commence_time" in sql:
+        binds.append(bindparam("commence_time", type_=DateTime(timezone=True)))
+    return text(sql).bindparams(*binds)
+
+
+def fixture_params(row) -> dict:
+    """The adjudicated fixture, as plain scalars, from a plan row or a bank row."""
+    return {
+        "sport_id": row.sport_id,
+        "home_team_name": row.home_team_name,
+        "away_team_name": row.away_team_name,
+        "commence_time": as_aware(row.commence_time),
+    }
 
 
 async def bank_exists(session) -> bool:
@@ -339,15 +385,36 @@ async def adjudicate(session, espn, row) -> dict:
             ),
         }
 
+    if espn._get_espn_path(row.sport_key) is None:
+        return {
+            **base,
+            "verdict": VERDICT_REFUSED,
+            "reason": f"no_espn_path — {row.sport_key!r} has no ESPN league; nothing to ask",
+        }
+
+    before = espn_authority_state()
     try:
         anchor = await espn.get_event(row.sport_key, row.espn_id)
     except Exception as exc:  # noqa: BLE001 — transient: report, never mark
         return {**base, "verdict": VERDICT_ERROR, "reason": f"espn_error — {exc!r}"}
     if anchor is None:
+        after = espn_authority_state()
+        answered = after["total_answers"] > before["total_answers"]
+        failed = after["total_failures"] > before["total_failures"]
+        if failed or not answered:
+            return {
+                **base,
+                "verdict": VERDICT_ERROR,
+                "reason": (
+                    "espn_dark — ESPN did not answer "
+                    f"(last_status={after['last_status']!r}, last_error={after['last_error']!r}); "
+                    "unmarked, asked again next run"
+                ),
+            }
         return {
             **base,
             "verdict": VERDICT_NO_ANSWER,
-            "reason": "espn_no_answer — nothing returned for this anchor (gotcha #53)",
+            "reason": "espn_answered_absent — ESPN answered with no game for this anchor (404/empty)",
         }
 
     reason = anchor_id_refusal(row, anchor) or anchor_refusal_reason(row, anchor)
@@ -386,6 +453,7 @@ async def bank(session, verdict: dict, row) -> int:
             "old_home_score": row.home_score,
             "old_away_score": row.away_score,
             "old_status": row.status,
+            **fixture_params(row),
             "new_home_score": verdict.get("home_score"),
             "new_away_score": verdict.get("away_score"),
         },
@@ -427,6 +495,7 @@ async def apply_verdicts(session, verdicts: list[dict], rows_by_id: dict) -> dic
             "away_score": verdict["away_score"],
             "status": row.status,
             "espn_id": row.espn_id,
+            **fixture_params(row),
         }
         try:
             result = await session.execute(typed(_WRITE_SQL), params)
@@ -532,6 +601,7 @@ async def _restore_inner(*, session, apply: bool) -> int:
             "eid": r.event_id, "espn_id": r.espn_id, "old_status": r.old_status,
             "old_home_score": r.old_home_score, "old_away_score": r.old_away_score,
             "new_home_score": r.new_home_score, "new_away_score": r.new_away_score,
+            **fixture_params(r),
         }
         try:
             result = await session.execute(typed(_RESTORE_SQL), params)
@@ -545,7 +615,7 @@ async def _restore_inner(*, session, apply: bool) -> int:
             await session.rollback()
             print(f"  FAILED event {r.event_id}: {exc}")
             failed.append(r.event_id)
-    print(f"\nrestored {restored} · declined (score moved since the repair — newer truth kept) "
+    print(f"\nrestored {restored} · declined (score or fixture moved since the repair — newer truth kept) "
           f"{len(declined)} · failed {len(failed)}")
     if declined:
         print(f"  declined ids: {declined}")

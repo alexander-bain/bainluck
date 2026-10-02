@@ -13,6 +13,8 @@ real sqlite engine with a stub ESPN, and assert:
   * preview writes and creates nothing; `--apply` banks before it writes;
   * the marker stops a postponed/scoreless row being asked twice, and re-opens
     the question only when the anchor itself changed;
+  * ESPN NOT ANSWERING (the real client's dark→None) is never a mark;
+  * the write and the undo both re-state the adjudicated fixture;
   * the undo restores only what this pass wrote and keeps newer truth.
 """
 
@@ -38,6 +40,7 @@ def _array_on_sqlite(type_, compiler, **kw):  # pragma: no cover - DDL shim
 
 
 from app.models import Event, Sport  # noqa: E402
+from app.services import espn_api  # noqa: E402
 from app.models.models import Base  # noqa: E402
 from app.tasks import espn_sync  # noqa: E402
 from scripts import repair_5841_zero_zero_finals_from_the_authority as r5841  # noqa: E402
@@ -68,18 +71,66 @@ class _AsyncSession:
 
 
 class _ESPN:
-    """Stub authority: answers by espn_id, records every question asked."""
+    """Stub authority: answers by espn_id, records every question asked.
+
+    Honours the real client's contract: every ANSWER — a ``None`` included,
+    which the real client returns for a 404 — is recorded in the module
+    authority state. ESPN going DARK is exercised through the real client
+    (:class:`TestESPNNotAnsweringIsNeverAMark`), not faked here.
+    """
 
     def __init__(self, answers):
         self.answers = answers
         self.asked = []
+
+    def _get_espn_path(self, sport_key):
+        return espn_api.ESPNAPIService._get_espn_path(None, sport_key)
 
     async def get_event(self, sport_key, espn_id):
         self.asked.append(espn_id)
         answer = self.answers.get(espn_id)
         if isinstance(answer, Exception):
             raise answer
+        espn_api._record_espn_answered("stub")
         return answer
+
+
+class _Response:
+    def __init__(self, status_code):
+        self.status_code = status_code
+
+    def json(self):
+        return {}
+
+
+class _HTTP:
+    """The ONLY fake under the real client: its transport. Counts requests."""
+
+    def __init__(self, status_code):
+        self.status_code = status_code
+        self.requests = 0
+
+    async def get(self, url):
+        self.requests += 1
+        return _Response(self.status_code)
+
+
+def _real_client(status_code):
+    svc = espn_api.ESPNAPIService()
+    http = _HTTP(status_code)
+
+    async def _client():
+        return http
+
+    svc._get_client = _client
+    return svc, http
+
+
+@pytest.fixture(autouse=True)
+def _fresh_authority_state():
+    espn_api.reset_espn_authority_state()
+    yield
+    espn_api.reset_espn_authority_state()
 
 
 def _aware(value):
@@ -264,9 +315,16 @@ class TestTheAuthorityDecides:
         v = self._verdict(corpus, 101, a)
         assert v["verdict"] == "REFUSED" and "not_final" in v["reason"]
 
-    def test_no_answer_and_transient_error_are_distinct(self, corpus):
+    def test_an_answered_absence_and_a_raised_error_are_distinct(self, corpus):
         assert self._verdict(corpus, 101, None)["verdict"] == "NO_ANSWER"
         assert self._verdict(corpus, 101, RuntimeError("429"))["verdict"] == "ERROR"
+
+    def test_a_sport_with_no_espn_league_is_refused_without_a_fetch(self, corpus):
+        row = NS(id=1, espn_id="x", sport_key="baseball_nowhere", sport_id=S_MLB,
+                 home_team_name="A", away_team_name="B", commence_time=_aware(STL_ARI[3]))
+        espn = _ESPN({})
+        v = asyncio.run(r980.adjudicate(_AsyncSession(corpus), espn, row))
+        assert v["verdict"] == "REFUSED" and "no_espn_path" in v["reason"] and espn.asked == []
 
     def test_a_scored_twin_is_refused_without_a_fetch(self, corpus):
         corpus.add(_event(301, STL_ARI[1], STL_ARI[2], STL_ARI[3], espn_id="401999999", score=(9, 4)))
@@ -383,6 +441,104 @@ class TestTheMarker:
         espn = _ESPN(_answers())
         _run(corpus, espn, apply=True, only_ids=[101])
         assert espn.asked == ["401815890"] and _scores(corpus)[101] == (9, 4)
+
+
+class TestESPNNotAnsweringIsNeverAMark:
+    """Through the REAL `ESPNAPIService.get_event`: `_get` raises its own
+    `_dark(503)`, `get_event` swallows it into `None` — the public contract."""
+
+    def test_a_dark_authority_is_unmarked_fails_loudly_and_is_asked_again(self, corpus):
+        svc, http = _real_client(503)
+        assert asyncio.run(svc.get_event("baseball_mlb", "401815890")) is None  # the contract
+        http.requests = 0
+        assert _run(corpus, svc, apply=True, only_ids=[101]) == 1
+        assert _scores(corpus)[101] == (0, 0)
+        assert 101 not in _bank(corpus)
+        assert _run(corpus, svc, apply=True, only_ids=[101]) == 1
+        assert http.requests == 2  # asked again: not frozen checked on an outage
+
+    def _adjudicate_101(self, corpus, espn):
+        row = next(r for r in corpus.execute(
+            r980.statement(r980.candidates_sql(marker=False, only_ids=True), only_ids=True),
+            {"settled": sorted(r980.SETTLED_STATUSES), "settled_before": NOW, "limit": 5,
+             "only_ids": [101]}).all())
+        return asyncio.run(r980.adjudicate(_AsyncSession(corpus), espn, row))
+
+    def test_a_none_with_no_recorded_answer_is_not_terminal(self, corpus):
+        class Silent(_ESPN):
+            async def get_event(self, sport_key, espn_id):
+                self.asked.append(espn_id)
+                return None  # neither answered nor failed: ambiguous
+        assert self._adjudicate_101(corpus, Silent({}))["verdict"] == "ERROR"
+
+    def test_a_failure_is_not_hidden_by_an_interleaved_answer(self, corpus):
+        class Interleaved(_ESPN):
+            async def get_event(self, sport_key, espn_id):
+                self.asked.append(espn_id)
+                espn_api._record_espn_answered("another-call")  # someone else's answer
+                espn_api._record_espn_dark("u", status=503, error=None)  # ours went dark
+                return None
+        assert self._adjudicate_101(corpus, Interleaved({}))["verdict"] == "ERROR"
+
+    def test_control_an_answered_404_is_a_terminal_mark(self, corpus):
+        svc, http = _real_client(404)
+        assert _run(corpus, svc, apply=True, only_ids=[101]) == 0
+        assert _bank(corpus)[101].verdict == "NO_ANSWER"
+        assert _run(corpus, svc, apply=True, only_ids=[101]) == 0
+        assert http.requests == 1
+
+    def test_control_a_healthy_postponement_stays_checked(self, corpus):
+        _run(corpus, _ESPN(_answers()), apply=True)
+        assert _bank(corpus)[103].verdict == "REFUSED"
+        espn = _ESPN(_answers())
+        _run(corpus, espn, apply=True, only_ids=[103])
+        assert espn.asked == []
+
+
+#: A same-anchor fixture repair: each of the four adjudicated columns, moved alone.
+FIXTURE_DRIFT = [
+    ("home_team_name", "'New York Yankees'"),
+    ("away_team_name", "'Boston Red Sox'"),
+    ("commence_time", "'2026-08-24 21:40:00.000000'"),
+    ("sport_id", str(S_NCAAB)),
+]
+
+
+class TestTheFixtureTravelsWithTheVerdict:
+    def _plan_101(self, corpus):
+        rows = corpus.execute(
+            r980.statement(r980.candidates_sql(marker=False, only_ids=True), only_ids=True),
+            {"settled": sorted(r980.SETTLED_STATUSES), "settled_before": NOW, "limit": 5,
+             "only_ids": [101]}).all()
+        verdict = {"id": 101, "espn_id": "401815890", "verdict": "WRITE", "home_score": 9, "away_score": 4}
+        return verdict, {101: rows[0]}
+
+    @pytest.mark.parametrize("column,value", FIXTURE_DRIFT)
+    def test_a_fixture_changed_between_plan_and_write_gets_no_score(self, corpus, column, value):
+        verdict, rows = self._plan_101(corpus)
+        corpus.execute(text(f"UPDATE events SET {column} = {value} WHERE id = 101"))
+        corpus.commit()
+        out = asyncio.run(r980.apply_verdicts(_AsyncSession(corpus), [verdict], rows))
+        assert out["written"] == 0 and out["skipped"] == [101]
+        assert _scores(corpus)[101] == (0, 0)
+        assert _bank(corpus)[101].written_at is None  # retryable, not marked
+
+    def test_control_an_unchanged_fixture_is_written(self, corpus):
+        verdict, rows = self._plan_101(corpus)
+        out = asyncio.run(r980.apply_verdicts(_AsyncSession(corpus), [verdict], rows))
+        assert out["written"] == 1 and _scores(corpus)[101] == (9, 4)
+        bank = _bank(corpus)[101]
+        assert (bank.home_team_name, bank.away_team_name, bank.sport_id) == (STL_ARI[1], STL_ARI[2], S_MLB)
+
+    @pytest.mark.parametrize("column,value", FIXTURE_DRIFT)
+    def test_restore_keeps_a_changed_fixture(self, corpus, column, value):
+        _run(corpus, _ESPN(_answers()), apply=True)
+        corpus.execute(text(f"UPDATE events SET {column} = {value} WHERE id = 101"))
+        corpus.commit()
+        assert asyncio.run(r980._restore_inner(session=_AsyncSession(corpus), apply=True)) == 0
+        after = _scores(corpus)
+        assert after[101] == (9, 4) and after[102] == (0, 0)  # control row restored
+        assert _bank(corpus)[101].restored_at is None
 
 
 class TestTheUndo:
