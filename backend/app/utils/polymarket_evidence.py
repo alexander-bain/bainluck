@@ -88,6 +88,7 @@ Ordering is never the whole answer — the floor is what the ordering starts on.
 
 from __future__ import annotations
 
+import math
 from datetime import date, datetime, timezone
 from enum import Enum
 from typing import Any, Optional
@@ -121,6 +122,11 @@ PM_SWEEP_FLOOR = PM_UNADDRESSABLE_THROUGH
 #: that makes the paging backfill structurally unable to reach the tail, and the
 #: reason the recovery rail addresses events by id instead of paging markets.
 GAMMA_MARKETS_MAX_OFFSET = 2000
+
+#: The ``probe`` provenance stamped on every recovery-rail receipt
+#: (``build_evidence_receipt``). ``calibration_trade_evidence`` validates
+#: receipts against this exact string, so it is a constant, not a literal.
+RECOVERY_EVIDENCE_PROBE = "clob:existence+data-api:trades+gamma:events"
 
 
 class PMEvidence(str, Enum):
@@ -191,13 +197,28 @@ def volume_to_write(
     and callers must not turn it into one. UNADDRESSABLE and INDETERMINATE both
     return None, for opposite reasons: the first can never be known, the second
     is not known *yet*. Only the receipt tells them apart.
+
+    Only CONFIRMED_ZERO may produce 0. A TRADED verdict writes an integer only
+    when Gamma's amount is a finite number >= 1 (#1870 consumer half): ``int()``
+    of a positive ``0.25`` is 0, and a TRADED verdict reached through non-empty
+    trades can carry Gamma ``0`` — both used to store the integer 0 beside a
+    ``traded`` receipt, which the consumer read as a confirmed zero. Below 1 the
+    integer column cannot hold the magnitude, so nothing is written and the
+    receipt carries the exact amount — the same rule as the forward writer's
+    ``polymarket_activity_volume``.
     """
     if evidence is PMEvidence.CONFIRMED_ZERO:
         return 0
     if evidence is PMEvidence.TRADED and gamma_volume is not None:
+        try:
+            amount = float(gamma_volume)
+        except (TypeError, ValueError):
+            return None
+        if not math.isfinite(amount) or amount < 1:
+            return None
         # Integer column; clamp as the existing Gamma backfill does. Magnitude
         # past 2B is irrelevant to a traded/untraded tag.
-        return min(int(gamma_volume), 2_000_000_000)
+        return min(int(amount), 2_000_000_000)
     return None
 
 
@@ -221,7 +242,7 @@ def build_evidence_receipt(
     receipt: dict[str, Any] = {
         "verdict": evidence.value,
         "fetched_at": stamped.isoformat(),
-        "probe": "clob:existence+data-api:trades+gamma:events",
+        "probe": RECOVERY_EVIDENCE_PROBE,
         "boundary_measured_on": PM_BOUNDARY_MEASURED_ON.isoformat(),
     }
     if n_trades is not None:

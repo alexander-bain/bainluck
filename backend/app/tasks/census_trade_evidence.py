@@ -104,7 +104,7 @@ def cohorts_sql() -> str:
     SELECT
         fm.source AS source,
         {_PRICE_MOVED} AS price_moved,
-        {trade_evidence_sql()} AS trade_evidence,
+        {trade_evidence_sql(metadata="fm.market_metadata")} AS trade_evidence,
         COUNT(*) AS n,
         SUM({_CURVE_PRICE}) AS sum_pred,
         SUM(CASE WHEN fo.is_winner THEN 1 ELSE 0 END) AS wins
