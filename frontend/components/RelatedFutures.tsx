@@ -12,7 +12,7 @@ import { teamShortName, teamShortNames } from "@/lib/teamShortName";
 import { teamTextColor } from "@/lib/teamColors";
 import { awardPriceIsStale } from "@/lib/awardPriceAge";
 import { isEventOwnMoneylineMarket } from "@/lib/eventOwnMoneyline";
-import { groupAwardsByPlayer, playerAwardKey } from "@/lib/playerAwardRows";
+import { groupAwardsByPlayer, playerAwardKey, withoutOwnClubTag } from "@/lib/playerAwardRows";
 import { withoutGamePropsDrawnAbove } from "@/lib/gamePropsDrawnAbove";
 import EntityImage from "./EntityImage";
 import { SettledMark, isSettledOutcome } from "@/components/SettledOutcomeMark";
@@ -1445,7 +1445,10 @@ function TitleComparison({
  * Same player in different award types → kept separate.
  * Also filters out near-0% entries (< 1%) and near-100% entries.
  */
-function deduplicateAwards(futures: RelatedFuture[]): { future: RelatedFuture; sourceCount: number }[] {
+function deduplicateAwards(
+  futures: RelatedFuture[],
+  ownClub?: string | null,
+): { future: RelatedFuture; sourceCount: number }[] {
   // First filter out noise: very low or very high probability
   const filtered = futures.filter((f) => {
     const p = f.probability;
@@ -1464,7 +1467,8 @@ function deduplicateAwards(futures: RelatedFuture[]): { future: RelatedFuture; s
   // Deduplicate by normalized player name + award label combo
   const dedupMap = new Map<string, { future: RelatedFuture; sources: Set<string> }>();
   for (const f of filtered) {
-    const playerKey = playerAwardKey(f.outcome_name);
+    // #10188: "Max Muncy (LAD)" on the Dodgers card is "Max Muncy".
+    const playerKey = playerAwardKey(withoutOwnClubTag((f.outcome_name || "").trim(), ownClub));
     const awardKey = (f.merge_group || shortAwardLabel(f.market_name, f.clean_label)).toLowerCase();
     const key = `${playerKey}::${awardKey}`;
     const existing = dedupMap.get(key);
@@ -2617,10 +2621,14 @@ export default function RelatedFutures({
     a: { future: RelatedFuture },
     b: { future: RelatedFuture },
   ) => (b.future.probability || 0) - (a.future.probability || 0);
-  const homeAwards = deduplicateAwards(homeCats.awards)
+  // #10188: each card's own club tag, so a venue's "(LAD)" namesake marker
+  // folds on the Dodgers card and nowhere else.
+  const homeClubTag = safeData.league_context?.home_team?.short_name;
+  const awayClubTag = safeData.league_context?.away_team?.short_name;
+  const homeAwards = deduplicateAwards(homeCats.awards, homeClubTag)
     .map((a) => ({ ...a, teamColor: hColor, teamLabel: homeShort }))
     .sort(byProbabilityDesc);
-  const awayAwards = deduplicateAwards(awayCats.awards)
+  const awayAwards = deduplicateAwards(awayCats.awards, awayClubTag)
     .map((a) => ({ ...a, teamColor: aColor, teamLabel: awayShort }))
     .sort(byProbabilityDesc);
 
@@ -3049,6 +3057,7 @@ export default function RelatedFutures({
                       label: shortAwardLabel(f.market_name, f.clean_label),
                       prob: f.probability || 0,
                     })),
+                    homeClubTag,
                   );
                   return (
                     <div className="mt-4">
@@ -3096,6 +3105,7 @@ export default function RelatedFutures({
                       label: shortAwardLabel(f.market_name, f.clean_label),
                       prob: f.probability || 0,
                     })),
+                    awayClubTag,
                   );
                   return (
                     <div className="mt-4">
