@@ -497,11 +497,29 @@ class TestG7Routing:
 #: calibration/precompute family, whose 25-minute passes would make a 2-minute
 #: beat meaningless. The full measurement is
 #: `docs/audits/latency/lat-p109-the-gin-pending-list-sawtooth.md` (#2255).
+#:
+#: 🔴 THE GUARD FIRED AS DESIGNED (latency, 2026-10-02, #9982) on the SIXTH
+#: interval beat, `warm-container-hubs` at 60 s. ARGUED, not absorbed:
+#:
+#:   1. **Its standing cost is the skip path.** A fire reads which hubs Browse
+#:      offers (at most 4) and does one Redis GET per hub. It BUILDS (~4.5 s for
+#:      NFL Week 4) only for a hub with no entry for its current revision or
+#:      under 150 s of servable life — about every 2.5-3 min per idle hub, and
+#:      ~never while readers keep the hub warm themselves.
+#:   2. **It cannot pile up behind THIS sweep.** `expires: 300` drops fires
+#:      older than one stale window, and the fires that do bunch up behind the
+#:      sweep take the skip path after the first rebuilds what lapsed.
+#:   3. **60 s is inside the floor's own rule** (`period <= 180.0`).
+#:
+#: Why `background`: it is where the other user-latency warmers live
+#: (`warm-search-head`, `warm-typeahead`); `realtime` carries the live price poll
+#: and a 4.5 s build does not belong beside it; `heavy` is another Heroku app.
 BACKGROUND_INTERVAL_FLOOR = frozenset(
     {
         "flush-search-gin-pending-lists",
         "refresh-open-commentary",
         "sync-tournament-results",
+        "warm-container-hubs",
         "warm-search-head",
         "warm-typeahead",
     }
