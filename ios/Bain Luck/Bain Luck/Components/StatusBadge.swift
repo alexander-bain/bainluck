@@ -10,6 +10,10 @@ struct StatusBadge: View {
     /// and that is not what arrives: the real value is `"5:11 - 1st Quarter"`,
     /// with the clock on the FRONT (#3273). Both call sites pass
     /// `event.espn?.period` straight through.
+    ///
+    /// #9208 — the suspended arm reads it too, for the authority's stoppage
+    /// word ("Postponed", "Canceled"). The team row has no `espn` block and
+    /// passes the served `stoppage` here instead (``SearchEvent/authorityPeriod``).
     var period: String? = nil
     /// #6381 — the served `venue_settled`, and DEFAULTED FALSE on purpose.
     ///
@@ -160,10 +164,15 @@ struct StatusBadge: View {
             // "Suspended" for the reason stated where it is defined — the same
             // status covers a rain delay and a source going dark, and only one
             // of those is a stoppage anybody reported.
+            //
+            // #9208 — and when the authority DID report one ("Postponed",
+            // "Canceled" in `espn.period`), the badge says that word instead:
+            // `suspendedLabel(authorityPeriod:)` is the allowlist, the same as
+            // web's `authorityStoppageLabel`. Callers pass the period they hold.
             HStack(spacing: 3) {
                 Image(systemName: "exclamationmark.circle")
                     .font(.system(size: 8))
-                Text(EventState.suspendedLabel)
+                Text(EventState.suspendedLabel(authorityPeriod: period))
                     .font(.caption2)
                     .fontWeight(.medium)
             }

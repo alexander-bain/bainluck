@@ -1070,6 +1070,8 @@ struct SearchView: View {
                     // #4021 — see StatusBadge: the suspended arm is clock-gated.
                     StatusBadge(
                         status: event.status, commenceTime: event.commenceTime,
+                        // #9208 — the authority's stoppage word ("Canceled").
+                        period: event.authorityPeriod,
                         startIsTbd: event.startIsTbd == true,
                         // #5811 — `/api/events/search` serves it.
                         venueClosedNoWinner: event.venueClosedNoWinner == true)

@@ -280,6 +280,9 @@ struct TeamDetailView: View {
                     // #4021 — see StatusBadge: the suspended arm is clock-gated.
                     StatusBadge(
                         status: event.status, commenceTime: event.commenceTime,
+                        // #9208 — the brief's `stoppage`: "Canceled", not
+                        // "No result reported", on a called-off game.
+                        period: event.authorityPeriod,
                         startIsTbd: event.startIsTbd == true)
                     if let commence = event.commenceTime {
                         // #8841 — an unannounced start prints "Sep 29 · TBD".

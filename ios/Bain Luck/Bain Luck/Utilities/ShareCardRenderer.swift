@@ -307,9 +307,15 @@ struct ShareableEventCardView: View {
     /// on the view to ask with, and it was pinned as an explicit carve-out in
     /// `eventStatusSingleSource.test.ts` rather than left to be rediscovered.
     let commenceTime: Date?
+    /// #9208 — the authority's period (`espn.period`), so a canceled game's
+    /// image says CANCELED rather than NO RESULT REPORTED. No default, for
+    /// `commenceTime`'s reason: this copy leaves the app.
+    let authorityPeriod: String?
 
     private var eyebrow: String {
-        Self.eyebrow(status: status, sportName: sportName, commenceTime: commenceTime)
+        Self.eyebrow(
+            status: status, sportName: sportName, commenceTime: commenceTime,
+            authorityPeriod: authorityPeriod)
     }
 
     /// The eyebrow word, as a function of the values that decide it.
@@ -320,7 +326,8 @@ struct ShareableEventCardView: View {
     /// left the app. `now` is injected so the clock arm is pinned at a fixed
     /// instant rather than tested against whatever time CI runs at.
     static func eyebrow(
-        status: String?, sportName: String, commenceTime: Date?, now: Date = Date()
+        status: String?, sportName: String, commenceTime: Date?,
+        authorityPeriod: String? = nil, now: Date = Date()
     ) -> String {
         if status == "live" { return "LIVE" }
         if EventState.isFinished(status) { return "FINAL" }
@@ -350,7 +357,7 @@ struct ShareableEventCardView: View {
         //    occupies roughly 140 of 331 available points, so nothing is traded
         //    for it but brevity.
         if EventState.isSuspendedAndStarted(status, commenceTime: commenceTime, now: now) {
-            return EventState.suspendedLabel.uppercased()
+            return EventState.suspendedLabel(authorityPeriod: authorityPeriod).uppercased()
         }
         return sportName.uppercased()
     }
@@ -617,7 +624,9 @@ enum ShareCardRenderer {
         awayScore: Int?,
         // #4044 — no default. A caller that forgets it would silently restore the
         // clockless behaviour on the one surface whose output leaves the app.
-        commenceTime: Date?
+        commenceTime: Date?,
+        // #9208 — no default, same reason.
+        authorityPeriod: String?
     ) -> PlatformImage? {
         let view = ShareableEventCardView(
             homeTeam: homeTeam,
@@ -632,7 +641,8 @@ enum ShareCardRenderer {
             status: status,
             homeScore: homeScore,
             awayScore: awayScore,
-            commenceTime: commenceTime
+            commenceTime: commenceTime,
+            authorityPeriod: authorityPeriod
         )
         let renderer = ImageRenderer(content: view)
         #if canImport(UIKit)

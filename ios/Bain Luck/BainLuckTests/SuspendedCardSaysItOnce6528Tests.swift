@@ -193,7 +193,9 @@ final class SuspendedCardSaysItOnce6528Tests: XCTestCase {
         XCTAssertTrue(
             code.contains(
                 "elseifisSuspended,letdetail=EventState.suspendedCardDetail("
-                + "away:event.awayScore,home:event.homeScore,date:formattedDateString)"),
+                + "away:event.awayScore,home:event.homeScore,date:formattedDateString,"
+                // #9208 — the authority's period drops a 0-0 under "Canceled".
+                + "authorityPeriod:event.espn?.period)"),
             """
             the suspended arm of topBar is not wired to suspendedCardDetail with \
             formattedDateString. Before #6528 it read \
@@ -225,7 +227,9 @@ final class SuspendedCardSaysItOnce6528Tests: XCTestCase {
     func testTheBadgeStillSaysTheWordsTheSlotStoppedSaying() throws {
         let code = try badgeCode()
         XCTAssertTrue(
-            code.contains("Text(EventState.suspendedLabel)"),
+            // #9208 — through the stoppage-word helper, which falls back to
+            // the constant: the badge still says the state on every row.
+            code.contains("Text(EventState.suspendedLabel(authorityPeriod:period))"),
             """
             StatusBadge no longer prints suspendedLabel, so #6528's premise is \
             gone: EventCardView's trailing slot was emptied on the strength of \

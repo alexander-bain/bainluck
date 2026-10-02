@@ -237,6 +237,45 @@ enum EventState {
     /// result was ever reported, so that is what the badge says.
     static let suspendedLabel = "No result reported"
 
+    /// #9208 / #8810 — what a suspended row says INSTEAD of ``suspendedLabel``
+    /// when the authority watching it said it was stopped before it could be
+    /// played, or nil, which keeps ``suspendedLabel``.
+    ///
+    /// Production 2026-10-02: Orioles @ Yankees (15319530, Sep 27) is
+    /// `suspended` and serves `espn.period = "Canceled"`. Web search and the
+    /// team page said Canceled (ux #10052); the phone said "No result reported"
+    /// on the same rows, which is the sentence for a match whose sources went
+    /// dark. This one's source did not go dark: it told us.
+    ///
+    /// The Swift twin of web's `authorityStoppageLabel` (`lib/gameTimeLabel.ts`),
+    /// and the same EXACT allowlist for the same reason: the status ladder has
+    /// already decided the row is suspended, the word only picks the label. A
+    /// word not listed keeps the old label, so a live period ("End 9th") left
+    /// on a row that went dark can never print as a stoppage. Pinned to the web
+    /// table by `eventStatusSingleSource.test.ts`.
+    ///
+    /// Takes the authority's PERIOD — `espn.period` on the feed, search and
+    /// event doors, or the team door's `stoppage`, which the server has already
+    /// run through this allowlist (feeding a label back through it returns it).
+    static func authorityStoppageLabel(_ authorityPeriod: String?) -> String? {
+        guard let authorityPeriod else { return nil }
+        let key = authorityPeriod.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        return authorityStoppageWords[key]
+    }
+
+    static let authorityStoppageWords: [String: String] = [
+        "postponed": "Postponed",
+        "canceled": "Canceled",
+        "cancelled": "Canceled",
+    ]
+
+    /// The suspended badge's words for one row: the authority's stoppage word
+    /// when it gave one, else ``suspendedLabel``. Every surface that prints the
+    /// suspended state reads THIS, so a canceled game says so on all of them.
+    static func suspendedLabel(authorityPeriod: String?) -> String {
+        authorityStoppageLabel(authorityPeriod) ?? suspendedLabel
+    }
+
     /// The score half of a suspended row's line, or nil when we hold no score.
     ///
     /// Side order is AWAY-HOME, matching the web summary and every native card:
@@ -256,9 +295,25 @@ enum EventState {
     /// The one line a card prints for a suspended event when nothing else on
     /// that card has said the state. Discover's hero card is the caller: its
     /// corner chip says "PAUSED", so this line is where the words live.
-    static func suspendedSummary(away: Int?, home: Int?) -> String {
-        guard let fragment = lastScoreFragment(away: away, home: home) else { return suspendedLabel }
-        return "\(suspendedLabel) · \(fragment)"
+    ///
+    /// #9208 — `authorityPeriod` picks the words (``suspendedLabel(authorityPeriod:)``),
+    /// and under a stoppage word a 0-0 is dropped: ESPN publishes 0-0 for both
+    /// sides of a postponed fixture, so that pair is filler, not a last score
+    /// (web's #8960 rule). A non-zero pair — stopped mid-game — still prints.
+    static func suspendedSummary(away: Int?, home: Int?, authorityPeriod: String? = nil) -> String {
+        let label = suspendedLabel(authorityPeriod: authorityPeriod)
+        guard let fragment = stoppageAwareScoreFragment(
+            away: away, home: home, authorityPeriod: authorityPeriod) else { return label }
+        return "\(label) · \(fragment)"
+    }
+
+    /// ``lastScoreFragment``, minus #8960's filler: nil for a 0-0 under an
+    /// authority stoppage word.
+    static func stoppageAwareScoreFragment(away: Int?, home: Int?, authorityPeriod: String?) -> String? {
+        if authorityStoppageLabel(authorityPeriod) != nil, (away ?? 0) == 0, (home ?? 0) == 0 {
+            return nil
+        }
+        return lastScoreFragment(away: away, home: home)
     }
 
     /// What the feed/search/team card's TRAILING slot prints for a suspended
@@ -294,8 +349,14 @@ enum EventState {
     /// Returns nil — the slot draws nothing — when we hold neither a score nor a
     /// date. The badge has already spoken; an empty slot beside it is quiet,
     /// where a second copy of the badge is noise.
-    static func suspendedCardDetail(away: Int?, home: Int?, date: String?) -> String? {
-        let parts = [lastScoreFragment(away: away, home: home), date]
+    ///
+    /// #9208 — a 0-0 beside a "Postponed"/"Canceled" badge is dropped for the
+    /// reason given on ``suspendedSummary(away:home:authorityPeriod:)``.
+    static func suspendedCardDetail(
+        away: Int?, home: Int?, date: String?, authorityPeriod: String? = nil
+    ) -> String? {
+        let parts = [stoppageAwareScoreFragment(
+            away: away, home: home, authorityPeriod: authorityPeriod), date]
             .compactMap { $0 }
             .filter { !$0.isEmpty }
         return parts.isEmpty ? nil : parts.joined(separator: " · ")
