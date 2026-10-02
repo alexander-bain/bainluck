@@ -1,6 +1,6 @@
 "use client";
 
-import { Fragment, useState, useMemo, useEffect, useLayoutEffect, useRef } from "react";
+import { Fragment, useState, useMemo, useEffect, useId, useLayoutEffect, useRef } from "react";
 import {
   ComposedChart,
   Line,
@@ -11,6 +11,7 @@ import {
   Tooltip,
   ReferenceLine,
   ResponsiveContainer,
+  Customized,
 } from "recharts";
 import Link from "next/link";
 import { format, parseISO } from "date-fns";
@@ -484,6 +485,116 @@ export function intraMinuteRanges(
     if (!(range.hi > range.lo)) byMinute.delete(key);
   }
   return byMinute;
+}
+
+/** What recharts hands a `<Customized>` child: its own render state, the bits read here. */
+interface ChartRenderState {
+  formattedGraphicalItems?: Array<{
+    item?: { type?: unknown };
+    props?: { points?: Array<{ x?: number | null } | undefined> };
+  }>;
+  xAxisMap?: Record<string, { allowDataOverflow?: boolean }>;
+  yAxisMap?: Record<string, { scale?: (v: number) => number; y?: number; height?: number; allowDataOverflow?: boolean }>;
+  offset?: { left?: number; top?: number; width?: number; height?: number };
+}
+
+/** One mark on one row of `chartData`, at `y` on the 0–100 axis. */
+export interface ChartRowMark {
+  index: number;
+  y: number;
+  payload: Record<string, unknown>;
+}
+
+/**
+ * Where row `index` of `chartData` sits on the x axis: a drawn `<Line>`'s own
+ * vertex for that row. Every line is computed over every row (a null value
+ * still gets its x), and recharts places every series on the same category
+ * coordinate, so this is the x a `<Scatter>` on that row would have got.
+ * `null` when no line has been laid out yet.
+ *
+ * PURE: no I/O, no React.
+ */
+export function chartRowX(state: ChartRenderState, index: number): number | null {
+  for (const formatted of state.formattedGraphicalItems ?? []) {
+    if (formatted.item?.type !== Line) continue;
+    const x = formatted.props?.points?.[index]?.x;
+    if (typeof x === "number" && Number.isFinite(x)) return x;
+  }
+  return null;
+}
+
+/**
+ * #10092 — a handful of marks on named rows, at the cost of a handful of marks.
+ *
+ * The end callout and the #10093 minute ranges were `<Scatter>` series over the
+ * whole of `chartData`, drawing an empty `<g/>` for every row but one. A
+ * `<Scatter>` builds a point, a props object and two elements for EVERY row
+ * whatever its `shape` returns, and a 48 h chart is one row per minute: the
+ * #10092 replay page (`/events/15320645`, 390px, production build) held 2,865
+ * symbol groups for one dot. Every accepted push re-renders the chart, and the
+ * hero commits with it, so that walk was most of the 233.7 ms p95 from frame to
+ * digits (Live's replay, 2026-10-02). With the callout drawn here, the same
+ * replay measured p95 84.4 ms (n = 33).
+ *
+ * Rendered through `<Customized>` (recharts clones its render state onto this
+ * element), so it paints in the same commit, in the same child order, as the
+ * series it replaces. `shape` gets the props a `<Scatter>` shape got —
+ * `cx`, `cy`, `payload` and the resolved `yAxis` (#5581 reads its plot rect) —
+ * and the layer is clipped exactly as recharts clipped a scatter (per axis, on
+ * an axis with `allowDataOverflow`). The `recharts-scatter` class stays on the
+ * layer so probes that read `.recharts-scatter text` (the #10092 harness) still
+ * find the callout.
+ */
+export function ChartRowMarks({
+  rows,
+  shape,
+  ...state
+}: ChartRenderState & {
+  rows: ChartRowMark[];
+  shape: (props: {
+    cx: number;
+    cy: number;
+    payload: Record<string, unknown>;
+    yAxis: { scale?: (v: number) => number; y?: number; height?: number };
+  }) => React.ReactNode;
+}) {
+  const clipId = `odds-chart-marks-${useId().replace(/:/g, "")}`;
+  const yAxis = Object.values(state.yAxisMap ?? {})[0];
+  const xAxis = Object.values(state.xAxisMap ?? {})[0];
+  const scale = yAxis?.scale;
+  if (!yAxis || typeof scale !== "function") return null;
+  const marks: React.ReactNode[] = [];
+  for (const row of rows) {
+    const cx = chartRowX(state, row.index);
+    const cy = scale(row.y);
+    if (cx === null || !Number.isFinite(cy)) continue;
+    marks.push(<Fragment key={row.index}>{shape({ cx, cy, payload: row.payload, yAxis })}</Fragment>);
+  }
+  if (marks.length === 0) return null;
+  // The rect recharts' own scatter clip uses: the plot on an axis that allows
+  // overflow, twice the plot on one that does not. The y axis does and the x
+  // does not, so the end dot's right half still draws past the plot's edge.
+  const { left = 0, top = 0, width = 0, height = 0 } = state.offset ?? {};
+  const clipX = !!xAxis?.allowDataOverflow;
+  const clipY = !!yAxis.allowDataOverflow;
+  const clip = clipX || clipY;
+  return (
+    <g className="recharts-layer recharts-scatter" clipPath={clip ? `url(#${clipId})` : undefined}>
+      {clip && (
+        <defs>
+          <clipPath id={clipId}>
+            <rect
+              x={clipX ? left : left - width / 2}
+              y={clipY ? top : top - height / 2}
+              width={clipX ? width : width * 2}
+              height={clipY ? height : height * 2}
+            />
+          </clipPath>
+        </defs>
+      )}
+      {marks}
+    </g>
+  );
 }
 
 /** Resolved source info used for rendering */
@@ -1806,16 +1917,16 @@ export default function OddsChart({
     : resolvedSources.find((s) => s.dataKey === primarySeriesKey)?.color ?? sourceHex("betting");
 
   const drawnMinuteRanges = useMemo(() => {
-    const drawn: Array<{ lo: number; hi: number }> = [];
-    for (const pt of chartData) {
+    const drawn: Array<ChartRowMark & { lo: number; hi: number }> = [];
+    chartData.forEach((pt, index) => {
       delete pt.minuteRangeHi;
       delete pt.minuteRangeLo;
       const range = primaryMinuteRanges.get(pt.timestamp);
-      if (!range) continue;
+      if (!range) return;
       pt.minuteRangeHi = range.hi;
       pt.minuteRangeLo = range.lo;
-      drawn.push(range);
-    }
+      drawn.push({ index, y: range.hi, payload: pt, lo: range.lo, hi: range.hi });
+    });
     return drawn;
   }, [chartData, primaryMinuteRanges]);
 
@@ -1992,6 +2103,8 @@ export default function OddsChart({
           // of was two tabs labelling two points ten minutes apart, so the
           // instant is the thing worth exporting.
           timestamp: chartData[i].timestamp,
+          // #10092 — the row the dot is drawn on (`ChartRowMarks`).
+          rowIndex: i,
           delta,
           homeProb: percents.home,
           awayProb: percents.away,
@@ -3010,14 +3123,11 @@ export default function OddsChart({
                 in the primary line's own colour (see `intraMinuteRanges`). The
                 line still passes through the minute's last reading, which is
                 the number the hero and callout print. Static: nothing animates
-                while the price is quiet, and a quiet minute draws nothing. */}
+                while the price is quiet, and a quiet minute draws nothing.
+                #10092: drawn on its ranged rows only (`ChartRowMarks`). */}
             {drawnMinuteRanges.length > 0 && (
-              <Scatter
-                dataKey="minuteRangeHi"
-                fill="none"
-                isAnimationActive={false}
-                legendType="none"
-                tooltipType="none"
+              <Customized component={<ChartRowMarks
+                rows={drawnMinuteRanges}
                 shape={(props: {
                   cx?: number;
                   cy?: number;
@@ -3042,7 +3152,7 @@ export default function OddsChart({
                     />
                   );
                 }}
-              />
+              />} />
             )}
 
 
@@ -3074,11 +3184,12 @@ export default function OddsChart({
               />
             )}
 
-            {/* Current probability callout — dot at the last data point */}
+            {/* Current probability callout — dot at the last data point.
+                #10092: drawn on that one row (`ChartRowMarks`), not as a
+                series over every row of the chart. */}
             {currentCallout && (
-              <Scatter
-                dataKey="calloutDelta"
-                fill="none"
+              <Customized component={<ChartRowMarks
+                rows={[{ index: currentCallout.rowIndex, y: currentCallout.delta, payload: chartData[currentCallout.rowIndex] }]}
                 shape={(props: {
                   cx?: number;
                   cy?: number;
@@ -3223,8 +3334,7 @@ export default function OddsChart({
                     </g>
                   );
                 }}
-                legendType="none"
-              />
+              />} />
             )}
 
             {/* ── EVENT MARKERS: LAST CHILDREN ON PURPOSE (#6964) ──────────────
