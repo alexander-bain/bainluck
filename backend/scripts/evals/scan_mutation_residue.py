@@ -127,6 +127,13 @@ SHAPES: dict[str, list[tuple[str, object, object, object]]] = {
     # `futures_movers_warm_mutations` above. Two targets in one table (the
     # shared loader and the route that delegates to it), carried per-entry at
     # index 2 — the `futures_categories_warm_mutations` shape.
+    # Q477. Alphabetical, for the reason spelled out under
+    # `futures_movers_warm_mutations` above. THREE targets in one table — the
+    # series table and its predicate, the anchor key builder that consults it,
+    # and the link-side writer — so the target is carried per-entry at index 4,
+    # the `tennis_population_mutations` shape, and all three files are swept
+    # whichever mutant left residue.
+    "kalshi_soccer_match_anchor_mutations": [("MUTANTS", 2, 3, 4)],
     "latest_observation_mutations": [("MUTANTS", 3, 4, 2)],
     # LAT-P128. Alphabetical, for the reason spelled out under
     # `futures_movers_warm_mutations` above.
