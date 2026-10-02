@@ -566,7 +566,9 @@ struct SearchView: View {
                                 HStack(spacing: 4) {
                                     // #4021 — the badge needs the clock to tell a
                                     // suspended-and-played row from a future-dated one.
-                                    StatusBadge(status: status, commenceTime: suggestion.commenceTime)
+                                    StatusBadge(status: status, commenceTime: suggestion.commenceTime,
+                                                // #9208 — the authority's stoppage word ("Canceled").
+                                                period: suggestion.stoppage)
                                     if let commenceTime = suggestion.commenceTime {
                                         RelativeTimeText(dateString: commenceTime)
                                     }

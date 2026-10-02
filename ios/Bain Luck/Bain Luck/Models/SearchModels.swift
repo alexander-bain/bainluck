@@ -434,6 +434,11 @@ nonisolated struct TypeaheadSuggestion: Decodable, Identifiable, Sendable {
     let marketId: Int?
     let marketTier: Int?
     let marketTypeLabel: String?
+    /// #9208 — "Canceled" / "Postponed" on a suspended event row whose
+    /// authority period is one of those words (live #10153, the same server
+    /// allowlist as the team brief's `stoppage`). The key is ABSENT otherwise,
+    /// and absent until that PR is on production — nil keeps the old badge.
+    let stoppage: String?
 
     var id: String { "\(type)-\(text)-\(marketId ?? teamId ?? eventId ?? 0)" }
 }

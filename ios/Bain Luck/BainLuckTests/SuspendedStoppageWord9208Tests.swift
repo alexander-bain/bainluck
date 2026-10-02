@@ -130,6 +130,25 @@ final class SuspendedStoppageWord9208Tests: XCTestCase {
                        "No result reported")
     }
 
+    func testTheTypeaheadSuggestionReadsItsStoppage() throws {
+        // `/api/events/typeahead` event row after live #10153: the key rides a
+        // suspended row only, and is absent (not null) everywhere else.
+        let rows = try Self.decoder().decode(TypeaheadResponse.self, from: Data("""
+        {"query":"orioles","did_you_mean":null,"suggestions":[
+         {"type":"event","text":"Baltimore Orioles @ New York Yankees","event_id":15319530,
+          "sport_key":"baseball_mlb","status":"suspended",
+          "commence_time":"2026-09-27T17:05:00+00:00","stoppage":"Canceled"},
+         {"type":"event","text":"Baltimore Orioles @ Boston Red Sox","event_id":15319999,
+          "sport_key":"baseball_mlb","status":"completed",
+          "commence_time":"2026-09-26T23:10:00+00:00"}]}
+        """.utf8)).suggestions
+        XCTAssertEqual(rows[0].stoppage, "Canceled")
+        XCTAssertEqual(EventState.suspendedLabel(authorityPeriod: rows[0].stoppage), "Canceled")
+        XCTAssertNil(rows[1].stoppage)
+        XCTAssertEqual(EventState.suspendedLabel(authorityPeriod: rows[1].stoppage),
+                       "No result reported")
+    }
+
     // MARK: - The share image
 
     func testTheShareEyebrowSaysCanceled() {

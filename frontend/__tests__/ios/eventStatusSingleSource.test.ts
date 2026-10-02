@@ -1033,10 +1033,12 @@ describe("#9208 — the phone says the authority's stoppage word", () => {
   });
 
   it("every badge caller that holds a period hands it over", () => {
-    // Search + team rows (a raw `event.status`), the hero's suspended arm and
-    // the feed card. The typeahead suggestion is the one badge left without:
-    // `/api/events/typeahead` serves no period or stoppage (handed to live).
+    // Search + team rows (a raw `event.status`), the hero's suspended arm, the
+    // feed card, and the typeahead suggestion (`stoppage`, live #10153).
     expect(read("Views/SearchView.swift")).toMatch(/period: event\.authorityPeriod,/);
+    expect(read("Views/SearchView.swift")).toMatch(
+      /StatusBadge\(status: status, commenceTime: suggestion\.commenceTime,\s*period: suggestion\.stoppage\)/,
+    );
     expect(read("Views/TeamDetailView.swift")).toMatch(/period: event\.authorityPeriod,/);
     expect(read("Views/EventDetailView.swift")).toMatch(
       /status: "suspended",\s*commenceTime: event\.commenceTime,\s*period: event\.espn\?\.period,/,
