@@ -53,7 +53,7 @@
 import type { FeedEventData, FeedItem, SportHierarchy } from "@/lib/types";
 import { feedEventSectionKey } from "@/lib/feedSections";
 import { finishedDayOffset } from "@/lib/gameTimeLabel";
-import { finishedHeadlineBand } from "@/lib/sports/headline";
+import { headlineBand } from "@/lib/sports/headline";
 
 /**
  * How many finals the section shows before it declares a cap.
@@ -180,7 +180,7 @@ function finishedAtTime(data: FeedEventData): string {
  * Still not the ranker's rank — the score is never read. A final is a headline
  * by the one definition `/sports` uses for its lead (`isHeadlineCard`: tier 1,
  * a playoff/championship, a Grand Slam, a major). Headlines take the cap's
- * slots first, postseason headlines ahead of the rest (`finishedHeadlineBand`);
+ * slots first, postseason headlines ahead of the rest (`headlineBand`);
  * day and recency then decide INSIDE each band exactly as above.
  * So two headline finals are never reordered against each other — the Slam
  * still competes with the ballgame on when it ended, which is #4454's
@@ -222,7 +222,7 @@ export function buildFinishedSection(
     }
     dated.push({
       item,
-      band: finishedHeadlineBand(item),
+      band: headlineBand(item),
       day,
       at: new Date(finishedAtTime(data)).getTime(),
       began: new Date(data.commence_time).getTime(),
