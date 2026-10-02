@@ -87,7 +87,10 @@ def test_unverified_token_rotation_and_query_rotation_cannot_mint_budgets(make_c
     ("POST", "/api/futures/1", "fresh=true", False),
     ("GET", "/api/futures/0", "fresh=true", False),
     ("GET", "/api/futures/1/", "fresh=true", False),
-    ("GET", "/api/futures/1/history", "fresh=true", False),
+    # #9536: the web chart's fresh /history read joins this bucket (full contract:
+    # test_rate_limit_fresh_market_budget.py).
+    ("GET", "/api/futures/1/history", "fresh=true", True),
+    ("GET", "/api/futures/1/history", "hours=168", False),
     ("GET", "/api/futures/search", "fresh=true", False),
     ("GET", "/api/futures/1/probability-timeline", "fresh=true&top=50&hours=8760", True),
     ("GET", "/api/futures/1/probability-timeline", "fresh=true&top=51", False),
@@ -104,7 +107,8 @@ def test_only_exact_opt_in_reads_with_valid_timeline_bounds_qualify(method, path
 def test_exact_production_routes_exist_and_budget_is_finite():
     from app.main import app
     paths = {route.path for route in app.routes if isinstance(route, APIRoute) and "GET" in route.methods}
-    assert {"/api/futures/{market_id}", "/api/futures/{market_id}/probability-timeline"} <= paths
+    assert {"/api/futures/{market_id}", "/api/futures/{market_id}/history",
+            "/api/futures/{market_id}/probability-timeline"} <= paths
     assert limits.FRESH_MARKET_RATE_LIMIT == "120/minute"
     assert limits._FRESH_MARKET_MAX == 120
 
