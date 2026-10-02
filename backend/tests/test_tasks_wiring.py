@@ -284,8 +284,9 @@ class TestBeatScheduleCompleteness:
         # "sync-mm-bracket",  # Disabled — March Madness is over
         "matching-metrics-daily",
         "check-data-quality-daily",
-        "turbo-collapse-futures",
-        "turbo-collapse-odds",
+        # `turbo-collapse-futures` / `turbo-collapse-odds` RETIRED 2026-10-02
+        # (#3481): both passes wrote 0 rows. `test_turbo_collapse_retired_3481.py`
+        # asserts they stay gone.
         "transition-event-statuses",
         "revive-retired-future-starts",
         "track-statpal-usage",
