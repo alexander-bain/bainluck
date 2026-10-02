@@ -2418,6 +2418,48 @@ export function computeLastChartPoint(
     if (!datable) scoreStamp = null;
   }
 
+  // #4571 — A NEWER READ OF THE SAME WHOLE SCORE DATES THE PAIR.
+  //
+  // History picked the number, and history dates it, with one exception. The
+  // event row's `score_observed_at` is stamped by a writer that read a score and
+  // left the row holding exactly that score (live's PR #4912: refused or raced
+  // writes are not stamped, and an unchanged read still moves the stamp). When
+  // that row's FULL tuple equals the pair on screen, the stamp is a newer reading
+  // of the same number. Without this, a 2–0 confirmed a minute ago read "49m ago"
+  // off the last history row.
+  //
+  // Every condition below keeps the history clock when it fails:
+  //   - both sides came from history. A `mixed` pair keeps its oldest-half rule.
+  //   - both event sides equal the rendered sides. One matching side does not
+  //     confirm a pair, so the stamp never moves to one side alone.
+  //   - the history pair is dated, and the event stamp parses and is strictly
+  //     newer. An unknown age is not upgraded by a guess.
+  //   - for a finished game (`completed_at` present) the stamp is not after
+  //     `completed_at`. A read after the whistle does not re-date a final (#7315's
+  //     boundary), and an unparseable `completed_at` is a final we cannot bound.
+  // The value pick above does not change. `scoreFrom` stays `"history"`.
+  if (
+    scoreFrom === "history" &&
+    scoreStamp !== null &&
+    homeScore != null &&
+    awayScore != null &&
+    homeScore === resolvedHomeScore &&
+    awayScore === resolvedAwayScore
+  ) {
+    const confirmedMs = eventStamp ? Date.parse(eventStamp) : NaN;
+    const completedAt = historyData.completed_at;
+    const completedMs = completedAt ? Date.parse(completedAt) : NaN;
+    const withinFinal =
+      !completedAt || (!Number.isNaN(completedMs) && confirmedMs <= completedMs);
+    if (
+      !Number.isNaN(confirmedMs) &&
+      confirmedMs > Date.parse(scoreStamp) &&
+      withinFinal
+    ) {
+      scoreStamp = eventStamp;
+    }
+  }
+
   // #925 — THE RESTING READOUT TAKES THE NEWEST READING OF EACH FIELD, as the
   // comment above already claims. It took `lastEspn.period` / `lastEspn.game_clock`
   // raw, so a score-only row — which ESPN emits between MLB half-innings —

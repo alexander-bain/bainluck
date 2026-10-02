@@ -137,17 +137,22 @@ describe("#4571 the score's stamp follows its provenance", () => {
   // ---- the ESPN arm: live on production today ----
 
   test("a score off the ESPN row is dated by that row, not by the price snapshot", () => {
+    // SPLIT (#4571 full-tuple confirmation). This used to pass the event row as
+    // 21–17 and pin `not.toBe(EVENT_T)` as "a different number", but 21–17 is the
+    // SAME number. The same-tuple case now lives in the confirmation block below.
+    // Here the event row holds 21–20, so its clock is about a different pair.
     const pt = computeLastChartPoint(
       hist({ espn_history: [espnRow()] as never, win_prob_history: priceOnlyWinProb }),
       21,
-      17,
+      20,
       EVENT_T,
     );
     expect(pt!.homeScore).toBe(21);
+    expect(pt!.awayScore).toBe(17);
     expect(pt!.scoreFrom).toBe("history");
     expect(pt!.scoreStamp).toBe(ESPN_T);
-    // Not the event row's clock either — that describes a different number.
     expect(pt!.scoreStamp).not.toBe(EVENT_T);
+    expect(pt!.scoreStamp).not.toBe(PRICE_T);
   });
 
   test("the ESPN arm does not need the backend key, so it works on production today", () => {
@@ -327,8 +332,11 @@ describe("#4571 the score's stamp follows its provenance", () => {
       EVENT_T,
     );
     expect(pt!.scoreFrom).not.toBe("espn");
-    // and the stamp is still right, which is the half that IS knowable
-    expect(pt!.scoreStamp).toBe(ESPN_T);
+    // and the stamp is still right, which is the half that IS knowable. The
+    // event row holds the same 21–17 and read it later, so its clock dates the
+    // pair; the label stays the array the number came out of.
+    expect(pt!.scoreFrom).toBe("history");
+    expect(pt!.scoreStamp).toBe(EVENT_T);
   });
 
   // ---- what the badge does with it ----
@@ -341,8 +349,179 @@ describe("#4571 the score's stamp follows its provenance", () => {
       EVENT_T,
     );
     const stamp = heroFreshness({ priceStamp: PRICE_T, scoreStamp: pt!.scoreStamp });
+    // The same-tuple confirmation (02:01:30Z) is still older than the price
+    // (02:09:50Z), so the badge still blames the score, at the confirmed age.
     expect(stamp.fact).toBe("score");
-    expect(stamp.stamp).toBe(ESPN_T);
+    expect(stamp.stamp).toBe(EVENT_T);
+  });
+});
+
+describe("#4571 a newer read of the SAME whole score dates a history-derived pair", () => {
+  // Live's PR #4912 stamps `score_observed_at` only when a writer read a score
+  // and the row holds that score after the write. An unchanged read still moves
+  // it. So when the event row's FULL tuple equals the pair on screen, its newer
+  // stamp is a newer reading of that pair. Anything less keeps history's clock.
+  const BEFORE_ESPN_T = "2026-09-11T01:59:00Z";
+
+  test("same tuple, newer event stamp: the pair is dated by the event read", () => {
+    const pt = computeLastChartPoint(
+      hist({ espn_history: [espnRow()] as never, win_prob_history: priceOnlyWinProb }),
+      21,
+      17,
+      EVENT_T,
+    );
+    // the value pick does not move
+    expect(pt!.homeScore).toBe(21);
+    expect(pt!.awayScore).toBe(17);
+    expect(pt!.scoreFrom).toBe("history");
+    expect(pt!.scoreStamp).toBe(EVENT_T);
+  });
+
+  test("away side differs: the event stamp is about another pair, history keeps its clock", () => {
+    // Kills the remove-full-tuple-guard mutant and a home-only comparison.
+    const pt = computeLastChartPoint(
+      hist({ espn_history: [espnRow()] as never, win_prob_history: priceOnlyWinProb }),
+      21,
+      20,
+      EVENT_T,
+    );
+    expect(pt!.scoreStamp).toBe(ESPN_T);
+  });
+
+  test("home side differs: no per-side transfer either way", () => {
+    // Kills an away-only comparison: the matching away 17 does not confirm 21–17.
+    const pt = computeLastChartPoint(
+      hist({ espn_history: [espnRow()] as never, win_prob_history: priceOnlyWinProb }),
+      24,
+      17,
+      EVENT_T,
+    );
+    expect(pt!.homeScore).toBe(21);
+    expect(pt!.scoreStamp).toBe(ESPN_T);
+  });
+
+  test("one event side unknown: not a full tuple, history keeps its clock", () => {
+    const pt = computeLastChartPoint(
+      hist({ espn_history: [espnRow()] as never, win_prob_history: priceOnlyWinProb }),
+      21,
+      null,
+      EVENT_T,
+    );
+    expect(pt!.scoreStamp).toBe(ESPN_T);
+  });
+
+  test("same tuple but the event stamp is OLDER: history keeps its newer clock", () => {
+    const pt = computeLastChartPoint(
+      hist({ espn_history: [espnRow()] as never, win_prob_history: priceOnlyWinProb }),
+      21,
+      17,
+      BEFORE_ESPN_T,
+    );
+    expect(pt!.scoreStamp).toBe(ESPN_T);
+  });
+
+  test("same tuple, unparseable or absent event stamp: history keeps its clock", () => {
+    for (const stamp of ["not a date", null, undefined]) {
+      const pt = computeLastChartPoint(
+        hist({ espn_history: [espnRow()] as never, win_prob_history: priceOnlyWinProb }),
+        21,
+        17,
+        stamp,
+      );
+      expect(pt!.scoreStamp).toBe(ESPN_T);
+    }
+  });
+
+  test("an UNDATABLE history pair is not dated by the confirmation", () => {
+    // Unknown stays unknown: a history row with no timestamp is not upgraded.
+    const pt = computeLastChartPoint(
+      hist({
+        espn_history: [espnRow({ timestamp: "" })] as never,
+        win_prob_history: priceOnlyWinProb,
+      }),
+      21,
+      17,
+      EVENT_T,
+    );
+    expect(pt!.scoreFrom).toBe("history");
+    expect(pt!.scoreStamp).toBeNull();
+  });
+
+  test("a MIXED pair keeps its oldest-half rule even when the event tuple matches", () => {
+    // ESPN holds home 21, the event row supplies away 17, and the event row's
+    // 21–17 equals the rendered pair. The pair is still only as current as ESPN.
+    const pt = computeLastChartPoint(
+      hist({
+        espn_history: [espnRow({ away_score: null })] as never,
+        win_prob_history: priceOnlyWinProb,
+      }),
+      21,
+      17,
+      EVENT_T,
+    );
+    expect(pt!.scoreFrom).toBe("mixed");
+    expect(pt!.scoreStamp).toBe(ESPN_T);
+  });
+
+  // ---- a finished game: the confirmation may not be after `completed_at` ----
+
+  const COMPLETED_T = "2026-09-11T02:05:00Z";
+  const AFTER_FINAL_T = "2026-09-11T02:05:01Z";
+
+  test("FINAL: a same-tuple read before completed_at dates the pair", () => {
+    const pt = computeLastChartPoint(
+      hist({
+        espn_history: [espnRow()] as never,
+        win_prob_history: priceOnlyWinProb,
+        completed_at: COMPLETED_T,
+      }),
+      21,
+      17,
+      EVENT_T,
+    );
+    expect(pt!.scoreStamp).toBe(EVENT_T);
+  });
+
+  test("FINAL: a same-tuple read AT completed_at dates the pair", () => {
+    const pt = computeLastChartPoint(
+      hist({
+        espn_history: [espnRow()] as never,
+        win_prob_history: priceOnlyWinProb,
+        completed_at: COMPLETED_T,
+      }),
+      21,
+      17,
+      COMPLETED_T,
+    );
+    expect(pt!.scoreStamp).toBe(COMPLETED_T);
+  });
+
+  test("FINAL: a same-tuple read AFTER completed_at does not re-date the final", () => {
+    const pt = computeLastChartPoint(
+      hist({
+        espn_history: [espnRow()] as never,
+        win_prob_history: priceOnlyWinProb,
+        completed_at: COMPLETED_T,
+      }),
+      21,
+      17,
+      AFTER_FINAL_T,
+    );
+    expect(pt!.scoreStamp).toBe(ESPN_T);
+  });
+
+  test("FINAL: an unparseable completed_at is a final we cannot bound, so history keeps its clock", () => {
+    const pt = computeLastChartPoint(
+      hist({
+        espn_history: [espnRow()] as never,
+        win_prob_history: priceOnlyWinProb,
+        completed_at: "not a date",
+      }),
+      21,
+      17,
+      EVENT_T,
+    );
+    expect(pt!.scoreStamp).toBe(ESPN_T);
   });
 });
 
