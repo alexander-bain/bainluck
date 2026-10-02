@@ -4893,6 +4893,7 @@ async def _fetch_futures_window(
     tier1_limit: int | None = None,
     split_arms: Sequence = (),
     split_report: dict | None = None,
+    arm_ms: dict | None = None,
 ) -> tuple[list, str]:
     """The futures window, fetched TIER-ORDERED instead of all at once.
 
@@ -4945,7 +4946,20 @@ async def _fetch_futures_window(
     except ``skipped``/``absent`` still returns at most the window: those states
     mean tier<=1 came back short, so a wider LIMIT did not bind and the rows are
     the ones it always returned. The outcome arm is never widened.
+
+    ``arm_ms`` (#1619), when given, receives each statement's wall time in ms
+    under ``tier1`` / ``split`` / ``outcome`` — only for the statements that ran
+    (an absent key is a statement that never started, not one that cost 0 ms).
+    The futures stage on production read 2-4.5 s for `f1 champion` while its
+    outcome arm is bounded at 1,000 ms, and one stage number could not say which
+    statement spent the rest.
     """
+    _arm_t0 = time.perf_counter()
+
+    def _arm_done(label: str) -> None:
+        if arm_ms is not None:
+            arm_ms[label] = round((time.perf_counter() - _arm_t0) * 1000)
+
     if tier1_arms:
         _tier1_stmt = window_query(candidates_in(tier1_arms))
         if tier1_limit is not None:
@@ -4956,6 +4970,7 @@ async def _fetch_futures_window(
             .unique()
             .all()
         )
+        _arm_done("tier1")
     else:  # pragma: no cover - the name arm is always built
         tier1_rows = []
 
@@ -4980,6 +4995,7 @@ async def _fetch_futures_window(
             if tier1_limit is not None:
                 _split_stmt = _split_stmt.limit(tier1_limit)
             split_savepoint = await db.begin_nested()
+            _arm_t0 = time.perf_counter()
             try:
                 tier1_rows = list(
                     (await db.execute(_split_stmt)).scalars().unique().all()
@@ -4996,6 +5012,7 @@ async def _fetch_futures_window(
             else:
                 await split_savepoint.commit()
                 _split_state = "merged"
+            _arm_done("split")
             await _apply_search_statement_timeout(db, deadline)
     if split_report is not None:
         split_report["state"] = _split_state
@@ -5059,6 +5076,7 @@ async def _fetch_futures_window(
     # price is one SAVEPOINT + one RELEASE round trip on the healthy path; stated
     # here rather than hidden, and pinned by `test_the_healthy_path_is_untouched`.
     nested = await db.begin_nested()
+    _arm_t0 = time.perf_counter()
     try:
         outcome_rows = (
             (await db.execute(window_query(candidates_in([outcome_arm]))))
@@ -5067,6 +5085,7 @@ async def _fetch_futures_window(
             .all()
         )
     except Exception as exc:  # noqa: BLE001 — re-raised below unless it is the bound
+        _arm_done("outcome")
         if not _is_query_timeout(exc):
             # A real error. Release the savepoint's aborted state before handing it
             # up, so the caller's own recovery is not fighting a poisoned
@@ -5099,6 +5118,7 @@ async def _fetch_futures_window(
         # the request at it. Put the stage's own bound back.
         await _apply_search_statement_timeout(db, deadline)
         return tier1_rows, "budget_exceeded"
+    _arm_done("outcome")
     await nested.commit()
     merged = list(tier1_rows)
     seen = {m.id for m in merged}
@@ -11365,6 +11385,10 @@ async def search_events(
     # class." Search is bounded at `per_page` = 100, a fifth of the list route's
     # ceiling, so it is strictly the cheaper of the two call sites.
     await attach_venue_settlement(db, events, formatted_results, now)
+    # #1619: the event page's fold + settlement reads are their own stage. Until
+    # this mark they were billed to `futures`, so a slow futures number could not
+    # say whether the futures arms or the event formatting spent it.
+    _mark("event_format")
 
     # Calculate pagination metadata
     total_count = total_count or 0
@@ -12048,6 +12072,8 @@ async def search_events(
     _futures_outcome_arm = "not_reached"
     # #10024: the split arms' state, beside the outcome arm's (gotcha #53).
     _futures_split_report: dict = {"state": "not_reached"}
+    # #1619: each futures statement's own ms; see `_fetch_futures_window`.
+    _futures_arm_ms: dict[str, int] = {}
     # #8704: tier<=1 rows ranked 21-60, fetched by the window's own statement.
     # See `_futures_refill_in_hand` for when they ARE the collapse refill.
     _futures_spare_rows: list = []
@@ -12070,6 +12096,7 @@ async def search_events(
                 tier1_limit=_SEARCH_FUTURES_WINDOW + _SEARCH_FUTURES_REFILL,
                 split_arms=_futures_split_arms,
                 split_report=_futures_split_report,
+                arm_ms=_futures_arm_ms,
             )
             _futures_spare_rows = futures_markets_raw[_SEARCH_FUTURES_WINDOW:]
             futures_markets_raw = futures_markets_raw[:_SEARCH_FUTURES_WINDOW]
@@ -13335,7 +13362,11 @@ async def search_events(
                              "futures_outcome_arm": _futures_outcome_arm,
                              "futures_refill_source": _futures_refill_source,
                              "futures_sunk_slot_arm": _futures_sunk_slot_arm,
-                             "futures_split_arm": _futures_split_report["state"]}}
+                             "futures_split_arm": _futures_split_report["state"],
+                             # #1619: NOT inside `_stage_ms` — these ms are
+                             # already inside `futures`, so summing them into
+                             # `total_ms` would count them twice.
+                             "futures_arm_ms": _futures_arm_ms}}
            if debug_timing else {}),
     }
 
