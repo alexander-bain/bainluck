@@ -6,6 +6,13 @@ private let logger = Logger(subsystem: "com.bainluck", category: "futuresDetail"
 
 protocol FuturesDetailProviding: Sendable {
     func fetchFuturesDetail(id: Int) async throws -> FuturesMarketDetail
+    /// #9387 opt-in. A provider that predates it serves its default body.
+    func fetchFuturesDetail(id: Int, representation: FuturesRepresentation) async throws -> FuturesMarketDetail
+}
+extension FuturesDetailProviding {
+    func fetchFuturesDetail(id: Int, representation: FuturesRepresentation) async throws -> FuturesMarketDetail {
+        try await fetchFuturesDetail(id: id)
+    }
 }
 extension APIClient: FuturesDetailProviding {}
 
@@ -17,6 +24,10 @@ final class FuturesDetailViewModel: ObservableObject {
     @Published private(set) var streamConnected = false
 
     let marketId: Int
+    /// #9387 — what this page ASKS for. The response says what it IS
+    /// (`market.effectiveRepresentation`); an ineligible board answers in source
+    /// mode and the page draws exactly what it drew before.
+    let representation: FuturesRepresentation
     private let client: FuturesDetailProviding
     private let makeStreamHandle: MarketStreamSubscription.Factory?
     private let now: () -> TimeInterval
@@ -34,7 +45,8 @@ final class FuturesDetailViewModel: ObservableObject {
     private var visible = false
     private var withdrawals: [Int: FuturesPriceReconciliation.Withdrawal] = [:]
 
-    init(marketId: Int, client: FuturesDetailProviding = APIClient.shared,
+    init(marketId: Int, representation: FuturesRepresentation = .verifiedTitle,
+         client: FuturesDetailProviding = APIClient.shared,
          makeStreamHandle: MarketStreamSubscription.Factory? = nil,
          now: @escaping () -> TimeInterval = { Date().timeIntervalSince1970 },
          minimumRefreshInterval: TimeInterval = 2,
@@ -45,6 +57,7 @@ final class FuturesDetailViewModel: ObservableObject {
              try? await Task.sleep(nanoseconds: UInt64($0 * 1_000_000_000))
          }) {
         self.marketId = marketId
+        self.representation = representation
         self.client = client
         self.makeStreamHandle = makeStreamHandle
         self.sleep = sleep
@@ -60,7 +73,7 @@ final class FuturesDetailViewModel: ObservableObject {
         let visibility = visibilityGeneration
         loading = market == nil
         do {
-            let fetched = try await client.fetchFuturesDetail(id: marketId)
+            let fetched = try await client.fetchFuturesDetail(id: marketId, representation: representation)
             guard !Task.isCancelled, generation == loadGeneration,
                   visibility == visibilityGeneration, fetched.id == marketId else { return }
             adopt(fetched)
@@ -78,6 +91,16 @@ final class FuturesDetailViewModel: ObservableObject {
         }
         loading = false
         configureStream()
+    }
+
+    /// Pull-to-refresh: re-read the detail AND the chart. `adopt` already moves
+    /// the chart when the body changed; an unchanged body still owes the reader
+    /// a fresh chart read, exactly once (#9387).
+    @MainActor
+    func refresh() async {
+        let token = chartRefreshToken
+        await load()
+        if chartRefreshToken == token { chartRefreshToken += 1 }
     }
 
     @MainActor
@@ -107,8 +130,11 @@ final class FuturesDetailViewModel: ObservableObject {
             // This token refreshes the chart, not a pushed-price receipt. An
             // accepted unclocked first quote still needs a matching chart.
             let changed = held.source != accepted.source
+                || held.effectiveRepresentation != accepted.effectiveRepresentation
                 || held.outcomes.map(\.id) != accepted.outcomes.map(\.id)
                 || held.outcomes.map(\.probability) != accepted.outcomes.map(\.probability)
+                || held.outcomes.map { $0.contributingSources ?? [] }
+                    != accepted.outcomes.map { $0.contributingSources ?? [] }
             if changed || FuturesPriceReconciliation.hasNewObservation(accepted, over: held) {
                 chartRefreshToken += 1
             }

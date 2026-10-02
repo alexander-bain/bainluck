@@ -237,6 +237,26 @@ nonisolated struct FuturesMarketDetail: Decodable, Identifiable, Sendable {
     /// board, and absent from builds before #8894; both decode to `nil` and the
     /// page keeps its highest-priced rule. See `futuresDetailHeroOutcome`.
     let leadOutcomeId: Int?
+
+    // #9387 — `?representation=verified_title`. All four are additive and
+    // optional: a default (source) response carries none of them, and a
+    // malformed value decodes to nil rather than failing the page. Read through
+    // `VerifiedTitlePresentation`, never directly.
+    /// The EFFECTIVE representation of this response: `source` or `verified_title`.
+    @TolerantNumeric var representation: String? = nil
+    @TolerantNumeric var questionIdentity: FuturesQuestionIdentity? = nil
+    /// Union of the venues actually used by the outcomes (`odds_api`, `kalshi`,
+    /// `polymarket`). Metadata only — the hero names its OWN outcome's sources.
+    @TolerantNumeric var contributingSources: [String]? = nil
+    @TolerantNumeric var representationFallback: String? = nil
+}
+
+/// #9387 — the provider-backed question a verified response answers. Every field
+/// is a string on the wire, edition included ("2027").
+nonisolated struct FuturesQuestionIdentity: Codable, Sendable {
+    @TolerantNumeric var competition: String? = nil
+    @TolerantNumeric var edition: String? = nil
+    @TolerantNumeric var question: String? = nil
 }
 
 // MARK: - Futures Outcome
@@ -255,12 +275,19 @@ nonisolated struct FuturesOutcome: Decodable, Identifiable, Sendable {
     let openingAmericanOdds: Int?
     let isWinner: Bool?
     let lastUpdated: String?
+    /// #9387, verified responses only: this outcome's actual source keys, the
+    /// OLDEST included observation (ISO), and the resolver rule that combined
+    /// them. Absent on source responses; malformed values decode to nil.
+    @TolerantNumeric var contributingSources: [String]? = nil
+    @TolerantNumeric var observedAt: String? = nil
+    @TolerantNumeric var aggregationRule: String? = nil
 
     private enum CodingKeys: String, CodingKey {
         case id, name, probability, americanOdds, rank
         case rankChange24h = "rankChange24H"
         case probabilityChange24h = "probabilityChange24H"
         case openingProbability, openingAmericanOdds, isWinner, lastUpdated
+        case contributingSources, observedAt, aggregationRule
     }
 }
 
@@ -437,6 +464,22 @@ nonisolated struct ProbabilityTimelineResponse: Decodable, Sendable {
     /// share a shape (gotcha #53).
     let coverageHours: Double?
     let observationTimes: Int?
+
+    // #9387 — opt-in timeline. `timeline` stays the requested source's own
+    // history; only the CURRENT column of `outcomes` may carry verified values.
+    // `historyBasis` names whose history the lines are, and the chart labels
+    // itself from it — never from the detail request.
+    @TolerantNumeric var representation: String? = nil
+    @TolerantNumeric var questionIdentity: FuturesQuestionIdentity? = nil
+    @TolerantNumeric var contributingSources: [String]? = nil
+    @TolerantNumeric var historyBasis: TimelineHistoryBasis? = nil
+}
+
+/// #9387 — `{kind: "single_source", source: "odds_api", market_id: 86832}`.
+nonisolated struct TimelineHistoryBasis: Codable, Sendable {
+    @TolerantNumeric var kind: String? = nil
+    @TolerantNumeric var source: String? = nil
+    @TolerantNumeric var marketId: Int? = nil
 }
 
 /// Probability snapshot for all tracked outcomes at one timestamp.
@@ -449,7 +492,8 @@ nonisolated struct TimelineEntry: Decodable, Sendable {
 nonisolated struct TimelineOutcomeMeta: Decodable, Identifiable, Sendable {
     let id: Int?
     let name: String
-    let currentProbability: Double?
+    /// `var` only so `withholdingCurrent()` can blank it on a copy (#9387).
+    var currentProbability: Double?
     let rank: Int?
     /// `probability_change_24h`. See `TolerantNumeric`.
     @TolerantNumeric var probabilityChange24h: Double?
@@ -464,6 +508,11 @@ nonisolated struct TimelineOutcomeMeta: Decodable, Identifiable, Sendable {
     let record: String?
     let location: String?
     let espnId: String?
+    /// #9387 — the same per-outcome fields as `FuturesOutcome`, on the current
+    /// column of an opt-in timeline.
+    @TolerantNumeric var contributingSources: [String]? = nil
+    @TolerantNumeric var observedAt: String? = nil
+    @TolerantNumeric var aggregationRule: String? = nil
 
     // Every plain camelCase property below does match its snake_case key via
     // `.convertFromSnakeCase` — but a digits-plus-letters suffix does NOT, which
@@ -473,5 +522,20 @@ nonisolated struct TimelineOutcomeMeta: Decodable, Identifiable, Sendable {
         case probabilityChange24h = "probabilityChange24H"
         case openingProbability, teamId, logoSmall, logoLarge
         case primaryColor, secondaryColor, abbreviation, record, location, espnId
+        case contributingSources, observedAt, aggregationRule
+    }
+}
+
+extension TimelineOutcomeMeta {
+    /// #9387 — this row with its CURRENT column withheld: no value, no 24h move,
+    /// no contributors. Name, id and team enrichment (and so the history key,
+    /// colour and order) are untouched. Lives beside the type because the
+    /// wrapped fields' backing storage is private to this file.
+    nonisolated func withholdingCurrent() -> TimelineOutcomeMeta {
+        var copy = self
+        copy.currentProbability = nil
+        copy._probabilityChange24h = TolerantNumeric(wrappedValue: nil)
+        copy._contributingSources = TolerantNumeric(wrappedValue: nil)
+        return copy
     }
 }

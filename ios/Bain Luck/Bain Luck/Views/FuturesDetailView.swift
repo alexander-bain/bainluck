@@ -78,6 +78,31 @@ nonisolated func futuresDetailHeroOutcome(_ market: FuturesMarketDetail) -> Futu
     return market.outcomes.max(by: { ($0.probability ?? 0) < ($1.probability ?? 0) })
 }
 
+/// The share sentence for this page.
+///
+/// #9387: a VERIFIED page's number is the cross-venue answer, and the link
+/// opens the web page, which still serves the source row's own estimator. So a
+/// verified share names the question and carries no number — "X at N%" would
+/// land on a page printing something else. Source-mode sharing is unchanged.
+func futuresDetailShareMessage(_ market: FuturesMarketDetail?) -> String {
+    guard let market else { return "Check this out on Bain Luck" }
+    if VerifiedTitlePresentation.shareOmitsQuote(market) {
+        return "\(market.name) on Bain Luck"
+    }
+    // The hero's own choice, so a share never quotes a leg the page does not lead with (#8892).
+    let leader = futuresDetailHeroOutcome(market)
+    if let leader, let prob = leader.probability {
+        // The sentence quotes the same integer the hero and the leader row
+        // print. Rounding it here again is how a share read "60%" off a page
+        // that said 59% — and the share is the copy that leaves the app.
+        let percent = futuresDetailRenderedPercents(market.outcomes)[leader.id]
+            ?? renderedPercent(prob)
+            ?? Int((prob * 100).rounded())
+        return "\(leader.name) at \(percent)% — \(market.name) on Bain Luck"
+    }
+    return "\(market.name) on Bain Luck"
+}
+
 // MARK: - View
 
 struct FuturesDetailView: View {
@@ -94,21 +119,7 @@ struct FuturesDetailView: View {
         _viewModel = StateObject(wrappedValue: FuturesDetailViewModel(marketId: marketId))
     }
 
-    private var shareMessage: String {
-        guard let market = viewModel.market else { return "Check this out on Bain Luck" }
-        // The hero's own choice, so a share never quotes a leg the page does not lead with (#8892).
-        let leader = futuresDetailHeroOutcome(market)
-        if let leader, let prob = leader.probability {
-            // The sentence quotes the same integer the hero and the leader row
-            // print. Rounding it here again is how a share read "60%" off a page
-            // that said 59% — and the share is the copy that leaves the app.
-            let percent = futuresDetailRenderedPercents(market.outcomes)[leader.id]
-                ?? renderedPercent(prob)
-                ?? Int((prob * 100).rounded())
-            return "\(leader.name) at \(percent)% — \(market.name) on Bain Luck"
-        }
-        return "\(market.name) on Bain Luck"
-    }
+    private var shareMessage: String { futuresDetailShareMessage(viewModel.market) }
 
     /// Both share buttons on this page — toolbar and hero — record the same
     /// `futures_detail` source on purpose: they share the same market and the
@@ -166,12 +177,19 @@ struct FuturesDetailView: View {
 
                             // Probability evolution chart
                             if market.outcomes.count >= 1 {
+                                // #9387: the chart asks for the same mode and is
+                                // told what the hero says, so its current column
+                                // can never contradict it.
                                 EvolutionChartView(
                                     marketId: marketId,
                                     hours: 168,
                                     tournamentStart: golfTournamentStart(market),
                                     tournamentEnd: golfTournamentEnd(market),
-                                    refreshToken: viewModel.chartRefreshToken
+                                    refreshToken: viewModel.chartRefreshToken,
+                                    representation: viewModel.representation,
+                                    expectation: viewModel.representation == .source ? nil
+                                        : VerifiedTitleChartExpectation(
+                                            market: market, hero: futuresDetailHeroOutcome(market))
                                 )
                             }
 
@@ -218,7 +236,8 @@ struct FuturesDetailView: View {
             }
         }
         .refreshable {
-            await viewModel.load()
+            // Detail AND chart (#9387).
+            await viewModel.refresh()
         }
         .onChange(of: scenePhase) { _, phase in
             viewModel.setVisible(pageVisible && phase == .active)
@@ -274,7 +293,9 @@ struct FuturesDetailView: View {
                         .padding(.vertical, 4)
                         .background(.black.opacity(0.24), in: Capsule())
                 }
-                if let source = market.source, let label = sourceLabel(source) {
+                // #9387: the hero names ITS OWN outcome's contributors when the
+                // page is verified — one contributor is one source, never a blend.
+                if let label = VerifiedTitlePresentation.heroSourcePill(market, hero: leader) {
                     Text(label.uppercased())
                         .font(.system(size: 9, weight: .heavy))
                         .tracking(0.8)
@@ -384,10 +405,6 @@ struct FuturesDetailView: View {
         }
     }
 
-    private func sourceLabel(_ source: String) -> String? {
-        SourceLabels.label(for: source)
-    }
-
     // MARK: - Metadata Section
 
     private func metadataSection(_ market: FuturesMarketDetail) -> some View {
@@ -423,17 +440,35 @@ struct FuturesDetailView: View {
                     }
                 }
 
-                // Source row
-                if let source = market.source {
+                // Source row. #9387: on a verified page this is the HERO
+                // outcome's contributors; the market-wide union gets its own
+                // row only when it says something more.
+                let heroSources = VerifiedTitlePresentation.heroContributors(
+                    market, hero: futuresDetailHeroOutcome(market))
+                if let sources = heroSources ?? market.source.map({ [$0] }) {
                     HStack(spacing: 6) {
                         Image(systemName: "building.2")
                             .font(.system(size: 9))
                             .foregroundStyle(DS.textMuted)
                             .frame(width: 6, alignment: .center)
-                        Text("Source")
+                        Text(sources.count > 1 ? "Sources" : "Source")
                             .font(.system(size: 12, weight: .medium))
                             .foregroundStyle(DS.textMuted)
-                        SourceChip(source: source)
+                        ForEach(sources, id: \.self) { SourceChip(source: $0) }
+                    }
+                }
+                if let heroSources,
+                   let union = VerifiedTitlePresentation.marketContributors(market),
+                   Set(union) != Set(heroSources) {
+                    HStack(spacing: 6) {
+                        Image(systemName: "square.stack.3d.up")
+                            .font(.system(size: 9))
+                            .foregroundStyle(DS.textMuted)
+                            .frame(width: 6, alignment: .center)
+                        Text("Venues")
+                            .font(.system(size: 12, weight: .medium))
+                            .foregroundStyle(DS.textMuted)
+                        ForEach(union, id: \.self) { SourceChip(source: $0) }
                     }
                 }
 
