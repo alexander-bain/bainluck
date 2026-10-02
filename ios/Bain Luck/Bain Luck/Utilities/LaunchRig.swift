@@ -431,4 +431,37 @@ enum LaunchRig {
         let lastViewport = Swift.max(0, contentHeight - viewportHeight)
         return Swift.min(Swift.max(0, requested), lastViewport)
     }
+
+    #if DEBUG
+    /// #9875's pin-only adapter. No credential or identity-provider override.
+    static let pinRuntime9875Key = "launch_pin_runtime_9875"
+    static let pinSeed9875Key = "launch_pin_seed_9875"
+    static let pinPhase9875Key = "launch_pin_phase_9875"
+
+    static func pinRuntime9875(defaults: UserDefaults = .standard)
+        -> Result<PinManagementRuntime9875.Configuration, PinManagementRuntime9875.Failure>? {
+        guard let raw = defaults.object(forKey: pinRuntime9875Key) else { return nil }
+        guard let suite = raw as? String,
+              suite.hasPrefix("bainluck.debug.9875."),
+              UUID(uuidString: String(suite.dropFirst("bainluck.debug.9875.".count))) != nil
+        else { return .failure(.harness("invalid isolated suite")) }
+        let phase: String
+        if let value = defaults.object(forKey: pinPhase9875Key) {
+            guard let word = value as? String else { return .failure(.harness("invalid phase")) }
+            phase = word
+        } else { phase = "warm" }
+        guard ["warm", "offline"].contains(phase) else {
+            return .failure(.harness("invalid phase"))
+        }
+        let seed: Bool
+        if let rawSeed = defaults.object(forKey: pinSeed9875Key) {
+            guard let word = (rawSeed as? String)?.lowercased() ?? (rawSeed as? NSNumber)?.stringValue,
+                  ["yes", "no", "true", "false", "1", "0"].contains(word)
+            else { return .failure(.harness("invalid seed flag")) }
+            seed = ["yes", "true", "1"].contains(word)
+        } else { seed = false }
+        return .success(.init(suite: suite, seed: seed, offline: phase == "offline"))
+    }
+    #endif
+
 }
