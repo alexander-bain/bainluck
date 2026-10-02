@@ -2859,6 +2859,57 @@ def _ready_restock_rig(tmp_path, *, status="Ready", api_failure=False):
     return workdir, launches, calls, env
 
 
+@pytest.mark.parametrize("status", [None, "In Progress"])
+def test_completed_return_advances_quality_disposition_ahead_of_future_hourly(tmp_path, status):
+    workdir, launches, calls, env = _ready_restock_rig(tmp_path, status=status)
+    handoff = tmp_path / "handoff"
+    policy = Path(env["BL_LANE_POLICY"])
+    policy.write_text(json.dumps({"schema_version": 1, "lanes": {
+        "demo": {"mode": "build", "return_disposition_owner": "shopper"},
+        "shopper": {"mode": "quality"},
+    }}))
+    target = handoff / "runner-inbox/shopper"
+    target.mkdir()
+    hourly = target / "HOURLY.md"
+    hourly.write_text("not-before: 2099-01-01T00:00:00Z\nexisting journey\n")
+    original = hourly.read_bytes()
+    _stage(tmp_path, "exact-42.md", "Existing issue42 and scoped successor only.\n")
+    rc, out, fired = _take_once(tmp_path, extra_env=env)
+    assert rc == 0 and fired == 1, out
+    assert not calls.exists()  # Return records no new GitHub read.
+    assert (handoff / "runner-inbox/demo/.returned-session.json").exists()
+    rc, out = run(RUNNER, "--restock-once", str(workdir), "demo", env=env)
+    assert rc == 1, out  # No second builder; quality owns the disposition.
+    events = list(target.glob("RETURN-DISPOSITION-*.md"))
+    assert len(events) == 1
+    assert "exact-42.md.running" in events[0].read_text()
+    assert not list((handoff / "runner-inbox/demo").glob("RESTOCK-*.md"))
+    rc, out, fired = _take_once(tmp_path, lane="shopper", extra_env=env)
+    assert rc == 0 and fired == 2, out
+    assert hourly.read_bytes() == original
+    assert not (target / ".returned-session.json").exists()  # No recursive wake.
+    assert not list(target.glob("RETURN-DISPOSITION-*.md"))
+    env["LANE_RESTOCK_MIN_INTERVAL"] = "0"
+    rc, out = run(RUNNER, "--restock-once", str(workdir), "demo", env=env)
+    assert rc == 1 and not list(target.glob("RETURN-DISPOSITION-*.md")), out
+
+
+def test_failed_session_creates_no_return_disposition(tmp_path):
+    workdir, _, _, env = _ready_restock_rig(tmp_path, status=None)
+    policy = Path(env["BL_LANE_POLICY"])
+    policy.write_text(json.dumps({"schema_version": 1, "lanes": {
+        "demo": {"mode": "build", "return_disposition_owner": "shopper"},
+        "shopper": {"mode": "quality"},
+    }}))
+    (tmp_path / "handoff/runner-inbox/shopper").mkdir()
+    (tmp_path / "bin/claude").write_text("#!/bin/bash\nexit 1\n")
+    env["LANE_RETRY_BACKOFF"] = "0"
+    _stage(tmp_path, "exact-42.md", "Existing scoped work.\n")
+    rc, out, _ = _take_once(tmp_path, extra_env=env)
+    assert rc == 0, out
+    assert not (tmp_path / "handoff/runner-inbox/demo/.returned-session.json").exists()
+
+
 def test_deferred_only_build_lane_dispatches_ready_without_consuming_future_work(tmp_path):
     workdir, launches, calls, env = _ready_restock_rig(tmp_path)
     future = _stage(tmp_path, "SELF-future.md", "not-before: 2099-01-01T00:00:00Z\nshop later\n")
