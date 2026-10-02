@@ -36,10 +36,14 @@ Cadence: the beat fires every :data:`BEAT_PERIOD_S`. An idle non-live hub
 life is shorter than one beat period, so a quiet live hub can still lapse between
 passes; on live days readers keep it warm, and this does not try to.
 
-Stated, not hidden: the beat is on ``background``, which delivers late (LAT-P112
-measured p50 138-152 s against a declared 120 s, worst ~2,500 s). On-time
-passes keep an idle hub warm; a delivery gap longer than ~150 s still lets the
-next reader pay the build, as every reader did before this existed.
+The queue is ``realtime`` because the argument above needs passes ON TIME.
+The first version ran on ``background``, which delivers late (LAT-P112: p50
+138-152 s against a declared 120 s, worst ~2,500 s; ``realtime`` held 40 s
+against 40 s, max 54 s). Its production after-check (2026-10-02 08:28-08:56Z)
+saw passes stop from 08:49:37 to 08:53:46Z, longer than the 300 s life, and 2 of
+3 first reads after a quiet spell were a 4.4 s ``miss``. On ``realtime`` the
+pass is bounded instead: it starts no build after :data:`PASS_BUDGET_S`, so it
+holds a slot beside the live price poll for one budget plus one build at most.
 """
 
 from __future__ import annotations
@@ -66,8 +70,11 @@ REFRESH_AHEAD_S = 150
 MAX_HUBS = 4
 
 #: Stop starting builds after this many seconds of a pass (one Week 4 build is
-#: ~4-5 s; the task's soft limit is well above this).
-PASS_BUDGET_S = 40.0
+#: ~4-5 s; the task's soft limit is well above this). 15, not the 40 it was on
+#: ``background``: the pass now shares ``realtime``'s four slots with the live
+#: price poll, so a pass holds one for at most this plus one build. A hub this
+#: cuts off is reached 60 s later, when the hubs ahead of it take the skip path.
+PASS_BUDGET_S = 15.0
 
 
 def container_hub_warmer_enabled() -> bool:

@@ -2049,7 +2049,14 @@ def free_background_slots(
 #: servable life — about every 2.5-3 min per idle hub, ~0 with readers present.
 #: The census RUN over the tree branched from `c2126222ff` printed
 #: `explicit 99 implicit 42 total 141`.
-BACKGROUND_BEAT_COUNT = 141
+#:
+#: 🔴 RE-DERIVED at latency (2026-10-02, #9982 after-check): 141 → 140, explicit
+#: 99 → 98, fall-through UNMOVED at 42. `warm-container-hubs` LEFT this queue for
+#: `realtime`: `background` held its 60 s beat to a ~4-minute hole in production
+#: (08:49:37 → 08:53:46Z), past an idle hub's 300 s life. Its cost moves with it
+#: and is declared at the beat entry. The census RUN over the tree branched from
+#: `0a348dffd5` printed `explicit 98 implicit 42 total 140`.
+BACKGROUND_BEAT_COUNT = 140
 #: 🔴 RE-DERIVED at lane1/282 (2026-09-13, #5896): 122 → **123**, explicit
 #: 79 → **80**, fall-through UNMOVED at 43. One beat added,
 #: `soccer-ghost-twin-sweep` (`crontab(minute="9,49")`) with an EXPLICIT
