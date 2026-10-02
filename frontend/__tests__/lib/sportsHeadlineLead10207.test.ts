@@ -13,6 +13,7 @@ import {
 } from "../../lib/sports/finishedSection";
 import { FINISHED_LOOKUP_LIMIT } from "../../lib/sports/feedKey";
 import {
+  headlineBand,
   isHeadlineCard,
   orderSportsGameSections,
   TOP_GAMES_CAP,
@@ -28,6 +29,7 @@ const WHITE_SOX_GUARDIANS = 15322462;
 const PADRES_BREWERS = 15322620;
 const LIIGA_KARPAT = 15322389;
 const STEELERS_BROWNS_TNF = 14780550;
+const SHARKS_KINGS = 15319666;
 
 function idOf(item: FeedItem): number | string {
   const d = item.data as unknown as { id?: number; key?: string };
@@ -99,6 +101,21 @@ describe("orderSportsGameSections — section priority on the real slate", () =>
     expect(sections[0].items.every(isHeadlineCard)).toBe(true);
   });
 
+  test("THE CONTROL — the first four upcoming headlines in served order drop a postseason game", () => {
+    const upcoming = sportsGameSections(PAGE_ONE).find((s) => s.key === "upcoming")!;
+    const servedFirstFour = upcoming.items.filter(isHeadlineCard).slice(0, TOP_GAMES_CAP).map(idOf);
+    expect(servedFirstFour).toContain(SHARKS_KINGS);
+    expect(servedFirstFour).not.toContain(PADRES_BREWERS);
+  });
+
+  test("postseason headlines take the Top Games slots before a regular-season one", () => {
+    const sections = orderSportsGameSections(sportsGameSections(PAGE_ONE));
+    const top = sections[0].items.map(idOf);
+    expect(top).toContain(PADRES_BREWERS);
+    expect(top).not.toContain(SHARKS_KINGS);
+    expect(sections[0].items.every((item) => headlineBand(item) === 0)).toBe(true);
+  });
+
   test("Live Now is second, whole — the minor live slate stays one scroll away", () => {
     const before = sportsGameSections(PAGE_ONE).find((s) => s.key === "live")!;
     const sections = orderSportsGameSections(sportsGameSections(PAGE_ONE));
@@ -137,6 +154,19 @@ describe("orderSportsGameSections — the two slates it must leave alone", () =>
     );
     expect(sections.map((s) => s.key)).toEqual(["live", "upcoming"]);
     expect(sections[0].items.map(idOf)).toEqual([2, 1]);
+  });
+
+  test("Top Games: postseason first in served order, regular-season headlines fill what is left", () => {
+    const regular = eventItem(1, "scheduled", ["tier:1", "importance:regular_season"]);
+    const playoffA = eventItem(2, "scheduled", ["tier:1", "importance:playoff"]);
+    const minor = eventItem(3, "scheduled", ["tier:4"]);
+    const playoffB = eventItem(4, "scheduled", ["tier:1", "importance:playoff"]);
+    const sections = orderSportsGameSections(
+      sportsGameSections([regular, playoffA, minor, playoffB]),
+    );
+    expect(sections[0].key).toBe("top-games");
+    expect(sections[0].items.map(idOf)).toEqual([2, 4, 1]);
+    expect(sections[1].items.map(idOf)).toEqual([3]);
   });
 
   test("a quiet slate invents nothing — no headline, no Top Games, same order", () => {

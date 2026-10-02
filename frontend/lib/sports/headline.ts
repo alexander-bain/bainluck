@@ -68,7 +68,7 @@ export function isHeadlineCard(item: FeedItem): boolean {
 }
 
 /**
- * The Finished section's band: 0 a postseason headline (playoff/championship),
+ * A card's headline band, for Finished AND Top Games: 0 a postseason headline (playoff/championship),
  * 1 any other headline, 2 everything else. Lower is shown first.
  *
  * Why postseason gets its own band among results: on 2026-10-02 two early-
@@ -77,8 +77,12 @@ export function isHeadlineCard(item: FeedItem): boolean {
  * it. A result that decides a series outranks one that decides nothing. A
  * Grand Slam match and a regular-season ballgame still share band 1 and are
  * ordered by when they ended, which is #4454's contract.
+ *
+ * Top Games fills its slots by the same band (after-check, 2026-10-02 17:45Z):
+ * production led it with a Rangers–Red Wings regular-season game while two MLB
+ * postseason games, Padres–Brewers and Braves–Dodgers, sat below in Upcoming.
  */
-export function finishedHeadlineBand(item: FeedItem): 0 | 1 | 2 {
+export function headlineBand(item: FeedItem): 0 | 1 | 2 {
   if (!isHeadlineCard(item)) return 2;
   if (item.type !== "event") return 1;
   const tags = (item.data as FeedEventData).event_tags ?? [];
@@ -112,9 +116,10 @@ function withItems(section: FeedSection, items: FeedItem[]): FeedSection {
  *
  *  1. Inside Live Now, headlines come first. A live NFL game is never seventh
  *     behind six minor live cards because of where it fell in the served list.
- *  2. When Live Now holds NO headline and Upcoming does, the first
+ *  2. When Live Now holds NO headline and Upcoming does, up to
  *     `TOP_GAMES_CAP` upcoming headlines become a "Top Games" section above
- *     Live Now, and leave Upcoming. Moved, never copied.
+ *     Live Now, and leave Upcoming. Moved, never copied. Postseason headlines
+ *     take the slots first (`headlineBand`), served order inside each band.
  *
  * Why a lead row and not "put Upcoming above Live Now": /sports pages more
  * games into Upcoming as the reader scrolls, so a Live Now section placed
@@ -136,12 +141,14 @@ export function orderSportsGameSections(sections: FeedSection[]): FeedSection[] 
   if (!upcoming) return ordered;
 
   const top: FeedItem[] = [];
-  const remaining: FeedItem[] = [];
-  for (const item of upcoming.items) {
-    if (top.length < TOP_GAMES_CAP && isHeadlineCard(item)) top.push(item);
-    else remaining.push(item);
+  for (const band of [0, 1] as const) {
+    for (const item of upcoming.items) {
+      if (top.length < TOP_GAMES_CAP && headlineBand(item) === band) top.push(item);
+    }
   }
   if (top.length === 0) return ordered;
+  const lifted = new Set(top);
+  const remaining = upcoming.items.filter((item) => !lifted.has(item));
 
   const topGames: FeedSection = {
     key: "top-games",
