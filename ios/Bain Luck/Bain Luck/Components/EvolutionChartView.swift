@@ -327,6 +327,10 @@ struct EvolutionChartView: View {
                             coverageHours: data?.coverageHours,
                             observationTimes: data?.observationTimes,
                             requestedHours: requestedHours
+                        ) ?? Self.heldSteadyNote(
+                            series: plottedSeries,
+                            windowInstants: windowInstants,
+                            windowWord: windowWord
                         ) {
                             Text(note)
                                 .font(.caption2)
@@ -598,6 +602,16 @@ struct EvolutionChartView: View {
         return points
     }
 
+    /// The window's prices per plotted outcome (the selected lines, never the
+    /// combined line), for the #10141 "Unchanged" sentence.
+    private var plottedSeries: [String: [Double]] {
+        let selected = effectiveSelected
+        return chartEntries.reduce(into: [:]) { series, point in
+            guard !point.isCombined, selected.contains(point.name) else { return }
+            series[point.name, default: []].append(point.probability)
+        }
+    }
+
     /// Distinct instants the CHOSEN window holds, counted off the same timeline and
     /// the same cutoff the plot is built from — not off `chartEntries`, whose count
     /// multiplies by however many outcomes are selected.
@@ -803,6 +817,28 @@ struct EvolutionChartView: View {
         guard let covered = coverageHours, covered >= 0, requestedHours > 0 else { return nil }
         guard covered < Double(requestedHours) * 0.5 else { return nil }
         return "Prices only go back \(coverageSpanWord(covered))"
+    }
+
+    /// #10141 — *Will the Iranian regime fall before 2027?* (113200) on Alex's build 34:
+    /// 168 venue prices in the week, every one 6.5%, drew one flat line that read as an
+    /// empty chart ("Why are there no data points for 7 days?"). A constant series that
+    /// was OBSERVED is a fact worth one line; nothing is smoothed or invented.
+    ///
+    /// Says "Unchanged <window>" only when every plotted outcome has at least two
+    /// prices in the window and all of them are equal, and the window holds more
+    /// instants than the "Only N prices seen so far" sentence covers — a two-dot line
+    /// is not evidence of holding steady.
+    static let heldSteadyMinimumInstants = 4
+
+    static func heldSteadyNote(
+        series: [String: [Double]], windowInstants: Int, windowWord: String
+    ) -> String? {
+        guard windowInstants >= heldSteadyMinimumInstants, !series.isEmpty else { return nil }
+        for values in series.values {
+            guard values.count >= 2, let low = values.min(), let high = values.max(),
+                  high - low <= 1e-9 else { return nil }
+        }
+        return "Unchanged \(windowWord)"
     }
 
     // MARK: - A Window With Almost Nothing In It (#7350)
