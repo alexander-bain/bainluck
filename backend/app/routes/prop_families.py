@@ -1008,6 +1008,13 @@ async def build_and_cache_prop_families(
     ends the loop; the mirror guard is what stops the fix from costing a warmed
     team its content.
     """
+    # #2683: the id is copied BEFORE the build. A branch that times out (or is
+    # deferred) rolls the session back, and the rollback expires `team`; every
+    # `team.id` below would then lazy-load inside an async session and raise
+    # MissingGreenlet — a 500 on the reader path, a silently lost mirror write
+    # on the warm path. `build_prop_families` already does this for its own
+    # reads (the scalars block above its first branch); this is its caller.
+    team_id = int(team.id)
     payload, unusable = await build_prop_families(team, db, cap, budget_ms=budget_ms)
     # Pop the private loss list FIRST and unconditionally — it must not reach
     # Redis or the wire on any path, including the ones that return early.
@@ -1015,7 +1022,7 @@ async def build_and_cache_prop_families(
     if unusable:
         return payload, True
 
-    keys = prop_families_cache_keys(team.id, _resolve_cap(cap))
+    keys = prop_families_cache_keys(team_id, _resolve_cap(cap))
     stamped = stamp_envelope(
         payload,
         created_at=datetime.now(timezone.utc),
@@ -1040,7 +1047,7 @@ async def build_and_cache_prop_families(
         logger.warning(
             "prop-families: partial build for team %s produced no families (%s) — "
             "served, not stored",
-            team.id, ",".join(reasons),
+            team_id, ",".join(reasons),
         )
         return stamped, True
 
@@ -1092,7 +1099,7 @@ async def build_and_cache_prop_families(
         logger.info(
             "prop-families: mirror for team %s changed under a partial build — "
             "declined to publish (%s)",
-            team.id, ",".join(reasons),
+            team_id, ",".join(reasons),
         )
     return stamped, False
 
@@ -1142,8 +1149,11 @@ async def get_team_prop_families(
     if not team:
         raise HTTPException(status_code=404, detail="Team not found")
 
+    # #2683: a scalar, read while `team` is live — the inline build below can
+    # roll the session back and expire it (see `build_and_cache_prop_families`).
+    team_id = int(team.id)
     cap = _resolve_cap(limit)
-    keys = prop_families_cache_keys(team.id, cap)
+    keys = prop_families_cache_keys(team_id, cap)
     rc = get_client()
 
     # 1. A live hit inside the primary TTL.
@@ -1169,7 +1179,7 @@ async def get_team_prop_families(
             and _deferral_reasons(_reasons)
             and _claim_completion_attempt(rc, keys)
         ):
-            _schedule_refresh(rc, keys, team.id, cap)
+            _schedule_refresh(rc, keys, team_id, cap)
         return with_availability(primary, AVAILABILITY_LIVE)
 
     # 2. A miss serves the 24h mirror and schedules ONE rebuild behind it. This
@@ -1177,7 +1187,7 @@ async def get_team_prop_families(
     #    before this tier existed every reader paid one.
     stale = read_slot(rc, keys.stale)
     if stale is not None:
-        _schedule_refresh(rc, keys, team.id, cap)
+        _schedule_refresh(rc, keys, team_id, cap)
         return with_availability(stale, AVAILABILITY_STALE_OK)
 
     # 3. Nothing usable cached — build inline. A cold miss must still SERVE, so
@@ -1207,7 +1217,7 @@ async def get_team_prop_families(
     # window suppress the only dispatch this build gets.
     _quality, _ = envelope_quality(payload)
     if _quality != QUALITY_FULL:
-        _schedule_refresh(rc, keys, team.id, cap)
+        _schedule_refresh(rc, keys, team_id, cap)
 
     if degraded:
         # Re-read the mirror rather than trusting step 2: a concurrent refresh may
@@ -1216,7 +1226,7 @@ async def get_team_prop_families(
         rescued = read_slot(rc, keys.stale)
         if rescued is not None:
             logger.warning(
-                "prop-families: build degraded for team %s — serving stale", team.id
+                "prop-families: build degraded for team %s — serving stale", team_id
             )
             return with_availability(rescued, AVAILABILITY_STALE_OK)
         return payload

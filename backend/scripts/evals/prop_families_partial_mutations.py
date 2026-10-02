@@ -240,10 +240,10 @@ MUTANTS: list[tuple[str, str, str, str, pathlib.Path]] = [
         "M16",
         "a partial with rows reports degraded — the route re-serves the mirror "
         "and the warmer counts a healthy build as failed",
-        """            team.id, ",".join(reasons),
+        """            team_id, ",".join(reasons),
         )
     return stamped, False""",
-        """            team.id, ",".join(reasons),
+        """            team_id, ",".join(reasons),
         )
     return stamped, True""",
         ROUTE,

@@ -156,17 +156,17 @@ MUTANTS: list[tuple[str, pathlib.Path, str, str, str]] = [
         "with a 16.8 s rebuild behind it instead of a 2.7 s one",
         """    stale = read_slot(rc, keys.stale)
     if stale is not None:
-        _schedule_refresh(rc, keys, team.id, cap)""",
+        _schedule_refresh(rc, keys, team_id, cap)""",
         """    stale = read_slot(rc, keys.stale)
     if False:
-        _schedule_refresh(rc, keys, team.id, cap)""",
+        _schedule_refresh(rc, keys, team_id, cap)""",
     ),
     (
         "M9",
         ROUTE,
         "serve the mirror but never revalidate — the page freezes at 24h old and "
         "then falls off a cliff",
-        """        _schedule_refresh(rc, keys, team.id, cap)
+        """        _schedule_refresh(rc, keys, team_id, cap)
         return with_availability(stale, AVAILABILITY_STALE_OK)""",
         """        return with_availability(stale, AVAILABILITY_STALE_OK)""",
     ),
