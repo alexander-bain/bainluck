@@ -73,25 +73,29 @@ describe("#4454 the pipeline, end to end, on the real payload", () => {
     expect(section.shown.map(idOf)).toContain(SHELTON_ALCARAZ);
   });
 
-  it("it is NOT first, and that is an open ruling, not an accident", () => {
-    // 🔴 PINNED SO NOBODY MISTAKES THIS FOR SETTLED. Fable's 9/9 note says the
-    // marquee final "must sit at the top of the tab's finished section".
-    // D54 as ux/1053 implemented it says day ascending, then most recent first
-    // inside a day — and `sportsFinishedSection.test.ts` asserts, deliberately,
-    // that score order is the WRONG answer to "what just happened".
+  it("it IS first now — the open ruling landed as a visible change (#10207)", () => {
+    // 🔴 WAS PINNED "NOT first" so the ruling would land here, not silently.
+    // Fable's 9/9 note said the marquee final "must sit at the top of the tab's
+    // finished section"; D54 as ux/1053 implemented it (day ascending, most
+    // recent first inside a day) put a Swedish third-tier football match that
+    // finished 10:00am PT TODAY above the US Open quarter-final Alex watched,
+    // which finished 8:00pm PT YESTERDAY.
     //
-    // On this payload those two rules disagree out loud: Shelton–Alcaraz
-    // finished 8:00pm PT YESTERDAY and a Swedish third-tier football match
-    // finished 10:00am PT TODAY, so D54 puts the football match above the US
-    // Open quarter-final Alex watched. The feed's own ranker disagrees with D54
-    // too — it placed the tennis at payload 21 and the football at 28.
-    //
-    // Routed to Fable (notice 36); not decided here. This test records today's
-    // behaviour so the ruling, whichever way it goes, lands as a visible change
-    // to this assertion rather than a silent one.
+    // #10207 (2026-10-02, the same shape: four tier-4 China Open matches over
+    // last night's TNF final) gave the section one band above D54: headline
+    // finals first (`isHeadlineCard` — tier 1, playoff/championship, a Grand
+    // Slam, a major), D54 unchanged inside each band. A Slam match is a
+    // headline; the Superettan match is not. Score order is still never read.
     const first = section.shown[0];
-    expect(idOf(first)).not.toBe(SHELTON_ALCARAZ);
-    expect(idOf(first)).toBe(15301254);
+    expect(idOf(first)).toBe(SHELTON_ALCARAZ);
+    // The football match is not deleted: it is behind the declared cap, the
+    // population the "More results in …" links point at. Four tier-1 MLB finals
+    // and the Slam fill the four slots; inside that band D54 still orders them
+    // by when they ended, which is why the Slam (ended 03:00Z) leads them.
+    expect(section.shown.map(idOf)).not.toContain(15301254);
+    expect(
+      section.dropped.find((d) => idOf(d.item) === 15301254)?.reason,
+    ).toBe("finished_section_cap");
   });
 
   it("every card shown is a settled game, and none is dropped as undated", () => {

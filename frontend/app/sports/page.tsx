@@ -37,6 +37,7 @@ import {
   buildFinishedSection,
   leagueResultsLinks,
 } from "@/lib/sports/finishedSection";
+import { orderSportsGameSections } from "@/lib/sports/headline";
 import { FinishedMoreResultsNote } from "@/components/sports/FinishedMoreResultsNote";
 import { trackEvent } from "@/lib/analytics";
 import CombinedFeedCard from "@/components/CombinedFeedCard";
@@ -557,8 +558,10 @@ export default function SportsPage() {
   // #1102 information architecture: games LEAD the page. Split the game sections
   // (Live Now / Just Happened / Upcoming) from the Top Markets futures section so
   // the grouped props strip can slot BELOW the games feed and above Top Markets.
+  // #10207 — and the page leads with its headlines, not with whatever happens to
+  // be live: see lib/sports/headline.ts for the rule and the 2026-10-02 slate.
   const gameSections = useMemo(
-    () => feedSections.filter((s) => s.key !== "markets"),
+    () => orderSportsGameSections(feedSections.filter((s) => s.key !== "markets")),
     [feedSections]
   );
   const marketsSection = useMemo(
