@@ -135,3 +135,35 @@ describe("#1626 slice 6 CONTROLS", () => {
     expect(ladderSummaries(render(graded, "graded"))).toHaveLength(0);
   });
 });
+
+// #1626 slice 7 — the percentages stand in one column. Production after slice 6
+// (/events/14780550, 390px, 23:5xZ 10/1): in TOUCHDOWNS, "+1 more" after Warren's
+// and Judkins' 48%/40% put those numbers ~55px left of DK Metcalf's lone 30%.
+describe("#1626 slice 7: every ladder-shaped row ends in the same fixed-width slot", () => {
+  const html = render(served);
+  const slots = [...html.matchAll(/<span([^>]*)data-script-more-slot=""([^>]*)>([^<]*)<\/span>/g)].map(
+    (m) => ({ attrs: `${m[1]} ${m[2]}`, text: m[3] }),
+  );
+  const cls = (attrs: string) => /class="([^"]*)"/.exec(attrs)?.[1] ?? "";
+
+  test("one slot per ladder row and per lone rung, all the same fixed width", () => {
+    expect(slots).toHaveLength(ladderSummaries(html).length + loneRungs(html).length);
+    const classes = new Set(slots.map((s) => cls(s.attrs)));
+    expect(classes.size).toBe(1);
+    expect([...classes][0]).toMatch(/(^| )w-14( |$)/);
+    expect([...classes][0]).toMatch(/(^| )shrink-0( |$)/);
+  });
+
+  test("a lone rung's slot is empty and hidden from screen readers; a ladder's says +N more", () => {
+    const empty = slots.filter((s) => s.text === "");
+    expect(empty).toHaveLength(loneRungs(html).length);
+    for (const s of empty) expect(s.attrs).toContain('aria-hidden="true"');
+    expect(slots.filter((s) => s.text !== "").map((s) => s.text)).toContain("+1 more");
+  });
+
+  test("the lone rung's slot comes AFTER its percent, exactly where a ladder's +N more sits", () => {
+    expect(html).toMatch(
+      /data-testid="script-lone-rung"[^>]*><span[^>]*>DK Metcalf<\/span><span[^>]*>1\+<\/span><span[^>]*>30%<\/span><span aria-hidden="true" data-script-more-slot=""/,
+    );
+  });
+});

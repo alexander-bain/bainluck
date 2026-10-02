@@ -1407,6 +1407,11 @@ function ScriptLadderRow({
       <ScriptValue item={ladder.headline} pairedPercent={ladder.pairedPercent} />
     </>
   );
+  // Slice 7: the "+N more" slot is one fixed width on every row, and a lone rung
+  // keeps it empty, so the percentages stand in one column. Sized to content it
+  // put DK Metcalf's 30% ~55px right of Jaylen Warren's 48% in one TOUCHDOWNS
+  // list (/events/14780550, 10/1), and "+10 more" vs "+8 more" nudged it too.
+  const moreSlot = "w-14 shrink-0 text-[11px] text-text-muted tabular-nums";
   // Slice 6: a lone rung has nothing behind it, so it is a row, not a disclosure.
   if (ladder.rungs.length === 1) {
     return (
@@ -1415,6 +1420,7 @@ function ScriptLadderRow({
         className="flex items-center gap-3 py-2 border-b border-surface-elevated last:border-0"
       >
         {cells}
+        <span aria-hidden="true" data-script-more-slot="" className={moreSlot} />
       </div>
     );
   }
@@ -1422,7 +1428,7 @@ function ScriptLadderRow({
     <details className="border-b border-surface-elevated last:border-0">
       <summary className="flex items-center gap-3 py-2 cursor-pointer select-none">
         {cells}
-        <span className="text-[11px] text-text-muted tabular-nums shrink-0">
+        <span data-script-more-slot="" className={moreSlot}>
           +{ladder.rungs.length - 1} more
         </span>
       </summary>
