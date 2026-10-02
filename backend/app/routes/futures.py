@@ -32,6 +32,23 @@ from app.utils.futures_history_basis import (
     devigged_consensus_by_time,
 )
 from app.utils.futures_market_snapshot import dated_movement_points
+from app.utils.futures_verified_title import (
+    CONTRIBUTOR_SOURCES as VERIFIED_TITLE_SOURCES,
+    SOURCE as REPRESENTATION_SOURCE,
+    VERIFIED_TITLE as REPRESENTATION_VERIFIED_TITLE,
+    BoardRow,
+    Composition,
+    MarketFacts,
+    Member,
+    OutcomeOverlay,
+    Refusal,
+    compose_members,
+    compose_outcomes,
+    member_of,
+    parse_aware,
+    question_for,
+    title_team_index,
+)
 from app.utils.generic_market_history import captures_are_coarse, captures_cover_cell
 from app.utils.kalshi_empty_book import KALSHI_BOOKMAKER
 from app.utils.futures_unsupported_price import (
@@ -4889,6 +4906,15 @@ async def withheld_price_outcome_ids_for_markets(
 async def get_futures_market(
     market_id: int,
     db: AsyncSession = Depends(get_db),
+    representation: str = Query(
+        REPRESENTATION_SOURCE,
+        description=(
+            "`source` (default) serves this market row alone. `verified_title` "
+            "(#9387) serves one current number per outcome across every venue "
+            "that provably asks the same title question, or source mode when "
+            "that cannot be proved."
+        ),
+    ),
 ):
     """
     Get detailed information about a specific futures market.
@@ -4962,6 +4988,11 @@ async def get_futures_market(
     # #10165: the game this board is the Polymarket container OF, so the page can
     # send the reader to the game instead of drawing the container as a field.
     detail["container_of_event_id"] = await _game_container_of_event_id(db, market)
+    # #9387: opt-in only. The default response is untouched, field for field.
+    if representation == REPRESENTATION_VERIFIED_TITLE:
+        _apply_verified_title_to_detail(
+            detail, await _resolve_verified_title(db, market)
+        )
     return detail
 
 
@@ -5018,6 +5049,287 @@ async def _game_container_of_event_id(
     if market.id not in _search_container_parents_among(candidates, rows):
         return None
     return market.event_id
+
+
+# ── #9387 — `representation=verified_title` ──────────────────────────────────
+#
+# The membership and arithmetic rules live in `app.utils.futures_verified_title`
+# and are pure. What lives here is only what needs a session: which rows are
+# candidates, each member's board AS ITS OWN DETAIL PAGE SERVES IT, and the
+# roster. Both opt-in routes call `_resolve_verified_title`, so the detail hero
+# and the chart's current column are one computation over one set of inputs.
+
+
+def _verified_title_facts(row) -> MarketFacts:
+    """Membership's inputs off an ORM row or a column row, as plain data."""
+    meta = getattr(row, "market_metadata", None)
+    return MarketFacts(
+        market_id=row.id,
+        source=row.source,
+        external_id=row.external_id,
+        status=row.status,
+        mutually_exclusive=row.mutually_exclusive,
+        resolution_date=row.resolution_date,
+        metadata=meta if isinstance(meta, dict) else {},
+    )
+
+
+def _verified_title_candidates_stmt(spec, edition: str, exclude_id: int):
+    """Every row a venue's OWN identity could make a member — never a key join.
+
+    A superset by construction: `member_of` re-proves each row, so this read
+    only has to be unable to MISS one. The canonical key is deliberately absent
+    (it also keys MVP, coach and qualifier markets, and the sportsbook row's key
+    carries no season).
+    """
+    slug = FuturesMarket.market_metadata["polymarket_event_slug"].astext
+    return select(
+        FuturesMarket.id,
+        FuturesMarket.source,
+        FuturesMarket.external_id,
+        FuturesMarket.status,
+        FuturesMarket.mutually_exclusive,
+        FuturesMarket.resolution_date,
+        FuturesMarket.market_metadata,
+    ).where(
+        FuturesMarket.id != exclude_id,
+        FuturesMarket.status == "open",
+        or_(
+            and_(
+                FuturesMarket.source == "odds_api",
+                FuturesMarket.external_id == spec.odds_api_sport_key,
+            ),
+            and_(
+                FuturesMarket.source == "kalshi",
+                FuturesMarket.external_id == spec.kalshi_event_ticker(edition),
+            ),
+            and_(
+                FuturesMarket.source == "polymarket",
+                slug.like(spec.polymarket_slug_stem(edition) + "%"),
+            ),
+        ),
+    )
+
+
+async def _verified_title_board(db: AsyncSession, market: FuturesMarket) -> list:
+    """This member's outcomes exactly as `/api/futures/{id}` would serve them.
+
+    The same withholding union and fleet clock the detail route passes, so a
+    venue contributes only a number its own page would print.
+    """
+    served = _format_market_detail(
+        market,
+        None,
+        await _withheld_price_outcome_ids(db, market),
+        fleet_newest_observation=await _fleet_newest_observation(db, market),
+    )["outcomes"]
+    rows_by_id = {o.id: o for o in market.outcomes}
+    board = []
+    for row in served:
+        orm = rows_by_id.get(row["id"])
+        board.append(
+            BoardRow(
+                outcome_id=row["id"],
+                name=row["name"],
+                external_id=getattr(orm, "external_id", None),
+                probability=row["probability"],
+                observed_at=parse_aware(getattr(orm, "last_updated", None)),
+            )
+        )
+    return board
+
+
+async def _compose_verified_title(db: AsyncSession, market: FuturesMarket):
+    now = datetime.now(timezone.utc)
+    spec = question_for(_verified_title_facts(market))
+    if spec is None:
+        return Refusal("not_a_title_question")
+    requested = member_of(spec, _verified_title_facts(market), now)
+    if isinstance(requested, Refusal):
+        return requested
+
+    candidate_rows = (
+        await db.execute(
+            _verified_title_candidates_stmt(spec, requested.edition, market.id)
+        )
+    ).all()
+    candidates = [
+        verdict
+        for verdict in (
+            member_of(spec, _verified_title_facts(r), now) for r in candidate_rows
+        )
+        if isinstance(verdict, Member)
+    ]
+    members = compose_members(spec, requested, candidates)
+    if isinstance(members, Refusal):
+        return members
+
+    other_ids = [m.market_id for m in members[1:]]
+    loaded = {
+        m.id: m
+        for m in (
+            await db.execute(
+                select(FuturesMarket)
+                .options(
+                    selectinload(FuturesMarket.outcomes),
+                    selectinload(FuturesMarket.sport),
+                )
+                .where(FuturesMarket.id.in_(other_ids))
+            )
+        ).scalars().all()
+    }
+    loaded[market.id] = market
+    if any(m.market_id not in loaded for m in members):
+        return Refusal("member_vanished")
+    boards = {
+        m.market_id: await _verified_title_board(db, loaded[m.market_id])
+        for m in members
+    }
+
+    roster = (
+        await db.execute(
+            select(Team.id, Team.name, Team.abbreviation, Team.alternate_names)
+            .join(Sport, Team.sport_id == Sport.id)
+            .where(Sport.key == spec.team_sport_key)
+        )
+    ).all()
+    index = title_team_index(
+        [
+            {
+                "id": t.id,
+                "name": t.name,
+                "abbreviation": t.abbreviation,
+                "alternate_names": t.alternate_names,
+            }
+            for t in roster
+        ]
+    )
+    return compose_outcomes(spec, members, boards, index, now)
+
+
+async def _resolve_verified_title(db: AsyncSession, market: FuturesMarket):
+    """A `Composition`, or a `Refusal` naming why this response is source mode.
+
+    Never raises: an opted-in reader whose identity cannot be proved gets the
+    source page, never an error page.
+    """
+    try:
+        return await _compose_verified_title(db, market)
+    except Exception:
+        logger.warning(
+            "verified_title resolver failed for market %s; serving source mode",
+            getattr(market, "id", None),
+            exc_info=True,
+        )
+        return Refusal("resolver_error")
+
+
+def _stamp_representation(payload: dict, verdict) -> None:
+    if isinstance(verdict, Composition):
+        payload["representation"] = REPRESENTATION_VERIFIED_TITLE
+        payload["question_identity"] = dict(verdict.question_identity)
+        payload["contributing_sources"] = list(verdict.contributing_sources)
+    else:
+        payload["representation"] = REPRESENTATION_SOURCE
+        payload["question_identity"] = None
+        payload["representation_fallback"] = verdict.reason
+
+
+def _overlay_current(row: dict, overlay, prob_key: str) -> bool:
+    """Write one outcome's verified current value onto a served row, by id.
+
+    Returns whether the estimator changed. Opening and movement are kept only
+    when the value IS the requested source's own, because they were measured on
+    that estimator; anywhere else they would pair an old sportsbook move with a
+    new number.
+    """
+    if overlay is None:
+        # A row the resolver's board did not serve has no current value here.
+        overlay = OutcomeOverlay(None, [], None, "unsupported", True)
+    row[prob_key] = overlay.probability
+    row["contributing_sources"] = list(overlay.contributing_sources)
+    row["observed_at"] = overlay.observed_at
+    row["aggregation_rule"] = overlay.aggregation_rule
+    if not overlay.changed:
+        return False
+    if "american_odds" in row:
+        row["american_odds"] = (
+            probability_to_american(overlay.probability)
+            if overlay.probability is not None
+            else None
+        )
+    for key in (
+        "probability_change_24h",
+        "opening_probability",
+        "opening_american_odds",
+        "price_changed_at",
+    ):
+        if key in row:
+            row[key] = None
+    return True
+
+
+def _apply_verified_title_to_detail(detail: dict, verdict) -> None:
+    """Effective verified mode changes current values; nothing else moves.
+
+    Outcome ids, names, array order, `source` and `bookmakers` stay the
+    requested row's provenance. Badges are renumbered by the canonical
+    `assign_display_ranks`, because the client sorts on the value it is given.
+    """
+    from app.utils.outcome_display import assign_display_ranks
+
+    _stamp_representation(detail, verdict)
+    if not isinstance(verdict, Composition):
+        return
+    changed = False
+    for row in detail["outcomes"]:
+        changed |= _overlay_current(row, verdict.overlay.get(row["id"]), "probability")
+    assign_display_ranks(detail["outcomes"])
+    # The stored sentence was written about the source row's numbers.
+    if changed and detail.get("hook_description"):
+        detail["hook_description"] = None
+        detail["hook_withheld"] = True
+
+
+async def _finish_verified_timeline(
+    db: AsyncSession,
+    market: FuturesMarket,
+    payload: dict,
+    representation: str,
+    field_ids: Sequence[int] = (),
+) -> dict:
+    """Opt-in timeline: current metadata from the resolver; history untouched.
+
+    `timeline`, its timestamps, gaps, coverage and `bucket_seconds` are the
+    requested source's and are not read here. The metadata list keeps its own
+    order, `top` selection and names (each name is its history key); only the
+    current column is mapped across, by outcome id.
+    """
+    if representation != REPRESENTATION_VERIFIED_TITLE:
+        return payload
+    verdict = await _resolve_verified_title(db, market)
+    _stamp_representation(payload, verdict)
+    payload["history_basis"] = {
+        "kind": "single_source",
+        "source": market.source,
+        "market_id": market.id,
+    }
+    if not isinstance(verdict, Composition):
+        return payload
+    for meta in payload.get("outcomes") or []:
+        if meta.get("id") is not None:
+            _overlay_current(meta, verdict.overlay.get(meta["id"]), "current_probability")
+        elif meta.get("name") == "Field":
+            parts = [verdict.overlay.get(i) for i in field_ids]
+            meta["current_probability"] = round(
+                sum((p.probability or 0.0) for p in parts if p is not None), 6
+            )
+            meta["contributing_sources"] = [
+                s
+                for s in VERIFIED_TITLE_SOURCES
+                if any(p is not None and s in p.contributing_sources for p in parts)
+            ]
+    return payload
 
 
 #: How many cards "Games This Week" shows. Was the bare `.limit(20)` on the
@@ -6486,6 +6798,15 @@ async def get_probability_timeline(
     top: int = Query(10, ge=1, le=50, description="Number of top outcomes to show"),
     hours: int = Query(168, ge=1, le=8760, description="Hours of history (default 7 days)"),
     db: AsyncSession = Depends(get_db),
+    representation: str = Query(
+        REPRESENTATION_SOURCE,
+        description=(
+            "`verified_title` (#9387) maps the detail route's verified current "
+            "values onto this market's metadata by outcome id and labels the "
+            "history with `history_basis`; the history itself stays this "
+            "market's own."
+        ),
+    ),
 ):
     """
     Get a time-bucketed probability timeline for a futures market.
@@ -6622,7 +6943,7 @@ async def get_probability_timeline(
     all_outcome_ids = [o.id for o in charted_outcomes]
 
     if not all_outcome_ids:
-        return {
+        return await _finish_verified_timeline(db, market, {
             "market_id": market_id,
             "market_name": market.name,
             "hours": hours,
@@ -6630,7 +6951,7 @@ async def get_probability_timeline(
             "top": top,
             "timeline": [],
             "outcomes": [],
-        }
+        }, representation)
 
     # Fetch all snapshots
     snapshot_query = (
@@ -6732,7 +7053,7 @@ async def get_probability_timeline(
                 window_start = extended_cutoff
 
     if not snapshots and not venue_rows:
-        return {
+        return await _finish_verified_timeline(db, market, {
             "market_id": market_id,
             "market_name": market.name,
             "hours": requested_hours,
@@ -6740,7 +7061,7 @@ async def get_probability_timeline(
             "top": top,
             "timeline": [],
             "outcomes": [],
-        }
+        }, representation)
 
     # Determine bucket size based on market state.
     # If commence_time is set and we're past it, use 15-min buckets.
@@ -7038,7 +7359,7 @@ async def get_probability_timeline(
             surface="futures_probability_timeline",
         )
 
-    return {
+    payload = {
         "market_id": market_id,
         "market_name": market.name,
         "sport_category": market.llm_sport_category,
@@ -7073,6 +7394,11 @@ async def get_probability_timeline(
         # unknown key (`Decodable`); nothing above it changed shape.
         **({"venue_history": venue_block} if venue_block is not None else {}),
     }
+    # #9387: last, after every history read, and only when opted in.
+    return await _finish_verified_timeline(
+        db, market, payload, representation,
+        field_ids=[o.id for o in sorted_outcomes[top:]],
+    )
 
 
 @router.get("/cross-source-timeline")
