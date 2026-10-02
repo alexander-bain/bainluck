@@ -31,7 +31,16 @@ helper, and it must never be the reason one of them acquires a cycle
 from datetime import datetime
 from typing import Any, Mapping, Optional
 
-from sqlalchemy import DateTime, String, case, column, literal, or_
+from sqlalchemy import (
+    DateTime,
+    Integer,
+    String,
+    case,
+    column,
+    literal,
+    null,
+    or_,
+)
 
 # The writers permitted to claim a score observation. A typo'd source is worse
 # than no source — it reads as a fourth writer in the attribution query that
@@ -209,6 +218,90 @@ def score_write_stamp_values(
             (newer, literal(source, String(_MAX_SOURCE_LEN))), else_=_HELD_SOURCE
         ),
         "score_observed_at": case((newer, at), else_=_HELD_OBSERVED_AT),
+    }
+
+
+#: The score columns by NAME, read the same way: the row's own value at the
+#: moment the UPDATE runs, not the value any writer loaded.
+_HELD_SCORES = {
+    "home_score": column("home_score", Integer),
+    "away_score": column("away_score", Integer),
+}
+
+
+def score_write_stamp_values_at_row(
+    *,
+    source: str,
+    observed_at: Optional[datetime],
+    writes: Mapping[str, Any],
+    reading: tuple,
+    may_confirm: bool,
+) -> dict:
+    """:func:`score_write_stamp_values` for a write that does NOT re-assert the
+    tuple it loaded — the whole decision is made by the database, at the write.
+
+    The compare-and-write rails re-assert their loaded ``(home, away)`` in the
+    UPDATE's WHERE, so the tuple the helper above judged is the tuple the row
+    holds when the statement lands. `_poll_all_odds` writes by primary key alone
+    (its status must land even when its score is refused), so between its load
+    and its write another writer can commit a different whole score. A decision
+    taken against the loaded tuple then dates the wrong number: Odds loads and
+    reads 3-0 at T1, StatPal commits 7-1 at T2, Odds' 3-0 lands, and "unchanged"
+    kept StatPal@T2 — a stamp for 7-1 — on 3-0. A half reading (3, None) over
+    loaded 3-0 had the same hole: the row ended 3-1 under StatPal's 7-1 stamp.
+
+    So no ``stored`` argument: what "unchanged" means is asked of the row in the
+    same statement. Same four rules, each decided against the row AT the write:
+
+    1. A written side differs from the row and the reading confirms the
+       resulting tuple → this reading's source and clock.
+    2. A written side differs and the reading does not confirm → cleared.
+    3. Nothing written differs and the reading confirms → forward only.
+    4. Nothing written differs and the reading does not confirm → held.
+
+    "Confirms" is the helper above's test, made stricter so that it needs no
+    row read at all: the write must SET both sides, each equal to the reading.
+    A side the write leaves alone is whatever the row holds at the write, which
+    this reading never saw — so a write of one side can clear or keep, never
+    stamp.
+
+    A reading that cannot confirm and writes no score returns ``{}``: the
+    statement leaves the tuple alone, so whatever stamp it holds still fits.
+    """
+    _validate_source(source)
+    reading_by_side = dict(zip(_HELD_SCORES, reading))
+    written = {side: writes[side] for side in _HELD_SCORES if side in writes}
+    moves = [
+        _HELD_SCORES[side].is_distinct_from(literal(value, Integer))
+        for side, value in written.items()
+    ]
+    confirms = (
+        may_confirm
+        and observed_at is not None
+        and len(written) == len(_HELD_SCORES)
+        and all(
+            value is not None and value == reading_by_side[side]
+            for side, value in written.items()
+        )
+    )
+    if not confirms:
+        if not moves:
+            return {}
+        changed = or_(*moves)
+        return {
+            "score_source": case((changed, null()), else_=_HELD_SOURCE),
+            "score_observed_at": case((changed, null()), else_=_HELD_OBSERVED_AT),
+        }
+
+    # The whole tuple is this reading's. A moved row takes it outright; an
+    # unmoved one takes it only if it is newer than the stamp already there.
+    at = literal(observed_at, DateTime(timezone=True))
+    takes = or_(*moves, _HELD_OBSERVED_AT.is_(None), _HELD_OBSERVED_AT < at)
+    return {
+        "score_source": case(
+            (takes, literal(source, String(_MAX_SOURCE_LEN))), else_=_HELD_SOURCE
+        ),
+        "score_observed_at": case((takes, at), else_=_HELD_OBSERVED_AT),
     }
 
 

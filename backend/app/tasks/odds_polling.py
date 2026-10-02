@@ -34,7 +34,7 @@ from app.utils.name_normalization import names_match, normalize_name
 from app.utils.polling_config import compute_effective_interval
 from app.utils.score_observation import (
     SCORE_SOURCE_ODDS,
-    score_write_stamp_values,
+    score_write_stamp_values_at_row,
 )
 from app.tasks.base import get_task_session, run_async
 from app.tasks.config import (
@@ -2367,11 +2367,19 @@ async def _poll_all_odds():
                             # payload can move the tuple without confirming it:
                             # the helper clears the stamp in that UPDATE rather
                             # than leave another reading's age on the new pair.
+                            #
+                            # AGAINST THE ROW AT THE WRITE, NOT `event_obj`. The
+                            # UPDATE below is by primary key only — it does not
+                            # re-assert the loaded score — so another writer can
+                            # commit a different whole score in between. Judged
+                            # against the loaded pair, "unchanged" would keep
+                            # that writer's stamp on the score this one puts
+                            # back (Sol a552 review). The `_at_row` helper asks
+                            # the row itself, inside the same statement.
                             update_values.update(
-                                score_write_stamp_values(
+                                score_write_stamp_values_at_row(
                                     source=SCORE_SOURCE_ODDS,
                                     observed_at=_scores_read_at,
-                                    stored=(event_obj.home_score, event_obj.away_score),
                                     writes=update_values,
                                     reading=(home_score, away_score),
                                     may_confirm=not _skip_score_write,

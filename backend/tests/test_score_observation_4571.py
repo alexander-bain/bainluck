@@ -526,6 +526,9 @@ def _calls_in(tree):
                 # The compare-and-write spelling (#6056): the stamp joined to
                 # the score's own UPDATE, never assigned on the ORM row.
                 "score_write_stamp_values",
+                # The primary-key spelling: a write that does not re-assert its
+                # loaded tuple, so the row itself is asked at the write.
+                "score_write_stamp_values_at_row",
             ):
                 yield node
 
@@ -584,6 +587,7 @@ def test_no_stamp_is_nested_inside_a_score_inequality(relpath):
 _HELPERS = {
     "stamp_score_observation", "clear_score_observation",
     "score_observation_values", "score_write_stamp_values",
+    "score_write_stamp_values_at_row",
     "SCORE_SOURCE_ESPN", "SCORE_SOURCE_STATPAL", "SCORE_SOURCE_ODDS",
 }
 
@@ -898,7 +902,7 @@ def test_the_odds_stamp_is_merged_into_the_same_update_values():
         if not isinstance(node, ast.Call):
             continue
         fn = node.func
-        # `update_values.update(score_write_stamp_values(...))`
+        # `update_values.update(score_write_stamp_values_at_row(...))`
         if getattr(fn, "attr", None) != "update":
             continue
         if getattr(getattr(fn, "value", None), "id", None) != "update_values":
@@ -906,7 +910,7 @@ def test_the_odds_stamp_is_merged_into_the_same_update_values():
         for arg in node.args:
             if isinstance(arg, ast.Call) and getattr(
                 arg.func, "id", None
-            ) == "score_write_stamp_values":
+            ) == "score_write_stamp_values_at_row":
                 merged = True
 
     assert merged, (
@@ -941,24 +945,34 @@ def test_the_odds_stamp_passes_the_scores_read_clock_not_a_fresh_now():
     )
 
 
-def test_the_odds_stamp_is_handed_the_stored_pair_the_reading_and_the_skip():
+def test_the_odds_stamp_is_handed_the_write_the_reading_and_the_skip():
     """The NO-SCORE / REFUSED-SCORE / HALF-SCORE control, at the site.
 
-    The rule itself lives in `score_write_stamp_values` and is paid by value
-    below; what the site owes is the right inputs. The stamp dates the score
-    TUPLE the row will hold, so the helper must see the stored pair, the very
-    `update_values` the UPDATE sends, BOTH sides of the reading (a one-sided
-    payload lands on the stored other half, which this read never confirmed),
-    and `_skip_score_write` as the reason it may not confirm. Never gated on
-    change: no `if` with a score `!=` may sit around it.
+    The rule itself lives in `score_write_stamp_values_at_row` and is paid by
+    value below and through the real pass in
+    `test_odds_stamp_against_a_concurrent_score_4571_e2e.py`; what the site
+    owes is the right inputs. The stamp dates the score TUPLE the row will hold,
+    so the helper must see the very `update_values` the UPDATE sends, BOTH sides
+    of the reading (a one-sided payload lands on the row's other half, which
+    this read never confirmed), and `_skip_score_write` as the reason it may not
+    confirm. Never gated on change: no `if` with a score `!=` may sit around it.
+
+    And NO loaded pair (Sol a552 review). This UPDATE is by primary key only and
+    re-asserts nothing it loaded, so `event_obj`'s scores can be another
+    writer's commit out of date by the time it lands; a decision taken against
+    them kept a 7-1 stamp on a 3-0 row. The `_at_row` helper asks the row in the
+    same statement — handing the site back to the loaded-tuple helper, or giving
+    it a `stored` pair, reopens the race.
     """
     calls = _odds_stamp_calls()
     assert len(calls) == 1, f"one stamp site expected, found {len(calls)}"
+    assert getattr(calls[0].func, "id", None) == "score_write_stamp_values_at_row", (
+        "the odds site's UPDATE is PK-only — its stamp must be decided against "
+        "the row at the write, not the tuple it loaded"
+    )
     kwargs = {k.arg: k.value for k in calls[0].keywords}
 
-    assert ast.unparse(kwargs["stored"]) == (
-        "(event_obj.home_score, event_obj.away_score)"
-    )
+    assert "stored" not in kwargs
     assert ast.unparse(kwargs["writes"]) == "update_values", (
         "the helper must read the same dict the UPDATE sends, or it judges a "
         "write other than the one that lands"
@@ -1148,6 +1162,7 @@ from sqlalchemy.sql.elements import ClauseElement  # noqa: E402
 from app.utils.score_observation import (  # noqa: E402
     SCORE_STAMP_CLEARED,
     score_write_stamp_values,
+    score_write_stamp_values_at_row,
 )
 
 T_HELD = NOW - timedelta(seconds=60)
@@ -1245,14 +1260,21 @@ def _core_write(engine, event_id, values):
     return row[0], row[1], row[2], _aware(row[3])
 
 
+def _odds_values(writes, reading, *, observed_at=NOW, may_confirm=True):
+    """What the odds site merges into its PK-only UPDATE — the row-relative
+    helper it actually calls, with no loaded pair."""
+    values = dict(writes)
+    values.update(score_write_stamp_values_at_row(
+        source=SCORE_SOURCE_ODDS, observed_at=observed_at,
+        writes=values, reading=reading, may_confirm=may_confirm,
+    ))
+    return values
+
+
 def test_odds_shaped_one_sided_payload_clears_the_old_stamp_on_a_real_row():
     engine, event_id = _core_row(home=3, away=0, source="statpal", observed_at=T_HELD)
-    update_values = {"home_score": 7}
-    update_values.update(score_write_stamp_values(
-        source=SCORE_SOURCE_ODDS, observed_at=NOW, stored=(3, 0),
-        writes=update_values, reading=(7, None), may_confirm=True,
-    ))
-    assert _core_write(engine, event_id, update_values) == (7, 0, None, None)
+    values = _odds_values({"home_score": 7}, (7, None))
+    assert _core_write(engine, event_id, values) == (7, 0, None, None)
 
 
 @pytest.mark.parametrize(
@@ -1266,11 +1288,60 @@ def test_odds_shaped_one_sided_payload_clears_the_old_stamp_on_a_real_row():
 )
 def test_the_forward_only_confirmation_on_a_real_row(held_source, held_at, expected):
     engine, event_id = _core_row(home=0, away=0, source=held_source, observed_at=held_at)
-    values = score_write_stamp_values(
-        source=SCORE_SOURCE_ODDS, observed_at=NOW, stored=(0, 0),
-        writes={}, reading=(0, 0), may_confirm=True,
-    )
+    values = _odds_values({"home_score": 0, "away_score": 0}, (0, 0))
     assert _core_write(engine, event_id, values) == (0, 0, *expected)
+
+
+# ── Sol a552: the PK-only write is judged against the row AT the write ───────
+#
+# Each case is (row at the write, Odds writes, Odds reading) → row after. The
+# row at the write is what another writer committed after Odds loaded; Odds'
+# own loaded pair is deliberately not an input — the helper takes none.
+
+T_OTHER = NOW + timedelta(seconds=30)
+
+
+@pytest.mark.parametrize(
+    "row_at_write, writes, reading, observed_at, expected",
+    [
+        # Sol arm 1: full 3-0 lands on a concurrent 7-1@T2 → Odds' read dates 3-0.
+        ((7, 1), {"home_score": 3, "away_score": 0}, (3, 0), NOW,
+         (3, 0, "odds_api", NOW)),
+        # Sol arm 2: half (3, None) lands on 7-1 → 3-1, which nobody read whole.
+        ((7, 1), {"home_score": 3}, (3, None), NOW, (3, 1, None, None)),
+        # Only the AWAY side lands on a moved row → still a fresh tuple, cleared.
+        ((7, 1), {"away_score": 0}, (None, 0), NOW, (7, 0, None, None)),
+        # Half reading that the moved row happens to agree with → held kept.
+        ((3, 1), {"home_score": 3}, (3, None), NOW, (3, 1, "statpal", T_OTHER)),
+        # Changed whole score with no clock over a moved row → cleared.
+        ((7, 1), {"home_score": 3, "away_score": 0}, (3, 0), None,
+         (3, 0, None, None)),
+    ],
+)
+def test_the_pk_only_write_is_judged_against_the_row_at_the_write(
+    row_at_write, writes, reading, observed_at, expected,
+):
+    engine, event_id = _core_row(
+        home=row_at_write[0], away=row_at_write[1],
+        source="statpal", observed_at=T_OTHER,
+    )
+    values = _odds_values(writes, reading, observed_at=observed_at)
+    assert _core_write(engine, event_id, values) == expected
+
+
+def test_a_refused_odds_reading_sends_no_stamp_whatever_the_row_holds():
+    """`_skip_score_write` strips the score from `update_values`, so nothing
+    the statement does can move the tuple — and nothing may date it."""
+    assert _odds_values({}, (3, 0), may_confirm=False) == {}
+    assert _odds_values({}, (3, None), may_confirm=False) == {}
+
+
+def test_a_written_side_the_reading_does_not_hold_never_confirms():
+    """Defensive: `writes` and `reading` disagreeing is a caller bug, and it
+    must read as "not confirmed", never as a stamp for a number not read."""
+    engine, event_id = _core_row(home=3, away=0, source="statpal", observed_at=T_HELD)
+    values = _odds_values({"home_score": 9, "away_score": 0}, (3, 0))
+    assert _core_write(engine, event_id, values) == (9, 0, None, None)
 
 
 # ── the same rules through the REAL ESPN writer ──────────────────────────────
