@@ -926,6 +926,40 @@ nonisolated enum FeedLifecycle {
         guard let anchor = finishedEventAgeAnchor(e) else { return false }
         return now.timeIntervalSince(anchor) > finishedEventMaxAgeHours(e) * 3600
     }
+
+    // MARK: - Scheduled games whose kickoff ran out (#10094)
+
+    /// How long past its kickoff a `scheduled` card may still be shown as upcoming.
+    /// Web's `UPCOMING_GRACE_MS` (`frontend/lib/eventState.ts`), itself pinned to
+    /// the backend's `UPCOMING_GRACE` (`utils/event_completion.py`) — the point at
+    /// which web stops printing a start time and calls the row `startedWithoutResult`.
+    static let scheduledKickoffGrace: TimeInterval = 2 * 3600
+
+    /// The grace when the server says the kickoff is a PLACEHOLDER (#8841
+    /// `startIsTbd`): StatPal parks an unannounced MLB postseason game on the hour
+    /// before the real first pitch, which can be several hours later. The day is
+    /// real and the clock is not, so the card keeps its whole day before it lapses.
+    static let placeholderKickoffGrace: TimeInterval = 24 * 3600
+
+    /// True when a card still says `scheduled` although its kickoff passed longer
+    /// ago than the grace — Discover withholds it rather than print "vs" over a game
+    /// that should already have been played.
+    ///
+    /// #10094: the phone painted an 8-day-old disk deck whose White Sox @ Royals
+    /// card was `scheduled` for Sep 24, and `finishedEventIsExpired` opens on
+    /// `isFinished`, so nothing ever aged it out. This is an ADMISSION rule, not a
+    /// result: it never says the game ended, and it changes no status or score.
+    ///
+    /// Same edges as web's `startedWithoutResult`: `scheduled` only, so a live,
+    /// suspended or unknown status is never dropped by kickoff age; an absent or
+    /// unreadable kickoff KEEPS the card; and the comparison is strict `>`, so a
+    /// card at exactly the grace is still shown.
+    static func scheduledKickoffHasLapsed(_ e: FeedEventData, now: Date = Date()) -> Bool {
+        guard e.status == "scheduled" else { return false }
+        guard let raw = e.commenceTime, let kickoff = raw.asDate else { return false }
+        let grace = e.startIsTbd == true ? placeholderKickoffGrace : scheduledKickoffGrace
+        return now.timeIntervalSince(kickoff) > grace
+    }
 }
 
 // MARK: - Pins Response

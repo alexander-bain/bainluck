@@ -399,4 +399,158 @@ final class NativeDiscoverStaleFilterTests: XCTestCase {
         XCTAssertTrue(DiscoverView.eligibleItems(sanitized, now: now).isEmpty,
                       "the later gate still removes the stale ordinary item")
     }
+
+    // MARK: - Events: `scheduled` past its kickoff grace (#10094)
+
+    /// A quoted ISO stamp `offset` seconds from the fixed `now` (negative = past),
+    /// so every boundary below is offset from one injected instant (gotcha #44).
+    private func stamp(_ offset: TimeInterval) -> String {
+        "\"\(ISO8601DateFormatter().string(from: now.addingTimeInterval(offset)))\""
+    }
+
+    private let hour: TimeInterval = 3600
+
+    /// One event card with the fields the Discover gate reads. Every value is a
+    /// raw JSON literal so a caller can exercise ABSENCE (`null`) as its own fact.
+    private func game(
+        id: Int = 200,
+        status: String = "\"scheduled\"",
+        commenceTime: String = "null",
+        endedAt: String = "null",
+        startIsTbd: String = "null",
+        marqueeFinal: String = "null"
+    ) throws -> FeedItem {
+        try item("""
+        {
+          "type": "event",
+          "score": 90,
+          "data": {
+            "id": \(id),
+            "sport": "baseball_mlb",
+            "home_team": "Kansas City Royals",
+            "away_team": "Chicago White Sox",
+            "status": \(status),
+            "commence_time": \(commenceTime),
+            "ended_at": \(endedAt),
+            "start_is_tbd": \(startIsTbd),
+            "discover_marquee_final": \(marqueeFinal)
+          }
+        }
+        """)
+    }
+
+    func testTheCachedWhiteSoxCardAWeekPastKickoffIsWithheld() throws {
+        // The Sep 23 disk deck's row: event 15314409, `scheduled`, first pitch
+        // Sep 24 18:10Z, painted on Oct 1 as "White Sox vs Royals".
+        let cached = try game(id: 15314409, commenceTime: stamp(-7 * 24 * hour))
+        XCTAssertTrue(DiscoverView.isStaleItem(cached, now: now))
+        XCTAssertTrue(DiscoverView.eligibleItems([cached], now: now).isEmpty)
+    }
+
+    func testTheGraceBoundaryIsStrictSoExactlyTwoHoursStillShows() throws {
+        XCTAssertEqual(FeedLifecycle.scheduledKickoffGrace, 2 * hour)
+        XCTAssertFalse(DiscoverView.isStaleItem(
+            try game(commenceTime: stamp(-2 * hour)), now: now))
+        XCTAssertTrue(DiscoverView.isStaleItem(
+            try game(commenceTime: stamp(-2 * hour - 1)), now: now))
+    }
+
+    func testAFutureOrJustStartedScheduledGameStays() throws {
+        XCTAssertFalse(DiscoverView.isStaleItem(try game(commenceTime: stamp(3 * hour)), now: now))
+        XCTAssertFalse(DiscoverView.isStaleItem(try game(commenceTime: stamp(-1 * hour)), now: now))
+    }
+
+    func testOnlyScheduledIsWithheldByKickoffAge() throws {
+        // A genuinely live game is never dropped for how long ago it started, and
+        // neither is any status this rule has no reading for.
+        for status in ["\"live\"", "\"suspended\"", "\"postponed\"", "\"\"", "null"] {
+            XCTAssertFalse(
+                DiscoverView.isStaleItem(
+                    try game(status: status, commenceTime: stamp(-7 * 24 * hour)), now: now),
+                "\(status) a week past kickoff must not be withheld by kickoff age"
+            )
+        }
+    }
+
+    func testAnAbsentOrUnreadableKickoffKeepsTheCard() throws {
+        XCTAssertFalse(DiscoverView.isStaleItem(try game(commenceTime: "null"), now: now))
+        XCTAssertFalse(DiscoverView.isStaleItem(
+            try game(commenceTime: "\"not a date\""), now: now))
+    }
+
+    func testAPlaceholderKickoffKeepsItsWholeDay() throws {
+        // #8841: the server's word that the clock is StatPal's placeholder. The
+        // real first pitch can be hours after it, so 2h would drop a game that has
+        // not started; the card lapses only once the day itself is gone.
+        XCTAssertEqual(FeedLifecycle.placeholderKickoffGrace, 24 * hour)
+        XCTAssertFalse(DiscoverView.isStaleItem(
+            try game(commenceTime: stamp(-5 * hour), startIsTbd: "true"), now: now))
+        XCTAssertFalse(DiscoverView.isStaleItem(
+            try game(commenceTime: stamp(-24 * hour), startIsTbd: "true"), now: now))
+        XCTAssertTrue(DiscoverView.isStaleItem(
+            try game(commenceTime: stamp(-24 * hour - 1), startIsTbd: "true"), now: now))
+        // `false` and absent read alike: the ordinary 2h grace.
+        XCTAssertTrue(DiscoverView.isStaleItem(
+            try game(commenceTime: stamp(-5 * hour), startIsTbd: "false"), now: now))
+    }
+
+    func testFinishedGamesKeepTheirOwnWindowsUnchanged() throws {
+        let completed = "\"completed\""
+        // Ordinary 8h from the whistle, strict.
+        XCTAssertFalse(DiscoverView.isStaleItem(
+            try game(status: completed, commenceTime: stamp(-11 * hour), endedAt: stamp(-8 * hour)), now: now))
+        XCTAssertTrue(DiscoverView.isStaleItem(
+            try game(status: completed, commenceTime: stamp(-11 * hour), endedAt: stamp(-8 * hour - 1)), now: now))
+        // The whistle outranks the kickoff; the kickoff is only the fallback.
+        XCTAssertFalse(DiscoverView.isStaleItem(
+            try game(status: completed, commenceTime: stamp(-30 * hour), endedAt: stamp(-1 * hour)), now: now))
+        XCTAssertTrue(DiscoverView.isStaleItem(
+            try game(status: "\"closed\"", commenceTime: stamp(-9 * hour)), now: now))
+        // A marquee final Discover kept on purpose: 14h.
+        XCTAssertFalse(DiscoverView.isStaleItem(
+            try game(status: completed, endedAt: stamp(-14 * hour), marqueeFinal: "true"), now: now))
+        XCTAssertTrue(DiscoverView.isStaleItem(
+            try game(status: completed, endedAt: stamp(-14 * hour - 1), marqueeFinal: "true"), now: now))
+    }
+
+    func testTheSharedFinishedPredicateIsNotWidened() throws {
+        // The Sports tab reads `finishedEventIsExpired` too; this rule lives beside
+        // it, so a lapsed `scheduled` card is still "not finished" there.
+        let lapsed = try XCTUnwrap(try game(commenceTime: stamp(-7 * 24 * hour)).event)
+        XCTAssertFalse(FeedLifecycle.finishedEventIsExpired(lapsed, now: now))
+        XCTAssertTrue(FeedLifecycle.scheduledKickoffHasLapsed(lapsed, now: now))
+        XCTAssertEqual(lapsed.status, "scheduled", "the gate reads the card; it never rewrites it")
+    }
+
+    func testAMixedDeckLosesOnlyTheLapsedGame() throws {
+        let deck = [
+            try futures(id: 1),
+            try game(id: 201, commenceTime: stamp(-7 * 24 * hour)),          // drop
+            try game(id: 202, commenceTime: stamp(4 * hour)),                // keep
+            try game(id: 203, status: "\"live\"", commenceTime: stamp(-3 * hour)), // keep
+            try game(id: 204, commenceTime: stamp(-90 * 60)),                // keep, inside grace
+        ]
+        XCTAssertEqual(DiscoverView.eligibleItems(deck, now: now).map(\.id),
+                       ["futures-1", "event-202", "event-203", "event-204"])
+    }
+
+    func testAnAllLapsedDeckIsEmptyWithNoRestoration() throws {
+        let deck = [
+            try game(id: 201, commenceTime: stamp(-7 * 24 * hour)),
+            try game(id: 202, commenceTime: stamp(-3 * hour)),
+        ]
+        XCTAssertTrue(DiscoverView.eligibleItems(deck, now: now).isEmpty)
+        XCTAssertEqual(
+            DiscoverView.undismissedEligibleCount(in: deck, dismissedAt: [:], now: now), 0)
+    }
+
+    func testALapsedGameInsideABundleIsDroppedBeforeComposition() throws {
+        let b = try bundleItem(children: [
+            eventChildJSON(id: 300, sport: "baseball_mlb", status: "scheduled",
+                           commenceTime: stamp(-7 * 24 * hour)),
+            futuresChildJSON(id: 6, category: "politics"),
+        ])
+        let sanitized = DiscoverView.sanitizedFeedItems([b], now: now)
+        XCTAssertEqual(try XCTUnwrap(sanitized.first?.bundle).items.map(\.id), ["futures-6"])
+    }
 }
