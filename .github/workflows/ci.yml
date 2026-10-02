@@ -3759,6 +3759,24 @@ jobs:
             exit 1
           fi
 
+      - name: "/api/calibration/rescue runs Part C, not a private copy (real Postgres)"
+        # The route said "Run Part C rescue directly" and carried its own SQL
+        # with no event link, no closing-line boundary and no source scope: it
+        # wrote the LAST snapshot ever onto every resolved row still at its
+        # opening, so a DataGolf winner forecast at 0.10 read back 0.95 (its
+        # final-round reading). Three arms: DataGolf and non-event controls that
+        # must not move, an event-linked leg that must get its closing line, and
+        # the removed statement executed on the same rows as the strawman.
+        if: matrix.group == 'shared'
+        run: |
+          set -o pipefail
+          python -m pytest tests/integration/test_calibration_rescue_part_c_pg.py \
+            -v -s -rs 2>&1 | tee /tmp/rescue_part_c.txt
+          if grep -qiE "[0-9]+ skipped" /tmp/rescue_part_c.txt; then
+            echo "::error::calibration rescue Part C gate SKIPPED — the gate did not run"
+            exit 1
+          fi
+
       - name: "#4444 the census caps do not move the numbers (real Postgres)"
         # The two `precompute_backfill_progress` tiles ran an uncapped
         # per-outcome `COUNT(*)` over `futures_odds_snapshots` and became the two
