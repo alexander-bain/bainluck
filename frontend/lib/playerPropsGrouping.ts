@@ -54,7 +54,7 @@ import {
   type PropGradeFields,
   type SettledLadderRead,
 } from "./propGrade";
-import { parsePropLabel } from "./otherMarketGroups";
+import { isScoringRaceMarket, parsePropLabel } from "./otherMarketGroups";
 
 export interface StatRung {
   threshold: number;
@@ -901,6 +901,16 @@ export function groupPlayerProps(input: GroupPlayerPropsInput): GroupPlayerProps
    * it after a commit would restore the original bug exactly.
    */
   function readOtherRow(o: OtherMarketRow): OtherCandidate | null {
+    // #6217 — a scoring race ("Pittsburgh vs Cleveland: Race to 21 Points") is a
+    // TEAM market and names no player, so it never becomes a card here. Without
+    // this, the suffix strip below takes "Points" off "Race to 21 Points", keeps
+    // "Race to 21" as the person, and "Points" passes the STAT_TYPES check: on
+    // Steelers @ Browns (/events/14780550, 2026-10-01) the PIT filter ended with
+    // five "Race to N" player cards. Decided by the market's own name, before
+    // any stat word is read out of it — the server's `_is_scoring_race_market`
+    // order. The races already have their real home: the Additional Markets
+    // race ladder (#1627) reads them with this same predicate.
+    if (isScoringRaceMarket(o.market_name)) return null;
     const parsed = parsePlayerName(o.market_name || "", o.outcome_name || "");
     if (!parsed || !parsed.player || !parsed.stat) return null;
     const statLower = parsed.stat.toLowerCase();
