@@ -22,13 +22,21 @@ THE RULE
 --------
 Read in order; first match wins, and the order is the contract:
 
-======================================  ========================
-``source`` in {odds_api, datagolf}      ``not_applicable``
-``fo.volume > 0``                       ``traded``
-``fo.volume = 0``                       ``untraded``
-``fo.volume IS NULL`` + market OI > 0   ``traded_open_interest``
-otherwise                               ``unknown``
-======================================  ========================
+==========================================  ========================
+``source`` in {odds_api, datagolf}          ``not_applicable``
+Polymarket, valid ``traded`` receipt        ``traded``
+Polymarket, valid ``confirmed_zero``
+receipt, ``fo.volume`` NULL or 0            ``untraded``
+Polymarket, valid ``confirmed_zero``
+receipt, any other ``fo.volume``            ``unknown`` (conflict)
+``fo.volume > 0``                           ``traded``
+``fo.volume = 0``                           ``untraded``
+``fo.volume IS NULL`` + market OI > 0       ``traded_open_interest``
+otherwise                                   ``unknown``
+==========================================  ========================
+
+The two receipt rows only exist when the caller passes ``market_metadata``;
+without it the rule is the five scalar rows, unchanged.
 
 **NULL IS UNKNOWN, NEVER UNTRADED.** This is the whole ruling. Measured live on
 2026-08-12 over resolved outcomes in a 30-day window, Polymarket is 95.2% NULL on
@@ -53,17 +61,67 @@ opening`` by construction; odds_api futures resolve nothing). They classify as
 be reported as ``unknown`` — which would read as "we might find out later" about
 a column that does not exist for it.
 
+**The Polymarket receipt (#1870's consumer half).** ``fo.volume`` is an
+integer and Polymarket's traded amount is not: a condition that traded $0.25 has
+no integer that is both honest and positive. Both Polymarket writers therefore
+carry the fact in ``market_metadata['volume_evidence']`` and the scalar can be
+NULL beside it (forward: ``tasks.polymarket.polymarket_activity_volume``;
+recovery: ``polymarket_evidence.build_evidence_receipt``). Before this, the rule
+read only the scalar, so a valid ``traded`` receipt beside a NULL was
+``unknown`` and one beside a recovery-manufactured 0 was ``untraded`` — a market
+that traded, published as one that did not.
+
+A receipt counts only when it is VALID for one of the two provenances that
+write it, and a valid receipt outranks the scalar:
+
+* forward ``gamma:events:condition-volume`` with ``grain = condition`` —
+  ``traded`` needs ``gamma_volume > 0``; ``confirmed_zero`` needs
+  ``gamma_volume = 0``.
+* recovery ``clob:existence+data-api:trades+gamma:events`` — ``traded`` needs
+  ``gamma_volume > 0`` or ``n_trades > 0``; ``confirmed_zero`` needs
+  ``n_trades = 0`` and no positive or malformed ``gamma_volume``.
+
+Anything else — no receipt, an ``unaddressable``/``indeterminate`` verdict, an
+unknown probe, a missing or non-numeric figure, a non-Polymarket row — is not
+evidence in EITHER direction and the scalar rule applies exactly as before. A
+malformed receipt never upgrades knowledge and never erases a scalar reading.
+
+Conflicts are explicit. ``traded`` receipt beside scalar 0: the 0 is the
+recovery rail's old ``int(0.25)`` / Gamma-0-with-trades write and the receipt
+holds the evidence, so ``traded``. ``confirmed_zero`` receipt beside a positive
+scalar: two readings that cannot both be true, so ``unknown`` — neither claim is
+published.
+
+The receipt is CONDITION-grain: one Polymarket condition is one
+``futures_markets`` row and its total is shared by that market's legs, exactly
+as the scalar copy already is. It says the condition traded; it is not a
+per-outcome trade count and nothing here reports it as one.
+
 Read-side only (gotcha #21). Nothing here mutates ``is_winner``,
 ``opening_probability``, ``calibration_probability`` or any resolution.
 """
 
 from __future__ import annotations
 
+import math
 from collections.abc import Iterable, Mapping
+from typing import Any
+
+from app.utils.polymarket_evidence import RECOVERY_EVIDENCE_PROBE
 
 #: Sources with no volume concept. Excluded BY SOURCE, never by a coverage
 #: heuristic — see the module docstring.
 EXCLUDED_SOURCES: tuple[str, ...] = ("odds_api", "datagolf")
+
+#: The only source whose receipts this rule reads.
+RECEIPT_SOURCE = "polymarket"
+
+#: Forward writer's receipt provenance. Restated, not imported: the owner is
+#: ``app.tasks.polymarket.POLYMARKET_CONDITION_VOLUME_PROBE`` and a utils module
+#: must not import the poller. ``test_calibration_trade_evidence_1530`` asserts
+#: the two strings are equal, so they cannot drift apart silently.
+FORWARD_EVIDENCE_PROBE = "gamma:events:condition-volume"
+FORWARD_EVIDENCE_GRAIN = "condition"
 
 #: The partition, in report order.
 CLASSES: tuple[str, ...] = (
@@ -91,15 +149,65 @@ RULE_TEXT = (
     "outcome volume but the market reports open interest > 0 (market-level, so it "
     "proves the market traded, not this leg); untraded = the outcome explicitly "
     "reports volume = 0; unknown = no volume figure at all — NEVER counted as "
-    "untraded. odds_api and datagolf are excluded by source (no volume concept). "
+    "untraded. For Polymarket, a validated condition-level volume receipt (the "
+    "condition's total, shared by its legs — not a per-outcome trade count) "
+    "outranks the integer column: a traded receipt is traded even where the "
+    "integer is empty or 0, a confirmed-zero receipt is untraded, and a "
+    "confirmed-zero receipt beside positive volume is unknown. A malformed or "
+    "unsupported receipt is ignored. "
+    "odds_api and datagolf are excluded by source (no volume concept). "
     "Measurement only: changes no probability, no curve and no resolution."
 )
+
+
+def _json_number(receipt: str, key: str) -> str:
+    """``receipt->key`` as numeric, or NULL when it is not a JSON number.
+
+    A ``CASE``, not ``AND``: PostgreSQL does not promise left-to-right ``AND``
+    evaluation, so ``jsonb_typeof(...) = 'number' AND (...)::numeric > 0`` can
+    still cast a string and abort the whole statement. ``CASE`` order is
+    guaranteed.
+    """
+    return (
+        f"(CASE WHEN jsonb_typeof({receipt}->'{key}') = 'number'"
+        f" THEN ({receipt}->>'{key}')::numeric END)"
+    )
+
+
+def _receipt_sql(metadata: str) -> tuple[str, str]:
+    """(valid-traded, valid-confirmed-zero) SQL predicates over ``metadata``.
+
+    The SQL twin of :func:`receipt_verdict`. ``->`` on a non-object JSONB
+    yields NULL rather than raising, so a malformed ``market_metadata`` or
+    ``volume_evidence`` simply fails every predicate.
+    """
+    r = f"({metadata}->'volume_evidence')"
+    gv = _json_number(r, "gamma_volume")
+    nt = _json_number(r, "n_trades")
+    gv_absent = f"COALESCE(jsonb_typeof({r}->'gamma_volume'), 'null') = 'null'"
+    forward = (
+        f"{r}->>'probe' = '{FORWARD_EVIDENCE_PROBE}'"
+        f" AND {r}->>'grain' = '{FORWARD_EVIDENCE_GRAIN}'"
+    )
+    recovery = f"{r}->>'probe' = '{RECOVERY_EVIDENCE_PROBE}'"
+    traded = (
+        f"({r}->>'verdict' = 'traded' AND ("
+        f"({forward} AND {gv} > 0)"
+        f" OR ({recovery} AND ({gv} > 0 OR {nt} > 0))))"
+    )
+    zero = (
+        f"({r}->>'verdict' = 'confirmed_zero' AND ("
+        f"({forward} AND {gv} = 0)"
+        f" OR ({recovery} AND {nt} = 0 AND ({gv_absent} OR {gv} = 0))))"
+    )
+    return traded, zero
 
 
 def trade_evidence_sql(
     source: str = "fm.source",
     volume: str = "fo.volume",
     open_interest: str = "fm.open_interest",
+    metadata: str | None = None,
 ) -> str:
     """The rule as a SQL ``CASE``, against caller-supplied aliases.
 
@@ -107,11 +215,27 @@ def trade_evidence_sql(
     joins ``fo``/``fm`` directly) and the producer (whose population chain
     carries the market columns on ``vm``) render the SAME predicate instead of
     each writing one that looks like it.
+
+    ``metadata`` names the ``market_metadata`` JSONB column. Omitted, the
+    ``CASE`` is the scalar rule exactly as it was (portable ANSI, so the SQLite
+    oracle still executes it); supplied, the Polymarket receipt clauses are
+    prepended after the source exclusion and the result is PostgreSQL-only.
     """
     excluded = ", ".join(f"'{s}'" for s in EXCLUDED_SOURCES)
+    receipt_clauses = ""
+    if metadata is not None:
+        traded, zero = _receipt_sql(metadata)
+        poly = f"{source} = '{RECEIPT_SOURCE}'"
+        receipt_clauses = (
+            f" WHEN {poly} AND {traded} THEN 'traded'"
+            f" WHEN {poly} AND {zero} AND ({volume} IS NULL OR {volume} = 0)"
+            " THEN 'untraded'"
+            f" WHEN {poly} AND {zero} THEN 'unknown'"
+        )
     return (
         "(CASE"
         f" WHEN {source} IN ({excluded}) THEN 'not_applicable'"
+        f"{receipt_clauses}"
         f" WHEN {volume} > 0 THEN 'traded'"
         f" WHEN {volume} = 0 THEN 'untraded'"
         f" WHEN {volume} IS NULL AND {open_interest} > 0 THEN 'traded_open_interest'"
@@ -119,17 +243,81 @@ def trade_evidence_sql(
     )
 
 
-def classify(source: str | None, volume: int | None, open_interest: int | None) -> str:
+def _number(value: Any) -> float | None:
+    """A JSON number as float, else None — ``jsonb_typeof = 'number'`` in Python.
+
+    ``bool`` is excluded explicitly (it is an ``int`` subclass, and JSON
+    ``true`` is not a number to PostgreSQL either).
+    """
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        return None
+    return float(value) if math.isfinite(value) else None
+
+
+def receipt_verdict(market_metadata: Any) -> str | None:
+    """``'traded'``, ``'confirmed_zero'``, or None for "not evidence".
+
+    Validates ``market_metadata['volume_evidence']`` against the two writers
+    that produce it (see the module docstring). Everything that is not a
+    receipt one of those writers could have written returns None — including
+    ``unaddressable``, which is a real receipt that says "cannot know".
+    """
+    if not isinstance(market_metadata, Mapping):
+        return None
+    receipt = market_metadata.get("volume_evidence")
+    if not isinstance(receipt, Mapping):
+        return None
+    verdict = receipt.get("verdict")
+    probe = receipt.get("probe")
+    gv = _number(receipt.get("gamma_volume"))
+    nt = _number(receipt.get("n_trades"))
+    forward = (
+        probe == FORWARD_EVIDENCE_PROBE
+        and receipt.get("grain") == FORWARD_EVIDENCE_GRAIN
+    )
+    recovery = probe == RECOVERY_EVIDENCE_PROBE
+    if verdict == "traded":
+        if forward and gv is not None and gv > 0:
+            return "traded"
+        if recovery and (
+            (gv is not None and gv > 0) or (nt is not None and nt > 0)
+        ):
+            return "traded"
+        return None
+    if verdict == "confirmed_zero":
+        if forward and gv == 0:
+            return "confirmed_zero"
+        if recovery and nt == 0 and (receipt.get("gamma_volume") is None or gv == 0):
+            return "confirmed_zero"
+        return None
+    return None
+
+
+def classify(
+    source: str | None,
+    volume: int | None,
+    open_interest: int | None,
+    market_metadata: Any = None,
+) -> str:
     """The rule in Python — the canonical, unit-testable twin of the SQL.
 
     Kept beside :func:`trade_evidence_sql` and asserted equivalent to it by
-    ``test_calibration_trade_evidence_1530``, the same way
+    ``test_calibration_trade_evidence_1530`` (SQLite, scalar rule) and
+    ``integration/test_calibration_trade_evidence_receipt_1870_pg`` (real
+    PostgreSQL JSONB, receipt rule), the same way
     ``outcome_is_calibration_liquid`` sits beside ``KALSHI_LIQUIDITY_EXISTS``.
     The pair is what lets the rule be tested without a database and still be the
-    rule production runs.
+    rule production runs. ``market_metadata`` defaults to None, which is the
+    scalar rule unchanged.
     """
     if source in EXCLUDED_SOURCES:
         return "not_applicable"
+    if source == RECEIPT_SOURCE:
+        verdict = receipt_verdict(market_metadata)
+        if verdict == "traded":
+            return "traded"
+        if verdict == "confirmed_zero":
+            return "untraded" if volume is None or volume == 0 else "unknown"
     if volume is not None:
         if volume > 0:
             return "traded"

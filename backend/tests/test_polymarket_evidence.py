@@ -188,3 +188,45 @@ class TestMeasuredConstantsAreCoherent:
         rail silently 422s again.
         """
         assert GAMMA_MARKETS_MAX_OFFSET == 2000
+
+
+class TestOnlyConfirmedZeroManufacturesZero:
+    """#1870 consumer half: a TRADED verdict never stores the integer 0.
+
+    ``int(0.25)`` is 0, and a TRADED verdict reached through non-empty trades can
+    carry Gamma ``0``. Both used to land as ``volume = 0`` beside a ``traded``
+    receipt — a market that traded, stored as a confirmed zero.
+    """
+
+    @pytest.mark.parametrize("amount", [0.25, 0.999, 0.0, 0])
+    def test_a_traded_amount_below_one_writes_nothing(self, amount):
+        # FAILS ON REVERT: the old body returned min(int(x), cap) == 0 here.
+        assert volume_to_write(PMEvidence.TRADED, amount) is None
+
+    @pytest.mark.parametrize("amount", [float("nan"), float("inf"), -3.0, "abc"])
+    def test_a_non_finite_negative_or_non_numeric_amount_writes_nothing(self, amount):
+        assert volume_to_write(PMEvidence.TRADED, amount) is None
+
+    def test_the_integral_healthy_control_still_writes(self):
+        # Control: without it, "returns None" could be a writer that never writes.
+        assert volume_to_write(PMEvidence.TRADED, 1.0) == 1
+        assert volume_to_write(PMEvidence.TRADED, 1.5) == 1
+        assert volume_to_write(PMEvidence.TRADED, 405.9) == 405
+
+    def test_zero_is_reachable_only_through_confirmed_zero(self):
+        writes = {
+            ev: volume_to_write(ev, g)
+            for ev in PMEvidence
+            for g in (None, 0, 0.25, 0.999)
+        }
+        assert {ev for ev, v in writes.items() if v == 0} == {PMEvidence.CONFIRMED_ZERO}
+
+    def test_the_receipt_keeps_the_exact_amount_the_integer_cannot_hold(self):
+        r = build_evidence_receipt(PMEvidence.TRADED, n_trades=0, gamma_volume=0.25)
+        assert r["gamma_volume"] == 0.25
+        assert r["verdict"] == "traded"
+
+    def test_the_recovery_probe_is_the_constant_the_consumer_validates(self):
+        from app.utils.polymarket_evidence import RECOVERY_EVIDENCE_PROBE
+
+        assert build_evidence_receipt(PMEvidence.TRADED)["probe"] == RECOVERY_EVIDENCE_PROBE

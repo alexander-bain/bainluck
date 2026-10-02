@@ -92,6 +92,7 @@
     "Calibration mode-price source scope (real Postgres)",
     "Calibration threshold-ladder collapse (real Postgres)",
     "Calibration DataGolf symmetric exclusion (real Postgres)",
+    "Calibration trade-evidence Polymarket receipt (real Postgres)",
     "Calibration mode-price source scope, peer sites (real Postgres)",
     "Calibration vm-variant join, one outcome one row (real Postgres)",
     "tag-counts statements execute (real Postgres)",

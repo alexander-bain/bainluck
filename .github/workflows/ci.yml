@@ -2761,6 +2761,27 @@ jobs:
             exit 1
           fi
 
+      - name: Calibration trade-evidence Polymarket receipt (real Postgres)
+        # #1870 consumer half. `fo.volume` is an integer and Polymarket's traded
+        # amount is not, so both writers carry the fact in
+        # `market_metadata['volume_evidence']` and may leave the scalar NULL (or,
+        # on the old recovery rail, a manufactured 0) beside it. The receipt
+        # clauses are JSONB and the SQLite oracle cannot execute them, so this
+        # runs the SQL beside the Python twin over real JSONB (malformed receipts
+        # and string-typed numbers included — an early cast aborts the census),
+        # then drives the real `census()` callable, each arm paired with the
+        # scalar-only rule reading the same rows differently.
+        if: matrix.group == 'shared'
+        run: |
+          set -o pipefail
+          python -m pytest \
+            tests/integration/test_calibration_trade_evidence_receipt_1870_pg.py \
+            -v -s -rs 2>&1 | tee /tmp/receipt1870.txt
+          if grep -qiE "[0-9]+ skipped" /tmp/receipt1870.txt; then
+            echo "::error::#1870 receipt trade-evidence contract SKIPPED — the gate did not run"
+            exit 1
+          fi
+
       - name: Calibration mode-price source scope, peer sites (real Postgres)
         # #2098 / ruling 125, sites TWO and THREE — CAL-P091. The step above
         # guards the PRODUCER. The same three-line defect also sat in

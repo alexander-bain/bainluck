@@ -77,6 +77,12 @@ COVERED = (
     #     identical except for it — so a seed that dropped it would compare a
     #     market against itself and pass.
     "test_calibration_datagolf_symmetric_exclusion_pg.py",
+    # #1870 consumer half. Seeds Polymarket markets by raw INSERT whose
+    # `market_metadata` is the whole subject — including deliberately malformed
+    # receipts, a JSON `null` (bound as the string 'null', distinct from SQL
+    # NULL) and non-object JSONB — so a seed that dropped the column would
+    # classify every row by its scalar and the twin oracle would pass vacuously.
+    "test_calibration_trade_evidence_receipt_1870_pg.py",
     # #2927. Added the same night this check would have saved the trip: the
     # containers gate seeded `INSERT INTO sports (key, name)` and died on
     # `NotNullViolation: null value in column "active"` in CI, because

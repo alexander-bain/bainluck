@@ -343,3 +343,195 @@ class TestTheCensusStatement:
         source = inspect.getsource(census_trade_evidence)
         for verb in ("UPDATE ", "INSERT ", "DELETE ", "ALTER "):
             assert verb not in source.upper().replace("STATEMENT_TIMEOUT", "")
+
+
+# ---------------------------------------------------------------------------
+# #1870 consumer half — the Polymarket receipt.
+# ---------------------------------------------------------------------------
+
+_NOW = "2026-10-02T18:00:00+00:00"
+
+
+def _forward(amount):
+    """A receipt exactly as the forward poller writes it."""
+    from datetime import datetime, timezone
+
+    from app.tasks.polymarket import polymarket_activity_volume
+
+    out = polymarket_activity_volume(
+        amount, observed_at=datetime(2026, 10, 2, 18, tzinfo=timezone.utc)
+    )
+    return out.scalar, out.receipt
+
+
+def _recovery(evidence, *, n_trades=None, gamma_volume=None):
+    """A receipt exactly as the recovery rail writes it."""
+    from app.utils.polymarket_evidence import PMEvidence, build_evidence_receipt
+
+    return build_evidence_receipt(
+        PMEvidence(evidence), n_trades=n_trades, gamma_volume=gamma_volume
+    )
+
+
+def _meta(receipt):
+    return {"volume_evidence": receipt}
+
+
+class TestThePolymarketReceipt:
+    def test_the_forward_probe_string_is_the_pollers_own(self):
+        from app.tasks.polymarket import POLYMARKET_CONDITION_VOLUME_PROBE
+        from app.utils.calibration_trade_evidence import FORWARD_EVIDENCE_PROBE
+
+        assert FORWARD_EVIDENCE_PROBE == POLYMARKET_CONDITION_VOLUME_PROBE
+
+    def test_a_fractional_forward_receipt_beside_null_is_traded(self):
+        # THE ship. Gamma said 0.25; the integer column holds NULL; the old rule
+        # read 'unknown' and the reader saw nothing about a market that traded.
+        scalar, receipt = _forward(0.25)
+        assert scalar is None
+        assert classify("polymarket", scalar, None) == "unknown", "the old reading"
+        assert classify("polymarket", scalar, None, _meta(receipt)) == "traded"
+
+    def test_a_recovery_traded_receipt_beside_a_manufactured_zero_is_traded(self):
+        # The historical rows: the old rail wrote int(0.25) == 0 beside this.
+        receipt = _recovery("traded", n_trades=0, gamma_volume=0.25)
+        assert classify("polymarket", 0, None) == "untraded", "the old reading"
+        assert classify("polymarket", 0, None, _meta(receipt)) == "traded"
+
+    def test_gamma_zero_with_real_trades_is_traded(self):
+        receipt = _recovery("traded", n_trades=4, gamma_volume=0.0)
+        assert classify("polymarket", 0, None, _meta(receipt)) == "traded"
+        assert classify("polymarket", None, None, _meta(receipt)) == "traded"
+
+    def test_a_positive_integral_forward_row_stays_traded(self):
+        scalar, receipt = _forward(405.9)
+        assert scalar == 405
+        assert classify("polymarket", scalar, None, _meta(receipt)) == "traded"
+
+    def test_a_confirmed_zero_survives_from_both_writers(self):
+        scalar, receipt = _forward(0)
+        assert scalar == 0
+        assert classify("polymarket", 0, None, _meta(receipt)) == "untraded"
+        assert classify("polymarket", None, None, _meta(receipt)) == "untraded"
+        rec = _recovery("confirmed_zero", n_trades=0)
+        assert classify("polymarket", 0, None, _meta(rec)) == "untraded"
+        rec0 = _recovery("confirmed_zero", n_trades=0, gamma_volume=0.0)
+        assert classify("polymarket", None, None, _meta(rec0)) == "untraded"
+
+    def test_a_confirmed_zero_receipt_beside_positive_volume_is_an_explicit_conflict(self):
+        _, receipt = _forward(0)
+        assert classify("polymarket", 12, None, _meta(receipt)) == "unknown"
+        assert classify("polymarket", 12, None) == "traded", "the scalar alone"
+
+    def test_a_confirmed_zero_outranks_market_open_interest_like_a_scalar_zero(self):
+        _, receipt = _forward(0)
+        assert classify("polymarket", None, 50, _meta(receipt)) == "untraded"
+
+    def test_unfetched_null_with_no_receipt_stays_unknown(self):
+        for meta in (None, {}, {"polymarket_event_id": "123"}):
+            assert classify("polymarket", None, None, meta) == "unknown"
+
+    def test_an_unaddressable_receipt_is_not_evidence(self):
+        receipt = _recovery("unaddressable")
+        assert classify("polymarket", None, None, _meta(receipt)) == "unknown"
+
+    @pytest.mark.parametrize(
+        "receipt",
+        [
+            {"verdict": "traded", "probe": "something-else", "gamma_volume": 5.0},
+            {"verdict": "traded", "probe": "gamma:events:condition-volume", "gamma_volume": 5.0},
+            {"verdict": "traded", "probe": "gamma:events:condition-volume", "grain": "condition"},
+            {"verdict": "traded", "probe": "gamma:events:condition-volume", "grain": "condition", "gamma_volume": "5"},
+            {"verdict": "traded", "probe": "gamma:events:condition-volume", "grain": "condition", "gamma_volume": True},
+            {"verdict": "traded", "probe": "gamma:events:condition-volume", "grain": "condition", "gamma_volume": 0},
+            {"verdict": "traded", "probe": "gamma:events:condition-volume", "grain": "condition", "gamma_volume": -1},
+            {"verdict": "traded", "probe": "clob:existence+data-api:trades+gamma:events"},
+            {"verdict": "traded", "probe": "clob:existence+data-api:trades+gamma:events", "n_trades": 0, "gamma_volume": 0},
+            {"verdict": "TRADED", "probe": "clob:existence+data-api:trades+gamma:events", "n_trades": 3},
+            {"verdict": None, "probe": "clob:existence+data-api:trades+gamma:events", "n_trades": 3},
+            "traded",
+            ["traded"],
+            None,
+        ],
+    )
+    def test_a_malformed_or_unsupported_traded_receipt_cannot_claim_trading(self, receipt):
+        assert classify("polymarket", None, None, _meta(receipt)) == "unknown"
+        # ...and it never erases what the scalar already says.
+        assert classify("polymarket", 0, None, _meta(receipt)) == "untraded"
+        assert classify("polymarket", 7, None, _meta(receipt)) == "traded"
+
+    @pytest.mark.parametrize(
+        "receipt",
+        [
+            {"verdict": "confirmed_zero", "probe": "gamma:events:condition-volume", "grain": "condition"},
+            {"verdict": "confirmed_zero", "probe": "gamma:events:condition-volume", "grain": "condition", "gamma_volume": 0.25},
+            {"verdict": "confirmed_zero", "probe": "clob:existence+data-api:trades+gamma:events"},
+            {"verdict": "confirmed_zero", "probe": "clob:existence+data-api:trades+gamma:events", "n_trades": 2},
+            {"verdict": "confirmed_zero", "probe": "clob:existence+data-api:trades+gamma:events", "n_trades": 0, "gamma_volume": "0"},
+            {"verdict": "confirmed_zero", "probe": "clob:existence+data-api:trades+gamma:events", "n_trades": 0, "gamma_volume": 3.0},
+        ],
+    )
+    def test_a_malformed_confirmed_zero_receipt_cannot_claim_zero(self, receipt):
+        assert classify("polymarket", None, None, _meta(receipt)) == "unknown"
+        assert classify("polymarket", 12, None, _meta(receipt)) == "traded"
+
+    @pytest.mark.parametrize("market_metadata", ["{}", 5, ["volume_evidence"], {"volume_evidence": "x"}])
+    def test_a_non_mapping_metadata_is_not_evidence(self, market_metadata):
+        assert classify("polymarket", None, None, market_metadata) == "unknown"
+
+    @pytest.mark.parametrize("source", EXCLUDED_SOURCES)
+    def test_excluded_sources_stay_not_applicable_even_with_a_receipt(self, source):
+        _, receipt = _forward(0.25)
+        assert classify(source, None, None, _meta(receipt)) == "not_applicable"
+
+    def test_a_receipt_on_a_non_polymarket_row_is_ignored(self):
+        _, receipt = _forward(0.25)
+        assert classify("kalshi", None, None, _meta(receipt)) == "unknown"
+        assert classify("kalshi", 0, None, _meta(receipt)) == "untraded"
+        assert classify("kalshi", None, 9, _meta(receipt)) == "traded_open_interest"
+
+    def test_open_interest_stays_the_weaker_class_when_no_receipt(self):
+        assert classify("polymarket", None, 7, None) == "traded_open_interest"
+
+
+class TestTheReceiptCohortFigures:
+    def test_a_confirmed_zero_only_cohort_reads_zero_percent_with_its_n(self):
+        _, receipt = _forward(0)
+        rows = [classify("polymarket", 0, None, _meta(receipt)) for _ in range(6)]
+        counts = empty_counts()
+        for klass in rows:
+            counts[klass] += 1
+        summary = summarise(counts)
+        assert summary["traded_share_of_evidenced_pct"] == 0.0
+        assert summary["evidenced_n"] == 6
+
+    def test_an_unfetched_only_cohort_reads_none_never_zero(self):
+        counts = empty_counts()
+        for _ in range(6):
+            counts[classify("polymarket", None, None, None)] += 1
+        summary = summarise(counts)
+        assert summary["traded_share_of_evidenced_pct"] is None
+        assert summary["evidenced_n"] == 0
+
+
+class TestTheReceiptSqlRendering:
+    def test_without_metadata_the_case_is_byte_identical_to_the_scalar_rule(self):
+        # Backwards compatibility, pinned: the default render must not grow JSONB
+        # (the SQLite oracle above executes it, and SQLite has no jsonb_typeof).
+        default = trade_evidence_sql()
+        assert "jsonb" not in default and "volume_evidence" not in default
+        assert default == (
+            "(CASE WHEN fm.source IN ('odds_api', 'datagolf') THEN 'not_applicable'"
+            " WHEN fo.volume > 0 THEN 'traded' WHEN fo.volume = 0 THEN 'untraded'"
+            " WHEN fo.volume IS NULL AND fm.open_interest > 0 THEN 'traded_open_interest'"
+            " ELSE 'unknown' END)"
+        )
+
+    def test_the_source_exclusion_still_comes_first_with_metadata(self):
+        sql = trade_evidence_sql(metadata="fm.market_metadata")
+        assert sql.index("'not_applicable'") < sql.index("volume_evidence")
+
+    def test_the_census_reads_the_receipt_aware_rule(self):
+        # FAILS ON REVERT of the census wiring: the census would render the
+        # scalar-only CASE and keep publishing receipt-backed rows as unknown.
+        assert trade_evidence_sql(metadata="fm.market_metadata") in cohorts_sql()

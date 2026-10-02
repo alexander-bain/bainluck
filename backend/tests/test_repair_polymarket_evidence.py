@@ -274,3 +274,110 @@ class TestBoundedness:
         out = await rail.repair(s, apply=False)
         assert out["stopped_before"] == "market_id=5"
         assert out["counts"]["markets_examined"] == 0
+
+
+def _receipt(session):
+    import json
+
+    writes = _writes(session, "futures_markets")
+    assert len(writes) == 1
+    return json.loads(writes[0][1]["receipt"])
+
+
+def _consumer(scalar, receipt):
+    """What the calibration consumer reads from the row the rail just wrote."""
+    from app.utils.calibration_trade_evidence import classify
+
+    return classify("polymarket", scalar, None, {"volume_evidence": receipt})
+
+
+class TestTheRailNeverStoresZeroBesideATradedReceipt:
+    """#1870 consumer half — the actual callable, then the actual consumer.
+
+    Each test reads the scalar the rail WROTE (or that it wrote none, leaving the
+    row's NULL) and the receipt it wrote, and hands both to ``classify`` exactly
+    as the census would see them.
+    """
+
+    async def test_gamma_zero_with_real_trades_is_traded_and_writes_no_zero(self, venue):
+        # FAILS ON REVERT of volume_to_write: the old body wrote vol=0 here.
+        venue.clob, venue.trades = 200, [{"size": 3}, {"size": 1}]
+        venue.event_volumes = {"0xabc": 0.0}
+        s = FakeSession([_target(cid="0xabc")])
+
+        out = await rail.repair(s, apply=True)
+
+        assert out["counts"]["traded"] == 1
+        assert _writes(s, "futures_outcomes") == []
+        r = _receipt(s)
+        assert (r["verdict"], r["n_trades"], r["gamma_volume"]) == ("traded", 2, 0.0)
+        assert _consumer(None, r) == "traded"
+
+    async def test_a_fractional_gamma_volume_is_traded_and_writes_no_zero(self, venue):
+        venue.clob, venue.trades = 200, []
+        venue.event_volumes = {"0xabc": 0.25}
+        s = FakeSession([_target(cid="0xabc")])
+
+        out = await rail.repair(s, apply=True)
+
+        assert out["counts"]["traded"] == 1
+        assert _writes(s, "futures_outcomes") == []
+        r = _receipt(s)
+        assert r["gamma_volume"] == 0.25
+        assert _consumer(None, r) == "traded"
+
+    async def test_a_historical_zero_beside_that_receipt_reads_traded_not_untraded(
+        self, venue
+    ):
+        # The rows already in production: the old rail wrote 0 AND this receipt.
+        venue.clob, venue.trades = 200, []
+        venue.event_volumes = {"0xabc": 0.25}
+        s = FakeSession([_target(cid="0xabc")])
+        await rail.repair(s, apply=True)
+
+        assert _consumer(0, _receipt(s)) == "traded"
+
+    async def test_the_positive_integral_control_still_writes_its_volume(self, venue):
+        venue.clob, venue.trades = 200, [{"size": 1}]
+        venue.event_volumes = {"0xabc": 405.0}
+        s = FakeSession([_target(cid="0xabc")])
+
+        await rail.repair(s, apply=True)
+
+        assert _writes(s, "futures_outcomes")[0][1]["vol"] == 405
+        assert _consumer(405, _receipt(s)) == "traded"
+
+    async def test_a_confirmed_zero_survives_end_to_end(self, venue):
+        venue.clob, venue.trades, venue.event_volumes = 200, [], {}
+        s = FakeSession([_target()])
+
+        await rail.repair(s, apply=True)
+
+        assert _writes(s, "futures_outcomes")[0][1]["vol"] == 0
+        r = _receipt(s)
+        assert _consumer(0, r) == "untraded"
+        assert _consumer(None, r) == "untraded"
+
+    async def test_an_unaddressable_404_writes_no_number_and_reads_unknown(self, venue):
+        venue.clob, venue.trades = 404, None
+        s = FakeSession([_target()])
+
+        await rail.repair(s, apply=True)
+
+        assert _writes(s, "futures_outcomes") == []
+        assert _consumer(None, _receipt(s)) == "unknown"
+
+    @pytest.mark.parametrize("status", [429, 500, None])
+    async def test_an_indeterminate_probe_writes_nothing_and_reads_unknown(
+        self, venue, status
+    ):
+        venue.clob, venue.trades = status, None
+        s = FakeSession([_target()])
+
+        await rail.repair(s, apply=True)
+
+        assert _writes(s, "futures_outcomes") == []
+        assert _writes(s, "futures_markets") == []
+        from app.utils.calibration_trade_evidence import classify
+
+        assert classify("polymarket", None, None, None) == "unknown"
