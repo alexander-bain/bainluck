@@ -1005,11 +1005,11 @@ async def calibration_rescue(
     # ``limit`` instead of by the beat's wall clock.
     rescued = 0
     while rescued < limit:
-        result = await db.execute(text(_part_c_calibration_sql()))
+        batch = await db.execute(text(_part_c_calibration_sql()))
         await db.commit()
-        if result.rowcount == 0:
+        if batch.rowcount == 0:
             break
-        rescued += result.rowcount
+        rescued += batch.rowcount
 
     return {"rescued": rescued, "limit": limit}
 
