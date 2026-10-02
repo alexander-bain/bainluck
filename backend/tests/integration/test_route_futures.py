@@ -228,6 +228,10 @@ class TestFuturesMarketDetail:
             # other board. Present for the same reason as the lines below: a
             # probe must be able to tell "no lead" from "this build cannot lead".
             "lead_outcome_id",
+            # #10165: the game this board is the Polymarket container of, null on
+            # every other board, so the page can send the reader to the game.
+            # Present for the same reason as the line above.
+            "container_of_event_id",
             # #5539: whether this field's openings were refused as incoherent, so
             # a probe can tell a withheld opening from one that never existed.
             # Always present — its absence would mean an old build, not a
