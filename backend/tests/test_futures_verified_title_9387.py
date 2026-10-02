@@ -611,6 +611,128 @@ class TestTheSportsbookAnchor:
         assert by_name(payload, "Buffalo Bills")["contributing_sources"][0] == "odds_api"
 
 
+# ── 3b. the rows served are the rows proved ──────────────────────────────────
+
+
+class _RollingDB(_DB):
+    """A poll commits between the candidate read and the full member read.
+
+    Candidate verdicts are taken on the old sportsbook row; ``roll`` rewrites
+    that row the moment the first member read after them returns, so the board
+    the resolver formats describes the NEW batch.
+    """
+
+    def __init__(self, markets, roll, **kw):
+        super().__init__(markets, **kw)
+        self._roll = roll
+        self.rolled = False
+
+    async def execute(self, stmt, *a, **kw):
+        result = await super().execute(stmt, *a, **kw)
+        if not self.rolled and self.kinds[-1] == "members" and "candidates" in self.kinds:
+            self._roll(self.markets[ODDS_ID])
+            self.rolled = True
+        return result
+
+
+def _roll_to(*, at, buffalo=None, **anchor):
+    def roll(odds):
+        odds.market_metadata["odds_api_current_event"] = _anchor(**anchor)
+        for row in odds.outcomes:
+            if at is not None:
+                row.last_updated = at
+            if buffalo is not None and row.name == "Buffalo Bills":
+                row.current_probability = buffalo
+    return roll
+
+
+NEXT_POLL = NOW - timedelta(minutes=30)
+#: Rolls the resolver must NOT credit: the sportsbook's loaded quotes are next
+#: season's, or its loaded batch clock is newer than every loaded quote.
+STALE_ROLLS = {
+    "2027_to_2028_quote_rollover": _roll_to(
+        at=NOW, event_id="new-2028-provider-event",
+        commence_time="2028-02-13T23:35:00+00:00", polled_at=NOW.isoformat(),
+    ),
+    "same_edition_newer_poll": _roll_to(at=None, polled_at=NEXT_POLL.isoformat()),
+    "same_edition_new_provider_event": _roll_to(
+        at=None, event_id="0f0f-new-provider-event", polled_at=NEXT_POLL.isoformat(),
+    ),
+    "same_edition_new_instant": _roll_to(
+        at=None, commence_time="2027-02-14T23:00:00+00:00",
+        polled_at=NEXT_POLL.isoformat(),
+    ),
+}
+KALSHI_BUFFALO = 643833
+
+
+async def _rolled(mid, roll, route):
+    markets = trio()
+    requested = next(m for m in markets if m.id == mid)
+    db = _RollingDB(markets, roll, snapshots=snapshots_for(requested))
+    with _at():
+        if route == "detail":
+            payload = await get_futures_market(mid, representation=VERIFIED, db=db)
+        else:
+            payload = await get_probability_timeline(
+                market_id=mid, top=10, hours=168, representation=VERIFIED, db=db
+            )
+    assert db.rolled, "the poll never landed between the two reads"
+    return payload
+
+
+class TestMembershipIsReprovedOnTheLoadedRows:
+    @pytest.mark.parametrize("route", ["detail", "timeline"])
+    @pytest.mark.parametrize("name", sorted(STALE_ROLLS))
+    async def test_a_sportsbook_that_rolled_after_the_candidate_read_never_contributes(
+        self, name, route
+    ):
+        payload = await _rolled(KALSHI_ID, STALE_ROLLS[name], route)
+        assert payload["representation"] == VERIFIED, _why(payload)
+        assert payload["question_identity"]["edition"] == "2027"
+        assert payload["contributing_sources"] == ["kalshi", "polymarket"]
+        prob_key = "probability" if route == "detail" else "current_probability"
+        buf = next(o for o in payload["outcomes"] if o["id"] == KALSHI_BUFFALO)
+        assert buf["contributing_sources"] == ["kalshi", "polymarket"]
+        assert buf[prob_key] == 0.1325
+        for o in payload["outcomes"]:
+            assert "odds_api" not in o.get("contributing_sources", []), o["name"]
+
+    @pytest.mark.parametrize("name", sorted(STALE_ROLLS))
+    async def test_the_chart_keeps_its_history_through_the_roll(self, name):
+        default, _ = await timeline(KALSHI_ID, trio())
+        verified = await _rolled(KALSHI_ID, STALE_ROLLS[name], "timeline")
+        assert default["timeline"], "the fixture draws history"
+        for key in set(default) - {"outcomes"}:
+            assert verified[key] == default[key], key
+        assert [(m["id"], m["name"]) for m in verified["outcomes"]] == [
+            (m["id"], m["name"]) for m in default["outcomes"]
+        ]
+
+    @pytest.mark.parametrize("route", ["detail", "timeline"])
+    async def test_a_fresh_batch_on_the_loaded_row_contributes_its_loaded_quotes(self, route):
+        # Same edition, newer poll, every quote refreshed WITH it: the loaded row
+        # is a member on its own loaded clock, and its loaded price is the one
+        # that moves the median (old 11.3% → 0.13; loaded 20% → 0.135).
+        roll = _roll_to(at=NEXT_POLL, buffalo=0.20, polled_at=NEXT_POLL.isoformat())
+        payload = await _rolled(KALSHI_ID, roll, route)
+        assert payload["representation"] == VERIFIED, _why(payload)
+        prob_key = "probability" if route == "detail" else "current_probability"
+        buf = next(o for o in payload["outcomes"] if o["id"] == KALSHI_BUFFALO)
+        assert buf["contributing_sources"] == ["odds_api", "kalshi", "polymarket"]
+        assert buf[prob_key] == 0.135
+        assert buf["observed_at"] == KALSHI_AT.isoformat(), "the OLDEST included observation"
+
+    @pytest.mark.parametrize("route", ["detail", "timeline"])
+    async def test_frozen_inputs_serve_the_same_payload(self, route):
+        rolled = await _rolled(KALSHI_ID, lambda _odds: None, route)
+        if route == "detail":
+            frozen, _ = await detail(KALSHI_ID, trio(), VERIFIED)
+        else:
+            frozen, _ = await timeline(KALSHI_ID, trio(), VERIFIED)
+        assert rolled == frozen
+
+
 # ── 4. wrong edition ─────────────────────────────────────────────────────────
 
 

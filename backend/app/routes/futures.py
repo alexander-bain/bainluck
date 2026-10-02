@@ -5181,6 +5181,25 @@ async def _compose_verified_title(db: AsyncSession, market: FuturesMarket):
     loaded[market.id] = market
     if any(m.market_id not in loaded for m in members):
         return Refusal("member_vanished")
+    # The candidate read and this one are two statements, so a poll can commit
+    # between them: the verdicts above describe the candidate snapshot, and the
+    # boards below are formatted from THESE rows. Membership — edition, instant
+    # and the sportsbook batch clock — is re-proved on the rows whose quotes are
+    # served, and the venues are composed again from those verdicts alone.
+    members = compose_members(
+        spec,
+        requested,
+        [
+            verdict
+            for verdict in (
+                member_of(spec, _verified_title_facts(loaded[m.market_id]), now)
+                for m in members[1:]
+            )
+            if isinstance(verdict, Member)
+        ],
+    )
+    if isinstance(members, Refusal):
+        return members
     boards = {
         m.market_id: await _verified_title_board(db, loaded[m.market_id])
         for m in members
