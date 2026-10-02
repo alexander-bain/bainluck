@@ -151,7 +151,13 @@ class TestFlushReachesTheBlend:
                 assert any(
                     isinstance(n, ast.Try) for h in helpers for n in h.body
                 ), f"{consumer}: expected the chunk write in a try block"
-            write_line = max(n.lineno for n in [*try_nodes, *write_calls])
+            # #10090: a chunked flush refreshes an event right after the chunk
+            # that completes it, so a refresh may precede a LATER chunk or the
+            # withdrawal — never the FIRST write.
+            write_line = (
+                min(c.lineno for c in write_calls) if write_calls
+                else max(n.lineno for n in try_nodes)
+            )
             refresh_calls = _calls_named(flush, "refresh")
             assert refresh_calls, consumer
             assert min(c.lineno for c in refresh_calls) > write_line, (
@@ -183,7 +189,11 @@ class TestFlushReachesTheBlend:
                 write_line = max(
                     c.lineno for h in helpers for c in _calls_named(flush, h.name)
                 )
-                refresh_line = min(c.lineno for c in _calls_named(flush, "refresh"))
+                # #10090: the per-chunk refresh is reached only for chunks that
+                # committed — executed by the real-consumer rollback control in
+                # test_ws_polymarket_open_contract_prices_9484. The flush-level
+                # refresh after every write still needs this return.
+                refresh_line = max(c.lineno for c in _calls_named(flush, "refresh"))
                 assert any(
                     isinstance(n, ast.Return)
                     and write_line < n.lineno < refresh_line

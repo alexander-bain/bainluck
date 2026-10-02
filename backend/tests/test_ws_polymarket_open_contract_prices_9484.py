@@ -30,6 +30,12 @@ THE CASES:
                                  a linked quote is written ahead of an open
                                  backlog; an open-only run opens no all-markets
                                  socket; a failed read costs the arm only.
+    TestACommittedChunkRefreshesItsEvent
+                                 #10090: a committed pair's event is refreshed
+                                 before an unrelated later chunk finishes; a
+                                 rolled-back pair is never refreshed; an event
+                                 two chunks or a withdrawal touch is refreshed
+                                 once, after the last of them.
 """
 
 import asyncio
@@ -814,13 +820,19 @@ def _tick(token, bid="0.40", ask="0.44"):
     })
 
 
-async def _drive(monkeypatch, rig, refresh=0.4, flush=0.05):
+async def _drive(
+    monkeypatch, rig, refresh=0.4, flush=0.05, session=None, on_refresh=None,
+):
     import app.tasks.base as task_base
     import app.tasks.redis_state as redis_state
+
+    session = session or _Session
 
     class _Refresher(blend_mod.LiveBlendRefresher):
         async def refresh(self, event_ids):
             rig.refreshed.append(set(event_ids))
+            if on_refresh is not None:
+                on_refresh(set(event_ids))
             return None
 
         async def refresh_pending(self):
@@ -829,7 +841,7 @@ async def _drive(monkeypatch, rig, refresh=0.4, flush=0.05):
     class _Ctx:
         async def __aenter__(self):
             self.real = Session(rig.engine)
-            return _Session(self.real, rig)
+            return session(self.real, rig)
 
         async def __aexit__(self, exc_type, *_exc):
             try:
@@ -1306,3 +1318,249 @@ class TestTheEventBridgeConsumer:
         assert rig.bridge_reads == []
         assert stats["open_contract_bridged_outcomes"] == 0
         assert rig.subscribes == [[GAME_TOKEN]]
+
+
+# ------------------------------------- a committed chunk's refresh ----
+#
+# #10090 / #837. Each flush chunk commits and publishes on its own (#9484), but
+# the blend refresh ran once, after EVERY chunk: a binary pair that had already
+# committed waited, unstamped, while a later unrelated chunk's UPDATE sat on a
+# row lock (controlled replay of 6443a89023). Now an event is refreshed right
+# after the last chunk of the flush that touches it. Synthetic ids.
+
+BINARY_MARKET_ROWS = [
+    (7, ["711", "712"], None, None, FAR_EVENT, "Steelers vs. Browns", "0x7"),
+    (8, ["811"], None, None, None, "Other independent question", "0x8"),
+    (9, ["911"], None, None, None, "Quiet independent question", "0x9"),
+]
+BINARY_OUTCOME_ROWS = [
+    (71, 7, "0x7", False), (72, 7, "0x7_side1", False),
+    (81, 8, "0x8", False), (91, 9, "0x9", False),
+]
+
+
+def _binary_database(tmp_path, fail_second_leg=False):
+    engine = _database(tmp_path)
+    with engine.begin() as conn:
+        conn.execute(text(
+            "UPDATE futures_outcomes SET current_probability = .435 WHERE id = 71"
+        ))
+        conn.execute(insert(FuturesOutcome.__table__).values(
+            id=72, market_id=7, external_id="0x7_side1", name="No",
+            current_probability=.565,
+        ))
+        if fail_second_leg:
+            conn.execute(text(
+                "CREATE TRIGGER second_leg BEFORE UPDATE ON futures_outcomes "
+                "WHEN NEW.id = 72 BEGIN SELECT RAISE(ABORT, 'second leg'); END"
+            ))
+    return engine
+
+
+class _HeldUpdate:
+    """Parks the first price UPDATE of one outcome until released, so a test
+    can read the committed database while that later chunk is mid-write."""
+
+    def __init__(self, outcome_id):
+        self.outcome_id = outcome_id
+        self.blocked = asyncio.Event()
+        self.release = asyncio.Event()
+
+    def session(self):
+        held = self
+
+        class _Parking(_Session):
+            async def execute(self, stmt, *a, **kw):
+                if (
+                    isinstance(stmt, Update)
+                    and stmt.table.name == "futures_outcomes"
+                    and stmt.compile().params.get("id_1") == held.outcome_id
+                    and not held.blocked.is_set()
+                ):
+                    held.blocked.set()
+                    await held.release.wait()
+                return await super().execute(stmt, *a, **kw)
+
+        return _Parking
+
+
+class TestACommittedChunkRefreshesItsEvent:
+    def _rig(self, engine, ticks):
+        rig = _Rig(
+            engine, GAME_SLATE, (BINARY_MARKET_ROWS, BINARY_OUTCOME_ROWS),
+            _frames_by_token(ticks),
+        )
+        rig.undecided = {FAR_EVENT}
+        return rig
+
+    async def _run_held(self, monkeypatch, rig, held, check, on_refresh=None):
+        """The real consumer with chunk 2 (outcome 81) parked; `check` reads
+        the database while it is, then the chunk is released."""
+        monkeypatch.setattr(open_mod, "FLUSH_CHUNK_ROWS", 2)
+        task = asyncio.create_task(_drive(
+            monkeypatch, rig, refresh=0.35, flush=0.04,
+            session=held.session(), on_refresh=on_refresh,
+        ))
+        try:
+            await asyncio.wait_for(held.blocked.wait(), 2)
+            await check()
+        finally:
+            held.release.set()
+            try:
+                stats = await asyncio.wait_for(task, 5)
+            except BaseException:
+                task.cancel()
+                await asyncio.gather(task, return_exceptions=True)
+                raise
+        return stats
+
+    async def test_a_committed_pair_is_refreshed_before_an_unrelated_held_chunk(
+        self, monkeypatch, tmp_path
+    ):
+        """THE SHIP. The pair commits and publishes together, and its event is
+        refreshed while the unrelated chunk is still parked at its UPDATE."""
+        engine = _binary_database(tmp_path)
+        rig = self._rig(engine, {
+            "711": [(0.0, _tick("711", "0.44", "0.46"))],
+            "811": [(0.0, _tick("811", "0.60", "0.62"))],
+        })
+        held = _HeldUpdate(81)
+        refreshed = asyncio.Event()
+        seen_pairs = []
+
+        def on_refresh(ids):
+            if FAR_EVENT in ids:
+                seen_pairs.append((_stored(engine, 71), _stored(engine, 72)))
+                refreshed.set()
+
+        async def check():
+            assert _stored(engine, 71) == pytest.approx(.45)
+            assert _stored(engine, 72) == pytest.approx(.55)
+            assert _stored(engine, 81) == pytest.approx(.30), "chunk 2 is parked"
+            frame = next(
+                f for c, f in rig.redis.published if c == market_channel(7)
+            )
+            assert frame["outcome_ids"] == [71, 72], "both legs publish together"
+            try:
+                await asyncio.wait_for(refreshed.wait(), 0.5)
+            except asyncio.TimeoutError:
+                pass
+            assert refreshed.is_set(), (
+                "a committed pair's event waited behind an unrelated held chunk"
+            )
+
+        stats = await self._run_held(monkeypatch, rig, held, check, on_refresh)
+
+        assert seen_pairs[0] == (pytest.approx(.45), pytest.approx(.55))
+        assert _stored(engine, 81) == pytest.approx(.61)
+        assert stats["errors"] == 0
+        assert stats["final_flush_dropped"] == 0
+        assert sorted(rig.subscribes) == sorted(
+            [[GAME_TOKEN], ["711", "712", "811", "911"]]
+        )
+
+    async def test_a_rolled_back_pair_publishes_nothing_and_refreshes_nothing(
+        self, monkeypatch, tmp_path
+    ):
+        """CONTROL. The second leg's write fails: both legs roll back, no frame,
+        no refresh of their event — and the unrelated chunk still lands."""
+        engine = _binary_database(tmp_path, fail_second_leg=True)
+        rig = self._rig(engine, {
+            "711": [(0.0, _tick("711", "0.44", "0.46"))],
+            "811": [(0.0, _tick("811", "0.60", "0.62"))],
+        })
+        held = _HeldUpdate(81)
+
+        async def check():
+            assert _stored(engine, 71) == pytest.approx(.435)
+            assert _stored(engine, 72) == pytest.approx(.565)
+            assert market_channel(7) not in [c for c, _f in rig.redis.published]
+
+        stats = await self._run_held(monkeypatch, rig, held, check)
+
+        assert all(FAR_EVENT not in ids for ids in rig.refreshed)
+        assert _stored(engine, 71) == pytest.approx(.435)
+        assert _stored(engine, 81) == pytest.approx(.61)
+        assert stats["errors"] > 0
+
+    async def test_an_event_two_chunks_write_is_refreshed_once_after_both(
+        self, monkeypatch, tmp_path
+    ):
+        """Refreshing after the FIRST chunk would stamp the event half-written
+        and leave the second chunk's price to the 2s throttle."""
+        monkeypatch.setattr(open_mod, "FLUSH_CHUNK_ROWS", 1)
+        monkeypatch.setattr(open_mod, "OPEN_FLUSH_CHUNKS_PER_FLUSH", 3)
+        engine = _database(tmp_path)
+        markets = [
+            (7, ["711"], None, None, FAR_EVENT, "Steelers vs. Browns", "0x7"),
+            (8, ["811"], None, None, FAR_EVENT, "Browns vs. Steelers", "0x8"),
+            (9, ["911"], None, None, None, "Quiet independent question", "0x9"),
+        ]
+        rig = _Rig(
+            engine, GAME_SLATE, (markets, OPEN_OUTCOME_ROWS),
+            _frames_by_token({
+                "711": [(0.0, _tick("711"))],
+                "811": [(0.0, _tick("811", "0.60", "0.62"))],
+            }),
+        )
+        rig.undecided = {FAR_EVENT}
+        seen = []
+
+        def on_refresh(ids):
+            if FAR_EVENT in ids:
+                seen.append((_stored(engine, 71), _stored(engine, 81)))
+
+        stats = await _drive(monkeypatch, rig, flush=0.2, on_refresh=on_refresh)
+
+        assert stats["errors"] == 0
+        assert seen == [(pytest.approx(0.42), pytest.approx(0.61))]
+
+    async def test_an_event_a_withdrawal_touches_is_refreshed_once_after_it(
+        self, monkeypatch, tmp_path
+    ):
+        """#9934's withdrawal runs after the chunks. An event it touches waits
+        for it, so the one refresh sees the price written AND the price gone."""
+        engine = _database(tmp_path)
+        markets = [
+            (7, ["711"], None, None, FAR_EVENT, "Steelers vs. Browns", "0x7"),
+            (8, ["811"], None, None, FAR_EVENT, "Browns vs. Steelers", "0x8"),
+            (9, ["911"], None, None, None, "Quiet independent question", "0x9"),
+        ]
+        rig = _Rig(
+            engine, GAME_SLATE, (markets, OPEN_OUTCOME_ROWS),
+            _frames_by_token({
+                "711": [(0.0, _tick("711"))],
+                # Wide (0.30 apart) and above the held 0.30: refuted, withdrawn.
+                "811": [(0.0, _tick("811", "0.50", "0.80"))],
+            }),
+        )
+        rig.undecided = {FAR_EVENT}
+
+        def held(oid):
+            with engine.connect() as conn:
+                return conn.execute(text(
+                    "SELECT current_probability FROM futures_outcomes WHERE id = :i"
+                ), {"i": oid}).scalar_one()
+
+        class _Withdrawing(_Session):
+            async def execute(self, stmt, *a, **kw):
+                if isinstance(stmt, Select) and (
+                    "futures_outcomes.current_probability IS NOT NULL" in str(stmt)
+                ):
+                    return self.sync_session.execute(stmt)
+                return await super().execute(stmt, *a, **kw)
+
+        seen = []
+
+        def on_refresh(ids):
+            if FAR_EVENT in ids:
+                seen.append((held(71), held(81)))
+
+        stats = await _drive(
+            monkeypatch, rig, flush=0.2, session=_Withdrawing,
+            on_refresh=on_refresh,
+        )
+
+        assert stats["errors"] == 0
+        assert stats["held_prices_withdrawn"] == 1
+        assert seen == [(pytest.approx(0.42), None)]
