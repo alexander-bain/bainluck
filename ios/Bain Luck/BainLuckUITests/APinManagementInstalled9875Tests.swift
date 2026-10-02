@@ -200,12 +200,36 @@ final class APinManagementInstalled9875Tests: XCTestCase {
             XCTAssertTrue(pin.waitForExistence(timeout: 65), "read-only existing #9495 detail must load")
             try record(app, "already-open-\(setup)")
             pin.tap()
-            // Run1's stacked detail uses this real alert too; the toast-only
-            // pinLimitManagePins identifier is not this reader action.
-            let alert = app.alerts["Pin limit reached"]
-            XCTAssertTrue(alert.waitForExistence(timeout: 10), "\(setup) must show the actual pin-limit alert")
-            let action = alert.buttons["Manage pins"]
-            XCTAssertTrue(action.waitForExistence(timeout: 10))
+            // Production has two existing feedback surfaces: the local alert
+            // when isPresented, otherwise the root management toast. Require
+            // the real reachable action on whichever surface actually appears.
+            var surface = "absent"
+            var reachedAction: XCUIElement?
+            let reached = wait(seconds: 10) {
+                let alertAction = app.alerts["Pin limit reached"].buttons["Manage pins"]
+                if alertAction.exists && alertAction.isHittable && alertAction.isEnabled {
+                    surface = "alert"
+                    reachedAction = alertAction
+                    return true
+                }
+                let toastAction = app.buttons["pinLimitManagePins"]
+                if toastAction.exists && toastAction.isHittable && toastAction.isEnabled {
+                    surface = "toast"
+                    reachedAction = toastAction
+                    return true
+                }
+                return false
+            }
+            print("PIN9875-LIMIT-SURFACE \(setup) \(surface)")
+            if !reached {
+                try record(app, "limit-action-absent-\(setup)")
+                let hierarchy = XCTAttachment(string: app.debugDescription)
+                hierarchy.name = "9875-limit-action-absent-\(setup)"
+                hierarchy.lifetime = .keepAlways
+                add(hierarchy)
+            }
+            XCTAssertTrue(reached, "\(setup) must show an actual reachable limit Manage action")
+            let action = try XCTUnwrap(reachedAction)
             action.tap()
             XCTAssertTrue(app.navigationBars["Manage pins"].waitForExistence(timeout: 10), "Manage must open actual list in one reader action")
             XCTAssertEqual(try saved(app).filter { $0.hasPrefix("event:") }.count, 6)

@@ -59,6 +59,11 @@ final class PinManagementRuntime9875: ObservableObject {
     private var pendingSync: [PendingSync] = []
     private var pendingMetadata: [PendingMetadata] = []
     private var pendingLoads: [PendingLoad] = []
+    private var observations: Set<AnyCancellable> = []
+    // No new objectWillChange events: recording a publisher must not itself
+    // rebuild the DEBUG setup while the production button presents feedback.
+    private var trace: [[String: String]] = []
+    private var traceSequence = 0
 
     init(configuration result: Result<Configuration, Failure>) {
         let config: Configuration
@@ -110,10 +115,44 @@ final class PinManagementRuntime9875: ObservableObject {
     var ready: Bool { failure == nil && realIdentity.authenticated && realIdentity.userID != nil }
 
     func makeManager() -> PinManager {
-        PinManager(defaults: defaults, allowLegacyGuestPins: false,
-                   initialBinding: PinAccountBinding(userID: nil, authenticated: false),
-                   serverLoad: { try await self.load() },
-                   serverSync: { type, id, pinned in try await self.sync(type: type, id: id, pinned: pinned) })
+        let manager = PinManager(defaults: defaults, allowLegacyGuestPins: false,
+                                 initialBinding: PinAccountBinding(userID: nil, authenticated: false),
+                                 serverLoad: { try await self.load() },
+                                 serverSync: { type, id, pinned in try await self.sync(type: type, id: id, pinned: pinned) })
+        // Run2's real toolbar tap produced no visible alert/toast. Observe the
+        // existing publisher synchronously so even emitted-then-cleared feedback
+        // is retained; never toggle a pin, clear feedback or drive presentation.
+        observations.removeAll()
+        manager.$feedback.sink { [weak self] feedback in
+            self?.recordTrace("feedback", fields: [
+                "id": feedback?.id.uuidString ?? "nil",
+                "message": feedback?.message ?? "",
+                "management_type": feedback?.managementType ?? "",
+                "title": feedback?.managementAlertTitle ?? ""
+            ])
+        }.store(in: &observations)
+        manager.$identityGeneration.sink { [weak self] generation in
+            self?.recordTrace("generation", fields: ["id": generation.uuidString])
+        }.store(in: &observations)
+        manager.$managementPresentation.sink { [weak self] request in
+            self?.recordTrace("management", fields: [
+                "id": request?.id.uuidString ?? "nil", "type": request?.focusType ?? ""
+            ])
+        }.store(in: &observations)
+        return manager
+    }
+
+    func recordTrace(_ event: String, fields: [String: String] = [:]) {
+        traceSequence += 1
+        var entry = fields
+        entry["sequence"] = String(traceSequence)
+        entry["time"] = String(Date().timeIntervalSince1970)
+        entry["event"] = event
+        trace.append(entry)
+        if trace.count > 64 { trace.removeFirst(trace.count - 64) }
+        if let data = try? JSONSerialization.data(withJSONObject: entry, options: [.sortedKeys]) {
+            print("PIN9875-TRACE \(String(decoding: data, as: UTF8.self))")
+        }
     }
 
     /// Both normal app auth-binding sites and controlled A/B setup use this
@@ -251,7 +290,7 @@ final class PinManagementRuntime9875: ObservableObject {
             "generation": manager.identityGeneration.uuidString,
             "saved": manager.savedPins.map(\.id), "saving": manager.savingKeys.sorted(),
             "held_sync": heldSyncCount, "held_metadata": heldMetadataCount, "held_load": heldLoadCount,
-            "feedback": manager.feedback?.message ?? "", "stores": stores,
+            "feedback": manager.feedback?.message ?? "", "stores": stores, "trace": trace,
             "calls": calls.map { "\($0.slot.rawValue):\($0.type):\($0.id):\($0.pinned ? "add" : "remove")" }
         ]
         guard let data = try? JSONSerialization.data(withJSONObject: value, options: [.sortedKeys]),
@@ -306,9 +345,11 @@ struct PinRuntime9875Setup: View {
             PinRuntime9875Controls(runtime: runtime, manager: manager)
             HStack {
                 Button("9875 stacked detail") {
+                    runtime.recordTrace("setup-stacked")
                     navigation.navigate(to: .eventDetail(id: PinManagementRuntime9875.detailID), tab: .myStuff)
                 }.accessibilityIdentifier("pin9875StackedDetail")
                 Button("9875 sheet detail") {
+                    runtime.recordTrace("setup-sheet")
                     navigation.selectedTab = .myStuff
                     detailSheet = true
                 }.accessibilityIdentifier("pin9875SheetDetail")
