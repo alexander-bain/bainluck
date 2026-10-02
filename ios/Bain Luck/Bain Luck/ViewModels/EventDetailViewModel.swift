@@ -230,6 +230,36 @@ final class EventDetailViewModel: ObservableObject {
         marketDelivery.setVisible(visible)
     }
 
+    /// #1833 — set when the app went to the background with this page open.
+    /// iOS suspends the poll loop and the socket with the app; nothing ensures
+    /// either one wakes up with a fresh read. Build 34 kept PIT–CLE at 'Q4 0:10'
+    /// 12.7 h after the final the server had already served.
+    private var resumeReadOwed = false
+
+    /// The scene moved. A return from the BACKGROUND re-reads the page once,
+    /// at once. `.inactive` (Control Center, a notification pulled down) is not
+    /// a return: the app never stopped running, so nothing went stale. A page
+    /// the reader has navigated away from is not re-read — `load()` re-plans
+    /// the poll, and that would restart polling for a page nobody can see.
+    ///
+    /// Synchronous, so the flag is set in the order the phases arrive; returns
+    /// the read it started, if any.
+    @MainActor
+    @discardableResult
+    func scenePhaseChanged(to phase: ScenePhase, pageVisible: Bool) -> Task<Void, Never>? {
+        switch phase {
+        case .background:
+            resumeReadOwed = true
+        case .active:
+            guard resumeReadOwed, pageVisible else { return nil }
+            resumeReadOwed = false
+            return Task { @MainActor [weak self] in await self?.load() }
+        default:
+            break
+        }
+        return nil
+    }
+
     @MainActor
     func load() async {
         loading = event == nil
