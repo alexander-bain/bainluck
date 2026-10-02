@@ -179,6 +179,8 @@ def test_search_and_game_card_expansions_are_byte_identical_to_before():
         "bama": ("Tide", "americanfootball_ncaaf"),
         "vols": ("Volunteers", "americanfootball_ncaaf"),
         "huskers": ("Cornhuskers", "americanfootball_ncaaf"),
+        # #1757 `milan` — spelled inside `Milano`, so the game arm only.
+        "milan": ("Milano", "basketball_euroleague"),
     }
 
 

@@ -89,6 +89,18 @@ CURATED_TEAM_ALIASES: dict[tuple[str, str], list[str]] = {
     # to no lexeme at all and `m's` to `m`, so no row can match them by FTS — the
     # Athletics row already held `A's` and still carded nothing.
     # Refused: `chisox` (token `Sox` is the Red Sox too), `os` (Os Marialvas).
+    # #1757 — `milan` for the Euroleague club, measured on production 2026-10-02
+    # 03:3xZ. Before: `milan` carded AC Milan, Inter Milan, Internazionale and the
+    # AC Milan youth sides and served 13 games, every one football — 0 Olimpia
+    # Milano team or game, while Baskonia–Olimpia Milano (Euroleague) was on that
+    # night and `milano` found it. The English stemmer keeps `milano` whole, so the
+    # games rail's whole-word test can never fold `milan` onto it. `Milano` names
+    # exactly ONE basketball_euroleague club (team row 967; every euroleague game
+    # holding the word is Olimpia's). Additive, like `avs`: AC Milan holds `Milan`
+    # in its own stored names and Inter in its name, so neither loses the word,
+    # and no football row sits in this scope. No futures arm: `milan` is spelled
+    # inside `Milano`, so the plain ILIKE futures rail already reaches it.
+    ("basketball_euroleague", "Pallacanestro Olimpia Milano"): ["milan"],
     ("baseball_mlb", "Baltimore Orioles"): ["o's", "o\u2019s"],
     ("baseball_mlb", "Athletics"): ["a's", "a\u2019s"],
     ("baseball_mlb", "Seattle Mariners"): ["m's", "m\u2019s"],
