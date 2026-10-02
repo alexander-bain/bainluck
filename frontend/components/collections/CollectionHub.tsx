@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { CollectionMemberCard } from "./CollectionMemberCard";
 import {
   acceptedCollection, collectionMemberDomId, collectionRefreshInterval, fetchCollection, reconcileCollectionContext, settleCollectionRead,
@@ -14,10 +14,8 @@ export default function CollectionHub({ slug }: { slug: string }) {
   const [hub, setHub] = useState<Hub | null>(() => acceptedCollection(slug));
   const [error, setError] = useState<string | null>(null);
   const [fetching, setFetching] = useState(true);
-  const [expanded, setExpanded] = useState<Set<string>>(new Set());
   const request = useRef<AbortController | null>(null);
   const restored = useRef(false);
-  const pendingScroll = useRef<CollectionReadingContext | null>(null);
 
   const load = useCallback(async () => {
     request.current?.abort();
@@ -43,8 +41,8 @@ export default function CollectionHub({ slug }: { slug: string }) {
   }, [slug]);
 
   useEffect(() => {
-    restored.current = false; pendingScroll.current = null;
-    setHub(acceptedCollection(slug)); setError(null); setExpanded(new Set());
+    restored.current = false;
+    setHub(acceptedCollection(slug)); setError(null);
     void load();
     const freshRead = () => { if (document.visibilityState !== "hidden") void load(); };
     window.addEventListener("focus", freshRead);
@@ -66,31 +64,21 @@ export default function CollectionHub({ slug }: { slug: string }) {
     restored.current = true;
     let context: CollectionReadingContext | null = null;
     try { context = reconcileCollectionContext(JSON.parse(sessionStorage.getItem(storageKey(slug)) ?? "null"), shown); } catch { /* blocked/corrupt storage never stops browsing */ }
-    if (!context) return;
-    pendingScroll.current = context;
-    setExpanded(new Set(context.expanded));
+    // No disclosures to reopen since #10146, so the drawn layout is the one the reader left (#9982).
+    const element = context?.memberKey ? document.getElementById(collectionMemberDomId(context.memberKey)) : null;
+    if (context && element) window.scrollTo({ top: Math.max(0, window.scrollY + element.getBoundingClientRect().top - context.offset), behavior: "instant" });
   }, [shown, slug]);
-
-  // Scroll only once the restored disclosures are committed, so the saved
-  // offset is measured against the layout the reader left (#9982).
-  useLayoutEffect(() => {
-    const context = pendingScroll.current;
-    if (!context || !shown) return;
-    pendingScroll.current = null;
-    const element = context.memberKey ? document.getElementById(collectionMemberDomId(context.memberKey)) : null;
-    if (element) window.scrollTo({ top: Math.max(0, window.scrollY + element.getBoundingClientRect().top - context.offset), behavior: "instant" });
-  }, [expanded, shown]);
 
   const remember = (key: string) => {
     const element = document.getElementById(collectionMemberDomId(key));
-    const context: CollectionReadingContext = { slug, memberKey: key, offset: element?.getBoundingClientRect().top ?? 0, expanded: [...expanded] };
+    const context: CollectionReadingContext = { slug, memberKey: key, offset: element?.getBoundingClientRect().top ?? 0, expanded: [] };
     try { sessionStorage.setItem(storageKey(slug), JSON.stringify(context)); } catch { /* browser Back remains available without storage */ }
   };
 
-  const card = (member: CollectionMember, relatedGame?: CollectionMember) => <div id={collectionMemberDomId(member.key)} key={member.key} data-collection-member={member.key} onClickCapture={(event) => {
+  const card = (member: CollectionMember) => <div id={collectionMemberDomId(member.key)} key={member.key} data-collection-member={member.key} onClickCapture={(event) => {
     const anchor = (event.target as Element).closest("a");
     if (anchor?.getAttribute("href") === member.href) remember(member.key);
-  }}><CollectionMemberCard member={member} relatedGame={relatedGame} /></div>;
+  }}><CollectionMemberCard member={member} /></div>;
 
   return <div className="mx-auto w-full max-w-4xl space-y-6" data-collection-hub={slug}>
     <div className="flex items-center justify-between gap-4">
@@ -118,13 +106,8 @@ export default function CollectionHub({ slug }: { slug: string }) {
       <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 items-start">
         {section.members.map((member) => <div key={member.key} className="min-w-0 space-y-3">
           {card(member)}
-          {!!shown.related[member.key]?.length && <details open={expanded.has(member.key)} onToggle={(event) => {
-            const open = event.currentTarget.open;
-            setExpanded((previous) => { const next = new Set(previous); if (open) next.add(member.key); else next.delete(member.key); return next; });
-          }} className="rounded-card border border-surface-border bg-surface-card p-3">
-            <summary className="cursor-pointer text-sm font-semibold text-text-secondary">Related questions ({shown.related[member.key].length})</summary>
-            <div className="mt-3 space-y-3">{shown.related[member.key].map((related) => card(related, member))}</div>
-          </details>}
+          {/* #10146: a game's questions open deliberately on its own page, never as hundreds of contracts inline. */}
+          {!!shown.related[member.key]?.length && <Link href={member.href} data-more-on-game={member.key} onClick={() => remember(member.key)} className="flex justify-between gap-4 rounded-card border border-surface-border bg-surface-card px-4 py-2.5 text-sm font-semibold text-text-secondary hover:bg-surface-elevated hover:text-text-primary">More on this game<span aria-hidden>›</span></Link>}
         </div>)}
       </div>
     </section>)}

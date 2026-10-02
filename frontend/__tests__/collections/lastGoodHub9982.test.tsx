@@ -46,10 +46,13 @@ const read = async (slug: string) => {
 beforeEach(() => forgetAcceptedCollections());
 
 describe("Back from a game while the refresh is pending", () => {
-  test("the six accepted cards draw on the first frame, with the refresh shown as in progress", () => {
+  // Six accepted members draw as five cards: game 7's question opens on its
+  // game page behind "More on this game" since #10146.
+  test("the accepted cards draw on the first frame, with the refresh shown as in progress", () => {
     accept();
     const html = frame(W4);
-    expect(cards(html)).toHaveLength(6);
+    expect(cards(html)).toHaveLength(5);
+    expect(html.match(/data-more-on-game=/g)).toHaveLength(1);
     expect(html).toContain("NFL Week 4");
     expect(html).toContain("Updating…");
     expect(html).not.toContain("Loading collection…");
@@ -76,7 +79,7 @@ describe("a failed refresh keeps the accepted hub with an honest error", () => {
     const next = await read(W4);
     expect(next.hub?.members).toHaveLength(6);
     expect(next.error).toBe("Couldn't refresh this collection. Showing the last update.");
-    expect(cards(frame(W4))).toHaveLength(6);
+    expect(cards(frame(W4))).toHaveLength(5);
   });
   test("control: a failed first read with nothing accepted shows the error and no cards", async () => {
     respond(503);
