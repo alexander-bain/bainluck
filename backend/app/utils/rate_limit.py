@@ -57,11 +57,14 @@ _FRESH_EVENT_PATH = r"/api/events/[1-9][0-9]*(?:/history)?"
 FRESH_FEED_PRICE_RATE_LIMIT = "60/minute"
 _FRESH_FEED_PRICE_MAX = 60
 _FRESH_FEED_PRICE_PATH = "/api/feed/price-cards"
-# 2s detail/history pairs spend60/min; bounded headroom for initial/reconnect reads.
+# 2s detail+history (web) or detail+timeline (native) pairs spend60/min; bounded headroom for initial/reconnect reads.
 # This ceiling is not a claim of measured server capacity.
 FRESH_MARKET_RATE_LIMIT = "120/minute"
 _FRESH_MARKET_MAX = 120
-_FRESH_MARKET_PATH = r"/api/futures/[1-9][0-9]*(?:/probability-timeline)?"
+# #9536: web charts refresh through /history, native through /probability-timeline.
+_FRESH_MARKET_PATH = r"/api/futures/[1-9][0-9]*(?:/probability-timeline|/history)?"
+# /history's own int query params (unbounded); a value it rejects is not a fresh read.
+_FRESH_MARKET_HISTORY_INT_PARAMS = ("outcome_id", "hours", "top_n")
 # Full event-market projections have a separate finite allowance.
 FRESH_GAME_MARKET_RATE_LIMIT = "60/minute"
 _FRESH_GAME_MARKET_MAX = 60
@@ -309,13 +312,21 @@ def _get_fresh_feed_price_limit():
 def _is_fresh_market_read(request: Request) -> bool:
     """Exact opt-in standalone reads, sharing one budget across IDs and queries.
 
-    Both routes already read outcome prices from the database. `fresh` bypasses
+    All three routes already read outcome prices from the database. `fresh` bypasses
     client caches; this classifier isolates those reads, it does not alter data.
     """
     if request.method != "GET" or not re.fullmatch(_FRESH_MARKET_PATH, request.url.path):
         return False
     if request.query_params.get("fresh", "").lower() not in {"1", "true", "t", "on", "yes", "y"}:
         return False
+    if request.url.path.endswith("/history"):
+        from pydantic import TypeAdapter, ValidationError
+        for field in _FRESH_MARKET_HISTORY_INT_PARAMS:
+            if field in request.query_params:
+                try:
+                    TypeAdapter(int).validate_python(request.query_params[field])
+                except ValidationError:
+                    return False
     if request.url.path.endswith("/probability-timeline"):
         from pydantic import TypeAdapter, ValidationError
         for field, maximum in (("top", 50), ("hours", 8760)):
