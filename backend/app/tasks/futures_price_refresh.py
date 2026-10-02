@@ -3121,6 +3121,21 @@ def _venue_quotes_this_leg(market) -> bool:
     return last is not None and float(last) > 0
 
 
+def _venue_closed_unpriced_legs(event) -> list[str]:
+    """The #4000 unpriced legs the venue has itself marked ``closed`` (#1826).
+
+    A subset of ``_unpriced_leg_external_ids`` by construction, so every safety
+    that function carries (negRisk only, a refused-but-quoted leg is never named,
+    a leg absent from the payload is never named) holds here too. A closed leg
+    that resolved YES prices at its settlement and is not unpriced, so it can
+    never appear.
+    """
+    from app.tasks.polymarket import _unpriced_leg_external_ids
+
+    closed_ids = {m.condition_id for m in event.markets if m.closed}
+    return [cid for cid in _unpriced_leg_external_ids(event) if cid in closed_ids]
+
+
 async def _fetch_polymarket_prices(
     service,
     event_ids: list[str],
@@ -3262,6 +3277,18 @@ async def _fetch_polymarket_prices(
 
             priced.append(item)
         if not priced:
+            # #1826: a field nobody quotes retires nothing (see the #4000 note
+            # below) — except the legs the venue CLOSED. `closed: true` on a leg
+            # is the venue speaking about that leg in this pass's payload, so it
+            # cannot be the dark-venue reading the priced-sibling gate exists to
+            # rule out. /futures/63490287 (World Series Exact Matchup): 16 legs
+            # Gamma closed and resolved No at 07:03Z kept printing 9.5% — the
+            # midpoint of a no-bid 0.19 ask from before they closed — because
+            # the 21 open legs are empty books, so nothing priced, and the hourly
+            # poll's newest-first window had already stopped reaching the event.
+            closed = _venue_closed_unpriced_legs(event)
+            if closed:
+                unpriced_out[str(event.id)] = closed
             continue
         if field_is_incoherent(
             (p["probability"] for p in priced),
@@ -3335,6 +3362,10 @@ async def _refresh_stale_futures_prices(
         # a clean success on every pass while retiring nothing, and a stat that
         # only appears when it fires cannot tell that apart from a quiet cohort.
         "legs_retired": 0,
+        # #1826. The part of `legs_retired` taken from fields where NO leg
+        # priced — legs the venue itself closed. Unconditional for the same
+        # reason.
+        "legs_retired_venue_closed": 0,
         # #9399. Stored prices withdrawn because the leg's CURRENT book prices
         # them out while every price the venue offered this pass was refused.
         # Unconditional for the reason `legs_retired` is.
@@ -3821,6 +3852,39 @@ async def _refresh_stale_futures_prices(
                                 continue
                             if priced is None:
                                 stats["not_found"] += 1
+                                # #1826: nothing priced, but the venue closed
+                                # some legs — withdraw those (only those; see
+                                # `_venue_closed_unpriced_legs`), then re-rank.
+                                closed_legs = unpriced_by_event.get(event_id) or []
+                                if not closed_legs:
+                                    continue
+                                try:
+                                    retired = await _retire_unpriced_legs(
+                                        session, market["id"], closed_legs
+                                    )
+                                    _reranked = (
+                                        await session.execute(
+                                            rerank_market_field_stmt(market["id"])
+                                        )
+                                    ).rowcount
+                                    await session.commit()
+                                except Exception as exc:
+                                    await session.rollback()
+                                    stats["errors"].append(
+                                        f"polymarket closed legs {market['external_id']}: {exc}"
+                                    )
+                                    continue
+                                if _reranked:
+                                    stats["ranks_rederived"] += _reranked
+                                if retired:
+                                    stats["legs_retired"] += retired
+                                    stats["legs_retired_venue_closed"] += retired
+                                    logger.info(
+                                        "futures_price_refresh: market %s — withdrew "
+                                        "our price on %d leg(s) the venue closed "
+                                        "while no leg priced (#1826)",
+                                        market["id"], retired,
+                                    )
                                 continue
                             try:
                                 written = await _write_prices(
