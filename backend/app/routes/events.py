@@ -7071,9 +7071,28 @@ def _multi_term_outcome_match(expanded: list[tuple[str, str | None]]):
     inside one name keeps working. Sized on production before the change: over
     the 26 most-searched multi-word queries of 30 days, the open markets reached
     only through outcomes lose exactly those three, all on `wild card`
-    (`falcons packers` keeps 14, `taylor swift` 83, `ohio state` 60). The cost,
-    named: two whole words in two outcomes still pass, so `world series` keeps
-    three Netflix boards listing "A Different World" and "Limited Series".
+    (`falcons packers` keeps 14, `taylor swift` 83, `ohio state` 60).
+
+    #10175: and the split reading applies only when no open market NAME holds
+    the typed phrase. A phrase that names markets (`world series`) is that
+    phrase, not two separate entities, so two whole words in two outcome titles
+    are a coincidence: "A Different World: Season 1" plus "East of Eden: Limited
+    Series" put three Netflix boards on `world series`. A phrase no market name
+    holds (`falcons packers`, `patriots seahawks`) still splits. Sized on
+    production 2026-10-02 over the 39 most-searched all-long multi-word queries
+    of 30 days. The gate removed, all of them wrong:
+
+        world series     3   Netflix top-show boards
+        aaron rodgers   17   golf boards (an Aaron in one outcome, a Rodgers in another)
+        golden knights   4   NCAA boards
+        taylor swift    13   NFL running-back boards
+        ohio state     ~30   "Spread: Ohio / Kent State" boards
+
+    Every other query removed 0. The check is uncorrelated, so Postgres runs it
+    once per statement as an InitPlan over the name trigram index: 65-116 ms
+    alone on production. The cost, named: `world series`'s outcome statement read
+    56-115 ms without it and 130-282 ms with it (three interleaved pairs);
+    `falcons packers`, `aaron rodgers` and `taylor swift` moved within noise.
     """
 
     def _some_outcome(term: str, exp: str | None):
@@ -7110,6 +7129,21 @@ def _multi_term_outcome_match(expanded: list[tuple[str, str | None]]):
                 for t, e in expanded
             ]
         )
+        # Aliased, or SQLAlchemy correlates it to the outer `futures_markets` and
+        # it asks whether THIS market's name holds the phrase.
+        _named = aliased(FuturesMarket, name="phrase_named")
+        phrase_names_a_market = (
+            select(_named.id)
+            .where(
+                _named.name.ilike(f"%{' '.join(t for t, _ in expanded)}%"),
+                _named.status == "open",
+                or_(
+                    _named.resolution_date.is_(None),
+                    _named.resolution_date >= datetime.now(timezone.utc),
+                ),
+            )
+            .exists()
+        )
         return and_(
             *[_some_outcome(t, e) for t, e in expanded],
             or_(
@@ -7119,7 +7153,7 @@ def _multi_term_outcome_match(expanded: list[tuple[str, str | None]]):
                         for t, e in expanded
                     ]
                 ),
-                whole_words,
+                and_(~phrase_names_a_market, whole_words),
             ),
         )
     # The long-term ILIKE is AND-ed inside the one subquery, so the trigram
