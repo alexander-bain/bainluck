@@ -881,8 +881,8 @@ jobs:
             echo "::error::#9587 on-page contender hoist gate collected NOTHING"
             exit 1
           fi
-          if ! grep -qE "^=+ 6 passed" /tmp/hoist9587.txt; then
-            echo "::error::#9587 on-page contender hoist gate did not pass all 6"
+          if ! grep -qE "^=+ 9 passed" /tmp/hoist9587.txt; then
+            echo "::error::#9587 on-page contender hoist gate did not pass all 9"
             exit 1
           fi
 

@@ -16143,6 +16143,15 @@ async def typeahead_search(
         _s.pop("_participants", None)
         # #4986: the verdict computed from them, same rule again.
         _s.pop("_names_participant", None)
+        # #10240: the one question-colon rule the /search card applies to its
+        # name, so the dropdown stops asking "…extra innings?: Yankees vs. Rays"
+        # one tap above a card and page that ask "…extra innings? — Yankees vs.
+        # Rays". HERE, after the rank, not where `text` is built: the scorer reads
+        # `text` as name evidence (MC0 exact key, MC5 trigram credit), so a
+        # display rule applied there could reorder rows. Before the club-name
+        # repair below, the same order /search runs them in.
+        if _s.get("type") == "futures":
+            _s["text"] = rewrite_question_colon_display(_s.get("text"))
 
     # T2-1 (#5058): the team row answers the season question without being
     # opened — "10+ regular-season wins: 47% · Make Playoffs: 49%".
