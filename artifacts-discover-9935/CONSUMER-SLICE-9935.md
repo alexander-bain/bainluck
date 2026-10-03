@@ -7,13 +7,15 @@
 
 Read at `origin/master` `38601bf8f2` (discover worktree HEAD, 2026-10-03 01:2xZ). It answers Authority contract v2 (#9935 comment 5963676371) plus Sol's 01:19Z delta review (repairs A and B). Line numbers below are at that sha.
 
+**Revision 2 (2026-10-03 02:10Z / 2026-10-02 19:10 PDT): the R-4 swings repair from Sol's v3.1 delta packet.** Before, §1.3 sent `"swings"` through the no-map arm, so a swings bundle whose members were **all** admitted to `ai` (the only admitting container in any state) resolved to `ai`, even though §0/§2 and R3 say swings never carries a ref. Swings is now refused **before** candidates and before the single-candidate arm (§1.3 step 0). R3 becomes the all-AI sole-candidate control, which discriminates, and runs through the producer resolver and the consumer for parity (§5). Nothing else in this definition moved apart from the R-2 last-member wording (§3.2, §7).
+
 ---
 
 ## 0. What the consumer stands on today (read, not measured)
 
 | Fact at 38601bf8f2 | Where | Consequence for this slice |
 |---|---|---|
-| There are exactly three `kind: "theme"` emitters: story-key (`grouped_by: story_key`), awards (`grouped_by: group_id`) and swings (`story_key: "swings"`). `assemble_geopolitics_theme_bundles` is an alias of the story bundler | `discover_bundles.py:1104`, `:1937`, `:2073`, `:1739`; called `feed.py:2544-2549` | The ref rule binds all three. Swings fails on its own (§1.3) |
+| There are exactly three `kind: "theme"` emitters: story-key (`grouped_by: story_key`), awards (`grouped_by: group_id`) and swings (`story_key: "swings"`). `assemble_geopolitics_theme_bundles` is an alias of the story bundler | `discover_bundles.py:1104`, `:1937`, `:2073`, `:1739`; called `feed.py:2544-2549` | The ref rule binds all three. Swings is refused explicitly (§1.3 step 0). It does **not** reliably fail on its own: a swings bundle can hold only AI members |
 | The feed's IPO key is **`story:ipo_markets`**, and the `"ipo"` arm runs **before** the AI arm in the cascade. `"OpenAI IPO before 2027?"` is therefore keyed IPOs | `feed_market_quality.py:2862`, AI arm `:2893-2897` | The contract's `story:ipos` (§5, §8 case 18) is not a real key. Map entries must be checked against the vocabulary (§2) |
 | `story:major_entertainment_events` (header "Who wins awards season?") spans Met Gala, Oscars, Grammys and Emmys | `feed_market_quality.py:2899`, `discover_bundles.py:63/273` (`AUTHORED_STORY_TITLES` / authored question) | It gets **no map entry** (§2) |
 | `_theme_member_eligible(item)` reads the feed's precomputed `item["_quality_class"]` and the card flag. It is **not** a function of stored fields as written | `discover_bundles.py:720-734`; `_quality_class` set at `feed.py:12106` from `classify_market_quality(name, llm_sport_category, outcome names, external_id, status)` at `feed.py:11860` | The lift has to recompute from the same five stored inputs (§3.1) |
@@ -43,11 +45,12 @@ New module **`backend/app/utils/feed_theme_refs.py`** (Discover, Green). It has 
 - It makes **one bounded statement** over the preview ids of every theme bundle in the deck (at most ~10 bundles × 8 members), using `ix_event_edge_child`. It reads the current `theme_rule` `contains` edges, the owning containers (`slug`, `name`, `publication_state`, `membership_revision`, any state) and the producer snapshot for those containers (§3.2).
 - Budget is `min(remaining, 0.25 s)`. On timeout or error it calls `db.rollback()` and returns the deck unchanged, with no ref. This copies `feed_collections.py:113-124`.
 - No gather, no `decide()`, no hydration, no LLM. Static guard: `feed_theme_refs` imports neither `theme_assembly` nor any `gather_sql` (this extends contract case 13).
-- It decides with a **pure core**, `resolve_theme_ref(bundle, rows, feed_key_map) -> (ref | None, reason)`, so every case in §5 is a unit test.
+- It decides with a **pure core**, `resolve_theme_ref(bundle, rows, feed_key_map) -> (ref | None, reason)`, so every case in §5 is a unit test. Steps 0–3 of §1.3 are **not** implemented here: `resolve_theme_ref` calls Authority's `resolve_collection_target` (`theme_definitions.py`, contract §5 / P1 packet) **by identity** and applies only step 4 itself. One resolver means the swings refusal and R4a–e can't drift between producer and consumer.
 
 ### 1.3 Target resolution. Publication can remove a link but never redirect it (incorporates repair A)
 For each theme bundle, with P = its `member_ids`:
-1. **Feed key.** Use `story_key` if present (story bundles, plus `"swings"`), otherwise `group_id` (awards).
+0. **Swings is never a collection.** If the bundle is a swings bundle (`story_key == "swings"`), the result is no ref (`swings_not_a_collection`), **before** candidates are read and before the map or the single-candidate arm. Swings groups by price movement, not by subject, so its members match a collection only by accident. Without this step, an all-AI swings bundle with |C| = 1 would resolve to `ai` through the no-map arm. "No map entry" is not a refusal.
+1. **Feed key.** Use `story_key` if present (story bundles), otherwise `group_id` (awards).
 2. **Candidates C** = theme containers that currently admit **every** id in P through a `theme_rule` edge, **in any publication state**. Publication is not used for resolution.
 3. **Intended target.**
    - If the feed key **has a map entry**, the intended target is the unique c ∈ C with `subject(c) == mapped subject`, where `subject` comes from `edition_for_slug(c.slug)`, the round-trip parser.
@@ -89,7 +92,7 @@ In **`feed_collections.py`** (Discover-authored), `_FINGERPRINT_SQL` gains `OR s
 
 ## 2. Feed-key → subject map: Discover's review of the entries
 
-These entries are for `theme_definitions.py`. Authority owns the file and Discover owns the keys. Each entry must be a member of the real key vocabulary: a test asserts every map key ∈ `discover_bundles.AUTHORED_STORY_TITLES` keys ∪ `{"swings"}`, so a misspelled key like `story:ipos` fails CI instead of silently never matching.
+These entries are for `theme_definitions.py`. Authority owns the file and Discover owns the keys. Each entry must be a member of the real key vocabulary: a test asserts every map key ∈ `discover_bundles.AUTHORED_STORY_TITLES` keys, so a misspelled key like `story:ipos` fails CI instead of silently never matching. It also asserts that `"swings"` is **not** a map key. Step 0 refuses swings first, so an entry for it could only be dead code or a sign that someone expects it to resolve.
 
 | Feed key | Entry | Why |
 |---|---|---|
@@ -97,7 +100,7 @@ These entries are for `theme_definitions.py`. Authority owns the file and Discov
 | `story:ipo_markets` | **no entry in the first ship**. Test-only: `story:ipo_markets → ipos` | `ipos` is not a first-ship subject. Case 18 must use the **real** key |
 | `story:major_entertainment_events` | **no entry** | The key names a season of four ceremonies. An all-Oscars pack still resolves through the no-map single-candidate arm, and the link says "Oscars 2027" |
 | `story:spacex_ipo`, `story:music_charts`, other keys | no entry | No subject |
-| `swings` | **no entry** | It groups by price movement across subjects |
+| `swings` | **no entry, and refused before resolution** (§1.3 step 0) | It groups by price movement, not subject. Having no entry is not enough: an all-AI swings bundle would reach the single-candidate arm and resolve to `ai` |
 | awards `group_id` | **no entry** (§1.3) | An event-id list would be a member list |
 
 ---
@@ -127,7 +130,7 @@ One producer function builds, per published theme container and revision:
 ```
 - **Same bytes for card and page.** The feed reads `shown_count` and the raw sets. The hub route paginates `shown_ids` and hydrates live prices per page. Neither reader re-derives the shown set, so `card collection_count == page shown_count` holds by construction instead of by coincidence.
 - **The revision moves whenever the shown set moves** (request R-1 to Authority). It moves on membership changes as today, and also when a pass finds the shown set or `shown_count` changed (for example a member turning `low_quality`). This is the existing principle stated at `feed_collections.py:21-24`: "the revision moves … whenever anything its reader would see changes". The snapshot is then immutable per revision, and the feed fingerprint (§1.5) stays sound.
-- A human correction bumps the revision under the lock before a new snapshot exists. Both readers treat a snapshot at a different revision as absent: the feed drops the ref, and the hub route uses its existing build/503 "building" path (#9984). Request R-2: the correction path triggers a snapshot rebuild, so the link's absence lasts seconds, not one producer cadence.
+- A human correction bumps the revision under the lock before a new snapshot exists. Both readers treat a snapshot at a different revision as absent: the feed drops the ref, and the hub route uses its existing build/503 "building" path (#9984). Request R-2: the correction path triggers a snapshot rebuild, so the link's absence lasts seconds, not one producer cadence. That includes a withdraw of the container's **last** member. The rebuild is queued from the theme identity known **before** the change (the container id/slug read with the pre-change edge), never by re-reading an edge that the correction has just removed. A container with zero members still gets a fresh empty snapshot at the new revision.
 
 ### 3.3 The fold
 - It runs **once over the whole post-withhold shown set, before pagination**. If it ran per page, a pair split across pages would fold on neither.
@@ -174,7 +177,9 @@ One producer function builds, per published theme container and revision:
 |---|---|---|
 | R1 | An awards bundle whose members are all admitted to published `oscars-2027` at the snapshot revision | ref `{slug:"oscars-2027", name:"Oscars 2027", revision, collection_count = shown_count}` |
 | R2 | The same bundle with one Grammys member | no ref, `preview_spans_collections` |
-| R3 | A swings bundle | no ref |
+| **R3** | **An all-AI swings bundle (the sole-candidate swings control).** Every member is admitted to `ai`, and `ai` is the **only** admitting container in any publication state. It is published, its snapshot is at the live revision, and every member is shown | **no ref, `swings_not_a_collection`.** Every later step would pass, so only step 0 can refuse it. Asserted on `resolve_collection_target` **and** `resolve_theme_ref` with the same fixture: consumer parity |
+| R3b | The same members and containers under `story:ai` | ref `ai`. This is R3's twin: it proves the fixture would otherwise resolve, so R3 is red for the swings reason alone |
+| — | *Not a control:* a mixed-subject swings bundle | It fails at |C| ≠ 1 with or without step 0, so it passes for the wrong reason. It may stay as an extra case but never stands in for R3 |
 | R4a | An OpenAI-IPO `story:ipo_markets` pack admitted to `ai` and `ipos` (test-only map `story:ipo_markets → ipos`), with `ipos` published | ref `ipos` |
 | R4b | The same pack with no map entry | no ref, `no_map_entry_ambiguous` |
 | **R4c** | **The map points at `ipos`, `ipos` is UNPUBLISHED, and `ai` is published and holds every member** | **NO REF, `target_unpublished`. The mapped-unpublished control; it must not fall back to `ai`** |
@@ -186,9 +191,11 @@ One producer function builds, per published theme container and revision:
 | R8 | Static guard | no `theme_assembly`, gather or LLM import |
 | R9 | Snapshot with one `low_quality`, one `suppressed` and one folded pair | `collection_count = eligible − 3`. Gate and fold are identity-asserted |
 | R10 | Fingerprint | byte-identical with no theme hub published; changes on publish, withdraw or revision bump of `ai` |
-| R11 | Map vocabulary | every map key ∈ `AUTHORED_STORY_TITLES` ∪ {"swings"} |
+| R11 | Map vocabulary | every map key ∈ `AUTHORED_STORY_TITLES`, and `"swings"` ∉ map keys |
+| R12 | Resolver identity | `feed_theme_refs` uses `theme_definitions.resolve_collection_target` by identity and has no local copy of steps 0–3 |
 
 **Mutations that must go red:**
+- step 0 deleted, or moved after the single-candidate arm (e.g. applied only when |C| > 1) → R3 returns `ai`;
 - step 2 restricted to published candidates → R4c returns `ai`;
 - the name taken from the bundle title → R1/R5;
 - the fold run per page → the split-pair case;
@@ -233,6 +240,8 @@ One producer function builds, per published theme container and revision:
 - **R-1:** the revision moves when the shown set moves (§3.2).
 - **R-2:** a correction triggers a snapshot rebuild (§3.2).
 - **R-3:** `ai-subject@1` assigns an edge class; proposal `side_question` (§3.4).
+- **R-2 refinement (rev 2):** the correction rebuild also fires on a last-member withdraw, keyed on the pre-change theme identity, not on a surviving edge (§3.2). This is part of P2's correction acceptance, not a P1 dependency.
 - **R-4:** contract §5 / case 18 adopt §1.3's resolution order (candidates in any state, map before checks, no fallback) and the **real** key `story:ipo_markets`. Case 18 is R4a–R4e.
+- **R-4 repair (rev 2, Sol v3.1 delta):** contract §5 gains step 0, swings refused (`swings_not_a_collection`) before candidates and before the single-candidate arm, inside the pure `resolve_collection_target`. Case 17's swings arm becomes the all-AI sole-candidate control (R3) with its `story:ai` twin (R3b), replacing the mixed-subject sample. Its expected reason changes from `preview_spans_collections` to `swings_not_a_collection`. The P1 mutation list gains "step 0 removed or moved after |C| = 1 → case 17 swings returns `ai`". §1's "swings fail the rule on their own" sentence is false for an all-AI swings bundle and should say they are refused. R4e is unchanged: the single-candidate arm still serves story and awards keys.
 - **R-5:** contract §5's agreement assertion becomes "preview ids ⊆ shown ∪ folded" (§3.3).
 - **R-6 (dependency, not a ruling):** an Oscars awards preview is a Polymarket `group_id` cluster: a parent "Oscars 2027: Best Picture Winner" plus children. The ref needs **every child admitted**. If a child title lacks the structural "Oscars 2027"/"Academy Awards" form, clause 1 excludes it and the main Oscars preview source can never carry a ref. Authority's corrected definition should state how a `group_id` child of an admitted Polymarket parent is decided (the venue's own structure first, notice 40 rule 1) and carry a parent+children fixture. This consumer slice makes no assumption either way: it fails closed (`preview_member_not_admitted`).
