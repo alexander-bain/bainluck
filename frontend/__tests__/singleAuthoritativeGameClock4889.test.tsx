@@ -55,11 +55,11 @@ function espnRow(agoMs: number, period: string | null, clock: string | null): Es
 }
 
 /** A live NCAAF game in its first quarter, as the detail payload serves it. */
-function event(espn: Record<string, unknown> | undefined) {
+function event(espn: Record<string, unknown> | undefined, sport = "americanfootball_ncaaf") {
   return {
     id: 15318034,
-    sport: "americanfootball_ncaaf",
-    sport_key: "americanfootball_ncaaf",
+    sport,
+    sport_key: sport,
     sport_title: "NCAAF",
     home_team: "Tennessee Volunteers",
     away_team: "Auburn Tigers",
@@ -135,8 +135,8 @@ const EventDetailPage = require("@/app/events/[id]/page").default;
 // eslint-disable-next-line @typescript-eslint/no-var-requires
 const { AnalyticsProvider } = require("@/components/Analytics");
 
-function draw(espn: Record<string, unknown> | undefined, hist: unknown): string {
-  eventPayload = event(espn);
+function draw(espn: Record<string, unknown> | undefined, hist: unknown, sport?: string): string {
+  eventPayload = event(espn, sport);
   historyPayload = hist;
   return renderToStaticMarkup(
     React.createElement(
@@ -179,6 +179,19 @@ function sameClock(header: string, strip: string): void {
 }
 
 describe("#4889 a live event page shows one game clock", () => {
+  it("#6684 a live MLB page: history carries ESPN's constant 0:00, the header prints the inning and no clock", () => {
+    // Production, ALDS Game 1 `/events/15322539`, 2026-10-03 22:59Z, v5455: the
+    // header read `End 1st · 0:00`. The detail payload serves `game_clock: null`
+    // for MLB, but every `/history` row carries `0:00`; PR #10380 moved the header
+    // onto the history clock without the sport, so #6684's rule never ran there.
+    const rows = [espnRow(2 * MINUTE, "End 1st", "0:00"), espnRow(1 * MINUTE, "End 1st", "0:00")];
+    const html = draw({ period: "End 1st", game_clock: null }, history(rows), "baseball_mlb");
+
+    expect(headerClock(html)).toBe("End 1st");
+    sameClock(headerClock(html), stripBadge(html));
+    expect(html).not.toContain("0:00");
+  });
+
   it("the production specimen: detail says 0:42, history says 0:38 — the header prints the strip's 0:38", () => {
     const rows = [espnRow(3 * MINUTE, "0:52 - 1st Quarter", "0:52"), espnRow(1 * MINUTE, "0:38 - 1st Quarter", "0:38")];
     const html = draw({ period: "0:42 - 1st Quarter", game_clock: "0:42" }, history(rows));
