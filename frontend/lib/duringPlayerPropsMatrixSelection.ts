@@ -87,9 +87,14 @@ export function resolveSource(row: DuringPropsRow | null, selected: SourceSelect
   return row?.contributors.find(source => sourceKey(source) === sourceKey(selected)) ?? null;
 }
 export function complementQuestion(data: DuringPlayerProps, row: DuringPropsRow): DuringPropsRow | null {
-  const key = row.complement_question_key;
-  return key ? data.rows.find(other => other.question_key === key && other.subject.key === row.subject.key &&
-    other.stat_key === row.stat_key && other.period_key === row.period_key && other.predicate.side !== row.predicate.side) ?? null : null;
+  const sameQuestionContext = (other: DuringPropsRow) => other.subject.key === row.subject.key &&
+    other.stat_key === row.stat_key && other.period_key === row.period_key && other.predicate.side !== row.predicate.side;
+  const direct = row.complement_question_key ? data.rows.find(other => other.question_key === row.complement_question_key && sameQuestionContext(other)) : null;
+  if (direct) return direct;
+  // The deployed producer serves under -> over, with null on the over row.
+  // Reverse that exact served edge for navigation, never its count/key/price.
+  const reverse = data.rows.filter(other => other.complement_question_key === row.question_key && sameQuestionContext(other));
+  return reverse.length === 1 ? reverse[0] : null;
 }
 
 export interface MatrixColumn { key: string; label: string; underOnly: boolean }
@@ -100,8 +105,14 @@ export function matrixForStat(data: DuringPlayerProps | null, statKey: string): 
     Number.isInteger(row.predicate.count) && row.predicate.count >= 0);
   // An unpaired under stays reachable under its OWN served label, with no
   // grid price. It never creates an over threshold, key or 1-minus quote.
-  const gridRows = rows.filter(row => row.predicate.kind === "count_at_least" && row.predicate.side === "over" ||
-    row.predicate.kind === "count_at_most" && row.predicate.side === "under" && !complementQuestion(data, row));
+  const gridRows = rows.filter(row => {
+    if (row.predicate.kind === "count_at_least" && row.predicate.side === "over") return true;
+    if (row.predicate.kind !== "count_at_most" || row.predicate.side !== "under") return false;
+    const over = complementQuestion(data, row);
+    // Hide an under only when that exact over detail can navigate back to it.
+    // Ambiguous or withdrawn edges leave the own under question in the grid.
+    return !over || complementQuestion(data, over)?.question_key !== row.question_key;
+  });
   const columnKey = (row: DuringPropsRow) => JSON.stringify([row.predicate.kind, row.predicate.count, row.predicate.label]);
   const columns = Array.from(new Map(gridRows.map(row => [columnKey(row), { key: columnKey(row), label: row.predicate.label,
     underOnly: row.predicate.side === "under", count: row.predicate.count }])).values())

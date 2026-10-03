@@ -37,11 +37,15 @@ export default function DuringPlayerPropsMatrix({ data, initialStatKey, initialS
   const chance = row ? source ? row.current.state === "quoted" && contributor && finiteChance(contributor.probability) ? contributor.probability : null : quotedChance(row) : null;
   const points = row && !source ? comparisonPoints(row) : null;
 
+  function showQuestion(rowToOpen: DuringPropsRow) {
+    const next = selectQuestion(rowToOpen);
+    setSelection(next);
+    setSource(sourceChoices.current.get(JSON.stringify(next)) ?? null);
+  }
   function open(rowToOpen: DuringPropsRow, button: HTMLButtonElement) {
     origin.current = button;
     returnPosition.current = { x: window.scrollX, y: window.scrollY, left: scroller.current?.scrollLeft ?? 0, top: scroller.current?.scrollTop ?? 0 };
-    setSelection(selectQuestion(rowToOpen));
-    setSource(sourceChoices.current.get(JSON.stringify(selectQuestion(rowToOpen))) ?? null);
+    showQuestion(rowToOpen);
   }
   function close() {
     setSelection(null);
@@ -150,7 +154,7 @@ export default function DuringPlayerPropsMatrix({ data, initialStatKey, initialS
               {row.contributors.map(item => <button key={sourceKey(item)} type="button" aria-pressed={!!source && sourceKey(source) === sourceKey(item)} onClick={() => setSource(item)} className={`min-h-[44px] rounded-lg border px-3 text-sm text-text-primary ${source && sourceKey(source) === sourceKey(item) ? "border-accent-brand bg-surface-elevated" : "border-surface-border"}`}>{item.source} · {item.outcome_name ?? `Outcome ${item.outcome_id ?? "unknown"}`} · {item.side}</button>)}
             </div>
             {contributor && <p className="mt-3 break-words text-xs text-text-muted">Market {contributor.market_id ?? "unknown"} · Outcome {contributor.outcome_id ?? "unknown"} · Full game</p>}
-            {opposite && <button type="button" className="mt-4 min-h-[44px] text-sm font-medium text-accent-brand" onClick={() => { setSelection(selectQuestion(opposite)); setSource(null); }}>View {opposite.predicate.side} · {opposite.predicate.label}</button>}
+            {opposite && <button type="button" className="mt-4 min-h-[44px] text-sm font-medium text-accent-brand" onClick={() => showQuestion(opposite)}>View {opposite.predicate.side} · {opposite.predicate.label}</button>}
           </>}
         </div>
       </div>}

@@ -42,13 +42,41 @@ describe("During Matrix typed truth", () => {
   test("uses server complement key; under-only is reachable without synthesized over or 1-minus quote", () => {
     const over = row(), under = row("server-under");
     under.predicate = { kind: "count_at_most", count: 1, side: "under", label: "1 or fewer" };
-    under.current.probability = .3; over.complement_question_key = under.question_key; under.complement_question_key = over.question_key;
+    under.current.probability = .3; under.complement_question_key = over.question_key;
+    under.contributors = [{ ...over.contributors[0], side: "under", outcome_id: 21, probability: .3 }];
+    expect(over.complement_question_key).toBeNull();
     expect(complementQuestion(data([over, under]), over)).toBe(under);
+    expect(complementQuestion(data([over, under]), under)).toBe(over);
+    expect(quotedChance(complementQuestion(data([over, under]), over)!)).toBe(.3);
+    expect(resolveSource(under, over.contributors[0])).toBeNull();
+    expect(resolveSource(under, under.contributors[0])?.probability).toBe(.3);
     expect(matrixForStat(data([over, under]), "hits").columns).toHaveLength(1);
     const only = matrixForStat(data([under]), "hits");
     expect(only.columns[0]).toMatchObject({ label: "1 or fewer", underOnly: true });
     expect(only.players[0].cells[0]?.current.probability).toBe(.3);
     expect(only.players[0].cells[0]?.question_key).toBe("server-under");
+  });
+  test("every served one-way question is reachable, including saved Angel Martínez Hits shape", () => {
+    const over = row("s:angel martinez|hits|full_game|ge:1|over", "angel martinez");
+    over.subject.label = "Angel Martínez"; over.predicate = { kind: "count_at_least", count: 1, side: "over", label: "1+" }; over.current.probability = .59;
+    const under: DuringPropsRow = { ...over, question_key: "s:angel martinez|hits|full_game|le:0|under", predicate: { kind: "count_at_most", count: 0, side: "under", label: "0 or fewer" }, complement_question_key: over.question_key, current: { ...over.current, probability: .41 } };
+    const projection = data([over, under]);
+    const cells = matrixForStat(projection, "hits").players.flatMap(player => player.cells.filter((cell): cell is DuringPropsRow => cell !== null));
+    const reachable = new Set(cells.flatMap(cell => [cell.question_key, complementQuestion(projection, cell)?.question_key]));
+    expect(projection.rows.every(question => reachable.has(question.question_key))).toBe(true);
+    expect(complementQuestion(projection, over)?.current.probability).toBe(.41);
+    expect(complementQuestion(projection, under)?.current.probability).toBe(.59);
+  });
+  test("reverse relation cannot borrow a different subject/stat/period; ambiguous under rows stay directly reachable", () => {
+    const over = row(), under: DuringPropsRow = { ...row("under-A"), predicate: { kind: "count_at_most", count: 1, side: "under", label: "1 or fewer" }, complement_question_key: over.question_key };
+    expect(complementQuestion(data([over, { ...under, subject: { ...under.subject, key: "other-player" } }]), over)).toBeNull();
+    expect(complementQuestion(data([over, { ...under, stat_key: "rebounds" }]), over)).toBeNull();
+    expect(complementQuestion(data([over, { ...under, period_key: "first_half" as "full_game" }]), over)).toBeNull();
+    const ambiguous = data([over, under, { ...under, question_key: "under-B", predicate: { kind: "count_at_most", count: 0, side: "under", label: "0 or fewer" } }]);
+    expect(complementQuestion(ambiguous, over)).toBeNull();
+    const direct = matrixForStat(ambiguous, "hits").players.flatMap(player => player.cells).filter(Boolean).map(cell => cell!.question_key);
+    expect(direct).toContain("under-A");
+    expect(direct).toContain("under-B");
   });
   test("comparable deltas remain server facts; tiny change omitted only in compact view", () => {
     const r = row(); expect(compactChange(r)).toBe("+15%");
