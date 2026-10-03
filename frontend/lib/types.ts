@@ -2013,6 +2013,8 @@ export interface FeedResponse {
 export interface RelatedEventLinkedTeam {
   side: "home" | "away";
   team_name: string;
+  /** #10243: the outcome this row's number belongs to. Absent on older payloads. */
+  outcome_id?: number;
   outcome_name: string;
   probability: number | null;
   american_odds: number | null;

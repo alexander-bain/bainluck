@@ -4,36 +4,30 @@
  * Fixtures under `__tests__/fixtures/verifiedTitle10224/` are the server's REAL
  * route output (PR #10216 at 358c040443), dumped through
  * `backend/tests/test_futures_verified_title_9387.py`'s own `detail()` /
- * `timeline()` helpers over its retained 86832 / 40533 / 129037 trio:
- *   detail-odds-verified / timeline-odds-verified   — sportsbook page, three venues
- *   detail-kalshi-verified / timeline-kalshi-verified — Kalshi page, source order
+ * helpers over its retained 86832 / 40533 / 129037 trio:
+ *   detail-odds-verified   — sportsbook page, three venues
+ *   detail-kalshi-verified — Kalshi page
  *   detail-*-default — the same rows, no opt-in (old/default callers)
- *   detail-odds-refused / timeline-odds-refused — opted in, anchor missing ⇒ source
+ *   detail-odds-refused — opted in, anchor missing ⇒ source
  */
 import oddsVerified from "../fixtures/verifiedTitle10224/detail-odds-verified.json";
 import oddsDefault from "../fixtures/verifiedTitle10224/detail-odds-default.json";
 import oddsRefused from "../fixtures/verifiedTitle10224/detail-odds-refused.json";
 import kalshiVerified from "../fixtures/verifiedTitle10224/detail-kalshi-verified.json";
-import oddsTimeline from "../fixtures/verifiedTitle10224/timeline-odds-verified.json";
-import kalshiTimeline from "../fixtures/verifiedTitle10224/timeline-kalshi-verified.json";
-import refusedTimeline from "../fixtures/verifiedTitle10224/timeline-odds-refused.json";
 import {
-  chartCurrentAgrees,
   contributorKeys,
   effectiveRepresentation,
   heroContributorLabels,
   heroValueIsSourceOwn,
-  historyBasisLabel,
+  relatedEventsOnDetailScale,
   sanitizeVerifiedTitleDetail,
-  timelineToChartHistory,
-  verifiedChartVerdict,
+  verifiedHistoryLabel,
 } from "@/lib/verifiedTitleDetail";
-import type { FuturesMarketDetailResponse, ProbabilityTimelineResponse } from "@/lib/types";
+import type { FuturesMarketDetailResponse, RelatedEvent } from "@/lib/types";
 
 const detail = (x: unknown) => structuredClone(x) as FuturesMarketDetailResponse;
-const timeline = (x: unknown) => structuredClone(x) as ProbabilityTimelineResponse;
 const BUFFALO_ODDS = 1309486;
-const BUFFALO_KALSHI = 643833;
+const RAMS_ODDS = 1309485;
 
 describe("effective representation", () => {
   it("reads the real verified wire, and everything else is source", () => {
@@ -108,115 +102,78 @@ describe("no cross-estimator movement survives", () => {
   });
 });
 
-describe("chart history: authentic geometry, its own label, no synthetic endpoint", () => {
-  it("labels from the timeline's own history_basis", () => {
-    expect(historyBasisLabel(timeline(oddsTimeline).history_basis)).toBe("Sportsbooks history");
-    expect(historyBasisLabel(timeline(kalshiTimeline).history_basis)).toBe("Kalshi history");
-    expect(historyBasisLabel({ kind: "blend", source: "kalshi", market_id: 1 })).toBeNull();
-    expect(historyBasisLabel({ kind: "single_source", source: "books", market_id: 1 })).toBeNull();
-    expect(historyBasisLabel({ kind: "single_source", source: "kalshi", market_id: "1" })).toBeNull();
-    expect(historyBasisLabel(undefined)).toBeNull();
+describe("#10244 the chart is the source's own /history, named as that source's", () => {
+  it("a verified page labels the chart with its source's name", () => {
+    expect(verifiedHistoryLabel(detail(oddsVerified))).toBe("Sportsbooks history");
+    expect(verifiedHistoryLabel(detail(kalshiVerified))).toBe("Kalshi history");
   });
 
-  it("every series is a metadata row: same id, byte-identical name, route order", () => {
-    for (const fixture of [oddsTimeline, kalshiTimeline]) {
-      const t = timeline(fixture);
-      const chart = timelineToChartHistory(t, { withCurrent: true });
-      expect(chart.outcomes.map((o) => o.outcome_id)).toEqual(t.outcomes.map((m) => m.id));
-      expect(chart.outcomes.map((o) => o.name)).toEqual(t.outcomes.map((m) => m.name));
-      for (const series of chart.outcomes) {
-        expect(t.timeline.some((e) => Object.prototype.hasOwnProperty.call(e.outcomes, series.name))).toBe(true);
-      }
-    }
-    // The Kalshi board's own order is NOT probability order; it is kept.
-    const kalshi = timelineToChartHistory(timeline(kalshiTimeline), { withCurrent: true });
-    const names = kalshi.outcomes.map((o) => o.name);
-    expect(names).toEqual((kalshiTimeline as ProbabilityTimelineResponse).outcomes.map((m) => m.name));
-    const byVerifiedValue = [...(kalshiTimeline as ProbabilityTimelineResponse).outcomes]
-      .sort((a, b) => (b.current_probability ?? 0) - (a.current_probability ?? 0))
-      .map((m) => m.name);
-    expect(names).not.toEqual(byVerifiedValue);
+  it("CONTROL: source mode (default or refused) has no label — the card is unchanged", () => {
+    expect(verifiedHistoryLabel(detail(oddsDefault))).toBeNull();
+    expect(verifiedHistoryLabel(detail(oddsRefused))).toBeNull();
+    expect(verifiedHistoryLabel(undefined)).toBeNull();
   });
 
-  it("points are exactly the buckets: same timestamps and values, nothing appended", () => {
-    const t = timeline(oddsTimeline);
-    const chart = timelineToChartHistory(t, { withCurrent: true });
-    const buffalo = chart.outcomes.find((o) => o.outcome_id === BUFFALO_ODDS)!;
-    expect(buffalo.history.map((p) => [p.timestamp, p.probability])).toEqual(
-      t.timeline.map((e) => [e.timestamp, e.outcomes["Buffalo Bills"]]),
-    );
-    // The current verified 13% is not the source history's last value, and it is
-    // not drawn as one.
-    const meta = t.outcomes.find((m) => m.id === BUFFALO_ODDS)!;
-    expect(meta.current_probability).toBe(0.13);
-    expect(buffalo.history[buffalo.history.length - 1].probability).not.toBe(0.13);
-    expect(buffalo.history.every((p) => p.bookmaker === "odds_api")).toBe(true);
-    expect(chart.total_data_points).toBe(t.timeline.length * t.outcomes.length);
-  });
-
-  it("a bucket without the name stays a gap; a near-miss name is not that series", () => {
-    const t = timeline(oddsTimeline);
-    delete (t.timeline[1].outcomes as Record<string, number>)["Buffalo Bills"];
-    (t.timeline[2].outcomes as Record<string, number>)["Buffalo Bills "] = 0.5;
-    delete (t.timeline[2].outcomes as Record<string, number>)["Buffalo Bills"];
-    const buffalo = timelineToChartHistory(t, { withCurrent: true }).outcomes.find(
-      (o) => o.outcome_id === BUFFALO_ODDS,
-    )!;
-    expect(buffalo.history.map((p) => p.timestamp)).toEqual([t.timeline[0].timestamp]);
-  });
-
-  it("persistent disagreement keeps the history and drops current metadata", () => {
-    const t = timeline(oddsTimeline);
-    const agreed = timelineToChartHistory(t, { withCurrent: true });
-    const held = timelineToChartHistory(t, { withCurrent: false });
-    expect(held.outcomes.map((o) => o.history)).toEqual(agreed.outcomes.map((o) => o.history));
-    expect(agreed.outcomes.every((o) => o.current_price_available === true)).toBe(true);
-    expect(held.outcomes.every((o) => !("current_price_available" in o))).toBe(true);
-  });
-
-  it("a Field row (id null) and malformed rows are not drawn", () => {
-    const t = timeline(oddsTimeline);
-    t.outcomes.push({ id: null, name: "Field", current_probability: 0.1 });
-    t.outcomes.push({ id: 1.5, name: "X", current_probability: 0.1 } as never);
-    const ids = timelineToChartHistory(t, { withCurrent: true }).outcomes.map((o) => o.outcome_id);
-    expect(ids).not.toContain(null);
-    expect(ids).not.toContain(1.5);
+  it("a source outside the vocabulary is never given an invented name", () => {
+    const d = detail(oddsVerified);
+    d.source = "books";
+    expect(verifiedHistoryLabel(d)).toBeNull();
   });
 });
 
-describe("detail and chart current context", () => {
-  it("the real frozen pair agrees, on both pages", () => {
-    expect(chartCurrentAgrees(detail(oddsVerified), timeline(oddsTimeline), BUFFALO_ODDS)).toBe(true);
-    expect(chartCurrentAgrees(detail(kalshiVerified), timeline(kalshiTimeline), BUFFALO_KALSHI)).toBe(true);
+/** Production's shape on /futures/86832: the strip's rows carry the SOURCE value. */
+function billsAtRams(ids: { away?: number; home?: number } = { away: BUFFALO_ODDS, home: RAMS_ODDS }): RelatedEvent[] {
+  return [
+    {
+      event_id: 1,
+      home_team: "Los Angeles Rams",
+      away_team: "Buffalo Bills",
+      commence_time: "2026-10-04T20:25:00Z",
+      status: "scheduled",
+      sport: "americanfootball_nfl",
+      home_score: null,
+      away_score: null,
+      linked_teams: [
+        { side: "home", team_name: "Los Angeles Rams", outcome_id: ids.home, outcome_name: "Los Angeles Rams",
+          probability: 0.107361, american_odds: 831, rank: 2, outcome_is_team: true },
+        { side: "away", team_name: "Buffalo Bills", outcome_id: ids.away, outcome_name: "Buffalo Bills",
+          probability: 0.112913, american_odds: 786, rank: 1, outcome_is_team: true },
+      ],
+    },
+  ];
+}
+const byTeam = (events: RelatedEvent[]) =>
+  Object.fromEntries(events[0].linked_teams.map((t) => [t.team_name, t]));
+
+describe("#10243 Games This Week prints the detail's own number for each outcome id", () => {
+  it("a verified page prints the table's verified value, not the route's source value", () => {
+    const d = detail(oddsVerified);
+    const rows = byTeam(relatedEventsOnDetailScale(d, billsAtRams()));
+    const table = new Map(d.outcomes.map((o) => [o.id, o]));
+    expect(rows["Buffalo Bills"].probability).toBe(table.get(BUFFALO_ODDS)!.probability);
+    expect(rows["Buffalo Bills"].probability).toBe(0.13);
+    expect(rows["Los Angeles Rams"].probability).toBe(table.get(RAMS_ODDS)!.probability);
+    expect(rows["Buffalo Bills"].american_odds).toBe(table.get(BUFFALO_ODDS)!.american_odds);
   });
 
-  it("same mode with a newer value disagrees", () => {
-    const t = timeline(oddsTimeline);
-    t.outcomes.find((m) => m.id === BUFFALO_ODDS)!.current_probability = 0.135;
-    expect(chartCurrentAgrees(detail(oddsVerified), t, BUFFALO_ODDS)).toBe(false);
+  it("joined by id, not by position or name: swapped ids swap the numbers", () => {
+    const d = detail(oddsVerified);
+    const rows = byTeam(relatedEventsOnDetailScale(d, billsAtRams({ away: RAMS_ODDS, home: BUFFALO_ODDS })));
+    expect(rows["Buffalo Bills"].probability).toBe(0.105);
+    expect(rows["Los Angeles Rams"].probability).toBe(0.13);
   });
 
-  it("same value with different contributors disagrees", () => {
-    const t = timeline(oddsTimeline);
-    t.outcomes.find((m) => m.id === BUFFALO_ODDS)!.contributing_sources = ["odds_api", "kalshi"];
-    expect(chartCurrentAgrees(detail(oddsVerified), t, BUFFALO_ODDS)).toBe(false);
+  it("no id, or an id the detail does not carry, prints no number — never the source one", () => {
+    const d = detail(oddsVerified);
+    const rows = byTeam(relatedEventsOnDetailScale(d, billsAtRams({ away: undefined, home: 999 })));
+    expect(rows["Buffalo Bills"].probability).toBeNull();
+    expect(rows["Los Angeles Rams"].probability).toBeNull();
   });
 
-  it("a mode mismatch disagrees in both directions", () => {
-    expect(chartCurrentAgrees(detail(oddsVerified), timeline(refusedTimeline), BUFFALO_ODDS)).toBe(false);
-    expect(chartCurrentAgrees(detail(oddsRefused), timeline(oddsTimeline), BUFFALO_ODDS)).toBe(false);
-  });
-
-  it("CONTROL: a sibling's change does not move the hero's comparison", () => {
-    const t = timeline(oddsTimeline);
-    t.outcomes.find((m) => m.id !== BUFFALO_ODDS)!.current_probability = 0.5;
-    expect(chartCurrentAgrees(detail(oddsVerified), t, BUFFALO_ODDS)).toBe(true);
-  });
-
-  it("one retry, then persistent", () => {
-    expect(verifiedChartVerdict(null, false)).toBe("pending");
-    expect(verifiedChartVerdict(true, true)).toBe("agree");
-    expect(verifiedChartVerdict(false, false)).toBe("retry");
-    expect(verifiedChartVerdict(false, true)).toBe("persistent");
+  it("CONTROL: source mode (default or refused) returns the events untouched", () => {
+    const events = billsAtRams();
+    expect(relatedEventsOnDetailScale(detail(oddsDefault), events)).toBe(events);
+    expect(relatedEventsOnDetailScale(detail(oddsRefused), events)).toBe(events);
+    expect(relatedEventsOnDetailScale(undefined, events)).toBe(events);
   });
 });

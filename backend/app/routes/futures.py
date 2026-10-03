@@ -5495,6 +5495,10 @@ async def get_related_events(
         named = team_named[team_id]
         o = _leader(named or group)
         team_outcome_map[team_id] = {
+            # #10243: the row's identity, so a page holding the same market's
+            # detail in another representation can print that row's own number
+            # by id instead of this route's source value beside it.
+            "outcome_id": o.id,
             "outcome_name": o.name,
             "probability": float(o.current_probability) if o.current_probability is not None else None,
             "american_odds": o.current_american_odds,
