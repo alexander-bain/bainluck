@@ -441,6 +441,10 @@ struct EvolutionChartView: View {
             case .today:
                 fetchHours = 24
             }
+            // #10244: a verified detail draws `/history`'s de-vigged lines, asked
+            // alongside the timeline so the chart costs no extra round trip.
+            async let verifiedHistory = Self.verifiedHistoryLines(
+                marketId: marketId, representation: representation, hours: fetchHours)
             let result = try await APIClient.shared.fetchProbabilityTimeline(
                 marketId: marketId, top: 50, hours: fetchHours, representation: representation
             )
@@ -454,7 +458,9 @@ struct EvolutionChartView: View {
             case .adopt(let withholds):
                 withholdsCurrent = withholds
             }
-            data = result
+            let lines = try await verifiedHistory
+            guard !Task.isCancelled, generation == requestGeneration else { return }
+            data = lines.map { VerifiedTitleHistory.drawing($0, over: result) } ?? result
             requestedHours = fetchHours
             if selectedNames.isEmpty {
                 selectedNames = Set(result.outcomes.prefix(3).map(\.name))
@@ -506,6 +512,15 @@ struct EvolutionChartView: View {
             errorIsRetryable = true
             loading = false
         }
+    }
+
+    /// #10244 — the verified chart's lines; nil (draw the timeline as served) for
+    /// every source-mode chart.
+    private static func verifiedHistoryLines(
+        marketId: Int, representation: FuturesRepresentation, hours: Int
+    ) async throws -> FuturesHistoryResponse? {
+        guard VerifiedTitleHistory.drawsSourceHistory(representation) else { return nil }
+        return try await APIClient.shared.fetchFuturesHistory(marketId: marketId, hours: hours)
     }
 
     // MARK: - Computed

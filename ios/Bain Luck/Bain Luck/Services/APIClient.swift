@@ -993,6 +993,16 @@ actor APIClient {
             requiresNetwork: true, revalidationQuery: ["fresh": "true"])
     }
 
+    /// #10244 — a futures market's own `/history`: per outcome, the de-vigged
+    /// consensus the source page draws. The verified title chart draws these lines
+    /// instead of the timeline's, whose sportsbook line medians raw prices.
+    func fetchFuturesHistory(marketId: Int, hours: Int, topN: Int = 50) async throws -> FuturesHistoryResponse {
+        return try await fetch("/api/futures/\(marketId)/history", query: [
+            "hours": "\(hours)",
+            "top_n": "\(topN)",
+        ], requiresNetwork: true, revalidationQuery: ["fresh": "true"])
+    }
+
     /// The opt-in is a query parameter only when it is not the default.
     nonisolated static func representationQuery(_ representation: FuturesRepresentation) -> [String: String] {
         representation == .source ? [:] : ["representation": representation.rawValue]

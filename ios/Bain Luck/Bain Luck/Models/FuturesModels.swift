@@ -447,7 +447,9 @@ nonisolated struct ProbabilityTimelineResponse: Decodable, Sendable {
     let hours: Int
     let top: Int
     let bucketSeconds: Int
-    let timeline: [TimelineEntry]
+    /// `var` only so `VerifiedTitleHistory.drawing(_:over:)` can put `/history`'s
+    /// consensus lines on a copy (#10244), with the coverage keys measured off them.
+    var timeline: [TimelineEntry]
     let outcomes: [TimelineOutcomeMeta]
 
     /// How much of the requested window this market was ACTUALLY observed for,
@@ -462,8 +464,8 @@ nonisolated struct ProbabilityTimelineResponse: Decodable, Sendable {
     /// Optional because an older server does not send them and because an empty
     /// history sends nulls rather than zeros — an absence and an instant must not
     /// share a shape (gotcha #53).
-    let coverageHours: Double?
-    let observationTimes: Int?
+    var coverageHours: Double?
+    var observationTimes: Int?
 
     // #9387 — opt-in timeline. `timeline` stays the requested source's own
     // history; only the CURRENT column of `outcomes` may carry verified values.
