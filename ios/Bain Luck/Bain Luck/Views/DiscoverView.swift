@@ -24,7 +24,7 @@ private enum DiscoverGroupedItem: Identifiable {
 /// testable). This alias keeps the call sites below reading as they did.
 private typealias NativeDiscoverAction = DiscoverInteractionProfile.Action
 
-struct NativeDiscoverDebugCard: Codable {
+nonisolated struct NativeDiscoverDebugCard: Codable {
     let itemType: String
     let itemId: String
     let itemName: String?
@@ -33,7 +33,7 @@ struct NativeDiscoverDebugCard: Codable {
     let score: Int
 }
 
-struct NativeDiscoverDebugInteraction: Codable {
+nonisolated struct NativeDiscoverDebugInteraction: Codable {
     let action: String
     let itemType: String
     let itemId: String
