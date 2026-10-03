@@ -493,7 +493,7 @@ final class MarketMapRailTests: XCTestCase {
             "one bar is not a distribution, however tall"
         )
         XCTAssertEqual(
-            MarketMapRail.fullMarginSubtitle(isDone: false, hasDistribution: false),
+            MarketMapRail.fullMarginSubtitle(isDone: false, canStillBeGraded: true, hasDistribution: false),
             "Projected margin",
             "the sentence is the defect: the card may not promise a shape it has not got"
         )
@@ -530,11 +530,11 @@ final class MarketMapRailTests: XCTestCase {
         ]
         XCTAssertTrue(MarketMapRail.marginRailHasDistribution(density: patriotsSeahawks))
         XCTAssertEqual(
-            MarketMapRail.fullMarginSubtitle(isDone: false, hasDistribution: true),
+            MarketMapRail.fullMarginSubtitle(isDone: false, canStillBeGraded: true, hasDistribution: true),
             "Projected margin distribution"
         )
         XCTAssertEqual(
-            MarketMapRail.fullMarginSubtitle(isDone: true, hasDistribution: true),
+            MarketMapRail.fullMarginSubtitle(isDone: true, canStillBeGraded: false, hasDistribution: true),
             "Final margin distribution"
         )
         XCTAssertEqual(
@@ -551,7 +551,7 @@ final class MarketMapRailTests: XCTestCase {
     /// have left most of them overclaiming.
     func testTheMarginCardIsGatedBeforeTheGameAsWellAsAfterIt() {
         XCTAssertEqual(
-            MarketMapRail.fullMarginSubtitle(isDone: false, hasDistribution: false),
+            MarketMapRail.fullMarginSubtitle(isDone: false, canStillBeGraded: true, hasDistribution: false),
             "Projected margin",
             "an upcoming or live card overclaims too — this is not a settled-only rule"
         )
@@ -560,7 +560,7 @@ final class MarketMapRailTests: XCTestCase {
         let settledSingleRung: [Double] = [0, 0, 0, 0, 0, 0, 0, 0, 0, 96, 0, 0, 0, 0]
         XCTAssertFalse(MarketMapRail.marginRailHasDistribution(density: settledSingleRung))
         XCTAssertEqual(
-            MarketMapRail.fullMarginSubtitle(isDone: true, hasDistribution: false),
+            MarketMapRail.fullMarginSubtitle(isDone: true, canStillBeGraded: false, hasDistribution: false),
             "Final margin"
         )
     }
@@ -569,6 +569,171 @@ final class MarketMapRailTests: XCTestCase {
     /// exactly as `halfTotalCard` did before #3576.
     func testTheHalfMarginCardDropsTheWordOnTheSameCondition() {
         XCTAssertEqual(MarketMapRail.halfMarginSubtitle(hasDistribution: false), "Half margin")
+    }
+
+    // MARK: - #10149: a canceled game's margin card is not a forecast
+
+    /// The view's own composition: `isDone` is `EventState.isFinished`, and the
+    /// gate is `EventState.canStillBeGraded` — the two computed properties on
+    /// `MarketMapView`, asked with a FIXED clock so no anchor here branches on
+    /// the day the suite runs.
+    private static let seen10149 = ISO8601DateFormatter().date(from: "2026-10-02T02:30:00Z")!
+
+    private static func subtitle10149(
+        status: String, commenceTime: Date?, hasDistribution: Bool
+    ) -> String {
+        MarketMapRail.fullMarginSubtitle(
+            isDone: EventState.isFinished(status),
+            canStillBeGraded: EventState.canStillBeGraded(
+                status, commenceTime: commenceTime, now: seen10149
+            ),
+            hasDistribution: hasDistribution
+        )
+    }
+
+    /// 🔴 THE PHOTOGRAPHED CARD. Event 15319530 (Orioles @ Yankees, Sep 27,
+    /// `status=suspended`, ESPN period `Canceled`): the hero read **Canceled**
+    /// and this card read **Run margin map · Projected margin**. Not finished,
+    /// started, so it cannot be graded — and it is not settled either, so it may
+    /// not be handed a `Final` it never had.
+    func testTheCanceledSpecimenReadsLastQuotedMargin() {
+        let firstPitch = ISO8601DateFormatter().date(from: "2026-09-27T17:05:00Z")!
+        XCTAssertFalse(EventState.isFinished("suspended"), "the specimen is not settled")
+        XCTAssertFalse(
+            EventState.canStillBeGraded("suspended", commenceTime: firstPitch, now: Self.seen10149),
+            "the specimen started and stopped, so no final can arrive — the marker's gate already says so"
+        )
+
+        let bare = Self.subtitle10149(status: "suspended", commenceTime: firstPitch, hasDistribution: false)
+        XCTAssertEqual(bare, "Last quoted margin", "#10149: the canceled card is captioned in the past tense")
+        XCTAssertFalse(bare.contains("Projected"), "a game that will never be played is not projected")
+        XCTAssertFalse(bare.contains("Final"), "and it is not given a fabricated final")
+
+        XCTAssertEqual(
+            Self.subtitle10149(status: "suspended", commenceTime: firstPitch, hasDistribution: true),
+            "Last quoted margin distribution",
+            "the distribution word still follows the drawn density, not the tense"
+        )
+    }
+
+    /// 🔴 THE GATE, NOT THE STATUS. #4021's row: `suspended` four days before it
+    /// was due to be played. `canStillBeGraded` asks the clock and says yes, so
+    /// the card keeps its forecast. A blanket "suspended ⇒ last quoted" rule
+    /// would fail here.
+    func testAFutureSuspendedRowStillAllowedByTheGateStaysProjected() {
+        let notYet = ISO8601DateFormatter().date(from: "2026-10-06T00:00:00Z")!
+        XCTAssertTrue(EventState.canStillBeGraded("suspended", commenceTime: notYet, now: Self.seen10149))
+        XCTAssertEqual(
+            Self.subtitle10149(status: "suspended", commenceTime: notYet, hasDistribution: false),
+            "Projected margin"
+        )
+        XCTAssertEqual(
+            Self.subtitle10149(status: "suspended", commenceTime: notYet, hasDistribution: true),
+            "Projected margin distribution"
+        )
+    }
+
+    /// The eligible controls: a scheduled game and a live one keep the forecast
+    /// noun, with and without a distribution under it.
+    func testEligibleScheduledAndLiveCardsKeepProjectedMargin() {
+        let tonight = ISO8601DateFormatter().date(from: "2026-10-02T23:05:00Z")!
+        let underway = ISO8601DateFormatter().date(from: "2026-10-02T01:40:00Z")!
+        for (status, start) in [("scheduled", tonight), ("live", underway)] {
+            XCTAssertEqual(
+                Self.subtitle10149(status: status, commenceTime: start, hasDistribution: false),
+                "Projected margin", status
+            )
+            XCTAssertEqual(
+                Self.subtitle10149(status: status, commenceTime: start, hasDistribution: true),
+                "Projected margin distribution", status
+            )
+        }
+    }
+
+    /// The settled controls, and the precedence: `Final` wins whatever the gate
+    /// argument says, so the new parameter can never demote a real result.
+    func testSettledCardsKeepFinalMarginAndFinalTakesPrecedence() {
+        let played = ISO8601DateFormatter().date(from: "2026-10-01T23:05:00Z")!
+        for status in ["completed", "closed"] {
+            XCTAssertEqual(
+                Self.subtitle10149(status: status, commenceTime: played, hasDistribution: false),
+                "Final margin", status
+            )
+            XCTAssertEqual(
+                Self.subtitle10149(status: status, commenceTime: played, hasDistribution: true),
+                "Final margin distribution", status
+            )
+        }
+        for gate in [true, false] {
+            XCTAssertEqual(
+                MarketMapRail.fullMarginSubtitle(isDone: true, canStillBeGraded: gate, hasDistribution: false),
+                "Final margin",
+                "settled precedes the gate (canStillBeGraded: \(gate))"
+            )
+        }
+    }
+
+    /// 🔴 THE MOUNTED CALLER. A helper that knows three tenses changes nothing if
+    /// the card hands it a constant. The one full-game margin call in
+    /// `MarketMapView` must pass the view's EXISTING `canStillBeGraded` — the
+    /// same property the PROJECTION marker on that card reads — and that property
+    /// must still be `EventState.canStillBeGraded`, not a new reading of status.
+    ///
+    /// 🪤 Reads CODE, not the file: comment lines are stripped first, so the
+    /// explanation beside the call cannot satisfy its own guard.
+    func testTheFullMarginCardPassesItsOwnGradeabilityGate() throws {
+        let code = try Self.code10149(at: "Bain Luck/Components/MarketMapView.swift")
+        let needle = "MarketMapRail.fullMarginSubtitle("
+
+        XCTAssertEqual(
+            code.components(separatedBy: needle).count - 1, 1,
+            "MarketMapView mounts the full-game margin subtitle exactly once"
+        )
+        let args = try XCTUnwrap(Self.callArguments10149(of: needle, in: code))
+        XCTAssertTrue(args.contains("isDone: isDone"), args)
+        XCTAssertTrue(
+            args.contains("canStillBeGraded: canStillBeGraded"),
+            "the caption must read the card's own gradeability gate — got: \(args)"
+        )
+        XCTAssertTrue(
+            code.contains("MarketMapRail.drawsPregameMarker(canStillBeGraded: canStillBeGraded)"),
+            "and that is the same property the PROJECTION marker is gated on"
+        )
+        XCTAssertTrue(
+            code.contains("EventState.canStillBeGraded(eventStatus, commenceTime: commenceTime)"),
+            "the property is #4018's predicate, not a new interpretation of status"
+        )
+    }
+
+    private static func code10149(at path: String) throws -> String {
+        let url = URL(fileURLWithPath: #filePath)      // …/BainLuckTests/<this file>.swift
+            .deletingLastPathComponent()               // …/BainLuckTests
+            .deletingLastPathComponent()               // …/ios/Bain Luck
+            .appendingPathComponent(path)
+        return try String(contentsOf: url, encoding: .utf8)
+            .split(separator: "\n", omittingEmptySubsequences: false)
+            .filter { !$0.trimmingCharacters(in: .whitespaces).hasPrefix("//") }
+            .joined(separator: "\n")
+    }
+
+    /// The text between `needle`'s opening parenthesis and the one that closes
+    /// it. Paren-counting, deliberately not a parser — the call's arguments
+    /// themselves contain a nested call.
+    private static func callArguments10149(of needle: String, in code: String) -> String? {
+        guard let start = code.range(of: needle)?.upperBound else { return nil }
+        var depth = 1
+        var index = start
+        while index < code.endIndex {
+            switch code[index] {
+            case "(": depth += 1
+            case ")":
+                depth -= 1
+                if depth == 0 { return String(code[start..<index]) }
+            default: break
+            }
+            index = code.index(after: index)
+        }
+        return nil
     }
 
     /// The degenerate rails, pinned so a future edit cannot make one of them
