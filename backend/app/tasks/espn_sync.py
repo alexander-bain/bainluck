@@ -4111,6 +4111,7 @@ async def _backfill_box_scores(
     ESPN summary response when they are missing.
     """
     from app.services.espn_api import ESPNAPIService
+    from app.utils.provider_box_evidence import build_provider_box_evidence
     from app.models.models import Event, Sport
     import asyncio as _asyncio
 
@@ -4273,6 +4274,16 @@ async def _backfill_box_scores(
                             # whole-dict write as the rest of the box.
                             if context.get("box_score_player_identities"):
                                 box_data["player_identities"] = context["box_score_player_identities"]
+                            # #10268: the same marker as the two live/completed
+                            # writers, minted only from this response's own box.
+                            evidence = build_provider_box_evidence(
+                                requested_event_id=event.espn_id,
+                                players=box_score,
+                                scores=scores,
+                                captured_at=now_str,
+                            )
+                            if evidence is not None:
+                                box_data["provider_box_evidence"] = evidence
                             event.box_score_data = box_data
                             stats["fetched"] += 1
                         elif event.box_score_data is None:

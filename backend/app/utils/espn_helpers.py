@@ -2972,6 +2972,7 @@ async def fetch_completed_box_scores(session, stats):
     carries no ``live`` key, so the row is asked once.
     """
     from app.services.espn_api import ESPNAPIService
+    from app.utils.provider_box_evidence import build_provider_box_evidence
     from app.models.models import Event
     from app.tasks.config import ESPN_SPORT_MAPPING
     from sqlalchemy.orm import selectinload
@@ -3042,6 +3043,17 @@ async def fetch_completed_box_scores(session, stats):
                     # wipes what the live pass stored.
                     if context.get("box_score_player_identities"):
                         bsd["player_identities"] = context["box_score_player_identities"]
+                    # #10268: what this response says about itself, in the same
+                    # whole-dict write. None (no marker) for a scoring-only
+                    # answer or a header id that is not the one we asked for.
+                    evidence = build_provider_box_evidence(
+                        requested_event_id=event.espn_id,
+                        players=box_score,
+                        scores=scores,
+                        captured_at=now_str,
+                    )
+                    if evidence is not None:
+                        bsd["provider_box_evidence"] = evidence
                     settled_over_live = had_live_box
                 elif had_live_box:
                     # #8970: ESPN answered with nothing for a game we already
@@ -3132,6 +3144,7 @@ async def fetch_live_box_scores(session, stats):
     query's WHERE, and only a row the pass will ask ESPN about can hold a slot.
     """
     from app.services.espn_api import ESPNAPIService
+    from app.utils.provider_box_evidence import build_provider_box_evidence
     from app.models.models import Event, Sport
     from app.tasks.config import ESPN_SPORT_MAPPING
     from sqlalchemy import and_
@@ -3239,6 +3252,17 @@ async def fetch_live_box_scores(session, stats):
                     # #10103: the same sibling key as the two settled writers.
                     if context.get("box_score_player_identities"):
                         bsd["player_identities"] = context["box_score_player_identities"]
+                    # #10268: the same marker as the two settled writers. It can
+                    # say provider_final (ESPN ahead of our row); the box still
+                    # carries live: True.
+                    evidence = build_provider_box_evidence(
+                        requested_event_id=ev.espn_id,
+                        players=box_data,
+                        scores=scores,
+                        captured_at=now_str,
+                    )
+                    if evidence is not None:
+                        bsd["provider_box_evidence"] = evidence
                     to_write.append((ev, bsd))
             except Exception as e:
                 logger.error(f"Live box score error for event {ev.id}: {e}")
