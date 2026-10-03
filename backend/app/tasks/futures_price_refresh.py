@@ -473,6 +473,18 @@ REGISTERED_REFRESH_MINUTES = 45
 #: was split out to break, one level up.
 SERVED_REFRESH_MINUTES = 45
 
+#: #10320 — how stale a market a CATEGORY PAGE is rendering (/politics,
+#: /economics, /entertainment, /weather) may get before the sweep re-prices it.
+#: Longer than page one's 45 minutes on purpose: the category pages carry about
+#: 250 ids, mostly Kalshi, against ~80 on page one, and pricing all of them on
+#: every beat would spend ~65s of the 420s wall budget ahead of the class arm
+#: (measured 2026-10-03: 415 markets in 118s). Two hours re-prices each card on
+#: every second beat, about half the set per run. A card stays within ~2h of the
+#: venue, not 3-14 days, and a board the venue has finalized is stamped within a
+#: few hours. A producer interval, not the renderer's idea of stale, like the
+#: other identity windows.
+CATEGORY_PAGE_REFRESH_MINUTES = 120
+
 #: #8718 — how stale a tier-1 outright may get IN ITS LAST DAYS before the sweep
 #: re-prices it. An outright is a season-long market for most of its life and an
 #: in-play market at the end: the Presidents Cup winner read USA 85.5% for 4.5h of
@@ -956,6 +968,12 @@ _REGISTERED_CANDIDATE_SQL = text(_BY_ID_CANDIDATE_SQL)
 #: other arm is the whole defect.
 _SERVED_CANDIDATE_SQL = text(_BY_ID_CANDIDATE_SQL)
 
+#: #10320 — the same by-id statement for the markets the CATEGORY pages last
+#: rendered (:mod:`app.utils.category_served_markets`). Its own arm and not more
+#: ids in the served arm, because the served arm's ids come with page one's
+#: signal STATE (CERT-1970) and this list has none; it gets its own clock too.
+_CATEGORY_PAGE_CANDIDATE_SQL = text(_BY_ID_CANDIDATE_SQL)
+
 #: #8718 — tier-1 outrights in their last :data:`IN_PLAY_HORIZON_HOURS`, stale for
 #: longer than :data:`IN_PLAY_REFRESH_MINUTES`. Selected by the market's own
 #: clock rather than by a list, because what makes it urgent is WHEN it is, not
@@ -1071,6 +1089,7 @@ _ARM_SERVED = "served"
 _ARM_IN_PLAY = "in_play"
 _ARM_SERIES_CARD = "series_card"
 _ARM_THRESHOLD_LABEL = "threshold_label"  # #9543
+_ARM_CATEGORY_PAGE = "category_page"  # #10320
 
 
 def _rows_to_markets(rows, *, arm: str) -> list[dict]:
@@ -1265,6 +1284,21 @@ async def _scan_served_candidates(
         )
     ).fetchall()
     return _rows_to_markets(rows, arm=_ARM_SERVED)
+
+
+async def _scan_category_page_candidates(
+    session, *, market_ids: list[int], stale_minutes: int
+) -> list[dict]:
+    """Stale markets a category page is rendering, at any tier or volume (#10320)."""
+    if not market_ids:
+        return []
+    rows = (
+        await session.execute(
+            _CATEGORY_PAGE_CANDIDATE_SQL,
+            {"market_ids": market_ids, "stale_minutes": stale_minutes},
+        )
+    ).fetchall()
+    return _rows_to_markets(rows, arm=_ARM_CATEGORY_PAGE)
 
 
 async def _scan_in_play_candidates(
@@ -3328,6 +3362,7 @@ async def _refresh_stale_futures_prices(
     served_refresh_minutes: int = SERVED_REFRESH_MINUTES,
     in_play_refresh_minutes: int = IN_PLAY_REFRESH_MINUTES,
     threshold_label_per_run: int = THRESHOLD_LABEL_PER_RUN,
+    category_page_refresh_minutes: int = CATEGORY_PAGE_REFRESH_MINUTES,
 ) -> dict:
     """Refresh prices for stale high-value open futures markets. See module docstring."""
     from app.tasks.base import get_task_session
@@ -3337,6 +3372,7 @@ async def _refresh_stale_futures_prices(
         note_served_signal_healthy,
         served_signal,
     )
+    from app.utils.category_served_markets import category_served_market_ids
     from app.utils.tournament_register import registered_market_ids
 
     started = time.monotonic()
@@ -3538,6 +3574,18 @@ async def _refresh_stale_futures_prices(
         "series_card_candidates": 0,
         "series_card_attempted": 0,
         "series_card_priced": 0,
+        # #10320: the markets the category pages last rendered. `known` is
+        # reported even at zero, and `read_ok` beside it, because "the producer
+        # has not run since this deployed" and "the read failed" both arrive as an
+        # empty arm (gotcha #53). `stale_pages` is a page whose producer stopped.
+        "category_page_known": 0,
+        "category_page_read_ok": True,
+        "category_page_pages": 0,
+        "category_page_stale_pages": 0,
+        "category_page_unreadable_pages": 0,
+        "category_page_candidates": 0,
+        "category_page_attempted": 0,
+        "category_page_priced": 0,
         # #9543 / CERT-3817: the threshold-label arm. `pool` is every live
         # one-`Yes` Kalshi row with no label (capped at the scan ceiling, and
         # `pool_capped` says when that bound bit); `candidates` is the slice this
@@ -3626,6 +3674,17 @@ async def _refresh_stale_futures_prices(
         series_card_scan = await _scan_series_card_candidates(
             session, stale_minutes=in_play_refresh_minutes
         )
+        category = category_served_market_ids()
+        stats["category_page_known"] = len(category.ids)
+        stats["category_page_read_ok"] = category.read_ok
+        stats["category_page_pages"] = category.pages
+        stats["category_page_stale_pages"] = category.stale_pages
+        stats["category_page_unreadable_pages"] = category.unreadable_pages
+        category_page_scan = await _scan_category_page_candidates(
+            session,
+            market_ids=category.ids,
+            stale_minutes=category_page_refresh_minutes,
+        )
         class_scan = await _scan_candidates(
             session,
             volume_floor=volume_floor,
@@ -3660,6 +3719,15 @@ async def _refresh_stale_futures_prices(
         # candidate keeps the identity classification.
         series_card_scan = [m for m in series_card_scan if m["id"] not in priority_ids]
         priority_ids |= {m["id"] for m in series_card_scan}
+        # #10320: the category-page arm ranks after the Series card, same rule. A
+        # card that page one also renders keeps the served attribution and its
+        # 45-minute clock. A category card that is ALSO a class candidate keeps
+        # the identity classification, so the class arm's 6h attempt TTL cannot
+        # undo the shorter clock.
+        category_page_scan = [
+            m for m in category_page_scan if m["id"] not in priority_ids
+        ]
+        priority_ids |= {m["id"] for m in category_page_scan}
         # #9543 / CERT-3817: the threshold-label arm ranks LAST among the
         # identity arms, and it also yields to a stale class row — that row is
         # fetched by the class pass, which writes the label off the same read,
@@ -3698,6 +3766,7 @@ async def _refresh_stale_futures_prices(
             + registered_scan
             + in_play_scan
             + series_card_scan
+            + category_page_scan
             + threshold_label_scan
             + [m for m in class_scan if m["id"] not in priority_ids]
         )
@@ -3707,6 +3776,7 @@ async def _refresh_stale_futures_prices(
         stats["served_candidates"] = len(served_scan)
         stats["in_play_candidates"] = len(in_play_scan)
         stats["series_card_candidates"] = len(series_card_scan)
+        stats["category_page_candidates"] = len(category_page_scan)
         stats["threshold_label_candidates"] = len(threshold_label_scan)
 
         skip_ids = _load_attempt_skips([m["id"] for m in scan])
@@ -3741,7 +3811,7 @@ async def _refresh_stale_futures_prices(
             # opposite states, so they get different terminals.
             stats["terminal"] = "complete" if not scan else "no_work"
             stats["reason"] = (
-                "no stale valuable, registered, served, in-play or series-card "
+                "no stale valuable, registered, served, in-play, series-card or category-page "
                 "markets and no unlabelled threshold rows"
                 if not scan
                 else "every stale market was attempted inside the current window"
@@ -3776,6 +3846,8 @@ async def _refresh_stale_futures_prices(
                 stats["in_play_attempted"] += 1
             if market["arm"] == _ARM_SERIES_CARD:
                 stats["series_card_attempted"] += 1
+            if market["arm"] == _ARM_CATEGORY_PAGE:
+                stats["category_page_attempted"] += 1
             if market["arm"] == _ARM_THRESHOLD_LABEL:
                 stats["threshold_label_attempted"] += 1
                 label_attempted_ids.append(market["id"])
@@ -3964,6 +4036,8 @@ async def _refresh_stale_futures_prices(
                                     stats["served_priced"] += 1
                                 if market["arm"] == _ARM_IN_PLAY:
                                     stats["in_play_priced"] += 1
+                                if market["arm"] == _ARM_CATEGORY_PAGE:
+                                    stats["category_page_priced"] += 1
                                 await _clear_if_stamped(session, market, stats)
                             else:
                                 stats["unpriceable"] += 1
@@ -4145,6 +4219,8 @@ async def _refresh_stale_futures_prices(
                         stats["in_play_priced"] += 1
                     if market["arm"] == _ARM_SERIES_CARD:
                         stats["series_card_priced"] += 1
+                    if market["arm"] == _ARM_CATEGORY_PAGE:
+                        stats["category_page_priced"] += 1
                     await _clear_if_stamped(session, market, stats)
                 else:
                     stats["unpriceable"] += 1
