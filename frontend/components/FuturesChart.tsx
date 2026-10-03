@@ -11,6 +11,7 @@ import { seriesFreshness } from "@/lib/seriesFreshness";
 import { chartSeriesPath } from "@/lib/chartSeriesPath";
 import { combinedLinePoints } from "@/lib/combinedLinePolicy";
 import {
+  inFixedSeriesOrder,
   visibleChartOutcomes,
   withoutBoardNamePrefix,
 } from "@/lib/futuresDetailDisplay";
@@ -146,6 +147,12 @@ interface FuturesChartProps {
    *  futures page's range controls do, on a sparse board), so the empty state must
    *  not print it again. Absent everywhere else: those callers render as before. */
   cadenceNoteShown?: boolean;
+  /** #10266: outcome ids in the order the palette is dealt (and the legend
+   *  reads). Without it the order is the history response's, which changes with
+   *  the range, so a line could change colour on a range tap. The futures page
+   *  passes its market's outcome order; absent everywhere else, where those
+   *  callers render as before. */
+  seriesOrder?: readonly number[];
 }
 
 export function FuturesChart({
@@ -171,6 +178,7 @@ export function FuturesChart({
   settled = false,
   marketName,
   cadenceNoteShown = false,
+  seriesOrder,
 }: FuturesChartProps) {
   const effectiveShowLegend = showLegend ?? !mini;
   const effectiveShowAxes = showAxes ?? !mini;
@@ -197,9 +205,11 @@ export function FuturesChart({
   // chart can ask what is drawn instead of guessing from the full leg list. This
   // memo is byte-equivalent to the inline version it replaces; the chart stays
   // the authority on what is on screen.
+  // #10266 — then put the drawn set in the caller's fixed order (when it gives
+  // one) so the palette below is dealt the same way on every range.
   const displayedOutcomes = useMemo(
-    () => visibleChartOutcomes(historyData, selectedOutcomes),
-    [historyData, selectedOutcomes],
+    () => inFixedSeriesOrder(visibleChartOutcomes(historyData, selectedOutcomes), seriesOrder),
+    [historyData, selectedOutcomes, seriesOrder],
   );
 
   // #8095: the default palette gives a party line its party's colour rather than

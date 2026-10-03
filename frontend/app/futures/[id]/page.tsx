@@ -3,6 +3,7 @@
 import { useState, useMemo, useEffect, useRef } from "react";
 import Link from "next/link";
 import { useSearchParams } from "next/navigation";
+import { browserCanGoBackInApp, followBackInApp } from "@/lib/inAppBack";
 import useSWR from "swr";
 import { useFuturesDetailStream } from "@/hooks/useFuturesDetailStream";
 import {
@@ -129,6 +130,13 @@ export default function FuturesDetailPage({ params }: FuturesDetailPageProps) {
   const sharedMedium = searchParams.get("utm_medium") || undefined;
   const sharedCampaign = searchParams.get("utm_campaign") || undefined;
   const isSharedLink = sharedSource === "share";
+  // #10265: whether the entry behind this one is one of our pages. Read after
+  // mount (the server cannot know), and again if the reader moves to another
+  // question; `false` keeps the Discover link, the old behaviour.
+  const [backGoesInApp, setBackGoesInApp] = useState(false);
+  useEffect(() => {
+    setBackGoesInApp(browserCanGoBackInApp());
+  }, [marketId]);
 
   // Analytics hooks must be called before conditional returns
   usePageTracking({
@@ -570,6 +578,14 @@ export default function FuturesDetailPage({ params }: FuturesDetailPageProps) {
     return pickCaptionSubject(market?.outcomes ?? [], drawnIds);
   }, [historyOutcomes, selectedOutcomes, market?.outcomes]);
 
+  // #10266: the chart deals its colours in the market's own outcome order, which
+  // a range tap does not refetch (the history response's order changes with
+  // `hours=`), so a team keeps its colour on 1W, 1M and All.
+  const chartSeriesOrder = useMemo(
+    () => (market?.outcomes ?? []).map((o) => o.id),
+    [market?.outcomes],
+  );
+
   const movementExplanation = useMemo(
     () => movementExplanationHelper(captionSubject, market?.name),
     [captionSubject, market?.name]
@@ -653,14 +669,23 @@ export default function FuturesDetailPage({ params }: FuturesDetailPageProps) {
           links; this is the one, and it lives on the very page the retirement
           keeps alive. When decision 3 rebuilds a real /futures landing, this is
           the link that should point back at it. */}
+      {/* #10265: a reader who came from inside the app (a live game's Bigger
+          Picture card, a team page, a hub) goes back to that page and their
+          place on it, as the browser's Back does, and the label stops naming
+          Discover. Anyone else (a fresh tab, a shared link) still lands on
+          Discover. The href stays /discover so a modified click or a new tab
+          opens Discover, never a blank history step. */}
       <Link
         href="/discover"
+        // `history.back()` is what Next's router.back() does; the app router
+        // restores the page (and the reader's scroll) on the popstate.
+        onClick={(e) => followBackInApp(e, backGoesInApp, () => window.history.back())}
         className="inline-flex items-center text-caption text-text-secondary hover:text-text-primary transition-colors"
       >
         <svg className="w-4 h-4 mr-1" fill="none" stroke="currentColor" viewBox="0 0 24 24">
           <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 19l-7-7 7-7" />
         </svg>
-        Back to Discover
+        {backGoesInApp ? "Back" : "Back to Discover"}
       </Link>
     </div>
   );
@@ -1220,6 +1245,7 @@ export default function FuturesDetailPage({ params }: FuturesDetailPageProps) {
               settled={isResolved}
               marketName={market?.name}
               cadenceNoteShown={trendCadenceNote != null}
+              seriesOrder={chartSeriesOrder}
             />
           )}
           {/* The clarification: WHY the blend line moved (#871-style). Suppressed
