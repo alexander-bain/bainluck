@@ -29937,7 +29937,7 @@ async def _build_related_futures(
         except Exception as exc:
             logger.warning(
                 "related-futures %s: series question matrix refused on error (%s)",
-                event_id, exc,
+                event.id, exc,
             )
             _series_question_matrix = None
 
