@@ -193,6 +193,16 @@ class TestTheStartMustBeReportedAndAhead:
         assert row.status == "live"
         assert stats["held_future_live_unreported_start"] == 1
 
+    @pytest.mark.parametrize("source", ["kalshi", "kalshi_occurrence"])
+    @pytest.mark.asyncio
+    async def test_a_kalshi_expected_expiration_hour_is_refused(self, source):
+        """That hour sits ~3h after kick-off (#5905): "still ahead" on it can
+        be a game in progress with no score to say so."""
+        row = _Row(commence_time_source=source)
+        stats, _ = await _run([row])
+        assert row.status == "live"
+        assert stats["held_future_live_unreported_start"] == 1
+
     @pytest.mark.parametrize(
         "source", ["odds_api", "espn", "statpal", "kalshi_ticker_time"]
     )

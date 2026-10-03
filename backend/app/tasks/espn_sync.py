@@ -6017,7 +6017,12 @@ async def _transition_event_statuses_impl() -> dict:
         # alone would not do: that predicate admits NULL so the PROMOTION path
         # does not freeze for the rows that predate the column, and here the
         # direction is reversed — un-starting a row on a start nobody can vouch
-        # for is acting on an instant we do not have.
+        # for is acting on an instant we do not have. And a Kalshi
+        # expected-expiration hour (`kalshi`, `kalshi_occurrence`, #5905) is
+        # refused for the same reason from the other side: it sits about three
+        # hours AFTER kick-off, so "still ahead" on that clock can be a game
+        # being played right now, and a Kalshi-only row carries no score to say
+        # so (Authority review, PR #10308).
         #
         # LOCKED AND RE-READ, NOT INFERRED FROM AN EARLIER READ. `FOR UPDATE
         # SKIP LOCKED` returns each row's latest committed version and holds it
@@ -6034,6 +6039,7 @@ async def _transition_event_statuses_impl() -> dict:
         # field. The 60-second promotion gate above takes the row live again
         # once its start is reached.
         from app.services.event_registry import _correction_unstarts_the_row
+        from app.utils.kalshi_occurrence_start import KALSHI_OCCURRENCE_TIMED_SOURCES
 
         stats["unstarted_future_live"] = 0
         stats["held_future_live_unreported_start"] = 0
@@ -6047,8 +6053,10 @@ async def _transition_event_statuses_impl() -> dict:
         for event in _future_live.scalars().all():
             if event.status != "live":
                 continue
-            if event.commence_time_source is None or not (
-                commence_time_is_a_reported_start(event.commence_time_source)
+            if (
+                event.commence_time_source is None
+                or event.commence_time_source in KALSHI_OCCURRENCE_TIMED_SOURCES
+                or not commence_time_is_a_reported_start(event.commence_time_source)
             ):
                 stats["held_future_live_unreported_start"] += 1
                 continue
@@ -6073,6 +6081,7 @@ async def _transition_event_statuses_impl() -> dict:
                 or stats["repaired_bogus_completed"] > 0
                 or stats["unsettled_future_commence"] > 0
                 or stats["unstarted_future_live"] > 0
+                or stats["held_future_live_unreported_start"] > 0
                 or stats["held_derived_start"] > 0
                 or stats["held_withdrawn_listing"] > 0
                 or stats["withdrew_illegal_tennis_score"] > 0
@@ -6081,6 +6090,7 @@ async def _transition_event_statuses_impl() -> dict:
                 "Status transitions: %d scheduled→live, %d live→suspended, "
                 "%d suspended→live, %d repaired, %d un-settled-future-commence, "
                 "%d live→scheduled (future start, no play), "
+                "%d held live (future start not reported), "
                 "%d illegal tennis scores withdrawn, "
                 "%d held (derived start), %d held (withdrawn listing), "
                 "%d held (still running), "
@@ -6090,6 +6100,7 @@ async def _transition_event_statuses_impl() -> dict:
                 stats["repaired_bogus_completed"],
                 stats["unsettled_future_commence"],
                 stats["unstarted_future_live"],
+                stats["held_future_live_unreported_start"],
                 stats["withdrew_illegal_tennis_score"],
                 stats["held_derived_start"],
                 stats["held_withdrawn_listing"],
