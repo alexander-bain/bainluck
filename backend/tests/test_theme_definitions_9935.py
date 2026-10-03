@@ -12,6 +12,7 @@ from __future__ import annotations
 import ast
 import inspect
 import random
+import re
 import subprocess
 import sys
 import textwrap
@@ -213,6 +214,18 @@ class TestOscarsCeremonyClause:
         m = kalshi(990003, "KXGRAMAOTY-69", "Grammy winner: Album of the Year")
         assert oscars(m).reason == td.NOT_THIS_CEREMONY
 
+    def test_title_arms_are_the_polymarket_titles_only(self):
+        # §3 clause 1: a non-KXOSCAR Kalshi row is the ticker arm's or nobody's,
+        # whatever its name or stored event title says.
+        title = {"event_title": "Oscars 2027: Best Picture Winner"}
+        by_name = kalshi(990004, "KXFILMX-27", "Oscars 2027: Best Picture Winner")
+        by_title = kalshi(990005, "KXFILMX-27B", "Will Oppenheimer win?", metadata=title)
+        assert oscars(by_name).reason == td.NOT_THIS_CEREMONY
+        assert oscars(by_title).reason == td.NOT_THIS_CEREMONY
+        # Control: the same name / event title on a Polymarket row admits.
+        assert oscars(mk(990006, "Oscars 2027: Best Picture Winner")).outcome == "admitted"
+        assert oscars(mk(990008, "Will Oppenheimer win?", metadata=title)).outcome == "admitted"
+
     def test_structural_pattern_postgres_flavour_matches_python(self):
         assert td.OSCARS_STRUCTURAL_PG == td.OSCARS_STRUCTURAL_RE.pattern.replace(r"\b", r"\y")
         assert r"\b" not in td.OSCARS_STRUCTURAL_PG
@@ -286,6 +299,15 @@ class TestOscarsEdition:
         assert "venue_title_conflict" in d.evidence["flags"]
         agree = oscars(kalshi(6173044, "KXOSCARPIC-27", "Oscar for Best Picture?"))
         assert "venue_title_conflict" not in agree.evidence["flags"]
+        assert clause(agree, "venue_title_conflict")["result"] == "agree"
+
+    def test_a_nominations_row_is_never_recorded_as_agreeing(self):
+        # Clause 5 checks a category row's title only; anything else is unchecked,
+        # never a claimed agreement (Authority review 5964991446, item 3).
+        d = oscars(kalshi(990009, "KXOSCARNOMPIC-27", "Best Actor nominations?"))
+        assert d.edge_class == "advancement"
+        assert clause(d, "venue_title_conflict") == {
+            "clause": "venue_title_conflict", "input": "PIC", "result": "unchecked"}
 
     def test_novelty_is_a_side_question_member(self):
         d = oscars(kalshi(990007, "KXOSCARGUESTS-27", "Who will attend the Oscars?"))
@@ -408,6 +430,26 @@ class TestAiEntity:
 
     def test_entity_with_no_second_signal_is_wrong_category(self):
         assert ai(mk(990022, "Will Grok beat ChatGPT downloads?", cat="sports")).reason == td.WRONG_CATEGORY
+
+    def test_model_names_with_suffixes_and_plurals_are_admitted_and_gathered(self):
+        # A trailing word boundary after `gpt-?\d` / `ai model` dropped these rows
+        # silently: no decision row, no evidence (Authority review 5964991446, item 1).
+        gather = re.compile(td.AI_ENTITY_PG.replace(r"\y", r"\b"), re.IGNORECASE)
+        for i, name in enumerate([
+            "Will GPT-4o top LMArena?",
+            "Top AI models by Oct 31",
+            "GPT-4.5 released before 2027?",
+            "Best AI model at the end of October?",
+        ]):
+            d = ai(mk(990040 + i, name, cat="tech"))
+            assert (d.outcome, d.reason) == ("admitted", td.ADMITTED_ENTITY_SIGNAL), name
+            assert gather.search(name), name
+
+    def test_decide_and_gather_share_one_term_list(self):
+        terms = td._AI_ENTITY_TERMS
+        assert td.AI_ENTITY_PG == r"\y(" + "|".join(terms) + r")\y"
+        decide_terms = td._AI_ENTITY_RE.pattern[len(r"\b("):-len(r")\b")].split("|")
+        assert decide_terms == [t for t in terms if t != "gemini"]
 
     def test_a_row_with_no_entity_term_is_not_this_subject(self):
         assert ai(mk(990023, "Fed cuts rates in December?", cat="economics")).reason == td.NOT_THIS_SUBJECT

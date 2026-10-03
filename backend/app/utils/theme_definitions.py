@@ -5,7 +5,7 @@ the same complete, correctly scoped collection on a URL that still works when
 membership changes. This module is the inert rider of that queued ship: it
 changes nothing a reader sees on its own. Nothing here writes, schedules,
 routes, publishes or executes SQL. The contract is Authority's
-``docs/theme-collection-producer-contract-9935.md`` (v3.1); section numbers
+``docs/theme-collection-producer-contract-9935.md`` (v3.2); section numbers
 below refer to it.
 
 What lives here:
@@ -25,7 +25,7 @@ What lives here:
   names the proposed ``container_member_decisions`` table through a lightweight
   ``table()`` clause: no model, no import of a future module, nothing
   initialised at startup.
-* ``resolve_collection_target`` — §5 steps 1–3 over candidate rows the caller
+* ``resolve_collection_target`` — §5 steps 0–3 over candidate rows the caller
   supplies. Publication is never read here: publication can REMOVE a link
   (step 4, P2) but never REDIRECT one.
 
@@ -206,10 +206,17 @@ _OSCAR_TICKER_CATEGORY_KEYWORDS: Mapping[str, re.Pattern] = {
     "VIS": re.compile(r"\bvisual effects?\b", re.IGNORECASE),
 }
 
-#: ``ai-subject@1`` clause 1. ``claude`` carries the #8742 deny clause;
-#: ``gemini`` is handled separately because it counts only with ADJACENT context.
+#: ``ai-subject@1`` clause 1 terms, shared by ``decide()`` and the §4 gather so the
+#: two can never drift. ``gpt-?\d\w*`` and ``ai models?`` keep the trailing word
+#: boundary from dropping "GPT-4o" and "AI models" (Authority review 5964991446,
+#: item 1). ``claude`` carries the #8742 deny clause; ``gemini`` is gathered here
+#: but decided separately, because it counts only with ADJACENT context.
+_AI_ENTITY_TERMS = (
+    "openai", "anthropic", "claude", r"gpt-?\d\w*", "chatgpt", "deepseek", "gemini",
+    "grok", "xai", r"ai models?", "best ai", "agi",
+)
 _AI_ENTITY_RE = re.compile(
-    r"\b(openai|anthropic|claude|gpt-?\d|chatgpt|deepseek|grok|xai|ai model|best ai|agi)\b",
+    r"\b(" + "|".join(t for t in _AI_ENTITY_TERMS if t != "gemini") + r")\b",
     re.IGNORECASE,
 )
 _CLAUDE_DENY_RE = re.compile(
@@ -225,9 +232,7 @@ _GEMINI_ADJACENT_RE = re.compile(
 AI_KALSHI_ENTITY_STEMS = ("KXCLAUDE", "KXGEMINI", "KXOPUS", "KXOAIANTH", "KXIPOOPENAI")
 AI_SECOND_SIGNAL_CATEGORIES = frozenset({"tech", "economics"})
 #: The gather's entity pattern (§4 arm a), Postgres flavour of clause 1's terms.
-AI_ENTITY_PG = (
-    r"\y(openai|anthropic|claude|gpt-?\d|chatgpt|deepseek|gemini|grok|xai|ai model|best ai|agi)\y"
-)
+AI_ENTITY_PG = r"\y(" + "|".join(_AI_ENTITY_TERMS) + r")\y"
 
 # ---------------------------------------------------------------------------
 # Decision + evidence.
@@ -346,7 +351,11 @@ def _decide_oscars(defn: "ThemeDefinition", market: Any, *, now: datetime) -> De
     # Clause 1 — ceremony. The row's own name wins over the venue's event title.
     name_structural = bool(OSCARS_STRUCTURAL_RE.search(name))
     name_other = bool(OTHER_CEREMONY_STRUCTURAL_RE.search(name))
-    title_structural = bool(event_title and OSCARS_STRUCTURAL_RE.search(event_title))
+    # §3 clause 1 reads "the Polymarket title": the title arms are Polymarket's only.
+    is_polymarket = _attr(market, "source") == "polymarket"
+    name_structural = name_structural and is_polymarket
+    title_structural = bool(
+        is_polymarket and event_title and OSCARS_STRUCTURAL_RE.search(event_title))
     if is_ticker:
         ev.fields["ceremony"] = "external_id"
     elif name_other:
@@ -418,7 +427,8 @@ def _decide_oscars(defn: "ThemeDefinition", market: Any, *, now: datetime) -> De
     if is_ticker:
         code = _ticker_category_code(external_id)
         keyword = _OSCAR_TICKER_CATEGORY_KEYWORDS.get(code)
-        if keyword is None:
+        if keyword is None or kind != "category":
+            # Only a category row's title is checked against its code.
             ev.clause("venue_title_conflict", code, "unchecked")
         elif kind == "category" and not keyword.search(name):
             ev.flag("venue_title_conflict")
