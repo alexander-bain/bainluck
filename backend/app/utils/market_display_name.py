@@ -306,13 +306,22 @@ _QUESTION_COLON = re.compile(
 )
 
 
-def _rewrite_question_colon(name: str) -> str:
+def rewrite_question_colon_display(name: str | None) -> str | None:
     """Turn "Will the game go to extra innings?: A vs. B" into "… innings? — A vs. B".
 
     Returns ``name`` byte-identical unless the whole shape matches and the
     question half carries no template blank (a blanked question here is a
     shape nobody has read, so it keeps what the reader sees today).
+
+    Public on purpose, and the ONLY rule of this module that is: the search
+    formatter (`routes/events.py::_format_futures_for_search`) applies this one
+    rule to its final name and nothing else, so a search card stops printing
+    "innings?:" without also inheriting the four blank-template rules below,
+    which search has never applied (#10240 review, 2026-10-03).
     """
+    if not name:
+        return name
+
     match = _QUESTION_COLON.match(name.strip())
     if match is None:
         return name
@@ -357,7 +366,7 @@ def clean_market_display_name(name: str | None) -> str | None:
     # and the score slot needs "reach", which none of the other three accepts.
     # The question-colon rule refuses any blank, and the four blank rules all
     # anchor on a name that ENDS in "?", which a "?: A vs. B" name never does.
-    return _rewrite_question_colon(
+    return rewrite_question_colon_display(
         _rewrite_score_slot(
             _rewrite_directional(_rewrite_object_slot(_strip_trailing_blank(name)))
         )

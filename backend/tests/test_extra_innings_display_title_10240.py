@@ -16,10 +16,14 @@ polymarket extra-innings game prop.
 ═══ THE TWO HALVES, AND WHY BOTH ARE HERE ═══
 
 1. `clean_market_display_name` (the shared display cleaner the market page and
-   Discover already serve) gains a fifth rule: `?: A vs. B` -> `? — A vs. B`.
+   Discover already serve) gains a fifth rule, the public callable
+   `rewrite_question_colon_display`: `?: A vs. B` -> `? — A vs. B`.
 2. `_format_futures_for_search` served `rewrite_venue_league_vocabulary(name)`
    and never called that cleaner at all, so a helper-only fix would have left
-   the search card raw. Its final `name` now runs through both.
+   the search card raw. Its final `name` now runs through that ONE callable —
+   not the whole cleaner. The cleaner's four blank-template rules have never
+   reached the search card, and this slice does not change that: a blank
+   template reads on the card exactly as it did before (the controls below).
 
 The stored name is never rewritten: every assertion below also checks the row's
 `name` is byte-identical after formatting.
@@ -28,7 +32,10 @@ The stored name is never rewritten: every assertion below also checks the row's
 import pytest
 
 from app.routes.events import _format_futures_for_search
-from app.utils.market_display_name import clean_market_display_name
+from app.utils.market_display_name import (
+    clean_market_display_name,
+    rewrite_question_colon_display,
+)
 from app.utils.market_label_normalization import rewrite_venue_league_vocabulary
 
 SPECIMEN = "Will the game go to extra innings?: New York Yankees vs. Tampa Bay Rays"
@@ -106,6 +113,14 @@ class TestTheSharedHelper:
     def test_surrounding_whitespace_does_not_defeat_the_rule(self):
         assert clean_market_display_name(f"  {SPECIMEN} ") == SPECIMEN_DISPLAY
 
+    def test_the_cleaner_and_search_share_one_callable(self):
+        # One grammar, not two copies: the cleaner's fifth rule IS the public
+        # callable search applies, so the two surfaces cannot drift apart.
+        assert rewrite_question_colon_display(SPECIMEN) == SPECIMEN_DISPLAY
+        assert rewrite_question_colon_display(SPECIMEN) == clean_market_display_name(SPECIMEN)
+        assert rewrite_question_colon_display(None) is None
+        assert rewrite_question_colon_display("") == ""
+
 
 class TestControlsStayByteIdentical:
     @pytest.mark.parametrize(
@@ -173,13 +188,34 @@ class TestTheSearchCard:
             "NFL: 2027 Champion"
         )
 
-    def test_a_blank_template_card_matches_its_page_too(self):
-        # The search card was the one display boundary that skipped the shared
-        # cleaner; it now asks the page's question for #3513 rows as well.
-        raw = "Netanyahu out by...?"
-        assert _served_name(raw, llm_sport_category="politics", category="politics") == (
-            clean_market_display_name(raw)
-        )
+    @pytest.mark.parametrize(
+        "raw",
+        [
+            # One specimen per blank-template rule of the cleaner (#3513 and
+            # after). Each would CHANGE under `clean_market_display_name`; the
+            # search card has never applied those rules and still must not.
+            "Netanyahu out by...?",  # trailing blank
+            "Will EUR/USD hit __ in 2026?",  # object slot
+            "Meta (META) closes above ___ on September 25?",  # directional
+            "Will any AI model reach ___ Coding Arena Score by December 31?",  # score slot
+            # Threshold safeguard: a refusal everywhere.
+            "Amazon 2026 capex above ___?",
+        ],
+    )
+    def test_blank_templates_keep_their_prior_search_rendering(self, raw):
+        prior = rewrite_venue_league_vocabulary(raw)
+        assert _served_name(raw, llm_sport_category="politics", category="politics") == prior
+
+    def test_strawman_the_whole_cleaner_would_have_changed_those_cards(self):
+        # Proves the control above can fail: mounting all of
+        # `clean_market_display_name` (PR #10258's first head) rewrote these.
+        for raw in (
+            "Netanyahu out by...?",
+            "Will EUR/USD hit __ in 2026?",
+            "Meta (META) closes above ___ on September 25?",
+            "Will any AI model reach ___ Coding Arena Score by December 31?",
+        ):
+            assert clean_market_display_name(raw) != rewrite_venue_league_vocabulary(raw), raw
 
     @pytest.mark.parametrize(
         "raw",

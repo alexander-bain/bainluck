@@ -31,6 +31,8 @@ from datetime import datetime, timedelta, timezone
 
 import pytest
 
+from app.utils.market_display_name import rewrite_question_colon_display
+
 DB_URL = os.environ.get("SEARCH_TEST_DATABASE_URL")
 
 pytestmark = [
@@ -55,6 +57,10 @@ CUBS_PROPS = [
     "Chicago Cubs vs. San Diego Padres: O/U 7.5",
     "Chicago Cubs vs. San Diego Padres: 1st 5 Innings O/U 5.5",
 ]
+# What the search card PRINTS for those seeded names: #10240's one
+# question-colon rule turns "…inning?: A vs. B" into "…inning? — A vs. B" on the
+# card. The seed stores the venue's text; the ordering assertions read the card.
+CUBS_PROPS_SERVED = [rewrite_question_colon_display(n) for n in CUBS_PROPS]
 ROYALS_PROPS = [
     "Spread: Kansas City Royals (-1.5)",
     "Kansas City Royals Team Total: O/U 3.5",
@@ -182,7 +188,7 @@ def _disarm_hoist(monkeypatch):
 async def test_the_world_series_leads_when_it_is_already_on_the_page(search, q):
     futures = await search(q)
     assert futures and futures[0] == WORLD_SERIES, f"{q!r} served {futures[:4]}"
-    assert set(futures[1:]) <= set(CUBS_PROPS), futures
+    assert set(futures[1:]) <= set(CUBS_PROPS_SERVED), futures
 
 
 async def test_strawman_without_the_hoist_arm_it_sits_below_the_props(
@@ -192,7 +198,7 @@ async def test_strawman_without_the_hoist_arm_it_sits_below_the_props(
     _disarm_hoist(monkeypatch)
     futures = await search("cubs")
     assert WORLD_SERIES in futures, f"seed no longer puts it on the page: {futures}"
-    assert futures.index(WORLD_SERIES) > 0 and futures[0] in CUBS_PROPS, futures
+    assert futures.index(WORLD_SERIES) > 0 and futures[0] in CUBS_PROPS_SERVED, futures
 
 
 async def test_control_the_hoist_reorders_and_never_changes_which_rows_ship(
