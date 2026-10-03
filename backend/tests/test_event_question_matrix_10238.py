@@ -371,6 +371,56 @@ class TestCountVersusSignedLine:
         assert opt["source_evidence"][0]["leg_side"] == "under"
         assert opt["source_evidence"][0]["raw_probability"] == 0.40
         assert opt["comparison"]["reason"] == "leg_is_complement"
+        assert (opt["label"], opt["side"]) == ("Over 7.5", "over")
+
+
+class TestOptionLabelNamesItsAxis:
+    """F2 — the label names the axis the published value is on. Production at
+    v5447 (event 15322462): "8+ runs" served option "Under" beside the over value
+    0.405, and a team total served "Over 0.57" / "Under 0.57" side by side."""
+
+    def test_a_bare_under_leg_on_a_count_question_reads_over(self):
+        legs = [_leg(2, 10, "Under", 0.595)]
+        m = _game({"totals": [_total(10, 2, "Under", 7.5, 0.405)]}, legs, {10: _facts("Total Runs")})
+        q = _q(m, "q:count|runs|game|full_game|ge:8")
+        (opt,) = q["options"]
+        assert (q["label"], opt["label"], opt["side"]) == ("8+ runs", "Over", "over")
+        assert opt["published"]["value"] == 0.405
+        assert opt["source_evidence"][0]["leg_side"] == "under"
+
+    def test_a_fallback_team_total_never_labels_the_over_value_under(self):
+        legs = [_leg(1, 10, "Over", 0.57), _leg(2, 10, "Under", 0.43)]
+        rows = [_total(10, 1, "Over", 2.5, 0.57, market_type="team_total"),
+                _total(10, 2, "Under", 2.5, 0.57, market_type="team_total")]
+        m = _game({"team_totals": rows}, legs, {10: _facts("Yankees Team Total: O/U 2.5")})
+        (q,) = m["questions"]
+        assert q["kind"] == "named_options"
+        got = sorted((o["label"], o["published"]["value"]) for o in q["options"])
+        assert got == [("Over", 0.57), ("Over", 0.57)]
+
+    def test_a_no_leg_on_the_totals_axis_reads_yes(self):
+        legs = [_leg(2, 10, "No", 0.3)]
+        m = _game({"totals": [_total(10, 2, "No", 7.5, 0.7)]}, legs, {10: _facts("Total Runs")})
+        (q,) = m["questions"]
+        (opt,) = q["options"]
+        assert opt["label"] == "Yes" and opt["published"]["value"] == 0.7
+
+    def test_an_unblended_pair_led_by_its_under_row_reads_over(self):
+        legs = [_leg(1, 10, "Over 4.5", 0.55), _leg(2, 10, "Under 4.5", 0.40)]
+        rows = [_total(10, 2, "Under 4.5", 4.5, 0.60, market_type="team_total"),
+                _total(10, 1, "Over 4.5", 4.5, 0.55, market_type="team_total")]
+        for r in rows:
+            r["team_side"], r["team_name"] = "home", "Boston Red Sox"
+        m = _game({"team_totals": rows}, legs, {10: _facts("Red Sox Team Total Runs")})
+        (opt,) = _q(m, "q:count|runs|home|full_game|ge:5")["options"]
+        assert opt["published"]["value_state"] == "unblended_equivalents"
+        assert opt["label"] == "Over 4.5"
+
+    def test_a_row_off_the_totals_axis_keeps_its_served_name(self):
+        legs = [_leg(5, 50, "Under the lights", 0.3)]
+        m = _game({"other": [_other(50, 5, "Under the lights", 0.3)]}, legs, {50: _facts("Night game")})
+        (q,) = m["questions"]
+        assert [o["label"] for o in q["options"]] == ["Under the lights"]
 
 
 class TestRankIsNotCountOrPriceRank:
