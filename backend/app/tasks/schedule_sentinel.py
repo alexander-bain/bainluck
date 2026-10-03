@@ -196,6 +196,17 @@ def _load_overrides() -> None:
 # ---------------------------------------------------------------------------
 _TEAM_STOPWORDS = {"the", "fc", "sc", "cf", "afc", "club", "de"}
 
+#: Whole-name folds applied after city expansion (#10304 review). Once "LA"
+#: expands, ESPN's "LA Galaxy" becomes {los, angeles, galaxy} and our stored
+#: "Los Angeles FC" drops `fc` as a stopword to {los, angeles} — a subset, 0.85,
+#: so a Galaxy fixture bound to the LAFC club row (CERT-3134's wrong bind) would
+#: pass the critical MISATTACHED check. LAFC is one token everywhere else in the
+#: repo (`soccer_team_matching.CLUB_NAME_ALIASES`, `name_normalization.
+#: _CLUB_NAME_ALIASES`); WHOLE NAME only, so it never touches another club.
+_WHOLE_NAME_FOLDS = {
+    "los angeles fc": "lafc",
+}
+
 
 def _norm_name(s: Optional[str]) -> str:
     """Lowercase, strip punctuation to spaces, collapse whitespace.
@@ -214,12 +225,15 @@ def _norm_name(s: Optional[str]) -> str:
     "LA Clippers" where we store "Los Angeles Clippers", which scored 0.25 and
     filed a MISSING for a game we hold. Expansion runs last, on standalone
     tokens only, so the same-city guard is unchanged ("LA Clippers" still
-    misses "Los Angeles Lakers" at 0.5)."""
+    misses "Los Angeles Lakers" at 0.5). A city-only club name then folds to
+    its one-token form (``_WHOLE_NAME_FOLDS``) so "Los Angeles FC" is never a
+    subset of "LA Galaxy"."""
     s = unicodedata.normalize("NFKD", s or "")
     s = "".join(c for c in s if not unicodedata.combining(c)).lower()
     s = re.sub(r"['‘’ʻ]", "", s)
     s = re.sub(r"[^a-z0-9]+", " ", s)
-    return expand_city_abbreviations(" ".join(s.split()))
+    s = expand_city_abbreviations(" ".join(s.split()))
+    return _WHOLE_NAME_FOLDS.get(s, s)
 
 
 def _name_tokens(s: Optional[str]) -> frozenset:

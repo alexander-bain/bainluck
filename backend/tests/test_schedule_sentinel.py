@@ -175,6 +175,18 @@ class TestNameSimilarity:
         assert ss.name_similarity("LA Clippers", "Los Angeles Lakers") < ss.MATCH_BAR
         assert ss.name_similarity("LA Clippers", "LA Lakers") < ss.MATCH_BAR
 
+    def test_city_abbreviation_keeps_galaxy_and_lafc_apart(self):
+        # #10304 review: once "LA" expands, "Los Angeles FC" minus its `fc`
+        # stopword is a SUBSET of "LA Galaxy" (0.85) unless the whole name
+        # folds to LAFC's one token. Both argument orders, both spellings.
+        assert ss.name_similarity("LA Galaxy", "Los Angeles FC") < ss.MATCH_BAR
+        assert ss.name_similarity("Los Angeles FC", "LA Galaxy") < ss.MATCH_BAR
+        assert ss.name_similarity("Los Angeles Galaxy", "Los Angeles FC") < ss.MATCH_BAR
+        assert ss.name_similarity("LAFC", "LA Galaxy") < ss.MATCH_BAR
+        # The fold reads LAFC's two spellings as one club.
+        assert ss.name_similarity("LAFC", "Los Angeles FC") == 1.0
+        assert ss.name_similarity("LA Galaxy", "Los Angeles Galaxy") == 1.0
+
     def test_empty_names_never_match(self):
         assert ss.name_similarity("", "Boston Red Sox") == 0.0
         assert ss.name_similarity(None, None) == 0.0
@@ -387,6 +399,20 @@ class TestMisattached:
                if f["check"] == "schedule_misattached"]
         assert mis[0]["names_agree"] is True
         assert "a name-only check passes this row" in mis[0]["detail"]
+
+    def test_galaxy_fixture_bound_to_lafc_club_is_misattached(self):
+        """#10304 review (authority's discriminator): the Galaxy's fixture with
+        its home FK dereferencing to the `Los Angeles FC` club row — the wrong
+        bind CERT-3134 measured. City expansion made "LA Galaxy" ⊇ "Los Angeles
+        FC" and silenced this; the LAFC whole-name fold restores it."""
+        mls = next(s for s in ss.SCHEDULE_LEAGUES if s.slug == "mls")
+        truth = [_truth("LA Galaxy", "Colorado Rapids", start=_ago(3), hs=3, aws=2)]
+        ours = [_ours(15314006, "LA Galaxy", "Colorado Rapids", start=_ago(3),
+                      hs=3, aws=2, home_fk="Los Angeles FC")]
+        mis = [f for f in ss.reconcile(truth, ours, mls, NOW)[0]
+               if f["check"] == "schedule_misattached"]
+        assert len(mis) == 1
+        assert mis[0]["fk_name"] == "Los Angeles FC"
 
     def test_correctly_wired_team_id_is_not_flagged(self):
         """The other direction (gotcha #43)."""
