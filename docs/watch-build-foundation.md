@@ -139,3 +139,17 @@ say “Closed · result unverified”; the detail qualifies scores as last repor
 It neither presents a win forecast nor promotes those scores to a verified final
 result. Completed/final behavior stays distinct. Snapshot round-trip guards cover
 closed state too.
+
+## Hosted verification
+
+`.github/workflows/watch-mvp.yml` runs the standalone Swift behavior harness and
+both unsigned Release SDK builds on a GitHub-hosted macOS runner for changes to
+Watch inputs. Xcode 26.3 is explicitly selected from the macos-15 image; its default
+Xcode 16.4 cannot compile the current model syntax. It checks out and prints the
+exact PR head, uploads only build logs, and performs no simulator boot, signing,
+account or deployment operation. The new workflow's successful execution must be
+observed before claiming this gate paid. It is path-scoped, not a globally required
+check on unrelated iPhone PRs, and does not replace BainLuckTests or physical proof.
+
+The first attended device step group is in `docs/watch-device-trial.md`; no user
+input is needed for ongoing source or hosted verification.

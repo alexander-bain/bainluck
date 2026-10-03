@@ -1,0 +1,65 @@
+name: Watch MVP
+
+# A separate hosted runner: no local Native simulator or iPhone test resource.
+# This is scoped verification for #4932, not an iPhone release prerequisite.
+on:
+  pull_request:
+    paths:
+      - 'ios/Bain Luck/BainLuckWatch Watch App/**'
+      - 'ios/Bain Luck/Bain Luck/Models/PredictionModels.swift'
+      - 'ios/Bain Luck/Bain Luck/Utilities/PeriodLabel.swift'
+      - 'ios/Bain Luck/Bain Luck.xcodeproj/**'
+      - 'tools/watch-build.sh'
+      - 'tools/tests/watch-selected-game/**'
+      - '.github/workflows/watch-mvp.yml'
+  push:
+    branches: [master]
+    paths:
+      - 'ios/Bain Luck/BainLuckWatch Watch App/**'
+      - 'ios/Bain Luck/Bain Luck/Models/PredictionModels.swift'
+      - 'ios/Bain Luck/Bain Luck/Utilities/PeriodLabel.swift'
+      - 'ios/Bain Luck/Bain Luck.xcodeproj/**'
+      - 'tools/watch-build.sh'
+      - 'tools/tests/watch-selected-game/**'
+      - '.github/workflows/watch-mvp.yml'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: watch-mvp-${{ github.event_name == 'pull_request' && github.event.pull_request.number || github.run_id }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+jobs:
+  watch-mvp:
+    name: Watch behavior and unsigned builds
+    runs-on: macos-15
+    timeout-minutes: 20
+    env:
+      # macos-15 defaults to Xcode 16.4; these models need Swift 6.2 or newer.
+      # Xcode 26.3 is listed in actions/runner-images' macos-15 manifest.
+      DEVELOPER_DIR: /Applications/Xcode_26.3.app/Contents/Developer
+      WATCH_BUILD_CONFIGURATION: Release
+      WATCH_BUILD_JOBS: '2'
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          persist-credentials: false
+      - name: Record exact source and toolchain
+        run: |
+          git rev-parse HEAD
+          xcodebuild -version
+          xcrun swiftc --version
+      - name: Exercise selected-game behavior without network or simulator
+        run: bash tools/tests/watch-selected-game/run.sh
+      - name: Build unsigned Watch simulator and device executables
+        run: bash tools/watch-build.sh
+      - name: Preserve build diagnostics
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: watch-mvp-build-logs
+          path: build/watch-mvp/*.log
+          if-no-files-found: ignore
+          retention-days: 7
