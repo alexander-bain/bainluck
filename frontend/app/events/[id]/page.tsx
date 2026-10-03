@@ -130,6 +130,9 @@ import { isCloseGame, calculateMinutesToStart } from "@/lib/analytics";
 import { isPregameStatus } from "@/lib/settledQuote";
 import { derivePeriodBoundaries } from "@/lib/periodMarkers";
 import { authorityStoppageLabel, formatLiveClockLabel } from "@/lib/gameTimeLabel";
+import { carryGameStateForward, stampObservedGameState, type CarriedGameStateRow } from "@/lib/chartGameState";
+import { toMinuteKey } from "@/lib/chartTimeline";
+import { parseISO } from "date-fns";
 import {
   SUSPENDED_DESCRIPTION,
   VENUE_SETTLED_DESCRIPTION,
@@ -145,7 +148,7 @@ import {
   authorityStoppageDescription,
   scoresShowPlay,
 } from "@/lib/eventState";
-import type { ActiveChartPoint, TeamData } from "@/lib/types";
+import type { ActiveChartPoint, ESPNHistoryPoint, TeamData, WinProbHistoryPoint } from "@/lib/types";
 import TeamNameLink from "@/components/TeamNameLink";
 import { PinIcon } from "@/components/PinButton";
 import { teamShortNames, shippableCrestBadge } from "@/lib/teamShortName";
@@ -200,6 +203,39 @@ function heroCrestImage(
     teamData?.logo_small ||
     undefined
   );
+}
+
+/* #4889 — the game clock the newest-play strip under the chart is showing.
+   The strip carries period and clock forward from `espn_history` (win-prob
+   `game_state` filling what ESPN left empty in a minute), and this runs the
+   chart's own two steps over the same served rows, so the header cannot read a
+   different answer from the same history. `null` when history holds no period
+   or clock at all: the strip then has no clock, and the header's detail-payload
+   clock is the only one on the page. A clock carried from a row OLDER than the
+   period's is dropped rather than shown as current, which is what the strip's
+   `~` says about it. */
+function stripGameClock(
+  espnHistory: ESPNHistoryPoint[] | undefined,
+  winProbHistory: Record<string, WinProbHistoryPoint[]> | undefined,
+): { period: string | null; clock: string | null } | null {
+  const winProbSeries = Object.values(winProbHistory ?? {});
+  const rows = new Map<string, CarriedGameStateRow>();
+  for (const { timestamp } of [...(espnHistory ?? []), ...winProbSeries.flat()]) {
+    const key = toMinuteKey(timestamp);
+    if (!rows.has(key)) rows.set(key, { timestamp: key });
+  }
+  stampObservedGameState(rows, espnHistory ?? [], winProbSeries.length > 0 ? winProbSeries : null);
+  const sorted = Array.from(rows.values()).sort(
+    (a, b) => parseISO(a.timestamp).getTime() - parseISO(b.timestamp).getTime(),
+  );
+  const carried = carryGameStateForward(sorted);
+  const edge = carried[carried.length - 1];
+  if (!edge || (!edge._period && !edge._clock)) return null;
+  const clockIsCurrent =
+    !edge._periodObservedAt ||
+    (edge._clockObservedAt != null &&
+      parseISO(edge._clockObservedAt).getTime() >= parseISO(edge._periodObservedAt).getTime());
+  return { period: edge._period ?? null, clock: clockIsCurrent ? edge._clock ?? null : null };
 }
 
 const LIVE_REFRESH_INTERVAL = 32000; // Match backend LIVE_POLL_INTERVAL (32s)
@@ -581,12 +617,6 @@ export default function EventPage({ params }: EventPageProps) {
     wasStreamConnected.current = streamConnected;
   }, [streamConnected, refreshEvent]);
 
-  // UX-P051 (#1710) — which of ESPN's two clock fields the phase badge may
-  // believe. `espn.period` is ESPN's status detail, and while ESPN still has the
-  // game as scheduled that detail is a sentence ("Mon, August 10th at 8:00 PM
-  // EDT") shipped with `game_clock: "0.0"` — both untrustworthy together.
-  const liveClockLabel = formatLiveClockLabel(event?.espn?.period, event?.espn?.game_clock, " · ");
-
   // Track page view with event-specific parameters
   usePageTracking({
     pageType: 'event_detail',
@@ -811,6 +841,28 @@ export default function EventPage({ params }: EventPageProps) {
     },
     [servedHistory, event, quoteEligible, chartPoints],
   );
+
+  // UX-P051 (#1710) — which of ESPN's two clock fields the phase badge may
+  // believe. `espn.period` is ESPN's status detail, and while ESPN still has the
+  // game as scheduled that detail is a sentence ("Mon, August 10th at 8:00 PM
+  // EDT") shipped with `game_clock: "0.0"` — both untrustworthy together.
+  //
+  // #4889 — ONE CLOCK ON THE PAGE. The header read the detail payload and the
+  // newest-play strip under the chart reads `/history`; the two are re-read on
+  // the same 32s cadence but not together, so after a play one of them could
+  // say 0:42 while the other said 0:38 (production, Auburn at Tennessee,
+  // 2026-10-03). The history row carries the time it was observed and the
+  // detail clock carries none, so the header now prints the strip's clock and
+  // only falls back to the detail payload when history has no clock to show.
+  // When the strip's clock fails the trust rules the header says "LIVE" — it
+  // never substitutes a second clock.
+  const stripClock = useMemo(
+    () => stripGameClock(historyData?.espn_history, historyData?.win_prob_history),
+    [historyData?.espn_history, historyData?.win_prob_history],
+  );
+  const liveClockLabel = stripClock
+    ? formatLiveClockLabel(stripClock.period, stripClock.clock, " · ")
+    : formatLiveClockLabel(event?.espn?.period, event?.espn?.game_clock, " · ");
 
   // A newer membership revision may carry an older surviving quote. Keep the
   // real chart observations and ask history for its current-state endpoint;
