@@ -277,7 +277,7 @@ def test_artifact_is_exclusive_read_only_with_a_detached_digest(tmp_path):
     assert hashlib.sha256(data).hexdigest() == out["sha256"]
     assert out["sha256"] not in data.decode()  # the file never carries its own final-byte hash
     assert Path(out["path"] + ".sha256").read_text() == f"{out['sha256']}  plan.json\n"
-    assert oct(os.stat(out["path"]).st_mode & 0o777) == "0o444"
+    assert oct(os.stat(out["path"]).st_mode & 0o777) == "0o400"
     assert json.loads(data)["content_address"] == out["content_address"]
     with pytest.raises(r.Refused) as exc:
         _write_plan(tmp_path)
@@ -314,8 +314,8 @@ def _rewrite(path, payload):
     """Replace an artifact's bytes and sidecar consistently (a well-formed forgery)."""
     import hashlib
     data = (r.canonical_json(payload) + "\n").encode()
-    os.chmod(path, 0o644)
-    os.chmod(path + ".sha256", 0o644)
+    os.chmod(path, 0o600)
+    os.chmod(path + ".sha256", 0o600)
     Path(path).write_bytes(data)
     digest = hashlib.sha256(data).hexdigest()
     Path(path + ".sha256").write_text(f"{digest}  {os.path.basename(path)}\n")
@@ -355,17 +355,17 @@ def test_load_artifact_refuses(tmp_path, case, reason):
     elif case == "wrong_hash":
         digest = "0" * 64
     elif case == "byte_edit":
-        os.chmod(path, 0o644)
+        os.chmod(path, 0o600)
         Path(path).write_bytes(Path(path).read_bytes().replace(b"Ternana", b"Ternanb"))
     elif case == "sidecar":
-        os.chmod(path + ".sha256", 0o644)
+        os.chmod(path + ".sha256", 0o600)
         Path(path + ".sha256").write_text(f"{'1' * 64}  plan.json\n")
     elif case == "no_sidecar":
-        os.chmod(path + ".sha256", 0o644)
+        os.chmod(path + ".sha256", 0o600)
         os.remove(path + ".sha256")
     elif case == "corrupt":
-        os.chmod(path, 0o644)
-        os.chmod(path + ".sha256", 0o644)
+        os.chmod(path, 0o600)
+        os.chmod(path + ".sha256", 0o600)
         Path(path).write_bytes(b"{not json")
         import hashlib
         digest = hashlib.sha256(b"{not json").hexdigest()

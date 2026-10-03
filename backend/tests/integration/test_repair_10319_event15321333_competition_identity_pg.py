@@ -296,8 +296,10 @@ async def test_cas_alone_refuses_when_the_compare_was_bypassed(factory, tmp_path
 
 @pytest.mark.parametrize("sql", [
     "UPDATE futures_markets SET source = 'polymarket' WHERE id = 63152777",
-    "UPDATE futures_markets SET market_metadata = market_metadata || "
-    "'{\"competition_scope\": \"Season\"}' WHERE id = 63152777",
+    (
+        "UPDATE futures_markets SET market_metadata = market_metadata || "
+        "'{\"competition_scope\": \"Season\"}' WHERE id = 63152777"
+    ),
     "UPDATE sports SET active = false WHERE id = 427850",
 ])
 async def test_cas_market_and_sport_fence_refuses_when_identity_compare_was_bypassed(

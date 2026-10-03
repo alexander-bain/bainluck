@@ -402,7 +402,7 @@ def _write_once(path: str, data: bytes) -> None:
         _fsync(fd)
     finally:
         os.close(fd)
-    os.chmod(path, 0o444)
+    os.chmod(path, 0o400)  # owner read-only: immutable to the tool, unreadable to others
     dfd = os.open(os.path.dirname(path), os.O_RDONLY)
     try:
         _fsync(dfd)
@@ -723,6 +723,7 @@ async def _write_step(session_factory, *, mode: str, plan: dict, stmt, from_writ
     commit_error = ""
     try:
         async with session_factory() as session:
+            staged = False  # True only once every in-transaction check has passed
             try:
                 await session.execute(text(f"SET LOCAL lock_timeout = '{int(lock_timeout_ms)}ms'"))
                 await session.execute(
@@ -771,9 +772,10 @@ async def _write_step(session_factory, *, mode: str, plan: dict, stmt, from_writ
                 if back is None or bad or canon(back.get(BANKED_ONLY_COLUMN)) != wps_locked:
                     raise Refused("in_transaction_readback_mismatch",
                                   {"columns": bad, "row_missing": back is None})
-            except BaseException:
-                await session.rollback()
-                raise
+                staged = True
+            finally:
+                if not staged:  # any refusal, DB error or cancellation: nothing is kept
+                    await session.rollback()
             commit_attempted = True
             try:
                 await session.commit()
@@ -789,9 +791,7 @@ async def _write_step(session_factory, *, mode: str, plan: dict, stmt, from_writ
         if not commit_attempted:  # lock/statement timeout or any DB error before COMMIT
             return _result(mode, REFUSED, reason=_db_reason(exc),
                            detail=f"{type(exc).__name__}: {str(exc)[:160]}", **extra)
-        if committed:  # closing the session failed after a good COMMIT; verify below
-            pass
-        else:
+        if not committed:  # a good COMMIT whose session close failed is verified below
             commit_error = commit_error or f"{type(exc).__name__}: {str(exc)[:160]}"
 
     before_written = from_written
