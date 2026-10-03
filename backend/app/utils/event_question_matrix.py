@@ -139,6 +139,17 @@ _HANDICAP_NOUNS = ("spread", "run line", "handicap")
 _LEADING_PERIOD_RE = re.compile(rf"^{_PERIOD_TOKEN}\s+")
 _TRAILING_LINE_RE = re.compile(r"\s*[+-]?\d+(?:\.\d+)?$")
 
+# A5 — THE TWO SPELLINGS THAT NAME NO STAT MUST NAME THE GAME. A bare
+# `O/U <line>` or a bare `Spread` says nothing about WHAT is counted, and the
+# stat can sit before the last `:` (`Utah State Total Receptions: O/U 19.5` is
+# a real retained name, a `game_total` inside football's band). So those two
+# spellings prove the unit only when everything before the last `:` is this
+# event's matchup: exactly one separator, and each side's words a subset of a
+# DIFFERENT team's. That is proof the prefix names the game, not a denylist of
+# stat nouns.
+_MATCHUP_SEPARATOR_RE = re.compile(r"\s(?:vs\.|vs|v|at|@)\s")
+_WORD_RE = re.compile(r"\w+")
+
 # The Series card caps each market at ten legs (`outcomes_list[:10]`); §7
 # lists missing legs only at or below that size and never calls a capped
 # array complete.
@@ -217,7 +228,28 @@ def _last_segment(market_name: Optional[str]) -> str:
     return " ".join(str(market_name or "").rsplit(":", 1)[-1].split()).lower()
 
 
-def _count_unit_proven(market_name: Optional[str], unit: str) -> bool:
+def _prefix_is_the_matchup(
+    market_name: Optional[str], home_team: Optional[str], away_team: Optional[str],
+) -> bool:
+    """A5: is everything before the market name's last `:` this event's game?"""
+    name = str(market_name or "")
+    if ":" not in name:
+        return False
+    prefix = name.rsplit(":", 1)[0].lower()
+    parts = _MATCHUP_SEPARATOR_RE.split(prefix)
+    if len(parts) != 2:
+        return False
+    home = set(_WORD_RE.findall((home_team or "").lower()))
+    away = set(_WORD_RE.findall((away_team or "").lower()))
+    left, right = (set(_WORD_RE.findall(part)) for part in parts)
+    if not (left and right and home and away):
+        return False
+    return (left <= home and right <= away) or (left <= away and right <= home)
+
+
+def _count_unit_proven(
+    market_name: Optional[str], unit: str, home_team: Optional[str], away_team: Optional[str],
+) -> bool:
     """A4: does the stored market name say this count is in ``unit``?"""
     segment = _last_segment(market_name)
     plural = _UNIT_PLURAL.get(unit)
@@ -226,14 +258,19 @@ def _count_unit_proven(market_name: Optional[str], unit: str) -> bool:
         return match.group(1) == plural and plural in _TOTAL_PHRASE_NOUNS
     if segment == plural:
         return plural in _TEAM_SEGMENT_NOUNS
-    return _BARE_OU_RE.match(segment) is not None
+    return (
+        _BARE_OU_RE.match(segment) is not None
+        and _prefix_is_the_matchup(market_name, home_team, away_team)
+    )
 
 
-def _handicap_unit_proven(market_name: Optional[str]) -> bool:
+def _handicap_unit_proven(
+    market_name: Optional[str], home_team: Optional[str], away_team: Optional[str],
+) -> bool:
     """A4: is the market a bare handicap on the scoring unit, with no other
-    stat noun (`Corners Handicap` is not)?"""
+    stat noun (`Corners Handicap` is not)? A5: and is it this game's?"""
     segment = _TRAILING_LINE_RE.sub("", _LEADING_PERIOD_RE.sub("", _last_segment(market_name)))
-    return segment in _HANDICAP_NOUNS
+    return segment in _HANDICAP_NOUNS and _prefix_is_the_matchup(market_name, home_team, away_team)
 
 
 def _period(
@@ -623,7 +660,7 @@ def _type_count(entry, period, unit, market_name, home_team, away_team) -> dict:
     row = entry["row"]
     if period is None:
         return {"reason": "untyped_period"}
-    if unit is None or not _count_unit_proven(market_name, unit):
+    if unit is None or not _count_unit_proven(market_name, unit, home_team, away_team):
         return {"reason": "untyped_unit"}
     side = "game"
     if entry["array"] == "team_totals":
@@ -681,7 +718,7 @@ def _type_handicap(entry, period, unit, market_name, home_team, away_team) -> di
             and _is_half_line(abs(value))
         )
         line = value
-        unit_proven = unit is not None and _handicap_unit_proven(market_name)
+        unit_proven = unit is not None and _handicap_unit_proven(market_name, home_team, away_team)
     elif not signed:
         match = _MARGIN_RE.match(name)
         if match is not None:

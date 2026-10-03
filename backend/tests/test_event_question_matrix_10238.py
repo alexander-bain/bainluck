@@ -717,7 +717,8 @@ class TestHandicapSpellingsAndComplement:
 
     def test_a_signed_number_with_no_team_is_untyped_subject(self):
         legs = [_leg(1, 10, "Spread -1.5", 0.5)]
-        m = _game({"spreads": [_spread(10, 1, "Spread -1.5", 1.5, 0.5)]}, legs, {10: _facts("Spread")},
+        m = _game({"spreads": [_spread(10, 1, "Spread -1.5", 1.5, 0.5)]}, legs,
+                  {10: _facts("Gwangju vs FC Anyang: Spread")},
                   sport="soccer", home="Gwangju FC", away="FC Anyang")
         assert _q(m, "m:10")["typing"]["reason"] == "untyped_subject"
 
@@ -726,7 +727,8 @@ class TestHandicapSpellingsAndComplement:
         locality ("Boston") resolves and the nickname alone ("Celtics", the
         4970 fixture's spelling) does not. The matrix inherits that refusal."""
         legs = [_leg(1, 10, "Celtics -3.5", 0.54)]
-        m = _game({"spreads": [_spread(10, 1, "Celtics -3.5", 3.5, 0.54)]}, legs, {10: _facts("Spread")},
+        m = _game({"spreads": [_spread(10, 1, "Celtics -3.5", 3.5, 0.54)]}, legs,
+                  {10: _facts("Celtics at Knicks: Spread")},
                   sport="basketball", home="Boston Celtics", away="New York Knicks")
         assert _q(m, "m:10")["typing"]["reason"] == "untyped_subject"
 
@@ -913,6 +915,59 @@ class TestA4TheUnitIsProvenByTheMarketName:
                   {10: _facts("Red Sox vs Yankees: Total Goals")})
         assert _q(m, "m:10")["typing"]["reason"] == "untyped_unit"
 
+
+
+class TestA5TheBareSpellingsMustNameTheGame:
+    """Authority A5 on 8486d91962: a bare `O/U <line>` or a bare handicap noun
+    names no stat in its own segment, and the stat can sit before the last
+    `:`. Those spellings prove the unit only when that prefix is this event's
+    matchup. Each case below typed a false label on that sha."""
+
+    def test_a_real_total_receptions_market_is_not_points(self):
+        name = "Utah State Total Receptions: O/U 19.5"
+        assert _retained(name, "tests/test_football_ou_props_leave_the_points_ladder_6909.py")
+        market_type = events_route._classify_game_market(name)
+        assert market_type == "game_total"
+        legs = [_leg(1, 10, "Over", 0.5)]
+        m = _game({"totals": [_total(10, 1, "Over", 19.5, 0.5, market_name=name,
+                                     market_type=market_type)]},
+                  legs, {10: _facts(name)}, sport="americanfootball",
+                  home="Utah State Aggies", away="Air Force Falcons")
+        q = _q(m, "m:10")
+        assert q["typing"] == {"state": "untyped", "reason": "untyped_unit"}
+        assert m["coverage"]["untyped"]["untyped_unit"] == 1
+        assert "points" not in json.dumps([x["label"] for x in m["questions"]])
+
+    def test_a_real_corners_ou_forced_into_totals_is_not_goals(self):
+        name = "Japan Corners: O/U 4.5"
+        assert _retained(name, "tests/test_unpriceable_speaker_retirement_6642.py")
+        legs = [_leg(1, 10, "Over", 0.5)]
+        m = _game({"totals": [_total(10, 1, "Over", 4.5, 0.5, market_name=name)]},
+                  legs, {10: _facts(name)}, sport="soccer", home="DPR Korea", away="Japan")
+        assert _q(m, "m:10")["typing"]["reason"] == "untyped_unit"
+        assert "goals" not in json.dumps([x["label"] for x in m["questions"]])
+
+    def test_a_handicap_whose_prefix_carries_a_stat_is_not_a_goal_handicap(self):
+        name = "Arsenal vs Chelsea Corners: Handicap -1.5"
+        legs = [_leg(1, 10, "Arsenal -1.5", 0.5)]
+        m = _game({"spreads": [_spread(10, 1, "Arsenal -1.5", 1.5, 0.5, market_name=name)]},
+                  legs, {10: _facts(name)}, sport="soccer", home="Arsenal", away="Chelsea")
+        assert _q(m, "m:10")["typing"]["reason"] == "untyped_unit"
+        assert "goals" not in json.dumps([x["label"] for x in m["questions"]])
+
+    @pytest.mark.parametrize("name,home,away", [
+        # both sides are the SAME team: not two different teams
+        ("Arsenal vs Arsenal: Handicap -1.5", "Arsenal", "Chelsea"),
+        # two separators: not exactly one
+        ("Arsenal vs Chelsea at Wembley: Handicap -1.5", "Arsenal", "Chelsea"),
+        # another game's matchup
+        ("Liverpool vs Everton: Handicap -1.5", "Arsenal", "Chelsea"),
+    ])
+    def test_a_prefix_that_is_not_this_game_does_not_prove_the_unit(self, name, home, away):
+        legs = [_leg(1, 10, "Arsenal -1.5", 0.5)]
+        m = _game({"spreads": [_spread(10, 1, "Arsenal -1.5", 1.5, 0.5, market_name=name)]},
+                  legs, {10: _facts(name)}, sport="soccer", home=home, away=away)
+        assert _q(m, "m:10")["typing"]["reason"] == "untyped_unit"
 
 class TestF1StaysOnTheLegsOwnAxis:
     def test_an_under_legs_stored_zero_is_never_published_as_over_axis_zero(self):
