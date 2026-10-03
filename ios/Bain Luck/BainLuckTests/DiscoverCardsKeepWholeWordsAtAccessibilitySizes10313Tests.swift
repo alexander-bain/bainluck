@@ -11,7 +11,8 @@ import XCTest
 ///   the percent never wraps.
 /// - #10314: the futures card's source mark sat in the footer row with the
 ///   price-age mark, signal bars and share button, and hyphenated as
-///   "Polymar-" / "ket". The mark now keeps its whole width.
+///   "Polymar-" / "ket". At `isAccessibilitySize` the mark now takes its own
+///   full-width line, where it wraps only between words.
 ///
 /// Source-census guards, as in `WinProbabilityLabelTakesItsOwnLine8258Tests`: a
 /// SwiftUI body is not reachable from XCTest here, so these pin the wiring that
@@ -69,12 +70,42 @@ final class DiscoverCardsKeepWholeWordsAtAccessibilitySizes10313Tests: XCTestCas
 
     // MARK: #10314 — futures card source mark
 
-    func testTheSourceMarkKeepsItsWholeWidth() throws {
+    func testTheMarkTakesItsOwnLineAtAccessibilitySizes() throws {
         let text = collapsed(try source("DiscoverFuturesCard.swift"))
-        let mark = "Text(mark) .font(.caption2.weight(.heavy))"
-        XCTAssertEqual(occurrences(of: mark, in: text), 1, "one source mark on the card")
         XCTAssertEqual(
-            occurrences(of: mark + " .lineLimit(1) .fixedSize()", in: text), 1,
-            "a source mark without lineLimit(1)+fixedSize() hyphenates as 'Polymar-' / 'ket'")
+            occurrences(of: "let markOnOwnLine = dynamicTypeSize.isAccessibilitySize", in: text), 1,
+            "the mark's placement is decided once, from the view's own text size")
+        XCTAssertEqual(
+            occurrences(of: "if markOnOwnLine, let mark = sourceMark { sourceMarkLabel(mark, onOwnLine: true) }", in: text), 1,
+            "at accessibility sizes the mark needs its own full-width line above the footer row")
+        XCTAssertEqual(
+            occurrences(of: "HStack(spacing: 8) { if !markOnOwnLine, let mark = sourceMark { sourceMarkLabel(mark, onOwnLine: false) }", in: text), 1,
+            "the in-row placement must be gated, or the mark is drawn twice and still squeezed")
+    }
+
+    func testTheMarkIsOneDefinition() throws {
+        let text = try source("DiscoverFuturesCard.swift")
+        XCTAssertEqual(occurrences(of: "Text(mark)", in: text), 1)
+        XCTAssertEqual(
+            occurrences(of: "sourceMarkLabel(", in: text), 3,
+            "one declaration plus exactly two placements (own line, in row)")
+    }
+
+    func testTheMarkIsNeverPinnedToOneLine() throws {
+        // The first repair pinned the mark with lineLimit(1)+fixedSize(). A
+        // two-venue mark ("Kalshi + Polymarket") at a11y5 is wider than the card,
+        // so the pinned mark made the footer row wider than the screen and pushed
+        // the whole card off both edges (simulator, 2026-10-03). The mark may wrap
+        // between words; it may never insist on one line.
+        let text = collapsed(try source("DiscoverFuturesCard.swift"))
+        guard let start = text.range(of: "private func sourceMarkLabel("),
+              let end = text.range(of: "var body: some View", range: start.upperBound..<text.endIndex)
+        else { return XCTFail("sourceMarkLabel must exist and precede body") }
+        let definition = String(text[start.lowerBound..<end.lowerBound])
+        XCTAssertFalse(definition.contains(".lineLimit(1)"), "a one-line mark overflows the card at a11y5")
+        XCTAssertFalse(definition.contains(".fixedSize()"), "a fixed-width mark overflows the card at a11y5")
+        XCTAssertEqual(
+            occurrences(of: "if onOwnLine { label .fixedSize(horizontal: false, vertical: true)", in: definition), 1,
+            "on its own line the mark wraps between words and keeps its full height")
     }
 }
