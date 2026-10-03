@@ -104,6 +104,41 @@ _FIRST_FIVE_NAME_RE = re.compile(r"first 5|1st 5")
 # §4.1 signed handicap: exactly one signed number in the leg name.
 _SIGNED_NUMBER_RE = re.compile(r"[+-]\d+(?:\.\d+)?")
 
+# A4 — THE UNIT IS PROVEN BY THE MARKET'S OWN NAME, NEVER BY THE SPORT ALONE.
+#
+# The route classifies `Pro Baseball All-Star Game: Total Home Runs` as a
+# `game_total` and its 2.5 line sits inside baseball's band, so a unit read off
+# the sport would label it "3+ runs"; `Total Cards O/U 4.5` would read "5+
+# goals" and `Corners Handicap` "-1.5 goals". So a typed question's unit is
+# admitted only when the stored market name (the segment after its last `:`)
+# says it, in one of the spellings below, and the noun is the sport's own
+# scoring unit. Each spelling is pinned to a real retained market name in
+# `test_event_question_matrix_10238.py::TestEveryAdmittedSpelling` (A3); a
+# spelling with no retained name is not admitted (`: Goals` as a team stat
+# segment, `Puck Line`).
+#
+# A period token the §4.3 table reads, as it leads a market-name segment.
+_PERIOD_TOKEN = (
+    r"(?:(?:1st|2nd|first|second)\s+half|[12]h"
+    r"|(?:1st|2nd|3rd|4th)\s+quarter|[1-4]q"
+    r"|(?:1st|first)\s+5(?:\s+innings)?)"
+)
+# count: `Total Points` / `Team Total Runs` / `Total Goals` ending the segment.
+_TOTAL_PHRASE_RE = re.compile(
+    r"\btotal\s+(points|runs|goals)(?:\s+o/u\s+\d+(?:\.\d+)?)?\s*$"
+)
+_TOTAL_PHRASE_NOUNS = ("points", "runs", "goals")
+# count: a team-total stat segment that is exactly the unit (`Cubs at Cardinals: Runs`).
+_TEAM_SEGMENT_NOUNS = ("points", "runs")
+# count: the bare over/under shape (`Cardinals vs. Reds: O/U 10.5`), which names
+# no stat at all, so the scoring unit is the only thing it can count.
+_BARE_OU_RE = re.compile(rf"^(?:{_PERIOD_TOKEN}\s+)?o/u\s+\d+(?:\.\d+)?$")
+# signed handicap: the bare handicap noun, after a leading period token and a
+# trailing line are stripped (`1st Half Spread`, `First 5 Spread`, `Handicap -1.5`).
+_HANDICAP_NOUNS = ("spread", "run line", "handicap")
+_LEADING_PERIOD_RE = re.compile(rf"^{_PERIOD_TOKEN}\s+")
+_TRAILING_LINE_RE = re.compile(r"\s*[+-]?\d+(?:\.\d+)?$")
+
 # The Series card caps each market at ten legs (`outcomes_list[:10]`); §7
 # lists missing legs only at or below that size and never calls a capped
 # array complete.
@@ -178,6 +213,29 @@ def _team_name(side: str, home_team: Optional[str], away_team: Optional[str]) ->
     return home_team if side == "home" else away_team if side == "away" else None
 
 
+def _last_segment(market_name: Optional[str]) -> str:
+    return " ".join(str(market_name or "").rsplit(":", 1)[-1].split()).lower()
+
+
+def _count_unit_proven(market_name: Optional[str], unit: str) -> bool:
+    """A4: does the stored market name say this count is in ``unit``?"""
+    segment = _last_segment(market_name)
+    plural = _UNIT_PLURAL.get(unit)
+    match = _TOTAL_PHRASE_RE.search(segment)
+    if match is not None:
+        return match.group(1) == plural and plural in _TOTAL_PHRASE_NOUNS
+    if segment == plural:
+        return plural in _TEAM_SEGMENT_NOUNS
+    return _BARE_OU_RE.match(segment) is not None
+
+
+def _handicap_unit_proven(market_name: Optional[str]) -> bool:
+    """A4: is the market a bare handicap on the scoring unit, with no other
+    stat noun (`Corners Handicap` is not)?"""
+    segment = _TRAILING_LINE_RE.sub("", _LEADING_PERIOD_RE.sub("", _last_segment(market_name)))
+    return segment in _HANDICAP_NOUNS
+
+
 def _period(
     market_type: Optional[str],
     served_period: Optional[str],
@@ -185,15 +243,20 @@ def _period(
     sport_prefix: Optional[str],
     period_from_ticker: Callable[[Optional[str]], Optional[str]],
     period_from_name: Callable[[str, str], Optional[str]],
+    leg_name: Optional[str] = None,
 ) -> Optional[tuple[str, str]]:
-    """§4.3's period table, or ``None`` when the evidence names no period."""
+    """§4.3's period table, or ``None`` when the evidence names no period.
+
+    A4: a full-game type is ``full_game`` only when neither the market's name
+    NOR the leg's own name states a period — `Boston Celtics -3.5 1st half`
+    on a market called `Spread` is not a full-game line."""
     name = (facts or {}).get("name") or ""
     lname = name.lower()
     baseball = sport_prefix == "baseball"
     if baseball and _FIRST_FIVE_NAME_RE.search(lname):
         return _FIRST_FIVE
     if market_type in _FULL_GAME_TYPES:
-        return _FULL_GAME if period_from_name(name, "") is None else None
+        return _FULL_GAME if period_from_name(name, leg_name or "") is None else None
     if market_type in _PERIOD_TYPES and not baseball:
         ticker_label = period_from_ticker((facts or {}).get("external_id"))
         if ticker_label in _PERIOD_BY_LABEL:
@@ -546,19 +609,21 @@ def _type_entry(
         return _type_rank(entry, facts)
     period = _period(
         market_type, row.get("period"), facts, sport_prefix, period_from_ticker, period_from_name,
+        row.get("outcome_name"),
     )
+    market_name = (facts or {}).get("name")
     if array in ("totals", "team_totals") or market_type in _COUNT_PERIOD_TYPES:
-        return _type_count(entry, period, unit, home_team, away_team)
+        return _type_count(entry, period, unit, market_name, home_team, away_team)
     if array == "spreads" or market_type in _HANDICAP_PERIOD_TYPES:
-        return _type_handicap(entry, period, unit, home_team, away_team)
+        return _type_handicap(entry, period, unit, market_name, home_team, away_team)
     return None  # period winners: named options
 
 
-def _type_count(entry, period, unit, home_team, away_team) -> dict:
+def _type_count(entry, period, unit, market_name, home_team, away_team) -> dict:
     row = entry["row"]
     if period is None:
         return {"reason": "untyped_period"}
-    if unit is None:
+    if unit is None or not _count_unit_proven(market_name, unit):
         return {"reason": "untyped_unit"}
     side = "game"
     if entry["array"] == "team_totals":
@@ -593,13 +658,16 @@ def _type_count(entry, period, unit, home_team, away_team) -> dict:
     }
 
 
-def _type_handicap(entry, period, unit, home_team, away_team) -> dict:
+def _type_handicap(entry, period, unit, market_name, home_team, away_team) -> dict:
     row = entry["row"]
     name = entry["row"].get("outcome_name") or ""
     side: Optional[str] = None
     line: Optional[float] = None
     predicate_ok = False
     subject_evaluable = False
+    # The margin-strict branch proves its unit from the leg's own words; the
+    # signed-number branch proves it from the market's name (A4).
+    unit_proven = unit is not None
 
     signed = _SIGNED_NUMBER_RE.findall(name)
     if len(signed) == 1:
@@ -613,6 +681,7 @@ def _type_handicap(entry, period, unit, home_team, away_team) -> dict:
             and _is_half_line(abs(value))
         )
         line = value
+        unit_proven = unit is not None and _handicap_unit_proven(market_name)
     elif not signed:
         match = _MARGIN_RE.match(name)
         if match is not None:
@@ -629,7 +698,7 @@ def _type_handicap(entry, period, unit, home_team, away_team) -> dict:
 
     if period is None:
         return {"reason": "untyped_period"}
-    if unit is None:
+    if not unit_proven:
         return {"reason": "untyped_unit"}
     if subject_evaluable and side is None:
         return {"reason": "untyped_subject"}
@@ -712,9 +781,14 @@ def _game_option(entry: dict, side: str, lifecycle_state: str, shared: dict) -> 
         published = (None, "result", "result")
     elif served_value is not None:
         published = (served_value, "quoted", basis_quoted)
-    elif raws and all(r == 0.0 for r in raws) and result["state"] == "open":
+    elif (
+        raws and all(r == 0.0 for r in raws) and result["state"] == "open"
+        and not _published_on_a_sibling_axis(entry, legs_by_id)
+    ):
         # F1: the route serves a stored 0.0 as null (`if prob else None`);
-        # finite 0 is a real quote and the annotation says so.
+        # finite 0 is a real quote and the annotation says so — but only on
+        # the leg's OWN axis: an under leg's 0.0 on the over axis is 1.0, and
+        # nothing is computed here, so that case stays refused.
         published = (0.0, "quoted", basis_quoted)
     elif all(r is None for r in raws):
         published = (None, "unpriced", "unknown")
@@ -745,6 +819,16 @@ def _game_option(entry: dict, side: str, lifecycle_state: str, shared: dict) -> 
         "result": result,
         "comparison": comparison,
     }
+
+
+def _published_on_a_sibling_axis(entry: dict, legs_by_id: dict) -> bool:
+    """F2: is this totals row's value its under leg's sibling's (over) axis?"""
+    if not entry["total_axis"]:
+        return False
+    return any(
+        leg is not None and _leg_reads_under(leg.name)
+        for leg in (legs_by_id.get(cid) for cid in entry["contributor_ids"])
+    )
 
 
 def _game_evidence(entry: dict, side: str, shared: dict) -> list:

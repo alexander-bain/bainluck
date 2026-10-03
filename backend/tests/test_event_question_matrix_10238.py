@@ -775,62 +775,152 @@ class TestCoverageAndOrder:
         assert m["contract"] == "10238.v1" and m["series_markets_count"] is None
 
 
-# ── A3: every admitted spelling ships on a retained real market name ────────
+# ── A3 + A4: every admitted spelling ships on a retained real market name ───
 
+# (shape, market name, leg name, sport, home, away, retained in). The market
+# name is what proves the unit (A4), so it is the real one, never a stand-in.
 ADMITTED_SPELLINGS = (
-    # (spelling, real leg/market name, retained in)
-    ("over_k5", "Over 224.5", "tests/integration/test_route_events_seeded.py"),
-    ("over_k5", "Over 210.5", "tests/test_a_game_market_row_carries_its_own_price_age_4970.py"),
-    ("signed_name", "Gwangju -1.5", "tests/test_a_settled_margin_market_is_graded_from_the_final_score_6312.py"),
-    ("signed_name", "Boston Celtics -9.5", "tests/test_kalshi_spread_phrasing_3948.py"),
-    ("signed_name", "New York Yankees -1.5", "tests/test_pm_first_five_midgame_5088.py"),
-    ("signed_name", "Tampa Bay -1.5", "tests/test_a_settled_ladder_keeps_its_losing_rungs_6196.py"),
-    ("margin_strict", "Gwangju wins by more than 1.5 goals",
+    ("count:total_phrase", "Celtics at Knicks: Total Points", "Over 210.5", "basketball",
+     "Boston Celtics", "New York Knicks", "tests/test_a_game_market_row_carries_its_own_price_age_4970.py"),
+    ("count:total_phrase", "Yankees at Red Sox: Total Runs", "Over 8.5", "baseball",
+     "Boston Red Sox", "New York Yankees", "tests/test_game_markets.py"),
+    ("count:total_phrase", "Oilers at Kings: Total Goals", "Over 5.5", "icehockey",
+     "Los Angeles Kings", "Edmonton Oilers", "tests/test_game_markets.py"),
+    ("count:team_segment", "LAL Lakers at BOS Celtics: Points", "Over 110.5", "basketball",
+     "Boston Celtics", "Los Angeles Lakers", "tests/test_repair_kalshi_nhl_prop_category_4365.py"),
+    ("count:team_segment", "Cubs at Cardinals: Runs", "Over 4.5", "baseball",
+     "St. Louis Cardinals", "Chicago Cubs", "tests/test_futures_categorization.py"),
+    ("count:bare_ou", "Cardinals vs. Reds: O/U 10.5", "Over", "baseball",
+     "Cincinnati Reds", "St. Louis Cardinals", "tests/test_a_runs_map_is_not_four_players_props_3594.py"),
+    ("count:bare_ou", "IR Iran vs. New Zealand: 1st Half O/U 1.5", "Over", "soccer",
+     "IR Iran", "New Zealand", "tests/test_ladder_coherence_p106.py"),
+    ("handicap:spread", "Gwangju vs FC Anyang: Spread", "Gwangju -1.5", "soccer",
+     "Gwangju FC", "FC Anyang", "tests/test_a_settled_margin_market_is_graded_from_the_final_score_6312.py"),
+    ("handicap:spread", "Dallas vs New York: Spread", "Dallas -3.5", "americanfootball",
+     "Dallas Cowboys", "New York Giants", "tests/test_kalshi_spread_phrasing_3948.py"),
+    ("handicap:run_line", "Yankees at Red Sox: Run Line", "Boston Red Sox -1.5", "baseball",
+     "Boston Red Sox", "New York Yankees", "tests/test_game_market_class.py"),
+    ("handicap:first_5_spread", "Tampa Bay vs Atlanta: First 5 Spread", "Tampa Bay -1.5", "baseball",
+     "Tampa Bay Rays", "Atlanta Braves", "tests/test_deep_otm_settled_spread_4845.py"),
+    ("handicap:handicap", "Arsenal vs Chelsea: Handicap -1.5", "Arsenal -1.5", "soccer",
+     "Arsenal", "Chelsea", "tests/evals/fixtures/soccer_classifier_contract.json"),
+    ("handicap:margin_strict", "Gwangju vs FC Anyang: Spread", "Gwangju wins by more than 1.5 goals",
+     "soccer", "Gwangju FC", "FC Anyang",
      "tests/test_a_settled_margin_market_is_graded_from_the_final_score_6312.py"),
-    ("top_n", "Presidents Cup - Top 10 Finish", "tests/test_golf_team_match_play_has_no_individual_markets_7985.py"),
+    ("rank:top_n", "Presidents Cup - Top 10 Finish", "Yes", "golf", None, None,
+     "tests/test_golf_team_match_play_has_no_individual_markets_7985.py"),
 )
 
-_TEAMS = {
-    "Over 224.5": ("basketball", "Boston Celtics", "New York Knicks"),
-    "Over 210.5": ("basketball", "Boston Celtics", "New York Knicks"),
-    "Gwangju -1.5": ("soccer", "Gwangju FC", "FC Anyang"),
-    "Boston Celtics -9.5": ("basketball", "Boston Celtics", "New York Knicks"),
-    "New York Yankees -1.5": ("baseball", "Boston Red Sox", "New York Yankees"),
-    "Tampa Bay -1.5": ("baseball", "Tampa Bay Rays", "Atlanta Braves"),
-    "Gwangju wins by more than 1.5 goals": ("soccer", "Gwangju FC", "FC Anyang"),
-}
+
+def _retained(text: str, path: str) -> bool:
+    return f'"{text}"' in (BACKEND / path).read_text()
 
 
 class TestEveryAdmittedSpelling:
-    @pytest.mark.parametrize("spelling,name,source_file", ADMITTED_SPELLINGS,
+    @pytest.mark.parametrize("shape,market,leg,sport,home,away,source_file", ADMITTED_SPELLINGS,
                              ids=[f"{s[0]}:{s[1]}" for s in ADMITTED_SPELLINGS])
-    def test_the_spelling_types_on_its_retained_name(self, spelling, name, source_file):
-        assert f'"{name}"' in (BACKEND / source_file).read_text(), (
-            f"{name!r} is no longer retained in {source_file}"
-        )
-        if spelling == "top_n":
-            legs = [_leg(1, 10, "Yes", 0.4)]
-            m = _game({"other": [_other(10, 1, "Yes", 0.4, market_name=name)]}, legs,
-                      {10: _facts(name, meta={"shape": {"outcome_relation": "independent_participation"}})},
-                      sport="golf")
+    def test_the_spelling_types_on_its_retained_real_market(
+        self, shape, market, leg, sport, home, away, source_file,
+    ):
+        assert _retained(market, source_file), f"{market!r} is no longer retained in {source_file}"
+        legs = [_leg(1, 10, leg, 0.5)]
+        if shape == "rank:top_n":
+            m = _game({"other": [_other(10, 1, leg, 0.5, market_name=market)]}, legs,
+                      {10: _facts(market, meta={"shape": {"outcome_relation": "independent_participation"}})},
+                      sport=sport)
             assert m["questions"][0]["kind"] == "rank_predicate"
             return
-        sport, home, away = _TEAMS[name]
-        threshold = events_route._extract_threshold(name)
-        legs = [_leg(1, 10, name, 0.5)]
-        if spelling == "over_k5":
-            served = {"totals": [_total(10, 1, name, threshold, 0.5)]}
+        line = events_route._extract_threshold(market if shape == "count:bare_ou" else leg)
+        if shape.startswith("count:"):
+            row = _total(10, 1, leg, line, 0.5, market_name=market,
+                         market_type="team_total" if shape == "count:team_segment" else "game_total")
+            if shape == "count:team_segment":
+                row["team_side"] = "home"
+                served = {"team_totals": [row]}
+            elif "1st Half" in market:
+                row["market_type"], row["period"] = "half_total", "1H"
+                served = {"period_markets": [row]}
+            else:
+                served = {"totals": [row]}
         else:
-            served = {"spreads": [_spread(10, 1, name, threshold, 0.5)]}
-        m = _game(served, legs, {10: _facts("Game")}, sport=sport, home=home, away=away)
+            served = {"spreads": [_spread(10, 1, leg, line, 0.5, market_name=market)]}
+        m = _game(served, legs, {10: _facts(market)}, sport=sport, home=home, away=away)
         (q,) = m["questions"]
-        assert q["typing"] == {"state": "typed", "reason": None}, q["typing"]
-        assert q["kind"] == ("count_threshold" if spelling == "over_k5" else "signed_handicap")
+        assert q["typing"] == {"state": "typed", "reason": None}, (q["typing"], q["question_key"])
+        assert q["kind"] == ("count_threshold" if shape.startswith("count:") else "signed_handicap")
 
     def test_the_n_plus_leg_spelling_has_no_retained_fixture_and_is_refused(self):
         legs = [_leg(1, 10, "8+", 0.5)]
         m = _game({"totals": [_total(10, 1, "8+", 8.0, 0.5)]}, legs, {10: _facts("Total Runs")})
         assert _q(m, "m:10")["typing"]["reason"] == "untyped_predicate"
+
+
+class TestA4TheUnitIsProvenByTheMarketName:
+    """Authority A4 on c326156218: the unit and the full-game period were
+    admitted on evidence that did not prove them. Each case below typed a
+    false label on that sha."""
+
+    def test_a_real_total_home_runs_market_is_not_runs(self):
+        name = "Pro Baseball All-Star Game: Total Home Runs"
+        assert _retained(name, "tests/fixtures/prop_family_keys_before_6630.json")
+        legs = [_leg(1, 10, "Over 2.5", 0.5)]
+        m = _game({"totals": [_total(10, 1, "Over 2.5", 2.5, 0.5, market_name=name)]}, legs,
+                  {10: _facts(name)})
+        q = _q(m, "m:10")
+        assert q["kind"] == "named_options"
+        assert q["typing"] == {"state": "untyped", "reason": "untyped_unit"}
+        assert m["coverage"]["untyped"]["untyped_unit"] == 1
+        assert "runs" not in json.dumps([x["label"] for x in m["questions"]])
+
+    @pytest.mark.parametrize("name,leg,line,market_type,period,sport", [
+        ("Arsenal vs Chelsea: Total Cards O/U 4.5", "Over", 4.5, "game_total", None, "soccer"),
+        ("Bills at Texans: 1st Half Total Touchdowns", "Over 2.5", 2.5, "half_total", "1H", "americanfootball"),
+    ])
+    def test_cards_and_touchdowns_are_not_goals_or_points(self, name, leg, line, market_type, period, sport):
+        legs = [_leg(1, 10, leg, 0.5)]
+        row = _total(10, 1, leg, line, 0.5, market_name=name, market_type=market_type, period=period)
+        served = {"period_markets": [row]} if market_type == "half_total" else {"totals": [row]}
+        m = _game(served, legs, {10: _facts(name, external_id="KXNFL1HTOTAL-X" if period else None)},
+                  sport=sport, home="Houston Texans", away="Buffalo Bills")
+        assert _q(m, "m:10")["typing"]["reason"] == "untyped_unit"
+
+    def test_a_corners_handicap_is_not_a_goal_handicap(self):
+        legs = [_leg(1, 10, "Arsenal -1.5", 0.5)]
+        m = _game({"spreads": [_spread(10, 1, "Arsenal -1.5", 1.5, 0.5,
+                                       market_name="Arsenal vs Chelsea: Corners Handicap")]},
+                  legs, {10: _facts("Arsenal vs Chelsea: Corners Handicap")},
+                  sport="soccer", home="Arsenal", away="Chelsea")
+        assert _q(m, "m:10")["typing"]["reason"] == "untyped_unit"
+
+    def test_a_period_stated_only_in_the_leg_is_not_full_game(self):
+        legs = [_leg(1, 10, "Boston Celtics -3.5 1st half", 0.5)]
+        m = _game({"spreads": [_spread(10, 1, "Boston Celtics -3.5 1st half", 3.5, 0.5,
+                                       market_name="Celtics at Knicks: Spread")]},
+                  legs, {10: _facts("Celtics at Knicks: Spread")},
+                  sport="basketball", home="Boston Celtics", away="New York Knicks")
+        assert _q(m, "m:10")["typing"]["reason"] == "untyped_period"
+
+    def test_a_puck_line_has_no_retained_name_and_is_not_admitted(self):
+        legs = [_leg(1, 10, "Edmonton Oilers -1.5", 0.5)]
+        m = _game({"spreads": [_spread(10, 1, "Edmonton Oilers -1.5", 1.5, 0.5)]}, legs,
+                  {10: _facts("Oilers at Kings: Puck Line")}, sport="icehockey",
+                  home="Los Angeles Kings", away="Edmonton Oilers")
+        assert _q(m, "m:10")["typing"]["reason"] == "untyped_unit"
+
+    def test_a_noun_of_another_sport_is_not_this_sports_unit(self):
+        legs = [_leg(1, 10, "Over 5.5", 0.5)]
+        m = _game({"totals": [_total(10, 1, "Over 5.5", 5.5, 0.5)]}, legs,
+                  {10: _facts("Red Sox vs Yankees: Total Goals")})
+        assert _q(m, "m:10")["typing"]["reason"] == "untyped_unit"
+
+
+class TestF1StaysOnTheLegsOwnAxis:
+    def test_an_under_legs_stored_zero_is_never_published_as_over_axis_zero(self):
+        legs = [_leg(1, 10, "Under 7.5", 0.0)]
+        m = _game({"totals": [_total(10, 1, "Under 7.5", 7.5, None)]}, legs, {10: _facts("Total Runs")})
+        opt = m["questions"][0]["options"][0]
+        assert opt["published"]["value"] is None
+        assert opt["published"]["value_state"] == "refused"
 
 
 # ── the route: served JSON, legacy byte-identity, the under-leg parity ──────
