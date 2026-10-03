@@ -4081,6 +4081,52 @@ def _traded_contenders_before_thin_names(
     return rest[:thin_at] + moving + rest[thin_at:]
 
 
+def _window_cut_contender_armed(page, window_rows, window_size, expanded) -> bool:
+    """#10230 r2: should the headline lane also read traded contenders below tier 1?
+
+    Only when the SQL window came back FULL (so its cut can have dropped one), a
+    thin name match is in view (so there is a row for a contender to beat), and
+    the window holds no traded contender already (r1's reranker has it then).
+    """
+    return (
+        len(window_rows) >= window_size
+        and any(
+            _query_name_match(m, expanded) and _market_volume(m) < MIN_CONTENDER_VOLUME
+            for m in page
+        )
+        and not any(
+            not _query_name_match(m, expanded) and is_traded_contender_market(m, expanded)
+            for m in window_rows
+        )
+    )
+
+
+def _insert_window_cut_contender(page, rows, expanded, dedup_key) -> list:
+    """#10230 r2: place ONE traded contender the window cut, by r1's rule.
+
+    `rows` is the lane's `any_tier` read. A tier-1 row is the headline
+    promoter's, a row already on the page or restating one (`dedup_key`) is
+    skipped, and the first remaining traded contender goes just ahead of the
+    first thin name match via `_traded_contenders_before_thin_names`. The page
+    keeps its length: the tail row yields, as in `promote_headline_contenders`.
+    With no thin name match ahead of it the appended row is the one trimmed, so
+    the page comes back unchanged.
+    """
+    seen_ids = {getattr(m, "id", None) for m in page}
+    seen_keys = {dedup_key(m) for m in page}
+    for m in rows:
+        if (
+            getattr(m, "market_tier", None) == HEADLINE_MARKET_TIER
+            or getattr(m, "id", None) in seen_ids
+            or _query_name_match(m, expanded)
+            or not is_traded_contender_market(m, expanded)
+            or dedup_key(m) in seen_keys
+        ):
+            continue
+        return _traded_contenders_before_thin_names([*page, m], expanded)[: len(page)]
+    return page
+
+
 def _rerank_search_futures(
     markets: list,
     expanded: list[tuple[str, str | None]],
@@ -8666,8 +8712,17 @@ def _headline_contender_outcome_clause(pattern):
     )
 
 
-def _headline_contender_statement(patterns, open_now, *, limit, options=()):
+def _headline_contender_statement(patterns, open_now, *, limit, options=(), any_tier=False):
     """The headline-contender lane's SELECT, for BOTH call sites.
+
+    `any_tier` (#10230 r2) drops the tier-1 clause and orders tier-1 rows FIRST,
+    so the headline rows the lane always asked for still fill `limit` ahead of
+    the rest. The callers arm it only when the 20-row window came back full with
+    a thin name match in view: the window orders name matches and then market
+    tier, so a traded contender below tier 1 is exactly the row its cut drops.
+    Production 2026-10-02, `judge`: 11 name matches plus 9 tier 1-3 outcome rows
+    filled the window, and "MLB The Show 27: Cover Athlete" (tier 5, Judge 8.5%,
+    $21.8k) never reached the reranker that r1 taught to lift it.
 
     ONE builder for the same reason `_headline_contender_outcome_clause` is one
     helper: `/search` and `/typeahead` run the identical lane, #3394 is the
@@ -8731,9 +8786,10 @@ def _headline_contender_statement(patterns, open_now, *, limit, options=()):
     stmt = select(FuturesMarket)
     for option in options:
         stmt = stmt.options(option)
+    is_headline_tier = FuturesMarket.market_tier == HEADLINE_MARKET_TIER
     return (
         stmt.where(
-            FuturesMarket.market_tier == HEADLINE_MARKET_TIER,
+            *(() if any_tier else (is_headline_tier,)),
             FuturesMarket.volume >= MIN_CONTENDER_VOLUME,
             # SELECTIVE FIRST — see the plan note above.
             *[_headline_contender_outcome_clause(pattern) for pattern in patterns],
@@ -8743,6 +8799,7 @@ def _headline_contender_statement(patterns, open_now, *, limit, options=()):
         # trusts, and `id` after it keeps the order TOTAL for the same LAT-P111
         # reason the main window needs one.
         .order_by(
+            *((is_headline_tier.desc().nulls_last(),) if any_tier else ()),
             FuturesMarket.volume.desc().nulls_last(),
             FuturesMarket.id.asc(),
         )
@@ -12868,6 +12925,12 @@ async def search_events(
         # and a coroutine is not an async context manager (#3394 measured 56
         # existing tests broken by the `async with` spelling, with the production
         # path correct in both).
+        # #10230 r2: the absent arm also reads traded contenders below tier 1
+        # when the window's cut can have dropped one (the hoist arm reads only
+        # rows already on the page, so it never needs to).
+        _headline_any_tier = _headline_absent_arm and _window_cut_contender_armed(
+            futures_markets, futures_markets_raw, _SEARCH_FUTURES_WINDOW, expanded
+        )
         _headline_savepoint = await db.begin_nested()
         try:
             _headline_statement = _headline_contender_statement(
@@ -12878,6 +12941,7 @@ async def search_events(
                     selectinload(FuturesMarket.sport),
                     selectinload(FuturesMarket.outcomes),
                 ),
+                any_tier=_headline_any_tier,
             )
             if _headline_hoist_ids:
                 # #9587: the hoist arm may only answer about rows already shipped.
@@ -12967,8 +13031,20 @@ async def search_events(
         # already matches cannot spend a reserved slot on a row the page holds
         # (Sabalenka's tier-1 "…vs Camila Osorio: Set 1 Winner" is a name match
         # and is filtered here, not by a second hand-rolled rule).
+        # #10230 r2: a traded contender below tier 1 is not a headline; it takes
+        # r1's slot ahead of the first thin name match instead.
+        if _headline_any_tier:
+            futures_markets = _insert_window_cut_contender(
+                futures_markets, _headline_rows, expanded,
+                _normalize_futures_dedup_key,
+            )
         _headline_rows = [
-            m for m in _headline_rows if not _query_name_match(m, expanded)
+            m for m in _headline_rows
+            if not _query_name_match(m, expanded)
+            and (
+                not _headline_any_tier
+                or getattr(m, "market_tier", None) == HEADLINE_MARKET_TIER
+            )
         ]
         futures_markets, _headline_promoted = promote_headline_contenders(
             futures_markets,
@@ -15355,6 +15431,11 @@ async def typeahead_search(
         # here broke 56 existing tests across the typeahead and search suites
         # while the production path stayed correct — the failure would have been
         # read as "the fix is wrong" rather than "the mock cannot spell it".
+        # #10230 r2: the same read, minus its tier clause, when the window's cut
+        # can have dropped a traded contender — see `_headline_contender_statement`.
+        _ta_any_tier = _window_cut_contender_armed(
+            ta_futures_ranked[:5], _ta_futures_rows, _TYPEAHEAD_FUTURES_POOL, ta_expanded
+        )
         _ta_savepoint = await db.begin_nested()
         try:
             _ta_headline_result = await db.execute(
@@ -15363,12 +15444,18 @@ async def typeahead_search(
                     _ta_open_now,
                     limit=5,
                     options=(selectinload(FuturesMarket.outcomes),),
+                    any_tier=_ta_any_tier,
                 )
             )
+            _ta_lane_rows = list(_ta_headline_result.scalars().unique().all())
             _ta_headline_rows = [
                 m
-                for m in _ta_headline_result.scalars().unique().all()
+                for m in _ta_lane_rows
                 if not _query_name_match(m, ta_expanded)
+                and (
+                    not _ta_any_tier
+                    or getattr(m, "market_tier", None) == HEADLINE_MARKET_TIER
+                )
             ]
         except Exception as exc:  # noqa: BLE001
             # THE SAVEPOINT ROLLBACK, and it comes before the re-raise decision
@@ -15415,12 +15502,18 @@ async def typeahead_search(
             # only, and the stages after it must run against the request
             # deadline, not against a 2s budget left lying around.
             await _apply_search_statement_timeout(db, _ta_deadline)
+            _ta_lane_rows = []
             _ta_headline_rows = []
         else:
             # RELEASE the savepoint on the happy path. Not cosmetic: an
             # unreleased savepoint is held for the rest of the transaction, and
             # this lane runs on every eligible keystroke.
             await _ta_savepoint.commit()
+        if _ta_any_tier:
+            ta_futures_ranked = _insert_window_cut_contender(
+                ta_futures_ranked, _ta_lane_rows, ta_expanded,
+                _normalize_futures_dedup_key,
+            )
         ta_futures_ranked, _ta_headline_promoted = promote_headline_contenders(
             ta_futures_ranked,
             _live_twin_first(_ta_headline_rows),  # #8417, as on /search
