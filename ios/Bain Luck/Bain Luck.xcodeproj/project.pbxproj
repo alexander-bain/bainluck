@@ -104,9 +104,6 @@
 		A707F8062FA91A3700A4D63C /* Exceptions for "Bain Luck" folder in "BainLuckWatch Watch App" target */ = {
 			isa = PBXFileSystemSynchronizedBuildFileExceptionSet;
 			membershipExceptions = (
-				Models/CommonTypes.swift,
-				Models/EventModels.swift,
-				Models/FeedModels.swift,
 				Models/PredictionModels.swift,
 				Utilities/PeriodLabel.swift,
 			);
@@ -330,12 +327,10 @@
 				A70F400D2FA6C20000170BF2 /* Sources */,
 				A70F400E2FA6C20000170BF2 /* Frameworks */,
 				A70F400F2FA6C20000170BF2 /* Resources */,
-				A7C0000000000000000000DC /* Embed Foundation Extensions */,
 			);
 			buildRules = (
 			);
 			dependencies = (
-				A7C0000000000000000000DA /* PBXTargetDependency */,
 			);
 			fileSystemSynchronizedGroups = (
 				A70F40152FA6C20000170BF2 /* BainLuckWatch Watch App */,
