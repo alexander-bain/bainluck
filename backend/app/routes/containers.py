@@ -226,7 +226,97 @@ async def _hydrate_event_cards(db: AsyncSession, event_ids: list) -> tuple[dict,
         cards[int(e.id)] = card
 
     await attach_venue_settlement(db, formatted_events, formatted, datetime.now(timezone.utc))
+    await _attach_settled_prematch(db, formatted_events, cards, folded_map)
     return cards, failed
+
+
+async def _attach_settled_prematch(db: AsyncSession, events: list, cards: dict, folded_map: dict) -> None:
+    """A settled hub card's ``prematch_odds`` — the number its own page prints. #10273.
+
+    The list card this hub reuses carries only ``opening_odds``, the sportsbook
+    median. The event page (#8315) and the Discover card serve ``prematch_odds``
+    off Alex's ladder (Kalshi → Polymarket → sportsbooks), so a reader tapping a
+    finished game on the NFL Week 4 hub watched its number move: Steelers @
+    Browns (14780550) printed 59% on the hub and "Pre-match 60%" on its page,
+    measured 2026-10-03 03:05Z. The iPhone card already prefers this key.
+
+    NO SECOND LADDER: the same statement (``PREMATCH_PRIOR_SQL``, bound by
+    ``prematch_prior_binds`` so only settled, kicked-off rows read), the same
+    row shape, the same resolver and the same paired rounding as
+    ``events._settled_prematch_odds`` — one read for the whole hub instead of
+    one per card. The books rung is the opening line this card already prints
+    (the fold's, #5853), through the event route's truthiness test.
+
+    A failed read costs the hub this key and nothing else: it runs in a
+    SAVEPOINT, and every card then answers from its books rung alone.
+    """
+    from app.utils.graded_card import rendered_duel_percents
+    from app.utils.kalshi_occurrence_start import loaded_sport_key
+    from app.utils.prematch_reading import (
+        PREMATCH_PRIOR_SQL,
+        prematch_prior_binds,
+        prematch_row_to_reading,
+        resolve_prematch_reading,
+    )
+
+    binds = prematch_prior_binds(events)
+    if binds is None:
+        return
+    by_event: dict = {}
+    try:
+        nested = await db.begin_nested()
+        try:
+            for row in (await db.execute(text(PREMATCH_PRIOR_SQL), binds)).all():
+                by_event.setdefault(row.event_id, {}).setdefault(
+                    row.source, prematch_row_to_reading(row)
+                )
+        except Exception:
+            try:
+                await nested.rollback()
+            except Exception:  # noqa: BLE001 — the read's error is the one to report
+                pass
+            raise
+        await nested.commit()
+    except Exception as exc:  # noqa: BLE001 — one optional key, never the hub
+        by_event = {}
+        logger.warning(
+            "container hub: pre-match venue read failed (%s) — books rung only",
+            type(exc).__name__,
+        )
+
+    settled_ids = set(binds["ids"])
+    for e in events:
+        card = cards.get(int(e.id))
+        if card is None or e.id not in settled_ids:
+            continue
+        folded = folded_map.get(e.id)
+        open_home, open_away = (
+            folded.opening
+            if folded is not None
+            else (e.opening_home_probability, e.opening_away_probability)
+        )
+        try:
+            reading = resolve_prematch_reading(
+                by_source=by_event.get(e.id, {}),
+                books_home=float(open_home) if open_home else None,
+                books_away=float(open_away) if open_away else None,
+                sport=loaded_sport_key(e) or "",
+            )
+            if reading is None:
+                continue
+            away_pct, home_pct = rendered_duel_percents(
+                reading["away_probability"], reading["home_probability"]
+            )
+        except Exception:  # noqa: BLE001 — gotcha #42: one card, never the hub
+            logger.exception("container hub: event %s pre-match reading failed", e.id)
+            continue
+        card["prematch_odds"] = {
+            "home_probability": reading["home_probability"],
+            "away_probability": reading["away_probability"],
+            "home_rendered_percent": home_pct,
+            "away_rendered_percent": away_pct,
+            "source": reading["source"],
+        }
 
 
 async def _hydrate_market_cards(
