@@ -441,20 +441,35 @@ struct EvolutionChartView: View {
             case .today:
                 fetchHours = 24
             }
+            // #10244: a verified detail draws `/history`'s de-vigged lines, asked
+            // alongside the timeline so the chart costs no extra round trip.
+            async let detailHistory = Self.verifiedHistoryLines(
+                marketId: marketId, hours: fetchHours,
+                when: VerifiedTitleHistory.drawsSourceHistory(
+                    detail: expectation?.representation, response: nil))
             let result = try await APIClient.shared.fetchProbabilityTimeline(
                 marketId: marketId, top: 50, hours: fetchHours, representation: representation
             )
             guard !Task.isCancelled, generation == requestGeneration else { return }
+            let withholds: Bool
             switch agreement.step(result, generation: .init(
                 refreshToken: refreshToken, range: selectedRange.rawValue, expectation: expectation)) {
             case .refetch:
                 // Discarded, never drawn: one more read for this generation.
                 await loadData()
                 return
-            case .adopt(let withholds):
-                withholdsCurrent = withholds
+            case .adopt(let withholdsCurrentColumn):
+                withholds = withholdsCurrentColumn
             }
-            data = result
+            var lines = try await detailHistory
+            if lines == nil, VerifiedTitleHistory.drawsSourceHistory(
+                detail: expectation?.representation, response: result.effectiveRepresentation) {
+                // The response is verified though the detail was not (yet).
+                lines = try await Self.verifiedHistoryLines(marketId: marketId, hours: fetchHours, when: true)
+            }
+            guard !Task.isCancelled, generation == requestGeneration else { return }
+            withholdsCurrent = withholds
+            data = lines.map { VerifiedTitleHistory.drawing($0, over: result) } ?? result
             requestedHours = fetchHours
             if selectedNames.isEmpty {
                 selectedNames = Set(result.outcomes.prefix(3).map(\.name))
@@ -506,6 +521,15 @@ struct EvolutionChartView: View {
             errorIsRetryable = true
             loading = false
         }
+    }
+
+    /// #10244 — the verified chart's lines; nil (draw the timeline as served) for
+    /// every source-mode chart.
+    private static func verifiedHistoryLines(
+        marketId: Int, hours: Int, when verified: Bool
+    ) async throws -> FuturesHistoryResponse? {
+        guard verified else { return nil }
+        return try await APIClient.shared.fetchFuturesHistory(marketId: marketId, hours: hours)
     }
 
     // MARK: - Computed
