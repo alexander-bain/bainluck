@@ -8,6 +8,7 @@ Uses the shared ``client`` fixture from conftest.py (mock empty DB session).
 
 import pytest
 from datetime import datetime, timedelta, timezone
+from itertools import count
 from types import SimpleNamespace
 from unittest.mock import MagicMock
 
@@ -75,8 +76,13 @@ def _market(
     )
 
 
+_OUTCOME_IDS = count(1)
+
+
 def _outcome(name, *, current_probability, probability_change_24h):
+    # A real outcome row always has an id; the 24h reader keys on it (#10248).
     return SimpleNamespace(
+        id=next(_OUTCOME_IDS),
         name=name,
         current_probability=current_probability,
         probability_change_24h=probability_change_24h,
