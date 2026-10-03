@@ -2318,7 +2318,14 @@ export default function EventPage({ params }: EventPageProps) {
 
         {/* Teams + Score + Giant Probability — v2 centered layout */}
         <div className="px-5 sm:px-6 py-4 sm:py-5">
-          <div className="flex items-center justify-between">
+          {/* #10252 — `items-stretch`, and each score is pushed to the foot of
+              its column (`mt-auto`). Centring the columns put the two scores at
+              different heights whenever one record line wrapped longer than the
+              other: "0-0-1, #5 Metropolitan, 1 pt" over four lines left
+              Carolina's 2 a line and a half below Washington's 5. The centre
+              block keeps its own vertical centring (`justify-center`), and a
+              record that wraps is centred under its name (`text-center`). */}
+          <div className="flex items-stretch justify-between">
             {/* Home Team */}
             <div className="flex flex-col items-center flex-1">
               {/* #2447: ONE RESOLVER, BOTH SURFACES. The ladder below is
@@ -2382,7 +2389,7 @@ export default function EventPage({ params }: EventPageProps) {
               {/* #5720 — `recordReadsAsRecord`, computed once beside the scores. */}
               {recordReadsAsRecord &&
                 (event.standings_context?.home || event.home_team_data?.record) && (
-                <span className="text-[11px] text-text-muted">
+                <span className="text-[11px] text-text-muted text-center">
                   {event.standings_context?.home || event.home_team_data?.record}
                 </span>
               )}
@@ -2390,7 +2397,7 @@ export default function EventPage({ params }: EventPageProps) {
                 /* L2-163 Item 2a: once there's a real score it is the hero's
                    biggest element after the probability — Alex's 0-4 exhibit
                    rendered it nearly invisible at text-2xl. */
-                <span className="text-4xl sm:text-[42px] font-black text-text-primary tabular-nums font-mono leading-none mt-1">
+                <span className="text-4xl sm:text-[42px] font-black text-text-primary tabular-nums font-mono leading-none mt-auto pt-1">
                   {bestHomeScore}
                 </span>
               )}
@@ -2413,7 +2420,7 @@ export default function EventPage({ params }: EventPageProps) {
                 be the widest one (the probability pair at 188.5px here; the
                 `+N pts <team> since open` chip on a long club name), which is
                 why the fix bounds the BLOCK rather than any one line. */}
-            <div className="flex flex-col items-center px-1 sm:px-4 min-w-0">
+            <div className="flex flex-col items-center justify-center px-1 sm:px-4 min-w-0">
               {isFinished ? (
                 /* Settled: winner name + chip + the result in the sport's own
                    units, no big number (mirrors FuturesHero's resolved rule).
@@ -2731,14 +2738,14 @@ export default function EventPage({ params }: EventPageProps) {
               {/* #5720 — same gate as the home side; see `recordReadsAsRecord`. */}
               {recordReadsAsRecord &&
                 (event.standings_context?.away || event.away_team_data?.record) && (
-                <span className="text-[11px] text-text-muted">
+                <span className="text-[11px] text-text-muted text-center">
                   {event.standings_context?.away || event.away_team_data?.record}
                 </span>
               )}
               {(isLive || isFinished || hasStarted) && bestAwayScore !== null && !heroScoreIsStoppageFiller && (
                 /* L2-163 Item 2a: score is the hero's biggest element after the
                    probability once the game is underway. */
-                <span className="text-4xl sm:text-[42px] font-black text-text-primary tabular-nums font-mono leading-none mt-1">
+                <span className="text-4xl sm:text-[42px] font-black text-text-primary tabular-nums font-mono leading-none mt-auto pt-1">
                   {bestAwayScore}
                 </span>
               )}
