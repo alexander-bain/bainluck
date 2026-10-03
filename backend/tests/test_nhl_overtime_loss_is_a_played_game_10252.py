@@ -106,7 +106,7 @@ class TestTheHeroLine:
             "Carolina Hurricanes",
             "Washington Capitals",
         )
-        assert ctx["home"] == "0-0-1, #5 Metropolitan Division, 1 pt"
+        assert ctx["home"] == "0-0-1, #5 Metropolitan, 1 pt"
         assert ctx["away"] == "0-0, 0 pts"
 
     def test_more_than_one_point_stays_plural(self):
@@ -114,4 +114,20 @@ class TestTheHeroLine:
         ctx = _compute_standings_context(
             _team(later, "3-2-1"), None, "Carolina Hurricanes", "Washington Capitals"
         )
-        assert ctx["home"] == "3-2-1, #5 Metropolitan Division, 7 pts"
+        assert ctx["home"] == "3-2-1, #5 Metropolitan, 7 pts"
+
+
+class TestTheHeroDivisionFitsItsColumn:
+    def test_only_the_nhl_suffix_is_dropped(self):
+        # The other leagues' boards already spell the bare name; they must be
+        # served exactly as before.
+        for division, shown in (
+            ("Metropolitan Division", "Metropolitan"),
+            ("AFC South", "AFC South"),
+            ("West", "West"),
+            ("Southeast", "Southeast"),
+        ):
+            row = {**CAROLINA_STANDINGS, "wins": 3, "losses": 2, "division": division}
+            row.pop("points")
+            ctx = _compute_standings_context(_team(row, "3-2"), None, "A", "B")
+            assert ctx["home"] == f"3-2, #5 {shown}"

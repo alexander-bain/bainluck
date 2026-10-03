@@ -45,7 +45,9 @@ describe("#5866 the hero's centre column does not dictate the row", () => {
     // defect: it pinned the column at its max-content width and left
     // `justify-between` to push the excess onto the away crest.
     expect(code).toMatch(
-      /className="flex flex-col items-center px-1 sm:px-4 min-w-0"/,
+      // `justify-center` since #10252: the hero row stretches its columns, so
+      // the centre block centres its own content vertically.
+      /className="flex flex-col items-center justify-center px-1 sm:px-4 min-w-0"/,
     );
     expect(code).not.toMatch(
       /className="flex flex-col items-center px-2 sm:px-4 flex-shrink-0"/,

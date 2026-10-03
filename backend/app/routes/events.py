@@ -34360,6 +34360,12 @@ def _compute_standings_context(
         # residue over a fresh `div_rank`.
         if s.get("div_rank"):
             div = s.get("division", "")
+            # #10252 — "Metropolitan", not "Metropolitan Division". NHL is the
+            # only league whose board spells the suffix (NFL "AFC South", MLB
+            # "West", NBA "Southeast"), and in the hero's narrow team column it
+            # wrapped Carolina's line over four rows at 390px.
+            if isinstance(div, str) and div.endswith(" Division"):
+                div = div[: -len(" Division")]
             parts.append(f"#{s['div_rank']} {div}".strip())
         elif s.get("league_rank"):
             parts.append(f"#{s['league_rank']}")

@@ -154,7 +154,8 @@ function draw(scores: Scores, status = "live", minutesFromNow = -206): string {
 
 /** The record's own element, so a `0-0` elsewhere on the page cannot answer for it. */
 function recordSpan(value: string): string {
-  return `<span class="text-[11px] text-text-muted">${value}</span>`;
+  // `text-center` since #10252: a record that wraps is centred under its name.
+  return `<span class="text-[11px] text-text-muted text-center">${value}</span>`;
 }
 
 describe("#5720 a record is not a score", () => {
