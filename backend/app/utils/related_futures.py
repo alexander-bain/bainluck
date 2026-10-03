@@ -8,6 +8,8 @@ from __future__ import annotations
 
 from datetime import datetime, timedelta, timezone
 
+from app.utils.futures_market_snapshot import reader_change_24h  # #10248
+
 # How old a futures quote may be before it stops being a valid answer to
 # "what are their chances?" during a live season (#1589).
 #
@@ -159,7 +161,15 @@ def build_futures_entry(
         "outcome_name": outcome.name,
         "probability": float(outcome.current_probability) if outcome.current_probability else None,
         "american_odds": outcome.current_american_odds,
-        "probability_change_24h": float(outcome.probability_change_24h) if outcome.probability_change_24h else None,
+        # #10248 D5 — `reader_change_24h`.
+        "probability_change_24h": (
+            float(chg)
+            if (chg := reader_change_24h(
+                market, outcome.id, outcome.current_probability,
+                outcome.probability_change_24h,
+            ))
+            else None
+        ),
         "opening_probability": float(outcome.opening_probability) if outcome.opening_probability else None,
         "rank": outcome.rank,
         "relevance_score": relevance_score,

@@ -11,16 +11,32 @@ markets.
 
 import logging
 from datetime import datetime, timedelta, timezone
+from types import SimpleNamespace
 
 from sqlalchemy import and_, select, update as sa_update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.models import DeviceToken, FuturesMarket, FuturesOutcome, User, UserPin
+from app.utils.futures_market_snapshot import (  # #10248
+    DATAGOLF_MARKET_SOURCE,
+    reader_change_24h,
+)
 
 logger = logging.getLogger(__name__)
 
 # Minimum absolute movement (in probability points, 0-1 scale) to trigger an alert
 BIG_MOVE_THRESHOLD = 0.15  # 15 percentage points
+
+
+def _served_change(row):
+    """The change a big-move row may state (#10248 D5): `reader_change_24h` —
+    the stored value for every source but DataGolf, the dated move for it."""
+    return reader_change_24h(
+        SimpleNamespace(source=row[6], market_metadata=row[7]),
+        row[5],
+        row[4],
+        row[3],
+    )
 
 
 async def _send_daily_challenge_push() -> dict:
@@ -102,6 +118,10 @@ async def _send_big_move_alerts() -> dict:
                 FuturesOutcome.name.label("outcome_name"),
                 FuturesOutcome.probability_change_24h,
                 FuturesOutcome.current_probability,
+                # #10248 D5: what `reader_change_24h` needs (rows [5:8]).
+                FuturesOutcome.id,
+                FuturesMarket.source,
+                FuturesMarket.market_metadata,
             )
             .join(FuturesOutcome, FuturesOutcome.market_id == FuturesMarket.id)
             .where(
@@ -121,6 +141,10 @@ async def _send_big_move_alerts() -> dict:
                 FuturesOutcome.name.label("outcome_name"),
                 FuturesOutcome.probability_change_24h,
                 FuturesOutcome.current_probability,
+                # #10248 D5: what `reader_change_24h` needs (rows [5:8]).
+                FuturesOutcome.id,
+                FuturesMarket.source,
+                FuturesMarket.market_metadata,
             )
             .join(FuturesOutcome, FuturesOutcome.market_id == FuturesMarket.id)
             .where(
@@ -135,6 +159,16 @@ async def _send_big_move_alerts() -> dict:
         # Combine positive and negative movers, dedup by market_id
         movers_by_market: dict[int, dict] = {}
         for row in list(big_movers.all()) + list(big_movers_neg.all()):
+            # #10248 D5: a DataGolf row's change is its dated day move, not a
+            # 90 s poll delta. The raw select only nominates it: the alert
+            # fires on the number it prints, so the dated move must clear the
+            # same bar (either sign). No dated move, nothing to alert on.
+            change = _served_change(row)
+            if row[6] == DATAGOLF_MARKET_SOURCE and (
+                change is None or abs(float(change)) < BIG_MOVE_THRESHOLD
+            ):
+                continue
+            row = (*row[:3], change, *row[4:])
             market_id = row[0]
             if market_id not in movers_by_market:
                 movers_by_market[market_id] = {

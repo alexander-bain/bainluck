@@ -6,11 +6,16 @@ on Bain Luck. Uses Gmail API via the same OAuth2 setup as bug notifications.
 
 import logging
 from datetime import datetime, timezone, timedelta
+from types import SimpleNamespace
 
 from sqlalchemy import select, func, text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.models import FuturesMarket, FuturesOutcome
+from app.utils.futures_market_snapshot import (  # #10248
+    DATAGOLF_MARKET_SOURCE,
+    reader_change_24h,
+)
 from app.tasks.bug_notifications import _send_gmail, _generate_email_body
 
 logger = logging.getLogger(__name__)
@@ -30,6 +35,9 @@ async def build_digest_content(db: AsyncSession) -> dict:
             FuturesOutcome.probability_change_24h,
             FuturesMarket.name.label("market_name"),
             FuturesMarket.source,
+            # #10248 D5: what `reader_change_24h` needs to date a DataGolf row.
+            FuturesOutcome.id.label("outcome_id"),
+            FuturesMarket.market_metadata,
         )
         .join(FuturesMarket, FuturesOutcome.market_id == FuturesMarket.id)
         .where(
@@ -42,16 +50,26 @@ async def build_digest_content(db: AsyncSession) -> dict:
         .limit(5)
     )
     movers_result = await db.execute(movers_query)
-    movers = [
-        {
+    movers = []
+    for row in movers_result.all():
+        # #10248 D5: a DataGolf row's change is its dated day move, not a 90 s
+        # poll delta, and a DataGolf row with no dated move, or a dated move of
+        # 0, is not a mover (it would print "+0.0pp" as a top mover).
+        change = reader_change_24h(
+            SimpleNamespace(source=row.source, market_metadata=row.market_metadata),
+            row.outcome_id,
+            row.current_probability,
+            row.probability_change_24h,
+        )
+        if row.source == DATAGOLF_MARKET_SOURCE and not change:
+            continue
+        movers.append({
             "outcome": row.name,
             "market": row.market_name,
             "probability": float(row.current_probability) if row.current_probability else 0,
-            "change": float(row.probability_change_24h) if row.probability_change_24h else 0,
+            "change": float(change) if change else 0,
             "source": row.source,
-        }
-        for row in movers_result.all()
-    ]
+        })
 
     # Resolving soon: markets closing in the next 24h
     resolving_query = (

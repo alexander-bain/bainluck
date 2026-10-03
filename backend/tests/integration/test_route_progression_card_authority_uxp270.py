@@ -43,6 +43,7 @@ Prices below are real production values for markets 59863411 (DataGolf) and
 
 from datetime import datetime, timezone
 from statistics import mean
+from itertools import count
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock
 
@@ -111,8 +112,13 @@ def _result_scalar_one_or_none(value):
     return result
 
 
+_OUTCOME_IDS = count(1)
+
+
 def _outcome(name, probability, *, change=None, team_id=None):
+    # A real outcome row always has an id; the 24h reader keys on it (#10248).
     return SimpleNamespace(
+        id=next(_OUTCOME_IDS),
         name=name,
         team_id=team_id,
         current_probability=probability,

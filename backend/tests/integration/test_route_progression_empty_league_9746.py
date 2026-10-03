@@ -13,6 +13,7 @@ right one), and every assertion reads the served body.
 """
 
 from datetime import datetime, timezone
+from itertools import count
 from types import SimpleNamespace
 from unittest.mock import MagicMock
 
@@ -24,8 +25,13 @@ EMPTY_LEAGUE_KEY = "soccer::championship:2026"
 REAL_LEAGUE_KEY = "soccer:uefa_nations_league:championship:2026"
 
 
+_OUTCOME_IDS = count(1)
+
+
 def _outcome(name, probability):
+    # A real outcome row always has an id; the 24h reader keys on it (#10248).
     return SimpleNamespace(
+        id=next(_OUTCOME_IDS),
         name=name, team_id=None, current_probability=probability,
         probability_change_24h=None,
     )

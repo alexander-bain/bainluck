@@ -19,6 +19,7 @@ from app.models import Event, Sport, FuturesMarket, FuturesOutcome
 from app.services import get_db
 from app.utils.highlights import LEAGUE_TIERS
 from app.utils.sport_keys import sport_display_name
+from app.utils.futures_market_snapshot import reader_change_24h  # #10248
 
 logger = logging.getLogger(__name__)
 
@@ -174,7 +175,13 @@ async def get_market_was_wrong(
 
     for market in markets:
         for outcome in market.outcomes:
-            change_24h = float(outcome.probability_change_24h) if outcome.probability_change_24h else 0
+            # #10248 D5: a DataGolf leg states its dated day move, not a 90 s
+            # poll delta; with no dated move it is 0 and the cut below drops it.
+            chg = reader_change_24h(
+                market, outcome.id, outcome.current_probability,
+                outcome.probability_change_24h,
+            )
+            change_24h = float(chg) if chg else 0
             abs_change = abs(change_24h)
 
             # Only include significant movers (>3% in 24h)

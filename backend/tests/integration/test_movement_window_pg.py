@@ -1074,7 +1074,12 @@ def test_the_scale_guard_does_not_cost_the_prediction_market_sweep() -> None:
     """
     from app.tasks import SCALE_IDENTICAL_SNAPSHOT_SOURCES
 
-    assert set(SCALE_IDENTICAL_SNAPSHOT_SOURCES) == {"kalshi", "polymarket"}, (
+    # #10248 D2 added `datagolf_model`; the loop below seeds a liar for it too.
+    assert set(SCALE_IDENTICAL_SNAPSHOT_SOURCES) == {
+        "kalshi",
+        "polymarket",
+        "datagolf_model",
+    }, (
         "this case seeds one liar per named source; a new member needs a row "
         f"here or it ships unproven. got {SCALE_IDENTICAL_SNAPSHOT_SOURCES}"
     )
