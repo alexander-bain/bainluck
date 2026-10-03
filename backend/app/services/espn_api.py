@@ -1489,6 +1489,19 @@ class ESPNAPIService:
             or _stype.get("state") == "post"
             or _stype.get("name") == "STATUS_FINAL"
         )
+        # #10237 (#10268): `is_final` above is as loose as #980 needs (ESPN
+        # puts a postponed game in `post` too) and stays exactly as it is.
+        # These two keys add the raw facts a box writer needs to say what THIS
+        # response claimed: ESPN's status triple, unjudged, and the response's
+        # own event id. `header.id` is the summary's event id, the same field
+        # `get_event` already reads (`header` keys measured 9/15: competitions/
+        # id/league/links/season/timeValid/uid/week).
+        result["provider_event_id"] = str(header.get("id") or "").strip() or None
+        result["provider_status"] = {
+            "name": _stype.get("name"),
+            "state": _stype.get("state"),
+            "completed": _stype.get("completed"),
+        }
         for comp in competitions[0].get("competitors", []):
             raw = comp.get("score")
             try:
