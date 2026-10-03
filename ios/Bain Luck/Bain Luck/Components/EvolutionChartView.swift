@@ -451,14 +451,15 @@ struct EvolutionChartView: View {
                 marketId: marketId, top: 50, hours: fetchHours, representation: representation
             )
             guard !Task.isCancelled, generation == requestGeneration else { return }
+            let withholds: Bool
             switch agreement.step(result, generation: .init(
                 refreshToken: refreshToken, range: selectedRange.rawValue, expectation: expectation)) {
             case .refetch:
                 // Discarded, never drawn: one more read for this generation.
                 await loadData()
                 return
-            case .adopt(let withholds):
-                withholdsCurrent = withholds
+            case .adopt(let withholdsCurrentColumn):
+                withholds = withholdsCurrentColumn
             }
             var lines = try await detailHistory
             if lines == nil, VerifiedTitleHistory.drawsSourceHistory(
@@ -467,6 +468,7 @@ struct EvolutionChartView: View {
                 lines = try await Self.verifiedHistoryLines(marketId: marketId, hours: fetchHours, when: true)
             }
             guard !Task.isCancelled, generation == requestGeneration else { return }
+            withholdsCurrent = withholds
             data = lines.map { VerifiedTitleHistory.drawing($0, over: result) } ?? result
             requestedHours = fetchHours
             if selectedNames.isEmpty {
