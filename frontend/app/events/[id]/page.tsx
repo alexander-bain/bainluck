@@ -38,6 +38,7 @@ import LiveAgeStamp, { heroStampIsStale } from "@/components/event/LiveAgeStamp"
 import { heroFreshness } from "@/lib/event/heroFreshness";
 import LiveSparkline from "@/components/event/LiveSparkline";
 import LiveConnectionStatus from "@/components/event/LiveConnectionStatus";
+import ChartFullscreenDialog from "@/components/event/ChartFullscreenDialog";
 import {
   EMPTY_CONNECTION_TRACKER,
   presentConnectionStatus,
@@ -219,6 +220,8 @@ export default function EventPage({ params }: EventPageProps) {
   const [oddsChartDomain, setOddsChartDomain] = useState<{ start: string; end: string } | null>(null);
   const [sourcesOpen, setSourcesOpen] = useState(false);
   const [chartFullscreen, setChartFullscreen] = useState(false);
+  // #10250 — focus goes back here when the fullscreen chart closes.
+  const chartFullscreenOpenerRef = useRef<HTMLButtonElement>(null);
   const [chartTimeRange, setChartTimeRange] = useState<"all" | "live">("live");
   // Once the reader picks a range it is theirs — the evidence sync below stops.
   const [chartRangeUserSet, setChartRangeUserSet] = useState(false);
@@ -2816,11 +2819,14 @@ export default function EventPage({ params }: EventPageProps) {
                 dup Alex flagged). The fullscreen modal keeps its own label. */}
           </div>
           <button
+            ref={chartFullscreenOpenerRef}
+            type="button"
             onClick={() => setChartFullscreen(true)}
             className="p-1.5 rounded-md hover:bg-surface-elevated text-text-muted hover:text-text-primary transition-colors"
-            title="Fullscreen"
+            title="Open fullscreen chart"
+            aria-label="Open fullscreen chart"
           >
-            <svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
+            <svg aria-hidden="true" width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
               <polyline points="10 2 14 2 14 6" />
               <polyline points="6 14 2 14 2 10" />
               <line x1="14" y1="2" x2="9.5" y2="6.5" />
@@ -3471,12 +3477,14 @@ export default function EventPage({ params }: EventPageProps) {
         ) : null;
       })()}
 
-      {/* Fullscreen Chart Modal */}
+      {/* Fullscreen Chart Modal — #10250: a dialog above the phone bottom nav. */}
       {chartFullscreen && (
-        <div className="fixed inset-0 z-50 bg-surface-card flex flex-col">
-          <div className="relative flex items-center justify-between px-4 py-3 border-b border-surface-border">
-            <div className="flex min-w-0 items-center gap-3">
-              <h2 className="shrink-0 text-sm font-semibold text-text-primary">Win Probability</h2>
+        <ChartFullscreenDialog
+          title="Win Probability"
+          onClose={() => setChartFullscreen(false)}
+          openerRef={chartFullscreenOpenerRef}
+          status={
+            <>
               {/* #8336/#10200 — the fullscreen view covers the card, so it carries
                   the same status model, not a copy of its own. Silent to screen
                   readers: the card's copy, still mounted beneath, does the
@@ -3488,18 +3496,9 @@ export default function EventPage({ params }: EventPageProps) {
                   <span className="text-[10px] text-text-muted font-medium">Final</span>
                 </div>
               )}
-            </div>
-            <button
-              onClick={() => setChartFullscreen(false)}
-              className="p-2 rounded-md hover:bg-surface-elevated text-text-muted hover:text-text-primary transition-colors"
-            >
-              <svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
-                <line x1="12" y1="4" x2="4" y2="12" />
-                <line x1="4" y1="4" x2="12" y2="12" />
-              </svg>
-            </button>
-          </div>
-          <div className="flex-1 p-4 min-h-0">
+            </>
+          }
+        >
             <OddsChart
               history={historyData?.history ?? []}
               homeTeam={event.home_team}
@@ -3536,8 +3535,7 @@ export default function EventPage({ params }: EventPageProps) {
                  taps expand must not get the withheld number back. */
               awayWithheld={awaySlotWithheld}
             />
-          </div>
-        </div>
+        </ChartFullscreenDialog>
       )}
     </div>
     </ErrorBoundary>

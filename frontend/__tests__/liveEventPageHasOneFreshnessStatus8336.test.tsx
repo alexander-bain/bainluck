@@ -178,7 +178,7 @@ describe("#8336 a live event page shows one freshness status", () => {
   it("the status sits in the chart card's header, beside Win Probability", () => {
     const html = draw(true);
     const card = html.slice(html.indexOf('data-testid="win-probability-card"'));
-    const cardHeader = card.slice(0, card.indexOf('title="Fullscreen"'));
+    const cardHeader = card.slice(0, card.indexOf('title="Open fullscreen chart"'));
     expect(cardHeader).toContain("Win Probability");
     expect(cardHeader).toContain(STATUS);
   });
@@ -201,12 +201,16 @@ describe("#8336 a live event page shows one freshness status", () => {
     expect(count(source, "<LiveConnectionStatus")).toBe(1);
     expect(source).toContain("presentation={connectionPresentation}");
 
-    const modal = source.slice(source.indexOf("{/* Fullscreen Chart Modal */}"));
-    const modalHeader = modal.slice(0, modal.indexOf("</h2>") + 400);
+    // #10250 moved the modal's shell into `ChartFullscreenDialog`; the page
+    // hands it the status through `status=`, which ends where the chart begins.
+    const modal = source.slice(source.indexOf("{/* Fullscreen Chart Modal"));
+    const modalHeader = modal.slice(0, modal.indexOf("<OddsChart"));
+    expect(modalHeader).toContain("<ChartFullscreenDialog");
+    expect(modalHeader).toContain("status={");
     expect(modalHeader).toContain("connectionStatus(false)");
     expect(modalHeader).not.toContain("{ageBadge}");
     const cardHeader = source.slice(source.indexOf("{/* Chart Header — v2: title + freshness."));
-    expect(cardHeader.slice(0, cardHeader.indexOf('title="Fullscreen"'))).toContain("connectionStatus(true)");
+    expect(cardHeader.slice(0, cardHeader.indexOf('title="Open fullscreen chart"'))).toContain("connectionStatus(true)");
   });
 
   it("both header rows are positioned, so the tap details hang from the row and fit a phone", () => {
@@ -215,7 +219,9 @@ describe("#8336 a live event page shows one freshness status", () => {
     const source = readFileSync(join(process.cwd(), "app/events/[id]/page.tsx"), "utf8");
     const card = source.slice(source.indexOf("{/* Chart Header — v2: title + freshness."));
     expect(card).toMatch(/^[\s\S]{0,200}<div className="relative px-4 sm:px-5 py-3 flex items-center justify-between">/);
-    const modal = source.slice(source.indexOf("{/* Fullscreen Chart Modal */}"));
+    // #10250 — the fullscreen header row now lives in the dialog component.
+    const dialog = readFileSync(join(process.cwd(), "components/event/ChartFullscreenDialog.tsx"), "utf8");
+    const modal = dialog.slice(dialog.indexOf('data-testid="chart-fullscreen-dialog"'));
     expect(modal).toMatch(/^[\s\S]{0,200}<div className="relative flex items-center justify-between px-4 py-3 border-b border-surface-border">/);
   });
 
