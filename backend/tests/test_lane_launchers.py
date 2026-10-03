@@ -1169,7 +1169,7 @@ def test_resolve_ref_without_a_pr_number_still_gives_up(monkeypatch):
 # with a short timeout rather than --dry-run (which must write nothing anywhere).
 
 
-def run_runner_briefly(workdir, handoff, seconds=6):
+def run_runner_briefly(workdir, handoff, seconds=30):
     """Start lane-runner.sh for real, let it seed, then stop it. Returns output.
 
     `start_new_session` is load-bearing, not tidiness: lane-runner.sh traps
@@ -1182,18 +1182,36 @@ def run_runner_briefly(workdir, handoff, seconds=6):
     --dry-run cannot stand in: it is specified to write nothing anywhere, which
     is precisely the branch that does not seed.
     """
+    import signal
+    import tempfile
+
     full = dict(os.environ)
     full["LANE_HANDOFF"] = str(handoff)
-    try:
-        p = subprocess.run(
+    with tempfile.TemporaryFile(mode="w+") as log:
+        p = subprocess.Popen(
             ["bash", str(RUNNER), str(workdir), "testlane"],
-            capture_output=True, text=True, env=full, cwd=str(REPO),
-            timeout=seconds, start_new_session=True,
+            stdout=log, stderr=subprocess.STDOUT, env=full, cwd=str(REPO),
+            start_new_session=True,
         )
-        return p.stdout + p.stderr
-    except subprocess.TimeoutExpired as exc:
-        out = (exc.stdout or b"") + (exc.stderr or b"")
-        return out.decode() if isinstance(out, bytes) else str(out)
+        try:
+            deadline = time.monotonic() + seconds
+            while p.poll() is None and time.monotonic() < deadline:
+                log.seek(0)
+                if "[runner] idle" in log.read():
+                    break  # startup (including settings) actually completed
+                time.sleep(0.05)
+        finally:
+            try:
+                os.killpg(p.pid, signal.SIGTERM)
+                p.wait(timeout=3)
+            except (ProcessLookupError, subprocess.TimeoutExpired):
+                try:
+                    os.killpg(p.pid, signal.SIGKILL)
+                except ProcessLookupError:
+                    pass
+                p.wait()
+        log.seek(0)
+        return log.read()
 
 
 def read_grant(workdir):
@@ -3052,3 +3070,280 @@ def test_take_once_starts_no_session_when_the_inbox_is_empty(tmp_path):
     rc, out, fired = _take_once(tmp_path)
     assert rc == 0 and fired == 0, out
     assert "idle" in out, out
+
+
+# #9668: execute actual capture/check/exec code in a scratch committed carrier.
+# Dedicated test groups never share live runners or inboxes.
+def _adoption_rig(tmp_path, *, busy=False, startup_race=False):
+    repo = tmp_path / "carrier"
+    repo.mkdir()
+    handoff = tmp_path / "handoff"
+    for lane in ("demo", "second lane"):
+        (handoff / "runner-inbox" / lane).mkdir(parents=True)
+    (tmp_path / "relative worktree").mkdir()
+    ready, go, report = (tmp_path / name for name in ("ready", "go", "report.json"))
+    source = RUNNER.read_text()
+    capture = source.split("set -u\n", 1)[1].split("# Take the whole session subtree", 1)[0]
+    adoption = "bl_maybe_adopt_runner() {" + source.split("bl_maybe_adopt_runner() {", 1)[1].split("# Ownership record", 1)[0]
+    script = repo / "lane-runner.sh"
+    script.write_text("#!/bin/bash\nset -u\n" + capture + '\nBL_REPO="$(dirname "$BL_RUNNER_SCRIPT")"\n'
+                      + 'BL_CARRIER_REF="${BL_CARRIER_REF:-origin/master}"\nHANDOFF="$LANE_HANDOFF"\n'
+                      + 'WORKDIR="$1"; shift; LANES=("$@"); cd "$WORKDIR"\n' + adoption
+                      + ('sleep 30 >/dev/null 2>&1 &\n' if busy else '')
+                      + 'echo ready > "$ADOPTION_READY"\n'
+                      + 'while [ ! -f "$ADOPTION_GO" ]; do /bin/sleep 0.02; done\n'
+                      + 'bl_maybe_adopt_runner; echo REFRESH_RC=$?\necho refused\n')
+    for args in (("init", "-q"), ("add", "lane-runner.sh"),
+                 ("-c", "user.name=Guard", "-c", "user.email=guard@example.test", "commit", "-qm", "initial")):
+        subprocess.run(["git", "-C", str(repo), *args], check=True, capture_output=True)
+    env = dict(os.environ, BL_CARRIER_REF="HEAD", LANE_HANDOFF=str(handoff),
+               ADOPTION_READY=str(ready), ADOPTION_GO=str(go), ADOPTION_REPORT=str(report),
+               LANE_NOW_EPOCH="1789497000", BL_ADOPTION_SENTINEL="kept exactly")
+    replacement = '''#!/bin/bash
+export ADOPTION_EXEC_PID=$$
+python3 - "$@" <<'PY'
+import json,os,sys
+from pathlib import Path
+Path(os.environ['ADOPTION_REPORT']).write_text(json.dumps({
+    'argv': sys.argv[1:], 'cwd': os.getcwd(), 'shell_pid': int(os.environ['ADOPTION_EXEC_PID']),
+    'sentinel': os.environ.get('BL_ADOPTION_SENTINEL'),
+    'clock': os.environ.get('LANE_NOW_EPOCH')}))
+PY
+'''
+    if startup_race:
+        import shutil
+
+        binp = tmp_path / "bin"
+        binp.mkdir()
+        startup_ready, startup_go = tmp_path / "startup-ready", tmp_path / "startup-go"
+        git = binp / "git"
+        git.write_text('#!/bin/bash\ncase "$*" in *hash-object*)\n'
+                       + f'touch "{startup_ready}"\nwhile [ ! -f "{startup_go}" ]; do /bin/sleep 0.02; done;;\nesac\n'
+                       + f'exec "{shutil.which("git")}" "$@"\n')
+        git.chmod(0o755)
+        env["PATH"] = f"{binp}:{os.environ['PATH']}"
+    proc = subprocess.Popen(["/bin/bash", str(script), "relative worktree", "demo", "second lane"],
+                            cwd=tmp_path, env=env, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
+                            text=True, start_new_session=True)
+    if startup_race:
+        deadline = time.monotonic() + 15
+        while not startup_ready.exists() and proc.poll() is None and time.monotonic() < deadline:
+            time.sleep(0.02)
+        assert startup_ready.exists(), "did not reach controlled startup hash"
+        _replace_adoption_source(repo, script, replacement)
+        startup_go.touch()
+    deadline = time.monotonic() + 10
+    while not ready.exists() and proc.poll() is None and time.monotonic() < deadline:
+        time.sleep(0.02)
+    assert ready.exists(), "scratch runner never reached controlled boundary"
+    return proc, repo, script, handoff, go, report, replacement
+
+
+def _replace_adoption_source(repo, script, text, *, committed=True):
+    replacement = script.with_suffix(".next")
+    replacement.write_text(text)
+    replacement.replace(script)  # preserve the old Bash's loaded inode
+    if committed:
+        subprocess.run(["git", "-C", str(repo), "add", "lane-runner.sh"], check=True, capture_output=True)
+        subprocess.run(["git", "-C", str(repo), "-c", "user.name=Guard", "-c", "user.email=guard@example.test",
+                        "commit", "-qm", "replacement"], check=True, capture_output=True)
+
+
+def _finish_adoption(proc, go):
+    import signal
+
+    try:
+        go.touch()
+        out, _ = proc.communicate(timeout=45)
+        return proc.returncode, out
+    finally:
+        # Busy regression retains a scratch sleep. Kill only our own test group.
+        try:
+            os.killpg(proc.pid, signal.SIGKILL)
+        except ProcessLookupError:
+            pass
+        proc.wait()
+
+
+def test_idle_runner_executes_committed_replacement_with_original_state(tmp_path):
+    import json
+
+    proc, repo, script, handoff, go, report, replacement = _adoption_rig(tmp_path)
+    inbox = handoff / "runner-inbox" / "demo"
+    retained = {
+        "001-future.md": "not-before: 2099-10-02T23:50:00Z\nfinite pending work\n",
+        ".returned-session.json": '{"source":"exact-return","log":"real-context"}',
+        ".last-restock": "1789496900\n",
+        ".receipt.dedup": "existing disposition\n",
+        ".claim": "existing owner\n",
+    }
+    for name, body in retained.items():
+        (inbox / name).write_text(body)
+    _replace_adoption_source(repo, script, replacement)
+    rc, out = _finish_adoption(proc, go)
+    assert rc == 0, out
+    assert "adopting committed HEAD runner" in out, out
+    result = json.loads(report.read_text())
+    assert result == {"argv": ["relative worktree", "demo", "second lane"],
+                      "cwd": str(tmp_path), "shell_pid": proc.pid,
+                      "sentinel": "kept exactly", "clock": "1789497000"}
+    assert {name: (inbox / name).read_text() for name in retained} == retained
+    assert "refused" not in out  # old functions/loop did not continue after exec
+
+
+def test_startup_replacement_does_not_mistake_disk_source_for_loaded_source(tmp_path):
+    proc, _, _, _, go, report, _ = _adoption_rig(tmp_path, startup_race=True)
+    rc, out = _finish_adoption(proc, go)
+    assert rc == 0, out
+    assert "unverified-loaded-" in out and "adopting committed HEAD runner" in out, out
+    assert report.exists() and "refused" not in out, out
+
+
+def test_unverified_startup_returns_hold_when_idle_proof_is_not_paid(tmp_path):
+    proc, _, _, handoff, go, report, _ = _adoption_rig(tmp_path, startup_race=True)
+    (handoff / "runner-inbox" / "demo" / "active.md.running").write_text("active owner\n")
+    rc, out = _finish_adoption(proc, go)
+    assert rc == 0, out
+    assert "REFRESH_RC=2" in out and "served inbox has running" in out, out
+    assert not report.exists(), out
+
+
+@pytest.mark.parametrize("refusal", ["dirty", "local_commit", "running", "second_inbox", "busy"])
+def test_idle_runner_refuses_unverified_source_or_busy_boundary(tmp_path, refusal):
+    proc, repo, script, handoff, go, report, replacement = _adoption_rig(tmp_path, busy=refusal == "busy")
+    if refusal == "local_commit":
+        # Committed disk bytes do not authorize adoption if carrier stays old.
+        subprocess.run(["git", "-C", str(repo), "branch", "carrier"], check=True, capture_output=True)
+        _replace_adoption_source(repo, script, replacement)
+        subprocess.run(["git", "-C", str(repo), "reset", "--soft", "carrier"], check=True, capture_output=True)
+    else:
+        _replace_adoption_source(repo, script, replacement, committed=refusal != "dirty")
+    if refusal in ("running", "second_inbox"):
+        lane = "demo" if refusal == "running" else "second lane"
+        (handoff / "runner-inbox" / lane / "active.md.running").write_text("active owner\n")
+    rc, out = _finish_adoption(proc, go)
+    assert rc == 0, out
+    assert not report.exists(), out
+    assert "refused" in out and "adopting committed" not in out, out
+    reason = ("changed disk source" if refusal in ("dirty", "local_commit") else
+              "session descendants/group" if refusal == "busy" else "served inbox has running")
+    assert reason in out, out
+
+
+def test_real_daemon_adopts_carrier_before_taking_pending_work(tmp_path):
+    """The ship must reach the daemon call site, not only an extracted helper."""
+    import json
+    import signal
+    import sys
+
+    repo = tmp_path / "carrier"
+    repo.mkdir()
+    script = repo / "lane-runner.sh"
+    script.write_text(RUNNER.read_text())
+    (repo / "scripts").mkdir()
+    (repo / "scripts" / "lane_ready_issue.py").write_text((REPO / "scripts" / "lane_ready_issue.py").read_text())
+    # The selector has its own real contract gates. This daemon gate needs a
+    # deterministic quality lane with no program, not host Python launch latency
+    # or remote Ready reads between the controlled source change and boundary.
+    binp = tmp_path / "bin"
+    binp.mkdir()
+    python = binp / "python3"
+    python.write_text('#!/bin/bash\ncase "$1" in */lane_ready_issue.py) exit 1;; esac\n'
+                      + f'exec "{sys.executable}" "$@"\n')
+    python.chmod(0o755)
+    handoff = _handoff(tmp_path, program=None)
+    inbox = handoff / "runner-inbox" / "demo"
+    pending = inbox / "future.md"
+    pending.write_text("not-before: 2099-10-02T23:50:00Z\nscoped next work\n")
+    receipt = inbox / ".returned-session.json"
+    receipt.write_text('{"source":"existing exact return"}')
+    for args in (("init", "-q"), ("add", "lane-runner.sh"),
+                 ("-c", "user.name=Guard", "-c", "user.email=guard@example.test", "commit", "-qm", "initial")):
+        subprocess.run(["git", "-C", str(repo), *args], check=True, capture_output=True)
+    report, log = tmp_path / "report.json", tmp_path / "daemon.log"
+    env = dict(os.environ, BL_CARRIER_REF="HEAD", LANE_HANDOFF=str(handoff), LANE_IDLE_SLEEP="0.05",
+               ADOPTION_REPORT=str(report), LANE_NOW_EPOCH="1789497000", PATH=f"{binp}:{os.environ['PATH']}")
+    with log.open("w") as output:
+        proc = subprocess.Popen(["/bin/bash", str(script), str(repo), "demo"], env=env,
+                                stdout=output, stderr=subprocess.STDOUT, start_new_session=True)
+        try:
+            deadline = time.monotonic() + 30
+            while "[runner] idle -" not in log.read_text() and proc.poll() is None and time.monotonic() < deadline:
+                time.sleep(0.05)
+            assert "[runner] idle -" in log.read_text(), log.read_text()
+            replacement = '''#!/bin/bash
+export ADOPTION_EXEC_PID=$$
+python3 - "$@" <<'PY'
+import json,os,sys
+from pathlib import Path
+Path(os.environ['ADOPTION_REPORT']).write_text(json.dumps({'argv':sys.argv[1:],
+    'pid':int(os.environ['ADOPTION_EXEC_PID'])}))
+PY
+'''
+            _replace_adoption_source(repo, script, replacement)
+            proc.wait(timeout=30)
+            assert proc.returncode == 0, log.read_text()
+            assert json.loads(report.read_text()) == {"argv": [str(repo), "demo"], "pid": proc.pid}
+            assert "adopting committed HEAD runner" in log.read_text()
+            assert pending.read_text() == "not-before: 2099-10-02T23:50:00Z\nscoped next work\n"
+            assert receipt.read_text() == '{"source":"existing exact return"}'
+            assert not list(inbox.glob("*.running"))
+        finally:
+            try:
+                os.killpg(proc.pid, signal.SIGKILL)
+            except ProcessLookupError:
+                pass
+            proc.wait()
+
+
+def test_real_daemon_holds_due_work_when_startup_descriptor_is_unverified(tmp_path):
+    import shutil
+    import signal
+    import sys
+
+    repo = tmp_path / "carrier"
+    repo.mkdir()
+    script = repo / "lane-runner.sh"
+    script.write_text(RUNNER.read_text())
+    for args in (("init", "-q"), ("add", "lane-runner.sh"),
+                 ("-c", "user.name=Guard", "-c", "user.email=guard@example.test", "commit", "-qm", "initial")):
+        subprocess.run(["git", "-C", str(repo), *args], check=True, capture_output=True)
+    handoff = _handoff(tmp_path, program=None)
+    inbox = handoff / "runner-inbox" / "demo"
+    directive = inbox / "due.md"
+    directive.write_text("# due scoped assignment\n")
+    binp = tmp_path / "bin"
+    binp.mkdir()
+    ticks, launches = tmp_path / "ticks", tmp_path / "launches"
+    stubs = {
+        "uname": '#!/bin/bash\necho Darwin\n',
+        "lsof": '#!/bin/bash\nexit 1\n',
+        "python3": f'#!/bin/bash\nexec "{sys.executable}" "$@"\n',
+        "sleep": f'#!/bin/bash\necho tick >> "{ticks}"\nexec "{shutil.which("sleep")}" "$@"\n',
+        "claude": f'#!/bin/bash\necho launched >> "{launches}"\nexit 0\n',
+    }
+    for name, body in stubs.items():
+        stub = binp / name
+        stub.write_text(body)
+        stub.chmod(0o755)
+    log = tmp_path / "hold.log"
+    env = dict(os.environ, BL_CARRIER_REF="HEAD", LANE_HANDOFF=str(handoff), LANE_IDLE_SLEEP="0.02",
+               PATH=f"{binp}:{os.environ['PATH']}")
+    with log.open("w") as output:
+        proc = subprocess.Popen(["/bin/bash", str(script), str(repo), "demo"], env=env,
+                                stdout=output, stderr=subprocess.STDOUT, start_new_session=True)
+        try:
+            deadline = time.monotonic() + 30
+            while (not ticks.exists() or len(ticks.read_text().splitlines()) < 2) and proc.poll() is None and time.monotonic() < deadline:
+                time.sleep(0.02)
+            assert ticks.exists() and len(ticks.read_text().splitlines()) >= 2, log.read_text()
+            assert "startup loaded descriptor unavailable" in log.read_text(), log.read_text()
+            assert proc.poll() is None and not launches.exists(), log.read_text()
+            assert directive.read_text() == "# due scoped assignment\n"
+            assert not list(inbox.glob("*.running")) and not list(inbox.glob("*.consumed-*"))
+        finally:
+            try:
+                os.killpg(proc.pid, signal.SIGKILL)
+            except ProcessLookupError:
+                pass
+            proc.wait()
