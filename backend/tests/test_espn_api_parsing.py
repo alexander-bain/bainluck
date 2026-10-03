@@ -914,3 +914,183 @@ class TestParseHeaderPeriodScores:
             healthy["home_period_scores"], healthy["away_period_scores"],
             "Atlanta Braves", "Tampa Bay Rays",
         ) is not None
+
+
+# ── #10305 D2: competitor_sides carrier ─────────────────────────────────
+
+def _with_competitors(competitors):
+    return {**SCHEDULED_EVENT, "competitions": [{"competitors": competitors}]}
+
+
+_CHI = {"id": "4", "name": "Bulls", "abbreviation": "CHI"}
+_MIA = {"id": "14", "name": "Heat", "abbreviation": "MIA"}
+
+# Every payload shape the existing home/else arm can see, including the ones
+# whose sides it cannot tell apart.
+_SIDE_PAYLOADS = {
+    "live": LIVE_EVENT,
+    "scheduled": SCHEDULED_EVENT,
+    "final": FINAL_EVENT,
+    "missing_side": _with_competitors([
+        {"homeAway": "home", "score": "3", "team": _CHI},
+        {"score": "1", "team": _MIA},
+    ]),
+    "duplicate_home": _with_competitors([
+        {"homeAway": "home", "score": "3", "team": _CHI},
+        {"homeAway": "home", "score": "1", "team": _MIA},
+    ]),
+    "duplicate_away": _with_competitors([
+        {"homeAway": "away", "team": _CHI},
+        {"homeAway": "away", "team": _MIA},
+    ]),
+    "unknown_side": _with_competitors([
+        {"homeAway": "HOME", "team": _CHI},
+        {"homeAway": "away", "team": _MIA},
+    ]),
+    "no_team_id": _with_competitors([
+        {"homeAway": "home", "team": {"name": "Bulls"}},
+        {"homeAway": "away", "team": _MIA},
+    ]),
+    "team_not_a_dict": _with_competitors([
+        {"homeAway": "home", "team": "Bulls"},
+        {"homeAway": "away", "team": _MIA},
+    ]),
+    "integer_team_id": _with_competitors([
+        {"homeAway": "home", "team": {"id": 4, "name": "Bulls"}},
+        {"homeAway": "away", "team": _MIA},
+    ]),
+    "one_competitor": _with_competitors([{"homeAway": "away", "team": _MIA}]),
+    "no_competitors": _with_competitors([]),
+}
+
+
+class TestCompetitorSides:
+    """The carrier records ESPN's literal sides and moves nothing else (#10305 D2).
+
+    Live's clearance (1435Z 10/03): last field, immutable default, recorded inside
+    the existing loop with the home/else arm untouched, passed by keyword; the
+    existing fields stay byte-identical for every payload.
+    """
+
+    def test_literal_home_away_in_payload_order(self, client):
+        assert client._parse_event(LIVE_EVENT).competitor_sides == (
+            ("13", "home"), ("2", "away"),
+        )
+        assert client._parse_event(FINAL_EVENT).competitor_sides == (
+            ("7", "home"), ("9", "away"),
+        )
+
+    def test_missing_side_is_recorded_raw_and_old_else_arm_still_fills_away(self, client):
+        event = client._parse_event(_SIDE_PAYLOADS["missing_side"])
+        assert event.competitor_sides == (("4", "home"), ("14", None))
+        # The old arm's fallback, pinned: a sideless competitor lands in away.
+        assert event.away_team.abbreviation == "MIA"
+        assert event.away_score == 1
+
+    def test_duplicate_side_is_recorded_raw(self, client):
+        event = client._parse_event(_SIDE_PAYLOADS["duplicate_home"])
+        assert event.competitor_sides == (("4", "home"), ("14", "home"))
+        # The old arm's last-wins, pinned: the second "home" overwrote the first.
+        assert event.home_team.abbreviation == "MIA"
+        assert event.away_team is None
+
+    def test_unrecognised_side_value_is_kept_verbatim(self, client):
+        event = client._parse_event(_SIDE_PAYLOADS["unknown_side"])
+        assert event.competitor_sides == (("4", "HOME"), ("14", "away"))
+
+    def test_absent_or_malformed_team_id_records_empty_id_and_keeps_the_event(self, client):
+        assert client._parse_event(_SIDE_PAYLOADS["no_team_id"]).competitor_sides == (
+            ("", "home"), ("14", "away"),
+        )
+        event = client._parse_event(_SIDE_PAYLOADS["team_not_a_dict"])
+        assert event is not None
+        assert event.competitor_sides == (("", "home"), ("14", "away"))
+        assert client._parse_event(_SIDE_PAYLOADS["integer_team_id"]).competitor_sides == (
+            ("4", "home"), ("14", "away"),
+        )
+
+    def test_no_competitors_records_empty_tuple(self, client):
+        assert client._parse_event(_SIDE_PAYLOADS["no_competitors"]).competitor_sides == ()
+
+    @pytest.mark.parametrize("name", sorted(_SIDE_PAYLOADS))
+    def test_existing_fields_identical_with_and_without_the_recording(
+        self, client, monkeypatch, name,
+    ):
+        import dataclasses
+
+        import app.services.espn_api as espn_api
+
+        payload = _SIDE_PAYLOADS[name]
+        with_recording = client._parse_event(payload)
+        monkeypatch.setattr(espn_api, "_espn_competitor_side", lambda _c: ("x", "x"))
+        without_recording = client._parse_event(payload)
+        assert with_recording is not None and without_recording is not None
+        before = dataclasses.asdict(with_recording)
+        after = dataclasses.asdict(without_recording)
+        # The stub really took effect wherever there was a competitor to record.
+        assert (before.pop("competitor_sides") != after.pop("competitor_sides")) == (
+            name != "no_competitors"
+        )
+        assert before == after
+
+    @pytest.mark.parametrize("competitor", [
+        None, "home", 7, [], {}, {"team": None}, {"team": []}, {"team": {"id": None}},
+    ])
+    def test_recording_never_raises(self, competitor):
+        from app.services.espn_api import _espn_competitor_side
+
+        team_id, side = _espn_competitor_side(competitor)
+        assert isinstance(team_id, str)
+
+    def test_default_is_empty_immutable_and_last(self):
+        import dataclasses
+
+        from app.services.espn_api import ESPNEvent
+
+        fields = dataclasses.fields(ESPNEvent)
+        assert fields[-1].name == "competitor_sides"
+        assert fields[-2].name == "playoff_series"
+        assert fields[-1].default == ()
+        assert isinstance(fields[-1].default, tuple)
+        assert fields[-1].default_factory is dataclasses.MISSING
+
+    def test_constructor_passes_it_by_keyword(self):
+        import ast
+        import inspect
+
+        import app.services.espn_api as espn_api
+
+        tree = ast.parse(inspect.getsource(espn_api))
+        calls = [
+            n for n in ast.walk(tree)
+            if isinstance(n, ast.Call) and getattr(n.func, "id", None) == "ESPNEvent"
+        ]
+        assert len(calls) == 1
+        assert "competitor_sides" in {k.arg for k in calls[0].keywords}
+
+    def test_home_else_arm_has_no_new_control_flow(self):
+        """No continue/break/return entered the competitor loop (Live condition 2)."""
+        import ast
+        import inspect
+
+        import app.services.espn_api as espn_api
+
+        tree = ast.parse(inspect.getsource(espn_api))
+        loops = [
+            n for n in ast.walk(tree)
+            if isinstance(n, ast.For)
+            and isinstance(n.iter, ast.Call)
+            and ast.unparse(n.iter) == "competition.get('competitors', [])"
+            and any("competitor_sides" in ast.unparse(s) for s in n.body)
+        ]
+        assert len(loops) == 1
+        loop = loops[0]
+        assert not [
+            n for n in ast.walk(loop)
+            if isinstance(n, (ast.Continue, ast.Break, ast.Return, ast.Raise))
+        ]
+        # The recording comes before the arm, and the arm is the original two-way split.
+        arm = loop.body[-1]
+        assert isinstance(arm, ast.If)
+        assert ast.unparse(arm.test) == "competitor.get('homeAway') == 'home'"
+        assert not isinstance(arm.orelse[0], ast.If)
