@@ -53,6 +53,29 @@
 # the runner changes WHO STARTS sessions, never what sessions may do.
 
 set -u
+# Capture before shifts, cd, or function definitions. A running Bash keeps the
+# old script descriptor after the carrier is replaced; hashing $0 later would
+# fingerprint the replacement, not the source this process started with.
+BL_RUNNER_ARGS=("$@")
+BL_RUNNER_CWD="$(pwd -P)"
+BL_RUNNER_SCRIPT="$(cd "$(dirname "$0")" && pwd -P)/$(basename "$0")"
+case "$(uname -s)" in
+  Darwin) BL_RUNNER_START_INODE="$(lsof -a -p $$ -d 255 -Fi 2>/dev/null | sed -n 's/^i//p')";;
+  *) BL_RUNNER_START_INODE="$(stat -Lc %i "/proc/$$/fd/255" 2>/dev/null || true)";;
+esac
+BL_RUNNER_START_BLOB="$(git -C "$(dirname "$BL_RUNNER_SCRIPT")" hash-object "$BL_RUNNER_SCRIPT" 2>/dev/null || true)"
+case "$(uname -s)" in
+  Darwin) BL_RUNNER_DISK_INODE="$(stat -f %i "$BL_RUNNER_SCRIPT" 2>/dev/null || true)";;
+  *) BL_RUNNER_DISK_INODE="$(stat -c %i "$BL_RUNNER_SCRIPT" 2>/dev/null || true)";;
+esac
+# An atomic carrier replacement during capture must not make old loaded source
+# appear current. Force the first idle proof/exec before any selection instead.
+if [ "$BL_RUNNER_START_INODE" != "$BL_RUNNER_DISK_INODE" ] || [ -z "$BL_RUNNER_START_BLOB" ]; then
+  BL_RUNNER_START_BLOB="unverified-loaded-$BL_RUNNER_START_INODE"
+fi
+BL_RUNNER_START_ID="$(ps -p $$ -o lstart=,command=)"
+readonly BL_RUNNER_CWD BL_RUNNER_SCRIPT BL_RUNNER_START_BLOB BL_RUNNER_START_INODE BL_RUNNER_START_ID
+readonly -a BL_RUNNER_ARGS
 # Take the whole session subtree down with us. Without this, Ctrl-C or closing
 # the window can orphan the in-flight claude session — it gets re-parented to
 # launchd and keeps editing the worktree invisibly (seen 2026-08-26: two orphans
@@ -287,6 +310,124 @@ bl_warn_if_runner_is_stale() {
   bl_head=$(git -C "$BL_REPO" rev-parse --verify -q "$BL_CARRIER_REF:lane-runner.sh" 2>/dev/null) || return 0
   [ -n "$bl_live" ] && [ -n "$bl_head" ] && [ "$bl_live" != "$bl_head" ] || return 0
   echo "[runner:$1] WARNING: $0 differs from $BL_CARRIER_REF:lane-runner.sh — this lane is executing tooling that is not on master (#4685)" >&2
+}
+
+# #9668: the existing daemon adopts committed carrier source only between
+# sessions. exec retains its PID/group/environment and reloads ALL functions;
+# queued work, return pointers and throttle/claim records remain on disk.
+bl_maybe_adopt_runner() {
+  local bl_candidate bl_committed bl_check bl_reason bl_must_refresh=0
+  if [[ ! "$BL_RUNNER_START_INODE" =~ ^[0-9]+$ ]]; then
+    bl_runner_adoption_notice "startup-unverified" "startup loaded descriptor unavailable — waiting"
+    return 2
+  fi
+  case "$BL_RUNNER_START_BLOB" in unverified-loaded-*) bl_must_refresh=1;; esac
+  bl_candidate=$(git -C "$BL_REPO" hash-object "$BL_RUNNER_SCRIPT" 2>/dev/null) || return $((2 * bl_must_refresh))
+  [ "$bl_candidate" != "$BL_RUNNER_START_BLOB" ] || return 0
+  bl_committed=$(git -C "$BL_REPO" rev-parse --verify -q "$BL_CARRIER_REF:lane-runner.sh" 2>/dev/null) || bl_committed=""
+  if [ "$bl_candidate" != "$bl_committed" ]; then
+    bl_runner_adoption_notice "$bl_candidate:uncommitted" "changed disk source is absent from $BL_CARRIER_REF — waiting"
+    return $((2 * bl_must_refresh))
+  fi
+  # The check process is our one allowed child. Its own ps/lsof subprocesses
+  # are ignored; any other descendant or peer runner makes this boundary busy.
+  python3 - "$BL_REPO" "$BL_RUNNER_SCRIPT" "$BL_CARRIER_REF" "$bl_candidate" \
+    "$BL_RUNNER_START_INODE" "$BL_RUNNER_START_ID" "$$" "$HANDOFF" "${LANES[@]}" <<'PY'
+import os
+from pathlib import Path
+import subprocess
+import sys
+
+repo, script, ref, candidate, inode, identity, pid, handoff, *lanes = sys.argv[1:]
+pid = int(pid)
+
+def read(*args):
+    return subprocess.check_output(args, text=True, stderr=subprocess.DEVNULL).strip()
+
+try:
+    if read('ps', '-p', str(pid), '-o', 'lstart=,command=') != identity.strip():
+        sys.exit(2)
+    # Pin the descriptor this Bash has loaded, not merely the replacement path.
+    if Path('/proc').is_dir():
+        loaded = [str(os.stat(f'/proc/{pid}/fd/255').st_ino)]
+    else:
+        fields = read('lsof', '-a', '-p', str(pid), '-d', '255', '-Fi').splitlines()
+        loaded = [f[1:] for f in fields if f.startswith('i')]
+    if loaded != [inode]:
+        sys.exit(3)
+    for lane in lanes:
+        if any((Path(handoff) / 'runner-inbox' / lane).glob('*.running')):
+            sys.exit(5)
+    rows = {}
+    for line in read('ps', '-axo', 'pid=,ppid=,pgid=,command=').splitlines():
+        bits = line.strip().split(None, 3)
+        if len(bits) == 4:
+            rows[int(bits[0])] = (int(bits[1]), int(bits[2]), bits[3])
+    # python3 can be a host launcher with the interpreter as its child. Follow
+    # only this proof's actual ancestor chain to its one child of the runner;
+    # never whitelist other Python/model processes by executable name.
+    checker_root = os.getpid()
+    ancestry = set()
+    while rows[checker_root][0] != pid:
+        if checker_root in ancestry or rows[checker_root][0] not in rows:
+            sys.exit(4)
+        ancestry.add(checker_root)
+        checker_root = rows[checker_root][0]
+    if [p for p, (parent, _, _) in rows.items() if parent == pid] != [checker_root]:
+        sys.exit(4)
+    # Reparented session remnants still belong to the runner's dedicated group.
+    # Exclude only this check's own subtree, never a detached model/session.
+    checking = {checker_root}
+    while True:
+        children = {p for p, (parent, _, _) in rows.items() if parent in checking}
+        if children <= checking:
+            break
+        checking |= children
+    if rows[pid][1] != pid or any(group == pid and p != pid and p not in checking
+                                 for p, (_, group, _) in rows.items()):
+        sys.exit(4)
+    # A second runner of the same invocation must not silently reset ownership.
+    argv = identity.strip().split(None, 5)[-1]
+    if [p for p, (_, _, cmd) in rows.items() if cmd == argv] != [pid]:
+        sys.exit(2)
+    # Repeat the byte/ref check last, after process/marker checks. Disk-only or
+    # locally committed changes absent from the approved carrier are refused.
+    if (read('git', '-C', repo, 'hash-object', script) != candidate
+        or read('git', '-C', repo, 'rev-parse', '--verify', ref + ':lane-runner.sh') != candidate):
+        sys.exit(6)
+except (OSError, subprocess.SubprocessError, ValueError, KeyError):
+    sys.exit(7)
+PY
+  bl_check=$?
+  if [ "$bl_check" -ne 0 ]; then
+    case "$bl_check" in
+      2) bl_reason="runner identity ambiguous";;
+      3) bl_reason="loaded descriptor unverified";;
+      4) bl_reason="session descendants/group still active";;
+      5) bl_reason="served inbox has running work";;
+      6) bl_reason="carrier bytes changed during check";;
+      *) bl_reason="idle proof unavailable";;
+    esac
+    bl_runner_adoption_notice "$bl_candidate:$bl_check" "$bl_reason — waiting"
+    return 2
+  fi
+  # Startup crash recovery requeues .running files, so refuse even a marker
+  # staged after the proof rather than entering that recovery over active work.
+  for bl_lane in "${LANES[@]}"; do
+    for bl_marker in "$HANDOFF/runner-inbox/$bl_lane"/*.running; do
+      [ ! -e "$bl_marker" ] || return 2
+    done
+  done
+  cd "$BL_RUNNER_CWD" || return 2
+  echo "[runner] adopting committed $BL_CARRIER_REF runner $BL_RUNNER_START_BLOB -> $bl_candidate at idle boundary"
+  exec /bin/bash "$BL_RUNNER_SCRIPT" "${BL_RUNNER_ARGS[@]}"
+  return 2  # failed exec must never fall through into old-source selection
+}
+
+bl_runner_adoption_notice() {
+  [ "${BL_RUNNER_ADOPTION_NOTICE:-}" != "$1" ] || return 0
+  BL_RUNNER_ADOPTION_NOTICE="$1"
+  echo "[runner] source adoption: $2"
 }
 
 # Ownership record for the orphan reaper in start-lanes.sh. Sessions spawned by
@@ -954,6 +1095,10 @@ EOF
 IDLE=0
 while true; do
   TOOK=0
+  if [ "$TAKE_ONCE" -eq 0 ]; then
+    for L in "${LANES[@]}"; do reap_stale_running "$L"; done
+    bl_maybe_adopt_runner || { sleep "$IDLE_SLEEP"; continue; }
+  fi
   # Recomputed every pass: a deferral that came due since the last one must not
   # still be advertised as pending, and one staged since must be.
   NEXT_DUE_EPOCH=""
