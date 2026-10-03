@@ -2740,10 +2740,60 @@ def _pair_matches_after_city_exonym(left: tuple, right: tuple) -> bool:
     """
     native_left = tuple(_native_city_spelling(name) for name in left)
     native_right = tuple(_native_city_spelling(name) for name in right)
-    if native_left == tuple(left) and native_right == tuple(right):
-        # No name in either pair carries one of the cities. Most pairs.
+    if (native_left != tuple(left) or native_right != tuple(right)) and (
+        soccer_pair_matches(native_left, native_right)
+    ):
+        return True
+    return _pair_matches_after_club_demonym(left, right)
+
+
+#: A club named for its city's ADJECTIVE on one side and for the city on the
+#: other, adjective -> city, matched as a whole word. #10287: the Ligue 1 page
+#: 2026-10-03 opened with RC Lens v Lyon (15313577, Odds API) and Racing Club de
+#: Lens v Olympique Lyonnais (15319175, Polymarket, no id), both 10-09 18:45Z —
+#: `lyonnais` and `lyon` share no token. The same page held two more pairs of the
+#: same shape that weekend: Brest v Angers (15313580) against Stade Brestois 29 v
+#: Angers SCO (15319676), and Rennes v Auxerre (15313584) against Stade Rennais
+#: FC 1901 v AJ Auxerre (15320453).
+#:
+#: Each entry is one club's name, measured over every Ligue 1 spelling in
+#: production for the 60 days to 2026-10-03: `Olympique Lyonnais` / `Olympique
+#: Lyon` / `Lyon`, `Stade Rennais` (+ `FC`, `FC 1901`) / `Rennes`, `Stade
+#: Brestois 29` / `Stade Brest 29` / `Brest`. After the rewrite `Stade Rennais`
+#: and `Stade Brestois` still disagree on the city, so the shared `stade` joins
+#: no two clubs.
+#:
+#: Fold-local for the reason the retries above are: `soccer_pair_matches` also
+#: decides the StatPal anchors `stamp_v1_statpal_fixtures` WRITES.
+_CLUB_DEMONYMS: dict[str, str] = {
+    "lyonnais": "Lyon",
+    "rennais": "Rennes",
+    "brestois": "Brest",
+}
+_CLUB_DEMONYM_WORD = re.compile(
+    r"\b(" + "|".join(map(re.escape, _CLUB_DEMONYMS)) + r")\b", re.IGNORECASE
+)
+
+
+def _city_for_club_demonym(name: Optional[str]) -> Optional[str]:
+    """`Olympique Lyonnais` -> `Olympique Lyon`. Anything else comes back unchanged."""
+    if not name:
+        return name
+    return _CLUB_DEMONYM_WORD.sub(lambda m: _CLUB_DEMONYMS[m.group(1).lower()], name)
+
+
+def _pair_matches_after_club_demonym(left: tuple, right: tuple) -> bool:
+    """:func:`soccer_pair_matches`, retried once with each club adjective as its city.
+
+    Asked last, only after every stricter question said no, so nothing that
+    folds today can stop folding.
+    """
+    city_left = tuple(_city_for_club_demonym(name) for name in left)
+    city_right = tuple(_city_for_club_demonym(name) for name in right)
+    if city_left == tuple(left) and city_right == tuple(right):
+        # No name in either pair carries one of the adjectives. Most pairs.
         return False
-    return soccer_pair_matches(native_left, native_right)
+    return soccer_pair_matches(city_left, city_right)
 
 
 @lru_cache(maxsize=4096)
