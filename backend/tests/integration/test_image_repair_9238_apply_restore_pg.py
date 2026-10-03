@@ -145,9 +145,11 @@ async def test_run_backup_apply_restore_roundtrip_and_control(gate):
         )
     ).scalar()
     await cleared(s)
-    for mid in repair.FILED_MARKET_IDS:
+    for mid in (16757297, 109295):
         assert await image(s, mid) == (None, None, None)
     assert await image(s, 1) == before[1]
+    # A pinned row outside the requested --ids is not touched (#10326's row).
+    assert await image(s, 61040985) == before[61040985]
     assert await restore.run(args()) == 0
     assert await image(s, 109295) == (None, None, None)
     assert await restore.run(SimpleNamespace(ids="16757297,109295", apply=True)) == 0

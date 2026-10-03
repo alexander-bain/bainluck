@@ -234,9 +234,33 @@ class TestTheRepickInterlock:
         _old, _new, changed = script.query_changed("politics", "politics")
         assert changed is False
 
-    def test_the_default_scope_is_exactly_the_two_filed_rows(self):
+    def test_the_10326_row_is_refused_on_the_build_that_fetched_the_lioness(
+        self, monkeypatch
+    ):
+        # 61040985's lioness came from #4962's OWN qualified query, which already
+        # differs from legacy — so "changed vs legacy" alone passes on the very
+        # build that fetched it. The recorded fetching query must refuse there.
         script = self._script()
-        assert script._parse_ids(None) == (16757297, 109295)
+        fetched = script.FETCHED_BY_QUERY[61040985]
+        name, category, _photo = script.PINNED_SPECIMENS[61040985]
+        old, new, changed = script.query_changed(name, category, fetched)
+        assert (old, new, changed) == (
+            "Packers Lions football",
+            "american football game",
+            True,
+        )
+
+        def pre_10326(_name, _category):
+            return ["Packers Lions football", "Packers Lions"]
+
+        monkeypatch.setattr(script, "_image_query_candidates", pre_10326)
+        assert script.query_changed(name, category)[2] is True  # the hole
+        assert script.query_changed(name, category, fetched)[2] is False
+
+    def test_the_default_scope_is_exactly_the_filed_rows(self):
+        script = self._script()
+        assert script._parse_ids(None) == (16757297, 109295, 61040985)
+        assert script._parse_ids("61040985") == (61040985,)
         import pytest
 
         assert script._parse_ids("109295") == (109295,)
@@ -278,6 +302,11 @@ class TestPinnedImageRepair:
         script = TestTheRepickInterlock._script()
         row = self.specimen(script)
         assert script.is_filed_bad_image(row)
+        lioness = self.specimen(script, market_id=61040985)
+        assert script.is_filed_bad_image(lioness)
+        assert not script.is_filed_bad_image(
+            self.specimen(script, market_id=61040985, name="Bears vs. Lions")
+        )
         for changes in [
             dict(name="Different question"),
             dict(llm_sport_category="golf"),
