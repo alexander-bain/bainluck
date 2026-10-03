@@ -14,6 +14,13 @@ back to its Pexels photo id:
               photo 35156556 -> "A competitive swimmer performs a backstroke in
               a pool, creating splashes."
 
+A third was filed on #10326 (2026-10-03) after #4962's fix had shipped:
+
+    61040985  "Packers vs. Lions"                football
+              photo 32775211 -> a lioness. The #4962-era query "Packers Lions
+              football" still returns it first (live Pexels, 2026-10-03 ~12:00Z);
+              #10326 makes a head-to-head game ask for its sport only.
+
 PREVENTION SHIPS FIRST and it does not reach these rows. `enrich_market_images`
 selects `image_url IS NULL`, so the corrected query only ever runs on rows that
 have no picture yet. A row that already holds a wrong one is never revisited —
@@ -81,7 +88,7 @@ migration-class: nothing here runs on merge or on release.
 
 The restore command is pinned to these identities and only restores still-NULL
 image columns; a re-picked image is never overwritten. Both commands default to
-the two specimens and accept --ids only to narrow scope. An attended operator
+the pinned specimens and accept --ids only to narrow scope. An attended operator
 must confirm the repair invocation: NULL alone is not an immutable repair receipt.
 
 USAGE
@@ -89,7 +96,7 @@ USAGE
     python3 scripts/repair_4962_market_image_repick.py                 # dry run
     python3 scripts/repair_4962_market_image_repick.py --backup
     python3 scripts/repair_4962_market_image_repick.py --apply
-    # --ids may select only a subset of the two pinned specimens.
+    # --ids may select only a subset of the pinned specimens.
 
 ORDER, and it is the whole safety argument:
 
@@ -127,9 +134,9 @@ from app.tasks.base import get_task_session  # noqa: E402
 # here means the fix is not deployed and the repair must not run.
 from app.tasks.enrich_markets import _image_query_candidates  # noqa: E402
 
-#: The rows filed on #4962 (the golf row is now resolved), holding a photograph of
-#: something else. `--ids` may narrow this list, never widen it.
-FILED_MARKET_IDS = (16757297, 109295)
+#: The rows filed on #4962 (the golf row is now resolved) and #10326, holding a
+#: photograph of something else. `--ids` may narrow this list, never widen it.
+FILED_MARKET_IDS = (16757297, 109295, 61040985)
 PINNED_SPECIMENS = {
     16757297: ("Presidents Cup Winner", "golf", "38465895"),
     109295: (
@@ -137,7 +144,12 @@ PINNED_SPECIMENS = {
         "entertainment",
         "35156556",
     ),
+    61040985: ("Packers vs. Lions", "football", "32775211"),
 }
+#: The query that actually fetched a row's bad photo, when it is NOT the legacy
+#: extractor's. 61040985's lioness came from #4962's own qualified query, so
+#: "differs from legacy" would have passed on the very build that fetched it.
+FETCHED_BY_QUERY = {61040985: "Packers Lions football"}
 CAPTURED_COLUMNS = (
     "id",
     "name",
@@ -268,15 +280,21 @@ def _legacy_image_keywords(name: str, category: str | None) -> str:
     return " ".join(words)
 
 
-def query_changed(name: str, category: str | None) -> tuple[str, str, bool]:
+def query_changed(
+    name: str, category: str | None, fetched_by: str | None = None
+) -> tuple[str, str, bool]:
     """(old query, the new first candidate, did it change).
 
-    Pure, so the interlock is unit-testable without a database.
+    `fetched_by` is the recorded query that fetched the bad photo when that was
+    not the legacy one; the new query must differ from it too, and it is what
+    is reported as "old". Pure, so the interlock is unit-testable without a
+    database.
     """
-    old = _legacy_image_keywords(name, category)
+    legacy = _legacy_image_keywords(name, category)
     candidates = _image_query_candidates(name, category)
     new = candidates[0] if candidates else ""
-    return old, new, new != old
+    old = fetched_by or legacy
+    return old, new, new not in {legacy, old}
 
 
 def _parse_ids(raw: str | None) -> tuple[int, ...]:
@@ -284,7 +302,7 @@ def _parse_ids(raw: str | None) -> tuple[int, ...]:
         return FILED_MARKET_IDS
     ids = tuple(dict.fromkeys(int(part) for part in raw.replace(",", " ").split()))
     if not ids or not set(ids).issubset(FILED_MARKET_IDS):
-        raise ValueError("--ids may only narrow the two pinned #4962 specimens")
+        raise ValueError("--ids may only narrow the pinned #4962/#10326 specimens")
     return ids
 
 
@@ -316,7 +334,9 @@ async def run(args) -> int:
                     f"SKIP {row.id}: identity/category or known bad photo no longer matches."
                 )
                 continue
-            old, new, changed = query_changed(row.name, row.llm_sport_category)
+            old, new, changed = query_changed(
+                row.name, row.llm_sport_category, FETCHED_BY_QUERY.get(row.id)
+            )
             mark = "" if row.image_url else "   (already imageless — nothing to clear)"
             print(
                 f"\n  {row.id}  {row.name!r}  [{row.llm_sport_category}] {row.status}{mark}"
@@ -461,7 +481,8 @@ def main() -> int:
         help="clear the image columns (needs a fresh backup)",
     )
     parser.add_argument(
-        "--ids", help="subset of the two pinned #4962 market ids; widening is refused"
+        "--ids",
+        help="subset of the pinned #4962/#10326 market ids; widening is refused",
     )
     return asyncio.run(run(parser.parse_args()))
 
