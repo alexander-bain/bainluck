@@ -137,8 +137,9 @@ class TestTheSpecimenGoesBack:
         before = dict(vars(row))
         await _run([row])
         after = dict(vars(row))
-        assert after.pop("status") == "scheduled"
+        moved = after.pop("status")
         before.pop("status")
+        assert moved == "scheduled"
         assert after == before
 
     @pytest.mark.asyncio
