@@ -22,6 +22,12 @@ test("semantic matrix names player/stat/threshold/zero chance and accurate loade
   expect(html).toContain('scope="row"'); expect(html).toContain("sticky left-0");
   expect(html).toContain("text-[22px]"); expect(html).toContain("min-h-[72px]");
 });
+test("a pregame move is spoken in percentage points, with no stray percent sign", () => {
+  const moved: DuringPropsRow = { ...row, current: { ...row.current, probability: .62 },
+    comparison: { state: "comparable", reason: null, baseline: { probability: .5, observed_at: "2026-10-02T17:00:00Z", basis: "pregame_pin" }, delta_points: 12 } };
+  const html = renderToStaticMarkup(<DuringPlayerPropsMatrix data={{ ...data, rows: [moved] }} />);
+  expect(html).toContain('aria-label="Aaron Judge, Hits, 2+, 62% chance, +12 percentage points since pregame"');
+});
 test("actual-only and absent quote disclose unavailable", () => {
   const html = renderToStaticMarkup(<DuringPlayerPropsMatrix data={{ ...data, rows: [{ ...row, current: { ...row.current, state: "actual_only" } }] }} />);
   expect(html).toContain("1 without a current quote"); expect(html).toContain("current chance unavailable");

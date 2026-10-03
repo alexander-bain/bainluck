@@ -113,7 +113,7 @@ export default function DuringPlayerPropsMatrix({ data, initialStatKey, initialS
             {player.cells.map((cell, index) => {
               const probability = cell && !matrix.columns[index].underOnly ? quotedChance(cell) : null;
               const change = cell && probability !== null ? compactChange(cell) : null;
-              const accessible = `${player.label}, ${stat?.label ?? statKey}, ${matrix.columns[index].label}, ${probability === null ? "current chance unavailable" : `${chanceLabel(probability)} chance`}${change ? `, ${change.replace("%", " percentage points")} since pregame` : ""}${matrix.columns[index].underOnly ? ", exact under question available" : ""}`;
+              const accessible = `${player.label}, ${stat?.label ?? statKey}, ${matrix.columns[index].label}, ${probability === null ? "current chance unavailable" : `${chanceLabel(probability)} chance`}${change ? `, ${change.replace(/%/g, " percentage points")} since pregame` : ""}${matrix.columns[index].underOnly ? ", exact under question available" : ""}`;
               return <td key={matrix.columns[index].key} className="snap-start border-b border-surface-border p-0 text-center align-middle">
                 {cell ? <button type="button" aria-label={accessible} aria-haspopup="dialog" onClick={event => open(cell, event.currentTarget)}
                   className="flex min-h-[72px] w-full flex-col items-center justify-center gap-1 px-2 py-3 text-text-primary hover:bg-surface-elevated focus-visible:outline focus-visible:outline-2 focus-visible:outline-accent-brand">
