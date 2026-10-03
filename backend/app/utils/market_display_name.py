@@ -279,6 +279,60 @@ def _rewrite_score_slot(name: str) -> str:
     return f"What {match.group('scale')} will {match.group('subject')} reach {tail}?"
 
 
+# --- the question-colon rule (#10240) -----------------------------------------
+#
+# Not a blank at all: Polymarket writes some game props as the member question
+# glued to the event title with a bare colon. Gamma, 2026-10-02 22:10Z,
+# ``futures_markets.id = 63854825`` (``group_id polymarket:1113712``):
+#
+#     question       = "Will the game go to extra innings?: New York Yankees vs. Tampa Bay Rays"
+#     groupItemTitle = "Extra Innings"
+#     event title    = "New York Yankees vs. Tampa Bay Rays"
+#
+# Measured the same minute: 8 open markets carry ``?:`` in ``name``, every one
+# polymarket, every one this extra-innings shape. The card read "innings?:".
+# Each becomes "Will the game go to extra innings? — New York Yankees vs. Tampa
+# Bay Rays": the venue's question and both clubs, word for word and in the
+# venue's order, with one deliberate separator where the colon was.
+#
+# Closed on purpose: exactly one ``?:``, a question before it with no blank in
+# it, and a tail that is a matchup (``A vs. B`` / ``A vs B``) with no question
+# mark of its own. A ``?:`` in any other position, or a tail that is not two
+# sides of a game, has not been read and stays byte-identical.
+_QUESTION_COLON_SEPARATOR = " — "
+
+_QUESTION_COLON = re.compile(
+    r"\A(?P<question>[^?]+\?):\s+(?P<matchup>[^?]+?\S\s+vs\.?\s+\S[^?]*?)\s*\Z"
+)
+
+
+def rewrite_question_colon_display(name: str | None) -> str | None:
+    """Turn "Will the game go to extra innings?: A vs. B" into "… innings? — A vs. B".
+
+    Returns ``name`` byte-identical unless the whole shape matches and the
+    question half carries no template blank (a blanked question here is a
+    shape nobody has read, so it keeps what the reader sees today).
+
+    Public on purpose, and the ONLY rule of this module that is: the search
+    formatter (`routes/events.py::_format_futures_for_search`) applies this one
+    rule to its final name and nothing else, so a search card stops printing
+    "innings?:" without also inheriting the four blank-template rules below,
+    which search has never applied (#10240 review, 2026-10-03).
+    """
+    if not name:
+        return name
+
+    match = _QUESTION_COLON.match(name.strip())
+    if match is None:
+        return name
+
+    question = match.group("question")
+    if re.search(_BLANK, question):
+        return name
+
+    return f"{question}{_QUESTION_COLON_SEPARATOR}{match.group('matchup')}"
+
+
 def clean_market_display_name(name: str | None) -> str | None:
     """Return ``name`` with Polymarket's template blank gone.
 
@@ -293,6 +347,8 @@ def clean_market_display_name(name: str | None) -> str | None:
                                                -> "How high will Meta (META) close on September 25?"
     "Will any AI model reach ___ Coding Arena Score by December 31?"
                                                -> "What Coding Arena Score will any AI model reach by December 31?"
+    "Will the game go to extra innings?: New York Yankees vs. Tampa Bay Rays"
+                                               -> "Will the game go to extra innings? — New York Yankees vs. Tampa Bay Rays"
 
     Anything this module does not positively recognise is returned UNCHANGED
     and byte-identical — including ``None``, the empty string, a name with no
@@ -302,14 +358,18 @@ def clean_market_display_name(name: str | None) -> str | None:
     if not name:
         return name
 
-    # Four rules in order, each returning its input byte-identical when it
+    # Five rules in order, each returning its input byte-identical when it
     # does not recognise the shape. They cannot both fire: the trailing rule
     # only returns a changed string with the blank already gone, and the
     # object-slot and directional patterns each require one. The directional
     # frames need "above" before the blank, which neither earlier rule accepts,
     # and the score slot needs "reach", which none of the other three accepts.
-    return _rewrite_score_slot(
-        _rewrite_directional(_rewrite_object_slot(_strip_trailing_blank(name)))
+    # The question-colon rule refuses any blank, and the four blank rules all
+    # anchor on a name that ENDS in "?", which a "?: A vs. B" name never does.
+    return rewrite_question_colon_display(
+        _rewrite_score_slot(
+            _rewrite_directional(_rewrite_object_slot(_strip_trailing_blank(name)))
+        )
     )
 
 
