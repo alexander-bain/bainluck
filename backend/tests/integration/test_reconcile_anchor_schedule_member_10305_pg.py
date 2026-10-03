@@ -7,7 +7,12 @@ told and never blocks. Each test pairs a refusal with the row it protects:
 * the stated move lands, with the rail's own undo record naming only it, and
   the rail's restore puts it back;
 * a non-member anchored at the SAME clock is decided and left alone;
-* drift in a fenced column, or a new anchor on the ESPN id, writes nothing;
+* drift in a fenced column writes nothing; another row holding ANY of the
+  member's own ids (ESPN or Odds) is refused even when nothing is stated, and
+  an anchor set over the read's cap is refused rather than clipped;
+* an anchor committed while ESPN is being asked stops the write (the fence is
+  re-judged inside the move's UPDATE), while an unrelated one does not;
+* an inverted ESPN answer is not admissible dry and is not moved on apply;
 * ESPN answering any other time writes nothing (dry says not admissible);
 * a row held by another writer is refused, not waited on;
 * while the member call holds the row, another writer to it BLOCKS — the fence
@@ -252,8 +257,120 @@ async def test_a_new_anchor_on_the_espn_id_writes_nothing(pg_engine, espn):
             VALUES (:d, 'espn', :e, 'game')
         """), {"d": DUP, "e": ESPN_MEMBER})
     result = await _call(pg_engine, apply=True)
-    assert result["reason_codes"] == ["MEMBER_STATE_DRIFT"]
-    assert set(result["member"]["fence_diff"]) == {"anchors"}
+    # Another row holding this row's own ESPN id is contested identity: refused
+    # as such, whatever the statement lists.
+    assert result["reason_codes"] == ["MEMBER_ID_HELD_ELSEWHERE"]
+    assert result["member"]["holders"] == [[str(DUP), "espn", ESPN_MEMBER, "game"]]
+    assert await _clock(pg_engine, MEMBER) == (OURS, "odds_api")
+
+
+async def test_the_rows_odds_id_held_elsewhere_refuses_even_when_nothing_is_stated(pg_engine, espn):
+    from sqlalchemy import text
+
+    async with pg_engine.begin() as c:  # the member's own Odds anchor now sits on DUP
+        await c.execute(text(
+            "UPDATE event_provider_anchors SET event_id = :d "
+            "WHERE event_id = :m AND source = 'odds_api' AND source_id = :e"
+        ), {"d": DUP, "m": MEMBER, "e": EXT_MEMBER})
+    # An empty statement matches "this row's anchors" exactly — it must not hide DUP.
+    for apply in (False, True):
+        result = await _call(pg_engine, apply=apply, anchors=[])
+        assert result["reason_codes"] == ["MEMBER_ID_HELD_ELSEWHERE"], result
+        assert result["member"]["holders"] == [[str(DUP), "odds_api", EXT_MEMBER, "game"]]
+    assert await _clock(pg_engine, MEMBER) == (OURS, "odds_api")
+
+
+async def test_an_anchor_set_over_the_cap_is_refused_not_clipped(pg_engine, espn, monkeypatch):
+    from sqlalchemy import text
+
+    from app.tasks import reconcile_anchor_schedule as rail
+
+    async with pg_engine.begin() as c:
+        await c.execute(text("""
+            INSERT INTO event_provider_anchors (event_id, source, source_id, id_kind)
+            VALUES (:m, 'espn', :e, 'game')
+        """), {"m": MEMBER, "e": ESPN_MEMBER})
+    both = [*EXPECT_ANCHORS,
+            {"event_id": MEMBER, "source": "espn", "source_id": ESPN_MEMBER, "id_kind": "game"}]
+    monkeypatch.setattr(rail, "MEMBER_ANCHOR_CAP", 1)
+    result = await _call(pg_engine, apply=True, anchors=both)
+    assert result["reason_codes"] == ["MEMBER_ANCHOR_SET_OVER_CAP"], result
+    assert await _clock(pg_engine, MEMBER) == (OURS, "odds_api")
+    monkeypatch.setattr(rail, "MEMBER_ANCHOR_CAP", 2)  # control: at the cap, it lands
+    async with pg_engine.begin() as c:
+        await c.execute(text("UPDATE events SET espn_id = NULL WHERE id = :i"), {"i": SIBLING})
+    assert (await _call(pg_engine, apply=True, anchors=both))["moved_event_ids"] == [MEMBER]
+
+
+async def test_an_anchor_written_while_espn_is_asked_stops_the_write(pg_engine, espn):
+    """The anchor fence is judged by the move's own UPDATE, not a read before ESPN."""
+    from sqlalchemy import text
+
+    _, hooks = espn
+
+    async def holder_appears():
+        if hooks.get("done"):
+            return
+        hooks["done"] = True
+        async with pg_engine.begin() as c:  # committed mid-call, from outside it
+            await c.execute(text("""
+                INSERT INTO event_provider_anchors (event_id, source, source_id, id_kind)
+                VALUES (:d, 'espn', :e, 'game')
+            """), {"d": DUP, "e": ESPN_MEMBER})
+
+    hooks["before"] = holder_appears
+    result = await _call(pg_engine, apply=True)
+    assert result["moved_event_ids"] == [], result
+    assert "MEMBER_ANCHORS_CHANGED_BEFORE_WRITE" in result["reason_codes"]
+    assert await _clock(pg_engine, MEMBER) == (OURS, "odds_api")
+
+
+async def test_an_unrelated_anchor_written_meanwhile_does_not_stop_the_write(pg_engine, espn):
+    """Control for the test above: the guard reads the row's scope, not the table."""
+    from sqlalchemy import text
+
+    _, hooks = espn
+
+    async def elsewhere():
+        if hooks.get("done"):
+            return
+        hooks["done"] = True
+        async with pg_engine.begin() as c:
+            await c.execute(text("""
+                INSERT INTO event_provider_anchors (event_id, source, source_id, id_kind)
+                VALUES (:d, 'espn', '9103050099', 'game')
+            """), {"d": DUP})
+
+    hooks["before"] = elsewhere
+    result = await _call(pg_engine, apply=True)
+    assert result["moved_event_ids"] == [MEMBER], result
+    assert await _clock(pg_engine, MEMBER) == (THEIRS, "espn")
+
+
+async def test_an_inverted_answer_is_not_admissible_dry_and_not_moved_on_apply(pg_engine, espn, monkeypatch):
+    """Dry is judged by the apply's own predicate, which reads orientation."""
+    from sqlalchemy import text
+
+    from app.utils.authority_id_collisions import AuthorityRecord
+
+    async with pg_engine.begin() as c:
+        await c.execute(text("UPDATE events SET espn_id = NULL WHERE id = :i"), {"i": SIBLING})
+    assert (await _call(pg_engine, apply=False))["member"]["admissible"] is True  # control
+
+    async def inverted(service, sport_keys, authority_id):
+        return AuthorityRecord(
+            authority_id=authority_id,
+            home_names=frozenset({"New York Liberty"}),
+            away_names=frozenset({"Atlanta Dream"}),
+            starts_at=THEIRS,
+            label="stub-inverted",
+        )
+
+    monkeypatch.setattr("app.tasks.repair_authority_id_collisions._fetch_record", inverted)
+    dry = await _call(pg_engine, apply=False)
+    assert dry["admitted_event_ids"] == [] and dry["member"]["admissible"] is False, dry
+    applied = await _call(pg_engine, apply=True)
+    assert applied["moved_event_ids"] == [], applied
     assert await _clock(pg_engine, MEMBER) == (OURS, "odds_api")
 
 

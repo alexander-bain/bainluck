@@ -59,6 +59,45 @@ class TestStatement:
         with pytest.raises(ValueError, match="UTC offset"):
             rail._member_spec(_expect(), [], "2031-03-07T22:17:00")
 
+    def test_a_stated_clock_must_carry_an_offset_too(self):
+        # Compared as UTC, read back as local by `astimezone`: two meanings.
+        with pytest.raises(ValueError, match="expect.commence_time must carry a UTC offset"):
+            rail._member_spec(_expect(commence_time="2031-03-07T05:17:00"), [], THEIRS)
+        with pytest.raises(ValueError, match="expect.completed_at must carry a UTC offset"):
+            rail._member_spec(_expect(completed_at="2031-03-07T08:00:00"), [], THEIRS)
+
+
+class TestAnchorScope:
+    """The fence reads the holders of EVERY id the row carries, keyed as written."""
+
+    def test_espn_odds_and_statpal_ids_are_all_in_scope(self):
+        keys = rail.member_anchor_keys({
+            "sport": "tennis_atp_us_open", "espn_id": "401", "external_id": "odds-1",
+            "statpal_fixture_id": "2629673",
+        })
+        # StatPal is qualified by its ID SPACE (`tennis`), as the stampers write it.
+        assert keys == [("espn", "401"), ("odds_api", "odds-1"), ("statpal", "tennis:2629673")]
+
+    def test_a_row_with_no_ids_scopes_to_its_own_anchors_only(self):
+        assert rail.member_anchor_keys({"sport": "basketball_wnba"}) == []
+        scope, params = rail._member_anchor_scope(7, [])
+        assert scope == "event_id = :m_id" and params == {"m_id": 7}
+
+    def test_each_key_is_a_bound_source_and_id_pair(self):
+        scope, params = rail._member_anchor_scope(7, [("espn", "401"), ("odds_api", "o'1")])
+        assert scope == (
+            "event_id = :m_id OR (source = :m_s0 AND source_id = :m_k0) "
+            "OR (source = :m_s1 AND source_id = :m_k1)"
+        )
+        assert params == {"m_id": 7, "m_s0": "espn", "m_k0": "401",
+                          "m_s1": "odds_api", "m_k1": "o'1"}
+
+    def test_the_write_guard_is_for_its_own_row_only(self):
+        guard = rail.member_write_guard(1, [("espn", "401")], [])
+        assert guard(_D(event_id=1)) is not None
+        with pytest.raises(ValueError, match="its own row only"):
+            guard(_D(event_id=2))
+
     def test_an_anchor_states_exactly_its_key(self):
         with pytest.raises(ValueError, match="each expected anchor"):
             rail._member_spec(_expect(), [{"event_id": 1, "source": "espn"}], THEIRS)

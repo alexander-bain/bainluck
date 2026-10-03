@@ -591,7 +591,9 @@ async def reconcile_anchor_schedule_endpoint(
             '{"event_id", "expect": {every fenced column}, "expect_anchors": '
             '[{event_id, source, source_id, id_kind}], "authority_start"}. The '
             "row is locked and compared with the statement in the transaction "
-            "that moves it. Excludes `sport`, `cursor` and `limit`."
+            "that moves it; its anchors are re-compared inside the move's own "
+            "write, and another event holding any of its ids is refused. "
+            "Excludes `sport`, `cursor` and `limit`."
         ),
     ),
     db: AsyncSession = Depends(get_db_rw),

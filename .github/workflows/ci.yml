@@ -538,7 +538,9 @@ jobs:
         # server can answer: the row is LOCKED through the rail's own commit
         # (another writer blocks), a stated-state mismatch writes nothing, and
         # `apply_only` reaches exactly the named row while a sibling at the
-        # same clock is decided and left alone. A fake session never blocks and
+        # same clock is decided and left alone; and the anchor fence covers
+        # every holder of the row's ids and is re-judged inside the move's own
+        # UPDATE. A fake session never blocks and
         # returns whatever rowcount it is told, so this cannot be a unit test.
         # Same skip refusal as every gate in this job, plus the exact count.
         if: matrix.group == 'shared'
@@ -550,8 +552,8 @@ jobs:
             echo "::error::#10305 member-move gate SKIPPED — the gate did not run"
             exit 1
           fi
-          if ! grep -qE "\b6 passed\b" /tmp/member10305.txt; then
-            echo "::error::#10305 member-move gate did not pass exactly 6 tests"
+          if ! grep -qE "\b11 passed\b" /tmp/member10305.txt; then
+            echo "::error::#10305 member-move gate did not pass exactly 11 tests"
             exit 1
           fi
 
