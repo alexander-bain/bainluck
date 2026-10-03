@@ -161,6 +161,32 @@ class TestNameSimilarity:
         assert ss.name_similarity("New York Mets", "New York Yankees") < ss.MATCH_BAR
         assert ss.name_similarity("Los Angeles Angels", "Los Angeles Dodgers") < ss.MATCH_BAR
 
+    def test_city_abbreviation_reads_the_same_club(self):
+        # #10304: ESPN prints "LA Clippers" where we store "Los Angeles
+        # Clippers". The pair scored 0.25 and filed a MISSING for a game we
+        # hold (plus an EXTRA watch row for the very row we hold).
+        assert ss.name_similarity("Los Angeles Clippers", "LA Clippers") == 1.0
+        assert ss.name_similarity("LA Clippers", "Los Angeles Clippers") == 1.0
+        assert ss.name_similarity("New York Knicks", "NY Knicks") == 1.0
+
+    def test_city_abbreviation_keeps_same_city_clubs_apart(self):
+        # Expansion must not loosen the strict pairing: shared-city clubs
+        # still miss the bar, abbreviated or not.
+        assert ss.name_similarity("LA Clippers", "Los Angeles Lakers") < ss.MATCH_BAR
+        assert ss.name_similarity("LA Clippers", "LA Lakers") < ss.MATCH_BAR
+
+    def test_city_abbreviation_keeps_galaxy_and_lafc_apart(self):
+        # #10304 review: once "LA" expands, "Los Angeles FC" minus its `fc`
+        # stopword is a SUBSET of "LA Galaxy" (0.85) unless the whole name
+        # folds to LAFC's one token. Both argument orders, both spellings.
+        assert ss.name_similarity("LA Galaxy", "Los Angeles FC") < ss.MATCH_BAR
+        assert ss.name_similarity("Los Angeles FC", "LA Galaxy") < ss.MATCH_BAR
+        assert ss.name_similarity("Los Angeles Galaxy", "Los Angeles FC") < ss.MATCH_BAR
+        assert ss.name_similarity("LAFC", "LA Galaxy") < ss.MATCH_BAR
+        # The fold reads LAFC's two spellings as one club.
+        assert ss.name_similarity("LAFC", "Los Angeles FC") == 1.0
+        assert ss.name_similarity("LA Galaxy", "Los Angeles Galaxy") == 1.0
+
     def test_empty_names_never_match(self):
         assert ss.name_similarity("", "Boston Red Sox") == 0.0
         assert ss.name_similarity(None, None) == 0.0
@@ -269,6 +295,23 @@ class TestMissing:
             ss.reconcile(truth, [], MLB, NOW)[0], MLB, NOW)
         assert len(classified["real"]) == 1
 
+    def test_abbreviated_authority_name_is_not_a_missing_game(self):
+        """#10304, end to end: the authority's "LA Clippers" and our row's "Los
+        Angeles Clippers" are one game at one clock. Before the city-abbreviation
+        expansion they never paired, so the same game produced a REAL MISSING
+        and an EXTRA watch row at once."""
+        NBA = next(s for s in ss.SCHEDULE_LEAGUES if s.slug == "nba")
+        truth = [_truth("LA Clippers", "Golden State Warriors", start=_ahead(9),
+                        state="scheduled", raw="STATUS_SCHEDULED")]
+        ours = [_ours(15320337, "Los Angeles Clippers", "Golden State Warriors",
+                      start=_ahead(9), status="scheduled")]
+        findings, stats = ss.reconcile(truth, ours, NBA, NOW)
+        assert stats["unmatched_truth"] == 0 and stats["unmatched_ours"] == 0
+        assert _defects(findings) == []
+        classified = ss.classify_findings(findings, NBA, NOW)
+        assert classified["real"] == []
+        assert classified["watch"] == []
+
     def test_partial_by_design_league_missing_is_watch_not_real(self):
         """We do not carry all ~360 D1 programs. Filing that daily is the
         cry-wolf the Grid Sentinel's mlb-66 lesson forbids."""
@@ -356,6 +399,20 @@ class TestMisattached:
                if f["check"] == "schedule_misattached"]
         assert mis[0]["names_agree"] is True
         assert "a name-only check passes this row" in mis[0]["detail"]
+
+    def test_galaxy_fixture_bound_to_lafc_club_is_misattached(self):
+        """#10304 review (authority's discriminator): the Galaxy's fixture with
+        its home FK dereferencing to the `Los Angeles FC` club row — the wrong
+        bind CERT-3134 measured. City expansion made "LA Galaxy" ⊇ "Los Angeles
+        FC" and silenced this; the LAFC whole-name fold restores it."""
+        mls = next(s for s in ss.SCHEDULE_LEAGUES if s.slug == "mls")
+        truth = [_truth("LA Galaxy", "Colorado Rapids", start=_ago(3), hs=3, aws=2)]
+        ours = [_ours(15314006, "LA Galaxy", "Colorado Rapids", start=_ago(3),
+                      hs=3, aws=2, home_fk="Los Angeles FC")]
+        mis = [f for f in ss.reconcile(truth, ours, mls, NOW)[0]
+               if f["check"] == "schedule_misattached"]
+        assert len(mis) == 1
+        assert mis[0]["fk_name"] == "Los Angeles FC"
 
     def test_correctly_wired_team_id_is_not_flagged(self):
         """The other direction (gotcha #43)."""
