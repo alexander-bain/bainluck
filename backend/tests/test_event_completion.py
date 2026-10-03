@@ -293,6 +293,7 @@ class _NetSession:
             [],                 # bogus completed
             [],                 # future-settled
             [],                 # illegal settled tennis score (#2772)
+            [],                 # live with a future start, no play (#10300)
         ]
         self._snapshots = snapshots
         self.blend_updates = []

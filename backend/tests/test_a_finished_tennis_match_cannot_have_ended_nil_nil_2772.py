@@ -340,7 +340,8 @@ class _Session:
     assertions can only be about this one."""
 
     def __init__(self, illegal):
-        self._selects = [[], [], [], [], [], illegal]
+        # The last slot is the #10300 future-start live read.
+        self._selects = [[], [], [], [], [], illegal, []]
 
     async def execute(self, stmt, params=None):
         sql = str(stmt)
