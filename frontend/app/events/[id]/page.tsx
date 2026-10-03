@@ -36,6 +36,7 @@ import {
 } from "@/lib/eventLivePush";
 import LiveAgeStamp, { heroStampIsStale } from "@/components/event/LiveAgeStamp";
 import { heroFreshness } from "@/lib/event/heroFreshness";
+import { newestServedScore } from "@/lib/event/newestServedScore";
 import LiveSparkline from "@/components/event/LiveSparkline";
 import LiveConnectionStatus from "@/components/event/LiveConnectionStatus";
 import ChartFullscreenDialog from "@/components/event/ChartFullscreenDialog";
@@ -1029,6 +1030,14 @@ export default function EventPage({ params }: EventPageProps) {
   // Game-level markets (totals spectrum, player props)
   const { data: servedGameMarkets } = useGameMarketsStream(eventId, event?.id ?? eventId);
 
+  // #10294 — the event row's score as of the NEWER of the page's two reads of it.
+  // Detail is re-read every 120 s while the stream is connected; game markets every
+  // few seconds, carrying the same row's score and stamp. See the helper.
+  const servedScore = useMemo(
+    () => newestServedScore(event, servedGameMarkets),
+    [event, servedGameMarkets],
+  );
+
   // #7064: the hero already answers the game's own moneyline, so the props body must not answer it
   // again — it was arriving once PER VENUE, so the page showed the same question two more times,
   // under two spellings, disagreeing with the hero and with each other (56 + 46 = 102%).
@@ -1061,16 +1070,16 @@ export default function EventPage({ params }: EventPageProps) {
     () =>
       computeLastChartPoint(
         historyData,
-        event?.home_score,
-        event?.away_score,
+        servedScore.home_score,
+        servedScore.away_score,
         // #4571 — the event row's own clock, so the helper can date the score by
         // the arm that supplied it rather than by its neighbouring timestamp.
-        event?.score_observed_at,
+        servedScore.score_observed_at,
         // #925 — the header's own inning, for a live game whose history rows
         // never named one. Live only: a finished row's period is its result.
         event?.status === "live" ? event?.espn ?? null : null,
       ),
-    [historyData, event?.home_score, event?.away_score, event?.score_observed_at, event?.status, event?.espn],
+    [historyData, servedScore, event?.status, event?.espn],
   );
 
   // Best-known scores. #5521 — the comment that stood here said *"prefer latest
@@ -1080,8 +1089,8 @@ export default function EventPage({ params }: EventPageProps) {
   // StatPal snapshot beside it and the hero printed the wrong team ahead for an
   // hour. `computeLastChartPoint` now ranks the two observation series by their
   // own clocks; the event row remains the fallback beneath both.
-  const bestHomeScore = lastChartPoint?.homeScore ?? event?.home_score ?? null;
-  const bestAwayScore = lastChartPoint?.awayScore ?? event?.away_score ?? null;
+  const bestHomeScore = lastChartPoint?.homeScore ?? servedScore.home_score;
+  const bestAwayScore = lastChartPoint?.awayScore ?? servedScore.away_score;
   // #8810 / #8960 — ESPN publishes 0-0 for both sides of a postponed fixture.
   // Under a stoppage word with no side scored, the hero's two big zeros and the
   // flat "actual score" line are a match nobody played, so neither is drawn.
@@ -1388,7 +1397,7 @@ export default function EventPage({ params }: EventPageProps) {
   const renderedScoreStamp = lastChartPoint
     ? lastChartPoint.scoreStamp ?? null
     : bestHomeScore !== null || bestAwayScore !== null
-      ? event?.score_observed_at ?? null
+      ? servedScore.score_observed_at
       : null;
 
   // #5607 — a slow load is a slow load, not a failure.
@@ -3057,8 +3066,8 @@ export default function EventPage({ params }: EventPageProps) {
             bookmakerHistory={historyData?.bookmaker_history}
             scoreHistory={historyData?.score_history}
             espnHistory={historyData?.espn_history}
-            currentHomeScore={event.home_score}
-            currentAwayScore={event.away_score}
+            currentHomeScore={servedScore.home_score}
+            currentAwayScore={servedScore.away_score}
             eventStatus={event.status}
             periodBoundaries={periodBoundaries}
             homeTeamColor={event.home_team_data?.primary_color || undefined}
