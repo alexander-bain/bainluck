@@ -179,6 +179,8 @@ extension CompactEventPriceStatusTests {
 
     private final class PageHandle: LiveStreamHandle, @unchecked Sendable {
         var callbacks: [String: [@MainActor (String) -> Void]] = [:]
+        var isClosed = false
+        var isConnecting = false
         func on(_ event: String, _ handler: @escaping @MainActor (String) -> Void) {
             callbacks[event, default: []].append(handler)
         }
@@ -203,6 +205,7 @@ extension CompactEventPriceStatusTests {
             .frame(width: 180, height: 70).background(.white)
             .environment(\.scenePhase, input.active ? .active : .background)
             .environment(\.colorScheme, .light)
+            .ignoresSafeArea()
         }
     }
 
@@ -293,7 +296,7 @@ extension CompactEventPriceStatusTests {
         ] {
             let view = CompactEventPriceStatusView(status: status, sequence: 5,
                 receivedAt: Date(timeIntervalSince1970: 1_790_600_000))
-                .frame(width: 150).padding().background(.white)
+                .frame(width: 358).padding().background(.white)
                 .environment(\.scenePhase, .active).environment(\.colorScheme, .light)
             let host = hostForMeasurement(view, at: size)
             let win = window(host, CGSize(width: 390, height: 280))
@@ -306,7 +309,7 @@ extension CompactEventPriceStatusTests {
     }
 
     func testActualEventPageShowsOneCompactLineBesideTheProbability() async throws {
-        for (name, size) in [("page-390", DynamicTypeSize.large), ("page-390-xxxl", .xxxLarge)] {
+        for (name, size) in [("page-390", DynamicTypeSize.large), ("page-390-xxxl", .xxxLarge), ("page-390-ax3", .accessibility3)] {
             let client = try PageClient(), handle = PageHandle()
             let vm = EventDetailViewModel(eventId: 4243, client: client, makeStreamHandle: { _ in handle })
             await vm.load(); handle.open()
