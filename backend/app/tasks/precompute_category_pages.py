@@ -22,6 +22,29 @@ CACHE_TTL = 7200
 STALE_CACHE_TTL = 86400  # 24 hours — served when primary cache is cold
 
 
+def _record_rendered_market_ids(rc, page: str, *payloads) -> None:
+    """#10320: record which futures markets this page just published.
+
+    ``refresh_stale_futures_prices`` re-prices these by id. Before this, no
+    Kalshi price path reached a category-page card: on 2026-10-03 /politics
+    showed a question Kalshi had settled YES a week earlier at 25%. Written from
+    the payload just cached, by the writer that built it, so it cannot disagree
+    with what a reader is served. Never raises: a failure here must not cost the
+    page its cache.
+    """
+    try:
+        from app.utils.category_served_markets import (
+            market_ids_in_category_payload,
+            record_category_served_market_ids,
+        )
+
+        record_category_served_market_ids(
+            rc, page, market_ids_in_category_payload(*payloads)
+        )
+    except Exception:
+        logger.debug("category served-ids record failed for %s", page, exc_info=True)
+
+
 async def _precompute_politics():
     """Build the politics response and cache it.
 
@@ -47,6 +70,7 @@ async def _precompute_politics():
     payload = json.dumps(response, default=str)
     rc.set(f"{CACHE_PREFIX}politics", payload, ex=CACHE_TTL)
     rc.set(f"{CACHE_PREFIX}politics:stale", payload, ex=STALE_CACHE_TTL)
+    _record_rendered_market_ids(rc, "politics", response)
     total = response.get("total_markets", 0)
     logger.info(
         "Cached politics category page (%d markets) stages=%s", total, stage_ms
@@ -67,6 +91,7 @@ async def _precompute_entertainment():
     payload = json.dumps(response, default=str)
     rc.set(f"{CACHE_PREFIX}entertainment", payload, ex=CACHE_TTL)
     rc.set(f"{CACHE_PREFIX}entertainment:stale", payload, ex=STALE_CACHE_TTL)
+    _record_rendered_market_ids(rc, "entertainment", response)
     logger.info("Cached entertainment category page (%d markets)", response.get("total_markets", 0))
     return response.get("total_markets", 0)
 
@@ -84,6 +109,7 @@ async def _precompute_economics():
     payload = json.dumps(response, default=str)
     rc.set(f"{CACHE_PREFIX}economics", payload, ex=CACHE_TTL)
     rc.set(f"{CACHE_PREFIX}economics:stale", payload, ex=STALE_CACHE_TTL)
+    _record_rendered_market_ids(rc, "economics", response)
     logger.info("Cached economics category page (%d markets)", response.get("total_markets", 0))
     return response.get("total_markets", 0)
 
@@ -122,6 +148,9 @@ async def _precompute_weather():
         ("weather:cross-source", cross_source),
     ]:
         rc.set(f"{CACHE_PREFIX}{key}", json.dumps(data, default=str), ex=CACHE_TTL)
+    _record_rendered_market_ids(
+        rc, "weather", featured, cities, rain, events, climate, wildcards, cross_source
+    )
 
     logger.info("Cached all 7 weather sub-endpoints")
     return 7

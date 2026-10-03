@@ -1431,6 +1431,12 @@ class _RunHarness:
         # Nothing read inside its window here; #9543's subclass overrides it.
         return set()
 
+    def _category_served(self, now=None):
+        # No category page has published here; #10320's subclass overrides it.
+        from app.utils.category_served_markets import CategoryServed
+
+        return CategoryServed(ids=[])
+
     async def run(self, monkeypatch):
         import contextlib
 
@@ -1450,6 +1456,12 @@ class _RunHarness:
         )
         monkeypatch.setattr(
             "app.utils.feed_served_markets.served_signal", lambda: self.signal
+        )
+        # #10320: hermetic — the category-page arm reads its own Redis key, and a
+        # run here must not depend on whatever a local Redis happens to hold.
+        monkeypatch.setattr(
+            "app.utils.category_served_markets.category_served_market_ids",
+            self._category_served,
         )
 
         def _note(*a, **kw):
