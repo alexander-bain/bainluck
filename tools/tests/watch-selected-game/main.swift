@@ -78,6 +78,14 @@ actor Stub: WatchSelectedGameTransport {
         await transport.finish(1, result: .failure(URLError(.notConnectedToInternet)))
         await failed.value
         precondition(store.game?.id == 1 && store.fetchedAt == clock && store.errorMessage != nil)
+        let retainedError = store.errorMessage
+        let interruptedRetry = Task { await store.refresh() }
+        await transport.waitFor(1)
+        precondition(store.errorMessage == retainedError && store.isRefreshing, "Retry is not recovery")
+        interruptedRetry.cancel()
+        await transport.finish(1, result: .failure(URLError(.cancelled)))
+        await interruptedRetry.value
+        precondition(store.errorMessage == retainedError && !store.isRefreshing)
         let old = Task { await store.refresh() }
         await transport.waitFor(1)
         store.select(eventID: 2)
@@ -185,6 +193,26 @@ actor Stub: WatchSelectedGameTransport {
             _ = try JSONDecoder().decode(WatchSelectedGame.self, from: Data("{}".utf8))
             fatalError("Empty success must fail decode")
         } catch is DecodingError {}
+        let errorTransport = Stub()
+        let errorStore = WatchSelectedGameStore(transport: errorTransport, defaults: defaults)
+        errorStore.select(eventID: 20)
+        for (failure, expected) in [(WatchSelectedGameRequestError.unavailable as Error, "Selected game is unavailable."),
+                                    (WatchSelectedGameRequestError.serviceBusy as Error, "Service temporarily busy."),
+                                    (WatchSelectedGameRequestError.invalidResponse as Error, "Couldn't read this game."),
+                                    (URLError(.timedOut) as Error, "Connection timed out.")] {
+            let request = Task { await errorStore.refresh() }
+            await errorTransport.waitFor(20)
+            await errorTransport.finish(20, result: .failure(failure))
+            await request.value
+            precondition(errorStore.errorMessage?.hasPrefix(expected) == true && errorStore.selectedEventID == 20)
+        }
+        let recovery = Task { await errorStore.refresh() }
+        await errorTransport.waitFor(20)
+        await errorTransport.finish(20, result: .success(try event(20)))
+        await recovery.value
+        precondition(errorStore.errorMessage == nil)
+        errorStore.clearSelection()
+        try await checkWatchHTTPTransport()
         let lifecycleTransport = Stub()
         let lifecycle = WatchSelectedGameStore(transport: lifecycleTransport, defaults: defaults, now: { clock })
         lifecycle.select(eventID: 10)

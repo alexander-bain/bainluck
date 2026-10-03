@@ -104,3 +104,13 @@ logic checks do not establish physical VoiceOver focus order or large-text fit.
 The build helper now defaults to worktree-local `build/watch-mvp` DerivedData and
 two build jobs (one is supported), respecting shared-host isolation. No simulator
 boot is needed for its two unsigned SDK builds.
+
+## Network failure behavior
+
+The public event transport distinguishes unavailable games (404/410), temporary
+service pressure (429/503), invalid responses and networking failures. None clears
+the selected game or last-good snapshot. Starting or cancelling a retry retains
+the prior error; only successful recovery or a selection change clears it. Timeout
+and offline messages are distinct. Deterministic URLProtocol tests intercept every
+request and verify the production URLSession transport without network/simulator
+usage. They do not establish physical connectivity behavior.

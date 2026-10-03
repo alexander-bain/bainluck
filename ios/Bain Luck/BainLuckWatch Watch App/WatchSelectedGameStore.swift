@@ -5,17 +5,34 @@ nonisolated protocol WatchSelectedGameTransport: Sendable {
     func fetch(eventID: Int) async throws -> WatchSelectedGame
 }
 
+nonisolated enum WatchSelectedGameRequestError: Error {
+    case unavailable
+    case serviceBusy
+    case invalidResponse
+}
+
 nonisolated struct WatchSelectedGameHTTPTransport: WatchSelectedGameTransport {
+    let session: URLSession
+
+    init(session: URLSession = .shared) { self.session = session }
+
     func fetch(eventID: Int) async throws -> WatchSelectedGame {
         let url = URL(string: "https://api.bainluck.com/api/events/\(eventID)")!
         var request = URLRequest(url: url)
         request.timeoutInterval = 15
         request.cachePolicy = .reloadIgnoringLocalCacheData
-        let (data, response) = try await URLSession.shared.data(for: request)
-        guard let http = response as? HTTPURLResponse, http.statusCode == 200 else {
-            throw URLError(.badServerResponse)
+        let (data, response) = try await session.data(for: request)
+        guard let http = response as? HTTPURLResponse else {
+            throw WatchSelectedGameRequestError.invalidResponse
         }
-        return try JSONDecoder().decode(WatchSelectedGame.self, from: data)
+        switch http.statusCode {
+        case 200: break
+        case 404, 410: throw WatchSelectedGameRequestError.unavailable
+        case 429, 503: throw WatchSelectedGameRequestError.serviceBusy
+        default: throw WatchSelectedGameRequestError.invalidResponse
+        }
+        do { return try JSONDecoder().decode(WatchSelectedGame.self, from: data) }
+        catch { throw WatchSelectedGameRequestError.invalidResponse }
     }
 }
 
@@ -115,7 +132,7 @@ final class WatchSelectedGameStore: ObservableObject {
         revision += 1
         let requestRevision = revision
         isRefreshing = true
-        errorMessage = nil
+        // A retry is not recovery. Keep the previous failure visible until success.
         do {
             let result = try await transport.fetch(eventID: id)
             try Task.checkCancellation()
@@ -124,6 +141,7 @@ final class WatchSelectedGameStore: ObservableObject {
             selectedEventID = result.id
             defaults.set(result.id, forKey: Self.selectionKey)
             consecutiveFailures = 0
+            errorMessage = nil
             game = result
             let receivedAt = now()
             fetchedAt = receivedAt
@@ -139,9 +157,20 @@ final class WatchSelectedGameStore: ObservableObject {
             isRefreshing = false
             if Task.isCancelled || error is CancellationError || (error as? URLError)?.code == .cancelled { return }
             consecutiveFailures = min(consecutiveFailures + 1, 5)
-            let code = (error as? URLError)?.code
-            errorMessage = (code == .notConnectedToInternet || code == .networkConnectionLost)
-                ? "Offline. Try again." : "Couldn't refresh. Try again."
+            switch error {
+            case WatchSelectedGameRequestError.unavailable:
+                errorMessage = "Selected game is unavailable. Try again or choose another game."
+            case WatchSelectedGameRequestError.serviceBusy:
+                errorMessage = "Service temporarily busy. Try again."
+            case WatchSelectedGameRequestError.invalidResponse:
+                errorMessage = "Couldn't read this game. Try again."
+            case let urlError as URLError where [.notConnectedToInternet, .networkConnectionLost].contains(urlError.code):
+                errorMessage = "Offline. Try again."
+            case let urlError as URLError where urlError.code == .timedOut:
+                errorMessage = "Connection timed out. Try again."
+            default:
+                errorMessage = "Couldn't refresh. Try again."
+            }
             // Keep the last successful game and its original timestamps.
         }
     }
