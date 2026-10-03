@@ -204,6 +204,31 @@ final class EventQuestionMatrix10238Tests: XCTestCase {
         XCTAssertEqual(binary.optionCounts?.loaded, 2)
     }
 
+    func testATypedQuestionOffersMoreOptionsOnlyForAnIdentifiedMissingLeg() throws {
+        let m = try matrix()
+        XCTAssertTrue(try question(m, "m:71001").offersMoreOptions, "named options, one leg identified missing")
+        XCTAssertFalse(try question(m, "m:71003").offersMoreOptions, "complete")
+        XCTAssertFalse(try question(m, runs8).offersMoreOptions, "complete unknown")
+
+        for key in [runs8, homeSpread, "m:71020"] {
+            let unvouched = try editing(key) { question in
+                question["complete"] = false
+                question["option_counts"] = ["loaded": 1, "returned": 1, "missing_identified": 0]
+                question["missing_options"] = []
+            }
+            XCTAssertFalse(try question(try matrix(unvouched), key).offersMoreOptions,
+                           "A4 rider: complete:false with 0 identified is no disclosure on a typed kind: \(key)")
+        }
+
+        let identified = try editing(runs8) { question in
+            question["complete"] = false
+            question["option_counts"] = ["loaded": 2, "returned": 1, "missing_identified": 1]
+            question["missing_options"] = [["option_key": "o:99001", "outcome_id": 99001,
+                                            "label": "Under 7.5", "side": "under", "value_state": "unpriced"]]
+        }
+        XCTAssertTrue(try question(try matrix(identified), runs8).offersMoreOptions)
+    }
+
     // MARK: - Comparison (R5)
 
     func testADeltaIsShownOnlyBesideLatestWhenTheServerSaysComparable() throws {

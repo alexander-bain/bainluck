@@ -124,6 +124,18 @@ nonisolated struct QuestionMatrixQuestion: Decodable, Equatable, Identifiable, S
         return kind
     }
 
+    /// Whether the question may offer a "more options" disclosure. Only a
+    /// server-identified missing leg earns one on a typed kind: there
+    /// `complete:false` with `missing_identified: 0` says the server cannot
+    /// vouch for the whole ladder, not that a leg is missing (A4 native rider).
+    /// Read from the served kind, so a typed kind marked untyped stays typed.
+    var offersMoreOptions: Bool {
+        guard complete == false else { return false }
+        let served = QuestionMatrixKind(rawValue: kind) ?? .namedOptions
+        if served == .namedOptions { return true }
+        return max(optionCounts?.missingIdentified ?? 0, missingOptions?.count ?? 0) > 0
+    }
+
     func option(_ key: String) -> QuestionMatrixOption? {
         options.first { $0.optionKey == key }
     }
