@@ -34265,7 +34265,10 @@ def _compute_standings_context(
             parts.append(f"#{s['league_rank']}")
         # Points (soccer)
         if "points" in s and "wins" in s:
-            parts.append(f"{s['points']} pts")
+            # "1 pt", not "1 pts" (#10252): an NHL team after one overtime
+            # loss, a soccer side after one draw.
+            unit = "pt" if str(s["points"]) in ("1", "1.0") else "pts"
+            parts.append(f"{s['points']} {unit}")
 
         if parts:
             context[key] = ", ".join(parts)
