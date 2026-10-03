@@ -246,9 +246,6 @@ export default function EventPage({ params }: EventPageProps) {
   const { isPinned, togglePin, isMaxReached } = usePinnedEvents();
   const eventIsPinned = isPinned(eventId);
 
-  // live/034 S2 — see the `refreshInterval` note below. Declared here because
-  // the SWR config closes over it and the hook that sets it needs `event`.
-  const streamConnectedRef = useRef(false);
   // Consume refresh intent in the fetcher, so deduped SWR requests retain it.
   // Ordinary interval reads continue using the shared server cache.
   const freshNextEventReadRef = useRef(false);
@@ -276,10 +273,10 @@ export default function EventPage({ params }: EventPageProps) {
   //
   // `useMemo` with an EMPTY dependency list is correct rather than lazy here:
   // the callback closes over nothing reactive (status arrives as swr's argument,
-  // liveness through the ref, the cadences are module constants), which is the
-  // precondition the factory documents.
+  // the cadences are module constants), which is the precondition the factory
+  // documents.
   const eventPollInterval = useMemo(
-    () => makeEventRefreshInterval(streamConnectedRef, {
+    () => makeEventRefreshInterval({
       live: LIVE_REFRESH_INTERVAL,
       scheduled: SCHEDULED_REFRESH_INTERVAL,
     }),
@@ -300,27 +297,15 @@ export default function EventPage({ params }: EventPageProps) {
       () => heldEventRef.current,
     ),
     {
-      // live/034 S2 — when the SSE stream is delivering, the 32s poll stands
-      // down. That is the ship: the same number, arriving instead of being
-      // waited for. The instant the stream stops delivering — errored, refused,
-      // closed, or silently dead — `streamConnected` goes false and the 32s
-      // poll comes straight back. A push path that dies must degrade to
-      // polling, never to a frozen number.
-      //
-      // CERT-1994: "stands down" is not "stops". It used to be 0, and a frame
-      // carries ONE probability, so every other field on a page somebody left
-      // open was frozen at first fetch — including the tennis games line and the
-      // `observed_at` its freshness chip counts from, which the server
-      // re-confirms every ~10 minutes. The chip then said `Stale · 40m ago`
-      // about a number re-confirmed a minute earlier: the honesty mechanism
-      // itself lying, which is worse than the staleness it exists to disclose.
-      // See `eventRefreshInterval` for why the pushed cadence is 120s and not a
-      // taste — it is derived from the chip's own stale threshold.
-      //
-      // Read through a REF, not the state value: `streamConnected` is derived
-      // from `event`, which is what this very call produces, so naming it here
-      // would be a use-before-declare. The ref is written just after the hook
-      // below, and SWR only ever invokes this after a render has completed.
+      // live/034 S2 stood this poll down while the SSE stream delivered: the
+      // frame carries the probability, so it arrives instead of being waited
+      // for. CERT-1994 found "stood down" cannot mean "stopped" — every field
+      // the frame does not carry froze at first fetch — and settled on 120s,
+      // the freshness chip's tolerance. #4889 found 120s is not the CLOCK's
+      // tolerance: the header's game clock comes from this read while the play
+      // strip comes from `/history` at 32s, so a live page showed two clocks
+      // 78 game-seconds apart. A live page now reads at 32s whether or not the
+      // stream delivers; see `eventRefreshInterval`.
       // #7621: a STABLE reference, built above. Inlining the arrow here again
       // is the bug — see the note on `eventPollInterval`.
       refreshInterval: eventPollInterval,
@@ -410,9 +395,8 @@ export default function EventPage({ params }: EventPageProps) {
     chartPoints,
     status: reportedStreamStatus,
   } = useLiveEventStream(eventId, quoteEligible);
-  streamConnectedRef.current = streamConnected;
   // #10200: the transport's own observation, for the chart status only — the
-  // poll above still gates on `streamConnected`. A stream that reports only
+  // disconnect refetch below still keys on `streamConnected`. A stream that reports only
   // `connected` (an older hook, a test double) reads as open or idle.
   const streamStatus = reportedStreamStatus ?? (streamConnected ? "open" : "idle");
 

@@ -128,12 +128,11 @@ function HeldEvent(props: { net: Net; liveFrame: LiveFrame | null; servedHistory
   const { net, liveFrame, servedHistory } = props;
   const eventId = EVENT_ID;
   const freshNextEventReadRef = useRef(false);
-  const streamConnectedRef = useRef(true); // the stream is delivering: the 120 s poll stands down
   const latestLiveFrameRef = useRef<LiveFrame | null>(null);
   const latestBlendEdgeRef = useRef<BlendEdgeObservation | null>(null);
   const heldEventRef = useRef<Held | undefined>(undefined);
   const eventPollInterval = useMemo(
-    () => makeEventRefreshInterval(streamConnectedRef, {
+    () => makeEventRefreshInterval({
       live: LIVE_REFRESH_INTERVAL,
       scheduled: SCHEDULED_REFRESH_INTERVAL,
     }),
@@ -369,7 +368,7 @@ describe("#9051 case 2: the last invalidation of a burst, then silence, still re
     expect(page.text()).toBe('0.45|{"100":6,"101":3}|3-1|live');
 
     // Nothing else arrives. By the end of the floor the page must have asked
-    // again on its own — no frame, no 120 s poll.
+    // again on its own — no frame, no 32 s poll.
     await page.advance(FOLDED_FRAME_REFETCH_MS / 2);
     expect(page.net.requests).toHaveLength(3);
     await page.resolve(2, folded({ p: 0.4, observedAt: T(12), revision: { "100": 7, "101": 3 } }));
@@ -377,7 +376,7 @@ describe("#9051 case 2: the last invalidation of a burst, then silence, still re
 
     // And it asks exactly once: silence past the floor makes no further request
     // short of the poll cadence.
-    await page.advance(SCHEDULED_REFRESH_INTERVAL - FOLDED_FRAME_REFETCH_MS - 1000);
+    await page.advance(LIVE_REFRESH_INTERVAL - FOLDED_FRAME_REFETCH_MS - 1000);
     expect(page.net.requests).toHaveLength(3);
     await page.unmount();
   });
@@ -410,8 +409,8 @@ describe("healthy controls", () => {
   it("a delayed older response cannot roll back accepted provenance", async () => {
     const page = await mountHeldEvent();
     await page.resolve(0, folded({ p: 0.6, observedAt: T(12), revision: { "100": 5 } }));
-    // A poll in flight (the 120 s cadence) …
-    await page.advance(SCHEDULED_REFRESH_INTERVAL);
+    // A poll in flight (the live page's 32 s cadence, #4889) …
+    await page.advance(LIVE_REFRESH_INTERVAL);
     expect(page.net.requests).toHaveLength(2);
     // … a newer frame lands while it flies …
     await page.deliver(frame({ rev: 7, p: 0.62, at: T(20) }));
@@ -435,7 +434,7 @@ describe("healthy controls", () => {
     expect(page.net.requests.length - 1).toBeLessThanOrEqual(3);
     const asked = page.net.requests.length;
     // Silence: nothing more until the poll cadence.
-    await page.advance(SCHEDULED_REFRESH_INTERVAL - FOLDED_FRAME_REFETCH_MS * 3);
+    await page.advance(LIVE_REFRESH_INTERVAL - FOLDED_FRAME_REFETCH_MS * 3);
     expect(page.net.requests).toHaveLength(asked);
     await page.unmount();
   });
@@ -498,7 +497,7 @@ it("#9296 ordinary interval polls do not inherit fresh mode from a live event", 
   await page.deliver(frame({ rev: 6, p: 0.55, at: T(16) }));
   await page.resolve(1, folded({ p: 0.4, observedAt: T(16), revision: { "100": 6, "101": 3 } }));
   expect(page.net.freshReads).toEqual([false, true]);
-  await page.advance(SCHEDULED_REFRESH_INTERVAL);
+  await page.advance(LIVE_REFRESH_INTERVAL);
   expect(page.net.freshReads).toEqual([false, true, false]);
   await page.unmount();
 });

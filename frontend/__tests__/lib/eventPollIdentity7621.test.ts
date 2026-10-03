@@ -32,8 +32,9 @@
  *
  * 4. STABILITY IS NOT STALENESS. A permanently-stable callback is only correct
  *    because it closes over nothing reactive. That is an assumption about OUR
- *    factory, so it is measured: one held reference must still track the ref
- *    flipping underneath it.
+ *    factory, so it is measured: one held reference must still track the
+ *    status swr hands it. (Until #4889 it also tracked a stream-liveness ref;
+ *    the cadence no longer depends on the stream, so the ref is gone.)
  */
 
 import { readFileSync } from "fs";
@@ -161,15 +162,14 @@ function simulatePolling(opts: {
 }
 
 describe("the poll survives a page that re-renders (#7621)", () => {
-  const ref = { current: false };
   const intervals = { live: LIVE, scheduled: SCHEDULED };
 
-  it("STALLED ARM: an inline arrow never lets the 120s poll fire on a page rendering once a second", () => {
+  it("STALLED ARM: an inline arrow never lets the poll fire on a page rendering once a second", () => {
     // This is the shipped defect, reproduced. Each render mints a new arrow, so
     // the timer is discarded ~120 times before its deadline.
     const { fetches } = simulatePolling({
       intervalForRender: () =>
-        (data) => eventRefreshInterval(data?.status, ref.current, intervals),
+        (data) => eventRefreshInterval(data?.status, intervals),
       renderEveryMs: 1_000,
       forMs: 10 * 60 * 1_000,
     });
@@ -178,7 +178,7 @@ describe("the poll survives a page that re-renders (#7621)", () => {
   });
 
   it("HEALTHY ARM: a stable reference fires on its own cadence through the same renders", () => {
-    const stable = makeEventRefreshInterval(ref, intervals);
+    const stable = makeEventRefreshInterval(intervals);
     const tenMinutes = 10 * 60 * 1_000;
 
     const { fetches } = simulatePolling({
@@ -187,7 +187,7 @@ describe("the poll survives a page that re-renders (#7621)", () => {
       forMs: tenMinutes,
     });
 
-    // Live + disconnected ⇒ 32s. Ten minutes buys about nineteen polls; assert
+    // Live ⇒ 32s. Ten minutes buys about nineteen polls; assert
     // the CADENCE rather than a magic count, so tuning a constant does not
     // rewrite the guard.
     expect(fetches.length).toBeGreaterThan(1);
@@ -202,7 +202,7 @@ describe("the poll survives a page that re-renders (#7621)", () => {
     // The mirror of the arm above, and the one that would catch a "fix" that
     // simply refetched on every render — which would turn a frozen page into a
     // page hammering the API once a second.
-    const stable = makeEventRefreshInterval(ref, intervals);
+    const stable = makeEventRefreshInterval(intervals);
     const window = 60 * 1_000;
 
     const { fetches } = simulatePolling({
@@ -223,43 +223,30 @@ describe("the poll survives a page that re-renders (#7621)", () => {
 
 describe("a permanently-stable callback still answers freshly", () => {
   it("returns the same reference no matter how often it is read", () => {
-    const ref = { current: false };
-    const stable = makeEventRefreshInterval(ref, { live: LIVE, scheduled: SCHEDULED });
+    const stable = makeEventRefreshInterval({ live: LIVE, scheduled: SCHEDULED });
     expect(stable).toBe(stable);
   });
 
-  it("tracks the stream ref flipping underneath one held reference", () => {
-    // The assumption that makes an empty dependency list safe, measured rather
-    // than asserted in a comment: if this callback had captured `connected` by
-    // value, the page would poll at the wrong cadence forever after the stream
-    // came up.
-    const ref = { current: false };
-    const stable = makeEventRefreshInterval(ref, { live: LIVE, scheduled: SCHEDULED });
-
-    expect(stable({ status: "live" })).toBe(LIVE);
-    ref.current = true;
-    expect(stable({ status: "live" })).toBe(SCHEDULED);
-    ref.current = false;
-    expect(stable({ status: "live" })).toBe(LIVE);
-  });
-
   it("tracks the status argument swr passes it", () => {
-    const ref = { current: false };
-    const stable = makeEventRefreshInterval(ref, { live: LIVE, scheduled: SCHEDULED });
+    const stable = makeEventRefreshInterval({ live: LIVE, scheduled: SCHEDULED });
 
     expect(stable({ status: "live" })).toBe(LIVE);
     expect(stable({ status: "completed" })).toBe(SCHEDULED);
     // swr calls with the cache entry, which is undefined before the first fetch.
-    expect(stable(undefined)).toBe(SCHEDULED);
-    expect(stable(null)).toBe(SCHEDULED);
+    // That is the timer swr arms at mount and does not re-price until it fires,
+    // so an unknown is priced at the shorter cadence (#4889) …
+    expect(stable(undefined)).toBe(LIVE);
+    expect(stable(null)).toBe(LIVE);
+    // … while a read that landed without a status is not unknown.
+    expect(stable({})).toBe(SCHEDULED);
+    expect(stable({ status: null })).toBe(SCHEDULED);
   });
 
   it("never answers 0 — a zero would disarm swr's timer entirely", () => {
     // `if (interval && timer !== -1)`: a falsy interval means swr schedules
     // nothing at all, which is the freeze this issue is about arriving by a
     // different door.
-    const ref = { current: false };
-    const stable = makeEventRefreshInterval(ref, { live: LIVE, scheduled: SCHEDULED });
+    const stable = makeEventRefreshInterval({ live: LIVE, scheduled: SCHEDULED });
     for (const status of ["live", "completed", "scheduled", "suspended", "", null, undefined]) {
       expect(stable({ status })).toBeGreaterThan(0);
     }
@@ -302,7 +289,7 @@ describe("no page prices a polled key with an inline function", () => {
       path.join(__dirname, "../../app/events/[id]/page.tsx"),
       "utf8",
     );
-    const at = src.indexOf("makeEventRefreshInterval(streamConnectedRef");
+    const at = src.indexOf("makeEventRefreshInterval({");
     expect(at).toBeGreaterThan(-1);
     // The memo's dependency array closes the call a few lines below.
     expect(src.slice(at, at + 400)).toMatch(/\}\),\s*\[\],/);
