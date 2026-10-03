@@ -287,6 +287,7 @@ const PAIR_PRINTERS: Array<[string, string]> = [
   [join(IOS_ROOT, "Views/EventDetailView.swift"), "the nav title and share text"],
   [join(IOS_ROOT, "Views/MenuBarView.swift"), "the macOS menu bar"],
   [join(WATCH_ROOT, "WatchFeedModels.swift"), "the watch feed row's clockText"],
+  [join(WATCH_ROOT, "WatchSelectedGameModels.swift"), "the selected watch game live clock"],
   [join(WATCH_ROOT, "WatchLiveView.swift"), "the watch live game row"],
   [join(WIDGET_ROOT, "WidgetAPIClient.swift"), "the widget"],
   // #6574. The eighth, and the one `RAW_JOIN` could not find: the pair is
