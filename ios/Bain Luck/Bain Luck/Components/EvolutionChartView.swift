@@ -443,8 +443,10 @@ struct EvolutionChartView: View {
             }
             // #10244: a verified detail draws `/history`'s de-vigged lines, asked
             // alongside the timeline so the chart costs no extra round trip.
-            async let verifiedHistory = Self.verifiedHistoryLines(
-                marketId: marketId, representation: representation, hours: fetchHours)
+            async let detailHistory = Self.verifiedHistoryLines(
+                marketId: marketId, hours: fetchHours,
+                when: VerifiedTitleHistory.drawsSourceHistory(
+                    detail: expectation?.representation, response: nil))
             let result = try await APIClient.shared.fetchProbabilityTimeline(
                 marketId: marketId, top: 50, hours: fetchHours, representation: representation
             )
@@ -458,7 +460,12 @@ struct EvolutionChartView: View {
             case .adopt(let withholds):
                 withholdsCurrent = withholds
             }
-            let lines = try await verifiedHistory
+            var lines = try await detailHistory
+            if lines == nil, VerifiedTitleHistory.drawsSourceHistory(
+                detail: expectation?.representation, response: result.effectiveRepresentation) {
+                // The response is verified though the detail was not (yet).
+                lines = try await Self.verifiedHistoryLines(marketId: marketId, hours: fetchHours, when: true)
+            }
             guard !Task.isCancelled, generation == requestGeneration else { return }
             data = lines.map { VerifiedTitleHistory.drawing($0, over: result) } ?? result
             requestedHours = fetchHours
@@ -517,9 +524,9 @@ struct EvolutionChartView: View {
     /// #10244 — the verified chart's lines; nil (draw the timeline as served) for
     /// every source-mode chart.
     private static func verifiedHistoryLines(
-        marketId: Int, representation: FuturesRepresentation, hours: Int
+        marketId: Int, hours: Int, when verified: Bool
     ) async throws -> FuturesHistoryResponse? {
-        guard VerifiedTitleHistory.drawsSourceHistory(representation) else { return nil }
+        guard verified else { return nil }
         return try await APIClient.shared.fetchFuturesHistory(marketId: marketId, hours: hours)
     }
 

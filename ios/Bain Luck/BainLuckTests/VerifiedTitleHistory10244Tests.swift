@@ -121,9 +121,21 @@ final class VerifiedTitleHistory10244Tests: XCTestCase {
 
     // MARK: - Which charts
 
-    func testOnlyAVerifiedRequestDrawsHistory() {
-        XCTAssertTrue(VerifiedTitleHistory.drawsSourceHistory(.verifiedTitle))
-        XCTAssertFalse(VerifiedTitleHistory.drawsSourceHistory(.source))
+    /// The page asks for verified on EVERY futures market, so only an answer can
+    /// move a chart: an ineligible board (golf, a Kalshi ladder) answers source in
+    /// both requests and keeps the chart it had.
+    func testOnlyAVerifiedAnswerDrawsHistory() throws {
+        XCTAssertTrue(VerifiedTitleHistory.drawsSourceHistory(detail: .verifiedTitle, response: nil))
+        XCTAssertTrue(VerifiedTitleHistory.drawsSourceHistory(detail: .source, response: .verifiedTitle))
+        XCTAssertTrue(VerifiedTitleHistory.drawsSourceHistory(detail: nil, response: .verifiedTitle))
+        XCTAssertFalse(VerifiedTitleHistory.drawsSourceHistory(detail: .source, response: .source))
+        XCTAssertFalse(VerifiedTitleHistory.drawsSourceHistory(detail: nil, response: nil))
+        // Real answers: #9387's fallback pair is a refused Kalshi board.
+        let refusedDetail = try T.detail(F.detailFallback).effectiveRepresentation
+        let refusedTimeline = try T.timeline(F.timelineFallback).effectiveRepresentation
+        XCTAssertFalse(VerifiedTitleHistory.drawsSourceHistory(detail: refusedDetail, response: refusedTimeline))
+        let verifiedDetail = try T.detail(F.detailVerified).effectiveRepresentation
+        XCTAssertTrue(VerifiedTitleHistory.drawsSourceHistory(detail: verifiedDetail, response: nil))
     }
 
     /// The chart is a SwiftUI view this suite cannot load, so its use of the
@@ -139,8 +151,11 @@ final class VerifiedTitleHistory10244Tests: XCTestCase {
             .split(separator: "\n", omittingEmptySubsequences: false)
             .map { line in line.range(of: "//").map { String(line[..<$0.lowerBound]) } ?? String(line) }
             .joined(separator: "\n")
-        XCTAssertTrue(code.contains("VerifiedTitleHistory.drawsSourceHistory(representation)"))
+        XCTAssertTrue(code.contains("detail: expectation?.representation, response: nil"))
+        XCTAssertTrue(code.contains("detail: expectation?.representation, response: result.effectiveRepresentation"))
         XCTAssertTrue(code.contains("APIClient.shared.fetchFuturesHistory(marketId: marketId, hours: hours)"))
+        XCTAssertFalse(code.contains("drawsSourceHistory(detail: representation"),
+                       "the REQUEST is verified on every futures page — it must not decide")
         XCTAssertTrue(code.contains("data = lines.map { VerifiedTitleHistory.drawing($0, over: result) } ?? result"))
     }
 

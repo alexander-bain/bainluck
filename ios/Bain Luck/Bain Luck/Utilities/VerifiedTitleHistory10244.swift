@@ -35,10 +35,14 @@ nonisolated struct FuturesHistoryPoint: Decodable, Sendable {
 }
 
 nonisolated enum VerifiedTitleHistory {
-    /// Whether a chart asked in this mode draws `/history`'s lines. Only the
-    /// verified title detail does; every source-mode chart is unchanged.
-    static func drawsSourceHistory(_ representation: FuturesRepresentation) -> Bool {
-        representation == .verifiedTitle
+    /// Whether the chart draws `/history`'s lines: only in verified context — the
+    /// detail OR the timeline response actually answered `verified_title`, the same
+    /// context that earns the "Sportsbooks history" caption. The page ASKS for
+    /// verified on every futures market, so the request alone decides nothing; an
+    /// ineligible board answers in source mode and its chart is unchanged.
+    static func drawsSourceHistory(detail: FuturesRepresentation?,
+                                   response: FuturesRepresentation?) -> Bool {
+        detail == .verifiedTitle || response == .verifiedTitle
     }
 
     /// The timeline response with its lines replaced by `/history`'s.
