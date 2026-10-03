@@ -57,6 +57,7 @@ import OutcomeRow, {
   outcomeRowVerdict,
 } from "@/components/futures/OutcomeRow";
 import RelatedByTag from "@/components/RelatedByTag";
+import FuturesBackControl from "@/components/futures/FuturesBackControl";
 import GamesThisWeek from "@/components/futures/GamesThisWeek";
 import { toTitleCaseAcronymSafe } from "@/lib/titleCase";
 import { categoryKeyLabel } from "@/lib/sportCategories";
@@ -653,15 +654,11 @@ export default function FuturesDetailPage({ params }: FuturesDetailPageProps) {
           links; this is the one, and it lives on the very page the retirement
           keeps alive. When decision 3 rebuilds a real /futures landing, this is
           the link that should point back at it. */}
-      <Link
-        href="/discover"
-        className="inline-flex items-center text-caption text-text-secondary hover:text-text-primary transition-colors"
-      >
-        <svg className="w-4 h-4 mr-1" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 19l-7-7 7-7" />
-        </svg>
-        Back to Discover
-      </Link>
+      {/* #10265: a reader who tapped in from one of our pages (a live game's
+          Bigger Picture card, a team page, a hub) goes back to that exact
+          entry and their place on it; everyone else still lands on Discover.
+          One control for the loading, error and loaded views. */}
+      <FuturesBackControl />
     </div>
   );
 
