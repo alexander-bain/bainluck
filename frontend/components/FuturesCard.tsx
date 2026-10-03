@@ -27,6 +27,7 @@ import { renderedPricesAsOf } from "@/lib/futuresCardPriceAge";
 import { outcomeRowVerdict } from "@/components/futures/OutcomeRow";
 import { PinIcon } from "@/components/PinButton";
 import { categoryKeyLabel } from "@/lib/sportCategories";
+import { gamePropContextLine, spreadSideLabels, type GamePropGameRef } from "@/lib/gamePropCardContext";
 
 interface FuturesCardProps {
   market: FuturesMarket;
@@ -40,6 +41,10 @@ interface FuturesCardProps {
   multiplier?: number;
   /** Personalization reason strings */
   personalizationReasons?: string[];
+  /** #10263: games the page already holds (Search's Games list), so a game prop
+   *  whose title names one team can print the matchup. Absent ⇒ the card still
+   *  dates the prop, and names the matchup only when its own rows do. */
+  games?: readonly GamePropGameRef[];
 }
 
 function formatSportName(sportKey: string | null, sportName: string | null): string {
@@ -105,6 +110,7 @@ export default function FuturesCard({
   personalized,
   multiplier,
   personalizationReasons,
+  games,
 }: FuturesCardProps) {
   const outcomes = market.top_outcomes || market.outcomes || [];
   // #6018: the footer pip's subject. Derived off the same row pick as `outcomes`
@@ -114,7 +120,14 @@ export default function FuturesCard({
   // suffix, so the rows read identically once truncated. Evaluate the all-or-nothing
   // predicate over the WHOLE shipped set, not the sliced five — a market whose first
   // five happen to be prefixed must not be stripped on the strength of a sample.
-  const outcomeLabels = outcomeDisplayNames(market.name, outcomes.map((o) => o.name));
+  // #10263: a two-sided spread labels each row with its own line — `Atlanta Braves
+  // +2.5` under `Spread: Los Angeles Dodgers (-2.5)` — so the leader no longer reads
+  // as contradicting the title. Any other shape keeps the #2662 labels.
+  const outcomeLabels =
+    spreadSideLabels(market.name, outcomes.map((o) => o.name)) ??
+    outcomeDisplayNames(market.name, outcomes.map((o) => o.name));
+  // #10263: which game a game prop is about — matchup and kickoff, or null.
+  const gameContext = gamePropContextLine(market, games);
   // #2789: the rows below carry `rank={index + 1}` and a highlighted leader, so the
   // array must be leader-first BEFORE it is truncated — `/api/futures/grouped-feed`
   // shipped an unordered five and this card stamped ranks on it. Pair each outcome
@@ -218,7 +231,9 @@ export default function FuturesCard({
               {isResolved && (
                 <span className="text-micro-xs text-text-muted uppercase">Resolved</span>
               )}
-              {market.outcome_count > 0 && (
+              {/* #10263: a two-way question has nothing to count — a bare "2" in the
+                  corner of a spread card read as noise, never as information. */}
+              {market.outcome_count > 2 && (
                 <span className="text-micro text-text-muted">
                   {market.outcome_count}
                 </span>
@@ -244,9 +259,14 @@ export default function FuturesCard({
           </div>
 
           {/* Market Name */}
-          <h3 className="text-sm font-medium text-text-primary mb-3 line-clamp-2 leading-snug">
+          <h3 className={cn("text-sm font-medium text-text-primary line-clamp-2 leading-snug", gameContext ? "mb-0.5" : "mb-3")}>
             {market.name}
           </h3>
+          {gameContext && (
+            <p className="text-micro text-text-muted mb-3 truncate" data-game-prop-context>
+              {gameContext}
+            </p>
+          )}
 
           {/* Top Outcomes — staggered entrance */}
           <motion.div
