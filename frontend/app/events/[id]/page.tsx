@@ -3526,6 +3526,16 @@ export default function EventPage({ params }: EventPageProps) {
               /* #6238 — the fullscreen chart is the same chart. A reader who
                  taps expand must not get the withheld number back. */
               awayWithheld={awaySlotWithheld}
+              /* #10362 — and it opens on the range the card shows. Without these the
+                 expanded chart fell back to its own default window: a reader on "All"
+                 tapped expand and got "Since Start", with no way back. The toggle here
+                 drives the same `chartTimeRange`, so closing returns to the same range. */
+              chartStartTime={sharedChartDomain?.start}
+              chartEndTime={sharedChartDomain?.end}
+              sharedTicks={sharedChartDomain?.ticks}
+              chartLabelFormat={sharedChartDomain?.labelFormat}
+              externalTimeRange={chartTimeRange}
+              onTimeRangeChange={handleChartTimeRangeChange}
             />
         </ChartFullscreenDialog>
       )}
