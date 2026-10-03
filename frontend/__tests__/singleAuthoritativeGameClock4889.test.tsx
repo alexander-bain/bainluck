@@ -14,13 +14,16 @@
 //
 // Every arm below feeds the two sources DIFFERENT clocks. A fixture where they
 // agree is green on the bug.
+//
+// The strip is the REAL mounted `GamePlayCard`, resting on the page's own
+// `lastChartPoint` (`next/dynamic` is mocked to render it inline — it is
+// `ssr: false`, so a static render would otherwise omit it). PR #10380's guard
+// compared the header with a re-implementation of the chart's carry instead, and
+// the independent review found the arm that broke: with no ESPN rows the header
+// read win-prob Q2 5:10 while the real readout printed the detail's 5:31.
 
 import React from "react";
 import { renderToStaticMarkup } from "react-dom/server";
-import { parseISO } from "date-fns";
-import { carryGameStateForward, stampObservedGameState, type CarriedGameStateRow } from "@/lib/chartGameState";
-import { toMinuteKey } from "@/lib/chartTimeline";
-import { trustedLiveClock } from "@/lib/gameTimeLabel";
 
 const MINUTE = 60 * 1000;
 
@@ -74,6 +77,15 @@ function event(espn: Record<string, unknown> | undefined) {
 function history(espn_history: EspnRow[], win_prob_history?: Record<string, unknown[]>) {
   return { history: [], bookmaker_history: {}, aggregate_line: [], espn_history, win_prob_history };
 }
+
+jest.mock("next/dynamic", () => ({
+  __esModule: true,
+  default: (loader: () => unknown) => {
+    if (!loader.toString().includes("GamePlayCard")) return () => null;
+    // eslint-disable-next-line @typescript-eslint/no-var-requires
+    return require("@/components/GamePlayCard").default;
+  },
+}));
 
 let eventPayload: unknown;
 let historyPayload: unknown;
@@ -146,22 +158,24 @@ function headerClock(html: string): string {
   return all[0][1];
 }
 
+/** The resting readout's badge — the real `GamePlayCard`'s period/clock span. */
+const STRIP_RE = /bg-surface-secondary px-2 py-1 rounded">([^<]*)</g;
+
+function stripBadge(html: string): string {
+  const all = Array.from(html.matchAll(STRIP_RE));
+  // The card is mounted, exactly once — a missing strip would make every
+  // "header == strip" comparison below vacuous.
+  expect(all).toHaveLength(1);
+  return all[0][1];
+}
+
 /**
- * What the strip under the chart prints at its live edge, computed by the
- * chart's own steps (`OddsChart` runs exactly these two over the same rows;
- * `GamePlayCard` paints the result through `trustedLiveClock`). Independent of
- * the page's code, so "header == strip" is a comparison, not a tautology.
+ * The header joins with " · ", the card with a space, and only the card marks a
+ * carried field with `~` (the header has no age vocabulary). The period and
+ * clock VALUES are what must match.
  */
-function stripLabel(espnHistory: EspnRow[]): string {
-  const rows = new Map<string, CarriedGameStateRow>();
-  for (const r of espnHistory) rows.set(toMinuteKey(r.timestamp), { timestamp: toMinuteKey(r.timestamp) });
-  stampObservedGameState(rows, espnHistory, null);
-  const sorted = Array.from(rows.values()).sort(
-    (a, b) => parseISO(a.timestamp).getTime() - parseISO(b.timestamp).getTime(),
-  );
-  const edge = carryGameStateForward(sorted).slice(-1)[0];
-  const t = trustedLiveClock(edge._period, edge._clock, "americanfootball_ncaaf");
-  return [t.period, t.gameClock].filter(Boolean).join(" · ");
+function sameClock(header: string, strip: string): void {
+  expect(header.split(" · ").join(" ")).toBe(strip.split("~").join(""));
 }
 
 describe("#4889 a live event page shows one game clock", () => {
@@ -170,7 +184,7 @@ describe("#4889 a live event page shows one game clock", () => {
     const html = draw({ period: "0:42 - 1st Quarter", game_clock: "0:42" }, history(rows));
 
     expect(headerClock(html)).toBe("0:38 - 1st Quarter");
-    expect(headerClock(html)).toBe(stripLabel(rows));
+    sameClock(headerClock(html), stripBadge(html));
     // The detail payload's clock is printed nowhere on the page.
     expect(html).not.toContain("0:42");
   });
@@ -182,7 +196,7 @@ describe("#4889 a live event page shows one game clock", () => {
     const html = draw({ period: "0:38 - 1st Quarter", game_clock: "0:38" }, history(rows));
 
     expect(headerClock(html)).toBe("0:42 - 1st Quarter");
-    expect(headerClock(html)).toBe(stripLabel(rows));
+    sameClock(headerClock(html), stripBadge(html));
     expect(html).not.toContain("0:38");
   });
 
@@ -191,7 +205,7 @@ describe("#4889 a live event page shows one game clock", () => {
     const html = draw({ period: "0:03 - 2nd Quarter", game_clock: "0:03" }, history(rows));
 
     expect(headerClock(html)).toBe("Halftime");
-    expect(headerClock(html)).toBe(stripLabel(rows));
+    sameClock(headerClock(html), stripBadge(html));
   });
 
   it("a clock carried from a row older than the period is not printed as the current clock", () => {
@@ -202,13 +216,17 @@ describe("#4889 a live event page shows one game clock", () => {
     const html = draw({ period: "2nd Quarter", game_clock: "0:05" }, history(rows));
 
     expect(headerClock(html)).toBe("3rd Quarter");
+    // The real strip says the same period and marks its inherited clock as old.
+    expect(stripBadge(html)).toBe("3rd Quarter ~0:05");
   });
 
   it("history holds no clock yet (quiet): the detail clock is the only clock on the page, so the header keeps it", () => {
     const rows = [espnRow(1 * MINUTE, null, null)];
-    expect(headerClock(draw({ period: "0:42 - 1st Quarter", game_clock: "0:42" }, history(rows)))).toBe(
-      "0:42 - 1st Quarter",
-    );
+    const quiet = draw({ period: "0:42 - 1st Quarter", game_clock: "0:42" }, history(rows));
+    expect(headerClock(quiet)).toBe("0:42 - 1st Quarter");
+    // The real strip falls back to the same event-row clock (#925), marked carried.
+    expect(stripBadge(quiet)).toBe("~0:42 - 1st Quarter");
+    sameClock(headerClock(quiet), stripBadge(quiet));
     // CONTROL: no history read at all — the pre-#4889 behaviour, unchanged.
     expect(headerClock(draw({ period: "0:42 - 1st Quarter", game_clock: "0:42" }, undefined))).toBe(
       "0:42 - 1st Quarter",
@@ -222,6 +240,7 @@ describe("#4889 a live event page shows one game clock", () => {
     const html = draw({ period: "14:51 - 1st Quarter", game_clock: "14:51" }, history(rows));
 
     expect(headerClock(html)).toBe("LIVE");
+    expect(stripBadge(html)).toBe("\u2014");
     expect(html).not.toContain("14:51");
   });
 
@@ -234,6 +253,10 @@ describe("#4889 a live event page shows one game clock", () => {
     const html = draw({ period: "5:31 - 2nd Quarter", game_clock: "5:31" }, history([], winProb));
 
     expect(headerClock(html)).toBe("Q2 · 5:10");
+    // The independent review's counterexample: the REAL resting readout printed
+    // the detail payload's 5:31 here while the header printed 5:10.
+    expect(stripBadge(html)).toBe("Q2 5:10");
+    sameClock(headerClock(html), stripBadge(html));
     expect(html).not.toContain("5:31");
   });
 });
