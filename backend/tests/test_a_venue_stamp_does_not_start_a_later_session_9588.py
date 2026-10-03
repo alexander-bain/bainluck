@@ -168,7 +168,8 @@ class _Row:
 
 class _NetSession:
     def __init__(self, scheduled, live, anchors):
-        self._selects = [scheduled, live, [], [], [], []]
+        # The last slot is the #10300 future-start live read.
+        self._selects = [scheduled, live, [], [], [], [], []]
         self._anchors = anchors
         self.anchor_reads = []
 

@@ -6024,6 +6024,27 @@ jobs:
             exit 1
           }
 
+      - name: "#10300 a live row with a future reported start and no play goes back to scheduled (real Postgres)"
+        # Ässät v Lukko sat in the live list 6.5h before its reported start.
+        # The un-start is decided on a row read `FOR UPDATE SKIP LOCKED`, and
+        # whether a concurrent score, clock, status or start write is seen,
+        # skipped or blocked is a property of Postgres row locks that only two
+        # real sessions can show. Reuses the #7617 database: this file drops
+        # and creates its own tables.
+        if: matrix.group == 'isolated'
+        run: |
+          set -o pipefail
+          python -m pytest tests/integration/test_future_unplayed_live_row_returns_to_scheduled_10300_pg.py \
+            -v -rs 2>&1 | tee /tmp/futurelive10300.txt
+          if grep -qiE "[0-9]+ skipped" /tmp/futurelive10300.txt; then
+            echo "::error::#10300 future-start live contract SKIPPED — the gate did not run"
+            exit 1
+          fi
+          grep -qE "[^0-9]8 passed," /tmp/futurelive10300.txt || {
+            echo "::error::#10300 future-start live contract did not run all eight cases"
+            exit 1
+          }
+
       - name: "#10022 an open-contract leg the socket sees finalize is graded alone (real Postgres)"
         # A finished CHC–SD series kept pricing scorelines that could no longer
         # happen because the socket left open contracts' results to the REST

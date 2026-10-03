@@ -5995,6 +5995,75 @@ async def _transition_event_statuses_impl() -> dict:
                 MAX_ILLEGAL_TENNIS_SCORES_PER_PASS,
             )
 
+        # --- Repair: LIVE with a FUTURE reported start and no play → scheduled
+        #     (#10300) ---
+        #
+        # Ässät v Lukko (15320706) sat in `/api/events?status=live` at 08:08Z
+        # 10/3 with a 14:00Z start, no score, no period, no completion. The row
+        # went live at a start that had passed, and a later start-time write
+        # moved it forward without un-starting it. Which writer moved it is not
+        # known, and this arm does not need to know: a reported start still
+        # ahead with nothing reported on the game is a match that has not
+        # begun, whoever wrote the start.
+        #
+        # The edge mirrors the registry's own un-start rather than restating
+        # it: `_correction_unstarts_the_row` is asked of the row's CURRENT start,
+        # so the evidence clauses (a score — 0 counts —, a period, a clock, a
+        # completion) are the same function both writers read. Narrower than
+        # that predicate on two axes, deliberately: only `live` (a suspended
+        # row is not touched here), and only a start a provider REPORTED — a
+        # stand-in start says nothing about whether play began. A NULL
+        # provenance is refused too, which `commence_time_is_a_reported_start`
+        # alone would not do: that predicate admits NULL so the PROMOTION path
+        # does not freeze for the rows that predate the column, and here the
+        # direction is reversed — un-starting a row on a start nobody can vouch
+        # for is acting on an instant we do not have.
+        #
+        # LOCKED AND RE-READ, NOT INFERRED FROM AN EARLIER READ. `FOR UPDATE
+        # SKIP LOCKED` returns each row's latest committed version and holds it
+        # until this transaction commits, so the predicate decides on the row
+        # the write lands on: a score, clock or start that committed first is
+        # seen and refuses; a writer mid-transaction on the row is skipped (the
+        # next pass reads what it wrote) instead of waited on, so this pass
+        # never queues behind a row lock while holding the ones it took above.
+        # `populate_existing` because an identity-map copy would be the earlier
+        # read this rule exists to avoid. Last in the pass so the ordering of
+        # every read above it is unchanged.
+        #
+        # Nothing else on the row moves: no start, no probability, no contract
+        # field. The 60-second promotion gate above takes the row live again
+        # once its start is reached.
+        from app.services.event_registry import _correction_unstarts_the_row
+
+        stats["unstarted_future_live"] = 0
+        stats["held_future_live_unreported_start"] = 0
+        _future_live = await session.execute(
+            select(Event)
+            .where(Event.status == "live", Event.commence_time > now)
+            .order_by(Event.id)
+            .with_for_update(skip_locked=True, of=Event)
+            .execution_options(populate_existing=True)
+        )
+        for event in _future_live.scalars().all():
+            if event.status != "live":
+                continue
+            if event.commence_time_source is None or not (
+                commence_time_is_a_reported_start(event.commence_time_source)
+            ):
+                stats["held_future_live_unreported_start"] += 1
+                continue
+            if not _correction_unstarts_the_row(event, event.commence_time, now):
+                continue
+            logger.info(
+                "#10300 un-started event %s (%s vs %s) live→scheduled: its "
+                "reported start %s (%s) is still ahead and nothing has reported "
+                "on the game (no score, period, clock or completion).",
+                event.id, event.home_team_name, event.away_team_name,
+                event.commence_time, event.commence_time_source,
+            )
+            event.status = "scheduled"
+            stats["unstarted_future_live"] += 1
+
         # `held_derived_start` is in the trigger and in the message: a guard that
         # declines silently reads as "there was nothing to do", and this one
         # holds ~40 rows a night on its own. Same reason `detect_and_close_stale_
@@ -6003,6 +6072,7 @@ async def _transition_event_statuses_impl() -> dict:
                 or stats["suspended_to_live"] > 0
                 or stats["repaired_bogus_completed"] > 0
                 or stats["unsettled_future_commence"] > 0
+                or stats["unstarted_future_live"] > 0
                 or stats["held_derived_start"] > 0
                 or stats["held_withdrawn_listing"] > 0
                 or stats["withdrew_illegal_tennis_score"] > 0
@@ -6010,6 +6080,7 @@ async def _transition_event_statuses_impl() -> dict:
             logger.info(
                 "Status transitions: %d scheduled→live, %d live→suspended, "
                 "%d suspended→live, %d repaired, %d un-settled-future-commence, "
+                "%d live→scheduled (future start, no play), "
                 "%d illegal tennis scores withdrawn, "
                 "%d held (derived start), %d held (withdrawn listing), "
                 "%d held (still running), "
@@ -6018,6 +6089,7 @@ async def _transition_event_statuses_impl() -> dict:
                 stats["suspended_to_live"],
                 stats["repaired_bogus_completed"],
                 stats["unsettled_future_commence"],
+                stats["unstarted_future_live"],
                 stats["withdrew_illegal_tennis_score"],
                 stats["held_derived_start"],
                 stats["held_withdrawn_listing"],

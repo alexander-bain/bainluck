@@ -244,7 +244,8 @@ class _NetSession:
         # staleness net now writes instead of `closed`; the last is #2772's
         # withdrawal of a settled tennis score no match could end on, and it is
         # empty here because this suite seeds no tennis row.
-        self._selects = [scheduled, [], [], [], [], []]
+        # The last slot is the #10300 future-start live read.
+        self._selects = [scheduled, [], [], [], [], [], []]
 
     async def execute(self, stmt, params=None):
         sql = str(stmt)

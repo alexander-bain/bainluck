@@ -135,7 +135,8 @@ class _Sighting:
 
 class _NetSession:
     def __init__(self, scheduled, sightings):
-        self._selects = [scheduled, [], [], [], [], []]
+        # The last slot is the #10300 future-start live read.
+        self._selects = [scheduled, [], [], [], [], [], []]
         self._sightings = sightings
         self.sighting_params = []
 

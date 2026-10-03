@@ -145,7 +145,8 @@ class _EspnSession:
     """
 
     def __init__(self, live):
-        self._selects = [[], live, [], [], [], []]
+        # The last slot is the #10300 future-start live read.
+        self._selects = [[], live, [], [], [], [], []]
 
     async def execute(self, stmt, params=None):
         sql = str(stmt)

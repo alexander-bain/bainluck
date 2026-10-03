@@ -266,7 +266,8 @@ class _NetSession:
         # #2772's illegal-settled-tennis-score withdrawal last. The final entry
         # is empty on purpose: this suite's specimens are `live`/`suspended`,
         # and that arm may reach neither — which is the guard, not an omission.
-        self._selects = [[], live, suspended or [], [], [], []]
+        # The last slot is the #10300 future-start live read.
+        self._selects = [[], live, suspended or [], [], [], [], []]
         self._snapshots = snapshots
         self.raw_updates = []
 
