@@ -3564,6 +3564,23 @@ CONTRADICTED_DIRECTION_BATCH = 10_000
 #: starve the high end of the table permanently.
 DATED_BASIS_BANK_BATCH = 10_000
 
+#: How far INSIDE the window A8-DG takes its basis (#10248 after-check).
+#:
+#: The reader refuses a basis older than the window, so a basis banked at the
+#: window's edge expires minutes after the sweep that banked it. DataGolf's
+#: history is dense — a snapshot every 4-6 min in play — so the oldest in-window
+#: observation is ALWAYS at the edge, and the dated move went dark until the
+#: next sweep: MEASURED on production 2026-10-03, the 11:58Z sweep banked the
+#: Dunhill winner's leaders off 12:01:13Z the day before (valid ~3 min), with
+#: sweeps 10-14 min apart, so the leader's 24h column read "-" most of the
+#: round. Taking the basis this far inside the window keeps every banked cell
+#: valid past the next sweep, with one missed run to spare; a STOPPED sweep
+#: still fails closed, just this much later. The move a reader sees then spans
+#: 23.5-24 h, which is still "the day" by the minimum-age bar above.
+#:
+#: DataGolf's arm only; the shared A8 is unchanged (#10248 scope).
+DATED_BASIS_BANK_LEAD_MINUTES = 30
+
 
 #: How many runs statement A10 spreads the opening-book judgement over (#8612).
 #:
@@ -4385,8 +4402,11 @@ def update_max_movement(self):
                                        ) AS foreign_scale
                                 FROM futures_odds_snapshots s
                                 WHERE s.outcome_id = fo.id
+                                  -- The bank lead: the basis must outlive the
+                                  -- next sweep (`DATED_BASIS_BANK_LEAD_MINUTES`).
                                   AND s.captured_at
                                       > now() - (:window_hours * interval '1 hour')
+                                            + (:bank_lead_minutes * interval '1 minute')
                             ) obs
                             WHERE fo.probability_change_24h IS NOT NULL
                               AND fo.current_probability IS NOT NULL
@@ -4417,6 +4437,7 @@ def update_max_movement(self):
                     "scale_identical": list(SCALE_IDENTICAL_SNAPSHOT_SOURCES),
                     "max_spread": max_spread,
                     "dg_mark": DATED_BASIS_PRICED_LEG,
+                    "bank_lead_minutes": DATED_BASIS_BANK_LEAD_MINUTES,
                 },
             )
 
