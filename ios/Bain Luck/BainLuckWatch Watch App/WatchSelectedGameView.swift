@@ -65,14 +65,13 @@ struct WatchSelectedGameView: View {
     }
 
     private func selectedGame(_ game: WatchSelectedGame) -> some View {
-        VStack(alignment: .leading, spacing: 10) {
-            Text(game.isFinal ? "Final" : game.isLive ? "Live" : game.status?.capitalized ?? "Game state unavailable")
-                .font(.headline)
-            if game.isLive, let clock = PeriodLabel.liveStatusText(
-                period: game.period.map { PeriodLabel.normalize($0, sport: game.sportKey) },
-                gameClock: game.gameClock
-            ) {
-                Text(clock).font(.subheadline)
+        VStack(alignment: .leading, spacing: 6) {
+            HStack(alignment: .firstTextBaseline, spacing: 6) {
+                Text(game.isFinal ? "Final" : game.isLive ? "Live" : game.status?.capitalized ?? "Game state unavailable")
+                    .font(.subheadline.bold())
+                if game.isLive, let clock = game.liveClockText {
+                    Text(clock).font(.footnote)
+                }
             }
             scoreRow(team: game.awayTeam, score: game.awayScore)
             scoreRow(team: game.homeTeam, score: game.homeScore)
@@ -113,10 +112,10 @@ struct WatchSelectedGameView: View {
 
     private func scoreRow(team: String, score: Int?) -> some View {
         HStack(alignment: .firstTextBaseline, spacing: 8) {
-            Text(team).font(.headline).fixedSize(horizontal: false, vertical: true)
+            Text(team).font(.footnote).fixedSize(horizontal: false, vertical: true)
             Spacer(minLength: 2)
             Text(score.map(String.init) ?? "—")
-                .font(.title2.bold()).monospacedDigit()
+                .font(.title3.bold()).monospacedDigit()
         }
         .accessibilityElement(children: .ignore)
         .accessibilityLabel("\(team), \(score.map { "score \($0)" } ?? "score unavailable")")

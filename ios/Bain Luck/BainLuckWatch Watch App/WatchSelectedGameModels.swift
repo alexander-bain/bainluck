@@ -21,6 +21,11 @@ nonisolated struct WatchSelectedGame: Decodable, Sendable, Identifiable {
 
     var isFinal: Bool { ["completed", "final"].contains(status?.lowercased() ?? "") }
     var isLive: Bool { status?.lowercased() == "live" }
+    var liveClockText: String? {
+        // The shared formatter normalizes once. Pre-normalizing an inning
+        // ("Bottom 3rd" -> "3rd") makes a second pass misread it as Q3.
+        PeriodLabel.liveStatusText(period: period, gameClock: gameClock)
+    }
     func observationAge(at now: Date) -> TimeInterval? {
         guard let observed = scoreObservedAt, observed <= now else { return nil }
         return now.timeIntervalSince(observed)
