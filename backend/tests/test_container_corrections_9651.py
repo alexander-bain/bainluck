@@ -158,7 +158,14 @@ class TestTheMigration:
                 parents.update(
                     re.findall(r"['\"]([^'\"]+)['\"]", down.group(1) if down else "")
                 )
-        assert revisions - parents == {"container_corrections"}
+        # ONE head, not THIS head: pinning the name made the first successor
+        # migration (#4571's `score_observation_stamp`) read as a branchpoint.
+        # The deploy-breaking property is a second head, so that is asserted;
+        # that this revision is in the chain is asserted beside it.
+        heads = revisions - parents
+        assert len(heads) == 1, f"expected a single Alembic head, got {heads}"
+        assert "container_corrections" in revisions
+        assert heads == {"container_corrections"} or "container_corrections" in parents
 
     def test_it_runs_the_helpers_statements_not_a_copy(self):
         text = MIGRATION.read_text()

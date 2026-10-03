@@ -229,7 +229,7 @@ class _Recorder:
     async def register_identities(self, *a, **k):
         return None
 
-    async def update_fields(self, session, event, ee, claimed, stats):
+    async def update_fields(self, session, event, ee, claimed, stats, *, observed_at=None):
         # The two lines of the real writer this suite makes a claim about;
         # everything else it does is covered by `test_espn_sync_helpers`.
         self.updated.append((event.id, ee.espn_id))

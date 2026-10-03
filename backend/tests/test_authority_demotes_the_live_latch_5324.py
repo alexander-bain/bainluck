@@ -295,7 +295,7 @@ class _Recorder:
     async def register_identities(self, *a, **k):
         return None
 
-    async def update_fields(self, session, event, ee, claimed, stats):
+    async def update_fields(self, session, event, ee, claimed, stats, *, observed_at=None):
         # The real writer only ever WRITES a score ESPN actually holds; a
         # `scheduled` board entry carries None and must not blank ours.
         if ee.home_score is not None:

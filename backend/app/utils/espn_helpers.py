@@ -26,6 +26,12 @@ from app.utils.game_state import (
     regulation_period_seconds_at_least,
 )
 from app.utils.live_state_write import write_live_state_if_unmoved
+from app.utils.score_observation import (
+    SCORE_SOURCE_ESPN,
+    clear_score_observation,
+    score_write_stamp_values,
+    stamp_score_observation,
+)
 from app.utils.start_time_authority import provider_may_set_start
 from app.utils.espn_start_time import espn_announced_start, espn_start_time
 from app.utils.start_placeholder import start_placeholder_tag, start_placeholder_tags
@@ -1517,7 +1523,9 @@ async def _espn_reading_outruns_wall_time(
 
 
 async def update_event_fields_from_espn(
-    session, event, ee, claimed_espn_ids, stats, *, allow_unstarted: bool = False
+    session, event, ee, claimed_espn_ids, stats, *,
+    allow_unstarted: bool = False,
+    observed_at=None,
 ):
     """Update clock, scores, broadcast, importance, and commence_time from ESPN.
 
@@ -1528,6 +1536,14 @@ async def update_event_fields_from_espn(
     refusal to settle a ``scheduled`` row; only the deep straggler arm passes it
     True, and only for rows it matched by ``espn_id`` on a board day more than
     48 hours past (#5501).
+
+    `observed_at` is the clock of the pass that read this ESPN payload, used to
+    stamp `Event.score_observed_at` (#4571). It is the CALLER's clock, not
+    `now()` taken here, because this function runs once per event across a
+    batch and a per-row clock would report each row as freshly observed at the
+    moment we happened to process it. Omitted → no stamp is written and the
+    score's age stays unknown, which is the pre-#4571 behaviour; the live call
+    site passes it, and `test_score_observation_4571.py` pins that it does.
     """
     from app.models.models import Event
 
@@ -1865,6 +1881,36 @@ async def update_event_fields_from_espn(
         _live_values["away_score"] = ee.away_score
         score_changed = True
 
+    # ── #4571: THE SCORE'S OWN OBSERVATION STAMP RIDES THE SAME WRITE ──────
+    #
+    # Stamped on CONFIRMATION, not on change: the 0-0 game this writer reads
+    # every minute and never moves is the row that most needs an age. But only
+    # when ESPN's FULL reading is the score the row will hold — a reading refused
+    # as stale, withheld as pre-game, or filler from a stoppage board confirms
+    # nothing, and stamping it would date a score ESPN did not say. Each side
+    # lands independently above, so half a reading can change the tuple without
+    # confirming it; the helper clears the stamp in that write rather than leave
+    # the old one dating a number nobody read whole.
+    #
+    # Joined to `_live_values` rather than assigned on the ORM row so the stamp
+    # and the score it dates are ONE compare-and-write: if another writer moved
+    # the row first, both are refused together and the row keeps that writer's
+    # score under that writer's stamp. `_live_change` is taken BEFORE the join so
+    # a confirmation-only write never reports the row as changed.
+    _live_change = bool(_live_values)
+    _live_values.update(score_write_stamp_values(
+        source=SCORE_SOURCE_ESPN,
+        observed_at=observed_at,
+        stored=(_observed_home_score, _observed_away_score),
+        writes=_live_values,
+        reading=(ee.home_score, ee.away_score),
+        may_confirm=(
+            not _live_state_is_stale
+            and not _withhold_live_state
+            and not _stoppage_scores_are_filler
+        ),
+    ))
+
     # ── #6056 / CERT-2829: THE FOUR LIVE-STATE WRITES LAND AS ONE ACT ────────
     #
     # ESPN runs on the REALTIME queue at concurrency 4 beside the 30-second
@@ -1889,13 +1935,19 @@ async def update_event_fields_from_espn(
         observed_away_score=_observed_away_score,
         what="ESPN live state",
     )
-    if _live_values:
+    if _live_change:
         if _live_write_landed:
             changed = True
         else:
             stats["live_state_write_lost_race"] = (
                 stats.get("live_state_write_lost_race", 0) + 1
             )
+    elif _live_values and not _live_write_landed:
+        # A confirmation-only write refused: another writer moved the row
+        # between our read and our write, so there is nothing of ours to date.
+        stats["score_confirmation_lost_race"] = (
+            stats.get("score_confirmation_lost_race", 0) + 1
+        )
 
     # Gated on the write having LANDED. A snapshot is a claim that the game
     # stood at this score at this moment; writing one for a score the
@@ -3306,6 +3358,9 @@ async def backfill_missing_scores(session, stats):
                         dates.add(ev.commence_time.strftime("%Y%m%d"))
                 for date_str in dates:
                     espn_events = await score_espn.get_scoreboard(sport_key, date=date_str)
+                    # #4571: the clock of THIS board's read, taken as it
+                    # returns — every score filled below came off it.
+                    _observed_at = datetime.now(timezone.utc)
                     if espn_events is None:
                         # AUTHORITY DARK (lane1/045) — no board, no backfill.
                         stats["score_backfill_authority_dark"] = (
@@ -3359,6 +3414,16 @@ async def backfill_missing_scores(session, stats):
                         if ee.home_score is not None:
                             ev.home_score = ee.home_score
                             ev.away_score = ee.away_score
+                            # This rail fills rows that had NO score at all, so
+                            # the stamp is the first one they carry (#4571) —
+                            # when ESPN stated both sides. Half a score is not a
+                            # tuple anyone read, so it carries no age at all.
+                            if ee.away_score is not None:
+                                stamp_score_observation(
+                                    ev, source=SCORE_SOURCE_ESPN, observed_at=_observed_at,
+                                )
+                            else:
+                                clear_score_observation(ev)
                             _bf_period = _sanitize_period(ee.status_detail)  # #5390
                             if _bf_period:
                                 ev.period = _bf_period

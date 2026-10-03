@@ -333,7 +333,7 @@ async def test_the_dated_board_is_fetched_before_any_game_in_the_sport_is_writte
     b = _FakeEvent("Purdue Boilermakers", "Wake Forest Demon Deacons")
 
     class _Logging(_Recorder):
-        async def update_fields(self, session, event, ee, claimed, stats):
+        async def update_fields(self, session, event, ee, claimed, stats, *, observed_at=None):
             log.append(("write", event.id))
             return await super().update_fields(session, event, ee, claimed, stats)
 
@@ -429,7 +429,7 @@ async def test_a_doubleheaders_second_game_still_reaches_the_dated_board():
     )
 
     class _Claiming(_Recorder):
-        async def update_fields(self, session, event, ee, claimed, stats):
+        async def update_fields(self, session, event, ee, claimed, stats, *, observed_at=None):
             # What the real writers do with a matched game's id
             # (`write_espn_win_probability`, `espn_id_stamp`).
             claimed.add(ee.espn_id)
@@ -487,7 +487,7 @@ async def _run_live_sport(rows, undated, fetch):
     )
 
     class _Claiming(_Recorder):
-        async def update_fields(self, session, event, ee, claimed, stats):
+        async def update_fields(self, session, event, ee, claimed, stats, *, observed_at=None):
             claimed.add(ee.espn_id)
             return await super().update_fields(session, event, ee, claimed, stats)
 
