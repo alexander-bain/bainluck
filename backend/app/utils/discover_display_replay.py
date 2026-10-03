@@ -258,6 +258,26 @@ def display_capture_from_request(request: Any) -> Optional["DiscoverDisplayCaptu
     return capture if isinstance(capture, DiscoverDisplayCapture) else None
 
 
+def capture_request(capture: "DiscoverDisplayCapture") -> Any:
+    """An in-process, anonymous ``/api/feed`` request carrying ``capture``.
+
+    The pre-warm's synthetic request without its marker: no headers (so no
+    session or user principal), no query, never sent over a network.
+    """
+    from starlette.requests import Request
+
+    return Request(
+        {
+            "type": "http",
+            "method": "GET",
+            "path": "/api/feed",
+            "headers": [],
+            "query_string": b"",
+            DISCOVER_DISPLAY_CAPTURE_SCOPE_KEY: capture,
+        }
+    )
+
+
 def _guarded(method: Callable) -> Callable:
     """Recorder hooks run inside ``/api/feed``: they never raise into it."""
 

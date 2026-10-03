@@ -633,28 +633,18 @@ async def capture_mixed_build(
     serves it, the capture is INCOMPLETE and nothing is written.
     """
     from fastapi import Response
-    from starlette.requests import Request
 
     from app.routes.feed import get_feed
     from app.tasks.base import get_task_session
     from app.utils.discover_display_replay import (
-        DISCOVER_DISPLAY_CAPTURE_SCOPE_KEY,
         DiscoverDisplayCapture,
         DisplayReplayError,
+        capture_request,
         write_capture,
     )
 
     capture = DiscoverDisplayCapture(origin=origin)
-    request = Request(
-        {
-            "type": "http",
-            "method": "GET",
-            "path": "/api/feed",
-            "headers": [],
-            "query_string": b"",
-            DISCOVER_DISPLAY_CAPTURE_SCOPE_KEY: capture,
-        }
-    )
+    request = capture_request(capture)
     async with get_task_session() as db:
         await get_feed(
             response=Response(),

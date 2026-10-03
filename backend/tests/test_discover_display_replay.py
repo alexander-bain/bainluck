@@ -328,6 +328,13 @@ async def test_an_armed_capture_does_not_change_the_served_response(harness):
     assert len(plain.json()["items"]) == 20
 
 
+def test_the_runner_request_is_anonymous_and_armed():
+    capture = ddr.DiscoverDisplayCapture(origin="local")
+    request = ddr.capture_request(capture)
+    assert ddr.display_capture_from_request(request) is capture
+    assert list(request.headers.keys()) == []
+
+
 async def test_an_http_request_cannot_arm_a_capture(harness):
     """The arm lives in the ASGI scope. A header or query naming the key is
     just text — the route never sees a recorder."""
