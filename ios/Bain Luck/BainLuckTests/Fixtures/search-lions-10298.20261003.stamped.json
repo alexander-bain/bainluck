@@ -1,0 +1,5041 @@
+{
+ "collections": [
+  {
+   "destination": {
+    "api": "/api/containers/nfl-2026-week-4",
+    "kind": "container",
+    "slug": "nfl-2026-week-4",
+    "web": "/collections/nfl-2026-week-4"
+   },
+   "edition": {
+    "kind": "nfl_week",
+    "league": "nfl",
+    "season": 2026,
+    "stage": "Regular Season",
+    "week": 4
+   },
+   "game_count": 16,
+   "id": 7,
+   "matched_event_ids": [
+    14780552
+   ],
+   "name": "NFL 2026 \u00b7 Week 4",
+   "question_count": 3431,
+   "revision": 34,
+   "slug": "nfl-2026-week-4",
+   "state": "published",
+   "status": "scheduled",
+   "text": "NFL 2026 \u00b7 Week 4",
+   "type": "collection",
+   "window_end": null,
+   "window_start": null
+  },
+  {
+   "destination": {
+    "api": "/api/containers/nfl-2026-week-5",
+    "kind": "container",
+    "slug": "nfl-2026-week-5",
+    "web": "/collections/nfl-2026-week-5"
+   },
+   "edition": {
+    "kind": "nfl_week",
+    "league": "nfl",
+    "season": 2026,
+    "stage": "Regular Season",
+    "week": 5
+   },
+   "game_count": 15,
+   "id": 8,
+   "matched_event_ids": [
+    14781714
+   ],
+   "name": "NFL 2026 \u00b7 Week 5",
+   "question_count": 38,
+   "revision": 34,
+   "slug": "nfl-2026-week-5",
+   "state": "published",
+   "status": "scheduled",
+   "text": "NFL 2026 \u00b7 Week 5",
+   "type": "collection",
+   "window_end": null,
+   "window_start": null
+  }
+ ],
+ "event_concepts": [],
+ "filters": {
+  "days_back": 30,
+  "include_upcoming": true,
+  "sport": null
+ },
+ "futures": [
+  {
+   "category": "championship",
+   "id": 129037,
+   "llm_sport_category": "football",
+   "market_tier": 1,
+   "market_type": "field",
+   "market_type_label": "Championship",
+   "name": "NFL: 2027 Champion",
+   "outcome_count": 33,
+   "prices_updated_at": "2026-10-03T05:35:38.995361+00:00",
+   "resolution_date": "2027-04-01T03:59:00+00:00",
+   "source": "polymarket",
+   "sport": null,
+   "sport_name": null,
+   "status": "open",
+   "top_outcomes": [
+    {
+     "american_odds": 2497,
+     "id": 1709107,
+     "is_winner": false,
+     "matched_rank": 10,
+     "movement": null,
+     "name": "Detroit Lions",
+     "probability": 0.0385,
+     "query_match": true,
+     "rank": 10,
+     "resolution_source": null
+    },
+    {
+     "american_odds": 641,
+     "id": 1709101,
+     "is_winner": false,
+     "movement": null,
+     "name": "Buffalo Bills",
+     "probability": 0.135,
+     "rank": 1,
+     "resolution_source": null
+    },
+    {
+     "american_odds": 770,
+     "id": 1709100,
+     "is_winner": false,
+     "movement": null,
+     "name": "Los Angeles Rams",
+     "probability": 0.115,
+     "rank": 2,
+     "resolution_source": null
+    },
+    {
+     "american_odds": 993,
+     "id": 1709109,
+     "is_winner": false,
+     "movement": null,
+     "name": "San Francisco 49ers",
+     "probability": 0.0915,
+     "rank": 3,
+     "resolution_source": null
+    },
+    {
+     "american_odds": 1056,
+     "id": 1709102,
+     "is_winner": false,
+     "movement": null,
+     "name": "Kansas City Chiefs",
+     "probability": 0.0865,
+     "rank": 4,
+     "resolution_source": null
+    }
+   ],
+   "updated_at": "2026-10-03T06:32:23.059785+00:00"
+  },
+  {
+   "category": "game_prop",
+   "event_commence_time": "2026-10-05T00:20:00+00:00",
+   "id": 62932016,
+   "llm_sport_category": "football",
+   "market_tier": 5,
+   "market_type": "quantity",
+   "market_type_label": "Prop",
+   "name": "DET Lions vs CAR Panthers: Total Points",
+   "outcome_count": 19,
+   "prices_updated_at": "2026-10-03T08:00:46.948746+00:00",
+   "resolution_date": "2026-10-07T00:20:00+00:00",
+   "source": "kalshi",
+   "sport": "americanfootball_nfl",
+   "sport_name": "NFL",
+   "status": "open",
+   "top_outcomes": [
+    {
+     "american_odds": -135,
+     "id": 237426685,
+     "is_winner": null,
+     "movement": null,
+     "name": "Over 48.5 points",
+     "probability": 0.58,
+     "rank": 9,
+     "resolution_source": null
+    },
+    {
+     "american_odds": -125,
+     "id": 237426686,
+     "is_winner": null,
+     "movement": null,
+     "name": "Over 49.5 points",
+     "probability": 0.555,
+     "rank": 10,
+     "resolution_source": null
+    },
+    {
+     "american_odds": -106,
+     "id": 237426687,
+     "is_winner": null,
+     "movement": null,
+     "name": "Over 50.5 points",
+     "probability": 0.515,
+     "rank": 11,
+     "resolution_source": null
+    },
+    {
+     "american_odds": 111,
+     "id": 237426688,
+     "is_winner": null,
+     "movement": null,
+     "name": "Over 51.5 points",
+     "probability": 0.475,
+     "rank": 12,
+     "resolution_source": null
+    },
+    {
+     "american_odds": 120,
+     "id": 237426689,
+     "is_winner": null,
+     "movement": null,
+     "name": "Over 52.5 points",
+     "probability": 0.455,
+     "rank": 13,
+     "resolution_source": null
+    }
+   ],
+   "updated_at": "2026-10-03T05:07:21.836981+00:00"
+  },
+  {
+   "category": "championship",
+   "event_commence_time": "2026-10-25T20:25:00+00:00",
+   "id": 61040985,
+   "llm_sport_category": "football",
+   "market_tier": 5,
+   "market_type": "field",
+   "market_type_label": "Prop",
+   "name": "Packers vs. Lions",
+   "outcome_count": 2,
+   "prices_updated_at": "2026-09-29T09:35:41.076739+00:00",
+   "related_game_listing": {
+    "event_id": 14780566,
+    "question_count": 2
+   },
+   "resolution_date": "2026-10-25T20:25:00+00:00",
+   "source": "polymarket",
+   "sport": "americanfootball_nfl",
+   "sport_name": "NFL",
+   "status": "open",
+   "top_outcomes": [
+    {
+     "american_odds": -113,
+     "id": 238286082,
+     "is_winner": null,
+     "movement": null,
+     "name": "Packers",
+     "probability": 0.53,
+     "rank": 1,
+     "resolution_source": null
+    },
+    {
+     "american_odds": 245,
+     "id": 235113478,
+     "is_winner": null,
+     "movement": null,
+     "name": "Spread -5.5",
+     "probability": 0.29,
+     "rank": 4,
+     "resolution_source": null
+    }
+   ],
+   "updated_at": "2026-10-02T22:47:36.354835+00:00"
+  },
+  {
+   "category": "game_prop",
+   "id": 56722514,
+   "llm_sport_category": "football",
+   "market_tier": 5,
+   "market_type": "field",
+   "market_type_label": "Prop",
+   "name": "NFL: Lions vs. Packers Season Series Winner",
+   "outcome_count": 3,
+   "prices_updated_at": "2026-10-02T01:59:37.897102+00:00",
+   "resolution_date": "2027-01-27T04:59:00+00:00",
+   "source": "polymarket",
+   "sport": "americanfootball_other",
+   "sport_name": "Other Football",
+   "status": "open",
+   "top_outcomes": [
+    {
+     "american_odds": -100,
+     "id": 210596200,
+     "is_winner": false,
+     "movement": null,
+     "name": "Tie",
+     "probability": 0.5,
+     "rank": 1,
+     "resolution_source": null
+    },
+    {
+     "american_odds": 133,
+     "id": 210596198,
+     "is_winner": false,
+     "movement": null,
+     "name": "Lions",
+     "probability": 0.43,
+     "rank": 2,
+     "resolution_source": null
+    },
+    {
+     "american_odds": 1076,
+     "id": 210596199,
+     "is_winner": false,
+     "movement": null,
+     "name": "Packers",
+     "probability": 0.085,
+     "rank": 3,
+     "resolution_source": null
+    }
+   ],
+   "updated_at": "2026-10-03T06:38:27.266538+00:00"
+  },
+  {
+   "category": "championship",
+   "id": 129171,
+   "llm_sport_category": "football",
+   "market_tier": 2,
+   "market_type": "field",
+   "market_type_label": "Conference",
+   "name": "NFL: 2027 NFC Champion ",
+   "outcome_count": 17,
+   "prices_updated_at": "2026-10-03T05:35:38.995361+00:00",
+   "resolution_date": "2027-04-01T03:59:00+00:00",
+   "source": "polymarket",
+   "sport": null,
+   "sport_name": null,
+   "status": "open",
+   "top_outcomes": [
+    {
+     "american_odds": 1393,
+     "id": 1709764,
+     "is_winner": false,
+     "matched_rank": 7,
+     "movement": -0.0005,
+     "name": "Detroit Lions",
+     "probability": 0.067,
+     "query_match": true,
+     "rank": 7,
+     "resolution_source": null
+    },
+    {
+     "american_odds": 471,
+     "id": 1709766,
+     "is_winner": false,
+     "movement": null,
+     "name": "San Francisco 49ers",
+     "probability": 0.175,
+     "rank": 1,
+     "resolution_source": null
+    },
+    {
+     "american_odds": 471,
+     "id": 1709760,
+     "is_winner": false,
+     "movement": null,
+     "name": "Los Angeles Rams",
+     "probability": 0.175,
+     "rank": 1,
+     "resolution_source": null
+    },
+    {
+     "american_odds": 669,
+     "id": 1709761,
+     "is_winner": false,
+     "movement": null,
+     "name": "Seattle Seahawks",
+     "probability": 0.13,
+     "rank": 3,
+     "resolution_source": null
+    },
+    {
+     "american_odds": 1127,
+     "id": 1709762,
+     "is_winner": false,
+     "movement": -0.0025,
+     "name": "Philadelphia Eagles",
+     "probability": 0.0815,
+     "rank": 4,
+     "resolution_source": null
+    }
+   ],
+   "updated_at": "2026-10-03T05:35:38.995361+00:00"
+  },
+  {
+   "category": "game_prop",
+   "id": 56722510,
+   "llm_sport_category": "football",
+   "market_tier": 5,
+   "market_type": "field",
+   "market_type_label": "Prop",
+   "name": "NFL: Bears vs. Lions Season Series Winner",
+   "outcome_count": 3,
+   "prices_updated_at": "2026-09-23T17:30:47.185974+00:00",
+   "resolution_date": "2027-01-27T04:59:00+00:00",
+   "source": "polymarket",
+   "sport": "americanfootball_other",
+   "sport_name": "Other Football",
+   "status": "open",
+   "top_outcomes": [
+    {
+     "american_odds": -106,
+     "id": 210596186,
+     "is_winner": false,
+     "movement": null,
+     "name": "Tie",
+     "probability": 0.515,
+     "rank": 1,
+     "resolution_source": null
+    },
+    {
+     "american_odds": 413,
+     "id": 210596187,
+     "is_winner": false,
+     "movement": null,
+     "name": "Lions",
+     "probability": 0.195,
+     "rank": 2,
+     "resolution_source": null
+    }
+   ],
+   "updated_at": "2026-10-03T06:38:27.266538+00:00"
+  },
+  {
+   "category": "game_prop",
+   "id": 56722500,
+   "llm_sport_category": "football",
+   "market_tier": 5,
+   "market_type": "field",
+   "market_type_label": "Prop",
+   "name": "NFL: Lions vs. Vikings Season Series Winner",
+   "outcome_count": 3,
+   "prices_updated_at": "2026-09-28T16:28:16.314167+00:00",
+   "resolution_date": "2027-01-27T04:59:00+00:00",
+   "source": "polymarket",
+   "sport": "americanfootball_other",
+   "sport_name": "Other Football",
+   "status": "open",
+   "top_outcomes": [
+    {
+     "american_odds": 104,
+     "id": 210596158,
+     "is_winner": false,
+     "movement": null,
+     "name": "Tie",
+     "probability": 0.49,
+     "rank": 1,
+     "resolution_source": null
+    },
+    {
+     "american_odds": 395,
+     "id": 210596157,
+     "is_winner": false,
+     "movement": null,
+     "name": "Vikings",
+     "probability": 0.202,
+     "rank": 2,
+     "resolution_source": null
+    }
+   ],
+   "updated_at": "2026-10-03T06:38:26.242936+00:00"
+  },
+  {
+   "category": "championship",
+   "id": 59567951,
+   "llm_sport_category": "football",
+   "market_tier": 5,
+   "market_type": "field",
+   "market_type_label": "Prop",
+   "name": "NFL: Lions 2026 Win Total",
+   "outcome_count": 5,
+   "prices_updated_at": "2026-10-03T07:52:30.180018+00:00",
+   "resolution_date": "2027-02-16T04:59:00+00:00",
+   "source": "polymarket",
+   "sport": null,
+   "sport_name": null,
+   "status": "open",
+   "top_outcomes": [
+    {
+     "american_odds": -388,
+     "id": 233541472,
+     "is_winner": null,
+     "movement": null,
+     "name": "8.5+ Wins",
+     "probability": 0.72,
+     "rank": 1,
+     "resolution_source": null
+    },
+    {
+     "american_odds": -233,
+     "id": 233541474,
+     "is_winner": null,
+     "movement": null,
+     "name": "9.5+ Wins",
+     "probability": 0.7,
+     "rank": 2,
+     "resolution_source": null
+    },
+    {
+     "american_odds": -125,
+     "id": 233541473,
+     "is_winner": null,
+     "movement": null,
+     "name": "10.5+ Wins",
+     "probability": 0.55,
+     "rank": 3,
+     "resolution_source": null
+    },
+    {
+     "american_odds": 163,
+     "id": 233541475,
+     "is_winner": null,
+     "movement": null,
+     "name": "11.5+ Wins",
+     "probability": 0.385,
+     "rank": 4,
+     "resolution_source": null
+    },
+    {
+     "american_odds": 335,
+     "id": 233541476,
+     "is_winner": null,
+     "movement": null,
+     "name": "12.5+ Wins",
+     "probability": 0.235,
+     "rank": 5,
+     "resolution_source": null
+    }
+   ],
+   "updated_at": "2026-10-02T17:41:57.336246+00:00"
+  },
+  {
+   "category": "championship",
+   "id": 63881724,
+   "llm_sport_category": "football",
+   "market_tier": 5,
+   "market_type": "field",
+   "market_type_label": "Prop",
+   "name": "What will the announcers say during the Lions vs Panthers game?",
+   "outcome_count": 16,
+   "prices_updated_at": "2026-10-03T07:53:15.914019+00:00",
+   "resolution_date": "2026-10-05T23:59:00+00:00",
+   "source": "polymarket",
+   "sport": null,
+   "sport_name": null,
+   "status": "open",
+   "top_outcomes": [
+    {
+     "american_odds": -2757,
+     "id": 240641992,
+     "is_winner": null,
+     "movement": -0.005,
+     "name": "Safety",
+     "probability": 0.97,
+     "rank": 1,
+     "resolution_source": null
+    },
+    {
+     "american_odds": -2432,
+     "id": 240641993,
+     "is_winner": null,
+     "movement": null,
+     "name": "Fumble / Fumbles",
+     "probability": 0.9605,
+     "rank": 2,
+     "resolution_source": null
+    },
+    {
+     "american_odds": -614,
+     "id": 240641994,
+     "is_winner": null,
+     "movement": null,
+     "name": "Trade / Traded",
+     "probability": 0.86,
+     "rank": 3,
+     "resolution_source": null
+    },
+    {
+     "american_odds": -488,
+     "id": 240641995,
+     "is_winner": null,
+     "movement": null,
+     "name": "Inch / Inches",
+     "probability": 0.83,
+     "rank": 4,
+     "resolution_source": null
+    },
+    {
+     "american_odds": -456,
+     "id": 240641996,
+     "is_winner": null,
+     "movement": null,
+     "name": "Wild",
+     "probability": 0.82,
+     "rank": 5,
+     "resolution_source": null
+    }
+   ],
+   "updated_at": "2026-10-03T07:16:47.014047+00:00"
+  },
+  {
+   "category": "game_prop",
+   "id": 61380784,
+   "llm_sport_category": "football",
+   "market_tier": 2,
+   "market_type": "container_member",
+   "market_type_label": "Conference",
+   "name": "Will Detroit Lions advance to the NFC Championship Game in the 2027 NFL Playoffs?",
+   "outcome_count": 2,
+   "prices_updated_at": "2026-10-03T08:00:15.280882+00:00",
+   "resolution_date": "2027-01-26T23:59:00+00:00",
+   "source": "polymarket",
+   "sport": null,
+   "sport_name": null,
+   "status": "open",
+   "top_outcomes": [
+    {
+     "american_odds": -770,
+     "id": 231082016,
+     "is_winner": null,
+     "movement": null,
+     "name": "No",
+     "probability": 0.885,
+     "rank": 1,
+     "resolution_source": null
+    },
+    {
+     "american_odds": 770,
+     "id": 231082015,
+     "is_winner": null,
+     "movement": null,
+     "name": "Yes",
+     "probability": 0.115,
+     "rank": 2,
+     "resolution_source": null
+    }
+   ],
+   "updated_at": "2026-10-02T20:58:59.208605+00:00"
+  }
+ ],
+ "futures_families": [
+  {
+   "family_key": "entity:lions",
+   "headline": {
+    "category": "championship",
+    "event_commence_time": "2026-10-25T20:25:00+00:00",
+    "id": 61040985,
+    "llm_sport_category": "football",
+    "market_tier": 5,
+    "market_type": "field",
+    "market_type_label": "Prop",
+    "name": "Packers vs. Lions",
+    "outcome_count": 2,
+    "prices_updated_at": "2026-09-29T09:35:41.076739+00:00",
+    "related_game_listing": {
+     "event_id": 14780566,
+     "question_count": 2
+    },
+    "resolution_date": "2026-10-25T20:25:00+00:00",
+    "source": "polymarket",
+    "sport": "americanfootball_nfl",
+    "sport_name": "NFL",
+    "status": "open",
+    "top_outcomes": [
+     {
+      "american_odds": -113,
+      "id": 238286082,
+      "is_winner": null,
+      "movement": null,
+      "name": "Packers",
+      "probability": 0.53,
+      "rank": 1,
+      "resolution_source": null
+     },
+     {
+      "american_odds": 245,
+      "id": 235113478,
+      "is_winner": null,
+      "movement": null,
+      "name": "Spread -5.5",
+      "probability": 0.29,
+      "rank": 4,
+      "resolution_source": null
+     }
+    ],
+    "updated_at": "2026-10-02T22:47:36.354835+00:00"
+   },
+   "label": "Lions",
+   "member_count": 12,
+   "members": [
+    {
+     "category": "game_prop",
+     "event_commence_time": "2026-10-05T00:20:00+00:00",
+     "id": 62932016,
+     "llm_sport_category": "football",
+     "market_tier": 5,
+     "market_type": "quantity",
+     "market_type_label": "Prop",
+     "name": "DET Lions vs CAR Panthers: Total Points",
+     "outcome_count": 19,
+     "prices_updated_at": "2026-10-03T08:00:46.948746+00:00",
+     "resolution_date": "2026-10-07T00:20:00+00:00",
+     "source": "kalshi",
+     "sport": "americanfootball_nfl",
+     "sport_name": "NFL",
+     "status": "open",
+     "top_outcomes": [
+      {
+       "american_odds": -135,
+       "id": 237426685,
+       "is_winner": null,
+       "movement": null,
+       "name": "Over 48.5 points",
+       "probability": 0.58,
+       "rank": 9,
+       "resolution_source": null
+      },
+      {
+       "american_odds": -125,
+       "id": 237426686,
+       "is_winner": null,
+       "movement": null,
+       "name": "Over 49.5 points",
+       "probability": 0.555,
+       "rank": 10,
+       "resolution_source": null
+      },
+      {
+       "american_odds": -106,
+       "id": 237426687,
+       "is_winner": null,
+       "movement": null,
+       "name": "Over 50.5 points",
+       "probability": 0.515,
+       "rank": 11,
+       "resolution_source": null
+      },
+      {
+       "american_odds": 111,
+       "id": 237426688,
+       "is_winner": null,
+       "movement": null,
+       "name": "Over 51.5 points",
+       "probability": 0.475,
+       "rank": 12,
+       "resolution_source": null
+      },
+      {
+       "american_odds": 120,
+       "id": 237426689,
+       "is_winner": null,
+       "movement": null,
+       "name": "Over 52.5 points",
+       "probability": 0.455,
+       "rank": 13,
+       "resolution_source": null
+      }
+     ],
+     "updated_at": "2026-10-03T05:07:21.836981+00:00"
+    },
+    {
+     "category": "game_prop",
+     "id": 56722514,
+     "llm_sport_category": "football",
+     "market_tier": 5,
+     "market_type": "field",
+     "market_type_label": "Prop",
+     "name": "NFL: Lions vs. Packers Season Series Winner",
+     "outcome_count": 3,
+     "prices_updated_at": "2026-10-02T01:59:37.897102+00:00",
+     "resolution_date": "2027-01-27T04:59:00+00:00",
+     "source": "polymarket",
+     "sport": "americanfootball_other",
+     "sport_name": "Other Football",
+     "status": "open",
+     "top_outcomes": [
+      {
+       "american_odds": -100,
+       "id": 210596200,
+       "is_winner": false,
+       "movement": null,
+       "name": "Tie",
+       "probability": 0.5,
+       "rank": 1,
+       "resolution_source": null
+      },
+      {
+       "american_odds": 133,
+       "id": 210596198,
+       "is_winner": false,
+       "movement": null,
+       "name": "Lions",
+       "probability": 0.43,
+       "rank": 2,
+       "resolution_source": null
+      },
+      {
+       "american_odds": 1076,
+       "id": 210596199,
+       "is_winner": false,
+       "movement": null,
+       "name": "Packers",
+       "probability": 0.085,
+       "rank": 3,
+       "resolution_source": null
+      }
+     ],
+     "updated_at": "2026-10-03T06:38:27.266538+00:00"
+    },
+    {
+     "category": "game_prop",
+     "id": 56722510,
+     "llm_sport_category": "football",
+     "market_tier": 5,
+     "market_type": "field",
+     "market_type_label": "Prop",
+     "name": "NFL: Bears vs. Lions Season Series Winner",
+     "outcome_count": 3,
+     "prices_updated_at": "2026-09-23T17:30:47.185974+00:00",
+     "resolution_date": "2027-01-27T04:59:00+00:00",
+     "source": "polymarket",
+     "sport": "americanfootball_other",
+     "sport_name": "Other Football",
+     "status": "open",
+     "top_outcomes": [
+      {
+       "american_odds": -106,
+       "id": 210596186,
+       "is_winner": false,
+       "movement": null,
+       "name": "Tie",
+       "probability": 0.515,
+       "rank": 1,
+       "resolution_source": null
+      },
+      {
+       "american_odds": 413,
+       "id": 210596187,
+       "is_winner": false,
+       "movement": null,
+       "name": "Lions",
+       "probability": 0.195,
+       "rank": 2,
+       "resolution_source": null
+      }
+     ],
+     "updated_at": "2026-10-03T06:38:27.266538+00:00"
+    },
+    {
+     "category": "game_prop",
+     "id": 56722500,
+     "llm_sport_category": "football",
+     "market_tier": 5,
+     "market_type": "field",
+     "market_type_label": "Prop",
+     "name": "NFL: Lions vs. Vikings Season Series Winner",
+     "outcome_count": 3,
+     "prices_updated_at": "2026-09-28T16:28:16.314167+00:00",
+     "resolution_date": "2027-01-27T04:59:00+00:00",
+     "source": "polymarket",
+     "sport": "americanfootball_other",
+     "sport_name": "Other Football",
+     "status": "open",
+     "top_outcomes": [
+      {
+       "american_odds": 104,
+       "id": 210596158,
+       "is_winner": false,
+       "movement": null,
+       "name": "Tie",
+       "probability": 0.49,
+       "rank": 1,
+       "resolution_source": null
+      },
+      {
+       "american_odds": 395,
+       "id": 210596157,
+       "is_winner": false,
+       "movement": null,
+       "name": "Vikings",
+       "probability": 0.202,
+       "rank": 2,
+       "resolution_source": null
+      }
+     ],
+     "updated_at": "2026-10-03T06:38:26.242936+00:00"
+    }
+   ],
+   "more_count": 3
+  }
+ ],
+ "pagination": {
+  "has_next": true,
+  "has_prev": false,
+  "page": 1,
+  "per_page": 25,
+  "total_pages": 4,
+  "total_results": 91
+ },
+ "query": "lions",
+ "results": [
+  {
+   "away_score": null,
+   "away_team": "Detroit Lions",
+   "away_team_data": {
+    "abbreviation": "DET",
+    "logo_large": "https://a.espncdn.com/i/teamlogos/nfl/500/scoreboard/det.png",
+    "logo_small": "https://a.espncdn.com/i/teamlogos/nfl/500/scoreboard/det.png",
+    "primary_color": "#0076b6",
+    "record": "2-1",
+    "secondary_color": "#bbbbbb",
+    "slug": "detroit-lions",
+    "standings": {
+     "conference": "National Football Conference",
+     "div_rank": 2,
+     "division": "NFC North",
+     "home_record": "2-0",
+     "losses": 1,
+     "pct": ".667",
+     "road_record": "0-1",
+     "streak": "W1",
+     "ties": 0,
+     "wins": 2
+    },
+    "team_id": 567
+   },
+   "bookmaker_odds": [
+    {
+     "away_moneyline": -190,
+     "away_probability": 0.6256,
+     "bookmaker": "ballybet",
+     "captured_at": "2026-10-01T22:15:35.171579+00:00",
+     "home_moneyline": 155,
+     "home_probability": 0.3744,
+     "over_under": 51.0,
+     "projected_away_score": 27.5,
+     "projected_home_score": 23.5,
+     "spread": 4.0
+    },
+    {
+     "away_moneyline": -195,
+     "away_probability": 0.6366,
+     "bookmaker": "betanysports",
+     "captured_at": "2026-10-01T22:15:35.212898+00:00",
+     "home_moneyline": 165,
+     "home_probability": 0.3634,
+     "over_under": 51.0,
+     "projected_away_score": 27.2,
+     "projected_home_score": 23.8,
+     "spread": 3.5
+    },
+    {
+     "away_moneyline": -200,
+     "away_probability": 0.6341,
+     "bookmaker": "betmgm",
+     "captured_at": "2026-10-03T03:05:24.790432+00:00",
+     "home_moneyline": 160,
+     "home_probability": 0.3659,
+     "over_under": null,
+     "projected_away_score": null,
+     "projected_home_score": null,
+     "spread": null
+    },
+    {
+     "away_moneyline": -190,
+     "away_probability": 0.6345,
+     "bookmaker": "betonlineag",
+     "captured_at": "2026-10-02T04:05:20.941209+00:00",
+     "home_moneyline": 165,
+     "home_probability": 0.3655,
+     "over_under": null,
+     "projected_away_score": null,
+     "projected_home_score": null,
+     "spread": null
+    },
+    {
+     "away_moneyline": -190,
+     "away_probability": 0.6256,
+     "bookmaker": "betparx",
+     "captured_at": "2026-10-01T22:15:35.156843+00:00",
+     "home_moneyline": 155,
+     "home_probability": 0.3744,
+     "over_under": 51.0,
+     "projected_away_score": 27.5,
+     "projected_home_score": 23.5,
+     "spread": 4.0
+    },
+    {
+     "away_moneyline": -190,
+     "away_probability": 0.6256,
+     "bookmaker": "betrivers",
+     "captured_at": "2026-10-02T04:05:20.948369+00:00",
+     "home_moneyline": 155,
+     "home_probability": 0.3744,
+     "over_under": null,
+     "projected_away_score": null,
+     "projected_home_score": null,
+     "spread": null
+    },
+    {
+     "away_moneyline": -190,
+     "away_probability": 0.6328,
+     "bookmaker": "betus",
+     "captured_at": "2026-10-02T04:05:20.930029+00:00",
+     "home_moneyline": 163,
+     "home_probability": 0.3672,
+     "over_under": null,
+     "projected_away_score": null,
+     "projected_home_score": null,
+     "spread": null
+    },
+    {
+     "away_moneyline": -200,
+     "away_probability": 0.6429,
+     "bookmaker": "bovada",
+     "captured_at": "2026-10-02T17:05:47.061078+00:00",
+     "home_moneyline": 170,
+     "home_probability": 0.3571,
+     "over_under": null,
+     "projected_away_score": null,
+     "projected_home_score": null,
+     "spread": null
+    },
+    {
+     "away_moneyline": -181,
+     "away_probability": 0.6234,
+     "bookmaker": "courtside",
+     "captured_at": "2026-10-01T22:27:28.706990+00:00",
+     "home_moneyline": 157,
+     "home_probability": 0.3766,
+     "over_under": 51.5,
+     "projected_away_score": 27.5,
+     "projected_home_score": 24.0,
+     "spread": 3.5
+    },
+    {
+     "away_moneyline": -185,
+     "away_probability": 0.6225,
+     "bookmaker": "draftkings",
+     "captured_at": "2026-10-02T04:05:20.915911+00:00",
+     "home_moneyline": 154,
+     "home_probability": 0.3775,
+     "over_under": null,
+     "projected_away_score": null,
+     "projected_home_score": null,
+     "spread": null
+    },
+    {
+     "away_moneyline": -200,
+     "away_probability": 0.6429,
+     "bookmaker": "espnbet",
+     "captured_at": "2026-10-01T22:15:35.219503+00:00",
+     "home_moneyline": 170,
+     "home_probability": 0.3571,
+     "over_under": 51.5,
+     "projected_away_score": 27.8,
+     "projected_home_score": 23.8,
+     "spread": 4.0
+    },
+    {
+     "away_moneyline": -200,
+     "away_probability": 0.6386,
+     "bookmaker": "fanatics",
+     "captured_at": "2026-10-03T07:35:45.282956+00:00",
+     "home_moneyline": 165,
+     "home_probability": 0.3614,
+     "over_under": null,
+     "projected_away_score": null,
+     "projected_home_score": null,
+     "spread": null
+    },
+    {
+     "away_moneyline": -205,
+     "away_probability": 0.6464,
+     "bookmaker": "fanduel",
+     "captured_at": "2026-10-02T20:36:08.051172+00:00",
+     "home_moneyline": 172,
+     "home_probability": 0.3536,
+     "over_under": null,
+     "projected_away_score": null,
+     "projected_home_score": null,
+     "spread": null
+    },
+    {
+     "away_moneyline": -210,
+     "away_probability": 0.6379,
+     "bookmaker": "fliff",
+     "captured_at": "2026-10-01T22:21:35.880100+00:00",
+     "home_moneyline": 160,
+     "home_probability": 0.3621,
+     "over_under": 51.5,
+     "projected_away_score": 27.5,
+     "projected_home_score": 24.0,
+     "spread": 3.5
+    },
+    {
+     "away_moneyline": -200,
+     "away_probability": 0.6386,
+     "bookmaker": "hardrockbet",
+     "captured_at": "2026-10-01T22:15:35.228718+00:00",
+     "home_moneyline": 165,
+     "home_probability": 0.3614,
+     "over_under": 51.0,
+     "projected_away_score": 27.5,
+     "projected_home_score": 23.5,
+     "spread": 4.0
+    },
+    {
+     "away_moneyline": -200,
+     "away_probability": 0.6386,
+     "bookmaker": "hardrockbet_fl",
+     "captured_at": "2026-10-01T22:15:35.239015+00:00",
+     "home_moneyline": 165,
+     "home_probability": 0.3614,
+     "over_under": 51.0,
+     "projected_away_score": 27.5,
+     "projected_home_score": 23.5,
+     "spread": 4.0
+    },
+    {
+     "away_moneyline": -200,
+     "away_probability": 0.6386,
+     "bookmaker": "hardrockbet_oh",
+     "captured_at": "2026-10-01T22:15:35.243187+00:00",
+     "home_moneyline": 165,
+     "home_probability": 0.3614,
+     "over_under": 51.0,
+     "projected_away_score": 27.5,
+     "projected_home_score": 23.5,
+     "spread": 4.0
+    },
+    {
+     "away_moneyline": -190,
+     "away_probability": 0.6345,
+     "bookmaker": "lowvig",
+     "captured_at": "2026-10-02T04:05:20.935533+00:00",
+     "home_moneyline": 165,
+     "home_probability": 0.3655,
+     "over_under": null,
+     "projected_away_score": null,
+     "projected_home_score": null,
+     "spread": null
+    },
+    {
+     "away_moneyline": -200,
+     "away_probability": 0.635,
+     "bookmaker": "mybookieag",
+     "captured_at": "2026-10-02T17:05:47.063155+00:00",
+     "home_moneyline": 161,
+     "home_probability": 0.365,
+     "over_under": null,
+     "projected_away_score": null,
+     "projected_home_score": null,
+     "spread": null
+    },
+    {
+     "away_moneyline": -194,
+     "away_probability": 0.6344,
+     "bookmaker": "rebet",
+     "captured_at": "2026-10-01T22:15:35.103260+00:00",
+     "home_moneyline": 163,
+     "home_probability": 0.3656,
+     "over_under": 50.5,
+     "projected_away_score": 27.0,
+     "projected_home_score": 23.5,
+     "spread": 3.5
+    },
+    {
+     "away_moneyline": -197,
+     "away_probability": 0.6365,
+     "bookmaker": "williamhill_us",
+     "captured_at": "2026-10-02T04:05:20.918390+00:00",
+     "home_moneyline": 164,
+     "home_probability": 0.3635,
+     "over_under": null,
+     "projected_away_score": null,
+     "projected_home_score": null,
+     "spread": null
+    }
+   ],
+   "commence_time": "2026-10-05T00:20:00+00:00",
+   "completed_at": null,
+   "current_odds": {
+    "away_probability": 0.645,
+    "bookmaker_count": 21,
+    "captured_at": "2026-10-03T07:35:45.282956+00:00",
+    "home_probability": 0.355,
+    "over_under": 51.1,
+    "projected_away_score": 27.4,
+    "projected_home_score": 23.7,
+    "spread": 3.8
+   },
+   "espn": {
+    "broadcast": "NBC",
+    "espn_id": "401872978",
+    "probability_sources": {
+     "betting": 0.3655,
+     "betting_book_count": 11.0,
+     "kalshi": 0.355,
+     "polymarket": 0.355
+    }
+   },
+   "external_id": "a73a76599a4f3422803e57bd8f61b626",
+   "hero_probability": 0.355,
+   "hero_probability_away": 0.645,
+   "hero_probability_source": "blend",
+   "highlight": {
+    "flags": {
+     "favorite_switched": false,
+     "has_lead_changes": false,
+     "has_recent_momentum": false,
+     "is_blowout": false,
+     "is_close_matchup": false,
+     "is_live": false,
+     "is_recently_finished": false,
+     "is_starting_soon": false,
+     "is_upset": false,
+     "is_volatile": false,
+     "league_tier": 1,
+     "probability_swing": "stable",
+     "score_swing": "stable"
+    },
+    "label": null,
+    "reasons": [
+     "tier_1"
+    ],
+    "score": 20,
+    "should_feature": false
+   },
+   "home_score": null,
+   "home_team": "Carolina Panthers",
+   "home_team_data": {
+    "abbreviation": "CAR",
+    "logo_large": "https://a.espncdn.com/i/teamlogos/nfl/500/scoreboard/car.png",
+    "logo_small": "https://a.espncdn.com/i/teamlogos/nfl/500/scoreboard/car.png",
+    "primary_color": "#0085ca",
+    "record": "1-2",
+    "secondary_color": "#000000",
+    "slug": "carolina-panthers",
+    "standings": {
+     "conference": "National Football Conference",
+     "div_rank": 1,
+     "division": "NFC South",
+     "home_record": "0-1",
+     "losses": 2,
+     "pct": ".333",
+     "road_record": "1-1",
+     "streak": "L1",
+     "ties": 0,
+     "wins": 1
+    },
+    "team_id": 545
+   },
+   "id": 14780552,
+   "metadata": {
+    "gender": "men",
+    "importance": "regular_season",
+    "league": "NFL",
+    "level": "professional"
+   },
+   "sport": "americanfootball_nfl",
+   "sport_name": "NFL",
+   "start_is_tbd": false,
+   "started_without_result": false,
+   "status": "scheduled",
+   "win_probability_sources": {
+    "betting": {
+     "color": "#374151",
+     "display_name": "Betting Odds",
+     "evidence_status": "not_applicable",
+     "type": "market",
+     "updated_at": "2026-10-03T07:35:45.292195+00:00",
+     "value": 0.3655
+    },
+    "betting_book_count": {
+     "color": "#6b7280",
+     "display_name": "betting_book_count",
+     "evidence_status": "not_applicable",
+     "type": "model",
+     "value": 11.0
+    },
+    "kalshi": {
+     "color": "#22c55e",
+     "contract_version": "live_blend.admissible_as_blend_speaker@5031",
+     "display_name": "Kalshi",
+     "evidence_status": "verified",
+     "type": "market",
+     "updated_at": "2026-10-03T08:00:51.660620+00:00",
+     "value": 0.355,
+     "verified_scope": "full_event_winner"
+    },
+    "polymarket": {
+     "color": "#3b82f6",
+     "contract_version": "live_blend.admissible_as_blend_speaker@5031",
+     "display_name": "Polymarket",
+     "evidence_status": "verified",
+     "type": "market",
+     "updated_at": "2026-10-03T07:57:12.589829+00:00",
+     "value": 0.355,
+     "verified_scope": "full_event_winner"
+    }
+   }
+  },
+  {
+   "away_score": 13,
+   "away_team": "Penn State Nittany Lions",
+   "away_team_data": {
+    "abbreviation": "PSU",
+    "logo_large": "https://a.espncdn.com/i/teamlogos/ncaa/500/213.png",
+    "logo_small": "https://a.espncdn.com/i/teamlogos/ncaa/500/213.png",
+    "primary_color": "#061440",
+    "record": "3-2",
+    "secondary_color": "#ffffff",
+    "slug": "penn-state-nittany-lions-ncaaf",
+    "team_id": 15356
+   },
+   "bookmaker_odds": [
+    {
+     "away_moneyline": null,
+     "away_probability": null,
+     "bookmaker": "betmgm",
+     "captured_at": "2026-10-03T03:28:33.685292+00:00",
+     "home_moneyline": null,
+     "home_probability": null,
+     "over_under": 47.5,
+     "projected_away_score": 13.5,
+     "projected_home_score": 34.0,
+     "spread": -20.5
+    },
+    {
+     "away_moneyline": -152,
+     "away_probability": 0.5832,
+     "bookmaker": "betonlineag",
+     "captured_at": "2026-10-03T00:14:32.877958+00:00",
+     "home_moneyline": 132,
+     "home_probability": 0.4168,
+     "over_under": 47.0,
+     "projected_away_score": 25.0,
+     "projected_home_score": 22.0,
+     "spread": 3.0
+    },
+    {
+     "away_moneyline": -155,
+     "away_probability": 0.5755,
+     "bookmaker": "betrivers",
+     "captured_at": "2026-10-02T23:55:07.678350+00:00",
+     "home_moneyline": 123,
+     "home_probability": 0.4245,
+     "over_under": 47.0,
+     "projected_away_score": 25.0,
+     "projected_home_score": 22.0,
+     "spread": 3.0
+    },
+    {
+     "away_moneyline": -155,
+     "away_probability": 0.5872,
+     "bookmaker": "betus",
+     "captured_at": "2026-10-02T23:59:33.882046+00:00",
+     "home_moneyline": 134,
+     "home_probability": 0.4128,
+     "over_under": 47.0,
+     "projected_away_score": 25.0,
+     "projected_home_score": 22.0,
+     "spread": 3.0
+    },
+    {
+     "away_moneyline": null,
+     "away_probability": null,
+     "bookmaker": "bovada",
+     "captured_at": "2026-10-03T03:19:33.392572+00:00",
+     "home_moneyline": null,
+     "home_probability": null,
+     "over_under": 44.5,
+     "projected_away_score": 13.2,
+     "projected_home_score": 31.2,
+     "spread": -18.0
+    },
+    {
+     "away_moneyline": null,
+     "away_probability": null,
+     "bookmaker": "draftkings",
+     "captured_at": "2026-10-03T03:26:33.630201+00:00",
+     "home_moneyline": null,
+     "home_probability": null,
+     "over_under": 47.5,
+     "projected_away_score": 13.5,
+     "projected_home_score": 34.0,
+     "spread": -20.5
+    },
+    {
+     "away_moneyline": null,
+     "away_probability": null,
+     "bookmaker": "fanatics",
+     "captured_at": "2026-10-03T03:31:33.548639+00:00",
+     "home_moneyline": null,
+     "home_probability": null,
+     "over_under": null,
+     "projected_away_score": null,
+     "projected_home_score": null,
+     "spread": -20.5
+    },
+    {
+     "away_moneyline": null,
+     "away_probability": null,
+     "bookmaker": "fanduel",
+     "captured_at": "2026-10-03T03:27:08.727764+00:00",
+     "home_moneyline": null,
+     "home_probability": null,
+     "over_under": null,
+     "projected_away_score": null,
+     "projected_home_score": null,
+     "spread": -20.5
+    },
+    {
+     "away_moneyline": -152,
+     "away_probability": 0.5832,
+     "bookmaker": "lowvig",
+     "captured_at": "2026-10-03T00:14:32.875479+00:00",
+     "home_moneyline": 132,
+     "home_probability": 0.4168,
+     "over_under": 47.0,
+     "projected_away_score": 25.0,
+     "projected_home_score": 22.0,
+     "spread": 3.0
+    },
+    {
+     "away_moneyline": null,
+     "away_probability": null,
+     "bookmaker": "mybookieag",
+     "captured_at": "2026-10-03T03:00:13.975156+00:00",
+     "home_moneyline": null,
+     "home_probability": null,
+     "over_under": null,
+     "projected_away_score": null,
+     "projected_home_score": null,
+     "spread": -24.5
+    },
+    {
+     "away_moneyline": null,
+     "away_probability": null,
+     "bookmaker": "williamhill_us",
+     "captured_at": "2026-10-03T03:28:07.630382+00:00",
+     "home_moneyline": null,
+     "home_probability": null,
+     "over_under": 46.5,
+     "projected_away_score": 13.0,
+     "projected_home_score": 33.5,
+     "spread": -20.5
+    }
+   ],
+   "commence_time": "2026-10-03T00:00:00+00:00",
+   "completed_at": "2026-10-03T03:39:26.335855+00:00",
+   "current_odds": {
+    "away_probability": 0.001,
+    "bookmaker_count": 4,
+    "captured_at": "2026-10-03T03:31:33.548639+00:00",
+    "home_probability": 0.999,
+    "over_under": 46.8,
+    "projected_away_score": 19.1,
+    "projected_home_score": 27.6,
+    "spread": -12.1
+   },
+   "ei": {
+    "emoji": "\u26a1",
+    "label": "Engaging",
+    "metadata": {
+     "comeback_factor": 0.417,
+     "lead_changes": 1,
+     "raw_ei": 0.4488,
+     "snapshot_count": 351
+    },
+    "raw_score": 42,
+    "score": 64,
+    "status": "exciting"
+   },
+   "espn": {
+    "broadcast": "FOX",
+    "espn_id": "401858476",
+    "game_clock": "0:00",
+    "period": "Final",
+    "probability_sources": {
+     "betting_book_count": 1.0,
+     "espn": 0.999,
+     "stat_model": 0.999
+    },
+    "win_probability": 0.999
+   },
+   "external_id": "0469a451e58ca81723a7760d4bede173",
+   "hero_probability": 1.0,
+   "hero_probability_away": 0.0,
+   "hero_probability_source": "settled",
+   "hero_settled_result": "home",
+   "highlight": {
+    "flags": {
+     "favorite_switched": true,
+     "has_lead_changes": false,
+     "has_recent_momentum": false,
+     "is_blowout": true,
+     "is_close_matchup": false,
+     "is_live": false,
+     "is_recently_finished": true,
+     "is_starting_soon": false,
+     "is_upset": false,
+     "is_volatile": false,
+     "league_tier": 2,
+     "probability_swing": "major",
+     "score_swing": "stable"
+    },
+    "label": null,
+    "reasons": [
+     "recent_finish",
+     "tier_2",
+     "blowout",
+     "major_prob_swing",
+     "favorite_switched"
+    ],
+    "score": 35,
+    "should_feature": true
+   },
+   "home_score": 34,
+   "home_team": "Northwestern Wildcats",
+   "home_team_data": {
+    "abbreviation": "NU",
+    "logo_large": "https://a.espncdn.com/i/teamlogos/ncaa/500/77.png",
+    "logo_small": "https://a.espncdn.com/i/teamlogos/ncaa/500/77.png",
+    "primary_color": "#492f92",
+    "record": "3-1",
+    "secondary_color": "#ffffff",
+    "slug": "northwestern-wildcats-ncaaf",
+    "team_id": 19683
+   },
+   "id": 15318029,
+   "metadata": {
+    "gender": "men",
+    "importance": "regular_season",
+    "league": "NCAAF",
+    "level": "college"
+   },
+   "opening_odds": {
+    "away_probability": 0.5831,
+    "favorite": "away",
+    "home_probability": 0.4169,
+    "over_under": 47.0,
+    "spread": 3.0
+   },
+   "pulse": {
+    "emoji": "\u26a1",
+    "label": "Engaging",
+    "metadata": {
+     "comeback_factor": 0.417,
+     "lead_changes": 1,
+     "raw_ei": 0.4488,
+     "snapshot_count": 351
+    },
+    "raw_score": 42,
+    "score": 64,
+    "status": "exciting"
+   },
+   "score_observed_at": "2026-10-03T05:59:50.112190+00:00",
+   "score_source": "espn",
+   "sport": "americanfootball_ncaaf",
+   "sport_name": "NCAAF",
+   "start_is_tbd": false,
+   "started_without_result": false,
+   "status": "completed",
+   "win_probability_sources": {
+    "betting_book_count": {
+     "color": "#6b7280",
+     "display_name": "betting_book_count",
+     "evidence_status": "not_applicable",
+     "type": "model",
+     "value": 1.0
+    },
+    "espn": {
+     "color": "#f97316",
+     "display_name": "ESPN",
+     "evidence_status": "not_applicable",
+     "type": "model",
+     "updated_at": "2026-10-03T03:38:20.104877+00:00",
+     "value": 0.999
+    },
+    "stat_model": {
+     "color": "#8b5cf6",
+     "display_name": "Bain Luck Model",
+     "evidence_status": "not_applicable",
+     "type": "model",
+     "updated_at": "2026-10-03T03:38:20.136680+00:00",
+     "value": 0.999
+    }
+   }
+  },
+  {
+   "away_score": null,
+   "away_team": "Detroit Lions",
+   "away_team_data": {
+    "abbreviation": "DET",
+    "logo_large": "https://a.espncdn.com/i/teamlogos/nfl/500/scoreboard/det.png",
+    "logo_small": "https://a.espncdn.com/i/teamlogos/nfl/500/scoreboard/det.png",
+    "primary_color": "#0076b6",
+    "record": "2-1",
+    "secondary_color": "#bbbbbb",
+    "slug": "detroit-lions",
+    "standings": {
+     "conference": "National Football Conference",
+     "div_rank": 2,
+     "division": "NFC North",
+     "home_record": "2-0",
+     "losses": 1,
+     "pct": ".667",
+     "road_record": "0-1",
+     "streak": "W1",
+     "ties": 0,
+     "wins": 2
+    },
+    "team_id": 567
+   },
+   "bookmaker_odds": [
+    {
+     "away_moneyline": -250,
+     "away_probability": 0.6818,
+     "bookmaker": "ballybet",
+     "captured_at": "2026-10-01T22:15:36.367765+00:00",
+     "home_moneyline": 200,
+     "home_probability": 0.3182,
+     "over_under": 52.0,
+     "projected_away_score": 28.8,
+     "projected_home_score": 23.2,
+     "spread": 5.5
+    },
+    {
+     "away_moneyline": null,
+     "away_probability": null,
+     "bookmaker": "betonlineag",
+     "captured_at": "2026-10-01T22:15:36.357008+00:00",
+     "home_moneyline": null,
+     "home_probability": null,
+     "over_under": 52.5,
+     "projected_away_score": 28.8,
+     "projected_home_score": 23.8,
+     "spread": 5.0
+    },
+    {
+     "away_moneyline": -250,
+     "away_probability": 0.6818,
+     "bookmaker": "betparx",
+     "captured_at": "2026-10-01T22:15:36.362428+00:00",
+     "home_moneyline": 200,
+     "home_probability": 0.3182,
+     "over_under": 52.0,
+     "projected_away_score": 28.8,
+     "projected_home_score": 23.2,
+     "spread": 5.5
+    },
+    {
+     "away_moneyline": -250,
+     "away_probability": 0.6818,
+     "bookmaker": "betrivers",
+     "captured_at": "2026-10-02T04:05:21.305976+00:00",
+     "home_moneyline": 200,
+     "home_probability": 0.3182,
+     "over_under": null,
+     "projected_away_score": null,
+     "projected_home_score": null,
+     "spread": null
+    },
+    {
+     "away_moneyline": null,
+     "away_probability": null,
+     "bookmaker": "betus",
+     "captured_at": "2026-10-01T22:15:36.354546+00:00",
+     "home_moneyline": null,
+     "home_probability": null,
+     "over_under": 53.0,
+     "projected_away_score": 29.2,
+     "projected_home_score": 23.8,
+     "spread": 5.5
+    },
+    {
+     "away_moneyline": -245,
+     "away_probability": 0.6806,
+     "bookmaker": "draftkings",
+     "captured_at": "2026-10-02T04:05:21.292013+00:00",
+     "home_moneyline": 200,
+     "home_probability": 0.3194,
+     "over_under": null,
+     "projected_away_score": null,
+     "projected_home_score": null,
+     "spread": null
+    },
+    {
+     "away_moneyline": -240,
+     "away_probability": 0.6778,
+     "bookmaker": "fanduel",
+     "captured_at": "2026-10-02T04:05:21.300324+00:00",
+     "home_moneyline": 198,
+     "home_probability": 0.3222,
+     "over_under": null,
+     "projected_away_score": null,
+     "projected_home_score": null,
+     "spread": null
+    },
+    {
+     "away_moneyline": null,
+     "away_probability": null,
+     "bookmaker": "lowvig",
+     "captured_at": "2026-10-01T22:15:36.359489+00:00",
+     "home_moneyline": null,
+     "home_probability": null,
+     "over_under": 52.5,
+     "projected_away_score": 28.8,
+     "projected_home_score": 23.8,
+     "spread": 5.0
+    },
+    {
+     "away_moneyline": null,
+     "away_probability": null,
+     "bookmaker": "mybookieag",
+     "captured_at": "2026-10-01T22:15:36.351302+00:00",
+     "home_moneyline": null,
+     "home_probability": null,
+     "over_under": 52.5,
+     "projected_away_score": 29.0,
+     "projected_home_score": 23.5,
+     "spread": 5.5
+    },
+    {
+     "away_moneyline": -228,
+     "away_probability": 0.6622,
+     "bookmaker": "rebet",
+     "captured_at": "2026-10-01T22:15:36.347261+00:00",
+     "home_moneyline": 182,
+     "home_probability": 0.3378,
+     "over_under": 52.5,
+     "projected_away_score": 29.0,
+     "projected_home_score": 23.5,
+     "spread": 5.5
+    },
+    {
+     "away_moneyline": -245,
+     "away_probability": 0.6806,
+     "bookmaker": "williamhill_us",
+     "captured_at": "2026-10-02T04:05:21.294519+00:00",
+     "home_moneyline": 200,
+     "home_probability": 0.3194,
+     "over_under": null,
+     "projected_away_score": null,
+     "projected_home_score": null,
+     "spread": null
+    }
+   ],
+   "commence_time": "2026-10-11T20:25:00+00:00",
+   "completed_at": null,
+   "current_odds": {
+    "away_probability": 0.6806,
+    "bookmaker_count": 7,
+    "captured_at": "2026-10-02T04:05:21.305976+00:00",
+    "home_probability": 0.3194,
+    "over_under": 52.4,
+    "projected_away_score": 28.9,
+    "projected_home_score": 23.5,
+    "spread": 5.4
+   },
+   "espn": {
+    "espn_id": "401872991",
+    "probability_sources": {
+     "betting": 0.3194,
+     "betting_book_count": 4.0,
+     "kalshi": 0.315,
+     "polymarket": 0.325
+    }
+   },
+   "external_id": "f8e7f43f73aa983c5c99c189587f0118",
+   "hero_probability": 0.3194,
+   "hero_probability_away": 0.6806,
+   "hero_probability_source": "blend",
+   "highlight": {
+    "flags": {
+     "favorite_switched": false,
+     "has_lead_changes": false,
+     "has_recent_momentum": false,
+     "is_blowout": false,
+     "is_close_matchup": false,
+     "is_live": false,
+     "is_recently_finished": false,
+     "is_starting_soon": false,
+     "is_upset": false,
+     "is_volatile": false,
+     "league_tier": 1,
+     "probability_swing": "stable",
+     "score_swing": "stable"
+    },
+    "label": null,
+    "reasons": [
+     "tier_1"
+    ],
+    "score": 20,
+    "should_feature": false
+   },
+   "home_score": null,
+   "home_team": "Arizona Cardinals",
+   "home_team_data": {
+    "abbreviation": "ARI",
+    "logo_large": "https://a.espncdn.com/i/teamlogos/nfl/500/scoreboard/ari.png",
+    "logo_small": "https://a.espncdn.com/i/teamlogos/nfl/500/scoreboard/ari.png",
+    "primary_color": "#a40227",
+    "record": "1-2",
+    "secondary_color": "#ffffff",
+    "slug": "arizona-cardinals",
+    "standings": {
+     "conference": "National Football Conference",
+     "div_rank": 4,
+     "division": "NFC West",
+     "home_record": "0-1",
+     "losses": 2,
+     "pct": ".333",
+     "road_record": "1-1",
+     "streak": "L2",
+     "ties": 0,
+     "wins": 1
+    },
+    "team_id": 541
+   },
+   "id": 14781714,
+   "metadata": {
+    "gender": "men",
+    "importance": "regular_season",
+    "league": "NFL",
+    "level": "professional"
+   },
+   "sport": "americanfootball_nfl",
+   "sport_name": "NFL",
+   "start_is_tbd": false,
+   "started_without_result": false,
+   "status": "scheduled",
+   "win_probability_sources": {
+    "betting": {
+     "color": "#374151",
+     "display_name": "Betting Odds",
+     "evidence_status": "not_applicable",
+     "type": "market",
+     "updated_at": "2026-10-03T07:35:45.478935+00:00",
+     "value": 0.3194
+    },
+    "betting_book_count": {
+     "color": "#6b7280",
+     "display_name": "betting_book_count",
+     "evidence_status": "not_applicable",
+     "type": "model",
+     "value": 4.0
+    },
+    "kalshi": {
+     "color": "#22c55e",
+     "contract_version": "live_blend.admissible_as_blend_speaker@5031",
+     "display_name": "Kalshi",
+     "evidence_status": "verified",
+     "type": "market",
+     "updated_at": "2026-10-03T07:36:42.100582+00:00",
+     "value": 0.315,
+     "verified_scope": "full_event_winner"
+    },
+    "polymarket": {
+     "color": "#3b82f6",
+     "contract_version": "live_blend.admissible_as_blend_speaker@5031",
+     "display_name": "Polymarket",
+     "evidence_status": "verified",
+     "type": "market",
+     "updated_at": "2026-10-03T07:59:22.575057+00:00",
+     "value": 0.325,
+     "verified_scope": "full_event_winner"
+    }
+   }
+  },
+  {
+   "away_score": null,
+   "away_team": "Green Bay Packers",
+   "away_team_data": {
+    "abbreviation": "GB",
+    "logo_large": "https://a.espncdn.com/i/teamlogos/nfl/500/scoreboard/gb.png",
+    "logo_small": "https://a.espncdn.com/i/teamlogos/nfl/500/scoreboard/gb.png",
+    "primary_color": "#204e32",
+    "record": "1-2",
+    "secondary_color": "#ffb612",
+    "slug": "green-bay-packers",
+    "standings": {
+     "conference": "National Football Conference",
+     "div_rank": 4,
+     "division": "NFC North",
+     "home_record": "0-1",
+     "losses": 2,
+     "pct": ".333",
+     "road_record": "1-1",
+     "streak": "L1",
+     "ties": 0,
+     "wins": 1
+    },
+    "team_id": 559
+   },
+   "bookmaker_odds": [
+    {
+     "away_moneyline": 120,
+     "away_probability": 0.4365,
+     "bookmaker": "draftkings",
+     "captured_at": "2026-09-13T15:10:39.345923+00:00",
+     "home_moneyline": -142,
+     "home_probability": 0.5635,
+     "over_under": 50.5,
+     "projected_away_score": 24.0,
+     "projected_home_score": 26.5,
+     "spread": -2.5
+    },
+    {
+     "away_moneyline": 121,
+     "away_probability": 0.4333,
+     "bookmaker": "williamhill_us",
+     "captured_at": "2026-09-13T15:10:39.347170+00:00",
+     "home_moneyline": -145,
+     "home_probability": 0.5667,
+     "over_under": 49.5,
+     "projected_away_score": 23.5,
+     "projected_home_score": 26.0,
+     "spread": -2.5
+    }
+   ],
+   "commence_time": "2026-10-25T20:25:00+00:00",
+   "completed_at": null,
+   "current_odds": {
+    "away_probability": 0.4365,
+    "bookmaker_count": 2,
+    "captured_at": "2026-09-13T15:10:39.347170+00:00",
+    "home_probability": 0.5635,
+    "over_under": 50.0,
+    "projected_away_score": 23.8,
+    "projected_home_score": 26.2,
+    "spread": -2.5
+   },
+   "espn": {
+    "espn_id": "401873020",
+    "probability_sources": {
+     "betting_book_count": 1.0
+    }
+   },
+   "external_id": "e8e5715eefb6a9ce64765e9ddf49c0cc",
+   "hero_probability": 0.5635,
+   "hero_probability_away": 0.4365,
+   "hero_probability_source": "opening",
+   "highlight": {
+    "flags": {
+     "favorite_switched": false,
+     "has_lead_changes": false,
+     "has_recent_momentum": false,
+     "is_blowout": false,
+     "is_close_matchup": true,
+     "is_live": false,
+     "is_recently_finished": false,
+     "is_starting_soon": false,
+     "is_upset": false,
+     "is_volatile": false,
+     "league_tier": 1,
+     "probability_swing": "stable",
+     "score_swing": "stable"
+    },
+    "label": null,
+    "reasons": [
+     "tier_1",
+     "close_matchup"
+    ],
+    "score": 45,
+    "should_feature": true
+   },
+   "home_score": null,
+   "home_team": "Detroit Lions",
+   "home_team_data": {
+    "abbreviation": "DET",
+    "logo_large": "https://a.espncdn.com/i/teamlogos/nfl/500/scoreboard/det.png",
+    "logo_small": "https://a.espncdn.com/i/teamlogos/nfl/500/scoreboard/det.png",
+    "primary_color": "#0076b6",
+    "record": "2-1",
+    "secondary_color": "#bbbbbb",
+    "slug": "detroit-lions",
+    "standings": {
+     "conference": "National Football Conference",
+     "div_rank": 2,
+     "division": "NFC North",
+     "home_record": "2-0",
+     "losses": 1,
+     "pct": ".667",
+     "road_record": "0-1",
+     "streak": "W1",
+     "ties": 0,
+     "wins": 2
+    },
+    "team_id": 567
+   },
+   "id": 14780566,
+   "metadata": {
+    "gender": "men",
+    "importance": "regular_season",
+    "league": "NFL",
+    "level": "professional"
+   },
+   "sport": "americanfootball_nfl",
+   "sport_name": "NFL",
+   "start_is_tbd": false,
+   "started_without_result": false,
+   "status": "scheduled",
+   "win_probability_sources": {
+    "betting_book_count": {
+     "color": "#6b7280",
+     "display_name": "betting_book_count",
+     "evidence_status": "not_applicable",
+     "type": "model",
+     "value": 1.0
+    }
+   }
+  },
+  {
+   "away_score": null,
+   "away_team": "Minnesota Vikings",
+   "away_team_data": {
+    "abbreviation": "MIN",
+    "logo_large": "https://a.espncdn.com/i/teamlogos/nfl/500/scoreboard/min.png",
+    "logo_small": "https://a.espncdn.com/i/teamlogos/nfl/500/scoreboard/min.png",
+    "primary_color": "#4f2683",
+    "record": "3-0",
+    "secondary_color": "#ffc62f",
+    "slug": "minnesota-vikings",
+    "standings": {
+     "conference": "National Football Conference",
+     "div_rank": 1,
+     "division": "NFC North",
+     "home_record": "1-0",
+     "losses": 0,
+     "pct": ".1000",
+     "road_record": "2-0",
+     "streak": "W3",
+     "ties": 0,
+     "wins": 3
+    },
+    "team_id": 555
+   },
+   "bookmaker_odds": [
+    {
+     "away_moneyline": 180,
+     "away_probability": 0.3425,
+     "bookmaker": "draftkings",
+     "captured_at": "2026-09-13T15:52:48.118059+00:00",
+     "home_moneyline": -218,
+     "home_probability": 0.6575,
+     "over_under": 47.5,
+     "projected_away_score": 21.5,
+     "projected_home_score": 26.0,
+     "spread": -4.5
+    },
+    {
+     "away_moneyline": 190,
+     "away_probability": 0.3243,
+     "bookmaker": "williamhill_us",
+     "captured_at": "2026-09-13T15:10:39.444937+00:00",
+     "home_moneyline": -255,
+     "home_probability": 0.6757,
+     "over_under": 47.0,
+     "projected_away_score": 20.8,
+     "projected_home_score": 26.2,
+     "spread": -5.5
+    }
+   ],
+   "commence_time": "2026-11-01T18:00:00+00:00",
+   "completed_at": null,
+   "current_odds": {
+    "away_probability": 0.3425,
+    "bookmaker_count": 2,
+    "captured_at": "2026-09-13T15:52:48.118059+00:00",
+    "home_probability": 0.6575,
+    "over_under": 47.2,
+    "projected_away_score": 21.1,
+    "projected_home_score": 26.1,
+    "spread": -5.0
+   },
+   "espn": {
+    "espn_id": "401873030",
+    "probability_sources": {
+     "betting_book_count": 1.0
+    }
+   },
+   "external_id": "52e7ee9c42525e6deec02da32dc2fad8",
+   "hero_probability": 0.6575,
+   "hero_probability_away": 0.3425,
+   "hero_probability_source": "opening",
+   "highlight": {
+    "flags": {
+     "favorite_switched": false,
+     "has_lead_changes": false,
+     "has_recent_momentum": false,
+     "is_blowout": false,
+     "is_close_matchup": false,
+     "is_live": false,
+     "is_recently_finished": false,
+     "is_starting_soon": false,
+     "is_upset": false,
+     "is_volatile": false,
+     "league_tier": 1,
+     "probability_swing": "stable",
+     "score_swing": "stable"
+    },
+    "label": null,
+    "reasons": [
+     "tier_1"
+    ],
+    "score": 20,
+    "should_feature": false
+   },
+   "home_score": null,
+   "home_team": "Detroit Lions",
+   "home_team_data": {
+    "abbreviation": "DET",
+    "logo_large": "https://a.espncdn.com/i/teamlogos/nfl/500/scoreboard/det.png",
+    "logo_small": "https://a.espncdn.com/i/teamlogos/nfl/500/scoreboard/det.png",
+    "primary_color": "#0076b6",
+    "record": "2-1",
+    "secondary_color": "#bbbbbb",
+    "slug": "detroit-lions",
+    "standings": {
+     "conference": "National Football Conference",
+     "div_rank": 2,
+     "division": "NFC North",
+     "home_record": "2-0",
+     "losses": 1,
+     "pct": ".667",
+     "road_record": "0-1",
+     "streak": "W1",
+     "ties": 0,
+     "wins": 2
+    },
+    "team_id": 567
+   },
+   "id": 14969871,
+   "metadata": {
+    "gender": "men",
+    "importance": "regular_season",
+    "league": "NFL",
+    "level": "professional"
+   },
+   "sport": "americanfootball_nfl",
+   "sport_name": "NFL",
+   "start_is_tbd": false,
+   "started_without_result": false,
+   "status": "scheduled",
+   "win_probability_sources": {
+    "betting_book_count": {
+     "color": "#6b7280",
+     "display_name": "betting_book_count",
+     "evidence_status": "not_applicable",
+     "type": "model",
+     "value": 1.0
+    }
+   }
+  },
+  {
+   "away_score": null,
+   "away_team": "Detroit Lions",
+   "away_team_data": {
+    "abbreviation": "DET",
+    "logo_large": "https://a.espncdn.com/i/teamlogos/nfl/500/scoreboard/det.png",
+    "logo_small": "https://a.espncdn.com/i/teamlogos/nfl/500/scoreboard/det.png",
+    "primary_color": "#0076b6",
+    "record": "2-1",
+    "secondary_color": "#bbbbbb",
+    "slug": "detroit-lions",
+    "standings": {
+     "conference": "National Football Conference",
+     "div_rank": 2,
+     "division": "NFC North",
+     "home_record": "2-0",
+     "losses": 1,
+     "pct": ".667",
+     "road_record": "0-1",
+     "streak": "W1",
+     "ties": 0,
+     "wins": 2
+    },
+    "team_id": 567
+   },
+   "bookmaker_odds": [
+    {
+     "away_moneyline": -278,
+     "away_probability": 0.705,
+     "bookmaker": "draftkings",
+     "captured_at": "2026-09-13T15:10:39.644534+00:00",
+     "home_moneyline": 225,
+     "home_probability": 0.295,
+     "over_under": 47.5,
+     "projected_away_score": 27.0,
+     "projected_home_score": 20.5,
+     "spread": 6.5
+    },
+    {
+     "away_moneyline": -295,
+     "away_probability": 0.7144,
+     "bookmaker": "williamhill_us",
+     "captured_at": "2026-09-13T15:10:39.646152+00:00",
+     "home_moneyline": 235,
+     "home_probability": 0.2856,
+     "over_under": 46.5,
+     "projected_away_score": 26.5,
+     "projected_home_score": 20.0,
+     "spread": 6.5
+    }
+   ],
+   "commence_time": "2026-11-08T18:00:00+00:00",
+   "completed_at": null,
+   "current_odds": {
+    "away_probability": 0.705,
+    "bookmaker_count": 2,
+    "captured_at": "2026-09-13T15:10:39.646152+00:00",
+    "home_probability": 0.295,
+    "over_under": 47.0,
+    "projected_away_score": 26.8,
+    "projected_home_score": 20.2,
+    "spread": 6.5
+   },
+   "espn": {
+    "espn_id": "401873042",
+    "probability_sources": {
+     "betting_book_count": 1.0
+    }
+   },
+   "external_id": "44d8c37868b700e90f816db7c5df5cdd",
+   "hero_probability": 0.295,
+   "hero_probability_away": 0.705,
+   "hero_probability_source": "opening",
+   "highlight": {
+    "flags": {
+     "favorite_switched": false,
+     "has_lead_changes": false,
+     "has_recent_momentum": false,
+     "is_blowout": false,
+     "is_close_matchup": false,
+     "is_live": false,
+     "is_recently_finished": false,
+     "is_starting_soon": false,
+     "is_upset": false,
+     "is_volatile": false,
+     "league_tier": 1,
+     "probability_swing": "stable",
+     "score_swing": "stable"
+    },
+    "label": null,
+    "reasons": [
+     "tier_1"
+    ],
+    "score": 20,
+    "should_feature": false
+   },
+   "home_score": null,
+   "home_team": "Miami Dolphins",
+   "home_team_data": {
+    "abbreviation": "MIA",
+    "logo_large": "https://a.espncdn.com/i/teamlogos/nfl/500/scoreboard/mia.png",
+    "logo_small": "https://a.espncdn.com/i/teamlogos/nfl/500/scoreboard/mia.png",
+    "primary_color": "#008e97",
+    "record": "0-3",
+    "secondary_color": "#fc4c02",
+    "slug": "miami-dolphins",
+    "standings": {
+     "conference": "American Football Conference",
+     "div_rank": 4,
+     "division": "AFC East",
+     "home_record": "0-1",
+     "losses": 3,
+     "pct": ".000",
+     "road_record": "0-2",
+     "streak": "L3",
+     "ties": 0,
+     "wins": 0
+    },
+    "team_id": 565
+   },
+   "id": 14969878,
+   "metadata": {
+    "gender": "men",
+    "importance": "regular_season",
+    "league": "NFL",
+    "level": "professional"
+   },
+   "sport": "americanfootball_nfl",
+   "sport_name": "NFL",
+   "start_is_tbd": false,
+   "started_without_result": false,
+   "status": "scheduled",
+   "win_probability_sources": {
+    "betting_book_count": {
+     "color": "#6b7280",
+     "display_name": "betting_book_count",
+     "evidence_status": "not_applicable",
+     "type": "model",
+     "value": 1.0
+    }
+   }
+  },
+  {
+   "away_score": null,
+   "away_team": "New England Patriots",
+   "away_team_data": {
+    "abbreviation": "NE",
+    "logo_large": "https://a.espncdn.com/i/teamlogos/nfl/500/scoreboard/ne.png",
+    "logo_small": "https://a.espncdn.com/i/teamlogos/nfl/500/scoreboard/ne.png",
+    "primary_color": "#002a5c",
+    "record": "1-2",
+    "secondary_color": "#c60c30",
+    "slug": "new-england-patriots",
+    "standings": {
+     "conference": "American Football Conference",
+     "div_rank": 3,
+     "division": "AFC East",
+     "home_record": "1-0",
+     "losses": 2,
+     "pct": ".333",
+     "road_record": "0-2",
+     "streak": "L1",
+     "ties": 0,
+     "wins": 1
+    },
+    "team_id": 11
+   },
+   "bookmaker_odds": [
+    {
+     "away_moneyline": 100,
+     "away_probability": 0.4783,
+     "bookmaker": "betmgm",
+     "captured_at": "2026-05-13T19:20:20.837188+00:00",
+     "home_moneyline": -120,
+     "home_probability": 0.5217,
+     "over_under": null,
+     "projected_away_score": null,
+     "projected_home_score": null,
+     "spread": null
+    },
+    {
+     "away_moneyline": 105,
+     "away_probability": 0.4675,
+     "bookmaker": "draftkings",
+     "captured_at": "2026-08-30T01:09:48.888052+00:00",
+     "home_moneyline": -125,
+     "home_probability": 0.5325,
+     "over_under": null,
+     "projected_away_score": null,
+     "projected_home_score": null,
+     "spread": null
+    },
+    {
+     "away_moneyline": 100,
+     "away_probability": 0.4783,
+     "bookmaker": "espnbet",
+     "captured_at": "2026-08-06T22:01:00.742262+00:00",
+     "home_moneyline": -120,
+     "home_probability": 0.5217,
+     "over_under": 49.5,
+     "projected_away_score": 24.0,
+     "projected_home_score": 25.5,
+     "spread": -1.5
+    },
+    {
+     "away_moneyline": -118,
+     "away_probability": 0.5198,
+     "bookmaker": "fanduel",
+     "captured_at": "2026-08-31T14:07:20.548118+00:00",
+     "home_moneyline": 100,
+     "home_probability": 0.4802,
+     "over_under": null,
+     "projected_away_score": null,
+     "projected_home_score": null,
+     "spread": null
+    },
+    {
+     "away_moneyline": -102,
+     "away_probability": 0.4761,
+     "bookmaker": "mybookieag",
+     "captured_at": "2026-07-21T01:37:58.719632+00:00",
+     "home_moneyline": -125,
+     "home_probability": 0.5239,
+     "over_under": null,
+     "projected_away_score": null,
+     "projected_home_score": null,
+     "spread": null
+    },
+    {
+     "away_moneyline": -101,
+     "away_probability": 0.4786,
+     "bookmaker": "rebet",
+     "captured_at": "2026-08-06T22:01:00.748241+00:00",
+     "home_moneyline": -121,
+     "home_probability": 0.5214,
+     "over_under": 49.5,
+     "projected_away_score": 24.0,
+     "projected_home_score": 25.5,
+     "spread": -1.5
+    },
+    {
+     "away_moneyline": -110,
+     "away_probability": 0.5,
+     "bookmaker": "williamhill_us",
+     "captured_at": "2026-09-02T14:37:09.955698+00:00",
+     "home_moneyline": -110,
+     "home_probability": 0.5,
+     "over_under": null,
+     "projected_away_score": null,
+     "projected_home_score": null,
+     "spread": null
+    }
+   ],
+   "commence_time": "2026-11-15T14:30:00+00:00",
+   "completed_at": null,
+   "current_odds": {
+    "away_probability": 0.4783,
+    "bookmaker_count": 7,
+    "captured_at": "2026-09-02T14:37:09.955698+00:00",
+    "home_probability": 0.5217,
+    "over_under": 49.5,
+    "projected_away_score": 24.0,
+    "projected_home_score": 25.5,
+    "spread": -1.5
+   },
+   "espn": {
+    "espn_id": "401873053",
+    "probability_sources": {
+     "betting": 0.5217,
+     "betting_book_count": 5.0
+    }
+   },
+   "external_id": "b8c10fdf1e0ac4e13deee7f7c0af0b0b",
+   "hero_probability": 0.5217,
+   "hero_probability_away": 0.4783,
+   "hero_probability_source": "blend",
+   "highlight": {
+    "flags": {
+     "favorite_switched": false,
+     "has_lead_changes": false,
+     "has_recent_momentum": false,
+     "is_blowout": false,
+     "is_close_matchup": true,
+     "is_live": false,
+     "is_recently_finished": false,
+     "is_starting_soon": false,
+     "is_upset": false,
+     "is_volatile": false,
+     "league_tier": 1,
+     "probability_swing": "stable",
+     "score_swing": "stable"
+    },
+    "label": null,
+    "reasons": [
+     "tier_1",
+     "close_matchup",
+     "very_close"
+    ],
+    "score": 55,
+    "should_feature": true
+   },
+   "home_score": null,
+   "home_team": "Detroit Lions",
+   "home_team_data": {
+    "abbreviation": "DET",
+    "logo_large": "https://a.espncdn.com/i/teamlogos/nfl/500/scoreboard/det.png",
+    "logo_small": "https://a.espncdn.com/i/teamlogos/nfl/500/scoreboard/det.png",
+    "primary_color": "#0076b6",
+    "record": "2-1",
+    "secondary_color": "#bbbbbb",
+    "slug": "detroit-lions",
+    "standings": {
+     "conference": "National Football Conference",
+     "div_rank": 2,
+     "division": "NFC North",
+     "home_record": "2-0",
+     "losses": 1,
+     "pct": ".667",
+     "road_record": "0-1",
+     "streak": "W1",
+     "ties": 0,
+     "wins": 2
+    },
+    "team_id": 567
+   },
+   "id": 14639206,
+   "metadata": {
+    "gender": "men",
+    "importance": "regular_season",
+    "league": "NFL",
+    "level": "professional"
+   },
+   "sport": "americanfootball_nfl",
+   "sport_name": "NFL",
+   "start_is_tbd": false,
+   "started_without_result": false,
+   "status": "scheduled",
+   "win_probability_sources": {
+    "betting": {
+     "color": "#374151",
+     "display_name": "Betting Odds",
+     "evidence_status": "not_applicable",
+     "type": "market",
+     "updated_at": "2026-08-30T01:00:19.723016+00:00",
+     "value": 0.5217
+    },
+    "betting_book_count": {
+     "color": "#6b7280",
+     "display_name": "betting_book_count",
+     "evidence_status": "not_applicable",
+     "type": "model",
+     "value": 5.0
+    }
+   }
+  },
+  {
+   "away_score": null,
+   "away_team": "Tampa Bay Buccaneers",
+   "away_team_data": {
+    "abbreviation": "TB",
+    "logo_large": "https://a.espncdn.com/i/teamlogos/nfl/500/scoreboard/tb.png",
+    "logo_small": "https://a.espncdn.com/i/teamlogos/nfl/500/scoreboard/tb.png",
+    "primary_color": "#bd1c36",
+    "record": "0-3",
+    "secondary_color": "#3e3a35",
+    "slug": "tampa-bay-buccaneers",
+    "standings": {
+     "conference": "National Football Conference",
+     "div_rank": 4,
+     "division": "NFC South",
+     "home_record": "0-2",
+     "losses": 3,
+     "pct": ".000",
+     "road_record": "0-1",
+     "streak": "L3",
+     "ties": 0,
+     "wins": 0
+    },
+    "team_id": 554
+   },
+   "bookmaker_odds": [
+    {
+     "away_moneyline": 185,
+     "away_probability": 0.3364,
+     "bookmaker": "draftkings",
+     "captured_at": "2026-09-13T15:42:04.352287+00:00",
+     "home_moneyline": -225,
+     "home_probability": 0.6636,
+     "over_under": 49.5,
+     "projected_away_score": 22.5,
+     "projected_home_score": 27.0,
+     "spread": -4.5
+    },
+    {
+     "away_moneyline": 175,
+     "away_probability": 0.3444,
+     "bookmaker": "williamhill_us",
+     "captured_at": "2026-09-13T15:10:39.953080+00:00",
+     "home_moneyline": -225,
+     "home_probability": 0.6556,
+     "over_under": 47.5,
+     "projected_away_score": 21.5,
+     "projected_home_score": 26.0,
+     "spread": -4.5
+    }
+   ],
+   "commence_time": "2026-11-22T18:00:00+00:00",
+   "completed_at": null,
+   "current_odds": {
+    "away_probability": 0.3364,
+    "bookmaker_count": 2,
+    "captured_at": "2026-09-13T15:42:04.352287+00:00",
+    "home_probability": 0.6636,
+    "over_under": 48.5,
+    "projected_away_score": 22.0,
+    "projected_home_score": 26.5,
+    "spread": -4.5
+   },
+   "espn": {
+    "espn_id": "401873072",
+    "probability_sources": {
+     "betting_book_count": 1.0
+    }
+   },
+   "external_id": "41e2dd69bddd65d7e823d9ed61cc2afc",
+   "hero_probability": 0.6636,
+   "hero_probability_away": 0.3364,
+   "hero_probability_source": "opening",
+   "highlight": {
+    "flags": {
+     "favorite_switched": false,
+     "has_lead_changes": false,
+     "has_recent_momentum": false,
+     "is_blowout": false,
+     "is_close_matchup": false,
+     "is_live": false,
+     "is_recently_finished": false,
+     "is_starting_soon": false,
+     "is_upset": false,
+     "is_volatile": false,
+     "league_tier": 1,
+     "probability_swing": "stable",
+     "score_swing": "stable"
+    },
+    "label": null,
+    "reasons": [
+     "tier_1"
+    ],
+    "score": 20,
+    "should_feature": false
+   },
+   "home_score": null,
+   "home_team": "Detroit Lions",
+   "home_team_data": {
+    "abbreviation": "DET",
+    "logo_large": "https://a.espncdn.com/i/teamlogos/nfl/500/scoreboard/det.png",
+    "logo_small": "https://a.espncdn.com/i/teamlogos/nfl/500/scoreboard/det.png",
+    "primary_color": "#0076b6",
+    "record": "2-1",
+    "secondary_color": "#bbbbbb",
+    "slug": "detroit-lions",
+    "standings": {
+     "conference": "National Football Conference",
+     "div_rank": 2,
+     "division": "NFC North",
+     "home_record": "2-0",
+     "losses": 1,
+     "pct": ".667",
+     "road_record": "0-1",
+     "streak": "W1",
+     "ties": 0,
+     "wins": 2
+    },
+    "team_id": 567
+   },
+   "id": 14969892,
+   "metadata": {
+    "gender": "men",
+    "importance": "regular_season",
+    "league": "NFL",
+    "level": "professional"
+   },
+   "sport": "americanfootball_nfl",
+   "sport_name": "NFL",
+   "start_is_tbd": false,
+   "started_without_result": false,
+   "status": "scheduled",
+   "win_probability_sources": {
+    "betting_book_count": {
+     "color": "#6b7280",
+     "display_name": "betting_book_count",
+     "evidence_status": "not_applicable",
+     "type": "model",
+     "value": 1.0
+    }
+   }
+  },
+  {
+   "away_score": null,
+   "away_team": "Chicago Bears",
+   "away_team_data": {
+    "abbreviation": "CHI",
+    "logo_large": "https://a.espncdn.com/i/teamlogos/nfl/500/scoreboard/chi.png",
+    "logo_small": "https://a.espncdn.com/i/teamlogos/nfl/500/scoreboard/chi.png",
+    "primary_color": "#0b1c3a",
+    "record": "2-1",
+    "secondary_color": "#e64100",
+    "slug": "chicago-bears",
+    "standings": {
+     "conference": "National Football Conference",
+     "div_rank": 3,
+     "division": "NFC North",
+     "home_record": "1-1",
+     "losses": 1,
+     "pct": ".667",
+     "road_record": "1-0",
+     "streak": "W1",
+     "ties": 0,
+     "wins": 2
+    },
+    "team_id": 561
+   },
+   "bookmaker_odds": [
+    {
+     "away_moneyline": 115,
+     "away_probability": 0.4436,
+     "bookmaker": "betmgm",
+     "captured_at": "2026-06-30T10:05:45.843836+00:00",
+     "home_moneyline": -140,
+     "home_probability": 0.5564,
+     "over_under": null,
+     "projected_away_score": null,
+     "projected_home_score": null,
+     "spread": null
+    },
+    {
+     "away_moneyline": 120,
+     "away_probability": 0.4365,
+     "bookmaker": "draftkings",
+     "captured_at": "2026-09-13T15:10:40.046308+00:00",
+     "home_moneyline": -142,
+     "home_probability": 0.5635,
+     "over_under": 52.5,
+     "projected_away_score": 25.0,
+     "projected_home_score": 27.5,
+     "spread": -2.5
+    },
+    {
+     "away_moneyline": 120,
+     "away_probability": 0.438,
+     "bookmaker": "espnbet",
+     "captured_at": "2026-09-09T22:20:21.639162+00:00",
+     "home_moneyline": -140,
+     "home_probability": 0.562,
+     "over_under": 52.5,
+     "projected_away_score": 25.0,
+     "projected_home_score": 27.5,
+     "spread": -2.5
+    },
+    {
+     "away_moneyline": 110,
+     "away_probability": 0.4573,
+     "bookmaker": "fanduel",
+     "captured_at": "2026-08-30T01:09:49.561094+00:00",
+     "home_moneyline": -130,
+     "home_probability": 0.5427,
+     "over_under": null,
+     "projected_away_score": null,
+     "projected_home_score": null,
+     "spread": null
+    },
+    {
+     "away_moneyline": 111,
+     "away_probability": 0.4468,
+     "bookmaker": "mybookieag",
+     "captured_at": "2026-07-29T18:09:18.028673+00:00",
+     "home_moneyline": -142,
+     "home_probability": 0.5532,
+     "over_under": null,
+     "projected_away_score": null,
+     "projected_home_score": null,
+     "spread": null
+    },
+    {
+     "away_moneyline": 116,
+     "away_probability": 0.441,
+     "bookmaker": "rebet",
+     "captured_at": "2026-09-09T22:20:21.656675+00:00",
+     "home_moneyline": -142,
+     "home_probability": 0.559,
+     "over_under": 52.5,
+     "projected_away_score": 25.0,
+     "projected_home_score": 27.5,
+     "spread": -2.5
+    },
+    {
+     "away_moneyline": 140,
+     "away_probability": 0.3977,
+     "bookmaker": "williamhill_us",
+     "captured_at": "2026-09-13T15:10:40.048326+00:00",
+     "home_moneyline": -171,
+     "home_probability": 0.6023,
+     "over_under": 51.5,
+     "projected_away_score": 24.2,
+     "projected_home_score": 27.2,
+     "spread": -3.0
+    }
+   ],
+   "commence_time": "2026-11-26T18:00:00+00:00",
+   "completed_at": null,
+   "current_odds": {
+    "away_probability": 0.4365,
+    "bookmaker_count": 7,
+    "captured_at": "2026-09-13T15:10:40.048326+00:00",
+    "home_probability": 0.5635,
+    "over_under": 52.2,
+    "projected_away_score": 24.8,
+    "projected_home_score": 27.4,
+    "spread": -2.6
+   },
+   "espn": {
+    "espn_id": "401873081",
+    "probability_sources": {
+     "betting_book_count": 1.0
+    }
+   },
+   "external_id": "9b825e6518156008da499be041975fdd",
+   "hero_probability": 0.5635,
+   "hero_probability_away": 0.4365,
+   "hero_probability_source": "opening",
+   "highlight": {
+    "flags": {
+     "favorite_switched": false,
+     "has_lead_changes": false,
+     "has_recent_momentum": false,
+     "is_blowout": false,
+     "is_close_matchup": true,
+     "is_live": false,
+     "is_recently_finished": false,
+     "is_starting_soon": false,
+     "is_upset": false,
+     "is_volatile": false,
+     "league_tier": 1,
+     "probability_swing": "stable",
+     "score_swing": "stable"
+    },
+    "label": null,
+    "reasons": [
+     "tier_1",
+     "close_matchup"
+    ],
+    "score": 45,
+    "should_feature": true
+   },
+   "home_score": null,
+   "home_team": "Detroit Lions",
+   "home_team_data": {
+    "abbreviation": "DET",
+    "logo_large": "https://a.espncdn.com/i/teamlogos/nfl/500/scoreboard/det.png",
+    "logo_small": "https://a.espncdn.com/i/teamlogos/nfl/500/scoreboard/det.png",
+    "primary_color": "#0076b6",
+    "record": "2-1",
+    "secondary_color": "#bbbbbb",
+    "slug": "detroit-lions",
+    "standings": {
+     "conference": "National Football Conference",
+     "div_rank": 2,
+     "division": "NFC North",
+     "home_record": "2-0",
+     "losses": 1,
+     "pct": ".667",
+     "road_record": "0-1",
+     "streak": "W1",
+     "ties": 0,
+     "wins": 2
+    },
+    "team_id": 567
+   },
+   "id": 14765410,
+   "metadata": {
+    "gender": "men",
+    "importance": "regular_season",
+    "league": "NFL",
+    "level": "professional"
+   },
+   "sport": "americanfootball_nfl",
+   "sport_name": "NFL",
+   "start_is_tbd": false,
+   "started_without_result": false,
+   "status": "scheduled",
+   "win_probability_sources": {
+    "betting_book_count": {
+     "color": "#6b7280",
+     "display_name": "betting_book_count",
+     "evidence_status": "not_applicable",
+     "type": "model",
+     "value": 1.0
+    }
+   }
+  },
+  {
+   "away_score": null,
+   "away_team": "Detroit Lions",
+   "away_team_data": {
+    "abbreviation": "DET",
+    "logo_large": "https://a.espncdn.com/i/teamlogos/nfl/500/scoreboard/det.png",
+    "logo_small": "https://a.espncdn.com/i/teamlogos/nfl/500/scoreboard/det.png",
+    "primary_color": "#0076b6",
+    "record": "2-1",
+    "secondary_color": "#bbbbbb",
+    "slug": "detroit-lions",
+    "standings": {
+     "conference": "National Football Conference",
+     "div_rank": 2,
+     "division": "NFC North",
+     "home_record": "2-0",
+     "losses": 1,
+     "pct": ".667",
+     "road_record": "0-1",
+     "streak": "W1",
+     "ties": 0,
+     "wins": 2
+    },
+    "team_id": 567
+   },
+   "bookmaker_odds": [
+    {
+     "away_moneyline": -185,
+     "away_probability": 0.6225,
+     "bookmaker": "draftkings",
+     "captured_at": "2026-09-13T15:10:40.245483+00:00",
+     "home_moneyline": 154,
+     "home_probability": 0.3775,
+     "over_under": 48.5,
+     "projected_away_score": 26.0,
+     "projected_home_score": 22.5,
+     "spread": 3.5
+    },
+    {
+     "away_moneyline": -160,
+     "away_probability": 0.5806,
+     "bookmaker": "williamhill_us",
+     "captured_at": "2026-09-13T15:10:40.248187+00:00",
+     "home_moneyline": 125,
+     "home_probability": 0.4194,
+     "over_under": 46.5,
+     "projected_away_score": 24.8,
+     "projected_home_score": 21.8,
+     "spread": 3.0
+    }
+   ],
+   "commence_time": "2026-12-06T18:00:00+00:00",
+   "completed_at": null,
+   "current_odds": {
+    "away_probability": 0.6225,
+    "bookmaker_count": 2,
+    "captured_at": "2026-09-13T15:10:40.248187+00:00",
+    "home_probability": 0.3775,
+    "over_under": 47.5,
+    "projected_away_score": 25.4,
+    "projected_home_score": 22.1,
+    "spread": 3.2
+   },
+   "espn": {
+    "espn_id": "401873098",
+    "probability_sources": {
+     "betting_book_count": 1.0
+    }
+   },
+   "external_id": "c94419ba8fb818fc36a5b21b526aab75",
+   "hero_probability": 0.3775,
+   "hero_probability_away": 0.6225,
+   "hero_probability_source": "opening",
+   "highlight": {
+    "flags": {
+     "favorite_switched": false,
+     "has_lead_changes": false,
+     "has_recent_momentum": false,
+     "is_blowout": false,
+     "is_close_matchup": false,
+     "is_live": false,
+     "is_recently_finished": false,
+     "is_starting_soon": false,
+     "is_upset": false,
+     "is_volatile": false,
+     "league_tier": 1,
+     "probability_swing": "stable",
+     "score_swing": "stable"
+    },
+    "label": null,
+    "reasons": [
+     "tier_1"
+    ],
+    "score": 20,
+    "should_feature": false
+   },
+   "home_score": null,
+   "home_team": "Atlanta Falcons",
+   "home_team_data": {
+    "abbreviation": "ATL",
+    "logo_large": "https://a.espncdn.com/i/teamlogos/nfl/500/scoreboard/atl.png",
+    "logo_small": "https://a.espncdn.com/i/teamlogos/nfl/500/scoreboard/atl.png",
+    "primary_color": "#a71930",
+    "record": "1-2",
+    "secondary_color": "#000000",
+    "slug": "atlanta-falcons",
+    "standings": {
+     "conference": "National Football Conference",
+     "div_rank": 3,
+     "division": "NFC South",
+     "home_record": "0-1",
+     "losses": 2,
+     "pct": ".333",
+     "road_record": "1-1",
+     "streak": "W1",
+     "ties": 0,
+     "wins": 1
+    },
+    "team_id": 553
+   },
+   "id": 15184635,
+   "metadata": {
+    "gender": "men",
+    "importance": "regular_season",
+    "league": "NFL",
+    "level": "professional"
+   },
+   "sport": "americanfootball_nfl",
+   "sport_name": "NFL",
+   "start_is_tbd": false,
+   "started_without_result": false,
+   "status": "scheduled",
+   "win_probability_sources": {
+    "betting_book_count": {
+     "color": "#6b7280",
+     "display_name": "betting_book_count",
+     "evidence_status": "not_applicable",
+     "type": "model",
+     "value": 1.0
+    }
+   }
+  },
+  {
+   "away_score": null,
+   "away_team": "Tennessee Titans",
+   "away_team_data": {
+    "abbreviation": "TEN",
+    "logo_large": "https://a.espncdn.com/i/teamlogos/nfl/500/scoreboard/ten.png",
+    "logo_small": "https://a.espncdn.com/i/teamlogos/nfl/500/scoreboard/ten.png",
+    "primary_color": "#4495d2",
+    "record": "0-3",
+    "secondary_color": "#001532",
+    "slug": "tennessee-titans",
+    "standings": {
+     "conference": "American Football Conference",
+     "div_rank": 3,
+     "division": "AFC South",
+     "home_record": "0-2",
+     "losses": 3,
+     "pct": ".000",
+     "road_record": "0-1",
+     "streak": "L3",
+     "ties": 0,
+     "wins": 0
+    },
+    "team_id": 548
+   },
+   "bookmaker_odds": [
+    {
+     "away_moneyline": 285,
+     "away_probability": 0.2492,
+     "bookmaker": "draftkings",
+     "captured_at": "2026-09-13T15:52:49.068912+00:00",
+     "home_moneyline": -360,
+     "home_probability": 0.7508,
+     "over_under": 47.5,
+     "projected_away_score": 20.0,
+     "projected_home_score": 27.5,
+     "spread": -7.5
+    },
+    {
+     "away_moneyline": 330,
+     "away_probability": 0.2252,
+     "bookmaker": "williamhill_us",
+     "captured_at": "2026-09-13T15:10:40.433577+00:00",
+     "home_moneyline": -400,
+     "home_probability": 0.7748,
+     "over_under": 46.5,
+     "projected_away_score": 19.5,
+     "projected_home_score": 27.0,
+     "spread": -7.5
+    }
+   ],
+   "commence_time": "2026-12-13T18:00:00+00:00",
+   "completed_at": null,
+   "current_odds": {
+    "away_probability": 0.2492,
+    "bookmaker_count": 2,
+    "captured_at": "2026-09-13T15:52:49.068912+00:00",
+    "home_probability": 0.7508,
+    "over_under": 47.0,
+    "projected_away_score": 19.8,
+    "projected_home_score": 27.2,
+    "spread": -7.5
+   },
+   "espn": {
+    "espn_id": "401873117",
+    "probability_sources": {
+     "betting_book_count": 1.0
+    }
+   },
+   "external_id": "a31f461ccd92e1072f23ccfae281ae9a",
+   "hero_probability": 0.7508,
+   "hero_probability_away": 0.2492,
+   "hero_probability_source": "opening",
+   "highlight": {
+    "flags": {
+     "favorite_switched": false,
+     "has_lead_changes": false,
+     "has_recent_momentum": false,
+     "is_blowout": false,
+     "is_close_matchup": false,
+     "is_live": false,
+     "is_recently_finished": false,
+     "is_starting_soon": false,
+     "is_upset": false,
+     "is_volatile": false,
+     "league_tier": 1,
+     "probability_swing": "stable",
+     "score_swing": "stable"
+    },
+    "label": null,
+    "reasons": [
+     "tier_1"
+    ],
+    "score": 20,
+    "should_feature": false
+   },
+   "home_score": null,
+   "home_team": "Detroit Lions",
+   "home_team_data": {
+    "abbreviation": "DET",
+    "logo_large": "https://a.espncdn.com/i/teamlogos/nfl/500/scoreboard/det.png",
+    "logo_small": "https://a.espncdn.com/i/teamlogos/nfl/500/scoreboard/det.png",
+    "primary_color": "#0076b6",
+    "record": "2-1",
+    "secondary_color": "#bbbbbb",
+    "slug": "detroit-lions",
+    "standings": {
+     "conference": "National Football Conference",
+     "div_rank": 2,
+     "division": "NFC North",
+     "home_record": "2-0",
+     "losses": 1,
+     "pct": ".667",
+     "road_record": "0-1",
+     "streak": "W1",
+     "ties": 0,
+     "wins": 2
+    },
+    "team_id": 567
+   },
+   "id": 15184647,
+   "metadata": {
+    "gender": "men",
+    "importance": "unknown",
+    "league": "NFL",
+    "level": "professional"
+   },
+   "sport": "americanfootball_nfl",
+   "sport_name": "NFL",
+   "start_is_tbd": false,
+   "started_without_result": false,
+   "status": "scheduled",
+   "win_probability_sources": {
+    "betting_book_count": {
+     "color": "#6b7280",
+     "display_name": "betting_book_count",
+     "evidence_status": "not_applicable",
+     "type": "model",
+     "value": 1.0
+    }
+   }
+  },
+  {
+   "away_score": null,
+   "away_team": "Detroit Lions",
+   "away_team_data": {
+    "abbreviation": "DET",
+    "logo_large": "https://a.espncdn.com/i/teamlogos/nfl/500/scoreboard/det.png",
+    "logo_small": "https://a.espncdn.com/i/teamlogos/nfl/500/scoreboard/det.png",
+    "primary_color": "#0076b6",
+    "record": "2-1",
+    "secondary_color": "#bbbbbb",
+    "slug": "detroit-lions",
+    "standings": {
+     "conference": "National Football Conference",
+     "div_rank": 2,
+     "division": "NFC North",
+     "home_record": "2-0",
+     "losses": 1,
+     "pct": ".667",
+     "road_record": "0-1",
+     "streak": "W1",
+     "ties": 0,
+     "wins": 2
+    },
+    "team_id": 567
+   },
+   "bookmaker_odds": [
+    {
+     "away_moneyline": -125,
+     "away_probability": 0.5325,
+     "bookmaker": "draftkings",
+     "captured_at": "2026-09-13T15:52:49.340890+00:00",
+     "home_moneyline": 105,
+     "home_probability": 0.4675,
+     "over_under": 46.5,
+     "projected_away_score": 24.0,
+     "projected_home_score": 22.5,
+     "spread": 1.5
+    },
+    {
+     "away_moneyline": -140,
+     "away_probability": 0.5506,
+     "bookmaker": "williamhill_us",
+     "captured_at": "2026-09-13T15:10:40.672447+00:00",
+     "home_moneyline": 110,
+     "home_probability": 0.4494,
+     "over_under": 45.5,
+     "projected_away_score": 24.0,
+     "projected_home_score": 21.5,
+     "spread": 2.5
+    }
+   ],
+   "commence_time": "2026-12-21T01:20:00+00:00",
+   "completed_at": null,
+   "current_odds": {
+    "away_probability": 0.5325,
+    "bookmaker_count": 2,
+    "captured_at": "2026-09-13T15:52:49.340890+00:00",
+    "home_probability": 0.4675,
+    "over_under": 46.0,
+    "projected_away_score": 24.0,
+    "projected_home_score": 22.0,
+    "spread": 2.0
+   },
+   "espn": {
+    "espn_id": "401873138",
+    "probability_sources": {
+     "betting_book_count": 1.0
+    }
+   },
+   "external_id": "b34897a0368d570291d44e176c0c2331",
+   "hero_probability": 0.4675,
+   "hero_probability_away": 0.5325,
+   "hero_probability_source": "opening",
+   "highlight": {
+    "flags": {
+     "favorite_switched": false,
+     "has_lead_changes": false,
+     "has_recent_momentum": false,
+     "is_blowout": false,
+     "is_close_matchup": true,
+     "is_live": false,
+     "is_recently_finished": false,
+     "is_starting_soon": false,
+     "is_upset": false,
+     "is_volatile": false,
+     "league_tier": 1,
+     "probability_swing": "stable",
+     "score_swing": "stable"
+    },
+    "label": null,
+    "reasons": [
+     "tier_1",
+     "close_matchup",
+     "very_close"
+    ],
+    "score": 55,
+    "should_feature": true
+   },
+   "home_score": null,
+   "home_team": "Minnesota Vikings",
+   "home_team_data": {
+    "abbreviation": "MIN",
+    "logo_large": "https://a.espncdn.com/i/teamlogos/nfl/500/scoreboard/min.png",
+    "logo_small": "https://a.espncdn.com/i/teamlogos/nfl/500/scoreboard/min.png",
+    "primary_color": "#4f2683",
+    "record": "3-0",
+    "secondary_color": "#ffc62f",
+    "slug": "minnesota-vikings",
+    "standings": {
+     "conference": "National Football Conference",
+     "div_rank": 1,
+     "division": "NFC North",
+     "home_record": "1-0",
+     "losses": 0,
+     "pct": ".1000",
+     "road_record": "2-0",
+     "streak": "W3",
+     "ties": 0,
+     "wins": 3
+    },
+    "team_id": 555
+   },
+   "id": 14780597,
+   "metadata": {
+    "gender": "men",
+    "importance": "regular_season",
+    "league": "NFL",
+    "level": "professional"
+   },
+   "sport": "americanfootball_nfl",
+   "sport_name": "NFL",
+   "start_is_tbd": false,
+   "started_without_result": false,
+   "status": "scheduled",
+   "win_probability_sources": {
+    "betting_book_count": {
+     "color": "#6b7280",
+     "display_name": "betting_book_count",
+     "evidence_status": "not_applicable",
+     "type": "model",
+     "value": 1.0
+    }
+   }
+  },
+  {
+   "away_score": null,
+   "away_team": "New York Giants",
+   "away_team_data": {
+    "abbreviation": "NYG",
+    "logo_large": "https://a.espncdn.com/i/teamlogos/nfl/500/scoreboard/nyg.png",
+    "logo_small": "https://a.espncdn.com/i/teamlogos/nfl/500/scoreboard/nyg.png",
+    "primary_color": "#003c7f",
+    "record": "2-1",
+    "secondary_color": "#c9243f",
+    "slug": "new-york-giants",
+    "standings": {
+     "conference": "National Football Conference",
+     "div_rank": 2,
+     "division": "NFC East",
+     "home_record": "2-0",
+     "losses": 1,
+     "pct": ".667",
+     "road_record": "0-1",
+     "streak": "W1",
+     "ties": 0,
+     "wins": 2
+    },
+    "team_id": 547
+   },
+   "bookmaker_odds": [
+    {
+     "away_moneyline": 170,
+     "away_probability": 0.3553,
+     "bookmaker": "draftkings",
+     "captured_at": "2026-09-13T15:10:40.843772+00:00",
+     "home_moneyline": -205,
+     "home_probability": 0.6447,
+     "over_under": 49.5,
+     "projected_away_score": 22.5,
+     "projected_home_score": 27.0,
+     "spread": -4.5
+    },
+    {
+     "away_moneyline": 210,
+     "away_probability": 0.3055,
+     "bookmaker": "williamhill_us",
+     "captured_at": "2026-09-13T15:10:40.844804+00:00",
+     "home_moneyline": -275,
+     "home_probability": 0.6945,
+     "over_under": 49.5,
+     "projected_away_score": 21.5,
+     "projected_home_score": 28.0,
+     "spread": -6.5
+    }
+   ],
+   "commence_time": "2026-12-29T01:15:00+00:00",
+   "completed_at": null,
+   "current_odds": {
+    "away_probability": 0.3553,
+    "bookmaker_count": 2,
+    "captured_at": "2026-09-13T15:10:40.844804+00:00",
+    "home_probability": 0.6447,
+    "over_under": 49.5,
+    "projected_away_score": 22.0,
+    "projected_home_score": 27.5,
+    "spread": -5.5
+   },
+   "espn": {
+    "espn_id": "401873155",
+    "probability_sources": {
+     "betting_book_count": 1.0
+    }
+   },
+   "external_id": "ca92c191ebf7361ea56f9bbc09a5f51b",
+   "hero_probability": 0.6447,
+   "hero_probability_away": 0.3553,
+   "hero_probability_source": "opening",
+   "highlight": {
+    "flags": {
+     "favorite_switched": false,
+     "has_lead_changes": false,
+     "has_recent_momentum": false,
+     "is_blowout": false,
+     "is_close_matchup": false,
+     "is_live": false,
+     "is_recently_finished": false,
+     "is_starting_soon": false,
+     "is_upset": false,
+     "is_volatile": false,
+     "league_tier": 1,
+     "probability_swing": "stable",
+     "score_swing": "stable"
+    },
+    "label": null,
+    "reasons": [
+     "tier_1"
+    ],
+    "score": 20,
+    "should_feature": false
+   },
+   "home_score": null,
+   "home_team": "Detroit Lions",
+   "home_team_data": {
+    "abbreviation": "DET",
+    "logo_large": "https://a.espncdn.com/i/teamlogos/nfl/500/scoreboard/det.png",
+    "logo_small": "https://a.espncdn.com/i/teamlogos/nfl/500/scoreboard/det.png",
+    "primary_color": "#0076b6",
+    "record": "2-1",
+    "secondary_color": "#bbbbbb",
+    "slug": "detroit-lions",
+    "standings": {
+     "conference": "National Football Conference",
+     "div_rank": 2,
+     "division": "NFC North",
+     "home_record": "2-0",
+     "losses": 1,
+     "pct": ".667",
+     "road_record": "0-1",
+     "streak": "W1",
+     "ties": 0,
+     "wins": 2
+    },
+    "team_id": 567
+   },
+   "id": 14780600,
+   "metadata": {
+    "gender": "men",
+    "importance": "regular_season",
+    "league": "NFL",
+    "level": "professional"
+   },
+   "sport": "americanfootball_nfl",
+   "sport_name": "NFL",
+   "start_is_tbd": false,
+   "started_without_result": false,
+   "status": "scheduled",
+   "win_probability_sources": {
+    "betting_book_count": {
+     "color": "#6b7280",
+     "display_name": "betting_book_count",
+     "evidence_status": "not_applicable",
+     "type": "model",
+     "value": 1.0
+    }
+   }
+  },
+  {
+   "away_score": null,
+   "away_team": "Detroit Lions",
+   "away_team_data": {
+    "abbreviation": "DET",
+    "logo_large": "https://a.espncdn.com/i/teamlogos/nfl/500/scoreboard/det.png",
+    "logo_small": "https://a.espncdn.com/i/teamlogos/nfl/500/scoreboard/det.png",
+    "primary_color": "#0076b6",
+    "record": "2-1",
+    "secondary_color": "#bbbbbb",
+    "slug": "detroit-lions",
+    "standings": {
+     "conference": "National Football Conference",
+     "div_rank": 2,
+     "division": "NFC North",
+     "home_record": "2-0",
+     "losses": 1,
+     "pct": ".667",
+     "road_record": "0-1",
+     "streak": "W1",
+     "ties": 0,
+     "wins": 2
+    },
+    "team_id": 567
+   },
+   "bookmaker_odds": [
+    {
+     "away_moneyline": 105,
+     "away_probability": 0.4675,
+     "bookmaker": "draftkings",
+     "captured_at": "2026-09-13T15:37:08.801440+00:00",
+     "home_moneyline": -125,
+     "home_probability": 0.5325,
+     "over_under": 49.5,
+     "projected_away_score": 24.0,
+     "projected_home_score": 25.5,
+     "spread": -1.5
+    },
+    {
+     "away_moneyline": -110,
+     "away_probability": 0.4899,
+     "bookmaker": "williamhill_us",
+     "captured_at": "2026-09-13T15:10:40.964987+00:00",
+     "home_moneyline": -120,
+     "home_probability": 0.5101,
+     "over_under": 48.5,
+     "projected_away_score": 23.5,
+     "projected_home_score": 25.0,
+     "spread": -1.5
+    }
+   ],
+   "commence_time": "2027-01-03T21:25:00+00:00",
+   "completed_at": null,
+   "current_odds": {
+    "away_probability": 0.4675,
+    "bookmaker_count": 2,
+    "captured_at": "2026-09-13T15:37:08.801440+00:00",
+    "home_probability": 0.5325,
+    "over_under": 49.0,
+    "projected_away_score": 23.8,
+    "projected_home_score": 25.2,
+    "spread": -1.5
+   },
+   "espn": {
+    "espn_id": "401873169",
+    "probability_sources": {
+     "betting_book_count": 1.0
+    }
+   },
+   "external_id": "12089441cea51add4694cdde98b4a5b7",
+   "hero_probability": 0.5325,
+   "hero_probability_away": 0.4675,
+   "hero_probability_source": "opening",
+   "highlight": {
+    "flags": {
+     "favorite_switched": false,
+     "has_lead_changes": false,
+     "has_recent_momentum": false,
+     "is_blowout": false,
+     "is_close_matchup": true,
+     "is_live": false,
+     "is_recently_finished": false,
+     "is_starting_soon": false,
+     "is_upset": false,
+     "is_volatile": false,
+     "league_tier": 1,
+     "probability_swing": "stable",
+     "score_swing": "stable"
+    },
+    "label": null,
+    "reasons": [
+     "tier_1",
+     "close_matchup",
+     "very_close"
+    ],
+    "score": 55,
+    "should_feature": true
+   },
+   "home_score": null,
+   "home_team": "Chicago Bears",
+   "home_team_data": {
+    "abbreviation": "CHI",
+    "logo_large": "https://a.espncdn.com/i/teamlogos/nfl/500/scoreboard/chi.png",
+    "logo_small": "https://a.espncdn.com/i/teamlogos/nfl/500/scoreboard/chi.png",
+    "primary_color": "#0b1c3a",
+    "record": "2-1",
+    "secondary_color": "#e64100",
+    "slug": "chicago-bears",
+    "standings": {
+     "conference": "National Football Conference",
+     "div_rank": 3,
+     "division": "NFC North",
+     "home_record": "1-1",
+     "losses": 1,
+     "pct": ".667",
+     "road_record": "1-0",
+     "streak": "W1",
+     "ties": 0,
+     "wins": 2
+    },
+    "team_id": 561
+   },
+   "id": 15184681,
+   "metadata": {
+    "gender": "men",
+    "importance": "regular_season",
+    "league": "NFL",
+    "level": "professional"
+   },
+   "sport": "americanfootball_nfl",
+   "sport_name": "NFL",
+   "start_is_tbd": false,
+   "started_without_result": false,
+   "status": "scheduled",
+   "win_probability_sources": {
+    "betting_book_count": {
+     "color": "#6b7280",
+     "display_name": "betting_book_count",
+     "evidence_status": "not_applicable",
+     "type": "model",
+     "value": 1.0
+    }
+   }
+  },
+  {
+   "away_score": null,
+   "away_team": "Detroit Lions",
+   "away_team_data": {
+    "abbreviation": "DET",
+    "logo_large": "https://a.espncdn.com/i/teamlogos/nfl/500/scoreboard/det.png",
+    "logo_small": "https://a.espncdn.com/i/teamlogos/nfl/500/scoreboard/det.png",
+    "primary_color": "#0076b6",
+    "record": "2-1",
+    "secondary_color": "#bbbbbb",
+    "slug": "detroit-lions",
+    "standings": {
+     "conference": "National Football Conference",
+     "div_rank": 2,
+     "division": "NFC North",
+     "home_record": "2-0",
+     "losses": 1,
+     "pct": ".667",
+     "road_record": "0-1",
+     "streak": "W1",
+     "ties": 0,
+     "wins": 2
+    },
+    "team_id": 567
+   },
+   "bookmaker_odds": [
+    {
+     "away_moneyline": 114,
+     "away_probability": 0.4486,
+     "bookmaker": "draftkings",
+     "captured_at": "2026-09-13T15:10:41.092065+00:00",
+     "home_moneyline": -135,
+     "home_probability": 0.5514,
+     "over_under": 47.5,
+     "projected_away_score": 22.5,
+     "projected_home_score": 25.0,
+     "spread": -2.5
+    }
+   ],
+   "commence_time": "2027-01-10T05:00:00+00:00",
+   "completed_at": null,
+   "current_odds": {
+    "away_probability": 0.4486,
+    "bookmaker_count": 1,
+    "captured_at": "2026-09-13T15:10:41.092065+00:00",
+    "home_probability": 0.5514,
+    "over_under": 47.5,
+    "projected_away_score": 22.5,
+    "projected_home_score": 25.0,
+    "spread": -2.5
+   },
+   "espn": {
+    "espn_id": "401873176",
+    "probability_sources": {
+     "betting_book_count": 1.0
+    }
+   },
+   "external_id": "8f81778bbdb984be44e24a3d55a49b4d",
+   "hero_probability": 0.5514,
+   "hero_probability_away": 0.4486,
+   "hero_probability_source": "opening",
+   "highlight": {
+    "flags": {
+     "favorite_switched": false,
+     "has_lead_changes": false,
+     "has_recent_momentum": false,
+     "is_blowout": false,
+     "is_close_matchup": true,
+     "is_live": false,
+     "is_recently_finished": false,
+     "is_starting_soon": false,
+     "is_upset": false,
+     "is_volatile": false,
+     "league_tier": 1,
+     "probability_swing": "stable",
+     "score_swing": "stable"
+    },
+    "label": null,
+    "reasons": [
+     "tier_1",
+     "close_matchup"
+    ],
+    "score": 45,
+    "should_feature": true
+   },
+   "home_score": null,
+   "home_team": "Green Bay Packers",
+   "home_team_data": {
+    "abbreviation": "GB",
+    "logo_large": "https://a.espncdn.com/i/teamlogos/nfl/500/scoreboard/gb.png",
+    "logo_small": "https://a.espncdn.com/i/teamlogos/nfl/500/scoreboard/gb.png",
+    "primary_color": "#204e32",
+    "record": "1-2",
+    "secondary_color": "#ffb612",
+    "slug": "green-bay-packers",
+    "standings": {
+     "conference": "National Football Conference",
+     "div_rank": 4,
+     "division": "NFC North",
+     "home_record": "0-1",
+     "losses": 2,
+     "pct": ".333",
+     "road_record": "1-1",
+     "streak": "L1",
+     "ties": 0,
+     "wins": 1
+    },
+    "team_id": 559
+   },
+   "id": 14780603,
+   "metadata": {
+    "gender": "men",
+    "importance": "regular_season",
+    "league": "NFL",
+    "level": "professional"
+   },
+   "sport": "americanfootball_nfl",
+   "sport_name": "NFL",
+   "start_is_tbd": true,
+   "started_without_result": false,
+   "status": "scheduled",
+   "win_probability_sources": {
+    "betting_book_count": {
+     "color": "#6b7280",
+     "display_name": "betting_book_count",
+     "evidence_status": "not_applicable",
+     "type": "model",
+     "value": 1.0
+    }
+   }
+  },
+  {
+   "away_score": null,
+   "away_team": "Ospreys",
+   "commence_time": "2026-10-03T11:45:00+00:00",
+   "completed_at": null,
+   "espn": {
+    "probability_sources": {
+     "polymarket": 0.825
+    }
+   },
+   "external_id": null,
+   "hero_probability": 0.825,
+   "hero_probability_away": 0.175,
+   "hero_probability_source": "blend",
+   "highlight": {
+    "flags": {
+     "favorite_switched": false,
+     "has_lead_changes": false,
+     "has_recent_momentum": false,
+     "is_blowout": false,
+     "is_close_matchup": false,
+     "is_live": false,
+     "is_recently_finished": false,
+     "is_starting_soon": false,
+     "is_upset": false,
+     "is_volatile": false,
+     "league_tier": 4,
+     "probability_swing": "stable",
+     "score_swing": "stable"
+    },
+    "label": null,
+    "reasons": [
+     "tier_4"
+    ],
+    "score": 0,
+    "should_feature": false
+   },
+   "home_score": null,
+   "home_team": "Lions",
+   "id": 15315955,
+   "metadata": {
+    "gender": "mixed",
+    "importance": "unknown",
+    "league": "Other",
+    "level": "unknown"
+   },
+   "sport": "rugby_other",
+   "sport_name": "Other Rugby",
+   "start_is_tbd": false,
+   "started_without_result": false,
+   "status": "scheduled",
+   "win_probability_sources": {
+    "polymarket": {
+     "color": "#3b82f6",
+     "contract_version": "live_blend.admissible_as_blend_speaker@5031",
+     "display_name": "Polymarket",
+     "evidence_status": "verified",
+     "type": "market",
+     "updated_at": "2026-10-03T07:50:59.583653+00:00",
+     "value": 0.825,
+     "verified_scope": "full_event_winner"
+    }
+   }
+  },
+  {
+   "away_score": null,
+   "away_team": "Princeton Tigers",
+   "away_team_data": {
+    "abbreviation": "PRIN",
+    "logo_large": "https://a.espncdn.com/i/teamlogos/ncaa/500/163.png",
+    "logo_small": "https://a.espncdn.com/i/teamlogos/ncaa/500/163.png",
+    "primary_color": "#000000",
+    "record": "1-1",
+    "secondary_color": "#ff6000",
+    "slug": "princeton-tigers-ncaaf_fcs",
+    "team_id": 19981
+   },
+   "bookmaker_odds": [
+    {
+     "away_moneyline": -112,
+     "away_probability": 0.5,
+     "bookmaker": "betrivers",
+     "captured_at": "2026-10-03T05:40:26.223296+00:00",
+     "home_moneyline": -112,
+     "home_probability": 0.5,
+     "over_under": 41.5,
+     "projected_away_score": 20.5,
+     "projected_home_score": 21.0,
+     "spread": -0.5
+    },
+    {
+     "away_moneyline": -112,
+     "away_probability": 0.5011,
+     "bookmaker": "draftkings",
+     "captured_at": "2026-10-03T05:40:26.208735+00:00",
+     "home_moneyline": -111,
+     "home_probability": 0.4989,
+     "over_under": 42.5,
+     "projected_away_score": 22.0,
+     "projected_home_score": 20.5,
+     "spread": 1.5
+    }
+   ],
+   "commence_time": "2026-10-03T16:00:00+00:00",
+   "completed_at": null,
+   "current_odds": {
+    "away_probability": 0.515,
+    "bookmaker_count": 2,
+    "captured_at": "2026-10-03T05:40:26.223296+00:00",
+    "home_probability": 0.485,
+    "over_under": 42.0,
+    "projected_away_score": 21.2,
+    "projected_home_score": 20.8,
+    "spread": 0.5
+   },
+   "espn": {
+    "broadcast": "ESPN+",
+    "espn_id": "401867819",
+    "probability_sources": {
+     "betting_book_count": 2.0,
+     "kalshi": 0.485,
+     "polymarket": 0.485
+    }
+   },
+   "external_id": "1d65170bf2dbeb1683e4373290cd25a2",
+   "hero_probability": 0.485,
+   "hero_probability_away": 0.515,
+   "hero_probability_source": "blend",
+   "highlight": {
+    "flags": {
+     "favorite_switched": false,
+     "has_lead_changes": false,
+     "has_recent_momentum": false,
+     "is_blowout": false,
+     "is_close_matchup": true,
+     "is_live": false,
+     "is_recently_finished": false,
+     "is_starting_soon": false,
+     "is_upset": false,
+     "is_volatile": false,
+     "league_tier": 4,
+     "probability_swing": "stable",
+     "score_swing": "stable"
+    },
+    "label": null,
+    "reasons": [
+     "tier_4"
+    ],
+    "score": 0,
+    "should_feature": false
+   },
+   "home_score": null,
+   "home_team": "Columbia Lions",
+   "home_team_data": {
+    "abbreviation": "COLU",
+    "logo_large": "https://a.espncdn.com/i/teamlogos/ncaa/500/171.png",
+    "logo_small": "https://a.espncdn.com/i/teamlogos/ncaa/500/171.png",
+    "primary_color": "#7ba4db",
+    "record": "2-0",
+    "secondary_color": "#183863",
+    "slug": "columbia-lions-ncaaf_fcs",
+    "team_id": 19778
+   },
+   "id": 15323294,
+   "metadata": {
+    "gender": "men",
+    "importance": "regular_season",
+    "league": "NCAAF",
+    "level": "college"
+   },
+   "sport": "americanfootball_ncaaf_fcs",
+   "sport_name": "NCAAF FCS",
+   "start_is_tbd": false,
+   "started_without_result": false,
+   "status": "scheduled",
+   "win_probability_sources": {
+    "betting_book_count": {
+     "color": "#6b7280",
+     "display_name": "betting_book_count",
+     "evidence_status": "not_applicable",
+     "type": "model",
+     "value": 2.0
+    },
+    "kalshi": {
+     "color": "#22c55e",
+     "contract_version": "live_blend.admissible_as_blend_speaker@5031",
+     "display_name": "Kalshi",
+     "evidence_status": "verified",
+     "type": "market",
+     "updated_at": "2026-10-03T08:01:22.430372+00:00",
+     "value": 0.485,
+     "verified_scope": "full_event_winner"
+    },
+    "polymarket": {
+     "color": "#3b82f6",
+     "contract_version": "live_blend.admissible_as_blend_speaker@5031",
+     "display_name": "Polymarket",
+     "evidence_status": "verified",
+     "type": "market",
+     "updated_at": "2026-10-03T07:54:24.699756+00:00",
+     "value": 0.485,
+     "verified_scope": "full_event_winner"
+    }
+   }
+  },
+  {
+   "away_score": null,
+   "away_team": "BC Lions",
+   "bookmaker_odds": [
+    {
+     "away_moneyline": -200,
+     "away_probability": 0.6386,
+     "bookmaker": "betmgm",
+     "captured_at": "2026-10-03T04:06:55.399387+00:00",
+     "home_moneyline": 165,
+     "home_probability": 0.3614,
+     "over_under": 64.5,
+     "projected_away_score": 34.5,
+     "projected_home_score": 30.0,
+     "spread": 4.5
+    },
+    {
+     "away_moneyline": -195,
+     "away_probability": 0.6409,
+     "bookmaker": "betonlineag",
+     "captured_at": "2026-10-03T04:06:55.372866+00:00",
+     "home_moneyline": 170,
+     "home_probability": 0.3591,
+     "over_under": 65.5,
+     "projected_away_score": 34.8,
+     "projected_home_score": 30.8,
+     "spread": 4.0
+    },
+    {
+     "away_moneyline": -190,
+     "away_probability": 0.6256,
+     "bookmaker": "betrivers",
+     "captured_at": "2026-10-03T04:06:55.343742+00:00",
+     "home_moneyline": 155,
+     "home_probability": 0.3744,
+     "over_under": 65.5,
+     "projected_away_score": 35.2,
+     "projected_home_score": 30.2,
+     "spread": 5.0
+    },
+    {
+     "away_moneyline": -190,
+     "away_probability": 0.6328,
+     "bookmaker": "betus",
+     "captured_at": "2026-10-03T04:06:55.378129+00:00",
+     "home_moneyline": 163,
+     "home_probability": 0.3672,
+     "over_under": 64.5,
+     "projected_away_score": 34.0,
+     "projected_home_score": 30.5,
+     "spread": 3.5
+    },
+    {
+     "away_moneyline": -195,
+     "away_probability": 0.6366,
+     "bookmaker": "bovada",
+     "captured_at": "2026-10-03T04:06:55.360353+00:00",
+     "home_moneyline": 165,
+     "home_probability": 0.3634,
+     "over_under": 64.5,
+     "projected_away_score": 34.0,
+     "projected_home_score": 30.5,
+     "spread": 3.5
+    },
+    {
+     "away_moneyline": -192,
+     "away_probability": 0.6309,
+     "bookmaker": "draftkings",
+     "captured_at": "2026-10-03T04:06:55.389957+00:00",
+     "home_moneyline": 160,
+     "home_probability": 0.3691,
+     "over_under": 64.5,
+     "projected_away_score": 34.0,
+     "projected_home_score": 30.5,
+     "spread": 3.5
+    },
+    {
+     "away_moneyline": -200,
+     "away_probability": 0.6386,
+     "bookmaker": "fanatics",
+     "captured_at": "2026-10-03T04:06:55.383647+00:00",
+     "home_moneyline": 165,
+     "home_probability": 0.3614,
+     "over_under": 64.5,
+     "projected_away_score": 34.0,
+     "projected_home_score": 30.5,
+     "spread": 3.5
+    },
+    {
+     "away_moneyline": -215,
+     "away_probability": 0.6532,
+     "bookmaker": "fanduel",
+     "captured_at": "2026-10-03T04:06:55.339009+00:00",
+     "home_moneyline": 176,
+     "home_probability": 0.3468,
+     "over_under": 63.5,
+     "projected_away_score": 34.0,
+     "projected_home_score": 29.5,
+     "spread": 4.5
+    },
+    {
+     "away_moneyline": -195,
+     "away_probability": 0.6409,
+     "bookmaker": "lowvig",
+     "captured_at": "2026-10-03T04:06:55.366183+00:00",
+     "home_moneyline": 170,
+     "home_probability": 0.3591,
+     "over_under": 65.5,
+     "projected_away_score": 34.8,
+     "projected_home_score": 30.8,
+     "spread": 4.0
+    },
+    {
+     "away_moneyline": -208,
+     "away_probability": 0.6424,
+     "bookmaker": "mybookieag",
+     "captured_at": "2026-10-03T04:10:06.870255+00:00",
+     "home_moneyline": 166,
+     "home_probability": 0.3576,
+     "over_under": 64.5,
+     "projected_away_score": 34.0,
+     "projected_home_score": 30.5,
+     "spread": 3.5
+    }
+   ],
+   "commence_time": "2026-10-03T19:00:00+00:00",
+   "completed_at": null,
+   "current_odds": {
+    "away_probability": 0.6386,
+    "bookmaker_count": 10,
+    "captured_at": "2026-10-03T04:10:06.870255+00:00",
+    "home_probability": 0.3614,
+    "over_under": 64.7,
+    "projected_away_score": 34.3,
+    "projected_home_score": 30.4,
+    "spread": 4.0
+   },
+   "espn": {
+    "probability_sources": {
+     "betting": 0.3614,
+     "betting_book_count": 10.0
+    }
+   },
+   "external_id": "4f46ecb665f890035c83174722b51b4e",
+   "hero_probability": 0.3614,
+   "hero_probability_away": 0.6386,
+   "hero_probability_source": "blend",
+   "highlight": {
+    "flags": {
+     "favorite_switched": false,
+     "has_lead_changes": false,
+     "has_recent_momentum": false,
+     "is_blowout": false,
+     "is_close_matchup": false,
+     "is_live": false,
+     "is_recently_finished": false,
+     "is_starting_soon": false,
+     "is_upset": false,
+     "is_volatile": false,
+     "league_tier": 4,
+     "probability_swing": "stable",
+     "score_swing": "stable"
+    },
+    "label": null,
+    "reasons": [
+     "tier_4"
+    ],
+    "score": 0,
+    "should_feature": false
+   },
+   "home_score": null,
+   "home_team": "Toronto Argonauts",
+   "id": 15320208,
+   "metadata": {
+    "gender": "men",
+    "importance": "regular_season",
+    "league": "CFL",
+    "level": "unknown"
+   },
+   "sport": "americanfootball_cfl",
+   "sport_name": "CFL",
+   "start_is_tbd": false,
+   "started_without_result": false,
+   "status": "scheduled",
+   "win_probability_sources": {
+    "betting": {
+     "color": "#374151",
+     "display_name": "Betting Odds",
+     "evidence_status": "not_applicable",
+     "type": "market",
+     "updated_at": "2026-10-03T04:36:56.826957+00:00",
+     "value": 0.3614
+    },
+    "betting_book_count": {
+     "color": "#6b7280",
+     "display_name": "betting_book_count",
+     "evidence_status": "not_applicable",
+     "type": "model",
+     "value": 10.0
+    }
+   }
+  },
+  {
+   "away_score": null,
+   "away_team": "Toronto Argonauts",
+   "commence_time": "2026-10-03T19:00:00+00:00",
+   "completed_at": null,
+   "espn": {
+    "probability_sources": {
+     "polymarket": 0.645
+    }
+   },
+   "external_id": null,
+   "hero_probability": 0.645,
+   "hero_probability_away": 0.355,
+   "hero_probability_source": "blend",
+   "highlight": {
+    "flags": {
+     "favorite_switched": false,
+     "has_lead_changes": false,
+     "has_recent_momentum": false,
+     "is_blowout": false,
+     "is_close_matchup": false,
+     "is_live": false,
+     "is_recently_finished": false,
+     "is_starting_soon": false,
+     "is_upset": false,
+     "is_volatile": false,
+     "league_tier": 4,
+     "probability_swing": "stable",
+     "score_swing": "stable"
+    },
+    "label": null,
+    "reasons": [
+     "tier_4"
+    ],
+    "score": 0,
+    "should_feature": false
+   },
+   "home_score": null,
+   "home_team": "British Columbia Lions",
+   "id": 15322678,
+   "metadata": {
+    "gender": "unknown",
+    "importance": "regular_season",
+    "league": "CFL",
+    "level": "unknown"
+   },
+   "sport": "rugby_other",
+   "sport_name": "Other Rugby",
+   "start_is_tbd": false,
+   "started_without_result": false,
+   "status": "scheduled",
+   "win_probability_sources": {
+    "polymarket": {
+     "color": "#3b82f6",
+     "contract_version": "live_blend.admissible_as_blend_speaker@5031",
+     "display_name": "Polymarket",
+     "evidence_status": "verified",
+     "type": "market",
+     "updated_at": "2026-10-03T07:49:32.816897+00:00",
+     "value": 0.645,
+     "verified_scope": "full_event_winner"
+    }
+   }
+  },
+  {
+   "away_score": null,
+   "away_team": "North Alabama Lions",
+   "away_team_data": {
+    "abbreviation": "UNA",
+    "logo_large": "https://a.espncdn.com/i/teamlogos/ncaa/500/2453.png",
+    "logo_small": "https://a.espncdn.com/i/teamlogos/ncaa/500/2453.png",
+    "primary_color": "#000000",
+    "record": "3-2",
+    "secondary_color": null,
+    "slug": "north-alabama-lions-ncaaf_fcs",
+    "team_id": 18614
+   },
+   "bookmaker_odds": [
+    {
+     "away_moneyline": 102,
+     "away_probability": 0.4712,
+     "bookmaker": "betrivers",
+     "captured_at": "2026-10-03T05:40:27.448626+00:00",
+     "home_moneyline": -125,
+     "home_probability": 0.5288,
+     "over_under": 48.5,
+     "projected_away_score": 23.5,
+     "projected_home_score": 25.0,
+     "spread": -1.5
+    },
+    {
+     "away_moneyline": 107,
+     "away_probability": 0.4576,
+     "bookmaker": "draftkings",
+     "captured_at": "2026-10-03T05:40:27.456606+00:00",
+     "home_moneyline": -134,
+     "home_probability": 0.5424,
+     "over_under": 47.5,
+     "projected_away_score": 23.0,
+     "projected_home_score": 24.5,
+     "spread": -1.5
+    },
+    {
+     "away_moneyline": -102,
+     "away_probability": 0.4761,
+     "bookmaker": "fanduel",
+     "captured_at": "2026-10-03T05:40:27.447269+00:00",
+     "home_moneyline": -125,
+     "home_probability": 0.5239,
+     "over_under": 47.5,
+     "projected_away_score": 23.0,
+     "projected_home_score": 24.5,
+     "spread": -1.5
+    }
+   ],
+   "commence_time": "2026-10-03T22:01:00+00:00",
+   "completed_at": null,
+   "current_odds": {
+    "away_probability": 0.4712,
+    "bookmaker_count": 3,
+    "captured_at": "2026-10-03T05:40:27.456606+00:00",
+    "home_probability": 0.5288,
+    "over_under": 47.8,
+    "projected_away_score": 23.2,
+    "projected_home_score": 24.7,
+    "spread": -1.5
+   },
+   "espn": {
+    "broadcast": "ESPN+",
+    "espn_id": "401868143",
+    "probability_sources": {
+     "betting": 0.5288,
+     "betting_book_count": 3.0,
+     "kalshi": 0.535,
+     "polymarket": 0.525
+    }
+   },
+   "external_id": "541c985bb0b93450c81b6293807f9317",
+   "hero_probability": 0.5288,
+   "hero_probability_away": 0.4712,
+   "hero_probability_source": "blend",
+   "highlight": {
+    "flags": {
+     "favorite_switched": false,
+     "has_lead_changes": false,
+     "has_recent_momentum": false,
+     "is_blowout": false,
+     "is_close_matchup": true,
+     "is_live": false,
+     "is_recently_finished": false,
+     "is_starting_soon": false,
+     "is_upset": false,
+     "is_volatile": false,
+     "league_tier": 4,
+     "probability_swing": "stable",
+     "score_swing": "stable"
+    },
+    "label": null,
+    "reasons": [
+     "tier_4",
+     "close_matchup",
+     "very_close"
+    ],
+    "score": 0,
+    "should_feature": false
+   },
+   "home_score": null,
+   "home_team": "Eastern Kentucky Colonels",
+   "home_team_data": {
+    "abbreviation": "EKU",
+    "logo_large": "https://a.espncdn.com/i/teamlogos/ncaa/500/2198.png",
+    "logo_small": "https://a.espncdn.com/i/teamlogos/ncaa/500/2198.png",
+    "primary_color": "#660819",
+    "record": "1-3",
+    "secondary_color": "#f0f0f0",
+    "slug": "eastern-kentucky-colonels-ncaaf_fcs",
+    "team_id": 18660
+   },
+   "id": 15322024,
+   "metadata": {
+    "gender": "men",
+    "importance": "regular_season",
+    "league": "NCAAF",
+    "level": "college"
+   },
+   "sport": "americanfootball_ncaaf_fcs",
+   "sport_name": "NCAAF FCS",
+   "start_is_tbd": false,
+   "started_without_result": false,
+   "status": "scheduled",
+   "win_probability_sources": {
+    "betting": {
+     "color": "#374151",
+     "display_name": "Betting Odds",
+     "evidence_status": "not_applicable",
+     "type": "market",
+     "updated_at": "2026-10-03T06:05:15.850348+00:00",
+     "value": 0.5288
+    },
+    "betting_book_count": {
+     "color": "#6b7280",
+     "display_name": "betting_book_count",
+     "evidence_status": "not_applicable",
+     "type": "model",
+     "value": 3.0
+    },
+    "kalshi": {
+     "color": "#22c55e",
+     "contract_version": "live_blend.admissible_as_blend_speaker@5031",
+     "display_name": "Kalshi",
+     "evidence_status": "verified",
+     "type": "market",
+     "updated_at": "2026-10-03T07:29:11.975053+00:00",
+     "value": 0.535,
+     "verified_scope": "full_event_winner"
+    },
+    "polymarket": {
+     "color": "#3b82f6",
+     "contract_version": "live_blend.admissible_as_blend_speaker@5031",
+     "display_name": "Polymarket",
+     "evidence_status": "verified",
+     "type": "market",
+     "updated_at": "2026-10-03T07:52:09.555222+00:00",
+     "value": 0.525,
+     "verified_scope": "full_event_winner"
+    }
+   }
+  },
+  {
+   "away_score": null,
+   "away_team": "Arkansas Pine Bluff Golden Lions",
+   "away_team_data": {
+    "abbreviation": "UAPB",
+    "logo_large": "https://a.espncdn.com/i/teamlogos/ncaa/500/2029.png",
+    "logo_small": "https://a.espncdn.com/i/teamlogos/ncaa/500/2029.png",
+    "primary_color": "#e0aa0f",
+    "record": "2-2",
+    "secondary_color": "#eaaa00",
+    "slug": "arkansas-pine-bluff-golden-lions-ncaaf_fcs",
+    "team_id": 19166
+   },
+   "bookmaker_odds": [
+    {
+     "away_moneyline": 143,
+     "away_probability": 0.3903,
+     "bookmaker": "betrivers",
+     "captured_at": "2026-10-03T05:40:27.546407+00:00",
+     "home_moneyline": -180,
+     "home_probability": 0.6097,
+     "over_under": 56.5,
+     "projected_away_score": 26.5,
+     "projected_home_score": 30.0,
+     "spread": -3.5
+    },
+    {
+     "away_moneyline": 151,
+     "away_probability": 0.3781,
+     "bookmaker": "draftkings",
+     "captured_at": "2026-10-03T05:40:27.551706+00:00",
+     "home_moneyline": -190,
+     "home_probability": 0.6219,
+     "over_under": 56.5,
+     "projected_away_score": 26.2,
+     "projected_home_score": 30.2,
+     "spread": -4.0
+    },
+    {
+     "away_moneyline": 124,
+     "away_probability": 0.4204,
+     "bookmaker": "fanduel",
+     "captured_at": "2026-10-03T05:40:27.544834+00:00",
+     "home_moneyline": -160,
+     "home_probability": 0.5796,
+     "over_under": 56.5,
+     "projected_away_score": 26.5,
+     "projected_home_score": 30.0,
+     "spread": -3.5
+    }
+   ],
+   "commence_time": "2026-10-03T23:01:00+00:00",
+   "completed_at": null,
+   "current_odds": {
+    "away_probability": 0.3903,
+    "bookmaker_count": 3,
+    "captured_at": "2026-10-03T05:40:27.551706+00:00",
+    "home_probability": 0.6097,
+    "over_under": 56.5,
+    "projected_away_score": 26.4,
+    "projected_home_score": 30.1,
+    "spread": -3.7
+   },
+   "espn": {
+    "espn_id": "401868936",
+    "probability_sources": {
+     "betting": 0.6097,
+     "betting_book_count": 3.0
+    }
+   },
+   "external_id": "a5d5526e71b520718c2ff2e8d68ebe94",
+   "hero_probability": 0.6097,
+   "hero_probability_away": 0.3903,
+   "hero_probability_source": "blend",
+   "highlight": {
+    "flags": {
+     "favorite_switched": false,
+     "has_lead_changes": false,
+     "has_recent_momentum": false,
+     "is_blowout": false,
+     "is_close_matchup": false,
+     "is_live": false,
+     "is_recently_finished": false,
+     "is_starting_soon": false,
+     "is_upset": false,
+     "is_volatile": false,
+     "league_tier": 4,
+     "probability_swing": "stable",
+     "score_swing": "stable"
+    },
+    "label": null,
+    "reasons": [
+     "tier_4"
+    ],
+    "score": 0,
+    "should_feature": false
+   },
+   "home_score": null,
+   "home_team": "Southern University Jaguars",
+   "home_team_data": {
+    "abbreviation": "SOU",
+    "logo_large": "https://a.espncdn.com/i/teamlogos/ncaa/500/2582.png",
+    "logo_small": "https://a.espncdn.com/i/teamlogos/ncaa/500/2582.png",
+    "primary_color": "#004B97",
+    "record": "2-3",
+    "secondary_color": "#ffc82d",
+    "slug": "southern-university-jaguars-ncaaf_fcs",
+    "team_id": 18627
+   },
+   "id": 15322027,
+   "metadata": {
+    "gender": "men",
+    "importance": "regular_season",
+    "league": "NCAAF",
+    "level": "college"
+   },
+   "sport": "americanfootball_ncaaf_fcs",
+   "sport_name": "NCAAF FCS",
+   "start_is_tbd": false,
+   "started_without_result": false,
+   "status": "scheduled",
+   "win_probability_sources": {
+    "betting": {
+     "color": "#374151",
+     "display_name": "Betting Odds",
+     "evidence_status": "not_applicable",
+     "type": "market",
+     "updated_at": "2026-10-03T06:05:15.923087+00:00",
+     "value": 0.6097
+    },
+    "betting_book_count": {
+     "color": "#6b7280",
+     "display_name": "betting_book_count",
+     "evidence_status": "not_applicable",
+     "type": "model",
+     "value": 3.0
+    }
+   }
+  },
+  {
+   "away_score": null,
+   "away_team": "UT Rio Grande Valley Vaqueros",
+   "away_team_data": {
+    "abbreviation": "RGV",
+    "logo_large": "https://a.espncdn.com/i/teamlogos/ncaa/500/292.png",
+    "logo_small": "https://a.espncdn.com/i/teamlogos/ncaa/500/292.png",
+    "primary_color": null,
+    "record": "2-2",
+    "secondary_color": null,
+    "slug": "ut-rio-grande-valley-vaqueros-ncaaf_fcs",
+    "team_id": 19164
+   },
+   "bookmaker_odds": [
+    {
+     "away_moneyline": -435,
+     "away_probability": 0.7756,
+     "bookmaker": "betrivers",
+     "captured_at": "2026-10-03T05:40:27.590661+00:00",
+     "home_moneyline": 325,
+     "home_probability": 0.2244,
+     "over_under": 52.5,
+     "projected_away_score": 31.5,
+     "projected_home_score": 21.0,
+     "spread": 10.5
+    },
+    {
+     "away_moneyline": -440,
+     "away_probability": 0.7739,
+     "bookmaker": "draftkings",
+     "captured_at": "2026-10-03T05:40:27.593554+00:00",
+     "home_moneyline": 320,
+     "home_probability": 0.2261,
+     "over_under": 51.5,
+     "projected_away_score": 31.0,
+     "projected_home_score": 20.5,
+     "spread": 10.5
+    },
+    {
+     "away_moneyline": -440,
+     "away_probability": 0.7696,
+     "bookmaker": "fanduel",
+     "captured_at": "2026-10-03T05:40:27.589366+00:00",
+     "home_moneyline": 310,
+     "home_probability": 0.2304,
+     "over_under": 51.5,
+     "projected_away_score": 31.0,
+     "projected_home_score": 20.5,
+     "spread": 10.5
+    }
+   ],
+   "commence_time": "2026-10-03T23:01:00+00:00",
+   "completed_at": null,
+   "current_odds": {
+    "away_probability": 0.7739,
+    "bookmaker_count": 3,
+    "captured_at": "2026-10-03T05:40:27.593554+00:00",
+    "home_probability": 0.2261,
+    "over_under": 51.8,
+    "projected_away_score": 31.2,
+    "projected_home_score": 20.7,
+    "spread": 10.5
+   },
+   "espn": {
+    "broadcast": "ESPN+",
+    "espn_id": "401868248",
+    "probability_sources": {
+     "betting": 0.2261,
+     "betting_book_count": 3.0,
+     "kalshi": 0.225,
+     "polymarket": 0.235
+    }
+   },
+   "external_id": "2cc38a87c94f7c45c8d9c42ef9bc801f",
+   "hero_probability": 0.2261,
+   "hero_probability_away": 0.7739,
+   "hero_probability_source": "blend",
+   "highlight": {
+    "flags": {
+     "favorite_switched": false,
+     "has_lead_changes": false,
+     "has_recent_momentum": false,
+     "is_blowout": false,
+     "is_close_matchup": false,
+     "is_live": false,
+     "is_recently_finished": false,
+     "is_starting_soon": false,
+     "is_upset": false,
+     "is_volatile": false,
+     "league_tier": 4,
+     "probability_swing": "stable",
+     "score_swing": "stable"
+    },
+    "label": null,
+    "reasons": [
+     "tier_4"
+    ],
+    "score": 0,
+    "should_feature": false
+   },
+   "home_score": null,
+   "home_team": "East Texas A&M Lions",
+   "home_team_data": {
+    "abbreviation": "ETAM",
+    "logo_large": "https://a.espncdn.com/i/teamlogos/ncaa/500/2837.png",
+    "logo_small": "https://a.espncdn.com/i/teamlogos/ncaa/500/2837.png",
+    "primary_color": "#000000",
+    "record": "1-4",
+    "secondary_color": null,
+    "slug": "east-texas-am-lions-ncaaf_fcs",
+    "team_id": 18639
+   },
+   "id": 15322029,
+   "metadata": {
+    "gender": "men",
+    "importance": "regular_season",
+    "league": "NCAAF",
+    "level": "college"
+   },
+   "sport": "americanfootball_ncaaf_fcs",
+   "sport_name": "NCAAF FCS",
+   "start_is_tbd": false,
+   "started_without_result": false,
+   "status": "scheduled",
+   "win_probability_sources": {
+    "betting": {
+     "color": "#374151",
+     "display_name": "Betting Odds",
+     "evidence_status": "not_applicable",
+     "type": "market",
+     "updated_at": "2026-10-03T06:05:15.955935+00:00",
+     "value": 0.2261
+    },
+    "betting_book_count": {
+     "color": "#6b7280",
+     "display_name": "betting_book_count",
+     "evidence_status": "not_applicable",
+     "type": "model",
+     "value": 3.0
+    },
+    "kalshi": {
+     "color": "#22c55e",
+     "contract_version": "live_blend.admissible_as_blend_speaker@5031",
+     "display_name": "Kalshi",
+     "evidence_status": "verified",
+     "type": "market",
+     "updated_at": "2026-10-03T07:59:30.313422+00:00",
+     "value": 0.225,
+     "verified_scope": "full_event_winner"
+    },
+    "polymarket": {
+     "color": "#3b82f6",
+     "contract_version": "live_blend.admissible_as_blend_speaker@5031",
+     "display_name": "Polymarket",
+     "evidence_status": "verified",
+     "type": "market",
+     "updated_at": "2026-10-03T07:50:10.027247+00:00",
+     "value": 0.235,
+     "verified_scope": "full_event_winner"
+    }
+   }
+  },
+  {
+   "away_score": null,
+   "away_team": "Saitama Seibu Lions",
+   "commence_time": "2026-10-05T09:00:00+00:00",
+   "completed_at": null,
+   "espn": {
+    "probability_sources": {
+     "polymarket": 0.495
+    }
+   },
+   "external_id": null,
+   "hero_probability": 0.495,
+   "hero_probability_away": 0.505,
+   "hero_probability_source": "blend",
+   "highlight": {
+    "flags": {
+     "favorite_switched": false,
+     "has_lead_changes": false,
+     "has_recent_momentum": false,
+     "is_blowout": false,
+     "is_close_matchup": false,
+     "is_live": false,
+     "is_recently_finished": false,
+     "is_starting_soon": false,
+     "is_upset": false,
+     "is_volatile": false,
+     "league_tier": 4,
+     "probability_swing": "stable",
+     "score_swing": "stable"
+    },
+    "label": null,
+    "reasons": [
+     "tier_4"
+    ],
+    "score": 0,
+    "should_feature": false
+   },
+   "home_score": null,
+   "home_team": "Chiba Lotte Marines",
+   "id": 15312542,
+   "metadata": {
+    "gender": "mixed",
+    "importance": "regular_season",
+    "league": "NPB",
+    "level": "unknown"
+   },
+   "sport": "baseball_other",
+   "sport_name": "Other Baseball",
+   "start_is_tbd": false,
+   "started_without_result": false,
+   "status": "scheduled",
+   "win_probability_sources": {
+    "polymarket": {
+     "color": "#3b82f6",
+     "contract_version": "live_blend.admissible_as_blend_speaker@5031",
+     "display_name": "Polymarket",
+     "evidence_status": "verified",
+     "type": "market",
+     "updated_at": "2026-09-30T05:38:36.975887+00:00",
+     "value": 0.495,
+     "verified_scope": "full_event_winner"
+    }
+   }
+  },
+  {
+   "away_score": null,
+   "away_team": "USC Trojans",
+   "away_team_data": {
+    "abbreviation": "USC",
+    "logo_large": "https://a.espncdn.com/i/teamlogos/ncaa/500/30.png",
+    "logo_small": "https://a.espncdn.com/i/teamlogos/ncaa/500/30.png",
+    "primary_color": "#9d2235",
+    "record": "4-1",
+    "secondary_color": "#ffc72c",
+    "slug": "usc-trojans-ncaaf",
+    "team_id": 15331
+   },
+   "bookmaker_odds": [
+    {
+     "away_moneyline": 102,
+     "away_probability": 0.4712,
+     "bookmaker": "betrivers",
+     "captured_at": "2026-10-02T23:38:12.850209+00:00",
+     "home_moneyline": -125,
+     "home_probability": 0.5288,
+     "over_under": 58.5,
+     "projected_away_score": 28.5,
+     "projected_home_score": 30.0,
+     "spread": -1.5
+    },
+    {
+     "away_moneyline": -105,
+     "away_probability": 0.4892,
+     "bookmaker": "draftkings",
+     "captured_at": "2026-10-02T23:38:12.846728+00:00",
+     "home_moneyline": -115,
+     "home_probability": 0.5108,
+     "over_under": 58.5,
+     "projected_away_score": 28.5,
+     "projected_home_score": 30.0,
+     "spread": -1.5
+    }
+   ],
+   "commence_time": "2026-10-10T23:30:00+00:00",
+   "completed_at": null,
+   "current_odds": {
+    "away_probability": 0.5675,
+    "bookmaker_count": 2,
+    "captured_at": "2026-10-02T23:38:12.850209+00:00",
+    "home_probability": 0.4325,
+    "over_under": 58.5,
+    "projected_away_score": 28.5,
+    "projected_home_score": 30.0,
+    "spread": -1.5
+   },
+   "espn": {
+    "espn_id": "401858485",
+    "probability_sources": {
+     "betting_book_count": 2.0,
+     "kalshi": 0.44,
+     "polymarket": 0.425
+    }
+   },
+   "external_id": "4462f1fa168ab2a5a25fe2807ebec8ac",
+   "hero_probability": 0.4325,
+   "hero_probability_away": 0.5675,
+   "hero_probability_source": "blend",
+   "highlight": {
+    "flags": {
+     "favorite_switched": false,
+     "has_lead_changes": false,
+     "has_recent_momentum": false,
+     "is_blowout": false,
+     "is_close_matchup": true,
+     "is_live": false,
+     "is_recently_finished": false,
+     "is_starting_soon": false,
+     "is_upset": false,
+     "is_volatile": false,
+     "league_tier": 2,
+     "probability_swing": "minor",
+     "score_swing": "stable"
+    },
+    "label": null,
+    "reasons": [
+     "tier_2",
+     "close_matchup"
+    ],
+    "score": 35,
+    "should_feature": true
+   },
+   "home_score": null,
+   "home_team": "Penn State Nittany Lions",
+   "home_team_data": {
+    "abbreviation": "PSU",
+    "logo_large": "https://a.espncdn.com/i/teamlogos/ncaa/500/213.png",
+    "logo_small": "https://a.espncdn.com/i/teamlogos/ncaa/500/213.png",
+    "primary_color": "#061440",
+    "record": "3-2",
+    "secondary_color": "#ffffff",
+    "slug": "penn-state-nittany-lions-ncaaf",
+    "team_id": 15356
+   },
+   "id": 14870014,
+   "metadata": {
+    "gender": "men",
+    "importance": "regular_season",
+    "league": "NCAAF",
+    "level": "college"
+   },
+   "sport": "americanfootball_ncaaf",
+   "sport_name": "NCAAF",
+   "start_is_tbd": false,
+   "started_without_result": false,
+   "status": "scheduled",
+   "win_probability_sources": {
+    "betting_book_count": {
+     "color": "#6b7280",
+     "display_name": "betting_book_count",
+     "evidence_status": "not_applicable",
+     "type": "model",
+     "value": 2.0
+    },
+    "kalshi": {
+     "color": "#22c55e",
+     "contract_version": "live_blend.admissible_as_blend_speaker@5031",
+     "display_name": "Kalshi",
+     "evidence_status": "verified",
+     "type": "market",
+     "updated_at": "2026-10-03T07:36:27.306720+00:00",
+     "value": 0.44,
+     "verified_scope": "full_event_winner"
+    },
+    "polymarket": {
+     "color": "#3b82f6",
+     "contract_version": "live_blend.admissible_as_blend_speaker@5031",
+     "display_name": "Polymarket",
+     "evidence_status": "verified",
+     "type": "market",
+     "updated_at": "2026-10-03T07:50:50.422750+00:00",
+     "value": 0.425,
+     "verified_scope": "full_event_winner"
+    }
+   }
+  },
+  {
+   "away_score": null,
+   "away_team": "Penn State Nittany Lions",
+   "away_team_data": {
+    "abbreviation": "PSU",
+    "logo_large": "https://a.espncdn.com/i/teamlogos/ncaa/500/213.png",
+    "logo_small": "https://a.espncdn.com/i/teamlogos/ncaa/500/213.png",
+    "primary_color": "#061440",
+    "record": "3-2",
+    "secondary_color": "#ffffff",
+    "slug": "penn-state-nittany-lions-ncaaf",
+    "team_id": 15356
+   },
+   "bookmaker_odds": [
+    {
+     "away_moneyline": 220,
+     "away_probability": 0.2998,
+     "bookmaker": "draftkings",
+     "captured_at": "2026-09-05T19:39:11.187891+00:00",
+     "home_moneyline": -270,
+     "home_probability": 0.7002,
+     "over_under": 51.5,
+     "projected_away_score": 22.5,
+     "projected_home_score": 29.0,
+     "spread": -6.5
+    }
+   ],
+   "commence_time": "2026-10-17T04:00:00+00:00",
+   "completed_at": null,
+   "current_odds": {
+    "away_probability": 0.2998,
+    "bookmaker_count": 1,
+    "captured_at": "2026-09-05T19:39:11.187891+00:00",
+    "home_probability": 0.7002,
+    "over_under": 51.5,
+    "projected_away_score": 22.5,
+    "projected_home_score": 29.0,
+    "spread": -6.5
+   },
+   "espn": {
+    "espn_id": "401858490",
+    "probability_sources": {
+     "betting_book_count": 1.0
+    }
+   },
+   "external_id": "f8b421c996286807b6e7b8e4d5631f80",
+   "hero_probability": 0.7002,
+   "hero_probability_away": 0.2998,
+   "hero_probability_source": "opening",
+   "highlight": {
+    "flags": {
+     "favorite_switched": false,
+     "has_lead_changes": false,
+     "has_recent_momentum": false,
+     "is_blowout": false,
+     "is_close_matchup": false,
+     "is_live": false,
+     "is_recently_finished": false,
+     "is_starting_soon": false,
+     "is_upset": false,
+     "is_volatile": false,
+     "league_tier": 2,
+     "probability_swing": "stable",
+     "score_swing": "stable"
+    },
+    "label": null,
+    "reasons": [
+     "tier_2"
+    ],
+    "score": 10,
+    "should_feature": false
+   },
+   "home_score": null,
+   "home_team": "Michigan Wolverines",
+   "home_team_data": {
+    "abbreviation": "MICH",
+    "logo_large": "https://a.espncdn.com/i/teamlogos/ncaa/500/130.png",
+    "logo_small": "https://a.espncdn.com/i/teamlogos/ncaa/500/130.png",
+    "primary_color": "#00274c",
+    "record": "3-1",
+    "secondary_color": "#ffcb05",
+    "slug": "michigan-wolverines-ncaaf",
+    "team_id": 836
+   },
+   "id": 14957709,
+   "metadata": {
+    "gender": "men",
+    "importance": "regular_season",
+    "league": "NCAAF",
+    "level": "college"
+   },
+   "sport": "americanfootball_ncaaf",
+   "sport_name": "NCAAF",
+   "start_is_tbd": true,
+   "started_without_result": false,
+   "status": "scheduled",
+   "win_probability_sources": {
+    "betting_book_count": {
+     "color": "#6b7280",
+     "display_name": "betting_book_count",
+     "evidence_status": "not_applicable",
+     "type": "model",
+     "value": 1.0
+    }
+   }
+  }
+ ],
+ "sports": [
+  {
+   "count": 17,
+   "key": "americanfootball_nfl",
+   "name": "NFL"
+  },
+  {
+   "count": 16,
+   "key": "baseball_kbo",
+   "name": "KBO"
+  },
+  {
+   "count": 16,
+   "key": "baseball_npb",
+   "name": "NPB"
+  },
+  {
+   "count": 15,
+   "key": "americanfootball_ncaaf_fcs",
+   "name": "NCAAF FCS"
+  },
+  {
+   "count": 14,
+   "key": "americanfootball_ncaaf",
+   "name": "NCAAF"
+  },
+  {
+   "count": 4,
+   "key": "aussierules_afl",
+   "name": "AFL"
+  },
+  {
+   "count": 4,
+   "key": "americanfootball_cfl",
+   "name": "CFL"
+  },
+  {
+   "count": 2,
+   "key": "baseball_other",
+   "name": "Other Baseball"
+  },
+  {
+   "count": 2,
+   "key": "rugby_other",
+   "name": "Other Rugby"
+  },
+  {
+   "count": 1,
+   "key": "aussierules_aflw",
+   "name": "AFL Women's"
+  }
+ ],
+ "teams": [
+  {
+   "abbreviation": "DET",
+   "id": 567,
+   "logo": "https://a.espncdn.com/i/teamlogos/nfl/500/scoreboard/det.png",
+   "name": "Detroit Lions",
+   "record": "2-1",
+   "slug": "detroit-lions",
+   "sport_key": "americanfootball_nfl"
+  },
+  {
+   "abbreviation": "SELA",
+   "id": 17179,
+   "logo": "https://a.espncdn.com/i/teamlogos/ncaa/500/2545.png",
+   "name": "Southeastern Louisiana Lions",
+   "record": "2-2",
+   "slug": "southeastern-louisiana-lions-ncaaf",
+   "sport_key": "americanfootball_ncaaf"
+  },
+  {
+   "abbreviation": "LIN",
+   "id": 19129,
+   "logo": "https://a.espncdn.com/i/teamlogos/ncaa/500/2815.png",
+   "name": "Lindenwood Lions",
+   "record": "1-3",
+   "slug": "lindenwood-lions-ncaaf",
+   "sport_key": "americanfootball_ncaaf"
+  },
+  {
+   "abbreviation": "UNA",
+   "id": 17078,
+   "logo": "https://a.espncdn.com/i/teamlogos/ncaa/500/2453.png",
+   "name": "North Alabama Lions",
+   "record": "0-0",
+   "slug": "north-alabama-lions-ncaaf",
+   "sport_key": "americanfootball_ncaaf"
+  },
+  {
+   "abbreviation": "COLU",
+   "id": 1121,
+   "logo": "https://a.espncdn.com/i/teamlogos/ncaa/500/171.png",
+   "name": "Columbia Lions",
+   "record": null,
+   "slug": "columbia-lions-ncaab",
+   "sport_key": "basketball_ncaab"
+  }
+ ]
+}

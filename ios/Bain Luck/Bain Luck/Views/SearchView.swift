@@ -574,7 +574,10 @@ struct SearchView: View {
                                     }
                                 }
                             }
-                            if suggestion.type == "futures", let label = suggestion.marketTypeLabel {
+                            if suggestion.type == "futures", let listing = suggestion.relatedGameListing {
+                                // #10298 — the game's own listing names its questions, not a type.
+                                relatedGameListingText(listing, font: .caption2)
+                            } else if suggestion.type == "futures", let label = suggestion.marketTypeLabel {
                                 Text(label)
                                     .font(.caption2)
                                     .foregroundStyle(.blue)
@@ -1219,7 +1222,10 @@ struct SearchView: View {
 
             Spacer(minLength: 4)
 
-            if let leader = market.dateLadderAnswer ?? SearchGrouping.leaderOutcome(market),
+            if let listing = market.relatedGameListing {
+                relatedGameListingText(listing, font: .caption)
+                    .layoutPriority(1)
+            } else if let leader = market.dateLadderAnswer ?? SearchGrouping.leaderOutcome(market),
                let probability = leader.probability {
                 HStack(spacing: 4) {
                     Text(leader.name)
@@ -1290,7 +1296,9 @@ struct SearchView: View {
                 }
             }
 
-            if let top = market.dateLadderAnswer ?? market.topOutcomes?.first {
+            if let listing = market.relatedGameListing {
+                relatedGameListingText(listing, font: .caption)
+            } else if let top = market.dateLadderAnswer ?? market.topOutcomes?.first {
                 HStack(spacing: 4) {
                     Text(top.name)
                         .font(.caption)
@@ -1307,6 +1315,15 @@ struct SearchView: View {
             }
         }
         .padding(.vertical, 2)
+    }
+
+    /// #10298 — a game's own venue listing, beside that game's card: a link
+    /// to its questions in place of a leader and a percentage (#10089).
+    private func relatedGameListingText(_ listing: RelatedGameListing, font: Font) -> some View {
+        Text(listing.label)
+            .font(font)
+            .foregroundStyle(.blue)
+            .lineLimit(1)
     }
 
     /// "Won" / "Lost" in the slot the percentage would take (#8640). Web's
