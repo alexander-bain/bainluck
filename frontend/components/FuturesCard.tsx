@@ -28,6 +28,7 @@ import { outcomeRowVerdict } from "@/components/futures/OutcomeRow";
 import { PinIcon } from "@/components/PinButton";
 import { categoryKeyLabel } from "@/lib/sportCategories";
 import { gamePropContextLine, spreadSideLabels, type GamePropGameRef } from "@/lib/gamePropCardContext";
+import { relatedGameListingText } from "@/lib/relatedGameListing";
 
 interface FuturesCardProps {
   market: FuturesMarket;
@@ -170,6 +171,10 @@ export default function FuturesCard({
   // #5516 — the tier is passed because it is the only field that can contradict
   // `category`; the helper owns the rule, this call site must not re-derive it.
   const categoryLabel = marketCategoryLabel(market.category, market.market_tier);
+  // #10298: Polymarket's listing for a game that is on this results page prints
+  // what it holds in place of its rows: its team-win leg's price disagreed with
+  // the game card beside it. No rows drawn, so no price age either.
+  const listing = relatedGameListingText(market.related_game_listing);
 
   const handlePinClick = (e: React.MouseEvent) => {
     e.preventDefault();
@@ -233,7 +238,7 @@ export default function FuturesCard({
               )}
               {/* #10263: a two-way question has nothing to count — a bare "2" in the
                   corner of a spread card read as noise, never as information. */}
-              {market.outcome_count > 2 && (
+              {market.outcome_count > 2 && !listing && (
                 <span className="text-micro text-text-muted">
                   {market.outcome_count}
                 </span>
@@ -268,7 +273,13 @@ export default function FuturesCard({
             </p>
           )}
 
-          {/* Top Outcomes — staggered entrance */}
+          {listing ? (
+            <p className="flex items-center justify-between gap-2 flex-grow text-sm text-text-secondary" data-related-listing-link>
+              <span className="min-w-0 truncate">{listing}</span>
+              <span aria-hidden className="flex-shrink-0">›</span>
+            </p>
+          ) : (
+          /* Top Outcomes — staggered entrance */
           <motion.div
             className="space-y-2 flex-grow"
             variants={staggerContainer}
@@ -296,6 +307,7 @@ export default function FuturesCard({
               </div>
             )}
           </motion.div>
+          )}
 
           {/* Footer */}
           <div className="mt-2.5 pt-2 border-t border-surface-border/50 flex justify-between items-center">
@@ -315,7 +327,7 @@ export default function FuturesCard({
                 screenshot — see `lib/futuresCardPriceAge`. `null` renders
                 nothing: an empty corner claims nothing, the old pip claimed
                 something false. */}
-            {pricesAsOf && (
+            {pricesAsOf && !listing && (
               <span className="text-micro text-text-muted">
                 {formatRelativeTime(pricesAsOf)}
               </span>

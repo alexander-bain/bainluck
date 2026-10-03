@@ -22,6 +22,7 @@ import {
   familySharedHead,
 } from "@/components/searchFamilyDisplay";
 import { spreadSideLabels } from "@/lib/gamePropCardContext";
+import { relatedGameListingText } from "@/lib/relatedGameListing";
 
 function AnswerRow({
   market,
@@ -39,6 +40,9 @@ function AnswerRow({
   onClick?: () => void;
 }) {
   const ld = leaderOutcome(market);
+  // #10298: Polymarket's listing for a game that is on this results page prints
+  // what it holds, not its team-win leg's price beside the game card's.
+  const listing = relatedGameListingText(market.related_game_listing);
   // #8640: a leader the venue has already GRADED is a result, not a price.
   // Production 2026-09-25, `/search?q=Fed chair`: the headline read
   // `Kevin Warsh >99%` over a leg served `is_winner: true, resolution_source:
@@ -139,7 +143,12 @@ function AnswerRow({
           <div className={`truncate shrink ${nameClass}`}>{title.tail}</div>
         )}
       </div>
-      {ld && ld.probability != null ? (
+      {listing ? (
+        <span className="flex items-center gap-1 ml-auto min-w-0 text-sm text-text-secondary" data-related-listing-link>
+          <span className="truncate">{listing}</span>
+          <span aria-hidden className="flex-shrink-0">›</span>
+        </span>
+      ) : ld && ld.probability != null ? (
         /* #4136: the outcome NAME may be arbitrarily long — production served an
            outcome called "Istanbul 3: Timofey Skatov vs Yanki Erel Set 2 O/U 9.5"
            — and this column used to be `flex-shrink-0`, so one row like that blew

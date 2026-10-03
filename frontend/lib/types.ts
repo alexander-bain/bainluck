@@ -929,6 +929,12 @@ export interface FuturesOutcome {
   aggregation_rule?: string | null;
 }
 
+/** #10298: the game a search row is the Polymarket listing of, and how many questions it holds. */
+export interface RelatedGameListing {
+  event_id: number;
+  question_count: number;
+}
+
 export interface FuturesMarket {
   id: number;
   name: string;
@@ -993,6 +999,14 @@ export interface FuturesMarket {
    * an older payload omits it too. Absent keeps the settlement-date label.
    */
   event_commence_time?: string | null;
+  /**
+   * #10298 — set by `/api/events/search` and `/api/events/typeahead` only when this
+   * row is Polymarket's mixed listing for a game that is ALSO in the same response.
+   * Beside its own game the listing is a link to more questions on that game with
+   * no percentages (#10089's rule), because its team-win leg printed a second,
+   * disagreeing favourite next to the game card. Absent keeps today's render.
+   */
+  related_game_listing?: RelatedGameListing | null;
   source_count?: number;
   group_id?: string | null;
   canonical_market_key?: string | null;
