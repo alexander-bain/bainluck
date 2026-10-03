@@ -30,7 +30,8 @@
  * SWR's own machinery:
  *
  *   1. the page must ASK again while connected — `eventRefreshInterval`, which
- *      was the whole defect and is now a pure function;
+ *      was the whole defect and is now a pure function (and, since #4889, one
+ *      the stream's state no longer feeds at all);
  *   2. the answer must SURVIVE the next pushed frame — `applyLiveFrame`;
  *   3. and the survivor must RENDER — the merged cache is fed to the real
  *      `FreshnessChip` and the real `liveHeroGamesLine`.
@@ -98,26 +99,29 @@ const MOVED = {
 // ── 1. the page keeps asking ────────────────────────────────────────────────
 
 describe("a pushed page still revalidates", () => {
-  test("a healthy stream no longer means NEVER", () => {
-    // The defect, stated as the assertion that would have caught it.
-    expect(eventRefreshInterval("live", true, INTERVALS)).toBeGreaterThan(0);
+  test("a live page never means NEVER", () => {
+    // The defect, stated as the assertion that would have caught it. Since
+    // #4889 the stream's state is not an input at all: a live page reads at
+    // the live cadence whether or not frames are arriving.
+    expect(eventRefreshInterval("live", INTERVALS)).toBeGreaterThan(0);
   });
 
   test("and the cadence cannot itself manufacture a Stale chip", () => {
     // The derivation, pinned so editing either number alone breaks it: if the
     // page can go longer than `STALE_MS` without asking, then `Stale` stops
     // meaning "the data is old" and starts meaning one of two different things.
-    const pushed = eventRefreshInterval("live", true, INTERVALS);
-    expect(pushedRefreshIntervalIsHonest(pushed, STALE_MS)).toBe(true);
-    expect(isStale(pushed)).toBe(false);
+    // The slowest cadence the page can be on is the non-live one.
+    for (const status of ["live", "scheduled", undefined]) {
+      const interval = eventRefreshInterval(status, INTERVALS);
+      expect(pushedRefreshIntervalIsHonest(interval, STALE_MS)).toBe(true);
+      expect(isStale(interval)).toBe(false);
+    }
   });
 
-  test("the control — with no stream, the 32s live poll is untouched", () => {
-    // The push ship must not be undone in either direction. A live page with a
-    // dead stream still polls at 32s, and a scheduled one still at 120s.
-    expect(eventRefreshInterval("live", false, INTERVALS)).toBe(32000);
-    expect(eventRefreshInterval("scheduled", false, INTERVALS)).toBe(120000);
-    expect(eventRefreshInterval(undefined, false, INTERVALS)).toBe(120000);
+  test("the control — a live page polls at 32s, a scheduled one at 120s", () => {
+    expect(eventRefreshInterval("live", INTERVALS)).toBe(32000);
+    expect(eventRefreshInterval("scheduled", INTERVALS)).toBe(120000);
+    expect(eventRefreshInterval(undefined, INTERVALS)).toBe(120000);
   });
 });
 

@@ -193,6 +193,29 @@ struct NativeFuturesDiscoverCard: View {
         return named.isEmpty ? nil : named.joined(separator: " + ")
     }
 
+    /// The source mark (D91): the venue names, small, reading as sourcing. One
+    /// definition for both placements (#10314). On its own line it may wrap
+    /// between words, so it takes a rounded rectangle there: a capsule around two
+    /// lines is a pill that crowds the text's corners.
+    @ViewBuilder
+    private func sourceMarkLabel(_ mark: String, onOwnLine: Bool) -> some View {
+        let label = Text(mark)
+            .font(.caption2.weight(.heavy))
+            .foregroundStyle(.blue)
+        if onOwnLine {
+            label
+                .fixedSize(horizontal: false, vertical: true)
+                .padding(.horizontal, 7)
+                .padding(.vertical, 3)
+                .background(Color.blue.opacity(0.10), in: RoundedRectangle(cornerRadius: 9))
+        } else {
+            label
+                .padding(.horizontal, 7)
+                .padding(.vertical, 3)
+                .background(Color.blue.opacity(0.10), in: Capsule())
+        }
+    }
+
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
             // 🔴 #7074 — THE BACKDROP WAS A FIXED-HEIGHT SIBLING OF CONTENT THAT
@@ -358,14 +381,22 @@ struct NativeFuturesDiscoverCard: View {
                         .fixedSize(horizontal: false, vertical: true)
                 }
 
+                // #10314 — at an accessibility text size the footer row left the
+                // mark less width than one venue name, and it hyphenated as
+                // "Polymar-" / "ket". There the mark takes its own full-width line
+                // above the row, where it wraps only between words ("Kalshi +" /
+                // "Polymarket"). It is NOT pinned to one line: a two-venue mark at
+                // a11y5 is wider than the card, and a fixed-width mark pushed the
+                // whole card off both edges of the screen. Below accessibility
+                // sizes the row is the one it always was.
+                let markOnOwnLine = dynamicTypeSize.isAccessibilitySize
+                if markOnOwnLine, let mark = sourceMark {
+                    sourceMarkLabel(mark, onOwnLine: true)
+                }
+
                 HStack(spacing: 8) {
-                    if let mark = sourceMark {
-                        Text(mark)
-                            .font(.caption2.weight(.heavy))
-                            .foregroundStyle(.blue)
-                            .padding(.horizontal, 7)
-                            .padding(.vertical, 3)
-                            .background(Color.blue.opacity(0.10), in: Capsule())
+                    if !markOnOwnLine, let mark = sourceMark {
+                        sourceMarkLabel(mark, onOwnLine: false)
                     }
 
                     // #6343 — beside the source mark, which is where D91 and

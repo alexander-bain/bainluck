@@ -50,13 +50,28 @@ import { frameFoldOrder, parseFoldRevision } from "./foldRevision";
  * already does, at 2.5x headroom, and reusing it beats inventing a fourth
  * cadence constant. `pushedRefreshIntervalIsHonest` pins that relationship so it
  * cannot be broken by editing either number alone.
+ *
+ * ═══ BUT 120s IS THE CHIP'S TOLERANCE, NOT THE CLOCK'S (#4889) ═══
+ *
+ * A LIVE page prints a game clock and period from this payload, and the frame
+ * carries neither. While the stream delivered, the clock was re-read every 120s,
+ * and the play strip beside it is drawn from `/history`, which keeps its 32s
+ * poll. Production, Navy at Air Force (15319770, 2026-10-03 17:06Z): the header
+ * read `8:14 - 2nd Quarter` over a strip reading `6:56 - 2nd Quarter`, and the
+ * server had been serving 6:56 on this very endpoint since before 17:06:28Z.
+ * Two clocks on one screen, 78 game-seconds apart.
+ *
+ * So a live page keeps the live cadence whether or not the stream delivers —
+ * the same 32s every sibling key on the page already polls at. Native made the
+ * same call (#9268: detail re-read every 30s between its slow full reads). The
+ * stream still delivers the probability in ~2s; only the wait for everything
+ * else shrinks. Every non-live status was already 120s either way, so the
+ * stream's state no longer changes the answer and is no longer an input.
  */
 export function eventRefreshInterval(
   status: string | null | undefined,
-  streamConnected: boolean,
   intervals: { live: number; scheduled: number },
 ): number {
-  if (streamConnected) return intervals.scheduled;
   return status === "live" ? intervals.live : intervals.scheduled;
 }
 
@@ -115,33 +130,36 @@ export function eventRefreshInterval(
  * and the countdown ring. Detection without recovery: the page correctly stopped
  * PROMISING an update it was structurally incapable of making.
  *
- * ═══ WHY A REF ARGUMENT AND NOT A DEPENDENCY ═══
+ * ═══ WHY IT CLOSES OVER NOTHING ═══
  *
  * A stable identity is only SAFE if the callback has nothing reactive to close
  * over — otherwise stability is just a stale closure wearing a fix's clothes.
  * It has nothing: `status` arrives as the argument (swr calls it with the key's
- * current cache data), the two cadences are module constants, and liveness is
- * read through the caller's ref, which is mutated in render and therefore
- * always current at call time. The ref was already there for an unrelated
- * reason — `streamConnected` derives from the very data this hook produces, so
- * naming the state value in the config would be a use-before-declare — and it
- * is precisely what makes a permanently-stable callback correct here.
+ * current cache data) and the two cadences are module constants. Until #4889
+ * it also read the stream's liveness through a caller-held ref; the cadence no
+ * longer depends on the stream (see `eventRefreshInterval`), so the ref went.
+ *
+ * ═══ NO READ YET IS PRICED AT THE LIVE CADENCE (#4889) ═══
+ *
+ * swr prices the FIRST timer once, when the polling effect mounts — before the
+ * page's first read has landed, so with `data` undefined — and never re-prices
+ * it until it fires. Priced as "not live", a live page's first re-read came
+ * 120s after open: the shopper's whole walk on 15319770 (open 17:04:47Z, left
+ * 17:06:43Z) sat inside that one timer, so the clock never moved once. An
+ * unknown is therefore priced at the shorter cadence; a non-live page pays one
+ * extra read 32s after open, and that read re-prices it to 120s. A read that
+ * landed without a `status` is not unknown — it gets the non-live answer.
  *
  * Built by a factory rather than written inline so the property is testable in
- * a `testEnvironment: 'node'` suite with no DOM: a test can hold ONE reference,
- * flip the ref underneath it, and assert both that the reference never changes
- * and that its answers still track the flip.
+ * a `testEnvironment: 'node'` suite with no DOM: a test can hold ONE reference
+ * and assert both that the reference never changes and that its answers still
+ * track the status swr hands it.
  */
 export function makeEventRefreshInterval(
-  streamConnectedRef: { readonly current: boolean },
   intervals: { live: number; scheduled: number },
 ): (data?: { status?: string | null } | null) => number {
   return (data) =>
-    eventRefreshInterval(
-      data?.status,
-      streamConnectedRef.current,
-      intervals,
-    );
+    data == null ? intervals.live : eventRefreshInterval(data.status, intervals);
 }
 
 /** True while the pushed-page poll cannot itself cause a false `Stale`. */

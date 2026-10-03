@@ -2274,6 +2274,26 @@ async def _poll_kalshi_markets():
                                 prob,
                             ),
                         }
+                        # #8265 — THIS POLL ADVANCES `last_updated` ON EVERY LEG IT
+                        # SEES, SO IT MUST TAKE THE VOLUME READING IN THE SAME
+                        # UPDATE. The consumer
+                        # (`futures_unsupported_price.venue_reports_no_recent_trading`)
+                        # trusts a zero only if `volume_24h_at >= last_updated`.
+                        # Before this, the hourly price refresh wrote the reading
+                        # and this poll then re-touched the row without one, which
+                        # left every zero stale until the next refresh. Production
+                        # 2026-10-03: the 2027 US Open men's board, all 25 legs
+                        # `volume_24h_fp '0.00'`, read 14:07Z volume against a
+                        # 15:07Z touch, so #8265's arm withheld nothing and Mensik's
+                        # 9/30 print headed Discover at 47%.
+                        #
+                        # Same shape as `futures_price_refresh._write_prices`.
+                        # OMITTED, NEVER NULLED, when the venue gave no readable
+                        # figure, so a real reading is never erased. Both stamps
+                        # are `func.now()`, which makes the consumer's `>=` exact.
+                        if market.volume_24h_reading is not None:
+                            update_set["volume_24h"] = market.volume_24h_reading
+                            update_set["volume_24h_at"] = func.now()
                         update_set.update(graded_cols)
                         if settled_price:
                             # The price columns are REPLACED, not added to: the
@@ -2364,6 +2384,18 @@ async def _poll_kalshi_markets():
                                 is_winner=graded_cols.get("is_winner"),
                                 resolution_source=graded_cols.get(
                                     "resolution_source"
+                                ),
+                                # #8265, the INSERT arm of the reading above. A
+                                # row born here gets `last_updated` from the
+                                # column's `server_default now()`, the same
+                                # transaction timestamp, so the pair is fresh at
+                                # birth. NULL/NULL when the venue gave no figure
+                                # means "never asked", which fails open.
+                                volume_24h=market.volume_24h_reading,
+                                volume_24h_at=(
+                                    func.now()
+                                    if market.volume_24h_reading is not None
+                                    else None
                                 ),
                             )
                             .on_conflict_do_update(

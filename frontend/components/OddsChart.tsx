@@ -2090,6 +2090,11 @@ export default function OddsChart({
     for (const pt of chartData) {
       delete pt.crossingDelta;
     }
+    // #10318: on a market that prices a draw, home crossing 50% is not the
+    // favourite changing (the favourite may be the draw or the away side; see
+    // "Favorite flips" above). Parma–Ternana counted seven flips while Parma
+    // were twice Ternana's price. No count, so no chip, markers or legend.
+    if (awayWithheld) return 0;
     let count = 0;
     let prevDelta: number | null = null;
     for (const pt of chartData) {
@@ -2105,7 +2110,7 @@ export default function OddsChart({
       prevDelta = delta;
     }
     return count;
-  }, [chartData, primarySeriesKey]);
+  }, [chartData, primarySeriesKey, awayWithheld]);
 
   // ── Current probability callout (last non-null data point) ──
   // Stamp `calloutDelta` directly onto the chartData point (same reason as above).
@@ -2793,12 +2798,10 @@ export default function OddsChart({
             className={`font-medium rounded-full transition-colors ${
               isDisabled
                 ? "opacity-30 cursor-not-allowed px-3 py-1.5 text-xs bg-surface-elevated text-text-secondary"
-                : fillContainer
-                ? `px-[0.4vw] py-[0.1vh] text-[0.9vh] ${
-                    timeRange === option.value
-                      ? "bg-surface-card/10 text-white/40"
-                      : "text-white/15 hover:text-white/25"
-                  }`
+                /* #10362 — the fullscreen view used its own white-on-dark pill
+                   (`text-white/15`) from when the modal was black. The dialog is
+                   `bg-surface-card` now, so those pills were invisible: the
+                   fullscreen chart had a range control nobody could see. One pill. */
                 : `px-3 py-1.5 text-xs ${
                     timeRange === option.value
                       ? "bg-text-primary text-surface-deep"
@@ -2883,29 +2886,36 @@ export default function OddsChart({
               {"↑"} {homeShort}
             </span>
           </div>
-          <div
-            className="flex items-center gap-1"
-            style={axisPoleStyle(axisPoleCaps.away)}
-            data-testid="chart-axis-pole"
-            data-pole="away"
-            data-capped={axisPoleCaps.away !== null ? "true" : undefined}
-            title={axisPoleCaps.away !== null ? awayShort : undefined}
-          >
-            <span className="sr-only">
-              The line falls towards {awayShort}: the bottom of this axis is {awayShort} at 100%.
-            </span>
-            {awayTeamLogo && (
-              <img src={awayTeamLogo} alt="" width={12} height={12} className="object-contain shrink-0" style={{ transform: "rotate(90deg)" }} />
-            )}
-            <span
-              aria-hidden="true"
-              data-axis-label
-              className="text-[11px] font-bold uppercase tracking-wider"
-              style={{ color: teamTextColor(awayTeamColor) || "#2563eb", ...axisLabelStyle(axisPoleCaps.away) }}
+          {/* #10318: NO AWAY POLE ON A THREE-WAY QUESTION. The line is the home
+              side's chance; on a market that prices a draw, its bottom is "the
+              home side does not win" (a draw OR the away side), never the away
+              side at 100%. The gutter keeps the home pole alone, the same rule
+              as the tooltip's withheld away cell (#6238). */}
+          {!awayWithheld && (
+            <div
+              className="flex items-center gap-1"
+              style={axisPoleStyle(axisPoleCaps.away)}
+              data-testid="chart-axis-pole"
+              data-pole="away"
+              data-capped={axisPoleCaps.away !== null ? "true" : undefined}
+              title={axisPoleCaps.away !== null ? awayShort : undefined}
             >
-              {"↓"} {awayShort}
-            </span>
-          </div>
+              <span className="sr-only">
+                The line falls towards {awayShort}: the bottom of this axis is {awayShort} at 100%.
+              </span>
+              {awayTeamLogo && (
+                <img src={awayTeamLogo} alt="" width={12} height={12} className="object-contain shrink-0" style={{ transform: "rotate(90deg)" }} />
+              )}
+              <span
+                aria-hidden="true"
+                data-axis-label
+                className="text-[11px] font-bold uppercase tracking-wider"
+                style={{ color: teamTextColor(awayTeamColor) || "#2563eb", ...axisLabelStyle(axisPoleCaps.away) }}
+              >
+                {"↓"} {awayShort}
+              </span>
+            </div>
+          )}
         </div>
 
         {/* Chart area. #10249: Recharts' own touch handling never ends an

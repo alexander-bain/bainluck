@@ -57,7 +57,7 @@ ALLOWED_TAGS: dict[str, set[str]] = {
     "league": {
         "nba", "nfl", "mlb", "nhl",
         "ncaab", "ncaaf", "wncaab", "wnba",
-        "epl", "la_liga", "mls", "bundesliga", "serie_a",
+        "epl", "la_liga", "mls", "bundesliga", "serie_a", "serie_a_femminile",
         "ligue_1", "champions_league", "europa_league",
         "liga_mx", "brazilian_serie_a",
         "ufc", "pga",
@@ -148,6 +148,7 @@ _SPORT_KEY_TO_LEAGUE: dict[str, str] = {
     "soccer_usa_mls": "mls",
     "soccer_germany_bundesliga": "bundesliga",
     "soccer_italy_serie_a": "serie_a",
+    "soccer_italy_serie_a_women": "serie_a_femminile",
     "soccer_france_ligue_one": "ligue_1",
     "soccer_uefa_champs_league": "champions_league",
     "soccer_uefa_europa_league": "europa_league",

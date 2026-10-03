@@ -48,6 +48,7 @@ from app.models.models import Base
 #: the discovery arm below fails if such a gate grows an INSERT and is not
 #: listed, so this list cannot silently fall behind.
 COVERED = (
+    "test_serie_a_femminile_seed_10319_pg.py",
     "test_bookmaker_count_real_postgres.py",
     "test_calibration_mode_price_source_scope_pg.py",
     "test_census_cap_real_postgres.py",
@@ -206,6 +207,10 @@ COVERED = (
     # #10182. Seeds narrow `futures_markets` / `futures_outcomes` in a private
     # schema and drives the reopen repair's own run(): apply, drift, restore.
     "test_repair_polymarket_false_parent_settlements_10182_pg.py",
+    # #10319. Seeds narrow `sports` / `teams` / `events` / `futures_markets` in a
+    # private per-test schema and drives the one-event identity repair's own
+    # preflight, apply and restore over them.
+    "test_repair_10319_event15321333_competition_identity_pg.py",
     # #9394. Seeds `futures_markets` and `futures_outcomes` by raw INSERT into a
     # private schema and drives the real Gamma winner rail over them.
     "test_price_crowned_pm_winner_venue_regrade_9394_pg.py",
@@ -487,6 +492,8 @@ COVERED = (
     # not resolve the payload to the seeded row, nothing writes `betting`, and
     # the probe finds a free row for the wrong reason.
     "test_a_poll_releases_its_event_rows_per_sport_837_pg.py",
+    # #10305: the anchor-schedule rail's one-row mode (lock, fence, reach).
+    "test_reconcile_anchor_schedule_member_10305_pg.py",
     # #837 follow-up: seeds two invented sports, their teams and four `events`
     # rows by raw INSERT (two scheduled for the odds loops, two completed for
     # the scores loop). `external_id` is the reach: the lookup that stands in
@@ -646,7 +653,13 @@ _INSERT_SELECT_RE = re.compile(
 
 def _columns(raw: str) -> set[str]:
     """Column names out of an INSERT's column list."""
-    return {c.strip() for c in raw.split(",") if c.strip()}
+    columns = {c.strip() for c in raw.split(",") if c.strip()}
+    # PostgreSQL requires quotes for reserved names such as sports."group".
+    # Compare their identifier value, not SQL's quoting syntax, to ORM names.
+    return {
+        c[1:-1].replace('""', '"') if c.startswith('"') and c.endswith('"') else c
+        for c in columns
+    }
 
 
 def _joined_source(path: Path) -> str:

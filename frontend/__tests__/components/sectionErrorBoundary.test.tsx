@@ -176,6 +176,9 @@ describe("the event page actually wraps its sections", () => {
       "The market maps",
       // UX-P098: THE DIVERGENCE rail leads the props body, above the full set.
       "What's moving",
+      // #10358: the live During player chances matrix sits between the rail
+      // and the full prop set, and renders independently of both.
+      "During player chances",
       "Player props",
       "Matchups",
       "Special markets",

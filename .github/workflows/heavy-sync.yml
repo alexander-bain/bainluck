@@ -578,6 +578,48 @@ jobs:
             fi
           fi
 
+          # #10320 — THE TARGET IS RE-READ AT THE PUSH, NOT AT THE DECISION.
+          #
+          # `read_facts` last ran before `decide`, and the in-flight loop above
+          # can then wait out most of the band. Main can deploy during that wait,
+          # and the header's promise ("the sha this job pushes must be the one
+          # main is serving at the moment of the push") did not hold. Run
+          # 37124099784 on 2026-10-03 decided PUSH on `5b31e3a3c` at 13:38:13Z,
+          # waited 21 min for a busy worker, and pushed it at 13:59Z. Main had
+          # gone live on `09c01b47c` at 13:42:11Z, and the run that commit
+          # triggered was cancelled as this one's pending duplicate. Heavy then
+          # sat a full cycle floor behind, holding the #10320 sweep arm.
+          #
+          # So every fact is read again here and, if either live ref moved, the
+          # same `decide` judges the new set. A moved main can only move the
+          # target forward. A moved heavy (another push landed) gets a HOLD
+          # rather than a rejected non-fast-forward. Nothing here is weaker
+          # than the first decision: it is the same judge on newer facts.
+          DECIDED_MAIN="$MAIN_LIVE"
+          DECIDED_HEAVY="$HEAVY_LIVE"
+          read_facts
+          if [ "$MAIN_LIVE" != "$DECIDED_MAIN" ] || [ "$HEAVY_LIVE" != "$DECIDED_HEAVY" ]; then
+            echo "A live ref moved while this run waited (main ${DECIDED_MAIN:0:9} -> ${MAIN_LIVE:0:9}, heavy ${DECIDED_HEAVY:0:9} -> ${HEAVY_LIVE:0:9}); re-judging."
+            set +e
+            python3 scripts/heavy_sync_decision.py decide \
+              --main-live "${MAIN_LIVE:-}" \
+              --heavy-live "${HEAVY_LIVE:-}" \
+              --heavy-is-ancestor "$ANCESTOR" \
+              --heavy-release-age-min "${HEAVY_AGE_MIN:-}" \
+              $DISPATCH_FLAG
+            REDECISION=$?
+            set -e
+            case "$REDECISION" in
+              0) echo "Re-decision: PUSH the newer target." ;;
+              1) echo "Re-decision: HOLD — nothing to do on the moved refs, exiting green."
+                 exit 0 ;;
+              2) echo "Re-decision: REFUSE — somebody should look. Failing loudly."
+                 exit 1 ;;
+              *) echo "Re-decision exited $REDECISION (usage/crash) — refusing."
+                 exit 1 ;;
+            esac
+          fi
+
           BEHIND="$(git rev-list --count "${HEAVY_LIVE}..${MAIN_LIVE}" 2>/dev/null || echo '?')"
           echo "Pushing $MAIN_LIVE to bainluck-heavy ($BEHIND commits behind)."
 

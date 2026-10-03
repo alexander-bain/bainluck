@@ -71,6 +71,23 @@ export interface RelatedRailQuery {
   fallbackTitle?: string;
 }
 
+/** #10319: this competition must never reopen the generic men's soccer rail. */
+export const SERIE_A_FEMMINILE_TAGS = [
+  "sport:soccer",
+  "league:serie_a_femminile",
+  "gender:women",
+];
+
+/** Require the producer's exact competition/gender tags and refuse conflicts.
+ * Extra non-identity tags (status, tier, etc.) remain ordinary feed metadata. */
+export function hasSerieAFemminileTags(tags: string[] | null | undefined): boolean {
+  if (!Array.isArray(tags)) return false;
+  return SERIE_A_FEMMINILE_TAGS.every((tag) => tags.includes(tag)) &&
+    tags.every((tag) => typeof tag === "string" && (
+      !/^(sport|league|gender):/.test(tag) || SERIE_A_FEMMINILE_TAGS.includes(tag)
+    ));
+}
+
 /**
  * The tag query and heading for the related rail at the foot of a game page.
  *
@@ -82,6 +99,13 @@ export function relatedRailQuery(
   eventTags: string[] | null | undefined,
 ): RelatedRailQuery | null {
   if (!sportKey) return null;
+  if (sportKey === "soccer_italy_serie_a_women") {
+    if (!hasSerieAFemminileTags(eventTags)) return null;
+    return {
+      tags: [...SERIE_A_FEMMINILE_TAGS],
+      title: "More Serie A Femminile (Women)",
+    };
+  }
   const category = getCategoryForLeague(sportKey);
   if (!category) return null;
 

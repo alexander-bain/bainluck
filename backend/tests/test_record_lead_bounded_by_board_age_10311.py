@@ -69,7 +69,7 @@ class TestTheSpecimen:
         out = record_text(
             MONTREAL_CURRENT_RECORD, MONTREAL_STANDINGS, BOARD_WRITTEN, SEEN
         )
-        assert out == "1-0"
+        assert out == "1-0-0"  # r2: the board keeps its overtime-loss column
 
     def test_without_the_stamp_the_old_answer_comes_back(self):
         # Strawman: the stamp is what carries the fix. Remove it and #5520's
@@ -81,7 +81,7 @@ class TestTheSpecimen:
         out = record_text(
             OTTAWA_CURRENT_RECORD, OTTAWA_AFTER_ITS_OPENER, BOARD_WRITTEN, SEEN
         )
-        assert out == "0-1"
+        assert out == "0-1-0"
 
 
 class TestTheMlbControl:
@@ -129,12 +129,12 @@ class TestTheBound:
                 "2026-10-03T08:00:00.078586Z",
                 SEEN,
             )
-            == "1-0"
+            == "1-0-0"
         )
         naive = BOARD_WRITTEN.replace(tzinfo=None)
         assert (
             record_text(MONTREAL_CURRENT_RECORD, MONTREAL_STANDINGS, naive, SEEN)
-            == "1-0"
+            == "1-0-0"
         )
 
     def test_the_real_clock_is_used_when_no_now_is_passed(self):
@@ -142,7 +142,7 @@ class TestTheBound:
         # fails on any real clock after the stamp.
         just_now = datetime.now(timezone.utc) - timedelta(minutes=1)
         assert (
-            record_text(MONTREAL_CURRENT_RECORD, MONTREAL_STANDINGS, just_now) == "1-0"
+            record_text(MONTREAL_CURRENT_RECORD, MONTREAL_STANDINGS, just_now) == "1-0-0"
         )
 
     def test_the_rollover_and_behind_arms_are_unchanged(self):
@@ -177,20 +177,66 @@ class TestTheServedSurfaces:
 
     def test_the_card_payload_serves_one_record_and_it_is_the_board(self):
         data = _format_team_data(_montreal_row())
-        assert data["record"] == "1-0"
+        assert data["record"] == "1-0-0"
         assert data["standings"]["wins"] == 1
         assert data["standings"]["losses"] == 0
 
     def test_the_hero_reads_the_board(self):
         out = _compute_standings_context(_montreal_row(), None, "Canadiens", "Penguins")
-        assert out["home"].startswith("1-0, #3 Atlantic")
+        assert out["home"].startswith("1-0-0, #3 Atlantic")
         assert "41-21-10" not in out["home"]
 
     def test_the_reconciler_threads_the_stamp_through(self):
         record, standings = reconciled_record_and_standings(
             MONTREAL_CURRENT_RECORD, MONTREAL_STANDINGS, BOARD_WRITTEN, SEEN
         )
-        assert record == "1-0"
-        # The board already says 1-0, so nothing is rewritten and the blob is
-        # returned by identity.
-        assert standings is MONTREAL_STANDINGS
+        assert record == "1-0-0"
+        # r2: the served record has three parts and the board's blob two, so
+        # the reconciler writes the third back as it does for #10252's
+        # Carolina; the argument itself is never mutated.
+        assert (standings["wins"], standings["losses"], standings["draws"]) == (1, 0, 0)
+        assert "draws" not in MONTREAL_STANDINGS
+
+
+class TestTheBoardKeepsItsOvertimeLossColumn:
+    """r2. Once the board won, the Canadiens hero read "1-0" beside the
+    Penguins' "1-0-0" (production, 2026-10-03 12:05Z, v5441): the NHL board
+    stores no overtime-loss key. The column is recovered from the board's own
+    splits only when its points confirm hockey scoring."""
+
+    PITTSBURGH_STANDINGS = {
+        **MONTREAL_STANDINGS,
+        "div_rank": 2,
+        "division": "Metropolitan Division",
+    }
+
+    def test_the_specimen_pair_reads_in_one_shape(self):
+        pit = record_text("1-0-0", self.PITTSBURGH_STANDINGS, BOARD_WRITTEN, SEEN)
+        mtl = record_text(MONTREAL_CURRENT_RECORD, MONTREAL_STANDINGS, BOARD_WRITTEN, SEEN)
+        assert (pit, mtl) == ("1-0-0", "1-0-0")
+
+    def test_an_overtime_loss_on_the_board_alone_is_recovered(self):
+        board = {"wins": 2, "losses": 1, "points": 5, "home_record": "1-1-0", "road_record": "1-0-1"}
+        assert record_text(None, board) == "2-1-1"
+
+    def test_controls_the_column_is_never_invented(self):
+        base = {"wins": 2, "losses": 1, "points": 5, "home_record": "1-1-0", "road_record": "1-0-1"}
+        # MLB: two-part splits.
+        assert record_text(None, {"wins": 2, "losses": 1, "home_record": "1-1", "road_record": "1-0"}) == "2-1"
+        # Splits that do not add up to the board's wins and losses.
+        assert record_text(None, {**base, "road_record": "2-0-1"}) == "2-1"
+        # Points that are not 2 a win + 1 an overtime loss (soccer's 3 a win).
+        assert record_text(None, {**base, "points": 7}) == "2-1"
+        # No points at all (an NFL board), or an unreadable one.
+        assert record_text(None, {k: v for k, v in base.items() if k != "points"}) == "2-1"
+        assert record_text(None, {**base, "points": "5"}) == "2-1"
+        # A sport that names its third column composes it itself.
+        assert record_text(None, {**base, "ties": 0}) == "2-1"
+        assert record_text(None, {**base, "draws": 3}) == "2-1-3"
+
+    def test_the_client_composed_snapshot_is_unchanged(self):
+        # The reconciler compares against what a client composes from the blob;
+        # that string must stay two-part or Carolina's card loses its column.
+        from app.utils.standings_shape import _snapshot_record
+
+        assert _snapshot_record(MONTREAL_STANDINGS) == "1-0"

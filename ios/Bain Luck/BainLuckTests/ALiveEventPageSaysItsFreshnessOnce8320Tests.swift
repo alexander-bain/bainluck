@@ -21,7 +21,7 @@ import XCTest
 ///
 /// The page carries one delivery status beside the hero probability. Manual
 /// refresh remains in the toolbar; fullscreen carries its own status because
-/// it covers the hero. Mounted page tests in VisibleLivePriceStatusTests prove
+/// it covers the hero. Mounted page tests in CompactEventPriceStatusTests prove
 /// the status is readable without opening the disclosure.
 ///
 /// These are source scans because the routing lives in `View` bodies no test
@@ -84,7 +84,7 @@ final class ALiveEventPageSaysItsFreshnessOnce8320Tests: XCTestCase {
 
     func testReadableStatusAndManualRefreshAreSeparate() throws {
         let page = try code("Views", "EventDetailView.swift")
-        XCTAssertEqual(occurrences(of: "VisibleLivePriceStatusView(status:vm.liveUpdateStatus", in: page), 1)
+        XCTAssertEqual(occurrences(of: "CompactEventPriceStatusView(status:vm.liveUpdateStatus", in: page), 1)
         XCTAssertEqual(occurrences(of: "LiveUpdateStatusView(status:vm.liveUpdateStatus)", in: page), 0)
         XCTAssertTrue(page.contains(".accessibilityLabel(\"Refreshnow\")"))
         XCTAssertTrue(page.contains("Button{Task{awaitvm.load()}}label:{Image(systemName:\"arrow.clockwise\")"))

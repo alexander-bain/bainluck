@@ -1,4 +1,4 @@
-"""#4962 — bounded undo for the two pinned image repairs (D51).
+"""#4962/#10326 — bounded undo for the pinned image repairs (D51).
 
 Restore only the named identities, while their image and dimensions are still
 NULL, from a captured backup of the known bad photo. Never overwrite a re-pick.
@@ -138,7 +138,7 @@ def main() -> int:
         "--apply", action="store_true", help="restore still-cleared pinned rows"
     )
     parser.add_argument(
-        "--ids", help="subset of the two pinned #4962 IDs; widening refused"
+        "--ids", help="subset of the pinned #4962/#10326 IDs; widening refused"
     )
     return asyncio.run(run(parser.parse_args()))
 

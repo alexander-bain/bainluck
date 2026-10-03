@@ -12,11 +12,14 @@ export interface LiveGameMarkets extends GameMarketsResponse {
   outcome_observed_at?: Record<string, string | null>;
   open_winner_quote?: OpenWinnerQuote | null;
   closed_winner_market_ids?: number[];
+  /** #10236 typed During matrix; the page renders only what adopt() accepted. */
+  during_player_props?: { rows?: WireRow[] } | null;
 }
 
 type WireRow = Record<string, unknown>;
+/** `evidence` = the clocks whose advance may (re)admit the row; defaults to its own contributors. */
 type Row = { key: string; prices: unknown[]; source: unknown; markets: number[]; contributors: string[];
-  hit: unknown; winner: unknown; actual: unknown; priced: boolean };
+  evidence?: string[]; hit: unknown; winner: unknown; actual: unknown; priced: boolean };
 const positive = (value: unknown): value is number => typeof value === 'number' && Number.isSafeInteger(value) && value > 0;
 const ids = (value: unknown): number[] => Array.isArray(value) ? value.filter(positive) : [];
 const grade = (value: unknown): boolean | null => typeof value === 'boolean' ? value : null;
@@ -47,6 +50,34 @@ function rows(body: LiveGameMarkets): Row[] {
       add(JSON.stringify(['matchup', matchup.market_name, row.name]), { ...row, source: matchup.source },
         [...ids(matchup._market_ids), ...ids([matchup._market_id])]);
     }
+  }
+  // #10358: a During cell is one typed question (question_key carries subject|stat|period|bound|side).
+  // Its number and every contributor's own quote and identity ride the same fences as the old rows.
+  // Whether a question is served at all is decided across its ladder (the producer's monotonic rule
+  // drops a rung on a NEIGHBOUR's price), so any rung's clock is evidence that may readmit it.
+  const during = Array.isArray(body.during_player_props?.rows) ? body.during_player_props!.rows! : [];
+  const ladderOf = (row: WireRow) => {
+    const subject = (row.subject ?? {}) as WireRow, predicate = (row.predicate ?? {}) as WireRow;
+    return JSON.stringify([subject.key, row.stat_key, row.period_key, predicate.side]);
+  };
+  const cellContributors = (row: WireRow) => (Array.isArray(row.contributors) ? row.contributors : []) as WireRow[];
+  const outcomesOf = (row: WireRow) =>
+    [...new Set([...ids(row.contributor_outcome_ids), ...ids(cellContributors(row).map(c => c.outcome_id))])].map(String);
+  const ladders = new Map<string, Set<string>>();
+  for (const row of during) {
+    const ladder = ladders.get(ladderOf(row)) ?? new Set<string>();
+    outcomesOf(row).forEach(id => ladder.add(id)); ladders.set(ladderOf(row), ladder);
+  }
+  for (const row of during) {
+    const current = (row.current ?? {}) as WireRow, grades = (row.result ?? {}) as WireRow;
+    const contributors = cellContributors(row);
+    result.push({ key: JSON.stringify(['during', row.question_key]),
+      prices: [current.probability ?? null, ...contributors.map(c => c.probability ?? null)],
+      source: JSON.stringify(contributors.map(c => [c.source, c.market_id, c.outcome_id, c.side, c.period_key])),
+      markets: [...new Set([...ids(row._market_ids), ...ids(contributors.map(c => c.market_id))])],
+      contributors: outcomesOf(row), evidence: [...ladders.get(ladderOf(row))!],
+      hit: grade(grades.hit), winner: grade(grades.is_winner), actual: grades.actual ?? null,
+      priced: current.state === 'quoted' && typeof current.probability === 'number' && Number.isFinite(current.probability) });
   }
   if (body.open_winner_quote) {
     const quote = body.open_winner_quote;
@@ -117,6 +148,10 @@ export function createGameMarketsReconciler() {
       const previous = rows(held), before = new Map(previous.map(row => [row.key, row]));
       const nextWithdrawn = new Map(withdrawn);
       const changed = new Set<number>();
+      // #10358: the section is published when the served game turns live, not by a quote tick; its
+      // first rows are admitted like the final winner board's, behind the same regression fences.
+      const duringPublished = !previous.some(row => row.key.startsWith('["during"'));
+      const advanced = (id: string) => clocks.has(id) && clocks.get(id)! > (revisions.get(id) ?? -Infinity);
       for (const [id, date] of clocks) {
         const prior = revisions.get(id);
         if (prior !== undefined && date < prior) return held;
@@ -151,10 +186,11 @@ export function createGameMarketsReconciler() {
         if (!terminal && removed) {
           const contributors = new Set([...removed, ...row.contributors]);
           if (!contributors.size || [...contributors].some(id => !clocks.has(id)) ||
-              ![...contributors].some(id => clocks.get(id)! > (revisions.get(id) ?? -Infinity))) return held;
+              ![...contributors, ...(row.evidence ?? [])].some(advanced)) return held;
         }
-        if (!prior && !terminal && !row.key.startsWith('winner:') && row.contributors.length && row.contributors.every(id => revisions.has(id)) &&
-            !row.contributors.some(id => (clocks.get(id) ?? -Infinity) > revisions.get(id)!)) return held;
+        if (!prior && !terminal && !row.key.startsWith('winner:') && !(duringPublished && row.key.startsWith('["during"')) &&
+            row.contributors.length && row.contributors.every(id => revisions.has(id)) &&
+            ![...row.contributors, ...(row.evidence ?? [])].some(advanced)) return held;
         if (prior?.priced && (JSON.stringify(prior.prices) !== JSON.stringify(row.prices) || prior.source !== row.source) &&
             !terminal && !row.markets.some(id => changed.has(id))) return held;
         nextWithdrawn.delete(row.key);

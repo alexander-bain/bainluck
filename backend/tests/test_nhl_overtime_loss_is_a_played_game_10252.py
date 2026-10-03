@@ -84,7 +84,9 @@ class TestAnOvertimeLossIsAPlayedGame:
 class TestTheRecordKeepsItsOvertimeLoss:
     def test_record_text_serves_current_record_for_the_specimen(self):
         assert record_text(CAROLINA_CURRENT_RECORD, CAROLINA_STANDINGS) == "0-0-1"
-        assert record_text(WASHINGTON_CURRENT_RECORD, WASHINGTON_STANDINGS) == "0-0"
+        # #10311 r2: the unplayed board keeps hockey's three columns, the same
+        # string as Washington's own `current_record`.
+        assert record_text(WASHINGTON_CURRENT_RECORD, WASHINGTON_STANDINGS) == "0-0-0"
 
     def test_the_team_card_composes_the_same_record(self):
         record, aligned = reconciled_record_and_standings(
@@ -107,7 +109,7 @@ class TestTheHeroLine:
             "Washington Capitals",
         )
         assert ctx["home"] == "0-0-1, #5 Metropolitan, 1 pt"
-        assert ctx["away"] == "0-0, 0 pts"
+        assert ctx["away"] == "0-0-0, 0 pts"
 
     def test_more_than_one_point_stays_plural(self):
         later = {**CAROLINA_STANDINGS, "wins": 3, "losses": 2, "points": 7}

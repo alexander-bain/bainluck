@@ -37,11 +37,13 @@ def _yes_no(market_id, name, yes, **kw):
 
 @pytest.mark.asyncio
 async def test_each_event_row_carries_its_own_market_id():
+    # A clock inside every title's period: /events drops past-period titles
+    # (#10331), so on a later clock these rows would not be served at all.
     served = await get_events(_db([
         _yes_no(62786086, "Will a Category 5 hurricane make landfall in 2026?", 0.2),
         _yes_no(41503, "Will a magnitude 8.0 earthquake hit in 2026?", 0.3),
         _yes_no(9917, "Number of tornadoes in Oct 2026 above 100?", 0.55),
-    ]))
+    ]), now=datetime(2026, 10, 3, 12, 0, tzinfo=timezone.utc))
     ids = {row["q"]: row["market_id"] for group in served.values() for row in group}
     assert ids == {
         "Will a Category 5 hurricane make landfall in 2026?": 62786086,

@@ -475,7 +475,34 @@ def _category_words(category: str | None) -> str:
     return token.replace("_", " ")
 
 
-def _image_query_candidates(name: str, category: str | None) -> list[str]:
+#: #10326. A game's NAME is its two teams, and a team name is the one thing a stock
+#: photo library reads literally: "Packers vs. Lions" (futures_markets 61040985,
+#: `llm_sport_category='football'`) was illustrated with a close-up of a lioness.
+#: The #4962 qualifier does not rescue it — measured against the live Pexels API on
+#: 2026-10-03, "Packers Lions football" returns that same lioness (32775211) first
+#: and four more lions after it; "Bears Eagles football" returns five bald eagles;
+#: "Dolphins Rams football" returns four dolphins. Pexels holds no team photographs
+#: to find, so a game asks for its SPORT. Each phrase below was measured the same
+#: day and its top five were all that sport ("basketball game" returned arcades,
+#: hence "match"). A sport not listed keeps the name query.
+_GAME_SPORT_QUERIES = {
+    "football": "american football game",
+    "soccer": "soccer match",
+    "basketball": "basketball match",
+    "baseball": "baseball game",
+    "hockey": "ice hockey game",
+    "tennis": "tennis match",
+    "mma": "mixed martial arts fight",
+    "boxing": "boxing match",
+    "esports": "esports gaming",
+    "cricket": "cricket match",
+}
+_HEAD_TO_HEAD = re.compile(r"\s(?:vs\.?|v\.?|@)\s", re.IGNORECASE)
+
+
+def _image_query_candidates(
+    name: str, category: str | None, *, linked_to_game: bool = False
+) -> list[str]:
     """The Pexels queries to try for this market, best first (#4962).
 
     THE DEFECT THIS EXISTS FOR — futures_markets "Presidents Cup Winner",
@@ -505,7 +532,14 @@ def _image_query_candidates(name: str, category: str | None) -> list[str]:
     to its own category ("Will the A?" + politics) must not search "politics
     politics", and a name that already says "golf" gains nothing from repeating
     it.
+
+    A HEAD-TO-HEAD GAME (#10326) asks for its sport and nothing else — see
+    `_GAME_SPORT_QUERIES`. `linked_to_game` is the row's `event_id IS NOT NULL`;
+    the name's own "A vs. B" covers a row the matcher has not linked yet.
     """
+    sport_query = _GAME_SPORT_QUERIES.get((category or "").strip().lower())
+    if sport_query and (linked_to_game or _HEAD_TO_HEAD.search(name or "")):
+        return [sport_query]
     base = _extract_image_keywords(name, category)
     if not base.strip():
         return []
@@ -600,7 +634,12 @@ async def enrich_market_images(limit: int = 50):
 
     async with get_task_session() as session:
         result = await session.execute(
-            select(FuturesMarket.id, FuturesMarket.name, FuturesMarket.llm_sport_category)
+            select(
+                FuturesMarket.id,
+                FuturesMarket.name,
+                FuturesMarket.llm_sport_category,
+                FuturesMarket.event_id,
+            )
             .where(
                 FuturesMarket.image_url.is_(None),
                 FuturesMarket.status == "open",
@@ -610,8 +649,10 @@ async def enrich_market_images(limit: int = 50):
         )
         markets = result.all()
 
-        for market_id, name, category in markets:
-            candidates = _image_query_candidates(name, category)
+        for market_id, name, category, event_id in markets:
+            candidates = _image_query_candidates(
+                name, category, linked_to_game=event_id is not None
+            )
             if not candidates:
                 continue
 

@@ -378,7 +378,13 @@ def test_natural_events_carry_the_price_behind_their_hundred():
     )
     session.commit()
 
-    events = asyncio.run(get_events(AsyncDB(session)))
+    events = asyncio.run(get_events(
+        AsyncDB(session),
+        # The clock of the 2026-09-16 measurement: "Number of tornadoes in Sep
+        # 2026?" is a past-period title on any later one, and /events drops
+        # those (#10331).
+        now=datetime(2026, 9, 16, 12, 0, tzinfo=timezone.utc),
+    ))
     _assert_travels(events["hurricane"][0], NINETY_NINE_FIVE, expected_prob=100)
     _assert_travels(events["tornadoes"][0], NINETY_NINE_FIVE, expected_prob=100)
 

@@ -521,14 +521,8 @@ describe("#5072 — the live event page's own function-valued cadence", () => {
    */
   const eventRefreshInterval = (
     status: string | null | undefined,
-    streamConnected: boolean,
     intervals: { live: number; scheduled: number },
-  ): number =>
-    streamConnected
-      ? intervals.scheduled
-      : status === "live"
-        ? intervals.live
-        : intervals.scheduled;
+  ): number => (status === "live" ? intervals.live : intervals.scheduled);
 
   const LIVE_REFRESH_INTERVAL = 32_000;
   const SCHEDULED_REFRESH_INTERVAL = 120_000;
@@ -537,16 +531,15 @@ describe("#5072 — the live event page's own function-valued cadence", () => {
   const CACHED_LIVE = { status: "live" };
 
   /** The page's actual config value, closure and all. */
-  const pageInterval = (streamConnected: boolean) => (data?: unknown) =>
+  const pageInterval = () => (data?: unknown) =>
     eventRefreshInterval(
       (data as { status?: string } | undefined)?.status,
-      streamConnected,
       { live: LIVE_REFRESH_INTERVAL, scheduled: SCHEDULED_REFRESH_INTERVAL },
     );
 
   it("arms — the regression CERT-2584 caught, stated as the assertion it should always have had", () => {
     const h = harness();
-    h.recovery.recordError(KEY, throttled(), pageInterval(false), CACHED_LIVE);
+    h.recovery.recordError(KEY, throttled(), pageInterval(), CACHED_LIVE);
 
     expect(h.recovery.armedKeys()).toEqual([KEY]);
     expect(h.recovery.pendingDelayMs(KEY)).toBe(LIVE_REFRESH_INTERVAL);
@@ -557,12 +550,12 @@ describe("#5072 — the live event page's own function-valued cadence", () => {
 
     // 1. The production-shape failure: one 429 on the live event key, with the
     //    payload the reader is looking at still in cache.
-    h.recovery.recordError(KEY, throttled(), pageInterval(false), CACHED_LIVE);
+    h.recovery.recordError(KEY, throttled(), pageInterval(), CACHED_LIVE);
     expect(h.recovery.pendingDelayMs(KEY)).toBe(LIVE_REFRESH_INTERVAL);
 
     // 2. The comeback comes due and asks the server again. Before this repair
     //    no request was ever made for this key, for the life of the mount.
-    h.failNextNudge(pageInterval(false), CACHED_LIVE);
+    h.failNextNudge(pageInterval(), CACHED_LIVE);
     await h.tick();
     expect(h.nudged).toEqual([KEY]);
 
@@ -587,7 +580,7 @@ describe("#5072 — the live event page's own function-valued cadence", () => {
     // value; evaluating with the payload on screen gives the same answer swr's
     // own poll would compute, which is the authoritative cadence.
     const h = harness();
-    h.recovery.recordError(KEY, throttled(), pageInterval(false), {
+    h.recovery.recordError(KEY, throttled(), pageInterval(), {
       status: "live",
     });
 

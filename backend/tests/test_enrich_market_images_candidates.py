@@ -14,6 +14,7 @@ and none of them is visible from the pure function:
    budget runs out on keeps `image_url IS NULL` and is the next pass's first
    row — the select is ordered by `volume_24h desc`.
 
+Rows are the SELECT's `(id, name, llm_sport_category, event_id)`.
 The fake session is deliberately dumb: the task's first `execute` is its SELECT
 and every later one is an UPDATE it wrote. Nothing here touches a database.
 """
@@ -85,7 +86,7 @@ def rig(monkeypatch):
 PHOTO = ("https://images.pexels.com/photos/1/a.jpeg?auto=compress&w=1200", 1200, 800)
 
 #: The cert's own specimen: "Presidents Cup Winner", `llm_sport_category='golf'`.
-PRESIDENTS_CUP = (109001, "Presidents Cup Winner", "golf")
+PRESIDENTS_CUP = (109001, "Presidents Cup Winner", "golf", None)
 
 
 @pytest.mark.asyncio
@@ -128,7 +129,9 @@ async def test_a_row_costs_at_most_two_requests_even_when_nothing_is_found(rig):
 
 @pytest.mark.asyncio
 async def test_a_row_with_no_category_signal_asks_exactly_once(rig):
-    _session, asked = rig([(1, "Manchester United title", "other")], lambda _q: PHOTO)
+    _session, asked = rig(
+        [(1, "Manchester United title", "other", None)], lambda _q: PHOTO
+    )
 
     await enrich_markets.enrich_market_images(limit=10)
 
@@ -138,7 +141,7 @@ async def test_a_row_with_no_category_signal_asks_exactly_once(rig):
 @pytest.mark.asyncio
 async def test_the_pass_never_spends_more_requests_than_its_limit(rig):
     # Four rows, every qualified query missing, so each row wants two requests.
-    rows = [(i, f"Presidents Cup {i} Winner", "golf") for i in range(4)]
+    rows = [(i, f"Presidents Cup {i} Winner", "golf", None) for i in range(4)]
     _session, asked = rig(rows, lambda _q: None)
 
     stats = await enrich_markets.enrich_market_images(limit=3)
@@ -151,7 +154,7 @@ async def test_the_pass_never_spends_more_requests_than_its_limit(rig):
 async def test_the_budget_is_requests_not_rows_so_a_clean_pass_is_unchanged(rig):
     # Every qualified query hits: five rows, five requests — exactly what this
     # task spent for five rows before the fallback existed.
-    rows = [(i, f"Team {i} championship", "soccer") for i in range(5)]
+    rows = [(i, f"Team {i} championship", "soccer", None) for i in range(5)]
     session, asked = rig(rows, lambda _q: PHOTO)
 
     stats = await enrich_markets.enrich_market_images(limit=5)
@@ -163,7 +166,9 @@ async def test_the_budget_is_requests_not_rows_so_a_clean_pass_is_unchanged(rig)
 
 @pytest.mark.asyncio
 async def test_a_blank_query_row_is_skipped_without_spending_a_request(rig):
-    _session, asked = rig([(1, "Will the A?", None), PRESIDENTS_CUP], lambda _q: PHOTO)
+    _session, asked = rig(
+        [(1, "Will the A?", None, None), PRESIDENTS_CUP], lambda _q: PHOTO
+    )
 
     await enrich_markets.enrich_market_images(limit=10)
 
@@ -229,9 +234,33 @@ class TestTheRepickInterlock:
         _old, _new, changed = script.query_changed("politics", "politics")
         assert changed is False
 
-    def test_the_default_scope_is_exactly_the_two_filed_rows(self):
+    def test_the_10326_row_is_refused_on_the_build_that_fetched_the_lioness(
+        self, monkeypatch
+    ):
+        # 61040985's lioness came from #4962's OWN qualified query, which already
+        # differs from legacy — so "changed vs legacy" alone passes on the very
+        # build that fetched it. The recorded fetching query must refuse there.
         script = self._script()
-        assert script._parse_ids(None) == (16757297, 109295)
+        fetched = script.FETCHED_BY_QUERY[61040985]
+        name, category, _photo = script.PINNED_SPECIMENS[61040985]
+        old, new, changed = script.query_changed(name, category, fetched)
+        assert (old, new, changed) == (
+            "Packers Lions football",
+            "american football game",
+            True,
+        )
+
+        def pre_10326(_name, _category):
+            return ["Packers Lions football", "Packers Lions"]
+
+        monkeypatch.setattr(script, "_image_query_candidates", pre_10326)
+        assert script.query_changed(name, category)[2] is True  # the hole
+        assert script.query_changed(name, category, fetched)[2] is False
+
+    def test_the_default_scope_is_exactly_the_filed_rows(self):
+        script = self._script()
+        assert script._parse_ids(None) == (16757297, 109295, 61040985)
+        assert script._parse_ids("61040985") == (61040985,)
         import pytest
 
         assert script._parse_ids("109295") == (109295,)
@@ -273,6 +302,11 @@ class TestPinnedImageRepair:
         script = TestTheRepickInterlock._script()
         row = self.specimen(script)
         assert script.is_filed_bad_image(row)
+        lioness = self.specimen(script, market_id=61040985)
+        assert script.is_filed_bad_image(lioness)
+        assert not script.is_filed_bad_image(
+            self.specimen(script, market_id=61040985, name="Bears vs. Lions")
+        )
         for changes in [
             dict(name="Different question"),
             dict(llm_sport_category="golf"),
