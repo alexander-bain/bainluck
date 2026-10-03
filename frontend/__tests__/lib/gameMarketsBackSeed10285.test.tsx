@@ -90,3 +90,62 @@ test('only the most recent eight games are held', async () => {
   expect(seen[0]?.event_id).toBe(209);
   kept.unmount();
 });
+
+// #10285 correction (Sol 0851Z): Back must not resurrect a quote the page withdrew. A null-clock
+// withdrawal leaves no clock in the held body, so a reconciler seeded from that body alone had no
+// watermark and adopted the unchanged 40% it had withdrawn. The remounted page keeps the reconciler.
+const quoted = (p: number | null, clock: string | null, id = 301) => body(id, {
+  other: [other('Home by 1-6', p as number, 1), other('Away by 1-6', 0.6, 2)],
+  outcome_revision_at: { 1: clock, 2: R1 } } as unknown as Partial<LiveGameMarkets>);
+const R1 = '2026-10-03T04:00:00Z', R2 = '2026-10-03T04:05:00Z';
+const homePrice = (data?: LiveGameMarkets) => (data?.other as unknown as { probability: number | null }[] | undefined)?.[0].probability;
+const poll = async () => { await act(async () => { jest.advanceTimersByTime(60_250); await drain(); }); };
+
+test('control: the page that never unmounts refuses the unchanged quote it withdrew', async () => {
+  fetcher.mockResolvedValueOnce(quoted(0.4, R1)).mockResolvedValueOnce(quoted(null, null)).mockResolvedValueOnce(quoted(0.4, R1));
+  const view = mount(301); await act(drain);
+  expect(homePrice(view.last())).toBe(0.4);
+  await poll(); expect(homePrice(view.last())).toBeNull();
+  await poll(); expect(fetcher).toHaveBeenCalledTimes(3);
+  expect(homePrice(view.last())).toBeNull();
+  view.unmount();
+});
+
+test('a quote withdrawn in session stays withdrawn after Back when the next read is unchanged', async () => {
+  fetcher.mockResolvedValueOnce(quoted(0.4, R1, 302)).mockResolvedValueOnce(quoted(null, null, 302));
+  const first = mount(302); await act(drain); await poll();
+  expect(homePrice(first.last())).toBeNull();
+  first.unmount();
+
+  fetcher.mockResolvedValueOnce(quoted(0.4, R1, 302));
+  seen.length = 0;
+  const back = mount(302);
+  expect(homePrice(seen[0])).toBeNull();
+  await act(drain);
+  expect(fetcher).toHaveBeenCalledTimes(3);
+  expect(seen.map(homePrice)).not.toContain(0.4);
+  back.unmount();
+});
+
+test('a withdrawal read on one visit fences the unchanged quote on the next', async () => {
+  fetcher.mockResolvedValueOnce(quoted(0.4, R1, 303));
+  const first = mount(303); await act(drain); first.unmount();
+  fetcher.mockResolvedValueOnce(quoted(null, null, 303));
+  const second = mount(303); await act(drain);
+  expect(homePrice(second.last())).toBeNull();
+  second.unmount();
+  fetcher.mockResolvedValueOnce(quoted(0.4, R1, 303));
+  seen.length = 0;
+  const third = mount(303); await act(drain);
+  expect(seen.map(homePrice)).not.toContain(0.4);
+  third.unmount();
+});
+
+test('after Back, only a newer revision of its own contributor restores the withdrawn quote', async () => {
+  fetcher.mockResolvedValueOnce(quoted(0.4, R1, 304)).mockResolvedValueOnce(quoted(null, null, 304));
+  const first = mount(304); await act(drain); await poll(); first.unmount();
+  fetcher.mockResolvedValueOnce(quoted(0.45, R2, 304));
+  const back = mount(304); await act(drain);
+  expect(homePrice(back.last())).toBe(0.45);
+  back.unmount();
+});
