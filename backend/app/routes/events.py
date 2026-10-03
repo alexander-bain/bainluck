@@ -103,6 +103,11 @@ from app.utils.event_rails import (
 from app.utils.lifecycle import EVENT_NOT_STARTED, served_event_status
 from app.utils.score_observation import score_observation_fields
 from app.utils.event_props_matrix import blend_mean, build_during_player_props
+from app.utils.event_question_matrix import (
+    build_game_question_matrix,
+    build_series_question_matrix,
+    question_market_facts,
+)
 # ONE definition of the state vocabulary (live/048) — imported, not spelled, so
 # that widening it is a rename here rather than a literal this route quietly
 # stops matching. CERT-786 is what that quiet stop looks like from a user's side.
@@ -27002,6 +27007,8 @@ async def _build_game_markets(
     # #9849: the same plain-list pass for the venue's threshold label (#9383),
     # read here for the same reason — no lazy ORM read after a commit boundary.
     _threshold_label_by_market_id = {m.id: market_threshold_label(m) for m in markets}
+    # #10238 G0 (A1): the question matrix's market facts, same plain-list pass.
+    _question_market_facts = {m.id: question_market_facts(m) for m in markets}
 
     # #1735 — THE SUPPRESSED ROWS ARE EXACTLY THE ROWS OWED A RESULT.
     #
@@ -27635,6 +27642,39 @@ async def _build_game_markets(
                 or _row.get("outcome_name")
             )
 
+    # #10238 G1 — the Game question matrix: additive, built from the FINAL served
+    # lists above and the legs already loaded, with this function's own decisions
+    # passed in; see `app/utils/event_question_matrix.py`. Never fails the page.
+    try:
+        _game_question_matrix = build_game_question_matrix(
+            served={
+                "totals": game_totals,
+                "team_totals": team_total_items,
+                "spreads": spreads,
+                "period_markets": period_markets,
+                "matchups": matchups,
+                "other": other_markets,
+            },
+            outcomes=outcomes,
+            market_facts=_question_market_facts,
+            observed=_observed,
+            markets_with_a_winner=markets_with_a_winner,
+            verdict_is_provable=_verdict_is_provable,
+            is_pregame=_pregame_mark_is_pregame,
+            period_from_ticker=_extract_period_from_ticker,
+            period_from_name=_extract_period_from_name,
+            row_market_ids=_row_market_ids,
+            sport_prefix=_gm_sport_prefix,
+            home_team=event.home_team_name,
+            away_team=event.away_team_name,
+            commence_time=event.commence_time,
+        )
+    except Exception as exc:
+        logger.warning(
+            "game-markets %s: question matrix refused on error (%s)", event_id, exc
+        )
+        _game_question_matrix = None
+
     response = {
         "event_id": event_id,
         "home_team": event.home_team_name,
@@ -27716,6 +27756,8 @@ async def _build_game_markets(
             if _during_prop_candidates is not None
             else None
         ),
+        # #10238 G2 — additive; null when no question is built. See G1.
+        "game_question_matrix": _game_question_matrix,
     }
 
     # Caching is the caller's job now (`_publish_game_markets`), so that a build
@@ -29801,6 +29843,7 @@ async def _build_related_futures(
     # belong to the matchup between BOTH teams, not one side. Loading them
     # separately avoids the home/away classification problems (Yes/No outcomes,
     # both-teams-match ambiguity) that caused them to be dropped or misplaced.
+    _series_question_matrix = None  # #10238 S0 — set by S1 below when built
     formatted_series: list[dict] = []
     if series_market_ids:
         series_outcomes_result = await db.execute(
@@ -29877,6 +29920,26 @@ async def _build_related_futures(
         relabel_series_card(
             formatted_series, {so.id: so.external_id for so in series_outcomes}
         )
+        # #10238 S1 — the Series question matrix, from the card just built and
+        # the legs it was built from. Its lifecycle is the Series market's own, so
+        # a final Game never closes an open Series. Never fails the page.
+        try:
+            _series_question_matrix = build_series_question_matrix(
+                formatted_series=formatted_series,
+                series_by_market=series_by_market,
+                series_withheld=series_withheld,
+                settled_before_the_game=lambda m: _settled_before_the_game(
+                    m, event.commence_time
+                ),
+                home_team=event.home_team_name,
+                away_team=event.away_team_name,
+            )
+        except Exception as exc:
+            logger.warning(
+                "related-futures %s: series question matrix refused on error (%s)",
+                event_id, exc,
+            )
+            _series_question_matrix = None
 
     resp = {
         "event_id": event_id,
@@ -29885,6 +29948,8 @@ async def _build_related_futures(
         "home_team_futures": home_futures,
         "away_team_futures": away_futures,
         "series_markets": formatted_series,
+        # #10238 S2 — additive; null when no Series question is built. See S1.
+        "series_question_matrix": _series_question_matrix,
         "total_count": len(home_futures) + len(away_futures),
         "summary": summary,
         "event_status": event.status,
