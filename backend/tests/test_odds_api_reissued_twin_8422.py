@@ -178,14 +178,21 @@ class TestTheLift:
 
 
 class FakeService:
-    def __init__(self, listed=None, fail=()):
+    def __init__(self, listed=None, fail=(), scored=None, scores_fail=()):
         self.listed, self.fail, self.calls = listed or {}, set(fail), []
+        self.scored, self.scores_fail, self.score_calls = scored or {}, set(scores_fail), []
 
     async def get_events(self, sport):
         self.calls.append(sport)
         if sport in self.fail:
             raise RuntimeError("503 from provider")
         return [{"id": i} for i in self.listed.get(sport, ())]
+
+    async def get_scores(self, sport, days_from=1):
+        self.score_calls.append((sport, days_from))
+        if sport in self.scores_fail:
+            raise RuntimeError("429 from provider")
+        return [{"id": i} for i in self.scored.get(sport, ())]
 
 
 @pytest.fixture
@@ -194,7 +201,9 @@ def sweep(monkeypatch):
     import app.tasks.odds_api_reissued_twin_sweep as mod
 
     state = {"rows": [GHOST, CANON], "banked": {}, "written": [], "lifted": {}, "confirmed": None,
-             "lines": {}, "lines_asked": [], "lines_fail": False}
+             "lines": {}, "lines_asked": [], "lines_fail": False,
+             # #10036 look-back arm: empty unless a test fills it.
+             "lb_rows": [], "moneylines": {}, "holders": set(), "lb_fail": False}
 
     @asynccontextmanager
     async def fake_session():
@@ -220,6 +229,17 @@ def sweep(monkeypatch):
             raise RuntimeError("statement timeout")
         return {i: v for i, v in state["lines"].items() if i in ids}
 
+    async def load_lookback_rows(session):
+        if state["lb_fail"]:
+            raise RuntimeError("statement timeout")
+        return state["lb_rows"], {r.event_id: "[]" for r in state["lb_rows"]}
+
+    async def load_moneylines(session, ids):
+        return {i: v for i, v in state["moneylines"].items() if i in ids}
+
+    async def load_market_holders(session, ids):
+        return {i for i in state["holders"] if i in ids}
+
     async def ensure_backup(session, tags, current):
         return len(tags)
 
@@ -238,6 +258,9 @@ def sweep(monkeypatch):
     monkeypatch.setattr(mod, "load_rows", load_rows)
     monkeypatch.setattr(mod, "load_banked_labels", load_banked)
     monkeypatch.setattr(mod, "load_book_lines", load_book_lines)
+    monkeypatch.setattr(mod, "load_lookback_rows", load_lookback_rows)
+    monkeypatch.setattr(mod, "load_moneylines", load_moneylines)
+    monkeypatch.setattr(mod, "load_market_holders", load_market_holders)
     monkeypatch.setattr(mod, "ensure_backup", ensure_backup)
     monkeypatch.setattr(mod, "write_tags", write_tags)
     monkeypatch.setattr(mod, "tagged_now", tagged_now)

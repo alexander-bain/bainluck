@@ -7072,8 +7072,10 @@ celery_app.conf.beat_schedule = {
     # #8422 — the Odds API re-issued-id fold. Undo: set
     # REISSUED_TWIN_SWEEP_DISABLED, confirm a `skipped` receipt, then
     # `scripts/restore_8422_odds_api_reissued_tags.py --apply`. Hourly at :51,
-    # a minute no other beat uses; its provider read costs no quota and is
-    # skipped entirely when no same-pair block exists.
+    # a minute no other beat uses; its `/events` read costs no quota and is
+    # skipped entirely when no same-pair block exists. #10036's look-back arm
+    # reads `/scores` (2 quota per sport) only for a sport holding a past-start
+    # ghost with a same-pair sibling.
     "odds-api-reissued-twin-sweep": {
         "task": "app.tasks.odds_api_reissued_twin_sweep",
         "schedule": crontab(minute="51"),

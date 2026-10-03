@@ -261,3 +261,163 @@ def relisted_banked_ids(
         for event_id, (sport, odds_ids) in banked.items()
         if sport in schedules and odds_ids & schedules[sport]
     )
+
+
+# ════════════════════════════════════════════════════════════════════════════
+# AFTER THE START — #10036
+# ════════════════════════════════════════════════════════════════════════════
+#
+# Everything above stops at MIN_LEAD, because ``/events`` drops a game once it
+# starts and "not listed" then means nothing. A ghost whose claimed start passes
+# before the sweep can decide it is stranded: WNBA 15322640 (Wings @ Valkyries,
+# 2026-10-02 01:00Z, ``odds_api:69f130a5…``, one BetRivers moneyline) sat
+# ``scheduled`` in search a day after a start that never happened, beside the
+# real game 15322555 (``odds_api:d0e97a8d…``, 10-03 01:00Z).
+#
+# After the start the provider still speaks, through a different door:
+# ``/scores?daysFrom=3`` lists, BY ID, every game it carries that is upcoming,
+# live, or started in the last three days. Read 2026-10-03 02:20Z it carried
+# ``d0e97a8d…`` (live, 37-44) and not ``69f130a5…`` at all. An id absent there
+# whose claimed start is inside the feed's window names no game the provider
+# ever started — the same id-keyed dereference as the listing arm, through the
+# provider's own records (gotcha #32's second arm), never a name or a time.
+#
+# That says the ghost was never a game. It does NOT say which game it became: a
+# rained-out KBO game whose id the provider dropped is absent too, and the one
+# carried sibling inside the gap is the NEXT game of the series. So the listing
+# arm's "the older id is the ghost" shortcut does not carry over — a re-issue
+# and a cancellation look the same here. What carries the label instead is the
+# ghost's own prices: every fully priced line it held on the sibling (#8755),
+# or — the one widening this arm gets — every moneyline it held, quoted by the
+# same sportsbook on the sibling. #8755 ignored a moneyline-only capture because
+# its only other signal was a pre-start listing gap; here the provider has also
+# said the id never started. Either way the page fold, which folds the ghost's
+# prices onto the sibling, adds nothing the sibling did not already hold.
+#
+# And the ghost must hold no linked market, so the fold carries no market
+# either: a wrong identity call could only hide a listing that never started.
+
+#: How far back a claimed start may sit. ``daysFrom=3`` covers 72 hours; the
+#: margin keeps a start near the edge from reading as absent.
+LOOKBACK = timedelta(days=2, hours=12)
+
+#: The ``daysFrom`` the look-back reads ``/scores`` with (the provider's max).
+SCORES_DAYS_FROM = 3
+
+#: Statuses a look-back SIBLING may be in: any row the provider still carries.
+#: A sibling that is itself a retired row is not something to fold onto.
+SIBLING_STATUSES = ("scheduled", "suspended", "live", "completed")
+
+#: One sportsbook's moneyline: ``(bookmaker, home_ml, away_ml)``.
+BookMoneyline = tuple[str, int, int]
+
+
+def moneylines_moved(ghost: frozenset, canonical: frozenset) -> bool:
+    """Every moneyline the ghost held, quoted by the same book on the sibling.
+
+    Empty ghost moneylines answer False, as :func:`lines_moved` does.
+    """
+    return bool(ghost) and ghost <= canonical
+
+
+def lookback_ghosts(rows: list[ReissueRow], *, now: datetime) -> list[ReissueRow]:
+    """Open rows whose claimed start has passed, inside the scores feed's window."""
+    return sorted(
+        (
+            r for r in rows
+            if r.status in OPEN_STATUSES
+            and now - LOOKBACK <= r.commence_time <= now - MIN_LEAD
+            and not r.already_tagged
+        ),
+        key=lambda r: r.event_id,
+    )
+
+
+def lookback_siblings(ghost: ReissueRow, rows: list[ReissueRow]) -> list[ReissueRow]:
+    """Same provider pair, inside the re-issue gap, any status the provider carries."""
+    key = pair_key(ghost)
+    return sorted(
+        (
+            r for r in rows
+            if r.event_id != ghost.event_id
+            and pair_key(r) == key
+            and r.status in SIBLING_STATUSES
+            and abs(r.commence_time - ghost.commence_time) <= MAX_REISSUE_GAP
+        ),
+        key=lambda r: r.event_id,
+    )
+
+
+def plan_lookback_tags(
+    rows: list[ReissueRow],
+    scores: dict[str, set[str]],
+    *,
+    now: datetime,
+    book_lines: dict[int, frozenset] | None = None,
+    moneylines: dict[int, frozenset] | None = None,
+    holds_markets: set[int] | frozenset = frozenset(),
+) -> ReissuePlan:
+    """Decide each past-start ghost against the provider's ``/scores`` ids.
+
+    ``scores`` maps a sport to the ids ``/scores?daysFrom=3`` returned on THIS
+    pass; a sport absent from it was not read and its ghosts are refused.
+    ``holds_markets`` names rows with at least one linked ``futures_markets``.
+    """
+    book_lines = book_lines or {}
+    moneylines = moneylines or {}
+    plan = ReissuePlan()
+    for ghost in lookback_ghosts(rows, now=now):
+        siblings = lookback_siblings(ghost, rows)
+        if not siblings:
+            continue
+        plan.blocks_examined += 1
+        ids = [ghost.event_id] + [s.event_id for s in siblings]
+
+        def refuse(reason: str) -> None:
+            plan.refusals.append(
+                {"event_ids": ids, "sport_key": ghost.sport_key, "reason": reason, "arm": "lookback"}
+            )
+
+        carried = scores.get(ghost.sport_key)
+        if carried is None:
+            refuse("scores_not_read")
+            continue
+        if ghost.odds_api_ids & carried:
+            refuse("ghost_started")  # the provider has a game under this id
+            continue
+        if ghost.other_anchor:
+            refuse(f"ghost_{ghost.event_id}_has_another_authority")
+            continue
+        if ghost.event_id in holds_markets:
+            refuse(f"ghost_{ghost.event_id}_holds_markets")
+            continue
+        present = [s for s in siblings if s.odds_api_ids & carried]
+        if len(present) != 1:
+            refuse("no_carried_sibling" if not present else "several_carried_siblings")
+            continue
+        canonical = present[0]
+        if canonical.already_tagged:
+            refuse("canonical_is_a_duplicate")
+            continue
+        if not (
+            lines_moved(
+                book_lines.get(ghost.event_id, frozenset()),
+                book_lines.get(canonical.event_id, frozenset()),
+            )
+            or moneylines_moved(
+                moneylines.get(ghost.event_id, frozenset()),
+                moneylines.get(canonical.event_id, frozenset()),
+            )
+        ):
+            refuse(f"ghost_{ghost.event_id}_prices_not_on_sibling")
+            continue
+        plan.tags.append(
+            ReissueTag(
+                duplicate_id=ghost.event_id,
+                canonical_id=canonical.event_id,
+                sport_key=ghost.sport_key,
+                ghost_odds_api_ids=",".join(sorted(ghost.odds_api_ids)),
+                canonical_odds_api_ids=",".join(sorted(canonical.odds_api_ids)),
+            )
+        )
+    return plan
