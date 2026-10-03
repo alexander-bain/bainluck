@@ -4409,6 +4409,26 @@ def _typeahead_seven_without_served_game_winners(
         dropped |= leaving
 
 
+def _typeahead_stamp_related_game_listings(suggestions: list) -> None:
+    """#10298: the dropdown's half of `_game_listing_event_id`, after the slice.
+
+    `q=lions packers` served "Green Bay Packers at Detroit Lions" (event
+    14780566) and, three rows down, Polymarket's listing for that game,
+    "Packers vs. Lions — Packers 53%". A futures row whose `_listing_of_game`
+    is among the event rows the reader sees gains `related_game_listing`; a
+    listing whose game was cut from the seven is printed as before, because
+    there it is not beside its game. Pops both private keys from every row.
+    """
+    served = {
+        s.get("event_id") for s in suggestions if s.get("type") == "event"
+    } - {None}
+    for s in suggestions:
+        game = s.pop("_listing_of_game", None)
+        questions = s.pop("_listing_questions", 0)
+        if game is not None and game in served:
+            s["related_game_listing"] = _related_game_listing(game, questions)
+
+
 def _typeahead_lead_fixtures_first(events: list, lead_ids: set) -> list:
     """#9435: the resolved team's own fixtures take the first of the four slots.
 
@@ -13137,6 +13157,15 @@ async def search_events(
         )
         for m in (*deduped_futures, *futures_markets)
     }
+    # #10298: a Polymarket game listing whose game is on this page says so; the
+    # families read the same dicts, so one stamp covers both reader lists.
+    for m in (*deduped_futures, *futures_markets):
+        _listing_game = _game_listing_event_id(m)
+        if _listing_game is not None and _listing_game in _served_event_ids:
+            _card = _formatted_by_id[m.id]
+            _card["related_game_listing"] = _related_game_listing(
+                _listing_game, _card["outcome_count"]
+            )
     formatted_futures = [_formatted_by_id[m.id] for m in futures_markets]
 
     # #6447 RESIDUAL — THE RESULTS STOP NAMING A CLUB THAT DOES NOT EXIST.
@@ -15693,6 +15722,11 @@ async def typeahead_search(
                 )
                 else None
             ),
+            # #10298: the game this row is the Polymarket listing of, and its
+            # question count. Turned into `related_game_listing` after the
+            # slice, only when that game is among the rows the reader sees.
+            "_listing_of_game": _game_listing_event_id(market),
+            "_listing_questions": len(_search_surviving_legs(market)),
         })
 
     # L2-65 Item 1c: EVENT CONCEPT suggestions (tournament pages) from the same
@@ -16132,6 +16166,7 @@ async def typeahead_search(
         suggestions = promote_answering_rows(suggestions, _ta_intent)
         _ta_mark("intent_promote")
 
+    _typeahead_stamp_related_game_listings(suggestions)  # #10298
     for _s in suggestions:
         _s.pop("_derived", None)
         _s.pop("_aliases", None)
@@ -36209,6 +36244,44 @@ def _search_container_parents_among(
             for leg in legs
         )
     }
+
+
+def _game_listing_event_id(market) -> Optional[int]:
+    """The game a Polymarket mixed game listing belongs to, else ``None`` (#10298).
+
+    Production, 2026-10-03 06:4xZ, `/search?q=lions`: GAMES served Lions v
+    Packers, Oct 25, at Lions 56%, and ANSWERS led with "Packers vs. Lions —
+    Packers 53% · Oct 25". That row is 61040985, Polymarket's listing for the
+    same game (`market_type` field, `event_id` 14780566), whose legs are a
+    team-win leg beside spreads and a second-half total. Its team-win leg is a
+    stale last trade, so one game had two rows that disagreed on the favourite.
+    The typeahead served it under the game's own row for `q=lions packers`.
+
+    This is #10089's rule (October 1 product decision, live on the NFL week
+    hubs via PR #10121): beside its own game, that listing is a link to more
+    questions on the game, with no percentages. It is not withheld, because
+    its spreads and totals have nowhere else to be found (the game page served
+    no game markets for 14780566), and nothing is inferred from the leg names.
+    The relation is the served one, the same three facts the hub reads: a
+    Polymarket row, stored as a `field`, attached to a game.
+    """
+    if (
+        getattr(market, "source", None) == "polymarket"
+        and getattr(market, "market_type", None) == "field"
+    ):
+        return getattr(market, "event_id", None)
+    return None
+
+
+def _related_game_listing(event_id: int, question_count: int) -> dict:
+    """The additive payload key a client reads to print the #10089 link (#10298).
+
+    Present only when the listing's game is on the same response; ux and native
+    render it as "N questions on this game ›" in place of the outcome
+    percentages. `top_outcomes` is left as it was so a client that has not
+    shipped the consumer half prints exactly what it printed before.
+    """
+    return {"event_id": event_id, "question_count": question_count}
 
 
 _SEASON_WORD_RE = re.compile(r"\bseason\b", re.IGNORECASE)
