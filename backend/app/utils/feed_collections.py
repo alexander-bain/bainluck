@@ -86,13 +86,21 @@ async def feed_collections_cache_fingerprint(db):
     return hashlib.sha256(f"v1|{raw}".encode()).hexdigest()[:16]
 
 
+#: #10290: which branch ``add_feed_collections`` took, for an ``observe`` hook.
+COLLECTIONS_NO_PAGE_GAMES = "no_page_games"
+COLLECTIONS_NO_BUDGET = "no_budget"
+COLLECTIONS_READ_FAILED = "read_failed"
+COLLECTIONS_READ = "read"
+
+
 async def add_feed_collections(
     db,
     items,
     *,
     rank_key,
     page_window=20,
-    budget_seconds=COLLECTION_READ_BUDGET_SECONDS
+    budget_seconds=COLLECTION_READ_BUDGET_SECONDS,
+    observe=None,
 ):
     """Insert eligible cards before their strongest member in the composed deck.
 
@@ -102,13 +110,20 @@ async def add_feed_collections(
     so a key scan cannot determine that position. A hub inherits the member's
     score and recency without a bonus. The producer card remains intact under
     ``data``, the normal feed envelope.
+
+    ``observe`` (#10290), when given, is called once as ``observe(branch,
+    collections)`` with one of the ``COLLECTIONS_*`` branches and, for
+    ``COLLECTIONS_READ``, the cards the read returned (``None`` otherwise). It
+    is how a display capture freezes this stage's only input; it changes
+    nothing here.
     """
-    games = {
-        item["data"]["id"]: item
-        for item in items[:page_window]
-        if item.get("type") == "event" and item.get("data", {}).get("id") is not None
-    }
+    games = _page_games(items, page_window)
     if not games or budget_seconds <= 0:
+        if observe is not None:
+            observe(
+                COLLECTIONS_NO_PAGE_GAMES if not games else COLLECTIONS_NO_BUDGET,
+                None,
+            )
         return items
     try:
         read = await asyncio.wait_for(
@@ -122,10 +137,34 @@ async def add_feed_collections(
         logger.warning(
             "Discover collection read failed; keeping ordinary cards", exc_info=True
         )
+        if observe is not None:
+            observe(COLLECTIONS_READ_FAILED, None)
         return items
 
+    if observe is not None:
+        observe(COLLECTIONS_READ, read.collections)
+    return insert_feed_collections(
+        items, read.collections, rank_key=rank_key, page_window=page_window
+    )
+
+
+def _page_games(items, page_window):
+    return {
+        item["data"]["id"]: item
+        for item in items[:page_window]
+        if item.get("type") == "event" and item.get("data", {}).get("id") is not None
+    }
+
+
+def insert_feed_collections(items, collections, *, rank_key, page_window=20):
+    """The pure half of ``add_feed_collections``: place already-read cards.
+
+    Split out for #10290 so the offline display replay places frozen cards by
+    running this, not a copy. No I/O and no clock; ``items`` is not mutated.
+    """
+    games = _page_games(items, page_window)
     additions = []
-    for card in read.collections:
+    for card in collections:
         members = [games[i] for i in card["matched_event_ids"] if i in games]
         if not members:
             continue

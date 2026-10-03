@@ -178,7 +178,15 @@ def test_humanise_runs_after_the_review_decision_scope_read():
     assuming it.
     """
     tree = _feed_tree()
-    humanise_lines = _call_lines(tree, "sport_display_name")
+    # #10290: the per-card publish step moved into `_publish_feed_item`, so
+    # the offline display replay runs it instead of a copy. The humanise call
+    # must live there and nowhere else; that helper's call sites are what
+    # `get_feed` orders against the review-decision read.
+    humanise_sites = _call_lines(tree, "sport_display_name")
+    assert {_enclosing_function(tree, line) for line in humanise_sites} == {
+        "_publish_feed_item"
+    }, f"sport_display_name is called outside the publish helper: {humanise_sites}"
+    humanise_lines = _call_lines(tree, "_publish_feed_item")
     applier_lines = _call_lines(tree, "_apply_manual_review_decisions")
 
     assert humanise_lines, "feed.py no longer humanises sport_name at all"
