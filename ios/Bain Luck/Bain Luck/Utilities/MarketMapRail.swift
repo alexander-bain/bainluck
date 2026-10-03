@@ -511,11 +511,40 @@ enum MarketMapRail {
     ///     being handed for this card's rungs — `nil` when there is none.
     ///   - isSettled: whether the event is over, the card's own lifecycle
     ///     predicate. Only consulted when there is no final.
-    static func spectrumSectionTitle(finalTotal: Int?, isSettled: Bool) -> String {
+    ///   - canStillBeGraded: #4018's gate (`EventState.canStillBeGraded`), the
+    ///     one ``fullMarginSubtitle(isDone:canStillBeGraded:hasDistribution:)``
+    ///     reads one card higher. See ``spectrumHeadingTense``.
+    static func spectrumSectionTitle(
+        finalTotal: Int?, isSettled: Bool, canStillBeGraded: Bool = true
+    ) -> String {
+        "\(spectrumHeadingTense(finalTotal: finalTotal, isSettled: isSettled, canStillBeGraded: canStillBeGraded)) scoring"
+    }
+
+    /// The one word both of the card's headings open with.
+    ///
+    /// #10272 — #10149, one card lower. On `15319530` (Orioles @ Yankees,
+    /// `status=suspended`, hero **Canceled**) #10149 made the margin map read
+    /// **Last quoted margin**, and the scoring card under it still read
+    /// **Projected scoring** over **Projected combined runs**. ``SpectrumTense``
+    /// has no state for "not over and never will be": a canceled game has no
+    /// final and is not settled, so it fell to `.projected`.
+    ///
+    /// The fix is the margin map's order, not a fourth ``SpectrumTense`` case:
+    /// the rung captions already read #4018's gate on their own
+    /// (``spectrumRowCaption(finalTotal:isSettled:canStillBeGraded:hasStarted:rungResult:)``),
+    /// so only the two headings were missing it. A final or a settled event
+    /// keeps its word; a forecast is offered only where a final can still
+    /// arrive; otherwise "Last quoted" — the margin map's word and
+    /// ``EventState``'s "last quoted chance". Both headings read this one
+    /// function, so they cannot drift apart in tense
+    /// (`testTheCardsTwoHeadingsAreNeverInDifferentTenses`).
+    static func spectrumHeadingTense(
+        finalTotal: Int?, isSettled: Bool, canStillBeGraded: Bool
+    ) -> String {
         switch SpectrumTense.of(finalTotal: finalTotal, isSettled: isSettled) {
-        case .projected: return "Projected scoring"
-        case .settled: return "Settled scoring"
-        case .graded: return "Final scoring"
+        case .graded: return "Final"
+        case .settled: return "Settled"
+        case .projected: return canStillBeGraded ? "Projected" : "Last quoted"
         }
     }
 
@@ -533,12 +562,13 @@ enum MarketMapRail {
     /// reasons — the two headings are one sentence in two sizes and have never
     /// been allowed to differ in tense
     /// (`testTheCardsTwoHeadingsAreNeverInDifferentTenses`).
-    static func spectrumLadderTitle(finalTotal: Int?, unit: String, isSettled: Bool) -> String {
-        switch SpectrumTense.of(finalTotal: finalTotal, isSettled: isSettled) {
-        case .projected: return "Projected combined \(unit)"
-        case .settled: return "Settled combined \(unit)"
-        case .graded: return "Final combined \(unit)"
-        }
+    ///
+    /// #10272 gave it #4018's gate with its sibling, through the same
+    /// ``spectrumHeadingTense``.
+    static func spectrumLadderTitle(
+        finalTotal: Int?, unit: String, isSettled: Bool, canStillBeGraded: Bool = true
+    ) -> String {
+        "\(spectrumHeadingTense(finalTotal: finalTotal, isSettled: isSettled, canStillBeGraded: canStillBeGraded)) combined \(unit)"
     }
 
     // MARK: - Reading a totals ladder once the game is over
