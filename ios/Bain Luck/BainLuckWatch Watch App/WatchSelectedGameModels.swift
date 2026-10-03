@@ -20,6 +20,19 @@ nonisolated struct WatchSelectedGame: Codable, Sendable, Identifiable {
     let drawProbability: Double?
 
     var isFinal: Bool { ["completed", "final"].contains(status?.lowercased() ?? "") }
+    var isClosed: Bool { status?.lowercased() == "closed" }
+    var showsForecast: Bool { !isFinal && !isClosed }
+    var stateLabel: String { Self.stateLabel(for: status) }
+
+    static func stateLabel(for status: String?) -> String {
+        switch status?.lowercased() {
+        case "completed", "final": return "Final"
+        case "closed": return "Closed · result unverified"
+        case "live": return "Live"
+        default: return status?.capitalized ?? "Game state unavailable"
+        }
+    }
+
     var isLive: Bool { status?.lowercased() == "live" }
     var liveClockText: String? {
         // The shared formatter normalizes once. Pre-normalizing an inning

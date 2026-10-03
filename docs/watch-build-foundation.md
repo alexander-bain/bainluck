@@ -126,3 +126,16 @@ partial, unavailable and previously received lists. The shared WatchFeedModels a
 WatchAPIClient are reused unchanged; their iPhone test membership is untouched.
 The standalone Swift harness now checks this store as well as the selected game.
 Actual picker taps on a physical Watch remain an unpaid acceptance step.
+
+## Integrated journey and closed results
+
+The deterministic journey now exercises Discover choice → canonical live detail →
+cold offline restoration → completed result → changed selection → cleared snapshot.
+This verifies store integration, not a physical tap or rendering.
+
+`closed` is terminal for withholding a forecast, but its scores may be frozen
+midgame (`backend/app/utils/settled_hero.py`). Picker/detail/spoken state therefore
+say “Closed · result unverified”; the detail qualifies scores as last reported.
+It neither presents a win forecast nor promotes those scores to a verified final
+result. Completed/final behavior stays distinct. Snapshot round-trip guards cover
+closed state too.

@@ -73,7 +73,7 @@ struct WatchSelectedGameView: View {
                     .accessibilityHidden(true) // Included before state in the grouped label below.
             }
             flexibleRow {
-                Text(game.isFinal ? "Final" : game.isLive ? "Live" : game.status?.capitalized ?? "Game state unavailable")
+                Text(game.stateLabel)
                     .font(.subheadline.bold())
                 if game.isLive, let clock = game.liveClockText {
                     Text(clock).font(.footnote)
@@ -81,17 +81,21 @@ struct WatchSelectedGameView: View {
             }
             .accessibilityElement(children: .ignore)
             .accessibilityLabel(stateAccessibilityLabel(game))
+            if game.isClosed {
+                Text("Last reported score · final result unverified")
+                    .font(.footnote).foregroundStyle(.secondary)
+            }
             scoreRow(team: game.awayTeam, score: game.awayScore)
             scoreRow(team: game.homeTeam, score: game.homeScore)
             if game.isFinal && (game.homeScore == nil || game.awayScore == nil) {
                 Text("Final score unavailable")
                     .font(.footnote).foregroundStyle(.secondary)
             }
-            if !game.isLive && !game.isFinal, let start = game.commenceTime {
+            if !game.isLive && game.showsForecast, let start = game.commenceTime {
                 Text(start, format: .dateTime.month().day().hour().minute())
                     .font(.footnote).foregroundStyle(.secondary)
             }
-            if !game.isFinal {
+            if game.showsForecast {
                 if let probability = game.homeProbability, probability.isFinite,
                    (0...1).contains(probability) {
                     VStack(alignment: .leading, spacing: 2) {
@@ -108,7 +112,7 @@ struct WatchSelectedGameView: View {
             }
             TimelineView(.periodic(from: .now, by: 15)) { context in
                 observationText(game, now: context.date)
-                if !game.isFinal && game.homeProbability != nil {
+                if game.showsForecast && game.homeProbability != nil {
                     probabilityObservationText(game, now: context.date)
                 }
             }
@@ -133,7 +137,7 @@ struct WatchSelectedGameView: View {
     }
 
     private func stateAccessibilityLabel(_ game: WatchSelectedGame) -> String {
-        let state = game.isFinal ? "Final" : game.isLive ? "Live" : game.status?.capitalized ?? "Game state unavailable"
+        let state = game.stateLabel
         return [store.isRestoredReading ? "Saved reading. Refresh to confirm." : nil,
                 store.errorMessage, state, game.isLive ? game.liveClockText : nil]
             .compactMap { $0 }.joined(separator: " ")
@@ -203,7 +207,7 @@ struct WatchSelectedGameView: View {
                     VStack(alignment: .leading, spacing: 3) {
                         Text("\(game.awayTeam ?? "Away team") at \(game.homeTeam ?? "Home team")")
                             .fixedSize(horizontal: false, vertical: true)
-                        Text((game.isSettled || game.status?.lowercased() == "final") ? "Final" : game.isLive ? "Live" : game.status?.capitalized ?? "State unavailable")
+                        Text(WatchSelectedGame.stateLabel(for: game.status))
                             .font(.footnote).foregroundStyle(.secondary)
                     }
                 }
