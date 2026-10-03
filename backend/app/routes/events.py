@@ -36399,7 +36399,7 @@ def _search_ladder_window(
 
 
 def _search_query_matched_leg(market, board: list, top: list, query_terms, withheld: set):
-    """The priced leg that NAMES the query and fell below the card's cut, or None.
+    """The priced leg that NAMES the query and does not already lead the card, or None.
 
     #8842 — `?q=ohtani` (390px, 2026-09-26 ~15:15Z) served four cards on which
     Ohtani appeared nowhere: `MLB: Home Runs Leader` (12516244) showed Schwarber,
@@ -36421,6 +36421,15 @@ def _search_query_matched_leg(market, board: list, top: list, query_terms, withh
     team typed was nowhere, because "Kansas City Chiefs" does not spell `super
     bowl`. For `ohtani` the name carries nothing, so the remainder is the whole
     query and the rule is the one above, unchanged.
+
+    #10279: the leg LEADS the row; it is not tacked onto its last line. `?q=judge`
+    (390px, 2026-10-03 03:58Z) put *MLB The Show 27: Cover Athlete* (24014885) in
+    the dropdown as "Matt Olson 21% · Bryan Woo 16%": Judge was pinned into row 3
+    of 3, and the dropdown prints two rows (`searchSuggestionDisplay.ts::
+    futuresAnswer`) while the iPhone search row prints one (`topOutcomes.first`).
+    So a leg already inside the cut counts too, unless it is already first. Of
+    several matches, the first in the board's own order — price, behind #8640's
+    tiers, so a live match leads ahead of a graded one.
     """
     if not query_terms:
         return None
@@ -36429,17 +36438,18 @@ def _search_query_matched_leg(market, board: list, top: list, query_terms, withh
     ]
     if not remainder:
         return None
-    shown = {id(o) for o in top}
-    matched = [
-        o for o in board
-        if id(o) not in shown
-        and o.id not in withheld
-        and _outcome_prints_a_price(o)
-        and _text_names_every_term(o.name, remainder)
-    ]
-    if not matched:
+    matched = next(
+        (
+            o for o in board
+            if o.id not in withheld
+            and _outcome_prints_a_price(o)
+            and _text_names_every_term(o.name, remainder)
+        ),
+        None,
+    )
+    if matched is None or (top and top[0] is matched):
         return None
-    return max(matched, key=lambda o: o.current_probability or 0)
+    return matched
 
 
 def _search_keep_settled_winners(real: list, limit: int, headline_tier) -> tuple[list, list]:
@@ -36666,11 +36676,14 @@ def _build_search_top_outcomes(
         winners: list = []
         if _demote_graded:
             top, winners = _search_keep_settled_winners(real, limit, _headline_tier)
-        # #8842: a card recalled through an outcome name shows that outcome, in
-        # the last row, when the probability cut left it out. Not on the ladder
-        # window above: a threshold rung is never a player or a team.
+        # #8842: a card recalled through an outcome name shows that outcome —
+        # first, since #10279, because the dropdown prints two rows and the
+        # iPhone row one. Not on the ladder window above: a threshold rung is
+        # never a player or a team.
         pinned = _search_query_matched_leg(market, real, top, query_terms, _withheld_ids)
-        if pinned is not None:
+        if pinned is not None and any(o is pinned for o in top):
+            top = [pinned] + [o for o in top if o is not pinned]
+        elif pinned is not None:
             # It displaces the last row that is not a kept winner, so searching
             # for a live team cannot evict the result #9675 put back.
             if len(top) >= limit:
@@ -36680,7 +36693,7 @@ def _build_search_top_outcomes(
                     len(top) - 1,
                 )
                 top = top[:drop] + top[drop + 1:]
-            top = top[: limit - 1] + [pinned]
+            top = [pinned] + top[: limit - 1]
     # #6479, and it is the SAME rung a reader meets on the detail page. Search
     # ranks these boards by probability, so the truncated name is not buried in
     # the tail: `?q=Los Angeles` led `2027 Pro Football Champion` with `Los

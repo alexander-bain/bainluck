@@ -94,16 +94,17 @@ def test_precondition_ohtani_is_below_the_cut_without_the_query():
 
 
 def test_ohtani_is_on_the_home_runs_card():
+    # #10279: first, not last — the dropdown prints two rows and iOS one.
     rows = _card(_hr_leaders(), OHTANI)
     assert [r["name"] for r in rows] == [
-        "Kyle Schwarber", "Pete Crow-Armstrong", "Pete Alonso", "Junior Caminero",
-        "Shohei Ohtani",
+        "Shohei Ohtani", "Kyle Schwarber", "Pete Crow-Armstrong", "Pete Alonso",
+        "Junior Caminero",
     ]
-    pinned = rows[-1]
+    pinned = rows[0]
     assert pinned["query_match"] is True
-    assert pinned["matched_rank"] == 7  # its place on the board, not row 5
+    assert pinned["matched_rank"] == 7  # its place on the board, not row 1
     assert pinned["probability"] == 0.03
-    assert not any(r.get("query_match") for r in rows[:-1])
+    assert not any(r.get("query_match") for r in rows[1:])
 
 
 def test_the_card_does_not_grow():
@@ -158,18 +159,18 @@ def test_an_unpriced_matched_leg_is_not_pinned():
 
 def test_the_expansion_counts_like_the_term():
     rows = _card(_hr_leaders(), [("sho", "shohei")])
-    assert rows[-1]["name"] == "Shohei Ohtani"
+    assert rows[0]["name"] == "Shohei Ohtani"
 
 
 def test_the_typeahead_dropdown_carries_it_too():
     rows = _card(_hr_leaders(), OHTANI, lean=True, limit=3)
-    assert [r["name"] for r in rows] == ["Kyle Schwarber", "Pete Crow-Armstrong", "Shohei Ohtani"]
-    assert "query_match" not in rows[-1]  # lean rows stay lean
+    assert [r["name"] for r in rows] == ["Shohei Ohtani", "Kyle Schwarber", "Pete Crow-Armstrong"]
+    assert "query_match" not in rows[0]  # lean rows stay lean
 
 
 def test_the_search_formatter_passes_the_terms_through():
     card = _format_futures_for_search(_hr_leaders(), None, query_terms=OHTANI)
-    assert card["top_outcomes"][-1]["name"] == "Shohei Ohtani"
+    assert card["top_outcomes"][0]["name"] == "Shohei Ohtani"
 
 
 def test_no_terms_is_the_old_card_exactly():

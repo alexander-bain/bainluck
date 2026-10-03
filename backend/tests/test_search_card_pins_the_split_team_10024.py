@@ -79,7 +79,7 @@ def test_precondition_the_chiefs_are_below_the_cut_without_the_query():
 def test_the_chiefs_are_on_the_super_bowl_card_at_their_real_place():
     rows = _card(_super_bowl(), CHIEFS_SUPER_BOWL)
     assert len(rows) == _SEARCH_LADDER_LIMIT
-    pinned = rows[-1]
+    pinned = rows[0]  # #10279: the matched leg leads the row
     assert pinned["name"] == "Kansas City Chiefs"
     assert pinned["query_match"] is True
     assert pinned["matched_rank"] == 8  # eighth on the board, not row 5
@@ -87,7 +87,7 @@ def test_the_chiefs_are_on_the_super_bowl_card_at_their_real_place():
 
 def test_the_typeahead_dropdown_carries_it_too():
     rows = _card(_super_bowl(), CHIEFS_SUPER_BOWL, lean=True, limit=3)
-    assert rows[-1]["name"] == "Kansas City Chiefs"
+    assert rows[0]["name"] == "Kansas City Chiefs"  # #10279
 
 
 def test_a_query_the_name_carries_in_full_is_untouched():
