@@ -411,7 +411,7 @@ async def test_a1_the_tag_written_is_oriented_and_a_complete_receipt(monkeypatch
     (tag,) = json.loads(params["tag_array"])
     assert tag.startswith(f"{FILL_TAG_PREFIX}{ESPN_EVENT}:away={AWAY_TID}:home={HOME_TID}:r1=")
     r = parse_fill_tag(tag)
-    assert (r.prior_home_name, r.prior_home_norm, r.prior_away_name) == (" TBA ", "tbd", "TBD")
+    assert (r.prior_home_name, r.prior_home_team_normalized, r.prior_away_name) == (" TBA ", "tbd", "TBD")
     assert (r.after_home_tid, r.after_away_tid) == (HOME_PK, AWAY_PK)
     assert r.filled_at == "2031-10-03T14:50:07Z"
     assert session.calls[0] == "flush" and session.calls[1] == "savepoint"
@@ -453,7 +453,7 @@ def test_e1_the_receipt_round_trips_exact_bytes(prior, after_name):
     receipt = _receipt(prior=prior, after__home_name=after_name)
     r = parse_fill_tag(_tag(receipt))
     assert (r.prior_home_name, r.prior_away_name) == (prior["home_name"], prior["away_name"])
-    assert (r.prior_home_norm, r.prior_away_norm) == (prior["home_norm"], prior["away_norm"])
+    assert (r.prior_home_team_normalized, r.prior_away_team_normalized) == (prior["home_norm"], prior["away_norm"])
     assert r.after_home_name == after_name
     assert (r.espn_event_id, r.away_espn_tid, r.home_espn_tid) == (ESPN_EVENT, AWAY_TID, HOME_TID)
 

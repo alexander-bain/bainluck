@@ -134,8 +134,8 @@ class FillReceipt:
     home_espn_tid: str
     prior_home_name: str
     prior_away_name: str
-    prior_home_norm: Optional[str]
-    prior_away_norm: Optional[str]
+    prior_home_team_normalized: Optional[str]
+    prior_away_team_normalized: Optional[str]
     after_home_name: str
     after_away_name: str
     after_home_tid: int
@@ -424,8 +424,8 @@ def parse_fill_tag(tag) -> FillReceipt:
         home_espn_tid=home_tid,
         prior_home_name=prior["home_name"],
         prior_away_name=prior["away_name"],
-        prior_home_norm=prior["home_norm"],
-        prior_away_norm=prior["away_norm"],
+        prior_home_team_normalized=prior["home_norm"],
+        prior_away_team_normalized=prior["away_norm"],
         after_home_name=after["home_name"],
         after_away_name=after["away_name"],
         after_home_tid=after["home_tid"],
@@ -518,6 +518,9 @@ async def maybe_fill_participants(session, event, ee, team_index, stats) -> Opti
        the ORM would otherwise keep claiming the fill). If that refresh fails it
        propagates — today's semantics: the sport step rolls back.
     """
+    # Bound only on the FILL branch; every other verdict returns before the write.
+    params: Optional[dict] = None
+    tag: Optional[str] = None
     try:
         verdict = participant_fill_verdict(event, ee, team_index)
         if verdict.action == FILL:

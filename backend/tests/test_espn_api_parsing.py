@@ -1028,9 +1028,9 @@ class TestCompetitorSides:
         before = dataclasses.asdict(with_recording)
         after = dataclasses.asdict(without_recording)
         # The stub really took effect wherever there was a competitor to record.
-        assert (before.pop("competitor_sides") != after.pop("competitor_sides")) == (
-            name != "no_competitors"
-        )
+        sides_before = before.pop("competitor_sides")
+        sides_after = after.pop("competitor_sides")
+        assert (sides_before != sides_after) == (name != "no_competitors")
         assert before == after
 
     @pytest.mark.parametrize("competitor", [

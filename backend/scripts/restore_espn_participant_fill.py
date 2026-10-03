@@ -506,8 +506,8 @@ async def _write(session, row: Mapping[str, Any], admission: RowAdmission) -> li
     params = {
         "prior_home_name": r.prior_home_name,
         "prior_away_name": r.prior_away_name,
-        "prior_home_norm": r.prior_home_norm,
-        "prior_away_norm": r.prior_away_norm,
+        "prior_home_norm": r.prior_home_team_normalized,
+        "prior_away_norm": r.prior_away_team_normalized,
         "new_tags": json.dumps(admission.new_tags),
         "eid": row["id"],
         "espn_id": r.espn_event_id,
@@ -526,8 +526,8 @@ async def _write(session, row: Mapping[str, Any], admission: RowAdmission) -> li
         "away_team_name": r.prior_away_name,
         "home_team_id": None,
         "away_team_id": None,
-        "home_team_normalized": r.prior_home_norm,
-        "away_team_normalized": r.prior_away_norm,
+        "home_team_normalized": r.prior_home_team_normalized,
+        "away_team_normalized": r.prior_away_team_normalized,
         "event_tags": admission.new_tags,
     }
     return [f"write_mismatch:{col}" for col, value in want.items() if got[col] != value]
@@ -547,8 +547,8 @@ def _report(out: Callable[[str], None], event_id: int, row, admission: Admission
             ("away_team_name", r.prior_away_name),
             ("home_team_id", None),
             ("away_team_id", None),
-            ("home_team_normalized", r.prior_home_norm),
-            ("away_team_normalized", r.prior_away_norm),
+            ("home_team_normalized", r.prior_home_team_normalized),
+            ("away_team_normalized", r.prior_away_team_normalized),
             ("event_tags", admission.row.new_tags),
         ):
             out(f"  {col:<22} : {row[col]!r} -> {after!r}")
