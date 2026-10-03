@@ -165,12 +165,20 @@ def _dated_basis_statements(session: _RecordingSession) -> list[str]:
 
     Selected by the bank's KEY, not by `market_metadata`: #8612's A10 writes
     the same column under a different key and is not part of this bank.
+    #10248's DataGolf arms (A8-DG / A9-DG) also write the bank and always carry
+    the eligibility mark; they are excluded here and pinned in
+    `test_datagolf_dated_movement_10248.py`.
     """
-    from app.utils.futures_market_snapshot import DATED_BASIS_METADATA_KEY
+    from app.utils.futures_market_snapshot import (
+        DATED_BASIS_ELIGIBILITY_METADATA_KEY,
+        DATED_BASIS_METADATA_KEY,
+    )
 
     return [
         s for s in _markets_statements(session)
-        if "market_metadata" in s and DATED_BASIS_METADATA_KEY in s
+        if "market_metadata" in s
+        and DATED_BASIS_METADATA_KEY in s
+        and DATED_BASIS_ELIGIBILITY_METADATA_KEY not in s
     ]
 
 
@@ -402,14 +410,16 @@ def test_a_short_batch_reports_the_backlog_as_drained(run_task) -> None:
     The list is consumed in EXECUTION order, so every statement added to the
     task shifts everything after it. Seven outcome sweeps now — A, A2, A3, A4,
     the two RANK sweeps A5/A6, and A7, the dated-direction sweep — then #4079's
-    A8/A9, which publish and retire the dated-basis bank, then #8612's A10,
-    which lists unpriced openings, which puts the two `max_movement_24h`
-    statements at positions 11 and 12. Each counter is
+    DataGolf bank and unbank (A8-DG / A9-DG, which run first so the shared
+    exclusions are load-bearing), then A8/A9, which publish and retire the
+    dated-basis bank, then #8612's A10, which lists
+    unpriced openings, which puts the two `max_movement_24h` statements at
+    positions 13 and 14. Each counter is
     asserted against a DISTINCT value so a statement that read its sibling's
     rowcount could not pass — which is the whole reason this fixture is a
     sequence rather than a repeated number.
     """
-    result, _ = run_task([12, 6, 9, 8, 1, 1, 5, 7, 3, 13, 4, 2])
+    result, _ = run_task([12, 6, 9, 8, 1, 1, 5, 14, 15, 7, 3, 13, 4, 2])
 
     assert result["expired"] == 12
     assert result["graded_retired"] == 6
@@ -418,6 +428,8 @@ def test_a_short_batch_reports_the_backlog_as_drained(run_task) -> None:
     assert result["contradicted_retired"] == 5
     assert result["dated_basis_banked"] == 7
     assert result["dated_basis_unbanked"] == 3
+    assert result["dated_basis_banked_datagolf"] == 14
+    assert result["dated_basis_unbanked_datagolf"] == 15
     assert result["unpriced_openings_written"] == 13
     assert result["cleared_markets"] == 2
     assert result["backlog_drained"] is True, (
@@ -429,11 +441,12 @@ def test_the_result_still_carries_the_original_contract(run_task) -> None:
     """LAT-P115's keys survive: the warm is still reported, never swallowed.
 
     Positions 5 and 6 are #4079's rank sweeps A5/A6, position 7 is its
-    dated-direction sweep A7, positions 8 and 9 are its dated-basis bank
-    (A8) and unbank (A9) and position 10 is #8612's unpriced-opening list
-    (A10), so the recompute is 11th.
+    dated-direction sweep A7, positions 8 and 9 are #10248's DataGolf bank and
+    unbank (A8-DG / A9-DG), positions 10 and 11 are #4079's dated-basis bank
+    (A8) and unbank (A9) and position 12 is #8612's unpriced-opening list
+    (A10), so the recompute is 13th.
     """
-    result, _ = run_task([5, 3, 7, 2, 0, 0, 6, 4, 8, 10, 9, 1])
+    result, _ = run_task([5, 3, 7, 2, 0, 0, 6, 11, 12, 4, 8, 10, 9, 1])
 
     assert result["updated"] == 9, f"the recompute's rowcount moved key: {result}"
     assert result["movers_warm"] == {"terminal": "ok", "completed": 1}
@@ -1285,9 +1298,19 @@ def test_a_short_rank_batch_reports_the_rank_backlog_drained(run_task) -> None:
 
 
 def _phase_a8(session: _RecordingSession) -> tuple[str, dict]:
-    """The BANK: the statement that writes the dated basis into metadata."""
+    """The BANK: the statement that writes the dated basis into metadata.
+
+    The shared arm only: #10248's A8-DG carries the eligibility mark and is
+    pinned in `test_datagolf_dated_movement_10248.py`.
+    """
+    from app.utils.futures_market_snapshot import DATED_BASIS_ELIGIBILITY_METADATA_KEY
+
     for sql, params in session.calls:
-        if "UPDATE futures_markets" in sql and "jsonb_object_agg" in sql:
+        if (
+            "UPDATE futures_markets" in sql
+            and "jsonb_object_agg" in sql
+            and DATED_BASIS_ELIGIBILITY_METADATA_KEY not in sql
+        ):
             return sql, params
     raise AssertionError(
         "no statement banks a dated basis, so the copy layer has no evidence "

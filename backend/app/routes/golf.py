@@ -32,6 +32,7 @@ from app.utils.golf_evolution_market import (
 from app.utils.competition_identity import next_edition, resolve_competition  # #8139
 from app.utils.majors_calendar import _as_utc_date  # one parser for the calendar's dates
 from app.utils.odds_math import probability_to_american
+from app.utils.futures_market_snapshot import reader_change_24h  # #10248
 from app.utils.golf_event_format import (  # #7985
     is_team_match_play_key,
     is_team_side_name,
@@ -2577,7 +2578,14 @@ def _aggregate_golfer_outcome(
     else:
         entry["dated_deltas"].pop(source_label, None)
 
-    if entry["undated_change"] is None and outcome.probability_change_24h is not None:
+    # #10248 D5: never for DataGolf. Its rows now carry a per-write delta (a
+    # 90 s move in play), and this arm prints it as `movement_24h`; DataGolf's
+    # day move is the dated arm above (`prob_24h_ago`) or nothing.
+    if (
+        not is_datagolf
+        and entry["undated_change"] is None
+        and outcome.probability_change_24h is not None
+    ):
         change = float(outcome.probability_change_24h) * prob_scale
         if abs(change) >= 0.001:
             entry["undated_change"] = change
@@ -4889,7 +4897,14 @@ async def get_golf_tournament(
                 "name": o.name,
                 "probability": round(float(o.current_probability), 4) if o.current_probability else None,
                 "american_odds": o.current_american_odds,
-                "probability_change_24h": round(float(o.probability_change_24h), 4) if o.probability_change_24h else None,
+                # #10248 D5 — `reader_change_24h`.
+                "probability_change_24h": (
+                    round(float(chg), 4)
+                    if (chg := reader_change_24h(
+                        o.market, o.id, o.current_probability, o.probability_change_24h
+                    ))
+                    else None
+                ),
                 # L2-121: pregame mark for the concept page PropsSection (see round
                 # groups above). Free — the ORM row is already loaded.
                 "opening_probability": (

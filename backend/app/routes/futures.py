@@ -31,7 +31,7 @@ from app.utils.futures_history_basis import (
     carry_forward_quotes,
     devigged_consensus_by_time,
 )
-from app.utils.futures_market_snapshot import dated_movement_points
+from app.utils.futures_market_snapshot import dated_movement_points, reader_change_24h
 from app.utils.futures_verified_title import (
     CONTRIBUTOR_SOURCES as VERIFIED_TITLE_SOURCES,
     SOURCE as REPRESENTATION_SOURCE,
@@ -972,7 +972,14 @@ def _movers_payload(outcomes, hours: int) -> dict:
                 "market_id": o.market_id,
                 "market_name": o.market.name if o.market else None,
                 "current_probability": float(o.current_probability) if o.current_probability is not None else None,
-                "probability_change_24h": float(o.probability_change_24h) if o.probability_change_24h else None,
+                # #10248 D5: a DataGolf leg serves its dated move, not a 90 s one.
+                "probability_change_24h": (
+                    float(chg)
+                    if (chg := reader_change_24h(
+                        o.market, o.id, o.current_probability, o.probability_change_24h
+                    ))
+                    else None
+                ),
                 # ANNOTATED — queue 333, C272/B4 zero-read census (#1620).
                 # Deliberately present and deliberately unrendered. The standing
                 # no-price-format ruling bans odds SOLD AS A FEATURE, not odds NAMED
@@ -1346,7 +1353,14 @@ async def browse_futures(
                 "id": o.id,
                 "name": o.name,
                 "probability": float(o.current_probability) if o.current_probability is not None else None,
-                "movement": float(o.probability_change_24h) if o.probability_change_24h else None,
+                # #10248 D5 — `reader_change_24h`.
+                "movement": (
+                    float(chg)
+                    if (chg := reader_change_24h(
+                        market, o.id, o.current_probability, o.probability_change_24h
+                    ))
+                    else None
+                ),
             }
             if o.id in withheld:
                 # Keyed on presence, as the detail and group arms are. `movement`
@@ -1801,7 +1815,14 @@ async def faceted_futures_search(
                 "id": o.id,
                 "name": o.name,
                 "probability": float(o.current_probability) if o.current_probability is not None else None,
-                "movement": float(o.probability_change_24h) if o.probability_change_24h else None,
+                # #10248 D5 — `reader_change_24h`.
+                "movement": (
+                    float(chg)
+                    if (chg := reader_change_24h(
+                        market, o.id, o.current_probability, o.probability_change_24h
+                    ))
+                    else None
+                ),
             }
             if o.id in withheld:
                 for field in WITHHELD_PRICE_FIELDS:
@@ -2430,7 +2451,14 @@ async def get_playoff_grid(
                     "source": source,
                     "probability": prob,
                     "market_id": m.id,
-                    "change_24h": float(o.probability_change_24h) if o.probability_change_24h else None,
+                    # #10248 D5 — `reader_change_24h`.
+                    "change_24h": (
+                        float(chg)
+                        if (chg := reader_change_24h(
+                            m, o.id, o.current_probability, o.probability_change_24h
+                        ))
+                        else None
+                    ),
                 })
 
     # --- Infer conference from conference/pennant stage market names ---
@@ -3833,8 +3861,13 @@ async def get_multi_market_history(
             entry["outcome_ids"].append(outcome.id)
             if outcome.current_probability is not None:
                 entry["current_probabilities"].append(float(outcome.current_probability))
-            if outcome.probability_change_24h is not None:
-                entry["changes_24h"].append(float(outcome.probability_change_24h))
+            # #10248 D5 — `reader_change_24h`.
+            chg = reader_change_24h(
+                market, outcome.id, outcome.current_probability,
+                outcome.probability_change_24h,
+            )
+            if chg is not None:
+                entry["changes_24h"].append(float(chg))
 
     # Sort by average current probability to pick top N
     # Track merge_key alongside each entry for later lookup
@@ -6256,8 +6289,12 @@ async def get_progression(
             p = participants[merge_key]
             prob = float(o.current_probability) if o.current_probability is not None else None
             p["probabilities"][stage_key] = prob
-            if o.probability_change_24h:
-                p["changes_24h"][stage_key] = float(o.probability_change_24h)
+            # #10248 D5 — `reader_change_24h`.
+            chg = reader_change_24h(
+                m, o.id, o.current_probability, o.probability_change_24h
+            )
+            if chg:
+                p["changes_24h"][stage_key] = float(chg)
             # Detect clinched / eliminated
             if prob is not None:
                 if prob >= 0.999:
@@ -6292,8 +6329,12 @@ async def get_progression(
                     continue  # secondary-only participant: never becomes a row
                 if o.current_probability is not None:
                     prob_contrib[merge_key].append(float(o.current_probability))
-                if o.probability_change_24h is not None:
-                    change_contrib[merge_key].append(float(o.probability_change_24h))
+                # #10248 D5 — `reader_change_24h`.
+                chg = reader_change_24h(
+                    m, o.id, o.current_probability, o.probability_change_24h
+                )
+                if chg is not None:
+                    change_contrib[merge_key].append(float(chg))
 
         for merge_key, extra_probs in prob_contrib.items():
             p = participants[merge_key]
@@ -7749,8 +7790,13 @@ async def get_cross_source_timeline(
             entry["outcome_ids"].append(outcome.id)
             if outcome.current_probability is not None:
                 entry["current_probabilities"].append(float(outcome.current_probability))
-            if outcome.probability_change_24h is not None:
-                entry["changes_24h"].append(float(outcome.probability_change_24h))
+            # #10248 D5 — `reader_change_24h`.
+            chg = reader_change_24h(
+                market, outcome.id, outcome.current_probability,
+                outcome.probability_change_24h,
+            )
+            if chg is not None:
+                entry["changes_24h"].append(float(chg))
             if outcome.opening_probability is not None:
                 entry["opening_probabilities"].append(float(outcome.opening_probability))
             if outcome.rank is not None:
@@ -8847,7 +8893,14 @@ def _format_market_summary(market: FuturesMarket, source_count_map: dict = None)
             "probability": float(o.current_probability) if o.current_probability is not None else None,
             "american_odds": o.current_american_odds,
             "rank": o.rank,
-            "movement": float(o.probability_change_24h) if o.probability_change_24h else None,
+            # #10248 D5 — `reader_change_24h`.
+            "movement": (
+                float(chg)
+                if (chg := reader_change_24h(
+                    market, o.id, o.current_probability, o.probability_change_24h
+                ))
+                else None
+            ),
         }
         for o in sorted_outcomes[:5]
     ]

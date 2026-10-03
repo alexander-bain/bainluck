@@ -81,6 +81,7 @@ from app.utils.sport_keys import NON_SPORT_LLM_CATEGORIES, SPORT_PREFIX_TO_LLM_C
 # imports it under the same alias for the same reason (#6256).
 from app.utils.futures_market_snapshot import (
     outcome_prints_a_price as _outcome_prints_a_price,
+    reader_change_24h,  # #10248
 )
 from app.utils.prematch_reading import (
     PREMATCH_PRIOR_SQL,
@@ -16802,7 +16803,15 @@ def _mover_chips(rows, *, limit: int = _SUGGESTION_MOVERS_LIMIT) -> list[dict]:
         # family. `_points` is the house display formatter those two now share —
         # it takes the ABSOLUTE magnitude, drops the trailing zero and says
         # "1 point" singular, so the sign stays out here where the chip wants it.
-        change = outcome.probability_change_24h
+        # #10248 D5: a DataGolf leg's chip states its dated move or nothing.
+        change = reader_change_24h(
+            market,
+            getattr(outcome, "id", None),
+            getattr(outcome, "current_probability", None),
+            outcome.probability_change_24h,
+        )
+        if not change:
+            continue
         direction = "Surging" if change > 0 else "Falling"
         sign = "+" if change > 0 else ("-" if change < 0 else "")
         pct = f"{sign}{format_movement_points(change)}"
@@ -29360,7 +29369,16 @@ async def _build_related_futures(
             "external_id": outcome.external_id,
             "probability": float(outcome.current_probability) if outcome.current_probability else None,
             "american_odds": outcome.current_american_odds,
-            "probability_change_24h": float(outcome.probability_change_24h) if outcome.probability_change_24h else None,
+            # #10248 D5 — `reader_change_24h`. The relevance score above keeps
+            # the stored column: it chooses, it does not print.
+            "probability_change_24h": (
+                float(chg)
+                if (chg := reader_change_24h(
+                    market, outcome.id, outcome.current_probability,
+                    outcome.probability_change_24h,
+                ))
+                else None
+            ),
             "opening_probability": float(outcome.opening_probability) if outcome.opening_probability else None,
             "rank": outcome.rank,
             "relevance_score": relevance_score,
@@ -29700,8 +29718,14 @@ async def _build_related_futures(
                     "outcome_id": so.id,
                     "name": so.name,
                     "probability": None if refused or not so.current_probability else float(so.current_probability),
+                    # #10248 D5 — `reader_change_24h`.
                     "probability_change_24h": (
-                        None if refused or not so.probability_change_24h else float(so.probability_change_24h)
+                        None
+                        if refused
+                        or not (chg := reader_change_24h(
+                            mkt, so.id, so.current_probability, so.probability_change_24h
+                        ))
+                        else float(chg)
                     ),
                     "settled": _outcome_is_settled(so, mkt.status, field_has_winner),
                     "is_winner": so.is_winner,
@@ -36748,7 +36772,14 @@ def _build_search_top_outcomes(
                 "probability": (
                     float(o.current_probability) if _outcome_prints_a_price(o) else None
                 ),
-                "movement": float(o.probability_change_24h) if o.probability_change_24h else None,
+                # #10248 D5 — `reader_change_24h`.
+                "movement": (
+                    float(chg)
+                    if (chg := reader_change_24h(
+                        market, o.id, o.current_probability, o.probability_change_24h
+                    ))
+                    else None
+                ),
             }
             for o, name in named
         ]
@@ -36762,7 +36793,14 @@ def _build_search_top_outcomes(
                 ),
                 "american_odds": o.current_american_odds,
                 "rank": o.rank,
-                "movement": float(o.probability_change_24h) if o.probability_change_24h else None,
+                # #10248 D5 — `reader_change_24h`.
+                "movement": (
+                    float(chg)
+                    if (chg := reader_change_24h(
+                        market, o.id, o.current_probability, o.probability_change_24h
+                    ))
+                    else None
+                ),
                 # #8640: the grade, in the detail payload's own two fields
                 # (`FuturesOutcome` in `lib/types.ts`), so a client can tell a
                 # graded 1.0 from a live one. Both are needed: `is_winner`

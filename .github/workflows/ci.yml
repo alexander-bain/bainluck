@@ -1911,6 +1911,23 @@ jobs:
             exit 1
           fi
 
+      - name: DataGolf dated movement contract (real Postgres)
+        # #10248. Golf rows served "-" in the 24h column: DataGolf never wrote
+        # `probability_change_24h`, and A8's 2-point per-write floor never banks
+        # a 90 s poll. Drives the real DataGolf writers (both rails), the real
+        # `update_max_movement` and the real `/api/futures/{id}` route: basis
+        # 0.02 at 19 h, 0.15 now, an unchanged poll storing 0 -> served +0.13;
+        # refusals serve None; four strawmen must each turn it red.
+        if: matrix.group == 'shared'
+        run: |
+          set -o pipefail
+          python -m pytest tests/integration/test_datagolf_dated_movement_10248_pg.py \
+            -v -s -rs 2>&1 | tee /tmp/datagolf_dated_movement.txt
+          if grep -qiE "[0-9]+ skipped" /tmp/datagolf_dated_movement.txt; then
+            echo "::error::DataGolf dated movement contract SKIPPED — the gate did not run"
+            exit 1
+          fi
+
       - name: Unpriced-opening statement contract (real Postgres)
         # #8612. `update_max_movement`'s A10 lists legs whose stored opening was
         # captured off a book that was never a price (a 16c/96c spread read as
