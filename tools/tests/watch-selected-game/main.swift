@@ -5,8 +5,10 @@ func event(_ id: Int = 1, extras: String = "") throws -> WatchSelectedGame {
 }
 actor Stub: WatchSelectedGameTransport {
     var calls: [Int: [CheckedContinuation<WatchSelectedGame, Error>]] = [:]
+    private(set) var fetchCount = 0
     func fetch(eventID: Int) async throws -> WatchSelectedGame {
-        try await withCheckedThrowingContinuation { calls[eventID, default: []].append($0) }
+        fetchCount += 1
+        return try await withCheckedThrowingContinuation { calls[eventID, default: []].append($0) }
     }
     func waitFor(_ id: Int, count: Int = 1) async { while (calls[id]?.count ?? 0) < count { await Task.yield() } }
     func finish(_ id: Int, result: Result<WatchSelectedGame, Error>) { let continuation = calls[id]?.removeFirst(); continuation?.resume(with: result) }
@@ -150,6 +152,72 @@ actor Stub: WatchSelectedGameTransport {
             _ = try JSONDecoder().decode(WatchSelectedGame.self, from: Data("{}".utf8))
             fatalError("Empty success must fail decode")
         } catch is DecodingError {}
+        let lifecycleTransport = Stub()
+        let lifecycle = WatchSelectedGameStore(transport: lifecycleTransport, defaults: defaults, now: { clock })
+        lifecycle.select(eventID: 10)
+        precondition(lifecycle.nextRefreshDelay == 300, "A game without a live reading uses the five-minute cadence")
+        func refreshLifecycle(_ result: Result<WatchSelectedGame, Error>) async {
+            let request = Task { await lifecycle.refresh() }
+            await lifecycleTransport.waitFor(10)
+            await lifecycleTransport.finish(10, result: result)
+            await request.value
+        }
+        for delay in [30, 60, 120, 240, 300, 300] as [TimeInterval] {
+            await refreshLifecycle(.failure(URLError(.notConnectedToInternet)))
+            precondition(lifecycle.nextRefreshDelay == delay, "Repeated failures back off to a five-minute cap")
+        }
+        await refreshLifecycle(.success(try event(10, extras: ",\"status\":\"live\"")))
+        precondition(lifecycle.nextRefreshDelay == 30, "Successful live refresh resets failure backoff")
+        await refreshLifecycle(.failure(URLError(.notConnectedToInternet)))
+        precondition(lifecycle.nextRefreshDelay == 30, "The next failure starts again at thirty seconds")
+        await refreshLifecycle(.failure(URLError(.notConnectedToInternet)))
+        precondition(lifecycle.nextRefreshDelay == 60)
+        await refreshLifecycle(.success(try event(10, extras: ",\"status\":\"completed\"")))
+        precondition(lifecycle.nextRefreshDelay == 300, "Successful final refresh returns to the nonlive cadence")
+        await refreshLifecycle(.failure(URLError(.notConnectedToInternet)))
+        lifecycle.clearSelection()
+        precondition(lifecycle.nextRefreshDelay == 300, "Clearing selection resets the failure delay")
+        lifecycle.select(eventID: 10)
+        await refreshLifecycle(.failure(URLError(.notConnectedToInternet)))
+        precondition(lifecycle.nextRefreshDelay == 30, "A new selection starts with the first failure delay")
+        for (status, delay) in [("live", 30), ("scheduled", 300)] as [(String, TimeInterval)] {
+            var sleeps: [TimeInterval] = []
+            let loop = Task {
+                await lifecycle.runForegroundRefresh { interval in
+                    sleeps.append(interval)
+                    throw CancellationError()
+                }
+            }
+            await lifecycleTransport.waitFor(10)
+            await lifecycleTransport.finish(10, result: .success(try event(10, extras: ",\"status\":\"\(status)\"")))
+            await loop.value
+            precondition(sleeps == [delay], "Throwing sleep exits the loop after its immediate refresh")
+        }
+        let beforeSleepCancellation = await lifecycleTransport.fetchCount
+        let cancelDuringSleep = Task {
+            await lifecycle.runForegroundRefresh { _ in
+                withUnsafeCurrentTask { $0?.cancel() }
+                // Even a sleeper that returns normally after cancellation cannot start another request.
+            }
+        }
+        await lifecycleTransport.waitFor(10)
+        await lifecycleTransport.finish(10, result: .success(try event(10)))
+        await cancelDuringSleep.value
+        let afterSleepCancellation = await lifecycleTransport.fetchCount
+        precondition(afterSleepCancellation == beforeSleepCancellation + 1)
+        let beforeCancellation = await lifecycleTransport.fetchCount
+        var cancelledSleeps = 0
+        let cancelledLoop = Task {
+            await lifecycle.runForegroundRefresh { _ in
+                cancelledSleeps += 1
+                throw CancellationError()
+            }
+        }
+        cancelledLoop.cancel() // Main-actor task cannot enter until this actor yields.
+        await cancelledLoop.value
+        let afterCancellation = await lifecycleTransport.fetchCount
+        precondition(afterCancellation == beforeCancellation && cancelledSleeps == 0, "Cancellation before entry performs neither fetch nor sleep")
         print("PASS: cold offline snapshot restoration, cache integrity, observation-clock round trips, selection persistence, empty/error distinction, retained failure, race fencing, canonical alias, same-selection refresh ordering, cancellation, final status, draw semantics, tolerant optionals, distinct score/probability ages")
+        print("PASS: foreground immediate refresh, live/nonlive cadence, capped failure backoff, success and selection reset, throwing-sleep exit, cancellation before entry")
     }
 }

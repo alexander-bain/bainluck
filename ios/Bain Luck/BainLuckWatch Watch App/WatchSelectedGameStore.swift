@@ -32,6 +32,7 @@ final class WatchSelectedGameStore: ObservableObject {
     private let defaults: UserDefaults
     private let now: () -> Date
     private var revision = 0
+    private var consecutiveFailures = 0
     private static let selectionKey = "bainluck_watch_selected_event_id"
 
     private static let snapshotKey = "bainluck_watch_selected_game_snapshot_v1"
@@ -62,6 +63,7 @@ final class WatchSelectedGameStore: ObservableObject {
     @MainActor func select(eventID: Int) {
         guard eventID > 0, eventID != selectedEventID else { return }
         revision += 1
+        consecutiveFailures = 0
         selectedEventID = eventID
         defaults.set(eventID, forKey: Self.selectionKey)
         defaults.removeObject(forKey: Self.snapshotKey)
@@ -74,6 +76,7 @@ final class WatchSelectedGameStore: ObservableObject {
 
     @MainActor func clearSelection() {
         revision += 1
+        consecutiveFailures = 0
         selectedEventID = nil
         defaults.removeObject(forKey: Self.selectionKey)
         defaults.removeObject(forKey: Self.snapshotKey)
@@ -84,7 +87,30 @@ final class WatchSelectedGameStore: ObservableObject {
         isRefreshing = false
     }
 
+    /// Foreground scheduling only; this is not a watchOS background guarantee.
+    /// Waiting happens after completion, so slow responses never overlap polls.
+    var nextRefreshDelay: TimeInterval {
+        if consecutiveFailures > 0 {
+            return min(300, 30 * pow(2, Double(consecutiveFailures - 1)))
+        }
+        return game?.isLive == true ? 30 : 300
+    }
+
+    @MainActor func runForegroundRefresh(
+        sleep: (TimeInterval) async throws -> Void = { seconds in
+            try await Task.sleep(for: .seconds(seconds))
+        }
+    ) async {
+        while !Task.isCancelled, selectedEventID != nil {
+            await refresh()
+            guard !Task.isCancelled, selectedEventID != nil else { return }
+            do { try await sleep(nextRefreshDelay) }
+            catch { return }
+        }
+    }
+
     @MainActor func refresh() async {
+        guard !Task.isCancelled else { return }
         guard let id = selectedEventID else { return }
         revision += 1
         let requestRevision = revision
@@ -97,6 +123,7 @@ final class WatchSelectedGameStore: ObservableObject {
             // Detail can resolve an absorbed alias to the surviving canonical id.
             selectedEventID = result.id
             defaults.set(result.id, forKey: Self.selectionKey)
+            consecutiveFailures = 0
             game = result
             let receivedAt = now()
             fetchedAt = receivedAt
@@ -111,6 +138,7 @@ final class WatchSelectedGameStore: ObservableObject {
             guard requestRevision == revision, selectedEventID == id else { return }
             isRefreshing = false
             if Task.isCancelled || error is CancellationError || (error as? URLError)?.code == .cancelled { return }
+            consecutiveFailures = min(consecutiveFailures + 1, 5)
             let code = (error as? URLError)?.code
             errorMessage = (code == .notConnectedToInternet || code == .networkConnectionLost)
                 ? "Offline. Try again." : "Couldn't refresh. Try again."

@@ -10,8 +10,9 @@ struct WatchSelectedGameView: View {
     @State private var choosingGame = false
     @State private var refreshGeneration = 0
     @State private var gamesRefreshGeneration = 0
+    @State private var gamesRequestRevision = 0
 
-    private var refreshKey: String { "\(scenePhase)-\(refreshGeneration)-\(store.selectedEventID ?? 0)" }
+    private var refreshKey: String { "\(scenePhase)-\(choosingGame)-\(refreshGeneration)-\(store.selectedEventID ?? 0)" }
 
     var body: some View {
         ScrollView {
@@ -42,17 +43,12 @@ struct WatchSelectedGameView: View {
         }
         .navigationTitle("Your game")
         .task(id: refreshKey) {
-            guard scenePhase == .active else { return }
+            guard scenePhase == .active, !choosingGame else { return }
             if store.selectedEventID == nil {
                 await loadGames()
                 return
             }
-            while !Task.isCancelled {
-                await store.refresh()
-                guard !Task.isCancelled else { return }
-                do { try await Task.sleep(for: .seconds(30)) }
-                catch { return }
-            }
+            await store.runForegroundRefresh()
         }
         .sheet(isPresented: $choosingGame) {
             ScrollView { gamePicker.padding(.horizontal, 6) }
@@ -194,16 +190,21 @@ struct WatchSelectedGameView: View {
 
     @MainActor
     private func loadGames() async {
+        guard !Task.isCancelled else { return }
+        gamesRequestRevision += 1
+        let requestRevision = gamesRequestRevision
         isLoadingGames = true
-        defer { isLoadingGames = false }
+        defer {
+            if gamesRequestRevision == requestRevision { isLoadingGames = false }
+        }
         do {
             let feed = try await WatchAPIClient.shared.fetchFeed(limit: 30, forceRefresh: true)
-            guard !Task.isCancelled else { return }
+            guard !Task.isCancelled, gamesRequestRevision == requestRevision else { return }
             var seen = Set<Int>()
             availableGames = feed.items.compactMap(\.event).filter { seen.insert($0.id).inserted }
             gamesError = nil
         } catch {
-            guard !Task.isCancelled else { return }
+            guard !Task.isCancelled, gamesRequestRevision == requestRevision else { return }
             gamesError = "Couldn't load available games. Refresh to try again."
         }
     }

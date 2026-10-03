@@ -43,8 +43,9 @@ build restoration does not repair those reader defects or close #4932/#1739.
 
 The Watch root now offers a real Discover game picker and retains one selected
 canonical event locally. It reads that event directly from the public detail API
-and never needs a sign-in token. Foreground refreshes are bounded to 30 seconds,
-with manual retry; a selection/request revision and cancellation checks prevent
+and never needs a sign-in token. Foreground live refreshes wait 30 seconds after completion; non-live games wait
+five minutes and repeated failures back off from 30 seconds to five minutes.
+Reopening and manual retry check immediately; a selection/request revision and cancellation checks prevent
 old responses replacing the current selection. Successful final state shows the
 final score, while refresh failure retains and dates the prior reading.
 
@@ -80,3 +81,14 @@ Codex owns this contribution and independent review. Native has no immediate
 execution request. Exact-commit native builds and BainLuckTests remain required
 before integration; old-head build evidence does not validate this source.
 Current milestones and ownership live in GitHub #4929/#4932.
+
+## Foreground refresh lifecycle
+
+The view cancels its selected-game loop while inactive or while the picker is open.
+The loop checks cancellation before network work and after each wait. Cancelled
+and obsolete requests do not advance failure backoff. A successful refresh resets
+backoff; a changed/cleared selection also resets it. Picker request revisions keep
+an older completion from clearing a newer loading state. These are foreground
+policies, not promises of background delivery. Swift tests inject the sleep boundary
+to exercise delays and cancellation without a real timer or simulator. Physical
+background/network and battery behavior still needs device evidence.
