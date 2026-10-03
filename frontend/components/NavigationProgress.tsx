@@ -3,6 +3,7 @@
 import { useEffect, useRef } from "react";
 import { usePathname, useSearchParams } from "next/navigation";
 import NProgress from "nprogress";
+import { browserOriginEnv, questionOrigin } from "@/lib/futuresReturnOrigin";
 
 /**
  * Global top-of-page progress bar for Next.js App Router navigation.
@@ -32,6 +33,31 @@ export default function NavigationProgress() {
       const target = (e.target as HTMLElement).closest("a");
       if (!target) return;
       const href = target.getAttribute("href");
+      // #10265: a tap into a question page records which history entry it
+      // left, so the question's Back control can prove where it goes
+      // (`lib/futuresReturnOrigin.ts`). Its own refusals; bookkeeping only, it
+      // never changes what the progress bar below does, and a failure here
+      // must never break the click.
+      try {
+        const env = browserOriginEnv();
+        if (env) {
+          questionOrigin.recordClick(
+            {
+              href,
+              button: e.button,
+              metaKey: e.metaKey,
+              ctrlKey: e.ctrlKey,
+              shiftKey: e.shiftKey,
+              altKey: e.altKey,
+              target: target.getAttribute("target"),
+              download: target.hasAttribute("download"),
+            },
+            env,
+          );
+        }
+      } catch {
+        // Bookkeeping failed: the question page falls back to Discover.
+      }
       if (!href || href.startsWith("#") || href.startsWith("http") || href.startsWith("mailto:")) return;
       if (target.getAttribute("target") === "_blank") return;
       if (e.metaKey || e.ctrlKey || e.shiftKey || e.altKey) return;
