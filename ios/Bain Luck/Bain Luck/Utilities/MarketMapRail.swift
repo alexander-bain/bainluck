@@ -350,8 +350,22 @@ enum MarketMapRail {
     ///    Unchanged: the card means it.
     /// 3. **Settled, with none** — "Final <unit>". Exactly what the card shows:
     ///    a final, on a rail with no shape on it.
-    static func fullTotalSubtitle(isDone: Bool, hasDistribution: Bool, unit: String) -> String {
-        guard isDone else { return "Projected total \(unit)" }
+    ///
+    /// #10272 — and state 1 splits the way #10149 split the margin map's. On
+    /// `15319530` (Orioles @ Yankees, hero **Canceled**) this card sat between
+    /// "Last quoted margin" and "Last quoted scoring" reading **Projected total
+    /// runs** over a game that will never be played. Not settled now offers a
+    /// forecast only where #4018's gate says a final can still arrive, and
+    /// otherwise "Last quoted total <unit>" —
+    /// ``fullMarginSubtitle(isDone:canStillBeGraded:hasDistribution:)``'s order
+    /// and word. It fits wherever that card's "Last quoted margin distribution"
+    /// already does: same `mapCard` subtitle slot, a shorter string.
+    static func fullTotalSubtitle(
+        isDone: Bool, hasDistribution: Bool, unit: String, canStillBeGraded: Bool = true
+    ) -> String {
+        guard isDone else {
+            return canStillBeGraded ? "Projected total \(unit)" : "Last quoted total \(unit)"
+        }
         return hasDistribution ? "Final \(unit) distribution" : "Final \(unit)"
     }
 

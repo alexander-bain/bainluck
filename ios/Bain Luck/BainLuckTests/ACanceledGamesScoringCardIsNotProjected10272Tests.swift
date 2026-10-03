@@ -39,6 +39,26 @@ final class ACanceledGamesScoringCardIsNotProjected10272Tests: XCTestCase {
         XCTAssertTrue(scoring.hasPrefix("Last quoted"), scoring)
     }
 
+    /// The runs map between them, the third card on the same screen: it read
+    /// "Projected total runs" in the after-frame of the first fix.
+    func testTheRunsMapAboveTheCardReadsLastQuotedToo() {
+        XCTAssertEqual(
+            MarketMapRail.fullTotalSubtitle(
+                isDone: false, hasDistribution: false, unit: "runs", canStillBeGraded: false),
+            "Last quoted total runs"
+        )
+        XCTAssertEqual(
+            MarketMapRail.fullTotalSubtitle(
+                isDone: false, hasDistribution: true, unit: "runs", canStillBeGraded: true),
+            "Projected total runs", "control: a game that can still be played keeps its forecast"
+        )
+        XCTAssertEqual(
+            MarketMapRail.fullTotalSubtitle(
+                isDone: true, hasDistribution: true, unit: "runs", canStillBeGraded: false),
+            "Final runs distribution", "control: a finished game's false gate never demotes Final"
+        )
+    }
+
     // MARK: - Controls: the gate moves only the case it names
 
     /// A scheduled or live game can still be graded and keeps its forecast.
@@ -123,6 +143,25 @@ final class ACanceledGamesScoringCardIsNotProjected10272Tests: XCTestCase {
                 "\(call) is called without the view's own gate: \(args)"
             )
         }
+    }
+
+    /// The runs map's call site, same hole: `fullTotalSubtitle` defaults to
+    /// the gradeable case.
+    func testTheRunsMapPassesItsOwnGate() throws {
+        let code = try Self.strippedSource("Components/MarketMapView.swift")
+        guard let start = code.range(of: "MarketMapRail.fullTotalSubtitle(") else {
+            return XCTFail("MarketMapView no longer calls fullTotalSubtitle")
+        }
+        // The call's own arguments contain `),` (`displayUnit(mapUnit),`), so
+        // the end is the next `mapCard` argument, not a parenthesis.
+        guard let close = code[start.upperBound...].range(of: "headline:") else {
+            return XCTFail("could not find the end of fullTotalSubtitle(")
+        }
+        let args = code[start.upperBound..<close.lowerBound]
+        XCTAssertTrue(
+            args.contains("canStillBeGraded: canStillBeGraded"),
+            "fullTotalSubtitle is called without the view's own gate: \(args)"
+        )
     }
 
     // MARK: - Fit
