@@ -124,10 +124,11 @@ async def test_the_climate_clock_row_asks_its_market_pages_question():
 
 @pytest.mark.asyncio
 async def test_weather_event_and_wildcard_rows_are_cleaned_too():
+    # Inside 2026: /events drops past-period titles (#10331).
     events = await get_events(_wdb([
         _yes(1, "Category 5 hurricane landfall by...?", 0.2),
         _yes(2, "Will a magnitude 8.0 earthquake hit in 2026?", 0.3),
-    ]))
+    ]), now=datetime(2026, 10, 3, 12, 0, tzinfo=timezone.utc))
     wild = await get_wildcards(_wdb([
         _yes(3, "Will a supervolcano erupt by...?", 0.03),
     ]))

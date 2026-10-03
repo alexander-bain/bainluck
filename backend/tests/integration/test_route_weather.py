@@ -1059,7 +1059,8 @@ class TestWeatherEvents:
         mock_db.execute.return_value = _query_result([
             _market(
                 market_id=1301,
-                name="Will a tornado hit Oklahoma in May 2026?",
+                # Next year's May, so the title is never a past period (#10331).
+                name=f"Will a tornado hit Oklahoma in May {now.year + 1}?",
                 source="kalshi",
                 outcomes=[
                     _outcome("Yes", 0.55, outcome_id=13010),
