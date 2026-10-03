@@ -629,6 +629,73 @@ def test_a_new_leg_is_not_served(monkeypatch) -> None:
 
 
 # ---------------------------------------------------------------------------
+# The bank lead (after-check 2026-10-03): a basis survives the next sweep
+# ---------------------------------------------------------------------------
+
+
+_LEAD_CLAUSE = " + (:bank_lead_minutes * interval '1 minute')"
+
+
+def _drive_edge(monkeypatch, rewrite=None):
+    """Dense history, as in play: 0.02 seen 23 h 55 m ago (five minutes from
+    leaving the window), 0.05 seen 20 h ago, 0.15 now. Returns the bank cell,
+    the served move now, and the reader's answer one sweep gap later."""
+    from types import SimpleNamespace
+
+    from app.utils.futures_market_snapshot import (
+        DATED_BASIS_METADATA_KEY,
+        dated_movement_points,
+    )
+
+    obs = [(23 + 55 / 60, 0.02, "datagolf_model"), (20, 0.05, "datagolf_model")]
+    market_ids, outcome_ids = asyncio.run(_reset_and_seed(_winner_field(obs)))
+    mid = market_ids[("pga", "win")]
+    jordan = outcome_ids[("pga", "win", JORDAN)]
+    _write(monkeypatch, "live", _priced(0.15))
+    _write(monkeypatch, "live", _priced(0.15))
+    _sweep(monkeypatch, rewrite=rewrite)
+    deltas, metadata = _rows(market_ids, outcome_ids)
+    meta = metadata[mid] or {}
+    served = _served(monkeypatch, mid)[jordan]
+
+    from app.utils.futures_market_snapshot import DATED_BASIS_ELIGIBILITY_METADATA_KEY
+
+    market = SimpleNamespace(source="datagolf", market_metadata=meta)
+    assert meta.get(DATED_BASIS_ELIGIBILITY_METADATA_KEY), meta
+    later = dated_movement_points(
+        market, jordan, 0.15, deltas[jordan],
+        now=datetime.now(timezone.utc) + timedelta(minutes=15),
+    )
+    return (meta.get(DATED_BASIS_METADATA_KEY) or {}).get(str(jordan)), served, later
+
+
+def test_the_bank_lead_keeps_the_move_served_past_the_next_sweep(monkeypatch) -> None:
+    cell, served, later = _drive_edge(monkeypatch)
+    assert cell is not None and abs(cell[0] - 0.05) < 1e-9, (
+        f"A8-DG must take the 20 h observation, not the one five minutes from "
+        f"leaving the window; banked {cell}"
+    )
+    assert served is not None and abs(served - 0.10) < 1e-6, served
+    assert later is not None and abs(later - 0.10) < 1e-6, (
+        f"fifteen minutes on — one sweep gap — the move must still be served; got {later}"
+    )
+
+
+def test_strawman_no_bank_lead_goes_dark_before_the_next_sweep(monkeypatch) -> None:
+    def _rewrite(sql):
+        if _mark_key() in sql and "jsonb_object_agg" in sql:
+            assert _LEAD_CLAUSE in sql, "the lead clause is gone — the strawman would be vacuous"
+            return sql.replace(_LEAD_CLAUSE, "")
+        return sql
+
+    cell, served, later = _drive_edge(monkeypatch, rewrite=_rewrite)
+    # Without the lead the edge observation is banked: right now, dark soon.
+    assert cell is not None and abs(cell[0] - 0.02) < 1e-9, cell
+    assert served is not None and abs(served - 0.13) < 1e-6, served
+    assert later is None, later
+
+
+# ---------------------------------------------------------------------------
 # Strawmen — each breaks one decision and must turn the positive case red
 # ---------------------------------------------------------------------------
 

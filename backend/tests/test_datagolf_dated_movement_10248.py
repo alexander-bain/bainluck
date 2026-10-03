@@ -211,6 +211,34 @@ def test_the_datagolf_bank_has_no_per_write_floor_and_keeps_a8s_bar(sweep) -> No
     assert params["dg_mark"] == DATED_BASIS_PRICED_LEG
 
 
+def test_the_datagolf_bank_takes_its_basis_inside_the_window_by_the_lead(sweep) -> None:
+    """After-check, 2026-10-03: a basis banked at the window's edge expired
+    minutes after the sweep that banked it, so a live golf board's 24h column
+    read "-" between sweeps. The lead must outlast the gap between two sweeps
+    with a missed run to spare, or the column still goes dark between them."""
+    from app.tasks import DATED_BASIS_BANK_LEAD_MINUTES, celery_app
+
+    _, calls = sweep
+    sql, params = next(
+        (sql, params)
+        for _, sql, params in _bank_statements(calls)
+        if DATED_BASIS_ELIGIBILITY_METADATA_KEY in sql and "jsonb_object_agg" in sql
+    )
+    assert (
+        "> now() - (:window_hours * interval '1 hour')"
+        " + (:bank_lead_minutes * interval '1 minute')"
+    ) in sql, sql
+    assert params["bank_lead_minutes"] == DATED_BASIS_BANK_LEAD_MINUTES
+
+    minutes = sorted(celery_app.conf.beat_schedule["update-max-movement"]["schedule"].minute)
+    gap = max(b - a for a, b in zip(minutes, minutes[1:] + [minutes[0] + 60]))
+    assert DATED_BASIS_BANK_LEAD_MINUTES >= 2 * gap, (gap, DATED_BASIS_BANK_LEAD_MINUTES)
+    # Still a lead, not a second window: the basis stays at least half a day old.
+    from app.tasks import DATED_BASIS_MIN_AGE_HOURS, MOVEMENT_WINDOW_HOURS
+
+    assert DATED_BASIS_BANK_LEAD_MINUTES < (MOVEMENT_WINDOW_HOURS - DATED_BASIS_MIN_AGE_HOURS) * 60
+
+
 def test_the_datagolf_unbank_removes_the_mark_with_the_bank(sweep) -> None:
     _, calls = sweep
     unbank = [
