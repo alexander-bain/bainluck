@@ -4,8 +4,12 @@
 set -euo pipefail
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 OUT="${WATCH_BUILD_OUTPUT:-$(mktemp -d /tmp/bainluck-watch-build.XXXXXX)}"
+CONFIGURATION="${WATCH_BUILD_CONFIGURATION:-Debug}"
+case "$CONFIGURATION" in Debug|Release) ;; *) echo 'Use Debug or Release' >&2; exit 2 ;; esac
 mkdir -p "$OUT"
 echo "Source: $(git -C "$ROOT" rev-parse HEAD)"
+echo 'Worktree changes (nonempty means the build is not exact-commit evidence):'
+git -C "$ROOT" status --short --untracked-files=normal -- ios tools/watch-build.sh
 echo "Evidence: $OUT"
 for PLATFORM in watchsimulator watchos; do
   if [[ "$PLATFORM" == watchsimulator ]]; then
@@ -15,7 +19,7 @@ for PLATFORM in watchsimulator watchos; do
   fi
   LOG="$OUT/$PLATFORM.log"
   if xcodebuild -project "$ROOT/ios/Bain Luck/Bain Luck.xcodeproj" \
-    -scheme BainLuckWatch -configuration Debug -destination "$DESTINATION" \
+    -scheme BainLuckWatch -configuration "$CONFIGURATION" -destination "$DESTINATION" \
     -derivedDataPath "$OUT/$PLATFORM" CODE_SIGNING_ALLOWED=NO \
     'OTHER_SWIFT_FLAGS=$(inherited) -Xfrontend -disable-sandbox' build > "$LOG" 2>&1; then
     grep -F '** BUILD SUCCEEDED **' "$LOG"
@@ -26,7 +30,7 @@ for PLATFORM in watchsimulator watchos; do
     exit "$RESULT"
   fi
   # A successful command alone is insufficient: require an executable app bundle.
-  APP="$OUT/$PLATFORM/Build/Products/Debug-$PLATFORM/BainLuckWatch Watch App.app"
+  APP="$OUT/$PLATFORM/Build/Products/$CONFIGURATION-$PLATFORM/BainLuckWatch Watch App.app"
   python3 - "$APP" "$PLATFORM" <<'PY'
 import pathlib, plistlib, subprocess, sys
 app = pathlib.Path(sys.argv[1])
