@@ -357,7 +357,9 @@ struct TotalPointsSpectrumView: View {
 
     private var header: some View {
         HStack {
-            Text(MarketMapRail.spectrumSectionTitle(finalTotal: actualTotal, isSettled: isDone))
+            Text(MarketMapRail.spectrumSectionTitle(
+                finalTotal: actualTotal, isSettled: isDone, canStillBeGraded: canStillBeGraded
+            ))
                 .font(Self.sectionTitleFont)
             Spacer()
             if sourceCount > 1 {
@@ -562,7 +564,8 @@ struct TotalPointsSpectrumView: View {
     private var ladderView: some View {
         VStack(alignment: .leading, spacing: 0) {
             Text(MarketMapRail.spectrumLadderTitle(
-                finalTotal: actualTotal, unit: unit, isSettled: isDone
+                finalTotal: actualTotal, unit: unit, isSettled: isDone,
+                canStillBeGraded: canStillBeGraded
             ))
                 .font(Self.ladderTitleFont)
                 .padding(.bottom, 4)

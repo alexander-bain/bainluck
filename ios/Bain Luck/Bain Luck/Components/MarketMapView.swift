@@ -812,7 +812,8 @@ struct MarketMapView: View {
             subtitle: MarketMapRail.fullTotalSubtitle(
                 isDone: isDone,
                 hasDistribution: hasDistribution,
-                unit: displayUnit(mapUnit)
+                unit: displayUnit(mapUnit),
+                canStillBeGraded: canStillBeGraded
             ),
             headline: "",
             density: density,
