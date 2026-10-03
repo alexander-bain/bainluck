@@ -314,19 +314,39 @@ struct NativeEventDiscoverCard: View {
                     )
                     let awayPct = duel[0]
                     let homePct = duel[1]
+                    // #8258 — at an accessibility text size the label sat between
+                    // two `.title3` numerals and was squeezed into whatever width
+                    // they left, so it broke mid-word ("Probabili-" / "ty") and
+                    // each `%` fell onto its own line. There the label takes its
+                    // own full-width line above the numbers, and the numbers keep
+                    // their whole width. Below accessibility sizes the row is
+                    // unchanged.
+                    let labelOnOwnLine = dynamicTypeSize.isAccessibilitySize
                     VStack(spacing: 6) {
+                        if labelOnOwnLine {
+                            winProbabilityLabel
+                                .multilineTextAlignment(printable.away == nil ? .leading : .center)
+                                .fixedSize(horizontal: false, vertical: true)
+                                .frame(
+                                    maxWidth: .infinity,
+                                    alignment: printable.away == nil ? .leading : .center)
+                        }
                         HStack {
                             if let awayProbability = printable.away {
                                 Text(formatProbability(awayProbability, renderedPercent: awayPct))
                                     .font(.title3.weight(.black).monospacedDigit())
+                                    .lineLimit(1)
+                                    .fixedSize()
                                     .foregroundStyle(awayColor)
                                 Spacer()
-                                Text("Win Probability")
-                                    .font(.caption2.weight(.medium))
-                                    .foregroundStyle(.secondary)
-                                Spacer()
+                                if !labelOnOwnLine {
+                                    winProbabilityLabel
+                                    Spacer()
+                                }
                                 Text(formatProbability(homeProbability, renderedPercent: homePct))
                                     .font(.title3.weight(.black).monospacedDigit())
+                                    .lineLimit(1)
+                                    .fixedSize()
                                     .foregroundStyle(homeColor)
                             } else {
                                 // #5363 — the strip has collapsed to ONE number,
@@ -342,9 +362,9 @@ struct NativeEventDiscoverCard: View {
                                 // to 101, and its answer for one side can be
                                 // `100 − other` — a number about the complement
                                 // this branch exists to refuse.
-                                Text("Win Probability")
-                                    .font(.caption2.weight(.medium))
-                                    .foregroundStyle(.secondary)
+                                if !labelOnOwnLine {
+                                    winProbabilityLabel
+                                }
                                 Spacer()
                                 Text(cardSides.home)
                                     .font(.caption2.weight(.bold))
@@ -352,6 +372,8 @@ struct NativeEventDiscoverCard: View {
                                     .foregroundStyle(homeColor)
                                 Text(formatProbability(homeProbability))
                                     .font(.title3.weight(.black).monospacedDigit())
+                                    .lineLimit(1)
+                                    .fixedSize()
                                     .foregroundStyle(homeColor)
                             }
                         }
@@ -633,6 +655,14 @@ struct NativeEventDiscoverCard: View {
             // #3966 — `lineLimit` alone still truncates when a parent proposes
             // one line's height. The pair is load-bearing together.
             .fixedSize(horizontal: false, vertical: true)
+    }
+
+    /// #8258 — one label for both strip shapes, so the inline and own-line
+    /// placements cannot drift apart in wording or style.
+    private var winProbabilityLabel: some View {
+        Text("Win Probability")
+            .font(.caption2.weight(.medium))
+            .foregroundStyle(.secondary)
     }
 
     private var statusLayout: GameCardStatusColumn.Layout {
