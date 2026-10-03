@@ -639,6 +639,51 @@ interface ResolvedSource {
  */
 
 /**
+ * #10249 — what a touch (or mouse) event means for an inspection of the chart.
+ *
+ * Recharts clears its tooltip only on `mouseleave`. Its `touchend` forwards to
+ * an `onMouseUp` prop and nothing else (2.15.4, `handleTouchEnd`), so on a phone
+ * a finger-drag left the tooltip, cursor and active dots latched on a historical
+ * point after the finger lifted. The readout under the chart stayed there too,
+ * and as live data shifted the index, the latched tooltip moved to a different
+ * moment on its own (shopper, production `/events/15318028`, 2026-10-02
+ * 23:31Z, 80 s observed).
+ *
+ * Lifting the last finger ends the inspection, the same as a mouse leaving the
+ * plot. This reads TOUCH events, not pointer events. Chrome sends `pointercancel`
+ * as soon as a drag could be a page scroll, while the touch events keep coming,
+ * so treating `pointercancel` as "finger lifted" would hide the tooltip during
+ * the drag itself (measured locally against `/events/15318028`). A mouse never
+ * "releases": a mouse inspection ends on leave, which already works. A mouse
+ * moving again resumes normal hovering.
+ */
+export function chartInspectionPhase(
+  event: "touchstart" | "touchend" | "touchcancel" | "pointermove",
+  detail: { pointerType?: string; touchesLeft?: number } = {},
+): "inspect" | "release" | "none" {
+  if (event === "touchstart") return "inspect";
+  if (event === "pointermove") return detail.pointerType === "mouse" ? "inspect" : "none";
+  // A pinch lifting one of two fingers is still an inspection.
+  return (detail.touchesLeft ?? 0) > 0 ? "none" : "release";
+}
+
+/**
+ * Ends a touch inspection: the readout returns to the current moment, and the
+ * chart's own active state (tooltip, cursor, active dots) is cleared through
+ * the same handler a mouse leaving the plot runs. `handleMouseLeave` is a
+ * Recharts class field, not a documented prop, so it is called only if
+ * present; the controlled `<Tooltip active={false}>` hides the card either way.
+ */
+export function releaseChartInspection(
+  chart: unknown,
+  onActivePointChange: ((point: null) => void) | undefined,
+): void {
+  onActivePointChange?.(null);
+  const leave = (chart as { handleMouseLeave?: unknown } | null)?.handleMouseLeave;
+  if (typeof leave === "function") leave.call(chart);
+}
+
+/**
  * #7848 — the tooltip card, lifted back onto the screen when recharts has pinned
  * it to a plot that is shorter than the card.
  *
@@ -805,6 +850,24 @@ export default function OddsChart({
   // Ruling 1/4): the blend is labeled and dominant; the faint source lines stay
   // unlabeled until the reader expands the legend (or isolates one via hover).
   const [legendExpanded, setLegendExpanded] = useState(false);
+
+  // #10249 — true from the moment a finger lifts until the next inspection
+  // begins. The ref mirrors it for the Recharts callbacks, which must not wait
+  // for a render: a tap is followed by compatibility mouse events, and their
+  // `mousemove` would otherwise pin the tapped point all over again.
+  const chartRef = useRef<unknown>(null);
+  const [touchReleased, setTouchReleased] = useState(false);
+  const touchReleasedRef = useRef(false);
+  const onChartInspection = (...args: Parameters<typeof chartInspectionPhase>) => {
+    const phase = chartInspectionPhase(...args);
+    if (phase === "none") return;
+    const released = phase === "release";
+    if (released) releaseChartInspection(chartRef.current, onActivePointChange);
+    if (touchReleasedRef.current !== released) {
+      touchReleasedRef.current = released;
+      setTouchReleased(released);
+    }
+  };
 
   // #925 — phone width prints the tooltip's probabilities as a table, so the card
   // fits inside the plot instead of hanging over the readout under the chart
@@ -2845,13 +2908,28 @@ export default function OddsChart({
           </div>
         </div>
 
-        {/* Chart area */}
-        <div className="flex-1 min-w-0">
+        {/* Chart area. #10249: Recharts' own touch handling never ends an
+            inspection, so the last finger lifting ends it here. */}
+        <div
+          className="flex-1 min-w-0"
+          onTouchStart={() => onChartInspection("touchstart")}
+          onTouchEnd={(e) => onChartInspection("touchend", { touchesLeft: e.touches.length })}
+          onTouchCancel={(e) => onChartInspection("touchcancel", { touchesLeft: e.touches.length })}
+          onPointerMove={(e) => onChartInspection("pointermove", { pointerType: e.pointerType })}
+        >
         <ResponsiveContainer width="100%" height="100%">
           <ComposedChart
+            ref={chartRef as never}
             data={chartData}
             margin={{ top: 15, right: 10, left: 0, bottom: 5 }}
             onMouseMove={(state: { activeTooltipIndex?: number }) => {
+              // #10249 — after a finger lifts, the only mouse events are the
+              // browser's compatibility copies of the tap. They must not
+              // re-latch the point that the release just cleared.
+              if (touchReleasedRef.current) {
+                releaseChartInspection(chartRef.current, onActivePointChange);
+                return;
+              }
               if (!onActivePointChange) return;
               const idx = state?.activeTooltipIndex;
               if (idx == null || idx < 0 || idx >= chartData.length) {
@@ -2976,7 +3054,14 @@ export default function OddsChart({
                 readings …"), so it must be asked. `CustomTooltip` still
                 shows a number only for entries that carry one, and returns
                 nothing when it has neither a number nor a note. */}
-            <Tooltip content={<CustomTooltip />} filterNull={false} />
+            {/* #10249 — `active={false}` once a finger has lifted, so no later
+                data can bring back the card the release cleared. `undefined`
+                otherwise, which leaves Recharts in charge as before. */}
+            <Tooltip
+              content={<CustomTooltip />}
+              filterNull={false}
+              active={touchReleased ? false : undefined}
+            />
 
             {/* #7878 — `connectNulls` is GONE from every observation series
                 below. It was the second half of the defect: the forward-fill
