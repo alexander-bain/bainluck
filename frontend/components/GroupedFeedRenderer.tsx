@@ -28,7 +28,7 @@ import type {
 
 import PlayerStatCard from "./PlayerStatCard";
 import ProgressionLadder from "./ProgressionLadder";
-import QuantityGroup, { buildThresholdRungs } from "./QuantityGroup";
+import QuantityGroup, { buildThresholdRungs, type QuantityRung } from "./QuantityGroup";
 import PlacementGrid from "./PlacementGrid";
 import FuturesCard from "./FuturesCard";
 
@@ -115,6 +115,51 @@ export function formatThresholdTitle(title: string): string {
   return cleaned.charAt(0).toUpperCase() + cleaned.slice(1);
 }
 
+/**
+ * #10280 — a two-team Spread / Team Total is ONE Kalshi event, so the backend
+ * groups both clubs' ladders into one card. The numeric rung label drops the
+ * team: "Washington vs Tampa Bay: Spread" printed `≥ 1.5 goals 22%` and
+ * `≥ 1.5 goals 37%` side by side. Each point's payload `name` already says
+ * whose number it is ("Washington wins by over 1.5 goals", "Vegas over 1.5"),
+ * so when a card's labels collide the rung carries that name instead. Only a
+ * demonstrated collision switches — a single-subject ladder (Total Goals, a
+ * price ladder) never has two rungs on one label and renders byte-for-byte as
+ * before. Returns null when there is nothing to fix or the names cannot fix it.
+ */
+export function disambiguateThresholdRungs(
+  rungs: QuantityRung[],
+  points: ThresholdFeedItem["points"],
+  title: string,
+): QuantityRung[] | null {
+  const labels = rungs.map((r) => r.label);
+  if (new Set(labels).size === labels.length) return null;
+  const nameById = new Map(points.map((p) => [p.id, (p.name ?? "").trim()]));
+  const named = rungs.map((r) => ({ ...r, label: nameById.get(Number(r.key)) || r.label }));
+  const namedLabels = named.map((r) => r.label);
+  if (new Set(namedLabels).size !== namedLabels.length) return null;
+  // At each threshold the clubs read in the title's order ("Anaheim vs Vegas"
+  // → Anaheim first) — the payload alternates them inconsistently, and the
+  // ladder's value sort is stable, so this pre-order decides the tie.
+  const sides = (title.split(":")[0] ?? "")
+    .split(/\s+(?:vs\.?|@|at)\s+/i)
+    .map((s) => s.trim().toLowerCase())
+    .filter(Boolean);
+  const sideRank = (label: string) => {
+    const l = label.toLowerCase();
+    const i = sides.findIndex((s) => l.startsWith(s));
+    return i < 0 ? sides.length : i;
+  };
+  return named
+    .map((r, i) => ({ r, i, rank: sideRank(r.label) }))
+    .sort(
+      (a, b) =>
+        (a.r.value ?? Number.NEGATIVE_INFINITY) - (b.r.value ?? Number.NEGATIVE_INFINITY) ||
+        a.rank - b.rank ||
+        a.i - b.i,
+    )
+    .map(({ r }) => r);
+}
+
 function ThresholdItem({
   item,
   compact,
@@ -134,7 +179,7 @@ function ThresholdItem({
   // rungs are labelled with the scoreline the market actually offers, and a
   // capped ladder says how many scorelines it left off instead of just ending.
   const isExactScore = item.kind === "exact_score";
-  const rungs = buildThresholdRungs(
+  const built = buildThresholdRungs(
     item.points.map((p) => ({
       outcome_id: p.id,
       name: p.name,
@@ -145,7 +190,11 @@ function ThresholdItem({
       label: p.label,
     })),
   );
-  if (rungs.length === 0) return null;
+  if (built.length === 0) return null;
+  const teamNamed = isExactScore
+    ? null
+    : disambiguateThresholdRungs(built, item.points, item.title);
+  const rungs = teamNamed ?? built;
   const cap = compact ? 4 : undefined;
   const hidden = cap == null ? 0 : Math.max(0, rungs.length - cap);
   // A tennis "Exact Match Score" outcome names its WINNER ("Iva Jovic 2–1"),
@@ -153,8 +202,9 @@ function ThresholdItem({
   // scoreline. Those labels do not fit the fixed numeric column, so the ladder
   // switches to its roomier label track — driven by the label the payload
   // actually sent, not by the sport.
+  // A team-named rung (#10280) is a sentence, so it takes the same track.
   const needsWideLabels =
-    isExactScore && rungs.some((r) => r.label.includes(" "));
+    teamNamed != null || (isExactScore && rungs.some((r) => r.label.includes(" ")));
   return (
     <QuantityGroup
       title={formatThresholdTitle(item.title)}
