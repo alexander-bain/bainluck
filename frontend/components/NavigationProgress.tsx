@@ -3,7 +3,7 @@
 import { useEffect, useRef } from "react";
 import { usePathname, useSearchParams } from "next/navigation";
 import NProgress from "nprogress";
-import { browserOriginEnv, questionOrigin } from "@/lib/futuresReturnOrigin";
+import { browserOriginEnv, gameOrigin, questionOrigin } from "@/lib/futuresReturnOrigin";
 
 /**
  * Global top-of-page progress bar for Next.js App Router navigation.
@@ -33,30 +33,29 @@ export default function NavigationProgress() {
       const target = (e.target as HTMLElement).closest("a");
       if (!target) return;
       const href = target.getAttribute("href");
-      // #10265: a tap into a question page records which history entry it
-      // left, so the question's Back control can prove where it goes
-      // (`lib/futuresReturnOrigin.ts`). Its own refusals; bookkeeping only, it
-      // never changes what the progress bar below does, and a failure here
-      // must never break the click.
+      // #10265 / #10317: a tap into a question or game page records which
+      // history entry it left, so that page's Back control can prove where it
+      // goes (`lib/futuresReturnOrigin.ts`). Each store refuses pages that are
+      // not its own; bookkeeping only, it never changes what the progress bar
+      // below does, and a failure here must never break the click.
       try {
         const env = browserOriginEnv();
         if (env) {
-          questionOrigin.recordClick(
-            {
-              href,
-              button: e.button,
-              metaKey: e.metaKey,
-              ctrlKey: e.ctrlKey,
-              shiftKey: e.shiftKey,
-              altKey: e.altKey,
-              target: target.getAttribute("target"),
-              download: target.hasAttribute("download"),
-            },
-            env,
-          );
+          const click = {
+            href,
+            button: e.button,
+            metaKey: e.metaKey,
+            ctrlKey: e.ctrlKey,
+            shiftKey: e.shiftKey,
+            altKey: e.altKey,
+            target: target.getAttribute("target"),
+            download: target.hasAttribute("download"),
+          };
+          questionOrigin.recordClick(click, env);
+          gameOrigin.recordClick(click, env);
         }
       } catch {
-        // Bookkeeping failed: the question page falls back to Discover.
+        // Bookkeeping failed: the page's Back falls back to its fixed link.
       }
       if (!href || href.startsWith("#") || href.startsWith("http") || href.startsWith("mailto:")) return;
       if (target.getAttribute("target") === "_blank") return;
