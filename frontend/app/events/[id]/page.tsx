@@ -19,6 +19,7 @@ import {
   nextFullHistoryLatch,
 } from "@/lib/event/historyRange";
 import { canonicalEventHref } from "@/lib/canonicalEventUrl";
+import { matrixForStat, type DuringPlayerProps } from "@/lib/duringPlayerPropsMatrixSelection";
 import { withoutEventOwnMoneyline } from "@/lib/eventOwnMoneyline";
 import { eventPageProjectedPair } from "@/lib/projectedFinalPair";
 import { teamTextColor } from "@/lib/teamColors";
@@ -62,6 +63,7 @@ const RelatedFutures = dynamic(() => import("@/components/RelatedFutures"), { ss
 const GamePlayCard = dynamic(() => import("@/components/GamePlayCard"), { ssr: false });
 const SeriesProbability = dynamic(() => import("@/components/SeriesProbability"), { ssr: false });
 const TotalPointsSpectrum = dynamic(() => import("@/components/TotalPointsSpectrum"), { ssr: false });
+const DuringPlayerPropsMatrix = dynamic(() => import("@/components/DuringPlayerPropsMatrix"), { ssr: false, loading: ChartSkeleton });
 const PlayerPropsDashboard = dynamic(() => import("@/components/PlayerPropsDashboard"), { ssr: false, loading: ChartSkeleton });
 // UX-P098: the rail LEADS the props body, so it is a static import — a dynamic
 // one would paint a skeleton in the one slot the page is supposed to answer first.
@@ -1037,6 +1039,16 @@ export default function EventPage({ params }: EventPageProps) {
     () => (servedGameMarkets ? withoutEventOwnMoneyline(servedGameMarkets) : servedGameMarkets),
     [servedGameMarkets]
   );
+
+  // #10358: consume only the existing adopted event-scoped projection. Live
+  // owns its revision/withdrawal fences; this mount adds no transport.
+  const duringPlayerProps = useMemo(() => {
+    const data = (gameMarkets as (NonNullable<typeof gameMarkets> & { during_player_props?: DuringPlayerProps | null }) | undefined)?.during_player_props;
+    return event?.status === "live" && gameMarkets?.event_id === event.id &&
+      data?.contract === "10236.v1" && Array.isArray(data.stats) && Array.isArray(data.rows) &&
+      data.stats.some(stat => matrixForStat(data, stat.stat_key).players.length > 0)
+      ? data : null;
+  }, [event?.id, event?.status, gameMarkets]);
 
   // Both charts read the same served + received publication history (#920).
   const sparklinePoints = useMemo(() =>
@@ -3137,28 +3149,32 @@ export default function EventPage({ params }: EventPageProps) {
       )}
 
       {/* Game Markets — Player Props + Matchups + Special Markets */}
-      {gameMarkets && (gameMarkets.player_props.length > 0 || (gameMarkets.matchups?.length ?? 0) > 0 || (gameMarkets.other?.length ?? 0) >= SPECIAL_MARKETS_MIN_WIRE_ROWS) && (
+      {gameMarkets && (duringPlayerProps || gameMarkets.player_props.length > 0 || (gameMarkets.matchups?.length ?? 0) > 0 || (gameMarkets.other?.length ?? 0) >= SPECIAL_MARKETS_MIN_WIRE_ROWS) && (
         <div className="space-y-3">
 
           {/* UX-P055: #1722's actual crash site. This is the one boundary that
               is not speculative — an unpriced `other` row here took the whole
               route down on 2026-08-10, and 7 of 8 sampled settled MLB events
               carry 55-73 rows of that shape. */}
-          {gameMarkets.player_props.length > 0 && (
+          {(duringPlayerProps || gameMarkets.player_props.length > 0) && (
             <>
             {/* UX-P098 (UX-AMBITION-1 slice 1) — THE DIVERGENCE leads.
                 Alex's V1: the pregame page opens with the five questions that
                 are actually live, not the whole prop set. On a real MLB payload
                 that set is FORTY props; leading with it is the wall this
                 replaces. The full set is one click away, below. */}
-            <SectionErrorBoundary label="What's moving" resetKey={gameMarkets}>
+            {gameMarkets.player_props.length > 0 && <SectionErrorBoundary label="What's moving" resetKey={gameMarkets}>
             <PropDivergenceRail
               playerProps={gameMarkets.player_props}
               status={event.status}
             />
-            </SectionErrorBoundary>
+            </SectionErrorBoundary>}
 
-            <SectionErrorBoundary label="Player props" resetKey={gameMarkets}>
+            {duringPlayerProps && <SectionErrorBoundary label="During player chances" resetKey={event.id}>
+              <DuringPlayerPropsMatrix key={event.id} data={duringPlayerProps} />
+            </SectionErrorBoundary>}
+
+            {gameMarkets.player_props.length > 0 && <SectionErrorBoundary label="Player props" resetKey={gameMarkets}>
             <details className="group bg-surface-card rounded-card shadow-card overflow-hidden">
               <summary className="cursor-pointer select-none px-4 sm:px-5 py-3 text-[13px] font-semibold text-text-primary marker:content-none">
                 All {countOf(gameMarkets.player_props.length, "prop", "props")}
@@ -3182,7 +3198,7 @@ export default function EventPage({ params }: EventPageProps) {
                 boxScore={event.box_score_data}
               />
             </details>
-            </SectionErrorBoundary>
+            </SectionErrorBoundary>}
             </>
           )}
 
