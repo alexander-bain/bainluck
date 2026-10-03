@@ -1337,6 +1337,35 @@ jobs:
             exit 1
           fi
 
+      - name: "#8265 a board keeps its shape across the ingest poll's metadata replace (real Postgres)"
+        # PILLAR: TRUTH. SHIP: a winner board where nobody bids or trades stops
+        # crowning an old print on Discover ("Jakub Mensik leads at 47%").
+        #
+        # The poll's REPLACE erased `market_metadata.shape`, so every proved-field
+        # withholding arm failed closed on the boards the poll had just touched.
+        # Same rig as #5531's step: the real merge over JSONB literals, the
+        # pre-#8265 expression as a strawman, and the merged row handed to the
+        # real route helper. Same three refusals: a skip, nothing collected, a
+        # short count.
+        if: matrix.group == 'shared'
+        run: |
+          set -o pipefail
+          python -m pytest tests/integration/test_the_poll_keeps_the_market_shape_8265_pg.py \
+            -v -rs 2>&1 | tee /tmp/shape8265.txt
+          if grep -qiE "[0-9]+ skipped" /tmp/shape8265.txt; then
+            echo "::error::#8265 shape merge contract SKIPPED — the gate did not run"
+            exit 1
+          fi
+          if grep -qiE "no tests ran|collected 0 items" /tmp/shape8265.txt; then
+            echo "::error::#8265 shape merge contract collected NOTHING"
+            exit 1
+          fi
+          PASSED=$(grep -oE "[0-9]+ passed" /tmp/shape8265.txt | tail -1 | grep -oE "[0-9]+")
+          if [ "${PASSED:-0}" -lt 12 ]; then
+            echo "::error::#8265 expected 12 passing contracts, saw ${PASSED:-0} — a case was lost, not fixed"
+            exit 1
+          fi
+
       - name: "#2077 the route supplies the fleet stamp (real Postgres)"
         # PILLAR: TRUTH. SHIP: a settled board nobody graded stops printing a
         # live coin flip.
