@@ -3,6 +3,7 @@
 import { Suspense, useState, useEffect, useRef } from "react";
 import { useSearchParams, useRouter } from "next/navigation";
 import { markSearchDestination } from "@/lib/searchFunnel";
+import { useSearchResultRestoration } from "@/hooks/useSearchResultRestoration";
 import Link from "next/link";
 import { searchEvents, fetchSearchSuggestions } from "@/lib/api";
 import { getLeagueDisplay, getEmojiForLeague, getSportLabel } from "@/lib/sportCategories";
@@ -199,11 +200,16 @@ function SearchContent() {
     track('search_opened', { has_query: query.length >= 2, surface: 'search' });
   }, [query, track]);
 
+  const searchKey = JSON.stringify([query, sportFilter ?? "", currentPage]);
   const [results, setResults] = useState<SearchResponse | null>(null);
+  const [resultsKey, setResultsKey] = useState<string | null>(null);
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [suggestions, setSuggestions] = useState<SearchSuggestion[]>([]);
   const [suggestionsLoading, setSuggestionsLoading] = useState(false);
+  const rememberResultPosition = useSearchResultRestoration(
+    searchKey, !isLoading && !error && resultsKey === searchKey,
+  );
 
   const { isPinned, togglePin, isMaxReached } = usePinnedEvents();
   const {
@@ -239,6 +245,7 @@ function SearchContent() {
       .then((data) => {
         if (ignore) return;
         setResults(data);
+        setResultsKey(searchKey);
         setIsLoading(false);
         const eventCount = data.results?.length ?? 0;
         const futuresCount = data.futures?.length ?? 0;
@@ -270,7 +277,7 @@ function SearchContent() {
       });
 
     return () => { ignore = true; };
-  }, [query, sportFilter, currentPage]);
+  }, [query, sportFilter, currentPage, searchKey]);
 
   useEffect(() => {
     if (query && query.length >= 2) return;
@@ -390,7 +397,7 @@ function SearchContent() {
     + (results.futures?.length ?? 0);
 
   return (
-    <div>
+    <div onClickCapture={rememberResultPosition}>
       {/* Header */}
       <div className="mb-6">
         <Link
