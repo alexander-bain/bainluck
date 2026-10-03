@@ -375,7 +375,8 @@ struct DiscoverView: View {
 
     /// Pure, testable staleness predicate powering the Discover stale gate
     /// (L2-191). Only AUTHORITATIVE lifecycle/date evidence settles a card:
-    /// resolved/closed futures, past-resolution futures, and expired FINAL games.
+    /// resolved/closed futures, past-resolution futures, expired FINAL games, and
+    /// `scheduled` games whose kickoff ran out (#10094).
     /// Probability alone NEVER settles a card (L2-214) — a near-certain but open
     /// market at 0.99 with a future resolution date is still a valid prediction;
     /// inferring settlement from price produced false "stale" hides. Unknown
@@ -395,8 +396,11 @@ struct DiscoverView: View {
         // marquee final Discover kept on purpose, falling back to kickoff when
         // the payload carries no whistle. Ageing from kickoff charged every card
         // for its own duration and dropped a marquee final six hours early.
+        // #10094: a card still `scheduled` more than 2h past kickoff is withheld —
+        // a cached deck kept a Sep 24 game reading "vs" a week later.
         if let e = item.event {
             if FeedLifecycle.finishedEventIsExpired(e, now: now) { return true }
+            if FeedLifecycle.scheduledKickoffHasLapsed(e, now: now) { return true }
         }
         // L2-225: tournaments had NO branch here. Decode and the WHAT-HIT render were
         // repaired in L2-224, but nothing gated a tournament that is simply over —
