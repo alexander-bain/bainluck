@@ -39,6 +39,16 @@ test("exact selected detail exposes own source identity and observation; no borr
   expect(html).toContain("Aaron Judge · Hits · 2+"); expect(html).toContain("kalshi · Yes · over");
   expect(html).toContain("Observed 2026-10-02T19:00:00Z"); expect(html).toContain("Pregame comparison unavailable.");
 });
+test("deployed under-to-over relation is navigable from both exact details with own source side", () => {
+  const under: DuringPropsRow = { ...row, question_key: "server-under", predicate: { kind: "count_at_most", count: 1, side: "under", label: "1 or fewer" }, complement_question_key: row.question_key,
+    current: { ...row.current, probability: .3 }, contributors: [{ ...row.contributors[0], side: "under", outcome_id: 21, probability: .3, outcome_name: "No" }] };
+  const projection = { ...data, rows: [row, under] };
+  const overHtml = renderToStaticMarkup(<DuringPlayerPropsMatrix data={projection} initialSelection={selectQuestion(row)} />);
+  expect(overHtml).toContain("View under · 1 or fewer");
+  const underHtml = renderToStaticMarkup(<DuringPlayerPropsMatrix data={projection} initialSelection={selectQuestion(under)} />);
+  expect(underHtml).toContain("View over · 2+"); expect(underHtml).toContain("30%");
+  expect(underHtml).toContain("kalshi · No · under"); expect(underHtml).not.toContain("70%");
+});
 test("withdrawn selection stays unavailable and unsupported/null fallback renders nothing", () => {
   const html = renderToStaticMarkup(<DuringPlayerPropsMatrix data={{ ...data, rows: [] }} initialSelection={selectQuestion(row)} />);
   expect(html).toContain("This exact question is no longer");
