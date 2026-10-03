@@ -42,6 +42,7 @@ from app.utils.start_placeholder import start_is_tbd
 # and safe — `market_label_normalization` imports only `utils.futures_categorization`,
 # so there is no cycle to defer around; `tests/test_startup.py` is the guard.
 from app.utils.market_label_normalization import non_sport_topic_label, rewrite_venue_league_vocabulary
+from app.utils.market_display_name import clean_market_display_name
 # #6993: the four-arm price refusal, asked here so the search surfaces cannot
 # serve a number the detail page refuses. Imported from the route that owns it
 # rather than copied, which is the whole point of the hook — its own docstring
@@ -37956,7 +37957,13 @@ def _format_futures_for_search(
         # Display only. `market.name` is untouched in the DB and every keyed
         # consumer — family keys, matching, calibration — still reads what it
         # read before.
-        "name": rewrite_venue_league_vocabulary(market.name),
+        #
+        # #10240: and the same display cleanup the market it opens prints
+        # (`routes/futures.py` serves `clean_market_display_name`), so the card
+        # stops asking "…extra innings?: Yankees vs. Rays" while the page asks
+        # "…extra innings? — Yankees vs. Rays". Applied to THIS output only:
+        # the dedup, family and eligibility steps upstream read `market.name`.
+        "name": clean_market_display_name(rewrite_venue_league_vocabulary(market.name)),
         "sport": market.sport.key if market.sport else None,
         # #6444: the FUTURES arm of the same search response Alex photographed.
         # #5657 fixed the facet chips and the events arm; `GET /api/events/
