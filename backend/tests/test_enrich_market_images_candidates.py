@@ -14,6 +14,7 @@ and none of them is visible from the pure function:
    budget runs out on keeps `image_url IS NULL` and is the next pass's first
    row — the select is ordered by `volume_24h desc`.
 
+Rows are the SELECT's `(id, name, llm_sport_category, event_id)`.
 The fake session is deliberately dumb: the task's first `execute` is its SELECT
 and every later one is an UPDATE it wrote. Nothing here touches a database.
 """
@@ -85,7 +86,7 @@ def rig(monkeypatch):
 PHOTO = ("https://images.pexels.com/photos/1/a.jpeg?auto=compress&w=1200", 1200, 800)
 
 #: The cert's own specimen: "Presidents Cup Winner", `llm_sport_category='golf'`.
-PRESIDENTS_CUP = (109001, "Presidents Cup Winner", "golf")
+PRESIDENTS_CUP = (109001, "Presidents Cup Winner", "golf", None)
 
 
 @pytest.mark.asyncio
@@ -128,7 +129,9 @@ async def test_a_row_costs_at_most_two_requests_even_when_nothing_is_found(rig):
 
 @pytest.mark.asyncio
 async def test_a_row_with_no_category_signal_asks_exactly_once(rig):
-    _session, asked = rig([(1, "Manchester United title", "other")], lambda _q: PHOTO)
+    _session, asked = rig(
+        [(1, "Manchester United title", "other", None)], lambda _q: PHOTO
+    )
 
     await enrich_markets.enrich_market_images(limit=10)
 
@@ -138,7 +141,7 @@ async def test_a_row_with_no_category_signal_asks_exactly_once(rig):
 @pytest.mark.asyncio
 async def test_the_pass_never_spends_more_requests_than_its_limit(rig):
     # Four rows, every qualified query missing, so each row wants two requests.
-    rows = [(i, f"Presidents Cup {i} Winner", "golf") for i in range(4)]
+    rows = [(i, f"Presidents Cup {i} Winner", "golf", None) for i in range(4)]
     _session, asked = rig(rows, lambda _q: None)
 
     stats = await enrich_markets.enrich_market_images(limit=3)
@@ -151,7 +154,7 @@ async def test_the_pass_never_spends_more_requests_than_its_limit(rig):
 async def test_the_budget_is_requests_not_rows_so_a_clean_pass_is_unchanged(rig):
     # Every qualified query hits: five rows, five requests — exactly what this
     # task spent for five rows before the fallback existed.
-    rows = [(i, f"Team {i} championship", "soccer") for i in range(5)]
+    rows = [(i, f"Team {i} championship", "soccer", None) for i in range(5)]
     session, asked = rig(rows, lambda _q: PHOTO)
 
     stats = await enrich_markets.enrich_market_images(limit=5)
@@ -163,7 +166,9 @@ async def test_the_budget_is_requests_not_rows_so_a_clean_pass_is_unchanged(rig)
 
 @pytest.mark.asyncio
 async def test_a_blank_query_row_is_skipped_without_spending_a_request(rig):
-    _session, asked = rig([(1, "Will the A?", None), PRESIDENTS_CUP], lambda _q: PHOTO)
+    _session, asked = rig(
+        [(1, "Will the A?", None, None), PRESIDENTS_CUP], lambda _q: PHOTO
+    )
 
     await enrich_markets.enrich_market_images(limit=10)
 
