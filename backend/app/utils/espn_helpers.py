@@ -62,6 +62,12 @@ from app.utils.game_pairing import (
 # column from the same `upsert_team` and were never routed through it (#4883).
 from app.utils.team_binding_invariant import accept_team_binding
 from app.utils.espn_team_spelling import apply_espn_respelling
+from app.utils.espn_participant_fill import (
+    build_team_index,
+    maybe_fill_participants,
+    note_fill_regate,
+    participant_fill_state,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -2755,9 +2761,13 @@ async def sync_scheduled_events(session, sport_key, espn_events, stats):
         _sched_team_result = await session.execute(
             select(Team).where(Team.sport_id == sched_sport_obj.id)
         )
-        sched_team_cache = {(t.name, t.sport_id): t for t in _sched_team_result.scalars().all()}
+        _sched_teams = _sched_team_result.scalars().all()
+        sched_team_cache = {(t.name, t.sport_id): t for t in _sched_teams}
+        # #10305 D2: the same rows, keyed by ESPN team id — no new query.
+        team_index = build_team_index(_sched_teams)
     else:
         sched_team_cache = {}
+        team_index = {}
 
     # Build ESPN ID lookup for scheduled pass
     espn_by_id_sched = {}
@@ -2836,6 +2846,11 @@ async def sync_scheduled_events(session, sport_key, espn_events, stats):
             continue
 
         ee = matched_espn
+        # #10305 D2: an own-id row ESPN names but we still print as TBD takes
+        # ESPN's two clubs. No try here — the helper owns what it absorbs.
+        fill_state = None
+        if id_anchored and await maybe_fill_participants(session, event, ee, team_index, stats):
+            fill_state = participant_fill_state(event)
         # #9482: a spelling-only difference takes ESPN's name first, so the
         # side resolves (and #1918 binds) to ESPN's id-anchored team row.
         apply_espn_respelling(event, ee, sched_team_cache, stats, source="espn_scheduled")
@@ -2866,6 +2881,8 @@ async def sync_scheduled_events(session, sport_key, espn_events, stats):
             stats=stats,
         ):
             event.away_team_id = away_team.id
+        if fill_state is not None:
+            note_fill_regate(event, fill_state, stats)
 
         # Register ESPN team identities (cached to avoid re-registering)
         await register_espn_team_identities(
