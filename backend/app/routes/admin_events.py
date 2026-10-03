@@ -3,7 +3,7 @@
 from datetime import datetime, timedelta, timezone
 from typing import Optional
 
-from fastapi import APIRouter, Depends, HTTPException, Query, Request
+from fastapi import APIRouter, Body, Depends, HTTPException, Query, Request
 from sqlalchemy import select, text, func
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
@@ -584,6 +584,18 @@ async def reconcile_anchor_schedule_endpoint(
             "other argument, and is itself a dry run unless `apply` is true."
         ),
     ),
+    member: Optional[dict] = Body(
+        None,
+        description=(
+            "#10305: move ONE named row only as stated — "
+            '{"event_id", "expect": {every fenced column}, "expect_anchors": '
+            '[{event_id, source, source_id, id_kind}], "authority_start"}. The '
+            "row is locked and compared with the statement in the transaction "
+            "that moves it; its anchors are re-compared inside the move's own "
+            "write, and another event holding any of its ids is refused. "
+            "Excludes `sport`, `cursor` and `limit`."
+        ),
+    ),
     db: AsyncSession = Depends(get_db_rw),
 ):
     """#2693/#2697 — does each anchored row agree with its own anchor's kickoff?
@@ -616,6 +628,7 @@ async def reconcile_anchor_schedule_endpoint(
     from app.tasks.reconcile_anchor_schedule import (
         DEFAULT_LIMIT,
         reconcile,
+        reconcile_member,
         restore,
         summarize_for_operator,
     )
@@ -625,6 +638,27 @@ async def reconcile_anchor_schedule_endpoint(
     # stray `sport` or `cursor` cannot quietly turn a restore into a sweep.
     if undo_identity:
         result = await restore(db, undo_identity, apply=apply)
+        return {**result, "operator_line": summarize_for_operator(result)}
+
+    # One named row. Never combined with the sweep's arguments: a member call
+    # that also paged or widened would be the sport-wide apply it replaces.
+    if member is not None:
+        if sport or cursor or limit is not None:
+            raise HTTPException(
+                status_code=400,
+                detail="`member` moves one named row; it takes no sport, cursor or limit",
+            )
+        try:
+            result = await reconcile_member(
+                db,
+                event_id=int(member["event_id"]),
+                expect=dict(member["expect"]),
+                expect_anchors=list(member.get("expect_anchors") or []),
+                authority_start=member["authority_start"],
+                apply=apply,
+            )
+        except (KeyError, TypeError, ValueError) as bad_member:
+            raise HTTPException(status_code=400, detail=f"bad member: {bad_member}") from None
         return {**result, "operator_line": summarize_for_operator(result)}
 
     # The module owns the bound, and it owns it for a reason a route cannot see

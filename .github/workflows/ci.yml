@@ -533,6 +533,30 @@ jobs:
             exit 1
           fi
 
+      - name: "#10305 one-row anchor-schedule move: lock, fence and reach (real Postgres)"
+        # The anchor-schedule rail's member mode claims three things only a
+        # server can answer: the row is LOCKED through the rail's own commit
+        # (another writer blocks), a stated-state mismatch writes nothing, and
+        # `apply_only` reaches exactly the named row while a sibling at the
+        # same clock is decided and left alone; and the anchor fence covers
+        # every holder of the row's ids and is re-judged inside the move's own
+        # UPDATE. A fake session never blocks and
+        # returns whatever rowcount it is told, so this cannot be a unit test.
+        # Same skip refusal as every gate in this job, plus the exact count.
+        if: matrix.group == 'shared'
+        run: |
+          set -o pipefail
+          python -m pytest tests/integration/test_reconcile_anchor_schedule_member_10305_pg.py \
+            -v -rs -p no:cacheprovider 2>&1 | tee /tmp/member10305.txt
+          if grep -qiE "[0-9]+ skipped" /tmp/member10305.txt; then
+            echo "::error::#10305 member-move gate SKIPPED — the gate did not run"
+            exit 1
+          fi
+          if ! grep -qE "\b11 passed\b" /tmp/member10305.txt; then
+            echo "::error::#10305 member-move gate did not pass exactly 11 tests"
+            exit 1
+          fi
+
       - name: Typeahead next-fixture contracts, or-NEXT and lead-team (real Postgres)
         # #5201 rides this step: the or-NEXT arm below is gated on "no pooled row
         # NAMES the query's participant", and a NAMESAKE satisfies that gate —
