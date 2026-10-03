@@ -11,7 +11,10 @@ replaced, and reads each outcome back from the rows.
 The seed is production's Fleetwood block plus one filler population so the
 floor holds; the #8755 tests add production's WNBA block and its `odds_snapshots`
 lines (the `DISTINCT` / `CAST(numeric AS text)` read) and drive the one-off
-repair script's by-id read on a ghost already `live`. Times are offsets from the real clock taken ONCE (the SQL reads
+repair script's by-id read on a ghost already `live`. The #10036 tests add
+production's Wings @ Valkyries phantom: a past-start row the look-back arm
+reads (`make_interval(hours => :n)` both sides of now, any status), its
+moneyline-only snapshot, and the `futures_markets` holder probe. Times are offsets from the real clock taken ONCE (the SQL reads
 `now()`), never branched on (gotcha #44).
 """
 
@@ -48,11 +51,15 @@ F_ID, S_ID = "430c3ce5bf9f4327248452640a68bdae", "4a5f7b77830bdea66bedfe80560e70
 
 
 class FakeService:
-    def __init__(self, listed):
-        self.listed = listed
+    def __init__(self, listed, scored=None):
+        self.listed, self.scored, self.score_calls = listed, scored or {}, []
 
     async def get_events(self, sport):
         return [{"id": i} for i in self.listed.get(sport, ())]
+
+    async def get_scores(self, sport, days_from=1):
+        self.score_calls.append(sport)
+        return [{"id": i} for i in self.scored.get(sport, ())]
 
 
 @pytest.fixture
@@ -62,7 +69,7 @@ async def pg(monkeypatch):
     import app.tasks.base as base
     import app.tasks.odds_api_reissued_twin_sweep as mod
     from app.models.models import (
-        Base, Event, EventProviderAnchor, OddsSnapshot, Sport, Team, Venue,
+        Base, Event, EventProviderAnchor, FuturesMarket, OddsSnapshot, Sport, Team, Venue,
     )
 
     engine = create_async_engine(
@@ -78,7 +85,7 @@ async def pg(monkeypatch):
                 tables=[
                     Sport.__table__, Team.__table__, Venue.__table__,
                     Event.__table__, EventProviderAnchor.__table__,
-                    OddsSnapshot.__table__,
+                    OddsSnapshot.__table__, FuturesMarket.__table__,
                 ],
             )
         )
@@ -285,3 +292,100 @@ async def test_the_repair_labels_a_live_ghost_the_sweep_cannot_see_and_restore_u
 
     assert await restore(apply=True, only=[FRIDAY]) == 0
     assert await _tags(s, FRIDAY) == []
+
+
+# #10036 — production's Wings @ Valkyries block, read 2026-10-03 01:29Z: the
+# phantom (newer id, claimed start a day past, still `scheduled`) holds ONE
+# moneyline-only BetRivers quote; the real game 3 row (older id, live) holds the
+# same quote. `/scores?daysFrom=3` carries the real id and not the phantom's.
+PHANTOM, REAL = 15322640, 15322555
+P_ID, R_ID = "69f130a54c408c0aba7ee9dd43adbdc2", "d0e97a8dca4d878e7ceb0b32ed20cfa7"
+
+
+async def _seed_phantom(s, *, with_market=False):
+    now = datetime.now(UTC)
+    for eid, oid, at, status, seen in (
+        (PHANTOM, P_ID, now - timedelta(hours=25, minutes=20), "scheduled", now - timedelta(hours=44, minutes=42)),
+        (REAL, R_ID, now - timedelta(hours=1, minutes=20), "live", now - timedelta(hours=46, minutes=19)),
+    ):
+        await s.execute(
+            text(
+                "INSERT INTO events (id, sport_id, external_id, home_team_name, away_team_name, "
+                "commence_time, status) VALUES (:id, :sp, :ext, 'Golden State Valkyries', "
+                "'Dallas Wings', :t, :st)"
+            ),
+            {"id": eid, "sp": WNBA, "ext": oid, "t": at, "st": status},
+        )
+        await s.execute(
+            text(
+                "INSERT INTO event_provider_anchors (event_id, source, source_id, id_kind, "
+                "first_seen_at) VALUES (:e, 'odds_api', :o, 'game', :f)"
+            ),
+            {"e": eid, "o": oid, "f": seen},
+        )
+    for i, (eid, book, hml, aml) in enumerate((
+        (PHANTOM, "betrivers", -315, 245),
+        (REAL, "betrivers", -315, 245),
+        (REAL, "betrivers", -315, 245),  # repeats collapse under DISTINCT
+        (REAL, "fanduel", -300, 240),
+    )):
+        await s.execute(
+            text(
+                "INSERT INTO odds_snapshots (event_id, captured_at, bookmaker, home_moneyline, "
+                "away_moneyline, reading_count) VALUES (:e, :c, :b, :h, :a, 1)"
+            ),
+            {"e": eid, "c": now - timedelta(hours=44, minutes=i), "b": book, "h": hml, "a": aml},
+        )
+    if with_market:
+        await s.execute(
+            text(
+                "INSERT INTO futures_markets (source, external_id, name, category, "
+                "mutually_exclusive, status, sport_id, event_id) VALUES ('kalshi', "
+                "'KXWNBAGAME-PHANTOM', 'Wings at Valkyries', 'game', true, 'open', :sp, :e)"
+            ),
+            {"sp": WNBA, "e": PHANTOM},
+        )
+    await s.commit()
+
+
+async def test_the_past_start_phantom_is_tagged_from_the_scores_feed_10036(pg):
+    mod, s = pg
+    await _seed_phantom(s)
+
+    rows, _ = await mod.load_lookback_rows(s)
+    by_id = {r.event_id: r for r in rows}
+    assert {PHANTOM, REAL} <= set(by_id) and by_id[REAL].status == "live"
+    assert GHOST not in by_id  # 33 days out: outside the look-back window
+    assert await mod.load_moneylines(s, [PHANTOM, REAL]) == {
+        PHANTOM: frozenset({("betrivers", -315, 245)}),
+        REAL: frozenset({("betrivers", -315, 245), ("fanduel", -300, 240)}),
+    }
+    assert await mod.load_market_holders(s, [PHANTOM]) == set()
+
+    service = FakeService({"soccer_england_efl_cup": {NEW}}, scored={"basketball_wnba": {R_ID}})
+    out = await mod.run_odds_api_reissued_twin_sweep(service=service)
+    assert out["terminal"] == "complete" and out["tagged"] == 2, out
+    assert service.score_calls == ["basketball_wnba"]
+    assert await _tags(s, PHANTOM) == [f"provenance:duplicate-of:{REAL}"]
+    assert not await _tags(s, REAL)
+    banked = (await s.execute(
+        text(f"SELECT canonical_id, ghost_odds_api_ids FROM {mod.BAK_TABLE} WHERE event_id = :e"),
+        {"e": PHANTOM},
+    )).one()
+    assert (banked.canonical_id, banked.ghost_odds_api_ids) == (REAL, P_ID)
+
+    # A later pass: nothing new, and no scores read for an already-labelled ghost.
+    again = FakeService({"soccer_england_efl_cup": {NEW}}, scored={"basketball_wnba": {R_ID}})
+    second = await mod.run_odds_api_reissued_twin_sweep(service=again)
+    assert second["tagged"] == 0 and again.score_calls == []
+
+
+async def test_a_phantom_holding_a_market_is_refused_10036(pg):
+    mod, s = pg
+    await _seed_phantom(s, with_market=True)
+    assert await mod.load_market_holders(s, [PHANTOM, REAL]) == {PHANTOM}
+    out = await mod.run_odds_api_reissued_twin_sweep(
+        service=FakeService({"soccer_england_efl_cup": {NEW}}, scored={"basketball_wnba": {R_ID}})
+    )
+    assert out["tagged"] == 1 and not await _tags(s, PHANTOM)  # Fleetwood only
+    assert out["lookback"]["refusals"] == 1

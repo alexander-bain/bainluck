@@ -35,7 +35,16 @@ A NEWER id the provider dropped is labelled only when its fully priced lines
 all reappear on the listed sibling (#8755, :func:`lines_moved`); the pass reads
 ``odds_snapshots`` for block members only, so a quiet pass still reads nothing.
 
-Refs #8422, #8755, #2693.
+AFTER THE START (#10036). A ghost whose claimed start passes before it is
+decided leaves the listing arm's window for good — WNBA 15322640 sat
+``scheduled`` in search a day after it. The look-back arm reads the provider's
+``/scores?daysFrom=3`` (2 quota per sport, only for a sport holding a
+past-start ghost with a same-pair sibling) and labels a ghost whose id the
+provider never started, onto the one sibling it does carry, when every price
+the ghost held is already on that sibling and it holds no market
+(:func:`plan_lookback_tags`). A label whose id the feed later carries is lifted.
+
+Refs #8422, #8755, #10036, #2693.
 """
 
 from __future__ import annotations
@@ -46,8 +55,15 @@ import os
 
 from app.services.anchor_channel import DUPLICATE_TAG_PREFIX, duplicate_tag
 from app.utils.odds_api_reissued_twins import (
+    LOOKBACK,
+    MAX_REISSUE_GAP,
+    SCORES_DAYS_FROM,
+    ReissuePlan,
     ReissueRow,
     candidate_blocks,
+    lookback_ghosts,
+    lookback_siblings,
+    plan_lookback_tags,
     plan_reissue_tags,
     relisted_banked_ids,
 )
@@ -109,6 +125,31 @@ WHERE e.id = ANY(:ids)
 GROUP BY e.id, s.key
 """
 
+#: The look-back arm's rows (#10036): every Odds API-anchored row a past-start
+#: ghost or its sibling could be. Ghosts start in the last ``LOOKBACK``; a
+#: sibling sits within ``MAX_REISSUE_GAP`` of one, so the window is widened by
+#: the gap on both sides. Status is filtered by the planner, not here.
+_LOOKBACK_SQL = _ROW_SELECT + """
+WHERE e.commence_time >= now() - make_interval(hours => :back_hours)
+  AND e.commence_time <= now() + make_interval(hours => :ahead_hours)
+GROUP BY e.id, s.key
+"""
+
+#: Each look-back member's moneylines, distinct. Partial captures count here and
+#: only here (:func:`app.utils.odds_api_reissued_twins.moneylines_moved`).
+_MONEYLINES_SQL = """
+SELECT DISTINCT event_id, bookmaker, home_moneyline, away_moneyline
+FROM odds_snapshots
+WHERE event_id = ANY(:ids)
+  AND bookmaker IS NOT NULL
+  AND home_moneyline IS NOT NULL AND away_moneyline IS NOT NULL
+"""
+
+#: Ghosts holding a linked market — the look-back arm refuses them.
+_MARKET_HOLDERS_SQL = """
+SELECT DISTINCT event_id FROM futures_markets WHERE event_id = ANY(:ids)
+"""
+
 #: Each block member's FULLY priced lines (#8755). Distinct, so a row's hundreds
 #: of snapshots cost one line per price change. The decimals are rendered by
 #: Postgres on both rows, so the ghost and its sibling share one spelling.
@@ -159,6 +200,42 @@ async def load_book_lines(session, ids) -> dict[int, frozenset]:
              r.home_spread, r.over_under)
         )
     return {eid: frozenset(v) for eid, v in lines.items()}
+
+
+async def load_lookback_rows(session) -> tuple[list[ReissueRow], dict[int, str]]:
+    """The look-back arm's rows (#10036). Returns ``(rows, tags)``."""
+    from sqlalchemy import text
+
+    gap_hours = int(MAX_REISSUE_GAP.total_seconds() // 3600)
+    back_hours = int(LOOKBACK.total_seconds() // 3600) + gap_hours
+    return _rows_from(
+        await session.execute(
+            text(_LOOKBACK_SQL), {"back_hours": back_hours, "ahead_hours": gap_hours}
+        )
+    )
+
+
+async def load_moneylines(session, ids) -> dict[int, frozenset]:
+    """``{event_id: frozenset of BookMoneyline}`` for the named rows. #10036."""
+    from sqlalchemy import text
+
+    if not ids:
+        return {}
+    out: dict[int, set] = {}
+    for r in await session.execute(text(_MONEYLINES_SQL), {"ids": list(ids)}):
+        out.setdefault(r.event_id, set()).add(
+            (r.bookmaker, int(r.home_moneyline), int(r.away_moneyline))
+        )
+    return {eid: frozenset(v) for eid, v in out.items()}
+
+
+async def load_market_holders(session, ids) -> set[int]:
+    """The named rows that hold at least one linked ``futures_markets`` row."""
+    from sqlalchemy import text
+
+    if not ids:
+        return set()
+    return {r.event_id for r in await session.execute(text(_MARKET_HOLDERS_SQL), {"ids": list(ids)})}
 
 
 def _rows_from(result) -> tuple[list[ReissueRow], dict[int, str]]:
@@ -238,6 +315,68 @@ async def read_schedules(sport_keys, *, service=None) -> tuple[dict[str, set[str
         if own:
             await service.close()
     return schedules, errors
+
+
+async def read_scores(sport_keys, *, service=None) -> tuple[dict[str, set[str]], list[str]]:
+    """``/scores?daysFrom=3`` ids for each sport. Returns ``(scores, errors)``.
+
+    Same contract as :func:`read_schedules`: a sport whose read raised is
+    ABSENT, and the planner refuses its ghosts. Costs 2 quota per sport, and is
+    read only for a sport holding a past-start ghost with a sibling. #10036.
+    """
+    from app.services.odds_api import OddsAPIService
+
+    scores: dict[str, set[str]] = {}
+    errors: list[str] = []
+    if not sport_keys:
+        return scores, errors
+    own = service is None
+    service = service or OddsAPIService()
+    try:
+        for sport in sorted(sport_keys):
+            try:
+                games = await service.get_scores(sport, days_from=SCORES_DAYS_FROM)
+                scores[sport] = {g["id"] for g in games if g.get("id")}
+            except Exception as exc:  # noqa: BLE001 — named, never swallowed
+                errors.append(f"scores {sport}: {type(exc).__name__}: {exc}"[:200])
+    finally:
+        if own:
+            await service.close()
+    return scores, errors
+
+
+async def plan_lookback(session, *, now, service=None):
+    """Read and decide the look-back arm.
+
+    Returns ``(plan, tags_text, scores, errors, ghosts_examined)``; ``scores``
+    is what the lift reads too.
+
+    Any read that raises is DAMAGE in ``errors`` and the arm plans nothing —
+    the listing arm's pass still completes on its own evidence.
+    """
+    try:
+        rows, tags_text = await load_lookback_rows(session)
+    except Exception as exc:  # noqa: BLE001
+        await session.rollback()
+        return ReissuePlan(), {}, {}, [f"lookback rows: {type(exc).__name__}: {exc}"[:200]], 0
+    ghosts = [g for g in lookback_ghosts(rows, now=now) if lookback_siblings(g, rows)]
+    if not ghosts:
+        return ReissuePlan(), tags_text, {}, [], 0
+    scores, errors = await read_scores({g.sport_key for g in ghosts}, service=service)
+    members = sorted({g.event_id for g in ghosts}
+                     | {s.event_id for g in ghosts for s in lookback_siblings(g, rows)})
+    try:
+        lines = await load_book_lines(session, members)
+        moneylines = await load_moneylines(session, members)
+        holders = await load_market_holders(session, [g.event_id for g in ghosts])
+    except Exception as exc:  # noqa: BLE001 — unread evidence refuses, and says so
+        await session.rollback()
+        errors.append(f"lookback evidence: {type(exc).__name__}: {exc}"[:200])
+        return ReissuePlan(), tags_text, scores, errors, len(ghosts)
+    plan = plan_lookback_tags(
+        rows, scores, now=now, book_lines=lines, moneylines=moneylines, holds_markets=holders
+    )
+    return plan, tags_text, scores, errors, len(ghosts)
 
 
 async def ensure_backup(session, tags, current_tags: dict[int, str]) -> int:
@@ -441,8 +580,18 @@ async def run_odds_api_reissued_twin_sweep(
             await session.rollback()
             errors.append(f"book lines: {type(exc).__name__}: {exc}"[:200])
         plan = plan_reissue_tags(blocks, schedules, lines)
-        relisted = relisted_banked_ids(
-            {eid: (s, oid) for eid, (s, oid, _) in banked.items()}, schedules
+        # #10036: ghosts whose claimed start already passed, against /scores.
+        lb_plan, lb_tags_text, scores, lb_errors, lb_ghosts = await plan_lookback(
+            session, now=now, service=service
+        )
+        errors += lb_errors
+        listing_ghosts = {t.duplicate_id for t in plan.tags}
+        tags = plan.tags + [t for t in lb_plan.tags if t.duplicate_id not in listing_ghosts]
+        current_tags = {**lb_tags_text, **current_tags}
+        banked_ids = {eid: (s, oid) for eid, (s, oid, _) in banked.items()}
+        relisted = sorted(
+            set(relisted_banked_ids(banked_ids, schedules))
+            | set(relisted_banked_ids(banked_ids, scores))
         )
         lifts = {eid: banked[eid][2] for eid in relisted}
         consumer = consumer_is_live()
@@ -452,41 +601,47 @@ async def run_odds_api_reissued_twin_sweep(
                 "rows_read": len(rows),
                 "blocks_examined": plan.blocks_examined,
                 "schedules_read": len(schedules),
-                "pairs_found": len(plan.tags),
-                "refusals": len(plan.refusals),
-                "refusal_samples": plan.refusals[:10],
+                "pairs_found": len(tags),
+                "refusals": len(plan.refusals) + len(lb_plan.refusals),
+                "refusal_samples": (plan.refusals + lb_plan.refusals)[:10],
+                "lookback": {
+                    "ghosts_examined": lb_ghosts,
+                    "scores_read": len(scores),
+                    "pairs_found": len(lb_plan.tags),
+                    "refusals": len(lb_plan.refusals),
+                },
                 "labels_held": len(banked),
                 "to_lift": len(lifts),
                 "consumer_live": consumer,
                 "plan_samples": [
                     {"ghost": t.duplicate_id, "canonical": t.canonical_id, "sport": t.sport_key}
-                    for t in plan.tags[:10]
+                    for t in tags[:10]
                 ],
             }
         )
 
-        if plan.tags and not consumer:
+        if tags and not consumer:
             return {
                 **summary,
                 "terminal": "failed",
                 "tagged": 0,
                 "reason": (
-                    f"refusing to write {len(plan.tags)} tag(s): search no longer "
+                    f"refusing to write {len(tags)} tag(s): search no longer "
                     f"calls not_a_proven_duplicate, so the label would hide nothing"
                 ),
             }
 
         if not apply:
-            return {**summary, "terminal": "no_work", "tagged": 0, "planned": len(plan.tags)}
+            return {**summary, "terminal": "no_work", "tagged": 0, "planned": len(tags)}
 
         written = lifted = banked_n = 0
         failed: list[int] = []
         missing: list[int] = []
-        if plan.tags:
-            banked_n = await ensure_backup(session, plan.tags, current_tags)
-            written, failed = await write_tags(session, plan.tags)
-            confirmed = await tagged_now(session, [t.duplicate_id for t in plan.tags])
-            missing = sorted({t.duplicate_id for t in plan.tags} - confirmed)
+        if tags:
+            banked_n = await ensure_backup(session, tags, current_tags)
+            written, failed = await write_tags(session, tags)
+            confirmed = await tagged_now(session, [t.duplicate_id for t in tags])
+            missing = sorted({t.duplicate_id for t in tags} - confirmed)
         if lifts:
             lifted, lift_failed = await lift_tags(session, lifts)
             failed += lift_failed
@@ -496,7 +651,7 @@ async def run_odds_api_reissued_twin_sweep(
             **summary,
             "terminal": "partial" if damage else "complete",
             "banked": banked_n,
-            "planned": len(plan.tags),
+            "planned": len(tags),
             "tagged": written,
             "lifted": lifted,
             "unconfirmed": missing[:20],
