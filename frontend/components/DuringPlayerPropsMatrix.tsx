@@ -6,6 +6,17 @@ import {
   finiteChance, matrixForStat, quotedChance, resolveQuestion, resolveSource, selectQuestion, sourceKey,
   type DuringPlayerProps, type DuringPropsRow, type QuestionSelection, type SourceSelection,
 } from "../lib/duringPlayerPropsMatrixSelection";
+import { propStalenessLabel } from "../lib/matchDetail";
+import { sourceLabel } from "../lib/sourceLabels";
+
+// #10358 — a reader reads a venue's name and its own wording for the leg, never
+// the stored source key or the typed side spelled again ("polymarket · Under ·
+// under" was the served line).
+function contributorLabel(item: { source: string | null; outcome_name?: string | null; side: string }): string {
+  const venue = sourceLabel(item.source) ?? "Other source";
+  const wording = item.outcome_name?.trim();
+  return wording && wording.toLowerCase() !== item.side.toLowerCase() ? `${venue} · ${wording}` : venue;
+}
 
 export interface DuringPlayerPropsMatrixProps {
   /** Already accepted embedded-market projection. No independent fetch/stream. */
@@ -81,7 +92,10 @@ export default function DuringPlayerPropsMatrix({ data, initialStatKey, initialS
 
   function clock(value: string | null) {
     if (observationLabel) return observationLabel(value);
-    return value && Number.isFinite(Date.parse(value)) ? `Observed ${value}` : "Observation time unknown";
+    // #10358 — the raw ISO stamp ("Observed 2026-10-03T22:08:09.607225+00:00")
+    // reached the dialog. Its age is what a reader can use; stale stays visible.
+    const at = value ? Date.parse(value) : NaN;
+    return Number.isFinite(at) ? `Updated ${propStalenessLabel(Math.max(0, Date.now() - at) / 3_600_000)}` : "Update time unknown";
   }
 
   // Null/unsupported/no-row fallback is the existing page holder's dashboard.
@@ -126,7 +140,9 @@ export default function DuringPlayerPropsMatrix({ data, initialStatKey, initialS
       </div> : <p role="status" className="px-4 pb-4 text-sm text-text-secondary">No questions for this statistic are currently available.</p>}
       <p className="px-4 py-3 text-xs leading-relaxed text-text-muted">Signed changes are percentage points since pregame. Missing quotes are shown as —.</p>
 
-      {selection && <div className="fixed inset-0 z-50 flex items-end justify-center bg-surface-deep/60 p-3 sm:items-center" onClick={event => { if (event.target === event.currentTarget) close(); }}>
+      {/* #10358 — z-[100], the site's sheet layer: at z-50 the BottomNav (z-50, later in
+          the DOM) painted over the sheet and hid its last control at 390px. */}
+      {selection && <div className="fixed inset-0 z-[100] flex items-end justify-center bg-surface-deep/60 p-3 sm:items-center" onClick={event => { if (event.target === event.currentTarget) close(); }}>
         <div ref={dialog} role="dialog" aria-modal="true" aria-labelledby={dialogId} className="max-h-[85dvh] w-full max-w-md overflow-y-auto rounded-2xl border border-surface-border bg-surface-card p-5 shadow-lg"
           onKeyDown={event => {
             if (event.key === "Escape") { event.preventDefault(); close(); }
@@ -140,20 +156,19 @@ export default function DuringPlayerPropsMatrix({ data, initialStatKey, initialS
           }}>
           <div className="flex items-start justify-between gap-3"><h3 id={dialogId} className="text-lg font-semibold text-text-primary">{row ? `${row.subject.label} · ${data?.stats.find(item => item.stat_key === row.stat_key)?.label ?? row.stat_key} · ${row.predicate.label}` : "Question unavailable"}</h3>
             <button ref={closeButton} type="button" onClick={close} className="min-h-[44px] px-2 text-sm font-medium text-accent-brand">Close</button></div>
-          {!row ? <p role="status" className="mt-4 text-sm text-text-secondary">This exact question is no longer in the accepted projection. Your selection has been kept.</p> : <>
+          {!row ? <p role="status" className="mt-4 text-sm text-text-secondary">This question isn&apos;t available right now.</p> : <>
             <p className="mt-1 text-sm text-text-muted">{row.period_key === "full_game" ? "Full game" : row.period_key} · {row.predicate.side === "under" ? "Under" : "Over"}</p>
             <div className="my-5"><p className="font-mono text-3xl font-semibold tabular-nums text-text-primary">{chance === null ? "Unavailable" : exactChanceLabel(chance)}</p>
-              <p className="mt-1 text-sm text-text-secondary">{source ? `${source.source} · ${source.side}` : row.current.basis === "blend_mean" ? "Blended chance" : "Current chance"}</p>
+              <p className="mt-1 text-sm text-text-secondary">{source ? contributorLabel(contributor ?? source) : row.current.basis === "blend_mean" ? "Blended chance" : "Current chance"}</p>
               <p className="mt-2 break-words text-xs text-text-muted">{clock(source ? contributor?.observed_at ?? null : row.current.observed_at)}</p>
-              {source && !contributor && <p role="status" className="mt-2 text-sm text-text-secondary">This exact source/outcome is no longer available. Select another source explicitly.</p>}
+              {source && !contributor && <p role="status" className="mt-2 text-sm text-text-secondary">This source isn&apos;t quoting this question right now. Pick another source.</p>}
               {row.current.state === "actual_only" && !source && <p className="mt-2 text-sm text-text-secondary">An actual result is available, but there is no current quote.</p>}
             </div>
-            {points !== null ? <p className="text-sm text-text-secondary">{points > 0 ? "+" : ""}{Number(points.toPrecision(12))} percentage points since pregame ({exactChanceLabel(row.comparison.baseline!.probability)}).<span className="mt-1 block break-words text-xs text-text-muted">Pregame observed {row.comparison.baseline!.observed_at}</span></p> : <p className="text-sm text-text-muted">Pregame comparison unavailable{source ? " for this exact source." : "."}</p>}
+            {points !== null ? <p className="text-sm text-text-secondary">{points > 0 ? "+" : ""}{Number(points.toPrecision(12))} percentage points since pregame ({exactChanceLabel(row.comparison.baseline!.probability)}).</p> : <p className="text-sm text-text-muted">Pregame comparison unavailable{source ? " for this exact source." : "."}</p>}
             <div aria-label="Quote source" className="mt-5 flex flex-wrap gap-2">
               <button type="button" aria-pressed={!source} onClick={() => setSource(null)} className={`min-h-[44px] rounded-lg border px-3 text-sm text-text-primary ${!source ? "border-accent-brand bg-surface-elevated" : "border-surface-border"}`}>{row.current.basis === "blend_mean" ? "Blend" : "Published chance"}</button>
-              {row.contributors.map(item => <button key={sourceKey(item)} type="button" aria-pressed={!!source && sourceKey(source) === sourceKey(item)} onClick={() => setSource(item)} className={`min-h-[44px] rounded-lg border px-3 text-sm text-text-primary ${source && sourceKey(source) === sourceKey(item) ? "border-accent-brand bg-surface-elevated" : "border-surface-border"}`}>{item.source} · {item.outcome_name ?? `Outcome ${item.outcome_id ?? "unknown"}`} · {item.side}</button>)}
+              {row.contributors.map(item => <button key={sourceKey(item)} type="button" data-market-id={item.market_id ?? undefined} data-outcome-id={item.outcome_id ?? undefined} aria-pressed={!!source && sourceKey(source) === sourceKey(item)} onClick={() => setSource(item)} className={`min-h-[44px] rounded-lg border px-3 text-sm text-text-primary ${source && sourceKey(source) === sourceKey(item) ? "border-accent-brand bg-surface-elevated" : "border-surface-border"}`}>{contributorLabel(item)}</button>)}
             </div>
-            {contributor && <p className="mt-3 break-words text-xs text-text-muted">Market {contributor.market_id ?? "unknown"} · Outcome {contributor.outcome_id ?? "unknown"} · Full game</p>}
             {opposite && <button type="button" className="mt-4 min-h-[44px] text-sm font-medium text-accent-brand" onClick={() => showQuestion(opposite)}>View {opposite.predicate.side} · {opposite.predicate.label}</button>}
           </>}
         </div>
