@@ -1175,6 +1175,10 @@ export interface GameMarketsResponse {
   away_team: string;
   home_score: number | null;
   away_score: number | null;
+  // #4571 — the same event row's score stamp `/api/events/{id}` carries; present
+  // only when a writer has read the score. #10294 lets the hero take it.
+  score_source?: string | null;
+  score_observed_at?: string | null;
   status: string;
   totals: {
     threshold: number;

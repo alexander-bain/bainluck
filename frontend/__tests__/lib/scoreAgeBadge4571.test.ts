@@ -625,10 +625,13 @@ describe("#4571 the page hands the badge the score it actually rendered", () => 
     expect(code).toMatch(
       // #925 added a fifth argument (the live event row's inning); the fourth
       // must still be the event clock, so the pattern allows exactly that tail.
-      /computeLastChartPoint\(\s*historyData,\s*event\?\.home_score,\s*event\?\.away_score,\s*event\?\.score_observed_at,\s*(?:event\?\.status === "live" \? event\?\.espn \?\? null : null,?\s*)?\)/,
+      // #10294: the event row's pair and clock now arrive as ONE object, the
+      // newer of the page's two reads of that row (`newestServedScore`); the
+      // fourth argument is still that row's clock, never a neighbour's.
+      /computeLastChartPoint\(\s*historyData,\s*servedScore\.home_score,\s*servedScore\.away_score,\s*servedScore\.score_observed_at,\s*(?:event\?\.status === "live" \? event\?\.espn \?\? null : null,?\s*)?\)/,
     );
     // And it is a dependency of the memo, or the badge freezes at the first
     // stamp the page ever saw.
-    expect(code).toMatch(/\[[^\]]*event\?\.score_observed_at[^\]]*\]/);
+    expect(code).toMatch(/\[\s*historyData,\s*servedScore,[^\]]*\]/);
   });
 });
