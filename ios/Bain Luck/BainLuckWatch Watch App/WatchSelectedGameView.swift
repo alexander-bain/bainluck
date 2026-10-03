@@ -86,7 +86,7 @@ struct WatchSelectedGameView: View {
             if !game.isFinal {
                 if let probability = game.homeProbability, probability.isFinite,
                    (0...1).contains(probability) {
-                    Text("\(game.homeTeam) win chance")
+                    Text("\(game.homeTeam) win")
                         .font(.footnote)
                     Text(probability, format: .percent.precision(.fractionLength(0)))
                         .font(.title2.bold()).monospacedDigit()
