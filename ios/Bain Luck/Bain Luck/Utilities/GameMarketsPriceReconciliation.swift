@@ -88,6 +88,19 @@ nonisolated enum GameMarketsPriceReconciliation {
                 verdict: nil, winner: $0.isWinner, actual: nil)
         }
     }
+    /// #10236 — its own section: one outcome can sit in both `player_props`
+    /// and the During matrix, and the two are different published answers.
+    /// The whole projection is the blend AND each contributor's own value, so
+    /// a detail sheet can never show a contributor that moved without its clock.
+    /// A row with no quoted chance publishes no price at all.
+    private static func row(_ entry: DuringPropRow) -> Row {
+        let quoted = entry.current.quotedProbability
+        return Row(key: "duringProps:\(entry.questionKey)",
+            prices: quoted == nil ? [nil] : [quoted] + entry.contributors.map(\.probability),
+            source: entry.current.basis,
+            markets: markets(entry._marketId, entry._marketIds), contributors: ids(entry.contributorOutcomeIds),
+            verdict: entry.result?.hit, winner: entry.result?.isWinner, actual: entry.result?.actual)
+    }
     private static let sections: [(String, KeyPath<GameMarketsResponse, [GameMarketOutcome]?>)] = [
         ("spreads", \.spreads), ("totals", \.totals), ("teamTotals", \.teamTotals), ("period", \.periodMarkets)]
 
@@ -96,6 +109,7 @@ nonisolated enum GameMarketsPriceReconciliation {
         for (section, path) in sections { result += (body[keyPath: path] ?? []).map { row(section, $0) } }
         result += (body.other ?? []).map(row)
         for matchup in body.matchups ?? [] { result += rows(matchup) }
+        result += (body.duringPlayerProps?.rows ?? []).map(row)
         if let quote = body.openWinnerQuote {
             result.append(Row(key: "finalWinner:\(quote.marketId)",
                 prices: quote.outcomes.sorted { $0.outcomeId < $1.outcomeId }.map { $0.probability },
@@ -135,6 +149,10 @@ nonisolated enum GameMarketsPriceReconciliation {
         body.periodMarkets = flat(body.periodMarkets, held?.periodMarkets) { row("period", $0) }
         body.other = flat(body.other, held?.other, row)
         body.matchups = replaced(body.matchups, held?.matchups, group: { "matchups:\($0.id)" }, rows: rows)
+        if var during = body.duringPlayerProps {
+            during.rows = flat(during.rows, held?.duringPlayerProps?.rows, row) ?? []
+            body.duringPlayerProps = during
+        }
         return body
     }
 
