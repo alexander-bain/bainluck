@@ -2798,12 +2798,10 @@ export default function OddsChart({
             className={`font-medium rounded-full transition-colors ${
               isDisabled
                 ? "opacity-30 cursor-not-allowed px-3 py-1.5 text-xs bg-surface-elevated text-text-secondary"
-                : fillContainer
-                ? `px-[0.4vw] py-[0.1vh] text-[0.9vh] ${
-                    timeRange === option.value
-                      ? "bg-surface-card/10 text-white/40"
-                      : "text-white/15 hover:text-white/25"
-                  }`
+                /* #10362 — the fullscreen view used its own white-on-dark pill
+                   (`text-white/15`) from when the modal was black. The dialog is
+                   `bg-surface-card` now, so those pills were invisible: the
+                   fullscreen chart had a range control nobody could see. One pill. */
                 : `px-3 py-1.5 text-xs ${
                     timeRange === option.value
                       ? "bg-text-primary text-surface-deep"
