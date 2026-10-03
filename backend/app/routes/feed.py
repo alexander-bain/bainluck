@@ -248,6 +248,7 @@ from app.utils.feed_editions import (
     edition_manifest_cache_key,
     edition_policy_fingerprint,
 )
+from app.utils.discover_display_replay import display_capture_from_request
 from app.utils.polymarket_email_ground_truth import (
     load_polymarket_email_ground_truth_report_from_env,
     summarize_polymarket_email_ground_truth,
@@ -5357,8 +5358,10 @@ async def get_feed(
                 _timings, _started_at, _previous_at, stage
             )
 
-        feed_items, _chain_meta = apply_discover_display_chain(
-            feed_items,
+        # #10290: ONE set of chain arguments, read by the chain and, when an
+        # in-process caller armed a display capture, by the capture — so the
+        # replay can never be handed arguments the build did not use.
+        _chain_kwargs = dict(
             limit=limit,
             ctx=ctx,
             event_pct=event_pct,
@@ -5366,9 +5369,46 @@ async def get_feed(
             my_teams_only=my_teams_only,
             sports_mode=_is_sports_mode,
             reviewed_keys=reviewed_keys,
-            timing_cb=_chain_timing,
             now=now,
         )
+        # Passive: ``None`` on every HTTP request (the arm lives in the ASGI
+        # scope, which no header or query parameter can reach), and a capture
+        # that cannot record refuses itself rather than touching the build.
+        _capture = display_capture_from_request(request)
+        if _capture is not None:
+            _capture.record_chain_entry(
+                feed_items,
+                chain_kwargs=_chain_kwargs,
+                request_facts={
+                    "mode": mode,
+                    "sport": sport,
+                    "category": category,
+                    "tags": tags,
+                    "include_events": include_events,
+                    "include_futures": include_futures,
+                    "my_teams_only": my_teams_only,
+                    "event_pct": event_pct,
+                    "limit": limit,
+                    "offset": offset,
+                    "edition": _edition_request,
+                    "debug": debug,
+                    "exclude_reviewed": exclude_reviewed,
+                    "principal_user": feed_user is not None,
+                    "principal_session": feed_session_id is not None,
+                    "cache_status": _cache_status,
+                    "build_quality": _build_quality,
+                    "degraded_reason": _degraded_reason,
+                    "collections_enabled": _collections_enabled,
+                    "edition_policy": _edition_policy,
+                    "discover_config": discover_config,
+                },
+            )
+
+        feed_items, _chain_meta = apply_discover_display_chain(
+            feed_items, timing_cb=_chain_timing, **_chain_kwargs
+        )
+        if _capture is not None:
+            _capture.record_chain_exit(feed_items, _chain_meta)
 
         if exclude_reviewed:
             reviewed_filter = {
@@ -5386,6 +5426,9 @@ async def get_feed(
                 rank_key=_rank_key,
                 page_window=DISCOVER_COMPOSITION_WINDOW,
                 budget_seconds=_feed_budget_remaining_s(),
+                observe=(
+                    _capture.record_collections if _capture is not None else None
+                ),
             )
 
         # T4-B2 / #5102: the pin, on the BUILD path. Applied to ``feed_items``
@@ -5402,14 +5445,24 @@ async def get_feed(
         # ``test_a_pinned_build_re_derives_the_very_token_it_was_asked_for``
         # fails rather than a reader silently seeing a new edition.
         if _edition_request:
+            _pin_manifest = await _read_edition_manifest()
+            _pin_now = time.time()
             _pin_items, _edition_status = apply_pinned_edition(
                 feed_items,
-                await _read_edition_manifest(),
+                _pin_manifest,
                 requested_policy=_edition_policy,
-                now=time.time(),
+                now=_pin_now,
             )
             if _edition_status == EDITION_STATUS_PINNED and _pin_items is not None:
                 feed_items = _pin_items
+            if _capture is not None:
+                _capture.record_edition(
+                    manifest=_pin_manifest,
+                    requested_policy=_edition_policy,
+                    now=_pin_now,
+                    status=_edition_status,
+                    items=feed_items,
+                )
 
         total = len(feed_items)
         paginated = feed_items[offset : offset + limit]
@@ -5534,7 +5587,12 @@ async def get_feed(
         # #5811: a game card the venue already graded says who won, as its event
         # page does. Over ``feed_items`` (the page base every page is sliced
         # from) and before the Redis write, so a cached page carries it too.
-        await _attach_feed_venue_settlement(db, feed_items, now)
+        _venue_before = (
+            _capture.venue_fields_before(feed_items) if _capture is not None else None
+        )
+        _venue_branch = await _attach_feed_venue_settlement(db, feed_items, now)
+        if _capture is not None:
+            _capture.record_venue_settlement(feed_items, _venue_before, _venue_branch)
         _previous_at = _record_feed_timing(
             _timings, _started_at, _previous_at, "venue_settlement"
         )
@@ -5548,91 +5606,17 @@ async def get_feed(
         # only the window and then storing the list would have shipped
         # ``_rank_score`` and friends to every reader of page 2.
         for item in feed_items:
-            # #1885: PROMOTE the story key into the card before dropping the
-            # internal one. The server's own caps thin a family down, but the
-            # client re-orders what it is given (`FeedInterleave`), and it was
-            # doing that by CATEGORY alone — so eleven same-family politics cards
-            # were eleven indistinguishable "politics" cards to the only code
-            # that could have separated them. A cap the client cannot see is a
-            # cap the client will undo.
-            #
-            # Bundles already carry their own `story_key` inside `data` (the
-            # theme bundlers put it there), so they are left alone rather than
-            # overwritten with the wrapper's copy.
-            story_key = item.get("_quality_story_key")
-            data = item.get("data")
-            if story_key and isinstance(data, dict) and "story_key" not in data:
-                data["story_key"] = story_key
+            _publish_feed_item(item)
 
-            # #6444: a sport's machine key is not its name, and the feed's three
-            # serializers were handing `Sport.name` straight to the card for the
-            # 15 rows whose `name` IS their `key` ("soccer_other" carries 147k
-            # futures, "tennis_other" 57k). Four web call sites read that field
-            # with no client-side map (`app/daily`, `discover/ComparisonCard`,
-            # `discover/FuturesCard`, `discover/GuessCard`) and three native ones
-            # do the same, so the reader sees the key.
-            #
-            # This runs HERE, at the publish boundary, and not at the three
-            # write sites — and that placement is the whole safety argument.
-            # `_review_decision_scope_keys` builds `category:{sport_name}` out of
-            # the very dict those serializers write, so humanising upstream would
-            # silently re-key every stored manual review decision
-            # (`category:tennis_other` -> `category:other tennis`), they would
-            # stop matching, and the only symptom would be suppressed cards
-            # quietly coming back. That is a RANKING change wearing a formatting
-            # change's clothes. By transforming after every ranking consumer has
-            # already read the raw value, the scope keys are unchanged BY
-            # CONSTRUCTION rather than by inspection.
-            #
-            # `sport_display_name` returns the stored name byte-for-byte unless
-            # it equals the key, so the 162 branded rows are untouched. The
-            # machine key stays on `data["sport"]`, which is what the clients
-            # key their own maps on.
-            if isinstance(data, dict) and data.get("sport_name") is not None:
-                data["sport_name"] = sport_display_name(
-                    data.get("sport"), data.get("sport_name")
-                )
-
-            # Strip internal keys BY PREFIX, not by an enumerated list.
-            #
-            # This was ten `pop` calls naming ten keys, and the contract it
-            # serves is "no item key starts with an underscore"
-            # (`test_response_shape_exposes_public_item_contract`). A list can
-            # only ever be a hand-maintained approximation of a prefix rule, so
-            # every new internal key was one forgotten line away from shipping
-            # to clients — which is exactly how `_quality_ladder_or_bucket`
-            # (#1958) leaked the moment it was added. The prefix rule cannot
-            # fall behind, because it has nothing to keep up with.
-            for private_key in [k for k in item if k.startswith("_")]:
-                item.pop(private_key, None)
-
-        payload = {
-            "items": paginated,
-            "total": total,
-            "limit": limit,
-            "offset": offset,
-            "has_more": (offset + limit) < total,
-        }
-
-        # D1 clause (a) / #4110: the edition token, over ``feed_items`` and NOT
-        # over ``paginated``.
-        #
-        # That distinction is the entire offset-stability contract. Hashing the
-        # window would give page 1 and page 2 different tokens and the client's
-        # pagination merge — which appends into the list page 1 painted — could
-        # never prove the two belong together. Hashing the whole ranked list
-        # gives every page of one build the same token, which is what native
-        # asked for (#4110 question 3).
-        #
-        # Placed after the private-key scrub above so it reads the same public
-        # card identities a client sees, and before the page base is stored, so
-        # ``render_feed_page_from_base`` carries it to every page for free (it
-        # copies every key that is not per-serve, and this is not per-serve).
-        _edition = feed_edition_token(feed_items)
-        if _edition is not None:
-            payload[FEED_EDITION_FIELD] = _edition
-        if _edition_status is not None:
-            payload[FEED_EDITION_STATUS_FIELD] = _edition_status
+        payload = _feed_page_payload(
+            feed_items,
+            paginated,
+            total=total,
+            limit=limit,
+            offset=offset,
+            edition_status=_edition_status,
+        )
+        _edition = payload.get(FEED_EDITION_FIELD)
 
 
         if my_teams_only:
@@ -5720,6 +5704,9 @@ async def get_feed(
         # futures built from an hour-old artifact is not wrong, and refusing it
         # would be a correctness fix that broke the product.
         if _built_live and live_total_age_headroom_s(_consumed_age_s) <= 0:
+            # #10290: what is served below is NOT the build the capture saw.
+            if _capture is not None:
+                _capture.abandon("input_age_ceiling")
             # The waiters first. `result=None` is the existing contract for "the
             # leader produced nothing usable" and sends each of them to its own
             # bounded last-good / truthful-unavailable terminal. Handing them the
@@ -6046,6 +6033,10 @@ async def get_feed(
             shared_reuse=_shared_reuse,
             shared_tiers=_shared_tiers,
         )
+        # #10290: the ONLY point a capture may call itself complete — this
+        # build, returned. Every earlier exit leaves it incomplete.
+        if _capture is not None:
+            _capture.record_response(payload, feed_items, timings=_timings)
         return payload
     except BaseException:
         # Release any coalescing waiters (result=None → they fall back to
@@ -6288,6 +6279,118 @@ async def _attach_missing_ground_truth_traces(
         )
 
 
+def _publish_feed_item(item: dict) -> None:
+    """Turn one built card into its public form, in place (``get_feed``'s scrub).
+
+    Extracted unchanged from the scrub loop in ``get_feed`` for #10290 so the
+    offline display replay publishes a card by running THIS code rather than a
+    copy of it. ``get_feed`` still owns the loop, and still runs it over the
+    whole list (LAT-P141) — see the comment above that loop.
+    """
+    # #1885: PROMOTE the story key into the card before dropping the
+    # internal one. The server's own caps thin a family down, but the
+    # client re-orders what it is given (`FeedInterleave`), and it was
+    # doing that by CATEGORY alone — so eleven same-family politics cards
+    # were eleven indistinguishable "politics" cards to the only code
+    # that could have separated them. A cap the client cannot see is a
+    # cap the client will undo.
+    #
+    # Bundles already carry their own `story_key` inside `data` (the
+    # theme bundlers put it there), so they are left alone rather than
+    # overwritten with the wrapper's copy.
+    story_key = item.get("_quality_story_key")
+    data = item.get("data")
+    if story_key and isinstance(data, dict) and "story_key" not in data:
+        data["story_key"] = story_key
+
+    # #6444: a sport's machine key is not its name, and the feed's three
+    # serializers were handing `Sport.name` straight to the card for the
+    # 15 rows whose `name` IS their `key` ("soccer_other" carries 147k
+    # futures, "tennis_other" 57k). Four web call sites read that field
+    # with no client-side map (`app/daily`, `discover/ComparisonCard`,
+    # `discover/FuturesCard`, `discover/GuessCard`) and three native ones
+    # do the same, so the reader sees the key.
+    #
+    # This runs HERE, at the publish boundary, and not at the three
+    # write sites — and that placement is the whole safety argument.
+    # `_review_decision_scope_keys` builds `category:{sport_name}` out of
+    # the very dict those serializers write, so humanising upstream would
+    # silently re-key every stored manual review decision
+    # (`category:tennis_other` -> `category:other tennis`), they would
+    # stop matching, and the only symptom would be suppressed cards
+    # quietly coming back. That is a RANKING change wearing a formatting
+    # change's clothes. By transforming after every ranking consumer has
+    # already read the raw value, the scope keys are unchanged BY
+    # CONSTRUCTION rather than by inspection.
+    #
+    # `sport_display_name` returns the stored name byte-for-byte unless
+    # it equals the key, so the 162 branded rows are untouched. The
+    # machine key stays on `data["sport"]`, which is what the clients
+    # key their own maps on.
+    if isinstance(data, dict) and data.get("sport_name") is not None:
+        data["sport_name"] = sport_display_name(
+            data.get("sport"), data.get("sport_name")
+        )
+
+    # Strip internal keys BY PREFIX, not by an enumerated list.
+    #
+    # This was ten `pop` calls naming ten keys, and the contract it
+    # serves is "no item key starts with an underscore"
+    # (`test_response_shape_exposes_public_item_contract`). A list can
+    # only ever be a hand-maintained approximation of a prefix rule, so
+    # every new internal key was one forgotten line away from shipping
+    # to clients — which is exactly how `_quality_ladder_or_bucket`
+    # (#1958) leaked the moment it was added. The prefix rule cannot
+    # fall behind, because it has nothing to keep up with.
+    for private_key in [k for k in item if k.startswith("_")]:
+        item.pop(private_key, None)
+
+
+def _feed_page_payload(
+    feed_items: list,
+    paginated: list,
+    *,
+    total: int,
+    limit: int,
+    offset: int,
+    edition_status: str | None,
+) -> dict:
+    """The page envelope ``get_feed`` builds over a published list (#10290).
+
+    Extracted unchanged so the offline display replay builds the same envelope
+    by calling this, not by restating it. Fields added afterwards by the route
+    (cache metadata, build quality, personalization, debug) stay in the route.
+    """
+    payload = {
+        "items": paginated,
+        "total": total,
+        "limit": limit,
+        "offset": offset,
+        "has_more": (offset + limit) < total,
+    }
+
+    # D1 clause (a) / #4110: the edition token, over ``feed_items`` and NOT
+    # over ``paginated``.
+    #
+    # That distinction is the entire offset-stability contract. Hashing the
+    # window would give page 1 and page 2 different tokens and the client's
+    # pagination merge — which appends into the list page 1 painted — could
+    # never prove the two belong together. Hashing the whole ranked list
+    # gives every page of one build the same token, which is what native
+    # asked for (#4110 question 3).
+    #
+    # Called after the private-key scrub so it reads the same public card
+    # identities a client sees, and before the page base is stored, so
+    # ``render_feed_page_from_base`` carries it to every page for free (it
+    # copies every key that is not per-serve, and this is not per-serve).
+    _edition = feed_edition_token(feed_items)
+    if _edition is not None:
+        payload[FEED_EDITION_FIELD] = _edition
+    if edition_status is not None:
+        payload[FEED_EDITION_STATUS_FIELD] = edition_status
+    return payload
+
+
 def _feed_item_may_be_askable(data: dict, now: datetime) -> bool:
     """Could the venue-settlement gate admit this served event card? (#5811)
 
@@ -6320,7 +6423,15 @@ def _feed_item_may_be_askable(data: dict, now: datetime) -> bool:
     return start is None or start < now - UPCOMING_GRACE
 
 
-async def _attach_feed_venue_settlement(db, feed_items: list, now: datetime) -> None:
+#: #10290: which branch ``_attach_feed_venue_settlement`` took. The function
+#: fails open, so from outside "the read failed" and "the read found nothing"
+#: leave identical cards; a display capture needs to tell them apart.
+VENUE_ATTACH_NOTHING_ASKABLE = "nothing_askable"
+VENUE_ATTACH_FAILED_OPEN = "failed_open"
+VENUE_ATTACH_READ = "read"
+
+
+async def _attach_feed_venue_settlement(db, feed_items: list, now: datetime) -> str:
     """#5811: a feed game card the venue already graded carries the verdict.
 
     ``/sports`` → Live & Paused printed "No result reported · Sep 29" over
@@ -6339,6 +6450,9 @@ async def _attach_feed_venue_settlement(db, feed_items: list, now: datetime) -> 
     the reader returned them, so a failed read leaves every card exactly as it
     was (the reader's absent-vs-False contract). Fail-open: this is ``/api/feed``.
     Producer half only — the section and the card are ux's (notice 41).
+
+    Returns which branch ran (``VENUE_ATTACH_*``); ``get_feed`` ignores it
+    unless a display capture is armed (#10290).
     """
     from types import SimpleNamespace
 
@@ -6355,7 +6469,7 @@ async def _attach_feed_venue_settlement(db, feed_items: list, now: datetime) -> 
         if _feed_item_may_be_askable(data, now):
             cards_by_id.setdefault(data["id"], []).append(data)
     if not cards_by_id:
-        return
+        return VENUE_ATTACH_NOTHING_ASKABLE
 
     try:
         result = await db.execute(
@@ -6390,7 +6504,7 @@ async def _attach_feed_venue_settlement(db, feed_items: list, now: datetime) -> 
         await attach_venue_settlement(db, rows, briefs, now)
     except Exception:
         logger.debug("Feed venue settlement attach skipped", exc_info=True)
-        return
+        return VENUE_ATTACH_FAILED_OPEN
 
     for brief in briefs:
         if "venue_settled" not in brief:
@@ -6400,6 +6514,7 @@ async def _attach_feed_venue_settlement(db, feed_items: list, now: datetime) -> 
             data["venue_settled_result"] = brief.get("venue_settled_result")
             if brief.get(VENUE_CLOSED_NO_WINNER_KEY) is True:
                 data[VENUE_CLOSED_NO_WINNER_KEY] = True
+    return VENUE_ATTACH_READ
 
 
 def _utc(dt: datetime | None) -> datetime | None:

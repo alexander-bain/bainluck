@@ -23,6 +23,14 @@ Usage:
 
     # fully offline demo (synthetic snapshot, no DB), two configs:
     python3 scripts/replay_discover_ranking.py --demo
+
+    # #10290 mixed-display replay: verify a frozen Discover build reproduces
+    # (exit 0 only on PASS; no comparison metric is computed on a non-PASS):
+    python3 scripts/replay_discover_ranking.py --mixed-capture capture.json --json
+
+    # #10290: capture ONE anonymous Discover build in-process against the
+    # configured database (writes nothing unless the build completes):
+    python3 scripts/replay_discover_ranking.py --capture-mixed out.json --origin local
 """
 
 from __future__ import annotations
@@ -602,6 +610,92 @@ def build_demo_labels() -> dict[int, dict[str, Any]]:
 
 
 # --------------------------------------------------------------------------- #
+# Mixed-display replay (#10290) — additive; the futures replay above is unchanged
+# --------------------------------------------------------------------------- #
+def run_mixed_capture_verification(path: str) -> dict[str, Any]:
+    """Load a ``mixed_display_replay_v1`` capture and verify its baseline arm.
+
+    Fidelity only. Any comparison arm is computed AFTER this returns PASS, on
+    the same frozen input; a non-PASS report is the whole output.
+    """
+    from app.utils.discover_display_replay import verify_baseline
+
+    return verify_baseline(path)
+
+
+async def capture_mixed_build(
+    out_path: str, *, origin: str, limit: int, offset: int
+) -> dict[str, Any]:
+    """Run ONE anonymous Discover build in-process with a display capture armed.
+
+    The request is the warmer's synthetic anonymous request WITHOUT the
+    pre-warm marker, so it is an ordinary anonymous build: if a cache tier
+    serves it, the capture is INCOMPLETE and nothing is written.
+    """
+    from fastapi import Response
+    from starlette.requests import Request
+
+    from app.routes.feed import get_feed
+    from app.tasks.base import get_task_session
+    from app.utils.discover_display_replay import (
+        DISCOVER_DISPLAY_CAPTURE_SCOPE_KEY,
+        DiscoverDisplayCapture,
+        DisplayReplayError,
+        write_capture,
+    )
+
+    capture = DiscoverDisplayCapture(origin=origin)
+    request = Request(
+        {
+            "type": "http",
+            "method": "GET",
+            "path": "/api/feed",
+            "headers": [],
+            "query_string": b"",
+            DISCOVER_DISPLAY_CAPTURE_SCOPE_KEY: capture,
+        }
+    )
+    async with get_task_session() as db:
+        await get_feed(
+            response=Response(),
+            request=request,
+            limit=limit,
+            offset=offset,
+            sport=None,
+            category=None,
+            include_events=True,
+            include_futures=True,
+            my_teams_only=False,
+            mode=None,
+            tags=None,
+            event_pct=None,
+            edition=None,
+            debug=False,
+            debug_ground_truth=False,
+            debug_personalization=False,
+            exclude_reviewed=False,
+            reviewer=None,
+            reviewed_surface=None,
+            secret=None,
+            db=db,
+            user=None,
+        )
+    try:
+        artifact = capture.artifact()
+    except DisplayReplayError as exc:
+        return {"captured": False, "code": exc.code, "detail": exc.detail}
+    write_capture(artifact, out_path)
+    return {
+        "captured": True,
+        "path": out_path,
+        "pool_count": artifact["scored_pool"]["count"],
+        "total": artifact["expected"]["total"],
+        "size_bytes": artifact["size_bytes"],
+        "origin": origin,
+    }
+
+
+# --------------------------------------------------------------------------- #
 # CLI
 # --------------------------------------------------------------------------- #
 def main() -> int:
@@ -627,7 +721,47 @@ def main() -> int:
     parser.add_argument("--label-days", type=int, default=120)
     parser.add_argument("--demo", action="store_true", help="Offline synthetic snapshot")
     parser.add_argument("--json", action="store_true")
+    parser.add_argument(
+        "--mixed-capture",
+        help="#10290: verify a mixed_display_replay_v1 capture file (exit 0 = PASS)",
+    )
+    parser.add_argument(
+        "--capture-mixed",
+        metavar="OUT",
+        help="#10290: capture one anonymous Discover build in-process to OUT",
+    )
+    parser.add_argument(
+        "--origin",
+        choices=("local", "production"),
+        default="local",
+        help="What --capture-mixed records as its provenance origin",
+    )
+    parser.add_argument("--limit", type=int, default=20, help="--capture-mixed page size")
+    parser.add_argument("--offset", type=int, default=0, help="--capture-mixed offset")
     args = parser.parse_args()
+
+    if args.mixed_capture:
+        report = run_mixed_capture_verification(args.mixed_capture)
+        if args.json:
+            print(json.dumps(report, indent=2, sort_keys=True))
+        else:
+            print(f"verdict: {report['verdict']}")
+            for key in ("detail", "first_divergence", "expected_total", "replayed_total"):
+                if key in report:
+                    print(f"{key}: {report[key]}")
+        return 0 if report.get("verdict") == "PASS" else 1
+
+    if args.capture_mixed:
+        result = asyncio.run(
+            capture_mixed_build(
+                args.capture_mixed,
+                origin=args.origin,
+                limit=args.limit,
+                offset=args.offset,
+            )
+        )
+        print(json.dumps(result, indent=2, sort_keys=True))
+        return 0 if result.get("captured") else 1
 
     if args.config_file:
         configs = [config_from_dict(d) for d in json.loads(Path(args.config_file).read_text())]
