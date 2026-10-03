@@ -1902,6 +1902,27 @@ jobs:
             exit 1
           fi
 
+      - name: "#10319 one-event identity repair preflight/apply/restore (real Postgres)"
+        # PILLARS MATCHING / TRUTH. SHIP: Parma–Ternana (15321333) identifies as
+        # women's Serie A Femminile. The attended tool's READ ONLY preflight, its
+        # one-row four-column compare-and-swap, the FOR UPDATE that fences a
+        # concurrently linked market, lock-budget refusal and the fenced inverse
+        # are server behaviour; the unit file's fake cannot see them. Same skip,
+        # zero-count and short-count detection as its neighbours.
+        if: matrix.group == 'shared'
+        run: |
+          set -o pipefail
+          python -m pytest tests/integration/test_repair_10319_event15321333_competition_identity_pg.py \
+            -v -rs 2>&1 | tee /tmp/repair_10319.txt
+          if grep -qiE "[0-9]+ skipped" /tmp/repair_10319.txt; then
+            echo "::error::#10319 identity repair gate SKIPPED — the gate did not run"
+            exit 1
+          fi
+          if ! grep -qE "^=+ 28 passed" /tmp/repair_10319.txt; then
+            echo "::error::#10319 identity repair gate did not report exactly 28 passed"
+            exit 1
+          fi
+
       - name: Movement window contract (real Postgres)
         # item 12 / lane1 Q482. `probability_change_24h` froze: all four writers
         # store a PER-WRITE delta and nothing recomputed it over a window, so a

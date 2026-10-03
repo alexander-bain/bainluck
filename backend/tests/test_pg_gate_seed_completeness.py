@@ -207,6 +207,10 @@ COVERED = (
     # #10182. Seeds narrow `futures_markets` / `futures_outcomes` in a private
     # schema and drives the reopen repair's own run(): apply, drift, restore.
     "test_repair_polymarket_false_parent_settlements_10182_pg.py",
+    # #10319. Seeds narrow `sports` / `teams` / `events` / `futures_markets` in a
+    # private per-test schema and drives the one-event identity repair's own
+    # preflight, apply and restore over them.
+    "test_repair_10319_event15321333_competition_identity_pg.py",
     # #9394. Seeds `futures_markets` and `futures_outcomes` by raw INSERT into a
     # private schema and drives the real Gamma winner rail over them.
     "test_price_crowned_pm_winner_venue_regrade_9394_pg.py",
