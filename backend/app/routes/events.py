@@ -28605,6 +28605,13 @@ async def _build_related_futures(
     )
     if _league_exclusion is not None:
         base_season_filters.append(_league_exclusion)
+    # #10319: this exact women's league needs positive competition evidence;
+    # the broad soccer arm and same club names cannot establish that identity.
+    from app.utils.serie_a_femminile_context import admission_condition
+
+    _competition_scope = admission_condition(event_sport_key)
+    _competition_filters = [] if _competition_scope is None else [_competition_scope]
+    base_season_filters.extend(_competition_filters)
     if event_is_finished:
         recency_cutoff = datetime.now(timezone.utc) - timedelta(days=90)
         base_season_filters.append(FuturesMarket.updated_at >= recency_cutoff)
@@ -28634,6 +28641,16 @@ async def _build_related_futures(
     season_market_ids = (
         None if debug else _smd.read(event_sport_key, event_is_finished)
     )
+    if _competition_scope is not None and season_market_ids:
+        # A cache populated before adoption of this rule must not bypass it.
+        # Rebuild a contaminated pool so wrong rows cannot consume its cap.
+        _scope_result = await db.execute(
+            select(FuturesMarket.id).where(
+                FuturesMarket.id.in_(season_market_ids), _competition_scope
+            )
+        )
+        if {row.id for row in _scope_result.all()} != set(season_market_ids):
+            season_market_ids = None
     if season_market_ids is None:
         _tier_query = await db.execute(
             select(FuturesMarket.id, FuturesMarket.market_tier)
@@ -28737,6 +28754,7 @@ async def _build_related_futures(
                         or_(*_series_detection),
                         or_(*_series_home_ilike),
                         or_(*_series_away_ilike),
+                        *_competition_filters,
                     )
                     .limit(50)
                 )
@@ -28750,7 +28768,9 @@ async def _build_related_futures(
         return empty, event.status or "", [], False
 
     # Apply gender name filter to exclude cross-gender markets
-    if gender_market_name_filter and sport_market_ids:
+    # Exact competition admission above also accepts provenance-backed rows
+    # without a "women" title and keeps event-linked game props independent.
+    if gender_market_name_filter and sport_market_ids and _competition_scope is None:
         if gender_market_name_filter == "women":
             # Women's event: only keep markets with women-related keywords
             gender_q = await db.execute(

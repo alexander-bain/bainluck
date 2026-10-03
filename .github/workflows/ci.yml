@@ -6451,6 +6451,46 @@ jobs:
             exit 1
           }
 
+      - name: "#10319 women's Serie A identity and season context stay separate from men's (real Postgres)"
+        # Both files create and drop only their own schema. The job's explicit
+        # SEARCH_TEST_DATABASE_URL arms both the route and seed/undo cases.
+        if: matrix.group == 'isolated'
+        run: |
+          set +e
+          python -m pytest \
+            tests/integration/test_serie_a_femminile_identity_10319_pg.py \
+            tests/integration/test_serie_a_femminile_seed_10319_pg.py \
+            -v -rs --tb=short --junitxml=/tmp/seriea10319-junit.xml \
+            > /tmp/seriea10319.txt 2>&1
+          RC=$?
+          set -e
+          cat /tmp/seriea10319.txt
+          echo "PYTEST EXIT CODE: $RC"
+          python - "$RC" <<'PY'
+          import sys, xml.etree.ElementTree as ET
+
+          rc = int(sys.argv[1])
+          try:
+              root = ET.parse("/tmp/seriea10319-junit.xml").getroot()
+          except Exception as exc:
+              sys.exit(f"::error::#10319 produced no junit report ({exc})")
+          s = root if root.tag == "testsuite" else root.find("testsuite")
+          t, f, e, k = (int(s.get(a, 0)) for a in ("tests", "failures", "errors", "skipped"))
+          print(f"tests={t} passed={t - f - e - k} failed={f} errors={e} skipped={k}")
+          if k:
+              sys.exit(f"::error::#10319 SKIPPED {k} test(s) — the gate did not run")
+          files = ("test_serie_a_femminile_identity_10319_pg", "test_serie_a_femminile_seed_10319_pg")
+          counts = {name: sum(name in case.get("classname", "").split(".") for case in s.iter("testcase")) for name in files}
+          print(f"#10319 cases by file: {counts}")
+          if t < 32 or not all(counts.values()):
+              sys.exit(f"::error::#10319 requires at least 32 cases and nonzero cases from both files; got {t}, {counts}")
+          if rc not in (0, 1):
+              sys.exit(f"::error::pytest exit {rc} is a harness story, not a result")
+          if f or e or rc:
+              sys.exit(f"::error::#10319 RED: {f} failed, {e} errors")
+          print(f"#10319 GREEN on all {t} cases from both files, zero skips")
+          PY
+
       - name: "#8430 a Polymarket child reuses the row its sibling holds (real Postgres)"
         # #8430. Each child of one Polymarket game event used to mint its own
         # row whenever the matcher's best candidate was refused — Boyer v

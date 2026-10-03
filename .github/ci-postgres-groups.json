@@ -222,6 +222,7 @@
     "#837 subscription slate — provision the disposable database",
     "#837 the socket does not subscribe to finished sport (real Postgres)",
     "#9484 a suspended match whose market still trades keeps its stream (real Postgres)",
+    "#10319 women's Serie A identity and season context stay separate from men's (real Postgres)",
     "#8910 a newer WebSocket stamp survives the two-minute poll (real Postgres)",
     "#8910 no live writer puts an older reading over a newer one (real Postgres)",
     "#837 every benchmark price reaches the number at the default floor (real Postgres)",

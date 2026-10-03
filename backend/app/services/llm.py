@@ -795,6 +795,7 @@ def classify_league(text: str, sport_key: Optional[str] = None) -> Optional[str]
         "soccer_spain_la_liga": "La_Liga",
         "soccer_germany_bundesliga": "Bundesliga",
         "soccer_italy_serie_a": "Serie_A",
+        "soccer_italy_serie_a_women": "Serie_A_Femminile",
         "soccer_france_ligue_one": "Ligue_1",
         "soccer_usa_mls": "MLS",
         "soccer_uefa_champs_league": "Champions_League",
