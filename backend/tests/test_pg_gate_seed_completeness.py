@@ -487,6 +487,8 @@ COVERED = (
     # not resolve the payload to the seeded row, nothing writes `betting`, and
     # the probe finds a free row for the wrong reason.
     "test_a_poll_releases_its_event_rows_per_sport_837_pg.py",
+    # #10305: the anchor-schedule rail's one-row mode (lock, fence, reach).
+    "test_reconcile_anchor_schedule_member_10305_pg.py",
     # #837 follow-up: seeds two invented sports, their teams and four `events`
     # rows by raw INSERT (two scheduled for the odds loops, two completed for
     # the scores loop). `external_id` is the reach: the lookup that stands in
