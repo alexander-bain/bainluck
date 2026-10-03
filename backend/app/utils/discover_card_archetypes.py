@@ -784,6 +784,74 @@ def _resolution_day(resolution_date: Any) -> date | None:
     return None
 
 
+def _place_year_less(
+    month_days: set[tuple[int, int]], anchor: date
+) -> dict[tuple[int, int], date] | None:
+    """Each year-less `(month, day)` as a calendar day, or None to refuse.
+
+    #10374 follow-up (ux, 2026-10-03 22:0xZ on live `eb2418ee11`): the first rule
+    gave each day "the latest year that does not put it after the question
+    resolves". A cumulative "by date" board can have legs that close AFTER the
+    stored resolution_date — `Saudi Oil Pipeline (East-West) restarts by...?`
+    (60789497) resolves 2026-11-01 and lists `November 15` and `November 30`,
+    which that rule placed in 2025, a year before `October 31`.
+
+    So the days are first put in order as one run of the calendar: on the
+    366-day ring they start just after the widest gap between them, and a later
+    day that reads earlier in the year is the next year. Then the run takes the
+    year that puts one of its ends nearest the anchor.
+    The run is placed whole, so no single leg can land a year from its siblings.
+
+    Refused (None): two gaps tied for widest, where the run has no one start;
+    two years tied for nearest; a day that cannot exist (`February 30`), or
+    `February 29` in the year the run lands on.
+    """
+    try:
+        # 2000 is a leap year, so every real month-day has a place on the ring.
+        ordinal = {md: date(2000, *md).timetuple().tm_yday for md in month_days}
+    except ValueError:
+        return None
+    ring = sorted(month_days, key=lambda md: ordinal[md])
+    if len(ring) < 2:
+        return None
+    gaps = [
+        (ordinal[ring[(i + 1) % len(ring)]] - ordinal[md]) % 366
+        for i, md in enumerate(ring)
+    ]
+    widest = max(gaps)
+    if gaps.count(widest) > 1:
+        return None
+    start = (gaps.index(widest) + 1) % len(ring)
+    run = ring[start:] + ring[:start]
+    # Years into the run: 0 until the run crosses New Year, then 1.
+    offsets = [0]
+    for prev, md in zip(run, run[1:]):
+        offsets.append(offsets[-1] + (ordinal[md] < ordinal[prev]))
+
+    def day_in(year: int, md: tuple[int, int]) -> date:
+        # February 29 reads as the 28th only to choose the year; the day itself
+        # is built below and refuses if the chosen year has no February 29.
+        return date(year, md[0], 28 if md == (2, 29) else md[1])
+
+    def distance(base: int) -> int:
+        # Nearer end only: an anchor inside a run is always nearer one of its
+        # ends than any end of the run a year either side, so no "inside" case.
+        first = day_in(base + offsets[0], run[0])
+        last = day_in(base + offsets[-1], run[-1])
+        return min(abs((anchor - first).days), abs((anchor - last).days))
+
+    ranked = sorted(
+        (distance(base), base) for base in range(anchor.year - 1, anchor.year + 2)
+    )
+    if ranked[0][0] == ranked[1][0]:
+        return None
+    base = ranked[0][1]
+    try:
+        return {md: date(base + off, *md) for md, off in zip(run, offsets)}
+    except ValueError:
+        return None
+
+
 def _chronological_dates(
     rows: list[dict[str, Any]], resolution_date: Any
 ) -> list[date | None] | None:
@@ -801,9 +869,12 @@ def _chronological_dates(
 
     A YEAR IS NEVER GUESSED BY THE CLIENT. The venue labels are `October 27`,
     with no year, and a board that resolves 15 January lists `December 28` before
-    `January 5`. Each year-less day takes the latest year that does not put it
-    after the question resolves. A board that mixes dated and year-less labels
-    is refused rather than reconciled: that is the `December 31, 2025` beside a
+    `January 5`. The year-less days are placed as ONE run of the calendar — the
+    run starts after the widest gap between them, so `December 28 · January 5`
+    crosses New Year rather than spanning eleven months — and the run takes the
+    year that puts it nearest the day the question resolves (`_place_year_less`
+    says why "nearest", not "not after"). A board that mixes dated and year-less
+    labels is refused rather than reconciled: that is the `December 31, 2025` beside a
     bare `December 31` shape `_live_dated_twins` exists for, and picking which
     is earlier is the guess this refuses. So is a board where two rows land on
     one day, or a year-less board with no resolution date to anchor it.
@@ -831,9 +902,16 @@ def _chronological_dates(
     if with_year not in (0, len(readings)):
         return None
 
-    anchor = None if with_year else _resolution_day(resolution_date)
-    if not with_year and anchor is None:
-        return None
+    placed_year_less: dict[tuple[int, int], date] = {}
+    if not with_year:
+        anchor = _resolution_day(resolution_date)
+        if anchor is None:
+            return None
+        placed_year_less = _place_year_less(
+            {(month, day) for month, day, _ in readings}, anchor
+        )
+        if placed_year_less is None:
+            return None
 
     dates: list[date | None] = []
     for reading in parsed:
@@ -841,17 +919,14 @@ def _chronological_dates(
             dates.append(None)
             continue
         month, day, year = reading
+        if year is None:
+            dates.append(placed_year_less[(month, day)])
+            continue
         try:
-            if year is not None:
-                dates.append(date(year, month, day))
-                continue
-            candidate = date(anchor.year, month, day)
-            if candidate > anchor:
-                candidate = date(anchor.year - 1, month, day)
+            dates.append(date(year, month, day))
         except ValueError:
             # February 29 in a year that has none: not a day we can place.
             return None
-        dates.append(candidate)
 
     placed = [d for d in dates if d is not None]
     if len(set(placed)) != len(placed):
