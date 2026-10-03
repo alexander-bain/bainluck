@@ -3315,3 +3315,132 @@ def test_the_expiry_never_reaches_past_the_band_or_the_never_backwards_guard():
         line for line in code.splitlines() if "git push heroku-heavy" in line
     )
     assert "--force" not in push and "-f " not in push, push
+
+
+# ── #10320: the target is re-read at the push, not at the decision ─────────────
+#
+# Run 37124099784 (2026-10-03) decided PUSH on `5b31e3a3c` at 13:38:13Z, waited
+# 21 min in the in-flight loop, and pushed that sha at 13:59Z. Main had gone live
+# on `09c01b47c` at 13:42:11Z, and the run that deploy triggered was cancelled as
+# a pending duplicate. Heavy sat a full cycle floor behind, holding the #10320
+# sweep arm. The block is lifted out of the YAML and run, with the REAL
+# `read_facts` and only `git` and `python3` stubbed.
+
+
+def _extract_read_facts_def() -> str:
+    lines = _workflow_code().splitlines()
+    start = next(i for i, ln in enumerate(lines) if ln.strip() == "read_facts() {")
+    end = next(i for i in range(start + 1, len(lines)) if lines[i] == " " * 10 + "}")
+    return "\n".join(ln[10:] for ln in lines[start:end + 1])
+
+
+def _extract_pre_push_reread() -> str:
+    lines = _workflow_code().splitlines()
+    start = next(
+        i for i, ln in enumerate(lines) if ln.strip() == 'DECIDED_MAIN="$MAIN_LIVE"'
+    )
+    end = next(i for i in range(start + 1, len(lines)) if lines[i] == " " * 10 + "fi")
+    return "\n".join(ln[10:] for ln in lines[start:end + 1])
+
+
+def _run_pre_push_reread(tmp_path, *, mains, heavies, decide_exit=0, dispatched=False):
+    """Read once (the decision's facts), then run the pre-push block.
+
+    `mains` / `heavies` are the shas `git ls-remote` serves per read. Returns
+    (exit code, sha that reached the push or None, the `decide` command lines).
+    """
+    stub = tmp_path / "stub"
+    stub.mkdir(parents=True)
+    state = tmp_path / "state"
+    state.mkdir(parents=True)
+    (state / "mains").write_text("\n".join(mains) + "\n")
+    (state / "heavies").write_text("\n".join(heavies) + "\n")
+    (stub / "git").write_text(
+        "#!/bin/bash\n"
+        'case "$*" in\n'
+        "  *ls-remote*heroku-main*)\n"
+        f"    n=$(cat {state}/nm 2>/dev/null || echo 0); n=$((n+1)); echo $n > {state}/nm\n"
+        f"    printf '%s\\trefs/heads/master\\n' \"$(sed -n \"${{n}}p\" {state}/mains)\" ;;\n"
+        "  *ls-remote*heroku-heavy*)\n"
+        f"    n=$(cat {state}/nh 2>/dev/null || echo 0); n=$((n+1)); echo $n > {state}/nh\n"
+        f"    printf '%s\\trefs/heads/master\\n' \"$(sed -n \"${{n}}p\" {state}/heavies)\" ;;\n"
+        "esac\n"
+        "exit 0\n"
+    )
+    (stub / "python3").write_text(
+        "#!/bin/bash\n"
+        'case "$*" in\n'
+        f"  *decide*) echo \"$*\" >> {state}/decides; exit {decide_exit} ;;\n"
+        "  *age*) echo 9999 ;;\n"
+        "esac\n"
+    )
+    for name in ("git", "python3"):
+        (stub / name).chmod(0o755)
+    script = tmp_path / "reread.sh"
+    script.write_text(
+        "set -uo pipefail\n"
+        f'DISPATCH_FLAG="{"--dispatched" if dispatched else ""}"\n'
+        + _extract_read_facts_def()
+        + "\nread_facts\n"
+        + _extract_pre_push_reread()
+        + '\necho "PUSHING=$MAIN_LIVE"\n'
+    )
+    proc = subprocess.run(
+        ["bash", str(script)], capture_output=True, text=True, cwd=str(REPO),
+        env={**os.environ, "PATH": f"{stub}{os.pathsep}{os.environ['PATH']}"}, timeout=60,
+    )
+    pushed = (
+        proc.stdout.rsplit("PUSHING=", 1)[1].split()[0] if "PUSHING=" in proc.stdout else None
+    )
+    decides = (
+        (state / "decides").read_text().splitlines() if (state / "decides").exists() else []
+    )
+    return proc.returncode, pushed, decides
+
+
+def test_a_main_deploy_during_the_wait_is_the_sha_that_gets_pushed(tmp_path):
+    """The 2026-10-03 run: decided on one sha, main moved, the old sha went out."""
+    newer = "c" * 40
+    code, pushed, decides = _run_pre_push_reread(
+        tmp_path, mains=[A, newer], heavies=[B, B]
+    )
+    assert (code, pushed) == (0, newer), "pushed the sha the run decided on, not main's live one"
+    assert len(decides) == 1 and f"--main-live {newer}" in decides[0], decides
+
+
+def test_unmoved_refs_push_the_decided_sha_without_asking_again(tmp_path):
+    code, pushed, decides = _run_pre_push_reread(tmp_path, mains=[A, A], heavies=[B, B])
+    assert (code, pushed, decides) == (0, A, [])
+
+
+def test_a_moved_heavy_is_re_judged_and_a_hold_exits_green_without_pushing(tmp_path):
+    """Another push landed while this run waited: HOLD, not a rejected push."""
+    code, pushed, decides = _run_pre_push_reread(
+        tmp_path, mains=[A, A], heavies=[B, A], decide_exit=1
+    )
+    assert (code, pushed) == (0, None)
+    assert len(decides) == 1 and f"--heavy-live {A}" in decides[0], decides
+
+
+def test_a_refusal_on_the_moved_refs_fails_loudly_and_never_pushes(tmp_path):
+    code, pushed, _ = _run_pre_push_reread(
+        tmp_path, mains=[A, "c" * 40], heavies=[B, B], decide_exit=2
+    )
+    assert (code, pushed) == (1, None)
+
+
+def test_an_attended_run_re_judges_as_attended(tmp_path):
+    _, _, decides = _run_pre_push_reread(
+        tmp_path, mains=[A, "c" * 40], heavies=[B, B], dispatched=True
+    )
+    assert len(decides) == 1 and "--dispatched" in decides[0], decides
+
+
+def test_the_re_read_is_the_last_gate_before_the_push():
+    """After the in-flight wait and the final band check, before the push."""
+    code = _workflow_code()
+    reread = code.index('DECIDED_MAIN="$MAIN_LIVE"')
+    assert code.index('case "$INFLIGHT" in') < reread
+    assert code.index('if [ -z "$DISPATCH_FLAG" ]; then') < reread
+    assert reread < code.index("BEHIND=") < code.index("git push heroku-heavy")
+    assert "read_facts" in _extract_pre_push_reread()
