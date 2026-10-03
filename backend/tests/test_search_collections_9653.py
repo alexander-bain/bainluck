@@ -249,6 +249,29 @@ class TestFailOpen:
         assert loop.time() - started < sc.SEARCH_COLLECTION_READ_BUDGET_SECONDS + 1.0
 
 
+class TestBudgetFitsTheProductionRead:
+    """#10274: at 0.25 s the Collections row came and went for the same query."""
+
+    async def test_a_read_slower_than_the_old_quarter_second_still_attaches(self, switches_on):
+        # 0.35 s is inside the measured production range (70-287 ms statement
+        # plus probe and round trips). The 0.25 s budget cut exactly this read.
+        session = _Session([_row()], delay=0.35)
+        body = _payload()
+        out = await sc.attach_search_collections(session, body)
+        assert out is not body
+        assert [c["slug"] for c in out["collections"]] == ["nfl-2026-week-5"]
+        assert session.rollbacks == 0
+
+    def test_the_budget_is_twice_the_slowest_measured_read(self):
+        assert (
+            sc.SEARCH_COLLECTION_READ_BUDGET_SECONDS * 1000
+            >= 2 * sc.MEASURED_COLLECTION_READ_MAX_MS
+        )
+
+    def test_the_budget_stays_a_bound_a_reader_does_not_feel(self):
+        # The ceiling is still a bonus read on a search answer, never a wait.
+        assert sc.SEARCH_COLLECTION_READ_BUDGET_SECONDS <= 1.0
+
 # ---------------------------------------------------------------------------
 # The route: live authority across the response cache
 # ---------------------------------------------------------------------------

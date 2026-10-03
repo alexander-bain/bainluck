@@ -27,7 +27,7 @@ switches are read before anything else, and the producer itself reads them again
 before its first statement.
 
 BOUNDED. One producer call (two statements), capped at
-``SEARCH_COLLECTION_READ_BUDGET_SECONDS``. A failure or overrun keeps the ordinary
+``SEARCH_COLLECTION_READ_BUDGET_SECONDS`` (sized from production, #10274). A failure or overrun keeps the ordinary
 answer, and it can never turn a served search into an error.
 """
 
@@ -43,8 +43,20 @@ logger = logging.getLogger(__name__)
 #: Most cards one search page can carry (the coordinator's cap, #9653).
 SEARCH_COLLECTIONS_CAP = 2
 
-#: The same bound Discover's consumer gives the same producer read.
-SEARCH_COLLECTION_READ_BUDGET_SECONDS = 0.25
+#: The producer read's ceiling on a search page (#10274). It started as
+#: Discover's 0.25 s, and that is a coin flip. The aggregate statement alone
+#: measured 70-275 ms on production (EXPLAIN ANALYZE, 10/3 03:3xZ, eagles and
+#: bills page ids, plus 7-12 ms of planning). The schema probe and two round
+#: trips add to that, so about half of searches cut the read and dropped the
+#: Collections row (eagles 0/4 cache hits at 323-344 ms; bills and chiefs
+#: carried it at 69-243 ms). 0.6 s is about twice the slowest whole read
+#: observed. A read is only charged its real duration, so a 300 ms read costs
+#: ~50 ms more than the old give-up at 250 ms, and the reader gets the row.
+SEARCH_COLLECTION_READ_BUDGET_SECONDS = 0.6
+
+#: The slowest producer statement measured on production when the budget was
+#: set (ms, execution + planning). The guard test keeps the budget >= 2x this.
+MEASURED_COLLECTION_READ_MAX_MS = 287
 
 
 def search_collections_enabled() -> bool:
