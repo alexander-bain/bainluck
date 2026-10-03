@@ -173,8 +173,10 @@ separately instead of returning one count.
 a handful of outcomes, the honest page says we can answer this for N% of
 forecasts — not a thinner version of the claim it makes today.
 
-Pure by construction: no session, no I/O, no clock. Nothing here is wired into
-``precompute_calibration``, which stays frozen under ruling 009.
+Pure by construction: no session, no I/O, no clock. The one producer that runs
+it is :mod:`app.tasks.calibration_paired_publication` (#6176, October 1 scope),
+called from ``_run_calibration_main_build`` — outside every function
+``_main_input_fingerprint`` hashes, so the population and the bank are untouched.
 """
 
 from __future__ import annotations
@@ -688,6 +690,7 @@ def paired_legs_sql(
     final_max_stale_seconds: int = DEFAULT_FINAL_MAX_STALE_SECONDS,
     cursor: str = ":cursor",
     scan: str = ":scan",
+    outcome_ids: Optional[str] = None,
 ) -> str:
     """Per-outcome early and final legs, with the whole pairing rule applied.
 
@@ -726,7 +729,18 @@ def paired_legs_sql(
     admin ``db-query`` rail the measurement bus uses does not bind, so
     :func:`paired_feasibility_sql` passes literals instead — same statement,
     substituted in one place rather than paraphrased into a second one.
+
+    ``outcome_ids`` (#6176 publication) is an optional SQL fragment — a bind
+    name such as ``:outcome_ids`` for an expanding parameter — naming an
+    already-MATERIALISED, bounded set of candidate outcome ids. It is a
+    primary-key restriction on ``futures_outcomes`` in the WHERE, so no outcome
+    outside the set ever reaches a lateral snapshot or book seek; the trailing
+    ``LIMIT`` alone bounds rows returned, never the work behind them. It ANDs
+    onto the population predicate and changes nothing else: the pairing rule,
+    the classes and the book preference are the same statement. Omitted, the
+    emitted SQL is exactly what it was before the parameter existed.
     """
+    id_filter = "" if outcome_ids is None else f"\n  AND fo.id IN {outcome_ids}"
     as_of_early = as_of_sql(_BOUNDARY, lead_seconds)
     early_fresh = _fresh_sql("early", as_of_early, early_max_stale_seconds)
     final_fresh = _fresh_sql("final", _BOUNDARY, final_max_stale_seconds)
@@ -796,7 +810,7 @@ LEFT JOIN LATERAL (
     LIMIT 1
 ) pair_book ON true
 WHERE {_POPULATION_PREDICATE}
-  AND fo.id > {cursor}
+  AND fo.id > {cursor}{id_filter}
 ORDER BY fo.id ASC
 LIMIT {scan}
 """
