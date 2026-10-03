@@ -1,3 +1,4 @@
+import { formatProbabilityPercent } from "../../lib/probabilityDisplay";
 import { chanceLabel, compactChange, comparisonPoints, complementQuestion, exactChanceLabel, matrixForStat, quotedChance, resolveQuestion, resolveSource, selectQuestion, sourceKey, type DuringPlayerProps, type DuringPropsRow } from "../../lib/duringPlayerPropsMatrixSelection";
 
 // Synthetic typed projection: these are UI discriminators, not live specimens.
@@ -20,6 +21,8 @@ describe("During Matrix typed truth", () => {
     for (const probability of [null, NaN, Infinity, -0.1, 1.1]) { r.current.probability = probability; expect(quotedChance(r)).toBeNull(); }
     r.current.probability = .8; r.current.state = "actual_only"; expect(quotedChance(r)).toBeNull();
     expect(chanceLabel(.0001)).toBe("<1%"); expect(chanceLabel(.9999)).toBe(">99%");
+    // The matrix prints the same number every other surface prints for one value.
+    for (const p of [.004, .007, .5, .993, .996]) expect(chanceLabel(p)).toBe(formatProbabilityPercent(p));
     expect(exactChanceLabel(.00000001)).not.toBe("0%");
   });
   test("same labels are distinct subjects and counts come from loaded questions", () => {

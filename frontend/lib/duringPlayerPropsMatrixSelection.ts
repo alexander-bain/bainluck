@@ -2,6 +2,8 @@
  * The caller owns transport/adoption fences. Keys, labels, blends and deltas
  * remain producer facts; this adapter never reconstructs a proposition.
  */
+import { formatProbabilityPercent } from "./probabilityDisplay";
+
 export interface DuringPropsStat {
   stat_key: string;
   label: string;
@@ -51,10 +53,9 @@ export function finiteChance(value: unknown): value is number {
 export function quotedChance(row: DuringPropsRow): number | null {
   return row.current.state === "quoted" && finiteChance(row.current.probability) ? row.current.probability : null;
 }
+// The site's one percentage rule (boundaries + rounding) — never a local copy.
 export function chanceLabel(value: number): string {
-  if (value > 0 && value < .01) return "<1%";
-  if (value < 1 && value > .99) return ">99%";
-  return `${Math.round(value * 100)}%`;
+  return formatProbabilityPercent(value);
 }
 export function exactChanceLabel(value: number): string {
   return `${Number((value * 100).toPrecision(12))}%`;
