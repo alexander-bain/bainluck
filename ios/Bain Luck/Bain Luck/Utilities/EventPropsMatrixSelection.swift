@@ -75,6 +75,25 @@ enum EventPropsMatrixLayout {
         props.rows.first { $0.complementQuestionKey == row.questionKey }
     }
 
+    /// The legacy `player_props` the matrix does not already draw, for the old
+    /// card beneath it — so no count question is listed twice on the page.
+    ///
+    /// A legacy prop is the matrix's when one of its contributor outcome ids
+    /// feeds a typed row; that is the server's own link, never a name match. A
+    /// prop carrying no outcome ids cannot be proven typed and stays in the old
+    /// card, as does everything when there is no typed payload at all.
+    static func untypedPlayerProps(
+        _ playerProps: [GameMarketPlayerProp],
+        typed props: DuringPlayerProps?
+    ) -> [GameMarketPlayerProp] {
+        guard let props, !props.rows.isEmpty else { return playerProps }
+        let typedOutcomeIds = Set(props.rows.flatMap { $0.contributorOutcomeIds ?? [] })
+        return playerProps.filter { prop in
+            let ids = prop.contributorOutcomeIds ?? []
+            return ids.isEmpty || !ids.contains(where: typedOutcomeIds.contains)
+        }
+    }
+
     // MARK: - Formatting (the view's only words)
 
     /// The cell's figure: the quoted chance, the server's grade, or the dash.

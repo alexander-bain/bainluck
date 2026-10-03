@@ -517,9 +517,18 @@ struct EventDetailView: View {
                             awayScore: event.awayScore
                         )
                     }
-                    // Player Props (from game-markets endpoint)
+                    // #10236 — during a live game, the server's typed player
+                    // questions as one matrix. Absent (not live, older server,
+                    // nothing typed) leaves the card below exactly as it was.
+                    if let during = vm.gameMarkets?.duringPlayerProps,
+                       !during.rows.isEmpty {
+                        EventPropsMatrixView(props: during)
+                    }
+                    // Player Props (from game-markets endpoint) — only the props
+                    // the matrix above does not already draw.
                     if let gameMarkets = vm.gameMarkets,
-                       let playerProps = gameMarkets.playerProps,
+                       case let playerProps = EventPropsMatrixLayout.untypedPlayerProps(
+                           gameMarkets.playerProps ?? [], typed: gameMarkets.duringPlayerProps),
                        !playerProps.isEmpty {
                         PlayerPropsCardView(
                             playerProps: playerProps,
@@ -628,6 +637,7 @@ struct EventDetailView: View {
             || !(gm.teamTotals ?? []).isEmpty
             || !(gm.periodMarkets ?? []).isEmpty
             || !(gm.playerProps ?? []).isEmpty
+            || !(gm.duringPlayerProps?.rows ?? []).isEmpty
             || !(gm.other ?? []).isEmpty
             || gm.openWinnerQuote?.isPresentable(eventId: gm.eventId, eventStatus: gm.status,
                                                 closedMarketIds: Set(gm.closedWinnerMarketIds ?? [])) == true
