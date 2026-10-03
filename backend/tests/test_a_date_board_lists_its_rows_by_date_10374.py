@@ -141,6 +141,74 @@ class TestTheYearIsPlacedNotGuessed:
         ]
 
 
+class TestABoardWhoseLegsCloseAfterItResolves:
+    """ux on live `eb2418ee11` (2026-10-03 22:0xZ): a cumulative "by date"
+    board can carry legs that close after its stored resolution_date. The first
+    rule — the latest year not after the anchor — put those legs a year early.
+    Labels and anchors are production `futures_outcomes` / `futures_markets`,
+    read 2026-10-03.
+    """
+
+    PIPELINE_RESOLVES = "2026-11-01T03:59:00+00:00"  # market 60789497
+
+    def test_the_pipeline_board_is_one_run_september_to_november(self):
+        board = [
+            ("October 31", 0.3),
+            ("November 30", 0.2),
+            ("November 15", 0.15),
+            ("October 15", 0.15),
+            ("September 30", 0.1),
+            ("September 15", 0.1),
+        ]
+        card = _card(board, resolution_date=self.PIPELINE_RESOLVES, outcome_count=6)
+        assert card["distribution_order"] == "chronological"
+        assert {r["label"]: r["date"] for r in card["distribution_outcomes"]} == {
+            "September 15": "2026-09-15",
+            "September 30": "2026-09-30",
+            "October 15": "2026-10-15",
+            "October 31": "2026-10-31",
+            "November 15": "2026-11-15",
+            "November 30": "2026-11-30",
+        }
+
+    def test_the_diesel_board_puts_december_after_october(self):
+        board = [("October 31", 0.5), ("December 31", 0.3), ("September 30", 0.2)]
+        card = _card(board, resolution_date="2026-11-01T03:59:00+00:00", outcome_count=3)
+        assert {r["label"]: r["date"] for r in card["distribution_outcomes"]} == {
+            "September 30": "2026-09-30",
+            "October 31": "2026-10-31",
+            "December 31": "2026-12-31",
+        }
+
+    def test_a_run_wholly_after_its_anchor_stays_in_the_anchors_year(self):
+        board = [("November 15", 0.6), ("November 30", 0.4)]
+        card = _card(board, resolution_date="2026-11-01T03:59:00+00:00", outcome_count=2)
+        assert [r["date"] for r in card["distribution_outcomes"]] == [
+            "2026-11-15",
+            "2026-11-30",
+        ]
+
+    def test_february_29_in_the_leap_year_it_lands_on(self):
+        board = [("February 29", 0.5), ("March 1", 0.5)]
+        card = _card(board, resolution_date="2028-03-15T00:00:00+00:00", outcome_count=2)
+        assert [r["date"] for r in card["distribution_outcomes"]] == [
+            "2028-02-29",
+            "2028-03-01",
+        ]
+
+    def test_two_gaps_tied_for_widest_is_refused(self):
+        """January 1 and July 2 sit 183 days apart both ways round the ring."""
+        board = [("January 1", 0.5), ("July 2", 0.5)]
+        card = _card(board, resolution_date="2026-11-01T00:00:00+00:00", outcome_count=2)
+        assert card["distribution_order"] == "probability"
+
+    def test_two_years_tied_for_nearest_is_refused(self):
+        """Jan 2 2026 and Jan 1 2027 are each 182 days from July 3 2026."""
+        board = [("January 1", 0.5), ("January 2", 0.5)]
+        card = _card(board, resolution_date="2026-07-03T00:00:00+00:00", outcome_count=2)
+        assert card["distribution_order"] == "probability"
+
+
 class TestEveryRefusalKeepsTodaysBoard:
     """`probability` and no `date` key: the rendering that already ships."""
 
