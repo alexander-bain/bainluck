@@ -327,6 +327,8 @@ D5_SITES = [
     ("app.utils.related_futures", "build_futures_entry", 1, 0),
     # One raw read stays: `compute_relevance_score`'s input SELECTS, it prints nothing.
     ("app.routes.events", "_build_related_futures", 2, 1),
+    ("app.routes.events", "_build_search_top_outcomes", 2, 0),
+    ("app.routes.events", "_mover_chips", 1, 0),
     ("app.routes.market_moves", "get_market_was_wrong", 1, 0),
     ("app.tasks.daily_digest", "build_digest_content", 1, 0),
     ("app.tasks.push_notifications", "_served_change", 1, 0),
@@ -356,3 +358,29 @@ def test_d5d_the_golf_card_fallback_excludes_datagolf() -> None:
     from app.routes.golf import _aggregate_golfer_outcome
 
     assert "not is_datagolf" in inspect.getsource(_aggregate_golfer_outcome)
+
+
+def test_d5_a_trending_chip_states_a_datagolf_legs_dated_move_or_nothing() -> None:
+    """The movers query SELECTS on the stored column; the chip PRINTS. A DataGolf
+    leg with a 90 s delta and no bank gets no chip; a dated one states the dated
+    move; a Kalshi leg is unchanged."""
+    from app.routes.events import _mover_chips
+
+    def _row(oid, name, change, market):
+        return SimpleNamespace(
+            id=oid, name=name, market_id=oid, market=market,
+            current_probability=0.15, probability_change_24h=change,
+        )
+
+    undated = SimpleNamespace(name="Dunhill - Winner", source="datagolf", market_metadata={})
+    dated = SimpleNamespace(name="Dunhill - Top 5", **vars(_market(oid=2, now=None)))
+    kalshi = SimpleNamespace(name="Masters winner", source="kalshi", market_metadata={})
+    chips = _mover_chips([
+        _row(1, "Matthew Jordan", Decimal("0.04"), undated),
+        _row(2, "Rory McIlroy", Decimal("0.04"), dated),
+        _row(3, "Scottie Scheffler", Decimal("0.05"), kalshi),
+    ])
+    text = " | ".join(str(c) for c in chips)
+    assert "Matthew Jordan" not in text, chips
+    assert "Rory McIlroy" in text and "13" in text, chips
+    assert "Scottie Scheffler" in text and "5" in text, chips
