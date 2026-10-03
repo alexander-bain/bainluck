@@ -360,8 +360,15 @@ struct NativeFuturesDiscoverCard: View {
 
                 HStack(spacing: 8) {
                     if let mark = sourceMark {
+                        // #10314 — at an accessibility text size the row left the
+                        // mark less width than the word and it hyphenated as
+                        // "Polymar-" / "ket". One venue name always fits a line, so
+                        // the mark keeps its whole width and its neighbours share
+                        // what is left.
                         Text(mark)
                             .font(.caption2.weight(.heavy))
+                            .lineLimit(1)
+                            .fixedSize()
                             .foregroundStyle(.blue)
                             .padding(.horizontal, 7)
                             .padding(.vertical, 3)
