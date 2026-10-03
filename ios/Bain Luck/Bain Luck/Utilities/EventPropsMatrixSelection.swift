@@ -26,9 +26,13 @@ enum EventPropsMatrixLayout {
         /// Questions of this stat with no over cell to live behind (an under
         /// row whose over question is absent). Listed, never dropped.
         let unplaced: [DuringPropRow]
-        /// Distinct players / questions of this stat — counted from rows, so a
-        /// player with three markets is one player.
+        /// Distinct players of this stat — counted from rows, so a player with
+        /// three markets is one player.
         let playerCount: Int
+        /// Questions a reader can open from the matrix: every drawn cell plus
+        /// every unplaced row. An under row paired behind a drawn over cell is
+        /// that question's other side, not a second question — counting rows
+        /// printed "42 questions" under 21 numbers (ATL @ LAD, 10/3).
         let questionCount: Int
         /// Questions shown with no current chance (unavailable, not results).
         let unavailableCount: Int
@@ -64,7 +68,7 @@ enum EventPropsMatrixLayout {
             players: players,
             unplaced: unplaced,
             playerCount: Set(rows.map(\.subject.key)).count,
-            questionCount: rows.count,
+            questionCount: placed.count + unplaced.count,
             unavailableCount: rows.filter { $0.current.quotedProbability == nil && !$0.current.isActualOnly }.count,
             showsChange: placed.contains { changeText($0) != nil }
         )

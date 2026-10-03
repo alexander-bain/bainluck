@@ -213,6 +213,7 @@ struct EventPropsMatrixDetailView: View {
     let open: EventPropsMatrixSelection.OpenQuestion
     let props: DuringPlayerProps
     @Environment(\.dismiss) private var dismiss
+    @Environment(\.dynamicTypeSize) private var typeSize
 
     private var stat: DuringPropStat? { props.stats.first { $0.statKey == open.statKey } }
 
@@ -224,9 +225,14 @@ struct EventPropsMatrixDetailView: View {
                     sources(row)
                     if let other = EventPropsMatrixLayout.otherSide(of: row, in: props) {
                         Section("Other side") {
-                            HStack {
+                            // Stacked at accessibility sizes, like Sources: side
+                            // by side at AX5 the question hyphenated "strike-outs".
+                            let layout = typeSize.isAccessibilitySize
+                                ? AnyLayout(VStackLayout(alignment: .leading, spacing: 4))
+                                : AnyLayout(HStackLayout())
+                            layout {
                                 Text(EventPropsMatrixLayout.question(other, stat: stat))
-                                Spacer()
+                                if !typeSize.isAccessibilitySize { Spacer() }
                                 Text(EventPropsMatrixLayout.cellText(other))
                                     .monospacedDigit()
                                     .fontWeight(.semibold)
@@ -311,7 +317,12 @@ struct EventPropsMatrixDetailView: View {
     private func sources(_ row: DuringPropRow) -> some View {
         Section("Sources") {
             ForEach(Array(row.contributors.enumerated()), id: \.offset) { _, c in
-                HStack(alignment: .firstTextBaseline) {
+                // Accessibility sizes stack name over number: side by side at
+                // AX5 the source name hyphenated mid-word ("Polymar-ket").
+                let layout = typeSize.isAccessibilitySize
+                    ? AnyLayout(VStackLayout(alignment: .leading, spacing: 4))
+                    : AnyLayout(HStackLayout(alignment: .firstTextBaseline))
+                layout {
                     VStack(alignment: .leading, spacing: 2) {
                         if let name = SourceLabels.label(for: c.source) {
                             Text(name).font(.subheadline).fontWeight(.semibold)
@@ -320,8 +331,8 @@ struct EventPropsMatrixDetailView: View {
                             Text(outcome).font(.caption).foregroundStyle(.secondary)
                         }
                     }
-                    Spacer()
-                    VStack(alignment: .trailing, spacing: 2) {
+                    if !typeSize.isAccessibilitySize { Spacer() }
+                    VStack(alignment: typeSize.isAccessibilitySize ? .leading : .trailing, spacing: 2) {
                         Text(EventPropsMatrixLayout.exactPercent(c.probability))
                             .font(.subheadline.monospacedDigit())
                         if let age = SourceAge.format(c.observedAt) {

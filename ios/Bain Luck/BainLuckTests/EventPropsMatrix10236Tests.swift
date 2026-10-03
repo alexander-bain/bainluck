@@ -94,10 +94,12 @@ final class EventPropsMatrix10236Tests: XCTestCase {
         XCTAssertEqual(grid.players[0].cells.keys.sorted(), [1, 2, 3, 4])
         XCTAssertEqual(grid.players[1].cells.keys.sorted(), [1, 2])
         XCTAssertNil(grid.players[1].cells[3], "Soto 3+ is not offered: an empty slot, never a borrowed price")
-        // Three players (Tatis has only an under row), ten questions — a
-        // player with two markets is still one player.
+        // Three players (Tatis has only an under row) — a player with two
+        // markets is still one player. Seven questions, not the ten rows: six
+        // drawn cells plus Tatis's unplaced under; the three unders paired
+        // behind a drawn over are those questions' other sides.
         XCTAssertEqual(grid.playerCount, 3)
-        XCTAssertEqual(grid.questionCount, 10)
+        XCTAssertEqual(grid.questionCount, 7)
         XCTAssertEqual(grid.unavailableCount, 0)
         XCTAssertEqual(grid.unplaced.map(\.questionKey), ["s:fernando tatis jr|hits|full_game|le:1|under"])
     }
