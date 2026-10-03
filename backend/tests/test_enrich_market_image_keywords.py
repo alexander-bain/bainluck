@@ -20,6 +20,7 @@ specimen among them — are not revisited by that task and are not repaired here
 import pytest
 
 from app.tasks.enrich_markets import (
+    _GAME_SPORT_QUERIES,
     _extract_image_keywords,
     _image_query_candidates,
 )
@@ -207,7 +208,11 @@ class TestEveryCandidateListIsUsable:
         assert len(candidates) <= 2
         assert all(c.strip() for c in candidates)
         assert len(set(candidates)) == len(candidates)
-        if candidates:
+        if candidates and " vs" in name and category in _GAME_SPORT_QUERIES:
+            # #10326: a head-to-head game asks for its sport ONLY. Its old name
+            # query is the team names, which is the defect, so it is no fallback.
+            assert candidates == [_GAME_SPORT_QUERIES[category]]
+        elif candidates:
             # The last candidate is always exactly what this task asked for
             # before the qualifier existed — that is what makes it a fallback.
             assert candidates[-1] == _extract_image_keywords(name, category)
