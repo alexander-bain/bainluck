@@ -82,7 +82,8 @@ final class AFuturesStartOnOrAfterItsResolveIsNotAStart9107Tests: XCTestCase {
         guard let src = try? String(contentsOf: url, encoding: .utf8) else {
             return XCTFail("could not read \(url.path)")
         }
-        XCTAssertTrue(src.contains("FuturesStartDate.shown("))
+        // #10246: the row now prints through `label`, which applies `shown` first.
+        XCTAssertTrue(src.contains("FuturesStartDate.label("))
         XCTAssertFalse(src.contains("if let commence = market.commenceTime, let date = commence.asDate"))
     }
 }

@@ -31,4 +31,22 @@ nonisolated enum FuturesStartDate {
         guard let resolves = resolutionDate?.asDate else { return start }
         return start < resolves ? start : nil
     }
+
+    /// What the "Starts" row PRINTS — #10246.
+    ///
+    /// `shown` decides WHETHER a start may be printed, on instants (#9107). This
+    /// decides WHAT it says, and it must use the same discriminator as the
+    /// Resolves row beneath it (#4081, `CalendarDeadline`): DataGolf serves a
+    /// tournament's start as a calendar date at UTC midnight
+    /// (`2026-10-01T00:00:00+00:00`, Alfred Dunhill Links, futures 62904927), and
+    /// formatting that as a local instant printed **"Starts Sep 30"** over
+    /// **"Resolves Oct 4"** for every reader west of UTC — a tournament whose
+    /// first round was Thursday Oct 1. Two rows on one card, two formatters.
+    static func label(commenceTime: String?, resolutionDate: String?,
+                      localZone: TimeZone = .current) -> String? {
+        guard shown(commenceTime: commenceTime, resolutionDate: resolutionDate) != nil else {
+            return nil
+        }
+        return CalendarDeadline.format(commenceTime, style: .monthDayYear, localZone: localZone)
+    }
 }

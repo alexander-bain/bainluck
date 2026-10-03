@@ -489,7 +489,9 @@ struct FuturesDetailView: View {
                 // Commence time — only when it falls before the resolve instant
                 // (#9107: Kalshi's commence_time is a close stamp, and printed
                 // "Starts Oct 25, 2027" over "Resolves Oct 25, 2026").
-                if let date = FuturesStartDate.shown(
+                // Printed through `CalendarDeadline`, like Resolves below (#10246:
+                // a UTC-midnight start read "Sep 30" for an Oct 1 tournament).
+                if let text = FuturesStartDate.label(
                     commenceTime: market.commenceTime,
                     resolutionDate: market.resolutionDate
                 ) {
@@ -501,7 +503,7 @@ struct FuturesDetailView: View {
                         Text("Starts")
                             .font(.system(size: 12, weight: .medium))
                             .foregroundStyle(DS.textMuted)
-                        Text(date, format: .dateTime.month(.abbreviated).day().year())
+                        Text(text)
                             .font(.system(size: 12, weight: .semibold, design: .monospaced))
                             .foregroundStyle(DS.textSecondary)
                     }
