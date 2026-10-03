@@ -134,5 +134,6 @@ final class ADateBoardListsItsDrawnRowsByDate10374Tests: XCTestCase {
         XCTAssertTrue(source.contains("isLeader: row.isLeader"))
         XCTAssertFalse(source.contains("isLeader: index == 0"))
         XCTAssertTrue(source.contains("if showsRanks {"))
+        XCTAssertTrue(source.contains("!DistributionBoardOrder.isChronological(data.discoverCard?.distributionOrder)"))
     }
 }
