@@ -416,6 +416,13 @@ class TestOptionLabelNamesItsAxis:
         assert opt["published"]["value_state"] == "unblended_equivalents"
         assert opt["label"] == "Over 4.5"
 
+    def test_over_legs_on_the_totals_axis_keep_their_served_name(self):
+        for name in ("Over 7.5", "8+", "Yes"):
+            legs = [_leg(1, 10, name, 0.6)]
+            m = _game({"totals": [_total(10, 1, name, 7.5, 0.6)]}, legs, {10: _facts("Total Runs")})
+            labels = [o["label"] for q in m["questions"] for o in q["options"]]
+            assert labels == [name], name
+
     def test_a_row_off_the_totals_axis_keeps_its_served_name(self):
         legs = [_leg(5, 50, "Under the lights", 0.3)]
         m = _game({"other": [_other(50, 5, "Under the lights", 0.3)]}, legs, {50: _facts("Night game")})
