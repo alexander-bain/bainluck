@@ -84,6 +84,7 @@ CLOCK_SKEW_MARGIN = timedelta(seconds=10)
 _TS_RE = re.compile(r"^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z$")
 _COMMIT_RE = re.compile(r"^[0-9a-f]{40}$")
 _ONE_OFF_TYPE_RE = re.compile(r"^run(\.\d+)?$")
+_NATIVE_RELEASE_RE = re.compile(r"v([1-9][0-9]*)")
 
 _TOP_KEYS = {"event_id", "denylist_commit", "apps"}
 _APP_KEYS = {
@@ -283,6 +284,18 @@ def effective_exit(instance: ProofInstance) -> datetime:
     return instance.exited_at
 
 
+def native_release_number(value) -> Optional[int]:
+    """The release number in Heroku's own ``HEROKU_RELEASE_VERSION`` (``v5500``).
+
+    Exactly ``v`` and a positive ASCII integer; anything else — absent, bare
+    digits, signs, padding, non-ASCII digits — is unknown, never a number.
+    """
+    if not isinstance(value, str):
+        return None
+    m = _NATIVE_RELEASE_RE.fullmatch(value)
+    return int(m.group(1)) if m else None
+
+
 def judge_retirement_proof(
     proof: RetirementProof,
     *,
@@ -294,17 +307,11 @@ def judge_retirement_proof(
     refusals: list[str] = []
     main = proof.apps[RESTORE_APP]
 
-    own_version: Optional[int] = None
-    if (
-        not release_version
-        or not str(release_version).isdigit()
-        or not slug_commit
-    ):
+    own_version = native_release_number(release_version)
+    if own_version is None or not slug_commit:
         refusals.append("release_metadata_unknown")
-    else:
-        own_version = int(release_version)
-        if own_version != main.release_version or slug_commit != main.release_commit:
-            refusals.append("retirement_proof_stale_release")
+    elif own_version != main.release_version or slug_commit != main.release_commit:
+        refusals.append("retirement_proof_stale_release")
 
     stale = False
     for name in PROOF_APPS:

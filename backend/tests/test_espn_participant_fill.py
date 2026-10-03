@@ -405,7 +405,7 @@ async def test_a1_the_tag_written_is_oriented_and_a_complete_receipt(monkeypatch
     monkeypatch.setattr(fill, "_utcnow", lambda: datetime(2031, 10, 3, 14, 50, 7, tzinfo=timezone.utc))
     session, stats = _SpySession(), {}
     event = _event(home_team_name=" TBA ", home_team_normalized="tbd")
-    assert await maybe_fill_participants(session, event, _ee(), _index(), stats) is False
+    assert await maybe_fill_participants(session, event, _ee(), _index(), stats) is None
     assert stats["participant_fill"] == {"fence_lost": 1}  # the spy returns no row
     params = next(c[1] for c in session.calls if isinstance(c, tuple))
     (tag,) = json.loads(params["tag_array"])
@@ -419,7 +419,7 @@ async def test_a1_the_tag_written_is_oriented_and_a_complete_receipt(monkeypatch
 
 async def test_a_refusal_issues_no_flush_and_no_statement():
     session, stats = _SpySession(), {}
-    assert await maybe_fill_participants(session, _event(status="live"), _ee(), _index(), stats) is False
+    assert await maybe_fill_participants(session, _event(status="live"), _ee(), _index(), stats) is None
     assert session.calls == []
     assert stats["participant_fill"] == {"refused_not_scheduled": 1}
 
@@ -431,7 +431,7 @@ async def test_e3_a_verdict_exception_is_counted_and_touches_nothing():
 
     session, stats = _SpySession(), {}
     index = {HOME_TID: [_Boom()], AWAY_TID: [_Boom()]}
-    assert await maybe_fill_participants(session, _event(), _ee(), index, stats) is False
+    assert await maybe_fill_participants(session, _event(), _ee(), index, stats) is None
     assert stats["participant_fill"] == {"verdict_error": 1}
     assert session.calls == []
 
@@ -524,7 +524,7 @@ NEW_COMMIT, OLD_COMMIT, DENY_COMMIT = "b" * 40, "c" * 40, "a" * 40
 NEW_VERSION, OLD_VERSION = 5500, 5499
 ENV = {
     "HEROKU_APP_NAME": "bainluck",
-    "HEROKU_RELEASE_VERSION": f"v{NEW_VERSION}"[1:],
+    "HEROKU_RELEASE_VERSION": f"v{NEW_VERSION}",  # Heroku's own form
     "HEROKU_SLUG_COMMIT": NEW_COMMIT,
     "HEROKU_RELEASE_CREATED_AT": (LOCK - timedelta(minutes=10)).strftime("%Y-%m-%dT%H:%M:%SZ"),
 }
@@ -703,6 +703,49 @@ async def test_rp5_release_age_and_the_proof_never_waive_each_other(tmp_path):
     assert "release_too_young" not in adm.refusals and "release_age_unknown" not in adm.refusals
 
 
+@pytest.mark.parametrize(
+    "value, number",
+    [
+        ("v5500", 5500),
+        ("v1", 1),
+        (None, None),
+        ("", None),
+        ("v", None),
+        ("5500", None),
+        ("v0", None),
+        ("v05500", None),
+        ("V5500", None),
+        ("vv5500", None),
+        ("v-5500", None),
+        ("v+5500", None),
+        (" v5500", None),
+        ("v5500 ", None),
+        ("v5500\n", None),
+        ("v5500.1", None),
+        ("v\uff15\uff15\uff10\uff10", None),  # full-width digits: isdigit() said yes
+        (5500, None),
+    ],
+)
+def test_rp6_only_herokus_native_release_version_is_a_number(value, number):
+    assert restore.native_release_number(value) == number
+
+
+@pytest.mark.parametrize(
+    "version, expect",
+    [
+        (f"v{NEW_VERSION}", []),
+        (f"v{NEW_VERSION + 1}", ["retirement_proof_stale_release", "replacement_not_carrying:worker-realtime.1"]),
+        (str(NEW_VERSION), ["release_metadata_unknown", "replacement_not_carrying:worker-realtime.1"]),
+        (None, ["release_metadata_unknown", "replacement_not_carrying:worker-realtime.1"]),
+        ("v", ["release_metadata_unknown", "replacement_not_carrying:worker-realtime.1"]),
+    ],
+)
+def test_rp6_the_proof_binds_to_the_native_release_version(version, expect):
+    env = {k: v for k, v in {**ENV, "HEROKU_RELEASE_VERSION": version}.items() if v is not None}
+    refusals, _ = _judge(_proof(), env=env)
+    assert refusals == expect
+
+
 @pytest.mark.parametrize("value", [None, "", "yesterday", "2031-10-03T14:59:00"])
 def test_rp5_an_absent_or_unparseable_release_stamp_is_unknown_never_old(value):
     assert restore.release_age_refusal(value, LOCK) == "release_age_unknown"
@@ -776,3 +819,26 @@ def test_the_seam_holds_no_catch_around_the_fill():
         if isinstance(node, ast.AsyncFunctionDef):
             assert node.name == "sync_scheduled_events"
             break
+
+
+def test_a_filled_row_skips_the_name_keyed_arms_and_binds_the_filled_teams():
+    """The seam: respelling and ``upsert_team`` run only when nothing was filled,
+    and a fill's teams are the ones the rest of the pass binds and registers."""
+    tree = ast.parse((BACKEND / "app/utils/espn_helpers.py").read_text(encoding="utf-8"))
+    (fn,) = [
+        n for n in ast.walk(tree)
+        if isinstance(n, ast.AsyncFunctionDef) and n.name == "sync_scheduled_events"
+    ]
+    (branch,) = [
+        n for n in ast.walk(fn)
+        if isinstance(n, ast.If) and ast.unparse(n.test) == "filled is not None"
+    ]
+    assert [ast.unparse(st) for st in branch.body] == ["home_team, away_team = filled"]
+    orelse = "\n".join(ast.unparse(st) for st in branch.orelse)
+    for name in ("apply_espn_respelling", "upsert_team"):
+        calls = [
+            n for n in ast.walk(fn)
+            if isinstance(n, ast.Call) and getattr(n.func, "id", None) == name
+        ]
+        assert calls and all(ast.unparse(c) in orelse for c in calls), name
+

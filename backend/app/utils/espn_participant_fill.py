@@ -24,7 +24,12 @@ that names anybody:
 * **Each side resolves to EXACTLY ONE team row** in the event's sport carrying
   ESPN's team id, whose identity corresponds to ESPN's competitor. The written
   name is that row's own name, so #1918's ``row_name ↔ FK`` holds by
-  construction (and the existing gate re-checks it right after).
+  construction.
+* **The pass's name-keyed arms do not re-resolve a filled row.** The helper
+  hands back the two rows it wrote and the seam uses them in place of
+  ``apply_espn_respelling``/``upsert_team``: the pass's team cache is keyed by
+  ``(name, sport)``, so a second same-name row can stand in it for the anchored
+  one and be bound under ESPN's id — a FK the receipt does not hold.
 * **One Core UPDATE writes all seven columns** with every current-state fence
   in its WHERE (gotcha #4: never an ORM assignment to JSONB), and the ORM is
   synced only from what the statement RETURNED.
@@ -492,8 +497,11 @@ def _self_check(returned: Mapping[str, Any], params: Mapping[str, Any], tag: str
         raise FillPostWriteMismatch("restored marker returned")
 
 
-async def maybe_fill_participants(session, event, ee, team_index, stats) -> bool:
+async def maybe_fill_participants(session, event, ee, team_index, stats) -> Optional[tuple]:
     """Fill one id-anchored placeholder row, or leave it exactly as it is.
+
+    Returns the ``(home, away)`` team rows the fill wrote — exactly the two its
+    receipt records — or ``None`` when nothing was written.
 
     The exception contract, in order (plan §3.6):
 
@@ -555,7 +563,7 @@ async def maybe_fill_participants(session, event, ee, team_index, stats) -> bool
             "participant fill: verdict failed for event %s: %r",
             getattr(event, "id", None), exc,
         )
-        return False
+        return None
 
     if verdict.action == CONFLICT:
         _count(stats, "orientation_conflict")
@@ -563,10 +571,10 @@ async def maybe_fill_participants(session, event, ee, team_index, stats) -> bool
             "participant fill: route=authority event=%s espn_id=%s reason=%s",
             event.id, event.espn_id, verdict.reason,
         )
-        return False
+        return None
     if verdict.action != FILL:
         _count(stats, f"refused_{verdict.reason}")
-        return False
+        return None
 
     await session.flush()
 
@@ -594,36 +602,13 @@ async def maybe_fill_participants(session, event, ee, team_index, stats) -> bool
             "participant fill: rolled back for event %s after the write: %r",
             event.id, exc,
         )
-        return False
+        return None
 
     if fence_lost:
         _count(stats, "fence_lost")
-        return False
+        return None
 
     _count(stats, "filled")
     logger.info("participant fill: event=%s tag=%s", event.id, tag)
-    return True
+    return verdict.home_team, verdict.away_team
 
-
-_REGATE_COLUMNS = ("home_team_name", "away_team_name", "home_team_id", "away_team_id")
-
-
-def participant_fill_state(event) -> tuple:
-    """The sides as the fill left them, for :func:`note_fill_regate`."""
-    return tuple(getattr(event, col) for col in _REGATE_COLUMNS)
-
-
-def note_fill_regate(event, fill_state: tuple, stats: dict) -> None:
-    """Count it when the pass's existing gates moved a side the fill just wrote.
-
-    Plan §3.7 shows the respelling, ``upsert_team`` and the #1918 binding are
-    no-ops on a freshly filled row; this is where a breach of that would show.
-    The fill's receipt then no longer matches the row, so restore refuses it as
-    ``after_drift`` — a counted, fail-closed state, never a silent one.
-    """
-    if participant_fill_state(event) != fill_state:
-        _count(stats, "regate_disagree")
-        logger.warning(
-            "participant fill: existing gates moved a filled side on event %s: %r -> %r",
-            event.id, fill_state, participant_fill_state(event),
-        )

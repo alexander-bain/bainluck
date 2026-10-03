@@ -65,8 +65,6 @@ from app.utils.espn_team_spelling import apply_espn_respelling
 from app.utils.espn_participant_fill import (
     build_team_index,
     maybe_fill_participants,
-    note_fill_regate,
-    participant_fill_state,
 )
 
 logger = logging.getLogger(__name__)
@@ -2848,14 +2846,24 @@ async def sync_scheduled_events(session, sport_key, espn_events, stats):
         ee = matched_espn
         # #10305 D2: an own-id row ESPN names but we still print as TBD takes
         # ESPN's two clubs. No try here — the helper owns what it absorbs.
-        fill_state = None
-        if id_anchored and await maybe_fill_participants(session, event, ee, team_index, stats):
-            fill_state = participant_fill_state(event)
-        # #9482: a spelling-only difference takes ESPN's name first, so the
-        # side resolves (and #1918 binds) to ESPN's id-anchored team row.
-        apply_espn_respelling(event, ee, sched_team_cache, stats, source="espn_scheduled")
-        home_team = await upsert_team(session, event.home_team_name, ee.home_team, event.sport_id, sched_team_cache, stats)
-        away_team = await upsert_team(session, event.away_team_name, ee.away_team, event.sport_id, sched_team_cache, stats)
+        filled = None
+        if id_anchored:
+            filled = await maybe_fill_participants(session, event, ee, team_index, stats)
+        if filled is not None:
+            # The fill resolved both sides by ESPN team id and its receipt holds
+            # exactly these two rows. The name-keyed arms below would resolve them
+            # AGAIN, through a cache keyed by (name, sport) — where a second
+            # same-name row, idless or under another id, can stand in for the
+            # anchored one; `upsert_team` then stamps ESPN's id onto it and #1918
+            # binds it, committing a FK the receipt cannot undo. So they don't run
+            # here, and #1918's gate below finds FK == team and writes nothing.
+            home_team, away_team = filled
+        else:
+            # #9482: a spelling-only difference takes ESPN's name first, so the
+            # side resolves (and #1918 binds) to ESPN's id-anchored team row.
+            apply_espn_respelling(event, ee, sched_team_cache, stats, source="espn_scheduled")
+            home_team = await upsert_team(session, event.home_team_name, ee.home_team, event.sport_id, sched_team_cache, stats)
+            away_team = await upsert_team(session, event.away_team_name, ee.away_team, event.sport_id, sched_team_cache, stats)
         # #1918/#4883. Same column, same resolver and the same OVERWRITE shape as
         # the live door in `tasks/espn_sync` — which has been gated since the guard
         # shipped, while these two were not. `upsert_team` reaches the DB through
@@ -2881,8 +2889,6 @@ async def sync_scheduled_events(session, sport_key, espn_events, stats):
             stats=stats,
         ):
             event.away_team_id = away_team.id
-        if fill_state is not None:
-            note_fill_regate(event, fill_state, stats)
 
         # Register ESPN team identities (cached to avoid re-registering)
         await register_espn_team_identities(

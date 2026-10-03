@@ -194,7 +194,7 @@ class Rig:
             self.monkeypatch.setattr(restore, "RESTORED_FILL_EVENT_IDS", frozenset(ids))
 
     # ── restore ──
-    def env(self, *, age_s=600, version="5500", commit="b" * 40, **over):
+    def env(self, *, age_s=600, version="v5500", commit="b" * 40, **over):  # Heroku's own form
         now = datetime.now(timezone.utc)
         env = {
             "HEROKU_APP_NAME": "bainluck",
@@ -589,14 +589,16 @@ async def test_w9c_a_later_gate_failing_rolls_back_the_sport_step_including_the_
 
     s, h = await _s_and_h(rig)
     before = await rig.row(s)
-    real = espn_helpers.upsert_team
+    real = espn_helpers.register_espn_team_identities
 
-    async def upsert(session, team_name, *a, **k):
-        if team_name == "Golden State Valkyries":
+    # A filled row skips the name-keyed arms, so the first later step it runs
+    # is the identity registration — handed the two teams the fill wrote.
+    async def register(session, home_team, *a, **k):
+        if getattr(home_team, "name", None) == "Golden State Valkyries":
             raise RuntimeError("injected after the fill")
-        return await real(session, team_name, *a, **k)
+        return await real(session, home_team, *a, **k)
 
-    rig.monkeypatch.setattr(espn_helpers, "upsert_team", upsert)
+    rig.monkeypatch.setattr(espn_helpers, "register_espn_team_identities", register)
     stats = await rig.run_pass([rig.board_s(), rig.board_h()])
     row = await rig.row(s)
     assert counters(stats).get("filled") == 1
@@ -648,35 +650,122 @@ async def test_w9e_a_siblings_pending_failure_surfaces_at_the_pre_flush_outside_
     assert {c: row[c] for c in COLS} == {c: before[c] for c in COLS}
 
 
-async def test_a_later_gate_that_moves_a_filled_side_is_counted_and_restore_refuses_it(rig):
-    """§3.8 ``regate_disagree``: a same-NAME row with no ESPN id is invisible to
-    the fill's uniqueness fence (it fences ESPN ids), but ``upsert_team``
-    resolves by name, and the #1918 gate finds the binding sound. Counted, and
-    the receipt no longer matches, so restore refuses — never silent."""
-    from app.models.models import Team
-    from app.utils import espn_helpers
+SAME_NAME = {"control": False, "idless": None, "foreign_id": "99039991"}
 
+
+async def _same_name_row(rig, case):
+    """A second "Golden State Valkyries" row in the sport, idless or under another
+    ESPN id — invisible to the fill's ESPN-id index and uniqueness fence, but
+    loaded after the anchored row, so it is the one the pass's ``(name, sport)``
+    cache holds. Returns ``(id, espn_id)``, or None for the control."""
+    from app.models.models import Team
+
+    if SAME_NAME[case] is False:
+        return None
     async with rig.maker() as s:
-        dupe = Team(name="Golden State Valkyries", sport_id=rig.sport_id, espn_id=None)
+        dupe = Team(name="Golden State Valkyries", sport_id=rig.sport_id, espn_id=SAME_NAME[case])
         s.add(dupe)
         await s.commit()
-        dupe_id = dupe.id
-    real = espn_helpers.upsert_team
+        return dupe.id, dupe.espn_id
 
-    async def upsert(session, team_name, *a, **k):
-        if team_name == "Golden State Valkyries":
-            return await session.get(Team, dupe_id)
-        return await real(session, team_name, *a, **k)
 
-    rig.monkeypatch.setattr(espn_helpers, "upsert_team", upsert)
+async def _team_espn_ids(rig):
+    rows = await rig.sql("SELECT id, espn_id FROM teams WHERE sport_id = :s", s=rig.sport_id)
+    return dict(rows.all())
+
+
+@pytest.mark.parametrize("case", sorted(SAME_NAME))
+async def test_a_same_name_row_in_the_pass_cache_cannot_take_a_filled_side(rig, case):
+    """The real pass, unpatched: the committed row is the receipt's after-image,
+    the same-name row is untouched, and the receipt's own inverse restores it."""
+    from app.utils.espn_participant_fill import parse_fill_tag
+
+    dupe = await _same_name_row(rig, case)
     eid = await rig.add_event()
+    before = await rig.row(eid)
+    teams_before = await _team_espn_ids(rig)
     stats = await rig.run_pass([rig.board_s()])
     row = await rig.row(eid)
-    assert counters(stats) == {"filled": 1, "regate_disagree": 1}
-    assert row["home_team_id"] == dupe_id
+    r = parse_fill_tag(fill_tags(row)[0])
+    assert (row["home_team_id"], row["away_team_id"]) == (r.after_home_tid, r.after_away_tid)
+    assert counters(stats) == {"filled": 1} and stats["errors"] == [], stats
+    assert (row["home_team_name"], row["away_team_name"]) == (r.after_home_name, r.after_away_name)
+    assert (r.after_home_tid, r.after_away_tid) == (rig.teams["valk"], rig.teams["aces"])
+    assert await _team_espn_ids(rig) == teams_before  # nobody else took ESPN's id
     rig.listed(eid)
     code, lines = await rig.restore(eid)
-    assert code == 1 and "after_drift:home_team_id" in refusals(lines)
+    assert code == 0, lines
+    restored = await rig.row(eid)
+    assert {c: restored[c] for c in COLS if c != "event_tags"} == {
+        c: before[c] for c in COLS if c != "event_tags"
+    }
+    assert fill_tags(restored) == [] and len(markers(restored)) == 1
+    if dupe is not None:
+        assert teams_before[dupe[0]] == dupe[1]
+
+
+def _named_s2(rig):
+    """A second own-id game naming the anchored home club by its real name."""
+    from app.services.espn_api import ESPNEvent
+
+    valk = _espn_team(HOME_TID, "Golden State Valkyries", "Valkyries")
+    wings = _espn_team(WINGS_TID, "Dallas Wings", "Wings")
+    return ESPNEvent(
+        espn_id=ESPN_H, name="Dallas Wings at Golden State Valkyries", short_name=None,
+        date=rig.start, status="scheduled", status_detail=None, period=None, clock=None,
+        home_team=valk, away_team=wings, home_score=None, away_score=None, venue=None,
+        broadcasts=[], home_win_probability=None,
+        competitor_sides=((HOME_TID, "home"), (WINGS_TID, "away")),
+    )
+
+
+@pytest.mark.parametrize("case", ["idless", "foreign_id"])
+@pytest.mark.parametrize("named_first", [True, False], ids=["named_row_first", "fill_row_first"])
+async def test_a_same_pass_row_that_stamps_espns_id_on_a_same_name_row(rig, case, named_first):
+    """The collision through ANOTHER row of the same pass. The named game's own
+    ``upsert_team`` resolves the cached same-name row and stamps ESPN's team id
+    on it — today's behaviour for that row, not this change's. Processed before
+    the TBD row, that stamp is flushed ahead of the fill and its uniqueness fence
+    refuses (row untouched); processed after, the filled row is already the
+    receipt and stays it, and restore undoes it exactly."""
+    from app.utils.espn_participant_fill import parse_fill_tag
+
+    dupe_id, _ = await _same_name_row(rig, case)
+    seen = []
+
+    async def before_fill(session, event):
+        seen.append(event.id)
+
+    if named_first:
+        named = await rig.add_event(espn_id=ESPN_H, home="Golden State Valkyries", away="Dallas Wings")
+        eid = await rig.add_event()
+    else:
+        eid = await rig.add_event()
+        named = await rig.add_event(espn_id=ESPN_H, home="Golden State Valkyries", away="Dallas Wings")
+    before = await rig.row(eid)
+    rig.hook(before=before_fill)
+    stats = await rig.run_pass([rig.board_s(), _named_s2(rig)])
+    rig.unhook()
+    # The pass's load order is the precondition this case is about; fail, never pass vacuously.
+    assert seen == ([named, eid] if named_first else [eid, named]), seen
+    assert stats["errors"] == [], stats
+    assert (await _team_espn_ids(rig))[dupe_id] == HOME_TID  # the named row's stamp happened
+    row = await rig.row(eid)
+    if named_first:
+        assert counters(stats) == {"refused_not_both_placeholder": 1, "fence_lost": 1}, stats
+        assert {c: row[c] for c in COLS} == {c: before[c] for c in COLS}
+        return
+    r = parse_fill_tag(fill_tags(row)[0])
+    assert (row["home_team_id"], row["away_team_id"]) == (r.after_home_tid, r.after_away_tid)
+    assert counters(stats) == {"filled": 1, "refused_not_both_placeholder": 1}, stats
+    assert r.after_home_tid == rig.teams["valk"]
+    rig.listed(eid)
+    code, lines = await rig.restore(eid)
+    assert code == 0, lines
+    restored = await rig.row(eid)
+    assert {c: restored[c] for c in COLS if c != "event_tags"} == {
+        c: before[c] for c in COLS if c != "event_tags"
+    }
 
 
 async def test_w10_a_second_pass_does_not_fill_again(rig):
@@ -1029,6 +1118,32 @@ async def test_w14f_release_age_is_checked_and_never_sufficient(rig, env_kw, pro
     eid, filled = await _fill(rig)
     rig.listed(eid)
     code, lines = await rig.restore(eid, proof=proof, env=rig.env(**env_kw))
+    assert code == 1 and expect in refusals(lines), lines
+    assert (await rig.row(eid))["xmin"] == filled["xmin"]
+
+
+@pytest.mark.parametrize(
+    "version, expect",
+    [
+        ("v5500", None),  # Heroku's own form, bound to the proof's 5500
+        ("v5501", "retirement_proof_stale_release"),
+        (None, "release_metadata_unknown"),
+        ("", "release_metadata_unknown"),
+        ("5500", "release_metadata_unknown"),  # not what Heroku exports
+        ("v05500", "release_metadata_unknown"),
+        ("V5500", "release_metadata_unknown"),
+        ("v5500 ", "release_metadata_unknown"),
+    ],
+)
+async def test_w14i_the_restore_binds_herokus_native_release_version(rig, version, expect):
+    """``run_restore`` end to end with only ``HEROKU_RELEASE_VERSION`` varied."""
+    eid, filled = await _fill(rig)
+    rig.listed(eid)
+    code, lines = await rig.restore(eid, env=rig.env(version=version))
+    if expect is None:
+        assert code == 0 and refusals(lines) == [], lines
+        assert fill_tags(await rig.row(eid)) == []
+        return
     assert code == 1 and expect in refusals(lines), lines
     assert (await rig.row(eid))["xmin"] == filled["xmin"]
 
