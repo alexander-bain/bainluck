@@ -61,6 +61,7 @@
     "Polymarket price-crown venue re-grade (real Postgres)",
     "Polymarket settlement sweep SQL (real Postgres)",
     "Polymarket false-settled reopen repair apply/drift/restore (real Postgres)",
+    "#10319 one-event identity repair preflight/apply/restore (real Postgres)",
     "Movement window contract (real Postgres)",
     "DataGolf dated movement contract (real Postgres)",
     "Unpriced-opening statement contract (real Postgres)",
