@@ -48,7 +48,7 @@ final class SearchRelatedGameListing10298Tests: XCTestCase {
     }
 
     func testAbsentKeyDecodesNilSoTodaysRowIsUnchanged() throws {
-        let json = #"{"id": 1, "name": "Packers vs. Lions", "top_outcomes": [{"name": "Packers", "probability": 0.53}], "outcome_count": 2}"#
+        let json = #"{"id": 1, "name": "Packers vs. Lions", "top_outcomes": [{"id": 11, "name": "Packers", "probability": 0.53}], "outcome_count": 2}"#
         let decoder = JSONDecoder()
         decoder.keyDecodingStrategy = .convertFromSnakeCase
         let market = try decoder.decode(SearchFuturesMarket.self, from: Data(json.utf8))
