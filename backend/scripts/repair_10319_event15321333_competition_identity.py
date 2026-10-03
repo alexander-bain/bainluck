@@ -449,8 +449,8 @@ def load_artifact(path: str, expected_hash: str, schema: str, what: str) -> dict
         raise Refused(f"{what}_sidecar_mismatch", sidecar)
     try:
         payload = json.loads(data)
-    except ValueError as exc:
-        raise Refused(f"{what}_corrupt", str(exc)) from exc
+    except ValueError as err:
+        raise Refused(f"{what}_corrupt", str(err)) from err
     if not isinstance(payload, dict) or payload.get("schema") != schema:
         raise Refused(f"{what}_wrong_schema", payload.get("schema") if isinstance(payload, dict) else None)
     if payload.get("content_address") != content_address(schema, payload):
