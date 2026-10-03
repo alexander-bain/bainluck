@@ -213,6 +213,7 @@ actor Stub: WatchSelectedGameTransport {
         precondition(errorStore.errorMessage == nil)
         errorStore.clearSelection()
         try await checkWatchHTTPTransport()
+        try await checkWatchGamePicker()
         let lifecycleTransport = Stub()
         let lifecycle = WatchSelectedGameStore(transport: lifecycleTransport, defaults: defaults, now: { clock })
         lifecycle.select(eventID: 10)

@@ -1,17 +1,21 @@
 import SwiftUI
 
+private nonisolated struct WatchDiscoverGameTransport: WatchGamePickerTransport {
+    func fetchGames() async throws -> WatchGamePickerBatch {
+        let feed = try await WatchAPIClient.shared.fetchFeed(limit: 30, forceRefresh: true)
+        return WatchGamePickerBatch(feed: feed)
+    }
+}
+
 /// A deliberately small Watch surface: select one real game and keep it through final.
 struct WatchSelectedGameView: View {
     @Environment(\.scenePhase) private var scenePhase
     @Environment(\.dynamicTypeSize) private var dynamicTypeSize
     @StateObject private var store = WatchSelectedGameStore()
-    @State private var availableGames: [WatchFeedEvent] = []
-    @State private var isLoadingGames = false
-    @State private var gamesError: String?
+    @StateObject private var picker = WatchGamePickerStore(transport: WatchDiscoverGameTransport())
     @State private var choosingGame = false
     @State private var refreshGeneration = 0
     @State private var gamesRefreshGeneration = 0
-    @State private var gamesRequestRevision = 0
 
     private var refreshKey: String { "\(scenePhase)-\(choosingGame)-\(refreshGeneration)-\(store.selectedEventID ?? 0)" }
 
@@ -46,7 +50,7 @@ struct WatchSelectedGameView: View {
         .task(id: refreshKey) {
             guard scenePhase == .active, !choosingGame else { return }
             if store.selectedEventID == nil {
-                await loadGames()
+                await picker.refresh()
                 return
             }
             await store.runForegroundRefresh()
@@ -56,7 +60,7 @@ struct WatchSelectedGameView: View {
                 .navigationTitle("Choose a game")
                 .task(id: "\(scenePhase)-\(gamesRefreshGeneration)") {
                     guard scenePhase == .active else { return }
-                    await loadGames()
+                    await picker.refresh()
                 }
         }
     }
@@ -171,15 +175,27 @@ struct WatchSelectedGameView: View {
         VStack(alignment: .leading, spacing: 10) {
             Text("Choose one game to follow")
                 .font(.headline)
-            if isLoadingGames && availableGames.isEmpty {
+            if picker.isLoading && picker.games.isEmpty {
                 ProgressView("Loading games")
-            } else if let error = gamesError {
+            } else if let error = picker.errorMessage {
                 Text(error).font(.footnote).foregroundStyle(.orange)
-            } else if availableGames.isEmpty {
-                Text("No games available in Discover right now.")
+                if !picker.games.isEmpty {
+                    Text("Showing the previously received list.")
+                        .font(.footnote).foregroundStyle(.secondary)
+                }
+            } else if picker.games.isEmpty {
+                Text(picker.omittedGameCount > 0 ? "Game details are unavailable. Refresh to try again." : "No games available in Discover right now.")
                     .font(.footnote).foregroundStyle(.secondary)
             }
-            ForEach(availableGames) { game in
+            if !picker.games.isEmpty {
+                Text("Games from Discover · not the full schedule")
+                    .font(.footnote).foregroundStyle(.secondary)
+                if picker.omittedGameCount > 0 {
+                    Text("Some games have unavailable details.")
+                        .font(.footnote).foregroundStyle(.secondary)
+                }
+            }
+            ForEach(picker.games) { game in
                 Button {
                     store.select(eventID: game.id)
                     choosingGame = false
@@ -187,7 +203,7 @@ struct WatchSelectedGameView: View {
                     VStack(alignment: .leading, spacing: 3) {
                         Text("\(game.awayTeam ?? "Away team") at \(game.homeTeam ?? "Home team")")
                             .fixedSize(horizontal: false, vertical: true)
-                        Text(game.isSettled ? "Final" : game.isLive ? "Live" : game.status?.capitalized ?? "State unavailable")
+                        Text((game.isSettled || game.status?.lowercased() == "final") ? "Final" : game.isLive ? "Live" : game.status?.capitalized ?? "State unavailable")
                             .font(.footnote).foregroundStyle(.secondary)
                     }
                 }
@@ -196,28 +212,8 @@ struct WatchSelectedGameView: View {
                 if choosingGame { gamesRefreshGeneration += 1 }
                 else { refreshGeneration += 1 }
             }
-                .disabled(isLoadingGames || scenePhase != .active)
+                .disabled(picker.isLoading || scenePhase != .active)
         }
     }
 
-    @MainActor
-    private func loadGames() async {
-        guard !Task.isCancelled else { return }
-        gamesRequestRevision += 1
-        let requestRevision = gamesRequestRevision
-        isLoadingGames = true
-        defer {
-            if gamesRequestRevision == requestRevision { isLoadingGames = false }
-        }
-        do {
-            let feed = try await WatchAPIClient.shared.fetchFeed(limit: 30, forceRefresh: true)
-            guard !Task.isCancelled, gamesRequestRevision == requestRevision else { return }
-            var seen = Set<Int>()
-            availableGames = feed.items.compactMap(\.event).filter { seen.insert($0.id).inserted }
-            gamesError = nil
-        } catch {
-            guard !Task.isCancelled, gamesRequestRevision == requestRevision else { return }
-            gamesError = "Couldn't load available games. Refresh to try again."
-        }
-    }
 }

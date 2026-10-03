@@ -114,3 +114,15 @@ the prior error; only successful recovery or a selection change clears it. Timeo
 and offline messages are distinct. Deterministic URLProtocol tests intercept every
 request and verify the production URLSession transport without network/simulator
 usage. They do not establish physical connectivity behavior.
+
+## Choosing a valid game
+
+The Watch-only picker store retains a prior list through failed/cancelled refreshes
+and fences overlapping requests. It omits nonpositive IDs and unnamed sides, keeps
+the first valid occurrence of each canonical ID, and preserves Discover order.
+Malformed event payloads count as unavailable details rather than silently becoming
+an empty feed. The UI names the bounded Discover source and distinguishes empty,
+partial, unavailable and previously received lists. The shared WatchFeedModels and
+WatchAPIClient are reused unchanged; their iPhone test membership is untouched.
+The standalone Swift harness now checks this store as well as the selected game.
+Actual picker taps on a physical Watch remain an unpaid acceptance step.
