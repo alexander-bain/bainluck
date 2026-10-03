@@ -136,21 +136,40 @@ describe("#10266 a line keeps its colour across range chips", () => {
     expect(out.get("San Francisco 49ers")).toBe(legendColours(chartAt(WINDOW_1M, ORDER)).get("San Francisco 49ers"));
   });
 
-  it("fixedOrderSeriesColors: top-of-board colours never move; a deep outcome stays distinct from the drawn lines", () => {
+  it("the chart keeps a deep outcome's colour when the outcome it cycles onto leaves the range (root's review of b3a58a0606)", () => {
+    // An 11-team board: Team 10 ranks past the 10-colour palette.
+    const board = Array.from({ length: 11 }, (_, i) => series(100 + i, `Team ${i}`, 0.2 - i * 0.01));
+    const order = board.map((o) => ({ id: o.outcome_id, name: o.name }));
+    const [leader, deep] = [board[0], board[10]];
+    const together = legendColours(chartAt([leader, deep], order));
+    const alone = legendColours(chartAt([deep], order));
+    expect(alone.get("Team 10")).toBe(together.get("Team 10"));
+    // And a deep line's colour is the same in any company on the board.
+    const crowd = legendColours(chartAt([board[3], deep, board[7]], order));
+    expect(crowd.get("Team 10")).toBe(alone.get("Team 10"));
+  });
+
+  it("fixedOrderSeriesColors: every outcome's colour is the board's, whatever subset is drawn", () => {
     const board = Array.from({ length: 14 }, (_, i) => ({ id: 100 + i, name: `Team ${i}` }));
-    const drawn = (ids: number[]) => ids.map((outcome_id) => ({ outcome_id }));
-    const all = fixedOrderSeriesColors(drawn([100, 101, 102]), board, SERIES_COLORS);
-    const some = fixedOrderSeriesColors(drawn([102]), board, SERIES_COLORS);
-    expect(some.get(102)).toBe(all.get(102));
-    expect(all.get(102)).toBe(SERIES_COLORS[2]);
-    // Rank 10 cycles onto rank 0's colour; drawn together they must still differ.
-    const deep = fixedOrderSeriesColors(drawn([100, 110]), board, SERIES_COLORS);
-    expect(deep.get(100)).toBe(SERIES_COLORS[0]);
-    expect(deep.get(110)).not.toBe(deep.get(100));
-    // Drawn alone, the deep outcome takes its own cycled colour.
-    expect(fixedOrderSeriesColors(drawn([110]), board, SERIES_COLORS).get(110)).toBe(SERIES_COLORS[0]);
-    // A skipped (eliminated) line takes no colour.
-    expect(fixedOrderSeriesColors([{ outcome_id: 100, skip: true }], board, SERIES_COLORS).has(100)).toBe(false);
+    const ids = board.map((o) => o.id);
+    const drawn = (xs: number[]) => xs.map((outcome_id) => ({ outcome_id }));
+    const whole = fixedOrderSeriesColors(drawn(ids), board, SERIES_COLORS);
+    // Each outcome's colour is its rank's, cycling past the palette.
+    ids.forEach((id, i) => expect(whole.get(id)).toBe(SERIES_COLORS[i % SERIES_COLORS.length]));
+    // Every subset answers each outcome exactly as the whole board does, deep ranks included.
+    const subsets = [[102], [100, 110], [110], [113, 101], [100, 101, 102, 103, 104], [111, 112, 113]];
+    for (const sub of subsets) {
+      const got = fixedOrderSeriesColors(drawn(sub), board, SERIES_COLORS);
+      expect([...got.keys()].sort()).toEqual([...sub].sort());
+      for (const id of sub) expect(got.get(id)).toBe(whole.get(id));
+    }
+    // An outcome the order does not name is stable too.
+    const stray = fixedOrderSeriesColors(drawn([999]), board, SERIES_COLORS).get(999);
+    expect(fixedOrderSeriesColors(drawn([100, 999, 105]), board, SERIES_COLORS).get(999)).toBe(stray);
+    // A skipped (eliminated) line takes no colour, and moves no one else's.
+    const withSkip = fixedOrderSeriesColors([{ outcome_id: 100, skip: true }, { outcome_id: 110 }], board, SERIES_COLORS);
+    expect(withSkip.has(100)).toBe(false);
+    expect(withSkip.get(110)).toBe(whole.get(110));
   });
 
   it("fixedOrderSeriesColors keeps a party line on its party colour (#8095)", () => {

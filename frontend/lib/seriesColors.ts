@@ -134,16 +134,17 @@ export function assignSeriesColors(
  * 1W, and on a sparse range a whole series can be missing: with Rams absent,
  * 49ers slid from slot 2 (green) to slot 1 (red).
  *
- * Here each outcome's colour is dealt from its rank in `order`, the caller's
- * fixed list of the board's outcomes (the futures page passes the market's own
- * outcome order), through `assignSeriesColors`, so party labels keep #8095's
- * colours. Ranks inside the palette are distinct, so the top outcomes never
- * move whatever subset is drawn. Two drawn lines can only collide when an
- * outcome ranks beyond the palette (a 30-team board); that one takes the first
- * colour no other drawn line holds, walking the drawn set in rank order, so the
- * lines on screen stay distinguishable. Outcomes `order` does not name are
- * treated the same way, after the named ones. `skip` (eliminated lines, which
- * draw grey) takes no colour.
+ * Here every outcome's colour is decided by the WHOLE board, never by what is
+ * drawn: it is dealt from its rank in `order`, the caller's fixed list of the
+ * board's outcomes (the futures page passes the market's own outcome order),
+ * through `assignSeriesColors`, so party labels keep #8095's colours. `drawn`
+ * only says which outcomes to answer for. No outcome is exempt: one ranked past
+ * the palette (Team 10 on an 11-team board) cycles onto rank 0's colour on
+ * every range, and if a reader draws both they share it. Resolving that
+ * against the drawn set made Team 10 red beside Team 0 and blue without it (root's
+ * review of b3a58a0606), which is the defect this function exists to remove. An
+ * outcome `order` does not name takes a colour from its own id, so it is stable
+ * too. `skip` (eliminated lines, which draw grey) takes no colour.
  */
 export function fixedOrderSeriesColors(
   drawn: readonly { outcome_id: number; skip?: boolean }[],
@@ -151,26 +152,15 @@ export function fixedOrderSeriesColors(
   palette: readonly string[],
 ): Map<number, string> {
   const base = assignSeriesColors(order.map((o) => o.name), palette);
-  const rank = new Map<number, number>();
-  const baseById = new Map<number, string>();
+  const byId = new Map<number, string>();
   order.forEach((o, i) => {
-    if (rank.has(o.id)) return;
-    rank.set(o.id, i);
-    baseById.set(o.id, base[i]);
+    if (!byId.has(o.id)) byId.set(o.id, base[i]);
   });
-  const ranked = drawn
-    .filter((o) => !o.skip)
-    .map((o, i) => ({ id: o.outcome_id, r: rank.get(o.outcome_id) ?? order.length + i }))
-    .sort((a, b) => a.r - b.r);
-  const used = new Set<string>();
   const out = new Map<number, string>();
-  for (const { id } of ranked) {
-    let colour = baseById.get(id);
-    if (colour === undefined || used.has(colour)) {
-      colour = palette.find((c) => !used.has(c)) ?? colour ?? palette[0];
-    }
-    used.add(colour);
-    out.set(id, colour);
+  for (const o of drawn) {
+    if (o.skip) continue;
+    const id = o.outcome_id;
+    out.set(id, byId.get(id) ?? palette[Math.abs(id) % palette.length]);
   }
   return out;
 }
