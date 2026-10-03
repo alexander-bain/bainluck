@@ -557,6 +557,29 @@ jobs:
             exit 1
           fi
 
+      - name: "#10305 D2 participant fill: fences, rollback, restore and the code denylist (real Postgres)"
+        # An own-id TBD row takes ESPN's two clubs in ONE fenced UPDATE whose
+        # every fence Postgres re-judges at write time; RETURNING reports a tag a
+        # concurrent writer committed while the UPDATE waited; a failure after
+        # the write rolls back to its SAVEPOINT through the real scheduled-pass
+        # caller; restore puts the exact prior bytes back; and a stale taxonomy
+        # flush that erases every tag still meets the code denylist on the next
+        # pass (with a control that re-fills). A fake session can do none of it.
+        # Same skip refusal as every gate in this job, plus the exact count.
+        if: matrix.group == 'shared'
+        run: |
+          set -o pipefail
+          python -m pytest tests/integration/test_espn_participant_fill_pg.py \
+            -v -rs -p no:cacheprovider 2>&1 | tee /tmp/fill10305.txt
+          if grep -qiE "[0-9]+ skipped" /tmp/fill10305.txt; then
+            echo "::error::#10305 D2 participant-fill gate SKIPPED — the gate did not run"
+            exit 1
+          fi
+          if ! grep -qE "\b92 passed\b" /tmp/fill10305.txt; then
+            echo "::error::#10305 D2 participant-fill gate did not pass exactly 92 tests"
+            exit 1
+          fi
+
       - name: Typeahead next-fixture contracts, or-NEXT and lead-team (real Postgres)
         # #5201 rides this step: the or-NEXT arm below is gated on "no pooled row
         # NAMES the query's participant", and a NAMESAKE satisfies that gate —
