@@ -71,7 +71,7 @@ final class DiscoverCardsKeepWholeWordsAtAccessibilitySizes10313Tests: XCTestCas
 
     func testTheSourceMarkKeepsItsWholeWidth() throws {
         let text = collapsed(try source("DiscoverFuturesCard.swift"))
-        let mark = "if let mark = sourceMark { Text(mark) .font(.caption2.weight(.heavy))"
+        let mark = "Text(mark) .font(.caption2.weight(.heavy))"
         XCTAssertEqual(occurrences(of: mark, in: text), 1, "one source mark on the card")
         XCTAssertEqual(
             occurrences(of: mark + " .lineLimit(1) .fixedSize()", in: text), 1,
