@@ -2,7 +2,7 @@ import Foundation
 
 /// Public event-detail fields only. Missing readings stay missing; an away or draw
 /// probability is never manufactured from a home reading.
-nonisolated struct WatchSelectedGame: Decodable, Sendable, Identifiable {
+nonisolated struct WatchSelectedGame: Codable, Sendable, Identifiable {
     let id: Int
     let homeTeam: String
     let awayTeam: String
@@ -95,6 +95,32 @@ nonisolated struct WatchSelectedGame: Decodable, Sendable, Identifiable {
         period = espn?.period
         gameClock = espn?.gameClock
         drawProbability = odds?.drawProbability
+    }
+    // Encode the validated public reading in the same shape as its decoder.
+    // Observation clocks remain producer clocks across a process restart.
+    func encode(to encoder: Encoder) throws {
+        var c = encoder.container(keyedBy: CodingKeys.self)
+        try c.encode(id, forKey: .id)
+        try c.encode(homeTeam, forKey: .homeTeam)
+        try c.encode(awayTeam, forKey: .awayTeam)
+        try c.encodeIfPresent(homeScore, forKey: .homeScore)
+        try c.encodeIfPresent(awayScore, forKey: .awayScore)
+        try c.encodeIfPresent(status, forKey: .status)
+        let formatter = ISO8601DateFormatter()
+        formatter.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
+        try c.encodeIfPresent(commenceTime.map(formatter.string), forKey: .commenceTime)
+        try c.encodeIfPresent(scoreObservedAt.map(formatter.string), forKey: .scoreObservedAt)
+        try c.encodeIfPresent(probabilityObservedAt.map(formatter.string), forKey: .probabilityObservedAt)
+        try c.encodeIfPresent(homeProbability, forKey: .heroProbability)
+        try c.encodeIfPresent(awayProbability, forKey: .heroAway)
+        try c.encodeIfPresent(sportKey, forKey: .sportKey)
+        var odds = c.nestedContainer(keyedBy: Odds.CodingKeys.self, forKey: .currentOdds)
+        try odds.encodeIfPresent(homeProbability, forKey: .homeProbability)
+        try odds.encodeIfPresent(awayProbability, forKey: .awayProbability)
+        try odds.encodeIfPresent(drawProbability, forKey: .drawProbability)
+        var state = c.nestedContainer(keyedBy: GameState.CodingKeys.self, forKey: .espn)
+        try state.encodeIfPresent(period, forKey: .period)
+        try state.encodeIfPresent(gameClock, forKey: .gameClock)
     }
     private struct GameState: Decodable {
         let period: String?

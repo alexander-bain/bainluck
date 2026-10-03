@@ -19,19 +19,27 @@ nonisolated struct WatchSelectedGameHTTPTransport: WatchSelectedGameTransport {
     }
 }
 
-/// Only the canonical selection is persisted; scores and timestamps always come
-/// from the public API. Each request is fenced against selection/refresh races.
+/// Persist one last-good public reading without changing its observation clocks.
+/// Each request is fenced against selection/refresh races.
 final class WatchSelectedGameStore: ObservableObject {
     @Published private(set) var selectedEventID: Int?
     @Published private(set) var game: WatchSelectedGame?
     @Published private(set) var fetchedAt: Date?
     @Published private(set) var isRefreshing = false
     @Published private(set) var errorMessage: String?
+    @Published private(set) var isRestoredReading = false
     private let transport: any WatchSelectedGameTransport
     private let defaults: UserDefaults
     private let now: () -> Date
     private var revision = 0
     private static let selectionKey = "bainluck_watch_selected_event_id"
+
+    private static let snapshotKey = "bainluck_watch_selected_game_snapshot_v1"
+    private struct Snapshot: Codable {
+        let version: Int
+        let game: WatchSelectedGame
+        let fetchedAt: Date
+    }
 
     init(transport: any WatchSelectedGameTransport = WatchSelectedGameHTTPTransport(),
          defaults: UserDefaults = .standard, now: @escaping () -> Date = Date.init) {
@@ -40,6 +48,15 @@ final class WatchSelectedGameStore: ObservableObject {
         self.now = now
         let stored = defaults.integer(forKey: Self.selectionKey)
         selectedEventID = stored > 0 ? stored : nil
+        if let data = defaults.data(forKey: Self.snapshotKey),
+           let snapshot = try? JSONDecoder().decode(Snapshot.self, from: data),
+           snapshot.version == 1, snapshot.game.id == selectedEventID {
+            game = snapshot.game
+            fetchedAt = snapshot.fetchedAt
+            isRestoredReading = true
+        } else {
+            defaults.removeObject(forKey: Self.snapshotKey)
+        }
     }
 
     @MainActor func select(eventID: Int) {
@@ -47,6 +64,8 @@ final class WatchSelectedGameStore: ObservableObject {
         revision += 1
         selectedEventID = eventID
         defaults.set(eventID, forKey: Self.selectionKey)
+        defaults.removeObject(forKey: Self.snapshotKey)
+        isRestoredReading = false
         game = nil
         fetchedAt = nil
         errorMessage = nil
@@ -57,6 +76,8 @@ final class WatchSelectedGameStore: ObservableObject {
         revision += 1
         selectedEventID = nil
         defaults.removeObject(forKey: Self.selectionKey)
+        defaults.removeObject(forKey: Self.snapshotKey)
+        isRestoredReading = false
         game = nil
         fetchedAt = nil
         errorMessage = nil
@@ -77,7 +98,14 @@ final class WatchSelectedGameStore: ObservableObject {
             selectedEventID = result.id
             defaults.set(result.id, forKey: Self.selectionKey)
             game = result
-            fetchedAt = now()
+            let receivedAt = now()
+            fetchedAt = receivedAt
+            isRestoredReading = false
+            if let data = try? JSONEncoder().encode(Snapshot(version: 1, game: result, fetchedAt: receivedAt)) {
+                defaults.set(data, forKey: Self.snapshotKey)
+            } else {
+                defaults.removeObject(forKey: Self.snapshotKey)
+            }
             isRefreshing = false
         } catch {
             guard requestRevision == revision, selectedEventID == id else { return }

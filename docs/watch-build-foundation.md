@@ -64,3 +64,19 @@ A dedicated Ultra 2 simulator on watchOS 27 is used for local evidence. Any test
 that seeds the saved selection directly must be labeled as seeded restoration,
 not proof a person tapped through the picker. Physical Watch, paired Handoff,
 battery and TestFlight acceptance remain distinct.
+
+## Offline restart contribution
+
+One versioned last-good public reading is persisted with the canonical selection.
+Restart restores it only when its ID matches. The view labels it “Saved reading”
+until a successful refresh; offline failure and cancellation do not remove that
+label or advance the original producer clocks. Selection changes remove the old
+cache. Corrupt, mismatched or unsupported snapshots are ignored. Final corrections
+remain accepted; score or observation timestamp monotonicity is not a safe proxy
+for correction authority. The compiled harness covers restoration, serialization,
+races, invalid cache, final corrections and independent observation ages.
+
+Codex owns this contribution and independent review. Native has no immediate
+execution request. Exact-commit native builds and BainLuckTests remain required
+before integration; old-head build evidence does not validate this source.
+Current milestones and ownership live in GitHub #4929/#4932.

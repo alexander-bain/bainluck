@@ -101,6 +101,10 @@ struct WatchSelectedGameView: View {
                     probabilityObservationText(game, now: context.date)
                 }
             }
+            if store.isRestoredReading {
+                Text("Saved reading · refresh to confirm")
+                    .font(.footnote).foregroundStyle(.orange)
+            }
             if let error = store.errorMessage {
                 Text(error)
                     .font(.footnote).foregroundStyle(.orange)

@@ -31,6 +31,13 @@ actor Stub: WatchSelectedGameTransport {
         await first.value
         precondition(store.game?.id == 1 && store.fetchedAt == clock)
         precondition(store.game?.observationAge(at: clock) == nil)
+        let restored = WatchSelectedGameStore(transport: transport, defaults: defaults, now: { clock })
+        precondition(restored.game?.id == 1 && restored.fetchedAt == clock && restored.isRestoredReading)
+        let restoredFailure = Task { await restored.refresh() }
+        await transport.waitFor(1)
+        await transport.finish(1, result: .failure(URLError(.notConnectedToInternet)))
+        await restoredFailure.value
+        precondition(restored.game?.id == 1 && restored.isRestoredReading && restored.errorMessage != nil)
         let failed = Task { await store.refresh() }
         await transport.waitFor(1)
         await transport.finish(1, result: .failure(URLError(.notConnectedToInternet)))
@@ -48,6 +55,7 @@ actor Stub: WatchSelectedGameTransport {
         precondition(store.game?.id == 3 && store.selectedEventID == 3 && !store.isRefreshing)
         precondition(WatchSelectedGameStore(defaults: defaults).selectedEventID == 3)
         store.select(eventID: 4)
+        precondition(WatchSelectedGameStore(defaults: defaults).game == nil)
         let olderRefresh = Task { await store.refresh() }
         await transport.waitFor(4)
         let latestRefresh = Task { await store.refresh() }
@@ -66,6 +74,10 @@ actor Stub: WatchSelectedGameTransport {
         precondition(store.game?.homeScore == 2 && store.errorMessage == nil && !store.isRefreshing)
         store.clearSelection()
         precondition(WatchSelectedGameStore(defaults: defaults).selectedEventID == nil)
+        precondition(WatchSelectedGameStore(defaults: defaults).game == nil)
+        defaults.set(4, forKey: "bainluck_watch_selected_event_id")
+        defaults.set(Data("corrupt".utf8), forKey: "bainluck_watch_selected_game_snapshot_v1")
+        precondition(WatchSelectedGameStore(defaults: defaults).game == nil)
         let live = try event(extras: ",\"status\":\"live\",\"home_score\":10,\"away_score\":0,\"commence_time\":\"2020-01-01T00:00:00Z\"")
         precondition(live.isLive && !live.isFinal)
         let final = try event(extras: ",\"status\":\"completed\"")
@@ -90,10 +102,54 @@ actor Stub: WatchSelectedGameTransport {
         let stamped = try event(extras: ",\"score_observed_at\":\"2026-01-01T00:00:00.123456Z\"")
         precondition(stamped.observationAge(at: clock) != nil)
         precondition(stamped.observationAge(at: Date(timeIntervalSince1970: 0)) == nil)
+        let awayOnly = try event(extras: ",\"current_odds\":{\"away_probability\":0.7}")
+        for reading in [hero, draw, homeOnly, invalidHero, awayOnly, stamped, final, baseball] {
+            let data = try JSONEncoder().encode(reading)
+            let copy = try JSONDecoder().decode(WatchSelectedGame.self, from: data)
+            precondition(copy.id == reading.id && copy.status == reading.status)
+            precondition(copy.homeProbability == reading.homeProbability && copy.awayProbability == reading.awayProbability && copy.drawProbability == reading.drawProbability)
+            precondition(copy.probabilityObservedAt == reading.probabilityObservedAt)
+            // ISO serialization preserves milliseconds; submillisecond precision is irrelevant to displayed ages.
+            if let original = reading.scoreObservedAt { precondition(abs(copy.scoreObservedAt!.timeIntervalSince(original)) < 0.001) }
+            precondition(copy.liveClockText == reading.liveClockText)
+        }
+        let cacheKey = "bainluck_watch_selected_game_snapshot_v1"
+        func cache(_ reading: WatchSelectedGame, version: Int = 1) throws -> Data {
+            let object = try JSONSerialization.jsonObject(with: JSONEncoder().encode(reading))
+            return try JSONSerialization.data(withJSONObject: ["version": version, "game": object, "fetchedAt": clock.timeIntervalSinceReferenceDate])
+        }
+        defaults.set(1, forKey: "bainluck_watch_selected_event_id")
+        defaults.set(try cache(hero), forKey: cacheKey)
+        let savedHero = WatchSelectedGameStore(transport: transport, defaults: defaults)
+        precondition(savedHero.game?.probabilityObservedAt == hero.probabilityObservedAt && savedHero.game?.scoreObservedAt == hero.scoreObservedAt && savedHero.isRestoredReading)
+        let confirmation = Task { await savedHero.refresh() }
+        await transport.waitFor(1)
+        await transport.finish(1, result: .success(final))
+        await confirmation.value
+        precondition(savedHero.game?.isFinal == true && !savedHero.isRestoredReading)
+        precondition(WatchSelectedGameStore(defaults: defaults).game?.isFinal == true)
+        let correction = Task { await savedHero.refresh() }
+        await transport.waitFor(1)
+        await transport.finish(1, result: .success(try event(extras: ",\"status\":\"completed\",\"home_score\":0")))
+        await correction.value
+        precondition(savedHero.game?.homeScore == 0 && savedHero.game?.isFinal == true)
+        let afterClear = Task { await savedHero.refresh() }
+        await transport.waitFor(1)
+        savedHero.clearSelection()
+        await transport.finish(1, result: .success(hero))
+        await afterClear.value
+        precondition(WatchSelectedGameStore(defaults: defaults).game == nil && defaults.data(forKey: cacheKey) == nil)
+        defaults.set(1, forKey: "bainluck_watch_selected_event_id")
+        defaults.set(try cache(hero, version: 2), forKey: cacheKey)
+        precondition(WatchSelectedGameStore(defaults: defaults).game == nil)
+        defaults.set(try cache(try event(2)), forKey: cacheKey)
+        precondition(WatchSelectedGameStore(defaults: defaults).game == nil)
+        savedHero.clearSelection()
+        precondition(WatchSelectedGameStore(defaults: defaults).game == nil)
         do {
             _ = try JSONDecoder().decode(WatchSelectedGame.self, from: Data("{}".utf8))
             fatalError("Empty success must fail decode")
         } catch is DecodingError {}
-        print("PASS: selection persistence, empty/error distinction, retained failure, race fencing, canonical alias, same-selection refresh ordering, cancellation, final status, draw semantics, tolerant optionals, distinct score/probability ages")
+        print("PASS: cold offline snapshot restoration, cache integrity, observation-clock round trips, selection persistence, empty/error distinction, retained failure, race fencing, canonical alias, same-selection refresh ordering, cancellation, final status, draw semantics, tolerant optionals, distinct score/probability ages")
     }
 }
