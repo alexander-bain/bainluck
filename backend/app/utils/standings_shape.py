@@ -1,6 +1,6 @@
 """Shape rules for `Team.standings_data` at the serving boundary.
 
-Imports nothing, so it stays circular-import safe for both `routes/teams.py`
+Imports only the standard library, so it stays circular-import safe for both `routes/teams.py`
 and `routes/events.py`.
 
 WHY THIS EXISTS — `conf_rank` IS WRITE-DEAD, NOT MERELY STALE (#4811).
@@ -36,6 +36,8 @@ If a source ever genuinely scopes a rank to a conference, it should write
 `conf_rank` again and this tuple is where that is re-enabled — deliberately,
 with the renderers checked, not by accident.
 """
+
+from datetime import datetime, timezone
 
 # Keys that no writer produces any more and that no client may be shown.
 WRITE_DEAD_STANDINGS_KEYS = ("conf_rank",)
@@ -111,7 +113,14 @@ def _dropped_keys(standings) -> tuple:
     return dropped
 
 
-def record_text(current_record, standings):
+# #10311. How far `current_record` may lead a played-game board and still be
+# read as the board LAGGING it: a base for the games of the day the board was
+# written, plus a doubleheader's worth per day since. See `_lead_is_a_lag`.
+LAG_ALLOWANCE_BASE_GAMES = 3
+LAG_ALLOWANCE_GAMES_PER_DAY = 2
+
+
+def record_text(current_record, standings, standings_updated_at=None, now=None):
     """Return the W-L(-D) string a reader should be shown, or None.
 
     TWO COLUMNS ANSWER THIS QUESTION AND THEY DISAGREE (#5520).
@@ -153,6 +162,20 @@ def record_text(current_record, standings):
     A record is only returned when it can be demonstrated — an unparseable
     `current_record` falls through to the snapshot rather than printing
     whatever string the column happens to hold (notice 34: empty beats wrong).
+
+    A LEAD IS ONLY A LAG IF THE CALENDAR ALLOWS IT (#10311). The rule above
+    assumes a played-game board and `current_record` describe one season, so
+    any lead is lag. On 2026-10-03 every Canadiens card printed "MTL 41-21-10"
+    beside "PIT 1-0-0": the name lookup's row (12651) carried a board written
+    that morning reading 1-0, and a `current_record` nothing had refreshed
+    since last season's 72 games. A 71-game lead over a board written today is
+    not lag; it is a different season. So pass the row's
+    `standings_updated_at` and the lead must fit inside the games that could
+    have been played since the board was written (`_lead_is_a_lag`); a bigger
+    lead returns the board. MLB's one-game leads over a 20-hour-old board, the
+    case #5520 exists for, fit easily. With no readable stamp the lead is not
+    bounded, so a row nobody can date keeps the answer it was already given.
+    `now` is the reference clock, injectable so tests never read the real one.
     """
     snapshot = _snapshot_record(standings)
     parsed = _parse_record(current_record)
@@ -171,10 +194,43 @@ def record_text(current_record, standings):
     if snapshot_games is not None and current_games is not None:
         if current_games < snapshot_games:
             return snapshot
+        if not _lead_is_a_lag(
+            current_games - snapshot_games, standings_updated_at, now
+        ):
+            return snapshot
     return parsed
 
 
-def reconciled_record_and_standings(current_record, standings):
+def _lead_is_a_lag(lead, standings_updated_at, now):
+    """False only when `lead` games is MORE than the board's age allows (#10311).
+
+    Allowance = `LAG_ALLOWANCE_BASE_GAMES` + `LAG_ALLOWANCE_GAMES_PER_DAY` per
+    day since `standings_updated_at`. A stamp that is missing or unreadable
+    proves nothing, so it returns True and the caller keeps #5520's answer. A
+    stamp in the future counts as zero days old, never negative.
+    """
+    if standings_updated_at is None:
+        return True
+    try:
+        stamp = standings_updated_at
+        if isinstance(stamp, str):
+            # A payload that round-tripped through JSON carries the ISO text.
+            stamp = datetime.fromisoformat(stamp.replace("Z", "+00:00"))
+        if stamp.tzinfo is None:
+            stamp = stamp.replace(tzinfo=timezone.utc)
+        if now is None:
+            now = datetime.now(timezone.utc)
+        elif now.tzinfo is None:
+            now = now.replace(tzinfo=timezone.utc)
+        age_days = max((now - stamp).total_seconds(), 0.0) / 86400.0
+    except (AttributeError, TypeError, ValueError, OverflowError):
+        return True
+    return lead <= LAG_ALLOWANCE_BASE_GAMES + LAG_ALLOWANCE_GAMES_PER_DAY * age_days
+
+
+def reconciled_record_and_standings(
+    current_record, standings, standings_updated_at=None, now=None
+):
     """One payload, one record. Returns `(record, standings)` that agree.
 
     #8070. `record_text` above settles WHICH rail is right, but only for the
@@ -208,7 +264,7 @@ def reconciled_record_and_standings(current_record, standings):
     Never mutates its argument. `teams.py` hands this a live SQLAlchemy JSONB
     value, and mutating one in place is the silent-write failure of gotcha #4.
     """
-    record = record_text(current_record, standings)
+    record = record_text(current_record, standings, standings_updated_at, now)
     if record is None or not isinstance(standings, dict):
         return record, standings
     if _snapshot_record(standings) == record:

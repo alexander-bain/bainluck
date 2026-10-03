@@ -34471,7 +34471,13 @@ def _compute_standings_context(
         # "Dodgers 92-60, #1 West" off a row whose `current_record` said 93-60,
         # and 25 of 30 MLB teams were a game or two behind the same way.
         # `getattr` because a team row is not required to carry the column.
-        record = record_text(getattr(team, "current_record", None), s)
+        # The board's stamp bounds how far `current_record` may lead it
+        # (#10311: a 71-game lead over a board written today is last season).
+        record = record_text(
+            getattr(team, "current_record", None),
+            s,
+            getattr(team, "standings_updated_at", None),
+        )
         if record:
             parts.append(record)
         # Division/league rank. `conf_rank` is NOT consulted: no writer has
@@ -34613,7 +34619,9 @@ def _format_team_data(team) -> dict:
         # serving. Such a row carries no composable W-L either, so it cannot be
         # the contradiction this exists to remove.
         record, standings = reconciled_record_and_standings(
-            team.current_record, standings
+            team.current_record,
+            standings,
+            getattr(team, "standings_updated_at", None),
         )
         if record is not None:
             data["record"] = record
