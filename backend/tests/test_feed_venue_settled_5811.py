@@ -268,5 +268,7 @@ class TestGetFeedCallsItAtThePublishBoundary:
         call = src.find("await _attach_feed_venue_settlement(db, feed_items, now)")
         assert call != -1
         scrub = src.find("# Remove internal sort/debug keys.")
-        payload = src.find('"items": paginated,')
+        # #10290: the envelope literal moved into `_feed_page_payload`; its
+        # call is where the page is built from the scrubbed list.
+        payload = src.find("payload = _feed_page_payload(")
         assert -1 < call < scrub < payload

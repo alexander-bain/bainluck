@@ -11,6 +11,7 @@ import { seriesFreshness } from "@/lib/seriesFreshness";
 import { chartSeriesPath } from "@/lib/chartSeriesPath";
 import { combinedLinePoints } from "@/lib/combinedLinePolicy";
 import {
+  inFixedSeriesOrder,
   visibleChartOutcomes,
   withoutBoardNamePrefix,
 } from "@/lib/futuresDetailDisplay";
@@ -21,6 +22,7 @@ import {
   ELIMINATED_SERIES_COLOR as ELIMINATED_COLOR,
   COMBINED_SERIES_COLOR as COMBINED_COLOR,
   assignSeriesColors,
+  fixedOrderSeriesColors,
 } from "@/lib/seriesColors";
 
 // Series palettes live in the shared registry (L2-157, census class E). This
@@ -146,6 +148,12 @@ interface FuturesChartProps {
    *  futures page's range controls do, on a sparse board), so the empty state must
    *  not print it again. Absent everywhere else: those callers render as before. */
   cadenceNoteShown?: boolean;
+  /** #10266: the board's outcomes in a fixed order (the futures page passes
+   *  its market's outcome order). When given, each line's colour belongs to its
+   *  outcome (`fixedOrderSeriesColors`) and the legend reads in this order, so
+   *  neither moves when the range changes what the history response holds.
+   *  Absent everywhere else, where those callers render as before. */
+  seriesOrder?: readonly { id: number; name: string }[];
 }
 
 export function FuturesChart({
@@ -171,6 +179,7 @@ export function FuturesChart({
   settled = false,
   marketName,
   cadenceNoteShown = false,
+  seriesOrder,
 }: FuturesChartProps) {
   const effectiveShowLegend = showLegend ?? !mini;
   const effectiveShowAxes = showAxes ?? !mini;
@@ -197,9 +206,12 @@ export function FuturesChart({
   // chart can ask what is drawn instead of guessing from the full leg list. This
   // memo is byte-equivalent to the inline version it replaces; the chart stays
   // the authority on what is on screen.
+  // #10266 — then put the drawn set in the caller's fixed order (when it gives
+  // one) so the palette below is dealt the same way on every range.
+  const seriesOrderIds = useMemo(() => seriesOrder?.map((o) => o.id), [seriesOrder]);
   const displayedOutcomes = useMemo(
-    () => visibleChartOutcomes(historyData, selectedOutcomes),
-    [historyData, selectedOutcomes],
+    () => inFixedSeriesOrder(visibleChartOutcomes(historyData, selectedOutcomes), seriesOrderIds),
+    [historyData, selectedOutcomes, seriesOrderIds],
   );
 
   // #8095: the default palette gives a party line its party's colour rather than
@@ -213,12 +225,28 @@ export function FuturesChart({
     [displayedOutcomes, palette],
   );
 
+  // #10266: with a fixed order, a line's colour is its outcome's, not its slot's.
+  const fixedColors = useMemo(
+    () =>
+      palette === DEFAULT_COLORS && seriesOrder && seriesOrder.length > 0
+        ? fixedOrderSeriesColors(
+            displayedOutcomes.map((o) => ({ outcome_id: o.outcome_id, skip: !!o.eliminated })),
+            seriesOrder,
+            palette,
+          )
+        : null,
+    [displayedOutcomes, seriesOrder, palette],
+  );
+
   // Resolve a line color: explicit per-outcome override > eliminated grey >
-  // index palette. Centralized so lines, hover dots and the legend never drift.
+  // fixed-order colour (#10266) > index palette. Centralized so lines, hover
+  // dots and the legend never drift.
   const colorFor = (outcome: FuturesOutcomeHistory, idx: number): string => {
     const override = outcomeColors?.get(outcome.outcome_id);
     if (override) return override;
     if (outcome.eliminated) return ELIMINATED_COLOR;
+    const fixed = fixedColors?.get(outcome.outcome_id);
+    if (fixed) return fixed;
     return indexColors?.[idx] ?? palette[idx % palette.length];
   };
 

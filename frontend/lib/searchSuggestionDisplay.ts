@@ -17,6 +17,7 @@ import type { TypeaheadSuggestion, TypeaheadOutcome, TeamSeasonAnswer } from "@/
 import { getEmojiForLeague, getLeagueDisplay } from "@/lib/sportCategories";
 import { hasNoReportedResult, SUSPENDED_LABEL, venueSettledSummary } from "@/lib/eventState";
 import { authorityStoppageLabel } from "@/lib/gameTimeLabel";
+import { relatedGameListingText } from "@/lib/relatedGameListing";
 
 /**
  * How many season facts a team row shows (T2-1 / #5058). Two, because two is
@@ -144,6 +145,9 @@ export interface FuturesAnswer {
  * which genuinely sum over 100% (gotcha #23).
  */
 export function futuresAnswer(s: TypeaheadSuggestion): FuturesAnswer | null {
+  // #10298: a game listing beside its own game row answers nothing here, or the
+  // dropdown prints two favourites for one game.
+  if (relatedGameListingText(s.related_game_listing)) return null;
   const priced = (s.top_outcomes ?? []).filter(
     (o): o is TypeaheadOutcome & { probability: number } => o.probability != null
   );
@@ -280,6 +284,8 @@ export function suggestionSubtitle(
   }
 
   if (s.type === "futures") {
+    const listing = relatedGameListingText(s.related_game_listing);
+    if (listing) return { kind: "futures-label", text: listing };
     const answer = futuresAnswer(s);
     if (answer) return { kind: "futures-answer", answer };
     return s.market_type_label

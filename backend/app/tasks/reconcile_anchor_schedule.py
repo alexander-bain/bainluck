@@ -85,10 +85,11 @@ import uuid
 from datetime import datetime, timedelta, timezone
 from typing import Any, Callable, Optional
 
-from sqlalchemy import and_, func, or_, select, update
+from sqlalchemy import and_, func, or_, select, text, update
 
 from app.utils.anchor_schedule import (
     AUTHORITY_MOVES_US,
+    AUTHORITY_SOURCE,
     AnchoredRow,
     SCHEDULE_VERDICTS,
     schedule_decision,
@@ -402,22 +403,28 @@ async def _load_rows(
     ]
 
 
-async def _apply_move(session, decision) -> bool:
+async def _apply_move(session, decision, write_guard=None) -> bool:
     """Write one move, and prove it landed on the row we decided about.
 
     The ``espn_id`` and ``commence_time`` in the WHERE clause are the compare:
     they are the two facts the decision was made from, so a row whose anchor or
     clock moved since the read is skipped rather than overwritten. ``rowcount``
     0 is therefore a real finding — the plan was stale — and not a silent pass.
+
+    ``write_guard(decision)`` is one more predicate in the SAME statement
+    (#10305: the one-row path's anchor set), so it is judged on the snapshot the
+    write itself takes, not on a read made before the authority was asked.
     """
     from app.models.models import Event
 
+    extra = [] if write_guard is None else [write_guard(decision)]
     result = await session.execute(
         update(Event)
         .where(
             Event.id == decision.event_id,
             Event.espn_id == decision.espn_id,
             Event.commence_time == decision.ours,
+            *extra,
         )
         .values(**decision.write)
     )
@@ -814,6 +821,7 @@ async def reconcile(
     exclude_sports: frozenset[str] = frozenset(),
     budget_seconds: float = EXAMINE_BUDGET_SECONDS,
     apply_only: Optional[Callable[[Any], bool]] = None,
+    write_guard: Optional[Callable[[Any], Any]] = None,
 ) -> dict[str, Any]:
     """Ask the authority about every anchored near-future row's kickoff.
 
@@ -873,6 +881,12 @@ async def reconcile(
     it is simply not written — so a narrowed apply that leaves moves behind
     ends ``plan_only``, never ``complete``. ``moved_event_ids`` names the rows
     that did land, which is how a caller tells the fixed from the still-wrong.
+    A call that passes ``apply_only`` also gets ``admitted_event_ids`` — the
+    moves the predicate admits, dry or not — so a dry run can be judged by the
+    same predicate the apply will use, not by the reduced ``moves`` summary
+    (which drops orientation and the write).
+
+    ``write_guard`` is handed to :func:`_apply_move`; see there.
     """
     from app.services.espn_api import get_espn_service
     from app.tasks.repair_authority_id_collisions import _fetch_record
@@ -961,16 +975,21 @@ async def reconcile(
         rows = rows[: len(decisions)]
 
     summary = summarize_decisions(decisions)
+    movers = [
+        d
+        for d in decisions
+        if d.verdict == AUTHORITY_MOVES_US and (apply_only is None or apply_only(d))
+    ]
+    admitted = (
+        {"admitted_event_ids": [int(d.event_id) for d in movers]}
+        if apply_only is not None
+        else {}
+    )
     moved, stale = 0, 0
     undo_identity: Optional[str] = None
     receipted: list[dict[str, Any]] = []
     if apply:
         rows_by_id = {row.event_id: row for row in rows}
-        movers = [
-            d
-            for d in decisions
-            if d.verdict == AUTHORITY_MOVES_US and (apply_only is None or apply_only(d))
-        ]
         planned = [undo_row_for(d, rows_by_id[d.event_id]) for d in movers]
 
         # ── BACKUP BEFORE WRITE (D51) ────────────────────────────────────────
@@ -1019,7 +1038,7 @@ async def reconcile(
                 }
 
         for decision, planned_row in zip(movers, planned):
-            if await _apply_move(session, decision):
+            if await _apply_move(session, decision, write_guard):
                 moved += 1
                 receipted.append(planned_row)
                 logger.info(
@@ -1130,6 +1149,7 @@ async def reconcile(
         "applied": apply,
         "moved": moved,
         "moved_event_ids": [int(r["event_id"]) for r in receipted],
+        **admitted,
         "stale": stale,
         "eligible": eligible,
         "remaining": remaining,
@@ -1160,6 +1180,395 @@ async def reconcile(
         ),
         **summary,
     }
+
+
+# ═══ ONE NAMED ROW (#10305) ═══════════════════════════════════════════════════
+#
+# The sweep above re-derives its own plan on every call, so a reviewer who read
+# a dry run that said "one move" cannot know the apply that follows will make
+# only that one: rows enter the 120-day window between the two calls, and the
+# HTTP route never exposed ``apply_only``. Before this, a reviewed single-row
+# move had two options, a sport-wide apply or a detached one-off script, and
+# repairs do not run as detached one-offs.
+#
+# ``reconcile_member`` is the same rail, with the reviewer's statement about the
+# row carried INTO the call. The row is locked and compared with that statement
+# in the very transaction the rail then moves it in (the rail's receipt
+# co-commit is that transaction's only commit), the window is the row's own
+# clock ±60 s, and ``apply_only`` admits exactly the stated move. Nothing about
+# the rail's decision, backup, receipt or restore changes.
+
+#: The columns a reviewer must state for a one-row move. All of them, every
+#: time: a fence that only checks what the caller remembered to send is the
+#: caller's memory, not a fence. Prices and the blend are absent on purpose —
+#: they change every poll and a clock write does not read them.
+MEMBER_FENCE_COLUMNS = (
+    "espn_id",
+    "external_id",
+    "home_team_id",
+    "away_team_id",
+    "home_team_name",
+    "away_team_name",
+    "commence_time",
+    "commence_time_source",
+    "status",
+    "completed_at",
+    "home_score",
+    "away_score",
+    "statpal_fixture_id",
+    "event_tags",
+)
+MEMBER_ANCHOR_KEYS = ("event_id", "source", "source_id", "id_kind")
+MEMBER_HALF_WINDOW = timedelta(seconds=60)
+MEMBER_LOCK_TIMEOUT = "5s"
+
+REASON_MEMBER_DRIFT = "MEMBER_STATE_DRIFT"
+REASON_MEMBER_LOCKED = "MEMBER_ROW_LOCKED"
+REASON_MEMBER_NOT_MOVED = "MEMBER_MOVE_NOT_ADMITTED"
+#: Another event holds one of this row's own provider ids. Refused whatever the
+#: statement says: an empty ``expect_anchors`` must not be able to hide it.
+REASON_MEMBER_FOREIGN_HOLDER = "MEMBER_ID_HELD_ELSEWHERE"
+#: More anchors in scope than the read is bounded to. Refused, never clipped: a
+#: fence over a truncated set is a claim about rows it did not read.
+REASON_MEMBER_ANCHOR_OVERFLOW = "MEMBER_ANCHOR_SET_OVER_CAP"
+#: The anchor set changed between the read and the write statement (the write's
+#: own guard matched no row), so nothing moved.
+REASON_MEMBER_DRIFT_AT_WRITE = "MEMBER_ANCHORS_CHANGED_BEFORE_WRITE"
+#: Unreachable while ``member_move_only`` holds; named so it can never be quiet.
+REASON_MEMBER_UNEXPECTED = "MEMBER_UNEXPECTED_MOVES_RESTORE_NOW"
+_MEMBER_TIME_COLUMNS = frozenset({"commence_time", "completed_at"})
+#: Anchors the member read will hold. A real row carries one per provider id
+#: (three at most today); the cap only has to be far above that and small.
+MEMBER_ANCHOR_CAP = 16
+#: The id columns a row carries, by anchor source. These are the ids whose
+#: holders can contradict the move, so these are the ids the fence reads.
+_MEMBER_ID_SOURCES = (
+    ("espn", "espn_id"),
+    ("odds_api", "external_id"),
+    ("statpal", "statpal_fixture_id"),
+)
+
+_MEMBER_ROW_SQL = """
+SELECT e.id, s.key AS sport, e.espn_id, e.external_id, e.home_team_id,
+       e.away_team_id, e.home_team_name, e.away_team_name, e.commence_time,
+       e.commence_time_source, e.status, e.completed_at, e.home_score,
+       e.away_score, e.statpal_fixture_id, e.event_tags
+FROM events e JOIN sports s ON s.id = e.sport_id
+WHERE e.id = :id
+"""
+
+
+def member_anchor_keys(observed: dict[str, Any]) -> list[tuple[str, str]]:
+    """``(source, source_id)`` of every provider id the row itself carries.
+
+    Keyed exactly as the registry writes them (``anchor_key_for_claim``: ESPN
+    and Odds bare, StatPal qualified by its sport's id space), so the fence
+    reads the keys a holder would actually have been written under.
+    """
+    from app.services.anchor_channel import anchor_key_for_claim
+
+    keys = set()
+    for source, column in _MEMBER_ID_SOURCES:
+        key = anchor_key_for_claim(
+            source, observed.get(column), sport_key=observed.get("sport"),
+            warn_unqualified=False,
+        )
+        if key is not None:
+            keys.add((key.source, key.source_id))
+    return sorted(keys)
+
+
+def _member_anchor_scope(
+    event_id: int, keys: list[tuple[str, str]]
+) -> tuple[str, dict[str, Any]]:
+    """The anchors that could contradict a move: the row's own, plus every
+    holder of one of its ids. Index-only — `ix_event_provider_anchors_event_id`
+    and `uq_anchor_source_id` by its leading (source, source_id)."""
+    clauses = ["event_id = :m_id"]
+    params: dict[str, Any] = {"m_id": event_id}
+    for i, (source, source_id) in enumerate(keys):
+        clauses.append(f"(source = :m_s{i} AND source_id = :m_k{i})")
+        params[f"m_s{i}"] = source
+        params[f"m_k{i}"] = source_id
+    return " OR ".join(clauses), params
+
+
+#: One anchor as one string, for the write guard's set compare. The unit
+#: separator cannot occur in any of the four columns' real values.
+_ANCHOR_TOKEN_SQL = "concat_ws(chr(31), event_id::text, source, source_id, id_kind)"
+
+
+def _anchor_token(anchor: dict[str, Any]) -> str:
+    return "\x1f".join(str(anchor[k]) for k in MEMBER_ANCHOR_KEYS)
+
+
+def member_write_guard(
+    event_id: int, keys: list[tuple[str, str]], anchors: list[dict[str, Any]]
+) -> Callable[[Any], Any]:
+    """The anchor fence, as a predicate inside the move's own UPDATE.
+
+    Under READ COMMITTED a statement reads one snapshot taken when it starts,
+    so the set compared here is the set at the instant of the write: an anchor
+    committed while ESPN was being asked makes the UPDATE match no row. Sorted
+    under ``COLLATE "C"`` (code-point order, which is what Python's ``sorted``
+    uses on ``str``) so the two sides compare as sets.
+
+    The limit, stated rather than implied: an anchor write still uncommitted
+    when this statement runs, and committed after it, is ordered after the move
+    — exactly as one made after the move commits. Nothing short of locking
+    every anchor writer out can refuse that, and this does not take table
+    locks. An anchor onto THIS row is blocked outright: its foreign key takes
+    a share lock on the row the member call holds ``FOR UPDATE``.
+    """
+    scope, params = _member_anchor_scope(event_id, keys)
+    expected = sorted(_anchor_token(a) for a in anchors)
+    clause = text(
+        f"(SELECT COALESCE(array_agg({_ANCHOR_TOKEN_SQL} ORDER BY "
+        f'{_ANCHOR_TOKEN_SQL} COLLATE "C"), ARRAY[]::text[]) '
+        f"FROM event_provider_anchors WHERE {scope}) = CAST(:m_expected AS text[])"
+    ).bindparams(**params, m_expected=expected)
+
+    def _guard(decision) -> Any:
+        if decision.event_id != event_id:
+            raise ValueError("the member write guard is for its own row only")
+        return clause
+
+    return _guard
+
+
+def _member_value(value: Any) -> Any:
+    """One column into the comparable form a reviewer writes in JSON."""
+    if isinstance(value, datetime):
+        aware = value if value.tzinfo else value.replace(tzinfo=timezone.utc)
+        return aware.astimezone(timezone.utc).isoformat()
+    if isinstance(value, str) and value.startswith("["):
+        try:
+            value = json.loads(value)
+        except ValueError:
+            return value
+    if isinstance(value, (list, tuple)):
+        return sorted(str(v) for v in value)
+    return value
+
+
+def member_fence_diff(
+    observed: Optional[dict[str, Any]],
+    anchors: list[dict[str, Any]],
+    *,
+    expect: dict[str, Any],
+    expect_anchors: list[dict[str, Any]],
+) -> dict[str, Any]:
+    """Every stated fact the row or its anchors no longer match. Empty = clean."""
+    if observed is None:
+        return {"row": "MISSING"}
+    diff: dict[str, Any] = {}
+    for column in MEMBER_FENCE_COLUMNS:
+        want = expect[column]
+        if column in _MEMBER_TIME_COLUMNS and isinstance(want, str):
+            want = datetime.fromisoformat(want)
+        want = _member_value(want)
+        got = _member_value(observed.get(column))
+        if want != got:
+            diff[column] = {"expected": want, "observed": got}
+    want_anchors = sorted(
+        tuple(str(a[k]) for k in MEMBER_ANCHOR_KEYS) for a in expect_anchors
+    )
+    got_anchors = sorted(tuple(str(a[k]) for k in MEMBER_ANCHOR_KEYS) for a in anchors)
+    if want_anchors != got_anchors:
+        diff["anchors"] = {"expected": want_anchors, "observed": got_anchors}
+    return diff
+
+
+def member_move_only(
+    event_id: int, espn_id: str, ours: datetime, theirs: datetime
+) -> Callable[[Any], bool]:
+    """``apply_only`` for exactly one stated move, and nothing near it."""
+    want_write = {"commence_time": theirs, "commence_time_source": AUTHORITY_SOURCE}
+
+    def _only(decision) -> bool:
+        return (
+            decision.event_id == event_id
+            and str(decision.espn_id) == str(espn_id)
+            and decision.ours == ours
+            and decision.theirs == theirs
+            and not decision.orientation_inverted
+            and dict(decision.write) == want_write
+        )
+
+    return _only
+
+
+def _member_spec(
+    expect: dict[str, Any], expect_anchors: list[dict[str, Any]], authority_start: Any
+) -> datetime:
+    missing = [c for c in MEMBER_FENCE_COLUMNS if c not in expect]
+    extra = sorted(set(expect) - set(MEMBER_FENCE_COLUMNS))
+    if missing or extra:
+        raise ValueError(
+            f"expect must state exactly the fenced columns; missing={missing} extra={extra}"
+        )
+    for anchor in expect_anchors:
+        if set(anchor) != set(MEMBER_ANCHOR_KEYS):
+            raise ValueError(f"each expected anchor states exactly {list(MEMBER_ANCHOR_KEYS)}")
+    for column in ("espn_id", "commence_time"):
+        if not expect[column]:
+            raise ValueError(f"expect.{column} is required for a one-row move")
+    # A stated time with no offset would compare as UTC and be read back as
+    # local by `astimezone`; refuse it here rather than mean two things.
+    for column in _MEMBER_TIME_COLUMNS:
+        stated = expect[column]
+        if stated is not None and datetime.fromisoformat(str(stated)).tzinfo is None:
+            raise ValueError(f"expect.{column} must carry a UTC offset")
+    theirs = (
+        authority_start
+        if isinstance(authority_start, datetime)
+        else datetime.fromisoformat(str(authority_start))
+    )
+    if theirs.tzinfo is None:
+        raise ValueError("authority_start must carry a UTC offset")
+    return theirs.astimezone(timezone.utc)
+
+
+async def reconcile_member(
+    session,
+    *,
+    event_id: int,
+    expect: dict[str, Any],
+    expect_anchors: list[dict[str, Any]],
+    authority_start: Any,
+    apply: bool = False,
+) -> dict[str, Any]:
+    """Move ONE named row's kickoff, only as stated, through :func:`reconcile`.
+
+    Dry unless ``apply``. The answer carries ``member.admissible`` (dry) or
+    ``moved_event_ids == [event_id]`` (apply); any other outcome wrote nothing.
+    Raises ``ValueError`` for a malformed statement — that is the caller's bug.
+    """
+    theirs = _member_spec(expect, expect_anchors, authority_start)
+    ours = datetime.fromisoformat(str(expect["commence_time"])).astimezone(timezone.utc)
+    espn_id = str(expect["espn_id"])
+
+    def _refused(code: str, reason: str, **extra) -> dict[str, Any]:
+        return {
+            "measured": True, "terminal": "refused", "applied": apply,
+            "moved": 0, "moved_event_ids": [], "reason_codes": [code],
+            "reason": reason, "member": {"event_id": event_id, **extra},
+        }
+
+    if apply:
+        try:
+            # SET LOCAL ends with this transaction, which is the bound wanted:
+            # a row someone else is writing is a refusal, not a wait.
+            await session.execute(text(f"SET LOCAL lock_timeout = '{MEMBER_LOCK_TIMEOUT}'"))
+            row = (
+                await session.execute(text(_MEMBER_ROW_SQL + " FOR UPDATE OF e"), {"id": event_id})
+            ).mappings().first()
+        except Exception as exc:  # noqa: BLE001 — a lock not granted is a refusal
+            await session.rollback()
+            return _refused(
+                REASON_MEMBER_LOCKED,
+                f"NOTHING WAS WRITTEN. Row {event_id} was held by another writer "
+                f"past {MEMBER_LOCK_TIMEOUT} ({type(exc).__name__}).",
+            )
+    else:
+        row = (await session.execute(text(_MEMBER_ROW_SQL), {"id": event_id})).mappings().first()
+    observed = None if row is None else dict(row)
+    keys = [] if observed is None else member_anchor_keys(observed)
+    scope, scope_params = _member_anchor_scope(event_id, keys)
+    anchors = [
+        dict(a)
+        for a in (
+            await session.execute(
+                text(
+                    "SELECT event_id, source, source_id, id_kind FROM event_provider_anchors "
+                    f"WHERE {scope} ORDER BY event_id, source, source_id, id_kind LIMIT :m_cap"
+                ),
+                {**scope_params, "m_cap": MEMBER_ANCHOR_CAP + 1},
+            )
+        ).mappings().all()
+    ]
+    if len(anchors) > MEMBER_ANCHOR_CAP:
+        await session.rollback()
+        return _refused(
+            REASON_MEMBER_ANCHOR_OVERFLOW,
+            f"NOTHING WAS WRITTEN. More than {MEMBER_ANCHOR_CAP} anchors are in this "
+            "row's scope; a fence over a clipped set is not a fence.",
+            anchor_keys=keys,
+        )
+    holders = [a for a in anchors if int(a["event_id"]) != event_id]
+    if holders:
+        await session.rollback()
+        return _refused(
+            REASON_MEMBER_FOREIGN_HOLDER,
+            "NOTHING WAS WRITTEN. Another event holds one of this row's own "
+            "provider ids, so which row is this game is contested; that is an "
+            "identity question for the authority, not a clock move.",
+            anchor_keys=keys,
+            holders=[[str(a[k]) for k in MEMBER_ANCHOR_KEYS] for a in holders],
+        )
+    diff = member_fence_diff(observed, anchors, expect=expect, expect_anchors=expect_anchors)
+    if diff:
+        await session.rollback()
+        return _refused(
+            REASON_MEMBER_DRIFT,
+            "NOTHING WAS WRITTEN. The row or its anchors are not what the request "
+            "states; re-read and re-review rather than re-sending.",
+            fence_diff=diff,
+        )
+
+    now = datetime.now(timezone.utc)
+    result = await reconcile(
+        session,
+        apply=apply,
+        apply_only=member_move_only(event_id, espn_id, ours, theirs),
+        write_guard=member_write_guard(event_id, keys, anchors),
+        sport=observed["sport"],
+        limit=5,
+        lookback=now - (ours - MEMBER_HALF_WINDOW),
+        horizon=(ours + MEMBER_HALF_WINDOW) - now,
+    )
+    moves = result.get("moves") or []
+    admissible = (
+        len(moves) == 1
+        and moves[0].get("event_id") == event_id
+        and str(moves[0].get("espn_id")) == espn_id
+        and moves[0].get("ours") == ours.isoformat()
+        and moves[0].get("theirs") == theirs.isoformat()
+        # The apply's own predicate, on the full decision — the summary above
+        # drops orientation and the write, so it cannot answer this alone.
+        and result.get("admitted_event_ids") == [event_id]
+        and not result.get("truncated")
+    )
+    member = {
+        "event_id": event_id,
+        # Row: locked through the commit. Anchors: re-compared inside the
+        # move's own UPDATE (`member_write_guard`, which states its limit).
+        "fence": "held" if apply else "read",
+        "admissible": admissible,
+        "observed": {k: _member_value(v) for k, v in observed.items()},
+        "anchor_keys": [list(k) for k in keys],
+        "anchors": [[str(a[k]) for k in MEMBER_ANCHOR_KEYS] for a in anchors],
+    }
+    moved = result.get("moved_event_ids") or []
+    if apply and moved != [event_id]:
+        # Only the receipt co-commit commits, and it commits exactly the moves
+        # `apply_only` admitted. Empty => nothing landed; release the lock.
+        if not moved:
+            await session.rollback()
+        if moved:
+            code = REASON_MEMBER_UNEXPECTED
+        elif result.get("stale"):
+            code = REASON_MEMBER_DRIFT_AT_WRITE
+        else:
+            code = REASON_MEMBER_NOT_MOVED
+        return {
+            **result,
+            "reason_codes": [*result.get("reason_codes", []), code],
+            "member": member,
+        }
+    if not apply:
+        await session.rollback()
+    return {**result, "member": member}
 
 
 def summarize_for_operator(result: dict[str, Any]) -> str:

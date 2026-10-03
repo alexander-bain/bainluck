@@ -69,6 +69,8 @@ class _Outcome:
     current_probability: Optional[float]
     opening_probability: Optional[float] = None
     probability_change_24h: Optional[float] = None
+    # The select carries the id; the 24h reader keys on it (#10248).
+    id: Optional[int] = None
 
 
 class _Result:

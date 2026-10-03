@@ -43,6 +43,16 @@ _MONTH_YEAR_RE = re.compile(
     re.IGNORECASE,
 )
 
+# "end of September" with no day or year after the month. #10331.
+_END_OF_MONTH_RE = re.compile(
+    r"\bend\s+of\s+("
+    r"jan(?:uary)?|feb(?:ruary)?|mar(?:ch)?|apr(?:il)?|may|jun(?:e)?|"
+    r"jul(?:y)?|aug(?:ust)?|sep(?:t(?:ember)?)?|oct(?:ober)?|"
+    r"nov(?:ember)?|dec(?:ember)?"
+    r")\b\.?(?!\s*,?\s*\d)",
+    re.IGNORECASE,
+)
+
 # 🔴 A DAY RANGE IS DATED BY ITS END, NOT ITS START (#7274 / #1567).
 #
 # `_EXPLICIT_MONTH_DAY_RE` needs a month name in front of every day it reads, so
@@ -179,6 +189,24 @@ def infer_market_real_world_end(
         except ValueError:
             return None
         return implied_end, "explicit_title_month", 1
+
+    # "by end of <Month>" with no day and no year (#10331) — the commonest
+    # Polymarket phrasing, and neither branch above can read it. The period ends
+    # the last day of that month. A year written elsewhere in the title is used
+    # as-is; otherwise the current year, unless that month ended longer ago than
+    # the bare-date look-back — then the title means the NEXT one, not stale.
+    end_of_month_matches = list(_END_OF_MONTH_RE.finditer(name))
+    if end_of_month_matches:
+        match = end_of_month_matches[-1]
+        month = _MONTH_NAME_TO_NUMBER[match.group(1).lower().rstrip(".")]
+        has_year = bool(re.search(r"\b20\d{2}\b", name))
+        year = _implied_year_from_market_name(name, now)
+        implied_end = _month_period_end(year, month, exclusive=False)
+        if implied_end is None:
+            return None
+        if not has_year and now - implied_end > timedelta(days=_BARE_DATE_LOOKBACK_DAYS):
+            return None
+        return implied_end, "explicit_title_end_of_month", 1
 
     event_year = _implied_year_from_market_name(name, now)
     if event_year > now.year:

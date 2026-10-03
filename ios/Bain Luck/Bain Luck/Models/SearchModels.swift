@@ -214,6 +214,10 @@ nonisolated struct SearchFuturesMarket: Decodable, Identifiable, Sendable {
     let topOutcomes: [SearchFuturesOutcome]?
     let outcomeCount: Int?
     let updatedAt: String?
+    /// #10298 — set only when this market is the venue's listing for a game
+    /// whose own card is in the same response. The row then links to the
+    /// questions instead of printing a second favourite beside the game card.
+    var relatedGameListing: RelatedGameListing? = nil
 
     /// #9963: date-ordered search outcomes are a ladder, not a ranked field.
     /// Name the earliest date at or above even, using Discover's existing rule.
@@ -439,8 +443,26 @@ nonisolated struct TypeaheadSuggestion: Decodable, Identifiable, Sendable {
     /// allowlist as the team brief's `stoppage`). The key is ABSENT otherwise,
     /// and absent until that PR is on production — nil keeps the old badge.
     let stoppage: String?
+    /// #10298 — the same key as ``SearchFuturesMarket/relatedGameListing``, on
+    /// a futures row whose game is among the dropdown's event rows.
+    var relatedGameListing: RelatedGameListing? = nil
 
     var id: String { "\(type)-\(text)-\(marketId ?? teamId ?? eventId ?? 0)" }
+}
+
+/// #10298 / #10089 — `related_game_listing`: a multi-question venue listing
+/// for a game that is already on the page. Beside its own game it is shown as
+/// "N questions on this game", never as percentages: its legs are spreads and
+/// totals as well as winners, and naming a favourite from them put "Packers
+/// 53%" next to the game card's "Lions 56%". The server decides membership and
+/// the count; the phone never guesses either from leg names.
+nonisolated struct RelatedGameListing: Decodable, Equatable, Sendable {
+    let eventId: Int
+    let questionCount: Int
+
+    var label: String {
+        "\(questionCount) \(questionCount == 1 ? "question" : "questions") on this game"
+    }
 }
 
 /// Team result returned by search.

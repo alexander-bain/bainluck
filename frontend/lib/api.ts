@@ -49,6 +49,7 @@ import type {
   EventStatus,
   GolfLeaderboardResponse,
   TeamData,
+  RelatedGameListing,
 } from "./types";
 import { getDiscoverSessionId } from "./discoverInteractions";
 import { VERIFIED_TITLE, sanitizeVerifiedTitleDetail } from "./verifiedTitleDetail";
@@ -584,6 +585,9 @@ export interface TypeaheadSuggestion {
   market_type_label?: string;
   // #993 Slice A: the answer, carried into the dropdown (top 3, #23-normalized)
   top_outcomes?: TypeaheadOutcome[];
+  // #10298: present only when this futures row is Polymarket's listing for a game
+  // whose own row is in the same dropdown; the row then prints no percentages.
+  related_game_listing?: RelatedGameListing | null;
   // T2-1 (#5058): the season answers a team row carries, already in reading
   // order and already elected server-side. Absent — not empty — when the team
   // has none.

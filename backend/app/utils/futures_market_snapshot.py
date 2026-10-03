@@ -1032,6 +1032,17 @@ DATED_BASIS_METADATA_KEY = "dated_movement_basis"
 DATED_BASIS_WINDOW_HOURS = 24
 DATED_BASIS_MIN_AGE_HOURS = DATED_BASIS_WINDOW_HOURS // 2
 
+#: The sibling key that says WHICH arm wrote a market's bank (#10248, D4).
+#:
+#: The shared arm banks only legs whose last per-write move cleared the card
+#: floor, so its reader keeps refusing a stored 0. DataGolf's arm banks every
+#: priced leg with a previous price, so a 0 there means "this poll did not
+#: move", not "no claim" — the reader may then date the day off the bank. The
+#: sweep writes and removes this key together with the bank, and only on
+#: `source = 'datagolf'` markets.
+DATED_BASIS_ELIGIBILITY_METADATA_KEY = "dated_movement_basis_eligibility"
+DATED_BASIS_PRICED_LEG = "priced_leg"
+
 
 def dated_movement_basis(market: Any) -> dict:
     """The banked `{outcome_id: [price, observed_at]}` for one market.
@@ -1105,6 +1116,22 @@ def unpriced_opening_ids(market: Any) -> frozenset[int]:
     return frozenset(
         v for v in listed if isinstance(v, int) and not isinstance(v, bool)
     )
+
+
+def dated_basis_admits_zero(market: Any) -> bool:
+    """True when the market's bank was written by the DataGolf arm (#10248, D4).
+
+    Read through `__dict__` for `dated_movement_basis`'s reason; every
+    unreadable shape is False, which keeps the shared `if not stored_change`
+    refusal.
+    """
+    state = _instance_dict(market)
+    if state is None:
+        return False
+    metadata = state.get("market_metadata")
+    if not isinstance(metadata, dict):
+        return False
+    return metadata.get(DATED_BASIS_ELIGIBILITY_METADATA_KEY) == DATED_BASIS_PRICED_LEG
 
 
 def read_dated_basis_entry(entry: Any) -> tuple[float | None, datetime | None]:
@@ -1213,7 +1240,13 @@ def dated_movement_points(
     refreshes only ever gets older, so it leaves the window by itself and the
     badges go quiet without anything having to detect the outage.
     """
-    if not stored_change:
+    if dated_basis_admits_zero(market):
+        # #10248 D4: the DataGolf arm banks every priced leg with a previous
+        # price, so a stored 0 is an unchanged poll, not a missing claim. NULL
+        # (a new or revived leg) still refuses.
+        if stored_change is None:
+            return None
+    elif not stored_change:
         return None
     if current_probability is None or outcome_id is None:
         return None
@@ -1229,6 +1262,38 @@ def dated_movement_points(
     if not DATED_BASIS_MIN_AGE_HOURS <= age_hours <= DATED_BASIS_WINDOW_HOURS:
         return None
     return float(current_probability) - basis
+
+
+#: `FuturesMarket.source` for every DataGolf market (`tasks/datagolf.py`).
+DATAGOLF_MARKET_SOURCE = "datagolf"
+
+
+def reader_change_24h(
+    market: Any,
+    outcome_id: Any,
+    current_probability: Any,
+    stored_change: Any,
+    now: datetime | None = None,
+) -> Any:
+    """The value a reader of the RAW `probability_change_24h` may use (#10248, D5).
+
+    Every source but DataGolf: `stored_change`, untouched, so each caller keeps
+    its own formatting and its exact current behaviour.
+
+    DataGolf: `dated_movement_points`. DataGolf rows now carry the shared
+    per-write delta (D1), which on a 90 s in-play poll is a 90 s move; a reader
+    that printed it under a "24h" label would be printing the wrong day. The
+    dated move is the same answer the detail ladder serves, or `None`.
+
+    `source` is read through `__dict__` for this module's usual reason (gotcha
+    #42); a row with no instance dict or no loaded source keeps the stored value.
+    """
+    state = _instance_dict(market)
+    if state is not None and state.get("source") == DATAGOLF_MARKET_SOURCE:
+        return dated_movement_points(
+            market, outcome_id, current_probability, stored_change, now
+        )
+    return stored_change
 
 
 def opening_baseline_stamp(market: Any) -> Any:
@@ -1691,9 +1756,14 @@ __all__ = [
     "DATED_BASIS_METADATA_KEY",
     "DATED_BASIS_WINDOW_HOURS",
     "DATED_BASIS_MIN_AGE_HOURS",
+    "DATED_BASIS_ELIGIBILITY_METADATA_KEY",
+    "DATED_BASIS_PRICED_LEG",
     "dated_movement_basis",
+    "dated_basis_admits_zero",
     "read_dated_basis_entry",
     "dated_movement_points",
+    "DATAGOLF_MARKET_SOURCE",
+    "reader_change_24h",
     "opening_baseline_stamp",
     "price_poll_stamp",
     "displayed_price_stamp",

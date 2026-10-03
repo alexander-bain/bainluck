@@ -139,6 +139,24 @@ def _event_id_of(external_id: str | None) -> Optional[str]:
     return parts[2]
 
 
+def _per_write_change(previous, prob: float) -> Optional[float]:
+    """`probability_change_24h` for one DataGolf price write (#10248, D1).
+
+    The shared per-write meaning every other writer stores: `new - previous`,
+    0 included when the poll is unchanged, NULL when there is no previous price
+    (a new leg, or a leg coming back from `current_probability = NULL`). The
+    dated "today" number is not this — the sweep banks a dated basis for
+    DataGolf markets and the reader subtracts it (`dated_movement_points`).
+
+    `is not None`, never `if previous`: 0.0 and 1.0 are real golf prices (a
+    graded miss, a won leg), and the falsy idiom in `tasks/futures.py` would
+    store NULL after a 0.0 previous price.
+    """
+    if previous is None:
+        return None
+    return prob - float(previous)
+
+
 def _inplay_owned_events(r, tour: str) -> set[str]:
     """The datagolf event_ids the in-play beat last COMMITTED prices for (#7958).
 
@@ -572,6 +590,11 @@ async def _poll_datagolf_markets() -> dict:
                                 # fourth Python copy of the change predicate, and
                                 # a copy that drifts does not throw — it just
                                 # stops stamping (the helper's own docstring).
+                                # #10248 D1: read the previous price before
+                                # it is replaced.
+                                outcome.probability_change_24h = _per_write_change(
+                                    outcome.current_probability, prob
+                                )
                                 outcome.price_changed_at = price_changed_at_value(
                                     FuturesOutcome.current_probability,
                                     FuturesOutcome.price_changed_at,
@@ -1034,6 +1057,10 @@ async def _poll_datagolf_live() -> dict:
                                 session.add(outcome)
                                 await session.flush()
                             else:
+                                # #10248 D1, the pre-tournament poll's rule.
+                                outcome.probability_change_24h = _per_write_change(
+                                    outcome.current_probability, prob
+                                )
                                 # #4958, same shape and same reason as the
                                 # pre-tournament poll's update branch above.
                                 outcome.price_changed_at = price_changed_at_value(

@@ -24,7 +24,8 @@ WHO IS SELECTED
 ---------------
 
 Only the pinned ``CANDIDATES`` (market id, Gamma event id) — the retained 05:30Z
-cohort plus the specimen. There is no population scan. Each one must, AT RUN TIME:
+cohort, the specimen, and the NLCS "Team to advance" board (60087227, Gamma 956265,
+closed 2026-09-12, found 2026-10-03). There is no population scan. Each one must, AT RUN TIME:
 
 * still be ``source='polymarket'`` with its pinned ``external_id``, and its
   ``polymarket_event_id`` / ``group_id`` (``GAMMA_EVENT_ID_EXPR``'s inputs) must
@@ -83,6 +84,20 @@ conditions are ``resolved`` with 0 writable legs.
 The resolve sync will not re-close a reopened board while the witness holds (that
 is #10183), and Pass 4 reads only ``status='resolved'``. So a reopened board stays
 open until the venue settles it, and then resolves through the normal path.
+
+NOT YET STORED: THE NLCS BOARD'S LIVE LEGS
+-----------------------------------------
+
+The NLCS board holds 1 of the venue's 15 legs (the eliminated Rockies, promoted
+as above). The four teams still trading were never stored. The repair does not
+mint them. Only ``status='open'`` parents are re-read: the hourly poll reaches
+the newest ~2,000 active events, and ``recover_sunk_polymarket_events`` (heavy,
+:26) re-reads stored parents through ``_SUNK_POLY_WHERE``. So the false close on
+9/12 is what kept the other legs out. Once reopened, the row's 2026-09-03
+``volume_updated_at`` puts it first in that task's STARVED arm (oldest stamp
+first; 0 rows ahead on 2026-10-03), and the poll's own writer mints every priced
+leg. The reader sees the board as settled until the apply, as open with one
+eliminated leg until the next :26 pass, then as live.
 
 THE BACKUP, THE COMPARE-AND-SWAP, THE UNDO
 ------------------------------------------
@@ -146,7 +161,8 @@ _TERMINAL_WIN = 0.95
 
 #: (market id, Gamma event id). The retained 05:30Z 2026-10-02 cohort: the 20
 #: boards that run closed while Gamma ``/events/{id}``, read right after, still
-#: listed them open with a trading leg. Plus the specimen, closed 2026-10-01 11:30Z.
+#: listed them open with a trading leg. Plus the specimen, closed 2026-10-01 11:30Z,
+#: and the NLCS board, closed 2026-09-12 05:35Z.
 SPECIMEN = (63490287, "1110298")  # MLB Playoffs: World Series Exact Matchup
 CANDIDATES: tuple[tuple[int, str], ...] = (
     SPECIMEN,
@@ -170,6 +186,10 @@ CANDIDATES: tuple[tuple[int, str], ...] = (
     (63646318, "1115031"),  # Israel vs. Kosovo - Player Props
     (63656412, "1115049"),  # Greece vs. Netherlands - Player Props
     (63656414, "1115048"),  # Wales vs. Norway - Player Props
+    # Found 2026-10-03 by a search walk, outside the 05:30Z cohort: resolved by the
+    # sync 2026-09-12 05:35Z holding only the eliminated Rockies leg (1 of 15) while
+    # Gamma still trades Dodgers/Brewers/Padres/Braves. See NOT YET STORED below.
+    (60087227, "956265"),   # MLB Playoffs: Team to advance to NLCS
 )
 
 REOPEN = "REOPEN"

@@ -3395,7 +3395,12 @@ IMPOSSIBLE_PRIOR_BATCH = 10_000
 #: priced from both a sportsbook and a prediction market has a
 #: `current_probability` this statement cannot reason about at all, so the
 #: honest move is to leave its delta alone — A, A2 and A3 still cover it.
-SCALE_IDENTICAL_SNAPSHOT_SOURCES = ("kalshi", "polymarket")
+#:
+#: `datagolf_model` (#10248, D2) is scale-identical by construction: both
+#: DataGolf rails assign the same `prob` to `current_probability` and to the
+#: snapshot, and there is one DataGolf row per leg, so no blend or vig sits
+#: between them.
+SCALE_IDENTICAL_SNAPSHOT_SOURCES = ("kalshi", "polymarket", "datagolf_model")
 
 #: How far a delta may OVERSTATE what the outcome's own series supports before
 #: statement A4 retires it (#4079).
@@ -3559,6 +3564,23 @@ CONTRADICTED_DIRECTION_BATCH = 10_000
 #: starve the high end of the table permanently.
 DATED_BASIS_BANK_BATCH = 10_000
 
+#: How far INSIDE the window A8-DG takes its basis (#10248 after-check).
+#:
+#: The reader refuses a basis older than the window, so a basis banked at the
+#: window's edge expires minutes after the sweep that banked it. DataGolf's
+#: history is dense — a snapshot every 4-6 min in play — so the oldest in-window
+#: observation is ALWAYS at the edge, and the dated move went dark until the
+#: next sweep: MEASURED on production 2026-10-03, the 11:58Z sweep banked the
+#: Dunhill winner's leaders off 12:01:13Z the day before (valid ~3 min), with
+#: sweeps 10-14 min apart, so the leader's 24h column read "-" most of the
+#: round. Taking the basis this far inside the window keeps every banked cell
+#: valid past the next sweep, with one missed run to spare; a STOPPED sweep
+#: still fails closed, just this much later. The move a reader sees then spans
+#: 23.5-24 h, which is still "the day" by the minimum-age bar above.
+#:
+#: DataGolf's arm only; the shared A8 is unchanged (#10248 scope).
+DATED_BASIS_BANK_LEAD_MINUTES = 30
+
 
 #: How many runs statement A10 spreads the opening-book judgement over (#8612).
 #:
@@ -3691,6 +3713,13 @@ def update_max_movement(self):
         # bank nobody can find, and the failure is silent — the card simply
         # never says "today" again.
         from app.utils.futures_market_snapshot import DATED_BASIS_METADATA_KEY
+
+        # A8-DG's mark (#10248, D4), from the reader's module for the same
+        # reason as the bank key above.
+        from app.utils.futures_market_snapshot import (
+            DATED_BASIS_ELIGIBILITY_METADATA_KEY,
+            DATED_BASIS_PRICED_LEG,
+        )
 
         # A8's price test (#8594). The empty-book rail, imported from the module
         # that owns it for the floor's reason: a basis the sweep calls a price
@@ -4277,9 +4306,178 @@ def update_max_movement(self):
                 },
             )
 
+            # A8's price test and carrier key, shared by A8-DG / A9-DG below.
+            priced = (
+                "((s.yes_bid IS NULL AND s.yes_ask IS NULL)"
+                " OR s.yes_ask - s.yes_bid < :max_spread)"
+            )
+            max_spread = Decimal(str(FEED_PHANTOM_MIN_SPREAD))
+            bank_key = DATED_BASIS_METADATA_KEY
+
+            # A8-DG. THE DATAGOLF BANK (#10248, D3).
+            #
+            #     DataGolf polls every 90 s in play and hourly before it, and
+            #     stores the shared per-write delta (D1), so an unchanged poll
+            #     stores 0 and almost no poll moves 2 points. A8's floor would
+            #     leave a golf board unbanked overnight and flickering in play.
+            #     So DataGolf markets get their own arm, with no per-write
+            #     floor: every priced leg that has a previous price (a non-NULL
+            #     delta, 0 allowed) is in scope.
+            #
+            #     The evidence bar is A8's, unchanged: the oldest in-window
+            #     priced observation, one source, same scale, at least
+            #     `DATED_BASIS_MIN_AGE_HOURS` old. Nothing else is an anchor —
+            #     not `opening_probability`, not a pre-window snapshot whose
+            #     `valid_until` reaches into the window, not another market's
+            #     cell. The cell key is the outcome id, and an outcome belongs
+            #     to one `datagolf:{tour}:{event}:{market_type}` market, so
+            #     winner, top-N, make-cut and each tour never share an anchor.
+            #
+            #     The bank carries a sibling mark, written and removed with it.
+            #     The reader lifts its zero-delta refusal only for a marked
+            #     bank (`dated_basis_admits_zero`), because only this arm banks
+            #     legs whose last poll did not move. A payload replaces the old
+            #     one; an empty payload removes both keys.
+            dg_mark_key = DATED_BASIS_ELIGIBILITY_METADATA_KEY
+            banked_dg = await session.execute(
+                text(f"""
+                    UPDATE futures_markets fm
+                    SET market_metadata =
+                            CASE WHEN bank.payload = '{{}}'::jsonb
+                                 THEN fm.market_metadata
+                                      - CAST('{bank_key}' AS text)
+                                      - CAST('{dg_mark_key}' AS text)
+                                 -- Not `coalesce`: a JSON `null` is not SQL
+                                 -- NULL, and `'null' || {{...}}` builds an
+                                 -- array (A10's note).
+                                 ELSE (CASE WHEN jsonb_typeof(fm.market_metadata)
+                                                 = 'object'
+                                            THEN fm.market_metadata
+                                            ELSE '{{}}'::jsonb END)
+                                      || jsonb_build_object(
+                                             '{bank_key}', bank.payload,
+                                             '{dg_mark_key}', CAST(:dg_mark AS text)
+                                         )
+                            END
+                    FROM (
+                        SELECT q.market_id,
+                               coalesce(
+                                   jsonb_object_agg(
+                                       q.outcome_id::text,
+                                       jsonb_build_array(
+                                           round(q.basis, 6),
+                                           to_char(
+                                               q.basis_at AT TIME ZONE 'UTC',
+                                               'YYYY-MM-DD"T"HH24:MI:SS"Z"'
+                                           )
+                                       )
+                                   ) FILTER (WHERE q.qualifies),
+                                   '{{}}'::jsonb
+                               ) AS payload
+                        FROM (
+                            SELECT fo.market_id,
+                                   fo.id AS outcome_id,
+                                   obs.basis::numeric AS basis,
+                                   obs.basis_at AS basis_at,
+                                   coalesce(
+                                       obs.basis IS NOT NULL
+                                       AND obs.foreign_scale IS FALSE
+                                       AND obs.sources = 1
+                                       AND obs.basis_at
+                                           <= now()
+                                              - (:basis_age_hours * interval '1 hour'),
+                                       false
+                                   ) AS qualifies
+                            FROM futures_outcomes fo
+                            JOIN futures_markets m ON m.id = fo.market_id
+                            CROSS JOIN LATERAL (
+                                SELECT (array_agg(
+                                            s.probability ORDER BY s.captured_at
+                                        ) FILTER (WHERE {priced}))[1] AS basis,
+                                       min(s.captured_at)
+                                           FILTER (WHERE {priced}) AS basis_at,
+                                       count(DISTINCT s.bookmaker) AS sources,
+                                       bool_or(
+                                           s.bookmaker <> ALL(:scale_identical)
+                                       ) AS foreign_scale
+                                FROM futures_odds_snapshots s
+                                WHERE s.outcome_id = fo.id
+                                  -- The bank lead: the basis must outlive the
+                                  -- next sweep (`DATED_BASIS_BANK_LEAD_MINUTES`).
+                                  AND s.captured_at
+                                      > now() - (:window_hours * interval '1 hour')
+                                            + (:bank_lead_minutes * interval '1 minute')
+                            ) obs
+                            WHERE fo.probability_change_24h IS NOT NULL
+                              AND fo.current_probability IS NOT NULL
+                              AND m.status = 'open'
+                              AND m.source = 'datagolf'
+                        ) q
+                        GROUP BY q.market_id
+                        ORDER BY q.market_id
+                        LIMIT :batch
+                    ) bank
+                    WHERE fm.id = bank.market_id
+                      AND CASE WHEN bank.payload = '{{}}'::jsonb
+                               THEN coalesce(
+                                        jsonb_exists(fm.market_metadata, '{bank_key}')
+                                        OR jsonb_exists(fm.market_metadata, '{dg_mark_key}'),
+                                        false
+                                    )
+                               ELSE (fm.market_metadata -> '{bank_key}')
+                                        IS DISTINCT FROM bank.payload
+                                    OR (fm.market_metadata ->> '{dg_mark_key}')
+                                        IS DISTINCT FROM CAST(:dg_mark AS text)
+                          END
+                """),
+                {
+                    "window_hours": MOVEMENT_WINDOW_HOURS,
+                    "basis_age_hours": DATED_BASIS_MIN_AGE_HOURS,
+                    "batch": DATED_BASIS_BANK_BATCH,
+                    "scale_identical": list(SCALE_IDENTICAL_SNAPSHOT_SOURCES),
+                    "max_spread": max_spread,
+                    "dg_mark": DATED_BASIS_PRICED_LEG,
+                    "bank_lead_minutes": DATED_BASIS_BANK_LEAD_MINUTES,
+                },
+            )
+
+            # A9-DG. A DataGolf market that has left A8-DG's scope (closed, or
+            #     no priced leg with a previous price) loses its bank and mark.
+            #     A9's job for the arm A9 no longer covers.
+            #
+            #     BOTH DataGolf arms run BEFORE A8 and A9, and their exclusions
+            #     below are what keep this bank: run first, a shared statement
+            #     without its `source` exclusion would overwrite (A8) or delete
+            #     (A9) it in the same pass.
+            unbanked_dg = await session.execute(
+                text(f"""
+                    UPDATE futures_markets fm
+                    SET market_metadata = fm.market_metadata
+                                          - CAST('{bank_key}' AS text)
+                                          - CAST('{dg_mark_key}' AS text)
+                    WHERE fm.source = 'datagolf'
+                      AND (
+                          jsonb_exists(fm.market_metadata, '{bank_key}')
+                          OR jsonb_exists(fm.market_metadata, '{dg_mark_key}')
+                      )
+                      AND (
+                          fm.status IS DISTINCT FROM 'open'
+                          OR NOT EXISTS (
+                              SELECT 1
+                              FROM futures_outcomes fo
+                              WHERE fo.market_id = fm.id
+                                AND fo.probability_change_24h IS NOT NULL
+                                AND fo.current_probability IS NOT NULL
+                          )
+                      )
+                """),
+            )
+
             # A8. PUBLISH THE DATED EVIDENCE A "TODAY" CLAIM NEEDS.
             #
-            #     Every statement above this one DELETES. A4 deletes a delta
+            #     Every statement above this one DELETES, except #10248's
+            #     DataGolf arms, which publish this same bank for DataGolf
+            #     markets only. A4 deletes a delta
             #     that claims to have travelled further than the window saw; A7
             #     deletes one that claims to have travelled the wrong way. What
             #     neither can do — what no amount of deleting can do — is make
@@ -4401,12 +4599,6 @@ def update_max_movement(self):
             #     and an empty payload removes the key rather than writing an
             #     empty cell. `dated_basis_banked` counts those removals too:
             #     it is markets WRITTEN.
-            priced = (
-                "((s.yes_bid IS NULL AND s.yes_ask IS NULL)"
-                " OR s.yes_ask - s.yes_bid < :max_spread)"
-            )
-            max_spread = Decimal(str(FEED_PHANTOM_MIN_SPREAD))
-            bank_key = DATED_BASIS_METADATA_KEY
             banked = await session.execute(
                 text(f"""
                     UPDATE futures_markets fm
@@ -4471,6 +4663,11 @@ def update_max_movement(self):
                               AND fo.current_probability IS NOT NULL
                               AND abs(fo.probability_change_24h) >= :floor
                               AND m.status = 'open'
+                              -- #10248 D3: DataGolf markets are banked by A8-DG
+                              -- below. Without this, this arm would overwrite
+                              -- their bank with only the legs at the floor.
+                              -- `IS DISTINCT FROM` keeps a NULL source in scope.
+                              AND m.source IS DISTINCT FROM 'datagolf'
                         ) q
                         GROUP BY q.market_id
                         ORDER BY max(abs(q.delta)) DESC
@@ -4522,6 +4719,10 @@ def update_max_movement(self):
                     SET market_metadata =
                             fm.market_metadata - CAST('{bank_key}' AS text)
                     WHERE jsonb_exists(fm.market_metadata, '{bank_key}')
+                      -- #10248 D3: A9-DG below owns DataGolf banks. This
+                      -- statement would delete them on every run, because a
+                      -- 90 s DataGolf move is almost never at the floor.
+                      AND fm.source IS DISTINCT FROM 'datagolf'
                       AND NOT EXISTS (
                           SELECT 1
                           FROM futures_outcomes fo
@@ -4682,6 +4883,8 @@ def update_max_movement(self):
             contradicted_rows = contradicted.rowcount
             banked_markets = banked.rowcount
             unbanked_markets = unbanked.rowcount
+            banked_dg_markets = banked_dg.rowcount
+            unbanked_dg_markets = unbanked_dg.rowcount
             opening_markets = openings.rowcount
             rank_expired_rows = rank_expired.rowcount
             rank_graded_rows = rank_graded.rowcount
@@ -4747,6 +4950,9 @@ def update_max_movement(self):
                 # stall (a basis only moves when an observation ages out).
                 "dated_basis_banked": banked_markets,
                 "dated_basis_unbanked": unbanked_markets,
+                # #10248 A8-DG / A9-DG, MARKETS WRITTEN like the two above.
+                "dated_basis_banked_datagolf": banked_dg_markets,
+                "dated_basis_unbanked_datagolf": unbanked_dg_markets,
                 # #8612 / A10. MARKETS WRITTEN in this run's slice (listed,
                 # changed or cleared), not markets judged: `IS DISTINCT FROM`
                 # skips unchanged verdicts, so after the first two hours a

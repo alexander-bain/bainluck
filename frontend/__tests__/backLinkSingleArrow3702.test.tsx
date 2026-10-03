@@ -93,36 +93,53 @@ function linkContaining(source: string, phrase: string): string {
   return matches[0];
 }
 
+/** JSX source with its `{/* ... *\/}` comments removed — code a reader can see, literal or expression. */
+const withoutComments = (jsx: string): string => jsx.replace(/\{\/\*[\s\S]*?\*\/\}/g, " ");
+
 describe("#3702: the events back link draws one arrow, not two", () => {
+  // #10317 moved the link into the shared `OriginBackControl`: the game page
+  // supplies the label ("Back to events") and the control draws the chevron and
+  // the label ("Back" once it has proof, the page's label otherwise). The rule
+  // is the same, so it is stated over the two halves the reader's link is now
+  // made of.
   const page = readSource("app/events/[id]/page.tsx");
-  const backLink = linkContaining(page, "Back to events");
+  const uses = page.split("<OriginBackControl").slice(1).map((rest) => rest.slice(0, rest.indexOf("/>")));
+  const label = /fallbackLabel="([^"]*)"/.exec(uses[0] ?? "")?.[1] ?? "";
+  const backLink = linkContaining(readSource("components/OriginBackControl.tsx"), "");
+
+  it("the page renders the shared control exactly once, with its label", () => {
+    expect(uses).toHaveLength(1);
+    expect(label).not.toBe("");
+  });
 
   it("still draws the chevron — the fix removed the duplicate, not the affordance", () => {
     expect(backLink).toContain(CHEVRON_PATH);
   });
 
   it("prints no arrow glyph in the label the reader reads", () => {
-    expect(containsArrowGlyph(renderedText(backLink))).toBe(false);
+    expect(containsArrowGlyph(label)).toBe(false);
+    // Both labels the control can print live in an expression, so the scan
+    // reads the whole element, not just its literal text.
+    expect(containsArrowGlyph(withoutComments(backLink))).toBe(false);
   });
 
   it("still says where it goes", () => {
-    expect(renderedText(backLink)).toContain("Back to events");
+    expect(label).toBe("Back to events");
+    expect(backLink).toContain("fallbackLabel");
   });
 
   it("POSITIVE CONTROL — the predicate fires on the markup that shipped", () => {
     // The label exactly as it was before this fix. If this ever stops failing
-    // the predicate, the two assertions above are vacuous.
-    const asShipped = backLink.replace("Back to events", "← Back to events");
-    expect(containsArrowGlyph(renderedText(asShipped))).toBe(true);
+    // the predicate, the assertions above are vacuous.
+    expect(containsArrowGlyph(label.replace("Back to events", "← Back to events"))).toBe(true);
+    expect(containsArrowGlyph(withoutComments(backLink.replace('"Back"', '"← Back"')))).toBe(true);
   });
 
   it("POSITIVE CONTROL — a comment mentioning ← does NOT trip the guard", () => {
     // Otherwise the fix could not explain itself in the file it fixes.
-    const commented = backLink.replace(
-      "Back to events",
-      "{/* was: ← Back to events */}Back to events",
-    );
-    expect(containsArrowGlyph(renderedText(commented))).toBe(false);
+    const commented = backLink.replace("fallbackLabel}", "fallbackLabel}{/* was: ← Back to events */}");
+    expect(commented).not.toBe(backLink);
+    expect(containsArrowGlyph(withoutComments(commented))).toBe(false);
   });
 });
 

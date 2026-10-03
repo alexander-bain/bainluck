@@ -965,6 +965,38 @@ export function visibleChartOutcomes<T extends { outcome_id: number }>(
 }
 
 /**
+ * #10266 — THE DRAWN LINES IN A FIXED ORDER, so a line keeps its colour when
+ * the reader changes range.
+ *
+ * The chart deals its palette by position, and the position was the order of
+ * the `/api/futures/{id}/history` response, which changes with `hours=`. On
+ * `/futures/231` the 1M legend read SMU, Pittsburgh, Miami and the 1W legend
+ * Pittsburgh, Miami, SMU, so Pittsburgh was red on 1M and blue on 1W. The
+ * reader came from a Pitt game page and had to find Pitt in the legend again.
+ *
+ * `order` is the caller's fixed list of outcome ids (the futures page passes
+ * the market's own outcome order, which a range tap does not refetch). Ids it
+ * does not name keep their response order, after the named ones. This only
+ * ORDERS the drawn set: which lines are drawn stays `visibleChartOutcomes`'s
+ * answer, so the caption that asks that helper still describes the chart.
+ */
+export function inFixedSeriesOrder<T extends { outcome_id: number }>(
+  drawn: readonly T[],
+  order?: readonly number[] | null,
+): T[] {
+  if (!order || order.length === 0) return [...drawn];
+  const rank = new Map<number, number>();
+  order.forEach((id, i) => {
+    if (!rank.has(id)) rank.set(id, i);
+  });
+  const unnamed = order.length;
+  return drawn
+    .map((o, i) => ({ o, i, r: rank.get(o.outcome_id) ?? unnamed }))
+    .sort((a, b) => a.r - b.r || a.i - b.i)
+    .map(({ o }) => o);
+}
+
+/**
  * #8016 — the caption's subject: the drawn line with the highest current
  * probability, or null when the chart is drawing nothing.
  *

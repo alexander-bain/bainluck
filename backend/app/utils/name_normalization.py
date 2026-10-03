@@ -11,6 +11,7 @@ Public API:
     clean_slug(name)          — URL-safe slug from a name
     token_overlap_score(a, b) — Jaccard-like fuzzy score (0.0-1.0)
     names_match(a, b)         — Boolean: do these names refer to the same entity?
+    expand_city_abbreviations(s) — Expand standalone city abbreviations ("la" → "los angeles")
 """
 
 import re
@@ -598,6 +599,19 @@ def _expand_abbreviations(name: str) -> str:
         else:
             expanded.append(w)
     return " ".join(expanded)
+
+
+def expand_city_abbreviations(normalized: str) -> str:
+    """Expand standalone city abbreviations in an already-normalized name (#10304).
+
+    Public wrapper over :data:`_CITY_ABBREVIATIONS` for modules that normalize
+    names their own way but must still read what ESPN prints: "la clippers"
+    becomes "los angeles clippers". College abbreviations are deliberately NOT
+    expanded here — "st" is "Saint" as often as "State" outside a college feed.
+    """
+    if not normalized:
+        return ""
+    return " ".join(_CITY_ABBREVIATIONS.get(w, w) for w in normalized.split())
 
 
 def token_overlap_score(name_a: str, name_b: str) -> float:

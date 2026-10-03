@@ -98,13 +98,40 @@ class TestTheManifest:
     def test_the_specimen_leads_and_the_cohort_is_pinned(self):
         assert repair.SPECIMEN == (63490287, "1110298")
         assert repair.CANDIDATES[0] == repair.SPECIMEN
-        assert len(repair.CANDIDATES) == 21
+        assert len(repair.CANDIDATES) == 22
         ids = [m for m, _ in repair.CANDIDATES]
         events = [e for _, e in repair.CANDIDATES]
         assert len(set(ids)) == len(ids) and len(set(events)) == len(events)
         assert all(e.isdigit() for e in events)
         # The Korn Ferry Winner board the after-check photographed.
         assert (63049616, "1098408") in repair.CANDIDATES
+
+    def test_the_nlcs_board_is_pinned(self):
+        # Closed 2026-09-12, before the guard; found 2026-10-03 outside the cohort.
+        assert (60087227, "956265") in repair.CANDIDATES
+        assert repair._selected([60087227]) == [(60087227, "956265")]
+
+    def test_the_nlcs_shape_reopens_with_its_one_eliminated_leg_promoted(self):
+        # Gamma 956265, read 2026-10-03: not negRisk (two teams advance), 15 legs,
+        # 11 closed at ["0", "1"], 4 trading. We store only the Rockies, which
+        # Pass 4 stamped all_losers at 0.0. Promoted, it can no longer feed
+        # #6919's stored-legs-only deferred close.
+        mid, eid = 60087227, "956265"
+        venue = _venue(
+            eid,
+            legs=[(n, True, '["0", "1"]') for n in range(11)]
+            + [(11, False, '["0.695", "0.305"]'), (12, False, '["0.635", "0.365"]'),
+               (13, False, '["0.385", "0.615"]'), (14, False, '["0.325", "0.675"]')],
+        )
+        market = _market(
+            id=mid, external_id=eid, name="MLB Playoffs: Team to advance to NLCS",
+            polymarket_event_id=eid, group_id=f"polymarket:{eid}",
+        )
+        p = repair.plan_market((mid, eid), market, [_leg(224051322, 3, src="all_losers")], venue)
+        assert p.verdict == repair.REOPEN, p.reason
+        assert p.promote_legs == [(224051322, _cid(3), False, "all_losers", 0.0)]
+        assert p.clear_legs == [] and p.legs_preserved == 0
+        assert p.venue == {"event_closed": False, "open_legs": 4, "closed_legs": 11, "stored_legs": 1}
 
     def test_the_witness_is_read_by_the_guards_own_helper(self):
         # One reader of venue truth for the guard and its repair, never a second copy.

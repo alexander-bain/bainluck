@@ -43,6 +43,7 @@ struct NativeTournamentDiscoverCard: View {
     let data: FeedTournamentData
     let feedContext: String?
     @Binding var navigationPath: NavigationPath
+    @Environment(\.dynamicTypeSize) private var dynamicTypeSize
 
     private var gradient: (Color, Color) {
         sportCategoryGradients["golf"] ?? sportDefaultGradient
@@ -169,13 +170,25 @@ struct NativeTournamentDiscoverCard: View {
                     // already over, sitting directly under the champion — suppress it,
                     // exactly as web does (its tournament card renders no runner-up
                     // row in the WHAT-HIT state).
+                    //
+                    // #10313 — at an accessibility text size three runners in one row
+                    // left each percent less width than "10%", so it broke as
+                    // "10" / "%" and the names cut to one or two letters. There the
+                    // runners stack, one per line, and the percent never wraps. Below
+                    // accessibility sizes the row is the one it always was.
                     if presentation.showsRunnerUpStrip, let golfers = data.golfers {
-                        HStack(spacing: 12) {
+                        let runnersStacked = dynamicTypeSize.isAccessibilitySize
+                        let runnerLayout = runnersStacked
+                            ? AnyLayout(VStackLayout(alignment: .leading, spacing: 4))
+                            : AnyLayout(HStackLayout(spacing: 12))
+                        runnerLayout {
                             ForEach(golfers.dropFirst().prefix(3)) { golfer in
                                 HStack(spacing: 3) {
                                     Text(FeedProbabilityScale.percentLabel(fromFraction: golfer.probability))
                                         .font(.caption.bold())
                                         .foregroundStyle(.white.opacity(0.9))
+                                        .lineLimit(1)
+                                        .fixedSize()
                                     Text(TeamShortName.short(golfer.name, sportKey: "golf"))
                                         .font(.caption)
                                         .foregroundStyle(.white.opacity(0.7))

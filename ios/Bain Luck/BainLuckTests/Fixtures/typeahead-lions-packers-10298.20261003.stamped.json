@@ -1,0 +1,74 @@
+{
+ "query": "lions packers",
+ "suggestions": [
+  {
+   "away_logo": "https://a.espncdn.com/i/teamlogos/nfl/500/scoreboard/gb.png",
+   "commence_time": "2026-10-25T20:25:00+00:00",
+   "event_id": 14780566,
+   "home_logo": "https://a.espncdn.com/i/teamlogos/nfl/500/scoreboard/det.png",
+   "sport_key": "americanfootball_nfl",
+   "status": "scheduled",
+   "text": "Green Bay Packers at Detroit Lions",
+   "type": "event"
+  },
+  {
+   "away_logo": "https://a.espncdn.com/i/teamlogos/nfl/500/scoreboard/det.png",
+   "commence_time": "2027-01-10T05:00:00+00:00",
+   "event_id": 14780603,
+   "home_logo": "https://a.espncdn.com/i/teamlogos/nfl/500/scoreboard/gb.png",
+   "sport_key": "americanfootball_nfl",
+   "status": "scheduled",
+   "text": "Detroit Lions at Green Bay Packers",
+   "type": "event"
+  },
+  {
+   "market_id": 129037,
+   "market_tier": 1,
+   "market_type_label": "Championship",
+   "sport_key": "football",
+   "text": "NFL: 2027 Champion",
+   "top_outcomes": [
+    {
+     "movement": null,
+     "name": "Buffalo Bills",
+     "probability": 0.135
+    },
+    {
+     "movement": null,
+     "name": "Los Angeles Rams",
+     "probability": 0.115
+    },
+    {
+     "movement": null,
+     "name": "San Francisco 49ers",
+     "probability": 0.0915
+    }
+   ],
+   "type": "futures"
+  },
+  {
+   "market_id": 61040985,
+   "market_tier": 5,
+   "market_type_label": "Prop",
+   "related_game_listing": {
+    "event_id": 14780566,
+    "question_count": 2
+   },
+   "sport_key": "football",
+   "text": "Packers vs. Lions",
+   "top_outcomes": [
+    {
+     "movement": null,
+     "name": "Packers",
+     "probability": 0.53
+    },
+    {
+     "movement": null,
+     "name": "Spread -5.5",
+     "probability": 0.29
+    }
+   ],
+   "type": "futures"
+  }
+ ]
+}

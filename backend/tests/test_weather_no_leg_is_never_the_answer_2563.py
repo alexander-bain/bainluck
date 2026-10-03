@@ -98,6 +98,11 @@ from app.routes.weather import (  # noqa: E402
     get_events,
 )
 
+# The clock the specimens were measured on. "…tornado risk on September 16?" is
+# a past-period title on any later clock, and /events drops those (#10331), so
+# these rows are only servable at the time they were captured.
+CAPTURED_AT = datetime(2026, 9, 17, 12, 0, tzinfo=timezone.utc)
+
 NOW = datetime.now(timezone.utc)
 FRESH = NOW - timedelta(hours=1)
 
@@ -236,7 +241,7 @@ async def test_the_three_production_specimens_print_the_honest_number():
     )
     session.commit()
 
-    payload = await get_events(AsyncDB(session))
+    payload = await get_events(AsyncDB(session), now=CAPTURED_AT)
 
     # The `which-cities` field market names its leading CITY — the same shape
     # the healthy "Number of tornadoes … / Above 25" row on this card already
@@ -269,7 +274,7 @@ async def test_the_repaired_rows_are_still_served():
     _stub(session, 59159633, "Will a hurricane make landfall in Virginia by November 30, 2026?", VIRGINIA)
     session.commit()
 
-    payload = await get_events(AsyncDB(session))
+    payload = await get_events(AsyncDB(session), now=CAPTURED_AT)
 
     assert len(_rows(payload)) == 2
     assert len(payload["tornadoes"]) == 1
@@ -295,7 +300,7 @@ async def test_the_healthy_rows_beside_them_are_untouched():
     _stub(session, 4, "When will the next Atlantic hurricane form?", NEXT_ATLANTIC, source="kalshi")
     session.commit()
 
-    payload = await get_events(AsyncDB(session))
+    payload = await get_events(AsyncDB(session), now=CAPTURED_AT)
 
     marie = _row(payload, "Hurricane Marie")
     assert marie["prob"] == 100 and marie["leader"] == "Category 1 or above"

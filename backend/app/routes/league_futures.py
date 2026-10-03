@@ -38,6 +38,7 @@ from app.services.anchor_channel import market_born_duplicates_on_page
 from app.services.same_instant_refutation import same_instant_refuted_on_page
 from app.utils.aggregation import compute_aggregate_probability
 from app.utils.outcome_display import normalize_display_probs
+from app.utils.futures_market_snapshot import reader_change_24h  # #10248
 from app.utils.event_rails import (
     commence_time_was_never_a_kickoff,
     live_first_order,
@@ -2678,7 +2679,15 @@ def _serialize_outcomes(
             "probability": float(o.current_probability) if o.current_probability else None,
             "opening_probability": float(o.opening_probability) if o.opening_probability else None,
             "rank": o.rank,
-            "movement_24h": float(o.probability_change_24h) if o.probability_change_24h else None,
+            # #10248 D5: a DataGolf leg serves its dated day move, not a 90 s
+            # poll delta; every other source keeps its stored value.
+            "movement_24h": (
+                float(chg)
+                if (chg := reader_change_24h(
+                    market, o.id, o.current_probability, o.probability_change_24h
+                ))
+                else None
+            ),
             "team_id": o.team_id,
             # #3868: the STATE, so the card can draw a result instead of a
             # percentage. `is_winner` is passed through raw — including None,

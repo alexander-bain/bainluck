@@ -103,6 +103,11 @@ from app.utils.event_rails import (
 from app.utils.lifecycle import EVENT_NOT_STARTED, served_event_status
 from app.utils.score_observation import score_observation_fields
 from app.utils.event_props_matrix import blend_mean, build_during_player_props
+from app.utils.event_question_matrix import (
+    build_game_question_matrix,
+    build_series_question_matrix,
+    question_market_facts,
+)
 # ONE definition of the state vocabulary (live/048) — imported, not spelled, so
 # that widening it is a rename here rather than a literal this route quietly
 # stops matching. CERT-786 is what that quiet stop looks like from a user's side.
@@ -4407,6 +4412,26 @@ def _typeahead_seven_without_served_game_winners(
         if not leaving:
             return seven
         dropped |= leaving
+
+
+def _typeahead_stamp_related_game_listings(suggestions: list) -> None:
+    """#10298: the dropdown's half of `_game_listing_event_id`, after the slice.
+
+    `q=lions packers` served "Green Bay Packers at Detroit Lions" (event
+    14780566) and, three rows down, Polymarket's listing for that game,
+    "Packers vs. Lions — Packers 53%". A futures row whose `_listing_of_game`
+    is among the event rows the reader sees gains `related_game_listing`; a
+    listing whose game was cut from the seven is printed as before, because
+    there it is not beside its game. Pops both private keys from every row.
+    """
+    served = {
+        s.get("event_id") for s in suggestions if s.get("type") == "event"
+    } - {None}
+    for s in suggestions:
+        game = s.pop("_listing_of_game", None)
+        questions = s.pop("_listing_questions", 0)
+        if game is not None and game in served:
+            s["related_game_listing"] = _related_game_listing(game, questions)
 
 
 def _typeahead_lead_fixtures_first(events: list, lead_ids: set) -> list:
@@ -13137,6 +13162,15 @@ async def search_events(
         )
         for m in (*deduped_futures, *futures_markets)
     }
+    # #10298: a Polymarket game listing whose game is on this page says so; the
+    # families read the same dicts, so one stamp covers both reader lists.
+    for m in (*deduped_futures, *futures_markets):
+        _listing_game = _game_listing_event_id(m)
+        if _listing_game is not None and _listing_game in _served_event_ids:
+            _card = _formatted_by_id[m.id]
+            _card["related_game_listing"] = _related_game_listing(
+                _listing_game, _card["outcome_count"]
+            )
     formatted_futures = [_formatted_by_id[m.id] for m in futures_markets]
 
     # #6447 RESIDUAL — THE RESULTS STOP NAMING A CLUB THAT DOES NOT EXIST.
@@ -15693,6 +15727,11 @@ async def typeahead_search(
                 )
                 else None
             ),
+            # #10298: the game this row is the Polymarket listing of, and its
+            # question count. Turned into `related_game_listing` after the
+            # slice, only when that game is among the rows the reader sees.
+            "_listing_of_game": _game_listing_event_id(market),
+            "_listing_questions": len(_search_surviving_legs(market)),
         })
 
     # L2-65 Item 1c: EVENT CONCEPT suggestions (tournament pages) from the same
@@ -16132,6 +16171,7 @@ async def typeahead_search(
         suggestions = promote_answering_rows(suggestions, _ta_intent)
         _ta_mark("intent_promote")
 
+    _typeahead_stamp_related_game_listings(suggestions)  # #10298
     for _s in suggestions:
         _s.pop("_derived", None)
         _s.pop("_aliases", None)
@@ -16765,6 +16805,9 @@ def _mover_chips(rows, *, limit: int = _SUGGESTION_MOVERS_LIMIT) -> list[dict]:
     Each row is an outcome carrying `.name`, `.market_id`, `.probability_change_24h`
     and a loaded `.market`; the market may carry a loaded `.event`.
     """
+    # #10248 D5. Function-local: the module's top-level imports are reserved.
+    from app.utils.futures_market_snapshot import reader_change_24h
+
     chips: list[dict] = []
     seen_market_ids: set = set()
 
@@ -16812,7 +16855,16 @@ def _mover_chips(rows, *, limit: int = _SUGGESTION_MOVERS_LIMIT) -> list[dict]:
         # family. `_points` is the house display formatter those two now share —
         # it takes the ABSOLUTE magnitude, drops the trailing zero and says
         # "1 point" singular, so the sign stays out here where the chip wants it.
-        change = outcome.probability_change_24h
+        # #10248 D5: the query SELECTS on the stored column; the chip PRINTS, so
+        # a DataGolf leg's chip states its dated move or is not shown.
+        change = reader_change_24h(
+            market,
+            getattr(outcome, "id", None),
+            getattr(outcome, "current_probability", None),
+            outcome.probability_change_24h,
+        )
+        if not change:
+            continue
         direction = "Surging" if change > 0 else "Falling"
         sign = "+" if change > 0 else ("-" if change < 0 else "")
         pct = f"{sign}{format_movement_points(change)}"
@@ -26955,6 +27007,8 @@ async def _build_game_markets(
     # #9849: the same plain-list pass for the venue's threshold label (#9383),
     # read here for the same reason — no lazy ORM read after a commit boundary.
     _threshold_label_by_market_id = {m.id: market_threshold_label(m) for m in markets}
+    # #10238 G0 (A1): the question matrix's market facts, same plain-list pass.
+    _question_market_facts = {m.id: question_market_facts(m) for m in markets}
 
     # #1735 — THE SUPPRESSED ROWS ARE EXACTLY THE ROWS OWED A RESULT.
     #
@@ -27588,6 +27642,39 @@ async def _build_game_markets(
                 or _row.get("outcome_name")
             )
 
+    # #10238 G1 — the Game question matrix: additive, built from the FINAL served
+    # lists above and the legs already loaded, with this function's own decisions
+    # passed in; see `app/utils/event_question_matrix.py`. Never fails the page.
+    try:
+        _game_question_matrix = build_game_question_matrix(
+            served={
+                "totals": game_totals,
+                "team_totals": team_total_items,
+                "spreads": spreads,
+                "period_markets": period_markets,
+                "matchups": matchups,
+                "other": other_markets,
+            },
+            outcomes=outcomes,
+            market_facts=_question_market_facts,
+            observed=_observed,
+            markets_with_a_winner=markets_with_a_winner,
+            verdict_is_provable=_verdict_is_provable,
+            is_pregame=_pregame_mark_is_pregame,
+            period_from_ticker=_extract_period_from_ticker,
+            period_from_name=_extract_period_from_name,
+            row_market_ids=_row_market_ids,
+            sport_prefix=_gm_sport_prefix,
+            home_team=event.home_team_name,
+            away_team=event.away_team_name,
+            commence_time=event.commence_time,
+        )
+    except Exception as exc:
+        logger.warning(
+            "game-markets %s: question matrix refused on error (%s)", event_id, exc
+        )
+        _game_question_matrix = None
+
     response = {
         "event_id": event_id,
         "home_team": event.home_team_name,
@@ -27669,6 +27756,8 @@ async def _build_game_markets(
             if _during_prop_candidates is not None
             else None
         ),
+        # #10238 G2 — additive; null when no question is built. See G1.
+        "game_question_matrix": _game_question_matrix,
     }
 
     # Caching is the caller's job now (`_publish_game_markets`), so that a build
@@ -28348,6 +28437,8 @@ async def _build_related_futures(
     Everything below this line is the pre-LAT-P136 route body, moved unchanged.
     """
     from app.utils.team_linking import compute_relevance_score
+    # #10248 D5. Function-local: the module's top-level imports are reserved.
+    from app.utils.futures_market_snapshot import reader_change_24h
     from app.utils.market_label_normalization import (
         normalize_market_label,
         classify_market_category,
@@ -28556,6 +28647,13 @@ async def _build_related_futures(
     )
     if _league_exclusion is not None:
         base_season_filters.append(_league_exclusion)
+    # #10319: this exact women's league needs positive competition evidence;
+    # the broad soccer arm and same club names cannot establish that identity.
+    from app.utils.serie_a_femminile_context import admission_condition
+
+    _competition_scope = admission_condition(event_sport_key)
+    _competition_filters = [] if _competition_scope is None else [_competition_scope]
+    base_season_filters.extend(_competition_filters)
     if event_is_finished:
         recency_cutoff = datetime.now(timezone.utc) - timedelta(days=90)
         base_season_filters.append(FuturesMarket.updated_at >= recency_cutoff)
@@ -28585,6 +28683,16 @@ async def _build_related_futures(
     season_market_ids = (
         None if debug else _smd.read(event_sport_key, event_is_finished)
     )
+    if _competition_scope is not None and season_market_ids:
+        # A cache populated before adoption of this rule must not bypass it.
+        # Rebuild a contaminated pool so wrong rows cannot consume its cap.
+        _scope_result = await db.execute(
+            select(FuturesMarket.id).where(
+                FuturesMarket.id.in_(season_market_ids), _competition_scope
+            )
+        )
+        if {row.id for row in _scope_result.all()} != set(season_market_ids):
+            season_market_ids = None
     if season_market_ids is None:
         _tier_query = await db.execute(
             select(FuturesMarket.id, FuturesMarket.market_tier)
@@ -28688,6 +28796,7 @@ async def _build_related_futures(
                         or_(*_series_detection),
                         or_(*_series_home_ilike),
                         or_(*_series_away_ilike),
+                        *_competition_filters,
                     )
                     .limit(50)
                 )
@@ -28701,7 +28810,9 @@ async def _build_related_futures(
         return empty, event.status or "", [], False
 
     # Apply gender name filter to exclude cross-gender markets
-    if gender_market_name_filter and sport_market_ids:
+    # Exact competition admission above also accepts provenance-backed rows
+    # without a "women" title and keeps event-linked game props independent.
+    if gender_market_name_filter and sport_market_ids and _competition_scope is None:
         if gender_market_name_filter == "women":
             # Women's event: only keep markets with women-related keywords
             gender_q = await db.execute(
@@ -29445,7 +29556,16 @@ async def _build_related_futures(
             "external_id": outcome.external_id,
             "probability": float(outcome.current_probability) if outcome.current_probability else None,
             "american_odds": outcome.current_american_odds,
-            "probability_change_24h": float(outcome.probability_change_24h) if outcome.probability_change_24h else None,
+            # #10248 D5 — `reader_change_24h`. The relevance score above keeps
+            # the stored column: it chooses, it does not print.
+            "probability_change_24h": (
+                float(chg)
+                if (chg := reader_change_24h(
+                    market, outcome.id, outcome.current_probability,
+                    outcome.probability_change_24h,
+                ))
+                else None
+            ),
             "opening_probability": float(outcome.opening_probability) if outcome.opening_probability else None,
             "rank": outcome.rank,
             "relevance_score": relevance_score,
@@ -29743,6 +29863,7 @@ async def _build_related_futures(
     # belong to the matchup between BOTH teams, not one side. Loading them
     # separately avoids the home/away classification problems (Yes/No outcomes,
     # both-teams-match ambiguity) that caused them to be dropped or misplaced.
+    _series_question_matrix = None  # #10238 S0 — set by S1 below when built
     formatted_series: list[dict] = []
     if series_market_ids:
         series_outcomes_result = await db.execute(
@@ -29785,8 +29906,14 @@ async def _build_related_futures(
                     "outcome_id": so.id,
                     "name": so.name,
                     "probability": None if refused or not so.current_probability else float(so.current_probability),
+                    # #10248 D5 — `reader_change_24h`.
                     "probability_change_24h": (
-                        None if refused or not so.probability_change_24h else float(so.probability_change_24h)
+                        None
+                        if refused
+                        or not (chg := reader_change_24h(
+                            mkt, so.id, so.current_probability, so.probability_change_24h
+                        ))
+                        else float(chg)
                     ),
                     "settled": _outcome_is_settled(so, mkt.status, field_has_winner),
                     "is_winner": so.is_winner,
@@ -29813,6 +29940,26 @@ async def _build_related_futures(
         relabel_series_card(
             formatted_series, {so.id: so.external_id for so in series_outcomes}
         )
+        # #10238 S1 — the Series question matrix, from the card just built and
+        # the legs it was built from. Its lifecycle is the Series market's own, so
+        # a final Game never closes an open Series. Never fails the page.
+        try:
+            _series_question_matrix = build_series_question_matrix(
+                formatted_series=formatted_series,
+                series_by_market=series_by_market,
+                series_withheld=series_withheld,
+                settled_before_the_game=lambda m: _settled_before_the_game(
+                    m, event.commence_time
+                ),
+                home_team=event.home_team_name,
+                away_team=event.away_team_name,
+            )
+        except Exception as exc:
+            logger.warning(
+                "related-futures %s: series question matrix refused on error (%s)",
+                event.id, exc,
+            )
+            _series_question_matrix = None
 
     resp = {
         "event_id": event_id,
@@ -29821,6 +29968,8 @@ async def _build_related_futures(
         "home_team_futures": home_futures,
         "away_team_futures": away_futures,
         "series_markets": formatted_series,
+        # #10238 S2 — additive; null when no Series question is built. See S1.
+        "series_question_matrix": _series_question_matrix,
         "total_count": len(home_futures) + len(away_futures),
         "summary": summary,
         "event_status": event.status,
@@ -34436,7 +34585,13 @@ def _compute_standings_context(
         # "Dodgers 92-60, #1 West" off a row whose `current_record` said 93-60,
         # and 25 of 30 MLB teams were a game or two behind the same way.
         # `getattr` because a team row is not required to carry the column.
-        record = record_text(getattr(team, "current_record", None), s)
+        # The board's stamp bounds how far `current_record` may lead it
+        # (#10311: a 71-game lead over a board written today is last season).
+        record = record_text(
+            getattr(team, "current_record", None),
+            s,
+            getattr(team, "standings_updated_at", None),
+        )
         if record:
             parts.append(record)
         # Division/league rank. `conf_rank` is NOT consulted: no writer has
@@ -34578,7 +34733,9 @@ def _format_team_data(team) -> dict:
         # serving. Such a row carries no composable W-L either, so it cannot be
         # the contradiction this exists to remove.
         record, standings = reconciled_record_and_standings(
-            team.current_record, standings
+            team.current_record,
+            standings,
+            getattr(team, "standings_updated_at", None),
         )
         if record is not None:
             data["record"] = record
@@ -36211,6 +36368,44 @@ def _search_container_parents_among(
     }
 
 
+def _game_listing_event_id(market) -> Optional[int]:
+    """The game a Polymarket mixed game listing belongs to, else ``None`` (#10298).
+
+    Production, 2026-10-03 06:4xZ, `/search?q=lions`: GAMES served Lions v
+    Packers, Oct 25, at Lions 56%, and ANSWERS led with "Packers vs. Lions —
+    Packers 53% · Oct 25". That row is 61040985, Polymarket's listing for the
+    same game (`market_type` field, `event_id` 14780566), whose legs are a
+    team-win leg beside spreads and a second-half total. Its team-win leg is a
+    stale last trade, so one game had two rows that disagreed on the favourite.
+    The typeahead served it under the game's own row for `q=lions packers`.
+
+    This is #10089's rule (October 1 product decision, live on the NFL week
+    hubs via PR #10121): beside its own game, that listing is a link to more
+    questions on the game, with no percentages. It is not withheld, because
+    its spreads and totals have nowhere else to be found (the game page served
+    no game markets for 14780566), and nothing is inferred from the leg names.
+    The relation is the served one, the same three facts the hub reads: a
+    Polymarket row, stored as a `field`, attached to a game.
+    """
+    if (
+        getattr(market, "source", None) == "polymarket"
+        and getattr(market, "market_type", None) == "field"
+    ):
+        return getattr(market, "event_id", None)
+    return None
+
+
+def _related_game_listing(event_id: int, question_count: int) -> dict:
+    """The additive payload key a client reads to print the #10089 link (#10298).
+
+    Present only when the listing's game is on the same response; ux and native
+    render it as "N questions on this game ›" in place of the outcome
+    percentages. `top_outcomes` is left as it was so a client that has not
+    shipped the consumer half prints exactly what it printed before.
+    """
+    return {"event_id": event_id, "question_count": question_count}
+
+
 _SEASON_WORD_RE = re.compile(r"\bseason\b", re.IGNORECASE)
 
 
@@ -36620,6 +36815,9 @@ def _build_search_top_outcomes(
     # live in `_search_surviving_legs`. They were lifted there by #5516 so that
     # the withdrawal predicate judges the same legs this builder draws; nothing
     # about the chain itself changed.
+    # #10248 D5. Function-local: the module's top-level imports are reserved.
+    from app.utils.futures_market_snapshot import reader_change_24h
+
     real = _search_surviving_legs(market)
     # #5516: an exclusive board whose whole served ladder sums far under 100% is
     # incoherent as a SET even when every rung in it is honest — `Cubs 24% ·
@@ -36833,7 +37031,14 @@ def _build_search_top_outcomes(
                 "probability": (
                     float(o.current_probability) if _outcome_prints_a_price(o) else None
                 ),
-                "movement": float(o.probability_change_24h) if o.probability_change_24h else None,
+                # #10248 D5 — `reader_change_24h`.
+                "movement": (
+                    float(chg)
+                    if (chg := reader_change_24h(
+                        market, o.id, o.current_probability, o.probability_change_24h
+                    ))
+                    else None
+                ),
             }
             for o, name in named
         ]
@@ -36847,7 +37052,14 @@ def _build_search_top_outcomes(
                 ),
                 "american_odds": o.current_american_odds,
                 "rank": o.rank,
-                "movement": float(o.probability_change_24h) if o.probability_change_24h else None,
+                # #10248 D5 — `reader_change_24h`.
+                "movement": (
+                    float(chg)
+                    if (chg := reader_change_24h(
+                        market, o.id, o.current_probability, o.probability_change_24h
+                    ))
+                    else None
+                ),
                 # #8640: the grade, in the detail payload's own two fields
                 # (`FuturesOutcome` in `lib/types.ts`), so a client can tell a
                 # graded 1.0 from a live one. Both are needed: `is_winner`

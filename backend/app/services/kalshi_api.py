@@ -93,6 +93,12 @@ class KalshiMarket(BaseModel):
     # Volume
     volume: Optional[int] = None
     volume_24h: Optional[int] = None
+    #: #8265. The same figure, un-floored and with zero kept apart from absent —
+    #: :func:`venue_volume_24h` of the raw payload. ``volume_24h`` above floors
+    #: ``"0.04"`` to 0 and turns ``"0.00"`` into ``None``, so it cannot answer
+    #: "did anyone trade this leg today"; this can. ``None`` = the venue gave no
+    #: readable figure.
+    volume_24h_reading: Optional[float] = None
     open_interest: Optional[int] = None
 
     # Result (if settled)
@@ -138,6 +144,66 @@ def _strike_number(value) -> Optional[float]:
         return float(value)
     except (TypeError, ValueError):
         return None
+
+
+def venue_volume_24h(raw_market: dict) -> Optional[float]:
+    """The venue's own 24-hour volume for ONE market, without flooring it (#7747).
+
+    🔴 WHY THIS IS NOT ``KalshiMarket.volume_24h``, WHICH IS RIGHT THERE AND
+    PARSED ALREADY. That field is built by
+    ``parse_int_str(volume_24h_fp) or market_data.get("volume_24h")``, and both
+    halves of that expression destroy the only distinction this ship turns on:
+
+    * ``parse_int_str`` is ``int(float(val))``, so the venue's ``"0.04"`` becomes
+      **0** — and 0 is not a rounding of 0.04 here, it is the exact value the
+      consumer reads as "nobody is trading this leg". Congo Republic, one of the
+      three legs CERT-3244 named, trades $0.04.
+    * the ``or`` treats a parsed **0** as falsy and falls through to the legacy
+      ``volume_24h`` key. Read from the venue 2026-09-21, the modern payload
+      carries ONLY the ``_fp`` form, so a genuine zero becomes ``None`` — which
+      this ship must read as "we never asked" and serve. The specimen itself
+      publishes ``volume_24h_fp: '0.00'``, so the shipped field would have made
+      Mensik unwithholdable and the whole ship inert.
+
+    That expression is CORRECT for its own consumer — ``tasks/kalshi.py`` sums it
+    into ``FuturesMarket.volume_24h``, a per-board BigInteger where sub-unit
+    remainders and a None-for-zero are both immaterial (``sum(m.volume_24h or 0)``
+    treats them identically). So it is deliberately left alone rather than
+    "fixed": changing a shared parser under a live ranking consumer to serve one
+    new caller is how a narrow ship becomes a wide regression.
+
+    Reading the RAW dict is normally refused for prices —
+    ``tasks/futures_price_refresh._fetch_kalshi_prices`` says so, because Kalshi
+    quotes PRICES in two formats and re-deriving that is
+    how ``95`` arrives where ``0.95`` belongs. That warning does not reach here:
+    ``volume_24h_fp`` is a single unambiguous decimal string, the plain
+    ``volume_24h`` fallback is the same figure as an integer, and neither can be
+    confused for the other by a factor of a hundred.
+
+    ABSENT AND ZERO ARE DIFFERENT ANSWERS and this is the function that keeps them
+    apart (gotcha #53): a missing or unparseable key returns ``None`` ("we never
+    asked"), while ``"0.00"`` returns ``0.0`` ("the venue says nobody traded it").
+
+    WHY IT LIVES HERE (#8265): every writer that advances a leg's ``last_updated``
+    must take this reading in the same UPDATE, or the consumer's row-relative
+    freshness test (``volume_24h_at >= last_updated``) goes false and the leg
+    reads as "never asked". The 2-hourly ``_poll_kalshi_markets`` re-touches
+    every leg it sees and took no reading, so on 2026-10-03 the 2027 US Open
+    men's board (25 legs, every one ``volume_24h_fp '0.00'``) went stale 15:07Z
+    and served Mensik's 9/30 print at 47%. The parser stores the result as
+    :attr:`KalshiMarket.volume_24h_reading` so that writer can carry it too.
+    """
+    for key in ("volume_24h_fp", "volume_24h"):
+        raw = raw_market.get(key)
+        if raw is None or raw == "":
+            continue
+        try:
+            return float(raw)
+        except (TypeError, ValueError):
+            # A key we cannot read is not a zero. Fall through to the next
+            # spelling, and to None if neither parses.
+            continue
+    return None
 
 
 def event_series_ticker(event_ticker: str) -> str:
@@ -2934,6 +3000,7 @@ class KalshiAPIService(BaseAPIClient):
                 last_price=last_price,
                 volume=volume,
                 volume_24h=volume_24h,
+                volume_24h_reading=venue_volume_24h(market_data),
                 open_interest=open_interest,
                 result=market_data.get("result"),
                 strike_type=market_data.get("strike_type"),

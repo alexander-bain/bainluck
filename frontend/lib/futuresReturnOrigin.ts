@@ -34,6 +34,12 @@
  * duplicated tab, a redirect to another path, a modified or middle click, a
  * stale or mismatched click: no proof, and the control stays the Discover
  * link. Nothing here writes `history.state` or patches `history`.
+ *
+ * #10317 — THE GAME PAGE HAD THE SAME HARD LINK. Its "Back to events" was a
+ * link to `/`, so league → game → Back landed on Discover. The game page gets
+ * the same proof from its OWN store (`gameOrigin`), keyed on game paths: each
+ * store refuses every page that is not its own, so a tap into a game never
+ * arms the question page's Back and the reverse.
  */
 
 /** The parts of a Navigation API history entry this module reads. */
@@ -80,6 +86,8 @@ export interface OriginClick {
 export const ORIGIN_CLICK_TTL_MS = 30_000;
 
 const QUESTION_PATH = /^\/futures\/[^/]+\/?$/;
+/** #10317: the game page, not its `/models` subpage. */
+const GAME_PATH = /^\/events\/[^/]+\/?$/;
 
 function normalizedPath(pathname: string): string {
   return pathname.length > 1 && pathname.endsWith("/") ? pathname.slice(0, -1) : pathname;
@@ -87,6 +95,15 @@ function normalizedPath(pathname: string): string {
 
 /** The question path a link points at, or null if it is not a same-origin question link. */
 export function questionPathOf(href: string | null, env: Pick<OriginEnv, "origin" | "href">): string | null {
+  return pagePathOf(href, env, QUESTION_PATH);
+}
+
+/** #10317: the game path a link points at, or null if it is not a same-origin game link. */
+export function gamePathOf(href: string | null, env: Pick<OriginEnv, "origin" | "href">): string | null {
+  return pagePathOf(href, env, GAME_PATH);
+}
+
+function pagePathOf(href: string | null, env: Pick<OriginEnv, "origin" | "href">, page: RegExp): string | null {
   if (!href) return null;
   let url: URL;
   try {
@@ -96,7 +113,7 @@ export function questionPathOf(href: string | null, env: Pick<OriginEnv, "origin
   }
   if (url.origin !== env.origin) return null;
   if (url.protocol !== "http:" && url.protocol !== "https:") return null;
-  return QUESTION_PATH.test(url.pathname) ? normalizedPath(url.pathname) : null;
+  return page.test(url.pathname) ? normalizedPath(url.pathname) : null;
 }
 
 function predecessorOf(nav: OriginNavigation, current: OriginEntry): OriginEntry | null {
@@ -126,7 +143,19 @@ export interface QuestionOriginStore {
   canGoBack(env: OriginEnv): boolean;
 }
 
+/** The store either back control reads; the question page's and the game page's are both this. */
+export type OriginStore = QuestionOriginStore;
+
 export function createQuestionOriginStore(): QuestionOriginStore {
+  return createOriginStore(QUESTION_PATH);
+}
+
+/** #10317: the same proof for the game page's Back. */
+export function createGameOriginStore(): QuestionOriginStore {
+  return createOriginStore(GAME_PATH);
+}
+
+function createOriginStore(page: RegExp): QuestionOriginStore {
   let pending: Pending | null = null;
   const proofs = new Map<string, Proof>();
 
@@ -138,11 +167,11 @@ export function createQuestionOriginStore(): QuestionOriginStore {
       if (click.download) return false;
       const target = (click.target ?? "").trim().toLowerCase();
       if (target !== "" && target !== "_self") return false;
-      const destPath = questionPathOf(click.href, env);
+      const destPath = pagePathOf(click.href, env, page);
       if (!destPath) return false;
       const current = env.navigation?.currentEntry;
       if (!current) return false;
-      // A link to the question already on screen is not a move.
+      // A link to the page already on screen is not a move.
       if (destPath === normalizedPath(env.pathname)) return false;
       pending = { sourceId: current.id, destPath, at: env.now };
       return true;
@@ -178,6 +207,9 @@ export function createQuestionOriginStore(): QuestionOriginStore {
 
 /** The page's one store: module memory, so it lives exactly as long as the document. */
 export const questionOrigin = createQuestionOriginStore();
+
+/** #10317: the game page's store, the same lifetime. */
+export const gameOrigin = createGameOriginStore();
 
 /** The live browser's env, or null on the server. Never throws. */
 export function browserOriginEnv(): OriginEnv | null {

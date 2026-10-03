@@ -66,6 +66,8 @@ const PlayerPropsDashboard = dynamic(() => import("@/components/PlayerPropsDashb
 // UX-P098: the rail LEADS the props body, so it is a static import — a dynamic
 // one would paint a skeleton in the one slot the page is supposed to answer first.
 import PropDivergenceRail from "@/components/PropDivergenceRail";
+import OriginBackControl from "@/components/OriginBackControl";
+import { gameOrigin } from "@/lib/futuresReturnOrigin";
 const SpecialEventMarkets = dynamic(() => import("@/components/SpecialEventMarkets"), { ssr: false });
 const MarketMapSection = dynamic(() => import("@/components/MarketMapSection"), { ssr: false, loading: ChartSkeleton });
 // UX-P152: the tournament's sections OF this page. Dynamic and below the fold —
@@ -2027,26 +2029,16 @@ export default function EventPage({ params }: EventPageProps) {
             arrows across two links. The chevron is the shared affordance both
             links use; the label is words. Guarded by
             __tests__/backLinkSingleArrow3702.test.tsx, over BOTH links. */}
-        <Link
-          href="/"
-          onClick={() => trackNavigationClick('back', `/events/${eventId}`, '/')}
-          className="inline-flex items-center text-caption text-text-secondary hover:text-text-primary transition-colors"
-        >
-          <svg
-            className="w-4 h-4 mr-1"
-            fill="none"
-            stroke="currentColor"
-            viewBox="0 0 24 24"
-          >
-            <path
-              strokeLinecap="round"
-              strokeLinejoin="round"
-              strokeWidth={2}
-              d="M15 19l-7-7 7-7"
-            />
-          </svg>
-          Back to events
-        </Link>
+        {/* #10317: "Back to events" was a hard link to `/`, so league → game →
+            Back landed on Discover. With proof that the entry behind this one
+            is the page the reader tapped from, it reads "Back" and goes there;
+            otherwise it is the old link (`lib/futuresReturnOrigin.ts`). */}
+        <OriginBackControl
+          store={gameOrigin}
+          fallbackHref="/"
+          fallbackLabel="Back to events"
+          onNavigate={(to) => trackNavigationClick('back', `/events/${eventId}`, to)}
+        />
         </div>
 
         {/* THE HEADER SAYS HOW OLD ITS NUMBER IS — live/034 S2, #4861, and now

@@ -83,6 +83,10 @@ INSERT_VERBS = {"pg_insert", "insert"}
 #: file exists to force. Adding a line here without adding the snapshot insert
 #: still fails :func:`test_every_stored_delta_is_born_beside_its_own_observation`.
 KNOWN_STORING_WRITERS = {
+    # #10248 D1: both DataGolf rails store the shared per-write delta and write
+    # the `datagolf_model` snapshot for the same outcome in the same pass.
+    "datagolf.py::_poll_datagolf_live",
+    "datagolf.py::_poll_datagolf_markets",
     "futures.py::_poll_futures_odds",
     "futures_price_refresh.py::_write_prices",
     "kalshi.py::_poll_kalshi_markets",

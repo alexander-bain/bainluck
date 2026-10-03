@@ -533,6 +533,30 @@ jobs:
             exit 1
           fi
 
+      - name: "#10305 one-row anchor-schedule move: lock, fence and reach (real Postgres)"
+        # The anchor-schedule rail's member mode claims three things only a
+        # server can answer: the row is LOCKED through the rail's own commit
+        # (another writer blocks), a stated-state mismatch writes nothing, and
+        # `apply_only` reaches exactly the named row while a sibling at the
+        # same clock is decided and left alone; and the anchor fence covers
+        # every holder of the row's ids and is re-judged inside the move's own
+        # UPDATE. A fake session never blocks and
+        # returns whatever rowcount it is told, so this cannot be a unit test.
+        # Same skip refusal as every gate in this job, plus the exact count.
+        if: matrix.group == 'shared'
+        run: |
+          set -o pipefail
+          python -m pytest tests/integration/test_reconcile_anchor_schedule_member_10305_pg.py \
+            -v -rs -p no:cacheprovider 2>&1 | tee /tmp/member10305.txt
+          if grep -qiE "[0-9]+ skipped" /tmp/member10305.txt; then
+            echo "::error::#10305 member-move gate SKIPPED — the gate did not run"
+            exit 1
+          fi
+          if ! grep -qE "\b11 passed\b" /tmp/member10305.txt; then
+            echo "::error::#10305 member-move gate did not pass exactly 11 tests"
+            exit 1
+          fi
+
       - name: Typeahead next-fixture contracts, or-NEXT and lead-team (real Postgres)
         # #5201 rides this step: the or-NEXT arm below is gated on "no pooled row
         # NAMES the query's participant", and a NAMESAKE satisfies that gate —
@@ -1908,6 +1932,23 @@ jobs:
             -v -s -rs 2>&1 | tee /tmp/movement_window.txt
           if grep -qiE "[0-9]+ skipped" /tmp/movement_window.txt; then
             echo "::error::movement window contract SKIPPED — the gate did not run"
+            exit 1
+          fi
+
+      - name: DataGolf dated movement contract (real Postgres)
+        # #10248. Golf rows served "-" in the 24h column: DataGolf never wrote
+        # `probability_change_24h`, and A8's 2-point per-write floor never banks
+        # a 90 s poll. Drives the real DataGolf writers (both rails), the real
+        # `update_max_movement` and the real `/api/futures/{id}` route: basis
+        # 0.02 at 19 h, 0.15 now, an unchanged poll storing 0 -> served +0.13;
+        # refusals serve None; four strawmen must each turn it red.
+        if: matrix.group == 'shared'
+        run: |
+          set -o pipefail
+          python -m pytest tests/integration/test_datagolf_dated_movement_10248_pg.py \
+            -v -s -rs 2>&1 | tee /tmp/datagolf_dated_movement.txt
+          if grep -qiE "[0-9]+ skipped" /tmp/datagolf_dated_movement.txt; then
+            echo "::error::DataGolf dated movement contract SKIPPED — the gate did not run"
             exit 1
           fi
 
@@ -6024,6 +6065,27 @@ jobs:
             exit 1
           }
 
+      - name: "#10300 a live row with a future reported start and no play goes back to scheduled (real Postgres)"
+        # Ässät v Lukko sat in the live list 6.5h before its reported start.
+        # The un-start is decided on a row read `FOR UPDATE SKIP LOCKED`, and
+        # whether a concurrent score, clock, status or start write is seen,
+        # skipped or blocked is a property of Postgres row locks that only two
+        # real sessions can show. Reuses the #7617 database: this file drops
+        # and creates its own tables.
+        if: matrix.group == 'isolated'
+        run: |
+          set -o pipefail
+          python -m pytest tests/integration/test_future_unplayed_live_row_returns_to_scheduled_10300_pg.py \
+            -v -rs 2>&1 | tee /tmp/futurelive10300.txt
+          if grep -qiE "[0-9]+ skipped" /tmp/futurelive10300.txt; then
+            echo "::error::#10300 future-start live contract SKIPPED — the gate did not run"
+            exit 1
+          fi
+          grep -qE "[^0-9]8 passed," /tmp/futurelive10300.txt || {
+            echo "::error::#10300 future-start live contract did not run all eight cases"
+            exit 1
+          }
+
       - name: "#10022 an open-contract leg the socket sees finalize is graded alone (real Postgres)"
         # A finished CHC–SD series kept pricing scorelines that could no longer
         # happen because the socket left open contracts' results to the REST
@@ -6388,6 +6450,46 @@ jobs:
             echo "::error::#7867 team-paths gate did not run all three cases"
             exit 1
           }
+
+      - name: "#10319 women's Serie A identity and season context stay separate from men's (real Postgres)"
+        # Both files create and drop only their own schema. The job's explicit
+        # SEARCH_TEST_DATABASE_URL arms both the route and seed/undo cases.
+        if: matrix.group == 'isolated'
+        run: |
+          set +e
+          python -m pytest \
+            tests/integration/test_serie_a_femminile_identity_10319_pg.py \
+            tests/integration/test_serie_a_femminile_seed_10319_pg.py \
+            -v -rs --tb=short --junitxml=/tmp/seriea10319-junit.xml \
+            > /tmp/seriea10319.txt 2>&1
+          RC=$?
+          set -e
+          cat /tmp/seriea10319.txt
+          echo "PYTEST EXIT CODE: $RC"
+          python - "$RC" <<'PY'
+          import sys, xml.etree.ElementTree as ET
+
+          rc = int(sys.argv[1])
+          try:
+              root = ET.parse("/tmp/seriea10319-junit.xml").getroot()
+          except Exception as exc:
+              sys.exit(f"::error::#10319 produced no junit report ({exc})")
+          s = root if root.tag == "testsuite" else root.find("testsuite")
+          t, f, e, k = (int(s.get(a, 0)) for a in ("tests", "failures", "errors", "skipped"))
+          print(f"tests={t} passed={t - f - e - k} failed={f} errors={e} skipped={k}")
+          if k:
+              sys.exit(f"::error::#10319 SKIPPED {k} test(s) — the gate did not run")
+          files = ("test_serie_a_femminile_identity_10319_pg", "test_serie_a_femminile_seed_10319_pg")
+          counts = {name: sum(name in case.get("classname", "").split(".") for case in s.iter("testcase")) for name in files}
+          print(f"#10319 cases by file: {counts}")
+          if t < 32 or not all(counts.values()):
+              sys.exit(f"::error::#10319 requires at least 32 cases and nonzero cases from both files; got {t}, {counts}")
+          if rc not in (0, 1):
+              sys.exit(f"::error::pytest exit {rc} is a harness story, not a result")
+          if f or e or rc:
+              sys.exit(f"::error::#10319 RED: {f} failed, {e} errors")
+          print(f"#10319 GREEN on all {t} cases from both files, zero skips")
+          PY
 
       - name: "#8430 a Polymarket child reuses the row its sibling holds (real Postgres)"
         # #8430. Each child of one Polymarket game event used to mint its own

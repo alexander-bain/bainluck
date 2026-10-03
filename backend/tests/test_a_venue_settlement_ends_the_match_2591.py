@@ -424,7 +424,8 @@ class _NetSession:
 
     def __init__(self, live, candidates):
         # scheduled, live, suspended, bogus-completed, future-settled, #2772.
-        self._selects = [[], live, [], [], [], []]
+        # The last slot is the #10300 future-start live read.
+        self._selects = [[], live, [], [], [], [], []]
         self._live = live
         self._candidates = candidates
         self.updates = []
