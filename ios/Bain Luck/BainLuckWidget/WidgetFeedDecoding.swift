@@ -12,7 +12,7 @@ import Foundation
 
 /// Empty decode target used to advance past a malformed feed item without
 /// failing the whole response (mirrors the main app's `SkipOne`).
-struct WidgetSkipOne: Decodable {}
+nonisolated struct WidgetSkipOne: Decodable {}
 
 enum WidgetItemsKey: String, CodingKey { case items }
 
@@ -21,7 +21,7 @@ enum WidgetItemsKey: String, CodingKey { case items }
 /// shape matches neither WidgetEventData nor WidgetFuturesData — threw out of the
 /// whole decode and took the ENTIRE widget down (all-or-nothing). Skip any item
 /// that fails to decode instead, exactly as `FeedResponse` does in the main app.
-func decodeTolerantWidgetItems<T: Decodable>(from decoder: Decoder) throws -> [WidgetFeedItem<T>] {
+nonisolated func decodeTolerantWidgetItems<T: Decodable>(from decoder: Decoder) throws -> [WidgetFeedItem<T>] {
     let c = try decoder.container(keyedBy: WidgetItemsKey.self)
     var itemsContainer = try c.nestedUnkeyedContainer(forKey: .items)
     var decoded: [WidgetFeedItem<T>] = []
@@ -35,7 +35,7 @@ func decodeTolerantWidgetItems<T: Decodable>(from decoder: Decoder) throws -> [W
     return decoded
 }
 
-struct WidgetFeedResponse: Decodable {
+nonisolated struct WidgetFeedResponse: Decodable {
     let items: [WidgetFeedItem<WidgetEventData>]
 
     init(from decoder: Decoder) throws {
@@ -43,7 +43,7 @@ struct WidgetFeedResponse: Decodable {
     }
 }
 
-struct WidgetDiscoverFeedResponse: Decodable {
+nonisolated struct WidgetDiscoverFeedResponse: Decodable {
     let items: [WidgetFeedItem<WidgetFuturesData>]
 
     init(from decoder: Decoder) throws {
@@ -51,7 +51,7 @@ struct WidgetDiscoverFeedResponse: Decodable {
     }
 }
 
-struct WidgetFeedItem<T: Decodable>: Decodable {
+nonisolated struct WidgetFeedItem<T: Decodable>: Decodable {
     let type: String
     let headline: String?
     let data: T?
@@ -68,7 +68,7 @@ struct WidgetFeedItem<T: Decodable>: Decodable {
     }
 }
 
-struct WidgetEventData: Decodable {
+nonisolated struct WidgetEventData: Decodable {
     let id: Int
     let sport: String?
     let sportName: String?
@@ -83,7 +83,7 @@ struct WidgetEventData: Decodable {
     let espn: WidgetESPNData?
 }
 
-struct WidgetFuturesData: Decodable {
+nonisolated struct WidgetFuturesData: Decodable {
     let id: Int
     let name: String
     let sport: String?
@@ -153,7 +153,7 @@ enum WidgetLifecycle {
     }()
 }
 
-struct WidgetCurrentOdds: Decodable {
+nonisolated struct WidgetCurrentOdds: Decodable {
     let homeProbability: Double?
     // UX-P114: the whole percents the SERVER decided this card prints. The widget
     // is a standalone target and cannot import `RenderedPercent.swift` (see the
@@ -166,17 +166,17 @@ struct WidgetCurrentOdds: Decodable {
     let awayRenderedPercent: Int?
 }
 
-struct WidgetTeamData: Decodable {
+nonisolated struct WidgetTeamData: Decodable {
     let primaryColor: String?
     let abbreviation: String?
 }
 
-struct WidgetESPNData: Decodable {
+nonisolated struct WidgetESPNData: Decodable {
     let gameClock: String?
     let period: String?
 }
 
-struct WidgetOutcome: Decodable {
+nonisolated struct WidgetOutcome: Decodable {
     let name: String
     let probability: Double?
     let movement: Double?
