@@ -3,7 +3,9 @@
 # No simulator boot, signing, provisioning, archive, upload or Apple account writes.
 set -euo pipefail
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
-OUT="${WATCH_BUILD_OUTPUT:-$(mktemp -d /tmp/bainluck-watch-build.XXXXXX)}"
+OUT="${WATCH_BUILD_OUTPUT:-$ROOT/build/watch-mvp}"
+JOBS="${WATCH_BUILD_JOBS:-2}"
+case "$JOBS" in 1|2) ;; *) echo 'Use WATCH_BUILD_JOBS=1 or 2 on the shared host' >&2; exit 2 ;; esac
 CONFIGURATION="${WATCH_BUILD_CONFIGURATION:-Debug}"
 case "$CONFIGURATION" in Debug|Release) ;; *) echo 'Use Debug or Release' >&2; exit 2 ;; esac
 mkdir -p "$OUT"
@@ -19,7 +21,7 @@ for PLATFORM in watchsimulator watchos; do
   fi
   LOG="$OUT/$PLATFORM.log"
   if xcodebuild -project "$ROOT/ios/Bain Luck/Bain Luck.xcodeproj" \
-    -scheme BainLuckWatch -configuration "$CONFIGURATION" -destination "$DESTINATION" \
+    -jobs "$JOBS" -scheme BainLuckWatch -configuration "$CONFIGURATION" -destination "$DESTINATION" \
     -derivedDataPath "$OUT/$PLATFORM" CODE_SIGNING_ALLOWED=NO \
     'OTHER_SWIFT_FLAGS=$(inherited) -Xfrontend -disable-sandbox' build > "$LOG" 2>&1; then
     grep -F '** BUILD SUCCEEDED **' "$LOG"

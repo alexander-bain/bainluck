@@ -141,3 +141,35 @@ nonisolated struct WatchSelectedGame: Codable, Sendable, Identifiable {
         return formatter.date(from: value)
     }
 }
+
+/// Presentation of producer observation age, shared by visible and spoken labels.
+/// Fetch time is deliberately not an input.
+nonisolated struct WatchObservationAge {
+    private let seconds: TimeInterval?
+
+    init(observedAt: Date?, now: Date) {
+        let age = observedAt.map { now.timeIntervalSince($0) }
+        seconds = age.flatMap { $0.isFinite && $0 >= 0 ? $0 : nil }
+    }
+
+    private var unit: (value: Double, short: String, singular: String)? {
+        guard let seconds else { return nil }
+        if seconds < 60 { return (seconds.rounded(.down), "s", "second") }
+        if seconds < 3600 { return ((seconds / 60).rounded(.down), "m", "minute") }
+        if seconds < 86400 { return ((seconds / 3600).rounded(.down), "h", "hour") }
+        return ((seconds / 86400).rounded(.down), "d", "day")
+    }
+
+    var compactText: String? {
+        guard let unit else { return nil }
+        return "\(unit.value.formatted(.number.grouping(.never).precision(.fractionLength(0))))\(unit.short) ago"
+    }
+
+    var spokenText: String? {
+        guard let unit else { return nil }
+        let count = unit.value.formatted(.number.grouping(.never).precision(.fractionLength(0)))
+        return "\(count) \(unit.singular)\(unit.value == 1 ? "" : "s") ago"
+    }
+
+    var isStale: Bool { seconds.map { $0 > 120 } ?? false }
+}

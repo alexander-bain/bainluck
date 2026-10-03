@@ -92,3 +92,15 @@ an older completion from clearing a newer loading state. These are foreground
 policies, not promises of background delivery. Swift tests inject the sleep boundary
 to exercise delays and cancellation without a real timer or simulator. Physical
 background/network and battery behavior still needs device evidence.
+
+## Readable and spoken observation ages
+
+Watch observation ages display seconds, minutes, hours or days and speak full unit
+names. Unknown/future/nonfinite timestamps remain unavailable. The state group
+announces saved/error qualification before scores and named probability. At
+accessibility text sizes, state and score rows stack vertically. These source and
+logic checks do not establish physical VoiceOver focus order or large-text fit.
+
+The build helper now defaults to worktree-local `build/watch-mvp` DerivedData and
+two build jobs (one is supported), respecting shared-host isolation. No simulator
+boot is needed for its two unsigned SDK builds.

@@ -21,6 +21,39 @@ actor Stub: WatchSelectedGameTransport {
         defer { defaults.removePersistentDomain(forName: suite) }
         let transport = Stub()
         let clock = Date(timeIntervalSince1970: 1_800_000_000)
+        let ageCases: [(TimeInterval, String, String, Bool)] = [
+            (0, "0s ago", "0 seconds ago", false),
+            (59, "59s ago", "59 seconds ago", false),
+            (60, "1m ago", "1 minute ago", false),
+            (119, "1m ago", "1 minute ago", false),
+            (120, "2m ago", "2 minutes ago", false),
+            (121, "2m ago", "2 minutes ago", true),
+            (3599, "59m ago", "59 minutes ago", true),
+            (3600, "1h ago", "1 hour ago", true),
+            (86399, "23h ago", "23 hours ago", true),
+            (86400, "1d ago", "1 day ago", true),
+            (1, "1s ago", "1 second ago", false),
+            (7200, "2h ago", "2 hours ago", true),
+            (172800, "2d ago", "2 days ago", true),
+        ]
+        for (seconds, compact, spoken, stale) in ageCases {
+            let age = WatchObservationAge(observedAt: clock.addingTimeInterval(-seconds), now: clock)
+            precondition(age.compactText == compact, "Compact observation age at \(seconds) seconds")
+            precondition(age.spokenText == spoken, "Spoken observation age at \(seconds) seconds")
+            precondition(age.isStale == stale, "Staleness starts strictly after 120 seconds")
+        }
+        let invalidObservationDates: [Date?] = [
+            nil,
+            clock.addingTimeInterval(1),
+            Date(timeIntervalSinceReferenceDate: .nan),
+            Date(timeIntervalSinceReferenceDate: .infinity),
+            Date(timeIntervalSinceReferenceDate: -.infinity),
+        ]
+        for observedAt in invalidObservationDates {
+            let age = WatchObservationAge(observedAt: observedAt, now: clock)
+            precondition(age.compactText == nil && age.spokenText == nil && !age.isStale,
+                         "Missing, future, or nonfinite observations cannot claim an age")
+        }
         let store = WatchSelectedGameStore(transport: transport, defaults: defaults, now: { clock })
         precondition(store.selectedEventID == nil && store.errorMessage == nil)
         await store.refresh()
@@ -219,5 +252,6 @@ actor Stub: WatchSelectedGameTransport {
         precondition(afterCancellation == beforeCancellation && cancelledSleeps == 0, "Cancellation before entry performs neither fetch nor sleep")
         print("PASS: cold offline snapshot restoration, cache integrity, observation-clock round trips, selection persistence, empty/error distinction, retained failure, race fencing, canonical alias, same-selection refresh ordering, cancellation, final status, draw semantics, tolerant optionals, distinct score/probability ages")
         print("PASS: foreground immediate refresh, live/nonlive cadence, capped failure backoff, success and selection reset, throwing-sleep exit, cancellation before entry")
+        print("PASS: deterministic compact and spoken observation ages, unit boundaries, strict two-minute stale threshold, missing/future/nonfinite observations")
     }
 }

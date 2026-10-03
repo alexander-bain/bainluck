@@ -3,6 +3,7 @@ import SwiftUI
 /// A deliberately small Watch surface: select one real game and keep it through final.
 struct WatchSelectedGameView: View {
     @Environment(\.scenePhase) private var scenePhase
+    @Environment(\.dynamicTypeSize) private var dynamicTypeSize
     @StateObject private var store = WatchSelectedGameStore()
     @State private var availableGames: [WatchFeedEvent] = []
     @State private var isLoadingGames = false
@@ -62,13 +63,20 @@ struct WatchSelectedGameView: View {
 
     private func selectedGame(_ game: WatchSelectedGame) -> some View {
         VStack(alignment: .leading, spacing: 6) {
-            HStack(alignment: .firstTextBaseline, spacing: 6) {
+            if store.isRestoredReading {
+                Text("Saved reading · refresh to confirm")
+                    .font(.footnote).foregroundStyle(.orange)
+                    .accessibilityHidden(true) // Included before state in the grouped label below.
+            }
+            flexibleRow {
                 Text(game.isFinal ? "Final" : game.isLive ? "Live" : game.status?.capitalized ?? "Game state unavailable")
                     .font(.subheadline.bold())
                 if game.isLive, let clock = game.liveClockText {
                     Text(clock).font(.footnote)
                 }
             }
+            .accessibilityElement(children: .ignore)
+            .accessibilityLabel(stateAccessibilityLabel(game))
             scoreRow(team: game.awayTeam, score: game.awayScore)
             scoreRow(team: game.homeTeam, score: game.homeScore)
             if game.isFinal && (game.homeScore == nil || game.awayScore == nil) {
@@ -82,10 +90,13 @@ struct WatchSelectedGameView: View {
             if !game.isFinal {
                 if let probability = game.homeProbability, probability.isFinite,
                    (0...1).contains(probability) {
-                    Text("\(game.homeTeam) win")
-                        .font(.footnote)
-                    Text(probability, format: .percent.precision(.fractionLength(0)))
-                        .font(.title2.bold()).monospacedDigit()
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text("\(game.homeTeam) win").font(.footnote)
+                        Text(probability, format: .percent.precision(.fractionLength(0)))
+                            .font(.title2.bold()).monospacedDigit()
+                    }
+                    .accessibilityElement(children: .ignore)
+                    .accessibilityLabel("\(game.homeTeam) win probability, \(probability.formatted(.percent.precision(.fractionLength(0))))")
                 } else {
                     Text("Win probability unavailable")
                         .font(.footnote).foregroundStyle(.secondary)
@@ -97,10 +108,6 @@ struct WatchSelectedGameView: View {
                     probabilityObservationText(game, now: context.date)
                 }
             }
-            if store.isRestoredReading {
-                Text("Saved reading · refresh to confirm")
-                    .font(.footnote).foregroundStyle(.orange)
-            }
             if let error = store.errorMessage {
                 Text(error)
                     .font(.footnote).foregroundStyle(.orange)
@@ -111,9 +118,9 @@ struct WatchSelectedGameView: View {
     }
 
     private func scoreRow(team: String, score: Int?) -> some View {
-        HStack(alignment: .firstTextBaseline, spacing: 8) {
+        flexibleRow {
             Text(team).font(.footnote).fixedSize(horizontal: false, vertical: true)
-            Spacer(minLength: 2)
+            if !dynamicTypeSize.isAccessibilitySize { Spacer(minLength: 2) }
             Text(score.map(String.init) ?? "—")
                 .font(.title3.bold()).monospacedDigit()
         }
@@ -121,36 +128,41 @@ struct WatchSelectedGameView: View {
         .accessibilityLabel("\(team), \(score.map { "score \($0)" } ?? "score unavailable")")
     }
 
-    @ViewBuilder
+    private func stateAccessibilityLabel(_ game: WatchSelectedGame) -> String {
+        let state = game.isFinal ? "Final" : game.isLive ? "Live" : game.status?.capitalized ?? "Game state unavailable"
+        return [store.isRestoredReading ? "Saved reading. Refresh to confirm." : nil,
+                store.errorMessage, state, game.isLive ? game.liveClockText : nil]
+            .compactMap { $0 }.joined(separator: " ")
+    }
+
+    private func flexibleRow<Content: View>(@ViewBuilder content: () -> Content) -> some View {
+        let layout = dynamicTypeSize.isAccessibilitySize
+            ? AnyLayout(VStackLayout(alignment: .leading, spacing: 3))
+            : AnyLayout(HStackLayout(alignment: .firstTextBaseline, spacing: 6))
+        return layout { content() }
+    }
+
     private func observationText(_ game: WatchSelectedGame, now: Date) -> some View {
-        if let age = game.observationAge(at: now) {
-            let seconds = max(0, Int(age))
-            let ageLabel = seconds < 60 ? "\(seconds)s ago" : "\(seconds / 60)m ago"
-            Text("Score observed \(ageLabel)")
-                .font(.footnote).foregroundStyle(.secondary)
-            if game.isLive && age > 120 {
-                Text("Stale score · waiting for a newer observation")
-                    .font(.footnote).foregroundStyle(.orange)
-            }
-        } else {
-            Text("Score observation time unavailable")
-                .font(.footnote).foregroundStyle(.secondary)
-        }
+        observationLabel("Score", observedAt: game.scoreObservedAt, now: now, isLive: game.isLive)
+    }
+
+    private func probabilityObservationText(_ game: WatchSelectedGame, now: Date) -> some View {
+        observationLabel("Probability", observedAt: game.probabilityObservedAt, now: now, isLive: game.isLive)
     }
 
     @ViewBuilder
-    private func probabilityObservationText(_ game: WatchSelectedGame, now: Date) -> some View {
-        if let age = game.probabilityAge(at: now) {
-            let seconds = max(0, Int(age))
-            let ageLabel = seconds < 60 ? "\(seconds)s ago" : "\(seconds / 60)m ago"
-            Text("Probability observed \(ageLabel)")
+    private func observationLabel(_ name: String, observedAt: Date?, now: Date, isLive: Bool) -> some View {
+        let age = WatchObservationAge(observedAt: observedAt, now: now)
+        if let compact = age.compactText, let spoken = age.spokenText {
+            Text("\(name) observed \(compact)")
                 .font(.footnote).foregroundStyle(.secondary)
-            if game.isLive && age > 120 {
-                Text("Stale probability · waiting for a newer observation")
+                .accessibilityLabel("\(name) observed \(spoken)")
+            if isLive && age.isStale {
+                Text("Stale \(name.lowercased()) · waiting for a newer observation")
                     .font(.footnote).foregroundStyle(.orange)
             }
         } else {
-            Text("Probability observation time unavailable")
+            Text("\(name) observation time unavailable")
                 .font(.footnote).foregroundStyle(.secondary)
         }
     }
