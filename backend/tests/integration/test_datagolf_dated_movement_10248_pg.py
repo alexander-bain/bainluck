@@ -1071,3 +1071,220 @@ def test_d5b_d5c_an_undated_big_poll_is_not_pushed_but_kalshi_is(monkeypatch) ->
     # the DataGolf leg, which had no dated move to state.
     assert len(bodies) == 1 and "Player 2001 is up 20.0pp" in bodies[0], (result, bodies)
     assert not any("Matthew Jordan" in b for b in bodies), bodies
+
+
+def test_d5a_a_big_poll_whose_dated_move_is_small_is_not_a_big_move_alert(monkeypatch) -> None:
+    """Calibration's 07:23Z receipt. Basis 0.22 seen 19 h ago, 0.10 two hours
+    ago, then a poll at 0.30: stored +0.20 nominates the row, but the dated day
+    move is +0.08. The alert prints the dated move, so it must clear the same
+    0.15 bar on it — no "Big Move Alert" for 8 points."""
+    seed = _winner_field([(19, 0.22, "datagolf_model"), (2, 0.10, "datagolf_model")],
+                         jordan_current=0.10)
+    _, _, base_mod, push = _push(monkeypatch, seed)
+    _write(monkeypatch, "live", {JORDAN: 0.30, **FIELD})
+    _sweep(monkeypatch)
+    result, bodies = _send(monkeypatch, base_mod, push)
+    assert not any("Matthew Jordan" in b for b in bodies), (result, bodies)
+    assert bodies == [], (result, bodies)
+
+
+def test_d5a_a_dated_big_fall_is_still_a_big_move_alert(monkeypatch) -> None:
+    """The bar is on the dated move's SIZE, either sign: basis 0.48 at 19 h,
+    0.50 two hours ago, a poll to 0.30 (stored -0.20, the negative select) is a
+    dated -0.18 day, a true big move, sent as a fall. Also the rig's positive
+    control for the test above. (A fall nominated by a POSITIVE stored delta
+    cannot reach the push: the shared contradicted-direction sweep step NULLs a
+    claim whose dated change has the opposite sign.)"""
+    seed = _winner_field([(19, 0.48, "datagolf_model"), (2, 0.50, "datagolf_model")],
+                         jordan_current=0.50)
+    _, _, base_mod, push = _push(monkeypatch, seed)
+    _write(monkeypatch, "live", {JORDAN: 0.30, **FIELD})
+    _sweep(monkeypatch)
+    result, bodies = _send(monkeypatch, base_mod, push)
+    assert any("Matthew Jordan is down 18.0pp" in b for b in bodies), (result, bodies)
+    assert not any("20.0pp" in b for b in bodies), bodies
+
+
+def test_d5a_a_dated_move_of_zero_is_not_a_digest_mover(monkeypatch) -> None:
+    """Basis 0.15 at 19 h, 0.10 two hours ago, a poll back to 0.15: stored
+    +0.05 nominates the row, the dated day move is 0. The digest must not list
+    it as a top mover at "+0.0pp"; a Kalshi row's stored 0.05 still lists."""
+    kalshi = _kalshi_market(
+        {2001: 0.05}, [(2001, 0.30, [(19, 0.25, "kalshi"), (1, 0.30, "kalshi")])]
+    )
+    seed = _winner_field([(19, 0.15, "datagolf_model"), (2, 0.10, "datagolf_model")],
+                         jordan_current=0.10, extra_markets=(kalshi,))
+    asyncio.run(_reset_and_seed(seed))
+    _write(monkeypatch, "live", {JORDAN: 0.15, **FIELD})
+    _sweep(monkeypatch)
+
+    digest = asyncio.run(_digest())
+    names = {m["outcome"]: m["change"] for m in digest["movers"]}
+    assert "Matthew Jordan" not in names, digest["movers"]
+    assert abs(names["Player 2001"] - 0.05) < 1e-6, digest["movers"]
+
+
+# ---------------------------------------------------------------------------
+# D5 — the two files root approved at 07:42Z: league_futures + enrich_markets
+# ---------------------------------------------------------------------------
+
+
+def _enrich_spine(monkeypatch):
+    """The spine (basis 0.02 at 19 h, 0.15 now, an unchanged poll storing 0,
+    the real sweep) beside a Kalshi winner whose stored +0.05 is the control.
+    Both markets tier 1, ranked leader-first, and linked to an upcoming
+    fixture so the hook task's own selection admits them."""
+    from sqlalchemy import text
+
+    kalshi = _kalshi_market(
+        {2001: 0.05}, [(2001, 0.30, [(19, 0.25, "kalshi"), (1, 0.30, "kalshi")])]
+    )
+    kalshi["market_tier"] = 1
+    field = _winner_field([(19, 0.02, "datagolf_model")], extra_markets=(kalshi,))
+    field[0]["market_tier"] = 1
+    market_ids, outcome_ids = asyncio.run(_reset_and_seed(field))
+    _write(monkeypatch, "live", _priced(0.15))
+    _write(monkeypatch, "live", _priced(0.15))  # stored 0
+    _sweep(monkeypatch)
+
+    async def _link():
+        from sqlalchemy.ext.asyncio import async_sessionmaker
+
+        from app.models.models import Event, Sport
+
+        engine = _engine()
+        async with async_sessionmaker(engine, expire_on_commit=False)() as session:
+            sport = Sport(key="golf_pga", name="PGA")
+            session.add(sport)
+            await session.flush()
+            event = Event(
+                sport_id=sport.id, home_team_name="Round 3", away_team_name="Field",
+                commence_time=datetime.now(timezone.utc) + timedelta(days=1),
+            )
+            session.add(event)
+            await session.flush()
+            await session.execute(text("UPDATE futures_markets SET event_id = :e"), {"e": event.id})
+            await session.execute(text(
+                "UPDATE futures_outcomes SET rank = CASE WHEN name IN"
+                " ('Matthew Jordan', 'Player 2001') THEN 1 ELSE 2 END"
+            ))
+            await session.commit()
+        await engine.dispose()
+
+    asyncio.run(_link())
+    return market_ids, outcome_ids
+
+
+class _FakeLLM:
+    """An OpenAI-shaped client that records every prompt and replies `reply`."""
+
+    def __init__(self, reply: str):
+        from types import SimpleNamespace
+
+        self.prompts: list[str] = []
+        self._reply = reply
+        self.chat = SimpleNamespace(completions=SimpleNamespace(create=self._create))
+
+    def _create(self, **kwargs):
+        from types import SimpleNamespace
+
+        self.prompts.append(kwargs["messages"][-1]["content"])
+        return SimpleNamespace(
+            choices=[SimpleNamespace(message=SimpleNamespace(content=self._reply))]
+        )
+
+
+def _run_enrich(monkeypatch, task_name: str, reply: str) -> list[str]:
+    import app.services.llm as llm
+    import app.tasks.enrich_markets as em
+
+    fake = _FakeLLM(reply)
+    monkeypatch.setattr(llm, "_get_client", lambda: fake)
+    monkeypatch.setattr(em, "get_task_session", lambda: _Ctx())
+    asyncio.run(getattr(em, task_name)())
+    return fake.prompts
+
+
+def _line(prompts: list[str], name: str) -> str:
+    lines = [ln for p in prompts for ln in p.splitlines() if f"{name}:" in ln]
+    assert lines, (name, prompts)
+    return lines[0]
+
+
+def test_d5_league_card_states_the_dated_move(monkeypatch) -> None:
+    """`/api/leagues/{sport}` cards: `_serialize_outcomes`, both callers' shape
+    (a full ORM market), on the real rows. DataGolf → dated +0.13, not the
+    stored 0; Kalshi → its stored +0.05 exactly as before."""
+    from sqlalchemy import select
+    from sqlalchemy.ext.asyncio import AsyncSession
+    from sqlalchemy.orm import selectinload
+
+    from app.models.models import FuturesMarket
+    from app.routes.league_futures import _serialize_outcomes
+
+    market_ids, _ = _enrich_spine(monkeypatch)
+
+    async def _cards():
+        engine = _engine()
+        out = {}
+        async with AsyncSession(engine, expire_on_commit=False) as session:
+            for key in (("pga", "win"), ("pga", "kwin")):
+                market = (await session.execute(
+                    select(FuturesMarket)
+                    .options(selectinload(FuturesMarket.outcomes))
+                    .where(FuturesMarket.id == market_ids[key])
+                )).scalar_one()
+                ordered = sorted(market.outcomes, key=lambda o: -float(o.current_probability))
+                out.update({r["name"]: r["movement_24h"] for r in _serialize_outcomes(ordered, market)})
+        await engine.dispose()
+        return out
+
+    cards = asyncio.run(_cards())
+    assert cards["Matthew Jordan"] is not None and abs(cards["Matthew Jordan"] - 0.13) < 1e-6, cards
+    assert abs(cards["Player 2001"] - 0.05) < 1e-6, cards
+
+
+def test_d5_hook_prompt_states_the_dated_move(monkeypatch) -> None:
+    """`enrich_market_hooks` (stored, then served as `hook_description`): the
+    DataGolf leader's leaderboard line carries its dated day move; on the
+    stored 0 it would carry none. Kalshi's line keeps its stored +5%."""
+    from app.utils.hook_prompt import NO_HOOK_SENTINEL
+
+    _enrich_spine(monkeypatch)
+    prompts = _run_enrich(monkeypatch, "enrich_market_hooks", NO_HOOK_SENTINEL)
+    jordan = _line(prompts, "Matthew Jordan")
+    assert "↑12% 24h" in jordan or "↑13% 24h" in jordan, jordan
+    assert "↑5% 24h" in _line(prompts, "Player 2001"), prompts
+
+
+def test_d5_discover_classifier_prompt_drives_the_dict_path(monkeypatch) -> None:
+    """`enrich_discover_llm_metadata` reads the plain DICT snapshot of each
+    market (`cand_rows`). `reader_change_24h(<dict>, …)` cannot see a dict's
+    source and returns the raw value, so a naive route prints nothing here on
+    the stored 0. The carrier makes it "+13.0pp"; Kalshi keeps "+5.0pp"."""
+    _enrich_spine(monkeypatch)
+    prompts = _run_enrich(monkeypatch, "enrich_discover_llm_metadata", "{}")
+    assert "24h move +13.0pp" in _line(prompts, "Matthew Jordan"), prompts
+    assert "24h move +5.0pp" in _line(prompts, "Player 2001"), prompts
+
+
+def test_d5_snippet_angle_reads_the_dated_move(monkeypatch) -> None:
+    """`enrich_snippet_angles` (stored as `snippet_v2`, then served): the
+    leader's `MarketContext.movement_24h` is the dated move for DataGolf and
+    the stored value for Kalshi."""
+    import app.tasks.enrich_markets as em
+    import app.utils.snippet_angles as sa
+
+    _enrich_spine(monkeypatch)
+    seen: dict = {}
+
+    def _capture(ctx):
+        seen[ctx.outcome_name] = ctx.movement_24h
+        return None  # no angle: no rephrase call
+
+    monkeypatch.setattr(sa, "select_angle", _capture)
+    monkeypatch.setattr(em, "get_task_session", lambda: _Ctx())
+    asyncio.run(em.enrich_snippet_angles())
+    assert seen.get("Matthew Jordan") is not None, seen
+    assert abs(float(seen["Matthew Jordan"]) - 0.13) < 1e-6, seen
+    assert abs(float(seen["Player 2001"]) - 0.05) < 1e-6, seen

@@ -12,12 +12,14 @@ import asyncio
 import re
 import json
 from datetime import datetime, timedelta, timezone
+from types import SimpleNamespace
 from typing import Any
 
 import httpx
 from sqlalchemy import select, update, func
 
 from app.tasks.base import get_task_session
+from app.utils.futures_market_snapshot import reader_change_24h  # #10248
 from app.utils.image_dimensions import delivered_dimensions
 from app.utils.cu_frame import (
     DROP_ABSENT as CU_FRAME_DROP_ABSENT,
@@ -830,6 +832,7 @@ async def enrich_market_hooks(limit: int = 50):
                     FuturesOutcome.current_probability,
                     FuturesOutcome.opening_probability,
                     FuturesOutcome.probability_change_24h,
+                    FuturesOutcome.id,  # #10248 D5: `reader_change_24h` keys on it
                 )
                 .where(FuturesOutcome.market_id == market.id)
                 .order_by(FuturesOutcome.rank.asc().nullslast())
@@ -858,7 +861,11 @@ async def enrich_market_hooks(limit: int = 50):
             for i, o in enumerate(outcomes):
                 prob = int((o.current_probability or 0) * 100)
                 opening = int((o.opening_probability or 0) * 100) if o.opening_probability else None
-                change = o.probability_change_24h
+                # #10248 D5: the hook copy is stored and then served, so a
+                # DataGolf leg states its dated day move, never a 90 s poll delta.
+                change = reader_change_24h(
+                    market, o.id, o.current_probability, o.probability_change_24h
+                )
                 parts = [f"#{i+1} {o.name}: {prob}%"]
                 if opening and abs(prob - opening) >= 3:
                     parts.append(f"(opened {opening}%)")
@@ -1115,6 +1122,7 @@ async def enrich_discover_llm_metadata(limit: int = 100):
                     FuturesOutcome.name,
                     FuturesOutcome.current_probability,
                     FuturesOutcome.probability_change_24h,
+                    FuturesOutcome.id,  # #10248 D5: `reader_change_24h` keys on it
                 )
                 .where(FuturesOutcome.market_id == market["id"])
                 .order_by(FuturesOutcome.rank.asc().nullslast())
@@ -1124,7 +1132,18 @@ async def enrich_discover_llm_metadata(limit: int = 100):
             outcome_lines = []
             for outcome in outcomes:
                 probability = int(float(outcome.current_probability or 0) * 100)
-                movement = float(outcome.probability_change_24h or 0)
+                # #10248 D5: `market` is the plain dict snapshot, which the
+                # helper cannot read (it would hand back the raw value), so it
+                # gets a carrier holding the two fields it dates a row by.
+                movement = float(reader_change_24h(
+                    SimpleNamespace(
+                        source=market["source"],
+                        market_metadata=market["market_metadata"],
+                    ),
+                    outcome.id,
+                    outcome.current_probability,
+                    outcome.probability_change_24h,
+                ) or 0)
                 movement_text = f", 24h move {movement * 100:+.1f}pp" if abs(movement) >= 0.01 else ""
                 outcome_lines.append(f"- {outcome.name}: {probability}%{movement_text}")
 
@@ -2285,7 +2304,12 @@ async def enrich_snippet_angles(limit: int = 125):
                 name=market.name or "",
                 probability=leader.current_probability if leader else None,
                 opening_probability=leader.opening_probability if leader else None,
-                movement_24h=leader.probability_change_24h if leader else None,
+                # #10248 D5: the snippet is stored and then served, so a
+                # DataGolf leader states its dated day move.
+                movement_24h=reader_change_24h(
+                    market, leader.id, leader.current_probability,
+                    leader.probability_change_24h,
+                ) if leader else None,
                 outcome_name=leader.name if leader else None,
                 resolution_date=market.resolution_date,
                 volume_24h=market.volume_24h,

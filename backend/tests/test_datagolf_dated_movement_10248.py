@@ -332,6 +332,11 @@ D5_SITES = [
     ("app.routes.market_moves", "get_market_was_wrong", 1, 0),
     ("app.tasks.daily_digest", "build_digest_content", 1, 0),
     ("app.tasks.push_notifications", "_served_change", 1, 0),
+    # Root's 07:42Z two-reader approval.
+    ("app.routes.league_futures", "_serialize_outcomes", 1, 0),
+    ("app.tasks.enrich_markets", "enrich_market_hooks", 1, 0),
+    ("app.tasks.enrich_markets", "enrich_discover_llm_metadata", 1, 0),
+    ("app.tasks.enrich_markets", "enrich_snippet_angles", 1, 0),
 ]
 
 
@@ -351,7 +356,19 @@ def test_d5d_the_push_loop_uses_the_served_change() -> None:
 
     source = inspect.getsource(_send_big_move_alerts)
     assert "_served_change(row)" in source
-    assert "DATAGOLF_MARKET_SOURCE and change is None" in source
+    # The alert prints the dated move, so a DataGolf row clears the bar on it.
+    assert "change is None or abs(float(change)) < BIG_MOVE_THRESHOLD" in source
+
+
+def test_d5d_the_discover_classifier_dates_through_a_carrier_not_the_dict() -> None:
+    """`cand_rows` are dicts; `reader_change_24h(market, …)` on one would
+    silently return the raw value. The real-PG case drives the dict path."""
+    from app.tasks.enrich_markets import enrich_discover_llm_metadata
+
+    source = inspect.getsource(enrich_discover_llm_metadata)
+    assert 'source=market["source"]' in source
+    assert 'market_metadata=market["market_metadata"]' in source
+    assert "reader_change_24h(market," not in source
 
 
 def test_d5d_the_golf_card_fallback_excludes_datagolf() -> None:

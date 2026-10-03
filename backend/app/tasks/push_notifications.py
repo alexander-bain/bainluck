@@ -160,9 +160,13 @@ async def _send_big_move_alerts() -> dict:
         movers_by_market: dict[int, dict] = {}
         for row in list(big_movers.all()) + list(big_movers_neg.all()):
             # #10248 D5: a DataGolf row's change is its dated day move, not a
-            # 90 s poll delta; with no dated move there is nothing to alert on.
+            # 90 s poll delta. The raw select only nominates it: the alert
+            # fires on the number it prints, so the dated move must clear the
+            # same bar (either sign). No dated move, nothing to alert on.
             change = _served_change(row)
-            if row[6] == DATAGOLF_MARKET_SOURCE and change is None:
+            if row[6] == DATAGOLF_MARKET_SOURCE and (
+                change is None or abs(float(change)) < BIG_MOVE_THRESHOLD
+            ):
                 continue
             row = (*row[:3], change, *row[4:])
             market_id = row[0]

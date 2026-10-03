@@ -53,14 +53,15 @@ async def build_digest_content(db: AsyncSession) -> dict:
     movers = []
     for row in movers_result.all():
         # #10248 D5: a DataGolf row's change is its dated day move, not a 90 s
-        # poll delta, and a DataGolf row with no dated move is not a mover.
+        # poll delta, and a DataGolf row with no dated move, or a dated move of
+        # 0, is not a mover (it would print "+0.0pp" as a top mover).
         change = reader_change_24h(
             SimpleNamespace(source=row.source, market_metadata=row.market_metadata),
             row.outcome_id,
             row.current_probability,
             row.probability_change_24h,
         )
-        if row.source == DATAGOLF_MARKET_SOURCE and change is None:
+        if row.source == DATAGOLF_MARKET_SOURCE and not change:
             continue
         movers.append({
             "outcome": row.name,
