@@ -35,7 +35,7 @@ actor WidgetAPIClient {
 
         let feed = try decoder.decode(WidgetFeedResponse.self, from: data)
 
-        return feed.items.compactMap { item -> WidgetGame? in
+        return await MainActor.run { feed.items.compactMap { item -> WidgetGame? in
             guard let event = item.data,
                   event.status == "live",
                   let homeProbability = event.currentOdds?.homeProbability,
@@ -144,6 +144,7 @@ actor WidgetAPIClient {
                 awayColor: event.awayTeamData?.primaryColor
             )
         }
+        }
     }
 
     // MARK: - Fetch top Discover items (futures markets)
@@ -160,7 +161,7 @@ actor WidgetAPIClient {
 
         let feed = try decoder.decode(WidgetDiscoverFeedResponse.self, from: data)
 
-        return feed.items.compactMap { item -> WidgetDiscoverItem? in
+        return await MainActor.run { feed.items.compactMap { item -> WidgetDiscoverItem? in
             guard let futures = item.data,
                   // L2-225: never put a settled market on the home screen. A widget
                   // timeline is cached for hours, so a resolved/past-resolution card
@@ -181,6 +182,7 @@ actor WidgetAPIClient {
                 hookDescription: futures.hookDescription,
                 headline: item.headline
             )
+        }
         }
     }
 }
