@@ -21,6 +21,7 @@ import {
   familyRowTitles,
   familySharedHead,
 } from "@/components/searchFamilyDisplay";
+import { spreadSideLabels } from "@/lib/gamePropCardContext";
 
 function AnswerRow({
   market,
@@ -51,6 +52,11 @@ function AnswerRow({
   const arrow = ld && verdict === null ? movementArrow(ld.movement) : null;
   // #8906: a row about a game is dated by its kickoff, not its settlement.
   const reso = answerDateLabel(market);
+  // #10263: a spread's leader carries its own line — `Atlanta Braves +2.5` under
+  // `Spread: Los Angeles Dodgers (-2.5)` — the label `FuturesCard` prints for it.
+  const shipped = market.top_outcomes ?? [];
+  const sideLabels = spreadSideLabels(market.name, shipped.map((o) => o.name));
+  const leaderName = (ld && sideLabels?.[shipped.indexOf(ld)]) || ld?.name;
   const nameClass = prominent
     ? "text-sm font-medium text-text-primary"
     : "text-sm text-text-secondary";
@@ -141,7 +147,7 @@ function AnswerRow({
            the percentage itself pinned: the reader may lose the outcome's name,
            never the answer. */
         <div className="flex items-center gap-1 ml-auto min-w-0 max-w-[55%] max-sm:max-w-full text-sm">
-          <span className="truncate text-text-primary font-medium">{ld.name}</span>
+          <span className="truncate text-text-primary font-medium">{leaderName}</span>
           {/* #7320: this span used to round `ld.probability * 100` inline — a
               second copy of the rounding rule, skipping the boundary clamp that
               UX-P046 owns. (Spelled without the call here on purpose: the

@@ -573,6 +573,7 @@ function SearchContent() {
                   isPinned={isFuturesPinned(market.id)}
                   onPinToggle={toggleFuturesPin}
                   pinDisabled={isFuturesMaxReached}
+                  games={results.results}
                 />
               </div>
             ))}
