@@ -300,3 +300,59 @@ def test_the_related_futures_entry_routes_datagolf() -> None:
     market.market_metadata = {}
     entry = build_futures_entry(market=market, outcome=_outcome(), **common)
     assert entry["probability_change_24h"] is None
+
+
+# ---------------------------------------------------------------------------
+# D5d — every routed SERVES site, by name. Putting the raw read back at any of
+# them (`float(<row>.probability_change_24h)`) turns its case red. The three
+# root-approved sites are also proven end to end in the real-PG file.
+# ---------------------------------------------------------------------------
+
+import inspect  # noqa: E402
+import re  # noqa: E402
+
+_RAW_PRINT = re.compile(r"float\(\s*\w+\.probability_change_24h\s*\)")
+
+#: (module, function, reader calls expected, raw prints allowed and why)
+D5_SITES = [
+    ("app.routes.futures", "_movers_payload", 1, 0),
+    ("app.routes.futures", "browse_futures", 1, 0),
+    ("app.routes.futures", "faceted_futures_search", 1, 0),
+    ("app.routes.futures", "get_playoff_grid", 1, 0),
+    ("app.routes.futures", "get_multi_market_history", 1, 0),
+    ("app.routes.futures", "get_progression", 2, 0),
+    ("app.routes.futures", "get_cross_source_timeline", 1, 0),
+    ("app.routes.futures", "_format_market_summary", 1, 0),
+    ("app.routes.golf", "get_golf_tournament", 1, 0),
+    ("app.utils.related_futures", "build_futures_entry", 1, 0),
+    # One raw read stays: `compute_relevance_score`'s input SELECTS, it prints nothing.
+    ("app.routes.events", "_build_related_futures", 2, 1),
+    ("app.routes.market_moves", "get_market_was_wrong", 1, 0),
+    ("app.tasks.daily_digest", "build_digest_content", 1, 0),
+    ("app.tasks.push_notifications", "_served_change", 1, 0),
+]
+
+
+@pytest.mark.parametrize("module,function,calls,raw", D5_SITES, ids=[s[1] for s in D5_SITES])
+def test_d5d_each_serves_site_reads_through_the_dated_reader(module, function, calls, raw) -> None:
+    import importlib
+
+    source = inspect.getsource(getattr(importlib.import_module(module), function))
+    assert source.count("reader_change_24h(") == calls, f"{module}.{function}"
+    assert len(_RAW_PRINT.findall(source)) == raw, (
+        f"{module}.{function} prints the raw per-write column: {_RAW_PRINT.findall(source)}"
+    )
+
+
+def test_d5d_the_push_loop_uses_the_served_change() -> None:
+    from app.tasks.push_notifications import _send_big_move_alerts
+
+    source = inspect.getsource(_send_big_move_alerts)
+    assert "_served_change(row)" in source
+    assert "DATAGOLF_MARKET_SOURCE and change is None" in source
+
+
+def test_d5d_the_golf_card_fallback_excludes_datagolf() -> None:
+    from app.routes.golf import _aggregate_golfer_outcome
+
+    assert "not is_datagolf" in inspect.getsource(_aggregate_golfer_outcome)
