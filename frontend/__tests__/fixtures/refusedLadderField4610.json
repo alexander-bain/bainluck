@@ -9,6 +9,7 @@
   "discover_card": {
     "bundle_candidate": true,
     "comparison_theme": "macro_ranges",
+    "distribution_order": "probability",
     "distribution_outcomes": [
       {
         "label": "Above 30",
