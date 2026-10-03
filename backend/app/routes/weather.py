@@ -1763,8 +1763,9 @@ async def get_events_cached(db: AsyncSession = Depends(get_db)):
     return await get_events(db)
 
 
-async def get_events(db: AsyncSession):
+async def get_events(db: AsyncSession, now: datetime | None = None):
     """Build natural events response from database."""
+    now = now or datetime.now(timezone.utc)
     query = _open_weather_query().where(
         or_(
             FuturesMarket.name.ilike("%hurricane%"),
@@ -1786,6 +1787,13 @@ async def get_events(db: AsyncSession):
     }
 
     for m in markets:
+        # #10331: a question whose title period is over ("by September 30",
+        # "in September 2026") is not an open forecast, even while the venue
+        # has yet to grade it and resolution_date keeps it in the query. The
+        # same rule /featured applies (#883 L2-56); printing it here read
+        # "<1%" and "95%" as live odds on a closed window.
+        if is_title_implied_stale(m.name, m.llm_sport_category, now):
+            continue
         item = {
             "q": m.name,
             "prob": _card_prob(m),
