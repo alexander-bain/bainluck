@@ -102,6 +102,7 @@ from app.utils.event_rails import (
 )
 from app.utils.lifecycle import EVENT_NOT_STARTED, served_event_status
 from app.utils.score_observation import score_observation_fields
+from app.utils.event_props_matrix import blend_mean, build_during_player_props
 # ONE definition of the state vocabulary (live/048) — imported, not spelled, so
 # that widening it is a rename here rather than a literal this route quietly
 # stops matching. CERT-786 is what that quiet stop looks like from a user's side.
@@ -21222,6 +21223,54 @@ def _row_market_ids(row: dict) -> set:
     return {market_id} if market_id is not None else set()
 
 
+def _redundant_parent_ids(markets, parent_candidates, leg_copy_members, payload_lists) -> set:
+    """#4189 / CERT-2340 — which candidate parents are redundant ON THIS PAYLOAD.
+
+    A candidate parent is redundant when a row belonging to one of its own
+    group's MEMBERS (or one of its leg copies) is among ``payload_lists`` —
+    never on the strength of the parent's own rows, so a parent that is its
+    group's sole survivor stays (`TestAParentWithNoServedChildrenStays`).
+
+    Lifted out of `_build_game_markets` unchanged so the #10236 matrix asks the
+    SAME decision of its own population instead of a copy of it; the route's
+    call passes exactly the seven lists it always judged.
+    """
+    if not parent_candidates:
+        return set()
+    member_ids_by_group: dict = {}
+    for _m in markets:
+        if _m.group_id and (_m.market_type or "") in _DECOMPOSED_MEMBER_SHAPES:
+            member_ids_by_group.setdefault(_m.group_id, set()).add(_m.id)
+
+    surviving_ids: set = set()
+    for _rows in payload_lists:
+        for _row in _rows:
+            surviving_ids |= _row_market_ids(_row)
+
+    return {
+        _m.id
+        for _m in markets
+        if _m.id in parent_candidates
+        and (
+            member_ids_by_group.get(_m.group_id, set())
+            | leg_copy_members.get(_m.id, set())
+        )
+        & surviving_ids
+    }
+
+
+def _row_is_only_redundant_parents(row: dict, redundant_parents: set) -> bool:
+    """A row leaves only when EVERY market it came from is a redundant parent.
+
+    A merged row (step 9b) carries several ids and is kept unless every one of
+    them is a redundant parent — dropping it on a partial match would delete a
+    member's price along with the container's. An untagged row is never
+    suppressed (see `_row_market_ids`).
+    """
+    ids = _row_market_ids(row)
+    return bool(ids) and ids <= redundant_parents
+
+
 #: The first word of an outcome that names the DRAW rather than either club.
 #:
 #: Read BEFORE the two clubs and matched on the FIRST TOKEN ONLY, because a venue
@@ -26946,6 +26995,27 @@ async def _build_game_markets(
         """
         return item.get("resolution_source") is not None or item.get("hit") is not None
 
+    # #10236 — THE DURING MATRIX'S POPULATION IS TAKEN HERE, BEFORE STEP 9.
+    #
+    # Step 9's band deletes every ungraded extreme price, and 9b then mutates
+    # its representative in place and drops each contributor's own value, so the
+    # matrix cannot be built from `player_props` downstream: a finite 0.0 is a
+    # real quote, and the reader's cell detail names what each source said. A
+    # DEEP copy, because 9b writes into these dicts. Nothing built from it
+    # flows back into any list here. The pins are read off the plain market list
+    # now, before any commit boundary below (gotcha #6), and only for a game the
+    # public surface serves as live — every other payload builds nothing extra.
+    _during_prop_candidates: Optional[list[dict]] = None
+    _pregame_mark_by_market_id: dict = {}
+    if served_event_status(
+        event.status, event.commence_time, datetime.now(timezone.utc)
+    ) == "live":
+        _during_prop_candidates = deepcopy(player_props)
+        for _m in markets:
+            _meta = _m.__dict__.get("market_metadata")
+            if isinstance(_meta, dict) and _meta.get("pregame_mark") is not None:
+                _pregame_mark_by_market_id[_m.id] = _meta["pregame_mark"]
+
     # 9. Filter out boring player props where neither side is interesting
     # (e.g., "2+ home runs: 98%" — the "over" is a near-certainty)
     #
@@ -27079,7 +27149,9 @@ async def _build_game_markets(
                 merged_props.append(entries[0])
             else:
                 probs = [e["over_probability"] for e in entries]
-                avg_prob = round(sum(probs) / len(probs), 4)
+                # The value rule lives in ONE helper so the #10236 matrix's
+                # wider union fold cannot drift from this one (v1.1 A1).
+                avg_prob = blend_mean(probs)
                 best = max(entries, key=lambda e: 1 if e.get("source") == "kalshi" else 0)
                 best["over_probability"] = avg_prob
                 best["all_sources"] = list({e.get("source") for e in entries})
@@ -27388,43 +27460,24 @@ async def _build_game_markets(
     # representation and must stay, which is the fail-safe
     # `TestAParentWithNoServedChildrenStays` guards.
     if _parent_candidates:
-        member_ids_by_group: dict = {}
-        for _m in markets:
-            if _m.group_id and (_m.market_type or "") in _DECOMPOSED_MEMBER_SHAPES:
-                member_ids_by_group.setdefault(_m.group_id, set()).add(_m.id)
-
-        payload_lists = (
-            game_totals,
-            player_props,
-            team_total_items,
-            spreads,
-            period_markets,
-            matchups,
-            other_markets,
+        redundant_parents = _redundant_parent_ids(
+            markets,
+            _parent_candidates,
+            _leg_copy_members,
+            (
+                game_totals,
+                player_props,
+                team_total_items,
+                spreads,
+                period_markets,
+                matchups,
+                other_markets,
+            ),
         )
-        surviving_ids: set = set()
-        for _rows in payload_lists:
-            for _row in _rows:
-                surviving_ids |= _row_market_ids(_row)
-
-        redundant_parents = {
-            _m.id
-            for _m in markets
-            if _m.id in _parent_candidates
-            and (
-                member_ids_by_group.get(_m.group_id, set())
-                | _leg_copy_members.get(_m.id, set())
-            )
-            & surviving_ids
-        }
 
         if redundant_parents:
-            # A merged row (step 9b) carries several ids and is kept unless
-            # EVERY one of them is a redundant parent — dropping it on a partial
-            # match would delete a member's price along with the container's.
             def _not_redundant(row: dict) -> bool:
-                ids = _row_market_ids(row)
-                return not ids or not ids <= redundant_parents
+                return not _row_is_only_redundant_parents(row, redundant_parents)
 
             game_totals = [r for r in game_totals if _not_redundant(r)]
             player_props = [r for r in player_props if _not_redundant(r)]
@@ -27583,6 +27636,29 @@ async def _build_game_markets(
             + _grade_closed_windows(
                 _window_closed_items, event, _ticker_by_market_id
             ),
+        ),
+        # #10236 — the DURING matrix: additive, null unless the served game is
+        # live and at least one prop types. Built from the pre-step-9 copy with
+        # this function's own decisions passed in, never re-spelled; see
+        # `app/utils/event_props_matrix.py`.
+        "during_player_props": (
+            build_during_player_props(
+                _during_prop_candidates,
+                player_and_stat=_prop_player_and_stat,
+                window_is_closed=_window_is_closed,
+                grade_is_in_hand=_grade_is_in_hand,
+                enforce_monotonicity=_enforce_monotonicity,
+                redundant_parent_ids=lambda rows: _redundant_parent_ids(
+                    markets, _parent_candidates, _leg_copy_members, (rows,)
+                ),
+                pregame_mark_by_market_id=_pregame_mark_by_market_id,
+                is_pregame=_pregame_mark_is_pregame,
+                commence_time=event.commence_time,
+                home_team=event.home_team_name,
+                away_team=event.away_team_name,
+            )
+            if _during_prop_candidates is not None
+            else None
         ),
     }
 
