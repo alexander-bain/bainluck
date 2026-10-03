@@ -48,6 +48,7 @@ from app.models.models import Base
 #: the discovery arm below fails if such a gate grows an INSERT and is not
 #: listed, so this list cannot silently fall behind.
 COVERED = (
+    "test_serie_a_femminile_seed_10319_pg.py",
     "test_bookmaker_count_real_postgres.py",
     "test_calibration_mode_price_source_scope_pg.py",
     "test_census_cap_real_postgres.py",
@@ -646,7 +647,13 @@ _INSERT_SELECT_RE = re.compile(
 
 def _columns(raw: str) -> set[str]:
     """Column names out of an INSERT's column list."""
-    return {c.strip() for c in raw.split(",") if c.strip()}
+    columns = {c.strip() for c in raw.split(",") if c.strip()}
+    # PostgreSQL requires quotes for reserved names such as sports."group".
+    # Compare their identifier value, not SQL's quoting syntax, to ORM names.
+    return {
+        c[1:-1].replace('""', '"') if c.startswith('"') and c.endswith('"') else c
+        for c in columns
+    }
 
 
 def _joined_source(path: Path) -> str:

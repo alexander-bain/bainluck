@@ -16,6 +16,7 @@ import { PREMATCH_SAID, prematchReading } from "@/lib/prematchReading";
 import { awayIsTheComplement } from "@/lib/drawPricedWinner";
 import { futuresOutcomeTotal } from "@/lib/discover/futuresBoard";
 import { namesOnlyTheOtherLeague, sharedLeague } from "@/lib/otherLeagueMarket";
+import { hasSerieAFemminileTags } from "@/lib/relatedRailQuery";
 
 /** The item types this section knows how to render.
  *
@@ -281,9 +282,14 @@ export default function RelatedByTag({
   preferNames,
   conferences,
 }: RelatedByTagProps) {
+  // #10319: only this exact competition requires corroborated returned tags.
+  // Concepts do not carry that contract; a sport-only concept response cannot
+  // supply this rail even when the feed ignored its league/gender filters.
+  const serieAFemminile = tags.includes("league:serie_a_femminile");
+  const queryAllowed = !serieAFemminile || hasSerieAFemminileTags(tags);
   const league = sharedLeague(conferences ?? []);
   const { data } = useSWR(
-    tags.length > 0 ? ["related-by-tag", ...tags] : null,
+    queryAllowed && tags.length > 0 ? ["related-by-tag", ...tags] : null,
     () => fetchFeed({ limit: limit + 5, tags }),
     { refreshInterval: 60000 }
   );
@@ -296,6 +302,17 @@ export default function RelatedByTag({
   const usable = (response: typeof data) => {
     const renderable = (response?.items ?? [])
       .filter((item) => RENDERABLE.has(item.type))
+      .filter((item) => {
+        if (!serieAFemminile) return true;
+        if (!queryAllowed) return false;
+        if (item.type === "event") {
+          return hasSerieAFemminileTags((item.data as FeedEventData).event_tags);
+        }
+        if (item.type === "futures") {
+          return hasSerieAFemminileTags((item.data as FeedFuturesData).market_tags);
+        }
+        return false;
+      })
       .filter((item) => {
         if (excludeId === undefined) return true;
         const id =
@@ -329,6 +346,7 @@ export default function RelatedByTag({
      fallback almost none of them use. Both hooks always run (a null key is how
      SWR is told to stand down), so the hook order never varies. */
   const needFallback =
+    !serieAFemminile &&
     data !== undefined &&
     primary.length === 0 &&
     (fallbackTags?.length ?? 0) > 0;

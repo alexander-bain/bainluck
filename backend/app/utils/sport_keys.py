@@ -2013,6 +2013,8 @@ KALSHI_FUTURES_TICKER_TO_SPORT_KEY: dict[str, str] = {
     # one of its own fixtures (the CERT-409 failure mode).
     "kxlaliga2promo": "soccer_spain_segunda_division",
     "kxbundes": "soccer_germany_bundesliga",
+    # #10319: classification only; existing game/mint authority is unchanged.
+    "kxserieawgame": "soccer_italy_serie_a_women",
     "kxseriea": "soccer_italy_serie_a",
     "kxligue1": "soccer_france_ligue_one",
     "kxmls": "soccer_usa_mls",
