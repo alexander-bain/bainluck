@@ -391,6 +391,27 @@ class ESPNEvent:
     # off `competitions[0].notes` + `.series`. None for anything that is not a
     # playoff series. Read by `app.utils.postseason_series.certain_to_be_played`.
     playoff_series: Optional[PlayoffSeries] = None
+    # #10305 D2: what ESPN literally sent for each competitor, in payload order,
+    # as `(team_id, homeAway)` pairs — `homeAway` raw, None when absent. The
+    # home/away fields above come from an if/else whose `else` arm takes every
+    # non-"home" competitor, so a missing or duplicated side is invisible there;
+    # this is the evidence a reader needs to refuse one. Empty for a reading that
+    # was not parsed from a payload (every other constructor), which a reader
+    # must treat as "no side evidence", never as agreement.
+    competitor_sides: tuple[tuple[str, Optional[str]], ...] = ()
+
+
+def _espn_competitor_side(competitor) -> tuple[str, Optional[str]]:
+    """One competitor's literal ``(team_id, homeAway)`` (#10305 D2).
+
+    Never raises: it runs inside ``_parse_event``'s competitor loop, whose
+    outer ``except`` would turn a recording failure into a lost event.
+    """
+    if not isinstance(competitor, dict):
+        return ("", None)
+    team = competitor.get("team")
+    team_id = team.get("id") if isinstance(team, dict) else None
+    return (str(team_id) if team_id is not None else "", competitor.get("homeAway"))
 
 
 def _espn_time_valid_flag(competition: dict, event_data: dict):
@@ -1150,8 +1171,10 @@ class ESPNAPIService:
             away_team = None
             home_score = None
             away_score = None
+            competitor_sides = []
 
             for competitor in competition.get("competitors", []):
+                competitor_sides.append(_espn_competitor_side(competitor))
                 team = self._parse_team(competitor)
                 raw_score = competitor.get("score")
                 if raw_score is not None:
@@ -1230,6 +1253,7 @@ class ESPNAPIService:
                 time_valid=espn_time_valid(competition, event_data),
                 time_announced=espn_time_announced(competition, event_data),
                 playoff_series=playoff_series,
+                competitor_sides=tuple(competitor_sides),
             )
         except Exception as e:
             logger.error(f"Error parsing ESPN event: {e}")
