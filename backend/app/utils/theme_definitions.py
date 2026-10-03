@@ -118,7 +118,7 @@ CONTINUING_ONLY_REASONS = frozenset(
 )
 
 # §5 resolver reasons (ops debug only, never reader text — notice 34).
-SWINGS_BUNDLE_REFUSED = "swings_bundle_refused"
+SWINGS_NOT_A_COLLECTION = "swings_not_a_collection"
 PREVIEW_EMPTY = "preview_empty"
 MAPPED_TARGET_ABSENT = "mapped_target_absent"
 MAPPED_TARGET_AMBIGUOUS = "mapped_target_ambiguous"
@@ -127,7 +127,7 @@ NO_MAP_ENTRY_AMBIGUOUS = "no_map_entry_ambiguous"
 TARGET_SLUG_NOT_THEME = "target_slug_not_theme"
 RESOLVER_REASONS = frozenset(
     {
-        SWINGS_BUNDLE_REFUSED,
+        SWINGS_NOT_A_COLLECTION,
         PREVIEW_EMPTY,
         MAPPED_TARGET_ABSENT,
         MAPPED_TARGET_AMBIGUOUS,
@@ -732,11 +732,14 @@ def resolve_collection_target(
 ) -> tuple[Optional[CandidateContainer], Optional[str]]:
     """(intended target, None) or (None, reason).
 
-    1. A swings bundle is refused outright, before any candidate is counted.
+    0. Swings is never a collection (v3.2): refused on the feed key alone,
+       before C is read and before the map or the single-candidate arm. Without
+       it an all-AI swings bundle with |C| = 1 resolves to ``ai``.
+    1. Feed key: ``story_key`` for story bundles, ``group_id`` for awards.
     2. C = candidates admitting EVERY preview id, in any publication state.
     3. A mapped key names exactly one subject in C (zero or many -> no ref, and
        never a fallback to another member of C). An unmapped key resolves only
-       when exactly one container in C exists (R4e).
+       when exactly one container in C exists (R4e, resolved by root).
 
     Step 4 (published, snapshot at the live revision, preview ⊆ shown ∪ folded,
     nothing withheld) runs on the returned target only, in P2. It can remove
@@ -745,7 +748,7 @@ def resolve_collection_target(
     fmap = FEED_KEY_MAP if feed_key_map is None else feed_key_map
 
     if feed_key == SWINGS_FEED_KEY:
-        return None, SWINGS_BUNDLE_REFUSED
+        return None, SWINGS_NOT_A_COLLECTION
     preview = frozenset(preview_ids)
     if not preview:
         return None, PREVIEW_EMPTY

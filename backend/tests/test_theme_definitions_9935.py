@@ -540,7 +540,7 @@ class TestCandidatePopulation:
 
 
 # ---------------------------------------------------------------------------
-# §5 steps 1–3: resolve_collection_target (cases 17, 18, swings refusal).
+# §5 steps 0–3: resolve_collection_target (cases 17, 18; v3.2 swings step 0).
 # ---------------------------------------------------------------------------
 
 
@@ -575,18 +575,20 @@ class TestResolveAwardsAndSwings:
         assert target is None and reason == td.PREVIEW_SPANS_COLLECTIONS
 
     def test_mixed_swings_bundle_is_refused(self):
+        # An extra, never the control: it fails at |C| != 1 with or without step 0.
         osc = cc(1, "oscars-2027", self.OSCAR_IDS)
         aic = cc(2, "ai", IPO_PACK)
         target, reason = resolve_collection_target("swings", [6173044, 13791997], [osc, aic])
-        assert target is None and reason == td.SWINGS_BUNDLE_REFUSED
+        assert target is None and reason == td.SWINGS_NOT_A_COLLECTION
 
-    # Root decision: swings is refused even when every member is AI-only and
+    # case 17's swings arm (v3.2) — the discriminating control. Root decision:
+    # swings is refused even when every member is AI-only and
     # exactly one container (any state) admits them all.
     @pytest.mark.parametrize("state", ["published", "unpublished", "withdrawn"])
     def test_all_ai_swings_with_a_sole_candidate_is_refused(self, state):
         aic = cc(2, "ai", [*IPO_PACK, 61461524], state)
         target, reason = resolve_collection_target("swings", [61461524, 13791997], [aic])
-        assert target is None and reason == td.SWINGS_BUNDLE_REFUSED
+        assert target is None and reason == td.SWINGS_NOT_A_COLLECTION
 
     def test_parity_control_same_all_ai_preview_resolves_when_not_swings(self):
         """Without the explicit refusal the sole-candidate arm WOULD target ai:
