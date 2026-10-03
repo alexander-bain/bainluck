@@ -283,7 +283,12 @@ describe("#6684 — the rule is actually REACHED by the reader's surface", () =>
 
   test("GamePlayCard hands it to the authority, and derives nothing itself", () => {
     const src = read("components/GamePlayCard.tsx");
-    expect(src).toMatch(/trustedLiveClock\(\s*formatPeriod\(point\.period\),\s*point\.clock,\s*sportKey\s*\)/);
+    // #4889 — the card's period/clock now come from `restingGameClock`, the one
+    // selector the live header shares; that helper hands the sport key on.
+    expect(src).toMatch(/\brestingGameClock\(\s*point,\s*sportKey\s*\)/);
+    expect(read("lib/restingGameClock.ts")).toMatch(
+      /trustedLiveClock\(\s*formatPeriod\(point\.period\),\s*point\.clock,\s*sportKey\s*\)/,
+    );
     // No private copy of the rule. A comment naming the sport is fine; code is not.
     const offenders = src
       .split("\n")
