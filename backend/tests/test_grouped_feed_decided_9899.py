@@ -27,6 +27,7 @@ from types import SimpleNamespace
 import pytest
 
 from app.routes.futures import _market_is_decided, select_ungrouped_markets
+from tests._grouped_feed_slate import NO_SLATE, is_slate_read
 
 
 def leg(prob, bid=None, ask=None, name="Yes", oid=1):
@@ -136,6 +137,8 @@ class _Session:
         self.statements = []
 
     async def execute(self, stmt):
+        if is_slate_read(stmt):  # #10208: no slate in this pool
+            return NO_SLATE
         self.statements.append(stmt)
         if len(self.statements) > 1:
             raise AssertionError("second read: this pool has nothing to fold")

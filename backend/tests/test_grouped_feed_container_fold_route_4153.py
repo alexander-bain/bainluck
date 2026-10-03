@@ -23,6 +23,7 @@ import collections
 import pytest
 
 from app.routes.futures import grouped_feed
+from tests._grouped_feed_slate import NO_SLATE, is_slate_read
 
 # ── the stub session ───────────────────────────────────────────────────────
 #
@@ -54,6 +55,8 @@ class _StubSession:
         self.statements = []
 
     async def execute(self, _stmt):
+        if is_slate_read(_stmt):  # #10208: no slate in this pool
+            return NO_SLATE
         self.calls += 1
         self.statements.append(_stmt)
         if not self._results:

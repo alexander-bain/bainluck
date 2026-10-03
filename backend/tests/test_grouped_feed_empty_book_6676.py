@@ -39,6 +39,7 @@ from app.routes.futures import (
     _market_has_priced_outcome,
 )
 from app.utils.feed_market_quality import is_empty_book_midpoint
+from tests._grouped_feed_slate import NO_SLATE, is_slate_read
 
 
 def outcome(prob, bid, ask, name="Over", oid=1):
@@ -201,6 +202,8 @@ class _StubSession:
         self.calls = 0
 
     async def execute(self, _stmt):
+        if is_slate_read(_stmt):  # #10208: no slate in this pool
+            return NO_SLATE
         self.calls += 1
         if self.calls > 1:
             raise AssertionError("the route made a second read; this pool has nothing to fold")

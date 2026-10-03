@@ -25,6 +25,7 @@ import pytest
 
 from app.routes.futures import _exact_score_field_nobody_prices, grouped_feed
 from app.utils.feed_market_quality import EMPTY_BOOK_MAX_BID, FEED_EXCLUSIVE_SUM_MIN
+from tests._grouped_feed_slate import NO_SLATE, is_slate_read
 
 D = Decimal
 
@@ -166,6 +167,8 @@ class _Session:
         self.calls = 0
 
     async def execute(self, _stmt):
+        if is_slate_read(_stmt):  # #10208: no slate in this pool
+            return NO_SLATE
         self.calls += 1
         if not self._results:
             raise AssertionError(f"the route made read {self.calls}; none canned")

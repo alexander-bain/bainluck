@@ -2923,6 +2923,203 @@ async def load_container_field_folds(
     return detect_container_field_groups(members_by_group, parent_names)
 
 
+#: #10207/#10208 — how far around now a game counts as "the current slate" for
+#: the /sports props strip: started up to 6 h ago (still live) to 72 h ahead
+#: (a Friday read reaches Sunday's NFL kickoffs).
+SLATE_WINDOW_BEFORE = timedelta(hours=6)
+SLATE_WINDOW_AFTER = timedelta(hours=72)
+#: At most this many of one game's markets join the pool, so a 60-market NFL
+#: game cannot fill the strip alone.
+SLATE_MARKETS_PER_EVENT = 4
+#: At most this many games of one league join the slate, so the MLB postseason
+#: (five games × four markets filled all twenty rows on 2026-10-02) cannot make
+#: the lead six baseball cards.
+SLATE_EVENTS_PER_LEAGUE = 3
+#: At most this many slate cards lead the strip, ONE per game.
+SLATE_LEAD_CAP = 6
+_SLATE_POSTSEASON = ("playoff", "championship")
+
+
+async def grouped_feed_slate(db: AsyncSession, filters: list, limit: int):
+    """#10208 — the current major-game slate's markets, for the /sports strip.
+
+    THE DEFECT. The pool below is ``limit * 5`` markets by ``updated_at`` and
+    nothing else, so the strip's supply is whatever the venues touched last:
+    on 2026-10-02 that was three golf placement grids, a St Kitts–Cuba
+    exact-score ladder and sixteen lower-league soccer and tennis sub-markets,
+    while 3,676 open markets linked to 58 upcoming NFL games, 289 to NHL games
+    and the Braves–Dodgers postseason game's own market never reached the 100.
+    Supply was there; selection never looked at it.
+
+    THIS READ: up to ``limit`` open markets (every pool filter applies, so a
+    finished game's props stay out — #10064) linked to an unfinished tier-1/2
+    game inside the slate window, at most ``SLATE_MARKETS_PER_EVENT`` per game
+    and ``SLATE_EVENTS_PER_LEAGUE`` games per league.
+    Games rank postseason first (``llm_importance``), then tier 1 before tier 2,
+    then kickoff — the order the strip should lead in.
+
+    Returns ``(market_ids, market_event)``: ids in slate order, and each one's
+    game id. Both empty when there is no slate — the strip is then built
+    exactly as before.
+    """
+    from app.utils.highlights import get_league_tier, tier_12_sport_keys
+    from sqlalchemy import case
+    from sqlalchemy.orm import aliased
+
+    tier_keys = sorted(tier_12_sport_keys())
+    if not tier_keys:
+        return [], {}
+    tier1_keys = [k for k in tier_keys if get_league_tier(k) == 1]
+    now = datetime.now(timezone.utc)
+    # Aliased so the #10064 `exists(Event ...)` clause in `filters` stays
+    # correlated on the market alone, exactly as in the pool query.
+    game = aliased(Event)
+    league = aliased(Sport)
+    ranked = (
+        select(
+            FuturesMarket.id.label("market_id"),
+            FuturesMarket.event_id.label("event_id"),
+            case((game.llm_importance.in_(_SLATE_POSTSEASON), 0), else_=1).label("postseason"),
+            case((league.key.in_(tier1_keys), 1), else_=2).label("tier"),
+            game.commence_time.label("commence_time"),
+            # Inside a game, the questions the game card does NOT already ask
+            # come first: totals, player props, prop legs before `duel`s (the
+            # moneyline leg and spreads), so a duel only fills a slot a game
+            # has no other question for.
+            func.row_number()
+            .over(
+                partition_by=FuturesMarket.event_id,
+                order_by=(
+                    case((FuturesMarket.market_type == "duel", 1), else_=0),
+                    FuturesMarket.updated_at.desc(),
+                ),
+            )
+            .label("rn"),
+            func.dense_rank()
+            .over(
+                partition_by=league.key,
+                order_by=(
+                    case((game.llm_importance.in_(_SLATE_POSTSEASON), 0), else_=1),
+                    game.commence_time,
+                    FuturesMarket.event_id,
+                ),
+            )
+            .label("league_rank"),
+        )
+        .join(game, game.id == FuturesMarket.event_id)
+        .join(league, league.id == game.sport_id)
+        .where(
+            and_(*filters),
+            game.status.in_(("scheduled", "live")),
+            game.commence_time >= now - SLATE_WINDOW_BEFORE,
+            game.commence_time <= now + SLATE_WINDOW_AFTER,
+            league.key.in_(tier_keys),
+            # The game's own winner market is the question the game card above
+            # the strip already asks ("Game 1: Chicago WS vs Cleveland", Kalshi
+            # `kalshi_event` × `duel`); the slate brings the game's OTHER
+            # questions. It stays eligible through the recency pool as before.
+            ~and_(
+                FuturesMarket.group_type == "kalshi_event",
+                FuturesMarket.market_type == "duel",
+            ),
+            # Polymarket's game WRAPPER is a container whose legs are its own
+            # sub-markets; the strip withholds it (#9466), so here it would only
+            # spend a slot that yields no card.
+            or_(
+                FuturesMarket.group_type.is_(None),
+                FuturesMarket.group_type != "polymarket_event",
+            ),
+        )
+        .subquery()
+    )
+    stmt = (
+        select(ranked.c.market_id, ranked.c.event_id)
+        .where(
+            ranked.c.rn <= SLATE_MARKETS_PER_EVENT,
+            ranked.c.league_rank <= SLATE_EVENTS_PER_LEAGUE,
+        )
+        .order_by(
+            ranked.c.postseason,
+            ranked.c.tier,
+            ranked.c.commence_time,
+            ranked.c.event_id,
+            ranked.c.rn,
+        )
+        .limit(limit)
+    )
+    rows = (await db.execute(stmt)).all()
+    market_ids = [int(r[0]) for r in rows]
+    market_event = {int(r[0]): int(r[1]) for r in rows}
+    return market_ids, market_event
+
+
+def _feed_item_market_ids(item: dict, outcome_market: dict) -> set:
+    """Every market id a grouped-feed row is built from (placement grids: none
+    shipped, and a tournament is never a slate game)."""
+    kind = item.get("type")
+    if kind == "market":
+        market = item.get("market") or {}
+        ids = {market.get("id")}
+        ids.update(o.get("market_id") for o in market.get("outcomes") or [])
+        return {i for i in ids if i is not None}
+    if kind == "stat_prop":
+        return {line.get("id") for line in item.get("lines") or []}
+    if kind == "playoff_progression":
+        return {stage.get("id") for stage in item.get("stages") or []}
+    if kind == "threshold":
+        return {
+            outcome_market[p.get("id")]
+            for p in item.get("points") or []
+            if p.get("id") in outcome_market
+        }
+    return set()
+
+
+def lead_with_slate(
+    feed_items: list,
+    slate_market_ids: list,
+    market_event: dict,
+    outcome_market: dict,
+    cap: int = SLATE_LEAD_CAP,
+) -> list:
+    """#10208 — the strip leads with the current slate, one card per game.
+
+    The first card built from each slate game's markets moves to the front, in
+    the slate's own order (postseason, tier, kickoff), up to ``cap``. Every
+    other row keeps the order the assembly passes gave it — the golf grids
+    Alex likes included, now after the games instead of instead of them. A
+    stable partition: no row is dropped or duplicated, and with no slate the
+    list comes back untouched.
+    """
+    if not slate_market_ids:
+        return feed_items
+    event_order: list = []
+    for mid in slate_market_ids:
+        eid = market_event.get(mid)
+        if eid is not None and eid not in event_order:
+            event_order.append(eid)
+    first_card: dict = {}
+    for idx, item in enumerate(feed_items):
+        for mid in _feed_item_market_ids(item, outcome_market):
+            eid = market_event.get(mid)
+            if eid is not None and eid not in first_card:
+                first_card[eid] = idx
+    lead: list = []
+    for eid in event_order:
+        idx = first_card.get(eid)
+        if idx is None or idx in lead:
+            continue
+        lead.append(idx)
+        if len(lead) >= cap:
+            break
+    if not lead:
+        return feed_items
+    chosen = set(lead)
+    return [feed_items[i] for i in lead] + [
+        item for i, item in enumerate(feed_items) if i not in chosen
+    ]
+
+
 def select_ungrouped_markets(
     market_dicts: list, grouped_market_ids: set, limit: int
 ) -> list:
@@ -3139,6 +3336,13 @@ async def grouped_feed(
             FuturesMarket.llm_sport_category.in_(SPORTS_PAGE_CATEGORIES)
         )
 
+    # #10208 — the /sports strip (sports-only, no narrower filter) also reads the
+    # current major-game slate, which the recency pool alone never reaches.
+    slate_market_ids: list = []
+    slate_market_event: dict = {}
+    if sports_only and not sport and not category:
+        slate_market_ids, slate_market_event = await grouped_feed_slate(db, filters, limit)
+
     stmt = (
         select(FuturesMarket)
         .options(selectinload(FuturesMarket.outcomes))
@@ -3146,8 +3350,35 @@ async def grouped_feed(
         .order_by(FuturesMarket.updated_at.desc())
         .limit(limit * 5)
     )
+    if slate_market_ids:
+        # The same recency pool, plus the slate rows it missed — in ONE read.
+        recent_ids = (
+            select(FuturesMarket.id)
+            .where(and_(*filters))
+            .order_by(FuturesMarket.updated_at.desc())
+            .limit(limit * 5)
+        )
+        stmt = (
+            select(FuturesMarket)
+            .options(selectinload(FuturesMarket.outcomes))
+            .where(
+                and_(*filters),
+                or_(
+                    FuturesMarket.id.in_(recent_ids),
+                    FuturesMarket.id.in_(slate_market_ids),
+                ),
+            )
+            .order_by(FuturesMarket.updated_at.desc())
+        )
     result = await db.execute(stmt)
     markets = result.scalars().unique().all()
+    if slate_market_ids:
+        # Slate rows first, in slate order, so the ungrouped pass's `[:limit]`
+        # can never cut the very rows the lead below is built from.
+        slate_rank = {mid: i for i, mid in enumerate(slate_market_ids)}
+        markets = sorted(
+            markets, key=lambda m: slate_rank.get(m.id, len(slate_rank))
+        )
     # #9466: a game container's legs are copies of its own sub-markets.
     container_parent_ids = await _grouped_feed_container_parent_ids(db, markets)
 
@@ -3476,6 +3707,13 @@ async def grouped_feed(
             },
         })
 
+    # #10208 — lead with the current slate, one card per game, BEFORE the cut.
+    feed_items = lead_with_slate(
+        feed_items,
+        slate_market_ids,
+        slate_market_event,
+        {o["id"]: o["market_id"] for o in outcome_dicts},
+    )
     payload = {
         "feed": feed_items[:limit],
         # #4153: a folded container group is a GROUPED row that rides the
