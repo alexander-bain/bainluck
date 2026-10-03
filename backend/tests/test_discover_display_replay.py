@@ -553,6 +553,51 @@ async def test_network_or_database_access_during_replay_is_refused(harness, monk
     assert Session.execute.__name__ == "execute"
 
 
+def _no_network_stub(*_a, **_k):
+    """Stands in for a socket call that would have reached the network — so a
+    candidate the fence misses completes instead of failing, and no test
+    ever makes real traffic."""
+    return SimpleNamespace(close=lambda: None)
+
+
+async def test_a_candidate_arm_that_reaches_the_network_is_refused(harness, monkeypatch):
+    """#10290 review: the candidate arm runs under the SAME fence as the chain.
+    Before the fix the arm ran before ``offline()`` and this stub was reached."""
+    artifact = await _capture(harness)
+    monkeypatch.setattr(socket, "create_connection", _no_network_stub)
+    reached = []
+
+    def hydrating_arm(pool):
+        socket.create_connection(("api.bainluck.com", 443), timeout=1)
+        reached.append(True)
+        return pool
+
+    with pytest.raises(ddr.DisplayReplayError) as exc:
+        ddr.replay_capture(artifact, arm=hydrating_arm)
+    assert exc.value.code == ddr.OFFLINE_VIOLATION
+    assert reached == [], "the stub was reached: the arm ran outside the fence"
+    # The fence is lifted afterwards: the pre-installed stub is back.
+    assert socket.create_connection is _no_network_stub
+
+
+async def test_a_candidate_arm_that_queries_the_database_is_refused(harness):
+    artifact = await _capture(harness)
+
+    def querying_arm(pool):
+        from sqlalchemy.orm import Session
+
+        Session.execute(None, "SELECT 1")
+        return pool
+
+    with pytest.raises(ddr.DisplayReplayError) as exc:
+        ddr.replay_capture(artifact, arm=querying_arm)
+    assert exc.value.code == ddr.OFFLINE_VIOLATION
+
+    # Control: the same capture with a pure arm replays to the oracle.
+    replay = ddr.replay_capture(artifact, arm=lambda pool: pool)
+    assert replay["deck_identities"] == artifact["expected"]["full_deck_identities"]
+
+
 # --------------------------------------------------------------------------- #
 # Unsupported, missing, unknown, duplicate — refused, never "faithful"
 # --------------------------------------------------------------------------- #
@@ -676,6 +721,133 @@ async def test_load_refuses_a_malformed_capture(harness, tamper, code):
     report = ddr.verify_baseline(artifact)
     assert report["verdict"] == code, report
     assert "scope" not in report, "a refusal carries no fidelity statement or metric"
+
+
+def _set_request(**changes):
+    """Rewrite facts inside the encoded ``effective_request``."""
+
+    def tamper(d):
+        d["effective_request"].update(changes)
+
+    return tamper
+
+
+def _venue(**changes):
+    def tamper(d):
+        d["downstream"]["venue_settlement"].update(changes)
+
+    return tamper
+
+
+# #10290 review, BLOCKER 1: each of these is a loaded capture the replay would
+# otherwise have taken to PASS with full deck and page parity — the replay
+# ignored browse metadata and treated an unknown branch as "nothing happened".
+_UNSUPPORTED_LOADED = [
+    ("venue-unknown-branch", _venue(branch="future_unimplemented_branch"), ddr.UNSUPPORTED),
+    (
+        "collections-unknown-branch-inactive-capture",
+        lambda d: d["downstream"].update(
+            collections={
+                "active": True,
+                "branch": "future_unimplemented_branch",
+                "page_window": 20,
+                "collections": None,
+            }
+        ),
+        ddr.INVALID,  # also disagrees with request.collections_enabled
+    ),
+    ("category-browse", _set_request(category="politics"), ddr.UNSUPPORTED),
+    ("sport-browse", _set_request(sport="basketball_nba"), ddr.UNSUPPORTED),
+    ("tags-browse", _set_request(tags="nfl"), ddr.UNSUPPORTED),
+    ("mode-sports", _set_request(mode="sports"), ddr.UNSUPPORTED),
+    ("events-only", _set_request(include_futures=False), ddr.UNSUPPORTED),
+    ("debug", _set_request(debug=True), ddr.UNSUPPORTED),
+    ("reviewed-filter", _set_request(exclude_reviewed=True), ddr.UNSUPPORTED),
+    ("session-principal", _set_request(principal_session=True), ddr.UNSUPPORTED),
+    ("user-principal", _set_request(principal_user=True), ddr.UNSUPPORTED),
+    ("cache-hit", _set_request(cache_status="hit"), ddr.UNSUPPORTED),
+    ("unknown-build-quality", _set_request(build_quality="partial"), ddr.UNSUPPORTED),
+    (
+        "degraded-reason-on-complete",
+        _set_request(degraded_reason="futures_timeout"),
+        ddr.INVALID,
+    ),
+    ("unknown-request-fact", _set_request(region="eu"), ddr.INVALID),
+    ("missing-request-fact", lambda d: d["effective_request"].pop("category"), ddr.INVALID),
+    ("limit-disagrees", lambda d: d["chain_kwargs"].update(limit=50), ddr.INVALID),
+    (
+        "event-pct-disagrees",
+        lambda d: d["chain_kwargs"].update(event_pct=d["chain_kwargs"]["event_pct"] + 0.1),
+        ddr.INVALID,
+    ),
+    ("unknown-chain-kwarg", lambda d: d["chain_kwargs"].update(boost=1), ddr.INVALID),
+    ("support-claims-more", lambda d: d["support"].update(sports="supported"), ddr.UNSUPPORTED),
+    ("context-changed", lambda d: d["effective_context"].update(cold_start="forced"), ddr.UNSUPPORTED),
+    ("edition-without-request", lambda d: d["downstream"].update(
+        edition={"active": True, "manifest": None, "requested_policy": "x",
+                 "now": 0.0, "status": "pinned"}), ddr.INVALID),
+    ("edition-request-without-pin", _set_request(edition="tok"), ddr.INVALID),
+    ("deltas-on-fail-open", _venue(
+        branch="failed_open",
+        deltas=[{"position": 0, "identity": "event:1",
+                 "changes": {"venue_settled": {"before": {"absent": True},
+                                               "after": {"value": True}}}}],
+    ), ddr.INVALID),
+    ("delta-outside-venue-fields", _venue(
+        branch="read",
+        deltas=[{"position": 0, "identity": "event:1",
+                 "changes": {"probability": {"before": {"absent": True},
+                                             "after": {"value": 0.9}}}}],
+    ), ddr.UNSUPPORTED),
+    ("unknown-downstream-stage", lambda d: d["downstream"].update(boosts={}), ddr.INVALID),
+    ("config-digest", lambda d: d["provenance"].update(effective_config_digest="0" * 64), ddr.INVALID),
+    ("naive-clock", lambda d: d["clocks"].update(
+        scoring_now=d["clocks"]["scoring_now"][:19]), ddr.INVALID),
+]
+
+
+@pytest.mark.parametrize(
+    "tamper,code",
+    [(t, c) for _, t, c in _UNSUPPORTED_LOADED],
+    ids=[name for name, _, _ in _UNSUPPORTED_LOADED],
+)
+async def test_a_loaded_capture_outside_the_contract_never_passes(harness, tamper, code):
+    artifact = await _capture(harness)
+    # Not vacuous: the untouched capture is a real PASS through the shared chain.
+    assert ddr.verify_baseline(copy.deepcopy(artifact))["verdict"] == ddr.PASS
+    tamper(artifact)
+    report = ddr.verify_baseline(artifact)
+    assert report["verdict"] == code, report
+    assert "scope" not in report, "a refusal carries no fidelity statement or metric"
+    # And the replay refuses on its own — it does not rely on load_capture.
+    with pytest.raises(ddr.DisplayReplayError) as exc:
+        ddr.replay_capture(artifact)
+    assert exc.value.code == code
+
+
+async def test_an_unknown_branch_on_an_active_collection_capture_is_unsupported(
+    harness, monkeypatch, collection_card
+):
+    read = AsyncMock(return_value=SimpleNamespace(collections=[collection_card]))
+    _enable_collections(monkeypatch, read)
+    artifact = await _capture(harness)
+    assert ddr.verify_baseline(copy.deepcopy(artifact))["verdict"] == ddr.PASS
+
+    unknown = copy.deepcopy(artifact)
+    unknown["downstream"]["collections"].update(
+        branch="future_unimplemented_branch", collections=None
+    )
+    assert ddr.verify_baseline(unknown)["verdict"] == ddr.UNSUPPORTED
+
+    # The read branch with its input missing is incomplete, not "no insertion".
+    missing = copy.deepcopy(artifact)
+    missing["downstream"]["collections"]["collections"] = None
+    assert ddr.verify_baseline(missing)["verdict"] == ddr.INCOMPLETE
+
+    # A fail-open branch that carries cards it never read is not consistent.
+    phantom = copy.deepcopy(artifact)
+    phantom["downstream"]["collections"]["branch"] = "read_failed"
+    assert ddr.verify_baseline(phantom)["verdict"] == ddr.INVALID
 
 
 # --------------------------------------------------------------------------- #

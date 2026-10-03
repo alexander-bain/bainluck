@@ -92,6 +92,29 @@ PASS = "PASS"
 
 _TAG = "__bl_t__"
 
+#: What a capture declares it supports. Written by the recorder and required
+#: verbatim by the loader: a capture claiming any other support is refused.
+_SUPPORT = {
+    "surface": "discover_anonymous_build",
+    "personalized": "unsupported",
+    "session_principal": "unsupported",
+    "cached_response": "unsupported",
+    "sports": "unsupported",
+    "filtered_browse": "unsupported",
+    "debug_or_reviewed": "unsupported",
+    "pinned_edition": "supported_frozen_manifest_and_clock",
+    "collections": "supported_frozen_read",
+    "venue_settlement": "supported_frozen_per_card_deltas",
+}
+
+#: The only principal context a capture may carry.
+_ANONYMOUS_CONTEXT = {
+    "principal_mode": "anonymous",
+    "personalization": "inactive (PersonalizationContext() equality)",
+    "cold_start": "derived by the chain from the inactive context",
+    "reviewed_keys": None,
+}
+
 
 class DisplayReplayError(Exception):
     """A capture or replay that cannot be trusted. ``code`` is one of the
@@ -381,18 +404,7 @@ class DiscoverDisplayCapture:
         config = facts.pop("discover_config", None)
         self._doc = {
             "schema_version": SCHEMA_VERSION,
-            "support": {
-                "surface": "discover_anonymous_build",
-                "personalized": "unsupported",
-                "session_principal": "unsupported",
-                "cached_response": "unsupported",
-                "sports": "unsupported",
-                "filtered_browse": "unsupported",
-                "debug_or_reviewed": "unsupported",
-                "pinned_edition": "supported_frozen_manifest_and_clock",
-                "collections": "supported_frozen_read",
-                "venue_settlement": "supported_frozen_per_card_deltas",
-            },
+            "support": dict(_SUPPORT),
             "provenance": {
                 "origin": self.origin,
                 "code_sha": _code_sha(),
@@ -413,12 +425,7 @@ class DiscoverDisplayCapture:
                 "source_and_feature_timestamps": "retained unchanged inside each card",
             },
             "effective_request": encode_value(facts, "$.request"),
-            "effective_context": {
-                "principal_mode": "anonymous",
-                "personalization": "inactive (PersonalizationContext() equality)",
-                "cold_start": "derived by the chain from the inactive context",
-                "reviewed_keys": None,
-            },
+            "effective_context": dict(_ANONYMOUS_CONTEXT),
             "chain_kwargs": {
                 "limit": chain_kwargs["limit"],
                 "event_pct": chain_kwargs["event_pct"],
@@ -631,31 +638,292 @@ def load_capture(source: Any, *, max_bytes: int = DEFAULT_MAX_CAPTURE_BYTES) -> 
         raise DisplayReplayError(
             INVALID, f"schema_version {doc.get('schema_version')!r} != {SCHEMA_VERSION}"
         )
-    keys = set(doc)
-    if keys != _REQUIRED_TOP:
-        raise DisplayReplayError(
-            INVALID,
-            f"missing keys {sorted(_REQUIRED_TOP - keys)}; unknown keys "
-            f"{sorted(keys - _REQUIRED_TOP)}",
-        )
-    if doc["effective_context"].get("principal_mode") != "anonymous":
-        raise DisplayReplayError(UNSUPPORTED, "only anonymous captures replay")
-    if doc["chain_kwargs"].get("sports_mode") or doc["chain_kwargs"].get("my_teams_only"):
-        raise DisplayReplayError(UNSUPPORTED, "Sports / My Stuff captures do not replay")
-    pool = decode_value(doc["scored_pool"]["items"])
-    ids = _check_identities(pool, kinds=SUPPORTED_POOL_KINDS, where="pool")
-    if ids != doc["scored_pool"]["identities"] or len(pool) != doc["scored_pool"]["count"]:
-        raise DisplayReplayError(INVALID, "pool identities disagree with the pool's cards")
-    downstream = doc["downstream"]
-    if downstream.get("venue_settlement") is None:
-        raise DisplayReplayError(INCOMPLETE, "venue settlement input missing")
-    collections = downstream.get("collections") or {}
-    if collections.get("active") and "branch" not in collections:
-        raise DisplayReplayError(INCOMPLETE, "collections were active but never recorded")
+    _exact_keys(doc, _REQUIRED_TOP, "capture")
+    validate_replay_inputs(doc)
     expected = doc["expected"]
+    _exact_keys(expected, _EXPECTED_KEYS, "expected")
+    if not isinstance(expected["full_deck_identities"], list) or not _is_int(
+        expected["total"]
+    ):
+        raise DisplayReplayError(INVALID, "expected deck identities / total malformed")
     if len(expected["full_deck_identities"]) != expected["total"]:
         raise DisplayReplayError(INVALID, "expected deck length disagrees with total")
     return doc
+
+
+# The closed replay contract (#10290 review). Every input the replay reads —
+# and every request/context fact that decides WHETHER the capture is a
+# supported build — is checked against the values the recorder can write for a
+# supported build. Anything else (an unknown branch, a browse filter, a missing
+# input, two blocks that disagree) refuses with a typed verdict before a single
+# stage runs. The replay itself dispatches only on these closed sets, so a
+# capture cannot reach PASS by naming a branch the replay silently skips.
+
+_EXPECTED_KEYS = {"full_deck_identities", "total", "full_public_deck_digest", "public_response"}
+_REQUEST_KEYS = {
+    "mode",
+    "sport",
+    "category",
+    "tags",
+    "include_events",
+    "include_futures",
+    "my_teams_only",
+    "event_pct",
+    "limit",
+    "offset",
+    "edition",
+    "debug",
+    "exclude_reviewed",
+    "principal_user",
+    "principal_session",
+    "cache_status",
+    "build_quality",
+    "degraded_reason",
+    "collections_enabled",
+    "edition_policy",
+}
+_CHAIN_KWARG_KEYS = {"limit", "event_pct", "include_events", "my_teams_only", "sports_mode"}
+_PROVENANCE_KEYS = {
+    "origin",
+    "code_sha",
+    "request_id",
+    "build_id",
+    "edition_policy_fingerprint",
+    "policy_version",
+    "policy_version_note",
+    "effective_config",
+    "effective_config_digest",
+}
+_CLOCK_KEYS = {
+    "scoring_now",
+    "chain_entry_wall",
+    "source_and_feature_timestamps",
+    "response_wall",
+    "stage_timings_ms",
+    "cache_metadata",
+}
+_POOL_KEYS = {"count", "identities", "items"}
+_DOWNSTREAM_KEYS = {"collections", "edition", "venue_settlement"}
+_COLLECTIONS_ACTIVE_KEYS = {"active", "branch", "page_window", "collections"}
+_EDITION_ACTIVE_KEYS = {"active", "manifest", "requested_policy", "now", "status"}
+_VENUE_KEYS = {"branch", "deltas"}
+_VENUE_DELTA_KEYS = {"position", "identity", "changes"}
+
+#: Cache states a build that reached the seam can carry. The two
+#: ``disabled_*`` states belong to debug / reviewed builds, refused at capture.
+_REPLAYABLE_CACHE_STATUSES = frozenset({"disabled", "miss", "error"})
+_BUILD_QUALITIES = frozenset({"complete", "degraded"})
+_DEGRADED_REASONS = frozenset(
+    {"futures_skipped_budget", "futures_timeout", "futures_error"}
+)
+
+
+def _is_int(value: Any) -> bool:
+    return isinstance(value, int) and not isinstance(value, bool)
+
+
+def _is_number(value: Any) -> bool:
+    return isinstance(value, (int, float)) and not isinstance(value, bool)
+
+
+def _exact_keys(block: Any, keys: set, where: str) -> None:
+    if not isinstance(block, dict):
+        raise DisplayReplayError(INVALID, f"{where} is not an object")
+    have = set(block)
+    if have != keys:
+        raise DisplayReplayError(
+            INVALID,
+            f"{where}: missing keys {sorted(keys - have)}; unknown keys "
+            f"{sorted(have - keys)}",
+        )
+
+
+def _require(condition: bool, code: str, detail: str) -> None:
+    if not condition:
+        raise DisplayReplayError(code, detail)
+
+
+def validate_replay_inputs(capture: dict) -> None:
+    """Refuse a capture the replay cannot reproduce faithfully.
+
+    Reads everything except ``expected`` (the oracle), so :func:`replay_capture`
+    runs it too without ever consulting the answer.
+    """
+    from app.routes.feed import (
+        DISCOVER_COMPOSITION_WINDOW,
+        VENUE_ATTACH_FAILED_OPEN,
+        VENUE_ATTACH_NOTHING_ASKABLE,
+        VENUE_ATTACH_READ,
+    )
+    from app.utils.feed_collections import (
+        COLLECTIONS_NO_BUDGET,
+        COLLECTIONS_NO_PAGE_GAMES,
+        COLLECTIONS_READ,
+        COLLECTIONS_READ_FAILED,
+    )
+    from app.utils.feed_editions import (
+        EDITION_STATUS_EXPIRED,
+        EDITION_STATUS_INVALIDATED,
+        EDITION_STATUS_PINNED,
+        EDITION_STATUS_SUPERSEDED,
+        EDITION_STATUS_UNPINNED,
+    )
+
+    if not isinstance(capture, dict) or capture.get("schema_version") != SCHEMA_VERSION:
+        raise DisplayReplayError(INVALID, "not a mixed_display_replay_v1 capture")
+    for key in _REQUIRED_TOP - {"expected"}:
+        _require(key in capture, INVALID, f"capture is missing {key!r}")
+
+    _require(capture["support"] == _SUPPORT, UNSUPPORTED,
+             "support declaration differs from the supported anonymous build")
+    _require(capture["effective_context"] == _ANONYMOUS_CONTEXT, UNSUPPORTED,
+             "only the anonymous, inactive-personalization context replays")
+
+    provenance = capture["provenance"]
+    _exact_keys(provenance, _PROVENANCE_KEYS, "provenance")
+    _require(provenance["origin"] in ("production", "local", "synthetic"), INVALID,
+             f"provenance.origin {provenance['origin']!r} is not a known origin")
+    _require(
+        _digest(decode_value(provenance["effective_config"]))
+        == provenance["effective_config_digest"],
+        INVALID,
+        "effective_config disagrees with its digest",
+    )
+
+    clocks = capture["clocks"]
+    _exact_keys(clocks, _CLOCK_KEYS, "clocks")
+    try:
+        scoring_now = _dt.datetime.fromisoformat(clocks["scoring_now"])
+    except (TypeError, ValueError):
+        raise DisplayReplayError(INVALID, "clocks.scoring_now is not an ISO datetime")
+    _require(scoring_now.tzinfo is not None, INVALID, "clocks.scoring_now is naive")
+
+    # -- the request: exactly the Discover build's facts ------------------- #
+    request = decode_value(capture["effective_request"])
+    _exact_keys(request, _REQUEST_KEYS, "effective_request")
+    _require(isinstance(request["mode"], str) and request["mode"].lower() == "discover",
+             UNSUPPORTED, f"mode={request['mode']!r} is not the Discover build")
+    for name in ("sport", "category", "tags"):
+        _require(request[name] is None, UNSUPPORTED,
+                 f"{name} filter is a browse, not Discover")
+    _require(request["include_events"] is True and request["include_futures"] is True,
+             UNSUPPORTED, "Discover carries both events and futures")
+    for name in ("my_teams_only", "debug", "exclude_reviewed",
+                 "principal_user", "principal_session", "collections_enabled"):
+        _require(isinstance(request[name], bool), INVALID, f"request.{name} is not a bool")
+    for name in ("my_teams_only", "debug", "exclude_reviewed",
+                 "principal_user", "principal_session"):
+        _require(request[name] is False, UNSUPPORTED, f"request.{name} is set")
+    _require(_is_int(request["limit"]) and request["limit"] >= 1, INVALID,
+             "request.limit is not a positive int")
+    _require(_is_int(request["offset"]) and request["offset"] >= 0, INVALID,
+             "request.offset is not a non-negative int")
+    _require(_is_number(request["event_pct"]), INVALID, "request.event_pct is not a number")
+    _require(request["edition"] is None or isinstance(request["edition"], str), INVALID,
+             "request.edition is not a token or null")
+    _require(isinstance(request["edition_policy"], str), INVALID,
+             "request.edition_policy is not a fingerprint")
+    _require(provenance["edition_policy_fingerprint"] == request["edition_policy"],
+             INVALID, "provenance and request disagree on the edition policy")
+    _require(request["cache_status"] in _REPLAYABLE_CACHE_STATUSES, UNSUPPORTED,
+             f"cache_status {request['cache_status']!r} is not a replayable build")
+    _require(request["build_quality"] in _BUILD_QUALITIES, UNSUPPORTED,
+             f"build_quality {request['build_quality']!r} is not known")
+    if request["build_quality"] == "complete":
+        _require(request["degraded_reason"] is None, INVALID,
+                 "a complete build carries a degraded_reason")
+    else:
+        _require(request["degraded_reason"] in _DEGRADED_REASONS, UNSUPPORTED,
+                 f"degraded_reason {request['degraded_reason']!r} is not known")
+
+    # -- chain arguments: agree with the request ---------------------------- #
+    kw = capture["chain_kwargs"]
+    _exact_keys(kw, _CHAIN_KWARG_KEYS, "chain_kwargs")
+    _require(kw["sports_mode"] is False and kw["my_teams_only"] is False, UNSUPPORTED,
+             "Sports / My Stuff captures do not replay")
+    _require(kw["include_events"] is True, UNSUPPORTED, "Discover carries events")
+    for name in ("limit", "event_pct", "my_teams_only", "include_events"):
+        _require(canonical(kw[name]) == canonical(request[name]), INVALID,
+                 f"chain_kwargs.{name} disagrees with the request")
+
+    # -- the pool ----------------------------------------------------------- #
+    scored = capture["scored_pool"]
+    _exact_keys(scored, _POOL_KEYS, "scored_pool")
+    _require(isinstance(scored["items"], list), INVALID, "scored_pool.items is not a list")
+    pool = decode_value(scored["items"])
+    ids = _check_identities(pool, kinds=SUPPORTED_POOL_KINDS, where="pool")
+    if ids != scored["identities"] or len(pool) != scored["count"]:
+        raise DisplayReplayError(INVALID, "pool identities disagree with the pool's cards")
+
+    # -- downstream: closed branch sets, inputs present for the branch ------ #
+    downstream = capture["downstream"]
+    _exact_keys(downstream, _DOWNSTREAM_KEYS, "downstream")
+
+    collections = downstream["collections"]
+    _require(isinstance(collections, dict) and isinstance(collections.get("active"), bool),
+             INVALID, "downstream.collections.active is not a bool")
+    _require(collections["active"] is request["collections_enabled"], INVALID,
+             "collections activity disagrees with request.collections_enabled")
+    if collections["active"]:
+        _require("branch" in collections, INCOMPLETE,
+                 "collections were active but never recorded")
+        _exact_keys(collections, _COLLECTIONS_ACTIVE_KEYS, "downstream.collections")
+        branch = collections["branch"]
+        _require(branch in (COLLECTIONS_READ, COLLECTIONS_READ_FAILED,
+                            COLLECTIONS_NO_BUDGET, COLLECTIONS_NO_PAGE_GAMES),
+                 UNSUPPORTED, f"collections branch {branch!r} is not supported")
+        _require(collections["page_window"] == DISCOVER_COMPOSITION_WINDOW, UNSUPPORTED,
+                 f"collections page_window {collections['page_window']!r} is not "
+                 f"the route's {DISCOVER_COMPOSITION_WINDOW}")
+        if branch == COLLECTIONS_READ:
+            _require(isinstance(collections["collections"], list), INCOMPLETE,
+                     "collections read branch has no frozen cards")
+        else:
+            _require(collections["collections"] is None, INVALID,
+                     f"collections branch {branch!r} carries cards it never read")
+    else:
+        _exact_keys(collections, {"active"}, "downstream.collections")
+
+    edition = downstream["edition"]
+    _require(isinstance(edition, dict) and isinstance(edition.get("active"), bool),
+             INVALID, "downstream.edition.active is not a bool")
+    _require(edition["active"] is (request["edition"] is not None), INVALID,
+             "edition activity disagrees with request.edition")
+    if edition["active"]:
+        _exact_keys(edition, _EDITION_ACTIVE_KEYS, "downstream.edition")
+        _require(edition["status"] in (EDITION_STATUS_PINNED, EDITION_STATUS_UNPINNED,
+                                       EDITION_STATUS_EXPIRED, EDITION_STATUS_SUPERSEDED,
+                                       EDITION_STATUS_INVALIDATED),
+                 UNSUPPORTED, f"edition status {edition['status']!r} is not supported")
+        _require(edition["requested_policy"] == request["edition_policy"], INVALID,
+                 "edition requested_policy disagrees with the request")
+        _require(_is_number(edition["now"]), INVALID, "edition clock is not a number")
+    else:
+        _exact_keys(edition, {"active"}, "downstream.edition")
+
+    venue = downstream["venue_settlement"]
+    _require(venue is not None, INCOMPLETE, "venue settlement input missing")
+    _exact_keys(venue, _VENUE_KEYS, "downstream.venue_settlement")
+    _require(venue["branch"] in (VENUE_ATTACH_READ, VENUE_ATTACH_FAILED_OPEN,
+                                 VENUE_ATTACH_NOTHING_ASKABLE),
+             UNSUPPORTED, f"venue branch {venue['branch']!r} is not supported")
+    _require(isinstance(venue["deltas"], list), INVALID, "venue deltas is not a list")
+    if venue["branch"] != VENUE_ATTACH_READ:
+        _require(venue["deltas"] == [], INVALID,
+                 f"venue branch {venue['branch']!r} wrote no cards but carries deltas")
+    for index, delta in enumerate(venue["deltas"]):
+        _exact_keys(delta, _VENUE_DELTA_KEYS, f"venue.deltas[{index}]")
+        _require(_is_int(delta["position"]) and delta["position"] >= 0, INVALID,
+                 f"venue.deltas[{index}].position is not a non-negative int")
+        changes = decode_value(delta["changes"])
+        _require(isinstance(changes, dict) and changes and set(changes) <= set(VENUE_FIELDS),
+                 UNSUPPORTED, f"venue.deltas[{index}] changes fields outside {VENUE_FIELDS}")
+        for key, change in changes.items():
+            _exact_keys(change, {"before", "after"}, f"venue.deltas[{index}].{key}")
+            for side in ("before", "after"):
+                _require(change[side] in ({"absent": True},) or (
+                    isinstance(change[side], dict) and set(change[side]) == {"value"}),
+                    INVALID, f"venue.deltas[{index}].{key}.{side} malformed")
 
 
 # --------------------------------------------------------------------------- #
@@ -718,22 +986,27 @@ def replay_capture(
     copy of the pool; the baseline arm is ``arm=None``.
 
     Never consults ``capture['expected']`` — that is the oracle, read only by
-    :func:`verify_baseline`.
+    :func:`verify_baseline`. Refuses (``validate_replay_inputs``) any capture
+    outside the closed contract before running a stage, and runs the arm and
+    every stage inside :func:`offline` — a candidate that hydrates is replaying
+    today, exactly like a chain that does.
     """
     from app.routes import feed as feed_route
     from app.utils.feed_collections import COLLECTIONS_READ, insert_feed_collections
     from app.utils.feed_editions import EDITION_STATUS_PINNED, apply_pinned_edition
     from app.utils.personalization import PersonalizationContext
 
+    validate_replay_inputs(capture)
     kw = capture["chain_kwargs"]
     request = decode_value(capture["effective_request"])
     now = _dt.datetime.fromisoformat(capture["clocks"]["scoring_now"])
-    pool = decode_value(capture["scored_pool"]["items"])
-    if arm is not None:
-        pool = arm(pool)
-    stages: dict[str, list[str]] = {"pool": deck_identities(pool)}
 
     with offline():
+        pool = decode_value(capture["scored_pool"]["items"])
+        if arm is not None:
+            pool = arm(pool)
+        stages: dict[str, list[str]] = {"pool": deck_identities(pool)}
+
         items, meta = feed_route.apply_discover_display_chain(
             pool,
             limit=kw["limit"],
