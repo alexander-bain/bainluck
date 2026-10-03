@@ -1,0 +1,1174 @@
+{
+  "away_score": 82,
+  "away_team": "New York Knicks",
+  "cache": {
+    "availability": "live",
+    "build_id": "nobuild",
+    "created_at": "2026-10-03T16:15:03.342101+00:00",
+    "generation": 3,
+    "lifecycle_watermark": null,
+    "quality": "full",
+    "quality_reasons": [],
+    "source_status": "live"
+  },
+  "closed_winner_market_ids": [],
+  "during_player_props": null,
+  "event_id": 42,
+  "game_question_matrix": {
+    "contract": "10238.v1",
+    "coverage": {
+      "build_errors": 0,
+      "by_kind": {
+        "count_threshold": 1,
+        "rank_predicate": 0,
+        "signed_handicap": 2
+      },
+      "options": 13,
+      "questions": 8,
+      "scope": "rows_served_by_this_response",
+      "untyped": {
+        "untyped_period": 0,
+        "untyped_predicate": 1,
+        "untyped_subject": 0,
+        "untyped_unit": 0
+      }
+    },
+    "display_scope": "game",
+    "questions": [
+      {
+        "complement_question_key": null,
+        "complete": null,
+        "display_scope": "game",
+        "kind": "count_threshold",
+        "label": "211+ points",
+        "lifecycle": {
+          "market_status": "open",
+          "state": "open"
+        },
+        "market_name": "Celtics at Knicks: Total Points",
+        "missing_options": [],
+        "option_counts": {
+          "declared": null,
+          "loaded": 1,
+          "missing_identified": 0,
+          "returned": 1
+        },
+        "options": [
+          {
+            "comparison": {
+              "baseline": null,
+              "delta_points": null,
+              "latest": null,
+              "reason": "leg_is_complement",
+              "state": "unavailable"
+            },
+            "contributor_outcome_ids": [
+              2
+            ],
+            "label": "Under 210.5",
+            "market_ids": [
+              101
+            ],
+            "option_key": "o:2",
+            "published": {
+              "basis": "published_source_display",
+              "observed_at": "2026-05-17T23:28:00+00:00",
+              "source": "kalshi",
+              "value": 0.52,
+              "value_state": "quoted"
+            },
+            "result": {
+              "evidence_kind": "none",
+              "state": "open"
+            },
+            "side": "over",
+            "source_evidence": [
+              {
+                "leg_side": "under",
+                "market_id": 101,
+                "observed_at": "2026-05-17T23:28:00+00:00",
+                "outcome_id": 2,
+                "raw_probability": 0.48,
+                "source": "kalshi"
+              }
+            ]
+          }
+        ],
+        "period": {
+          "key": "full_game",
+          "label": "Game"
+        },
+        "predicate": {
+          "bound": 211,
+          "line": 210.5,
+          "relation": "ge"
+        },
+        "proposition_key": "count|points|game|full_game|ge:211",
+        "quantity": {
+          "integer": true,
+          "key": "points",
+          "plural": "points",
+          "singular": "point"
+        },
+        "question_key": "q:count|points|game|full_game|ge:211",
+        "source_array": "totals",
+        "source_totals": [
+          {
+            "legs": 1,
+            "raw_sum": 0.48,
+            "source": "kalshi"
+          }
+        ],
+        "subject": {
+          "label": null,
+          "side": "game"
+        },
+        "typing": {
+          "reason": null,
+          "state": "typed"
+        }
+      },
+      {
+        "complement_question_key": "q:handicap|points|home|full_game|-3.5",
+        "complete": false,
+        "display_scope": "game",
+        "kind": "signed_handicap",
+        "label": "New York Knicks +3.5 points",
+        "lifecycle": {
+          "market_status": "open",
+          "state": "open"
+        },
+        "market_name": "Celtics at Knicks: Spread",
+        "missing_options": [],
+        "option_counts": {
+          "declared": null,
+          "loaded": 2,
+          "missing_identified": 0,
+          "returned": 1
+        },
+        "options": [
+          {
+            "comparison": {
+              "baseline": null,
+              "delta_points": null,
+              "latest": null,
+              "reason": "no_pregame_pin",
+              "state": "unavailable"
+            },
+            "contributor_outcome_ids": [
+              4
+            ],
+            "label": "New York Knicks +3.5",
+            "market_ids": [
+              102
+            ],
+            "option_key": "o:4",
+            "published": {
+              "basis": "published_source_display",
+              "observed_at": "2026-05-17T23:26:00+00:00",
+              "source": "kalshi",
+              "value": 0.46,
+              "value_state": "quoted"
+            },
+            "result": {
+              "evidence_kind": "none",
+              "state": "open"
+            },
+            "side": "away",
+            "source_evidence": [
+              {
+                "leg_side": "away",
+                "market_id": 102,
+                "observed_at": "2026-05-17T23:26:00+00:00",
+                "outcome_id": 4,
+                "raw_probability": 0.46,
+                "source": "kalshi"
+              }
+            ]
+          }
+        ],
+        "period": {
+          "key": "full_game",
+          "label": "Game"
+        },
+        "predicate": {
+          "bound": null,
+          "line": 3.5,
+          "relation": "handicap"
+        },
+        "proposition_key": "handicap|points|away|full_game|+3.5",
+        "quantity": {
+          "integer": true,
+          "key": "points",
+          "plural": "points",
+          "singular": "point"
+        },
+        "question_key": "q:handicap|points|away|full_game|+3.5",
+        "source_array": "spreads",
+        "source_totals": [
+          {
+            "legs": 1,
+            "raw_sum": 0.46,
+            "source": "kalshi"
+          }
+        ],
+        "subject": {
+          "label": "New York Knicks",
+          "side": "away"
+        },
+        "typing": {
+          "reason": null,
+          "state": "typed"
+        }
+      },
+      {
+        "complement_question_key": "q:handicap|points|away|full_game|+3.5",
+        "complete": false,
+        "display_scope": "game",
+        "kind": "signed_handicap",
+        "label": "Boston Celtics -3.5 points",
+        "lifecycle": {
+          "market_status": "open",
+          "state": "open"
+        },
+        "market_name": "Celtics at Knicks: Spread",
+        "missing_options": [],
+        "option_counts": {
+          "declared": null,
+          "loaded": 2,
+          "missing_identified": 0,
+          "returned": 1
+        },
+        "options": [
+          {
+            "comparison": {
+              "baseline": {
+                "basis": "pregame_pin",
+                "observed_at": "2026-05-17T22:00:00+00:00",
+                "probability": 0.4
+              },
+              "delta_points": 14.0,
+              "latest": {
+                "observed_at": "2026-05-17T23:27:00+00:00",
+                "probability": 0.54
+              },
+              "reason": null,
+              "state": "comparable"
+            },
+            "contributor_outcome_ids": [
+              3
+            ],
+            "label": "Boston Celtics -3.5",
+            "market_ids": [
+              102
+            ],
+            "option_key": "o:3",
+            "published": {
+              "basis": "published_source_display",
+              "observed_at": "2026-05-17T23:27:00+00:00",
+              "source": "kalshi",
+              "value": 0.54,
+              "value_state": "quoted"
+            },
+            "result": {
+              "evidence_kind": "none",
+              "state": "open"
+            },
+            "side": "home",
+            "source_evidence": [
+              {
+                "leg_side": "home",
+                "market_id": 102,
+                "observed_at": "2026-05-17T23:27:00+00:00",
+                "outcome_id": 3,
+                "raw_probability": 0.54,
+                "source": "kalshi"
+              }
+            ]
+          }
+        ],
+        "period": {
+          "key": "full_game",
+          "label": "Game"
+        },
+        "predicate": {
+          "bound": null,
+          "line": -3.5,
+          "relation": "handicap"
+        },
+        "proposition_key": "handicap|points|home|full_game|-3.5",
+        "quantity": {
+          "integer": true,
+          "key": "points",
+          "plural": "points",
+          "singular": "point"
+        },
+        "question_key": "q:handicap|points|home|full_game|-3.5",
+        "source_array": "spreads",
+        "source_totals": [
+          {
+            "legs": 1,
+            "raw_sum": 0.54,
+            "source": "kalshi"
+          }
+        ],
+        "subject": {
+          "label": "Boston Celtics",
+          "side": "home"
+        },
+        "typing": {
+          "reason": null,
+          "state": "typed"
+        }
+      },
+      {
+        "complement_question_key": null,
+        "complete": null,
+        "display_scope": "game",
+        "kind": "named_options",
+        "label": "Celtics at Knicks: Spread 3",
+        "lifecycle": {
+          "market_status": "open",
+          "state": "open"
+        },
+        "market_name": "Celtics at Knicks: Spread 3",
+        "missing_options": [],
+        "option_counts": {
+          "declared": null,
+          "loaded": 1,
+          "missing_identified": 0,
+          "returned": 1
+        },
+        "options": [
+          {
+            "comparison": {
+              "baseline": null,
+              "delta_points": null,
+              "latest": null,
+              "reason": "no_pregame_pin",
+              "state": "unavailable"
+            },
+            "contributor_outcome_ids": [
+              18
+            ],
+            "label": "Boston Celtics -3",
+            "market_ids": [
+              110
+            ],
+            "option_key": "o:18",
+            "published": {
+              "basis": "published_source_display",
+              "observed_at": "2026-05-17T23:12:00+00:00",
+              "source": "kalshi",
+              "value": 0.5,
+              "value_state": "quoted"
+            },
+            "result": {
+              "evidence_kind": "none",
+              "state": "open"
+            },
+            "side": "category",
+            "source_evidence": [
+              {
+                "leg_side": "category",
+                "market_id": 110,
+                "observed_at": "2026-05-17T23:12:00+00:00",
+                "outcome_id": 18,
+                "raw_probability": 0.5,
+                "source": "kalshi"
+              }
+            ]
+          }
+        ],
+        "period": {
+          "key": "full_game",
+          "label": "Game"
+        },
+        "predicate": null,
+        "proposition_key": null,
+        "quantity": null,
+        "question_key": "m:110",
+        "source_array": "spreads",
+        "source_totals": [
+          {
+            "legs": 1,
+            "raw_sum": 0.5,
+            "source": "kalshi"
+          }
+        ],
+        "subject": null,
+        "typing": {
+          "reason": "untyped_predicate",
+          "state": "untyped"
+        }
+      },
+      {
+        "complement_question_key": null,
+        "complete": null,
+        "display_scope": "game",
+        "kind": "named_options",
+        "label": "Head-to-Head: Scheffler vs McIlroy",
+        "lifecycle": {
+          "market_status": "open",
+          "state": "open"
+        },
+        "market_name": "Head-to-Head: Scheffler vs McIlroy",
+        "missing_options": [],
+        "option_counts": {
+          "declared": null,
+          "loaded": 2,
+          "missing_identified": 0,
+          "returned": 2
+        },
+        "options": [
+          {
+            "comparison": {
+              "baseline": null,
+              "delta_points": null,
+              "latest": null,
+              "reason": "no_pregame_pin",
+              "state": "unavailable"
+            },
+            "contributor_outcome_ids": [
+              5
+            ],
+            "label": "Scheffler",
+            "market_ids": [
+              104
+            ],
+            "option_key": "o:5",
+            "published": {
+              "basis": "published_source_display",
+              "observed_at": "2026-05-17T23:25:00+00:00",
+              "source": "kalshi",
+              "value": 0.55,
+              "value_state": "quoted"
+            },
+            "result": {
+              "evidence_kind": "none",
+              "state": "open"
+            },
+            "side": "contender",
+            "source_evidence": [
+              {
+                "leg_side": "contender",
+                "market_id": 104,
+                "observed_at": "2026-05-17T23:25:00+00:00",
+                "outcome_id": 5,
+                "raw_probability": 0.55,
+                "source": "kalshi"
+              }
+            ]
+          },
+          {
+            "comparison": {
+              "baseline": null,
+              "delta_points": null,
+              "latest": null,
+              "reason": "no_pregame_pin",
+              "state": "unavailable"
+            },
+            "contributor_outcome_ids": [
+              6
+            ],
+            "label": "McIlroy",
+            "market_ids": [
+              104
+            ],
+            "option_key": "o:6",
+            "published": {
+              "basis": "published_source_display",
+              "observed_at": "2026-05-17T23:24:00+00:00",
+              "source": "kalshi",
+              "value": 0.45,
+              "value_state": "quoted"
+            },
+            "result": {
+              "evidence_kind": "none",
+              "state": "open"
+            },
+            "side": "contender",
+            "source_evidence": [
+              {
+                "leg_side": "contender",
+                "market_id": 104,
+                "observed_at": "2026-05-17T23:24:00+00:00",
+                "outcome_id": 6,
+                "raw_probability": 0.45,
+                "source": "kalshi"
+              }
+            ]
+          }
+        ],
+        "period": null,
+        "predicate": null,
+        "proposition_key": null,
+        "quantity": null,
+        "question_key": "m:104",
+        "source_array": "matchups",
+        "source_totals": [
+          {
+            "legs": 2,
+            "raw_sum": 1.0,
+            "source": "kalshi"
+          }
+        ],
+        "subject": null,
+        "typing": {
+          "reason": null,
+          "state": "typed"
+        }
+      },
+      {
+        "complement_question_key": null,
+        "complete": null,
+        "display_scope": "game",
+        "kind": "named_options",
+        "label": "Celtics at Warriors",
+        "lifecycle": {
+          "market_status": "open",
+          "state": "open"
+        },
+        "market_name": "Celtics at Warriors",
+        "missing_options": [],
+        "option_counts": {
+          "declared": null,
+          "loaded": 1,
+          "missing_identified": 0,
+          "returned": 1
+        },
+        "options": [
+          {
+            "comparison": {
+              "baseline": null,
+              "delta_points": null,
+              "latest": null,
+              "reason": "no_pregame_pin",
+              "state": "unavailable"
+            },
+            "contributor_outcome_ids": [
+              8
+            ],
+            "label": "Yes",
+            "market_ids": [
+              106
+            ],
+            "option_key": "o:8",
+            "published": {
+              "basis": "published_source_display",
+              "observed_at": "2026-05-17T23:22:00+00:00",
+              "source": "kalshi",
+              "value": 0.7,
+              "value_state": "quoted"
+            },
+            "result": {
+              "evidence_kind": "none",
+              "state": "open"
+            },
+            "side": "category",
+            "source_evidence": [
+              {
+                "leg_side": "category",
+                "market_id": 106,
+                "observed_at": "2026-05-17T23:22:00+00:00",
+                "outcome_id": 8,
+                "raw_probability": 0.7,
+                "source": "kalshi"
+              }
+            ]
+          }
+        ],
+        "period": null,
+        "predicate": null,
+        "proposition_key": null,
+        "quantity": null,
+        "question_key": "m:106",
+        "source_array": "other",
+        "source_totals": [
+          {
+            "legs": 1,
+            "raw_sum": 0.7,
+            "source": "kalshi"
+          }
+        ],
+        "subject": null,
+        "typing": {
+          "reason": null,
+          "state": "typed"
+        }
+      },
+      {
+        "complement_question_key": null,
+        "complete": true,
+        "display_scope": "game",
+        "kind": "named_options",
+        "label": "Celtics at Knicks: Result after 3 quarters",
+        "lifecycle": {
+          "market_status": "open",
+          "state": "open"
+        },
+        "market_name": "Celtics at Knicks: Result after 3 quarters",
+        "missing_options": [],
+        "option_counts": {
+          "declared": null,
+          "loaded": 3,
+          "missing_identified": 0,
+          "returned": 3
+        },
+        "options": [
+          {
+            "comparison": {
+              "baseline": null,
+              "delta_points": null,
+              "latest": null,
+              "reason": "no_pregame_pin",
+              "state": "unavailable"
+            },
+            "contributor_outcome_ids": [
+              13
+            ],
+            "label": "Boston Celtics",
+            "market_ids": [
+              108
+            ],
+            "option_key": "o:13",
+            "published": {
+              "basis": "published_source_display",
+              "observed_at": "2026-05-17T23:17:00+00:00",
+              "source": "kalshi",
+              "value": 0.52,
+              "value_state": "quoted"
+            },
+            "result": {
+              "evidence_kind": "none",
+              "state": "open"
+            },
+            "side": "home",
+            "source_evidence": [
+              {
+                "leg_side": "home",
+                "market_id": 108,
+                "observed_at": "2026-05-17T23:17:00+00:00",
+                "outcome_id": 13,
+                "raw_probability": 0.52,
+                "source": "kalshi"
+              }
+            ]
+          },
+          {
+            "comparison": {
+              "baseline": null,
+              "delta_points": null,
+              "latest": null,
+              "reason": "no_pregame_pin",
+              "state": "unavailable"
+            },
+            "contributor_outcome_ids": [
+              14
+            ],
+            "label": "Tie",
+            "market_ids": [
+              108
+            ],
+            "option_key": "o:14",
+            "published": {
+              "basis": "published_source_display",
+              "observed_at": "2026-05-17T23:16:00+00:00",
+              "source": "kalshi",
+              "value": 0.0,
+              "value_state": "quoted"
+            },
+            "result": {
+              "evidence_kind": "none",
+              "state": "open"
+            },
+            "side": "draw",
+            "source_evidence": [
+              {
+                "leg_side": "draw",
+                "market_id": 108,
+                "observed_at": "2026-05-17T23:16:00+00:00",
+                "outcome_id": 14,
+                "raw_probability": 0.0,
+                "source": "kalshi"
+              }
+            ]
+          },
+          {
+            "comparison": {
+              "baseline": null,
+              "delta_points": null,
+              "latest": null,
+              "reason": "no_pregame_pin",
+              "state": "unavailable"
+            },
+            "contributor_outcome_ids": [
+              19
+            ],
+            "label": "New York Knicks",
+            "market_ids": [
+              108
+            ],
+            "option_key": "o:19",
+            "published": {
+              "basis": "published_source_display",
+              "observed_at": "2026-05-17T23:11:00+00:00",
+              "source": "kalshi",
+              "value": 0.47,
+              "value_state": "quoted"
+            },
+            "result": {
+              "evidence_kind": "none",
+              "state": "open"
+            },
+            "side": "away",
+            "source_evidence": [
+              {
+                "leg_side": "away",
+                "market_id": 108,
+                "observed_at": "2026-05-17T23:11:00+00:00",
+                "outcome_id": 19,
+                "raw_probability": 0.47,
+                "source": "kalshi"
+              }
+            ]
+          }
+        ],
+        "period": null,
+        "predicate": null,
+        "proposition_key": null,
+        "quantity": null,
+        "question_key": "m:108",
+        "source_array": "other",
+        "source_totals": [
+          {
+            "legs": 3,
+            "raw_sum": 0.99,
+            "source": "kalshi"
+          }
+        ],
+        "subject": null,
+        "typing": {
+          "reason": null,
+          "state": "typed"
+        }
+      },
+      {
+        "complement_question_key": null,
+        "complete": null,
+        "display_scope": "game",
+        "kind": "named_options",
+        "label": "Celtics at Knicks: Top scorer",
+        "lifecycle": {
+          "market_status": "open",
+          "state": "open"
+        },
+        "market_name": "Celtics at Knicks: Top scorer",
+        "missing_options": [],
+        "option_counts": {
+          "declared": null,
+          "loaded": 3,
+          "missing_identified": 0,
+          "returned": 3
+        },
+        "options": [
+          {
+            "comparison": {
+              "baseline": null,
+              "delta_points": null,
+              "latest": null,
+              "reason": "no_pregame_pin",
+              "state": "unavailable"
+            },
+            "contributor_outcome_ids": [
+              15
+            ],
+            "label": "Jayson Tatum",
+            "market_ids": [
+              109
+            ],
+            "option_key": "o:15",
+            "published": {
+              "basis": "published_source_display",
+              "observed_at": "2026-05-17T23:15:00+00:00",
+              "source": "kalshi",
+              "value": 0.5392,
+              "value_state": "quoted"
+            },
+            "result": {
+              "evidence_kind": "none",
+              "state": "open"
+            },
+            "side": "category",
+            "source_evidence": [
+              {
+                "leg_side": "category",
+                "market_id": 109,
+                "observed_at": "2026-05-17T23:15:00+00:00",
+                "outcome_id": 15,
+                "raw_probability": 0.55,
+                "source": "kalshi"
+              }
+            ]
+          },
+          {
+            "comparison": {
+              "baseline": null,
+              "delta_points": null,
+              "latest": null,
+              "reason": "no_pregame_pin",
+              "state": "unavailable"
+            },
+            "contributor_outcome_ids": [
+              16
+            ],
+            "label": "Jalen Brunson",
+            "market_ids": [
+              109
+            ],
+            "option_key": "o:16",
+            "published": {
+              "basis": "published_source_display",
+              "observed_at": "2026-05-17T23:14:00+00:00",
+              "source": "kalshi",
+              "value": 0.2451,
+              "value_state": "quoted"
+            },
+            "result": {
+              "evidence_kind": "none",
+              "state": "open"
+            },
+            "side": "category",
+            "source_evidence": [
+              {
+                "leg_side": "category",
+                "market_id": 109,
+                "observed_at": "2026-05-17T23:14:00+00:00",
+                "outcome_id": 16,
+                "raw_probability": 0.25,
+                "source": "kalshi"
+              }
+            ]
+          },
+          {
+            "comparison": {
+              "baseline": null,
+              "delta_points": null,
+              "latest": null,
+              "reason": "no_pregame_pin",
+              "state": "unavailable"
+            },
+            "contributor_outcome_ids": [
+              17
+            ],
+            "label": "Jaylen Brown",
+            "market_ids": [
+              109
+            ],
+            "option_key": "o:17",
+            "published": {
+              "basis": "published_source_display",
+              "observed_at": "2026-05-17T23:13:00+00:00",
+              "source": "kalshi",
+              "value": 0.2157,
+              "value_state": "quoted"
+            },
+            "result": {
+              "evidence_kind": "none",
+              "state": "open"
+            },
+            "side": "category",
+            "source_evidence": [
+              {
+                "leg_side": "category",
+                "market_id": 109,
+                "observed_at": "2026-05-17T23:13:00+00:00",
+                "outcome_id": 17,
+                "raw_probability": 0.22,
+                "source": "kalshi"
+              }
+            ]
+          }
+        ],
+        "period": null,
+        "predicate": null,
+        "proposition_key": null,
+        "quantity": null,
+        "question_key": "m:109",
+        "source_array": "other",
+        "source_totals": [
+          {
+            "legs": 3,
+            "raw_sum": 1.02,
+            "source": "kalshi"
+          }
+        ],
+        "subject": null,
+        "typing": {
+          "reason": null,
+          "state": "typed"
+        }
+      }
+    ],
+    "series_markets_count": null
+  },
+  "home_score": 88,
+  "home_team": "Boston Celtics",
+  "matchups": [
+    {
+      "_market_id": 104,
+      "contributor_outcome_ids": [
+        5,
+        6
+      ],
+      "market_name": "Head-to-Head: Scheffler vs McIlroy",
+      "outcomes": [
+        {
+          "contributor_outcome_ids": [
+            5
+          ],
+          "is_winner": null,
+          "name": "Scheffler",
+          "observed_at": "2026-05-17T23:25:00+00:00",
+          "probability": 0.55,
+          "resolution_source": null
+        },
+        {
+          "contributor_outcome_ids": [
+            6
+          ],
+          "is_winner": null,
+          "name": "McIlroy",
+          "observed_at": "2026-05-17T23:24:00+00:00",
+          "probability": 0.45,
+          "resolution_source": null
+        }
+      ],
+      "source": "kalshi",
+      "type": "h2h"
+    }
+  ],
+  "open_winner_quote": null,
+  "other": [
+    {
+      "_market_id": 106,
+      "contributor_outcome_ids": [
+        8
+      ],
+      "is_winner": null,
+      "market_name": "Celtics at Warriors",
+      "observed_at": "2026-05-17T23:22:00+00:00",
+      "outcome_name": "Yes",
+      "probability": 0.7,
+      "resolution_source": null,
+      "source": "kalshi"
+    },
+    {
+      "_market_id": 108,
+      "contributor_outcome_ids": [
+        13
+      ],
+      "is_winner": null,
+      "market_name": "Celtics at Knicks: Result after 3 quarters",
+      "observed_at": "2026-05-17T23:17:00+00:00",
+      "outcome_name": "Boston Celtics",
+      "probability": 0.52,
+      "resolution_source": null,
+      "source": "kalshi"
+    },
+    {
+      "_market_id": 108,
+      "contributor_outcome_ids": [
+        14
+      ],
+      "is_winner": null,
+      "market_name": "Celtics at Knicks: Result after 3 quarters",
+      "observed_at": "2026-05-17T23:16:00+00:00",
+      "outcome_name": "Tie",
+      "probability": null,
+      "resolution_source": null,
+      "source": "kalshi"
+    },
+    {
+      "_market_id": 108,
+      "contributor_outcome_ids": [
+        19
+      ],
+      "is_winner": null,
+      "market_name": "Celtics at Knicks: Result after 3 quarters",
+      "observed_at": "2026-05-17T23:11:00+00:00",
+      "outcome_name": "New York Knicks",
+      "probability": 0.47,
+      "resolution_source": null,
+      "source": "kalshi"
+    },
+    {
+      "_market_id": 109,
+      "contributor_outcome_ids": [
+        15
+      ],
+      "is_winner": null,
+      "market_name": "Celtics at Knicks: Top scorer",
+      "observed_at": "2026-05-17T23:15:00+00:00",
+      "outcome_name": "Jayson Tatum",
+      "probability": 0.5392,
+      "resolution_source": null,
+      "source": "kalshi"
+    },
+    {
+      "_market_id": 109,
+      "contributor_outcome_ids": [
+        16
+      ],
+      "is_winner": null,
+      "market_name": "Celtics at Knicks: Top scorer",
+      "observed_at": "2026-05-17T23:14:00+00:00",
+      "outcome_name": "Jalen Brunson",
+      "probability": 0.2451,
+      "resolution_source": null,
+      "source": "kalshi"
+    },
+    {
+      "_market_id": 109,
+      "contributor_outcome_ids": [
+        17
+      ],
+      "is_winner": null,
+      "market_name": "Celtics at Knicks: Top scorer",
+      "observed_at": "2026-05-17T23:13:00+00:00",
+      "outcome_name": "Jaylen Brown",
+      "probability": 0.2157,
+      "resolution_source": null,
+      "source": "kalshi"
+    }
+  ],
+  "outcome_market_ids": {
+    "13": 108,
+    "14": 108,
+    "15": 109,
+    "16": 109,
+    "17": 109,
+    "18": 110,
+    "19": 108,
+    "2": 101,
+    "3": 102,
+    "4": 102,
+    "5": 104,
+    "6": 104,
+    "8": 106
+  },
+  "outcome_observed_at": {
+    "13": "2026-05-17T23:17:00+00:00",
+    "14": "2026-05-17T23:16:00+00:00",
+    "15": "2026-05-17T23:15:00+00:00",
+    "16": "2026-05-17T23:14:00+00:00",
+    "17": "2026-05-17T23:13:00+00:00",
+    "18": "2026-05-17T23:12:00+00:00",
+    "19": "2026-05-17T23:11:00+00:00",
+    "2": "2026-05-17T23:28:00+00:00",
+    "3": "2026-05-17T23:27:00+00:00",
+    "4": "2026-05-17T23:26:00+00:00",
+    "5": "2026-05-17T23:25:00+00:00",
+    "6": "2026-05-17T23:24:00+00:00",
+    "8": "2026-05-17T23:22:00+00:00"
+  },
+  "outcome_revision_at": {
+    "13": "2026-05-17T23:30:00+00:00",
+    "14": "2026-05-17T23:30:00+00:00",
+    "15": "2026-05-17T23:30:00+00:00",
+    "16": "2026-05-17T23:30:00+00:00",
+    "17": "2026-05-17T23:30:00+00:00",
+    "18": "2026-05-17T23:30:00+00:00",
+    "19": "2026-05-17T23:30:00+00:00",
+    "2": "2026-05-17T23:30:00+00:00",
+    "3": "2026-05-17T23:30:00+00:00",
+    "4": "2026-05-17T23:30:00+00:00",
+    "5": "2026-05-17T23:30:00+00:00",
+    "6": "2026-05-17T23:30:00+00:00",
+    "8": "2026-05-17T23:30:00+00:00"
+  },
+  "pace": {
+    "fraction_elapsed": 0.614,
+    "projected_total": 277,
+    "time_remaining_display": "18:31 left",
+    "total_scored": 170
+  },
+  "period_markets": [],
+  "player_props": [],
+  "props_script": [],
+  "spreads": [
+    {
+      "_market_id": 110,
+      "contributor_outcome_ids": [
+        18
+      ],
+      "is_winner": null,
+      "market_name": "Celtics at Knicks: Spread 3",
+      "observed_at": "2026-05-17T23:12:00+00:00",
+      "outcome_name": "Boston Celtics -3",
+      "probability": 0.5,
+      "resolution_source": null,
+      "source": "kalshi",
+      "threshold": 3.0
+    },
+    {
+      "_market_id": 102,
+      "contributor_outcome_ids": [
+        3
+      ],
+      "is_winner": null,
+      "market_name": "Celtics at Knicks: Spread",
+      "observed_at": "2026-05-17T23:27:00+00:00",
+      "outcome_name": "Boston Celtics -3.5",
+      "probability": 0.54,
+      "resolution_source": null,
+      "source": "kalshi",
+      "threshold": 3.5
+    },
+    {
+      "_market_id": 102,
+      "contributor_outcome_ids": [
+        4
+      ],
+      "is_winner": null,
+      "market_name": "Celtics at Knicks: Spread",
+      "observed_at": "2026-05-17T23:26:00+00:00",
+      "outcome_name": "New York Knicks +3.5",
+      "probability": 0.46,
+      "resolution_source": null,
+      "source": "kalshi",
+      "threshold": 3.5
+    }
+  ],
+  "status": "live",
+  "stream_market_ids": [
+    101,
+    102,
+    104,
+    106,
+    108,
+    109,
+    110
+  ],
+  "team_totals": [],
+  "totals": [
+    {
+      "_external_id": null,
+      "_market_id": 101,
+      "contributor_outcome_ids": [
+        2
+      ],
+      "is_winner": null,
+      "market_name": "Celtics at Knicks: Total Points",
+      "market_type": "game_total",
+      "movement": -0.02,
+      "observed_at": "2026-05-17T23:28:00+00:00",
+      "outcome_name": "Under 210.5",
+      "over_probability": 0.52,
+      "period": null,
+      "resolution_source": null,
+      "source": "kalshi",
+      "threshold": 210.5
+    }
+  ]
+}
