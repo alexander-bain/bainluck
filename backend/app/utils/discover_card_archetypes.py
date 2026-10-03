@@ -9,9 +9,11 @@ need heatmaps, bundles, distributions, timelines, or recap treatment.
 from __future__ import annotations
 
 import re
+from datetime import date, datetime
 from typing import Any
 
 from app.utils.market_grouping import extract_threshold
+from app.utils.market_staleness import whole_name_date
 from app.utils.outcome_display import (
     LADDER_MIN_DRAWN_RUNGS,
     incoherent_ladder_indexes,
@@ -762,6 +764,101 @@ def _distribution_outcomes(outcomes: list[dict[str, Any]]) -> list[dict[str, Any
     return rows
 
 
+# #10374 — A ROW THAT SAYS WHAT HAPPENS IF NONE OF THE DATES DOES.
+# `No release by October 31` on the Claude Haiku board. It is not a date, it is
+# the residual after every date, so it sorts after them rather than refusing
+# the board. Anything else that is not a date refuses it.
+_DATE_BOARD_RESIDUAL_RE = re.compile(r"^\s*(no|none|not|neither|other)\b", re.I)
+
+
+def _resolution_day(resolution_date: Any) -> date | None:
+    if isinstance(resolution_date, datetime):
+        return resolution_date.date()
+    if isinstance(resolution_date, date):
+        return resolution_date
+    if isinstance(resolution_date, str) and resolution_date:
+        try:
+            return datetime.fromisoformat(resolution_date.replace("Z", "+00:00")).date()
+        except ValueError:
+            return None
+    return None
+
+
+def _chronological_dates(
+    rows: list[dict[str, Any]], resolution_date: Any
+) -> list[date | None] | None:
+    """Each row's calendar date when the board is a date question, else None.
+
+    #10374 — Alex, rage shake 170: "These date oriented cards should be shown in
+    chronological order ... even if that is the true descending order of the
+    probabilities." The `Next Claude Haiku (4.6+) released on...?` card read
+    October 27 · October 12 · October 28 · October 13.
+
+    THE CARD STILL DRAWS THE SAME FOUR ROWS. This answers only what order they
+    are listed in; which rows survive the cut stays the leader-first slice both
+    clients already make (#1526), so the leader can never fall off the card by
+    being late in the month.
+
+    A YEAR IS NEVER GUESSED BY THE CLIENT. The venue labels are `October 27`,
+    with no year, and a board that resolves 15 January lists `December 28` before
+    `January 5`. Each year-less day takes the latest year that does not put it
+    after the question resolves. A board that mixes dated and year-less labels
+    is refused rather than reconciled: that is the `December 31, 2025` beside a
+    bare `December 31` shape `_live_dated_twins` exists for, and picking which
+    is earlier is the guess this refuses. So is a board where two rows land on
+    one day, or a year-less board with no resolution date to anchor it.
+
+    `None` means "list it by probability, as today" — every refusal fails to the
+    rendering that already ships.
+    """
+    parsed: list[tuple[int, int, int | None] | None] = []
+    residuals = 0
+    for row in rows:
+        label = row.get("label") or ""
+        reading = whole_name_date(label)
+        if reading is None:
+            if not _DATE_BOARD_RESIDUAL_RE.match(label):
+                return None
+            residuals += 1
+            parsed.append(None)
+            continue
+        parsed.append(reading)
+
+    readings = [p for p in parsed if p is not None]
+    if len(readings) < 2 or residuals > 1:
+        return None
+    with_year = sum(1 for _, _, year in readings if year is not None)
+    if with_year not in (0, len(readings)):
+        return None
+
+    anchor = None if with_year else _resolution_day(resolution_date)
+    if not with_year and anchor is None:
+        return None
+
+    dates: list[date | None] = []
+    for reading in parsed:
+        if reading is None:
+            dates.append(None)
+            continue
+        month, day, year = reading
+        try:
+            if year is not None:
+                dates.append(date(year, month, day))
+                continue
+            candidate = date(anchor.year, month, day)
+            if candidate > anchor:
+                candidate = date(anchor.year - 1, month, day)
+        except ValueError:
+            # February 29 in a year that has none: not a day we can place.
+            return None
+        dates.append(candidate)
+
+    placed = [d for d in dates if d is not None]
+    if len(set(placed)) != len(placed):
+        return None
+    return dates
+
+
 def _comparison_theme(name: str, category: str | None) -> str | None:
     # This is broader than the public bundle allowlist. Some themes, especially
     # macro ranges and sports paths, are useful admin/archetype signals but too
@@ -798,6 +895,7 @@ def classify_discover_card_archetype(
     status: str | None = None,
     ladder_treatment_refused: bool = False,
     field_is_a_race: bool = True,
+    resolution_date: Any = None,
 ) -> dict[str, Any]:
     """Return frontend/admin rendering metadata for a Discover futures market.
 
@@ -837,6 +935,16 @@ def classify_discover_card_archetype(
         ladder_already_refused=ladder_treatment_refused,
     )
     distribution_outcomes = _distribution_outcomes(outcome_rows)
+    # #10374 — served alongside, never instead: the rows keep probability order
+    # (which four survive is still the leader-first cut) and each date row says
+    # its day, so the card lists the drawn rows earliest-first. Additive on
+    # purpose: a client that has not learnt the field still renders today's
+    # board, where re-ordering the list here would have handed every shipped
+    # iPhone build a leader bar on whichever drawn date came first.
+    row_dates = _chronological_dates(distribution_outcomes, resolution_date)
+    if row_dates is not None:
+        for row, day in zip(distribution_outcomes, row_dates):
+            row["date"] = day.isoformat() if day is not None else None
     comparison_theme = _comparison_theme(market_name, category)
 
     suggested_format = "binary_probability"
@@ -933,6 +1041,12 @@ def classify_discover_card_archetype(
         # asserted structurally in the #7844 guard rather than left latent.
         "field_is_a_race": bool(field_is_a_race),
         "distribution_outcomes": distribution_outcomes,
+        # #10374 — `chronological`: list the drawn rows by
+        # `distribution_outcomes[].date`, earliest first, a row whose date is
+        # null (the `No release by…` residual) last. `probability`: as served.
+        "distribution_order": (
+            "chronological" if row_dates is not None else "probability"
+        ),
         "remaining_outcome_count": max(0, count - len(distribution_outcomes)),
         "qa_signals": qa_signals,
         "public_source_disagreement": False,

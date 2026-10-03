@@ -591,6 +591,12 @@ def _whole_name_date(name: str) -> tuple[int, int, int | None] | None:
     return month, day, year
 
 
+# #10374 — the one reading of "this rung's whole name is a date", for the
+# Discover card that lists a date question's rows earliest-first. A second regex
+# there would be a second answer to which labels are dates.
+whole_name_date = _whole_name_date
+
+
 def _live_dated_twins(
     names: list[str], now: datetime, *, grace_days: float
 ) -> dict[tuple[int, int], int]:

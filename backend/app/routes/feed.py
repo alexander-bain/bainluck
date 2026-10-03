@@ -12118,6 +12118,8 @@ async def _score_sports_mode_futures(
             # #7844 half two — the SAME resolution the copy was decided on above,
             # so the caption and the board it describes cannot disagree.
             field_is_a_race=_field_is_a_race,
+            # #10374 — the anchor that places a year-less `October 27` rung.
+            resolution_date=market.resolution_date,
         )
 
         futures_data = {
@@ -14048,6 +14050,8 @@ async def _score_futures(
                 ladder_treatment_refused=ladder_refused,
                 # #7844 half two — see the matching line in the sibling scorer.
                 field_is_a_race=_field_is_a_race,
+                # #10374 — see the matching line in the sibling scorer.
+                resolution_date=market.resolution_date,
             )
 
             futures_data = {
