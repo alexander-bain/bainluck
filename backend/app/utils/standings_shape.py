@@ -176,8 +176,15 @@ def record_text(current_record, standings, standings_updated_at=None, now=None):
     case #5520 exists for, fit easily. With no readable stamp the lead is not
     bounded, so a row nobody can date keeps the answer it was already given.
     `now` is the reference clock, injectable so tests never read the real one.
+
+    THE BOARD'S RECORD KEEPS ITS OVERTIME LOSSES (#10311 r2). Once the board won
+    above, the same Canadiens hero read "1-0" beside the Penguins' "1-0-0": the
+    NHL board stores no overtime-loss key, so the board's string had two parts
+    where `current_record` has three. `_board_record` recovers the column from
+    the board's own splits when its points confirm it (2 a win, 1 an overtime
+    loss).
     """
-    snapshot = _snapshot_record(standings)
+    snapshot = _board_record(standings)
     parsed = _parse_record(current_record)
     if parsed is None:
         return snapshot
@@ -283,6 +290,36 @@ def reconciled_record_and_standings(
         for key in ("draws", "ties"):
             aligned.pop(key, None)
     return record, aligned
+
+
+def _board_record(standings):
+    """The board's record as `record_text` serves it: `_snapshot_record`, plus
+    the overtime-loss column an NHL board leaves out (#10311 r2).
+
+    The column is recovered only when the board proves it: no `draws`/`ties`
+    key (a sport that names its third column already composes it), home and
+    road splits that are both W-L-OTL and sum to the board's own wins and
+    losses, and `points` equal to two a win plus one an overtime loss. Anything
+    else (MLB's two-part splits, an NFL or soccer board, a split that does not
+    add up) returns `_snapshot_record` unchanged.
+
+    `_snapshot_record` itself stays the string a CLIENT composes from the blob,
+    because `reconciled_record_and_standings` compares against exactly that to
+    decide whether the blob needs the third column written back.
+    """
+    record = _snapshot_record(standings)
+    if record is None or "draws" in standings or "ties" in standings:
+        return record
+    splits = [_parse_record(standings.get(key)) for key in ("home_record", "road_record")]
+    if any(split is None or split.count("-") != 2 for split in splits):
+        return record
+    columns = [sum(int(split.split("-")[i]) for split in splits) for i in range(3)]
+    wins, losses, points = standings.get("wins"), standings.get("losses"), standings.get("points")
+    if not all(type(v) is int for v in (wins, losses, points)):
+        return record
+    if columns[0] != wins or columns[1] != losses or points != 2 * wins + columns[2]:
+        return record
+    return f"{record}-{columns[2]}"
 
 
 def _snapshot_record(standings):
