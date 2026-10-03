@@ -124,3 +124,53 @@ export function assignSeriesColors(
   let next = 0;
   return conventional.map((c) => c ?? pool[next++ % pool.length]);
 }
+
+/**
+ * #10266 — a colour that belongs to the OUTCOME, not to its slot in the drawn
+ * set, so a team keeps it when the reader changes range.
+ *
+ * Positional colouring changes a line's colour whenever the set around it
+ * changes. On `/futures/231` the history response's order moved between 1M and
+ * 1W, and on a sparse range a whole series can be missing: with Rams absent,
+ * 49ers slid from slot 2 (green) to slot 1 (red).
+ *
+ * Here each outcome's colour is dealt from its rank in `order`, the caller's
+ * fixed list of the board's outcomes (the futures page passes the market's own
+ * outcome order), through `assignSeriesColors`, so party labels keep #8095's
+ * colours. Ranks inside the palette are distinct, so the top outcomes never
+ * move whatever subset is drawn. Two drawn lines can only collide when an
+ * outcome ranks beyond the palette (a 30-team board); that one takes the first
+ * colour no other drawn line holds, walking the drawn set in rank order, so the
+ * lines on screen stay distinguishable. Outcomes `order` does not name are
+ * treated the same way, after the named ones. `skip` (eliminated lines, which
+ * draw grey) takes no colour.
+ */
+export function fixedOrderSeriesColors(
+  drawn: readonly { outcome_id: number; skip?: boolean }[],
+  order: readonly { id: number; name: string }[],
+  palette: readonly string[],
+): Map<number, string> {
+  const base = assignSeriesColors(order.map((o) => o.name), palette);
+  const rank = new Map<number, number>();
+  const baseById = new Map<number, string>();
+  order.forEach((o, i) => {
+    if (rank.has(o.id)) return;
+    rank.set(o.id, i);
+    baseById.set(o.id, base[i]);
+  });
+  const ranked = drawn
+    .filter((o) => !o.skip)
+    .map((o, i) => ({ id: o.outcome_id, r: rank.get(o.outcome_id) ?? order.length + i }))
+    .sort((a, b) => a.r - b.r);
+  const used = new Set<string>();
+  const out = new Map<number, string>();
+  for (const { id } of ranked) {
+    let colour = baseById.get(id);
+    if (colour === undefined || used.has(colour)) {
+      colour = palette.find((c) => !used.has(c)) ?? colour ?? palette[0];
+    }
+    used.add(colour);
+    out.set(id, colour);
+  }
+  return out;
+}

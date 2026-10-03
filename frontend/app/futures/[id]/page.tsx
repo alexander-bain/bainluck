@@ -570,11 +570,12 @@ export default function FuturesDetailPage({ params }: FuturesDetailPageProps) {
     return pickCaptionSubject(market?.outcomes ?? [], drawnIds);
   }, [historyOutcomes, selectedOutcomes, market?.outcomes]);
 
-  // #10266: the chart deals its colours in the market's own outcome order, which
-  // a range tap does not refetch (the history response's order changes with
-  // `hours=`), so a team keeps its colour on 1W, 1M and All.
+  // #10266: the chart colours each team from its place in the market's own
+  // outcome order, which a range tap does not refetch (the history response's
+  // order and membership change with `hours=`), so a team keeps its colour on
+  // 1W, 1M and All.
   const chartSeriesOrder = useMemo(
-    () => (market?.outcomes ?? []).map((o) => o.id),
+    () => (market?.outcomes ?? []).map((o) => ({ id: o.id, name: o.name })),
     [market?.outcomes],
   );
 

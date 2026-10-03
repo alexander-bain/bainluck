@@ -4,12 +4,17 @@
  *
  * On `/futures/231` the chart dealt its colours in the history response's
  * order, which changes with `hours=`: Pittsburgh red on 1M and blue on 1W.
- * The page now passes the market's own outcome order (`seriesOrder`).
+ * The page now passes the market's own outcome order (`seriesOrder`), and a
+ * line's colour belongs to its outcome's place in that order, so it survives a
+ * range whose response is in another order OR holds a different set of lines
+ * (sol's review of 69e3879d91: with Rams absent on a sparse range, 49ers slid
+ * from green to red).
  */
 import React from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import oddsVerified from "./fixtures/verifiedTitle10224/detail-odds-verified.json";
 import { inFixedSeriesOrder } from "@/lib/futuresDetailDisplay";
+import { ELIMINATED_SERIES_COLOR, SERIES_COLORS, fixedOrderSeriesColors } from "@/lib/seriesColors";
 import { FuturesChart } from "@/components/FuturesChart";
 
 jest.mock("next/navigation", () => ({
@@ -30,6 +35,8 @@ const NINERS = series(1309494, "San Francisco 49ers", 0.09);
  *  different order each time (the 1M vs 1W shape on /futures/231). */
 const WINDOW_1M = [NINERS, RAMS, BILLS];
 const WINDOW_1W = [RAMS, BILLS, NINERS];
+/** A sparse range: Rams has no history in this window at all. */
+const WINDOW_SPARSE = [NINERS, BILLS];
 
 let HISTORY_OUTCOMES: unknown[] = [];
 jest.mock("swr", () => ({
@@ -75,11 +82,17 @@ function pageAt(window: unknown[]): string {
   HISTORY_OUTCOMES = window;
   return renderToStaticMarkup(<FuturesDetailPage params={{ id: "86832" }} />);
 }
-function chartAt(window: typeof WINDOW_1M, seriesOrder?: number[]): string {
+type Line = typeof BILLS & { eliminated?: boolean };
+function chartAt(
+  window: Line[],
+  seriesOrder?: { id: number; name: string }[],
+  outcomeColors?: Map<number, string>,
+): string {
   return renderToStaticMarkup(
-    <FuturesChart historyData={window} onToggleOutcome={() => {}} seriesOrder={seriesOrder} />,
+    <FuturesChart historyData={window} onToggleOutcome={() => {}} seriesOrder={seriesOrder} outcomeColors={outcomeColors} />,
   );
 }
+const ORDER = [BILLS, RAMS, NINERS].map((o) => ({ id: o.outcome_id, name: o.name }));
 
 describe("#10266 a line keeps its colour across range chips", () => {
   it("the question page colours each team the same on two windows whose responses disagree on order", () => {
@@ -99,9 +112,52 @@ describe("#10266 a line keeps its colour across range chips", () => {
     expect(a.get("Buffalo Bills")).not.toBe(b.get("Buffalo Bills"));
   });
 
-  it("the chart with an order colours by it", () => {
-    const order = [BILLS.outcome_id, RAMS.outcome_id, NINERS.outcome_id];
-    expect(legendColours(chartAt(WINDOW_1M, order))).toEqual(legendColours(chartAt(WINDOW_1W, order)));
+  it("the question page keeps a surviving team's colour when another team is missing from the range (sol's subset case)", () => {
+    const full = legendColours(pageAt(WINDOW_1M));
+    const sparse = legendColours(pageAt(WINDOW_SPARSE));
+    expect([...sparse.keys()]).toEqual(["Buffalo Bills", "San Francisco 49ers"]);
+    expect(sparse.get("San Francisco 49ers")).toBe(full.get("San Francisco 49ers"));
+    expect(sparse.get("Buffalo Bills")).toBe(full.get("Buffalo Bills"));
+  });
+
+  it("the chart with an order colours by it, on a reordered and on a sparse window", () => {
+    const a = legendColours(chartAt(WINDOW_1M, ORDER));
+    expect(legendColours(chartAt(WINDOW_1W, ORDER))).toEqual(a);
+    const sparse = legendColours(chartAt(WINDOW_SPARSE, ORDER));
+    expect(sparse.get("San Francisco 49ers")).toBe(a.get("San Francisco 49ers"));
+  });
+
+  it("an explicit override and eliminated grey still win over the fixed-order colour", () => {
+    const override = new Map([[NINERS.outcome_id, "#123456"]]);
+    expect(legendColours(chartAt(WINDOW_1M, ORDER, override)).get("San Francisco 49ers")).toBe("#123456");
+    const out = legendColours(chartAt([BILLS, { ...RAMS, eliminated: true }, NINERS], ORDER));
+    expect(out.get("Los Angeles Rams")).toBe(ELIMINATED_SERIES_COLOR.toLowerCase());
+    // The grey line takes no colour, and the others keep theirs.
+    expect(out.get("San Francisco 49ers")).toBe(legendColours(chartAt(WINDOW_1M, ORDER)).get("San Francisco 49ers"));
+  });
+
+  it("fixedOrderSeriesColors: top-of-board colours never move; a deep outcome stays distinct from the drawn lines", () => {
+    const board = Array.from({ length: 14 }, (_, i) => ({ id: 100 + i, name: `Team ${i}` }));
+    const drawn = (ids: number[]) => ids.map((outcome_id) => ({ outcome_id }));
+    const all = fixedOrderSeriesColors(drawn([100, 101, 102]), board, SERIES_COLORS);
+    const some = fixedOrderSeriesColors(drawn([102]), board, SERIES_COLORS);
+    expect(some.get(102)).toBe(all.get(102));
+    expect(all.get(102)).toBe(SERIES_COLORS[2]);
+    // Rank 10 cycles onto rank 0's colour; drawn together they must still differ.
+    const deep = fixedOrderSeriesColors(drawn([100, 110]), board, SERIES_COLORS);
+    expect(deep.get(100)).toBe(SERIES_COLORS[0]);
+    expect(deep.get(110)).not.toBe(deep.get(100));
+    // Drawn alone, the deep outcome takes its own cycled colour.
+    expect(fixedOrderSeriesColors(drawn([110]), board, SERIES_COLORS).get(110)).toBe(SERIES_COLORS[0]);
+    // A skipped (eliminated) line takes no colour.
+    expect(fixedOrderSeriesColors([{ outcome_id: 100, skip: true }], board, SERIES_COLORS).has(100)).toBe(false);
+  });
+
+  it("fixedOrderSeriesColors keeps a party line on its party colour (#8095)", () => {
+    const board = [{ id: 1, name: "Republicans" }, { id: 2, name: "Democrats" }];
+    const out = fixedOrderSeriesColors([{ outcome_id: 1 }, { outcome_id: 2 }], board, SERIES_COLORS);
+    expect(out.get(2)).toBe(SERIES_COLORS[0]); // Democrats blue
+    expect(out.get(1)).toBe(SERIES_COLORS[1]); // Republicans red
   });
 
   it("inFixedSeriesOrder orders by the list, puts unnamed ids after in response order, and never changes the set", () => {
