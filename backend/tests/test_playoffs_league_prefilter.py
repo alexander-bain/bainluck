@@ -231,6 +231,23 @@ _STAGE_SPECIMENS = {
         (62383707, "KXMLBNLCSQUAL-26", "Pro Baseball NLCS Qualifiers", 5, False),
         (62383708, "KXMLBALCSQUAL-26", "Pro Baseball ALCS Qualifiers", 5, False),
     ],
+    # #10032: the five markets the World Series column served on 2026-10-02
+    # (`/api/playoffs/mlb?debug=true`, 15:43Z). The two `False` rows ask which
+    # league / division the champion comes from; their six answers were served
+    # as team rows and the column summed to 293%. Tier 1 is the worst case: it
+    # is the tier rule that files a market under `championship`.
+    ("mlb", "championship"): [
+        (63448360, "1108756", "MLB 2026: World Series Division Winner", 1, False),
+        (63448358, "1108758", "MLB 2026: World Series Winning League", 1, False),
+        (114584, "179312", "MLB World Series Champion 2026", 1, True),
+        (275, "KXMLB-26", "Pro Baseball Champion", 1, True),
+        (1, "baseball_mlb_world_series_winner", "MLB World Series Winner", 1, True),
+    ],
+    ("mlb", "division"): [
+        (272, "KXMLBALEAST-26", "AL East Division Winner", 4, True),
+        (268, "KXMLBNLEAST-26", "NL East Division Winner", 4, True),
+        (63448360, "1108756", "MLB 2026: World Series Division Winner", 4, False),
+    ],
     ("nfl", "conference"): [
         (31615, "KXNFLNFCCHAMP-27", "NFC Championship Winner", 2, True),
         (31616, "KXNFLAFCCHAMP-27", "AFC Championship Winner", 2, True),
@@ -293,6 +310,44 @@ class TestAStageColumnHoldsOnlyItsOwnQuestion:
         # Open on production 2026-09-26 but not (yet) in a column: the same
         # questions under their other names.
         assert not _market_passes_league_filter(name, eid, get_league_config(slug)), name
+
+
+class TestTheWorldSeriesColumnHoldsOnlyClubs:
+    """#10032: a question about which league or division wins the World Series
+    is refused by what it asks, not by its id or by the words "League" or
+    "Division" — the pennant and division markets use both."""
+
+    @pytest.mark.parametrize(
+        "name,eid",
+        [
+            ("MLB 2026: World Series Winning League", "1108758"),
+            ("MLB 2026: World Series Division Winner", "1108756"),
+            ("mlb 2027:  world  series winning league", "1200001"),
+            ("MLB: World Series Winning Division", "1200002"),
+            ("World Series League Winner 2026", "1200003"),
+            ("MLB 2026 World Series division winner", "1200004"),
+        ],
+    )
+    def test_the_side_questions_are_refused(self, name, eid):
+        assert not _market_passes_league_filter(name, eid, get_league_config("mlb")), name
+
+    @pytest.mark.parametrize(
+        "name,eid",
+        [
+            ("MLB World Series Champion 2026", "179312"),
+            ("Pro Baseball Champion", "KXMLB-26"),
+            ("MLB World Series Winner", "baseball_mlb_world_series_winner"),
+            ("American League Champion", "KXMLBAL-26"),
+            ("National League Champion", "KXMLBNL-26"),
+            ("MLB: 2026 American League Champion", "215866"),
+            ("MLB: 2026 National League Champion", "215871"),
+            ("AL East Division Winner", "KXMLBALEAST-26"),
+            ("NL West Division Winner", "KXMLBNLWEST-26"),
+        ],
+    )
+    def test_the_club_markets_still_pass(self, name, eid):
+        """The control: "League", "Division" and "Winner" alone refuse nothing."""
+        assert _market_passes_league_filter(name, eid, get_league_config("mlb")), name
 
 
 class TestPrefilterNeverNarrows:

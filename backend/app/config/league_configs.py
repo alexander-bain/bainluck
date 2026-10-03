@@ -577,6 +577,12 @@ MLB_CONFIG = LeagueConfig(
         # pennant rule's \b(?:ALCS|NLCS)\b admitted it, and the AL / NL Champ
         # chart drew "Los Angeles D 67.5%" above the real pennant line (41.5%).
         r"\b(?:AL|NL)(?:CS|DS)\s+Qualif",
+        # #10032: "MLB 2026: World Series Winning League" / "... Division
+        # Winner" ask which LEAGUE or DIVISION the champion comes from. Their
+        # answers ("National League" 63.5%, "NL West" 42%) were served as six
+        # team rows in the World Series column, which summed to 293%.
+        r"\bWorld\s+Series\s+Winning\s+(?:League|Division)\b",
+        r"\bWorld\s+Series\s+(?:League|Division)\s+Winner\b",
     ],
     columns=[
         GridColumn(key="make_playoffs", label="Make Playoffs", order=1),
