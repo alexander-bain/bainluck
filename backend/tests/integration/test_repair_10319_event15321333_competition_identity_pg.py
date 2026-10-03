@@ -111,18 +111,20 @@ async def factory():
             """CREATE TABLE futures_markets (
                 id integer PRIMARY KEY, event_id integer REFERENCES events(id),
                 sport_id integer REFERENCES sports(id), source varchar(50) NOT NULL,
-                external_id varchar(200) NOT NULL, name varchar(300), market_metadata jsonb)""",
+                external_id varchar(200) NOT NULL, name varchar(300) NOT NULL,
+                category varchar(50) NOT NULL, mutually_exclusive boolean NOT NULL,
+                status varchar(20) NOT NULL, market_metadata jsonb)""",
             "CREATE INDEX ix_fm_event ON futures_markets(event_id)",
         ):
             await conn.execute(text(ddl))
         await conn.execute(text(
-            "INSERT INTO sports VALUES "
+            'INSERT INTO sports (id, key, name, "group", active) VALUES '
             f"({MEN_SPORT_ID}, 'soccer_italy_serie_a', 'Serie A - Italy', 'Soccer', true), "
             f"({r.WOMEN_SPORT_ID}, '{r.WOMEN_SPORT_KEY}', '{r.WOMEN_SPORT_NAME}', 'Soccer', true), "
             "(8, 'soccer_epl', 'EPL', 'Soccer', true)"
         ))
         await conn.execute(text(
-            f"INSERT INTO teams VALUES ({HOME_TEAM}, {r.WOMEN_SPORT_ID}, 'Parma Calcio'), "
+            f"INSERT INTO teams (id, sport_id, name) VALUES ({HOME_TEAM}, {r.WOMEN_SPORT_ID}, 'Parma Calcio'), "
             f"({AWAY_TEAM}, {r.WOMEN_SPORT_ID}, 'Ternana'), (903, {MEN_SPORT_ID}, 'Parma Calcio')"
         ))
         for eid, ext, tags in ((r.EVENT_ID, "kalshi_KXSERIEAWGAME-26OCT03PARTER", PRE_TAGS),
@@ -146,11 +148,12 @@ async def factory():
             )
         await conn.execute(
             text(
-                "INSERT INTO futures_markets VALUES "
+                "INSERT INTO futures_markets (id, event_id, sport_id, source, external_id, name, "
+                "category, mutually_exclusive, status, market_metadata) VALUES "
                 "(:mid, :eid, :msid, 'kalshi', 'KXSERIEAWGAME-26OCT03PARTER', 'Parma vs Ternana', "
-                "CAST(:meta AS jsonb)), "
+                "'game', true, 'resolved', CAST(:meta AS jsonb)), "
                 "(63000001, :other, :msid, 'kalshi', 'KXSERIEAGAME-26SEP20PARGEN', 'Parma vs Genoa', "
-                "'{\"competition\": \"Serie A\"}')"
+                "'game', true, 'resolved', '{\"competition\": \"Serie A\"}')"
             ),
             {"mid": r.MARKET_ID, "eid": r.EVENT_ID, "other": OTHER_EVENT, "msid": MEN_SPORT_ID,
              "meta": json.dumps({"competition": "Serie A Femminile", "competition_scope": "Game",
@@ -330,7 +333,9 @@ async def test_uncommitted_linked_market_is_fenced_by_the_event_lock(factory, tm
     before = await _snapshot(factory)
     async with factory() as linker:
         await linker.execute(text(
-            "INSERT INTO futures_markets VALUES (63999999, :e, 7, 'kalshi', 'KXSERIEAGAME-X', 'men', NULL)"
+            "INSERT INTO futures_markets (id, event_id, sport_id, source, external_id, name, "
+            "category, mutually_exclusive, status) "
+            "VALUES (63999999, :e, 7, 'kalshi', 'KXSERIEAGAME-X', 'men', 'game', true, 'open')"
         ), {"e": r.EVENT_ID})
         out = await _apply(factory, tmp_path, plan, lock_timeout_ms=300)
         await linker.rollback()
@@ -340,7 +345,9 @@ async def test_uncommitted_linked_market_is_fenced_by_the_event_lock(factory, tm
 
 async def test_committed_extra_linked_market_refuses(factory, tmp_path):
     plan = await _plan(factory, tmp_path)
-    await _exec(factory, "INSERT INTO futures_markets VALUES (63999999, :e, 7, 'kalshi', 'X', 'm', NULL)",
+    await _exec(factory, "INSERT INTO futures_markets (id, event_id, sport_id, source, external_id, "
+                "name, category, mutually_exclusive, status) "
+                "VALUES (63999999, :e, 7, 'kalshi', 'X', 'm', 'game', true, 'open')",
                 {"e": r.EVENT_ID})
     before = await _snapshot(factory)
     out = await _apply(factory, tmp_path, plan)
