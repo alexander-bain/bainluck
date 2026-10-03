@@ -138,8 +138,8 @@ async def maker():
 
 
 @pytest.fixture
-async def search(maker):
-    """`GET /api/events/search` against the real app and the real database."""
+async def http(maker):
+    """The real app against the real database, no Redis."""
     from unittest.mock import patch
 
     from httpx import ASGITransport, AsyncClient
@@ -162,18 +162,24 @@ async def search(maker):
     ):
         async with AsyncClient(
             transport=ASGITransport(app=app), base_url="http://test"
-        ) as http:
-
-            async def _get(q: str) -> list[str]:
-                resp = await http.get("/api/events/search", params={"q": q})
-                assert resp.status_code == 200, f"{q!r} -> {resp.status_code}"
-                payload = resp.json()
-                assert "futures" in payload, sorted(payload)
-                return [f["name"] for f in payload["futures"] or []]
-
-            yield _get
+        ) as client:
+            yield client
 
     app.dependency_overrides.clear()
+
+
+@pytest.fixture
+async def search(http):
+    """`GET /api/events/search` futures card names, in served order."""
+
+    async def _get(q: str) -> list[str]:
+        resp = await http.get("/api/events/search", params={"q": q})
+        assert resp.status_code == 200, f"{q!r} -> {resp.status_code}"
+        payload = resp.json()
+        assert "futures" in payload, sorted(payload)
+        return [f["name"] for f in payload["futures"] or []]
+
+    return _get
 
 
 def _disarm_hoist(monkeypatch):
@@ -216,3 +222,74 @@ async def test_control_a_longshot_board_on_the_page_is_not_hoisted(search):
     futures = await search("royals")
     assert LONGSHOT_BOARD in futures, f"control seed lost its board: {futures}"
     assert futures[0] in ROYALS_PROPS and futures.index(LONGSHOT_BOARD) > 0, futures
+
+
+# ---------------------------------------------------------------------------
+# #10240 residual: the phone search DROPDOWN prints the card's title.
+#
+# Production v5433 (`7f1bbb105f`), 2026-10-03 04:08Z, ux at 390px: the /search
+# card and the market page read "…extra innings? — Yankees vs. Rays", while the
+# overlay's typeahead rows for `extra innings` still read "…extra innings?: …".
+# The typeahead served `rewrite_venue_league_vocabulary(name)` and never the
+# question-colon rule. It now applies that one rule AFTER its rank, so the
+# scorer still reads the text it read before (the id-order control below).
+# ---------------------------------------------------------------------------
+
+
+async def _typeahead_futures(http, q: str) -> list[tuple[int, str]]:
+    resp = await http.get("/api/events/typeahead", params={"q": q})
+    assert resp.status_code == 200, f"{q!r} -> {resp.status_code}"
+    return [
+        (r["market_id"], r["text"])
+        for r in resp.json()["suggestions"]
+        if r.get("type") == "futures"
+    ]
+
+
+async def _search_cards(http, q: str) -> dict[int, str]:
+    resp = await http.get("/api/events/search", params={"q": q})
+    assert resp.status_code == 200, f"{q!r} -> {resp.status_code}"
+    return {f["id"]: f["name"] for f in resp.json()["futures"] or []}
+
+
+def _disarm_typeahead_colon_rule(monkeypatch):
+    from app.routes import events as events_module
+
+    monkeypatch.setattr(events_module, "rewrite_question_colon_display", lambda n: n)
+
+
+EXTRA_INNINGS = CUBS_PROPS[3]
+
+
+async def test_10240_the_dropdown_row_reads_like_the_card_it_opens(http):
+    rows = await _typeahead_futures(http, "extra innings")
+    texts = [t for _, t in rows]
+    assert rewrite_question_colon_display(EXTRA_INNINGS) in texts, rows
+    assert not [t for t in texts if "?:" in t], rows
+    cards = await _search_cards(http, "extra innings")
+    for market_id, text in rows:
+        if market_id in cards:
+            assert text == cards[market_id], (market_id, text, cards[market_id])
+    assert set(dict(rows)) & set(cards), (rows, cards)
+
+
+async def test_10240_control_rows_without_the_shape_are_byte_identical(http):
+    rows = await _typeahead_futures(http, "cubs")
+    plain = {n for n in CUBS_PROPS + [WORLD_SERIES] if "?:" not in n}
+    served = {n: rewrite_question_colon_display(n) for n in CUBS_PROPS if "?:" in n}
+    texts = [t for _, t in rows]
+    assert plain & set(texts), f"control seed served no plain row: {rows}"
+    for text in texts:
+        assert text in plain or text in served.values(), text
+
+
+async def test_10240_strawman_and_control_disarmed_prints_the_colon_same_order(
+    http, monkeypatch
+):
+    armed = await _typeahead_futures(http, "extra innings")
+    _disarm_typeahead_colon_rule(monkeypatch)
+    disarmed = await _typeahead_futures(http, "extra innings")
+    # Strawman: without the rule the dropdown prints the venue's "?:" again.
+    assert EXTRA_INNINGS in [t for _, t in disarmed], disarmed
+    # Control: the rule is display-only — the same rows in the same order.
+    assert [m for m, _ in armed] == [m for m, _ in disarmed], (armed, disarmed)
