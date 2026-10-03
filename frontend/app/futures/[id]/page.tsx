@@ -571,6 +571,15 @@ export default function FuturesDetailPage({ params }: FuturesDetailPageProps) {
     return pickCaptionSubject(market?.outcomes ?? [], drawnIds);
   }, [historyOutcomes, selectedOutcomes, market?.outcomes]);
 
+  // #10266: the chart colours each team from its place in the market's own
+  // outcome order, which a range tap does not refetch (the history response's
+  // order and membership change with `hours=`), so a team keeps its colour on
+  // 1W, 1M and All.
+  const chartSeriesOrder = useMemo(
+    () => (market?.outcomes ?? []).map((o) => ({ id: o.id, name: o.name })),
+    [market?.outcomes],
+  );
+
   const movementExplanation = useMemo(
     () => movementExplanationHelper(captionSubject, market?.name),
     [captionSubject, market?.name]
@@ -1217,6 +1226,7 @@ export default function FuturesDetailPage({ params }: FuturesDetailPageProps) {
               settled={isResolved}
               marketName={market?.name}
               cadenceNoteShown={trendCadenceNote != null}
+              seriesOrder={chartSeriesOrder}
             />
           )}
           {/* The clarification: WHY the blend line moved (#871-style). Suppressed
