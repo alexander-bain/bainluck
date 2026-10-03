@@ -24,6 +24,7 @@ from __future__ import annotations
 import asyncio
 import inspect
 import json
+import time
 from datetime import datetime, timedelta, timezone
 from types import SimpleNamespace
 
@@ -487,13 +488,28 @@ class _RealSessionHarness:
     20261001T1714Z/6176-REVIEW-ca93839f6a-cleanup-repro.py) showed the first cut's
     ``asyncio.wait_for`` waiting out a slow ``session.close()`` and
     ``engine.dispose()``. These tests run that teardown for real.
+
+    The two ``SET`` statements answer at once; the first read hangs. The
+    session hands out a driver whose ``terminate()`` is logged, the way an
+    asyncpg connection's is reached through ``get_raw_connection()``.
     """
 
-    def __init__(self, monkeypatch, *, hang_s=10.0, close_s=0.0, dispose_s=0.0):
+    def __init__(self, monkeypatch, *, hang_s=10.0, close_s=0.0, dispose_s=0.0, driver=True):
         import app.tasks.base as base
 
         self.log: list[str] = []
         harness = self
+
+        class _Driver:
+            def terminate(self):
+                harness.log.append("terminate")
+
+        class _Raw:
+            driver_connection = _Driver()
+
+        class _Connection:
+            async def get_raw_connection(self):
+                return _Raw()
 
         class _Engine:
             async def dispose(self):
@@ -507,7 +523,10 @@ class _RealSessionHarness:
             async def __aexit__(self, *exc):
                 return False
 
-            async def execute(self, *a, **k):
+            async def execute(self, statement, *a, **k):
+                if str(statement).startswith("SET "):
+                    harness.log.append("set")
+                    return _Result([])
                 harness.log.append("execute")
                 await asyncio.sleep(hang_s)
 
@@ -521,6 +540,13 @@ class _RealSessionHarness:
             async def commit(self):
                 harness.log.append("commit")
 
+        if driver:
+
+            async def connection(self):
+                return _Connection()
+
+            _Session.connection = connection
+
         monkeypatch.setattr(base, "_get_task_engine", lambda **kw: _Engine())
         monkeypatch.setattr(base, "async_sessionmaker", lambda *a, **k: _Session)
 
@@ -532,25 +558,43 @@ class _RealSessionHarness:
 
 class TestTheWallIncludesTheTeardown:
     @pytest.mark.asyncio
-    async def test_a_slow_teardown_cannot_hold_the_publish_past_the_wall(self, monkeypatch):
+    async def test_a_slow_teardown_is_cut_and_reaped_not_left_running(self, monkeypatch):
         harness = _RealSessionHarness(monkeypatch, close_s=1.0, dispose_s=1.0)
         monkeypatch.setattr(cpp, "COLLECT_BUDGET_S", 0.05)
         monkeypatch.setattr(cpp, "CLEANUP_BUDGET_S", 0.05)
 
-        started = asyncio.get_running_loop().time()
+        loop = asyncio.get_running_loop()
+        started = loop.time()
         block = await cpp.build_paired_accuracy(generated_at="GEN")
-        elapsed = asyncio.get_running_loop().time() - started
+        elapsed = loop.time() - started
 
         assert block["status"] == cpp.STATUS_UNAVAILABLE and block["reason"] == cpp.REASON_TIMEOUT
         assert elapsed < 0.5, f"the publish waited {elapsed:.2f}s on a 0.10s wall"
-        assert "teardown abandoned" in block["detail"]
-        assert cpp._ABANDONED, "the slow teardown was dropped, not owned"
-        assert "dispose" not in harness.log
+        assert "connection cut and teardown reaped" in block["detail"]
+        assert harness.log == ["set", "set", "execute", "terminate"], "the socket was not cut"
 
-        # Cleanup stays OWNED: the abandoned teardown still closes and disposes.
-        await harness.drain()
-        assert harness.log == ["execute", "close", "dispose"]
+        # Reaped, not abandoned: the 1s close AND the 1s dispose behind it are
+        # both cancelled within a few ticks. One cancellation would interrupt
+        # the close and then wait out the whole dispose.
+        await harness.drain(timeout=0.25)
+        assert not cpp._ABANDONED, "the teardown outlived its reap"
+        assert loop.time() - started < 0.5
+        assert harness.log == ["set", "set", "execute", "terminate"], "it queried or waited on"
+
+    @pytest.mark.asyncio
+    async def test_without_a_driver_the_repeated_cancel_still_bounds_it(self, monkeypatch):
+        harness = _RealSessionHarness(monkeypatch, close_s=1.0, dispose_s=1.0, driver=False)
+        monkeypatch.setattr(cpp, "COLLECT_BUDGET_S", 0.05)
+        monkeypatch.setattr(cpp, "CLEANUP_BUDGET_S", 0.05)
+
+        started = asyncio.get_running_loop().time()
+        block = await cpp.build_paired_accuracy()
+        await harness.drain(timeout=0.25)
+
+        assert block["reason"] == cpp.REASON_TIMEOUT
         assert not cpp._ABANDONED
+        assert asyncio.get_running_loop().time() - started < 0.5
+        assert harness.log == ["set", "set", "execute"]
 
     @pytest.mark.asyncio
     async def test_a_prompt_teardown_finishes_inside_the_wall(self, monkeypatch):
@@ -562,7 +606,7 @@ class TestTheWallIncludesTheTeardown:
 
         assert block["reason"] == cpp.REASON_TIMEOUT
         assert "session closed" in block["detail"]
-        assert harness.log == ["execute", "close", "dispose"], "closed before returning"
+        assert harness.log == ["set", "set", "execute", "close", "dispose"], "closed before returning"
         assert not cpp._ABANDONED
 
     @pytest.mark.asyncio
@@ -576,9 +620,188 @@ class TestTheWallIncludesTheTeardown:
             await task
 
         await harness.drain()
-        assert harness.log == ["execute", "close", "dispose"], (
+        assert harness.log == ["set", "set", "execute", "close", "dispose"], (
             "the collection kept querying, or was never closed, after its caller left"
         )
+        assert not cpp._ABANDONED
+
+    @pytest.mark.asyncio
+    async def test_a_cancelled_callers_slow_teardown_is_reaped_after_its_share(self, monkeypatch):
+        harness = _RealSessionHarness(monkeypatch, close_s=1.0, dispose_s=1.0)
+        monkeypatch.setattr(cpp, "CLEANUP_BUDGET_S", 0.1)
+
+        loop = asyncio.get_running_loop()
+        task = asyncio.ensure_future(cpp.build_paired_accuracy())
+        await asyncio.sleep(0.02)
+        cancelled_at = loop.time()
+        task.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await task
+        assert loop.time() - cancelled_at < 0.05, "the cancelled caller was held"
+
+        await harness.drain(timeout=0.5)
+        assert not cpp._ABANDONED
+        assert loop.time() - cancelled_at < 0.4, "teardown outlived cleanup + reap"
+        assert harness.log == ["set", "set", "execute", "terminate"]
+
+
+class TestTheCutClosesTheSocket:
+    """``_cut`` against the asyncpg shapes measured on a real local Postgres."""
+
+    class _Transport:
+        def __init__(self):
+            self.closing = False
+            self.aborts = 0
+
+        def is_closing(self):
+            return self.closing
+
+        def abort(self):
+            self.aborts += 1
+            self.closing = True
+
+    def test_a_terminate_that_closes_the_transport_is_not_doubled(self):
+        transport = self._Transport()
+        driver = SimpleNamespace(_transport=transport, terminate=transport.abort)
+        cpp._cut(driver)
+        assert transport.aborts == 1
+
+    def test_a_terminate_that_is_a_no_op_mid_close_still_closes_the_socket(self):
+        # asyncpg: once a graceful close() has begun, Protocol.abort() returns
+        # without touching the transport, so terminate() leaves it ESTABLISHED.
+        transport = self._Transport()
+        driver = SimpleNamespace(_transport=transport, terminate=lambda: None)
+        cpp._cut(driver)
+        assert transport.aborts == 1 and transport.is_closing()
+
+    def test_no_driver_and_a_failing_driver_never_raise(self):
+        cpp._cut(None)
+
+        def boom():
+            raise RuntimeError("already gone")
+
+        cpp._cut(SimpleNamespace(terminate=boom))
+
+
+# ---------------------------------------------------------------------------
+# The boundary the review found: the REAL ``run_async`` (``asyncio.run``), as
+# the Celery task calls it. On loop exit ``asyncio.run`` cancels each leftover
+# task ONCE and waits for it; a teardown merely abandoned at the wall then
+# interrupted ``session.close`` and waited out ``engine.dispose`` in full —
+# 0.706s on a 0.10s wall (EXACT-HEAD-REVIEW-a46554934c.md, loop_exit_probe).
+# ---------------------------------------------------------------------------
+
+
+def _run_task_boundary(main):
+    from app.tasks import base
+
+    started = time.monotonic()
+    result = base.run_async(main())
+    return result, time.monotonic() - started
+
+
+class TestTheRealRunAsyncBoundary:
+    @pytest.mark.parametrize(
+        "close_s,dispose_s",
+        [(0.6, 0.6), (0.0, 0.6), (0.6, 0.0)],
+        ids=["slow-close-and-dispose", "slow-dispose", "slow-close"],
+    )
+    def test_the_task_returns_inside_the_wall_with_its_connection_cut(
+        self, monkeypatch, close_s, dispose_s
+    ):
+        harness = _RealSessionHarness(monkeypatch, close_s=close_s, dispose_s=dispose_s)
+        monkeypatch.setattr(cpp, "COLLECT_BUDGET_S", 0.05)
+        monkeypatch.setattr(cpp, "CLEANUP_BUDGET_S", 0.05)
+        published = []
+
+        async def build_then_publish():
+            block = await cpp.build_paired_accuracy(generated_at="GEN")
+            published.append(block["reason"])
+            return block
+
+        block, elapsed = _run_task_boundary(build_then_publish)
+
+        assert published == [cpp.REASON_TIMEOUT], "the core coroutine did not reach its publish"
+        assert block["status"] == cpp.STATUS_UNAVAILABLE
+        assert elapsed < 0.3, f"run_async returned {elapsed:.3f}s on a 0.10s wall"
+        assert not cpp._ABANDONED
+        assert harness.log.count("execute") == 1, "a query ran after the wall"
+        assert harness.log.count("terminate") == 1, "the connection was not cut exactly once"
+        if close_s:
+            # The slow close was interrupted; a prompt dispose may still finish.
+            assert harness.log[:4] == ["set", "set", "execute", "terminate"]
+            assert "close" not in harness.log
+        else:
+            # The close finished inside its share; the slow dispose behind it did not.
+            assert harness.log == ["set", "set", "execute", "close", "terminate"]
+
+    def test_a_cancelled_caller_then_loop_exit_returns_inside_the_wall(self, monkeypatch):
+        """Two cancellations: the caller's, then ``asyncio.run``'s own at exit."""
+        harness = _RealSessionHarness(monkeypatch, close_s=0.6, dispose_s=0.6)
+        monkeypatch.setattr(cpp, "CLEANUP_BUDGET_S", 0.1)
+
+        async def caller_leaves():
+            task = asyncio.ensure_future(cpp.build_paired_accuracy())
+            await asyncio.sleep(0.02)
+            task.cancel()
+            try:
+                await task
+            except asyncio.CancelledError:
+                return "cancelled"
+            return "not cancelled"
+
+        outcome, elapsed = _run_task_boundary(caller_leaves)
+
+        assert outcome == "cancelled"
+        assert elapsed < 0.35, f"run_async returned {elapsed:.3f}s; cancel + 0.10s cleanup"
+        assert not cpp._ABANDONED
+        assert harness.log.count("execute") == 1, "the collection queried after its caller left"
+        assert harness.log == ["set", "set", "execute", "terminate"]
+
+    def test_control_a_prompt_teardown_closes_gracefully_and_is_never_cut(self, monkeypatch):
+        harness = _RealSessionHarness(monkeypatch)
+        monkeypatch.setattr(cpp, "COLLECT_BUDGET_S", 0.05)
+        monkeypatch.setattr(cpp, "CLEANUP_BUDGET_S", 0.5)
+
+        async def build():
+            return await cpp.build_paired_accuracy()
+
+        block, elapsed = _run_task_boundary(build)
+
+        assert block["reason"] == cpp.REASON_TIMEOUT
+        assert elapsed < 0.3
+        assert harness.log == ["set", "set", "execute", "close", "dispose"]
+        assert not cpp._ABANDONED
+
+    def test_a_finished_collection_is_never_cut(self, monkeypatch):
+        """A healthy read returns through the graceful close; the cut is not armed."""
+        import app.tasks.base as base
+
+        terminated = []
+        session = _Session([[], [], []])
+        session.connection = None  # set below: a real-shaped driver handle
+
+        class _Raw:
+            class driver_connection:  # noqa: N801 — attribute shape of a fairy
+                @staticmethod
+                def terminate():
+                    terminated.append(True)
+
+        async def connection():
+            class _C:
+                async def get_raw_connection(self):
+                    return _Raw()
+
+            return _C()
+
+        session.connection = connection
+        monkeypatch.setattr(base, "get_task_session", _session_factory(session, {}))
+
+        block, elapsed = _run_task_boundary(lambda: cpp.build_paired_accuracy())
+
+        assert block["reason"] == cpp.REASON_NO_ELIGIBLE_EVENTS
+        assert len(session.calls) == 3, "reading the driver issued a statement"
+        assert terminated == []
         assert not cpp._ABANDONED
 
 

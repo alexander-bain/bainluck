@@ -35,7 +35,9 @@ THE FROZEN INITIAL POLICY (issue body, "October 1")
 * **Its own session**, every statement bounded at
   :data:`STATEMENT_TIMEOUT_MS` and the WHOLE call — collection AND teardown —
   at :data:`WALL_BUDGET_S` (:func:`_within_wall`), shrunk further to fit the
-  build's remaining publish deadline. Everything runs inside ONE
+  build's remaining publish deadline. A teardown that overruns is not left for
+  ``asyncio.run`` to wait out when the task exits: its connection is cut and the
+  task reaped (:func:`_reap`). Everything runs inside ONE
   ``REPEATABLE READ READ ONLY`` transaction.
   That one snapshot is what makes the block coherent: the event pick, the
   per-event candidate counts (the denominator), the refusal tally, the pair
@@ -95,20 +97,32 @@ SCHEMA = "paired-accuracy/v1"
 EVENT_LIMIT = 100
 CANDIDATE_CAP = 2000
 STATEMENT_TIMEOUT_MS = 5000
-#: Server-side backstop for a client that walks away mid-transaction: Postgres
-#: aborts the transaction itself, so an abandoned teardown leaves no open
-#: snapshot behind. Applied with ``SET LOCAL``, so it dies with the transaction.
+#: Server-side backstop for a client that goes quiet INSIDE a healthy
+#: transaction: Postgres aborts the transaction itself. Applied with
+#: ``SET LOCAL``, so it dies with the transaction — including when a statement
+#: error aborts it, which leaves the session ``idle in transaction (aborted)``
+#: with no timeout at all (measured on local Postgres). It is therefore not what
+#: ends a session whose teardown overran; cutting the socket is (:func:`_cut`).
 IDLE_IN_TRANSACTION_TIMEOUT_MS = 5000
 
 #: The WHOLE call, teardown included: :data:`COLLECT_BUDGET_S` for the reads,
 #: then at most :data:`CLEANUP_BUDGET_S` for a cancelled session to close and
 #: dispose. ``asyncio.wait_for`` cannot give this guarantee — it waits for the
 #: cancelled coroutine's ``finally`` however long that takes — so the
-#: collection runs as its own task and a teardown that outlives its share is
-#: abandoned to finish on its own (see :func:`_within_wall`).
+#: collection runs as its own task, and a teardown that outlives its share is
+#: cut and reaped (see :func:`_within_wall` and :func:`_reap`).
 COLLECT_BUDGET_S = 12.0
 CLEANUP_BUDGET_S = 3.0
 WALL_BUDGET_S = COLLECT_BUDGET_S + CLEANUP_BUDGET_S
+
+#: How often a reaped teardown is cancelled again (after the first round,
+#: which only cuts its connection), and for how many rounds.
+#: ``get_task_session`` ends in two ``finally`` awaits (``session.close`` then
+#: ``engine.dispose``) and each cancellation interrupts only the await it lands
+#: on, so one cancel is never enough. Once the connection is cut, both of
+#: those awaits fail fast anyway, so in practice the rounds go unused.
+REAP_TICK_S = 0.01
+REAP_ROUNDS = 50
 
 #: Kept free for the gate, serialisation and the durable + Redis publish when
 #: the build tells us how long it has left. Below the minimum, the block is not
@@ -502,8 +516,9 @@ class _WallBudgetExceeded(RuntimeError):
     """The collection did not finish inside its share of the wall budget."""
 
 
-#: Teardowns abandoned at the wall. Held so they are not garbage-collected
-#: mid-flight; each removes itself and has its outcome retrieved when it ends.
+#: Collections being reaped: cancelled, connection cut, not yet finished. Held
+#: so they are not garbage-collected mid-flight; each removes itself and has
+#: its outcome retrieved when it ends.
 _ABANDONED: set = set()
 
 
@@ -511,18 +526,97 @@ def _retire(task: "asyncio.Task") -> None:
     _ABANDONED.discard(task)
     if not task.cancelled() and task.exception() is not None:
         logger.warning(
-            "calibration paired_accuracy: abandoned teardown ended with %r", task.exception()
+            "calibration paired_accuracy: reaped teardown ended with %r", task.exception()
         )
 
 
-async def _collect(as_of: datetime) -> tuple[list, dict, list, list]:
-    """The four reads, in one read-only snapshot on a session of their own."""
+async def _driver_of(db: Any) -> Any:
+    """The driver connection under ``db``'s transaction, or ``None``.
+
+    Read once, right after the transaction opens, so a teardown that overruns
+    can be cut without awaiting anything. A session that cannot say (a test
+    double, a connection already gone) gives ``None``: the reap's repeated
+    cancellation still bounds the wait, it just cannot close the socket first.
+    """
+    try:
+        connection = await db.connection()
+        raw = await connection.get_raw_connection()
+        return raw.driver_connection
+    except Exception:  # noqa: BLE001 — no driver means no cut, never a failed block
+        return None
+
+
+def _cut(driver: Any) -> None:
+    """Close the connection's socket NOW. Synchronous, so nothing can postpone it.
+
+    asyncpg's ``terminate()`` drops the socket without waiting for pending data,
+    and the server ends the session — and the transaction with it — when it
+    next writes to that socket (at the latest when :data:`STATEMENT_TIMEOUT_MS`
+    stops the running statement).
+
+    ``terminate()`` alone is not enough. Once the teardown has started
+    asyncpg's graceful ``close()``, ``Protocol.abort()`` returns without
+    touching the transport, and a ``close()`` cancelled while it waits to send
+    its cancel request never reaches its own ``transport.abort()``. Measured
+    on real asyncpg 0.31 (local Postgres): the socket stayed ESTABLISHED after
+    the task returned and the backend sat ``idle in transaction (aborted)``
+    indefinitely. So a transport still open after ``terminate()`` is aborted
+    here directly.
+    """
+    if driver is None:
+        return
+    try:
+        driver.terminate()
+        transport = getattr(driver, "_transport", None)
+        if transport is not None and not transport.is_closing():
+            transport.abort()
+    except Exception as exc:  # noqa: BLE001 — a cut that fails still gets reaped
+        logger.warning("calibration paired_accuracy: could not cut the connection: %r", exc)
+
+
+def _reap(task: "asyncio.Task", cut, rounds: int = REAP_ROUNDS) -> None:
+    """Cut the connection, then cancel ``task`` every tick until it ends.
+
+    A loop callback, not a coroutine: it is never awaited, so it cannot hold a
+    caller, and it keeps firing while ``asyncio.run`` waits on leftover tasks
+    as the event loop exits. That exit is the boundary a wall that merely
+    stopped waiting did not cover: ``asyncio.run`` cancels each pending task
+    ONCE and then waits for it, and ``get_task_session``'s ``finally`` starts a
+    fresh ``engine.dispose()`` after that one cancellation has been spent.
+    """
+    if task.done():
+        return
+    if task not in _ABANDONED:
+        _ABANDONED.add(task)
+        task.add_done_callback(_retire)
+    if rounds == REAP_ROUNDS:
+        # First round: cut only. Every await on a dead socket ends by itself
+        # within a few loop turns, and a cancellation that lands inside
+        # SQLAlchemy's own terminate is logged by its pool at ERROR. The
+        # cancellations below are for whatever the cut did not end.
+        cut()
+    else:
+        task.cancel()
+    if rounds > 1:
+        asyncio.get_running_loop().call_later(REAP_TICK_S, _reap, task, cut, rounds - 1)
+    else:
+        logger.error("calibration paired_accuracy: teardown survived %d reap rounds", REAP_ROUNDS)
+
+
+async def _collect(as_of: datetime, held: Optional[dict] = None) -> tuple[list, dict, list, list]:
+    """The four reads, in one read-only snapshot on a session of their own.
+
+    ``held["driver"]`` receives the connection's driver as soon as the
+    transaction is open, so :func:`_within_wall` can cut it.
+    """
     from app.tasks.base import get_task_session
 
     async with get_task_session(statement_timeout_ms=STATEMENT_TIMEOUT_MS) as db:
         # First statement of the transaction: one snapshot for every read, and
         # a write is impossible even by mistake.
         await db.execute(text("SET TRANSACTION ISOLATION LEVEL REPEATABLE READ READ ONLY"))
+        if held is not None:
+            held["driver"] = await _driver_of(db)
         await db.execute(
             text(f"SET LOCAL idle_in_transaction_session_timeout = {IDLE_IN_TRANSACTION_TIMEOUT_MS}")
         )
@@ -569,20 +663,23 @@ async def _collect(as_of: datetime) -> tuple[list, dict, list, list]:
     return events, admission, ids, rows
 
 
-async def _within_wall(make_coro, *, collect_s: float, cleanup_s: float):
+async def _within_wall(make_coro, *, collect_s: float, cleanup_s: float, cut=lambda: None):
     """Run ``make_coro()`` with a wall that INCLUDES its cancellation teardown.
 
     Returns its result, re-raises its exception, or raises
     :class:`_WallBudgetExceeded` no later than ``collect_s + cleanup_s`` after
-    the call (plus scheduling jitter). A teardown that outlives ``cleanup_s`` is
-    left running in :data:`_ABANDONED` — its own ``finally`` still closes the
-    session and disposes the engine, and ``idle_in_transaction_session_timeout``
-    makes the server abort the transaction even if that never happens.
+    the call (plus scheduling jitter). A teardown that outlives ``cleanup_s``
+    is reaped (:func:`_reap`): ``cut()`` closes its connection and it is
+    cancelled every :data:`REAP_TICK_S` until it ends, so neither this caller
+    nor the event loop's exit waits on a slow close or dispose.
 
-    A cancellation of the CALLER cancels the collection and propagates; the
-    collection is never left issuing queries for a caller that has gone.
+    A cancellation of the CALLER cancels the collection and propagates at once;
+    the collection is never left issuing queries for a caller that has gone.
+    Its teardown keeps ``cleanup_s`` to close gracefully and is reaped after
+    that, which is what bounds a second cancellation at loop exit.
     """
     task = asyncio.ensure_future(make_coro())
+    loop = asyncio.get_running_loop()
     try:
         done, _ = await asyncio.wait({task}, timeout=collect_s)
         if task in done:
@@ -594,13 +691,13 @@ async def _within_wall(make_coro, *, collect_s: float, cleanup_s: float):
         if not task.done():
             _ABANDONED.add(task)
             task.add_done_callback(_retire)
+            loop.call_later(cleanup_s, _reap, task, cut)
         raise
     if task not in done:
-        _ABANDONED.add(task)
-        task.add_done_callback(_retire)
+        _reap(task, cut)
         raise _WallBudgetExceeded(
             f"collection exceeded {collect_s:.3f}s and its teardown exceeded "
-            f"{cleanup_s:.3f}s; teardown abandoned to finish on its own"
+            f"{cleanup_s:.3f}s; connection cut and teardown reaped"
         )
     if not task.cancelled() and task.exception() is not None:
         # It failed on its own between the two waits — report that, not the wall.
@@ -645,9 +742,14 @@ async def build_paired_accuracy(
             detail=f"{deadline_s:.1f}s left before the build deadline",
         )
 
+    held: dict = {}
     try:
         events, admission, ids, rows = await _within_wall(
-            lambda: _collect(as_of), collect_s=collect_s, cleanup_s=cleanup_s
+            lambda: _collect(as_of, held),
+            collect_s=collect_s,
+            cleanup_s=cleanup_s,
+            # Popped, so the reap cuts once however many rounds it runs.
+            cut=lambda: _cut(held.pop("driver", None)),
         )
         if len(rows) != len(ids):
             # Unreachable inside one snapshot: the legs statement is restricted
