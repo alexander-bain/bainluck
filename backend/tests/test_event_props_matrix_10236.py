@@ -807,10 +807,12 @@ class TestTheServedMatrix:
 
 
 def _strip_clocks(payload):
-    """`observed_at` is relative to each build's `now`; everything else is exact."""
+    """`observed_at` (and the envelope's `outcome_observed_at`, #10236 flake) is
+    relative to each build's `now`; everything else is exact."""
+    clock_keys = ("observed_at", "observed_at_by_source", "outcome_observed_at")
     def walk(node):
         if isinstance(node, dict):
-            return {k: (None if k in ("observed_at", "observed_at_by_source") else walk(v))
+            return {k: (None if k in clock_keys else walk(v))
                     for k, v in node.items()}
         if isinstance(node, list):
             return [walk(v) for v in node]
