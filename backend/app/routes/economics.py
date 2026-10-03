@@ -35,6 +35,7 @@ from app.utils.duplicate_condition_outcomes import drop_duplicate_legs
 from app.utils.inflation_release_identity import fold_same_release
 from app.utils.ladder_monotonicity import cumulative_outcome_ladder
 from app.utils.feed_market_quality import book_bounds_nothing, is_fabricated_midpoint
+from app.utils.futures_liveness import market_reads_settled
 from app.utils.economics_headline import (
     LadderCandidate,
     RecessionCandidate,
@@ -1363,6 +1364,14 @@ async def get_economics(db: AsyncSession):
         if should_exclude_from_featured(
             m.name, m.llm_sport_category, m.status, _leader_prob(m), now,
         ):
+            continue
+        # #10320: a question the venue has decided must not render as an open
+        # percentage. `status` stays 'open' on a settled Kalshi market (gotcha
+        # #33), so this is the same read-side answer /politics has used since
+        # CERT-452. Measured 2026-10-03: "Will Canada housing starts go above
+        # 275K this year?" read 94.5% on this page, graded YES and venue-settled
+        # since 2026-09-06.
+        if market_reads_settled(m, now=now):
             continue
         # #9343: a months-old price is not a quote. `status` cannot see a
         # market the venue stopped listing (gotcha #33); the touch stamp can.
