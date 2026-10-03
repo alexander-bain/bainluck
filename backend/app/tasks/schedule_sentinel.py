@@ -84,6 +84,7 @@ from zoneinfo import ZoneInfo
 import httpx
 
 from app.utils import season_windows
+from app.utils.name_normalization import expand_city_abbreviations
 
 logger = logging.getLogger(__name__)
 
@@ -207,12 +208,18 @@ def _norm_name(s: Optional[str]) -> str:
     their base letter (ESPN's "CF Montréal" vs our "CF Montreal" — an accented
     letter turned into a space split "montreal" into ``montr al`` and scored
     0.0, filed four times as a critical MISATTACHED), and apostrophes are
-    DELETED ("Hawai'i" vs "Hawaii")."""
+    DELETED ("Hawai'i" vs "Hawaii").
+
+    City abbreviations EXPAND through the canonical map (#10304): ESPN prints
+    "LA Clippers" where we store "Los Angeles Clippers", which scored 0.25 and
+    filed a MISSING for a game we hold. Expansion runs last, on standalone
+    tokens only, so the same-city guard is unchanged ("LA Clippers" still
+    misses "Los Angeles Lakers" at 0.5)."""
     s = unicodedata.normalize("NFKD", s or "")
     s = "".join(c for c in s if not unicodedata.combining(c)).lower()
     s = re.sub(r"['‘’ʻ]", "", s)
     s = re.sub(r"[^a-z0-9]+", " ", s)
-    return " ".join(s.split())
+    return expand_city_abbreviations(" ".join(s.split()))
 
 
 def _name_tokens(s: Optional[str]) -> frozenset:
