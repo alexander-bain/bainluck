@@ -34,6 +34,7 @@
     "typeahead folds one question asked by two venues, the search page's",
     "#6354 the Browse list serves no answer-less row (real Postgres)",
     "#5531 a hook's stamps survive the ingest poll's metadata replace (real Postgres)",
+    "#8265 a board keeps its shape across the ingest poll's metadata replace (real Postgres)",
     "#2077 the route supplies the fleet stamp (real Postgres)",
     "Tennis twin sweep write/undo contract (real Postgres)",
     "#8308 a merge moves the duplicate-of tag, and the repair round-trips (real Postgres)",

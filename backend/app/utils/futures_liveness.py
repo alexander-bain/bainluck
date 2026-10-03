@@ -118,10 +118,22 @@ from app.utils.hook_staleness import (  # noqa: E402
     HOOK_PROB_METADATA_KEY,
 )
 
+#: #8265. The semantics v2 contract ``backfill_market_shapes`` merges in with
+#: ``||`` and ``futures_unsupported_price.market_is_proved_exclusive_field``
+#: reads. The poll does not classify, so the REPLACE erased it on every board
+#: the poll touched, and every proved-field withholding arm then failed closed
+#: until the backfill's id cursor came round again. Production 2026-10-03
+#: 21:05Z, open tier<=2 Kalshi boards: all 52 polled in the last 150 minutes
+#: had no ``shape``, and every one of the 6,769 not polled had one. That is how
+#: ``/futures/61308736`` served "Jakub Mensik leads at 47%" with
+#: ``prices_withheld: 0`` while all 25 legs carried a fresh zero volume.
+MARKET_SHAPE_METADATA_KEY = "shape"
+
 CARRIED_METADATA_KEYS = (
     VENUE_SETTLED_KEY,
     HOOK_POLICY_METADATA_KEY,  # #5531
     HOOK_PROB_METADATA_KEY,  # #5531
+    MARKET_SHAPE_METADATA_KEY,  # #8265
 )
 
 
