@@ -678,10 +678,14 @@ def _db(event, markets, outcomes, observations):
     return db
 
 
-def _page(*, status="live", extra_markets=(), extra_outcomes=()):
+def _commence():
+    return datetime.now(timezone.utc).replace(microsecond=0) - timedelta(hours=1)
+
+
+def _page(*, status="live", extra_markets=(), extra_outcomes=(), commence=None):
     """A live MLB game: Kalshi's Hits ladder for Judge, Polymarket's Judge O/U
     1.5 pair (the A0 shape), and a Polymarket Soto pair nothing else touches."""
-    commence = datetime.now(timezone.utc).replace(microsecond=0) - timedelta(hours=1)
+    commence = commence or _commence()
     pin_seen = commence - timedelta(minutes=10)
     seen = commence + timedelta(minutes=50)
     pin = lambda outcomes: {
@@ -774,14 +778,17 @@ class TestTheServedMatrix:
         assert soto["comparison"]["reason"] == "no_pregame_pin"
 
     def test_every_existing_key_is_byte_identical_with_or_without_the_matrix(self, monkeypatch):
-        with_matrix = _page()
+        # One fixture clock for both builds: two `now`s a second apart moved every
+        # stored observation stamp (`outcome_observed_at`) and reddened CI (gotcha #44).
+        commence = _commence()
+        with_matrix = _page(commence=commence)
         assert with_matrix["during_player_props"] is not None
         _game_markets_cache.clear()
         monkeypatch.setattr(events_route, "build_during_player_props", lambda *a, **k: None)
-        without = _page()
+        without = _page(commence=commence)
         with_matrix.pop("during_player_props")
         without.pop("during_player_props")
-        # Clocks are taken from `now` per build, so compare after re-basing.
+        # The route's own clocks are still taken from `now` per build, so compare after re-basing.
         assert _strip_clocks(with_matrix) == _strip_clocks(without)
 
     @pytest.mark.parametrize("status", ["scheduled", "final", "completed"])
