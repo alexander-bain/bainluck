@@ -212,6 +212,24 @@ def _leg_reads_under(name: Optional[str]) -> bool:
     return bool(is_under and not is_over)
 
 
+def _axis_label(entry: dict) -> Optional[str]:
+    """F2 — the option label names the axis its published value is on.
+
+    A totals row built from an UNDER leg publishes its sibling's OVER axis, but
+    its served name is still the under leg's own ("Under", "No"). Copied
+    verbatim it labels the over value as the under one: "8+ runs · Under 41%"
+    where 41% is the chance of 8 or more, and "Over 57% / Under 57%" side by side
+    on a team total. Rows the route does not invert keep their served name.
+    """
+    label = entry["label"]
+    if not entry["total_axis"] or not _leg_reads_under(label):
+        return label
+    stripped = label.strip()
+    if stripped.lower() == "no":
+        return "Yes"
+    return "Over" + stripped[len("under"):]
+
+
 def _is_half_line(threshold: Any) -> bool:
     """A line of the form k.5 with k ≥ 0 — non-integer, so no push (§4.1)."""
     if isinstance(threshold, bool) or not isinstance(threshold, (int, float)):
@@ -841,7 +859,7 @@ def _game_option(entry: dict, side: str, lifecycle_state: str, shared: dict) -> 
     comparison = _game_comparison(entry, value_state, leg, shared)
     return {
         "option_key": "o:" + "+".join(str(c) for c in sorted(contributors)),
-        "label": entry["label"],
+        "label": _axis_label(entry),
         "side": side,
         "market_ids": list(entry["market_ids"]),
         "contributor_outcome_ids": list(contributors),
@@ -1015,7 +1033,7 @@ def _unblended_option(entries: list, side: str, lifecycle_state: str, shared: di
     evidence = [ev for e in entries for ev in _game_evidence(e, side, shared)]
     return {
         "option_key": "o:" + "+".join(str(c) for c in contributors),
-        "label": entries[0]["label"],
+        "label": _axis_label(entries[0]),
         "side": side,
         "market_ids": _question_markets(entries),
         "contributor_outcome_ids": contributors,
