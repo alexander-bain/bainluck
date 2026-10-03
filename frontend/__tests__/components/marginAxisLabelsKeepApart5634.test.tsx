@@ -33,7 +33,10 @@ function axisRow(left: string, right: string): string {
       accentRgb="37, 99, 235"
       axisLabels={{ left, mid: "0", right }}
       zeroPosition={0}
-      markers={[]}
+      // The specimen's own final (94-87). A settled margin card always places
+      // one, and since #10350 a shapeless rail with nothing on it is dropped,
+      // so this fixture needs it for the axis row to exist at all.
+      markers={[{ key: "final", value: 7, type: "final", label: "FINAL", displayValue: "Dubai by 7" }]}
       ladder={[]}
     />
   );
