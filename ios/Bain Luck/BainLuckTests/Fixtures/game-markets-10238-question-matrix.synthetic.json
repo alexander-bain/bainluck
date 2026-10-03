@@ -1,0 +1,1039 @@
+{
+ "event_id": 91000001,
+ "home_team": "Alpha City",
+ "away_team": "Beta Town",
+ "status": "live",
+ "home_score": 3,
+ "away_score": 2,
+ "pace": null,
+ "totals": [
+  {
+   "probability": null,
+   "over_probability": 0.6,
+   "source": "kalshi",
+   "threshold": 7.5,
+   "market_type": "game_total",
+   "movement": null,
+   "period": null,
+   "is_winner": null,
+   "resolution_source": null,
+   "market_name": "Synthetic full game total runs",
+   "outcome_name": "Over 7.5",
+   "observed_at": "2026-10-02T20:00:00+00:00",
+   "_market_id": 71005,
+   "contributor_outcome_ids": [
+    72012
+   ]
+  }
+ ],
+ "spreads": [],
+ "team_totals": [],
+ "player_props": [],
+ "period_markets": [
+  {
+   "probability": 0.52,
+   "over_probability": null,
+   "source": "kalshi",
+   "threshold": 3.5,
+   "market_type": "half_spread",
+   "movement": null,
+   "period": "1H",
+   "is_winner": null,
+   "resolution_source": null,
+   "market_name": "1st half spread",
+   "outcome_name": "Alpha City -3.5",
+   "_market_id": 71006,
+   "contributor_outcome_ids": [
+    72021
+   ]
+  },
+  {
+   "probability": 0.48,
+   "over_probability": null,
+   "source": "kalshi",
+   "threshold": 3.5,
+   "market_type": "half_spread",
+   "movement": null,
+   "period": "1H",
+   "is_winner": null,
+   "resolution_source": null,
+   "market_name": "1st half spread",
+   "outcome_name": "Beta Town +3.5",
+   "_market_id": 71006,
+   "contributor_outcome_ids": [
+    72022
+   ]
+  }
+ ],
+ "other": [],
+ "matchups": [],
+ "stream_market_ids": [
+  71001,
+  71003,
+  71004,
+  71005,
+  71006,
+  71011,
+  71012,
+  71020,
+  71021
+ ],
+ "outcome_market_ids": {
+  "72012": 71005,
+  "72021": 71006,
+  "72022": 71006,
+  "72001": 71001,
+  "72005": 71003,
+  "72006": 71003,
+  "72007": 71003,
+  "72008": 71004,
+  "72009": 71004,
+  "72010": 71004,
+  "72031": 71011,
+  "72041": 71012,
+  "72050": 71020,
+  "72051": 71021
+ },
+ "outcome_revision_at": {
+  "72012": "2030-01-01T00:00:00.000001Z",
+  "72021": "2030-01-01T00:00:00.000001Z",
+  "72022": "2030-01-01T00:00:00.000001Z",
+  "72001": "2030-01-01T00:00:00.000001Z",
+  "72005": "2030-01-01T00:00:00.000001Z",
+  "72006": "2030-01-01T00:00:00.000001Z",
+  "72007": "2030-01-01T00:00:00.000001Z",
+  "72008": "2030-01-01T00:00:00.000001Z",
+  "72009": "2030-01-01T00:00:00.000001Z",
+  "72010": "2030-01-01T00:00:00.000001Z",
+  "72031": "2030-01-01T00:00:00.000001Z",
+  "72041": "2030-01-01T00:00:00.000001Z",
+  "72050": "2030-01-01T00:00:00.000001Z",
+  "72051": "2030-01-01T00:00:00.000001Z"
+ },
+ "outcome_observed_at": {},
+ "game_question_matrix": {
+  "contract": "10238.v1",
+  "display_scope": "game",
+  "questions": [
+   {
+    "question_key": "q:count|runs|game|full_game|ge:8",
+    "proposition_key": "count|runs|game|full_game|ge:8",
+    "display_scope": "game",
+    "kind": "count_threshold",
+    "label": "8+ runs",
+    "market_name": "Synthetic full game total runs",
+    "source_array": "totals",
+    "quantity": {
+     "key": "runs",
+     "singular": "run",
+     "plural": "runs",
+     "integer": true
+    },
+    "period": {
+     "key": "full_game",
+     "label": "Game"
+    },
+    "subject": {
+     "side": "game",
+     "label": null
+    },
+    "predicate": {
+     "relation": "ge",
+     "bound": 8,
+     "line": 7.5
+    },
+    "complement_question_key": null,
+    "typing": {
+     "state": "typed",
+     "reason": null
+    },
+    "lifecycle": {
+     "state": "open",
+     "market_status": "open"
+    },
+    "options": [
+     {
+      "option_key": "o:72012",
+      "label": "Over 7.5",
+      "side": "over",
+      "market_ids": [
+       71005
+      ],
+      "contributor_outcome_ids": [
+       72012
+      ],
+      "published": {
+       "value": 0.6,
+       "value_state": "quoted",
+       "basis": "published_source_display",
+       "source": "kalshi",
+       "observed_at": "2026-10-02T20:00:00+00:00"
+      },
+      "source_evidence": [
+       {
+        "source": "kalshi",
+        "market_id": 71005,
+        "outcome_id": 72012,
+        "leg_side": "over",
+        "raw_probability": 0.6,
+        "observed_at": "2026-10-02T20:00:00+00:00"
+       }
+      ],
+      "result": {
+       "state": "open",
+       "evidence_kind": "none"
+      },
+      "comparison": {
+       "state": "unavailable",
+       "reason": "no_pregame_pin",
+       "baseline": null,
+       "latest": null,
+       "delta_points": null
+      }
+     }
+    ],
+    "missing_options": [],
+    "option_counts": {
+     "declared": null,
+     "loaded": 1,
+     "returned": 1,
+     "missing_identified": 0
+    },
+    "complete": null,
+    "source_totals": []
+   },
+   {
+    "question_key": "q:handicap|points|home|half_1|-3.5",
+    "proposition_key": "handicap|points|home|half_1|-3.5",
+    "display_scope": "game",
+    "kind": "signed_handicap",
+    "label": "Alpha City -3.5 points \u00b7 1st half",
+    "market_name": "Alpha City -3.5 points \u00b7 1st half",
+    "source_array": "period_markets",
+    "quantity": {
+     "key": "points",
+     "singular": "point",
+     "plural": "points",
+     "integer": true
+    },
+    "period": {
+     "key": "half_1",
+     "label": "1st half"
+    },
+    "subject": {
+     "side": "home",
+     "label": null
+    },
+    "predicate": {
+     "relation": "handicap",
+     "bound": null,
+     "line": -3.5
+    },
+    "complement_question_key": "q:handicap|points|away|half_1|+3.5",
+    "typing": {
+     "state": "typed",
+     "reason": null
+    },
+    "lifecycle": {
+     "state": "open",
+     "market_status": "open"
+    },
+    "options": [
+     {
+      "option_key": "o:72021",
+      "label": "Alpha City -3.5",
+      "side": "home",
+      "market_ids": [
+       71006
+      ],
+      "contributor_outcome_ids": [
+       72021
+      ],
+      "published": {
+       "value": 0.52,
+       "value_state": "quoted",
+       "basis": "published_source_display",
+       "source": "kalshi",
+       "observed_at": "2026-10-02T20:00:00+00:00"
+      },
+      "source_evidence": [
+       {
+        "source": "kalshi",
+        "market_id": 71006,
+        "outcome_id": 72021,
+        "leg_side": "home",
+        "raw_probability": 0.52,
+        "observed_at": "2026-10-02T20:00:00+00:00"
+       }
+      ],
+      "result": {
+       "state": "open",
+       "evidence_kind": "none"
+      },
+      "comparison": {
+       "state": "comparable",
+       "reason": null,
+       "baseline": {
+        "probability": 0.4,
+        "observed_at": "2026-10-02T18:00:00+00:00",
+        "basis": "pregame_pin"
+       },
+       "latest": {
+        "probability": 0.52,
+        "observed_at": "2026-10-02T20:00:00+00:00"
+       },
+       "delta_points": 12.0
+      }
+     }
+    ],
+    "missing_options": [],
+    "option_counts": {
+     "declared": null,
+     "loaded": 1,
+     "returned": 1,
+     "missing_identified": 0
+    },
+    "complete": null,
+    "source_totals": []
+   },
+   {
+    "question_key": "q:handicap|points|away|half_1|+3.5",
+    "proposition_key": "handicap|points|away|half_1|+3.5",
+    "display_scope": "game",
+    "kind": "signed_handicap",
+    "label": "Beta Town +3.5 points \u00b7 1st half",
+    "market_name": "Beta Town +3.5 points \u00b7 1st half",
+    "source_array": "period_markets",
+    "quantity": {
+     "key": "points",
+     "singular": "point",
+     "plural": "points",
+     "integer": true
+    },
+    "period": {
+     "key": "half_1",
+     "label": "1st half"
+    },
+    "subject": {
+     "side": "away",
+     "label": null
+    },
+    "predicate": {
+     "relation": "handicap",
+     "bound": null,
+     "line": 3.5
+    },
+    "complement_question_key": "q:handicap|points|home|half_1|-3.5",
+    "typing": {
+     "state": "typed",
+     "reason": null
+    },
+    "lifecycle": {
+     "state": "open",
+     "market_status": "open"
+    },
+    "options": [
+     {
+      "option_key": "o:72022",
+      "label": "Beta Town +3.5",
+      "side": "away",
+      "market_ids": [
+       71006
+      ],
+      "contributor_outcome_ids": [
+       72022
+      ],
+      "published": {
+       "value": 0.48,
+       "value_state": "quoted",
+       "basis": "published_source_display",
+       "source": "kalshi",
+       "observed_at": "2026-10-02T20:00:00+00:00"
+      },
+      "source_evidence": [
+       {
+        "source": "kalshi",
+        "market_id": 71006,
+        "outcome_id": 72022,
+        "leg_side": "away",
+        "raw_probability": 0.48,
+        "observed_at": "2026-10-02T20:00:00+00:00"
+       }
+      ],
+      "result": {
+       "state": "open",
+       "evidence_kind": "none"
+      },
+      "comparison": {
+       "state": "unavailable",
+       "reason": "no_pregame_pin",
+       "baseline": null,
+       "latest": null,
+       "delta_points": null
+      }
+     }
+    ],
+    "missing_options": [],
+    "option_counts": {
+     "declared": null,
+     "loaded": 1,
+     "returned": 1,
+     "missing_identified": 0
+    },
+    "complete": null,
+    "source_totals": []
+   },
+   {
+    "question_key": "m:71001",
+    "proposition_key": null,
+    "display_scope": "game",
+    "kind": "named_options",
+    "label": "Alpha vs Beta",
+    "market_name": "Alpha vs Beta",
+    "source_array": "matchups",
+    "quantity": null,
+    "period": null,
+    "subject": null,
+    "predicate": null,
+    "complement_question_key": null,
+    "typing": {
+     "state": "typed",
+     "reason": null
+    },
+    "lifecycle": {
+     "state": "open",
+     "market_status": "open"
+    },
+    "options": [
+     {
+      "option_key": "o:72001",
+      "label": "Alpha",
+      "side": "contender",
+      "market_ids": [
+       71001
+      ],
+      "contributor_outcome_ids": [
+       72001
+      ],
+      "published": {
+       "value": 0.62,
+       "value_state": "quoted",
+       "basis": "published_source_display",
+       "source": "kalshi",
+       "observed_at": "2026-10-02T20:00:00+00:00"
+      },
+      "source_evidence": [
+       {
+        "source": "kalshi",
+        "market_id": 71001,
+        "outcome_id": 72001,
+        "leg_side": "contender",
+        "raw_probability": 0.62,
+        "observed_at": "2026-10-02T20:00:00+00:00"
+       }
+      ],
+      "result": {
+       "state": "open",
+       "evidence_kind": "none"
+      },
+      "comparison": {
+       "state": "unavailable",
+       "reason": "no_pregame_pin",
+       "baseline": null,
+       "latest": null,
+       "delta_points": null
+      }
+     }
+    ],
+    "missing_options": [
+     {
+      "option_key": "o:72002",
+      "outcome_id": 72002,
+      "label": "Beta",
+      "side": "contender",
+      "value_state": "unpriced"
+     }
+    ],
+    "option_counts": {
+     "declared": null,
+     "loaded": 2,
+     "returned": 1,
+     "missing_identified": 1
+    },
+    "complete": false,
+    "source_totals": []
+   },
+   {
+    "question_key": "m:71003",
+    "proposition_key": null,
+    "display_scope": "game",
+    "kind": "named_options",
+    "label": "Match result",
+    "market_name": "Match result",
+    "source_array": "other",
+    "quantity": null,
+    "period": null,
+    "subject": null,
+    "predicate": null,
+    "complement_question_key": null,
+    "typing": {
+     "state": "typed",
+     "reason": null
+    },
+    "lifecycle": {
+     "state": "open",
+     "market_status": "open"
+    },
+    "options": [
+     {
+      "option_key": "o:72005",
+      "label": "Alpha City",
+      "side": "home",
+      "market_ids": [
+       71003
+      ],
+      "contributor_outcome_ids": [
+       72005
+      ],
+      "published": {
+       "value": 0.4,
+       "value_state": "quoted",
+       "basis": "published_source_display",
+       "source": "polymarket",
+       "observed_at": "2026-10-02T20:00:00+00:00"
+      },
+      "source_evidence": [
+       {
+        "source": "polymarket",
+        "market_id": 71003,
+        "outcome_id": 72005,
+        "leg_side": "home",
+        "raw_probability": 0.4,
+        "observed_at": "2026-10-02T20:00:00+00:00"
+       }
+      ],
+      "result": {
+       "state": "open",
+       "evidence_kind": "none"
+      },
+      "comparison": {
+       "state": "unavailable",
+       "reason": "no_pregame_pin",
+       "baseline": null,
+       "latest": null,
+       "delta_points": null
+      }
+     },
+     {
+      "option_key": "o:72006",
+      "label": "Draw",
+      "side": "draw",
+      "market_ids": [
+       71003
+      ],
+      "contributor_outcome_ids": [
+       72006
+      ],
+      "published": {
+       "value": 0.2,
+       "value_state": "quoted",
+       "basis": "published_source_display",
+       "source": "polymarket",
+       "observed_at": "2026-10-02T20:00:00+00:00"
+      },
+      "source_evidence": [
+       {
+        "source": "polymarket",
+        "market_id": 71003,
+        "outcome_id": 72006,
+        "leg_side": "draw",
+        "raw_probability": 0.2,
+        "observed_at": "2026-10-02T20:00:00+00:00"
+       }
+      ],
+      "result": {
+       "state": "open",
+       "evidence_kind": "none"
+      },
+      "comparison": {
+       "state": "unavailable",
+       "reason": "no_pregame_pin",
+       "baseline": null,
+       "latest": null,
+       "delta_points": null
+      }
+     },
+     {
+      "option_key": "o:72007",
+      "label": "Beta Town",
+      "side": "away",
+      "market_ids": [
+       71003
+      ],
+      "contributor_outcome_ids": [
+       72007
+      ],
+      "published": {
+       "value": 0.0,
+       "value_state": "quoted",
+       "basis": "published_source_display",
+       "source": "polymarket",
+       "observed_at": "2026-10-02T20:00:00+00:00"
+      },
+      "source_evidence": [
+       {
+        "source": "polymarket",
+        "market_id": 71003,
+        "outcome_id": 72007,
+        "leg_side": "away",
+        "raw_probability": 0.0,
+        "observed_at": "2026-10-02T20:00:00+00:00"
+       }
+      ],
+      "result": {
+       "state": "open",
+       "evidence_kind": "none"
+      },
+      "comparison": {
+       "state": "unavailable",
+       "reason": "no_pregame_pin",
+       "baseline": null,
+       "latest": null,
+       "delta_points": null
+      }
+     }
+    ],
+    "missing_options": [],
+    "option_counts": {
+     "declared": 3,
+     "loaded": 3,
+     "returned": 3,
+     "missing_identified": 0
+    },
+    "complete": true,
+    "source_totals": []
+   },
+   {
+    "question_key": "m:71004",
+    "proposition_key": null,
+    "display_scope": "game",
+    "kind": "named_options",
+    "label": "Synthetic three-ball",
+    "market_name": "Synthetic three-ball",
+    "source_array": "matchups",
+    "quantity": null,
+    "period": null,
+    "subject": null,
+    "predicate": null,
+    "complement_question_key": null,
+    "typing": {
+     "state": "typed",
+     "reason": null
+    },
+    "lifecycle": {
+     "state": "open",
+     "market_status": "open"
+    },
+    "options": [
+     {
+      "option_key": "o:72008",
+      "label": "Golfer A",
+      "side": "contender",
+      "market_ids": [
+       71004
+      ],
+      "contributor_outcome_ids": [
+       72008
+      ],
+      "published": {
+       "value": 0.5392,
+       "value_state": "quoted",
+       "basis": "published_source_display",
+       "source": "kalshi",
+       "observed_at": "2026-10-02T20:00:00+00:00"
+      },
+      "source_evidence": [
+       {
+        "source": "kalshi",
+        "market_id": 71004,
+        "outcome_id": 72008,
+        "leg_side": "contender",
+        "raw_probability": 0.55,
+        "observed_at": "2026-10-02T20:00:00+00:00"
+       }
+      ],
+      "result": {
+       "state": "open",
+       "evidence_kind": "none"
+      },
+      "comparison": {
+       "state": "unavailable",
+       "reason": "no_pregame_pin",
+       "baseline": null,
+       "latest": null,
+       "delta_points": null
+      }
+     },
+     {
+      "option_key": "o:72009",
+      "label": "Golfer B",
+      "side": "contender",
+      "market_ids": [
+       71004
+      ],
+      "contributor_outcome_ids": [
+       72009
+      ],
+      "published": {
+       "value": 0.2451,
+       "value_state": "quoted",
+       "basis": "published_source_display",
+       "source": "kalshi",
+       "observed_at": "2026-10-02T20:00:00+00:00"
+      },
+      "source_evidence": [
+       {
+        "source": "kalshi",
+        "market_id": 71004,
+        "outcome_id": 72009,
+        "leg_side": "contender",
+        "raw_probability": 0.25,
+        "observed_at": "2026-10-02T20:00:00+00:00"
+       }
+      ],
+      "result": {
+       "state": "open",
+       "evidence_kind": "none"
+      },
+      "comparison": {
+       "state": "unavailable",
+       "reason": "no_pregame_pin",
+       "baseline": null,
+       "latest": null,
+       "delta_points": null
+      }
+     },
+     {
+      "option_key": "o:72010",
+      "label": "Golfer C",
+      "side": "contender",
+      "market_ids": [
+       71004
+      ],
+      "contributor_outcome_ids": [
+       72010
+      ],
+      "published": {
+       "value": 0.2157,
+       "value_state": "quoted",
+       "basis": "published_source_display",
+       "source": "kalshi",
+       "observed_at": "2026-10-02T20:00:00+00:00"
+      },
+      "source_evidence": [
+       {
+        "source": "kalshi",
+        "market_id": 71004,
+        "outcome_id": 72010,
+        "leg_side": "contender",
+        "raw_probability": 0.22,
+        "observed_at": "2026-10-02T20:00:00+00:00"
+       }
+      ],
+      "result": {
+       "state": "open",
+       "evidence_kind": "none"
+      },
+      "comparison": {
+       "state": "unavailable",
+       "reason": "no_pregame_pin",
+       "baseline": null,
+       "latest": null,
+       "delta_points": null
+      }
+     }
+    ],
+    "missing_options": [],
+    "option_counts": {
+     "declared": null,
+     "loaded": 3,
+     "returned": 3,
+     "missing_identified": 0
+    },
+    "complete": null,
+    "source_totals": [
+     {
+      "source": "kalshi",
+      "raw_sum": 1.02,
+      "legs": 3
+     }
+    ]
+   },
+   {
+    "question_key": "q:count|goals|game|full_game|ge:3",
+    "proposition_key": "count|goals|game|full_game|ge:3",
+    "display_scope": "game",
+    "kind": "count_threshold",
+    "label": "3+ goals",
+    "market_name": "3+ goals",
+    "source_array": "totals",
+    "quantity": {
+     "key": "goals",
+     "singular": "goal",
+     "plural": "goals",
+     "integer": true
+    },
+    "period": {
+     "key": "full_game",
+     "label": "Game"
+    },
+    "subject": {
+     "side": "game",
+     "label": null
+    },
+    "predicate": {
+     "relation": "ge",
+     "bound": 3,
+     "line": 2.5
+    },
+    "complement_question_key": null,
+    "typing": {
+     "state": "typed",
+     "reason": null
+    },
+    "lifecycle": {
+     "state": "open",
+     "market_status": "open"
+    },
+    "options": [
+     {
+      "option_key": "o:72031+72041",
+      "label": "Over 2.5",
+      "side": "over",
+      "market_ids": [
+       71011,
+       71012
+      ],
+      "contributor_outcome_ids": [
+       72031,
+       72041
+      ],
+      "published": {
+       "value": null,
+       "value_state": "unblended_equivalents",
+       "basis": "unknown",
+       "source": null,
+       "observed_at": null
+      },
+      "source_evidence": [
+       {
+        "source": "kalshi",
+        "market_id": 71011,
+        "outcome_id": 72031,
+        "leg_side": "over",
+        "raw_probability": 0.55,
+        "observed_at": "2026-10-02T20:00:00+00:00"
+       },
+       {
+        "source": "polymarket",
+        "market_id": 71012,
+        "outcome_id": 72041,
+        "leg_side": "under",
+        "raw_probability": 0.47,
+        "observed_at": "2026-10-02T20:00:00+00:00"
+       }
+      ],
+      "result": {
+       "state": "open",
+       "evidence_kind": "none"
+      },
+      "comparison": {
+       "state": "unavailable",
+       "reason": "not_quoted",
+       "baseline": null,
+       "latest": null,
+       "delta_points": null
+      }
+     }
+    ],
+    "missing_options": [],
+    "option_counts": {
+     "declared": null,
+     "loaded": 1,
+     "returned": 1,
+     "missing_identified": 0
+    },
+    "complete": null,
+    "source_totals": []
+   },
+   {
+    "question_key": "m:71020",
+    "proposition_key": null,
+    "display_scope": "game",
+    "kind": "count_threshold",
+    "label": "Contradictory typed kind",
+    "market_name": "Contradictory typed kind",
+    "source_array": "totals",
+    "quantity": null,
+    "period": null,
+    "subject": null,
+    "predicate": null,
+    "complement_question_key": null,
+    "typing": {
+     "state": "untyped",
+     "reason": "untyped_predicate"
+    },
+    "lifecycle": {
+     "state": "open",
+     "market_status": "open"
+    },
+    "options": [
+     {
+      "option_key": "o:72050",
+      "label": "Over 8",
+      "side": "category",
+      "market_ids": [
+       71020
+      ],
+      "contributor_outcome_ids": [
+       72050
+      ],
+      "published": {
+       "value": 0.5,
+       "value_state": "quoted",
+       "basis": "published_source_display",
+       "source": "kalshi",
+       "observed_at": "2026-10-02T20:00:00+00:00"
+      },
+      "source_evidence": [
+       {
+        "source": "kalshi",
+        "market_id": 71020,
+        "outcome_id": 72050,
+        "leg_side": "category",
+        "raw_probability": 0.5,
+        "observed_at": "2026-10-02T20:00:00+00:00"
+       }
+      ],
+      "result": {
+       "state": "open",
+       "evidence_kind": "none"
+      },
+      "comparison": {
+       "state": "unavailable",
+       "reason": "no_pregame_pin",
+       "baseline": null,
+       "latest": null,
+       "delta_points": null
+      }
+     }
+    ],
+    "missing_options": [],
+    "option_counts": {
+     "declared": null,
+     "loaded": 1,
+     "returned": 1,
+     "missing_identified": 0
+    },
+    "complete": null,
+    "source_totals": []
+   },
+   {
+    "question_key": "m:71021",
+    "proposition_key": null,
+    "display_scope": "game",
+    "kind": "future_kind_v2",
+    "label": "Unknown kind",
+    "market_name": "Unknown kind",
+    "source_array": "other",
+    "quantity": null,
+    "period": null,
+    "subject": null,
+    "predicate": null,
+    "complement_question_key": null,
+    "typing": {
+     "state": "typed",
+     "reason": null
+    },
+    "lifecycle": {
+     "state": "open",
+     "market_status": "open"
+    },
+    "options": [
+     {
+      "option_key": "o:72051",
+      "label": "Yes",
+      "side": "category",
+      "market_ids": [
+       71021
+      ],
+      "contributor_outcome_ids": [
+       72051
+      ],
+      "published": {
+       "value": 0.3,
+       "value_state": "quoted",
+       "basis": "published_source_display",
+       "source": "kalshi",
+       "observed_at": "2026-10-02T20:00:00+00:00"
+      },
+      "source_evidence": [
+       {
+        "source": "kalshi",
+        "market_id": 71021,
+        "outcome_id": 72051,
+        "leg_side": "category",
+        "raw_probability": 0.3,
+        "observed_at": "2026-10-02T20:00:00+00:00"
+       }
+      ],
+      "result": {
+       "state": "open",
+       "evidence_kind": "none"
+      },
+      "comparison": {
+       "state": "unavailable",
+       "reason": "no_pregame_pin",
+       "baseline": null,
+       "latest": null,
+       "delta_points": null
+      }
+     }
+    ],
+    "missing_options": [],
+    "option_counts": {
+     "declared": null,
+     "loaded": 1,
+     "returned": 1,
+     "missing_identified": 0
+    },
+    "complete": null,
+    "source_totals": []
+   },
+   {
+    "question_key": "m:71099",
+    "kind": "named_options",
+    "label": "Malformed: no options"
+   }
+  ],
+  "series_markets_count": null,
+  "coverage": {
+   "scope": "rows_served_by_this_response",
+   "questions": 9,
+   "options": 13,
+   "by_kind": {
+    "count_threshold": 2,
+    "signed_handicap": 2,
+    "named_options": 5,
+    "rank_predicate": 0
+   },
+   "untyped": {
+    "untyped_period": 0,
+    "untyped_unit": 0,
+    "untyped_subject": 0,
+    "untyped_predicate": 1
+   },
+   "build_errors": 0
+  }
+ }
+}

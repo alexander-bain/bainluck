@@ -1,0 +1,337 @@
+{
+ "event_id": 91000001,
+ "home_team": "Alpha City",
+ "away_team": "Beta Town",
+ "event_status": "final",
+ "home_team_futures": [],
+ "away_team_futures": [],
+ "shared_futures": [],
+ "summary": null,
+ "box_score": null,
+ "game_period": null,
+ "game_clock": null,
+ "series_markets": [
+  {
+   "market_id": 71008,
+   "market_name": "Series winner",
+   "source": "kalshi",
+   "status": "open",
+   "resolution_date": null,
+   "outcomes": [
+    {
+     "outcome_id": 72013,
+     "name": "Alpha City",
+     "probability": 0.7
+    },
+    {
+     "outcome_id": 72014,
+     "name": "Beta Town",
+     "probability": 0.29
+    }
+   ]
+  },
+  {
+   "market_id": 71009,
+   "market_name": "Series exact result",
+   "source": "kalshi",
+   "status": "open",
+   "resolution_date": null,
+   "outcomes": [
+    {
+     "outcome_id": 72015,
+     "name": "Alpha City 2-0",
+     "probability": null
+    },
+    {
+     "outcome_id": 72016,
+     "name": "Alpha City 2-1",
+     "probability": 0.49
+    },
+    {
+     "outcome_id": 72017,
+     "name": "Beta Town 2-1",
+     "probability": null
+    }
+   ]
+  }
+ ],
+ "series_question_matrix": {
+  "contract": "10238.v1",
+  "display_scope": "series",
+  "questions": [
+   {
+    "question_key": "m:71008",
+    "proposition_key": null,
+    "display_scope": "series",
+    "kind": "named_options",
+    "label": "Series winner",
+    "market_name": "Series winner",
+    "source_array": "series_markets",
+    "quantity": null,
+    "period": null,
+    "subject": null,
+    "predicate": null,
+    "complement_question_key": null,
+    "typing": {
+     "state": "typed",
+     "reason": null
+    },
+    "lifecycle": {
+     "state": "open",
+     "market_status": "open"
+    },
+    "options": [
+     {
+      "option_key": "o:72013",
+      "label": "Alpha City",
+      "side": "contender",
+      "market_ids": [
+       71008
+      ],
+      "contributor_outcome_ids": [
+       72013
+      ],
+      "published": {
+       "value": 0.7,
+       "value_state": "quoted",
+       "basis": "published_source_display",
+       "source": "kalshi",
+       "observed_at": null
+      },
+      "source_evidence": [
+       {
+        "source": "kalshi",
+        "market_id": 71008,
+        "outcome_id": 72013,
+        "leg_side": "contender",
+        "raw_probability": 0.7,
+        "observed_at": null
+       }
+      ],
+      "result": {
+       "state": "open",
+       "evidence_kind": "none"
+      },
+      "comparison": {
+       "state": "unavailable",
+       "reason": "series_baseline_unsupported",
+       "baseline": null,
+       "latest": null,
+       "delta_points": null
+      }
+     },
+     {
+      "option_key": "o:72014",
+      "label": "Beta Town",
+      "side": "contender",
+      "market_ids": [
+       71008
+      ],
+      "contributor_outcome_ids": [
+       72014
+      ],
+      "published": {
+       "value": 0.29,
+       "value_state": "quoted",
+       "basis": "published_source_display",
+       "source": "kalshi",
+       "observed_at": null
+      },
+      "source_evidence": [
+       {
+        "source": "kalshi",
+        "market_id": 71008,
+        "outcome_id": 72014,
+        "leg_side": "contender",
+        "raw_probability": 0.29,
+        "observed_at": null
+       }
+      ],
+      "result": {
+       "state": "open",
+       "evidence_kind": "none"
+      },
+      "comparison": {
+       "state": "unavailable",
+       "reason": "series_baseline_unsupported",
+       "baseline": null,
+       "latest": null,
+       "delta_points": null
+      }
+     }
+    ],
+    "missing_options": [],
+    "option_counts": {
+     "declared": null,
+     "loaded": 2,
+     "returned": 2,
+     "missing_identified": 0
+    },
+    "complete": null,
+    "source_totals": []
+   },
+   {
+    "question_key": "m:71009",
+    "proposition_key": null,
+    "display_scope": "series",
+    "kind": "named_options",
+    "label": "Series exact result",
+    "market_name": "Series exact result",
+    "source_array": "series_markets",
+    "quantity": null,
+    "period": null,
+    "subject": null,
+    "predicate": null,
+    "complement_question_key": null,
+    "typing": {
+     "state": "typed",
+     "reason": null
+    },
+    "lifecycle": {
+     "state": "open",
+     "market_status": "open"
+    },
+    "options": [
+     {
+      "option_key": "o:72015",
+      "label": "Alpha City 2-0",
+      "side": "category",
+      "market_ids": [
+       71009
+      ],
+      "contributor_outcome_ids": [
+       72015
+      ],
+      "published": {
+       "value": null,
+       "value_state": "result",
+       "basis": "result",
+       "source": "kalshi",
+       "observed_at": null
+      },
+      "source_evidence": [],
+      "result": {
+       "state": "lost",
+       "evidence_kind": "outcome_is_settled"
+      },
+      "comparison": {
+       "state": "unavailable",
+       "reason": "not_quoted",
+       "baseline": null,
+       "latest": null,
+       "delta_points": null
+      }
+     },
+     {
+      "option_key": "o:72016",
+      "label": "Alpha City 2-1",
+      "side": "category",
+      "market_ids": [
+       71009
+      ],
+      "contributor_outcome_ids": [
+       72016
+      ],
+      "published": {
+       "value": 0.49,
+       "value_state": "quoted",
+       "basis": "published_source_display",
+       "source": "kalshi",
+       "observed_at": null
+      },
+      "source_evidence": [
+       {
+        "source": "kalshi",
+        "market_id": 71009,
+        "outcome_id": 72016,
+        "leg_side": "category",
+        "raw_probability": 0.49,
+        "observed_at": null
+       }
+      ],
+      "result": {
+       "state": "open",
+       "evidence_kind": "none"
+      },
+      "comparison": {
+       "state": "unavailable",
+       "reason": "series_baseline_unsupported",
+       "baseline": null,
+       "latest": null,
+       "delta_points": null
+      }
+     },
+     {
+      "option_key": "o:72017",
+      "label": "Beta Town 2-1",
+      "side": "category",
+      "market_ids": [
+       71009
+      ],
+      "contributor_outcome_ids": [
+       72017
+      ],
+      "published": {
+       "value": null,
+       "value_state": "refused",
+       "basis": "unknown",
+       "source": "kalshi",
+       "observed_at": null
+      },
+      "source_evidence": [],
+      "result": {
+       "state": "open",
+       "evidence_kind": "none"
+      },
+      "comparison": {
+       "state": "unavailable",
+       "reason": "not_quoted",
+       "baseline": null,
+       "latest": null,
+       "delta_points": null
+      }
+     }
+    ],
+    "missing_options": [
+     {
+      "option_key": "o:72018",
+      "outcome_id": 72018,
+      "label": "Beta Town 2-0",
+      "side": null,
+      "value_state": "unavailable"
+     }
+    ],
+    "option_counts": {
+     "declared": 4,
+     "loaded": 4,
+     "returned": 3,
+     "missing_identified": 1
+    },
+    "complete": false,
+    "source_totals": []
+   }
+  ],
+  "series_markets_count": {
+   "eligible": 2,
+   "returned": 2
+  },
+  "coverage": {
+   "scope": "rows_served_by_this_response",
+   "questions": 2,
+   "options": 5,
+   "by_kind": {
+    "count_threshold": 0,
+    "signed_handicap": 0,
+    "named_options": 2,
+    "rank_predicate": 0
+   },
+   "untyped": {
+    "untyped_period": 0,
+    "untyped_unit": 0,
+    "untyped_subject": 0,
+    "untyped_predicate": 0
+   },
+   "build_errors": 0
+  }
+ }
+}
