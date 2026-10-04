@@ -18,11 +18,24 @@ mutable book population or a ``valid_until`` window.
    only ever exposed the second state. The row is therefore built at
    ``before_commit`` from the row as the transaction will commit it (after a
    flush, re-read inside the transaction), not from any one writer's
-   ``RETURNING``. A writer this module does not see (a venue stamp, a raw
-   update) that changes the bag later in the same transaction is in the
-   recorded bag, and its keys are listed in ``uncovered_keys`` with
-   ``coverage = 'uncovered_writer_in_txn'``: the bag is exact, but the
-   evidence covers only the nonvenue writes.
+   ``RETURNING``.
+
+   Writers this module does not see (a venue stamp, a raw update) still land
+   in the recorded bag, which is exact. What ``coverage`` states is whether
+   every change to it in this transaction has a recorded observation:
+
+   * ``uncovered_writer_in_txn``: proven NOT covered. After the first tracked
+     write, a key the next tracked write did not write moved (listed in
+     ``uncovered_keys``), or the revision moved more than the tracked writes
+     explain (``unobserved_bumps``). That catches a write between two tracked
+     writes, a write after the last one, and a change later undone.
+   * ``prior_txn_write_unestablished``: nothing after the first tracked write
+     is unexplained, but the row had ALREADY been modified by this transaction
+     before it (``prior_txn_row_write``: true, or null when the probe did not
+     run). Whether that earlier write touched the bag cannot be seen from
+     inside the transaction, so completeness is not claimed.
+   * ``nonvenue_complete``: the probe proved the first tracked write started
+     from the committed row, and every later revision is a tracked write.
 
    Each nonvenue write in the transaction, intermediate ones included, is kept
    in ``observations``. Those are what a producer OBSERVED and wrote, never a
@@ -37,9 +50,16 @@ mutable book population or a ``valid_until`` window.
    sources are listed in ``removed_sources`` (removed in this transaction and
    still absent at commit); ``blend_probability`` / ``blend_tier`` say what the
    surviving siblings still produce, and ``blend_probability IS NULL`` is the
-   only "no overall probability" state. ``stream_frame_eligible`` says whether
-   the existing hook queued a live frame for this commit. It is NOT a delivery
-   receipt, and it is false for a removal.
+   only "no overall probability" state.
+
+   ``queued_frame`` is the exact frame the existing hook hands to fanout if
+   this commit succeeds, or null (a removal queues none). It is not a delivery
+   receipt. The frame is computed from the last tracked write's RETURNING, the
+   row from the committed bag. ``queued_frame_matches`` is true only when the
+   frame carries this row's revision and blend. False means the stream showed
+   a different state than the one committed (for example, a raw write after
+   the last tracked write), and a reader must not treat the row as what the
+   frame exposed.
 
 3. **The evidence is the producer's own.** ``sources`` is the committed bag
    verbatim (JSONB, full precision). Each observation carries the writer's
@@ -101,6 +121,7 @@ SCHEMA_VERSION = 1
 BLEND_METHOD = "aggregation.compute_aggregate_probability_tiered/v1"
 COVERAGE_COMPLETE = "nonvenue_complete"
 COVERAGE_UNCOVERED = "uncovered_writer_in_txn"
+COVERAGE_PRIOR_UNESTABLISHED = "prior_txn_write_unestablished"
 
 
 def recording_enabled() -> bool:
@@ -126,7 +147,7 @@ def build_publication(
     espn_win_prob_home: Any,
     opening_home_probability: Any,
     observations: list[dict[str, Any]],
-    stream_frame_eligible: bool,
+    queued_frame: Optional[dict[str, Any]],
 ) -> dict[str, Any]:
     """The row for one committed event bag. Pure: no session, no clock."""
     from app.utils.aggregation import (
@@ -147,11 +168,36 @@ def build_publication(
     )
     probability = _number(probability)
 
-    last = observations[-1]["returned_sources"]
-    last = last if isinstance(last, dict) else {}
-    uncovered = sorted(
-        key for key in set(bag) | set(last) if bag.get(key) != last.get(key)
-    )
+    def returned(observation):
+        value = observation["returned_sources"]
+        return value if isinstance(value, dict) else {}
+
+    # Between two tracked writes, a key the second did not write must not move,
+    # and the revision may move by at most one, and only if its bag changed.
+    # After the last tracked write, nothing may move at all.
+    uncovered: set[str] = set()
+    unobserved_bumps = 0
+    for before, after in zip(observations, observations[1:]):
+        prev, cur = returned(before), returned(after)
+        own = {after["source"], *after.get("metadata_keys", ())}
+        uncovered |= {
+            key
+            for key in set(prev) | set(cur)
+            if key not in own and prev.get(key) != cur.get(key)
+        }
+        expected = 1 if cur != prev else 0
+        unobserved_bumps += max(0, after["rev"] - before["rev"] - expected)
+    last = returned(observations[-1])
+    uncovered |= {key for key in set(bag) | set(last) if bag.get(key) != last.get(key)}
+    unobserved_bumps += max(0, int(rev) - observations[-1]["rev"])
+    uncovered = sorted(uncovered)
+    prior = observations[0].get("prior_txn_row_write")
+    if uncovered or unobserved_bumps:
+        coverage = COVERAGE_UNCOVERED
+    elif prior is False:
+        coverage = COVERAGE_COMPLETE
+    else:
+        coverage = COVERAGE_PRIOR_UNESTABLISHED
     removed = sorted(
         {o["source"] for o in observations if o["removed"]} - set(bag)
     )
@@ -167,6 +213,7 @@ def build_publication(
             "removed": o["removed"],
             "rev": o["rev"],
             "stamped_at": o["stamped_at"],
+            "metadata_keys": o.get("metadata_keys", []),
             "evidence": o.get("evidence"),
         }
         for o in observations
@@ -198,30 +245,38 @@ def build_publication(
         "source_clocks": clocks,
         "removed_sources": removed,
         "observations": recorded_observations,
-        "coverage": COVERAGE_UNCOVERED if uncovered else COVERAGE_COMPLETE,
+        "coverage": coverage,
         "uncovered_keys": uncovered,
-        "stream_frame_eligible": bool(stream_frame_eligible),
+        "unobserved_bumps": unobserved_bumps,
+        "prior_txn_row_write": prior,
+        "queued_frame": queued_frame,
+        "queued_frame_matches": (
+            None
+            if queued_frame is None
+            else queued_frame.get("rev") == {str(int(event_id)): int(rev)}
+            and queued_frame.get("p") == probability
+        ),
         "payload_sha256": payload_sha256,
     }
 
 
 def record_committing_publications(
-    session, entries: Iterable[tuple[int, dict[str, Any], bool]]
+    session, entries: Iterable[tuple[int, dict[str, Any], Optional[dict[str, Any]]]]
 ) -> dict[str, int]:
     """Insert one publication per event, inside the transaction about to commit.
 
     Runs in the sync ``before_commit`` hook. ``entries`` is
-    ``(event_id, observation, frame_would_be_sent)`` in write order, holding
+    ``(event_id, observation, queued_frame)`` in write order, holding
     only writes whose transaction or savepoint is still alive. Returns counts
     for tests and logs. Never raises: a failure rolls back only its SAVEPOINT.
     """
     from app.models.models import Event, ProbabilityPublication
 
     by_event: dict[int, list[dict[str, Any]]] = {}
-    eligible: dict[int, bool] = {}
-    for event_id, observation, would_send in entries:
+    frames: dict[int, Optional[dict[str, Any]]] = {}
+    for event_id, observation, frame in entries:
         by_event.setdefault(int(event_id), []).append(observation)
-        eligible[int(event_id)] = bool(would_send)
+        frames[int(event_id)] = frame
     counts = {"inserted": 0, "idempotent": 0, "divergent": 0, "missing_row": 0}
     if not by_event:
         return counts
@@ -265,7 +320,7 @@ def record_committing_publications(
                         espn_win_prob_home=espn,
                         opening_home_probability=opening,
                         observations=observations,
-                        stream_frame_eligible=eligible[event_id],
+                        queued_frame=frames[event_id],
                     )
                 )
             if not publications:

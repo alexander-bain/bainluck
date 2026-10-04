@@ -575,7 +575,12 @@ class ProbabilityPublication(Base):
     observations: Mapped[list] = mapped_column(JSONB, nullable=False)
     coverage: Mapped[str] = mapped_column(String(32), nullable=False)
     uncovered_keys: Mapped[list] = mapped_column(JSONB, nullable=False)
-    stream_frame_eligible: Mapped[bool] = mapped_column(Boolean, nullable=False)
+    unobserved_bumps: Mapped[int] = mapped_column(Integer, nullable=False)
+    # NULL: the probe did not run. Only False establishes the committed baseline.
+    prior_txn_row_write: Mapped[Optional[bool]] = mapped_column(Boolean)
+    # The frame handed to fanout on this commit (not a receipt); NULL if none.
+    queued_frame: Mapped[Optional[dict]] = mapped_column(JSONB)
+    queued_frame_matches: Mapped[Optional[bool]] = mapped_column(Boolean)
     txn_started_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False
     )

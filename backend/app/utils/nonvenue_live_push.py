@@ -15,7 +15,16 @@ import asyncio
 import logging
 from types import SimpleNamespace
 
-from sqlalchemy import case, cast, event as sa_event, func, inspect, literal, update
+from sqlalchemy import (
+    case,
+    cast,
+    event as sa_event,
+    func,
+    inspect,
+    literal,
+    text,
+    update,
+)
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm.attributes import set_committed_value
 
@@ -50,10 +59,14 @@ def _before_commit(session):
     if not pending:
         return
     latest = {frame["event_id"]: frame for _, frame, _, _, _ in pending}
+    queued = {
+        event_id: (frame if _frame_is_sent(frame) else None)
+        for event_id, frame in latest.items()
+    }
     record_committing_publications(
         session,
         [
-            (frame["event_id"], observation, _frame_is_sent(latest[frame["event_id"]]))
+            (frame["event_id"], observation, queued[frame["event_id"]])
             for _, frame, _, _, observation in pending
         ],
     )
@@ -89,6 +102,51 @@ def _after_rollback(session, transaction):
         if event is not None:
             set_committed_value(event, "win_probability_sources", previous)
     session.info[_PENDING] = [entry for entry in pending if not belongs_to(entry[0])]
+
+
+_PRIOR_WRITE_PROBE_SQL = (
+    "SELECT coalesce(pg_xact_status((((pg_current_xact_id()::text::bigint >> 32)"
+    " << 32) | xmin::text::bigint)::text::xid8) = 'in progress', false)"
+    " FROM events WHERE id = :id"
+)
+
+
+async def _probe_prior_txn_row_write(session, event_id):
+    """#4971: had THIS transaction already modified the row before this write?
+
+    Asked only for the first tracked write of an event in a transaction, and
+    only while recording is on. A row version visible to us whose ``xmin`` is
+    still in progress can only be our own write, top-level or savepoint. False
+    therefore proves the bag this write starts from is the committed one. True
+    means an earlier write in this transaction, which this path did not see,
+    touched the row. Whether it touched the bag is not known.
+
+    ``xmin`` is 32 bits and is placed in the current epoch. After a
+    wraparound, an ancient frozen row can alias to another live transaction,
+    which reads True (conservative), or to a future xid, which makes
+    ``pg_xact_status`` raise. The probe therefore runs in its own SAVEPOINT. An
+    error yields None ("not established"), and the price write is untouched.
+    """
+    from app.utils.probability_publication import recording_enabled
+
+    if not recording_enabled():
+        return None
+    pending = session.sync_session.info.get(_PENDING, [])
+    if any(frame["event_id"] == event_id for _, frame, _, _, _ in pending):
+        return None
+    connection = await session.connection()
+    try:
+        async with connection.begin_nested():
+            return (
+                await connection.execute(text(_PRIOR_WRITE_PROBE_SQL), {"id": event_id})
+            ).scalar()
+    except Exception:
+        logger.warning(
+            "prior-write probe failed for event %s; coverage not established",
+            event_id,
+            exc_info=True,
+        )
+        return None
 
 
 def _queue(session, frame, event, previous, observation):
@@ -128,6 +186,7 @@ async def write_nonvenue_probability(
     """
     if source not in NONVENUE_SOURCES:
         raise ValueError(f"not a nonvenue probability source: {source}")
+    prior_txn_row_write = await _probe_prior_txn_row_write(session, event.id)
     # Literal source dispatch keeps the existing writer/eligibility scanner
     # able to verify every mint. This entry point never accepts venue sources.
     if source == "betting":
@@ -204,6 +263,8 @@ async def write_nonvenue_probability(
             "rev": rev,
             "stamped_at": at,
             "returned_sources": sources,
+            "metadata_keys": sorted(metadata or {}),
+            "prior_txn_row_write": prior_txn_row_write,
             "evidence": evidence,
         },
     )

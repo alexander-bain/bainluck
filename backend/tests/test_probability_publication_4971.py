@@ -8,6 +8,7 @@ import pytest
 
 from app.utils.probability_publication import (
     COVERAGE_COMPLETE,
+    COVERAGE_PRIOR_UNESTABLISHED,
     COVERAGE_UNCOVERED,
     RECORDING_FLAG,
     build_publication,
@@ -17,7 +18,7 @@ from app.utils.probability_publication import (
 STAMP = "2026-10-04T20:00:00+00:00"
 
 
-def _obs(source, value, returned, *, rev=1, evidence=None):
+def _obs(source, value, returned, *, rev=3, evidence=None, prior=False, meta=()):
     return {
         "source": source,
         "value": value,
@@ -25,6 +26,8 @@ def _obs(source, value, returned, *, rev=1, evidence=None):
         "rev": rev,
         "stamped_at": STAMP,
         "returned_sources": returned,
+        "metadata_keys": list(meta),
+        "prior_txn_row_write": prior,
         "evidence": evidence,
     }
 
@@ -38,7 +41,7 @@ def _build(bag, observations, **overrides):
         espn_win_prob_home=None,
         opening_home_probability=None,
         observations=observations,
-        stream_frame_eligible=True,
+        queued_frame=None,
     )
     kwargs.update(overrides)
     return build_publication(**kwargs)
@@ -82,9 +85,9 @@ def test_removed_lists_only_sources_still_absent_at_commit():
     pub = _build(
         readded,
         [
-            _obs("betting", None, {}, rev=1),
-            _obs("stat_model", None, {}, rev=1),
-            _obs("betting", 0.5, readded, rev=2),
+            _obs("betting", None, {}, rev=2),
+            _obs("stat_model", None, {}, rev=2),
+            _obs("betting", 0.5, readded, rev=3),
         ],
     )
     assert pub["removed_sources"] == ["stat_model"]
@@ -118,3 +121,51 @@ def test_evidence_does_not_change_the_payload_identity():
 def test_a_publication_needs_a_write():
     with pytest.raises(ValueError):
         _build({}, [])
+
+
+def test_prior_write_unknown_or_seen_withholds_completeness():
+    bag = {"mlb": {"value": 0.6, "updated_at": STAMP}}
+    assert _build(bag, [_obs("mlb", 0.6, bag)])["coverage"] == COVERAGE_COMPLETE
+    for prior in (True, None):
+        pub = _build(bag, [_obs("mlb", 0.6, bag, prior=prior)])
+        assert pub["coverage"] == COVERAGE_PRIOR_UNESTABLISHED
+        assert pub["prior_txn_row_write"] is prior
+
+
+def test_a_key_moved_between_tracked_writes_is_uncovered():
+    first = {"mlb": {"value": 0.6, "updated_at": STAMP}}
+    second = {**first, "kalshi": 0.8, "stat_model": {"value": 0.5, "updated_at": STAMP}}
+    pub = _build(
+        second, [_obs("mlb", 0.6, first, rev=1), _obs("stat_model", 0.5, second, rev=3)]
+    )
+    assert pub["uncovered_keys"] == ["kalshi"] and pub["unobserved_bumps"] == 1
+    assert pub["coverage"] == COVERAGE_UNCOVERED
+
+
+def test_a_writes_own_metadata_key_is_not_uncovered():
+    first = {"betting": {"value": 0.6, "updated_at": STAMP}, "betting_book_count": 5}
+    second = {"betting": {"value": 0.61, "updated_at": STAMP}, "betting_book_count": 6}
+    pub = _build(
+        second,
+        [
+            _obs("betting", 0.6, first, rev=2, meta=["betting_book_count"]),
+            _obs("betting", 0.61, second, rev=3, meta=["betting_book_count"]),
+        ],
+    )
+    assert pub["coverage"] == COVERAGE_COMPLETE
+
+
+def test_a_revision_move_with_no_bag_difference_is_an_unobserved_bump():
+    bag = {"mlb": {"value": 0.6, "updated_at": STAMP}}
+    pub = _build(bag, [_obs("mlb", 0.6, bag, rev=1)], rev=3)
+    assert pub["uncovered_keys"] == [] and pub["unobserved_bumps"] == 2
+    assert pub["coverage"] == COVERAGE_UNCOVERED
+
+
+def test_queued_frame_matches_only_its_own_revision_and_blend():
+    bag = {"mlb": {"value": 0.6, "updated_at": STAMP}}
+    frame = {"event_id": 7, "p": 0.6, "rev": {"7": 3}}
+    assert _build(bag, [_obs("mlb", 0.6, bag)], queued_frame=frame)["queued_frame_matches"] is True
+    stale = {**frame, "rev": {"7": 2}}
+    assert _build(bag, [_obs("mlb", 0.6, bag)], queued_frame=stale)["queued_frame_matches"] is False
+    assert _build(bag, [_obs("mlb", 0.6, bag)])["queued_frame_matches"] is None

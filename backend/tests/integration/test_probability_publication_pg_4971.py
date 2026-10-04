@@ -25,6 +25,7 @@ from app.utils.nonvenue_live_push import (
 from app.utils.probability_publication import (
     BLEND_METHOD,
     COVERAGE_COMPLETE,
+    COVERAGE_PRIOR_UNESTABLISHED,
     COVERAGE_UNCOVERED,
     RECORDING_FLAG,
 )
@@ -153,8 +154,8 @@ async def test_one_write_records_the_committed_bag_rev_and_blend(engine, sink):
     assert (pub.blend_probability, pub.blend_tier) == _blend(bag)
     assert pub.blend_method == BLEND_METHOD
     assert pub.coverage == COVERAGE_COMPLETE and pub.uncovered_keys == []
+    assert pub.prior_txn_row_write is False and pub.unobserved_bumps == 0
     assert pub.removed_sources == []
-    assert pub.stream_frame_eligible is True
     assert pub.source_clocks == {
         "betting": bag["betting"]["updated_at"],
         "mlb": bag["mlb"]["updated_at"],
@@ -162,8 +163,10 @@ async def test_one_write_records_the_committed_bag_rev_and_blend(engine, sink):
     assert [o["source"] for o in pub.observations] == ["mlb"]
     assert pub.observations[0]["rev"] == rev
     assert pub.recorded_at >= pub.txn_started_at
-    # The same committed state reached the stream, with the same revision.
+    # The frame recorded is the frame fanout sent, and it carries this state.
     assert len(sink) == 1
+    assert pub.queued_frame == sink[0]
+    assert pub.queued_frame_matches is True
     assert sink[0]["p"] == pub.blend_probability
     assert sink[0]["rev"] == {str(event_id): pub.rev}
 
@@ -186,29 +189,153 @@ async def test_two_writes_one_commit_record_only_the_final_bag(engine, sink):
         ("espn", 1),
         ("stat_model", 2),
     ]
+    assert pub.coverage == COVERAGE_COMPLETE
     assert len(sink) == 1 and sink[0]["rev"] == {str(event_id): 2}
+    assert pub.queued_frame == sink[0] and pub.queued_frame_matches is True
+
+
+async def _raw_kalshi(session, event_id, value=0.8):
+    await session.execute(
+        update(Event)
+        .where(Event.id == event_id)
+        .values(win_probability_sources=atomic_stamp_expression("kalshi", value))
+    )
 
 
 async def test_unqueued_writer_later_in_the_transaction_is_in_the_bag_and_flagged(
-    engine,
+    engine, sink
 ):
     event_id = await _seed_event(engine)
     async with _sessions(engine)() as session:
         event = await session.get(Event, event_id)
         await write_nonvenue_probability(session, event, "mlb", 0.6)
-        await session.execute(
-            update(Event)
-            .where(Event.id == event_id)
-            .values(win_probability_sources=atomic_stamp_expression("kalshi", 0.8))
-        )
+        await _raw_kalshi(session, event_id)
         await session.commit()
+        await publish_committed_nonvenue_frames(session)
     bag, rev, _ = await _row(engine, event_id)
     pub = _pub(await _publications(engine, event_id))
     assert pub.rev == rev == 2
     assert pub.sources == bag and "kalshi" in pub.sources
     assert (pub.blend_probability, pub.blend_tier) == _blend(bag)
     assert pub.coverage == COVERAGE_UNCOVERED
-    assert pub.uncovered_keys == ["kalshi"]
+    assert pub.uncovered_keys == ["kalshi"] and pub.unobserved_bumps == 1
+    # The stream showed the mlb write's state, not the committed one: kept apart.
+    assert pub.queued_frame == sink[0]
+    assert sink[0]["rev"] == {str(event_id): 1}
+    assert pub.queued_frame_matches is False
+
+
+async def test_unqueued_writer_before_the_first_tracked_write_is_not_complete(engine):
+    """Root's discriminator: untracked Kalshi first, then the tracked write."""
+    event_id = await _seed_event(engine)
+    async with _sessions(engine)() as session:
+        event = await session.get(Event, event_id)
+        await _raw_kalshi(session, event_id)
+        await write_nonvenue_probability(session, event, "espn", 0.6)
+        await session.commit()
+    bag, rev, _ = await _row(engine, event_id)
+    pub = _pub(await _publications(engine, event_id))
+    assert pub.sources == bag and "kalshi" in bag and pub.rev == rev == 2
+    assert [o["source"] for o in pub.observations] == ["espn"]
+    assert pub.prior_txn_row_write is True
+    assert pub.coverage == COVERAGE_PRIOR_UNESTABLISHED
+    assert pub.uncovered_keys == [] and pub.unobserved_bumps == 0
+
+
+async def test_prior_write_inside_a_released_savepoint_is_still_seen(engine):
+    event_id = await _seed_event(engine)
+    async with _sessions(engine)() as session:
+        event = await session.get(Event, event_id)
+        async with session.begin_nested():
+            await _raw_kalshi(session, event_id)
+        await write_nonvenue_probability(session, event, "espn", 0.6)
+        await session.commit()
+    pub = _pub(await _publications(engine, event_id))
+    assert pub.prior_txn_row_write is True
+    assert pub.coverage == COVERAGE_PRIOR_UNESTABLISHED
+
+
+async def test_prior_write_rolled_back_in_a_savepoint_leaves_the_baseline_clean(engine):
+    event_id = await _seed_event(engine)
+    async with _sessions(engine)() as session:
+        event = await session.get(Event, event_id)
+        async with session.begin_nested() as nested:
+            await _raw_kalshi(session, event_id)
+            await nested.rollback()
+        await session.refresh(event)  # gotcha #6: the rollback expired it
+        await write_nonvenue_probability(session, event, "espn", 0.6)
+        await session.commit()
+    pub = _pub(await _publications(engine, event_id))
+    assert "kalshi" not in pub.sources
+    assert pub.prior_txn_row_write is False and pub.coverage == COVERAGE_COMPLETE
+
+
+async def test_a_prior_non_bag_row_write_is_conservatively_unestablished(engine):
+    # The probe sees the row, not the column: an earlier score write in this
+    # transaction cannot be told from a bag write, so completeness is withheld.
+    event_id = await _seed_event(engine)
+    async with _sessions(engine)() as session:
+        event = await session.get(Event, event_id)
+        await session.execute(
+            update(Event).where(Event.id == event_id).values(home_score=1)
+        )
+        await write_nonvenue_probability(session, event, "espn", 0.6)
+        await session.commit()
+    pub = _pub(await _publications(engine, event_id))
+    assert pub.prior_txn_row_write is True
+    assert pub.coverage == COVERAGE_PRIOR_UNESTABLISHED
+    assert pub.unobserved_bumps == 0
+
+
+async def test_a_failing_probe_is_contained_and_never_claims_completeness(
+    engine, monkeypatch
+):
+    # Stands in for the post-wraparound future-xid error: a REAL server error.
+    monkeypatch.setattr(
+        "app.utils.nonvenue_live_push._PRIOR_WRITE_PROBE_SQL",
+        "SELECT 1 / (id - id) = 1 FROM events WHERE id = :id",
+    )
+    event_id = await _seed_event(engine)
+    async with _sessions(engine)() as session:
+        event = await session.get(Event, event_id)
+        await write_nonvenue_probability(session, event, "mlb", 0.6)
+        await session.commit()
+    assert (await _stored(engine, event_id))["mlb"]["value"] == 0.6
+    pub = _pub(await _publications(engine, event_id))
+    assert pub.prior_txn_row_write is None
+    assert pub.coverage == COVERAGE_PRIOR_UNESTABLISHED
+
+
+async def test_unqueued_writer_between_two_tracked_writes_is_flagged(engine):
+    event_id = await _seed_event(engine)
+    async with _sessions(engine)() as session:
+        event = await session.get(Event, event_id)
+        await write_nonvenue_probability(session, event, "mlb", 0.6)
+        await _raw_kalshi(session, event_id)
+        await write_nonvenue_probability(session, event, "stat_model", 0.5)
+        await session.commit()
+    bag, rev, _ = await _row(engine, event_id)
+    pub = _pub(await _publications(engine, event_id))
+    assert pub.sources == bag and pub.rev == rev == 3
+    assert pub.coverage == COVERAGE_UNCOVERED
+    assert pub.uncovered_keys == ["kalshi"] and pub.unobserved_bumps == 1
+
+
+async def test_an_unqueued_change_undone_before_commit_is_still_flagged(engine):
+    event_id = await _seed_event(engine)
+    async with _sessions(engine)() as session:
+        event = await session.get(Event, event_id)
+        await write_nonvenue_probability(session, event, "mlb", 0.6)
+        await _raw_kalshi(session, event_id)
+        await session.execute(
+            update(Event)
+            .where(Event.id == event_id)
+            .values(win_probability_sources=Event.win_probability_sources.op("-")("kalshi"))
+        )
+        await session.commit()
+    pub = _pub(await _publications(engine, event_id))
+    assert pub.uncovered_keys == [] and pub.unobserved_bumps == 2
+    assert pub.coverage == COVERAGE_UNCOVERED
 
 
 async def test_unflushed_orm_change_is_flushed_before_the_bag_is_read(engine):
@@ -222,7 +349,7 @@ async def test_unflushed_orm_change_is_flushed_before_the_bag_is_read(engine):
     assert bag["kalshi"] == 0.8
     pub = _pub(await _publications(engine, event_id))
     assert pub.sources == bag and pub.rev == rev
-    assert pub.uncovered_keys == ["kalshi"]
+    assert pub.uncovered_keys == ["kalshi"] and pub.unobserved_bumps == 1
 
 
 async def test_outer_rollback_records_nothing(engine):
@@ -308,7 +435,8 @@ async def test_removal_keeps_the_surviving_blend_and_names_the_gap(engine, sink)
     assert pub.removed_sources == ["betting"]
     assert (pub.blend_probability, pub.blend_tier) == (0.8, "sources")
     # A removal is not a frame: none was queued, and the row does not claim one.
-    assert pub.stream_frame_eligible is False and not sink
+    assert pub.queued_frame is None and pub.queued_frame_matches is None
+    assert not sink
     assert pub.observations[0]["removed"] is True
     assert pub.observations[0]["value"] is None
 
@@ -387,6 +515,8 @@ async def test_concurrent_writers_record_consecutive_committed_revisions(engine)
     assert rows[0].sources == first
     assert rows[1].sources == second == (await _row(engine, event_id))[0]
     assert "mlb" in rows[1].sources
+    # The waiting writer's probe read the committed row, not its own write.
+    assert [r.coverage for r in rows] == [COVERAGE_COMPLETE, COVERAGE_COMPLETE]
 
 
 async def test_recording_failure_rolls_back_only_its_savepoint(
@@ -453,3 +583,95 @@ async def test_actual_betting_ingest_records_its_book_population(
             {"book": "book2", "home_probability": 0.63},
         ],
     }
+
+
+async def _ingest(engine, monkeypatch, prices, **kwargs):
+    from app.tasks.odds_polling import _ingest_event_odds
+    from tests.test_discovery_advances_betting_consensus_5426 import _FakeSnapshot
+
+    quotes = iter(prices)
+
+    async def snapshot(*args, **_):
+        return _FakeSnapshot(next(quotes), None, None), False
+
+    monkeypatch.setattr("app.tasks.odds_polling._create_or_update_snapshot", snapshot)
+    event_id = await _seed_event(engine)
+    async with _sessions(engine)() as session:
+        event = await session.get(Event, event_id)
+        await _ingest_event_odds(
+            session,
+            event,
+            {"bookmakers": [{"key": f"book{i}"} for i in range(len(prices))]},
+            datetime.now(timezone.utc),
+            {},
+            update_opening=False,
+            **kwargs,
+        )
+        await session.commit()
+    return event_id
+
+
+@pytest.mark.parametrize(
+    "prices, decision, split_pair, median",
+    [
+        # Ruling 051: two books are below the floor, so betting is removed.
+        ([0.5, 0.6], "below_floor", None, 0.55),
+        # #7523: the middle pair 0.21/0.8 is a split, so it is removed too.
+        ([0.2, 0.21, 0.8, 0.81], "split", [0.21, 0.8], 0.505),
+    ],
+)
+async def test_actual_betting_ingest_tombstone_keeps_its_refusal_evidence(
+    engine, monkeypatch, prices, decision, split_pair, median
+):
+    from app.tasks.odds_polling import BETTING_BOOK_FLOOR
+
+    event_id = await _ingest(engine, monkeypatch, prices)
+    bag, rev, _ = await _row(engine, event_id)
+    assert "betting" not in bag and bag["betting_book_count"] == len(prices)
+    pub = _pub(await _publications(engine, event_id))
+    assert pub.sources == bag and pub.rev == rev
+    assert pub.removed_sources == ["betting"]
+    assert pub.queued_frame is None
+    evidence = pub.observations[0]["evidence"]
+    assert evidence == {
+        "rule": "median",
+        "floor": BETTING_BOOK_FLOOR,
+        "decision": decision,
+        "median": pytest.approx(median),
+        "split_pair": split_pair,
+        "population": [
+            {"book": f"book{i}", "home_probability": p} for i, p in enumerate(prices)
+        ],
+    }
+    assert pub.observations[0]["value"] is None
+
+
+async def test_a_zero_quote_stays_out_of_the_recorded_population(engine, monkeypatch):
+    # The truthiness predicate never admitted a 0.0 home price; the evidence
+    # must show the population that was actually used, not the books polled.
+    event_id = await _ingest(engine, monkeypatch, [0.0, 0.58, 0.6, 0.63])
+    bag, _, _ = await _row(engine, event_id)
+    assert bag["betting"]["value"] == 0.6 and bag["betting_book_count"] == 3
+    evidence = _pub(await _publications(engine, event_id)).observations[0]["evidence"]
+    assert evidence["decision"] == "admitted" and evidence["median"] == 0.6
+    assert [b["book"] for b in evidence["population"]] == ["book1", "book2", "book3"]
+
+
+@pytest.mark.parametrize(
+    "prices, kwargs",
+    [
+        # #5426: a partial caller under the floor leaves betting alone.
+        ([0.5, 0.6], {"drop_below_floor": False}),
+        # No book quotes a moneyline: no write, so nothing is published.
+        ([None, None, None], {}),
+    ],
+)
+async def test_an_ingest_that_writes_nothing_publishes_nothing(
+    engine, monkeypatch, prices, kwargs
+):
+    from tests.integration.test_live_blend_concurrent_stamp_pg import SEEDED
+
+    event_id = await _ingest(engine, monkeypatch, prices, **kwargs)
+    bag, rev, _ = await _row(engine, event_id)
+    assert bag == SEEDED and rev == 0
+    assert await _publications(engine, event_id) == []
