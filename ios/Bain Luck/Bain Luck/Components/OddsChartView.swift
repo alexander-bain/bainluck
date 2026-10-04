@@ -370,6 +370,11 @@ struct OddsChartView: View {
     /// #9436 — the hero's current home number, for the dot at the live edge.
     /// Nil off a live page.
     var liveEdge: LiveEdgeReading?
+    /// #10456 — the page's served winner pair (`current_odds`), both sides.
+    /// Admission evidence for the balance ink only: a two-outcome question the
+    /// page publishes. Never derived here, never `1 − home`.
+    var servedHomeProbability: Double?
+    var servedAwayProbability: Double?
     /// Shared domain from parent — ensures OddsChart and ScoreDiffChart have identical x-axes
     var forcedDomain: ClosedRange<Date>?
     /// Blends pushed to the page since it opened (#920), drawn as the live end
@@ -524,6 +529,8 @@ struct OddsChartView: View {
          liveUpdateStatus: LiveUpdateStatus = .hidden,
          priceActivity: LivePriceActivity? = nil,
          liveEdge: LiveEdgeReading? = nil,
+         servedHomeProbability: Double? = nil,
+         servedAwayProbability: Double? = nil,
          forcedDomain: ClosedRange<Date>? = nil,
          pageAxisPlotWidth: CGFloat = 0,
          selectedRange: Binding<OddsTimeRange> = .constant(.sinceStart),
@@ -549,6 +556,8 @@ struct OddsChartView: View {
         self.liveUpdateStatus = liveUpdateStatus
         self.priceActivity = priceActivity
         self.liveEdge = liveEdge
+        self.servedHomeProbability = servedHomeProbability
+        self.servedAwayProbability = servedAwayProbability
         self.forcedDomain = forcedDomain
         self.pageAxisPlotWidth = pageAxisPlotWidth
         self.liveFrames = liveFrames
@@ -1458,7 +1467,8 @@ struct OddsChartView: View {
         sources: [String: WinProbSourceInfo],
         visibleMarkers: [PeriodMarker],
         moments: [ChartMoment],
-        liveSplit: LiveEdgeSplit? = nil
+        liveSplit: LiveEdgeSplit? = nil,
+        balanceSource: String? = nil
     ) -> some ChartContent {
         let _ = vm.onPlotBuild?()
         // 50% reference line (single 0–100 axis: even is 0.5)
@@ -1470,7 +1480,10 @@ struct OddsChartView: View {
         // ("the blend is the product" — one number per question); source detail
         // never competes with it here. Absent a blend we fail closed to the full
         // set with the sportsbook consensus as primary (L2-216).
-        ForEach(Self.defaultVisibleSources(in: dataPoints), id: \.self) { source in
+        // #10456 — an admitted binary chart's primary line is drawn by the
+        // balance ink behind the plot (`chartBackground`), so its LineMarks and
+        // lone PointMarks are skipped here. Nothing else is.
+        ForEach(Self.defaultVisibleSources(in: dataPoints).filter { $0 != balanceSource }, id: \.self) { source in
             let points = dataPoints.filter { $0.source == source }
             let color = colorForSource(source, sources: sources)
             let stroke = strokeStyleForSource(source, sources: sources)
@@ -1535,7 +1548,8 @@ struct OddsChartView: View {
                 y: .value("Win probability", moment.probability)
             )
             .symbolSize(momentSymbolArea)
-            .foregroundStyle(colorForSource(Self.primarySource(in: dataPoints), sources: sources))
+            .foregroundStyle(momentColor(moment, inked: balanceSource != nil,
+                                         dataPoints: dataPoints, sources: sources))
             .annotation(position: .overlay, spacing: 0) {
                 Circle()
                     .stroke(Color.systemBackground, lineWidth: 1.5)
@@ -1544,6 +1558,17 @@ struct OddsChartView: View {
             }
             .accessibilityLabel(Text(moment.label))
         }
+    }
+
+    /// A moment wears the color of the line it sits on: the primary line's, or —
+    /// on an inked binary chart (#10456) — the balance side it sits on.
+    private func momentColor(_ moment: ChartMoment, inked: Bool,
+                             dataPoints: [ChartDataPoint], sources: [String: WinProbSourceInfo]) -> Color {
+        if inked, let colors = teamColors {
+            return BinaryWinBalanceMount.sideColor(probability: moment.probability,
+                                                   home: colors.home, away: colors.away)
+        }
+        return colorForSource(Self.primarySource(in: dataPoints), sources: sources)
     }
 
     /// `symbolSize` is an AREA in square points, so the diameter has to be squared —
@@ -1593,14 +1618,37 @@ struct OddsChartView: View {
                 pageNarrowest: sharesPageAxis ? pageAxisPlotWidth : 0))
         let ticks = Self.xAxisTicks(for: domain, plan: plan)
         let liveSplit = liveEdgeSplit(dataPoints: dataPoints, domain: domain)
+        let balance = balancePlan(dataPoints: dataPoints, liveSplit: liveSplit, domain: domain)
+        let balanceColors = balance == nil ? nil : teamColors
 
         return Chart {
             chartContent(dataPoints: dataPoints, sources: sources,
                          visibleMarkers: visibleMarkers, moments: moments,
-                         liveSplit: liveSplit)
+                         liveSplit: liveSplit,
+                         balanceSource: balance == nil ? nil : Self.primarySource(in: dataPoints))
         }
         .chartYScale(domain: yMin...yMax)
         .chartXScale(domain: domain)
+        // #10456 — the balance ink: the primary line and its fill in the home
+        // color above 50% and the away color below, BEHIND the marks so the
+        // even line, period rules and moments stay on top as they do today.
+        // Projected linearly over the chart's own two domains, in plot-local
+        // space, then placed on the plot frame.
+        .chartBackground { proxy in
+            GeometryReader { geo in
+                if let balance, let colors = balanceColors {
+                    let plotFrame = geo[proxy.plotAreaFrame]
+                    BinaryWinChartBalanceInkLayer(
+                        plan: balance,
+                        project: BinaryWinChartBalanceInk.linearProjector(
+                            xDomain: domain, yDomain: yMin...yMax,
+                            plotRect: CGRect(origin: .zero, size: plotFrame.size)),
+                        homeColor: colors.home, awayColor: colors.away)
+                        .frame(width: plotFrame.width, height: plotFrame.height)
+                        .offset(x: plotFrame.minX, y: plotFrame.minY)
+                }
+            }
+        }
         // Period marker labels positioned inside chart via overlay.
         //
         // #3237, two corrections in one place, because they are the same mistake:
@@ -1646,7 +1694,10 @@ struct OddsChartView: View {
                         selection: selection, proxy: proxy, plotFrame: plotFrame,
                         tail: liveSplit.tail, label: "\(homeShort) \(liveEdge.homeLabel)",
                         rising: priceActivity?.homeDelta.map { $0 > 0 },
-                        lineColor: colorForSource(liveSplit.source, sources: sources),
+                        lineColor: balanceColors.map {
+                            BinaryWinBalanceMount.sideColor(probability: liveSplit.tail.to.probability,
+                                                            home: $0.home, away: $0.away)
+                        } ?? colorForSource(liveSplit.source, sources: sources),
                         lineStyle: strokeStyleForSource(liveSplit.source, sources: sources),
                         activity: priceActivity, pulseColor: teamColors?.home ?? .accentColor)
                         .accessibilityHidden(true)
@@ -1727,6 +1778,27 @@ struct OddsChartView: View {
         // `ChartScrubSurface`), so the Mac keeps the built-in selection.
         .chartXSelection(value: Binding(get: { selection.date }, set: { selection.select($0) }))
         #endif
+    }
+
+    /// #10456 — the balance ink's plan for this chart, or `nil` (today's line).
+    /// Reads the primary series' runs the same way `chartContent` does — the
+    /// live-edge split when it is the primary's, else its observation runs.
+    private func balancePlan(dataPoints: [ChartDataPoint], liveSplit: LiveEdgeSplit?,
+                             domain: ClosedRange<Date>) -> BinaryWinBalancePlan? {
+        let primary = Self.primarySource(in: dataPoints)
+        let admission = BinaryWinBalanceMount.admission(
+            sportKey: sportKey, servedHome: servedHomeProbability, servedAway: servedAwayProbability,
+            hasTeamColors: teamColors != nil,
+            drawnSources: Self.defaultVisibleSources(in: dataPoints), primarySource: primary)
+        guard admission == .admittedBinary else { return nil }
+        let split = liveSplit?.source == primary ? liveSplit : nil
+        let segments = split?.segments
+            ?? Self.observationSegments(dataPoints.filter { $0.source == primary }, gameStart: gameStartDate)
+        return BinaryWinBalanceMount.plan(
+            admission: admission,
+            runs: BinaryWinBalanceMount.displayedRuns(segments: segments, continuedRun: split?.continuedRun),
+            servedHome: servedHomeProbability, servedAway: servedAwayProbability,
+            gameFinished: EventState.isFinished(status), xDomain: domain)
     }
 
     /// #925 — the date under a finger at chart-space `x`, clamped to the plot
@@ -1810,11 +1882,24 @@ struct OddsChartView: View {
             return a < b
         }
 
+        // #10456 — an inked binary line is not the source color, so its swatch
+        // is the two team colors it is actually drawn in (home over away).
+        let domain = xAxisDomain(for: dataPoints)
+        let inkedColors = balancePlan(dataPoints: dataPoints,
+                                      liveSplit: liveEdgeSplit(dataPoints: dataPoints, domain: domain),
+                                      domain: domain) == nil ? nil : teamColors
+
         return FlowLayout(spacing: 8) {
             ForEach(ordered, id: \.self) { source in
                 let isPrimary = source == "aggregate" || (source == "consensus" && !ordered.contains("aggregate"))
                 HStack(spacing: 4) {
-                    if isPrimary {
+                    if isPrimary, let inkedColors {
+                        VStack(spacing: 0) {
+                            Rectangle().fill(inkedColors.home).frame(width: 14, height: 1.5)
+                            Rectangle().fill(inkedColors.away).frame(width: 14, height: 1.5)
+                        }
+                        .clipShape(RoundedRectangle(cornerRadius: 1))
+                    } else if isPrimary {
                         RoundedRectangle(cornerRadius: 1)
                             .fill(colorForSource(source, sources: sources))
                             .frame(width: 14, height: 3)
