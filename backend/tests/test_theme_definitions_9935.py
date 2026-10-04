@@ -710,3 +710,107 @@ def test_reason_vocabulary_is_closed_and_disjoint():
         assert not (seen & g)
         seen |= g
     assert td.CONTINUING_ONLY_REASONS <= td.EXCLUDED_REASONS
+
+
+# ---------------------------------------------------------------------------
+# §10.4 S0: the decision ledger declared once (no ORM model) + the vocabulary
+# the P2 writer validates against. Pins only; nothing here touches a database.
+# ---------------------------------------------------------------------------
+
+
+def _ddl_columns():
+    """``{name: sql_type}`` for every column line of ``CREATE_DECISIONS_SQL``."""
+    body = td.CREATE_DECISIONS_SQL.split("(", 1)[1].rsplit(")", 1)[0]
+    cols = {}
+    for line in body.splitlines():
+        line = line.strip().rstrip(",")
+        if not line or line.startswith("CONSTRAINT"):
+            continue
+        name, sql_type = line.split()[:2]
+        cols[name] = sql_type
+    return cols
+
+
+def _varchar_len(sql_type):
+    m = re.fullmatch(r"VARCHAR\((\d+)\)", sql_type)
+    return int(m.group(1)) if m else None
+
+
+class TestDecisionLedgerDDL:
+    def test_the_core_clause_and_the_ddl_name_the_same_columns(self):
+        assert td.DECISIONS_TABLE == "container_member_decisions"
+        table = td.decisions_table()
+        assert table.name == td.DECISIONS_TABLE
+        assert set(table.c.keys()) == set(_ddl_columns())
+        assert len(_ddl_columns()) == 12
+
+    def test_every_varchar_bound_agrees_between_ddl_and_clause(self):
+        table = td.decisions_table()
+        bounded = {n: _varchar_len(t) for n, t in _ddl_columns().items() if _varchar_len(t)}
+        assert bounded == {"child_type": 16, "outcome": 12, "reason": 40, "rule_version": 32}
+        for name, length in bounded.items():
+            assert table.c[name].type.length == length, name
+
+    def test_evidence_is_jsonb_on_both_sides(self):
+        from sqlalchemy.dialects.postgresql import JSONB
+
+        assert _ddl_columns()["evidence"] == "JSONB"
+        assert isinstance(td.decisions_table().c.evidence.type, JSONB)
+
+    def test_outcomes_equal_the_check_constraint(self):
+        m = re.search(r"CHECK \(outcome IN \(([^)]*)\)\)", td.CREATE_DECISIONS_SQL)
+        assert m is not None
+        assert {v.strip().strip("'") for v in m.group(1).split(",")} == td.OUTCOMES
+
+    def test_every_written_value_fits_its_column(self):
+        widths = {n: _varchar_len(t) for n, t in _ddl_columns().items()}
+        assert all(len(r) <= widths["reason"] for r in td.DECISION_REASONS)
+        assert all(len(o) <= widths["outcome"] for o in td.OUTCOMES)
+        assert all(len(d.rule_version) <= widths["rule_version"] for d in REGISTRY.values())
+        assert len("market") <= widths["child_type"]
+        # The withdrawn exclusion is a decision-row reason (§10.4 semantics 4).
+        assert td.CONTAINER_MEMBER_WITHDRAWN in td.DECISION_REASONS
+
+    def test_the_one_member_key_is_unique(self):
+        assert "CONSTRAINT uq_cmd_member UNIQUE (container_id, child_type, child_id)" in (
+            td.CREATE_DECISIONS_SQL
+        )
+
+    def test_statements_are_idempotent_additive_and_never_concurrent(self):
+        assert td.UPGRADE_STATEMENTS == (td.CREATE_DECISIONS_SQL, td.CREATE_DECISIONS_INDEX_SQL)
+        for stmt in td.UPGRADE_STATEMENTS:
+            assert "IF NOT EXISTS" in stmt
+            assert "CONCURRENTLY" not in stmt.upper()  # gotcha #31
+            assert "ALTER" not in stmt.upper() and "DROP" not in stmt.upper()
+        assert td.DOWNGRADE_STATEMENTS == ("DROP TABLE IF EXISTS container_member_decisions",)
+
+    def test_the_prior_decision_arm_reads_the_shared_clause(self, monkeypatch):
+        from sqlalchemy import column, table
+
+        monkeypatch.setattr(
+            td, "decisions_table",
+            lambda: table("shared_clause_probe", column("container_id"),
+                          column("child_type"), column("child_id")),
+        )
+        sql = _sql(candidate_population(AI, container_id=12, now=NOW)["prior_decision"])
+        assert "shared_clause_probe" in sql and "container_member_decisions" not in sql
+
+
+class TestWriterVocabulary:
+    def test_every_registered_container_kind_is_writable(self):
+        from app.utils.container_graph import validate_container_kind
+
+        for defn in REGISTRY.values():
+            assert validate_container_kind(defn.container_kind) == defn.container_kind
+        assert validate_container_kind("theme") == "theme"
+
+    def test_theme_rule_is_an_edge_source(self):
+        from app.utils.container_graph import validate_edge_source
+
+        assert validate_edge_source("theme_rule") == "theme_rule"
+
+    @pytest.mark.parametrize("edge_class", ["title", "advancement", "side_question"])
+    def test_every_class_decide_can_emit_is_a_contains_class(self, edge_class):
+        from app.utils.container_graph import validate_edge_kind_and_class
+
+        assert validate_edge_kind_and_class("contains", edge_class) == ("contains", edge_class)

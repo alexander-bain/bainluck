@@ -22,9 +22,13 @@ What lives here:
   evidence. ``now`` is always explicit.
 * ``candidate_population`` — the §4 gather arms as Core ``select()``
   expressions. They are BUILT, never executed, in P1. The prior-decision arm
-  names the proposed ``container_member_decisions`` table through a lightweight
-  ``table()`` clause: no model, no import of a future module, nothing
+  reads the proposed ``container_member_decisions`` table through
+  ``decisions_table()``: no model, no import of a future module, nothing
   initialised at startup.
+* ``CREATE_DECISIONS_SQL`` / ``UPGRADE_STATEMENTS`` / ``DOWNGRADE_STATEMENTS``
+  + ``decisions_table()`` — that table, declared once (§10.4 S0, the
+  ``container_corrections`` precedent). The D45 migration imports the
+  statements; nothing here runs them.
 * ``resolve_collection_target`` — §5 steps 0–3 over candidate rows the caller
   supplies. Publication is never read here: publication can REMOVE a link
   (step 4, P2) but never REDIRECT one.
@@ -516,19 +520,76 @@ def _decide_ai(defn: "ThemeDefinition", market: Any, *, now: datetime) -> Decisi
 
 
 # ---------------------------------------------------------------------------
+# The decision ledger (§2; §10.4 S0). Declared ONCE here, with no ORM model —
+# the ``container_corrections`` precedent (#9651): the D45 migration and the
+# real-Postgres gate both run these exact statements. Nothing here executes
+# them; the writer fails closed until the table exists.
+# ---------------------------------------------------------------------------
+
+DECISIONS_TABLE = "container_member_decisions"
+
+CREATE_DECISIONS_SQL = """
+CREATE TABLE IF NOT EXISTS container_member_decisions (
+    id BIGSERIAL PRIMARY KEY,
+    container_id BIGINT NOT NULL REFERENCES containers(id) ON DELETE CASCADE,
+    child_type VARCHAR(16) NOT NULL,
+    child_id BIGINT NOT NULL,
+    outcome VARCHAR(12) NOT NULL,
+    reason VARCHAR(40) NOT NULL,
+    rule_version VARCHAR(32) NOT NULL,
+    evidence JSONB NOT NULL,
+    revision INTEGER NOT NULL,
+    first_decided_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+    last_decided_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+    attempt_count INTEGER NOT NULL DEFAULT 1,
+    CONSTRAINT uq_cmd_member UNIQUE (container_id, child_type, child_id),
+    CONSTRAINT ck_cmd_outcome CHECK (outcome IN ('admitted','excluded','withheld'))
+)"""
+
+#: "Every decision about this market, in any container" — the reverse lookup a
+#: correction or an audit makes.
+CREATE_DECISIONS_INDEX_SQL = (
+    "CREATE INDEX IF NOT EXISTS ix_cmd_child ON container_member_decisions (child_type, child_id)"
+)
+
+UPGRADE_STATEMENTS = (CREATE_DECISIONS_SQL, CREATE_DECISIONS_INDEX_SQL)
+DOWNGRADE_STATEMENTS = ("DROP TABLE IF EXISTS container_member_decisions",)
+
+
+def decisions_table():
+    """The one Core clause over ``container_member_decisions``: every column of
+    ``CREATE_DECISIONS_SQL``, typed, so the prior-decision arm and the P2 writer
+    read and write the same names. Built lazily: importing this module loads no
+    model and initialises nothing."""
+    from sqlalchemy import BigInteger, DateTime, Integer, String, column, table
+    from sqlalchemy.dialects.postgresql import JSONB
+
+    return table(
+        DECISIONS_TABLE,
+        column("id", BigInteger),
+        column("container_id", BigInteger),
+        column("child_type", String(16)),
+        column("child_id", BigInteger),
+        column("outcome", String(12)),
+        column("reason", String(40)),
+        column("rule_version", String(32)),
+        column("evidence", JSONB),
+        column("revision", Integer),
+        column("first_decided_at", DateTime(timezone=True)),
+        column("last_decided_at", DateTime(timezone=True)),
+        column("attempt_count", Integer),
+    )
+
+
+# ---------------------------------------------------------------------------
 # Candidate populations (§4). Built, never executed, in P1.
 # ---------------------------------------------------------------------------
 
 
 def _prior_decision_arm(container_id: int):
-    from sqlalchemy import column, select, table
+    from sqlalchemy import select
 
-    decisions = table(
-        "container_member_decisions",
-        column("container_id"),
-        column("child_type"),
-        column("child_id"),
-    )
+    decisions = decisions_table()
     return select(decisions.c.child_id.label("id")).where(
         decisions.c.container_id == container_id,
         decisions.c.child_type == "market",
