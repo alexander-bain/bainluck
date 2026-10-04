@@ -29,6 +29,14 @@ final class NavigationCoordinator: ObservableObject {
     @Published var showBugReport = false
     @Published var liveGameTitle: String = "Bain Luck"
 
+    /// Handoff carries only a canonical identity; the phone loads its own current detail.
+    func handleGameContinuation(_ activity: NSUserActivity) -> Bool {
+        guard activity.activityType == GameContinuation.activityType,
+              let id = GameContinuation.eventID(from: activity.webpageURL),
+              let url = GameContinuation.url(eventID: id) else { return false }
+        return handleURL(url)
+    }
+
     /// Handles supported app links by selecting the destination tab and queuing any route payload.
     /// Returns `true` when the URL maps to a known Bain Luck route.
     func handleURL(_ url: URL) -> Bool {

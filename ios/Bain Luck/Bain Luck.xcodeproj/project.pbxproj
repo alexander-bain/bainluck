@@ -114,6 +114,7 @@
 			membershipExceptions = (
 				Models/PredictionModels.swift,
 				Utilities/DrawPricedWinner.swift,
+				Utilities/GameContinuation.swift,
 				Utilities/PeriodLabel.swift,
 				Utilities/RenderedPercent.swift,
 				Utilities/SportVocab.swift,
@@ -787,6 +788,7 @@
 				ENABLE_PREVIEWS = YES;
 				ENABLE_USER_SCRIPT_SANDBOXING = YES;
 				GENERATE_INFOPLIST_FILE = YES;
+				INFOPLIST_FILE = "BainLuckWatch-Info.plist";
 				INFOPLIST_KEY_CFBundleDisplayName = BainLuckWatch;
 				INFOPLIST_KEY_UISupportedInterfaceOrientations = "UIInterfaceOrientationPortrait UIInterfaceOrientationPortraitUpsideDown";
 				INFOPLIST_KEY_WKWatchOnly = YES;
@@ -822,6 +824,7 @@
 				ENABLE_PREVIEWS = YES;
 				ENABLE_USER_SCRIPT_SANDBOXING = YES;
 				GENERATE_INFOPLIST_FILE = YES;
+				INFOPLIST_FILE = "BainLuckWatch-Info.plist";
 				INFOPLIST_KEY_CFBundleDisplayName = BainLuckWatch;
 				INFOPLIST_KEY_UISupportedInterfaceOrientations = "UIInterfaceOrientationPortrait UIInterfaceOrientationPortraitUpsideDown";
 				INFOPLIST_KEY_WKWatchOnly = YES;

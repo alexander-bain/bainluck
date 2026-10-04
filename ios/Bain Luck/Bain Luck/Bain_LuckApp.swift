@@ -226,6 +226,9 @@ struct Bain_LuckApp: App {
                         _ = navCoordinator.handleURL(url)
                     }
                 }
+                .onContinueUserActivity(GameContinuation.activityType) { activity in
+                    _ = navCoordinator.handleGameContinuation(activity)
+                }
                 .onContinueUserActivity(NSUserActivityTypeBrowsingWeb) { activity in
                     if let url = activity.webpageURL {
                         _ = navCoordinator.handleURL(url)
