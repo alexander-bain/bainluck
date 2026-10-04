@@ -8,6 +8,7 @@ These guards pin the helper that names them, without touching the route.
 from __future__ import annotations
 
 import ast
+import inspect
 from datetime import date, datetime, timedelta, timezone, tzinfo
 from pathlib import Path
 
@@ -162,7 +163,13 @@ class _AnswersOnceTZ(tzinfo):
 class _ComparesAsEarlier:
     """Not an instant, but answers the reflected comparison instead of raising."""
 
+    def __lt__(self, other):
+        return True
+
     def __le__(self, other):
+        return True
+
+    def __gt__(self, other):
         return True
 
     def __ge__(self, other):
@@ -215,8 +222,9 @@ class TestRefusal:
         assert tz.calls >= 2  # the specimen really reached the second use
 
     def test_arguments_are_keyword_only(self):
-        with pytest.raises(TypeError):
-            bookmaker_history_provenance(CUTOFF, None)  # type: ignore[misc]
+        params = inspect.signature(bookmaker_history_provenance).parameters
+        assert list(params) == ["captured_at", "cutoff"]
+        assert all(p.kind is inspect.Parameter.KEYWORD_ONLY for p in params.values())
 
 
 class TestInputsUnchangedAndPure:
