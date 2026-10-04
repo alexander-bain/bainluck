@@ -68,7 +68,7 @@ final class EventPropsMatrixFocusReturn10236Tests: XCTestCase {
         XCTAssertEqual(selection.openQuestion, open)
 
         let reordered = try props { block in
-            block["stats"] = try XCTUnwrap(block["stats"] as? [[String: Any]]).reversed()
+            block["stats"] = Array(try XCTUnwrap(block["stats"] as? [[String: Any]]).reversed())
         }
         XCTAssertEqual(reordered.stats.first?.statKey, "total_bases", "the newer payload leads with another stat")
         XCTAssertEqual(selection.resolvedStat(in: reordered), "hits", "the open question's stat stays on screen")

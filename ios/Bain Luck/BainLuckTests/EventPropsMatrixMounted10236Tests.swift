@@ -75,9 +75,9 @@ final class EventPropsMatrixMounted10236Tests: XCTestCase {
 
     func testThePageMountsTheMatrixOnceAboveTheFilteredOldCard() throws {
         let src = try page()
-        XCTAssertEqual(src.components(separatedBy: "EventPropsMatrixView(props:").count - 1, 1)
+        XCTAssertEqual(src.components(separatedBy: "EventPropsMatrixView(").count - 1, 1)
         XCTAssertEqual(src.components(separatedBy: "PlayerPropsCardView(").count - 1, 1)
-        let matrix = try XCTUnwrap(src.range(of: "EventPropsMatrixView(props:"))
+        let matrix = try XCTUnwrap(src.range(of: "EventPropsMatrixView("))
         let filter = try XCTUnwrap(src.range(of: "EventPropsMatrixLayout.untypedPlayerProps("))
         let card = try XCTUnwrap(src.range(of: "PlayerPropsCardView("))
         let spectrum = try XCTUnwrap(src.range(of: "TotalPointsSpectrumView("))
