@@ -504,13 +504,26 @@ struct RelatedFuturesView: View {
         }
     }
 
+    /// #10238 — a series market the page's sourced Series section
+    /// (`EventQuestionMatrixSection10238`, same payload) already draws is not
+    /// drawn a second time here. Withdraw the sourced question and the legacy
+    /// card comes back.
+    static func seriesMarketsNotDrawnAbove(_ relatedFutures: RelatedFuturesResponse) -> [SeriesMarket] {
+        let matrix = relatedFutures.seriesQuestionMatrix
+        let drawn = Set(EventQuestionMatrixAdapter.rows(in: matrix, scope: .series).map(\.id.questionKey))
+        let drawnMarkets = Set((matrix?.questions ?? [])
+            .filter { drawn.contains($0.questionKey) }
+            .flatMap { $0.options.flatMap { $0.marketIds ?? [] } })
+        return (relatedFutures.seriesMarkets ?? []).filter { !drawnMarkets.contains($0.marketId) }
+    }
+
     // MARK: - Content (V6 Cross-Team Layout)
 
     @ViewBuilder
     private func content(_ relatedFutures: RelatedFuturesResponse) -> some View {
         let awayFutures = relatedFutures.awayTeamFutures ?? []
         let homeFutures = relatedFutures.homeTeamFutures ?? []
-        let seriesMarkets = relatedFutures.seriesMarkets ?? []
+        let seriesMarkets = Self.seriesMarketsNotDrawnAbove(relatedFutures)
         let totalCount = awayFutures.count + homeFutures.count
 
         if totalCount > 0 || !seriesMarkets.isEmpty {

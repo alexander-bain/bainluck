@@ -133,6 +133,31 @@ final class EventQuestionMatrixMount10238Tests: XCTestCase {
                        "the refusal took more than the one question")
     }
 
+    // MARK: 5 — one series question, drawn once
+
+    func testASeriesMarketDrawnAboveIsNotRepeatedInSeasonFutures() throws {
+        // Production (event 15323083): the sourced "Series Winner" section and
+        // the legacy Season Futures SERIES card printed the same market twice.
+        var dict = try object(Self.seriesURL)
+        let both = try decode(RelatedFuturesResponse.self, dict)
+        XCTAssertEqual(both.seriesMarkets?.map(\.marketId), [900, 910])
+        XCTAssertEqual(RelatedFuturesView.seriesMarketsNotDrawnAbove(both).map(\.marketId), [],
+                       "a series market is drawn by both the sourced section and Season Futures")
+
+        // Only m:900 drawn above → only 910 stays in the legacy card.
+        var matrix = try XCTUnwrap(dict["series_question_matrix"] as? [String: Any])
+        let questions = try XCTUnwrap(matrix["questions"] as? [[String: Any]])
+        matrix["questions"] = questions.filter { $0["question_key"] as? String == "m:900" }
+        dict["series_question_matrix"] = matrix
+        XCTAssertEqual(RelatedFuturesView.seriesMarketsNotDrawnAbove(
+            try decode(RelatedFuturesResponse.self, dict)).map(\.marketId), [910])
+
+        // Control: no sourced Series → the legacy card keeps every market.
+        dict.removeValue(forKey: "series_question_matrix")
+        XCTAssertEqual(RelatedFuturesView.seriesMarketsNotDrawnAbove(
+            try decode(RelatedFuturesResponse.self, dict)).map(\.marketId), [900, 910])
+    }
+
     // MARK: 3 — rendered room
 
     private func height<V: View>(_ view: V) -> CGFloat {
