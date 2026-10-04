@@ -83,6 +83,8 @@ from app.utils.discover_bundles import (
     _dedupe_same_question_members,
     theme_member_withhold_reason,
 )
+from app.utils.futures_market_snapshot import CARD_PRICE_AGE_LEG_COUNT, outcome_prints_a_price
+from app.utils.outcome_display import display_rank_order
 from app.utils.theme_definitions import (
     CONTAINER_MEMBER_WITHDRAWN,
     OUTCOME_ADMITTED,
@@ -149,6 +151,9 @@ class OutcomeRow:
     name: Optional[str]
     is_winner: Optional[bool]
     resolution_source: Optional[str]
+    # The stored price when a card would print one (``outcome_prints_a_price``),
+    # else None. Absent is not zero (ruling 051): an unpriced leg stays None.
+    probability: Optional[float] = None
 
 
 @dataclass(frozen=True)
@@ -187,8 +192,15 @@ def member_row(market: Any) -> MemberRow:
         settled_at=getattr(market, "settled_at", None),
         market_metadata=json.loads(json.dumps(meta, default=str)) if isinstance(meta, dict) else None,
         outcomes=tuple(
-            OutcomeRow(o.name, getattr(o, "is_winner", None), getattr(o, "resolution_source", None))
-            for o in (getattr(market, "outcomes", None) or ())
+            OutcomeRow(
+                o.name,
+                getattr(o, "is_winner", None),
+                getattr(o, "resolution_source", None),
+                float(o.current_probability) if outcome_prints_a_price(o) else None,
+            )
+            # id order: the relationship has no order_by, and a tie at the
+            # three-leg cut must not move the fold between two passes
+            for o in sorted(getattr(market, "outcomes", None) or (), key=lambda o: o.id or 0)
         ),
     )
 
@@ -333,6 +345,35 @@ class ThemeSnapshot:
         return self.to_json().encode("utf-8")
 
 
+def fold_input(row: MemberRow) -> dict:
+    """The ``data`` Discover's fold reads for one member, in the feed's DTO shape.
+
+    ``_comparison_title`` gates two of its removals on ``resolution_date`` and
+    ``top_outcomes`` (the stated-year arm and the priced-field arm, #8387), so a
+    row handed over without them can only ever be refused. Both are the stored
+    values, serialized as the feed serializes them: the date as ISO text, the
+    legs in the card's order (price descending, then ``display_rank_order``)
+    cut to the three a card prints, an unpriced leg keeping ``None``. A row
+    missing either is passed missing, and the fold refuses it as it would.
+    """
+    ordered = sorted(
+        (o for o in row.outcomes if o.name is not None),
+        key=lambda o: o.probability or 0,
+        reverse=True,
+    )
+    ordered = display_rank_order(ordered, lambda o: o.name, lambda o: o.probability)
+    return {
+        "id": row.id,
+        "name": row.name,
+        "source": row.source,
+        "resolution_date": row.resolution_date.isoformat() if row.resolution_date else None,
+        "top_outcomes": [
+            {"name": o.name, "probability": o.probability, "rank": rank}
+            for rank, o in enumerate(ordered[:CARD_PRICE_AGE_LEG_COUNT], start=1)
+        ],
+    }
+
+
 def _page_order(members: Mapping[int, str]) -> list[int]:
     return sorted(
         (int(i) for i in members),
@@ -375,9 +416,7 @@ def build_snapshot(
         if reason is not None:
             withheld.setdefault(reason, []).append(child_id)
             continue
-        eligible.append(
-            {"type": "futures", "data": {"id": child_id, "name": row.name, "source": row.source}}
-        )
+        eligible.append({"type": "futures", "data": fold_input(row)})
     kept, folded = _dedupe_same_question_members(eligible)
     shown = tuple(int(item["data"]["id"]) for item in kept)
     return ThemeSnapshot(

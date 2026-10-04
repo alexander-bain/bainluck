@@ -526,62 +526,187 @@ async def test_case_16_a_low_quality_member_stays_admitted_and_off_the_page(db, 
 
 
 # ---------------------------------------------------------------------------
-# Case 19 — two venues, one question: two members, one shown
+# Case 19 — two venues, one question: two members, one shown. Unmocked, on
+# #8387's own fixture: production's two Best Picture rows (6173044 Kalshi,
+# 57313556 Polymarket) with their stored dates and priced legs. The fold and the
+# matcher both run for real; nothing here stands in for either.
 # ---------------------------------------------------------------------------
 
+from tests.test_discover_awards_best_picture_twice_8387 import (  # noqa: E402
+    _bundle_members as _awards_members_8387,
+)
 
-def _fold_winner_titles(monkeypatch):
-    """Make Discover's fold pair the two Best Picture WINNER questions, through
-    the matcher it calls (``cross_source_matching.is_same_question``, which
-    receives the fold's own comparison titles). The fold itself runs unpatched,
-    so the identity A2 depends on is the one under test."""
-    from app.utils import cross_source_matching
 
-    def winner(title):
-        t = title.lower()
-        return "best picture" in t and "nomin" not in t
+def _fixture_row(data, **changes):
+    """One 8387 fixture member as the plain row ``member_row`` would copy."""
+    kalshi = data["source"] == "kalshi"
+    row = ta.MemberRow(
+        id=data["id"],
+        name=data["name"],
+        source=data["source"],
+        external_id="KXOSCARPIC-27" if kalshi else f"PM-{data['id']}",
+        status="open",
+        llm_sport_category=data["llm_sport_category"],
+        resolution_date=datetime.fromisoformat(data["resolution_date"]),
+        outcomes=tuple(ta.OutcomeRow(o["name"], None, None, o["probability"])
+                       for o in data["top_outcomes"]),
+    )
+    return dataclasses.replace(row, **changes)
 
-    monkeypatch.setattr(cross_source_matching, "is_same_question",
-                        lambda a, b: winner(a) and winner(b))
+
+def _awards_rows():
+    return {m["data"]["id"]: _fixture_row(m["data"]) for m in _awards_members_8387()}
+
+
+KALSHI_PICTURE_ID, PM_PICTURE_ID = 6173044, 57313556
+# The other Oscars categories in the same served bundle; the film leads two of them.
+PM_ADAPTED_ID, PM_CINEMATOGRAPHY_ID = 58495122, 58495124
+
+
+def _oscars_snapshot(rows, ids):
+    return ta.build_snapshot({"id": 7, "slug": "oscars-2027", "name": "Oscars 2027"}, 1,
+                             {i: "title" for i in ids}, rows, inventory_complete=True)
 
 
 @pytest.mark.asyncio
-async def test_case_19_a_cross_venue_pair_is_two_members_and_one_shown_question(
-    db, redis, monkeypatch
-):
-    _fold_winner_titles(monkeypatch)
-    db.add_markets(KALSHI_BEST_PICTURE, PM_BEST_PICTURE, PM_NOMINATIONS, slug="oscars-2027")
+async def test_case_19_a_cross_venue_pair_is_two_members_and_one_shown_question(db, redis):
+    rows = _awards_rows()
+    db.add_markets(rows[KALSHI_PICTURE_ID], rows[PM_PICTURE_ID], PM_NOMINATIONS,
+                   slug="oscars-2027")
 
     await _assemble(only="oscars-2027")
 
     assert db.theme_edges("oscars-2027") == {
-        KALSHI_BEST_PICTURE.id: "title",
-        PM_BEST_PICTURE.id: "title",
+        KALSHI_PICTURE_ID: "title",
+        PM_PICTURE_ID: "title",
         PM_NOMINATIONS.id: "advancement",
     }
     assert len(db.state["decisions"]) == 3
     snap = _stored(redis, db, "oscars-2027")
-    # page order is (class rank, id): both titles before the advancement row,
-    # so the better-placed Kalshi title survives and Polymarket's folds
-    assert snap["shown_ids"] == [KALSHI_BEST_PICTURE.id, PM_NOMINATIONS.id]
-    assert snap["folded_ids"] == [PM_BEST_PICTURE.id]
+    # page order is (class rank, id): both titles before the advancement row, so
+    # the better-placed Kalshi title survives, Polymarket's folds, and the
+    # nominations question (a different question) stays on the page
+    assert snap["shown_ids"] == [KALSHI_PICTURE_ID, PM_NOMINATIONS.id]
+    assert snap["folded_ids"] == [PM_PICTURE_ID]
     assert snap["shown_count"] == 2 and snap["eligible_count"] == 3
 
 
+def test_case_19_the_fold_reads_what_discovers_own_fixture_reads():
+    """``fold_input`` hands the fold the fields #8387's served rows carried, so
+    the comparison titles are the ones Discover's own test proves fold."""
+    served = {m["data"]["id"]: m["data"] for m in _awards_members_8387()}
+    rows = _awards_rows()
+    from app.utils.discover_bundles import _comparison_title
+
+    for a, b in ((KALSHI_PICTURE_ID, PM_PICTURE_ID), (PM_PICTURE_ID, KALSHI_PICTURE_ID)):
+        mine = ta.fold_input(rows[a]), ta.fold_input(rows[b])
+        assert _comparison_title(*mine) == _comparison_title(served[a], served[b])
+    poly = ta.fold_input(rows[PM_PICTURE_ID])
+    assert poly["resolution_date"] == "2027-07-01T03:59:00+00:00"
+    assert [(o["name"], o["probability"]) for o in poly["top_outcomes"]] == [
+        ("The Odyssey", 0.49), ("La Bola Negra", 0.315), ("Dune: Part Three", 0.115)]
+
+
+def test_case_19_the_oscars_categories_the_film_also_leads_stay():
+    rows = _awards_rows()
+    ids = (KALSHI_PICTURE_ID, PM_PICTURE_ID, PM_ADAPTED_ID, PM_CINEMATOGRAPHY_ID)
+    snap = _oscars_snapshot(rows, ids)
+    assert snap.folded_ids == (PM_PICTURE_ID,)
+    assert snap.shown_ids == (KALSHI_PICTURE_ID, PM_ADAPTED_ID, PM_CINEMATOGRAPHY_ID)
+
+
 def test_case_19_the_page_split_is_exactly_discovers_fold():
-    """Whatever the fold decides for the real rows, the snapshot carries it
-    unchanged: shown + folded partition the eligible members in page order."""
-    members = {KALSHI_BEST_PICTURE.id: "title", PM_BEST_PICTURE.id: "title",
-               PM_NOMINATIONS.id: "advancement"}
-    rows = {r.id: r for r in (KALSHI_BEST_PICTURE, PM_BEST_PICTURE, PM_NOMINATIONS)}
-    snap = ta.build_snapshot({"id": 7, "slug": "oscars-2027", "name": "Oscars 2027"}, 1,
-                             members, rows, inventory_complete=True)
-    items = [{"type": "futures", "data": {"id": i, "name": rows[i].name, "source": rows[i].source}}
-             for i in (KALSHI_BEST_PICTURE.id, PM_BEST_PICTURE.id, PM_NOMINATIONS.id)]
+    """Whatever the fold decides, the snapshot carries it unchanged: shown +
+    folded partition the eligible members in page order."""
+    rows = {**_awards_rows(), PM_NOMINATIONS.id: PM_NOMINATIONS}
+    ids = (KALSHI_PICTURE_ID, PM_PICTURE_ID, PM_CINEMATOGRAPHY_ID, PM_NOMINATIONS.id)
+    snap = _oscars_snapshot(rows, ids)
+    items = [{"type": "futures", "data": ta.fold_input(rows[i])} for i in sorted(ids)]
     kept, folded = discover_bundles._dedupe_same_question_members(items)
     assert snap.shown_ids == tuple(i["data"]["id"] for i in kept)
     assert snap.folded_ids == tuple(i["data"]["id"] for i in folded)
-    assert sorted(snap.shown_ids + snap.folded_ids) == sorted(members)
+    assert sorted(snap.shown_ids + snap.folded_ids) == sorted(ids)
+
+
+# The refusals: each takes one piece of the context away, or changes it to
+# what a different question would carry, and the pair must stay two rows.
+
+
+def _pair_with(**poly_changes):
+    rows = _awards_rows()
+    rows[PM_PICTURE_ID] = dataclasses.replace(rows[PM_PICTURE_ID], **poly_changes)
+    return _oscars_snapshot(rows, (KALSHI_PICTURE_ID, PM_PICTURE_ID))
+
+
+def test_case_19_a_row_without_a_resolution_date_is_not_folded():
+    snap = _pair_with(resolution_date=None)
+    assert snap.folded_ids == () and snap.shown_ids == (KALSHI_PICTURE_ID, PM_PICTURE_ID)
+
+
+def test_case_19_a_row_without_prices_is_not_folded():
+    """An unpriced leg stays None — not a dummy number — so a row with no
+    prices gives the field arm nothing to agree on."""
+    unpriced = tuple(dataclasses.replace(o, probability=None)
+                     for o in _awards_rows()[PM_PICTURE_ID].outcomes)
+    snap = _pair_with(outcomes=unpriced)
+    assert all(o["probability"] is None
+               for o in ta.fold_input(dataclasses.replace(
+                   _awards_rows()[PM_PICTURE_ID], outcomes=unpriced))["top_outcomes"])
+    assert snap.folded_ids == ()
+
+
+def test_case_19_a_field_led_by_a_different_film_is_not_folded():
+    legs = list(_awards_rows()[PM_PICTURE_ID].outcomes)
+    legs[0] = dataclasses.replace(legs[0], probability=0.1)  # La Bola Negra now leads
+    assert _pair_with(outcomes=tuple(legs)).folded_ids == ()
+
+
+def test_case_19_next_years_ceremony_is_not_folded_onto_this_years():
+    """Kalshi's undated title for the NEXT ceremony beside Polymarket's dated
+    2027 one: the same title, the same leader, a different edition."""
+    rows = _awards_rows()
+    rows[KALSHI_PICTURE_ID] = dataclasses.replace(
+        rows[KALSHI_PICTURE_ID], resolution_date=datetime(2028, 12, 31, 15, tzinfo=timezone.utc))
+    snap = _oscars_snapshot(rows, (KALSHI_PICTURE_ID, PM_PICTURE_ID))
+    assert snap.folded_ids == () and snap.shown_count == 2
+
+
+def test_case_19_winner_and_nominations_stay_two_questions():
+    rows = {**_awards_rows(), PM_NOMINATIONS.id: PM_NOMINATIONS}
+    snap = _oscars_snapshot(rows, (KALSHI_PICTURE_ID, PM_NOMINATIONS.id))
+    assert snap.folded_ids == ()
+
+
+def test_member_row_copies_the_stored_price_and_keeps_absent_absent():
+    """``outcome_prints_a_price`` decides: a stored 0.0 is a price, NULL is None.
+    Legs copy in id order so a tie at the three-leg cut is stable."""
+    from decimal import Decimal
+    from types import SimpleNamespace
+
+    legs = [SimpleNamespace(id=3, name="C", is_winner=None, resolution_source=None,
+                            current_probability=None),
+            SimpleNamespace(id=1, name="A", is_winner=None, resolution_source=None,
+                            current_probability=Decimal("0.3774")),
+            SimpleNamespace(id=2, name="B", is_winner=None, resolution_source=None,
+                            current_probability=Decimal("0"))]
+    market = SimpleNamespace(id=9, name="Q", source="kalshi", external_id="K", status="open",
+                             llm_sport_category="entertainment", outcomes=legs,
+                             resolution_date=datetime(2027, 12, 31, 15, tzinfo=timezone.utc))
+    row = ta.member_row(market)
+    assert [(o.name, o.probability) for o in row.outcomes] == [
+        ("A", 0.3774), ("B", 0.0), ("C", None)]
+    assert ta.fold_input(row)["resolution_date"] == "2027-12-31T15:00:00+00:00"
+
+
+def test_fold_input_orders_the_legs_as_the_card_does_and_cuts_at_three():
+    """Price descending, unpriced last, three legs — the card's order, whatever
+    order the rows were loaded in."""
+    legs = tuple(ta.OutcomeRow(n, None, None, p) for n, p in
+                 (("Hamnet", 0.05), ("Unpriced", None), ("Dune: Part Three", 0.11),
+                  ("The Odyssey", 0.49)))
+    row = dataclasses.replace(_awards_rows()[PM_PICTURE_ID], outcomes=legs)
+    assert [(o["name"], o["rank"]) for o in ta.fold_input(row)["top_outcomes"]] == [
+        ("The Odyssey", 1), ("Dune: Part Three", 2), ("Hamnet", 3)]
 
 
 # ---------------------------------------------------------------------------
