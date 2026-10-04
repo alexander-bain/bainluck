@@ -29,13 +29,18 @@ struct WatchComplicationLayoutFixture: View {
             let timestamp = ISO8601DateFormatter().string(from: now.addingTimeInterval(-120))
             if scenario != "empty" {
                 let final = scenario == "final"
-                let fields: [String: Any] = [
+                var fields: [String: Any] = [
                     "id": 101, "home_team": "San Francisco Giants", "away_team": "Los Angeles Dodgers",
                     "status": final ? "completed" : "live", "sport": "baseball_mlb",
                     "home_score": 4, "away_score": 2,
                     "hero_probability": 0.455, "hero_probability_away": 0.545,
                     "hero_probability_observed_at": timestamp, "score_observed_at": timestamp
                 ]
+                if scenario == "score" {
+                    fields.removeValue(forKey: "hero_probability")
+                    fields.removeValue(forKey: "hero_probability_away")
+                    fields.removeValue(forKey: "hero_probability_observed_at")
+                }
                 if let data = try? JSONSerialization.data(withJSONObject: fields),
                    let game = try? JSONDecoder().decode(WatchSelectedGame.self, from: data) {
                     snapshot = WatchComplicationProjection.snapshot(game: game, savedAt: now)

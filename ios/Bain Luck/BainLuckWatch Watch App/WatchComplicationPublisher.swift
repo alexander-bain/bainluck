@@ -10,21 +10,40 @@ nonisolated enum WatchComplicationProjection {
         let detail: String
         let observed: Date?
         if game.isFinal {
-            guard let home = game.homeScore, let away = game.awayScore else { return nil }
+            guard let home = game.homeScore, let away = game.awayScore, home >= 0, away >= 0 else { return nil }
             if home > away { title = "\(game.homeTeam) won"; detail = "Final · \(home)–\(away)" }
             else if away > home { title = "\(game.awayTeam) won"; detail = "Final · \(away)–\(home)" }
             else { title = "\(game.awayTeam) at \(game.homeTeam)"; detail = "Final · tied \(home)–\(away)" }
             observed = game.scoreObservedAt
         } else {
             guard ["live", "scheduled", "upcoming", "in_progress", "pregame"].contains(game.status?.lowercased() ?? ""),
-                  game.showsForecast, let probability = game.homeProbabilityText else { return nil }
-            title = "\(game.homeTeam) win"
-            detail = "\(probability) · \(game.stateLabel)"
-            observed = game.probabilityObservedAt
+                  game.showsForecast else { return nil }
+            if let probability = game.homeProbabilityText,
+               let clock = game.probabilityObservedAt, validObservation(clock, savedAt: savedAt) {
+                title = "\(game.homeTeam) win"
+                detail = "\(probability) · \(game.stateLabel)"
+                observed = clock
+            } else if ["live", "in_progress"].contains(game.status?.lowercased() ?? ""), let home = game.homeScore, let away = game.awayScore,
+                      home >= 0, away >= 0,
+                      let clock = game.scoreObservedAt, validObservation(clock, savedAt: savedAt) {
+                // A score is independently useful when no honest probability reading exists.
+                // Keep away-home order aligned with the named matchup, and use only its clock.
+                title = "\(game.awayTeam) at \(game.homeTeam)"
+                detail = "Score \(away)–\(home) · Live"
+                observed = clock
+            } else {
+                return nil
+            }
         }
-        guard let observed else { return nil }
+        guard let observed, validObservation(observed, savedAt: savedAt) else { return nil }
         return WatchComplicationSnapshot(version: 1, eventID: game.id, title: title,
                                          detail: detail, observedAt: observed, savedAt: savedAt)
+    }
+
+    private static func validObservation(_ observed: Date, savedAt: Date) -> Bool {
+        observed.timeIntervalSinceReferenceDate.isFinite
+            && savedAt.timeIntervalSinceReferenceDate.isFinite
+            && observed <= savedAt
     }
 }
 

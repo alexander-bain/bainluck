@@ -3,11 +3,11 @@ import XCTest
 
 final class ComplicationContentJourneyTests: XCTestCase {
     @MainActor
-    func testSavedLiveFinalAndEmptyRectangularContent() throws {
+    func testSavedLiveScoreFinalAndEmptyRectangularContent() throws {
         continueAfterFailure = false
         let app = XCUIApplication()
         defer { app.terminate() }
-        for scenario in ["live", "final", "empty"] {
+        for scenario in ["live", "score", "final", "empty"] {
             app.launchEnvironment = [
                 "BAINLUCK_WATCH_UI_TEST": "1", "BAINLUCK_WATCH_UI_SUITE": UUID().uuidString,
                 "BAINLUCK_WATCH_UI_RESET": "1", "BAINLUCK_WATCH_UI_COMPLICATION": scenario
@@ -26,10 +26,24 @@ final class ComplicationContentJourneyTests: XCTestCase {
                 let detail = app.staticTexts["watch.complication.detail"]
                 let observed = app.staticTexts["watch.complication.observed"]
                 XCTAssertTrue(title.exists && detail.exists && observed.exists)
-                XCTAssertEqual(title.label, scenario == "live" ? "San Francisco Giants win" : "San Francisco Giants won")
-                XCTAssertTrue(detail.label.contains("Saved"))
-                XCTAssertTrue(detail.label.contains(scenario == "live" ? "45%" : "Final"))
-                XCTAssertTrue(detail.label.contains(scenario == "live" ? "Live" : "4–2"))
+                let expectedTitle: String
+                let expectedDetail: String
+                switch scenario {
+                case "live":
+                    expectedTitle = "San Francisco Giants win"
+                    expectedDetail = "Saved · 45% · Live"
+                case "score":
+                    expectedTitle = "Los Angeles Dodgers at San Francisco Giants"
+                    expectedDetail = "Saved · Score 2–4 · Live"
+                default:
+                    expectedTitle = "San Francisco Giants won"
+                    expectedDetail = "Saved · Final · 4–2"
+                }
+                XCTAssertEqual(title.label, expectedTitle)
+                XCTAssertEqual(detail.label, expectedDetail)
+                if scenario == "score" {
+                    XCTAssertFalse(detail.label.contains("%"), "Score-only reading must not invent a probability")
+                }
                 let timestamp = try XCTUnwrap(ISO8601DateFormatter().date(from: "2026-10-04T12:00:00Z"))
                 XCTAssertEqual(observed.label, "Observed \(timestamp.formatted(date: .abbreviated, time: .shortened))")
                 for element in [title, detail, observed] {

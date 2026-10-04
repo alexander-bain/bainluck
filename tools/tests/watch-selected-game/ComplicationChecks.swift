@@ -83,6 +83,59 @@ private actor ComplicationRaceTransport: WatchSelectedGameTransport {
         precondition(WatchComplicationProjection.snapshot(game: incompleteFinal, savedAt: clock) == nil,
                      "A final missing either score cannot fall back to a forecast or invent a winner")
     }
+
+    let scoreFields = "\"home_score\":3,\"away_score\":2,\"score_observed_at\":\"2026-10-04T17:59:00Z\""
+    let scoreClock = clock.addingTimeInterval(-60)
+    for status in ["live", "in_progress"] {
+        for probabilityFields in ["", ",\"hero_probability\":0.6",
+                                  ",\"hero_probability\":0.6,\"hero_probability_observed_at\":\"invalid\"",
+                                  ",\"hero_probability\":0.6,\"hero_probability_observed_at\":\"2026-10-04T18:01:00Z\""] {
+            let scoreGame = try detail("\"status\":\"\(status)\",\(scoreFields)\(probabilityFields)")
+            let scoreProjection = WatchComplicationProjection.snapshot(game: scoreGame, savedAt: clock)!
+            precondition(scoreProjection.title == "Los Angeles Dodgers at San Francisco Giants")
+            precondition(scoreProjection.detail == "Score 2–3 · Live",
+                         "Score order follows the named away-at-home matchup")
+            precondition(scoreProjection.observedAt == scoreClock && scoreProjection.savedAt == clock,
+                         "Score fallback retains score observation time independently of probability/fetch clocks")
+            precondition(!scoreProjection.detail.contains("%"))
+            if probabilityFields.isEmpty {
+                let laterSavedScore = WatchComplicationProjection.snapshot(game: scoreGame, savedAt: clock.addingTimeInterval(3600))!
+                precondition(laterSavedScore.observedAt == scoreClock && laterSavedScore.savedAt == clock.addingTimeInterval(3600),
+                             "Advancing only fetch/save time never refreshes score observation time")
+            }
+        }
+    }
+    let liveZero = try detail("\"status\":\"live\",\"home_score\":0,\"away_score\":0,\"score_observed_at\":\"2026-10-04T17:59:00Z\"")
+    precondition(WatchComplicationProjection.snapshot(game: liveZero, savedAt: clock)?.detail == "Score 0–0 · Live",
+                 "Valid observed live zero scores are real readings")
+    let preferredGame = try detail("\"status\":\"live\",\(scoreFields),\"hero_probability\":0.6,\"hero_probability_observed_at\":\"2026-10-04T17:58:00Z\"")
+    let preferred = WatchComplicationProjection.snapshot(game: preferredGame, savedAt: clock)!
+    precondition(preferred.title == "San Francisco Giants win" && preferred.detail == "60% · Live")
+    precondition(preferred.observedAt == observed, "Valid probability remains preferred even with a newer score")
+    for rejectedFields in [
+        "\"home_score\":3,\"away_score\":2",
+        "\"home_score\":3,\"away_score\":2,\"score_observed_at\":\"invalid\"",
+        "\"home_score\":3,\"away_score\":2,\"score_observed_at\":\"2026-10-04T18:01:00Z\"",
+        "\"home_score\":3,\"score_observed_at\":\"2026-10-04T17:59:00Z\"",
+        "\"away_score\":2,\"score_observed_at\":\"2026-10-04T17:59:00Z\"",
+        "\"home_score\":-1,\"away_score\":2,\"score_observed_at\":\"2026-10-04T17:59:00Z\"",
+        "\"home_score\":3,\"away_score\":-1,\"score_observed_at\":\"2026-10-04T17:59:00Z\"",
+    ] {
+        let rejectedGame = try detail("\"status\":\"live\",\(rejectedFields)")
+        precondition(WatchComplicationProjection.snapshot(game: rejectedGame, savedAt: clock) == nil,
+                     "Unverified score/timestamp cannot become a saved complication")
+    }
+    for status in ["scheduled", "upcoming", "pregame", "closed"] {
+        let notLive = try detail("\"status\":\"\(status)\",\"home_score\":0,\"away_score\":0,\"score_observed_at\":\"2026-10-04T17:59:00Z\"")
+        precondition(WatchComplicationProjection.snapshot(game: notLive, savedAt: clock) == nil,
+                     "Pregame zero scores and closed rows cannot masquerade as a live score")
+    }
+
+    for scores in ["\"home_score\":-1,\"away_score\":2", "\"home_score\":3,\"away_score\":-1"] {
+        let negativeFinal = try detail("\"status\":\"final\",\(scores),\"score_observed_at\":\"2026-10-04T17:59:00Z\"")
+        precondition(WatchComplicationProjection.snapshot(game: negativeFinal, savedAt: clock) == nil,
+                     "Negative final scores cannot establish a winner")
+    }
     let missingLiveTimestamp = try detail("\"status\":\"live\",\"hero_probability\":0.6")
     precondition(WatchComplicationProjection.snapshot(game: missingLiveTimestamp, savedAt: clock) == nil,
                  "Missing producer timestamp falls back to no saved complication")
