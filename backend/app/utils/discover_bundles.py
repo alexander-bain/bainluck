@@ -10,6 +10,7 @@ from typing import Any
 from app.utils.feed_market_quality import GOLF_TOURNAMENT_STORY_PREFIX
 from app.utils.feed_market_quality import UFC_EVENT_STORY_PREFIX
 from app.utils.feed_market_quality import _story_key as compute_story_key
+from app.utils.feed_market_quality import classify_market_quality
 from app.utils.feed_market_quality import golf_tournament_display_name
 from app.utils.feed_market_quality import ufc_event_display_name
 
@@ -717,6 +718,54 @@ def _theme_story_key(item: dict[str, Any]) -> str | None:
     return compute_story_key(name, str(category))
 
 
+def _theme_withhold_reason_for(
+    quality_class: str | None, public_source_disagreement: bool
+) -> str | None:
+    """The ONE theme-membership predicate (#9925 / #9935); None means admit.
+
+    Both callers decide through this: :func:`_theme_member_eligible` on the
+    feed path (which reads the ``_quality_class`` the feed already attached, so
+    nothing is classified twice) and :func:`theme_member_withhold_reason` for a
+    caller that holds only the market's public fields.
+    """
+    if quality_class == "suppress":
+        return "suppressed"
+    if quality_class == "low_quality":
+        return "low_quality"
+    if public_source_disagreement:
+        return "public_source_disagreement"
+    return None
+
+
+def theme_member_withhold_reason(
+    *,
+    market_name: str | None,
+    sport_category: str | None = None,
+    outcome_names: list[str] | None = None,
+    external_id: str | None = None,
+    status: str | None = None,
+    public_source_disagreement: bool = False,
+) -> str | None:
+    """Why a market may not sit in a theme collection, or None if it may.
+
+    Public so a collection page builds its membership from the same rule the
+    feed folds by — import it, never copy it. Takes the classifier's own
+    arguments (feed.py's ``classify_market_quality`` call) and returns
+    ``"suppressed"``, ``"low_quality"``, ``"public_source_disagreement"`` or
+    None.
+    """
+    quality = classify_market_quality(
+        market_name=market_name,
+        sport_category=sport_category,
+        outcome_names=outcome_names,
+        external_id=external_id,
+        status=status,
+    )
+    return _theme_withhold_reason_for(
+        quality.quality_class, bool(public_source_disagreement)
+    )
+
+
 def _theme_member_eligible(item: dict[str, Any]) -> bool:
     """Whether a candidate may be folded into a theme bundle.
 
@@ -724,14 +773,18 @@ def _theme_member_eligible(item: dict[str, Any]) -> bool:
     gates that apply are the two that decide whether a card is publishable at
     all: source disagreement is a data bug we never surface as a feature ("the
     blend is the product"), and a low-quality family is suppressed rather than
-    promoted into a bundle.
+    promoted into a bundle. Decided by :func:`_theme_withhold_reason_for`, the
+    same predicate :func:`theme_member_withhold_reason` exposes. A ``suppress``
+    item never reaches the bundler (feed.py drops it first), so the extra arm
+    changes nothing here.
     """
-    if item.get("_quality_class") == "low_quality":
-        return False
     card = _discover_card(_futures_data(item))
-    if card.get("public_source_disagreement"):
-        return False
-    return True
+    return (
+        _theme_withhold_reason_for(
+            item.get("_quality_class"), bool(card.get("public_source_disagreement"))
+        )
+        is None
+    )
 
 
 # Back-compat alias for slice-1 callers/tests.
@@ -913,6 +966,29 @@ def _member_answers_story_question(story_key: str, item: dict[str, Any]) -> bool
         return True
     name = str(_futures_data(item).get("name") or "")
     return not _CANDIDACY_NOT_VICTORY_RE.search(name)
+
+
+# ── AN AWARDS QUESTION IS ASKED OF AWARDS MARKETS (#9925 / #9935) ────────────
+#
+# `story:major_entertainment_events` is minted from the name alone
+# (`\boscars?\b` and friends), so a boxer or a tennis player called Oscar lands
+# under "Who wins awards season?" beside Best Picture — "Will Oscar Collazo win
+# his next fight?" (61082201) and an M15 Baku "Oscar Brown" match
+# (63448382/63448383). The family is entertainment by definition, and the
+# category vocabulary folds film, TV, music and awards into `entertainment`, so
+# a member outside it is a name collision, not a nominee. Like #7552's refusal,
+# a refused member is not dropped: it falls through to its own card.
+_STORY_KEYS_REQUIRING_ENTERTAINMENT = frozenset({"story:major_entertainment_events"})
+
+
+def _member_fits_story(story_key: str, item: dict[str, Any]) -> bool:
+    """Whether a member belongs to its family's subject at all.
+
+    ``True`` for every family that makes no category claim.
+    """
+    if story_key in _STORY_KEYS_REQUIRING_ENTERTAINMENT:
+        return _is_entertainment(item)
+    return True
 
 
 # ── A DERIVED KEY CANNOT BE AUTHORED, SO ITS COPY IS CUT FROM THE MEMBERS ────
@@ -1604,6 +1680,8 @@ def _with_story_overflow(
             # is not lost — the seat goes to a member that answers the question.
             if not _member_answers_story_question(story_key, surplus):
                 continue
+            if not _member_fits_story(story_key, surplus):
+                continue
             seen.add(surplus_id)
             topped.append(surplus)
     return topped
@@ -1671,6 +1749,9 @@ def assemble_story_theme_bundles(
         # #7552. Before `min_items`, so a family whose answering members are too
         # few to fold never forms on the strength of rows that do not answer it.
         if not _member_answers_story_question(story_key, item):
+            continue
+        # #9925: an "Oscar" who is a boxer is not an awards-season member.
+        if not _member_fits_story(story_key, item):
             continue
         groups.setdefault(story_key, []).append(item)
 
