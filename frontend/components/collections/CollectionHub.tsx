@@ -4,8 +4,9 @@ import Link from "next/link";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { CollectionMemberCard } from "./CollectionMemberCard";
 import {
-  acceptedCollection, collectionMemberDomId, collectionRefreshInterval, fetchCollection, reconcileCollectionContext, settleCollectionRead,
-  type CollectionHub as Hub, type CollectionMember, type CollectionReadingContext,
+  acceptedCollection, collectionMemberDomId, collectionReadAdmitted, collectionRefreshInterval, fetchCollection, openCollectionRead, reconcileCollectionContext,
+  settleCollectionPage, settleCollectionRead,
+  type CollectionHub as Hub, type CollectionMember, type CollectionPageRequest, type CollectionReadingContext,
 } from "@/lib/collections";
 
 const storageKey = (slug: string) => `collection-reading:${slug}`;
@@ -14,25 +15,32 @@ export default function CollectionHub({ slug }: { slug: string }) {
   const [hub, setHub] = useState<Hub | null>(() => acceptedCollection(slug));
   const [error, setError] = useState<string | null>(null);
   const [fetching, setFetching] = useState(true);
+  const [paging, setPaging] = useState(false);
+  const [pageError, setPageError] = useState<string | null>(null);
   const request = useRef<AbortController | null>(null);
+  const pageRequest = useRef<AbortController | null>(null);
+  const latest = useRef<Hub | null>(hub);
   const restored = useRef(false);
 
   const load = useCallback(async () => {
     request.current?.abort();
     const controller = new AbortController();
     request.current = controller;
+    const ticket = openCollectionRead();
     setFetching(true);
     const timeout = window.setTimeout(() => controller.abort(), 12000);
     try {
       const fresh = await fetchCollection(slug, controller.signal);
-      if (request.current !== controller) return;
+      if (request.current !== controller || !collectionReadAdmitted(slug, ticket)) return;
       const next = settleCollectionRead(slug, { hub: fresh });
+      latest.current = next.hub?.slug === slug ? next.hub : null;
       setHub(next.hub); setError(next.error);
     } catch {
-      if (request.current !== controller) return;
+      if (request.current !== controller || !collectionReadAdmitted(slug, ticket)) return;
       // A failed read is not a withdrawal: keep this slug's last accepted hub
       // (with an honest error) or, with none, show the error alone.
       const next = settleCollectionRead(slug, { failed: true });
+      latest.current = next.hub?.slug === slug ? next.hub : null;
       setHub(next.hub); setError(next.error);
     } finally {
       window.clearTimeout(timeout);
@@ -42,16 +50,47 @@ export default function CollectionHub({ slug }: { slug: string }) {
 
   useEffect(() => {
     restored.current = false;
-    setHub(acceptedCollection(slug)); setError(null);
+    setHub(acceptedCollection(slug)); setError(null); setPageError(null); setPaging(false);
     void load();
     const freshRead = () => { if (document.visibilityState !== "hidden") void load(); };
     window.addEventListener("focus", freshRead);
     window.addEventListener("pageshow", freshRead);
-    return () => { request.current?.abort(); request.current = null; window.removeEventListener("focus", freshRead); window.removeEventListener("pageshow", freshRead); };
+    return () => {
+      request.current?.abort(); request.current = null; pageRequest.current?.abort(); pageRequest.current = null;
+      window.removeEventListener("focus", freshRead); window.removeEventListener("pageshow", freshRead);
+    };
   }, [load]);
 
   // Never draw another slug's hub, even for the frame before the reset effect.
   const shown = hub?.slug === slug ? hub : null;
+  latest.current = shown;
+
+  // #9925: one more page of a theme collection, only when the reader asks.
+  const loadMore = async () => {
+    const base = latest.current;
+    if (!base?.theme?.nextCursor || base.revision === null || pageRequest.current) return;
+    const requested: CollectionPageRequest = { revision: base.revision, cursor: base.theme.nextCursor };
+    const controller = new AbortController();
+    pageRequest.current = controller;
+    const ticket = openCollectionRead();
+    setPaging(true); setPageError(null);
+    const timeout = window.setTimeout(() => controller.abort(), 12000);
+    try {
+      const page = await fetchCollection(slug, controller.signal, requested);
+      if (pageRequest.current !== controller || !latest.current || !collectionReadAdmitted(slug, ticket)) return;
+      // Settled state is current at once, not at the next render: a second
+      // answer in the same interval is admitted against it.
+      const settled = settleCollectionPage(slug, latest.current, requested, page);
+      latest.current = settled;
+      setHub(settled); setError(null);
+    } catch {
+      // A failed page leaves every loaded question where it is.
+      if (pageRequest.current === controller) setPageError("Couldn't load more questions. Please try again.");
+    } finally {
+      window.clearTimeout(timeout);
+      if (pageRequest.current === controller) { pageRequest.current = null; setPaging(false); }
+    }
+  };
   const interval = collectionRefreshInterval(shown);
   useEffect(() => {
     if (!interval) return;
@@ -100,6 +139,7 @@ export default function CollectionHub({ slug }: { slug: string }) {
       <button type="button" onClick={() => void load()} className="text-accent-brand hover:underline">Try again</button>
     </div>}
     {shown?.note && <p role="status" className="text-sm text-text-secondary">{shown.note}</p>}
+    {shown?.theme && !shown.theme.inventoryComplete && <p className="text-sm text-text-secondary">This list may not include every question yet.</p>}
     {shown?.children.map((child) => <Link key={child.key} id={collectionMemberDomId(child.key)} href={child.href} onClick={() => remember(child.key)} className="flex justify-between gap-4 rounded-card border border-surface-border bg-surface-card p-4 font-semibold text-text-primary hover:bg-surface-elevated">{child.name}<span aria-hidden>›</span></Link>)}
     {shown?.sections.map((section) => <section key={section.key} className="space-y-3" aria-labelledby={`section-${section.key}`}>
       <h2 id={`section-${section.key}`} className="text-lg font-semibold text-text-primary">{section.title}</h2>
@@ -111,5 +151,10 @@ export default function CollectionHub({ slug }: { slug: string }) {
         </div>)}
       </div>
     </section>)}
+    {shown?.theme && shown.members.length > 0 && <div className="flex flex-col items-center gap-2 pb-6" data-collection-pager={shown.revision ?? ""}>
+      <p className="text-sm text-text-secondary">{shown.members.length} of {Math.max(shown.theme.totalCount, shown.members.length)} questions</p>
+      {shown.theme.nextCursor && <button type="button" disabled={paging} onClick={() => void loadMore()} className="rounded-card border border-surface-border bg-surface-card px-4 py-2 text-sm font-semibold text-text-primary hover:bg-surface-elevated disabled:text-text-muted">{paging ? "Loading…" : "Load more"}</button>}
+      {pageError && <p role="status" className="text-sm text-text-secondary">{pageError}</p>}
+    </div>}
   </div>;
 }
