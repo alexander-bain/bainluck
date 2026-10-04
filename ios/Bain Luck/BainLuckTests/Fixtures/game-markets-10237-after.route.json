@@ -1,0 +1,430 @@
+{
+ "after_player_props": {
+  "actuals": [
+   {
+    "actual_key": "s:aaron judge|home_runs|full_game",
+    "athlete_id": null,
+    "captured_at": "2026-09-30T03:30:00.123456+00:00",
+    "finality_basis": null,
+    "period_key": "full_game",
+    "provider": "espn",
+    "provider_event_id": "401000001",
+    "reason": "player_not_in_box",
+    "record_version": null,
+    "source_label": null,
+    "stat_key": "home_runs",
+    "state": "unknown",
+    "subject": {
+     "key": "aaron judge",
+     "kind": "player",
+     "label": "Aaron Judge"
+    },
+    "team_id": null,
+    "value": null
+   },
+   {
+    "actual_key": "s:ben rice|home_runs|full_game",
+    "athlete_id": "1000001",
+    "captured_at": "2026-09-30T03:30:00.123456+00:00",
+    "finality_basis": "espn_fresh_box_status_final",
+    "period_key": "full_game",
+    "provider": "espn",
+    "provider_event_id": "401000001",
+    "reason": null,
+    "record_version": "d82ccea75cf801c8",
+    "source_label": "ESPN final statistic",
+    "stat_key": "home_runs",
+    "state": "final",
+    "subject": {
+     "key": "ben rice",
+     "kind": "player",
+     "label": "Ben Rice"
+    },
+    "team_id": "10",
+    "value": 2
+   }
+  ],
+  "contract": "10237.v1",
+  "coverage": {
+   "actuals": 2,
+   "expectation_available": 2,
+   "final": 1,
+   "pending": 0,
+   "questions": 3,
+   "refused": {
+    "ambiguous_subject": 0,
+    "stat_not_in_after_set": 0,
+    "team_subject": 0,
+    "under_side": 1,
+    "untyped_predicate": 0,
+    "untyped_stat": 0
+   },
+   "scope": "linked_markets_loaded_for_event",
+   "unknown": 1
+  },
+  "questions": [
+   {
+    "_market_ids": [
+     501
+    ],
+    "actual_key": "s:aaron judge|home_runs|full_game",
+    "comparison": {
+     "reason": "player_not_in_box",
+     "state": "unknown"
+    },
+    "contributor_outcome_ids": [
+     5013
+    ],
+    "expectation": {
+     "basis": null,
+     "contributors": [],
+     "excluded": [
+      {
+       "outcome_id": 5013,
+       "reason": "no_pregame_pin",
+       "source": "kalshi"
+      }
+     ],
+     "observed_at": null,
+     "probability": null,
+     "reason": "no_admitted_pin",
+     "state": "unavailable"
+    },
+    "period_key": "full_game",
+    "predicate": {
+     "count": 1,
+     "kind": "count_at_least",
+     "label": "1+",
+     "side": "over"
+    },
+    "question_key": "s:aaron judge|home_runs|full_game|ge:1|over",
+    "stat_key": "home_runs",
+    "subject": {
+     "key": "aaron judge",
+     "kind": "player",
+     "label": "Aaron Judge"
+    },
+    "venue_grade": {
+     "is_winner": false,
+     "resolution_source": "kalshi_settled"
+    }
+   },
+   {
+    "_market_ids": [
+     501
+    ],
+    "actual_key": "s:ben rice|home_runs|full_game",
+    "comparison": {
+     "reason": null,
+     "state": "reached"
+    },
+    "contributor_outcome_ids": [
+     5011
+    ],
+    "expectation": {
+     "basis": "single_source",
+     "contributors": [
+      {
+       "admission": "pregame_pin_5509",
+       "market_id": 501,
+       "observed_at": "2026-10-04T05:12:49+00:00",
+       "outcome_id": 5011,
+       "outcome_name": "Ben Rice: 1+",
+       "probability": 0.31,
+       "source": "kalshi"
+      }
+     ],
+     "excluded": [],
+     "observed_at": "2026-10-04T05:12:49+00:00",
+     "probability": 0.31,
+     "reason": null,
+     "state": "available"
+    },
+    "period_key": "full_game",
+    "predicate": {
+     "count": 1,
+     "kind": "count_at_least",
+     "label": "1+",
+     "side": "over"
+    },
+    "question_key": "s:ben rice|home_runs|full_game|ge:1|over",
+    "stat_key": "home_runs",
+    "subject": {
+     "key": "ben rice",
+     "kind": "player",
+     "label": "Ben Rice"
+    },
+    "venue_grade": {
+     "is_winner": true,
+     "resolution_source": "kalshi_settled"
+    }
+   },
+   {
+    "_market_ids": [
+     501,
+     502
+    ],
+    "actual_key": "s:ben rice|home_runs|full_game",
+    "comparison": {
+     "reason": null,
+     "state": "reached"
+    },
+    "contributor_outcome_ids": [
+     5012,
+     5021
+    ],
+    "expectation": {
+     "basis": "blend_mean",
+     "contributors": [
+      {
+       "admission": "pregame_pin_5509",
+       "market_id": 501,
+       "observed_at": "2026-10-04T05:12:49+00:00",
+       "outcome_id": 5012,
+       "outcome_name": "Ben Rice: 2+",
+       "probability": 0.02,
+       "source": "kalshi"
+      },
+      {
+       "admission": "pregame_pin_5509",
+       "market_id": 502,
+       "observed_at": "2026-10-04T05:12:49+00:00",
+       "outcome_id": 5021,
+       "outcome_name": "Over",
+       "probability": 0.04,
+       "source": "polymarket"
+      }
+     ],
+     "excluded": [],
+     "observed_at": "2026-10-04T05:12:49+00:00",
+     "probability": 0.03,
+     "reason": null,
+     "state": "available"
+    },
+    "period_key": "full_game",
+    "predicate": {
+     "count": 2,
+     "kind": "count_at_least",
+     "label": "2+",
+     "side": "over"
+    },
+    "question_key": "s:ben rice|home_runs|full_game|ge:2|over",
+    "stat_key": "home_runs",
+    "subject": {
+     "key": "ben rice",
+     "kind": "player",
+     "label": "Ben Rice"
+    },
+    "venue_grade": {
+     "is_winner": true,
+     "resolution_source": "kalshi_settled"
+    }
+   }
+  ],
+  "stats": [
+   {
+    "label": "Home Runs",
+    "period_key": "full_game",
+    "period_label": "Game",
+    "predicate": "count_at_least",
+    "stat_key": "home_runs",
+    "unit_plural": "home runs",
+    "unit_singular": "home run"
+   }
+  ]
+ },
+ "away_score": 5,
+ "away_team": "New York Yankees",
+ "closed_winner_market_ids": [
+  501,
+  502
+ ],
+ "during_player_props": null,
+ "event_id": 15320207,
+ "game_question_matrix": null,
+ "home_score": 2,
+ "home_team": "Boston Red Sox",
+ "matchups": [],
+ "open_winner_quote": null,
+ "other": [],
+ "outcome_market_ids": {
+  "5011": 501,
+  "5012": 501,
+  "5013": 501,
+  "5021": 502,
+  "5022": 502
+ },
+ "outcome_observed_at": {
+  "5011": null,
+  "5012": null,
+  "5013": null,
+  "5021": null,
+  "5022": null
+ },
+ "outcome_revision_at": {
+  "5011": null,
+  "5012": null,
+  "5013": null,
+  "5021": null,
+  "5022": null
+ },
+ "pace": null,
+ "period_markets": [],
+ "player_props": [
+  {
+   "_inverted": false,
+   "_market_id": 501,
+   "actual": 2.0,
+   "contributor_outcome_ids": [
+    5011
+   ],
+   "hit": true,
+   "is_winner": true,
+   "market_name": "New York at Boston: Home Runs",
+   "movement": null,
+   "observed_at": null,
+   "opening_over_probability": null,
+   "outcome_name": "Ben Rice: 1+",
+   "over_probability": 0.99,
+   "pregame_mark": 0.31,
+   "resolution_source": "kalshi_settled",
+   "source": "kalshi",
+   "threshold": 1.0
+  },
+  {
+   "_inverted": false,
+   "_market_id": 502,
+   "actual": 2.0,
+   "contributor_outcome_ids": [
+    5021
+   ],
+   "hit": true,
+   "is_winner": null,
+   "market_name": "Ben Rice: Home Runs O/U 1.5",
+   "movement": null,
+   "observed_at": null,
+   "opening_over_probability": null,
+   "outcome_name": "Over",
+   "over_probability": 0.99,
+   "pregame_mark": 0.04,
+   "resolution_source": null,
+   "source": "polymarket",
+   "threshold": 1.5
+  },
+  {
+   "_inverted": false,
+   "_market_id": 501,
+   "actual": 2.0,
+   "contributor_outcome_ids": [
+    5012
+   ],
+   "hit": true,
+   "is_winner": true,
+   "market_name": "New York at Boston: Home Runs",
+   "movement": null,
+   "observed_at": null,
+   "opening_over_probability": null,
+   "outcome_name": "Ben Rice: 2+",
+   "over_probability": 0.99,
+   "pregame_mark": 0.02,
+   "resolution_source": "kalshi_settled",
+   "source": "kalshi",
+   "threshold": 2.0
+  },
+  {
+   "_inverted": false,
+   "_market_id": 501,
+   "actual": null,
+   "contributor_outcome_ids": [
+    5013
+   ],
+   "hit": null,
+   "is_winner": false,
+   "market_name": "New York at Boston: Home Runs",
+   "movement": null,
+   "observed_at": null,
+   "opening_over_probability": null,
+   "outcome_name": "Aaron Judge: 1+",
+   "over_probability": 0.01,
+   "pregame_mark": null,
+   "resolution_source": "kalshi_settled",
+   "source": "kalshi",
+   "threshold": 1.0
+  },
+  {
+   "_inverted": true,
+   "_market_id": 502,
+   "actual": 2.0,
+   "contributor_outcome_ids": [
+    5022
+   ],
+   "hit": false,
+   "is_winner": null,
+   "market_name": "Ben Rice: Home Runs O/U 1.5",
+   "movement": null,
+   "observed_at": null,
+   "opening_over_probability": null,
+   "outcome_name": "Under",
+   "over_probability": 0.99,
+   "pregame_mark": 0.04,
+   "resolution_source": null,
+   "source": "polymarket",
+   "threshold": 1.5
+  }
+ ],
+ "props_script": [
+  {
+   "current": 0.99,
+   "graded_label": "2 \u2014 hit",
+   "graded_result": "hit",
+   "key": "New York at Boston: Home Runs|Ben Rice: 1+",
+   "label": "Ben Rice: 1+",
+   "pregame_mark": 0.31,
+   "settled": true
+  },
+  {
+   "current": 0.99,
+   "graded_label": "2 \u2014 hit",
+   "graded_result": "hit",
+   "key": "Ben Rice: Home Runs O/U 1.5|Over",
+   "label": "Over",
+   "pregame_mark": 0.04,
+   "settled": true
+  },
+  {
+   "current": 0.99,
+   "graded_label": "2 \u2014 hit",
+   "graded_result": "hit",
+   "key": "New York at Boston: Home Runs|Ben Rice: 2+",
+   "label": "Ben Rice: 2+",
+   "pregame_mark": 0.02,
+   "settled": true
+  },
+  {
+   "current": 0.01,
+   "graded_label": null,
+   "graded_result": "miss",
+   "key": "New York at Boston: Home Runs|Aaron Judge: 1+",
+   "label": "Aaron Judge: 1+",
+   "pregame_mark": null,
+   "settled": true
+  },
+  {
+   "current": 0.01,
+   "graded_label": "2 \u2014 miss",
+   "graded_result": "miss",
+   "key": "Ben Rice: Home Runs O/U 1.5|Under",
+   "label": "Under",
+   "pregame_mark": 0.96,
+   "settled": true
+  }
+ ],
+ "spreads": [],
+ "status": "completed",
+ "stream_market_ids": [
+  501,
+  502
+ ],
+ "team_totals": [],
+ "totals": []
+}

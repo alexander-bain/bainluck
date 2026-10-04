@@ -19,6 +19,7 @@ struct EventDetailView: View {
     @State private var marketPageVisible = false
     // Only presentation/event identity is retained, never a withdrawn quote.
     @State private var duringDetailEventID: Int?
+    @State private var afterDetailEventID: Int?
     @AccessibilityFocusState(for: .voiceOver) private var duringPageTitleFocused: Bool
     let eventId: Int
     @StateObject private var vm: EventDetailViewModel
@@ -309,6 +310,7 @@ struct EventDetailView: View {
             .onDisappear {
                 marketPageVisible = false
                 duringDetailEventID = nil
+                afterDetailEventID = nil
                 duringPageTitleFocused = false
                 vm.stopRefresh()
             }
@@ -523,10 +525,29 @@ struct EventDetailView: View {
                             awayScore: event.awayScore
                         )
                     }
-                    // #10236 — during a live game, the server's typed player
-                    // questions as one matrix. Absent (not live, older server,
-                    // nothing typed) leaves the card below exactly as it was.
-                    if !(vm.gameMarkets?.duringPlayerProps?.rows ?? []).isEmpty
+                    // #10236 / #10237 — ONE player-props mount, phased by the
+                    // server's envelope: `after_player_props` (finished game)
+                    // draws the After grid, else `during_player_props` (live)
+                    // draws the During matrix, else the card below stays exactly
+                    // as it was. The phone never decides the phase; a detail
+                    // sheet open in one phase keeps its host until dismissed.
+                    if duringDetailEventID != eventId,
+                       AfterPropsMatrixLayout.drawable(vm.gameMarkets?.afterPlayerProps) != nil
+                        || afterDetailEventID == eventId {
+                        AfterPropsMatrixView(
+                            props: AfterPropsMatrixLayout.drawable(vm.gameMarkets?.afterPlayerProps)
+                                ?? AfterPlayerProps(contract: nil, stats: [], actuals: [], questions: [], coverage: nil),
+                            onDetailPresentationChanged: { presented in
+                                afterDetailEventID = presented ? eventId : nil
+                                if presented { duringPageTitleFocused = false }
+                            },
+                            onMatrixUnavailableDismissed: {
+                                guard marketPageVisible, scenePhase == .active,
+                                      afterDetailEventID == eventId else { return }
+                                duringPageTitleFocused = true
+                            }
+                        )
+                    } else if !(vm.gameMarkets?.duringPlayerProps?.rows ?? []).isEmpty
                         || duringDetailEventID == eventId {
                         EventPropsMatrixView(
                             // Nil/empty after withdrawal carries NO old source,
@@ -548,8 +569,10 @@ struct EventDetailView: View {
                     // Player Props (from game-markets endpoint) — only the props
                     // the matrix above does not already draw.
                     if let gameMarkets = vm.gameMarkets,
-                       case let playerProps = EventPropsMatrixLayout.untypedPlayerProps(
-                           gameMarkets.playerProps ?? [], typed: gameMarkets.duringPlayerProps),
+                       case let playerProps = AfterPropsMatrixLayout.untypedPlayerProps(
+                           EventPropsMatrixLayout.untypedPlayerProps(
+                               gameMarkets.playerProps ?? [], typed: gameMarkets.duringPlayerProps),
+                           typed: gameMarkets.afterPlayerProps),
                        !playerProps.isEmpty {
                         PlayerPropsCardView(
                             playerProps: playerProps,
@@ -675,6 +698,7 @@ struct EventDetailView: View {
             || !(gm.periodMarkets ?? []).isEmpty
             || !(gm.playerProps ?? []).isEmpty
             || !(gm.duringPlayerProps?.rows ?? []).isEmpty
+            || AfterPropsMatrixLayout.drawable(gm.afterPlayerProps) != nil
             || !(gm.other ?? []).isEmpty
             || gm.openWinnerQuote?.isPresentable(eventId: gm.eventId, eventStatus: gm.status,
                                                 closedMarketIds: Set(gm.closedWinnerMarketIds ?? [])) == true

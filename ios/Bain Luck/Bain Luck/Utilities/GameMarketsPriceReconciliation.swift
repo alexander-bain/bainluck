@@ -117,6 +117,21 @@ nonisolated enum GameMarketsPriceReconciliation {
             markets: markets(entry._marketId, entry._marketIds), contributors: ids(entry.contributorOutcomeIds),
             verdict: entry.result?.hit, winner: entry.result?.isWinner, actual: entry.result?.actual)
     }
+    /// #10237 — its own section, keyed by the server's question key. The
+    /// published value is the SAVED pregame chance and each admitted pin; it
+    /// is fixed before first pitch, so it orders exactly like any other quote.
+    /// The comparison and the final count are deliberately not a verdict here:
+    /// a 2→1 correction is a new served record (`record_version`), not a grade
+    /// regression, and must never hold the page. Actuals ride the adopted body
+    /// as served; a re-fetch that only moves `captured_at` changes nothing.
+    private static func row(_ question: AfterPropQuestion) -> Row {
+        let saved = question.expectation.savedProbability
+        return Row(key: "afterProps:\(question.questionKey)",
+            prices: saved == nil ? [nil] : [saved] + question.expectation.contributors.map(\.probability),
+            source: question.expectation.basis,
+            markets: Set(question._marketIds ?? []), contributors: ids(question.contributorOutcomeIds),
+            verdict: nil, winner: nil, actual: nil)
+    }
     private static let sections: [(String, KeyPath<GameMarketsResponse, [GameMarketOutcome]?>)] = [
         ("spreads", \.spreads), ("totals", \.totals), ("teamTotals", \.teamTotals), ("period", \.periodMarkets)]
 
@@ -127,6 +142,7 @@ nonisolated enum GameMarketsPriceReconciliation {
         result += (body.other ?? []).map(row)
         for matchup in body.matchups ?? [] { result += rows(matchup) }
         result += (body.duringPlayerProps?.rows ?? []).map(row)
+        result += (body.afterPlayerProps?.questions ?? []).map(row)
         if let quote = body.openWinnerQuote {
             result.append(Row(key: "finalWinner:\(quote.marketId)",
                 prices: quote.outcomes.sorted { $0.outcomeId < $1.outcomeId }.map { $0.probability },
@@ -174,6 +190,10 @@ nonisolated enum GameMarketsPriceReconciliation {
         if var during = body.duringPlayerProps {
             during.rows = flat(during.rows, held?.duringPlayerProps?.rows, row) ?? []
             body.duringPlayerProps = during
+        }
+        if var after = body.afterPlayerProps {
+            after.questions = flat(after.questions, held?.afterPlayerProps?.questions, row) ?? []
+            body.afterPlayerProps = after
         }
         return body
     }
