@@ -495,8 +495,9 @@ export type PropDropReason =
   | "no_line"
   /**
    * 7 — the legs of one question disagree about its opening mark by at least
-   * `PROP_LEG_DISAGREEMENT` (#8313). NOT benign: it is stored data contradicting
-   * itself, and neither leg can be trusted over the other.
+   * `PROP_LEG_DISAGREEMENT` (#8313), or one ladder marks a lower rung
+   * near-certain NO and a higher one near-certain YES (#10397). NOT benign: it is stored
+   * data contradicting itself, and neither side can be trusted over the other.
    */
   | "conflicting_legs"
   /** Unreadable for a reason we cannot name. Renders AS unknown. NOT benign. */
@@ -1605,6 +1606,55 @@ function buildCandidates(input: DivergenceInput): BuiltCandidates {
       noteDrop("conflicting_legs", (questionLegs[0]?.market_name || "").trim());
       candidates.splice(i, 1);
     }
+  }
+
+  // #10397 — WITHHOLD THE RUNGS OF A LADDER THAT CONTRADICT EACH OTHER ON THE MARK.
+  //
+  // #8313's check sees one question's legs, so a mis-stored mark that BOTH legs
+  // carry passes it. A ladder is a second witness: "2+" can never be less
+  // likely than "4+". `/events/15322539` (Rays 1 – 0 Yankees, Final): Ben
+  // Rice's Hits + Runs + RBIs ladder served O/U 1.5 at 0.01 and O/U 3.5 at
+  // 0.99, both legs of each agreeing, and the rail led with "marked 99% — and
+  // it missed". Neither rung can be trusted over the other, so both are
+  // withheld, as #8313 withholds both legs.
+  //
+  // ** ONLY OPPOSITE NEAR-CERTAINTIES, NOT ANY INVERSION — A RULED STORY SAYS SO. **
+  // `pregameMark` is each rung's OWN opening capture, and rungs open at
+  // different times, so a ladder's marks are not one instant and need not be
+  // monotone. The first draft withheld any inversion of `PROP_LEG_DISAGREEMENT`
+  // and deleted ruling 112's specimen: 14788546, Brady Singer's 5+ strikeouts
+  // opened at 39% over a 3+ that opened at 5% — "the single loudest thing the
+  // market said about this game". What no opening time explains is a ladder
+  // that says near-certain NO at a lower rung and near-certain YES above it,
+  // with "near-certain" the structural pass's own `PROP_STRUCTURAL_CERTAINTY`.
+  // Of the 13 other production props fixtures in the suite, none holds such a
+  // pair; the specimen is 0.49 / 0.49. Runs before the structural pass for
+  // the same reason #8313 does.
+  const nearCertain = (row: DivergenceRow) =>
+    Math.abs(row.pregameMark - 0.5) >= PROP_STRUCTURAL_CERTAINTY - TRAVEL_EPSILON;
+  const inverted = new Set<DivergenceRow>();
+  for (const low of candidates) {
+    for (const high of candidates) {
+      if (ladderFamilyKey(high) !== ladderFamilyKey(low)) continue;
+      if (inclusiveRung(high.threshold) <= inclusiveRung(low.threshold)) continue;
+      if (
+        low.pregameMark < 0.5 &&
+        high.pregameMark > 0.5 &&
+        nearCertain(low) &&
+        nearCertain(high)
+      ) {
+        inverted.add(low);
+        inverted.add(high);
+      }
+    }
+  }
+  for (let i = candidates.length - 1; i >= 0; i--) {
+    if (!inverted.has(candidates[i])) continue;
+    const ownLine = (legs.get(candidates[i].key) ?? []).filter(
+      (leg) => leg.threshold === candidates[i].threshold,
+    );
+    noteDrop("conflicting_legs", (ownLine[0]?.market_name || "").trim());
+    candidates.splice(i, 1);
   }
 
   // #9003 — THE ROW PRINTS THE PAIR THE WAY THE PAGE PRINTS IT.
