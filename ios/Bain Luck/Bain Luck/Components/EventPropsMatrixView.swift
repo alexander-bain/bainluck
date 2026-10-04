@@ -388,3 +388,435 @@ struct EventPropsMatrixDetailView: View {
         }
     }
 }
+
+// MARK: - After (#10237)
+
+/// #10237 — after a finished game, each player's saved pregame chance for
+/// every threshold beside ESPN's official final count, stated once per player,
+/// and the server's own Reached / Below mark. Same grid grammar as the During
+/// matrix: a fixed player column, threshold columns browsed sideways, a tap
+/// opening that exact question. Drawn only from ``AfterPlayerProps``; every
+/// word comes from ``PropExpectationActualDisplay``.
+enum AfterPropsMatrixLayout {
+    struct PlayerRow: Equatable, Identifiable {
+        var id: String { subjectKey }
+        let subjectKey: String
+        let label: String
+        /// The player's one final count for this stat (nil when the server
+        /// carries none) — drawn in the player column, never per threshold.
+        let actual: AfterPropActual?
+        let cells: [Int: AfterPropQuestion]
+    }
+
+    struct Grid: Equatable {
+        let stat: AfterPropStat
+        let columns: [Int]
+        /// Server question order (first appearance), never re-ranked.
+        let players: [PlayerRow]
+        let questionCount: Int
+    }
+
+    /// The payload the page may draw, or nil: an unknown contract or an empty
+    /// question list keeps whatever the page drew before.
+    static func drawable(_ props: AfterPlayerProps?) -> AfterPlayerProps? {
+        guard let props, props.isSupported, !props.questions.isEmpty else { return nil }
+        return props
+    }
+
+    /// v1 emits only `count_at_least` questions; any other shape is not drawn
+    /// here (it was never typed for After) rather than guessed into a column.
+    static func grid(_ props: AfterPlayerProps, statKey: String) -> Grid? {
+        guard let stat = props.stat(statKey) else { return nil }
+        let questions = props.questions.filter { $0.statKey == statKey && $0.predicate.isAtLeast }
+        guard !questions.isEmpty else { return nil }
+        var order: [String] = []
+        var labels: [String: String] = [:]
+        var actuals: [String: AfterPropActual] = [:]
+        var cells: [String: [Int: AfterPropQuestion]] = [:]
+        for q in questions {
+            let subject = q.subject.key
+            if labels[subject] == nil {
+                order.append(subject)
+                labels[subject] = q.subject.label
+                actuals[subject] = props.actual(for: q)
+            }
+            if cells[subject]?[q.predicate.count] == nil {
+                cells[subject, default: [:]][q.predicate.count] = q
+            }
+        }
+        let players = order.map {
+            PlayerRow(subjectKey: $0, label: labels[$0] ?? $0, actual: actuals[$0], cells: cells[$0] ?? [:])
+        }
+        return Grid(
+            stat: stat,
+            columns: Set(players.flatMap { $0.cells.keys }).sorted(),
+            players: players,
+            questionCount: players.reduce(0) { $0 + $1.cells.count }
+        )
+    }
+
+    /// The legacy `player_props` the After grid does not already draw — the
+    /// server's contributor-outcome link, never a name match (as #10236).
+    static func untypedPlayerProps(
+        _ playerProps: [GameMarketPlayerProp],
+        typed props: AfterPlayerProps?
+    ) -> [GameMarketPlayerProp] {
+        guard let props = drawable(props) else { return playerProps }
+        let typedOutcomeIds = Set(props.questions.flatMap { $0.contributorOutcomeIds ?? [] })
+        return playerProps.filter { prop in
+            let ids = prop.contributorOutcomeIds ?? []
+            return ids.isEmpty || !ids.contains(where: typedOutcomeIds.contains)
+        }
+    }
+
+    /// The question the reader opened, exactly, or nil — never a sibling.
+    static func resolve(_ open: EventPropsMatrixSelection.OpenQuestion, in props: AfterPlayerProps) -> AfterPropQuestion? {
+        props.questions.first {
+            $0.questionKey == open.questionKey && $0.subject.key == open.subjectKey && $0.statKey == open.statKey
+        }
+    }
+}
+
+extension EventPropsMatrixSelection.OpenQuestion {
+    init(_ question: AfterPropQuestion) {
+        questionKey = question.questionKey
+        subjectKey = question.subject.key
+        statKey = question.statKey
+    }
+}
+
+struct AfterPropsMatrixView: View {
+    let props: AfterPlayerProps
+    var onDetailPresentationChanged: (Bool) -> Void = { _ in }
+    var onMatrixUnavailableDismissed: () -> Void = {}
+
+    @State private var statKey: String?
+    @State private var openQuestion: EventPropsMatrixSelection.OpenQuestion?
+    @State private var returnQuestion: EventPropsMatrixSelection.OpenQuestion?
+    @AccessibilityFocusState(for: .voiceOver) private var accessibilityFocus: FocusTarget?
+
+    private enum FocusTarget: Hashable {
+        case question(EventPropsMatrixSelection.OpenQuestion)
+        case header
+    }
+
+    @ScaledMetric(relativeTo: .subheadline) private var baseRowHeight: CGFloat = 46
+    @ScaledMetric(relativeTo: .caption2) private var headerHeight: CGFloat = 22
+    @Environment(\.dynamicTypeSize) private var typeSize
+    @ScaledMetric(relativeTo: .subheadline) private var cellWidth: CGFloat = 58
+    @ScaledMetric(relativeTo: .subheadline) private var nameWidth: CGFloat = 112
+    private let maxNameWidth: CGFloat = 150
+
+    /// Accessibility sizes give each row room for a two-line name over a
+    /// two-line count: the count is the fact this grid exists to state, so it
+    /// wraps rather than truncating to "2 home…".
+    private var rowHeight: CGFloat { typeSize.isAccessibilitySize ? baseRowHeight * 2 : baseRowHeight }
+
+    /// The reader's chosen statistic, else the server's first. A chosen one
+    /// that leaves stays chosen (and shows nothing) rather than switching.
+    private var resolvedStat: String? { statKey ?? props.stats.first?.statKey }
+
+    var body: some View {
+        let statKey = resolvedStat
+        VStack(alignment: .leading, spacing: 10) {
+            Text("Player Props")
+                .font(.subheadline)
+                .fontWeight(.semibold)
+                .accessibilityAddTraits(.isHeader)
+                .accessibilityFocused($accessibilityFocus, equals: .header)
+
+            if props.stats.count > 1 {
+                statPicker(selected: statKey)
+            }
+
+            if let statKey, let grid = AfterPropsMatrixLayout.grid(props, statKey: statKey) {
+                matrix(grid)
+                footer(grid)
+            } else {
+                Text("No questions for this stat")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+        }
+        .padding(16)
+        .background(Color.cardBackground)
+        .clipShape(RoundedRectangle(cornerRadius: 16))
+        .sheet(item: $openQuestion, onDismiss: restoreQuestionFocus) { open in
+            AfterPropsDetailView(open: open, props: props)
+        }
+    }
+
+    private func open(_ question: AfterPropQuestion) {
+        accessibilityFocus = nil
+        onDetailPresentationChanged(true)
+        let open = EventPropsMatrixSelection.OpenQuestion(question)
+        // Opening pins the statistic, so a reordered payload cannot swap the
+        // background (and the Close destination) under the open detail.
+        statKey = open.statKey
+        returnQuestion = open
+        openQuestion = open
+    }
+
+    private func restoreQuestionFocus() {
+        defer {
+            returnQuestion = nil
+            onDetailPresentationChanged(false)
+        }
+        guard let open = returnQuestion else {
+            accessibilityFocus = .header
+            return
+        }
+        if props.questions.isEmpty {
+            accessibilityFocus = nil
+            onMatrixUnavailableDismissed()
+            return
+        }
+        let drawn = resolvedStat == open.statKey
+            && (AfterPropsMatrixLayout.grid(props, statKey: open.statKey)?.players
+                .flatMap { Array($0.cells.values) }
+                .contains { EventPropsMatrixSelection.OpenQuestion($0) == open } ?? false)
+        accessibilityFocus = drawn ? .question(open) : .header
+    }
+
+    private func statPicker(selected: String?) -> some View {
+        ScrollView(.horizontal, showsIndicators: false) {
+            HStack(spacing: 6) {
+                ForEach(props.stats) { stat in
+                    let isOn = stat.statKey == selected
+                    Button {
+                        statKey = stat.statKey
+                    } label: {
+                        Text(stat.label)
+                            .font(.caption)
+                            .fontWeight(.semibold)
+                            .foregroundStyle(isOn ? Color.white : Color.primary)
+                            .padding(.horizontal, 10)
+                            .padding(.vertical, 6)
+                            .background(isOn ? Color.blue : Color.secondary.opacity(0.1))
+                            .clipShape(Capsule())
+                    }
+                    .buttonStyle(.plain)
+                    .accessibilityAddTraits(isOn ? .isSelected : [])
+                }
+            }
+        }
+    }
+
+    private func matrix(_ grid: AfterPropsMatrixLayout.Grid) -> some View {
+        HStack(alignment: .top, spacing: 0) {
+            VStack(alignment: .leading, spacing: 4) {
+                Text(grid.stat.label)
+                    .font(.caption2)
+                    .fontWeight(.semibold)
+                    .foregroundStyle(.secondary)
+                    .frame(height: headerHeight, alignment: .leading)
+                ForEach(grid.players) { player in
+                    playerCell(player, stat: grid.stat)
+                }
+            }
+            .padding(.trailing, 6)
+
+            ScrollView(.horizontal, showsIndicators: false) {
+                VStack(alignment: .leading, spacing: 4) {
+                    HStack(spacing: 4) {
+                        ForEach(grid.columns, id: \.self) { count in
+                            Text(grid.players.lazy.compactMap { $0.cells[count]?.predicate.label }.first ?? "\(count)+")
+                                .font(.caption2)
+                                .fontWeight(.semibold)
+                                .foregroundStyle(.secondary)
+                                .frame(width: cellWidth, height: headerHeight)
+                                .accessibilityHidden(true)
+                        }
+                    }
+                    ForEach(grid.players) { player in
+                        HStack(spacing: 4) {
+                            ForEach(grid.columns, id: \.self) { count in
+                                cell(player.cells[count], stat: grid.stat)
+                            }
+                        }
+                    }
+                }
+            }
+            .id(grid.stat.statKey)
+        }
+    }
+
+    /// Name over the player's one final count. The count is spoken here once,
+    /// so no cell repeats it.
+    private func playerCell(_ player: AfterPropsMatrixLayout.PlayerRow, stat: AfterPropStat) -> some View {
+        let actual = PropExpectationActualDisplay.actual(player.actual, stat: stat)
+        return VStack(alignment: .leading, spacing: 1) {
+            Text(player.label)
+                .font(.subheadline)
+                .lineLimit(2)
+                .minimumScaleFactor(0.85)
+            Text(actual.countText ?? absentProbabilityMarker)
+                .font(.caption.monospacedDigit())
+                .foregroundStyle(.secondary)
+                .lineLimit(2)
+                .minimumScaleFactor(0.85)
+                .fixedSize(horizontal: false, vertical: true)
+        }
+        .frame(width: min(nameWidth, maxNameWidth), height: rowHeight, alignment: .leading)
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel(actual.countText.map { "\(player.label), final \($0)" } ?? "\(player.label), final count \(actual.stateText.lowercased())")
+    }
+
+    @ViewBuilder
+    private func cell(_ question: AfterPropQuestion?, stat: AfterPropStat) -> some View {
+        if let question {
+            let expectation = PropExpectationActualDisplay.expectation(question.expectation)
+            let mark = PropExpectationActualDisplay.mark(question, actual: props.actual(for: question))
+            Button {
+                open(question)
+            } label: {
+                VStack(spacing: 1) {
+                    Text(expectation.valueText ?? absentProbabilityMarker)
+                        .font(.subheadline.monospacedDigit())
+                        .fontWeight(expectation.valueText == nil ? .regular : .semibold)
+                        .foregroundStyle(expectation.valueText == nil ? Color.secondary : Color.primary)
+                    if mark != .unknown {
+                        Text(PropExpectationActualDisplay.markText(mark))
+                            .font(.caption2)
+                            .fontWeight(mark == .reached ? .semibold : .regular)
+                            .foregroundStyle(mark == .reached ? Color.green : Color.secondary)
+                    }
+                }
+                .lineLimit(1)
+                .minimumScaleFactor(0.8)
+                .frame(width: cellWidth, height: rowHeight)
+                .background(RoundedRectangle(cornerRadius: 8)
+                    .fill(mark == .reached ? Color.green.opacity(0.12) : Color.secondary.opacity(0.08)))
+                .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+            .accessibilityLabel(PropExpectationActualDisplay.accessibilityLabel(
+                question, actual: props.actual(for: question), stat: stat))
+            .accessibilityHint("Shows this question and its sources")
+            .accessibilityFocused($accessibilityFocus, equals: .question(.init(question)))
+        } else {
+            Color.clear
+                .frame(width: cellWidth, height: rowHeight)
+                .accessibilityHidden(true)
+        }
+    }
+
+    private func footer(_ grid: AfterPropsMatrixLayout.Grid) -> some View {
+        Text("Saved pregame chance · final counts from ESPN")
+            .font(.caption2)
+            .foregroundStyle(.secondary)
+    }
+}
+
+/// One After question, exactly: the saved pregame chance and where it came
+/// from, the player's official final count, and the server's mark. A question
+/// the server stops carrying reads as unavailable; the sheet never moves.
+struct AfterPropsDetailView: View {
+    let open: EventPropsMatrixSelection.OpenQuestion
+    let props: AfterPlayerProps
+    @Environment(\.dismiss) private var dismiss
+    @Environment(\.dynamicTypeSize) private var typeSize
+
+    private var stat: AfterPropStat? { props.stat(open.statKey) }
+
+    var body: some View {
+        NavigationStack {
+            List {
+                if let question = AfterPropsMatrixLayout.resolve(open, in: props) {
+                    summary(question)
+                    result(question)
+                    if !question.expectation.contributors.isEmpty { sources(question) }
+                } else {
+                    Text("This question isn't available right now.")
+                        .foregroundStyle(.secondary)
+                }
+            }
+            .navigationTitle(AfterPropsMatrixLayout.resolve(open, in: props)?.subject.label ?? "Player prop")
+            #if os(iOS)
+            .navigationBarTitleDisplayMode(.inline)
+            #endif
+            .toolbar {
+                ToolbarItem(placement: .cancellationAction) {
+                    Button("Close") { dismiss() }
+                }
+            }
+        }
+        .presentationDetents([.medium, .large])
+    }
+
+    private func summary(_ question: AfterPropQuestion) -> some View {
+        let expectation = PropExpectationActualDisplay.expectation(question.expectation)
+        return Section {
+            VStack(alignment: .leading, spacing: 6) {
+                Text(PropExpectationActualDisplay.question(question, stat: stat))
+                    .font(.headline)
+                HStack(alignment: .firstTextBaseline, spacing: 8) {
+                    Text(expectation.valueText ?? absentProbabilityMarker)
+                        .font(.largeTitle.monospacedDigit())
+                        .fontWeight(.bold)
+                    if let p = question.expectation.savedProbability {
+                        Text(EventPropsMatrixLayout.exactPercent(p))
+                            .font(.subheadline.monospacedDigit())
+                            .foregroundStyle(.secondary)
+                    }
+                }
+                Text(expectation.label)
+                    .font(.subheadline)
+                if let basis = expectation.basisText {
+                    Text(basis).font(.subheadline).foregroundStyle(.secondary)
+                }
+            }
+            .accessibilityElement(children: .combine)
+        }
+    }
+
+    private func result(_ question: AfterPropQuestion) -> some View {
+        let actual = PropExpectationActualDisplay.actual(props.actual(for: question), stat: stat)
+        let mark = PropExpectationActualDisplay.mark(question, actual: props.actual(for: question))
+        return Section("Result") {
+            let layout = typeSize.isAccessibilitySize
+                ? AnyLayout(VStackLayout(alignment: .leading, spacing: 4))
+                : AnyLayout(HStackLayout(alignment: .firstTextBaseline))
+            layout {
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(actual.countText ?? actual.stateText)
+                        .font(.subheadline)
+                        .fontWeight(.semibold)
+                    if let source = actual.sourceLabel {
+                        Text(source).font(.caption).foregroundStyle(.secondary)
+                    }
+                }
+                if !typeSize.isAccessibilitySize { Spacer() }
+                Text(PropExpectationActualDisplay.markText(mark))
+                    .font(.subheadline)
+                    .fontWeight(mark == .reached ? .semibold : .regular)
+                    .foregroundStyle(mark == .reached ? Color.green : Color.secondary)
+            }
+            .accessibilityElement(children: .combine)
+        }
+    }
+
+    private func sources(_ question: AfterPropQuestion) -> some View {
+        Section("Sources") {
+            ForEach(Array(question.expectation.contributors.enumerated()), id: \.offset) { _, c in
+                let layout = typeSize.isAccessibilitySize
+                    ? AnyLayout(VStackLayout(alignment: .leading, spacing: 4))
+                    : AnyLayout(HStackLayout(alignment: .firstTextBaseline))
+                layout {
+                    VStack(alignment: .leading, spacing: 2) {
+                        if let name = SourceLabels.label(for: c.source) {
+                            Text(name).font(.subheadline).fontWeight(.semibold)
+                        }
+                        if let outcome = c.outcomeName, !outcome.isEmpty {
+                            Text(outcome).font(.caption).foregroundStyle(.secondary)
+                        }
+                    }
+                    if !typeSize.isAccessibilitySize { Spacer() }
+                    Text(EventPropsMatrixLayout.exactPercent(c.probability))
+                        .font(.subheadline.monospacedDigit())
+                }
+                .accessibilityElement(children: .combine)
+            }
+        }
+    }
+}

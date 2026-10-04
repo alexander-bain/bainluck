@@ -70,6 +70,8 @@ nonisolated struct GameMarketsResponse: Decodable, Equatable, Sendable {
     var matchups: [GameMarketMatchup]? = nil
     /// #10236 — typed During player matrix; nil keeps the old props card.
     var duringPlayerProps: DuringPlayerProps? = nil
+    /// #10237 — typed After comparison; a body the app cannot read is nil.
+    @LenientDecode var afterPlayerProps: AfterPlayerProps? = nil
 }
 
 /// A head-to-head/field bucket keeps every nested quote and grade identifiable.
