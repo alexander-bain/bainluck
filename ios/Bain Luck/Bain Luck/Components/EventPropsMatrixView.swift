@@ -10,8 +10,17 @@ import SwiftUI
 /// (``DuringPlayerProps``); see ``EventPropsMatrixLayout`` for every rule.
 struct EventPropsMatrixView: View {
     let props: DuringPlayerProps
+    var onDetailPresentationChanged: (Bool) -> Void = { _ in }
+    var onMatrixUnavailableDismissed: () -> Void = {}
 
     @State private var selection = EventPropsMatrixSelection()
+    @State private var returnQuestion: EventPropsMatrixSelection.OpenQuestion?
+    @AccessibilityFocusState(for: .voiceOver) private var accessibilityFocus: FocusTarget?
+
+    private enum FocusTarget: Hashable {
+        case question(EventPropsMatrixSelection.OpenQuestion)
+        case header
+    }
 
     /// Rows and columns grow with Dynamic Type; the player column is capped so
     /// at least one whole numeric column stays on a 390pt screen at the largest
@@ -28,6 +37,7 @@ struct EventPropsMatrixView: View {
                 .font(.subheadline)
                 .fontWeight(.semibold)
                 .accessibilityAddTraits(.isHeader)
+                .accessibilityFocused($accessibilityFocus, equals: .header)
 
             if props.stats.count > 1 {
                 statPicker(selected: statKey)
@@ -46,8 +56,39 @@ struct EventPropsMatrixView: View {
         .padding(16)
         .background(Color.cardBackground)
         .clipShape(RoundedRectangle(cornerRadius: 16))
-        .sheet(item: $selection.openQuestion) { open in
+        .sheet(item: $selection.openQuestion, onDismiss: restoreQuestionFocus) { open in
             EventPropsMatrixDetailView(open: open, props: props)
+        }
+    }
+
+    // Capture the exact initiating question independently of sheet state:
+    // SwiftUI clears openQuestion before onDismiss runs. Prices and indices
+    // never identify the focus destination.
+    private func openQuestion(_ row: DuringPropRow) {
+        accessibilityFocus = nil
+        onDetailPresentationChanged(true)
+        returnQuestion = selection.open(row)
+    }
+
+    private func restoreQuestionFocus() {
+        defer {
+            returnQuestion = nil
+            onDetailPresentationChanged(false)
+        }
+        guard let open = returnQuestion else {
+            accessibilityFocus = .header
+            return
+        }
+        switch EventPropsMatrixLayout.returnFocus(after: open, selection: selection, in: props) {
+        case .question(let question):
+            accessibilityFocus = .question(question)
+        case .header:
+            accessibilityFocus = .header
+        case .matrixWithdrawn:
+            // The page retains this presentation host with an empty payload
+            // until dismissal; it owns the destination once it removes us.
+            accessibilityFocus = nil
+            onMatrixUnavailableDismissed()
         }
     }
 
@@ -136,7 +177,7 @@ struct EventPropsMatrixView: View {
     private func cell(_ row: DuringPropRow?, stat: DuringPropStat) -> some View {
         if let row {
             Button {
-                selection.openQuestion = .init(row)
+                openQuestion(row)
             } label: {
                 VStack(spacing: 1) {
                     Text(EventPropsMatrixLayout.cellText(row))
@@ -158,6 +199,7 @@ struct EventPropsMatrixView: View {
             .buttonStyle(.plain)
             .accessibilityLabel(EventPropsMatrixLayout.accessibilityLabel(row, stat: stat))
             .accessibilityHint("Shows this question and its sources")
+            .accessibilityFocused($accessibilityFocus, equals: .question(.init(row)))
         } else {
             // Not offered for this player: an empty slot, not a dash — a dash
             // means a question that exists without a current price.
@@ -173,7 +215,7 @@ struct EventPropsMatrixView: View {
         VStack(alignment: .leading, spacing: 4) {
             ForEach(grid.unplaced) { row in
                 Button {
-                    selection.openQuestion = .init(row)
+                    openQuestion(row)
                 } label: {
                     HStack {
                         Text("\(row.subject.label) · \(EventPropsMatrixLayout.question(row, stat: grid.stat))")
@@ -187,6 +229,7 @@ struct EventPropsMatrixView: View {
                 }
                 .buttonStyle(.plain)
                 .accessibilityLabel(EventPropsMatrixLayout.accessibilityLabel(row, stat: grid.stat))
+                .accessibilityFocused($accessibilityFocus, equals: .question(.init(row)))
             }
         }
     }

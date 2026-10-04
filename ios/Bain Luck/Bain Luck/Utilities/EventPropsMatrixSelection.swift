@@ -79,6 +79,31 @@ enum EventPropsMatrixLayout {
         props.rows.first { $0.complementQuestionKey == row.questionKey }
     }
 
+    /// Where VoiceOver lands when the reader closes `open`'s detail.
+    enum ReturnFocus: Equatable {
+        /// The same question, still drawn (quoted, stale or unavailable).
+        case question(EventPropsMatrixSelection.OpenQuestion)
+        /// Removed, reclassified, or its statistic left: the section header,
+        /// never another threshold, player or a silently paired hidden side.
+        case header
+        /// The whole matrix withdrew while the detail was open: no cell and
+        /// no header exist, so the page owns the destination.
+        case matrixWithdrawn
+    }
+
+    static func returnFocus(
+        after open: EventPropsMatrixSelection.OpenQuestion,
+        selection: EventPropsMatrixSelection,
+        in props: DuringPlayerProps
+    ) -> ReturnFocus {
+        if props.rows.isEmpty { return .matrixWithdrawn }
+        guard selection.resolvedStat(in: props) == open.statKey,
+              let grid = grid(props, statKey: open.statKey) else { return .header }
+        let drawnRows = grid.players.flatMap { Array($0.cells.values) } + grid.unplaced
+        let stillDrawn = drawnRows.contains { EventPropsMatrixSelection.OpenQuestion($0) == open }
+        return stillDrawn ? .question(open) : .header
+    }
+
     /// The legacy `player_props` the matrix does not already draw, for the old
     /// card beneath it — so no count question is listed twice on the page.
     ///
@@ -210,6 +235,17 @@ nonisolated struct EventPropsMatrixSelection: Equatable {
 
     var statKey: String?
     var openQuestion: OpenQuestion?
+
+    /// The reader opens one exact question. Opening a question on the
+    /// default statistic is a choice of that statistic too: pin it, so a newer
+    /// payload that reorders the server's stats cannot swap the background
+    /// (and the Close destination) out from under the open detail.
+    mutating func open(_ row: DuringPropRow) -> OpenQuestion {
+        let open = OpenQuestion(row)
+        statKey = open.statKey
+        openQuestion = open
+        return open
+    }
 
     /// The statistic on screen: the reader's choice once made, else the
     /// server's first. A chosen statistic that leaves the payload stays chosen
