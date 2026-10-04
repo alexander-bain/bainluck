@@ -395,8 +395,9 @@ class TestOptionLabelNamesItsAxis:
         m = _game({"team_totals": rows}, legs, {10: _facts("Yankees Team Total: O/U 2.5")})
         (q,) = m["questions"]
         assert q["kind"] == "named_options"
-        got = sorted((o["label"], o["published"]["value"]) for o in q["options"])
-        assert got == [("Over", 0.57), ("Over", 0.57)]
+        # #10312: the two rows are one over-axis proposition — one option, no blend.
+        got = [(o["label"], o["published"]["value"]) for o in q["options"]]
+        assert got == [("Over", None)]
 
     def test_a_no_leg_on_the_totals_axis_reads_yes(self):
         legs = [_leg(2, 10, "No", 0.3)]
@@ -428,6 +429,134 @@ class TestOptionLabelNamesItsAxis:
         m = _game({"other": [_other(50, 5, "Under the lights", 0.3)]}, legs, {50: _facts("Night game")})
         (q,) = m["questions"]
         assert [o["label"] for o in q["options"]] == ["Under the lights"]
+
+
+_NYY_TT = "New York Yankees Team Total: O/U 2.5"
+
+
+def _nyy_team_total(under_grade, over_grade, *, under_over=0.0, over_over=0.0, line=2.5,
+                    mid=63854826, under_id=240500335, over_id=240500334, winners=True):
+    """Production m:63854826 on `/events/15322539` (NYY @ TB): the route's own
+    `_settled_over_verdict` puts the Under row's grade on the over axis."""
+    rows = []
+    for oid, name, over, grade in ((under_id, "Under", under_over, under_grade),
+                                   (over_id, "Over", over_over, over_grade)):
+        supplied = events_route._settled_over_verdict(grade, name == "Under", winners)
+        row = _total(mid, oid, name, line, over, market_type="team_total", market_name=_NYY_TT,
+                     source="polymarket", **supplied)
+        row["team_side"], row["team_name"] = "away", "New York Yankees"
+        rows.append(row)
+    return rows
+
+
+class TestTotalAxisEquivalentsAreOneOption:
+    """#10312 real sides. Production `/events/15322539` served m:63854826 New
+    York Yankees Team Total O/U 2.5 as two options both labelled "Over", both
+    Lost: o:240500335 (raw Under, 1.0) and o:240500334 (raw Over, 0.0). The
+    route normalises the Under row onto the OVER axis, value and grade, so the
+    two rows are one proposition — published once, every leg kept as evidence."""
+
+    def _build(self, rows, legs, *, status="resolved", winners=None):
+        return _game({"team_totals": rows}, legs, {63854826: _facts(_NYY_TT, status=status)},
+                     home="Tampa Bay Rays", away="New York Yankees", winners=winners)
+
+    def test_the_settled_specimen_is_one_over_option_graded_lost(self):
+        legs = [_leg(240500335, 63854826, "Under", 1.0, is_winner=True),
+                _leg(240500334, 63854826, "Over", 0.0, is_winner=False)]
+        rows = _nyy_team_total(_grade(True, "api_settlement"), _grade(False, "api_settlement"))
+        q = _q(self._build(rows, legs), "m:63854826")
+        (opt,) = q["options"]
+        assert opt["option_key"] == "o:240500334+240500335"
+        assert opt["contributor_outcome_ids"] == [240500334, 240500335]
+        assert opt["label"] == "Over"
+        assert opt["result"] == {"state": "lost", "evidence_kind": "verdict_is_provable"}
+        assert opt["published"]["value"] is None
+        assert [(e["outcome_id"], e["leg_side"], e["raw_probability"]) for e in opt["source_evidence"]] == [
+            (240500335, "under", 1.0), (240500334, "over", 0.0)]
+        assert "Under" not in [o["label"] for o in q["options"]]
+        assert q["option_counts"] == {"declared": None, "loaded": 2, "returned": 2, "missing_identified": 0}
+        assert q["complete"] is not False
+
+    def test_open_equal_over_values_stay_unblended(self):
+        legs = [_leg(240500335, 63854826, "Under", 0.43), _leg(240500334, 63854826, "Over", 0.57)]
+        rows = _nyy_team_total(_grade(), _grade(), under_over=0.57, over_over=0.57)
+        (opt,) = _q(self._build(rows, legs, status="open"), "m:63854826")["options"]
+        assert opt["published"]["value_state"] == "unblended_equivalents"
+        assert opt["published"]["value"] is None and opt["result"]["state"] == "open"
+        assert [e["raw_probability"] for e in opt["source_evidence"]] == [0.43, 0.57]
+
+    def test_open_unequal_over_values_publish_no_number(self):
+        legs = [_leg(240500335, 63854826, "Under", 0.40), _leg(240500334, 63854826, "Over", 0.55)]
+        rows = _nyy_team_total(_grade(), _grade(), under_over=0.60, over_over=0.55)
+        (opt,) = _q(self._build(rows, legs, status="open"), "m:63854826")["options"]
+        assert opt["published"]["value"] is None
+        assert opt["published"]["value_state"] == "unblended_equivalents"
+        assert opt["comparison"]["reason"] == "not_quoted"
+
+    def test_a_void_market_bare_false_is_never_lost(self):
+        legs = [_leg(240500335, 63854826, "Under", 0.0, is_winner=False),
+                _leg(240500334, 63854826, "Over", 0.0, is_winner=False)]
+        rows = _nyy_team_total(_grade(False, "api_settlement"), _grade(False, "api_settlement"),
+                               winners=False)
+        (opt,) = _q(self._build(rows, legs), "m:63854826")["options"]
+        assert opt["result"]["state"] == "unknown"
+
+    def test_disagreeing_supplied_grades_are_unknown(self):
+        legs = [_leg(240500335, 63854826, "Under", 1.0, is_winner=True),
+                _leg(240500334, 63854826, "Over", 0.0)]
+        rows = _nyy_team_total(_grade(True, "api_settlement"), _grade())
+        (opt,) = _q(self._build(rows, legs), "m:63854826")["options"]
+        assert opt["result"] == {"state": "unknown", "evidence_kind": "none"}
+
+    def test_a_refused_row_keeps_the_option_refused_with_no_raw_leak(self):
+        legs = [_leg(240500335, 63854826, "Under", 0.43), _leg(240500334, 63854826, "Over", 0.57)]
+        rows = _nyy_team_total(_grade(), _grade(), under_over=None, over_over=0.57)
+        (opt,) = _q(self._build(rows, legs, status="open"), "m:63854826")["options"]
+        assert opt["published"]["value_state"] == "refused" and opt["published"]["value"] is None
+        assert opt["source_evidence"] == []
+
+    def test_an_integer_line_is_not_folded(self):
+        legs = [_leg(240500335, 63854826, "Under", 0.4), _leg(240500334, 63854826, "Over", 0.5)]
+        rows = _nyy_team_total(_grade(), _grade(), under_over=0.6, over_over=0.5, line=3)
+        q = _q(self._build(rows, legs, status="open"), "m:63854826")
+        assert sorted(o["option_key"] for o in q["options"]) == ["o:240500334", "o:240500335"]
+
+    def test_distinct_lines_in_one_market_are_not_collapsed(self):
+        legs = [_leg(1, 63854826, "Under 2.5", 0.4), _leg(2, 63854826, "Over 2.5", 0.6),
+                _leg(3, 63854826, "Under 3.5", 0.6), _leg(4, 63854826, "Over 3.5", 0.4)]
+        rows = (_nyy_team_total(_grade(), _grade(), under_over=0.6, over_over=0.6, under_id=1, over_id=2)
+                + _nyy_team_total(_grade(), _grade(), under_over=0.4, over_over=0.4, line=3.5,
+                                  under_id=3, over_id=4))
+        q = _q(self._build(rows, legs, status="open"), "m:63854826")
+        assert [o["option_key"] for o in q["options"]] == ["o:1+2", "o:3+4"]
+
+    def test_distinct_markets_are_not_merged(self):
+        legs = [_leg(1, 10, "Under", 0.4), _leg(2, 11, "Over", 0.6)]
+        rows = (_nyy_team_total(_grade(), _grade(), under_over=0.6, mid=10, under_id=1)[:1]
+                + _nyy_team_total(_grade(), _grade(), over_over=0.6, mid=11, over_id=2)[1:])
+        m = _game({"team_totals": rows}, legs, {10: _facts(_NYY_TT), 11: _facts(_NYY_TT)},
+                  home="Tampa Bay Rays", away="New York Yankees")
+        assert [o["option_key"] for o in _q(m, "m:10")["options"]] == ["o:1"]
+        assert [o["option_key"] for o in _q(m, "m:11")["options"]] == ["o:2"]
+
+    def test_two_over_legs_without_an_under_are_not_folded(self):
+        legs = [_leg(1, 63854826, "Over", 0.6), _leg(2, 63854826, "Yes", 0.6)]
+        rows = _nyy_team_total(_grade(), _grade(), under_id=1, over_id=2)
+        rows[0]["outcome_name"] = "Over"
+        q = _q(self._build(rows, legs, status="open"), "m:63854826")
+        assert len(q["options"]) == 2
+
+    def test_a_missing_leg_and_a_broken_sibling_still_count(self):
+        legs = [_leg(240500335, 63854826, "Under", 0.43), _leg(240500334, 63854826, "Over", 0.57),
+                _leg(240500336, 63854826, "Exactly 2", 0.1)]
+        rows = _nyy_team_total(_grade(), _grade(), under_over=0.57, over_over=0.57)
+        broken = dict(rows[0], contributor_outcome_ids=[])
+        m = self._build(rows + [broken], legs, status="open")
+        q = _q(m, "m:63854826")
+        assert [o["option_key"] for o in q["options"]] == ["o:240500334+240500335"]
+        assert [x["option_key"] for x in q["missing_options"]] == ["o:240500336"]
+        assert q["option_counts"]["returned"] == 2 and q["complete"] is False
+        assert m["coverage"]["build_errors"] == 1
 
 
 class TestRankIsNotCountOrPriceRank:

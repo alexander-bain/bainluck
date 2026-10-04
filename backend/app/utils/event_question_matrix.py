@@ -1091,6 +1091,73 @@ def _missing_options(legs: list, sides: dict, shared: dict) -> list:
     return missing
 
 
+def _total_axis_key(entry: dict, legs_by_id: dict) -> Optional[tuple]:
+    """#10312 — the over-axis proposition one served totals row publishes, or
+    ``None`` when the row does not prove it.
+
+    Proof is the row's own: one contributor, loaded; one market; a k.5 line (an
+    integer line has a push, so "not Under 3" is not "Over 3"); and the served
+    side and period. Nothing here types a unit, a team or a threshold."""
+    row = entry["row"]
+    if (
+        not entry["total_axis"]
+        or len(entry["market_ids"]) != 1
+        or len(entry["contributor_ids"]) != 1
+        or legs_by_id.get(entry["contributor_ids"][0]) is None
+        or not _is_half_line(row.get("threshold"))
+    ):
+        return None
+    return (entry["market_ids"][0], float(row["threshold"]), row.get("team_side"), row.get("period"))
+
+
+def _total_axis_equivalents(entries: list, legs_by_id: dict) -> list:
+    """#10312 — the named question's rows, with each proven same-market
+    total-axis equivalent set replaced, at its first member's place, by the
+    list of its members.
+
+    The route publishes an UNDER leg on its sibling's OVER axis — value AND
+    grade (`_settled_over_probability` / `_settled_over_verdict`) — so on one
+    market and one k.5 line the Over row and the Under row are the same
+    proposition twice. Served as two options they read "Over · Lost / Over ·
+    Lost" (production `/events/15322539`, m:63854826 New York Yankees Team
+    Total: O/U 2.5). A set is proven only when it holds at least one leg that
+    reads under AND one that does not; two Over legs, distinct lines and
+    distinct markets are never folded."""
+    groups: dict = defaultdict(list)
+    for entry in entries:
+        key = _total_axis_key(entry, legs_by_id)
+        if key is not None:
+            groups[key].append(entry)
+    proven = {
+        key: members for key, members in groups.items()
+        if {_leg_reads_under(legs_by_id[m["contributor_ids"][0]].name) for m in members} == {True, False}
+    }
+    out: list = []
+    for entry in entries:
+        key = _total_axis_key(entry, legs_by_id)
+        if key not in proven:
+            out.append(entry)
+        elif proven[key][0] is entry:
+            out.append(proven[key])
+    return out
+
+
+def _equivalent_option(entries: list, lifecycle_state: str, shared: dict) -> dict:
+    """#10312 — one option for a proven total-axis equivalent set: U5's
+    unblended option (value null, every leg's raw value in evidence, the
+    supplied over-axis grades agreeing or ``unknown``), labelled on the axis.
+    A row the route declined to publish stays declined: the option is refused
+    and no raw value leaks beside it, as `_game_option` does for one row."""
+    option = _unblended_option(entries, "category", lifecycle_state, shared)
+    if any(
+        _game_option(e, "category", lifecycle_state, shared)["published"]["value_state"] == "refused"
+        for e in entries
+    ):
+        option["published"]["value_state"] = "refused"
+        option["source_evidence"] = []
+    return option
+
+
 def _named_question(group: list, shared: dict) -> dict:
     entries = [entry for entry, _ in group]
     reasons = {reason for _, reason in group if reason is not None}
@@ -1109,13 +1176,18 @@ def _named_question(group: list, shared: dict) -> dict:
     lifecycle = _question_lifecycle(entries, market_ids, shared)
 
     options = []
-    for entry in entries:
-        cids = entry["contributor_ids"]
+    for item in _total_axis_equivalents(entries, shared["legs_by_id"]):
+        if isinstance(item, list):
+            options.append(_equivalent_option(item, lifecycle["state"], shared))
+            continue
+        cids = item["contributor_ids"]
         side = sides.get(cids[0], "category") if len(cids) == 1 else "category"
-        options.append(_game_option(entry, side, lifecycle["state"], shared))
+        options.append(_game_option(item, side, lifecycle["state"], shared))
 
     missing = _missing_options(legs, sides, shared) if len(legs) <= _LIST_CAP else []
-    counts, complete = _option_counts(market_ids, len(options), missing, shared, three_way)
+    # `returned` counts the served ROWS, so folding two equivalent rows into
+    # one option never reads as a leg held back.
+    counts, complete = _option_counts(market_ids, len(entries), missing, shared, three_way)
     period = (
         _period(first["market_type"], first["row"].get("period"), facts,
                 shared["sport_prefix"], shared["period_from_ticker"], shared["period_from_name"])
