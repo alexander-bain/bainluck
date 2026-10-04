@@ -34,8 +34,10 @@ Three further defects Codex C224 found in this tier are closed here too:
 
 from __future__ import annotations
 
+import asyncio
 import json
 import logging
+import time
 import zlib
 from dataclasses import dataclass
 from datetime import datetime, timezone
@@ -820,17 +822,34 @@ return 0
 """
 
 
-def acquire_refresh_lock(rc, keys: ConceptCacheKeys) -> str | None:
+#: #10426. Prefix of a token held by a REQUEST building inline past the ceiling,
+#: as opposed to a dispatched refresh. It is the only thing a reader that loses
+#: the single-flight can use to decide whether waiting is worth it: an inline
+#: build finishes inside `LIVE_INLINE_REBUILD_BUDGET`, a dispatched refresh waits
+#: behind the background queue for minutes. Carried IN the token, not in a sibling
+#: key, for the reason `_RELEASE_IF_OWNER_LUA` gives below.
+INLINE_TOKEN_PREFIX = "inline:"
+
+#: How often a waiting reader re-reads the (tiny) lock key. Only the lock is
+#: polled; the payload is read once, after the holder lets go (gotcha #38: a
+#: 550 KB decode holds the GIL, so it must not run every tick).
+INLINE_WAIT_POLL_SECONDS = 0.2
+
+
+def acquire_refresh_lock(rc, keys: ConceptCacheKeys, *, inline: bool = False) -> str | None:
     """Single-flight. Returns an owner TOKEN for exactly one caller per
     REFRESH_LOCK_TTL window, or None if somebody else already holds it.
 
     Returns a token rather than a bool so the holder can prove ownership on
     release. Truthiness is preserved for existing callers: a token is truthy and
     None is falsy, so `if not acquire_refresh_lock(...)` still reads correctly.
+
+    `inline=True` marks the token as a request building inline (#10426), so a
+    concurrent reader can wait for it instead of taking the mirror.
     """
     if rc is None:
         return None
-    token = uuid4().hex
+    token = (INLINE_TOKEN_PREFIX if inline else "") + uuid4().hex
     try:
         if rc.set(keys.refresh_lock, token, nx=True, ex=REFRESH_LOCK_TTL):
             return token
@@ -864,6 +883,60 @@ def release_refresh_lock(rc, keys: ConceptCacheKeys, token: str | None) -> bool:
             keys.refresh_lock,
         )
         return False
+
+
+async def await_inline_build(
+    rc, keys: ConceptCacheKeys, stale: dict[str, Any], budget: float
+) -> dict[str, Any] | None:
+    """#10426: wait for ANOTHER request's inline rebuild, return what it wrote.
+
+    The reader that loses the past-ceiling single-flight used to take the mirror at
+    once. On a page load that loser is usually the browser: the site's server
+    fetches this same key for the page title a moment earlier, wins the lock,
+    builds in ~2-3s, and the reader is handed the old leaderboard anyway and keeps
+    it, because the page does not re-fetch. Measured 2026-10-04 10:05Z on
+    `event:golf:alfred-dunhill-links-championship`: two reads 0.3s apart, the first
+    rebuilt in 2.2s, the second got a 2.4-minute-old mirror in 107ms.
+
+    Waits only while the holder is an INLINE build — its token carries
+    `INLINE_TOKEN_PREFIX` and its build is bounded by `budget`. A dispatched
+    refresh can sit behind the background queue for minutes, so a reader behind
+    one returns None at once and keeps the mirror-first serve. Returns None too
+    when the holder lets go without writing anything newer than `stale` (it raised,
+    overran, or refused the key). Never raises.
+    """
+    if rc is None:
+        return None
+    try:
+        held = rc.get(keys.refresh_lock)
+    except Exception:
+        return None
+    if isinstance(held, bytes):
+        held = held.decode("utf-8", "replace")
+    if not isinstance(held, str) or not held.startswith(INLINE_TOKEN_PREFIX):
+        return None
+
+    deadline = time.monotonic() + budget
+    while time.monotonic() < deadline:
+        await asyncio.sleep(INLINE_WAIT_POLL_SECONDS)
+        try:
+            now_held = rc.get(keys.refresh_lock)
+        except Exception:
+            return None
+        if isinstance(now_held, bytes):
+            now_held = now_held.decode("utf-8", "replace")
+        if now_held != held:
+            break
+    else:
+        return None
+
+    fresh = read_slot(rc, keys.primary)
+    if fresh is None:
+        return None
+    fresh_at, stale_at = payload_created_at(fresh), payload_created_at(stale)
+    if fresh_at is None or (stale_at is not None and fresh_at <= stale_at):
+        return None
+    return fresh
 
 
 def get_client():

@@ -26,6 +26,7 @@ from app.utils.event_concept_cache import (
     LIVE_INLINE_REBUILD_BUDGET,
     ConceptCacheKeys,
     acquire_refresh_lock,
+    await_inline_build,
     build_and_cache,
     cache_keys,
     get_client,
@@ -75,14 +76,19 @@ def _schedule_refresh(rc, keys: ConceptCacheKeys, key: str) -> None:
 async def _rebuild_past_ceiling(rc, keys: ConceptCacheKeys, key: str, db, adapter, stale: dict):
     """#10114: a live mirror past `LIVE_STALE_SERVE_CEILING` is rebuilt before it is served.
 
-    Single-flight on the same lock as the refresh-behind: if any producer already
-    holds it, a rebuild is in flight and the mirror is served as before. Otherwise
-    this request builds inline for at most `LIVE_INLINE_REBUILD_BUDGET`; an overrun
-    is cancelled (so it never writes) and falls back to mirror + refresh-behind, and
-    a build that raises falls back to the mirror, as step 4 does.
+    Single-flight on the same lock as the refresh-behind. If another request is
+    already building inline, this one waits for that build (same budget) and
+    serves what it wrote (#10426); if a dispatched refresh holds the lock, the
+    mirror is served as before. Otherwise this request builds inline for at most
+    `LIVE_INLINE_REBUILD_BUDGET`; an overrun is cancelled (so it never writes) and
+    falls back to mirror + refresh-behind, and a build that raises falls back to
+    the mirror, as step 4 does.
     """
-    token = acquire_refresh_lock(rc, keys)
+    token = acquire_refresh_lock(rc, keys, inline=True)
     if not token:
+        fresh = await await_inline_build(rc, keys, stale, LIVE_INLINE_REBUILD_BUDGET)
+        if fresh is not None:
+            return with_availability(fresh, AVAILABILITY_LIVE)
         return with_availability(stale, AVAILABILITY_STALE_OK)
     try:
         built = await asyncio.wait_for(
