@@ -634,21 +634,21 @@ final class TheLiveChartEndCarriesTheHeroNumber9436Tests: XCTestCase {
         XCTAssertLessThan(stamps[settleIndex], LiveChartEdgeMarkerPlan.glideDuration + 0.25, "\(stamps)")
     }
 
-    func testTheSamplingRigDoesNotInventAnAppendGlideWithReduceMotion() async throws {
-        try await assertNoSampledGlideWithReduceMotion(pinReplacement: false)
+    func testTheSamplingRigDoesNotInventAnAppendGlideInAnInactiveScene() async throws {
+        try await assertNoSampledGlideInAnInactiveScene(pinReplacement: false)
     }
 
-    func testTheSamplingRigDoesNotInventAPinGlideWithReduceMotion() async throws {
-        try await assertNoSampledGlideWithReduceMotion(pinReplacement: true)
+    func testTheSamplingRigDoesNotInventAPinGlideInAnInactiveScene() async throws {
+        try await assertNoSampledGlideInAnInactiveScene(pinReplacement: true)
     }
 
-    private func assertNoSampledGlideWithReduceMotion(pinReplacement: Bool) async throws {
+    private func assertNoSampledGlideInAnInactiveScene(pinReplacement: Bool) async throws {
         let feed = Feed(frames: pinReplacement ? [] : frames([0.49, 0.55, 0.78]),
                         edge: LiveEdgeReading(homeProbability: pinReplacement ? 0.50 : 0.78,
                                               homeLabel: pinReplacement ? "50%" : "78%"),
                         history: pinReplacement ? try pinnedHistory(pinAt: 12, 0.50) : nil)
-        let hosted = Hosted(FedChart(feed: feed, history: try history())
-            .environment(\.accessibilityReduceMotion, true))
+        feed.phase = .background
+        let hosted = Hosted(FedChart(feed: feed, history: try history()))
         defer { hosted.close() }
         try await Task.sleep(for: .milliseconds(600))
         let before = try XCTUnwrap(tipColumn(hosted.shot()))
@@ -666,8 +666,8 @@ final class TheLiveChartEndCarriesTheHeroNumber9436Tests: XCTestCase {
         // A not-yet-presented update may leave an initial old frame. Neither
         // that old endpoint nor the settled endpoint is an intermediate glide.
         XCTAssertTrue(columns.allSatisfy { $0 == before || $0 == settled },
-                      "Sampling invented motion with Reduce Motion: \(columns)")
-        print("#9436 Reduce Motion control pin=\(pinReplacement): before=\(before) frames=\(columns) settled=\(settled)")
+                      "Sampling invented motion in an inactive scene: \(columns)")
+        print("#9436 inactive-scene control pin=\(pinReplacement): before=\(before) frames=\(columns) settled=\(settled)")
     }
 
     /// Finding 3, rendered: the scene leaving `.active` mid-glide cancels the
