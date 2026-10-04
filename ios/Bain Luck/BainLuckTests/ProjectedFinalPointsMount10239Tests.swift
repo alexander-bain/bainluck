@@ -21,8 +21,8 @@ final class ProjectedFinalPointsMount10239Tests: XCTestCase {
     /// One served row. `kind` / `observed` are RAW JSON fragments so a test can
     /// serve a mistyped or null value; nil omits the key.
     private func row(_ minute: String, _ home: Double, _ away: Double, prob: Double = 0.8,
-                     kind: String? = nil, observed: String? = nil) -> String {
-        var fields = [#""timestamp":"2026-09-14T\#(minute):00+00:00""#, #""home_probability":\#(prob)"#,
+                     kind: String? = nil, observed: String? = nil, day: String = "2026-09-14") -> String {
+        var fields = [#""timestamp":"\#(day)T\#(minute):00+00:00""#, #""home_probability":\#(prob)"#,
                       #""projected_home_score":\#(home)"#, #""projected_away_score":\#(away)"#]
         if let kind { fields.append(#""kind":\#(kind)"#) }
         if let observed { fields.append(#""observed_at":\#(observed)"#) }
@@ -31,8 +31,10 @@ final class ProjectedFinalPointsMount10239Tests: XCTestCase {
 
     /// A row as the producer serves a genuine capture: 30.123456 s into its
     /// displayed minute, in Python's `isoformat()` shape.
-    private func rec(_ minute: String, _ home: Double, _ away: Double) -> String {
-        row(minute, home, away, kind: #""recorded""#, observed: #""2026-09-14T\#(minute):30.123456+00:00""#)
+    private func rec(_ minute: String, _ home: Double, _ away: Double, prob: Double = 0.8,
+                     day: String = "2026-09-14") -> String {
+        row(minute, home, away, prob: prob, kind: #""recorded""#,
+            observed: #""\#(day)T\#(minute):30.123456+00:00""#, day: day)
     }
 
     /// The instant a `rec` row is placed at (whole milliseconds, as parsed).
@@ -304,5 +306,42 @@ final class ProjectedFinalPointsMount10239Tests: XCTestCase {
             "fanduel": [row("00:40", 29, 10)],
         ]))
         XCTAssertEqual(mount(after)?.sourceKey, "fanduel")
+    }
+
+    func testRowsTheSeriesRefusesCannotOutvoteABookItDraws() throws {
+        // Live, observed Q1 floor 00:20, reader clock 01:10. draftkings serves TWO
+        // admitted recorded captures, fanduel ONE. Every draftkings row is one the
+        // series withholds or windows out, so counting admitted rows would pick
+        // draftkings, `build` would return nil, and fanduel's real reading would vanish.
+        let now = "2026-09-14T01:10:00Z".asDate
+        let fanduel = [rec("00:40", 30, 10)]
+        let refused: [(String, [String])] = [
+            ("contradicts the moneyline", [rec("00:40", 10, 30), rec("01:00", 10, 30)]),
+            // 7–0 is on the board from 00:50; a 6-point home projection is below it.
+            ("below the actual score", [rec("00:55", 6, 10, prob: 0.3), rec("01:00", 6, 10, prob: 0.3)]),
+            // More than an hour before the floor: outside the window the series draws.
+            ("outside the window", [rec("22:00", 27, 10, day: "2026-09-13"), rec("22:30", 27, 10, day: "2026-09-13")]),
+        ]
+        for (name, draftkings) in refused {
+            let h = try history(status: live, completedAt: "null",
+                                books: books(["draftkings": draftkings, "fanduel": fanduel]))
+            let admission = ProjectedFinalPointsMount.Admission(legacyRowsAdmitted: false, asOf: now!)
+            let admittedDK = try XCTUnwrap(h.bookmakerHistory?["draftkings"]).filter {
+                let admitted = ProjectedFinalPointsMount.admit($0, admission: admission)
+                return admitted.kind == .recorded && admitted.at.map { $0 <= now! } == true
+            }
+            XCTAssertEqual(admittedDK.count, 2, "\(name): the draftkings rows are admitted evidence, refused only by the series")
+            let input = try XCTUnwrap(mount(h, page: "live", now: now), name)
+            XCTAssertEqual(input.sourceKey, "fanduel", name)
+            let series = try XCTUnwrap(ProjectedFinalPointsSeries.build(input), name)
+            XCTAssertEqual(series.latest.at, capture("00:40"), name)
+            XCTAssertEqual(series.latest.home, 30, name)
+            XCTAssertEqual(series.latest.away, 10, name)
+        }
+        // Control: the same two draftkings captures, drawable, out-vote fanduel's one.
+        let control = try history(status: live, completedAt: "null", books: books([
+            "draftkings": [rec("00:40", 28, 10), rec("01:00", 28, 10)], "fanduel": fanduel,
+        ]))
+        XCTAssertEqual(mount(control, page: "live", now: now)?.sourceKey, "draftkings")
     }
 }
