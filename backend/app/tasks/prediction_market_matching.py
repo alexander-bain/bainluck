@@ -7495,7 +7495,7 @@ def _log_stale_reading_refusal(
     event_id,
     source: str,
     *,
-    value,
+    home_prob,
     basis,
     stored_sources,
 ) -> None:
@@ -7504,14 +7504,18 @@ def _log_stale_reading_refusal(
     `stale_readings_refused` is an aggregate, and on the WebSocket lane it also
     counts a row deleted mid-batch, so a count above zero never proved WHICH
     game was protected from WHICH older price. This line is that receipt for the
-    poll and the matcher: the writer, the event, the source, the value it would
-    have stamped, and — per contributing row — when THIS reading saw the row
-    against when the stored entry's writer saw it.
+    poll and the matcher: the writer, the event, the source, the HOME-oriented
+    probability it would have stamped (``rejected_home_prob``) against the stored
+    one (``stored_home_prob``), and — per contributing row — when THIS reading
+    saw the row against when the stored entry's writer saw it.
 
-    Both clocks are OBSERVATION clocks (the `observed_basis` the comparison was
-    made on). The stored entry's ``updated_at`` is a publication time and is
-    deliberately not printed beside them: putting the two side by side is how
-    the first cut of this guard refused a newer reading.
+    The stored side is read through `stored_observation_basis`, the guard's own
+    validated binding: the basis, and the value it dates, only while
+    ``observed_value`` still equals ``value``. Never ``updated_at`` (a
+    publication time — comparing it with an observation is how the first cut of
+    this guard refused a newer reading) and never the whole sources map. An
+    unbound or absent basis means the guard abstained and nothing is logged; if
+    one reaches here anyway the stored side prints ``-``.
 
     Logging only. It reads values the caller already holds, and it can never
     raise into the refusal branch it sits in — the commit that releases the row
@@ -7522,8 +7526,10 @@ def _log_stale_reading_refusal(
 
         stored_basis = stored_observation_basis(stored_sources, source) or {}
         rejected = basis if isinstance(basis, dict) else {}
-        entry = stored_sources.get(source) if isinstance(stored_sources, dict) else None
-        stored_value = entry.get("value") if isinstance(entry, dict) else entry
+        # Bound: the validated basis exists only while observed_value == value.
+        stored_home_prob = (
+            stored_sources[source]["value"] if stored_basis else None
+        )
         regressed = sorted(
             (
                 key for key, seen in rejected.items()
@@ -7536,10 +7542,11 @@ def _log_stale_reading_refusal(
             default=None,
         )
         logger.info(
-            "stale-reading-refused writer=%s event=%s source=%s value=%s "
-            "stored_value=%s rejected_observed=%s stored_observed=%s "
-            "regressed_rows=%s max_observation_lag_s=%s",
-            writer, event_id, source, value, stored_value,
+            "stale-reading-refused writer=%s event=%s source=%s "
+            "rejected_home_prob=%s stored_home_prob=%s rejected_observed=%s "
+            "stored_observed=%s regressed_rows=%s max_observation_lag_s=%s",
+            writer, event_id, source, home_prob,
+            "-" if stored_home_prob is None else stored_home_prob,
             _render_observation_basis(rejected),
             _render_observation_basis(stored_basis),
             ",".join(regressed[:_STALE_REFUSAL_LOG_ROWS]) or "-",
@@ -7650,7 +7657,7 @@ async def _phase2_persist_group_reading(
         stats["stale_readings_refused"] = stats.get("stale_readings_refused", 0) + 1
         _log_stale_reading_refusal(
             "matcher", anchor.event_id, anchor.source,
-            value=round(home_prob, 4), basis=basis, stored_sources=stored_sources,
+            home_prob=round(home_prob, 4), basis=basis, stored_sources=stored_sources,
         )
         await session.commit()
         return None
@@ -12310,7 +12317,7 @@ async def _poll_live_prediction_market_prices():
                     stats["stale_readings_refused"] += 1
                     _log_stale_reading_refusal(
                         "poll", event.id, market.source,
-                        value=round(home_prob, 4), basis=_basis_of_reading2,
+                        home_prob=round(home_prob, 4), basis=_basis_of_reading2,
                         stored_sources=_stored_wps2,
                     )
                     # #8910 review: the refusal still holds the FOR UPDATE

@@ -19,6 +19,9 @@ OBSERVATION clocks of the row that regressed.
 * precision: a two-row (devigged) reading where only ONE row regressed names
   that row alone, with the lag of that row (not of its fresher sibling);
 * matcher healthy control: a newer reading writes, and logs no receipt;
+* unknown arm: a stored basis bound to a different value is not believed by
+  the guard OR the receipt (same `stored_observation_basis` binding) — the
+  reading writes and nothing is logged;
 * receipt failure, both writers: a receipt that raises cannot skip the commit
   that releases the row lock, and the refusal still stands.
 """
@@ -120,7 +123,7 @@ class TestTheMatcherRefusalLeavesAnAttributedReceipt:
         assert got["writer"] == "matcher", got
         assert got["event"] == str(EVENT_ID), got
         assert got["source"] == "polymarket", got
-        assert got["stored_value"] == "0.4", got
+        assert got["stored_home_prob"] == "0.4", got
         # The group speaks from its home row; the stored writer's basis has both.
         assert got["regressed_rows"] == HOME_ROW, got
         assert got["rejected_observed"] == f"{HOME_ROW}@{home_seen.isoformat()}", got
@@ -129,7 +132,8 @@ class TestTheMatcherRefusalLeavesAnAttributedReceipt:
         ), got
         assert got["max_observation_lag_s"] == "280.000", got
         # The value it WOULD have stamped is the oriented home probability.
-        assert 0.0 < float(got["value"]) < 1.0, got
+        assert 0.0 < float(got["rejected_home_prob"]) < 1.0, got
+        assert "updated_at" not in lines[0] and "{" not in lines[0], lines[0]
 
     async def test_a_devigged_reading_names_only_the_row_that_regressed(
         self, caplog
@@ -156,7 +160,7 @@ class TestTheMatcherRefusalLeavesAnAttributedReceipt:
         with caplog.at_level(logging.INFO, logger=_LOGGER):
             pmm._log_stale_reading_refusal(
                 "matcher", EVENT_ID, "polymarket",
-                value=0.6, basis=basis, stored_sources=stored,
+                home_prob=0.6, basis=basis, stored_sources=stored,
             )
         got = _fields(_receipts(caplog)[0])
         assert got["regressed_rows"] == HOME_ROW, got
@@ -180,6 +184,43 @@ class TestTheMatcherRefusalLeavesAnAttributedReceipt:
         assert session.stamped_sources() is not None, "control: nothing stamped"
         assert len(session.added) == 1 and session.commits == 1
         assert _receipts(caplog) == [], "a write logged a refusal receipt"
+
+
+    async def test_control_an_unbound_stored_basis_writes_and_logs_nothing(
+        self, caplog
+    ):
+        """Unknown arm: the stored basis is LATER than this reading but bound to
+        a different value, so neither the guard nor the receipt believes it."""
+        home_seen, away_seen = _matcher_reading_basis()
+        stored_seen = NOW - timedelta(seconds=20)
+        stored = _stored({
+            HOME_ROW: stored_seen.timestamp(), AWAY_ROW: stored_seen.timestamp(),
+        })
+        stored["polymarket"]["value"] = 0.55  # rewritten without its basis
+        with caplog.at_level(logging.INFO, logger=_LOGGER):
+            session, stats, spoke = await _persist(
+                _outcomes(home_seen=home_seen, away_seen=away_seen), stored,
+            )
+        assert spoke == 9, "control: the unknown arm never spoke"
+        assert stats.get("stale_readings_refused", 0) == 0, stats
+        assert len(session.added) == 1 and session.commits == 1
+        assert _receipts(caplog) == [], "an unbound basis logged a refusal"
+
+    async def test_the_stored_side_is_the_guards_validated_binding(self, caplog):
+        """Called directly on an unbound entry (the guard would have abstained),
+        the receipt prints no stored value or clock rather than the raw ones."""
+        stored = _stored({HOME_ROW: (NOW - timedelta(seconds=20)).timestamp()})
+        stored["polymarket"]["value"] = 0.55
+        with caplog.at_level(logging.INFO, logger=_LOGGER):
+            pmm._log_stale_reading_refusal(
+                "matcher", EVENT_ID, "polymarket", home_prob=0.6,
+                basis={HOME_ROW: (NOW - timedelta(seconds=300)).timestamp()},
+                stored_sources=stored,
+            )
+        got = _fields(_receipts(caplog)[0])
+        assert got["stored_home_prob"] == "-", got
+        assert got["stored_observed"] == "-", got
+        assert got["regressed_rows"] == "-", got
 
 
 @pytest.mark.asyncio
