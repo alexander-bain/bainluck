@@ -27,6 +27,23 @@ import { renderToStaticMarkup } from "react-dom/server";
 
 const MINUTE = 60 * 1000;
 
+// The page prints wall-clock-derived times (the "Score confirmed" popover's
+// `<time dateTime>`), and the arms below assert game clocks like "14:51" and
+// "0:42" appear NOWHERE in the markup. On the real clock those substrings turn
+// up inside an ISO timestamp whenever the minute or second lines up — CI run
+// 37210689200 went red at 14:52:10Z on `agoIso(1 * MINUTE)` = "…T14:51:10…".
+// So the clock is pinned to an instant whose every offset used here (1–20 min,
+// in UTC or any whole- or half-hour zone) contains none of the asserted clocks.
+const PINNED_NOW = Date.parse("2026-10-03T17:27:13.000Z");
+
+beforeAll(() => {
+  jest.useFakeTimers({ now: PINNED_NOW });
+});
+
+afterAll(() => {
+  jest.useRealTimers();
+});
+
 /** Offset FIRST, then serialise (gotcha #44). */
 function agoIso(ms: number): string {
   return new Date(Date.now() - ms).toISOString();
@@ -179,6 +196,10 @@ function sameClock(header: string, strip: string): void {
 }
 
 describe("#4889 a live event page shows one game clock", () => {
+  it("runs on the pinned clock, so the negative assertions cannot meet a timestamp", () => {
+    expect(Date.now()).toBe(PINNED_NOW);
+  });
+
   it("#6684 a live MLB page: history carries ESPN's constant 0:00, the header prints the inning and no clock", () => {
     // Production, ALDS Game 1 `/events/15322539`, 2026-10-03 22:59Z, v5455: the
     // header read `End 1st · 0:00`. The detail payload serves `game_clock: null`
