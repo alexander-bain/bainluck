@@ -10,6 +10,9 @@ on:
       - 'ios/Bain Luck/Bain Luck/Utilities/PeriodLabel.swift'
       - 'ios/Bain Luck/Bain Luck.xcodeproj/**'
       - 'tools/watch-build.sh'
+      - 'tools/watch-iphone-compatibility.sh'
+      - 'tools/watch_iphone_receipt.py'
+      - 'tools/tests/test_watch_iphone_receipt.py'
       - 'tools/tests/watch-selected-game/**'
       - '.github/workflows/watch-mvp.yml'
   push:
@@ -20,6 +23,9 @@ on:
       - 'ios/Bain Luck/Bain Luck/Utilities/PeriodLabel.swift'
       - 'ios/Bain Luck/Bain Luck.xcodeproj/**'
       - 'tools/watch-build.sh'
+      - 'tools/watch-iphone-compatibility.sh'
+      - 'tools/watch_iphone_receipt.py'
+      - 'tools/tests/test_watch_iphone_receipt.py'
       - 'tools/tests/watch-selected-game/**'
       - '.github/workflows/watch-mvp.yml'
 
@@ -61,5 +67,34 @@ jobs:
         with:
           name: watch-mvp-build-logs
           path: build/watch-mvp/*.log
+          if-no-files-found: ignore
+          retention-days: 7
+
+  iphone-compatibility:
+    name: Watch change iPhone compatibility
+    needs: watch-mvp
+    runs-on: macos-15
+    timeout-minutes: 60
+    env:
+      DEVELOPER_DIR: /Applications/Xcode_26.3.app/Contents/Developer
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          persist-credentials: false
+      - name: Verify receipt rejects incomplete and misleading results
+        run: python3 -m unittest discover -s tools/tests -p test_watch_iphone_receipt.py
+      - name: Run full BainLuckTests on a disposable hosted iPhone
+        run: bash tools/watch-iphone-compatibility.sh
+      - name: Preserve compatibility evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: watch-iphone-compatibility-evidence
+          path: |
+            build/watch-iphone-compatibility/*.txt
+            build/watch-iphone-compatibility/*.json
+            build/watch-iphone-compatibility/*.log
+            build/watch-iphone-compatibility/BainLuckTests.xcresult
           if-no-files-found: ignore
           retention-days: 7

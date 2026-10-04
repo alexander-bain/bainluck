@@ -153,3 +153,22 @@ check on unrelated iPhone PRs, and does not replace BainLuckTests or physical pr
 
 The first attended device step group is in `docs/watch-device-trial.md`; no user
 input is needed for ongoing source or hosted verification.
+
+## Hosted iPhone compatibility gate
+
+A second job in the Watch-scoped workflow runs the existing full `BainLuckTests`
+scheme on a fresh disposable hosted iPhone simulator, after Watch checks pass.
+`tools/watch-iphone-compatibility.sh` refuses to operate unless GitHub identifies
+the runner as hosted. It does not invoke Native's broader local gate script, modify
+its tests, or touch a local simulator.
+
+The result is accepted only when xcodebuild exits zero, prints TEST SUCCEEDED,
+and prints exactly one named All tests passed summary with a nonzero test count
+and zero failures. Partial/class-only/contradictory results are rejected by
+`tools/watch_iphone_receipt.py`, whose fixtures cover those failure shapes. The
+workflow preserves raw logs, exact SHA/toolchain/destination, receipt and xcresult.
+Fresh build output and plain `test` avoid executing an older test bundle.
+
+This is the existing iPhone compatibility requirement for integrating the Watch
+contribution, not a new feature or local task for Native. Implementation of the
+workflow alone never pays the gate; only a complete successful hosted run does.
