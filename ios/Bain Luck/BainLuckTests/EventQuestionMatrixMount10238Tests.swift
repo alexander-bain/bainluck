@@ -105,6 +105,34 @@ final class EventQuestionMatrixMount10238Tests: XCTestCase {
         XCTAssertFalse(EventDetailView.gameMarketsHaveContent(gm))
     }
 
+    // MARK: 4 — options a reader cannot tell apart
+
+    func testAQuestionWhoseOptionsShareALabelIsNotDrawn() throws {
+        // Production (event 15323083) served every Polymarket team total as
+        // "Over" / "Over" with one shared result; drawn, it read "Over Won /
+        // Over Won". The specimen's two-option question, relabelled the same way.
+        var dict = try object(Self.gameURL)
+        var matrix = try XCTUnwrap(dict["game_question_matrix"] as? [String: Any])
+        var questions = try XCTUnwrap(matrix["questions"] as? [[String: Any]])
+        let index = try XCTUnwrap(questions.firstIndex { $0["question_key"] as? String == "m:104" })
+        var options = try XCTUnwrap(questions[index]["options"] as? [[String: Any]])
+        XCTAssertEqual(options.count, 2)
+        let control = try decode(GameMarketsResponse.self, dict)
+        XCTAssertTrue(EventQuestionMatrixAdapter.rows(in: control.gameQuestionMatrix, scope: .game)
+            .contains { $0.id.questionKey == "m:104" }, "control: distinct labels are drawn")
+
+        for i in options.indices { options[i]["label"] = i == 0 ? "Over" : "over " }
+        questions[index]["options"] = options
+        matrix["questions"] = questions
+        dict["game_question_matrix"] = matrix
+        let rows = EventQuestionMatrixAdapter.rows(
+            in: try decode(GameMarketsResponse.self, dict).gameQuestionMatrix, scope: .game)
+        XCTAssertFalse(rows.contains { $0.id.questionKey == "m:104" },
+                       "two options both called Over were drawn")
+        XCTAssertEqual(rows.count, EventQuestionMatrixAdapter.rows(in: control.gameQuestionMatrix, scope: .game).count - 1,
+                       "the refusal took more than the one question")
+    }
+
     // MARK: 3 — rendered room
 
     private func height<V: View>(_ view: V) -> CGFloat {

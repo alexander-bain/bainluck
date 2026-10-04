@@ -88,8 +88,17 @@ nonisolated enum EventQuestionMatrixAdapter {
         guard let matrix, matrix.displayScope == nil || matrix.displayScope == scope.rawValue else { return [] }
         return matrix.questions.compactMap { question in
             guard question.displayScope == nil || question.displayScope == scope.rawValue else { return nil }
+            // Options a reader cannot tell apart are not a question we can
+            // show. Production served every Polymarket team total as
+            // "Over" / "Over" with one shared result (event 15323083).
+            guard !hasIndistinguishableOptions(question) else { return nil }
             return row(question, scope: scope)
         }
+    }
+
+    static func hasIndistinguishableOptions(_ question: QuestionMatrixQuestion) -> Bool {
+        let labels = question.options.map { $0.label.trimmingCharacters(in: .whitespaces).lowercased() }
+        return Set(labels).count != labels.count
     }
 
     /// Resolve against the latest payload using the existing selection
