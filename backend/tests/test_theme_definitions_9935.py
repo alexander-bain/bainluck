@@ -812,6 +812,64 @@ class TestDecisionLedgerDDL:
         assert "shared_clause_probe" in sql and "container_member_decisions" not in sql
 
 
+MIGRATION = BACKEND / "alembic" / "versions" / "ce9935000002_theme_member_decisions.py"
+
+
+def _load_migration():
+    import importlib.util
+
+    spec = importlib.util.spec_from_file_location("ce9935000002_probe", MIGRATION)
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
+class TestTheC2Migration:
+    """C2 (D45): the migration runs S0's statements, follows the head it was
+    written on, and leaves exactly one head — the #9651 precedent."""
+
+    def test_its_id_fits_and_it_follows_the_head_it_was_written_on(self):
+        text = MIGRATION.read_text()
+        revision = re.search(r'^revision = "([^"]+)"', text, re.M).group(1)
+        down = re.search(r'^down_revision = "([^"]+)"', text, re.M).group(1)
+        assert revision == "ce9935000002"
+        assert len(revision) <= 32  # gotcha #1
+        assert down == "serie_a_femminile_sport"
+
+    def test_it_is_the_only_head(self):
+        revisions, parents = set(), set()
+        for path in (BACKEND / "alembic" / "versions").glob("*.py"):
+            text = path.read_text()
+            rev = re.search(r"^revision\s*(?::\s*str)?\s*=\s*['\"]([^'\"]+)", text, re.M)
+            down = re.search(r"^down_revision[^=]*=\s*(.+)$", text, re.M)
+            if rev:
+                revisions.add(rev.group(1))
+                parents.update(re.findall(r"['\"]([^'\"]+)['\"]", down.group(1) if down else ""))
+        # ONE head, not THIS head: a successor migration must not read as a
+        # branchpoint here. This revision being in the chain is asserted beside it.
+        heads = revisions - parents
+        assert len(heads) == 1, f"expected a single Alembic head, got {heads}"
+        assert heads == {"ce9935000002"} or "ce9935000002" in parents
+
+    def test_it_runs_the_helpers_statements_by_identity_not_a_copy(self):
+        text = MIGRATION.read_text()
+        for ddl in ("CREATE TABLE", "CREATE INDEX", "DROP TABLE", "container_member_decisions ("):
+            assert ddl not in text
+        module = _load_migration()
+        assert module.UPGRADE_STATEMENTS is td.UPGRADE_STATEMENTS
+        assert module.DOWNGRADE_STATEMENTS is td.DOWNGRADE_STATEMENTS
+
+    def test_upgrade_and_downgrade_execute_exactly_those_statements_in_order(self, monkeypatch):
+        module = _load_migration()
+        executed: list[str] = []
+        monkeypatch.setattr(module, "op", SimpleNamespace(execute=executed.append))
+        module.upgrade()
+        assert executed == list(td.UPGRADE_STATEMENTS)
+        executed.clear()
+        module.downgrade()
+        assert executed == list(td.DOWNGRADE_STATEMENTS)
+
+
 class TestWriterVocabulary:
     def test_every_registered_container_kind_is_writable(self):
         from app.utils.container_graph import validate_container_kind
