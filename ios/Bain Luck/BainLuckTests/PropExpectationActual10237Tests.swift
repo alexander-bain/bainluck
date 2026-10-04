@@ -279,6 +279,128 @@ final class PropExpectationActual10237Tests: XCTestCase {
         }
     }
 
+    // MARK: - Root's display helper (guard cases handed over with f1d3aca244)
+
+    private func editingExpectation(_ key: String, _ edit: (inout [String: Any]) -> Void) throws -> [String: Any] {
+        try editingQuestion(key) {
+            var e = $0["expectation"] as? [String: Any] ?? [:]
+            edit(&e)
+            $0["expectation"] = e
+        }
+    }
+
+    func testTheMarkFollowsTheServerEvenWhenTheCountSaysOtherwise() throws {
+        // A final 1 under a 2+ question the server calls reached stays reached.
+        let one = try props(try editingActual(riceHR) { $0["value"] = 1 })
+        let q = try question(one, rice2)
+        XCTAssertEqual(PropExpectationActualDisplay.mark(q, actual: one.actual(for: q)), .reached)
+        // A final 2 under a 2+ question the server calls below stays below.
+        let below = try props(try editingQuestion(rice2) { $0["comparison"] = ["state": "below", "reason": NSNull()] })
+        let bq = try question(below, rice2)
+        XCTAssertEqual(below.actual(for: bq)?.finalCount, 2, "control")
+        XCTAssertEqual(PropExpectationActualDisplay.mark(bq, actual: below.actual(for: bq)), .below)
+    }
+
+    func testEachIdentityMismatchOnAnActualIsUnknownOnItsOwn() throws {
+        let after = try props(try specimen())
+        let q = try question(after, rice2)
+        let rice = try XCTUnwrap(after.actuals.first { $0.actualKey == riceHR })
+        XCTAssertEqual(PropExpectationActualDisplay.mark(q, actual: rice), .reached, "control")
+        let edits: [(String, (inout [String: Any]) -> Void)] = [
+            ("subject", { $0["subject"] = ["key": "aaron judge", "kind": "player", "label": "Aaron Judge"] }),
+            ("stat", { $0["stat_key"] = "hits" }),
+            ("period", { $0["period_key"] = "first_5" }),
+        ]
+        for (name, edit) in edits {
+            let odd = try props(try editingActual(riceHR, edit))
+            let oq = try question(odd, rice2)
+            let actual = try XCTUnwrap(odd.actuals.first { $0.actualKey == riceHR }, name)
+            XCTAssertEqual(actual.actualKey, oq.actualKey, "\(name): same actual_key")
+            XCTAssertEqual(PropExpectationActualDisplay.mark(oq, actual: actual), .unknown, name)
+        }
+        XCTAssertEqual(PropExpectationActualDisplay.mark(q, actual: nil), .unknown)
+        let unworded = try props(try editingQuestion(rice2) { $0["comparison"] = ["state": "unknown", "reason": NSNull()] })
+        let uq = try question(unworded, rice2)
+        XCTAssertEqual(PropExpectationActualDisplay.mark(uq, actual: unworded.actual(for: uq)), .unknown)
+    }
+
+    func testANegativeCountOrAStatForAnotherPeriodShowsNoCount() throws {
+        let stat = try XCTUnwrap(try props(try specimen()).stat("home_runs"))
+        let negative = try props(try editingActual(riceHR) { $0["value"] = -1 })
+        let shown = PropExpectationActualDisplay.actual(negative.actuals.first { $0.actualKey == riceHR }, stat: stat)
+        XCTAssertNil(shown.countText)
+        XCTAssertNil(shown.sourceLabel)
+        XCTAssertFalse(shown.isFinal)
+        XCTAssertEqual(shown.stateText, "Unknown")
+        XCTAssertEqual(PropExpectationActualDisplay.actual(nil, stat: stat).stateText, "Unknown")
+
+        var dict = try specimen()
+        var body = try XCTUnwrap(dict["after_player_props"] as? [String: Any])
+        var stats = try XCTUnwrap(body["stats"] as? [[String: Any]])
+        stats[0]["period_key"] = "first_5"
+        body["stats"] = stats
+        dict["after_player_props"] = body
+        let other = try props(dict)
+        let otherStat = try XCTUnwrap(other.stat("home_runs"))
+        let rice = other.actuals.first { $0.actualKey == riceHR }
+        XCTAssertEqual(rice?.finalCount, 2, "control: the actual itself is final")
+        let mismatched = PropExpectationActualDisplay.actual(rice, stat: otherStat)
+        XCTAssertNil(mismatched.countText, "another period's units never label this count")
+        XCTAssertEqual(mismatched.stateText, "Unknown")
+        XCTAssertEqual(PropExpectationActualDisplay.question(try question(other, rice2), stat: otherStat), "2+")
+    }
+
+    func testAnUnsupportedQuestionIsNeverRewrittenAsAnOverCount() throws {
+        let stat = try XCTUnwrap(try props(try specimen()).stat("home_runs"))
+        let edits: [(String, (inout [String: Any]) -> Void)] = [
+            ("kind", { var p = $0["predicate"] as? [String: Any] ?? [:]; p["kind"] = "signed_margin"; $0["predicate"] = p }),
+            ("side", { var p = $0["predicate"] as? [String: Any] ?? [:]; p["side"] = "under"; $0["predicate"] = p }),
+            ("count", { var p = $0["predicate"] as? [String: Any] ?? [:]; p["count"] = -2; $0["predicate"] = p }),
+            ("period", { $0["period_key"] = "first_5" }),
+        ]
+        for (name, edit) in edits {
+            let odd = try props(try editingQuestion(rice2, edit))
+            let q = try question(odd, rice2)
+            let actual = odd.actuals.first { $0.actualKey == riceHR }
+            XCTAssertEqual(PropExpectationActualDisplay.question(q, stat: stat), absentProbabilityMarker, name)
+            XCTAssertEqual(PropExpectationActualDisplay.mark(q, actual: actual), .unknown, name)
+            let spoken = PropExpectationActualDisplay.accessibilityLabel(q, actual: actual, stat: stat)
+            XCTAssertTrue(spoken.contains("Question unavailable"), "\(name): \(spoken)")
+            XCTAssertFalse(spoken.contains("or more"), "\(name): \(spoken)")
+        }
+    }
+
+    func testTheSpokenChanceKeepsTheVisualMarkersAtTheEdges() throws {
+        for (p, visual, spokenChance) in [(0.004, "<1%", "under 1 percent"), (0.996, ">99%", "over 99 percent"),
+                                          (0.0, "<1%", "under 1 percent"), (1.0, ">99%", "over 99 percent")] {
+            let after = try props(try editingExpectation(rice2) { $0["probability"] = p })
+            let q = try question(after, rice2)
+            XCTAssertEqual(q.expectation.savedProbability, p, "a finite 0 or 1 is a real saved chance")
+            XCTAssertEqual(PropExpectationActualDisplay.expectation(q.expectation).valueText, visual)
+            let spoken = PropExpectationActualDisplay.accessibilityLabel(q, actual: after.actual(for: q), stat: after.stat("home_runs"))
+            XCTAssertTrue(spoken.contains("saved pregame chance \(spokenChance)"), spoken)
+            XCTAssertTrue(spoken.hasSuffix("result reached"), "the chance never grades: \(spoken)")
+        }
+    }
+
+    func testTheBasisNamesOnlySourcesTheAppKnows() throws {
+        func basis(_ kind: String, _ sources: [String]) throws -> String? {
+            let after = try props(try editingExpectation(rice2) { e in
+                let template = (e["contributors"] as? [[String: Any]])?.first ?? [:]
+                e["basis"] = kind
+                e["contributors"] = sources.map { s -> [String: Any] in var c = template; c["source"] = s; return c }
+            })
+            return PropExpectationActualDisplay.expectation(try question(after, rice2).expectation).basisText
+        }
+        XCTAssertNil(try basis("single_source", ["acme_exchange"]))
+        XCTAssertEqual(try basis("blend_mean", ["kalshi", "acme_exchange"]), "Average of 2 prices")
+        XCTAssertEqual(try basis("blend_mean", ["kalshi", "polymarket", "kalshi"]), "Average of Kalshi and Polymarket")
+        XCTAssertNil(try basis("median_of_three", ["kalshi", "polymarket"]), "an unknown basis invents nothing")
+        for text in [try basis("single_source", ["acme_exchange"]), try basis("blend_mean", ["kalshi", "acme_exchange"])] {
+            XCTAssertFalse(text?.contains("acme") ?? false)
+        }
+    }
+
     // MARK: - Page
 
     func testTheOldCardKeepsOnlyThePropsTheAfterGridDoesNotDraw() throws {
