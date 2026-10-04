@@ -3382,6 +3382,15 @@ async def _prune_orphaned_blend_source(
         await session.execute(
             update(Event).where(Event.id == event_id).values(win_probability_sources=new_wps)
         )
+        # #9051: this transaction may still roll back. Attribute the staged
+        # prune for the existing held-page check; never claim a committed drop.
+        try:
+            logger.info(
+                "blend_source_prune_staged event_id=%s source=%s phase=unlink",
+                event_id, source,
+            )
+        except Exception:
+            pass  # Diagnostic failure must not alter the existing write path.
     return changed
 
 
@@ -3461,6 +3470,14 @@ async def _cleanup_orphaned_blend_sources(session, time_remaining_fn=None, limit
                     update(Event).where(Event.id == eid).values(win_probability_sources=new_wps)
                 )
                 pruned += 1
+                # #9051: attribution only; the existing commit happens later.
+                try:
+                    logger.info(
+                        "blend_source_prune_staged event_id=%s source=%s phase=cleanup",
+                        eid, source,
+                    )
+                except Exception:
+                    pass  # Logging cannot suppress commit or change its result.
     if pruned:
         await session.commit()
     return pruned
