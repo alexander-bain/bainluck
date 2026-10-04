@@ -51,7 +51,9 @@ ESPN_API_BASE = "https://site.api.espn.com/apis/site/v2/sports"
 ESPN_CORE_API = "https://sports.core.api.espn.com/v2/sports"
 # #10103: sports whose box scores keep each athlete's ESPN id, team and picture
 # (`box_score_data.player_identities`). Widen this only together with a reader.
-BOX_SCORE_IDENTITY_SPORTS = frozenset({"americanfootball_nfl"})
+# #10237: MLB's reader is the After props read (`prop_expectation_actual`), which
+# refuses any name the identity list does not make unique.
+BOX_SCORE_IDENTITY_SPORTS = frozenset({"americanfootball_nfl", "baseball_mlb"})
 # Standings live on the `apis/v2` host, NOT under `apis/site/v2`. Its own
 # constant because the wrong one does not fail: measured 2026-09-21,
 # `apis/site/v2/sports/baseball/mlb/standings` answers **200** with the body
@@ -1407,8 +1409,8 @@ class ESPNAPIService:
             "box_score": box_score,
             "scoring_plays": scoring_plays,
             "scores": scores,
-            # #10103: NFL only in this slice — the one sport whose prop reader
-            # consumes it. Every other sport's stored box stays byte-identical.
+            # #10103 / #10237: only the sports whose prop reader consumes it
+            # (NFL, MLB). Every other sport's stored box stays byte-identical.
             "box_score_player_identities": (
                 self._parse_boxscore_player_identities(data)
                 if sport_key in BOX_SCORE_IDENTITY_SPORTS

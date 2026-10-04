@@ -103,6 +103,7 @@ from app.utils.event_rails import (
 from app.utils.lifecycle import EVENT_NOT_STARTED, served_event_status
 from app.utils.score_observation import score_observation_fields
 from app.utils.event_props_matrix import blend_mean, build_during_player_props
+from app.utils.prop_expectation_actual import build_after_player_props
 from app.utils.event_question_matrix import (
     build_game_question_matrix,
     build_series_question_matrix,
@@ -27068,12 +27069,20 @@ async def _build_game_markets(
     # flows back into any list here. The pins are read off the plain market list
     # now, before any commit boundary below (gotcha #6), and only for a game the
     # public surface serves as live — every other payload builds nothing extra.
+    #
+    # #10237 — the AFTER comparison reads the same population for a finished
+    # game (`event_is_finished`, the flag `_grade_settled_prop` grades under),
+    # so the two copies are never both taken: a served-live game is not finished.
     _during_prop_candidates: Optional[list[dict]] = None
+    _after_prop_candidates: Optional[list[dict]] = None
     _pregame_mark_by_market_id: dict = {}
     if served_event_status(
         event.status, event.commence_time, datetime.now(timezone.utc)
     ) == "live":
         _during_prop_candidates = deepcopy(player_props)
+    elif event_is_finished:
+        _after_prop_candidates = deepcopy(player_props)
+    if _during_prop_candidates is not None or _after_prop_candidates is not None:
         for _m in markets:
             _meta = _m.__dict__.get("market_metadata")
             if isinstance(_meta, dict) and _meta.get("pregame_mark") is not None:
@@ -27675,6 +27684,30 @@ async def _build_game_markets(
         )
         _game_question_matrix = None
 
+    # #10237 — the AFTER comparison: additive, null unless the game is finished
+    # and at least one prop types. The actual is read only from a box whose own
+    # provider evidence proves it final, never from `hit`; see
+    # `app/utils/prop_expectation_actual.py`. Never fails the page.
+    _after_player_props = None
+    if _after_prop_candidates is not None:
+        try:
+            _after_player_props = build_after_player_props(
+                _after_prop_candidates,
+                box_score_data=event.box_score_data,
+                espn_id=event.espn_id,
+                sport_key=sport_key,
+                player_and_stat=_prop_player_and_stat,
+                pregame_mark_by_market_id=_pregame_mark_by_market_id,
+                is_pregame=_pregame_mark_is_pregame,
+                commence_time=event.commence_time,
+                home_team=event.home_team_name,
+                away_team=event.away_team_name,
+            )
+        except Exception as exc:
+            logger.warning(
+                "game-markets %s: after props refused on error (%s)", event_id, exc
+            )
+
     response = {
         "event_id": event_id,
         "home_team": event.home_team_name,
@@ -27756,6 +27789,8 @@ async def _build_game_markets(
             if _during_prop_candidates is not None
             else None
         ),
+        # #10237 — the AFTER comparison; see above the response literal.
+        "after_player_props": _after_player_props,
         # #10238 G2 — additive; null when no question is built. See G1.
         "game_question_matrix": _game_question_matrix,
     }
