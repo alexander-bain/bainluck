@@ -8,7 +8,7 @@ from pathlib import Path
 
 
 def inspect(log: str, platform: str, exit_code: int) -> dict:
-    if platform not in {"macOS", "visionOS"}:
+    if platform != "macOS":
         raise ValueError("Unsupported platform")
     if exit_code != 0:
         raise ValueError(f"xcodebuild did not succeed: {exit_code}")
@@ -42,21 +42,23 @@ def inspect(log: str, platform: str, exit_code: int) -> dict:
 
 
 def inspect_product(products: Path, platform: str) -> dict:
+    if platform != "macOS":
+        raise ValueError("Unsupported platform")
     candidates = list(products.glob("**/Bain Luck.app"))
     if len(candidates) != 1:
         raise ValueError("Expected exactly one built Bain Luck application")
     app = candidates[0]
-    info_path = app / ("Contents/Info.plist" if platform == "macOS" else "Info.plist")
+    info_path = app / "Contents/Info.plist"
     info = plistlib.loads(info_path.read_bytes())
     if not isinstance(info, dict) or info.get("CFBundleIdentifier") != "com.bainluck.Bain-Luck":
         raise ValueError("Built app identity does not match Bain Luck")
-    expected = "MacOSX" if platform == "macOS" else "XROS"
+    expected = "MacOSX"
     if expected not in info.get("CFBundleSupportedPlatforms", []):
         raise ValueError("Built app platform does not match destination")
     executable = info.get("CFBundleExecutable", "")
     if not executable or Path(executable).name != executable:
         raise ValueError("Missing or invalid app executable name")
-    binary = app / ("Contents/MacOS" if platform == "macOS" else "") / executable
+    binary = app / "Contents/MacOS" / executable
     if not binary.is_file() or binary.stat().st_size == 0:
         raise ValueError("Built app executable missing or empty")
     for item in app.rglob("*"):

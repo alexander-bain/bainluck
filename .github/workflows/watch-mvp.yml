@@ -207,13 +207,9 @@ jobs:
           retention-days: 7
 
   non-ios-packaging-plan:
-    name: Watch excluded from ${{ matrix.platform }} build
+    name: Watch excluded from macOS build
     runs-on: xcode-27
     timeout-minutes: 45
-    strategy:
-      fail-fast: false
-      matrix:
-        platform: [macOS, visionOS]
     env:
       DEVELOPER_DIR: /Applications/Xcode_27.0.app/Contents/Developer
     steps:
@@ -223,13 +219,13 @@ jobs:
           persist-credentials: false
       - name: Exercise plan acceptance guards
         run: python3 tools/tests/test_watch_non_ios_plan.py -v
-      - name: Build unsigned non-iOS app and verify Watch exclusion
-        run: bash tools/watch-non-ios-plan.sh '${{ matrix.platform }}'
+      - name: Build unsigned Mac app and verify Watch exclusion
+        run: bash tools/watch-non-ios-plan.sh macOS
       - name: Preserve plan and receipt
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: watch-non-ios-plan-${{ matrix.platform }}
+          name: watch-non-ios-plan-macOS
           path: |
             build/watch-non-ios-plan/*.log
             build/watch-non-ios-plan/*.json

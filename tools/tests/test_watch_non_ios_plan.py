@@ -15,8 +15,8 @@ GOOD = """Target dependency graph (2 targets)
 """
 
 class PlanTests(unittest.TestCase):
-    def test_accepts_both_platforms_with_explicit_limited_scope(self):
-        for platform in ("macOS", "visionOS"):
+    def test_accepts_mac_with_explicit_limited_scope(self):
+        for platform in ("macOS",):
             result = plan.inspect(GOOD, platform, 0)
             self.assertEqual(result["target_count"], 2)
             self.assertIn("runtime and distribution unverified", result["scope"])
@@ -42,7 +42,7 @@ class PlanTests(unittest.TestCase):
     def test_rejects_copy_even_when_graph_omits_watch(self):
         for command in ("builtin-copy /build/BainLuckWatch.app /App/Watch/", "Copy /tmp/app.watchkitapp", "CpResource /App/Watch/content", "ditto /tmp/BainLuckComplication.appex /App"):
             with self.subTest(command=command):
-                with self.assertRaises(ValueError): plan.inspect(GOOD + command, "visionOS", 0)
+                with self.assertRaises(ValueError): plan.inspect(GOOD + command, "macOS", 0)
 
     def test_rejects_watch_compile_or_sign_command(self):
         for command in ("SwiftCompile BainLuckWatch", "Ld BainLuckComplication", "CodeSign /tmp/BainLuckWatch.app"):
@@ -51,28 +51,28 @@ class PlanTests(unittest.TestCase):
 
 class ProductTests(unittest.TestCase):
     def fixture(self, root, platform):
-        products = Path(root) / ("Release" if platform == "macOS" else "Release-xros")
+        products = Path(root) / "Release"
         app = products / "Bain Luck.app"
-        info_path = app / ("Contents/Info.plist" if platform == "macOS" else "Info.plist")
-        binary = app / ("Contents/MacOS/Bain Luck" if platform == "macOS" else "Bain Luck")
+        info_path = app / "Contents/Info.plist"
+        binary = app / "Contents/MacOS/Bain Luck"
         binary.parent.mkdir(parents=True)
         binary.write_bytes(b"synthetic built executable")
         info = {"CFBundleIdentifier": "com.bainluck.Bain-Luck", "CFBundleExecutable": "Bain Luck",
-                "CFBundleSupportedPlatforms": ["MacOSX" if platform == "macOS" else "XROS"]}
+                "CFBundleSupportedPlatforms": ["MacOSX"]}
         info_path.write_bytes(plistlib.dumps(info))
         return products, app, info_path, binary, info
 
-    def test_correct_mac_and_vision_products(self):
-        for platform in ("macOS", "visionOS"):
+    def test_correct_mac_product(self):
+        for platform in ("macOS",):
             with self.subTest(platform=platform), tempfile.TemporaryDirectory() as root:
                 products, app, _, _, _ = self.fixture(root, platform)
                 result = plan.inspect_product(products, platform)
                 self.assertEqual(result["app"], str(app))
-                self.assertEqual(result["built_platform"], "MacOSX" if platform == "macOS" else "XROS")
+                self.assertEqual(result["built_platform"], "MacOSX")
                 self.assertEqual(result["watch_payload"], "ABSENT")
 
     def test_missing_and_empty_executables(self):
-        for platform in ("macOS", "visionOS"):
+        for platform in ("macOS",):
             with self.subTest(platform=platform), tempfile.TemporaryDirectory() as root:
                 products, _, _, binary, _ = self.fixture(root, platform)
                 binary.write_bytes(b"")
@@ -88,25 +88,25 @@ class ProductTests(unittest.TestCase):
             with self.assertRaises(ValueError): plan.inspect_product(products, "macOS")
 
     def test_platform_mismatch(self):
-        for platform in ("macOS", "visionOS"):
+        for platform in ("macOS",):
             with self.subTest(platform=platform), tempfile.TemporaryDirectory() as root:
                 products, _, info_path, _, info = self.fixture(root, platform)
-                info["CFBundleSupportedPlatforms"] = ["XROS" if platform == "macOS" else "MacOSX"]
+                info["CFBundleSupportedPlatforms"] = ["iPhoneOS"]
                 info_path.write_bytes(plistlib.dumps(info))
                 with self.assertRaises(ValueError): plan.inspect_product(products, platform)
 
     def test_watch_directory_is_rejected(self):
-        for platform in ("macOS", "visionOS"):
+        for platform in ("macOS",):
             with self.subTest(platform=platform), tempfile.TemporaryDirectory() as root:
                 products, app, _, _, _ = self.fixture(root, platform)
                 (app / "Watch").mkdir()
                 with self.assertRaises(ValueError): plan.inspect_product(products, platform)
 
     def test_disguised_watch_bundles_are_rejected(self):
-        for platform in ("macOS", "visionOS"):
+        for platform in ("macOS",):
             for child_info in [
                 {"CFBundleIdentifier": "innocent.name", "CFBundleSupportedPlatforms": ["WatchOS"]},
-                {"CFBundleIdentifier": "com.bainluck.Bain-Luck.watchkitapp.Complication", "CFBundleSupportedPlatforms": ["XROS"]},
+                {"CFBundleIdentifier": "com.bainluck.Bain-Luck.watchkitapp.Complication", "CFBundleSupportedPlatforms": ["MacOSX"]},
             ]:
                 with self.subTest(platform=platform, child=child_info), tempfile.TemporaryDirectory() as root:
                     products, app, _, _, _ = self.fixture(root, platform)
