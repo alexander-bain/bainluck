@@ -42,7 +42,8 @@ nonisolated struct MatrixPageReadingAnchorScrollGeometry10236: Equatable, Sendab
     let viewportHeight: Double
     let adjustedTopInset: Double
     let adjustedBottomInset: Double
-    /// Points per physical pixel, supplied by Native's bridge.
+    /// Physical pixels per point, supplied by Native's bridge; one pixel is
+    /// `1 / screenScale` points.
     let screenScale: Double
 
     init(offsetX: Double, offsetY: Double, contentHeight: Double, viewportHeight: Double,
@@ -56,13 +57,19 @@ nonisolated struct MatrixPageReadingAnchorScrollGeometry10236: Equatable, Sendab
         self.screenScale = screenScale
     }
 
+    /// Every input finite, a positive scale, and physical heights: a page with
+    /// no visible height or negative content has no position to restore.
     var isUsable: Bool {
         [offsetX, offsetY, contentHeight, viewportHeight, adjustedTopInset, adjustedBottomInset, screenScale]
-            .allSatisfy(\.isFinite) && screenScale > 0
+            .allSatisfy(\.isFinite) && screenScale > 0 && viewportHeight > 0 && contentHeight >= 0
     }
 
     var minOffsetY: Double { -adjustedTopInset }
-    var maxOffsetY: Double { max(minOffsetY, contentHeight - viewportHeight + adjustedBottomInset) }
+    /// The deepest offset the content reaches before `maxOffsetY` floors it at
+    /// `minOffsetY`. Finite inputs can still overflow here, and the floor would
+    /// hide a `-infinity`, so the planner checks this value itself.
+    var contentExtentY: Double { contentHeight - viewportHeight + adjustedBottomInset }
+    var maxOffsetY: Double { max(minOffsetY, contentExtentY) }
 }
 
 /// What the page looked like when the reader opened the question.
@@ -236,10 +243,23 @@ nonisolated enum MatrixPageReadingAnchorPlan10236 {
             return .invalidate(.nonFiniteGeometry)
         }
 
+        // Finite inputs do not make finite derived values: the bounds, the
+        // proposed offset and the pixel can each overflow. Refuse before any
+        // hold, clamp or move reads them.
         let pixel = 1 / scroll.screenScale
+        let lowerY = scroll.minOffsetY
+        let upperY = scroll.maxOffsetY
+        let proposedY = scroll.offsetY + delta
+        guard pixel.isFinite, lowerY.isFinite, scroll.contentExtentY.isFinite, upperY.isFinite,
+              proposedY.isFinite else {
+            return .invalidate(.nonFiniteGeometry)
+        }
+
         if abs(delta) < pixel { return .hold(.restored) }
-        let destinationY = min(max(scroll.offsetY + delta, scroll.minOffsetY), scroll.maxOffsetY)
-        if abs(destinationY - scroll.offsetY) < pixel { return .hold(.clampedAtLimit) }
+        let destinationY = min(max(proposedY, lowerY), upperY)
+        let travelY = destinationY - scroll.offsetY
+        guard destinationY.isFinite, travelY.isFinite else { return .invalidate(.nonFiniteGeometry) }
+        if abs(travelY) < pixel { return .hold(.clampedAtLimit) }
         return .move(to: MatrixPageReadingAnchorOffset10236(x: scroll.offsetX, y: destinationY))
     }
 }

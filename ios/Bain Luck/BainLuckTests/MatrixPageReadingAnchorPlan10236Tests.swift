@@ -211,6 +211,71 @@ final class MatrixPageReadingAnchorPlan10236Tests: XCTestCase {
         }
     }
 
+    /// A reading whose scroll offset is independent of the marker's `bounds.minY`.
+    private func measured(contentY: Double, boundsMinY: Double, scroll: AnchorScroll) -> AnchorReading {
+        AnchorReading(eventID: eventID, host: .during, markerInstanceID: markerID, presentationGeneration: generation,
+                      marker: AnchorMarker(contentY: contentY, boundsMinY: boundsMinY), scroll: scroll)
+    }
+
+    func testFiniteInputsWhoseDerivedBoundsOverflowAreRefused() throws {
+        let big = Double.greatestFiniteMagnitude
+        let atTop = try captured(contentY: 0, boundsMinY: 0)
+        // The review's specimen: every input finite, the bound and the proposed offset both 2e308.
+        // Unguarded, this answered .move(y: +infinity).
+        XCTAssertEqual(AnchorPlan.reconcile(atTop, measured(contentY: 1e308, boundsMinY: 0, scroll: scroll(
+            offsetY: 1e308, contentHeight: 1e308, viewportHeight: -1e308))), .invalidate(.nonFiniteGeometry))
+        // The same overflow with physical heights, so the height check cannot be what refuses it.
+        XCTAssertEqual(AnchorPlan.reconcile(atTop, measured(contentY: 1e308, boundsMinY: 0, scroll: scroll(
+            offsetY: 1e308, contentHeight: 1e308, viewportHeight: 1, bottom: 1e308))), .invalidate(.nonFiniteGeometry))
+        let token = try captured()
+        // Only the upper bound overflows; unguarded, the clamp to +infinity let the ordinary 522 through.
+        XCTAssertEqual(AnchorPlan.reconcile(token, reading(contentY: 1022, boundsMinY: 500, contentHeight: big, bottom: big)),
+                       .invalidate(.nonFiniteGeometry))
+        // The extent overflows downward and max(minOffsetY, −infinity) hides it; unguarded, this moved to 0.
+        XCTAssertEqual(AnchorPlan.reconcile(token, reading(contentY: 1022, boundsMinY: 500, contentHeight: 0,
+                                                           viewportHeight: big, bottom: -big)),
+                       .invalidate(.nonFiniteGeometry))
+    }
+
+    func testFiniteInputsWhoseProposedOffsetOverflowsAreRefused() throws {
+        let atTop = try captured(contentY: 0, boundsMinY: 0)
+        // offsetY + delta = 2e308 against an ordinary 3200 bound; unguarded, the clamp turned it into a move to 3200.
+        XCTAssertEqual(AnchorPlan.reconcile(atTop, measured(contentY: 1e308, boundsMinY: 0, scroll: scroll(offsetY: 1e308))),
+                       .invalidate(.nonFiniteGeometry))
+        // −2e308 the other way; unguarded, a move to 0.
+        XCTAssertEqual(AnchorPlan.reconcile(atTop, measured(contentY: -1e308, boundsMinY: 0, scroll: scroll(offsetY: -1e308))),
+                       .invalidate(.nonFiniteGeometry))
+    }
+
+    func testFiniteInputsWhoseSubtractionsOverflowAreRefused() throws {
+        let big = Double.greatestFiniteMagnitude
+        // Already guarded before this change; pinned so the guard cannot be dropped.
+        let farAbove = try captured(contentY: -big, boundsMinY: 0)
+        XCTAssertEqual(AnchorPlan.reconcile(farAbove, measured(contentY: big, boundsMinY: 0, scroll: scroll(offsetY: 0))),
+                       .invalidate(.nonFiniteGeometry), "delta = big − (−big)")
+        XCTAssertEqual(AnchorPlan.reconcile(try captured(), measured(contentY: big, boundsMinY: -big, scroll: scroll(offsetY: 500))),
+                       .invalidate(.nonFiniteGeometry), "the reading's viewportY = big − (−big)")
+        XCTAssertNil(AnchorPlan.capture(eventID: eventID, host: .during, markerInstanceID: markerID,
+                                        presentationGeneration: generation,
+                                        marker: AnchorMarker(contentY: big, boundsMinY: -big)))
+    }
+
+    func testNonPhysicalHeightsAndAnUnrepresentablePixelAreRefused() throws {
+        let token = try captured()
+        let refused: [AnchorReading] = [
+            reading(contentY: 1022, boundsMinY: 500, viewportHeight: 0),
+            reading(contentY: 1022, boundsMinY: 500, viewportHeight: -800),
+            reading(contentY: 1022, boundsMinY: 500, contentHeight: -1),
+            // 1 / scale overflows; unguarded, an infinite pixel held every reading as restored.
+            reading(contentY: 1022, boundsMinY: 500, scale: .leastNonzeroMagnitude),
+        ]
+        for (index, measurement) in refused.enumerated() {
+            XCTAssertEqual(AnchorPlan.reconcile(token, measurement), .invalidate(.nonFiniteGeometry), "reading \(index)")
+        }
+        // Empty content is still a page: it clamps to its one valid offset rather than refusing.
+        XCTAssertEqual(AnchorPlan.reconcile(token, reading(contentY: 1022, boundsMinY: 500, contentHeight: 0)), move(0, 0))
+    }
+
     // MARK: - Identity
 
     func testMismatchedIdentityInvalidatesEvenWhenTheGeometryWantsToMove() throws {
