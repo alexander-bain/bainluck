@@ -9,17 +9,32 @@ Contract: ``10237-AFTER-AUTHORITY-ACK-v1.md`` (+ addendum 0215Z). Two layers:
   is published, every existing key is byte-identical with or without it, and a
   scheduled or live game carries none.
 
-The STATUS_FINAL fixture gate (contract §8.5) is paid by a real finished MLB
-ESPN summary, which Live supplies; until then ``FINAL_STATUS_NAMES`` rests on
-the writer test's NFL fixture triple and this file's synthetic boxes.
+* FIXTURE GATE (contract §8.5) — ``espn_summary_mlb_401907985_yankees_at_rays_10237.json``
+  is ESPN's raw MLB summary for Yankees at Rays, 2026-10-03, copied byte for
+  byte (the sha256 is pinned below). It goes through the real parser
+  (``get_event_context``), the real completed-box writer and its
+  ``provider_box_evidence`` marker, then this reader. It pins the
+  ``STATUS_FINAL`` / ``post`` / ``completed: true`` triple behind
+  ``FINAL_STATUS_NAMES`` and the batting ``hits`` / ``home runs`` keys. It is
+  one game, not coverage of every MLB stat or player. The parser has no MLB
+  player identities yet (Live's widening), so every actual from it stays
+  ``unknown``. The marker's ``captured_at`` is when the writer ran in this
+  test, not when the game ended.
+
+The synthetic boxes elsewhere in this file are REPRESENTATIVE controls; they
+do not pay the fixture gate.
 """
 
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import copy
+import hashlib
+import json
 from datetime import datetime, timedelta, timezone
-from unittest.mock import AsyncMock, MagicMock
+from pathlib import Path
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
@@ -721,3 +736,160 @@ def _strip_clocks(payload):
             return [walk(v) for v in node]
         return node
     return walk(payload)
+
+
+# ═══════════════════════════════════════════════ §8.5 FIXTURE GATE ═══
+
+MLB_FIXTURE = (
+    Path(__file__).parent / "fixtures" / "espn_summary_mlb_401907985_yankees_at_rays_10237.json"
+)
+MLB_FIXTURE_SHA256 = "d07bc1299d852496b182918e9f9550af39bd0ebcefb0030d3a934fb870e8874e"
+MLB_ESPN_ID = "401907985"
+MLB_FINAL = {"name": "STATUS_FINAL", "state": "post", "completed": True}
+
+
+def _raw_summary():
+    return json.loads(MLB_FIXTURE.read_bytes())
+
+
+async def _real_context(summary):
+    from app.services.espn_api import ESPNAPIService
+
+    svc = ESPNAPIService()
+    try:
+        with patch.object(svc, "_get", AsyncMock(return_value=summary)):
+            return await svc.get_event_context("baseball_mlb", MLB_ESPN_ID)
+    finally:
+        await svc.close()
+
+
+class _Rows:
+    def __init__(self, rows):
+        self._rows = rows
+
+    def scalars(self):
+        return self
+
+    def all(self):
+        return self._rows
+
+
+class _WriteRecorder:
+    def __init__(self, event):
+        self._event = event
+        self.writes: list = []
+
+    async def execute(self, statement, params=None):
+        if params is None:
+            return _Rows([self._event])
+        self.writes.append(params)
+        return _Rows([])
+
+    def begin_nested(self):
+        return contextlib.nullcontext()
+
+
+async def _real_stored_box(context):
+    """The box the real completed-game writer stores for this response."""
+    from app.utils import espn_helpers
+
+    event = MagicMock()
+    event.id, event.espn_id, event.status, event.box_score_data = 1, MLB_ESPN_ID, "completed", None
+    event.home_score, event.away_score = 1, 0
+    event.sport = MagicMock()
+    event.sport.key = "baseball_mlb"
+    service = MagicMock()
+    service.get_event_context = AsyncMock(return_value=context)
+    service.close = AsyncMock()
+    session = _WriteRecorder(event)
+    with patch("app.services.espn_api.ESPNAPIService", return_value=service):
+        await espn_helpers.fetch_completed_box_scores(session, {})
+    assert len(session.writes) == 1
+    return json.loads(session.writes[0]["bsd"])
+
+
+@pytest.fixture(scope="module")
+def real_mlb():
+    context = asyncio.run(_real_context(_raw_summary()))
+    return context, asyncio.run(_real_stored_box(context))
+
+
+def _real_build(box, rows, *, espn_id=MLB_ESPN_ID, sport="baseball_mlb"):
+    return build_after_player_props(
+        rows,
+        box_score_data=box,
+        espn_id=espn_id,
+        sport_key=sport,
+        player_and_stat=_prop_player_and_stat,
+        pregame_mark_by_market_id={},
+        is_pregame=_pregame_mark_is_pregame,
+        commence_time=datetime(2026, 10, 3, 22, 30, tzinfo=timezone.utc),
+        home_team="Tampa Bay Rays",
+        away_team="New York Yankees",
+    )
+
+
+class TestTheRealFinishedMlbSummary:
+
+    def test_the_fixture_is_the_accepted_raw_bytes(self):
+        raw = MLB_FIXTURE.read_bytes()
+        assert (len(raw), hashlib.sha256(raw).hexdigest()) == (892795, MLB_FIXTURE_SHA256)
+
+    def test_STATUS_FINAL_the_raw_summary_carries_the_triple_and_its_own_id(self):
+        summary = _raw_summary()
+        competition = summary["header"]["competitions"][0]
+        assert summary["header"]["id"] == competition["id"] == MLB_ESPN_ID
+        status = competition["status"]["type"]
+        assert {k: status[k] for k in MLB_FINAL} == MLB_FINAL
+        assert status["name"] in FINAL_STATUS_NAMES["baseball_mlb"]
+        assert len(summary["boxscore"]["players"]) == 2
+
+    def test_the_parser_reads_the_triple_and_the_id_from_the_response(self, real_mlb):
+        scores = real_mlb[0]["scores"]
+        assert scores["provider_status"] == MLB_FINAL
+        assert scores["provider_event_id"] == MLB_ESPN_ID
+        assert (scores["home_score"], scores["away_score"]) == (1, 0)
+
+    def test_the_v1_stats_are_batting_keys_and_zero_is_a_real_zero(self, real_mlb):
+        players = real_mlb[0]["box_score"]
+        assert len(players) == 27
+        assert set(after.AFTER_STAT_BOX_KEYS.values()) <= set(players["Ben Rice"])
+        assert (players["Ben Rice"]["hits"], players["Ben Rice"]["home runs"]) == (0.0, 0.0)
+        assert players["Jonathan Aranda"]["home runs"] == 1.0
+        # A pitcher's line carries hits ALLOWED under its own key, never `hits`.
+        cole = players["Gerrit Cole"]
+        assert "hits" not in cole and "home runs" not in cole
+        assert cole["pitching hits allowed"] == 5.0
+
+    def test_the_parser_has_no_mlb_player_identities_yet(self, real_mlb):
+        context, box = real_mlb
+        assert context["box_score_player_identities"] == []
+        assert not box.get("player_identities")
+
+    def test_the_real_writer_marks_it_final_and_the_reader_accepts_it(self, real_mlb):
+        box = real_mlb[1]
+        evidence = box["provider_box_evidence"]
+        assert evidence["provider_status"] == MLB_FINAL and evidence["provider_final"] is True
+        # The writer's own clock, not the game's end.
+        assert evidence["captured_at"] == box["fetched_at"]
+        got = box_finality(box, MLB_ESPN_ID, "baseball_mlb")
+        assert (got["state"], got["reason"], got["evidence"]) == ("final", None, evidence)
+
+    def test_CONTROL_the_same_box_under_another_id_or_sport_is_refused(self, real_mlb):
+        box = real_mlb[1]
+        assert box_finality(box, "401907986", "baseball_mlb")["reason"] == "provider_event_mismatch"
+        assert box_finality(box, MLB_ESPN_ID, "americanfootball_nfl")["reason"] == "sport_not_supported"
+
+    def test_with_no_identities_every_actual_stays_unknown(self, real_mlb):
+        rows = [
+            _row(71, 7, "Ben Rice: 1+", market_name="New York at Tampa Bay: Hits"),
+            _row(72, 8, "Jonathan Aranda: 1+", market_name="New York at Tampa Bay: Home Runs"),
+        ]
+        payload = _real_build(real_mlb[1], rows)
+        assert len(payload["actuals"]) == len(payload["questions"]) == 2, payload
+        for actual in payload["actuals"]:
+            assert (actual["state"], actual["reason"], actual["value"]) == (
+                "unknown", "player_not_in_box", None,
+            ), actual
+        for question in payload["questions"]:
+            assert question["comparison"]["state"] == "unknown", question
