@@ -486,43 +486,65 @@ final class TheLiveChartEndCarriesTheHeroNumber9436Tests: XCTestCase {
     private final class Hosted {
         let host: UIViewController
         let window: UIWindow
-        init<V: View>(_ view: V) {
+        let previousKeyWindow: UIWindow?
+        init<V: View>(_ view: V) throws {
+            let scene = try XCTUnwrap(UIApplication.shared.connectedScenes
+                .compactMap { $0 as? UIWindowScene }
+                .first { $0.activationState == .foregroundActive },
+                "Motion capture requires a foreground-active window scene")
+            previousKeyWindow = scene.windows.first { $0.isKeyWindow }
             host = hostForMeasurement(view)
             host.view.frame = CGRect(x: 0, y: 0, width: 390, height: 360)
-            window = UIWindow(frame: host.view.frame)
+            window = UIWindow(windowScene: scene)
+            window.frame = host.view.frame
             window.rootViewController = host
-            window.isHidden = false
+            window.makeKeyAndVisible()
         }
-        func close() { window.isHidden = true }
-        /// `scale: 1` is for the two glide probes only: a 3x capture of this view
-        /// took ~300 ms on a hosted runner, so the 350 ms glide was sampled two
-        /// or three times. The scene-cancel checks keep the screen's scale, so
-        /// their equality still compares full-resolution frames.
-        func shot(scale: CGFloat? = nil) -> UIImage {
+        func close() {
+            window.isHidden = true
+            previousKeyWindow?.makeKey()
+        }
+        func shot(afterScreenUpdates: Bool = true, scale: CGFloat? = nil) -> UIImage {
             host.view.setNeedsLayout(); host.view.layoutIfNeeded()
+            // Only motion sampling opts into 1x. Cancellation equalities retain
+            // screen resolution so small unfinished motion remains detectable.
             let format = UIGraphicsImageRendererFormat()
             if let scale { format.scale = scale }
-            return UIGraphicsImageRenderer(bounds: host.view.bounds, format: format).image { _ in
-                host.view.drawHierarchy(in: host.view.bounds, afterScreenUpdates: true)
+            var captured = false
+            let image = UIGraphicsImageRenderer(bounds: host.view.bounds, format: format).image { _ in
+                captured = host.view.drawHierarchy(in: host.view.bounds, afterScreenUpdates: afterScreenUpdates)
             }
+            XCTAssertTrue(captured, "The motion probe failed to capture its view hierarchy")
+            return image
         }
     }
 
-    /// Sample the tip column for `seconds` after a change. Each stamp is taken
-    /// as its capture returns, and the pixel scans run after the loop, so the
-    /// sampling cadence is the capture's cost alone.
-    private func sampleTip(_ hosted: Hosted, seconds: Double) async throws -> (columns: [Int], stamps: [Double]) {
-        var shots: [(image: UIImage, stamp: Double)] = []
+    /// Sample the tip column for `seconds` after a change.
+    private func sampleTip(_ hosted: Hosted, seconds: Double, measuresMarker: Bool = true) async throws -> (columns: [Int], stamps: [Double]) {
+        var captures: [(image: UIImage, acquiredAt: Double, duration: Double)] = []
         let start = CACurrentMediaTime()
         while CACurrentMediaTime() - start < seconds {
-            try await Task.sleep(for: .milliseconds(16))
-            let image = hosted.shot(scale: 1)
-            shots.append((image, CACurrentMediaTime() - start))
+            try await Task.sleep(for: .milliseconds(30))
+            let captureStart = CACurrentMediaTime()
+            // Read the displayed frame; waiting for the next update can consume
+            // most of this short animation before the observer gets another turn.
+            let image = hosted.shot(afterScreenUpdates: false, scale: 1)
+            let acquiredAt = CACurrentMediaTime()
+            captures.append((image, acquiredAt - start, acquiredAt - captureStart))
         }
+        // Scanning pixels must not delay the next animation observation. Timestamp
+        // after acquisition, never before it: capture cost is still paid honestly.
         var columns: [Int] = [], stamps: [Double] = []
-        for shot in shots {
-            if let x = tipColumn(shot.image) { columns.append(x); stamps.append(shot.stamp) }
+        for (index, capture) in captures.enumerated() {
+            // Retain the real frame so an apparent reversal can be distinguished
+            // from label pixels or changing chart axes, without relaxing the gate.
+            recordMotionFrame(capture.image, name: "motion-frame-\(index)-at-\(capture.acquiredAt)")
+            let measured = measuresMarker ? markerColumn(capture.image) : tipColumn(capture.image)
+            let x = try XCTUnwrap(measured, "Sample must contain one unambiguous rendered endpoint")
+            columns.append(x)
+            stamps.append(capture.acquiredAt)
         }
+        print("#9436 sampling acquisitions: \(captures.map(\.acquiredAt)); capture durations: \(captures.map(\.duration))")
         return (columns, stamps)
     }
 
@@ -544,9 +566,100 @@ final class TheLiveChartEndCarriesTheHeroNumber9436Tests: XCTestCase {
         """.utf8))
     }
 
-    /// Rightmost column holding the line colour (#059669): the drawn end of the
-    /// line, which is the dot. Label text is left of the dot on this fixture.
-    private func tipColumn(_ image: UIImage) -> Int? {
+    private func recordMotionFrame(_ image: UIImage, name: String) {
+        let attachment = XCTAttachment(image: image)
+        attachment.name = name
+        attachment.lifetime = .keepAlways
+        add(attachment)
+        print("#9436 \(name) detected pixel: \(String(describing: tipPixel(image))); marker column: \(String(describing: markerColumn(image)))")
+    }
+
+    /// Rightmost line-colour pixel. Retained frames distinguish the endpoint
+    /// from label pixels when the chart's domain changes.
+    private func tipColumn(_ image: UIImage) -> Int? { tipPixel(image)?.x }
+
+    /// Detect the compact filled dot, not the same-colour animated label.
+    /// The 1x fixture draws an 8pt dot with a 1.5pt white outline. Require one
+    /// isolated, near-square green core and a white collar; ambiguity fails.
+    private func markerColumn(_ image: UIImage) -> Int? {
+        guard let cg = image.cgImage else { return nil }
+        let (w, h) = (cg.width, cg.height)
+        var bytes = [UInt8](repeating: 0, count: w * h * 4)
+        guard let ctx = CGContext(data: &bytes, width: w, height: h, bitsPerComponent: 8, bytesPerRow: w * 4,
+                                  space: CGColorSpaceCreateDeviceRGB(),
+                                  bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue) else { return nil }
+        ctx.draw(cg, in: CGRect(x: 0, y: 0, width: w, height: h))
+        var green = (0..<(w * h)).map { pixel in
+            let i = pixel * 4
+            return abs(Int(bytes[i]) - 5) < 24 && abs(Int(bytes[i + 1]) - 150) < 24
+                && abs(Int(bytes[i + 2]) - 105) < 24
+        }
+        var candidates: [Int] = []
+        for seed in green.indices where green[seed] {
+            var queue = [seed], count = 0
+            var minX = w, maxX = 0, minY = h, maxY = 0
+            green[seed] = false
+            while let pixel = queue.popLast() {
+                let x = pixel % w, y = pixel / w
+                count += 1
+                minX = min(minX, x); maxX = max(maxX, x)
+                minY = min(minY, y); maxY = max(maxY, y)
+                for (dx, dy) in [(1, 0), (-1, 0), (0, 1), (0, -1)] {
+                    let nx = x + dx, ny = y + dy
+                    guard nx >= 0, nx < w, ny >= 0, ny < h else { continue }
+                    let next = ny * w + nx
+                    if green[next] { green[next] = false; queue.append(next) }
+                }
+            }
+            let width = maxX - minX + 1, height = maxY - minY + 1
+            guard (4...7).contains(width), (4...7).contains(height), abs(width - height) <= 1,
+                  count >= 16, count * 3 >= width * height * 2 else { continue }
+            let cx = (minX + maxX) / 2, cy = (minY + maxY) / 2
+            let collar = [(minX - 2, cy), (maxX + 2, cy), (cx, minY - 2), (cx, maxY + 2)]
+            let white = collar.filter { x, y in
+                guard x >= 0, x < w, y >= 0, y < h else { return false }
+                let i = (y * w + x) * 4
+                return bytes[i] > 230 && bytes[i + 1] > 230 && bytes[i + 2] > 230
+            }.count
+            // The joining line can occupy one collar point.
+            if white >= 3 { candidates.append(maxX) }
+        }
+        return candidates.count == 1 ? candidates[0] : nil
+    }
+
+    private func detectorFixture(dotCenters: [CGPoint]) -> UIImage {
+        let format = UIGraphicsImageRendererFormat()
+        format.scale = 1
+        let green = UIColor(red: 5 / 255.0, green: 150 / 255.0, blue: 105 / 255.0, alpha: 1)
+        return UIGraphicsImageRenderer(size: CGSize(width: 220, height: 80), format: format).image { context in
+            UIColor.white.setFill()
+            context.fill(CGRect(x: 0, y: 0, width: 220, height: 80))
+            ("BOS 50%" as NSString).draw(at: CGPoint(x: 120, y: 25), withAttributes: [
+                .font: UIFont.boldSystemFont(ofSize: 13), .foregroundColor: green])
+            for center in dotCenters {
+                let circle = CGRect(x: center.x - 4, y: center.y - 4, width: 8, height: 8)
+                context.cgContext.setFillColor(green.cgColor)
+                context.cgContext.fillEllipse(in: circle)
+                context.cgContext.setStrokeColor(UIColor.white.cgColor)
+                context.cgContext.setLineWidth(1.5)
+                context.cgContext.strokeEllipse(in: circle)
+            }
+        }
+    }
+
+    func testTheMotionDetectorIgnoresFartherRightLabelPixels() throws {
+        let image = detectorFixture(dotCenters: [CGPoint(x: 60, y: 40)])
+        let dot = try XCTUnwrap(markerColumn(image))
+        XCTAssertTrue((61...63).contains(dot))
+        XCTAssertGreaterThan(try XCTUnwrap(tipColumn(image)), dot)
+    }
+
+    func testTheMotionDetectorRejectsLabelOnlyAndAmbiguousDots() {
+        XCTAssertNil(markerColumn(detectorFixture(dotCenters: [])))
+        XCTAssertNil(markerColumn(detectorFixture(dotCenters: [CGPoint(x: 60, y: 40), CGPoint(x: 90, y: 40)])))
+    }
+
+    private func tipPixel(_ image: UIImage) -> (x: Int, y: Int)? {
         // Redrawn into a known RGBA layout: a snapshot's own byte order is BGRA.
         guard let cg = image.cgImage else { return nil }
         let (w, h) = (cg.width, cg.height)
@@ -559,7 +672,7 @@ final class TheLiveChartEndCarriesTheHeroNumber9436Tests: XCTestCase {
             for y in 0..<h {
                 let i = (y * w + x) * 4
                 let (r, g, b) = (Int(bytes[i]), Int(bytes[i + 1]), Int(bytes[i + 2]))
-                if abs(r - 5) < 24 && abs(g - 150) < 24 && abs(b - 105) < 24 { return x }
+                if abs(r - 5) < 24 && abs(g - 150) < 24 && abs(b - 105) < 24 { return (x, y) }
             }
         }
         return nil
@@ -568,17 +681,19 @@ final class TheLiveChartEndCarriesTheHeroNumber9436Tests: XCTestCase {
     func testAnAcceptedAppendGlidesTheDotAlongTheLineAndSettles() async throws {
         let feed = Feed(frames: frames([0.49, 0.55, 0.78]),
                         edge: LiveEdgeReading(homeProbability: 0.78, homeLabel: "78%"))
-        let hosted = Hosted(FedChart(feed: feed, history: try history()))
+        let hosted = try Hosted(FedChart(feed: feed, history: try history()))
         defer { hosted.close() }
         try await Task.sleep(for: .milliseconds(600))
-        let before = try XCTUnwrap(tipColumn(hosted.shot(scale: 1)))
+        let before = try XCTUnwrap(markerColumn(hosted.shot(scale: 1)))
 
         // One accepted frame a minute later, at 60% — hero and chart together.
         let next = try XCTUnwrap("2026-09-21T12:14:00Z".asDate)
         feed.frames.append(LiveBlendPoint(date: next, homeProbability: 0.60))
         feed.edge = LiveEdgeReading(homeProbability: 0.60, homeLabel: "60%")
         let (columns, stamps) = try await sampleTip(hosted, seconds: 0.8)
-        let settled = try XCTUnwrap(columns.last)
+        let sampledLast = try XCTUnwrap(columns.last)
+        let settled = try XCTUnwrap(markerColumn(hosted.shot(scale: 1)))
+        XCTAssertEqual(sampledLast, settled, "Sampling must reach the independently captured final endpoint")
         print("#9436 glide tip columns: before=\(before) frames=\(columns)")
 
         // The glide is visible: at least two distinct positions short of the
@@ -600,15 +715,21 @@ final class TheLiveChartEndCarriesTheHeroNumber9436Tests: XCTestCase {
     func testAPinReplacementGlidesTheDotAndSettles() async throws {
         let feed = Feed(frames: [], edge: LiveEdgeReading(homeProbability: 0.50, homeLabel: "50%"),
                         history: try pinnedHistory(pinAt: 12, 0.50))
-        let hosted = Hosted(FedChart(feed: feed, history: try history()))
+        let hosted = try Hosted(FedChart(feed: feed, history: try history()))
         defer { hosted.close() }
         try await Task.sleep(for: .milliseconds(600))
-        let before = try XCTUnwrap(tipColumn(hosted.shot(scale: 1)))
+        let beforeImage = hosted.shot(scale: 1)
+        recordMotionFrame(beforeImage, name: "pin-before")
+        let before = try XCTUnwrap(markerColumn(beforeImage))
 
         feed.history = try pinnedHistory(pinAt: 16, 0.58)
         feed.edge = LiveEdgeReading(homeProbability: 0.58, homeLabel: "58%")
         let (columns, stamps) = try await sampleTip(hosted, seconds: 0.8)
-        let settled = try XCTUnwrap(columns.last)
+        let sampledLast = try XCTUnwrap(columns.last)
+        let finalImage = hosted.shot(scale: 1)
+        recordMotionFrame(finalImage, name: "pin-final")
+        let settled = try XCTUnwrap(markerColumn(finalImage))
+        XCTAssertEqual(sampledLast, settled, "Sampling must reach the independently captured final endpoint")
         print("#9436 pin-replacement tip columns: before=\(before) frames=\(columns)")
 
         // A later pin widens the x-domain in the same update, so `before`
@@ -622,13 +743,49 @@ final class TheLiveChartEndCarriesTheHeroNumber9436Tests: XCTestCase {
         XCTAssertLessThan(stamps[settleIndex], LiveChartEdgeMarkerPlan.glideDuration + 0.25, "\(stamps)")
     }
 
+    func testTheSamplingRigDoesNotInventAnAppendGlideInAnInactiveScene() async throws {
+        try await assertNoSampledGlideInAnInactiveScene(pinReplacement: false)
+    }
+
+    func testTheSamplingRigDoesNotInventAPinGlideInAnInactiveScene() async throws {
+        try await assertNoSampledGlideInAnInactiveScene(pinReplacement: true)
+    }
+
+    private func assertNoSampledGlideInAnInactiveScene(pinReplacement: Bool) async throws {
+        let feed = Feed(frames: pinReplacement ? [] : frames([0.49, 0.55, 0.78]),
+                        edge: LiveEdgeReading(homeProbability: pinReplacement ? 0.50 : 0.78,
+                                              homeLabel: pinReplacement ? "50%" : "78%"),
+                        history: pinReplacement ? try pinnedHistory(pinAt: 12, 0.50) : nil)
+        feed.phase = .background
+        let hosted = try Hosted(FedChart(feed: feed, history: try history()))
+        defer { hosted.close() }
+        try await Task.sleep(for: .milliseconds(600))
+        let before = try XCTUnwrap(tipColumn(hosted.shot(scale: 1)))
+        if pinReplacement {
+            feed.history = try pinnedHistory(pinAt: 16, 0.58)
+            feed.edge = LiveEdgeReading(homeProbability: 0.58, homeLabel: "58%")
+        } else {
+            feed.frames.append(LiveBlendPoint(date: try XCTUnwrap("2026-09-21T12:14:00Z".asDate), homeProbability: 0.60))
+            feed.edge = LiveEdgeReading(homeProbability: 0.60, homeLabel: "60%")
+        }
+        let (columns, _) = try await sampleTip(hosted, seconds: 0.8, measuresMarker: false)
+        let settled = try XCTUnwrap(tipColumn(hosted.shot(scale: 1)))
+        XCTAssertNotEqual(before, settled, "Control must actually display the accepted update")
+        XCTAssertEqual(columns.last, settled, "Control must reach the independent final capture")
+        // A not-yet-presented update may leave an initial old frame. Neither
+        // that old endpoint nor the settled endpoint is an intermediate glide.
+        XCTAssertTrue(columns.allSatisfy { $0 == before || $0 == settled },
+                      "Sampling invented motion in an inactive scene: \(columns)")
+        print("#9436 inactive-scene control pin=\(pinReplacement): before=\(before) frames=\(columns) settled=\(settled)")
+    }
+
     /// Finding 3, rendered: the scene leaving `.active` mid-glide cancels the
     /// glide — the line is drawn to its settled end at once, not over the
     /// rest of the 350 ms.
     func testLeavingTheActiveSceneMidGlideCancelsIt() async throws {
         let feed = Feed(frames: frames([0.49, 0.55, 0.78]),
                         edge: LiveEdgeReading(homeProbability: 0.78, homeLabel: "78%"))
-        let hosted = Hosted(FedChart(feed: feed, history: try history()))
+        let hosted = try Hosted(FedChart(feed: feed, history: try history()))
         defer { hosted.close() }
         try await Task.sleep(for: .milliseconds(600))
 
@@ -669,7 +826,7 @@ final class TheLiveChartEndCarriesTheHeroNumber9436Tests: XCTestCase {
         }
         func bytes(_ image: UIImage) -> Data? { image.pngData() }
         let value = Value()
-        let hosted = Hosted(Hero(value: value))
+        let hosted = try Hosted(Hero(value: value))
         defer { hosted.close() }
         try await Task.sleep(for: .milliseconds(400))
 

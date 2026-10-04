@@ -13,6 +13,32 @@ final class DiscoverViewModelPaginationTests: XCTestCase {
 
     // MARK: - Fake client
 
+    /// Holds one request until the test explicitly releases it.
+    private actor HeldRequest {
+        private let entered: XCTestExpectation
+        private var continuation: CheckedContinuation<Void, Never>?
+        private var released = false
+
+        init(entered: XCTestExpectation) { self.entered = entered }
+
+        func wait() async {
+            entered.fulfill()
+            await withCheckedContinuation { continuation in
+                if released {
+                    continuation.resume()
+                } else {
+                    self.continuation = continuation
+                }
+            }
+        }
+
+        func release() {
+            released = true
+            continuation?.resume()
+            continuation = nil
+        }
+    }
+
     private enum Reply {
         case ok(FeedResponse)
         case fail(Error)
@@ -25,6 +51,7 @@ final class DiscoverViewModelPaginationTests: XCTestCase {
         private let lock = NSLock()
         private var script: [Reply]
         private var offsets: [Int] = []
+        private var heldRequest: HeldRequest?
 
         init(_ script: [Reply]) { self.script = script }
 
@@ -32,15 +59,28 @@ final class DiscoverViewModelPaginationTests: XCTestCase {
 
         func reset() { lock.withLock { offsets.removeAll() } }
 
+        func holdNextRequest(_ request: HeldRequest) {
+            lock.withLock { heldRequest = request }
+        }
+
         nonisolated func fetchDiscoverFeed(
             limit: Int,
             offset: Int,
             eventPct: Double?,
             cacheTTL: TimeInterval?
         ) async throws -> FeedResponse {
-            // Yield first so a concurrent second call observes loadingMore=true
-            // before this one records its request.
-            await Task.yield()
+            let held = lock.withLock {
+                let request = heldRequest
+                heldRequest = nil
+                return request
+            }
+            if let held {
+                await withTaskCancellationHandler {
+                    await held.wait()
+                } onCancel: {
+                    Task { await held.release() }
+                }
+            }
             return try lock.withLock {
                 offsets.append(offset)
                 guard !script.isEmpty else {
@@ -372,9 +412,32 @@ final class DiscoverViewModelPaginationTests: XCTestCase {
         let (vm, fake) = try await loadedVM([
             .ok(try Self.response(ids: [500], offset: 12, hasMore: true)),
         ])
-        async let a: Void = vm.loadMoreIfNeeded()
-        async let b: Void = vm.loadMoreIfNeeded()
-        _ = await (a, b)
+        let entered = expectation(description: "first pagination request entered")
+        let finished = expectation(description: "first pagination request finished")
+        let held = HeldRequest(entered: entered)
+        fake.holdNextRequest(held)
+        let first = Task {
+            await vm.loadMoreIfNeeded()
+            finished.fulfill()
+        }
+        defer {
+            first.cancel()
+            Task { await held.release() }
+        }
+        await fulfillment(of: [entered], timeout: 5)
+        XCTAssertTrue(vm.loadingMore, "the first request must remain in flight")
+        guard vm.loadingMore else {
+            await held.release()
+            first.cancel()
+            return
+        }
+
+        // The first request is held, so the second must exit through the guard.
+        await vm.loadMoreIfNeeded()
+        // Release even after an entered-wait timeout so a late request cannot
+        // leave its checked continuation suspended.
+        await held.release()
+        await fulfillment(of: [finished], timeout: 5)
 
         let offsets = fake.requestedOffsets
         XCTAssertEqual(offsets.count, 1, "concurrent loadMore must not double-fetch")
