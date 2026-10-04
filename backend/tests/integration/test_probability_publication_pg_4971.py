@@ -31,6 +31,7 @@ from app.utils.probability_publication import (
 )
 from tests.integration.test_live_blend_concurrent_stamp_pg import (
     MARKER,
+    SEEDED,
     _seed_event,
     _stored,
     needs_postgres,
@@ -669,8 +670,6 @@ async def test_a_zero_quote_stays_out_of_the_recorded_population(engine, monkeyp
 async def test_an_ingest_that_writes_nothing_publishes_nothing(
     engine, monkeypatch, prices, kwargs
 ):
-    from tests.integration.test_live_blend_concurrent_stamp_pg import SEEDED
-
     event_id = await _ingest(engine, monkeypatch, prices, **kwargs)
     bag, rev, _ = await _row(engine, event_id)
     assert bag == SEEDED and rev == 0
