@@ -5,6 +5,7 @@ import SwiftUI
 /// Ranked leaderboard card for multi-outcome distribution markets.
 /// Shows top 4 outcomes with probability bars, rank numbers, and percentages.
 /// Leader row is bold; remaining outcomes collapsed behind "Show more".
+/// #10374 — a date board lists those same four by date, without rank numbers.
 struct DistributionCardView: View {
     let data: FeedFuturesData
     @Binding var navigationPath: NavigationPath
@@ -21,7 +22,19 @@ struct DistributionCardView: View {
     }
 
     private var shownOutcomes: [FeedDiscoverDistributionOutcome] {
-        Array(outcomes.prefix(4))
+        Array(outcomes.prefix(DistributionBoardOrder.drawnRowLimit))
+    }
+
+    /// #10374 — the same rows, listed by date on a date board, with the leader
+    /// named by probability. See `DistributionBoardOrder`.
+    private var listedRows: [DistributionBoardOrder.ListedRow] {
+        DistributionBoardOrder.listedRows(outcomes, order: data.discoverCard?.distributionOrder)
+    }
+
+    /// #10374 — rank digits beside dates read as ranks ("1 October 12"), so a
+    /// chronological board draws none.
+    private var showsRanks: Bool {
+        !DistributionBoardOrder.isChronological(data.discoverCard?.distributionOrder)
     }
 
     private var remainingCount: Int {
@@ -73,17 +86,19 @@ struct DistributionCardView: View {
 
             // Leaderboard rows
             VStack(spacing: 0) {
-                ForEach(Array(shownOutcomes.enumerated()), id: \.offset) { index, outcome in
-                    outcomeRow(outcome, rank: index + 1, isLeader: index == 0)
+                ForEach(Array(listedRows.enumerated()), id: \.offset) { index, row in
+                    outcomeRow(row.outcome, rank: index + 1, isLeader: row.isLeader)
                 }
 
                 // "Show more" row
                 if remainingCount > 0 {
                     HStack(spacing: 0) {
-                        Text("\(shownOutcomes.count + 1)")
-                            .font(.system(size: 12, weight: .semibold, design: .monospaced))
-                            .foregroundStyle(DS.textMuted)
-                            .frame(width: 20, alignment: .leading)
+                        if showsRanks {
+                            Text("\(shownOutcomes.count + 1)")
+                                .font(.system(size: 12, weight: .semibold, design: .monospaced))
+                                .foregroundStyle(DS.textMuted)
+                                .frame(width: 20, alignment: .leading)
+                        }
 
                         Text("Field and remaining outcomes")
                             .font(.system(size: 12, weight: .medium))
@@ -176,10 +191,12 @@ struct DistributionCardView: View {
 
         HStack(spacing: 8) {
             // Rank number
-            Text("\(rank)")
-                .font(.system(size: 12, weight: .semibold, design: .monospaced))
-                .foregroundStyle(DS.textMuted)
-                .frame(width: 20, alignment: .leading)
+            if showsRanks {
+                Text("\(rank)")
+                    .font(.system(size: 12, weight: .semibold, design: .monospaced))
+                    .foregroundStyle(DS.textMuted)
+                    .frame(width: 20, alignment: .leading)
+            }
 
             // Name + bar
             VStack(alignment: .leading, spacing: 4) {

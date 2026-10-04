@@ -116,6 +116,25 @@ ABSENT_COMPLETED = 15316893  # Montréal v Ottawa, the specimen, open 0.5830
 #: Their visible counterparts, which hold no opening line of their own.
 VISIBLE_COMPLETED = 15312790  # Montreal v Ottawa, open NULL
 
+#: The moment the reader saw the defect (production, 2026-09-22 03:15Z). Both
+#: the fixtures and the page read THIS clock, never the real one (#10394).
+#:
+#: 🔴 The specimen is a September EXHIBITION, and #7051's season floor
+#: (`season_windows.season_start`) admits exhibitions on an NHL rail only until
+#: that league's opener. On the real clock the floor moved to 2026-10-04 00:00Z,
+#: the pair `_ago(20)` placed at noon 10-03 became a correctly-cut pre-season
+#: game, and this file went red on untouched master: `got 0: []`, plus the
+#: severed-widening control losing its rail. No real-clock anchor can fix it —
+#: in the first minutes after an opener there is no in-season past for a
+#: completed pair to sit in — and it would recur every October. Pinning to the
+#: specimen's own moment is also the faithful reading: the page under test is
+#: the page the reader had, under the floor that page had.
+SPECIMEN_NOW = datetime(2026, 9, 22, 3, 15, tzinfo=timezone.utc)
+
+#: The clock that reddened master (#10394): ten minutes past the 2026-27 NHL
+#: opener floor. The control in `TestThePinnedClock` serves the page here.
+PAST_THE_OPENER = datetime(2026, 10, 4, 0, 25, tzinfo=timezone.utc)
+
 
 def _ago(hours, now=None):
     """A point `hours` in the past, SNAPPED INTO ONE UTC DAY.
@@ -146,15 +165,16 @@ def _ago(hours, now=None):
     the fake breaks this rig rather than revealing anything about it (the tool's
     own docstring names this failure mode). An exhaustive property check over
     every minute is both available and stronger than 12 samples.
+
+    The default is `SPECIMEN_NOW`, not the real clock (#10394, see there). The
+    snap stays: the sweep below still proves it for every minute of a day.
     """
-    base = (now if now is not None else datetime.now(timezone.utc)) - timedelta(
-        hours=hours
-    )
+    base = (now if now is not None else SPECIMEN_NOW) - timedelta(hours=hours)
     return base.replace(hour=12, minute=0, second=0, microsecond=0)
 
 
 def _soon(hours=72):
-    return datetime.now(timezone.utc) + timedelta(hours=hours)
+    return SPECIMEN_NOW + timedelta(hours=hours)
 
 
 def _event(
@@ -291,15 +311,36 @@ def _the_nhl_world(*extra_events, extra_teams=()):
     )
 
 
-def _page(eng, slug="montreal-canadiens"):
-    """`get_team` for real — its real `select()`s, its real predicates."""
+def _clock_at(instant):
+    """`datetime` with `now()` pinned to ``instant``, for the route module only.
+
+    A subclass, so every other use of the name in `routes/teams.py` (arithmetic,
+    `.replace`, comparisons with stored rows) behaves exactly as before.
+    """
+
+    class _Pinned(datetime):
+        @classmethod
+        def now(cls, tz=None):
+            return instant if tz is None else instant.astimezone(tz)
+
+    return _Pinned
+
+
+def _page(eng, slug="montreal-canadiens", now=SPECIMEN_NOW):
+    """`get_team` for real — its real `select()`s, its real predicates — on the
+    rig's clock rather than the wall's (#10394)."""
     with Session(eng) as s:
 
         class _Session:
             async def execute(self, statement):
                 return s.execute(statement)
 
-        return asyncio.run(route.get_team(slug, db=_Session()))
+        real = route.datetime
+        route.datetime = _clock_at(now)
+        try:
+            return asyncio.run(route.get_team(slug, db=_Session()))
+        finally:
+            route.datetime = real
 
 
 def _cards(page):
@@ -371,6 +412,41 @@ class TestTheAnchorDoesNotBranchOnTheClock:
         ]
         assert straddled, "the strawman did not reproduce the defect — guard is vacuous"
         assert straddled[0] == "19:45" and straddled[-1] == "19:59", straddled
+
+
+class TestThePinnedClock:
+    """The rig's second clock guard (#10394). The ship arms below are only
+    readable while the page's season floor still admits the exhibition pair, so
+    the rig serves the page on `SPECIMEN_NOW`. These two arms prove that pin is
+    what the route actually reads, at any wall clock."""
+
+    def test_the_specimen_clock_is_before_the_floor_that_would_cut_the_pair(self):
+        league = route._league_slug_for_sport_key("icehockey_nhl")
+        floor = route.season_windows.season_start(league, SPECIMEN_NOW)
+        assert floor is not None and floor <= _ago(20), (
+            f"the NHL floor at the rig's clock is {floor}, after the exhibition "
+            f"pair at {_ago(20)} — the ship arms would read an empty rail"
+        )
+
+    def test_the_route_reads_the_pinned_clock_not_the_wall(self):
+        """Same rows, two clocks, two answers in one run — so neither the wall
+        clock nor a pin that never reached `get_team` can pass both halves.
+        The second half is #7051 doing its job, and the exact state that
+        reddened master: past the opener, a September exhibition is cut."""
+        eng = _the_nhl_world()
+
+        def ottawa(now):
+            return [
+                c["id"]
+                for c in _cards(_page(eng, now=now))
+                if c["opponent"] == "Ottawa Senators"
+            ]
+
+        assert ottawa(SPECIMEN_NOW), "the pair is missing on the specimen's own clock"
+        assert ottawa(PAST_THE_OPENER) == [], (
+            "the exhibition pair survived the opener floor — either #7051 no "
+            "longer binds on this page or the pin never reached the route"
+        )
 
 
 class TestTheCanadiensPage:

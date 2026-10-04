@@ -385,51 +385,39 @@ struct NativeEventDiscoverCard: View {
                     }
                 }
 
-                // Context text
+                // Context text + footer.
+                //
+                // #10373 — Alex, rage shake 169: "I like including our liquidity
+                // and confidence indicator on the card, but it looks like doing so
+                // has cost us a ton of white space". The signal bars and the share
+                // button sat on a row of their own under the caption — a 44pt tap
+                // target plus this stack's 12pt spacing, on every game card, for
+                // two small marks at the right edge. They now ride the caption's
+                // row, trailing it. Measured on the served feed (2026-10-03, 11
+                // event cards) the longest caption is 53 characters, so the
+                // narrower caption column still fits in its two lines.
+                //
+                // At accessibility text sizes the caption keeps the full width and
+                // the marks keep their own row: a 44pt button beside AX5 type would
+                // squeeze the caption to a few words a line. A card with no
+                // caption also keeps the row — there is no row to share.
                 if let contextText {
-                    ExpandableNativeContextText(
-                        text: contextText,
-                        expandedText: expandedContext,
-                        font: .caption,
-                        onExpand: onContextExpand,
-                        onCollapse: onContextCollapse
-                    )
-                }
-
-                // Footer
-                HStack {
-                    Spacer()
-
-                    // #490 / L2-184: confidence signal (1-3 bars) — renders nothing
-                    // when absent. Same tier map + placement as the native
-                    // multi-candidate kernels (Comparison/Distribution/HeatMap).
-                    SignalBarsView(tier: event.confidenceTier)
-
-                    ShareLink(
-                        item: shareURL,
-                        subject: Text("\(event.awayTeam) vs \(event.homeTeam)"),
-                        message: Text(shareMessage)
-                    ) {
-                        Image(systemName: "square.and.arrow.up")
-                            .font(.subheadline.weight(.medium))
-                            .foregroundStyle(.secondary)
-                            .padding(8)
-                            .background(Color.secondary.opacity(0.10), in: Circle())
-                            .frame(minWidth: 44, minHeight: 44)
-                            .contentShape(Circle())
+                    if dynamicTypeSize.isAccessibilitySize {
+                        contextCaption(contextText)
+                        HStack {
+                            Spacer()
+                            footerMarks
+                        }
+                    } else {
+                        HStack(alignment: .center, spacing: 8) {
+                            contextCaption(contextText)
+                            footerMarks
+                        }
                     }
-                    .buttonStyle(.plain)
-                    .recordsShareOpened { onShare?() }
-                    .contextMenu {
-                        Button(action: copyShareImage) {
-                            Label("Copy Image", systemImage: "doc.on.doc")
-                        }
-
-                        #if os(iOS)
-                        Button(action: saveShareImage) {
-                            Label("Save Image", systemImage: "square.and.arrow.down")
-                        }
-                        #endif
+                } else {
+                    HStack {
+                        Spacer()
+                        footerMarks
                     }
                 }
             }
@@ -472,6 +460,54 @@ struct NativeEventDiscoverCard: View {
 
     /// How a tap-driven test finds this card. See the `onTapGesture` above.
     static let tapTargetIdentifier = "discover-card-event"
+
+    private func contextCaption(_ text: String) -> some View {
+        ExpandableNativeContextText(
+            text: text,
+            expandedText: expandedContext,
+            font: .caption,
+            onExpand: onContextExpand,
+            onCollapse: onContextCollapse
+        )
+    }
+
+    /// The signal bars and the share button — one view so the caption row and
+    /// the own-row fallback (#10373) cannot draw two different footers.
+    private var footerMarks: some View {
+        HStack {
+            // #490 / L2-184: confidence signal (1-3 bars) — renders nothing
+            // when absent. Same tier map + placement as the native
+            // multi-candidate kernels (Comparison/Distribution/HeatMap).
+            SignalBarsView(tier: event.confidenceTier)
+
+            ShareLink(
+                item: shareURL,
+                subject: Text("\(event.awayTeam) vs \(event.homeTeam)"),
+                message: Text(shareMessage)
+            ) {
+                Image(systemName: "square.and.arrow.up")
+                    .font(.subheadline.weight(.medium))
+                    .foregroundStyle(.secondary)
+                    .padding(8)
+                    .background(Color.secondary.opacity(0.10), in: Circle())
+                    .frame(minWidth: 44, minHeight: 44)
+                    .contentShape(Circle())
+            }
+            .buttonStyle(.plain)
+            .recordsShareOpened { onShare?() }
+            .contextMenu {
+                Button(action: copyShareImage) {
+                    Label("Copy Image", systemImage: "doc.on.doc")
+                }
+
+                #if os(iOS)
+                Button(action: saveShareImage) {
+                    Label("Save Image", systemImage: "square.and.arrow.down")
+                }
+                #endif
+            }
+        }
+    }
 
     /// #3430 — the card draws BOTH competitors side by side, so their labels
     /// are resolved together and handed in. Deriving each from its own name
