@@ -42,6 +42,11 @@ from app.utils.settled_price import (  # #5246 / #7767
 from app.utils.futures_rank import rerank_market_field_stmt  # #6598
 from app.utils.futures_liveness import preserve_venue_settled  # #2222
 from app.utils.venue_competition import POLYMARKET_EVENT_SLUG_KEY  # #8636
+from app.utils.polymarket_no_winner_cutoff import (  # #10407 A1
+    NO_WINNER_CUTOFF_KEY,
+    REFUSAL_REASONS as CUTOFF_REFUSAL_REASONS,
+    parse_no_winner_cutoff,
+)
 from app.utils.event_taxonomy import NON_SPORT_CATEGORIES  # #7814 — see below
 from app.utils.event_completion import (  # #6073
     POLYMARKET_VENUE_COMMENCE_SOURCE,
@@ -2706,6 +2711,23 @@ async def _process_event_batch(
                 # rest of this dict, so live rows acquire it on the next poll.
                 if event.slug:
                     poly_metadata[POLYMARKET_EVENT_SLUG_KEY] = event.slug
+                # #10407 A1: an MLB series winner's own stated no-winner cutoff,
+                # read from its rule text. Absent (never null) out of family or
+                # on any refusal; never Gamma `endDate`, `resolution_date` or
+                # `neg_risk`. Rewritten on conflict with the rest of this dict.
+                _cutoff, _cutoff_refusal = parse_no_winner_cutoff(
+                    slug=event.slug,
+                    market_descriptions=[m.description for m in event.markets],
+                    event_description=event.description,
+                )
+                if _cutoff is not None:
+                    poly_metadata[NO_WINNER_CUTOFF_KEY] = _cutoff
+                    stats["no_winner_cutoff_stored"] = (
+                        stats.get("no_winner_cutoff_stored", 0) + 1
+                    )
+                elif _cutoff_refusal in CUTOFF_REFUSAL_REASONS:
+                    _refused = stats.setdefault("no_winner_cutoff_refused", {})
+                    _refused[_cutoff_refusal] = _refused.get(_cutoff_refusal, 0) + 1
                 # #4965: THE VENUE'S OWN FIXTURE INSTANT, kept because
                 # `commence_time` above cannot carry it — that column is fed by
                 # Gamma's `startDate`, which is the LISTING stamp (the three

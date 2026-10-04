@@ -29975,6 +29975,69 @@ async def _build_related_futures(
         relabel_series_card(
             formatted_series, {so.id: so.external_id for so in series_outcomes}
         )
+        # #10407 A1 — Kalshi's and Polymarket's "who wins the series" are one
+        # question when each venue's own structure says so and Kalshi's dated
+        # instant falls before Polymarket's stated no-winner cutoff. Pure rule
+        # over plain values; it feeds the matrix only, never `series_markets`.
+        # Any error leaves the matrix exactly as without it.
+        _series_compositions = None
+        try:
+            from app.utils.series_winner_correspondence import (
+                SeriesLeg,
+                SeriesMarketFacts,
+                compose_series_pairs,
+            )
+
+            await _load_team_roster()
+            _series_compositions = compose_series_pairs(
+                [
+                    SeriesMarketFacts(
+                        market_id=mid,
+                        source=legs[0].market.source,
+                        external_id=legs[0].market.external_id,
+                        status=legs[0].market.status,
+                        resolution_date=legs[0].market.resolution_date,
+                        market_metadata=(
+                            legs[0].market.__dict__.get("market_metadata") or {}
+                        ),
+                        settled_before_the_game=_settled_before_the_game(
+                            legs[0].market, event.commence_time
+                        ),
+                        legs=tuple(
+                            SeriesLeg(
+                                outcome_id=so.id,
+                                name=so.name,
+                                external_id=so.external_id,
+                                probability=(
+                                    None
+                                    if so.current_probability is None
+                                    else float(so.current_probability)
+                                ),
+                                is_winner=so.is_winner,
+                                withheld=so.id in series_withheld,
+                            )
+                            for so in legs
+                        ),
+                    )
+                    for mid, legs in series_by_market.items()
+                    if legs and legs[0].market is not None
+                ],
+                [
+                    {
+                        "id": t.id,
+                        "name": t.name,
+                        "abbreviation": t.abbreviation,
+                        "alternate_names": t.alternate_names,
+                    }
+                    for t in team_rows
+                ],
+            )
+        except Exception as exc:
+            logger.warning(
+                "related-futures %s: series winner correspondence refused on error (%s)",
+                event.id, exc,
+            )
+            _series_compositions = None
         # #10238 S1 — the Series question matrix, from the card just built and
         # the legs it was built from. Its lifecycle is the Series market's own, so
         # a final Game never closes an open Series. Never fails the page.
@@ -29988,6 +30051,7 @@ async def _build_related_futures(
                 ),
                 home_team=event.home_team_name,
                 away_team=event.away_team_name,
+                series_compositions=_series_compositions,
             )
         except Exception as exc:
             logger.warning(
