@@ -97,6 +97,8 @@ const PropsSection = dynamic(() => import("@/components/event/PropsSection"), { 
 import type { PropMark } from "@/components/event/PropsSection";
 import { indexPropRowsByScriptKey, verifyScriptGrade } from "@/lib/propGrade";
 import { isChildTitleMark } from "@/lib/propFamily";
+import { groupPlayerPropsWithCoverage, type BoxScorePlayer } from "@/lib/playerPropsGrouping";
+import { dropScriptRowsTheFoldDraws, isKnownPregameForScript } from "@/lib/pregamePropsScript10340";
 import { countOf } from "@/lib/plural";
 import LoadingSpinner from "@/components/LoadingSpinner";
 import ErrorBoundary from "@/components/ErrorBoundary";
@@ -3295,8 +3297,33 @@ export default function EventPage({ params }: EventPageProps) {
           The section self-gates on an empty array; PropsSection returns null when
           items is empty. Forward-only marks render honest "pending" chips. */}
       {(() => {
-        const propsScript = gameMarkets?.props_script;
-        if (!Array.isArray(propsScript) || propsScript.length === 0) return null;
+        const servedScript = gameMarkets?.props_script;
+        if (!Array.isArray(servedScript) || servedScript.length === 0) return null;
+        // #10340: before kickoff, a question the "All N props" fold above
+        // already draws is not drawn again here. Coverage is the fold's own
+        // grouping over the SAME inputs `PlayerPropsDashboard` passes (colours
+        // and the dead box-score path included), and only its emitted rungs
+        // count. Live/final/unknown pass the script through untouched.
+        const knownPregame = isKnownPregameForScript(event.status, hasStarted);
+        const foldBoxScore = event.box_score_data as { players?: BoxScorePlayer[] } | null | undefined;
+        const propsScript = knownPregame
+          ? dropScriptRowsTheFoldDraws(servedScript, {
+              knownPregame,
+              representedKeys: groupPlayerPropsWithCoverage({
+                playerProps: gameMarkets?.player_props,
+                other: gameMarkets?.other,
+                homeTeam: event.home_team,
+                awayTeam: event.away_team,
+                homeColor: event.home_team_data?.primary_color || undefined,
+                awayColor: event.away_team_data?.primary_color || undefined,
+                boxScorePlayers:
+                  foldBoxScore?.players != null && foldBoxScore.players.length > 0
+                    ? foldBoxScore.players
+                    : null,
+              }).representedScriptKeys,
+            })
+          : servedScript;
+        if (propsScript.length === 0) return null;
         // #1650: hold the WHAT HIT row to the same authority as the Player
         // Props card above it, using the raw typed rows on this same payload.
         const rawPropRowsByKey = indexPropRowsByScriptKey(gameMarkets?.player_props);
