@@ -24,10 +24,13 @@ import Foundation
 /// - `asOf` is the recorded completion after the game, so the view does not
 ///   move with the reader's clock. Before and during, it is the reader's clock
 ///   the caller supplies; without one those phases mount nothing.
-/// - The book is the deterministic picker's (most ADMITTED pairs captured by
-///   `asOf`, ties to the first key in sorted order), and only a book
-///   `SourceLabels` can name. Counting raw rows would let a book of refused rows
-///   hide one with real readings.
+/// - The book is the deterministic picker's (most pairs the series would DRAW,
+///   ties to the first key in sorted order), and only a book `SourceLabels` can
+///   name. Each book is scored through `ProjectedFinalPointsSeries.build` with
+///   the same floor, actuals, final and `asOf`, so a row the series refuses
+///   (outside the window, at or past the final, contradicting the moneyline,
+///   below the actual score) never counts. Counting raw or merely admitted rows
+///   would let a book of refused rows hide one with real readings.
 /// - Before the game there is no score floor, no actual score and no final
 ///   boundary, whatever markers or scores the history retains. During and
 ///   after, the score floor is the first Q1 boundary a named instrument
@@ -90,19 +93,12 @@ enum ProjectedFinalPointsMount {
             asOf = readerNow
         }
         let admission = Admission(legacyRowsAdmitted: pagePhase == .after, asOf: asOf)
-        guard let sourceKey = pickSportsbook(history.bookmakerHistory, admission: admission) else { return nil }
         var scoreFloor: Date?
         if pagePhase != .before {
             // A floor after the reader's clock is not yet a game state they can see.
             guard let observed = firstRecordedGameStateAt(history.periodMarkers, sportKey: sportKey),
                   observed <= asOf else { return nil }
             scoreFloor = observed
-        }
-        let pairs: [ProjectedFinalPointsSeries.Pair] = (history.bookmakerHistory?[sourceKey] ?? []).compactMap { row in
-            let admitted = admit(row, admission: admission)
-            guard let at = admitted.at else { return nil }
-            return .init(at: at, home: row.projectedHomeScore, away: row.projectedAwayScore,
-                         homeProbability: row.homeProbability, kind: admitted.kind)
         }
         var actuals: [ProjectedFinalPointsSeries.Actual] = []
         if pagePhase != .before {
@@ -115,12 +111,21 @@ enum ProjectedFinalPointsMount {
             actuals.removeAll { $0.at >= finalAt }
             actuals.append(.init(at: finalAt, home: Double(finalHome), away: Double(finalAway)))
         }
-        let input = ProjectedFinalPointsSeries.Input(
-            sportKey: "americanfootball_nfl", sourceKey: sourceKey,
-            basis: .sameBookSameCaptureFullGameSpreadAndTotal,
-            pairs: pairs, actuals: actuals, kickoffAt: nil, scoreObservationStartAt: scoreFloor,
-            finalAt: finalAt, asOf: asOf, windowStartAt: nil, requestCutoffAt: nil)
-        return ProjectedFinalPointsSeries.build(input) == nil ? nil : input
+        func seriesInput(_ sourceKey: String) -> ProjectedFinalPointsSeries.Input {
+            let pairs: [ProjectedFinalPointsSeries.Pair] = (history.bookmakerHistory?[sourceKey] ?? []).compactMap { row in
+                let admitted = admit(row, admission: admission)
+                guard let at = admitted.at else { return nil }
+                return .init(at: at, home: row.projectedHomeScore, away: row.projectedAwayScore,
+                             homeProbability: row.homeProbability, kind: admitted.kind)
+            }
+            return ProjectedFinalPointsSeries.Input(
+                sportKey: "americanfootball_nfl", sourceKey: sourceKey,
+                basis: .sameBookSameCaptureFullGameSpreadAndTotal,
+                pairs: pairs, actuals: actuals, kickoffAt: nil, scoreObservationStartAt: scoreFloor,
+                finalAt: finalAt, asOf: asOf, windowStartAt: nil, requestCutoffAt: nil)
+        }
+        guard let sourceKey = pickSportsbook(history.bookmakerHistory, seriesInput: seriesInput) else { return nil }
+        return seriesInput(sourceKey)
     }
 
     /// One served row's admission: the kind it is read as and the instant it
@@ -145,21 +150,17 @@ enum ProjectedFinalPointsMount {
         return (.recorded, observed)
     }
 
-    /// The named book with the most ADMITTED full-game pairs captured by
-    /// `asOf`; ties go to the first key in sorted order (web
-    /// `pickProjectionSportsbook`).
+    /// The named book whose series draws the most points; ties go to the first
+    /// key in sorted order (web `pickProjectionSportsbook`). A book is scored by
+    /// `build` over the caller's own input, so every series refusal applies to
+    /// the count, and a book that charts nothing never wins.
     @MainActor
-    static func pickSportsbook(_ books: [String: [BookmakerHistoryPoint]]?, admission: Admission) -> String? {
+    static func pickSportsbook(_ books: [String: [BookmakerHistoryPoint]]?,
+                               seriesInput: (String) -> ProjectedFinalPointsSeries.Input) -> String? {
         var best: String?
         var bestCount = 0
         for key in (books ?? [:]).keys.sorted() where SourceLabels.sportsbookName(for: key) != nil {
-            let count = (books?[key] ?? []).filter { row in
-                guard let home = row.projectedHomeScore, let away = row.projectedAwayScore,
-                      home.isFinite, home >= 0, away.isFinite, away >= 0 else { return false }
-                let admitted = admit(row, admission: admission)
-                guard admitted.kind == .recorded, let at = admitted.at else { return false }
-                return at <= admission.asOf
-            }.count
+            let count = ProjectedFinalPointsSeries.build(seriesInput(key))?.segments.reduce(0) { $0 + $1.count } ?? 0
             if count > bestCount { best = key; bestCount = count }
         }
         return best
