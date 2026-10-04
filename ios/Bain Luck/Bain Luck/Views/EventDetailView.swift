@@ -366,6 +366,10 @@ struct EventDetailView: View {
                                      // #9436 — the hero's own number, for the
                                      // dot on the end of the line.
                                      liveEdge: LiveEdgeReading.current(in: event),
+                                     // #10456 — the served winner pair, both
+                                     // sides: admission for the balance ink.
+                                     servedHomeProbability: event.currentOdds?.homeProbability,
+                                     servedAwayProbability: event.currentOdds?.awayProbability,
                                      forcedDomain: sharedChartDomain,
                                      pageAxisPlotWidth: pageAxisPlotWidth,
                                      selectedRange: $chartRange,
