@@ -474,8 +474,8 @@ class TestTotalAxisEquivalentsAreOneOption:
         assert [(e["outcome_id"], e["leg_side"], e["raw_probability"]) for e in opt["source_evidence"]] == [
             (240500335, "under", 1.0), (240500334, "over", 0.0)]
         assert "Under" not in [o["label"] for o in q["options"]]
-        assert q["option_counts"] == {"declared": None, "loaded": 2, "returned": 2, "missing_identified": 0}
-        assert q["complete"] is not False
+        # §7: `returned` is the display count (one option); both legs stay loaded and identified.
+        assert q["option_counts"] == {"declared": None, "loaded": 2, "returned": 1, "missing_identified": 0}
 
     def test_open_equal_over_values_stay_unblended(self):
         legs = [_leg(240500335, 63854826, "Under", 0.43), _leg(240500334, 63854826, "Over", 0.57)]
@@ -555,7 +555,7 @@ class TestTotalAxisEquivalentsAreOneOption:
         q = _q(m, "m:63854826")
         assert [o["option_key"] for o in q["options"]] == ["o:240500334+240500335"]
         assert [x["option_key"] for x in q["missing_options"]] == ["o:240500336"]
-        assert q["option_counts"]["returned"] == 2 and q["complete"] is False
+        assert q["option_counts"]["returned"] == 1 and q["complete"] is False
         assert m["coverage"]["build_errors"] == 1
 
 

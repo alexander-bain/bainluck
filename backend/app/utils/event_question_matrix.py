@@ -1185,9 +1185,7 @@ def _named_question(group: list, shared: dict) -> dict:
         options.append(_game_option(item, side, lifecycle["state"], shared))
 
     missing = _missing_options(legs, sides, shared) if len(legs) <= _LIST_CAP else []
-    # `returned` counts the served ROWS, so folding two equivalent rows into
-    # one option never reads as a leg held back.
-    counts, complete = _option_counts(market_ids, len(entries), missing, shared, three_way)
+    counts, complete = _option_counts(market_ids, len(options), missing, shared, three_way)
     period = (
         _period(first["market_type"], first["row"].get("period"), facts,
                 shared["sport_prefix"], shared["period_from_ticker"], shared["period_from_name"])
