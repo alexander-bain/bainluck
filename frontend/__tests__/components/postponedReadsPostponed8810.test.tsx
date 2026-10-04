@@ -170,7 +170,9 @@ describe("the event page feeds the authority's word from the payload", () => {
     expect(src).toMatch(/"home-away",[\s\S]{0,200}stoppageLabel,\s*\)/);
     expect(src).toContain("authorityStoppageDescription(stoppageLabel)");
     expect(src).toContain("stopped={stoppageLabel !== null}");
-    expect(src.match(/!heroScoreIsStoppageFiller/g)?.length).toBe(3);
+    // Both hero scores, the score chart, and (#10239) the final score handed to the projected final
+    // points module: a postponed match's 0–0 filler is never passed in as a final.
+    expect(src.match(/!heroScoreIsStoppageFiller/g)?.length).toBe(4);
   });
 });
 

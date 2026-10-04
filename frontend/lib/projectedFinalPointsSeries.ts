@@ -62,9 +62,24 @@
  * - Show anything after `asOf`. Inspection rebuilds the series at the cursor,
  *   so a scrubbed reading cannot reveal a later projection or a later score.
  * - Invent a 0–0 start. Actual steps begin at the first recorded score at or
- *   after the observed kickoff. Before kickoff there are none.
+ *   after the score floor. Before it there are none.
+ *
+ * ── THE SCORE FLOOR IS NOT A KICKOFF ────────────────────────────────────────
+ *
+ * Actual scores need a floor: the instant from which a recorded score is a
+ * game-state observation rather than a pregame placeholder. An observed
+ * kickoff is one, but nothing serves an observed kickoff today
+ * (`commence_time` is the schedule, and `commence_time_is_kickoff` only says
+ * it is not a Kalshi expiration, #7878). So the floor may instead be the FIRST
+ * RECORDED GAME STATE: the `not_before` bound of the first-period marker an
+ * instrument saw (`firstRecordedGameStateAt`). That bound is the last poll
+ * that showed no first period. It is not proof the kick happened or play
+ * began, so a 0–0 recorded there is a real recorded score, never a kickoff
+ * 0–0, and `kickoffAt` stays null. An `estimated` marker is arithmetic on the
+ * schedule and is refused.
  */
 
+import { normalizePeriodLabel, PERIOD_SOURCE_ESTIMATED, type ServedPeriodMarker } from "@/lib/periodMarkers";
 import { sourceLabel } from "@/lib/sourceLabels";
 import type { EventHistoryResponse } from "@/lib/types";
 
@@ -117,13 +132,18 @@ export interface ProjectedFinalPointsInput {
   /** OBSERVED kickoff. A scheduled start is not one; pass null if unknown. */
   kickoffAt: string | null;
   /**
+   * The first recorded game state (`firstRecordedGameStateAt`), the score
+   * floor when `kickoffAt` is unknown. NOT a kickoff (module doc).
+   */
+  scoreObservationStartAt?: string | null;
+  /**
    * The server-recorded completion boundary (`completed_at`), or null while
    * the game is unfinished. A processing time, not an observed final whistle.
    */
   finalAt: string | null;
   /** Nothing after this instant is read. The page's now, or the cursor. */
   asOf: string;
-  /** Start of the drawn window. Defaults to an hour before kickoff, or six hours before `asOf` pregame. */
+  /** Start of the drawn window. Defaults to an hour before the score floor, or six hours before `asOf` before it. */
   windowStartAt?: string | null;
 }
 
@@ -173,7 +193,7 @@ export interface ProjectedFinalPointsSeries {
   /** Runs of consecutive valid readings. A run of one is drawn as a dot. */
   segments: ForecastPoint[][];
   withheld: WithheldReading[];
-  /** Empty before kickoff. Right-continuous: each holds until the next. */
+  /** Empty before the score floor. Right-continuous: each holds until the next. */
   actualSteps: ActualStep[];
   start: number;
   end: number;
@@ -230,13 +250,13 @@ function actualAt(steps: ActualStep[], t: number): ActualStep | null {
   return found;
 }
 
-/** The admitted actual steps, oldest first. Empty without an observed kickoff. */
-function admitActuals(input: ProjectedFinalPointsInput, kickoff: number | null, asOf: number): ActualStep[] {
-  if (kickoff === null || kickoff > asOf) return [];
+/** The admitted actual steps, oldest first. Empty without a score floor. */
+function admitActuals(input: ProjectedFinalPointsInput, floor: number | null, asOf: number): ActualStep[] {
+  if (floor === null || floor > asOf) return [];
   const steps: ActualStep[] = [];
   for (const row of input.actuals) {
     const at = parseTime(row.timestamp);
-    if (at === null || at < kickoff || at > asOf) continue;
+    if (at === null || at < floor || at > asOf) continue;
     if (!isPoints(row.home_score) || !isPoints(row.away_score)) continue;
     steps.push({ at, home: row.home_score, away: row.away_score });
   }
@@ -259,17 +279,18 @@ export function buildProjectedFinalPointsSeries(
 
   const asOfRaw = parseTime(input.asOf);
   if (asOfRaw === null) return { supported: false, reason: "no_valid_pair" };
-  const kickoff = parseTime(input.kickoffAt);
+  // An observed kickoff when there is one, otherwise the first recorded game state (module doc).
+  const scoreFloor = parseTime(input.kickoffAt) ?? parseTime(input.scoreObservationStartAt);
   const final = parseTime(input.finalAt);
   // Readings stop at the recorded completion boundary, and never run past the reader's now.
   const end = final !== null && final <= asOfRaw ? final : asOfRaw;
   const phase: ProjectedFinalPointsPhase =
-    final !== null && final <= asOfRaw ? "after" : kickoff !== null && kickoff <= asOfRaw ? "during" : "before";
-  const started = kickoff !== null && kickoff <= end;
+    final !== null && final <= asOfRaw ? "after" : scoreFloor !== null && scoreFloor <= asOfRaw ? "during" : "before";
+  const started = scoreFloor !== null && scoreFloor <= end;
   const start =
-    parseTime(input.windowStartAt) ?? (started ? kickoff - PREGAME_CONTEXT_MS : end - DEFAULT_WINDOW_MS);
+    parseTime(input.windowStartAt) ?? (started ? scoreFloor - PREGAME_CONTEXT_MS : end - DEFAULT_WINDOW_MS);
 
-  const actualSteps = phase === "before" ? [] : admitActuals(input, kickoff, end);
+  const actualSteps = phase === "before" ? [] : admitActuals(input, scoreFloor, end);
 
   type Row =
     | { at: number; kind: "valid"; home: number; away: number }
@@ -407,6 +428,34 @@ export function pickProjectionSportsbook(history: Pick<EventHistoryResponse, "bo
   return best;
 }
 
+/** Instruments whose period markers record what they saw (`ServedPeriodMarker`). */
+const OBSERVING_MARKER_SOURCES: ReadonlySet<string> = new Set(["espn_state", "espn_box", "statpal", "win_prob"]);
+/** Precisions that place a period start, not merely its first score. */
+const PERIOD_START_PRECISIONS: ReadonlySet<string> = new Set(["first_seen", "boundary_observed"]);
+
+/**
+ * The first recorded game state: the earliest `not_before` among the served
+ * first-period markers an instrument observed, or null when there is none.
+ * An `estimated` marker, a marker with no source or no lower bound, and a
+ * `first_score` marker are all refused. NOT a kickoff (module doc), so it is
+ * only ever passed as `scoreObservationStartAt`.
+ */
+export function firstRecordedGameStateAt(
+  markers: ServedPeriodMarker[] | null | undefined,
+  sportKey: string | null | undefined,
+): string | null {
+  let best: { at: number; iso: string } | null = null;
+  for (const m of markers ?? []) {
+    if (!m.source || m.source === PERIOD_SOURCE_ESTIMATED || !OBSERVING_MARKER_SOURCES.has(m.source)) continue;
+    if (!m.precision || !PERIOD_START_PRECISIONS.has(m.precision)) continue;
+    if (normalizePeriodLabel(m.period, sportKey) !== "Q1") continue;
+    const at = parseTime(m.not_before);
+    if (at === null || (best && best.at <= at)) continue;
+    best = { at, iso: m.not_before as string };
+  }
+  return best?.iso ?? null;
+}
+
 /**
  * Slack past the request cutoff inside which a row may be a re-stamp. The
  * route truncates to the minute and its clock is not the reader's.
@@ -415,7 +464,8 @@ export const CUTOFF_RESTAMP_SLACK_MS = 2 * 60 * 1000;
 
 /**
  * Builds the input from a served history payload. The caller chooses the
- * book and supplies the observed kickoff, because neither is in the payload.
+ * book and supplies the observed kickoff, because neither is in the payload,
+ * and may supply the first recorded game state as the score floor.
  *
  * `cutoffAt` is the window cutoff the request asked for (`now - hours`), or
  * null when the route serves the whole series (a finished game). The route
@@ -431,6 +481,7 @@ export function projectedFinalPointsInputFromHistory(
     sportKey: string | null | undefined;
     sourceKey: string;
     kickoffAt: string | null;
+    scoreObservationStartAt?: string | null;
     asOf: string;
     cutoffAt: string | null;
   },
@@ -452,6 +503,7 @@ export function projectedFinalPointsInputFromHistory(
     })),
     actuals: history.score_history ?? [],
     kickoffAt: opts.kickoffAt,
+    scoreObservationStartAt: opts.scoreObservationStartAt ?? null,
     finalAt: history.completed_at ?? null,
     asOf: opts.asOf,
   };

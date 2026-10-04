@@ -40,6 +40,12 @@ export interface ProjectedFinalPointsChartProps {
   awayTeam: string;
   homeColor?: string | null;
   awayColor?: string | null;
+  /**
+   * The game's final score as the page's hero prints it, or null when the page has none it would
+   * show. It is the only thing that lets the last recorded score be called final. It is printed in
+   * the readout, never drawn as a step or given a time, and never shown while a moment is inspected.
+   */
+  finalScore?: { home: number; away: number } | null;
 }
 
 interface ViewProps extends ProjectedFinalPointsChartProps {
@@ -102,6 +108,7 @@ export function ProjectedFinalPointsChartView({
   awayTeam,
   homeColor,
   awayColor,
+  finalScore = null,
   cursorAt,
   onCursorChange,
 }: ViewProps) {
@@ -128,6 +135,13 @@ export function ProjectedFinalPointsChartView({
   const reading = shown?.latest ?? null;
   const actual = shown?.latestActual ?? null;
   const showActual = !cursorGone && (shown?.phase ?? "before") !== "before";
+  // The last recorded score is the final only when it equals the page's own final. A completion
+  // timestamp does not make an earlier observation final: a game whose last recorded row is 26–7
+  // (before the extra point) still ended 27–7. A moment being inspected never shows the final.
+  const atRestAfter = !inspecting && !cursorGone && shown?.phase === "after";
+  const recordedIsFinal =
+    !!finalScore && !!actual && actual.home === finalScore.home && actual.away === finalScore.away;
+  const showFinalApart = atRestAfter && !!finalScore && !recordedIsFinal;
   const withheldAtCursor = inspecting && full.withheld.some((w) => w.at === cursorAt);
   const lastIndex = instants.length - 1;
   // A gone cursor parks the thumb at the last instant before it; the readout says it is gone.
@@ -170,9 +184,16 @@ export function ProjectedFinalPointsChartView({
               {reading && !withheldAtCursor ? points(reading[key]) : "—"}
             </div>
             <div className="text-xs text-text-secondary">projected final</div>
-            {showActual && (
+            {/* Only a recorded score is printed. Without one there is no "— final" placeholder:
+                a dash beside "final" reads as a result nobody recorded. */}
+            {showActual && actual && (
               <div className="text-sm tabular-nums text-text-primary" data-actual={key}>
-                {actual ? actual[key] : "—"} {shown?.phase === "after" && !inspecting ? "final" : "scored"}
+                {actual[key]} {inspecting || shown?.phase !== "after" ? "scored" : recordedIsFinal ? "final" : "last recorded"}
+              </div>
+            )}
+            {showFinalApart && finalScore && (
+              <div className="text-sm tabular-nums text-text-primary" data-final={key}>
+                {finalScore[key]} final
               </div>
             )}
           </div>
@@ -341,7 +362,7 @@ export function ProjectedFinalPointsChartView({
       <details className="mt-3 text-xs text-text-secondary">
         <summary className="cursor-pointer">How to read this</summary>
         <p className="mt-1">
-          Each line is the final score {full.sourceName}&apos;s point spread and total imply for one team. The dashed
+          Each line is the final score {full.sourceName}&apos;s expected winning margin and total points imply for one team. The dashed
           steps are the score so far. A break in a line means that reading was missing or could not be right, such as a
           projection below points already scored. The last projection is never joined to the final score.
         </p>
