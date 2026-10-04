@@ -31,7 +31,7 @@ class WatchCompanionArchiveTests(unittest.TestCase):
                                CFBundleSupportedPlatforms=["WatchOS"], WKCompanionAppBundleIdentifier=PHONE,
                                WKRunsIndependentlyOfCompanionApp=True,
                                CFBundleURLTypes=[{"CFBundleURLSchemes": ["bainluck-watch"]}])
-        self.extension_info = {"CFBundleIdentifier": WATCH + ".Complication",
+        self.extension_info = {"CFBundleIdentifier": WATCH + ".SavedGlance",
                                "CFBundleExecutable": "Complication",
                                "CFBundleSupportedPlatforms": ["WatchOS"],
                                "CFBundleShortVersionString": "1.0", "CFBundleVersion": "10",
@@ -66,10 +66,15 @@ class WatchCompanionArchiveTests(unittest.TestCase):
         self.assertEqual(result["distribution"], "UNVERIFIED")
         self.assertEqual(result["launcher_url_scheme"], "bainluck-watch")
         self.assertEqual(len(result["applications"]), 3)
-        self.assertEqual(result["applications"][2]["bundle_id"], WATCH + ".Complication")
+        self.assertEqual(result["applications"][2]["bundle_id"], WATCH + ".SavedGlance")
         self.watch_info["WKWatchOnly"] = False
         self.save_infos()
         self.inspect()
+
+    def test_retired_complication_bundle_identifier_is_rejected(self):
+        self.extension_info["CFBundleIdentifier"] = WATCH + ".Complication"
+        self.save_infos()
+        self.reject()
 
     def test_launcher_registration_missing_wrong_or_malformed(self):
         original = self.watch_info["CFBundleURLTypes"]

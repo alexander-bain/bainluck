@@ -1214,7 +1214,7 @@
 					"@executable_path/../../Frameworks",
 				);
 				MARKETING_VERSION = 1.0;
-				PRODUCT_BUNDLE_IDENTIFIER = "com.bainluck.Bain-Luck.watchkitapp.Complication";
+				PRODUCT_BUNDLE_IDENTIFIER = "com.bainluck.Bain-Luck.watchkitapp.SavedGlance";
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				SDKROOT = watchos;
 				SKIP_INSTALL = YES;
@@ -1246,7 +1246,7 @@
 					"@executable_path/../../Frameworks",
 				);
 				MARKETING_VERSION = 1.0;
-				PRODUCT_BUNDLE_IDENTIFIER = "com.bainluck.Bain-Luck.watchkitapp.Complication";
+				PRODUCT_BUNDLE_IDENTIFIER = "com.bainluck.Bain-Luck.watchkitapp.SavedGlance";
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				SDKROOT = watchos;
 				SKIP_INSTALL = YES;

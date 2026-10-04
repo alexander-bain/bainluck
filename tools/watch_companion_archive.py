@@ -10,7 +10,7 @@ import subprocess
 PHONE = "com.bainluck.Bain-Luck"
 WATCH = PHONE + ".watchkitapp"
 ACTIVITY = "com.bainluck.view-game"
-COMPLICATION = WATCH + ".Complication"
+COMPLICATION = WATCH + ".SavedGlance"
 
 
 def require(condition, message):

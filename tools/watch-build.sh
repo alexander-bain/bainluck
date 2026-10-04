@@ -47,7 +47,7 @@ plugins = list((app / 'PlugIns').glob('*.appex'))
 assert len(plugins) == 1, 'Expected exactly one launcher extension'
 with (plugins[0] / 'Info.plist').open('rb') as stream:
     extension = plistlib.load(stream)
-assert extension['CFBundleIdentifier'] == info['CFBundleIdentifier'] + '.Complication'
+assert extension['CFBundleIdentifier'] == info['CFBundleIdentifier'] + '.SavedGlance'
 assert extension['NSExtension']['NSExtensionPointIdentifier'] == 'com.apple.widgetkit-extension'
 for key in ['CFBundleVersion', 'CFBundleShortVersionString']:
     assert extension[key] == info[key], f'Launcher version mismatch: {key}'
