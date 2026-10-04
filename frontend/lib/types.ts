@@ -645,6 +645,11 @@ export interface EventHistoryResponse {
   home_team: string;
   away_team: string;
   completed_at?: string;
+  /**
+   * The event's served status when this history was built (`served_event_status`).
+   * The page may hold a different, newer status; a reader of both must reconcile.
+   */
+  status?: string | null;
   history: OddsHistoryPoint[];
   bookmaker_history?: Record<string, BookmakerHistoryPoint[]>;
   score_history?: ScoreHistoryPoint[];

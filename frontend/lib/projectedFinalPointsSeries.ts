@@ -41,12 +41,18 @@
  * displayed minute, and it is then placed at `observed_at`, so `asOf` and a
  * scrub cursor compare against the capture itself. `synthetic`, an unknown
  * kind, a missing or malformed `observed_at` are refused, never promoted.
+ * `observed_at` must be a valid calendar instant written with its offset
+ * (`parseCaptureInstant`): a local time, a bare date or an impossible day
+ * (`2026-02-30`) is not a capture, even when a lenient parser would round it
+ * onto the displayed minute.
  *
  * A row with no provenance at all (a payload from before the contract) is
- * admitted ONLY on a finished page whose history was served whole: finished
- * status, a completion boundary, and no request cutoff, so no row can be a
- * re-stamp. Anywhere else it is refused, so a live or pregame chart draws
- * nothing until the server says what each row is.
+ * admitted ONLY on a finished page whose history was served whole: a finished
+ * page AND a history whose own `status` is finished, a completion boundary,
+ * and no request cutoff, so no row can be a re-stamp. A completion stamp
+ * alone does not say the history behind it is the finished game's. Anywhere
+ * else the row is refused, so a live or pregame chart draws nothing until the
+ * server says what each row is.
  *
  * ── WHAT A ROW'S `valid_until` IS NOT ───────────────────────────────────────
  *
@@ -251,6 +257,37 @@ function parseTime(value: string | null | undefined): number | null {
   if (!value) return null;
   const t = Date.parse(value);
   return Number.isFinite(t) ? t : null;
+}
+
+const CAPTURE_INSTANT = /^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2}):(\d{2})(?:\.(\d{1,6}))?(Z|[+-]\d{2}:\d{2})$/;
+
+/**
+ * A served capture instant (`observed_at`), or null. Stricter than
+ * `parseTime` on purpose, and used only for provenance: the string must be an
+ * ISO-8601 date-time with seconds and an explicit offset, on a real calendar
+ * day. `Date.parse` reads an offset-less string as the reader's local time and
+ * rolls `2026-02-30` over to March 2, so either could land on a displayed
+ * minute by accident and be promoted to a recorded capture.
+ */
+export function parseCaptureInstant(value: unknown): number | null {
+  if (typeof value !== "string") return null;
+  const m = CAPTURE_INSTANT.exec(value);
+  if (!m) return null;
+  const [, y, mo, d, h, mi, sec, frac, zone] = m;
+  const [year, month, day, hour, minute, second] = [y, mo, d, h, mi, sec].map(Number);
+  if (month < 1 || month > 12 || hour > 23 || minute > 59 || second > 59) return null;
+  const wall = Date.UTC(year, month - 1, day, hour, minute, second);
+  // A day the month does not have rolls into the next one; that is not this instant.
+  if (new Date(wall).getUTCDate() !== day) return null;
+  let offsetMs = 0;
+  if (zone !== "Z") {
+    const oh = Number(zone.slice(1, 3));
+    const om = Number(zone.slice(4, 6));
+    if (oh > 23 || om > 59) return null;
+    offsetMs = (zone[0] === "-" ? -1 : 1) * (oh * 60 + om) * 60 * 1000;
+  }
+  const ms = frac ? Math.floor(Number(`0.${frac}`) * 1000) : 0;
+  return wall + ms - offsetMs;
 }
 
 function isPoints(value: unknown): value is number {
@@ -465,11 +502,24 @@ export interface ProjectionAdmission {
   asOf: string;
 }
 
-type HistoryForAdmission = Pick<EventHistoryResponse, "bookmaker_history" | "completed_at">;
+type HistoryForAdmission = Pick<EventHistoryResponse, "bookmaker_history" | "completed_at" | "status">;
 
-/** True when a row without provenance may still be read as a recorded capture: a finished, whole-served history. */
+/** History statuses that say the served history is a finished game's. */
+export const FINISHED_HISTORY_STATUSES: ReadonlySet<string> = new Set(["completed", "closed"]);
+
+/**
+ * True when a row without provenance may still be read as a recorded capture:
+ * a finished page AND a finished history (its own `status`), served whole with
+ * a completion boundary. A live, scheduled or missing history status refuses,
+ * whatever `completed_at` says.
+ */
 function legacyRowsAdmitted(history: HistoryForAdmission, admission: ProjectionAdmission): boolean {
-  return admission.finishedPage && admission.cutoffAt === null && parseTime(history.completed_at) !== null;
+  return (
+    admission.finishedPage &&
+    admission.cutoffAt === null &&
+    FINISHED_HISTORY_STATUSES.has(history.status ?? "") &&
+    parseTime(history.completed_at) !== null
+  );
 }
 
 const MINUTE_MS = 60 * 1000;
@@ -483,14 +533,15 @@ function admitRow(row: BookmakerHistoryPoint, legacy: boolean): { kind: "recorde
   const hasProvenance = row.kind !== undefined || row.observed_at !== undefined;
   if (!hasProvenance) return { kind: legacy ? "recorded" : "unproven", timestamp: row.timestamp };
   if (row.kind === "synthetic") return { kind: "synthetic", timestamp: row.timestamp };
-  if (row.kind !== "recorded" || typeof row.observed_at !== "string") return { kind: "unproven", timestamp: row.timestamp };
-  const observed = parseTime(row.observed_at);
+  if (row.kind !== "recorded") return { kind: "unproven", timestamp: row.timestamp };
+  const observed = parseCaptureInstant(row.observed_at);
   const minute = parseTime(row.timestamp);
   // The displayed minute is the capture truncated to the minute. Anything else is not this row's capture.
   if (observed === null || minute === null || Math.floor(observed / MINUTE_MS) * MINUTE_MS !== minute) {
     return { kind: "unproven", timestamp: row.timestamp };
   }
-  return { kind: "recorded", timestamp: row.observed_at };
+  // Placed at the instant the strict parse read, so nothing downstream re-reads the string leniently.
+  return { kind: "recorded", timestamp: new Date(observed).toISOString() };
 }
 
 /**
@@ -566,7 +617,7 @@ export function firstRecordedGameStateAt(
  * WITHOUT provenance may be read the pre-contract way.
  */
 export function projectedFinalPointsInputFromHistory(
-  history: Pick<EventHistoryResponse, "bookmaker_history" | "score_history" | "completed_at">,
+  history: Pick<EventHistoryResponse, "bookmaker_history" | "score_history" | "completed_at" | "status">,
   opts: {
     sportKey: string | null | undefined;
     sourceKey: string;

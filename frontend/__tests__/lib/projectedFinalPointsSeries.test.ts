@@ -14,6 +14,7 @@ import {
   firstRecordedGameStateAt,
   inspectionInstants,
   MAX_CAPTURE_GAP_MS,
+  parseCaptureInstant,
   pickProjectionSportsbook,
   projectedFinalPointsInputFromHistory,
   seriesAt,
@@ -308,6 +309,7 @@ describe("holds come from recorded captures only", () => {
 describe("reading a served history payload", () => {
   const history = {
     completed_at: FINAL,
+    status: "completed",
     // The aggregate line is never read: its buckets mix whichever books wrote that minute.
     history: [
       {
@@ -593,8 +595,8 @@ describe("served provenance decides what is a recorded reading (#10461)", () => 
     projected_away_score: 17,
     ...over,
   });
-  const payload = (rows: Record<string, unknown>[], completed_at: string | null = null) =>
-    ({ completed_at, bookmaker_history: { draftkings: rows }, score_history: [] }) as unknown as EventHistoryResponse;
+  const payload = (rows: Record<string, unknown>[], completed_at: string | null = null, status: string | null = completed_at ? "completed" : "live") =>
+    ({ completed_at, status, bookmaker_history: { draftkings: rows }, score_history: [] }) as unknown as EventHistoryResponse;
   const live: { sportKey: string; sourceKey: string; kickoffAt: string; asOf: string; cutoffAt: string | null; finishedPage: boolean } = {
     sportKey: "americanfootball_nfl",
     sourceKey: "draftkings",
@@ -608,7 +610,7 @@ describe("served provenance decides what is a recorded reading (#10461)", () => 
 
   it("admits recorded + an observed_at inside its own minute, placed at the capture, numbers untouched", () => {
     const input = projectedFinalPointsInputFromHistory(payload([row({ kind: "recorded", observed_at: "2026-09-29T00:30:41.250000+00:00" })]), live);
-    expect(input.pairs[0]).toMatchObject({ kind: "recorded", timestamp: "2026-09-29T00:30:41.250000+00:00", home: 27.5, away: 17 });
+    expect(input.pairs[0]).toMatchObject({ kind: "recorded", timestamp: "2026-09-29T00:30:41.250Z", home: 27.5, away: 17 });
     const s = supported(input);
     expect(s.latest).toMatchObject({ at: ms("2026-09-29T00:30:41.250Z"), home: 27.5, away: 17 });
   });
@@ -621,15 +623,47 @@ describe("served provenance decides what is a recorded reading (#10461)", () => 
     ["recorded with a malformed observed_at", { kind: "recorded", observed_at: "not a time" }, "unproven"],
     ["recorded with a capture outside its minute", { kind: "recorded", observed_at: "2026-09-29T00:29:59+00:00" }, "unproven"],
     ["an observed_at with no kind", { observed_at: "2026-09-29T00:30:05+00:00" }, "unproven"],
+    // Each of these lands on 00:30 under a lenient Date.parse (jest runs in UTC); none is a capture instant.
+    ["an observed_at with no offset", { kind: "recorded", observed_at: "2026-09-29T00:30:05" }, "unproven"],
+    ["an observed_at with no offset and fractions", { kind: "recorded", observed_at: "2026-09-29T00:30:05.250000" }, "unproven"],
+    ["an observed_at with no seconds", { kind: "recorded", observed_at: "2026-09-29T00:30Z" }, "unproven"],
+    ["an observed_at with a space for T", { kind: "recorded", observed_at: "2026-09-29 00:30:05+00:00" }, "unproven"],
+    ["an observed_at in another format", { kind: "recorded", observed_at: "Tue, 29 Sep 2026 00:30:05 GMT" }, "unproven"],
+    ["an observed_at that is a number", { kind: "recorded", observed_at: Date.parse("2026-09-29T00:30:05Z") }, "unproven"],
+    ["an observed_at with an impossible offset", { kind: "recorded", observed_at: "2026-09-29T00:30:05+24:00" }, "unproven"],
     ["no provenance at all, live", {}, "unproven"],
   ] as const)("refuses %s", (_label, over, expected) => {
     expect(kinds([row(over)])).toEqual([expected]);
     expect(buildProjectedFinalPointsSeries(projectedFinalPointsInputFromHistory(payload([row(over)]), live)).supported).toBe(false);
   });
 
+  it.each([
+    // A date only: midnight UTC, the 00:00 minute.
+    ["a bare date", "2026-09-29T00:00:00Z", "2026-09-29"],
+    // February 30 rolls over to March 2 under Date.parse.
+    ["an impossible calendar day", "2026-03-02T00:00:00Z", "2026-02-30T00:00:17Z"],
+    ["day zero", "2026-08-31T00:00:00Z", "2026-09-00T00:00:17Z"],
+  ])("refuses %s even when a lenient parse lands it on the displayed minute", (_label, timestamp, observed_at) => {
+    expect(Math.floor(Date.parse(observed_at) / 60_000) * 60_000 === Date.parse(timestamp) || Number.isNaN(Date.parse(observed_at))).toBe(true);
+    expect(kinds([row({ timestamp, kind: "recorded", observed_at })])).toEqual(["unproven"]);
+  });
+
+  it("a capture written with a non-UTC offset is the same instant, placed at it", () => {
+    const input = projectedFinalPointsInputFromHistory(payload([row({ kind: "recorded", observed_at: "2026-09-28T20:30:41-04:00" })]), live);
+    expect(input.pairs[0]).toMatchObject({ kind: "recorded", timestamp: "2026-09-29T00:30:41.000Z" });
+    expect(kinds([row({ kind: "recorded", observed_at: "2026-09-29T00:30:41Z" })])).toEqual(["recorded"]);
+  });
+
   it("a row without provenance is read the old way only on a finished, whole-served history", () => {
     const finished = { finishedPage: true, asOf: FINAL };
     expect(kinds([row({})], finished, FINAL)).toEqual(["recorded"]);
+    // The history's own status must be finished too: a completion stamp alone does not qualify it.
+    for (const status of ["live", "scheduled", "postponed", null]) {
+      const input = projectedFinalPointsInputFromHistory(payload([row({})], FINAL, status), { ...live, ...finished });
+      expect([status, input.pairs.map((p) => p.kind)]).toEqual([status, ["unproven"]]);
+      expect(pickProjectionSportsbook(payload([row({})], FINAL, status), { ...finished, cutoffAt: null })).toBeNull();
+    }
+    expect(projectedFinalPointsInputFromHistory(payload([row({})], FINAL, "closed"), { ...live, ...finished }).pairs[0].kind).toBe("recorded");
     // Every qualification is needed: finished status, a completion boundary, no request cutoff.
     expect(kinds([row({})], { ...finished, finishedPage: false }, FINAL)).toEqual(["unproven"]);
     expect(kinds([row({})], finished, null)).toEqual(["unproven"]);
@@ -676,5 +710,39 @@ describe("served provenance decides what is a recorded reading (#10461)", () => 
     // Rows without provenance count on a live page for nobody.
     const legacy = { completed_at: null, bookmaker_history: { fanduel: [row({})] } } as unknown as EventHistoryResponse;
     expect(pickProjectionSportsbook(legacy, { finishedPage: false, cutoffAt: null, asOf: LIVE_NOW })).toBeNull();
+  });
+});
+
+describe("parseCaptureInstant", () => {
+  it.each([
+    ["2026-09-29T00:30:41Z", "2026-09-29T00:30:41.000Z"],
+    ["2026-09-29T00:30:41.250000+00:00", "2026-09-29T00:30:41.250Z"],
+    ["2026-09-29T05:30:41.9+05:00", "2026-09-29T00:30:41.900Z"],
+    ["2026-09-28T23:45:41-00:45", "2026-09-29T00:30:41.000Z"],
+    ["2028-02-29T12:00:00Z", "2028-02-29T12:00:00.000Z"],
+  ])("reads %s as %s", (value, iso) => {
+    expect(parseCaptureInstant(value)).toBe(Date.parse(iso));
+  });
+
+  it.each([
+    "2026-09-29T00:30:41",
+    "2026-09-29",
+    "2026-02-30T00:00:17Z",
+    "2027-02-29T00:00:17Z",
+    "2026-13-01T00:00:17Z",
+    "2026-09-29T24:00:00Z",
+    "2026-09-29T00:60:00Z",
+    "2026-09-29T00:30:60Z",
+    "2026-09-29T00:30:41+0000",
+    "2026-09-29T00:30:41+00:60",
+    "2026-09-29T00:30:41.1234567Z",
+    " 2026-09-29T00:30:41Z",
+    "",
+  ])("refuses %p", (value) => {
+    expect(parseCaptureInstant(value)).toBeNull();
+  });
+
+  it("refuses anything that is not a string", () => {
+    for (const v of [null, undefined, 0, Date.parse("2026-09-29T00:30:41Z"), {}]) expect(parseCaptureInstant(v)).toBeNull();
   });
 });
