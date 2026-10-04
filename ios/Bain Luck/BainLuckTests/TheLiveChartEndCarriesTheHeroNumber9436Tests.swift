@@ -630,19 +630,26 @@ final class TheLiveChartEndCarriesTheHeroNumber9436Tests: XCTestCase {
             guard (4...7).contains(width), (4...7).contains(height), abs(width - height) <= 1,
                   count >= 16, count * 3 >= width * height * 2 else { continue }
             let cx = (minX + maxX) / 2, cy = (minY + maxY) / 2
-            let collar = [(minX - 2, cy), (maxX + 2, cy), (cx, minY - 2), (cx, maxY + 2)]
-            let white = collar.filter { x, y in
+            func white(_ x: Int, _ y: Int) -> Bool {
                 guard x >= 0, x < w, y >= 0, y < h else { return false }
                 let i = (y * w + x) * 4
                 return bytes[i] > 230 && bytes[i + 1] > 230 && bytes[i + 2] > 230
-            }.count
-            // The joining line can occupy one collar point.
-            if white >= 3 { candidates.append(maxX) }
+            }
+            let (left, right) = (white(minX - 2, cy), white(maxX + 2, cy))
+            let (top, bottom) = (white(cx, minY - 2), white(cx, maxY + 2))
+            // The joining line can occupy one collar point — or two, left and
+            // top/bottom, when the dot sits just past a sharp turn: the line
+            // into the old vertex covers one, the short new segment the other
+            // (hosted run 37217671736). The line always arrives from the left,
+            // so nothing of it is ever to the right of the newest vertex.
+            let whites = [left, right, top, bottom].filter { $0 }.count
+            if whites >= 3 || (right && (top || bottom)) { candidates.append(maxX) }
         }
         return candidates.count == 1 ? candidates[0] : nil
     }
 
-    private func detectorFixture(dotCenters: [CGPoint]) -> UIImage {
+    /// `line` is drawn under the dots as the chart draws its 3pt blend line.
+    private func detectorFixture(dotCenters: [CGPoint], line: [CGPoint] = []) -> UIImage {
         let format = UIGraphicsImageRendererFormat()
         format.scale = 1
         let green = UIColor(red: 5 / 255.0, green: 150 / 255.0, blue: 105 / 255.0, alpha: 1)
@@ -651,6 +658,16 @@ final class TheLiveChartEndCarriesTheHeroNumber9436Tests: XCTestCase {
             context.fill(CGRect(x: 0, y: 0, width: 220, height: 80))
             ("BOS 50%" as NSString).draw(at: CGPoint(x: 120, y: 25), withAttributes: [
                 .font: UIFont.boldSystemFont(ofSize: 13), .foregroundColor: green])
+            if let first = line.first {
+                let cg = context.cgContext
+                cg.setStrokeColor(green.cgColor)
+                cg.setLineWidth(3)
+                cg.setLineCap(.round)
+                cg.setLineJoin(.round)
+                cg.move(to: first)
+                line.dropFirst().forEach { cg.addLine(to: $0) }
+                cg.strokePath()
+            }
             for center in dotCenters {
                 let circle = CGRect(x: center.x - 4, y: center.y - 4, width: 8, height: 8)
                 context.cgContext.setFillColor(green.cgColor)
@@ -672,6 +689,35 @@ final class TheLiveChartEndCarriesTheHeroNumber9436Tests: XCTestCase {
     func testTheMotionDetectorRejectsLabelOnlyAndAmbiguousDots() {
         XCTAssertNil(markerColumn(detectorFixture(dotCenters: [])))
         XCTAssertNil(markerColumn(detectorFixture(dotCenters: [CGPoint(x: 60, y: 40), CGPoint(x: 90, y: 40)])))
+    }
+
+    /// Hosted run 37217671736: ~0.13 s into a fall the dot sits just below and
+    /// right of the old peak. The line rising into the peak covers the left
+    /// collar point and the short new segment the top one — 7 of 724 frames
+    /// sampled at random phases read no dot. Geometry measured off those
+    /// frames; mirrored for a rise past a trough (the pin replacement).
+    func testTheMotionDetectorFindsADotJustPastASharpTurn() throws {
+        // Every quarter-pixel phase: the old rule read no dot at 10 of these 32.
+        for offset in (0..<16).map({ CGPoint(x: Double($0 % 4) / 4, y: Double($0 / 4) / 4) }) {
+            for flip: CGFloat in [1, -1] {
+                let c = CGPoint(x: 60 + offset.x, y: 40 + offset.y)
+                let turn = CGPoint(x: c.x - 2.5, y: c.y - 8.5 * flip)
+                let image = detectorFixture(dotCenters: [c],
+                                            line: [CGPoint(x: c.x - 9.5, y: c.y + 8.5 * flip), turn, c])
+                let dot = try XCTUnwrap(markerColumn(image), "offset \(offset) flip \(flip)")
+                XCTAssertTrue((61...64).contains(dot), "offset \(offset) flip \(flip): \(dot)")
+            }
+        }
+    }
+
+    /// The widening is the left-side join only: a dot the line runs THROUGH
+    /// — across it or down it — is not an endpoint, with two white points.
+    func testTheMotionDetectorRejectsADotTheLineRunsThrough() {
+        let c = CGPoint(x: 60, y: 40)
+        XCTAssertNil(markerColumn(detectorFixture(dotCenters: [c],
+                                                  line: [CGPoint(x: 45, y: 40), CGPoint(x: 75, y: 40)])))
+        XCTAssertNil(markerColumn(detectorFixture(dotCenters: [c],
+                                                  line: [CGPoint(x: 60, y: 28), CGPoint(x: 60, y: 52)])))
     }
 
     private func tipPixel(_ image: UIImage) -> (x: Int, y: Int)? {
