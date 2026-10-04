@@ -114,6 +114,9 @@ class Session:
                     )
                 ]
             )
+        if sql.startswith("SELECT slug FROM containers WHERE id = :cid"):
+            # #9935: corrections read the slug under the lock (theme rebuild).
+            return Result([] if self.missing else [(self.facts["slug"],)])
         if "SELECT count(*) FROM event_edges" in sql:
             return Result([(self.facts["edge_count"],)])
         if sql.startswith("UPDATE containers SET publication_state"):
@@ -660,6 +663,10 @@ class MemberSession:
                 self.world.on_lock = None
             c = s["containers"].get(params["cid"])
             return Result([(params["cid"], c["pub"], c["revision"], 0)] if c else [])
+        if sql.startswith("SELECT slug FROM containers WHERE id = :cid"):
+            # #9935: corrections read the slug under the lock (theme rebuild).
+            c = s["containers"].get(params["cid"])
+            return Result([(c["slug"],)] if c else [])
         if "FROM containers c WHERE c.id = :cid" in sql:
             c = s["containers"].get(params["cid"])
             if c is None:

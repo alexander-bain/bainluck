@@ -2063,7 +2063,13 @@ def free_background_slots(
 #: measured writing 0 rows per 5,000-partition pass. Cost removed, not added: up to
 #: ~35 min of one background slot each, four times a day. The census RUN over the
 #: tree branched from `81f8b97dba` printed `explicit 98 implicit 40 total 138`.
-BACKGROUND_BEAT_COUNT = 138
+#: Re-derived on root #9935 atomic composition 05bf6059d0 (2026-10-04):
+#: explicit 99, fall-through 40, total 139, from the assembled schedule.
+#: assemble-theme-collections-hourly explicitly names background at minute59.
+#: Cost: one dispatch/hour; flag-off exits before DB/Redis writes. When enabled,
+#: one bounded theme pass has a200s budget /240s soft limit; publication remains
+#: separate. This count describes scheduled arrivals, not active theme work.
+BACKGROUND_BEAT_COUNT = 139
 #: 🔴 RE-DERIVED at lane1/282 (2026-09-13, #5896): 122 → **123**, explicit
 #: 79 → **80**, fall-through UNMOVED at 43. One beat added,
 #: `soccer-ghost-twin-sweep` (`crontab(minute="9,49")`) with an EXPLICIT

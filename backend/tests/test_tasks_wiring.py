@@ -470,6 +470,8 @@ class TestBeatScheduleCompleteness:
         # #12: this allowlist is the reason a new beat entry cannot land
         # silently.
         "assemble-containers-hourly",
+        # #9935 C1 — the theme collections assemble hourly, flag-gated.
+        "assemble-theme-collections-hourly",
     }
 
     def test_no_missing_entries(self):
@@ -916,3 +918,52 @@ class TestHeavyQueueRouting:
             and entry.get("options", {}).get("queue") != "heavy"
         }
         assert not bad_beat, f"sentinel beat entries not pinned to heavy: {bad_beat}"
+
+
+class TestThemeCollectionWiring9935:
+    """#9935 C1: the theme producer's two tasks, their queue, their beat minute,
+    and the name a correction sends — pinned, so A2 never guesses its caller."""
+
+    TASKS = ("app.tasks.assemble_theme_collections", "app.tasks.rebuild_theme_snapshot")
+    BEAT = "assemble-theme-collections-hourly"
+
+    def test_both_tasks_are_registered_on_background_and_not_heavy(self):
+        from app.tasks import HEAVY_TASKS, celery_app as app
+        for name in self.TASKS:
+            assert name in app.tasks, name
+            assert app.conf.task_routes[name] == {"queue": "background"}, name
+            assert name not in HEAVY_TASKS, name
+
+    def test_the_beat_entry_is_hourly_on_a_minute_no_other_entry_uses(self):
+        entry = celery_app.conf.beat_schedule[self.BEAT]
+        assert entry["task"] == "app.tasks.assemble_theme_collections"
+        assert entry["options"] == {"queue": "background"}
+        assert entry["schedule"].minute == {59}
+        assert entry["schedule"].hour == set(range(24))
+        sharing = [
+            name for name, other in celery_app.conf.beat_schedule.items()
+            if name != self.BEAT and 59 in getattr(other["schedule"], "minute", ())
+        ]
+        assert not sharing, f"minute 59 is shared with {sharing}"
+
+    def test_a_correction_sends_the_registered_rebuild_on_background(self):
+        from app.utils import container_corrections as cc
+        assert cc.THEME_REBUILD_TASK == "app.tasks.rebuild_theme_snapshot"
+        assert cc.THEME_REBUILD_TASK in celery_app.tasks
+
+    def test_the_wrappers_run_the_producer_coroutines_through_tracked_run(self, monkeypatch):
+        import app.tasks as tasks_pkg
+        from app.tasks import theme_assembly
+
+        calls = []
+        monkeypatch.setattr(tasks_pkg, "_tracked_run", lambda name, work: calls.append((name, work)))
+        monkeypatch.setattr(theme_assembly, "_run_assemble_theme_collections",
+                            lambda apply=True, only=None: ("assemble", apply, only))
+        monkeypatch.setattr(theme_assembly, "_run_rebuild_theme_snapshot",
+                            lambda container_id: ("rebuild", container_id))
+        tasks_pkg.assemble_theme_collections(apply=False, only="ai")
+        tasks_pkg.rebuild_theme_snapshot(7)
+        assert calls == [
+            ("assemble_theme_collections", ("assemble", False, "ai")),
+            ("rebuild_theme_snapshot", ("rebuild", 7)),
+        ]

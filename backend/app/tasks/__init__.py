@@ -746,6 +746,12 @@ celery_app.conf.task_routes = {
     # `/api/containers/{slug}`, so no user is waiting on this pass. Two bounded
     # queries per anchor, six anchors, once an hour.
     "app.tasks.assemble_containers": {"queue": "background"},
+    # #9935 C1. Same queue and same reasoning as `assemble_containers`: the
+    # theme pass converges the snapshot a collection page reads, so no reader
+    # waits on it, and the rebuild a correction sends is one container. Not a
+    # heavy task (main app, not `bainluck-heavy`).
+    "app.tasks.assemble_theme_collections": {"queue": "background"},
+    "app.tasks.rebuild_theme_snapshot": {"queue": "background"},
     "app.tasks.stamp_nhl_statpal_fixtures": {"queue": "background"},
     "app.tasks.stamp_mlb_statpal_fixtures": {"queue": "background"},
     "app.tasks.heartbeat": {"queue": "realtime"},
@@ -5141,6 +5147,47 @@ def assemble_containers(self, apply=True, only=None):
 
 
 @celery_app.task(bind=True, soft_time_limit=240, time_limit=270,
+                 name="app.tasks.assemble_theme_collections")
+def assemble_theme_collections(self, apply=True, only=None):
+    """Assemble every theme collection (#9935): Oscars 2027 and AI.
+
+    Gathers each definition's own candidate population, decides every member
+    by its versioned rule, writes `theme_rule` edges and one decision row per
+    member under the container lock, and publishes the page snapshot for the
+    revision it committed. The work is `app.tasks.theme_assembly`.
+
+    DARK UNTIL ATTENDED. `THEME_ASSEMBLY_ENABLED` unset, or the
+    `container_member_decisions` table absent (its migration is Alex's word,
+    D45), returns `terminal: skipped` with the reason and writes nothing.
+    Skipped is not success (gotcha #53). Assembly never publishes a collection.
+
+    `apply=False` gathers and decides and writes nothing. 240s soft limit over
+    the pass's own 200s budget, well clear of the global 300s (#966)."""
+    from app.tasks.theme_assembly import _run_assemble_theme_collections
+    return _tracked_run(
+        "assemble_theme_collections",
+        _run_assemble_theme_collections(apply=apply, only=only),
+    )
+
+
+@celery_app.task(bind=True, soft_time_limit=120, time_limit=150,
+                 name="app.tasks.rebuild_theme_snapshot")
+def rebuild_theme_snapshot(self, container_id):
+    """Rebuild ONE theme collection's page snapshot (#9935).
+
+    Sent by `container_corrections` after a correction on a theme container
+    commits, so a withdrawn member leaves the page in seconds rather than at
+    the next hourly pass. No gather, no decision: members and revision are
+    read together under the container lock. Same gates as the pass; a
+    non-theme container is `skipped / not_a_theme_container`."""
+    from app.tasks.theme_assembly import _run_rebuild_theme_snapshot
+    return _tracked_run(
+        "rebuild_theme_snapshot",
+        _run_rebuild_theme_snapshot(container_id),
+    )
+
+
+@celery_app.task(bind=True, soft_time_limit=240, time_limit=270,
                  name="app.tasks.stamp_nfl_statpal_fixtures")
 def stamp_nfl_statpal_fixtures(self, apply=True):
     """Stamp each NFL row with the StatPal contest it is (#2867, D50).
@@ -8471,6 +8518,19 @@ celery_app.conf.beat_schedule = {
     "assemble-containers-hourly": {
         "task": "app.tasks.assemble_containers",
         "schedule": crontab(minute=47),
+        "options": {"queue": "background"},
+    },
+    # --- #9935 C1: the theme collections assemble themselves ----------------
+    #
+    # Crontab for the reason above. Minute 59 is unshared with every entry on
+    # every queue and outside the settlement sweep's 10:31–10:44 window.
+    # FLAG-GATED: until `THEME_ASSEMBLY_ENABLED` is set in
+    # production (attended config, notice 39) the pass returns
+    # `skipped / theme_assembly_disabled` and writes nothing, so the entry can
+    # land before the migration and the flag.
+    "assemble-theme-collections-hourly": {
+        "task": "app.tasks.assemble_theme_collections",
+        "schedule": crontab(minute=59),
         "options": {"queue": "background"},
     },
     # --- #2077 (queue 419): the settlement-capture sweep, on a schedule -------
