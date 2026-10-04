@@ -243,6 +243,36 @@ async def test_unqueued_writer_before_the_first_tracked_write_is_not_complete(en
     assert pub.uncovered_keys == [] and pub.unobserved_bumps == 0
 
 
+async def test_a_dirty_orm_bag_before_the_first_tracked_write_is_not_complete(engine):
+    """Transaction reviewer's order: the dirty bag would autoflush AFTER a Core
+    probe but BEFORE the tracked UPDATE, so the probe must flush it first."""
+    event_id = await _seed_event(engine)
+    async with _sessions(engine)() as session:
+        event = await session.get(Event, event_id)
+        event.win_probability_sources = {**event.win_probability_sources, "kalshi": 0.8}
+        await write_nonvenue_probability(session, event, "espn", 0.6)
+        await session.commit()
+    bag, rev, _ = await _row(engine, event_id)
+    pub = _pub(await _publications(engine, event_id))
+    assert "kalshi" in bag and pub.sources == bag and pub.rev == rev == 2
+    assert [o["source"] for o in pub.observations] == ["espn"]
+    assert pub.prior_txn_row_write is True
+    assert pub.coverage == COVERAGE_PRIOR_UNESTABLISHED
+
+
+async def test_pending_orm_state_without_autoflush_is_not_established(engine):
+    event_id = await _seed_event(engine)
+    async with _sessions(engine)() as session:
+        event = await session.get(Event, event_id)
+        with session.no_autoflush:
+            event.home_score = 2
+            await write_nonvenue_probability(session, event, "espn", 0.6)
+        await session.commit()
+    pub = _pub(await _publications(engine, event_id))
+    assert pub.prior_txn_row_write is None
+    assert pub.coverage == COVERAGE_PRIOR_UNESTABLISHED
+
+
 async def test_prior_write_inside_a_released_savepoint_is_still_seen(engine):
     event_id = await _seed_event(engine)
     async with _sessions(engine)() as session:

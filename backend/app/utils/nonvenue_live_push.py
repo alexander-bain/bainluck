@@ -116,7 +116,8 @@ async def _probe_prior_txn_row_write(session, event_id):
 
     Asked only for the first tracked write of an event in a transaction, and
     only while recording is on. A row version visible to us whose ``xmin`` is
-    still in progress can only be our own write, top-level or savepoint. False
+    still in progress can only be our own write, top-level or savepoint. Pending
+    ORM state is flushed first (see below). False
     therefore proves the bag this write starts from is the committed one. True
     means an earlier write in this transaction, which this path did not see,
     touched the row. Whether it touched the bag is not known.
@@ -131,8 +132,18 @@ async def _probe_prior_txn_row_write(session, event_id):
 
     if not recording_enabled():
         return None
-    pending = session.sync_session.info.get(_PENDING, [])
+    sync = session.sync_session
+    pending = sync.info.get(_PENDING, [])
     if any(frame["event_id"] == event_id for _, frame, _, _, _ in pending):
+        return None
+    # The Core probe bypasses autoflush, but the UPDATE below does not: pending
+    # ORM state would land between them, unseen. Flush it first, which is
+    # exactly what that UPDATE's autoflush does a moment later. With autoflush
+    # off, pending state flushes at some later point we cannot place, so a
+    # session with any pending state is not established.
+    if sync.autoflush:
+        await session.flush()
+    elif sync.new or sync.dirty or sync.deleted:
         return None
     connection = await session.connection()
     try:
