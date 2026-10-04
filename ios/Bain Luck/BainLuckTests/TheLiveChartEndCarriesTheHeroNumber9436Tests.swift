@@ -494,14 +494,17 @@ final class TheLiveChartEndCarriesTheHeroNumber9436Tests: XCTestCase {
             window.isHidden = false
         }
         func close() { window.isHidden = true }
-        func shot() -> UIImage {
+        func shot(afterScreenUpdates: Bool = true) -> UIImage {
             host.view.setNeedsLayout(); host.view.layoutIfNeeded()
             // This probe needs tip positions, not a 3x presentation screenshot.
             let format = UIGraphicsImageRendererFormat()
             format.scale = 1
-            return UIGraphicsImageRenderer(bounds: host.view.bounds, format: format).image { _ in
-                host.view.drawHierarchy(in: host.view.bounds, afterScreenUpdates: true)
+            var captured = false
+            let image = UIGraphicsImageRenderer(bounds: host.view.bounds, format: format).image { _ in
+                captured = host.view.drawHierarchy(in: host.view.bounds, afterScreenUpdates: afterScreenUpdates)
             }
+            XCTAssertTrue(captured, "The motion probe failed to capture its view hierarchy")
+            return image
         }
     }
 
@@ -512,7 +515,9 @@ final class TheLiveChartEndCarriesTheHeroNumber9436Tests: XCTestCase {
         while CACurrentMediaTime() - start < seconds {
             try await Task.sleep(for: .milliseconds(30))
             let captureStart = CACurrentMediaTime()
-            let image = hosted.shot()
+            // Read the displayed frame; waiting for the next update can consume
+            // most of this short animation before the observer gets another turn.
+            let image = hosted.shot(afterScreenUpdates: false)
             let acquiredAt = CACurrentMediaTime()
             captures.append((image, acquiredAt - start, acquiredAt - captureStart))
         }
@@ -581,7 +586,9 @@ final class TheLiveChartEndCarriesTheHeroNumber9436Tests: XCTestCase {
         feed.frames.append(LiveBlendPoint(date: next, homeProbability: 0.60))
         feed.edge = LiveEdgeReading(homeProbability: 0.60, homeLabel: "60%")
         let (columns, stamps) = try await sampleTip(hosted, seconds: 0.8)
-        let settled = try XCTUnwrap(columns.last)
+        let sampledLast = try XCTUnwrap(columns.last)
+        let settled = try XCTUnwrap(tipColumn(hosted.shot()))
+        XCTAssertEqual(sampledLast, settled, "Sampling must reach the independently captured final endpoint")
         print("#9436 glide tip columns: before=\(before) frames=\(columns)")
 
         // The glide is visible: at least two distinct positions short of the
@@ -611,7 +618,9 @@ final class TheLiveChartEndCarriesTheHeroNumber9436Tests: XCTestCase {
         feed.history = try pinnedHistory(pinAt: 16, 0.58)
         feed.edge = LiveEdgeReading(homeProbability: 0.58, homeLabel: "58%")
         let (columns, stamps) = try await sampleTip(hosted, seconds: 0.8)
-        let settled = try XCTUnwrap(columns.last)
+        let sampledLast = try XCTUnwrap(columns.last)
+        let settled = try XCTUnwrap(tipColumn(hosted.shot()))
+        XCTAssertEqual(sampledLast, settled, "Sampling must reach the independently captured final endpoint")
         print("#9436 pin-replacement tip columns: before=\(before) frames=\(columns)")
 
         // A later pin widens the x-domain in the same update, so `before`
@@ -623,6 +632,42 @@ final class TheLiveChartEndCarriesTheHeroNumber9436Tests: XCTestCase {
         XCTAssertEqual(columns, columns.sorted(), "the tip reversed: \(columns)")
         let settleIndex = try XCTUnwrap(columns.firstIndex(of: settled))
         XCTAssertLessThan(stamps[settleIndex], LiveChartEdgeMarkerPlan.glideDuration + 0.25, "\(stamps)")
+    }
+
+    func testTheSamplingRigDoesNotInventAnAppendGlideWithReduceMotion() async throws {
+        try await assertNoSampledGlideWithReduceMotion(pinReplacement: false)
+    }
+
+    func testTheSamplingRigDoesNotInventAPinGlideWithReduceMotion() async throws {
+        try await assertNoSampledGlideWithReduceMotion(pinReplacement: true)
+    }
+
+    private func assertNoSampledGlideWithReduceMotion(pinReplacement: Bool) async throws {
+        let feed = Feed(frames: pinReplacement ? [] : frames([0.49, 0.55, 0.78]),
+                        edge: LiveEdgeReading(homeProbability: pinReplacement ? 0.50 : 0.78,
+                                              homeLabel: pinReplacement ? "50%" : "78%"),
+                        history: pinReplacement ? try pinnedHistory(pinAt: 12, 0.50) : nil)
+        let hosted = Hosted(FedChart(feed: feed, history: try history())
+            .environment(\.accessibilityReduceMotion, true))
+        defer { hosted.close() }
+        try await Task.sleep(for: .milliseconds(600))
+        let before = try XCTUnwrap(tipColumn(hosted.shot()))
+        if pinReplacement {
+            feed.history = try pinnedHistory(pinAt: 16, 0.58)
+            feed.edge = LiveEdgeReading(homeProbability: 0.58, homeLabel: "58%")
+        } else {
+            feed.frames.append(LiveBlendPoint(date: try XCTUnwrap("2026-09-21T12:14:00Z".asDate), homeProbability: 0.60))
+            feed.edge = LiveEdgeReading(homeProbability: 0.60, homeLabel: "60%")
+        }
+        let (columns, _) = try await sampleTip(hosted, seconds: 0.8)
+        let settled = try XCTUnwrap(tipColumn(hosted.shot()))
+        XCTAssertNotEqual(before, settled, "Control must actually display the accepted update")
+        XCTAssertEqual(columns.last, settled, "Control must reach the independent final capture")
+        // A not-yet-presented update may leave an initial old frame. Neither
+        // that old endpoint nor the settled endpoint is an intermediate glide.
+        XCTAssertTrue(columns.allSatisfy { $0 == before || $0 == settled },
+                      "Sampling invented motion with Reduce Motion: \(columns)")
+        print("#9436 Reduce Motion control pin=\(pinReplacement): before=\(before) frames=\(columns) settled=\(settled)")
     }
 
     /// Finding 3, rendered: the scene leaving `.active` mid-glide cancels the
