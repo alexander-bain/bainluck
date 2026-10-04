@@ -77,6 +77,8 @@ struct WatchSelectedGameView: View {
                     Text("Launcher opens: \(launcherOpenCount)")
                         .font(.footnote)
                         .accessibilityIdentifier("watch.launch-receipt")
+                    Text(WatchUIFixture.processID).font(.footnote)
+                        .accessibilityIdentifier("watch.launch-process")
                 }
                 #endif
             }

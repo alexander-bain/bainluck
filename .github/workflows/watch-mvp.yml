@@ -24,6 +24,8 @@ on:
       - 'ios/Bain Luck/BainLuckTests/DiscoverViewModelPaginationTests.swift'
       - 'ios/Bain Luck/BainLuckWatchUITests/**'
       - 'tools/watch-ui-journey.sh'
+      - 'tools/watch_ui_warm_delivery.py'
+      - 'tools/tests/test_watch_ui_warm_delivery.py'
       - 'tools/watch-build.sh'
       - 'tools/watch-companion-archive.sh'
       - 'tools/watch-non-ios-plan.sh'
@@ -58,6 +60,8 @@ on:
       - 'ios/Bain Luck/BainLuckTests/DiscoverViewModelPaginationTests.swift'
       - 'ios/Bain Luck/BainLuckWatchUITests/**'
       - 'tools/watch-ui-journey.sh'
+      - 'tools/watch_ui_warm_delivery.py'
+      - 'tools/tests/test_watch_ui_warm_delivery.py'
       - 'tools/watch-build.sh'
       - 'tools/watch-companion-archive.sh'
       - 'tools/watch-non-ios-plan.sh'
@@ -160,6 +164,8 @@ jobs:
         with:
           ref: ${{ github.event.pull_request.head.sha || github.sha }}
           persist-credentials: false
+      - name: Check warm-delivery handshake guards
+        run: python3 tools/tests/test_watch_ui_warm_delivery.py -v
       - name: Select, reopen offline, and change a game through Watch controls
         run: bash tools/watch-ui-journey.sh
       - name: Preserve UI journey evidence

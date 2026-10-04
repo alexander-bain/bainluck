@@ -4,6 +4,7 @@ import Foundation
 /// Deterministic UI-test data, excluded from Release. Never contacts the public API.
 /// A separate defaults domain keeps fixture selections out of the reader's data.
 nonisolated struct WatchUIFixture: WatchSelectedGameTransport, WatchGamePickerTransport {
+    static let processID = UUID().uuidString
     let offline: Bool
     let suite: String
     var rounding = false
