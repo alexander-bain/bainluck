@@ -122,16 +122,15 @@ struct WatchSelectedGameView: View {
                     .font(.footnote).foregroundStyle(.secondary)
             }
             if game.showsForecast {
-                if let probability = game.homeProbability, probability.isFinite,
-                   (0...1).contains(probability) {
+                if let probabilityText = game.homeProbabilityText {
                     VStack(alignment: .leading, spacing: 2) {
                         Text("\(game.homeTeam) win").font(.footnote)
-                        Text(probability, format: .percent.precision(.fractionLength(0)))
+                        Text(probabilityText)
                             .font(.title2.bold()).monospacedDigit()
                     }
                     .accessibilityElement(children: .ignore)
                     .accessibilityIdentifier("watch.home-probability")
-                    .accessibilityLabel("\(game.homeTeam) win probability, \(probability.formatted(.percent.precision(.fractionLength(0))))")
+                    .accessibilityLabel("\(game.homeTeam) win probability, \(probabilityText)")
                 } else {
                     Text("Win probability unavailable")
                         .font(.footnote).foregroundStyle(.secondary)
