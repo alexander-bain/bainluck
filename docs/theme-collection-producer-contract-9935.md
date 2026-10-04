@@ -3,7 +3,7 @@
 **PILLARS** MATCHING · DISCOVER · TRUTH.
 **SHIP** An AI or Oscars preview opens the same complete, correctly scoped collection on a URL that still works when membership changes.
 
-**Status: CONTRACT v3.2, DEFINED. Root has accepted the definition: AI continuing `ai` = A, finite Oscars 2027, Discover's six amendments, and the hydration-time fold.** #9935 stays **Conditional / Blocked / Defined / not Ready**. No app source changed, no production, API or provider call, no dispatch, no source claim. Current claims are unchanged: Authority owns identity and membership, Discover owns relevance, the NFL/MLB publication owners keep their files. The `container_member_decisions` table is **proposed, not approved**: its migration is D45, Alex's word only. Nothing here authorizes a migration, publication or activation.
+**Status: CONTRACT v3.2, DEFINED (v3.3 adds the §10.4 P2 interface only). Root has accepted the definition: AI continuing `ai` = A, finite Oscars 2027, Discover's six amendments, and the hydration-time fold.** #9935 stays **Conditional / Blocked / Defined / not Ready**. No app source changed, no production, API or provider call, no dispatch, no source claim. Current claims are unchanged: Authority owns identity and membership, Discover owns relevance, the NFL/MLB publication owners keep their files. The `container_member_decisions` table is **proposed, not approved**: its migration is D45, Alex's word only. Nothing here authorizes a migration, publication or activation.
 
 Source basis: `6e4afb6` (v1). Re-checked 2026-10-03 01:3xZ: `git diff --stat 6e4afb6 origin/master(38601bf8f2) -- backend/app` touches 9 files, none of them cited here (events.py, futures.py, calibration ×4, search_headline_contender, sports_imminent_marquee, standings_shape). Every line number cited below was re-read at `38601bf8f2`. Examples come from #9925's evidence at `cbd3b254bc` (`artifacts/discovery-containers-release-plan/9925-theme-design/evidence/`), read from git, not re-queried.
 
@@ -12,6 +12,8 @@ Source basis: `6e4afb6` (v1). Re-checked 2026-10-03 01:3xZ: `git diff --stat 6e4
 - **B. The 14-day settled cutoff in the gather belongs to continuing AI only** (§4). The finite Oscars 2027 population is now defined on its own: the ceremony's Kalshi ticker family plus structurally titled Polymarket rows, with no status, `settled_at` or `created_at` cutoff, plus prior decisions. Finite `decide()` has no retention clause, so a member that settled 20 days before the first pass is gathered and admitted, and every rerun keeps it (new §8 cases 20, 21).
 - Stale "waiting on root" / "if root accepts" wording is reconciled to the accepted state. No new acknowledgement gate.
 - New §10: the producer source slice (exact files, current collisions, Discover dependency, proposed checks) and a separate migration/source/rollback packet boundary for Alex.
+
+**v3.3 changelog (2026-10-04 10:3xZ, interface only, nothing built).** Adds §10.4: the finite P2 split and the exact interface that a scoped contributor (lane1b) builds against, read at origin/master `ca8a2fad34` with P1 `26c74c63f6` on master. It makes two narrowings, each following a live precedent: (1) **no ORM model.** The `container_corrections` ledger (#9651) has no model in `models.py`, and its migration imports `UPGRADE_STATEMENTS` from its utility module. `container_member_decisions` follows that, so `models.py` (Red) leaves P2 and the table is declared once, in `theme_definitions.py`. (2) **The vocabulary lands first (S0).** `container_assembly` validates edges through `container_graph.validate_edge_source` / `validate_edge_kind_and_class`, so a writer cannot pass its own tests until `theme_rule` / `theme` are on master. The snapshot's `folded` is a flat id list, because step 4 reads only shown ∪ folded and `_dedupe_same_question_members` returns no survivor map. Page order is `(class rank, id)`: a volatile sort key would move the revision every pass.
 
 **v3.2 changelog (2026-10-03 02:3xZ).** Applies the one coherence repair in sol's v3.1 delta (`FROM-sol-design-20261003-9935-V31-R4-RETURN-PURE-P1-PACKET`, packet `artifacts/discovery-containers-release-plan/v24-design-scope-20261002/9935-V31-DELTA-AND-P1-PACKET.md`) and Discover's matching consumer rev 2 (`FROM-discover-20261003-0215Z-9935-R4-swings-step0-consumer-rev2`, `CONSUMER-SLICE-9935.md` at `5511315993`, #9935 comment 5964441017). Discover ACKed v3.1 (`FROM-discover-20261003-0200Z-…-ACK-v3.1-all-7-folded-R4e-concur`).
 - **R-4 swings repair:** §5 gains **step 0**: a swings bundle (feed key `"swings"`) gets no ref, reason `swings_not_a_collection`, **before** candidates are read and before the map or the single-candidate arm. Without it, an all-AI swings bundle with |C| = 1 resolved to `ai` through the no-map arm. `"swings"` is never a map key (case 22). §6.1's "swings fail the rule on their own" was false for an all-AI bundle and now says they are refused.
@@ -294,3 +296,104 @@ Not done here: no census, no corpus probe, no Native or tool ownership, no publi
 - **Source that needs it:** P2 only. It composes with the migration as one co-arriving unit (model + migration + writer), with the writer behind a production flag that is **unset** (proposed `THEME_ASSEMBLY_ENABLED`). Flipping it is attended config (notice 39 rule), and it is not part of the merge word.
 - **Rollback, in reader order:** (1) **Reader:** withdraw the collection with #9916's operator. `read_published` → `unavailable`, §5 step 2 fails, and every card loses its ref on the next feed build. (2) **Writer:** unset the flag, so nothing more is written. (3) **Data (D51: backup first, one-command restore):** copy then delete `event_edges WHERE source='theme_rule'` under `lock_container_chain` with a revision bump. Decision rows are inert without edges. (4) **Schema:** `alembic downgrade -1` drops the table. Steps 1–3 never need step 4.
 - **Exact approval boundary.** Alex's word: merging the migration-class sha ("merge NNNN"). Attended config: setting the writer flag in production. Human operator (#9916): publication and withdrawal. Not Alex's: P1, and P2's non-migration code under the normal reviewed path. No lane sets a default for any of these (notice 36). The coordinator writes the YOUR-TURN entry when P2 is composed. This packet is its source.
+
+### 10.4 P2 finite split and the contributor interface (v3.3; read at `ca8a2fad34`, nothing built)
+
+**Units, in landing order.** Each unit is one sha. None stacks on an unmerged branch.
+
+| Unit | Owner | Files | Class / gate | Precondition |
+|---|---|---|---|---|
+| **S0** vocabulary + DDL | Authority | `utils/container_graph.py` (`CONTAINER_KINDS += "theme"`, `EDGE_SOURCES += "theme_rule"`); `utils/theme_definitions.py` (DDL constants + one shared Core `table()` clause, below; P1's `_prior_decision_arm` reads that clause instead of its private one); `tests/test_theme_definitions_9935.py` (DDL pins) | Inert: no write, no migration, no route. 49(d) desk on CI green | none |
+| **A1** public withhold gate + P3 | Discover | `utils/discover_bundles.py`, NEW `tests/test_theme_member_gate_9935.py` (Discover's packet `FROM-discover-20261004T1011Z-…-P3-HELPER-CLEAR-CLAIM-PACKET`) | Ranking-class: reviewed | none (parallel with S0) |
+| **A2** writer + snapshot builder | **lane1b** (contributor) | NEW `tasks/theme_assembly.py`, NEW `tests/test_theme_assembly_9935.py`. Nothing else | Writes production membership data, so reviewed class, behind a flag that stays unset | may be CODED now; its exact-sha gate runs on a master holding S0 **and** A1 |
+| **C1** wiring + reader | Authority, Root composes A2 + C1 into ONE sha | `tasks/__init__.py` (two task wrappers, `background` routing, one flag-gated beat entry at an unshared minute) + `tests/test_tasks_wiring.py`; `utils/container_corrections.py` (after-commit enqueue); `utils/container_presentation.py` (`edition_for_slug` theme branch after NFL/MLB); `routes/containers.py` (`revision`/`cursor`/`limit`, counts, snapshot read); NEW `tests/integration/test_theme_collections_9935_pg.py` (creates the table from S0's DDL in the test DB) | Reviewed. Not a heavy task (not in `HEAVY_TASKS`, background queue, main app): notice 48 N/A | S0, A1, A2 |
+| **C2** migration | Authority, Alex's word (D45 / notice 47b) | ONE file `alembic/versions/container_member_decisions.py`: `from app.utils.theme_definitions import UPGRADE_STATEMENTS, DOWNGRADE_STATEMENTS` (the `container_corrections` precedent); `down_revision` = the head at merge (`serie_a_femminile_sport` at `ca8a2fad34`) | Migration-class. No default, no merge-on-silence | C1 on master (the writer already fails closed without the table) |
+| attended | Alex / #9916 operator | `THEME_ASSEMBLY_ENABLED` set in production (config, notice 39); first pass; `publish_container` for `oscars-2027` / `ai` | — | C2 applied |
+
+`models.py` is **not** in P2. Discover's consumer (`collection_ref`, reader count, hub Back) reads C1's snapshot and route and follows C1. #9936 follows P2.
+
+**S0: the table, declared once** (exact text; C2's migration and C1's PG test both execute these statements):
+
+```python
+DECISIONS_TABLE = "container_member_decisions"
+CREATE_DECISIONS_SQL = """
+CREATE TABLE IF NOT EXISTS container_member_decisions (
+    id BIGSERIAL PRIMARY KEY,
+    container_id BIGINT NOT NULL REFERENCES containers(id) ON DELETE CASCADE,
+    child_type VARCHAR(16) NOT NULL,
+    child_id BIGINT NOT NULL,
+    outcome VARCHAR(12) NOT NULL,
+    reason VARCHAR(40) NOT NULL,
+    rule_version VARCHAR(32) NOT NULL,
+    evidence JSONB NOT NULL,
+    revision INTEGER NOT NULL,
+    first_decided_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+    last_decided_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+    attempt_count INTEGER NOT NULL DEFAULT 1,
+    CONSTRAINT uq_cmd_member UNIQUE (container_id, child_type, child_id),
+    CONSTRAINT ck_cmd_outcome CHECK (outcome IN ('admitted','excluded','withheld'))
+)"""
+CREATE_DECISIONS_INDEX_SQL = (
+    "CREATE INDEX IF NOT EXISTS ix_cmd_child ON container_member_decisions (child_type, child_id)"
+)
+UPGRADE_STATEMENTS = (CREATE_DECISIONS_SQL, CREATE_DECISIONS_INDEX_SQL)
+DOWNGRADE_STATEMENTS = ("DROP TABLE IF EXISTS container_member_decisions",)
+
+def decisions_table():  # Core clause: every column above, used by P1's prior-decision arm and the A2 writer
+```
+
+S0 pins: every column in `CREATE_DECISIONS_SQL` is in `decisions_table().c`, and the other way round. `OUTCOMES` equals the CHECK's set. Every `DECISION_REASONS` member fits in 40 characters. Every `rule_version` fits in 32.
+
+**A2: `backend/app/tasks/theme_assembly.py`, the interface lane1b builds.** Imports, read-only and by identity: `theme_definitions` (REGISTRY, decide, candidate_population, decisions_table, reasons); `container_corrections` (`lock_container_chain`, `bump_revision`, `withdrawn_members`, `current_members`, `correction_schema_present`, `WITHHELD_WITHDRAWN`); `container_graph` (`validate_container_kind`, `validate_edge_source`, `validate_edge_kind_and_class`); `container_assembly.containers_tables_present`; `discover_bundles.theme_member_withhold_reason` and `discover_bundles._dedupe_same_question_members`; `tasks.redis_state.get_redis_client` (gotcha #39); `FuturesMarket` with `selectinload(outcomes)`. It edits none of them. It does not import `routes/feed.py`, and feed never imports it (case 13).
+
+```python
+THEME_ASSEMBLY_ENABLED_ENV = "THEME_ASSEMBLY_ENABLED"
+def theme_assembly_enabled() -> bool          # same truthy set as container_assembly.collections_enabled
+EDGE_SOURCE = "theme_rule"; EDGE_CONFIDENCE = Decimal("1.000")
+CLASS_RANK = {"title": 0, "advancement": 1, "side_question": 2}   # any other class ranks 3, then by id
+SNAPSHOT_KEY = "theme_snapshot:{container_id}:{revision}"; SNAPSHOT_TTL_S = 3 * 86400
+GATHER_PAGE = 500; PASS_BUDGET_S = 200   # under the wrapper's 240 s soft limit
+
+# pure (unit-tested without a database)
+@dataclass(frozen=True) class MemberDecision: child_id: int; decision: Decision; withdrawn: bool
+@dataclass(frozen=True) class PassPlan:
+    edge_upserts: tuple[tuple[int, str], ...]    # (child_id, class)
+    edge_deletes: tuple[int, ...]                # theme_rule edges only
+    decision_rows: tuple[dict, ...]              # one per decided child; written whether or not anything changed
+    membership_changed: bool
+def plan_container_pass(decided: Sequence[MemberDecision], current_theme_edges: Mapping[int, str],
+                        *, inventory_complete: bool) -> PassPlan
+@dataclass(frozen=True) class ThemeSnapshot:
+    container_id: int; slug: str; name: str; revision: int; inventory_complete: bool
+    shown_ids: tuple[int, ...]                   # page order (CLASS_RANK, id)
+    folded_ids: tuple[int, ...]                  # flat: step 4 reads shown ∪ folded only
+    withheld: Mapping[str, tuple[int, ...]]      # row_missing | suppressed | low_quality | public_source_disagreement
+    shown_count: int; eligible_count: int
+    def content_key(self) -> tuple               # everything except revision: the "did the shown set move" comparison
+    def to_json(self) -> str                     # sort_keys, compact
+def build_snapshot(container, revision, members: Mapping[int, str], rows: Mapping[int, MemberRow],
+                   *, inventory_complete: bool) -> ThemeSnapshot
+
+# async executors (thin; one container per transaction, commit per container)
+async def _run_assemble_theme_collections(apply: bool = True, only: Optional[str] = None) -> dict
+async def _run_rebuild_theme_snapshot(container_id: int) -> dict
+```
+
+**Semantics (binding, one line each):**
+1. **Gates, in order, before any statement that writes:** flag unset → `{"terminal": "skipped", "reason": "theme_assembly_disabled"}`, zero DB writes, zero Redis writes. `containers_tables_present` false → `containers_tables_absent`. `correction_schema_present().columns` false → `correction_schema_absent`. `to_regclass('public.container_member_decisions')` NULL → `decision_schema_absent`. Skipped is not success (gotcha #53, `task_verdict`). `apply=False` runs gather + decide and returns the plan counts, writing nothing.
+2. **Container row:** per registry definition, `INSERT INTO containers (kind, name, slug, category, window_start, window_end) … ON CONFLICT (slug) DO NOTHING`, then select it. `kind` = `defn.container_kind` through `validate_container_kind`; `window_end` = `edition_backstop` (finite) or NULL. An existing row is never updated. Publication stays `unpublished` (assembly never publishes).
+3. **Gather:** `UNION` of `candidate_population(defn, container_id=…, now=…)`'s arms, paged `WHERE id > :cursor ORDER BY id LIMIT GATHER_PAGE`. Each page's rows are loaded with outcomes and decided at once. Decisions and the hydration inputs are copied to plain data before any commit or rollback (gotcha #6). `inventory_complete` = the cursor reached the end inside `PASS_BUDGET_S`.
+4. **Under `lock_container_chain(container_id)` for the write:** `withdrawn = withdrawn_members()`. A withdrawn child gets the decision row `excluded / container_member_withdrawn`. Its evidence carries `rule_decision` (what `decide()` said) and `correction: withdraw`, and it gets no edge, whatever `decide()` returned (case 12).
+5. **`plan_container_pass`:** admitted and not withdrawn → upsert the edge `(container, contains, market, child_id)` with `class = decision.edge_class`, `source='theme_rule'`, `confidence 1.000`, `receipt_id NULL`, `ON CONFLICT ON CONSTRAINT uq_event_edge DO UPDATE SET class = EXCLUDED.class WHERE event_edges.source = 'theme_rule'`. Not admitted (or withdrawn) and a `theme_rule` edge exists → delete that edge. **A non-`theme_rule` edge is never touched.** `inventory_complete=False` → `edge_deletes` is restricted to children decided **this pass**, and an unseen member is never retired. `membership_changed` = any upsert that inserts or changes class, or any delete.
+6. **Decision rows:** `INSERT … ON CONFLICT ON CONSTRAINT uq_cmd_member DO UPDATE SET outcome, reason, rule_version, evidence, revision, last_decided_at = now(), attempt_count = container_member_decisions.attempt_count + 1`. `first_decided_at` is set only on insert. `revision` = the container's revision after this pass's at most one bump, in the same transaction. Matcher receipts are never read or written (case 1).
+7. **Revision, at most ONE bump per container per pass**, through `bump_revision`: on `membership_changed`, **or** when the snapshot built at the current revision differs by `content_key()` from the stored `SNAPSHOT_KEY` at that revision (case 24). A **missing** key is absent, not different: write it at the current revision, with no bump. An identical rerun bumps nothing.
+8. **Snapshot (`build_snapshot`)**, for every theme container in the registry at its current revision, whatever its publication state (unpublished ones make publication instant and are invisible to readers): members = `current_members()` (theme containers hold only `theme_rule` edges). A member with no `futures_markets` row → `row_missing`. Otherwise `theme_member_withhold_reason(market_name=name, sport_category=llm_sport_category, outcome_names=[o.name …], external_id=external_id, status=status, public_source_disagreement=False)` (the literal every write site sets, §4). A non-None result → `withheld[reason]`. The rest, in page order, go through `_dedupe_same_question_members` with items `{"type": "futures", "data": {"id", "name", "source"}}`: kept → `shown_ids`, folded → `folded_ids`. `eligible_count = len(members)`, `shown_count = len(shown_ids)`. **The last member withdrawn → `members` is empty → an empty snapshot is written (`shown_count 0`), never skipped** (case 25).
+9. **Write order:** commit the transaction, **then** `SET SNAPSHOT_KEY <to_json> EX SNAPSHOT_TTL_S` through `get_redis_client()`. The live revision's key is rewritten every pass, which refreshes the TTL. A failed Redis write is logged and reported (`snapshot_write_failed`), never raised. The reader treats a missing key as absent and fails closed (`snapshot_stale`, hub 503/build path, #9984).
+10. **`_run_rebuild_theme_snapshot(container_id)`:** flag and schema gates as in 1. A container whose slug `parse_theme_slug` refuses → `skipped / not_a_theme_container`. Otherwise semantics 7–9 only: no gather, no decide, no edge writes.
+11. **Verdict dict:** `{terminal, reason?, containers: [{slug, container_id, inventory_complete, decided, admitted, excluded{reason: n}, withheld{reason: n}, edges_upserted, edges_deleted, revision_before, revision_after, bumped, snapshot: written|unchanged|write_failed}]}`. Rows decided equal to zero on a complete pass is LOUD (`task_verdict`), never green.
+
+**A2 tests (lane1b's own; §8 case numbers):** 1 (two definitions → two edges, two decision rows, receipt untouched), 12, 16 (identity: `theme_assembly.theme_member_withhold_reason is discover_bundles.theme_member_withhold_reason`, same for the fold), 19, 20/21 at plan level, 24, 25's rebuild half (empty snapshot), 13 (static), and three own arms: truncated pass retires nothing unseen; flag unset → zero writes (a session double that records statements: zero non-SELECT); a non-`theme_rule` edge on the container survives a retire. **Mutations, each must turn a named case red:** drop the withdrawn check → 12; bump inside the edge loop → 24 (bumps twice); `edge_deletes` unrestricted on a truncated pass → the truncated arm; copy the gate instead of importing it → 16's identity; key "changed" on a missing snapshot → identical-rerun arm bumps; drop the `source='theme_rule'` guard on delete → the survivor arm. Gates: `pytest tests/test_theme_assembly_9935.py tests/test_theme_definitions_9935.py tests/test_startup.py`, `collected N` read, EXIT quoted (gotcha #54).
+
+**C1 (Authority) pins, so A2 never guesses its caller:** task names `app.tasks.assemble_theme_collections` (beat, `background`) and `app.tasks.rebuild_theme_snapshot` (args `[container_id]`, `background`), both wrapping the A2 coroutines through `_tracked_run`. **Corrections enqueue:** in `_member_correction` and `_publication_correction`, the container's slug is read under the existing lock **before** any edge delete. If `parse_theme_slug(slug)` is not None, an `after_commit` listener (`once=True`) on `session.sync_session` calls `celery_app.send_task("app.tasks.rebuild_theme_snapshot", args=[container_id], queue="background")`. This keys on identity, not on a surviving edge (case 25, the mutation "key on a post-change edge read" turns it red). No ledger or lock change. **Route:** a slug that `parse_theme_slug` accepts reads the snapshot at the live `membership_revision`. A missing snapshot → the existing build/503 path. The cursor is opaque `(class rank, id)`. Counts are identical on every page. `revision` ≠ live → page 1 at the live revision + `revision_moved: true`. Non-theme slugs are byte-identical to today when no `revision` param is sent.
+
+**Collision clearance at `ca8a2fad34` (2026-10-04 10:2xZ):** open PRs touching any P2 path: #2262, #4037, #4570 (models.py + alembic, stale; models.py is no longer in P2), #2791 (alembic, stale), #2466/#2487/#3468/#3483 (`tasks/__init__.py`, stale; C1's beat entry is additive). None touches `container_graph`, `container_corrections`, `container_presentation`, `routes/containers.py`, `theme_definitions`, `discover_bundles` or any `theme_assembly*` path. No running or pending inbox directive names those paths, except Discover's own A1 packet. `/private/tmp/lane1b-9935-theme-assembly` does not exist. `codex/10264-pure-theme-p1` (`~/.codex-personal/worktrees/9935-pure-p1`) is P1, clean and merged. #9886 is open for its MLB published-reader acceptance only: it holds no source on `routes/containers.py`, and C1 re-checks that at composition.
