@@ -72,6 +72,14 @@ struct WatchSelectedGameView: View {
             }
             .padding(.horizontal, 6)
         }
+        .onOpenURL { url in
+            guard WatchLaunchRoute.accepts(url) else { return }
+            // Warm launch must reveal the retained choice, not a picker/help overlay.
+            // Existing foreground refresh rules still own all network scheduling.
+            choosingGame = false
+            showingHandoffHelp = false
+            scroll.scrollTo("watch.game.top", anchor: .top)
+        }
         .navigationTitle("Your game")
         .userActivity(GameContinuation.activityType, element: continuationEventID) { id, activity in
             GameContinuation.configure(activity, eventID: id)

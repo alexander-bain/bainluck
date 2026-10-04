@@ -221,6 +221,7 @@ actor Stub: WatchSelectedGameTransport {
         precondition(errorStore.errorMessage == nil)
         errorStore.clearSelection()
         try await checkWatchHTTPTransport()
+        checkWatchLaunchRoute()
         checkWatchContinuation()
         try await checkWatchGamePicker()
         try await checkWatchGameFlow()

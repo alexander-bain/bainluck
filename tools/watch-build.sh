@@ -43,7 +43,16 @@ binary = app / info['CFBundleExecutable']
 assert binary.is_file(), f'Missing app executable: {binary}'
 description = subprocess.check_output(['file', str(binary)], text=True)
 assert 'Mach-O' in description, description
-assert not list((app / 'PlugIns').glob('*.appex')), 'Deferred complication unexpectedly embedded'
+plugins = list((app / 'PlugIns').glob('*.appex'))
+assert len(plugins) == 1, 'Expected exactly one launcher extension'
+with (plugins[0] / 'Info.plist').open('rb') as stream:
+    extension = plistlib.load(stream)
+assert extension['CFBundleIdentifier'] == info['CFBundleIdentifier'] + '.Complication'
+assert extension['NSExtension']['NSExtensionPointIdentifier'] == 'com.apple.widgetkit-extension'
+for key in ['CFBundleVersion', 'CFBundleShortVersionString']:
+    assert extension[key] == info[key], f'Launcher version mismatch: {key}'
+assert 'Mach-O' in subprocess.check_output(['file', str(plugins[0] / extension['CFBundleExecutable'])], text=True)
+assert any('bainluck-watch' in item.get('CFBundleURLSchemes', []) for item in info.get('CFBundleURLTypes', [])), 'Missing launcher URL scheme'
 print(f"{sys.argv[2]}: executable verified, {info['CFBundleIdentifier']}")
 PY
 done

@@ -10,6 +10,7 @@ import subprocess
 PHONE = "com.bainluck.Bain-Luck"
 WATCH = PHONE + ".watchkitapp"
 ACTIVITY = "com.bainluck.view-game"
+COMPLICATION = WATCH + ".Complication"
 
 
 def require(condition, message):
@@ -65,14 +66,22 @@ def inspect_archive(archive: Path, platform_reader=read_platform):
     watch = safe_path(archive, watch_path)
     phone_info = read_plist(archive, phone_path / "Info.plist")
     watch_info = read_plist(archive, watch_path / "Info.plist")
+    plugin_folder = safe_path(archive, watch_path / "PlugIns")
+    plugins = list(plugin_folder.glob("*.appex"))
+    require(len(plugins) == 1, "Watch archive must embed exactly one launcher extension")
+    plugin_path = plugins[0].relative_to(archive)
+    plugin = safe_path(archive, plugin_path)
+    plugin_info = read_plist(archive, plugin_path / "Info.plist")
     evidence = []
     for folder, relative_folder, info, bundle_id, plist_platform, binary_platform in [
         (phone, phone_path, phone_info, PHONE, "iPhoneOS", "IOS"),
         (watch, watch_path, watch_info, WATCH, "WatchOS", "WATCHOS"),
+        (plugin, plugin_path, plugin_info, COMPLICATION, "WatchOS", "WATCHOS"),
     ]:
         require(info.get("CFBundleIdentifier") == bundle_id, "Unexpected application identity")
         require(info.get("CFBundleSupportedPlatforms") == [plist_platform], "Simulator or wrong-platform plist")
-        require(ACTIVITY in info.get("NSUserActivityTypes", []), "Missing Handoff registration")
+        if bundle_id != COMPLICATION:
+            require(ACTIVITY in info.get("NSUserActivityTypes", []), "Missing Handoff registration")
         name = info.get("CFBundleExecutable")
         require(isinstance(name, str) and name not in ("", ".", "..") and Path(name).name == name, "Invalid executable name")
         binary = safe_path(archive, relative_folder / name)
@@ -83,9 +92,12 @@ def inspect_archive(archive: Path, platform_reader=read_platform):
     require(watch_info.get("WKCompanionAppBundleIdentifier") == PHONE, "Wrong phone companion")
     require(watch_info.get("WKWatchOnly", False) is False, "Watch-only app cannot pass companion packaging")
     require(watch_info.get("WKRunsIndependentlyOfCompanionApp") is True, "Public Watch app must run independently")
+    extension = plugin_info.get("NSExtension", {})
+    require(isinstance(extension, dict) and extension.get("NSExtensionPointIdentifier") == "com.apple.widgetkit-extension", "Wrong launcher extension type")
     for key in ("CFBundleShortVersionString", "CFBundleVersion"):
         require(isinstance(phone_info.get(key), str) and bool(phone_info[key]), f"Missing phone {key}")
         require(phone_info[key] == watch_info.get(key), f"Phone/Watch {key} mismatch")
+        require(watch_info[key] == plugin_info.get(key), f"Watch/launcher {key} mismatch")
     return {"verdict": "PACKAGED_UNSIGNED_CANDIDATE", "physical_install": "UNVERIFIED",
             "distribution": "UNVERIFIED", "signing": "UNVERIFIED", "applications": evidence,
             "version": phone_info["CFBundleShortVersionString"], "build": phone_info["CFBundleVersion"]}
