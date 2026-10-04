@@ -70,6 +70,7 @@ final class WatchSelectedGameStore: ObservableObject {
     @Published private(set) var isRestoredReading = false
     private let transport: any WatchSelectedGameTransport
     private let defaults: UserDefaults
+    private let publish: (WatchSelectedGame?, Date?) -> Void
     private let now: () -> Date
     private var revision = 0
     private var consecutiveFailures = 0
@@ -87,11 +88,13 @@ final class WatchSelectedGameStore: ObservableObject {
 
     init(transport: any WatchSelectedGameTransport = WatchSelectedGameHTTPTransport(),
          defaults: UserDefaults = .standard, now: @escaping () -> Date = Date.init,
-         retryClock: @escaping () -> TimeInterval = { ProcessInfo.processInfo.systemUptime }) {
+         retryClock: @escaping () -> TimeInterval = { ProcessInfo.processInfo.systemUptime },
+         publish: @escaping (WatchSelectedGame?, Date?) -> Void = { _, _ in }) {
         self.transport = transport
         self.defaults = defaults
         self.now = now
         self.retryClock = retryClock
+        self.publish = publish
         let stored = defaults.integer(forKey: Self.selectionKey)
         selectedEventID = stored > 0 ? stored : nil
         if let data = defaults.data(forKey: Self.snapshotKey),
@@ -103,6 +106,7 @@ final class WatchSelectedGameStore: ObservableObject {
         } else {
             defaults.removeObject(forKey: Self.snapshotKey)
         }
+        publish(game, fetchedAt)
     }
 
     @MainActor func select(eventID: Int) {
@@ -111,6 +115,7 @@ final class WatchSelectedGameStore: ObservableObject {
         consecutiveFailures = 0
         retryNotBefore = nil
         selectedEventID = eventID
+        publish(nil, nil)
         defaults.set(eventID, forKey: Self.selectionKey)
         defaults.removeObject(forKey: Self.snapshotKey)
         isRestoredReading = false
@@ -125,6 +130,7 @@ final class WatchSelectedGameStore: ObservableObject {
         consecutiveFailures = 0
         retryNotBefore = nil
         selectedEventID = nil
+        publish(nil, nil)
         defaults.removeObject(forKey: Self.selectionKey)
         defaults.removeObject(forKey: Self.snapshotKey)
         isRestoredReading = false
@@ -197,6 +203,7 @@ final class WatchSelectedGameStore: ObservableObject {
             } else {
                 defaults.removeObject(forKey: Self.snapshotKey)
             }
+            publish(result, receivedAt)
             isRefreshing = false
         } catch {
             guard requestRevision == revision, selectedEventID == id else { return }

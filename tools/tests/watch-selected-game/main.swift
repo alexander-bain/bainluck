@@ -16,6 +16,7 @@ actor Stub: WatchSelectedGameTransport {
 
 @main struct Checks {
     @MainActor static func main() async throws {
+        try await runComplicationChecks()
         try checkWatchProbabilityFormatting()
         let suite = "watch-selected-game-tests-\(UUID().uuidString)"
         let defaults = UserDefaults(suiteName: suite)!

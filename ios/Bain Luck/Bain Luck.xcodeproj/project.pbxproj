@@ -169,6 +169,7 @@
 			isa = PBXFileSystemSynchronizedBuildFileExceptionSet;
 			membershipExceptions = (
 				BainLuckComplication.swift,
+				WatchComplicationSnapshot.swift,
 				WatchLaunchRoute.swift,
 			);
 			target = A7C0000000000000000000D1 /* BainLuckComplication */;
@@ -806,6 +807,7 @@
 				ENABLE_USER_SCRIPT_SANDBOXING = YES;
 				GENERATE_INFOPLIST_FILE = YES;
 				INFOPLIST_FILE = "BainLuckWatch-Info.plist";
+				CODE_SIGN_ENTITLEMENTS = "BainLuckWatchShared.entitlements";
 				INFOPLIST_KEY_CFBundleDisplayName = BainLuckWatch;
 				INFOPLIST_KEY_UISupportedInterfaceOrientations = "UIInterfaceOrientationPortrait UIInterfaceOrientationPortraitUpsideDown";
 				INFOPLIST_KEY_WKWatchOnly = NO;
@@ -842,6 +844,7 @@
 				ENABLE_USER_SCRIPT_SANDBOXING = YES;
 				GENERATE_INFOPLIST_FILE = YES;
 				INFOPLIST_FILE = "BainLuckWatch-Info.plist";
+				CODE_SIGN_ENTITLEMENTS = "BainLuckWatchShared.entitlements";
 				INFOPLIST_KEY_CFBundleDisplayName = BainLuckWatch;
 				INFOPLIST_KEY_UISupportedInterfaceOrientations = "UIInterfaceOrientationPortrait UIInterfaceOrientationPortraitUpsideDown";
 				INFOPLIST_KEY_WKWatchOnly = NO;
@@ -1202,6 +1205,7 @@
 				DEVELOPMENT_TEAM = J893F72P4R;
 				GENERATE_INFOPLIST_FILE = YES;
 				INFOPLIST_FILE = "BainLuckComplication-Info.plist";
+				CODE_SIGN_ENTITLEMENTS = "BainLuckWatchShared.entitlements";
 				INFOPLIST_KEY_CFBundleDisplayName = "Bain Luck";
 				LD_RUNPATH_SEARCH_PATHS = (
 					"$(inherited)",
@@ -1233,6 +1237,7 @@
 				DEVELOPMENT_TEAM = J893F72P4R;
 				GENERATE_INFOPLIST_FILE = YES;
 				INFOPLIST_FILE = "BainLuckComplication-Info.plist";
+				CODE_SIGN_ENTITLEMENTS = "BainLuckWatchShared.entitlements";
 				INFOPLIST_KEY_CFBundleDisplayName = "Bain Luck";
 				LD_RUNPATH_SEARCH_PATHS = (
 					"$(inherited)",
