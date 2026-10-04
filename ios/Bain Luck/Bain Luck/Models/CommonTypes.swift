@@ -413,7 +413,7 @@ extension String {
 
 // MARK: - AnyCodable (used by FeedModels + SearchModels)
 
-enum AnyCodable: Decodable, Sendable {
+nonisolated enum AnyCodable: Decodable, Sendable {
     case int(Int)
     case double(Double)
     case string(String)

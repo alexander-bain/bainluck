@@ -19,6 +19,7 @@ from sqlalchemy.orm import selectinload
 
 from app.models import FuturesMarket
 from app.services import get_db
+from app.utils.futures_liveness import market_reads_settled
 from app.utils.hook_staleness import is_hook_stale
 from app.utils.ladder_headline import ladder_median_row
 from app.utils.ladder_monotonicity import cumulative_outcome_ladder
@@ -978,6 +979,13 @@ async def get_entertainment(db: AsyncSession):
             m.name, m.llm_sport_category, m.status, _leader_prob(m), now,
         )
         if exclude:
+            continue
+        # #10320: a question the venue has decided must not render as an open
+        # percentage, here or in trending. `status` stays 'open' on a settled
+        # Kalshi market (gotcha #33); this is the read /politics has used since
+        # CERT-452, and it sits above BOTH appends so the two lists keep their
+        # subset relationship.
+        if market_reads_settled(m, now=now):
             continue
         featured_eligible.append(m)
         theme = _classify_theme(m)

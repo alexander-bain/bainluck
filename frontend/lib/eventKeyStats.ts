@@ -2492,6 +2492,36 @@ export function computeLastChartPoint(
   let periodReading = newestEspnField((row) => row.period?.toString() ?? null);
   let clockReading = newestEspnField((row) => row.game_clock ?? null);
 
+  // #4889 — WITH NO ESPN PERIOD OR CLOCK, THE WIN-PROB `game_state` IS NEXT, as
+  // it is on the hover path (`stampObservedGameState` fills what ESPN left
+  // empty). The readout skipped it and fell to the event row, so with
+  // `espn_history: []` and a win-prob row saying Q2 5:10 the readout printed the
+  // detail payload's 5:31 while hovering the same minute printed Q2 5:10. Same
+  // shape as the ESPN search: newest row naming each field, carried (and dated
+  // by that row) when it is older than this point.
+  if (periodReading.value == null && clockReading.value == null && wpHistory) {
+    const pointMs = Date.parse(lastEspn?.timestamp || lastWp?.timestamp || lastHist?.timestamp || "");
+    const newestWinProbField = (key: "period" | "clock"): { value: string | null; at: string | null; carried: boolean } => {
+      let best: { value: string; at: string } | null = null;
+      for (const pts of Object.values(wpHistory)) {
+        for (const pt of pts) {
+          // The synthetic "now" point (#920) re-delivers an older reading; its
+          // timestamp is a delivery time and must not date the clock.
+          if (pt.live_edge || pt.evidence?.kind === "live_edge") continue;
+          const raw = pt.game_state?.[key];
+          const value = raw == null ? "" : String(raw);
+          if (value !== "" && (!best || pt.timestamp > best.at)) best = { value, at: pt.timestamp };
+        }
+      }
+      if (!best) return { value: null, at: null, carried: false };
+      const atMs = Date.parse(best.at);
+      const carried = Number.isNaN(pointMs) || Number.isNaN(atMs) || atMs < pointMs;
+      return { value: best.value, at: best.at, carried };
+    };
+    periodReading = newestWinProbField("period");
+    clockReading = newestWinProbField("clock");
+  }
+
   // #925, second arm — NO ROW EVER NAMED THE INNING, BUT THE HEADER DID.
   // `/events/15320300` (Astros v White Sox, MLB, live, 2026-09-29 21:26Z): all
   // six `espn_history` rows carried `period: null` (the MLB win-prob rows name

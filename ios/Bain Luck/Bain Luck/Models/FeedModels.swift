@@ -684,6 +684,13 @@ nonisolated struct FeedDiscoverCard: Decodable, Sendable {
     let qaSignals: [String]?
     let publicSourceDisagreement: Bool?
     let reasons: [String]?
+    /// #10374 — `"chronological"` when every drawn row is a date (the Claude Haiku
+    /// release board), else `"probability"`. Decided on the server, which also
+    /// stamps each row's `date`; the list itself stays in probability order so a
+    /// build that has not learnt this field still draws the leader on row 0.
+    /// `var` with a default so the synthesized decoder reads it and a cached body
+    /// without the key decodes as today's board.
+    var distributionOrder: String? = nil
 }
 
 /// Single threshold point for heatmap-style cards.
@@ -704,6 +711,10 @@ nonisolated struct FeedDiscoverDistributionOutcome: Decodable, Sendable {
     let label: String
     let probability: Double?
     let movement: Double?
+    /// #10374 — the row's calendar day (`yyyy-MM-dd`) on a chronological board;
+    /// `nil` on the "No release by…" residual and on every other board. The year
+    /// is the server's (venue labels read `October 27`), never guessed here.
+    var date: String? = nil
 }
 
 // MARK: - Feed Tournament Data

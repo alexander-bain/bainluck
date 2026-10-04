@@ -100,8 +100,11 @@ from app.routes.weather import (  # noqa: E402
 
 # The clock the specimens were measured on. "…tornado risk on September 16?" is
 # a past-period title on any later clock, and /events drops those (#10331), so
-# these rows are only servable at the time they were captured.
-CAPTURED_AT = datetime(2026, 9, 17, 12, 0, tzinfo=timezone.utc)
+# these rows are only servable at the time they were captured. The specimens
+# were measured on 2026-09-17; a single-day title keeps a 12h grace past its
+# day's end, so "September 16" stops serving at 11:59:59Z — the clock sits
+# inside that window.
+CAPTURED_AT = datetime(2026, 9, 17, 2, 0, tzinfo=timezone.utc)
 
 NOW = datetime.now(timezone.utc)
 FRESH = NOW - timedelta(hours=1)

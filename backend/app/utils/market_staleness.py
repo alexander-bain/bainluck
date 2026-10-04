@@ -155,7 +155,7 @@ def infer_market_real_world_end(
     market_name: str | None,
     sport_category: str | None,
     now: datetime,
-) -> tuple[datetime, str, int] | None:
+) -> tuple[datetime, str, float] | None:
     """Infer when the real-world question stopped being current."""
     name = market_name or ""
     if not name:
@@ -171,7 +171,14 @@ def infer_market_real_world_end(
             implied_end = datetime(year, month, day, 23, 59, 59, tzinfo=timezone.utc)
         except ValueError:
             return None
-        grace_days = 7 if re.search(r"\bweek of\b", name, re.IGNORECASE) else 1
+        # A named day is a venue deadline like a ladder rung's, so it takes the
+        # rung's grace (#10137): twelve hours clears Hawaii's 09:59Z day-end. A
+        # whole day kept "on October 2" on screen until 4:59pm PT Oct 3 (#10331).
+        # "Week of" titles keep their seven days.
+        if re.search(r"\bweek of\b", name, re.IGNORECASE):
+            grace_days = 7
+        else:
+            grace_days = RUNG_GRACE_DAYS
         return implied_end, "explicit_title_date", grace_days
 
     # Month + year with no day ("... in Jun 2026") — period ends the last day of
@@ -582,6 +589,12 @@ def _whole_name_date(name: str) -> tuple[int, int, int | None] | None:
     except ValueError:
         return None  # February 30 is not a date, it is a label we cannot read
     return month, day, year
+
+
+# #10374 — the one reading of "this rung's whole name is a date", for the
+# Discover card that lists a date question's rows earliest-first. A second regex
+# there would be a second answer to which labels are dates.
+whole_name_date = _whole_name_date
 
 
 def _live_dated_twins(

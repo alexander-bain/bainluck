@@ -187,7 +187,8 @@ extension VisibleLivePriceStatusTests {
             let recognized = try text(shot(host, name))
             XCTAssertTrue(recognized.contains("Win Probability"), recognized)
             XCTAssertTrue(recognized.contains("Waiting for update"), recognized)
-            XCTAssertNotNil(recognized.range(of: "No live.*update yet", options: .regularExpression), recognized)
+            // #8320 v24: the receipt row left the hero; the exact time is on tap only.
+            XCTAssertNil(recognized.range(of: "No live.*update yet", options: .regularExpression), recognized)
             XCTAssertTrue(recognized.contains("55%"), recognized)
             XCTAssertTrue(recognized.contains("45%"), recognized)
         }

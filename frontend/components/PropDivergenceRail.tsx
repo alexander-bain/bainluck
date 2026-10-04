@@ -25,10 +25,12 @@ import PropDivergenceDetail from "./PropDivergenceDetail";
 interface Props {
   playerProps?: readonly PlayerPropRow[] | null;
   status?: string | null;
+  /** Opens with the full list showing. Tests only; the page never sets it. */
+  defaultExpanded?: boolean;
 }
 
-export default function PropDivergenceRail({ playerProps, status }: Props) {
-  const [expanded, setExpanded] = useState(false);
+export default function PropDivergenceRail({ playerProps, status, defaultExpanded = false }: Props) {
+  const [expanded, setExpanded] = useState(defaultExpanded);
   const result = useMemo(
     () => selectDivergenceRows({ playerProps, status }),
     [playerProps, status],
@@ -156,8 +158,9 @@ export default function PropDivergenceRail({ playerProps, status }: Props) {
 
         {/* V3: a non-benign loss must reach the screen. We do not claim "no
             trading" for something we could not read — that is the invention
-            gotcha #53 forbids. */}
-        {nonBenign.length > 0 && (
+            gotcha #53 forbids. #10405: while expanded, PropDivergenceDetail
+            carries this same line from the same rows — print it once. */}
+        {nonBenign.length > 0 && !expanded && (
           <p className="text-[11px] text-text-muted border-t border-surface-border/30 pt-2.5">
             {result.rows.length === 0
               ? "These props couldn't be shown: "

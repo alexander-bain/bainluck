@@ -497,12 +497,26 @@ export type PeriodLabelPosition = "insideTopLeft" | "insideTopRight";
  * neither the spacing rule nor the row rule could see, because both had already
  * done their jobs correctly.
  *
- * A FLIPPED LABEL WITH ROOM ON NEITHER ROW IS NOT DRAWN. It needs twice the
+ * A FLIPPED LABEL WITH ROOM ON NEITHER ROW NEVER SMEARS. It needs twice the
  * budget (UX-P022: two labels either side of a gap grow toward each other), and
- * when neither row can give it that, the choice is a smear or a missing caption.
- * #3541 made the same trade for the `Final` marker and it is the right one: an
- * unreadable label is worse than an absent one, and this only ever reaches the
- * newest marker at the right edge.
+ * #3541 made the trade for the `Final` marker: an unreadable label is worse than
+ * an absent one. #10403 settles WHICH label is absent — see below.
+ *
+ * ── #10403: THE LABEL THAT GIVES WAY IS THE OLDER ONE ───────────────────────
+ *
+ * The "no room on either row" case used to drop the flipped marker itself, and
+ * the flipped marker is by construction the newest one at the right edge. On a
+ * live MLB page that is the half-inning being played; on a final it is the last
+ * one. Measured on two served charts at 390px: ALDS G1 (final, Rays 1–0) drew
+ * `… B7 B8` with `T9` deleted; NLDS (live, Bottom 6th) drew `… T5 B5` with both
+ * `T6` and `B6` deleted — the chart never showed where the game was.
+ *
+ * Now the later marker wins, the way `placePeriodLabels` and #8831 already
+ * settle overflow: the earlier labels on its row inside its two inks give way.
+ * It takes whichever allowed row costs the fewest captions once the #8831
+ * walk-back has run as well, because the walk-back can take a second one (on
+ * ALDS, row 0 would cost `B7` and `B8`; row 1 costs `B8` alone). On a tie it
+ * keeps its own row. It is still two inks clear on its row, so it never smears.
  *
  * ── #8831: THE OTHER ROW CANNOT OVERLAP IT, BUT IT CAN OUT-ORDER IT ─────────
  *
@@ -536,12 +550,35 @@ export function anchorPeriodLabels<T extends { timestamp: string; labelRow: numb
   const ink = chartDurationMs * PERIOD_LABEL_INK_FRACTION;
   const out: Array<T & { labelPosition: PeriodLabelPosition }> = [];
 
-  /** How far this marker sits from the last label drawn on `row` before `out[before]`. */
-  const clearanceOn = (row: number, t: number, before = out.length) => {
+  /** How far this marker sits from the last label drawn on `row` before `list[before]`. */
+  const clearanceOn = (row: number, t: number, before = out.length, list = out) => {
     for (let i = before - 1; i >= 0; i--) {
-      if (out[i].labelRow === row) return t - new Date(out[i].timestamp).getTime();
+      if (list[i].labelRow === row) return t - new Date(list[i].timestamp).getTime();
     }
     return Infinity; // nothing on that row yet
+  };
+
+  /**
+   * #8831's walk-back over `list`: the caption about to land at `t` must not
+   * START left of an earlier marker's caption on the other row. Flips the
+   * predecessor where it has room, otherwise removes it. Mutates `list`.
+   */
+  const settleOrder = (list: typeof out, t: number) => {
+    // Walk back over markers inside one ink of this rule; anything older starts
+    // behind this caption's left edge.
+    for (let k = list.length - 1; k >= 0; k--) {
+      const prev = list[k];
+      const tp = new Date(prev.timestamp).getTime();
+      if (tp <= t - ink) break;
+      // A flipped caption also starts behind this one. No same-row test: this
+      // row is two inks clear (above), so nothing inside the window is on it.
+      if (prev.labelPosition === "insideTopRight") continue;
+      if (clearanceOn(prev.labelRow, tp, k, list) >= 2 * ink) {
+        list[k] = { ...prev, labelPosition: "insideTopRight" };
+      } else {
+        list.splice(k, 1);
+      }
+    }
   };
 
   for (const b of ascending) {
@@ -559,27 +596,34 @@ export function anchorPeriodLabels<T extends { timestamp: string; labelRow: numb
     // never lowers one, so row 1 stays on row 1.
     const rows = b.labelRow === 0 ? [0, 1] : [1];
     const row = rows.find((r) => clearanceOn(r, t) >= 2 * ink);
-    if (row === undefined) continue; // no room on any row: draw no marker here
-
-    // #8831: the caption must not START left of a caption on the other row that
-    // belongs to an earlier marker, or the two read in the wrong order. See the
-    // docblock. Walk back over markers inside one ink of this rule; anything
-    // older starts behind this caption's left edge.
-    for (let k = out.length - 1; k >= 0; k--) {
-      const prev = out[k];
-      const tp = new Date(prev.timestamp).getTime();
-      if (tp <= t - ink) break;
-      // A flipped caption also starts behind this one. No same-row test: this
-      // row is two inks clear (above), so nothing inside the window is on it.
-      if (prev.labelPosition === "insideTopRight") continue;
-      if (clearanceOn(prev.labelRow, tp, k) >= 2 * ink) {
-        out[k] = { ...prev, labelPosition: "insideTopRight" };
-      } else {
-        out.splice(k, 1);
-      }
+    if (row !== undefined) {
+      // #8831: the caption must not START left of a caption on the other row
+      // that belongs to an earlier marker. See the docblock.
+      settleOrder(out, t);
+      out.push({ ...b, labelRow: row, labelPosition: "insideTopRight" });
+      continue;
     }
 
-    out.push({ ...b, labelRow: row, labelPosition: "insideTopRight" });
+    // #10403: no row has room, so the LATER marker wins — the earlier labels in
+    // its way give way, on whichever row costs the fewest captions once the
+    // #8831 walk-back has run too (ties keep its own row). See the docblock.
+    let best: typeof out | undefined;
+    let bestRow = rows[0];
+    for (const r of rows) {
+      const trial = out.slice();
+      for (let k = trial.length - 1; k >= 0; k--) {
+        if (trial[k].labelRow !== r) continue;
+        if (t - new Date(trial[k].timestamp).getTime() >= 2 * ink) break;
+        trial.splice(k, 1);
+      }
+      settleOrder(trial, t);
+      if (best === undefined || trial.length > best.length) {
+        best = trial;
+        bestRow = r;
+      }
+    }
+    out.length = 0;
+    out.push(...best!, { ...b, labelRow: bestRow, labelPosition: "insideTopRight" });
   }
   return out;
 }

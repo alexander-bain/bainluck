@@ -728,7 +728,8 @@ struct EventDetailView: View {
     }
 
     /// One visible delivery status directly beside the probabilities, including
-    /// accepted receipts whose rounded percentage does not move. Detail age stays disclosed.
+    /// accepted receipts whose rounded percentage does not move. The exact device
+    /// receipt time is disclosed on tap only (#8320 v24: one compact line).
     private func probabilityDetails(confidenceTier: String?) -> some View {
         Button { showProbabilityDetails.toggle() } label: {
             VStack(spacing: 4) {
@@ -738,7 +739,7 @@ struct EventDetailView: View {
                         .foregroundStyle(.secondary)
                     SignalBarsView(tier: confidenceTier)
                 }
-                VisibleLivePriceStatusView(status: vm.liveUpdateStatus,
+                CompactEventPriceStatusView(status: vm.liveUpdateStatus,
                     sequence: vm.priceActivity?.sequence ?? 0,
                     receivedAt: vm.priceActivity?.receivedAt)
             }

@@ -3,6 +3,7 @@
 import { format, isSameDay, parseISO } from "date-fns";
 import { PLAY_ATTACH_WINDOW_MS } from "@/lib/chartGameState";
 import { trustedLiveClock } from "@/lib/gameTimeLabel";
+import { formatPeriod, restingGameClock } from "@/lib/restingGameClock";
 import { formatProbabilityPercent } from "@/lib/probabilityDisplay";
 import { renderedComplementPercents, renderedDuelPercents } from "@/lib/renderedPercent";
 import { teamShortNames } from "@/lib/teamShortName";
@@ -75,18 +76,6 @@ interface GamePlayCardProps {
    * (a live or upcoming game) and nothing changes.
    */
   restingFinalScore?: { home: number; away: number } | null;
-}
-
-/** Format period number into display string */
-function formatPeriod(period?: string | null): string {
-  if (!period) return "";
-  // Already formatted (e.g., "1st Quarter", "Halftime")
-  if (period.length > 2) return period;
-  // Numeric period
-  const num = parseInt(period, 10);
-  if (isNaN(num)) return period;
-  const suffix = num === 1 ? "st" : num === 2 ? "nd" : num === 3 ? "rd" : "th";
-  return `Q${num}`;
 }
 
 /**
@@ -236,7 +225,8 @@ export default function GamePlayCard({
   // "3" -> "Q3" rendering is a display choice no other surface makes. The trust
   // decision is taken over the string the reader will actually see, which is the
   // only string a duplicate can be visible in.
-  const trusted = trustedLiveClock(formatPeriod(point.period), point.clock, sportKey);
+  // #4889 — `restingGameClock` is the one selector the live header reads too.
+  const trusted = restingGameClock(point, sportKey);
   // Game clock is shown only when genuinely observed; a value carried forward from
   // an earlier snapshot is marked approximate ("~") rather than shown as exact, and
   // when there's no clock at all we fall back to the period, then to "—" (#925).
@@ -260,8 +250,8 @@ export default function GamePlayCard({
   //
   // Each field is dated by the row that observed IT (`lib/chartGameState.ts`);
   // a clock-only row must not refresh the age of the period it never saw.
-  const periodIsCarried = point.periodApprox === true && !!trusted.period;
-  const clockIsCarried = point.clockApprox === true && !!trusted.gameClock;
+  const periodIsCarried = trusted.periodCarried;
+  const clockIsCarried = trusted.clockCarried;
   const periodText = trusted.period
     ? `${periodIsCarried && !clockIsCarried ? "~" : ""}${trusted.period}`
     : "";

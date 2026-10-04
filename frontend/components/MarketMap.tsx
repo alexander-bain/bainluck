@@ -145,6 +145,12 @@ export default function MarketMap({
 
   const zeroPct = zeroPosition != null ? posOnRail(zeroPosition, rangeMin, rangeMax) : null;
 
+  // #10350: #3210 keeps the bare track as a number line for the markers on it.
+  // With no shape AND no marker it carries nothing — a 2nd-half map before the
+  // half starts drew an empty "24 · 29 · 34+" bar above its two quoted lines.
+  // The rungs are already printed inline, so the rail block is dropped whole.
+  const railCarriesNothing = !bandDrawsShape && markers.every((m) => m.value == null);
+
   return (
     <section
       ref={cardRef}
@@ -240,7 +246,9 @@ export default function MarketMap({
       )}
 
       {/* Distribution rail + markers */}
+      {!railCarriesNothing && (
       <div
+        data-map-rail=""
         className="relative"
         style={{
           height: noTiles ? 76 : 86,
@@ -403,6 +411,7 @@ export default function MarketMap({
           </span>
         )}
       </div>
+      )}
 
       {/* #3210: THE RUNGS, DRAWN — the card already held them.
           A band with no shape is replaced by the lines it actually has, in the
@@ -416,7 +425,8 @@ export default function MarketMap({
         // BELOW the block that contains them. At the popover's old `marginTop:
         // 4` the first LOOK of this change photographed "32 38 44+" sitting on
         // top of "CHANCE OF GOING OVER" on the pre-game card.
-        <div style={{ marginTop: 18, position: "relative", zIndex: 6 }} data-inline-ladder="1">
+        // With no rail block above (#10350) there is no overhang to clear.
+        <div style={{ marginTop: railCarriesNothing ? 10 : 18, position: "relative", zIndex: 6 }} data-inline-ladder="1">
           <LadderRows
             ladder={ladder}
             accentRgb={accentRgb}

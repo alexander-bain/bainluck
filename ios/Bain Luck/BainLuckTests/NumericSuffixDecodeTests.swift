@@ -27,7 +27,7 @@ final class NumericSuffixDecodeTests: XCTestCase {
     /// explicit `…24H` / `…7D` CodingKey raw value in the Models layer is now
     /// wrong. That is the signal to re-derive them, not to patch a call site.
     func testConvertFromSnakeCaseUppercasesTheLetterAfterADigit() throws {
-        struct Probe: Decodable {
+        nonisolated struct Probe: Decodable {
             let converted: [String]
             struct AnyKey: CodingKey {
                 var stringValue: String
