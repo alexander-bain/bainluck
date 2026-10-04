@@ -74,7 +74,7 @@ if xcodebuild test -project "$ROOT/ios/Bain Luck/Bain Luck.xcodeproj" \
   -scheme BainLuckWatchUITests -configuration Debug \
   -destination "platform=watchOS Simulator,id=$TEST_UDID" \
   -derivedDataPath "$DERIVED" -resultBundlePath "$RESULT" \
-  -parallel-testing-enabled NO -jobs 2 \
+  -parallel-testing-enabled NO -jobs 2 -collect-test-diagnostics never \
   -test-timeouts-enabled YES -maximum-test-execution-time-allowance 180 \
   CODE_SIGNING_ALLOWED=NO \
   'OTHER_SWIFT_FLAGS=$(inherited) -Xfrontend -disable-sandbox' \

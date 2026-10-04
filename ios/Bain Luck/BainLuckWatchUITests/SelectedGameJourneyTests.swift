@@ -92,11 +92,13 @@ final class SelectedGameJourneyTests: XCTestCase {
     private func reveal(_ element: XCUIElement, in app: XCUIApplication) throws {
         for _ in 0..<24 {
             if element.isHittable && app.frame.contains(element.frame) { return }
+            print("WATCH_UI_REVEAL \(element.identifier) reading=\(element.frame) viewport=\(app.frame)")
             let towardEarlierContent = element.frame.minY < app.frame.minY
             let start = app.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.60))
             let end = app.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: towardEarlierContent ? 0.75 : 0.45))
-            start.press(forDuration: 0.1, thenDragTo: end)
+            start.press(forDuration: 0.1, thenDragTo: end, withVelocity: .slow, thenHoldForDuration: 0.4)
         }
+        capture(app, name: "Unreachable reading - \(element.identifier)")
         XCTFail("Cannot bring full reading into view: \(element.identifier)")
         throw NSError(domain: "WatchJourney", code: 2)
     }
