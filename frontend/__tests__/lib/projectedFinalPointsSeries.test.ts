@@ -359,11 +359,41 @@ describe("reading a served history payload", () => {
 });
 
 describe("the default window", () => {
-  it("opens an hour before kickoff once the game has started, so the game gets the width", () => {
+  it("opens at the earliest reading in the hour before kickoff, so the game gets the width", () => {
     const s = supported(nflInput());
-    expect(s.start).toBe(ms(KICKOFF) - 60 * 60 * 1000);
+    expect(s.start).toBe(ms("2026-09-28T23:30:00Z"));
+    expect(allPoints(s)[0].at).toBe(s.start);
     // A pregame reading from before the window is not drawn.
     expect(allPoints(s).some((p) => p.at === ms("2026-09-28T21:00:00Z"))).toBe(false);
+  });
+
+  it("opens at kickoff when the book recorded nothing in the hour before it", () => {
+    // 21:00 is older than the hour; drop the 23:30 reading that sits inside it.
+    const pairs = nflInput().pairs.filter((p) => p.timestamp !== "2026-09-28T23:30:00Z");
+    const s = supported(nflInput({ pairs }));
+    expect(s.start).toBe(ms(KICKOFF));
+    expect(allPoints(s)[0].at).toBe(ms("2026-09-29T00:30:00Z"));
+    // A cursor mid-game keeps the same window.
+    const v = seriesAt(nflInput({ pairs }), ms("2026-09-29T01:30:00Z"));
+    expect(v.supported && v.start).toBe(ms(KICKOFF));
+  });
+
+  it("reaches back no further than an hour, however early the book's readings start", () => {
+    // 21:00 and 23:15 are older than the hour; 23:16 sits on its edge.
+    const extra = [
+      { timestamp: "2026-09-28T23:15:00Z", home: 24.5, away: 20.0, homeProbability: 0.62 },
+      { timestamp: "2026-09-28T23:16:00Z", home: 24.5, away: 20.0, homeProbability: 0.62 },
+    ];
+    const s = supported(nflInput({ pairs: [...extra, ...nflInput().pairs] }));
+    expect(s.start).toBe(ms(KICKOFF) - 60 * 60 * 1000);
+    expect(allPoints(s)[0].at).toBe(s.start);
+  });
+
+  it("a re-stamped row in the pregame hour does not open the window", () => {
+    const pairs = nflInput().pairs.map((p) =>
+      p.timestamp === "2026-09-28T23:30:00Z" ? { ...p, kind: "synthetic" as const } : p,
+    );
+    expect(supported(nflInput({ pairs })).start).toBe(ms(KICKOFF));
   });
 
   it("looks back six hours from now before kickoff", () => {
@@ -491,9 +521,25 @@ describe("the first recorded game state floors actual scores, and is not a kicko
     expect(during.supported && during.latestActual).toMatchObject({ home: 14, away: 7 });
   });
 
-  it("opens the default window an hour before the floor", () => {
+  it("opens the default window at the earliest reading in the hour before the floor", () => {
     const s = supported(nflInput({ kickoffAt: null, scoreObservationStartAt: FLOOR }));
-    expect(s.start).toBe(ms(FLOOR) - 60 * 60 * 1000);
+    expect(s.start).toBe(ms("2026-09-28T23:30:00Z"));
+  });
+
+  it("a first reading just before the floor opens the window there, not an hour earlier (14780549's shape)", () => {
+    // The route's since-start range served the book's first reading 50 s before the floor.
+    const pairs = [
+      { timestamp: "2026-09-29T00:19:10Z", home: 19.5, away: 23.0, homeProbability: 0.37 },
+      ...nflInput().pairs.filter((p) => Date.parse(p.timestamp) > ms(FLOOR)),
+    ];
+    const s = supported(nflInput({ pairs, kickoffAt: null, scoreObservationStartAt: FLOOR }));
+    expect(s.start).toBe(ms("2026-09-29T00:19:10Z"));
+  });
+
+  it("opens at the floor itself when the book has no reading in the hour before it", () => {
+    const pairs = nflInput().pairs.filter((p) => p.timestamp !== "2026-09-28T23:30:00Z");
+    const s = supported(nflInput({ pairs, kickoffAt: null, scoreObservationStartAt: FLOOR }));
+    expect(s.start).toBe(ms(FLOOR));
   });
 });
 
