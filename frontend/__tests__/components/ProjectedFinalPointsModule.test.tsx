@@ -34,13 +34,15 @@ const NFL = "americanfootball_nfl";
 /** The 1st Quarter marker's `not_before`, verbatim: the last poll that showed no first quarter. */
 const FIRST_RECORDED_STATE = "2026-09-29T00:16:50.361763+00:00";
 const COMPLETED_AT = "2026-09-29T03:12:51.383951+00:00";
+/** A reader clock for the finished mount. A finished game reads its completion boundary, never this. */
+const READER_NOW = "2026-10-04T18:00:00Z";
 
 function history(over: Partial<EventHistoryResponse> = {}): EventHistoryResponse {
   return { ...structuredClone(RAW), ...over };
 }
 
 function mounted(h: EventHistoryResponse = history()): ProjectedFinalPointsInput {
-  const d = projectedFinalPointsMount({ sportKey: NFL, eventStatus: "completed", history: h });
+  const d = projectedFinalPointsMount({ sportKey: NFL, eventStatus: "completed", history: h, now: READER_NOW });
   if (!d.mount) throw new Error(`expected a mount, got ${d.reason}`);
   return d.input;
 }
@@ -249,7 +251,7 @@ describe("the score floor refuses an estimated or unobserved marker", () => {
   const q1 = markers[0];
   const withQ1 = (over: Partial<typeof q1>) => history({ period_markers: [{ ...q1, ...over }, ...markers.slice(1)] });
   const reason = (h: EventHistoryResponse) => {
-    const d = projectedFinalPointsMount({ sportKey: NFL, eventStatus: "completed", history: h });
+    const d = projectedFinalPointsMount({ sportKey: NFL, eventStatus: "completed", history: h, now: READER_NOW });
     return d.mount ? "mount" : d.reason;
   };
 
@@ -283,16 +285,36 @@ describe("supported and unsupported mounts", () => {
     );
 
   it("a finished NFL game with every input renders the module", () => {
+    expect(RAW.status).toBe("completed");
     expect(html({})).toContain("Projected final points");
     expect(html({ eventStatus: "closed" })).toContain("Projected final points");
+    // completed and closed are one phase on either side.
+    expect(html({ history: history({ status: "closed" }) })).toContain("Projected final points");
+  });
+
+  it("the module carries the history's own status through its memo, in both directions", () => {
+    // Dropping status would refuse every mount; reading it from anywhere but the history would admit this one.
+    expect(html({ history: history({ status: "live" }) })).toBe("");
+    expect(html({ history: history({ status: "completed" }) })).toContain("Projected final points");
   });
 
   it.each([
     ["another sport", { sportKey: "baseball_mlb" }, "sport_not_supported"],
-    ["a live game", { eventStatus: "live" }, "not_finished"],
-    ["a scheduled game", { eventStatus: "scheduled" }, "not_finished"],
+    // The authentic rows carry no provenance (#10461), so only a finished, whole-served page may read them.
+    ["a live game whose rows carry no provenance", { eventStatus: "live", history: history({ status: "live", completed_at: undefined }) }, "no_named_book"],
+    ["a scheduled game whose rows carry no provenance", { eventStatus: "scheduled", history: history({ status: "scheduled", completed_at: undefined }) }, "no_named_book"],
+    ["a postponed game", { eventStatus: "postponed" }, "status_not_supported"],
+    ["no status", { eventStatus: null }, "status_not_supported"],
     ["no completion boundary", { history: history({ completed_at: undefined }) }, "not_finished"],
-    ["no history yet", { history: null }, "not_finished"],
+    ["no history yet", { history: null }, "no_history"],
+    // The page and its history disagree on the phase, or the history does not say: refused, never reconciled.
+    ["a finished page over a live history, completion stamped", { history: history({ status: "live" }) }, "history_phase_mismatch"],
+    ["a finished page over a scheduled history, completion stamped", { history: history({ status: "scheduled" }) }, "history_phase_mismatch"],
+    ["a finished page over a history with a null status", { history: history({ status: null }) }, "history_phase_mismatch"],
+    ["a finished page over a history with no status", { history: history({ status: undefined }) }, "history_phase_mismatch"],
+    ["a finished page over a postponed history", { history: history({ status: "postponed" }) }, "history_phase_mismatch"],
+    ["a live page over a finished history", { eventStatus: "live" }, "history_phase_mismatch"],
+    ["a scheduled page over a finished history", { eventStatus: "scheduled" }, "history_phase_mismatch"],
     ["no named sportsbook", { history: history({ bookmaker_history: { not_a_book: RAW.bookmaker_history!.draftkings } }) }, "no_named_book"],
   ] as const)("%s renders nothing, not an empty frame", (_label, props, reason) => {
     expect(html(props as never)).toBe("");
@@ -300,6 +322,7 @@ describe("supported and unsupported mounts", () => {
       sportKey: NFL,
       eventStatus: "completed",
       history: history(),
+      now: READER_NOW,
       ...(props as object),
     } as never);
     expect(d.mount ? "mount" : d.reason).toBe(reason);
@@ -319,5 +342,129 @@ describe("supported and unsupported mounts", () => {
       /finalScore=\{isFinished && !venueVoided && !heroScoreIsStoppageFiller \? \{ home: bestHomeScore, away: bestAwayScore \} : null\}/,
     );
     expect(page.indexOf("<ProjectedFinalPointsModule")).toBeGreaterThan(page.indexOf("<ScoreDifferentialChart"));
+  });
+});
+
+/**
+ * #10461 before and during. The same authentic game, re-served as a live
+ * payload would be once the route names each row: no completion boundary,
+ * and every row `recorded` with its capture 17 s into its displayed minute.
+ */
+describe("before and during: rows count only by served provenance", () => {
+  const withProvenance = (h: EventHistoryResponse, kind = "recorded"): EventHistoryResponse => ({
+    ...h,
+    bookmaker_history: Object.fromEntries(
+      Object.entries(h.bookmaker_history ?? {}).map(([book, rows]) => [
+        book,
+        rows.map((r) => ({ ...r, kind, observed_at: r.timestamp.replace(/:00\+00:00$/, ":17+00:00") })),
+      ]),
+    ),
+  });
+  const livePayload = (over: Partial<EventHistoryResponse> = {}) =>
+    withProvenance(history({ completed_at: undefined, status: "live", ...over }));
+  const MID_GAME = "2026-09-29T01:30:00Z";
+  const PREGAME = "2026-09-29T00:00:00Z";
+
+  it("the derived rows really are recorded captures inside their own minute", () => {
+    const rows = livePayload().bookmaker_history!.draftkings!;
+    expect(rows.every((r) => r.kind === "recorded" && Date.parse(r.observed_at!) - Date.parse(r.timestamp) === 17_000)).toBe(true);
+  });
+
+  it("during: mounts, places readings at their capture, shows nothing after now, and floors actuals at the observed state", () => {
+    const d = projectedFinalPointsMount({ sportKey: NFL, eventStatus: "live", history: livePayload(), now: MID_GAME });
+    if (!d.mount) throw new Error(`expected a mount, got ${d.reason}`);
+    expect(d.input.asOf).toBe(MID_GAME);
+    expect(d.input.kickoffAt).toBeNull();
+    expect(d.input.scoreObservationStartAt).toBe(FIRST_RECORDED_STATE);
+    const s = series(d.input);
+    expect(s.phase).toBe("during");
+    expect(s.end).toBe(at(MID_GAME));
+    expect(s.segments.flat().every((p) => p.at <= at(MID_GAME) && new Date(p.at).getUTCSeconds() === 17)).toBe(true);
+    expect(s.actualSteps.length).toBeGreaterThan(0);
+    expect(s.actualSteps[0].at).toBeGreaterThanOrEqual(at(FIRST_RECORDED_STATE));
+    expect(s.actualSteps.every((a) => a.at <= at(MID_GAME))).toBe(true);
+    const html = renderToStaticMarkup(<ProjectedFinalPointsChartView input={d.input} {...teams} cursorAt={null} />);
+    expect(html).toContain('data-projected-final-points="during"');
+    // Each side's readout is a score so far: never "final", never "last recorded".
+    expect(html.match(/data-actual="(home|away)">\d+ scored</g)).toHaveLength(2);
+    expect(html).not.toContain("data-final=");
+    expect(html).not.toMatch(/\d+ final<|last recorded/);
+    expect(html).toContain("┅ Actual score");
+  });
+
+  it("during without an observed game state renders nothing: the schedule is never a kickoff", () => {
+    const d = projectedFinalPointsMount({ sportKey: NFL, eventStatus: "live", history: livePayload({ period_markers: [] }), now: MID_GAME });
+    expect(d.mount ? "mount" : d.reason).toBe("no_recorded_game_state");
+  });
+
+  it("before: forecasts with no actual score and no invented 0–0, and no first-quarter marker needed", () => {
+    const d = projectedFinalPointsMount({ sportKey: NFL, eventStatus: "scheduled", history: livePayload({ status: "scheduled", period_markers: [] }), now: PREGAME });
+    if (!d.mount) throw new Error(`expected a mount, got ${d.reason}`);
+    const s = series(d.input);
+    expect(s.phase).toBe("before");
+    expect(s.actualSteps).toEqual([]);
+    expect(s.latestActual).toBeNull();
+    expect(s.segments.flat().every((p) => p.at <= at(PREGAME))).toBe(true);
+    const html = renderToStaticMarkup(<ProjectedFinalPointsChartView input={d.input} {...teams} cursorAt={null} />);
+    expect(html).toContain('data-projected-final-points="before"');
+    expect(html).not.toContain("data-actual=");
+    expect(html).not.toMatch(/\d+ scored/);
+    expect(html).not.toContain("┅ Actual score");
+  });
+
+  it("scheduled with retained past game state still draws forecasts only", () => {
+    // The live payload keeps its observed Q1 marker and recorded scores; the clock is mid-game.
+    const h = livePayload({ status: "scheduled" });
+    expect(h.period_markers?.length).toBeGreaterThan(0);
+    expect((h.score_history ?? []).some((r) => Date.parse(r.timestamp) <= at(MID_GAME))).toBe(true);
+    const d = projectedFinalPointsMount({ sportKey: NFL, eventStatus: "scheduled", history: h, now: MID_GAME });
+    if (!d.mount) throw new Error(`expected a mount, got ${d.reason}`);
+    expect(d.input.scoreObservationStartAt).toBeNull();
+    expect(d.input.kickoffAt).toBeNull();
+    expect(d.input.actuals).toEqual([]);
+    expect(d.input.finalAt).toBeNull();
+    const s = series(d.input);
+    expect(s.phase).toBe("before");
+    expect(s.actualSteps).toEqual([]);
+    expect(s.latestActual).toBeNull();
+    for (const t of inspectionInstants(s)) {
+      const v = seriesAt(d.input, t);
+      if (!v.supported) continue;
+      expect(v.phase).toBe("before");
+      expect(v.actualSteps).toEqual([]);
+    }
+    const html = renderToStaticMarkup(<ProjectedFinalPointsChartView input={d.input} {...teams} cursorAt={null} />);
+    expect(html).toContain('data-projected-final-points="before"');
+    expect(html).not.toContain("data-actual=");
+    expect(html).not.toContain("┅ Actual score");
+  });
+
+  it("a completion stamp on an unfinished page is refused, never read as after", () => {
+    const AFTER_COMPLETION = "2026-09-29T04:00:00Z";
+    for (const [eventStatus, status] of [["live", "live"], ["scheduled", "scheduled"]] as const) {
+      const h = livePayload({ status, completed_at: COMPLETED_AT });
+      const d = projectedFinalPointsMount({ sportKey: NFL, eventStatus, history: h, now: AFTER_COMPLETION });
+      expect([eventStatus, d.mount ? "mount" : d.reason]).toEqual([eventStatus, "stale_completion"]);
+      const html = renderToStaticMarkup(
+        <ProjectedFinalPointsModule sportKey={NFL} eventStatus={eventStatus} history={h} {...teams} />,
+      );
+      expect(html).toBe("");
+    }
+  });
+
+  it("rows the route names synthetic never mount a live chart", () => {
+    const h = withProvenance(history({ completed_at: undefined, status: "live" }), "synthetic");
+    const d = projectedFinalPointsMount({ sportKey: NFL, eventStatus: "live", history: h, now: MID_GAME });
+    expect(d.mount ? "mount" : d.reason).toBe("no_named_book");
+  });
+
+  it("a finished page with provenance reads it, and the paid finished view is unchanged", () => {
+    const d = projectedFinalPointsMount({ sportKey: NFL, eventStatus: "completed", history: withProvenance(history()), now: READER_NOW });
+    if (!d.mount) throw new Error(`expected a mount, got ${d.reason}`);
+    expect(d.input.sourceKey).toBe("draftkings");
+    const before = series(mounted());
+    const after = series(d.input);
+    expect(after.latest).toMatchObject({ home: before.latest.home, away: before.latest.away, at: before.latest.at + 17_000 });
+    expect(after.segments.flat().map((p) => [p.home, p.away])).toEqual(before.segments.flat().map((p) => [p.home, p.away]));
   });
 });
