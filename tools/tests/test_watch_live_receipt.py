@@ -62,6 +62,18 @@ class WatchLiveReceiptTests(unittest.TestCase):
     def test_wrong_named_test(self):
         self.reject(self.log().replace("testProductionPickerSelectionSurvivesRelaunchAndRefreshes", "testFixtureExample"))
 
+    def test_targeted_root_and_ambiguous_summaries(self):
+        selected = self.log().replace("'All tests'", "'Selected tests'")
+        verify(selected, 0, self.preferences())
+        self.reject(selected + summary())
+        self.reject(self.log() + summary())
+        self.reject(selected.replace("'Selected tests'", "'Nested suite'"))
+        self.reject(selected.replace("with 0 failures", "with 1 failure"))
+        self.reject(selected.replace("** TEST SUCCEEDED **", "** TEST FAILED **"))
+        self.reject(selected.replace("'Selected tests' passed", "'Selected tests' failed"))
+        named = "Test Case '-[BainLuckWatchUITests.LiveSelectedGameJourneyTests testProductionPickerSelectionSurvivesRelaunchAndRefreshes]' passed (1.0 seconds).\n"
+        self.reject(selected + named)
+
     def test_missing_duplicate_and_malformed_packets(self):
         for log in [summary(), self.log() + "WATCH_LIVE_EVIDENCE=" + json.dumps(self.evidence) + "\n",
                     summary() + "WATCH_LIVE_EVIDENCE={broken\n"]:

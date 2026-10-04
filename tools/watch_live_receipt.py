@@ -6,18 +6,22 @@ from pathlib import Path
 import plistlib
 import re
 
-from watch_iphone_receipt import verified_summary
-
-
 def verify(log: str, exit_code: int, preferences: dict) -> dict:
-    count, _ = verified_summary(log, exit_code)
-    if count != 1:
-        raise ValueError("Expected exactly one Release live journey")
-    if not re.search(
+    if exit_code != 0 or not re.search(r"^\*\* TEST SUCCEEDED \*\*\s*$", log, re.MULTILINE):
+        raise ValueError("Live test process did not finish successfully")
+    totals = re.findall(
+        r"^Test Suite '(?:Selected tests|All tests)' passed[^\n]*\n"
+        r"[ \t]*Executed (\d+) tests?, with (\d+) failures?[^\n]*",
+        log, re.MULTILINE,
+    )
+    if len(totals) != 1 or totals[0] != ("1", "0"):
+        raise ValueError("Expected exactly one completed root summary with one test and zero failures")
+    count = 1
+    if len(re.findall(
         r"^Test Case '-\[BainLuckWatchUITests\.LiveSelectedGameJourneyTests "
         r"testProductionPickerSelectionSurvivesRelaunchAndRefreshes\]' passed",
         log, re.MULTILINE,
-    ):
+    )) != 1:
         raise ValueError("Expected the production picker/relaunch test to pass")
     packets = re.findall(r"^WATCH_LIVE_EVIDENCE=(.+)$", log, re.MULTILINE)
     if len(packets) != 1:
