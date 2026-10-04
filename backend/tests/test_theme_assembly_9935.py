@@ -963,6 +963,24 @@ async def test_p6_a_rollback_before_commit_publishes_nothing(db, redis, monkeypa
 
 
 @pytest.mark.asyncio
+async def test_p6_the_payload_is_serialized_before_commit(db, redis, monkeypatch):
+    """Semantics 9: a page that cannot be serialized commits nothing — not a
+    revision, an edge or a decision row that no snapshot will ever describe."""
+    db.add_markets(OPENAI_IPO, slug="ai")
+
+    def unserializable(self):
+        raise TypeError("not JSON serializable")
+
+    monkeypatch.setattr(ta.ThemeSnapshot, "payload", unserializable)
+    report = await _assemble()
+
+    assert _container(report, "ai")["terminal"] == "failed"
+    assert redis.writes() == []
+    assert db.state["containers"] == {}
+    assert db.state["edges"] == {} and db.state["decisions"] == {}
+
+
+@pytest.mark.asyncio
 async def test_a_redis_read_error_is_absent_and_a_write_error_is_reported(db, monkeypatch):
     class Down:
         def get(self, key):
