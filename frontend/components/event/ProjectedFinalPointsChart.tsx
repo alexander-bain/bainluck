@@ -343,7 +343,7 @@ export function ProjectedFinalPointsChartView({
       <details className="mt-3 text-xs text-text-secondary">
         <summary className="cursor-pointer">How to read this</summary>
         <p className="mt-1">
-          Each line is the final score {full.sourceName}&apos;s point spread and total imply for one team. The dashed
+          Each line is the final score {full.sourceName}&apos;s expected winning margin and total points imply for one team. The dashed
           steps are the score so far. A break in a line means that reading was missing or could not be right, such as a
           projection below points already scored. The last projection is never joined to the final score.
         </p>
