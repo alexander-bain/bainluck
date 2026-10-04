@@ -32,6 +32,18 @@
  * Times are OUR capture minute, not the venue's publication time (the venue's
  * `last_update` is not kept), so the reader is told "recorded", nothing more.
  *
+ * ── WHAT A ROW'S `valid_until` IS NOT ───────────────────────────────────────
+ *
+ * The capture minute is the only evidence a pair was quoted. `valid_until` is
+ * NOT read, on purpose. `odds_polling.py::_create_or_update_snapshot` sets the
+ * old row's `valid_until = now` when the values CHANGE, just before it writes
+ * the new row, as well as on an unchanged re-read. So on any row with a
+ * successor it is the first capture of a DIFFERENT pair, and on the newest row
+ * it is a re-read that may sit across hours with no poll. Read as "confirmed
+ * through", a pair recorded at 00:00 and replaced at 03:00 would vouch for a
+ * three-hour hole. So the line holds a reading only up to the next recorded
+ * capture, and only when that capture follows within `MAX_CAPTURE_GAP_MS`.
+ *
  * ── WHAT THE CHART MAY NEVER DO ─────────────────────────────────────────────
  *
  * - Draw a sport whose spread is not an expected margin in points. Only the
@@ -39,11 +51,14 @@
  *   ±1.5 run line, soccer goals, tennis sets and golf positions are refused by
  *   name, not by a unit lookup that would let soccer through.
  * - Bridge a gap. A missing half, a non-finite value, a value already beaten
- *   by the recorded score, or a pair whose leader contradicts its own
- *   moneyline all break the line. A single valid reading between two gaps is
- *   still drawn, as a dot.
+ *   by the recorded score, a pair whose leader contradicts its own moneyline,
+ *   or a next capture recorded more than `MAX_CAPTURE_GAP_MS` later all break
+ *   the line. A single valid reading between two gaps is still drawn, as a dot.
  * - Append the final result to the forecast line. Readings at or after the
- *   final whistle are dropped, and actual scores are a separate series.
+ *   server-recorded completion boundary (`completed_at`) are dropped, and
+ *   actual scores are a separate series. That boundary is when our server
+ *   recorded the game finished, not an observed final whistle, so it does not
+ *   prove every dropped reading came after the whistle, or every kept one before.
  * - Show anything after `asOf`. Inspection rebuilds the series at the cursor,
  *   so a scrubbed reading cannot reveal a later projection or a later score.
  * - Invent a 0–0 start. Actual steps begin at the first recorded score at or
@@ -77,8 +92,6 @@ export interface ProjectedPairObservation {
   away: number | null | undefined;
   /** The same book's home win probability at this capture, when served. */
   homeProbability?: number | null;
-  /** When the source last confirmed this exact pair (`valid_until`). */
-  heldUntil?: string | null;
   /**
    * `recorded` = a row we actually captured, stamped with our capture minute.
    * `synthetic` = a row the history route RE-STAMPED at its window cutoff
@@ -103,7 +116,10 @@ export interface ProjectedFinalPointsInput {
   actuals: ActualScoreObservation[];
   /** OBSERVED kickoff. A scheduled start is not one; pass null if unknown. */
   kickoffAt: string | null;
-  /** The final whistle (`completed_at`), or null while the game is unfinished. */
+  /**
+   * The server-recorded completion boundary (`completed_at`), or null while
+   * the game is unfinished. A processing time, not an observed final whistle.
+   */
   finalAt: string | null;
   /** Nothing after this instant is read. The page's now, or the cursor. */
   asOf: string;
@@ -128,15 +144,11 @@ export type WithheldReason =
   | "contradicts_moneyline";
 
 export interface ForecastPoint {
-  /** Where the point is drawn: its capture, or the window start if it was held into the window. */
+  /** The recorded capture minute. Where the point is drawn, and the time a reader is told. */
   at: number;
-  /** When the source first returned this pair. This is the time a reader is told. */
-  observedAt: number;
-  /** When the source last confirmed this exact pair, clipped to the window end. */
-  confirmedThrough: number;
   home: number;
   away: number;
-  /** Where the drawn hold ends: the next reading, or the last confirmation before a break. */
+  /** Where the drawn hold ends: the next recorded capture, or this one before a break. */
   holdEnd: number;
 }
 
@@ -185,11 +197,11 @@ export const DEFAULT_WINDOW_MS = 6 * HOUR_MS;
  */
 export const PREGAME_CONTEXT_MS = HOUR_MS;
 /**
- * How long past a pair's last confirmation the line may run before the next
- * reading. Past this the stretch is unobserved and the line breaks. A
+ * The longest stretch between two recorded captures the line may hold a
+ * reading across. Past this the stretch is unobserved and the line breaks. A
  * rendering choice, not a measured poll cadence.
  */
-export const MAX_UNCONFIRMED_MS = HOUR_MS;
+export const MAX_CAPTURE_GAP_MS = HOUR_MS;
 
 function parseTime(value: string | null | undefined): number | null {
   if (!value) return null;
@@ -249,7 +261,7 @@ export function buildProjectedFinalPointsSeries(
   if (asOfRaw === null) return { supported: false, reason: "no_valid_pair" };
   const kickoff = parseTime(input.kickoffAt);
   const final = parseTime(input.finalAt);
-  // Readings stop at the final whistle, and never run past the reader's now.
+  // Readings stop at the recorded completion boundary, and never run past the reader's now.
   const end = final !== null && final <= asOfRaw ? final : asOfRaw;
   const phase: ProjectedFinalPointsPhase =
     final !== null && final <= asOfRaw ? "after" : kickoff !== null && kickoff <= asOfRaw ? "during" : "before";
@@ -260,28 +272,27 @@ export function buildProjectedFinalPointsSeries(
   const actualSteps = phase === "before" ? [] : admitActuals(input, kickoff, end);
 
   type Row =
-    | { at: number; kind: "valid"; home: number; away: number; heldUntil: number }
+    | { at: number; kind: "valid"; home: number; away: number }
     | { at: number; kind: "withheld"; reason: WithheldReason };
   const rows: Row[] = [];
   for (const pair of input.pairs) {
     if (pair.kind === "synthetic") continue;
     const at = parseTime(pair.timestamp);
-    // Strictly before the final: a reading stamped at the whistle is not a forecast.
+    // Strictly before the completion boundary: a reading stamped at it is not a forecast.
     if (at === null || at > end || (final !== null && at >= final)) continue;
-    const heldUntil = Math.max(at, parseTime(pair.heldUntil) ?? at);
-    // A pair stamped before the window still counts if it was held into it.
-    if (heldUntil < start) continue;
+    // Only captures inside the window. Nothing older is carried in (module doc).
+    if (at < start) continue;
     const { home, away } = pair;
     if (home == null || away == null) {
-      if (at >= start) rows.push({ at, kind: "withheld", reason: "pair_incomplete" });
+      rows.push({ at, kind: "withheld", reason: "pair_incomplete" });
       continue;
     }
     if (!isPoints(home) || !isPoints(away)) {
-      if (at >= start) rows.push({ at, kind: "withheld", reason: "not_a_number" });
+      rows.push({ at, kind: "withheld", reason: "not_a_number" });
       continue;
     }
     if (contradictsMoneyline(home, away, pair.homeProbability)) {
-      if (at >= start) rows.push({ at, kind: "withheld", reason: "contradicts_moneyline" });
+      rows.push({ at, kind: "withheld", reason: "contradicts_moneyline" });
       continue;
     }
     const scored = actualAt(actualSteps, at);
@@ -289,7 +300,7 @@ export function buildProjectedFinalPointsSeries(
       rows.push({ at, kind: "withheld", reason: "below_recorded_score" });
       continue;
     }
-    rows.push({ at, kind: "valid", home, away, heldUntil });
+    rows.push({ at, kind: "valid", home, away });
   }
   rows.sort((a, b) => a.at - b.at);
 
@@ -308,14 +319,12 @@ export function buildProjectedFinalPointsSeries(
       continue;
     }
     const next = rows[i + 1];
-    const at = Math.max(row.at, start);
-    const confirmedThrough = Math.max(at, Math.min(row.heldUntil, end));
-    // The line only runs on to the next VALID reading. If the next reading is
-    // unusable, or arrived long after the last confirmation, the stretch in
-    // between was never vouched for, so the line stops at the last confirmation.
-    const broken = !next || next.kind === "withheld" || next.at - confirmedThrough > MAX_UNCONFIRMED_MS;
-    const holdEnd = broken ? confirmedThrough : next.at;
-    run.push({ at, observedAt: row.at, confirmedThrough, home: row.home, away: row.away, holdEnd });
+    // The line only runs on to the next VALID capture. If the next reading is
+    // unusable, or was recorded long after this one, nothing recorded the
+    // stretch in between, so the line stops at this capture.
+    const broken = !next || next.kind === "withheld" || next.at - row.at > MAX_CAPTURE_GAP_MS;
+    const holdEnd = broken ? row.at : next.at;
+    run.push({ at: row.at, home: row.home, away: row.away, holdEnd });
     if (next && broken) close();
   }
   close();
@@ -325,7 +334,7 @@ export function buildProjectedFinalPointsSeries(
   const latest = lastRun[lastRun.length - 1];
   const lastRow = rows[rows.length - 1];
   const latestIntervalUnavailable =
-    lastRow.kind === "withheld" || end - latest.confirmedThrough > MAX_UNCONFIRMED_MS;
+    lastRow.kind === "withheld" || end - latest.at > MAX_CAPTURE_GAP_MS;
 
   let high = 0;
   for (const seg of segments) for (const p of seg) high = Math.max(high, p.home, p.away);
@@ -438,7 +447,7 @@ export function projectedFinalPointsInputFromHistory(
       home: p.projected_home_score,
       away: p.projected_away_score,
       homeProbability: p.home_probability,
-      heldUntil: p.valid_until ?? null,
+      // `valid_until` deliberately not carried: continuity, not confirmation (module doc).
       kind: restampedThrough !== null && (parseTime(p.timestamp) ?? -Infinity) <= restampedThrough ? "synthetic" : "recorded",
     })),
     actuals: history.score_history ?? [],

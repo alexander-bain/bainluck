@@ -4,10 +4,13 @@
  *
  * Rendered with real inputs through `renderToStaticMarkup`. The cursor is a
  * prop on the view, so the inspected state is rendered the same way the
- * latest one is.
+ * latest one is. The last block MOUNTS the stateful chart and re-renders it
+ * with refreshed history, because a held selection is state, not markup.
  */
 
-import React from "react";
+import "../helpers/minimalDom";
+import React, { act } from "react";
+import { createRoot } from "react-dom/client";
 import { renderToStaticMarkup } from "react-dom/server";
 import ProjectedFinalPointsChart, {
   formatProjectionTime,
@@ -53,18 +56,18 @@ function nflInput(over: Partial<ProjectedFinalPointsInput> = {}): ProjectedFinal
 
 const teams = { homeTeam: "Chicago Bears", awayTeam: "Philadelphia Eagles" };
 
-function render(input: ProjectedFinalPointsInput, cursorIndex: number | null = null): string {
-  return renderToStaticMarkup(<ProjectedFinalPointsChartView input={input} {...teams} cursorIndex={cursorIndex} />);
+function render(input: ProjectedFinalPointsInput, cursorAt: number | null = null): string {
+  return renderToStaticMarkup(<ProjectedFinalPointsChartView input={input} {...teams} cursorAt={cursorAt} />);
 }
 
 const count = (html: string, needle: string) => html.split(needle).length - 1;
 
-function instantIndex(input: ProjectedFinalPointsInput, iso: string): number {
+/** The instant at `iso`, asserted to be one a reader can step to. */
+function instant(input: ProjectedFinalPointsInput, iso: string): number {
   const s = buildProjectedFinalPointsSeries(input);
   if (!s.supported) throw new Error("expected supported");
-  const i = inspectionInstants(s).indexOf(Date.parse(iso));
-  if (i < 0) throw new Error(`${iso} is not an instant`);
-  return i;
+  if (!inspectionInstants(s).includes(Date.parse(iso))) throw new Error(`${iso} is not an instant`);
+  return Date.parse(iso);
 }
 
 describe("unsupported games render nothing", () => {
@@ -103,7 +106,7 @@ describe("a finished game", () => {
 
   it("draws each lone reading as a dot, never stretched toward a gap", () => {
     // 01:20 and 02:30 each sit between two withheld readings, and 03:09 is the
-    // last reading with no later confirmation: three dots for each team.
+    // last capture before the completion boundary: three dots for each team.
     expect(count(html, 'data-single-point="true"')).toBe(6);
     expect(count(html, 'data-series="forecast-home"')).toBe(4);
   });
@@ -140,7 +143,7 @@ describe("inspecting a moment", () => {
   const input = nflInput();
 
   it("reads the projection and score at the cursor, and nothing later", () => {
-    const html = render(input, instantIndex(input, "2026-09-29T00:30:00Z"));
+    const html = render(input, instant(input, "2026-09-29T00:30:00Z"));
     expect(html).toContain("Projection at this point · recorded " + formatProjectionTime(Date.parse("2026-09-29T00:30:00Z")));
     expect(html).toContain(">27.5<");
     expect(html).toContain(">17.0<");
@@ -154,7 +157,7 @@ describe("inspecting a moment", () => {
   });
 
   it("says so when the inspected reading was unusable", () => {
-    const html = render(input, instantIndex(input, "2026-09-29T01:00:00Z"));
+    const html = render(input, instant(input, "2026-09-29T01:00:00Z"));
     expect(html).toContain("No usable projection at this point");
     expect(html).not.toContain(">27.5<");
   });
@@ -165,5 +168,78 @@ describe("a live game whose newest reading was unusable", () => {
     const html = render(nflInput({ finalAt: null, asOf: "2026-09-29T01:50:00Z" }));
     expect(html).toContain("Latest projection · recorded " + formatProjectionTime(Date.parse("2026-09-29T01:20:00Z")));
     expect(html).toContain("No usable projection since then");
+  });
+});
+
+describe("a held selection survives refreshed history (mounted)", () => {
+  type El = HTMLElement & Record<string, unknown>;
+  const descendants = (node: El): El[] => [node, ...Array.from(node.childNodes).flatMap((n) => descendants(n as El))];
+  const reactProps = (node: El) =>
+    node[Object.keys(node).find((k) => k.startsWith("__reactProps$"))!] as Record<string, (arg?: unknown) => void>;
+
+  let host: El;
+  let root: ReturnType<typeof createRoot>;
+  beforeEach(() => {
+    host = document.createElement("div") as unknown as El;
+    document.body.appendChild(host);
+    root = createRoot(host);
+  });
+  afterEach(() => act(() => root.unmount()));
+
+  const mount = (input: ProjectedFinalPointsInput) =>
+    act(() => root.render(<ProjectedFinalPointsChart input={input} {...teams} />));
+  const slider = () => descendants(host).find((n) => n.tagName === "INPUT")!;
+  const stamp = () => descendants(host).find((n) => n["data-testid"] === "projected-stamp")!.textContent;
+  const reading = () => descendants(host).find((n) => n["data-testid"] === "projected-reading")!.textContent;
+  const pick = (index: number) => act(() => reactProps(slider()).onChange({ target: { value: String(index) } }));
+
+  // Live at 02:40: the window opens an hour before kickoff.
+  const live = (pairs: ProjectedFinalPointsInput["pairs"]) =>
+    nflInput({ finalAt: null, asOf: "2026-09-29T02:40:00Z", pairs });
+  const base = nflInput().pairs.filter((p) => p.timestamp <= "2026-09-29T02:30:00Z");
+  const at0030 = formatProjectionTime(Date.parse("2026-09-29T00:30:00Z"));
+
+  function inspect0030() {
+    mount(live(base));
+    pick(1); // 23:30, 00:30, ...
+    expect(stamp()).toContain(`Projection at this point · recorded ${at0030}`);
+    expect(reading()).toContain("27.5");
+    expect(reading()).toContain("17.0");
+  }
+
+  it("an earlier reading inserted ahead of the cursor keeps the same moment", () => {
+    inspect0030();
+    const inserted = [{ timestamp: "2026-09-28T23:50:00Z", home: 25, away: 19.5, homeProbability: 0.64 }, ...base];
+    mount(live(inserted));
+    expect(stamp()).toContain(`Projection at this point · recorded ${at0030}`);
+    expect(reading()).toContain("27.5");
+    expect(reading()).not.toContain("25.0");
+    expect(slider().value).toBe("2");
+  });
+
+  it("an earlier reading removed ahead of the cursor keeps the same moment", () => {
+    inspect0030();
+    mount(live(base.filter((p) => p.timestamp !== "2026-09-28T23:30:00Z")));
+    expect(stamp()).toContain(`Projection at this point · recorded ${at0030}`);
+    expect(reading()).toContain("27.5");
+    expect(slider().value).toBe("0");
+  });
+
+  it("if the inspected reading itself leaves, it says so instead of showing a neighbour", () => {
+    inspect0030();
+    mount(live(base.filter((p) => p.timestamp !== "2026-09-29T00:30:00Z")));
+    expect(stamp()).toContain("That reading is no longer shown");
+    expect(reading()).not.toContain("24.5");
+    expect(reading()).not.toContain("27.5");
+    expect(slider()["aria-valuetext"]).toBe(`${at0030}, that reading is no longer shown`);
+  });
+
+  it("Back to latest still returns to the newest reading", () => {
+    inspect0030();
+    mount(live([{ timestamp: "2026-09-28T23:50:00Z", home: 25, away: 19.5, homeProbability: 0.64 }, ...base]));
+    const back = descendants(host).find((n) => n.tagName === "BUTTON")!;
+    act(() => reactProps(back).onClick());
+    expect(stamp()).toContain("Latest projection · recorded " + formatProjectionTime(Date.parse("2026-09-29T02:30:00Z")));
+    expect(descendants(host).some((n) => n.tagName === "BUTTON")).toBe(false);
   });
 });

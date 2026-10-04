@@ -5,13 +5,14 @@
  * final 03:10Z, final score 27–7. The shape follows the approved v24 replay
  * (forecast-experiment.md). A reading of 26.5 for Chicago after Chicago
  * already had 27 is withheld. The last valid pair, 27.0 / 7.5, stays apart
- * from the 27–7 result, and readings after the whistle are dropped.
+ * from the 27–7 result, and readings at or after the server-recorded
+ * completion boundary (`completed_at`, not an observed whistle) are dropped.
  */
 
 import {
   buildProjectedFinalPointsSeries,
   inspectionInstants,
-  MAX_UNCONFIRMED_MS,
+  MAX_CAPTURE_GAP_MS,
   pickProjectionSportsbook,
   projectedFinalPointsInputFromHistory,
   seriesAt,
@@ -105,13 +106,13 @@ describe("sport and source admission", () => {
 describe("after the final", () => {
   const s = supported(nflInput());
 
-  it("is the after phase and ends the window at the final whistle", () => {
+  it("is the after phase and ends the window at the recorded completion boundary", () => {
     expect(s.phase).toBe("after");
     expect(s.end).toBe(ms(FINAL));
   });
 
   it("keeps home and away oriented as served, in points", () => {
-    const first = allPoints(s).find((p) => p.observedAt === ms("2026-09-29T00:30:00Z"));
+    const first = allPoints(s).find((p) => p.at === ms("2026-09-29T00:30:00Z"));
     expect(first).toMatchObject({ home: 27.5, away: 17.0 });
   });
 
@@ -121,25 +122,25 @@ describe("after the final", () => {
   });
 
   it("never appends the 27–7 final to the forecast line", () => {
-    expect(s.latest).toMatchObject({ home: 27.0, away: 7.5, observedAt: ms("2026-09-29T03:09:00Z") });
+    expect(s.latest).toMatchObject({ home: 27.0, away: 7.5, at: ms("2026-09-29T03:09:00Z") });
     expect(allPoints(s).some((p) => p.home === 27 && p.away === 7)).toBe(false);
-    expect(allPoints(s).every((p) => p.observedAt < ms(FINAL))).toBe(true);
+    expect(allPoints(s).every((p) => p.at < ms(FINAL))).toBe(true);
     expect(s.latestActual).toMatchObject({ home: 27, away: 7 });
   });
 
   it("drops readings stamped after the final, not even as gaps", () => {
-    const after = [...allPoints(s).map((p) => p.observedAt), ...s.withheld.map((w) => w.at)].filter(
+    const after = [...allPoints(s).map((p) => p.at), ...s.withheld.map((w) => w.at)].filter(
       (t) => t >= ms(FINAL),
     );
     expect(after).toEqual([]);
   });
 
-  it("does not treat a reading stamped at the final whistle as a forecast", () => {
+  it("does not treat a reading stamped at the completion boundary as a forecast", () => {
     const input = nflInput();
     input.pairs = [...input.pairs, { timestamp: FINAL, home: 27.0, away: 7.0, homeProbability: 0.99 }];
     const t = supported(input);
-    expect(t.latest.observedAt).toBe(ms("2026-09-29T03:09:00Z"));
-    expect(allPoints(t).some((p) => p.observedAt === ms(FINAL))).toBe(false);
+    expect(t.latest.at).toBe(ms("2026-09-29T03:09:00Z"));
+    expect(allPoints(t).some((p) => p.at === ms(FINAL))).toBe(false);
   });
 
   it("breaks the line at a missing pair and at a non-number, and never bridges them", () => {
@@ -153,7 +154,7 @@ describe("after the final", () => {
   });
 
   it("keeps a single valid reading between two gaps as its own run", () => {
-    const lone = s.segments.find((seg) => seg[0].observedAt === ms("2026-09-29T01:20:00Z"));
+    const lone = s.segments.find((seg) => seg[0].at === ms("2026-09-29T01:20:00Z"));
     expect(lone).toHaveLength(1);
     expect(lone![0].holdEnd).toBe(lone![0].at);
   });
@@ -172,7 +173,7 @@ describe("after the final", () => {
     input.pairs = [...input.pairs, { timestamp: "2026-09-29T03:09:30Z", home: null, away: 7 }];
     const t = supported(input);
     expect(t.latestIntervalUnavailable).toBe(true);
-    expect(t.latest.observedAt).toBe(ms("2026-09-29T03:09:00Z"));
+    expect(t.latest.at).toBe(ms("2026-09-29T03:09:00Z"));
   });
 
   it("uses a points grid with headroom over every drawn value", () => {
@@ -213,7 +214,7 @@ describe("before kickoff", () => {
 
   it("shows only readings up to now", () => {
     expect(s.latest).toMatchObject({ home: 24.5, away: 20.0 });
-    expect(allPoints(s).every((p) => p.observedAt <= ms("2026-09-29T00:00:00Z"))).toBe(true);
+    expect(allPoints(s).every((p) => p.at <= ms("2026-09-29T00:00:00Z"))).toBe(true);
   });
 });
 
@@ -235,7 +236,7 @@ describe("during the game, nothing from later leaks in", () => {
     if (!at.supported) throw new Error("expected supported");
     expect(at.latest).toMatchObject({ home: 27.5, away: 17.0 });
     expect(at.latestActual).toMatchObject({ home: 7, away: 0 });
-    expect(allPoints(at).every((p) => p.observedAt <= cursor)).toBe(true);
+    expect(allPoints(at).every((p) => p.at <= cursor)).toBe(true);
     expect(at.withheld.every((w) => w.at <= cursor)).toBe(true);
     // Same window as the full view, so the drawn x positions do not jump.
     expect(at.start).toBe(fin.start);
@@ -259,42 +260,43 @@ describe("during the game, nothing from later leaks in", () => {
   });
 });
 
-describe("holds and the window edge", () => {
-  it("breaks the line when the next reading arrives long after the last confirmation", () => {
+describe("holds come from recorded captures only", () => {
+  it("breaks the line when the next capture is recorded long after this one", () => {
     const s = supported(
       nflInput({
         pairs: [
-          { timestamp: "2026-09-29T00:20:00Z", home: 24, away: 20, heldUntil: "2026-09-29T00:40:00Z" },
+          { timestamp: "2026-09-29T00:20:00Z", home: 24, away: 20 },
           { timestamp: "2026-09-29T02:30:00Z", home: 27, away: 9.5 },
         ],
       }),
     );
     expect(s.segments).toHaveLength(2);
-    expect(s.segments[0][0].holdEnd).toBe(ms("2026-09-29T00:40:00Z"));
+    expect(s.segments[0][0].holdEnd).toBe(ms("2026-09-29T00:20:00Z"));
   });
 
-  it("joins readings that follow within the confirmation tolerance", () => {
+  it("joins captures recorded within the gap tolerance", () => {
     const s = supported(
       nflInput({
         pairs: [
-          { timestamp: "2026-09-29T00:20:00Z", home: 24, away: 20, heldUntil: "2026-09-29T00:40:00Z" },
-          { timestamp: new Date(ms("2026-09-29T00:40:00Z") + MAX_UNCONFIRMED_MS - 60_000).toISOString(), home: 27, away: 13 },
+          { timestamp: "2026-09-29T00:20:00Z", home: 24, away: 20 },
+          { timestamp: new Date(ms("2026-09-29T00:20:00Z") + MAX_CAPTURE_GAP_MS - 60_000).toISOString(), home: 27, away: 13 },
         ],
       }),
     );
     expect(s.segments).toHaveLength(1);
   });
 
-  it("carries in a pair held into the window, telling the reader when it was first returned", () => {
+  it("never carries a capture from before the window into it", () => {
     const s = supported(
       nflInput({
-        pairs: [{ timestamp: "2026-09-26T12:00:00Z", home: 23.5, away: 21, heldUntil: "2026-09-29T00:10:00Z" }],
-        actuals: [],
+        pairs: [
+          { timestamp: "2026-09-26T12:00:00Z", home: 23.5, away: 21 },
+          { timestamp: "2026-09-29T00:30:00Z", home: 27.5, away: 17, homeProbability: 0.75 },
+        ],
       }),
     );
-    expect(s.latest.observedAt).toBe(ms("2026-09-26T12:00:00Z"));
-    expect(s.latest.at).toBe(s.start);
-    expect(s.latest.confirmedThrough).toBe(ms("2026-09-29T00:10:00Z"));
+    expect(allPoints(s).map((p) => p.at)).toEqual([ms("2026-09-29T00:30:00Z")]);
+    expect(allPoints(s).some((p) => p.at < s.start)).toBe(false);
   });
 });
 
@@ -346,7 +348,9 @@ describe("reading a served history payload", () => {
     expect(input.basis).toBe("same_book_same_capture_full_game_spread_and_total");
     expect(input.finalAt).toBe(FINAL);
     expect(input.pairs.map((p) => p.home)).toEqual([27.5, 28]);
-    expect(input.pairs[0]).toMatchObject({ homeProbability: 0.75, heldUntil: "2026-09-29T00:50:00Z" });
+    expect(input.pairs[0]).toMatchObject({ homeProbability: 0.75 });
+    // `valid_until` is continuity, not confirmation: it never reaches the input.
+    expect(input.pairs.every((p) => !("heldUntil" in p) && !("valid_until" in p))).toBe(true);
     const s = supported(input);
     expect(allPoints(s).some((p) => p.home === 99)).toBe(false);
     expect(s.sourceName).toBe("DraftKings");
@@ -357,8 +361,8 @@ describe("the default window", () => {
   it("opens an hour before kickoff once the game has started, so the game gets the width", () => {
     const s = supported(nflInput());
     expect(s.start).toBe(ms(KICKOFF) - 60 * 60 * 1000);
-    // A pregame reading from before the window, with no hold into it, is not drawn.
-    expect(allPoints(s).some((p) => p.observedAt === ms("2026-09-28T21:00:00Z"))).toBe(false);
+    // A pregame reading from before the window is not drawn.
+    expect(allPoints(s).some((p) => p.at === ms("2026-09-28T21:00:00Z"))).toBe(false);
   });
 
   it("looks back six hours from now before kickoff", () => {
@@ -386,11 +390,69 @@ describe("rows the route re-stamped at its window cutoff", () => {
     const input = projectedFinalPointsInputFromHistory(history, { ...opts, cutoffAt });
     expect(input.pairs.map((p) => p.kind)).toEqual(["synthetic", "recorded"]);
     const s = supported(input);
-    expect(allPoints(s).map((p) => p.observedAt)).toEqual([ms("2026-09-29T00:30:00Z")]);
+    expect(allPoints(s).map((p) => p.at)).toEqual([ms("2026-09-29T00:30:00Z")]);
   });
 
   it("without a cutoff (a finished game's whole series) every row is a recorded capture", () => {
     const input = projectedFinalPointsInputFromHistory(history, { ...opts, cutoffAt: null });
     expect(input.pairs.map((p) => p.kind)).toEqual(["recorded", "recorded"]);
+  });
+});
+
+/**
+ * The producer (`odds_polling.py::_create_or_update_snapshot`) sets the OLD
+ * row's `valid_until = now` when the values CHANGE, just before writing the
+ * new row. So `valid_until` on a replaced pair is the first capture of a
+ * DIFFERENT pair. Recorded 00:00, replaced 03:00, old `valid_until` 03:00:
+ * nothing recorded the three hours between.
+ */
+describe("a changed reading after a long gap (valid_until is not confirmation)", () => {
+  const history = {
+    completed_at: null,
+    bookmaker_history: {
+      draftkings: [
+        { timestamp: "2026-09-29T00:20:00Z", home_probability: 0.6, away_probability: 0.4, projected_home_score: 24, projected_away_score: 20.5, valid_until: "2026-09-29T03:20:00Z" },
+        { timestamp: "2026-09-29T03:20:00Z", home_probability: 0.9, away_probability: 0.1, projected_home_score: 30, projected_away_score: 14 },
+      ],
+    },
+    score_history: [{ timestamp: "2026-09-29T00:24:00Z", home_score: 7, away_score: 0 }],
+  } as unknown as EventHistoryResponse;
+  const opts = { sportKey: "americanfootball_nfl", sourceKey: "draftkings", kickoffAt: KICKOFF, cutoffAt: null };
+
+  it("does not bridge the three hours: two runs, the first ending at its own capture", () => {
+    const s = supported(projectedFinalPointsInputFromHistory(history, { ...opts, asOf: "2026-09-29T03:30:00Z" }));
+    expect(s.segments).toHaveLength(2);
+    expect(s.segments[0]).toEqual([{ at: ms("2026-09-29T00:20:00Z"), home: 24, away: 20.5, holdEnd: ms("2026-09-29T00:20:00Z") }]);
+    expect(s.segments[1][0].at).toBe(ms("2026-09-29T03:20:00Z"));
+  });
+
+  it("before the change lands, the old valid_until cannot hide that nothing usable came since", () => {
+    // Reader at 02:00 sees only the 00:20 row; its served valid_until says 03:20.
+    const early = {
+      ...history,
+      bookmaker_history: { draftkings: history.bookmaker_history!.draftkings!.slice(0, 1) },
+    } as unknown as EventHistoryResponse;
+    const s = supported(projectedFinalPointsInputFromHistory(early, { ...opts, asOf: "2026-09-29T02:00:00Z" }));
+    expect(s.latest).toEqual({ at: ms("2026-09-29T00:20:00Z"), home: 24, away: 20.5, holdEnd: ms("2026-09-29T00:20:00Z") });
+    expect(s.latestIntervalUnavailable).toBe(true);
+  });
+
+  it("a pre-window row whose valid_until reaches into the window is not pulled in", () => {
+    const s = supported(
+      projectedFinalPointsInputFromHistory(history, { ...opts, asOf: "2026-09-29T03:30:00Z" }),
+    );
+    // Window opens an hour before kickoff (23:16); fake an earlier capture held "through" it.
+    const withOld = {
+      ...history,
+      bookmaker_history: {
+        draftkings: [
+          { timestamp: "2026-09-28T20:00:00Z", home_probability: 0.6, away_probability: 0.4, projected_home_score: 23, projected_away_score: 21, valid_until: "2026-09-29T00:20:00Z" },
+          ...history.bookmaker_history!.draftkings!,
+        ],
+      },
+    } as unknown as EventHistoryResponse;
+    const t = supported(projectedFinalPointsInputFromHistory(withOld, { ...opts, asOf: "2026-09-29T03:30:00Z" }));
+    expect(t.segments).toEqual(s.segments);
+    expect(allPoints(t).some((p) => p.home === 23)).toBe(false);
   });
 });

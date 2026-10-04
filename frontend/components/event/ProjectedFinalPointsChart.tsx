@@ -13,6 +13,12 @@
  * Inspection rebuilds the series AT the cursor (`seriesAt`), so the readout
  * and the drawn lines stop there. A scrubbed moment cannot show a later
  * projection or a later score.
+ *
+ * The cursor is the inspected TIMESTAMP, never a slider index. A refresh that
+ * adds an earlier reading, or drops one off the window's left edge, shifts
+ * every index; holding the index would silently move the reader to another
+ * reading. If the inspected reading itself leaves the data, the readout says
+ * so rather than showing a neighbour.
  */
 
 import { useMemo, useState } from "react";
@@ -37,9 +43,9 @@ export interface ProjectedFinalPointsChartProps {
 }
 
 interface ViewProps extends ProjectedFinalPointsChartProps {
-  /** Index into `inspectionInstants`, or null for the latest view. */
-  cursorIndex: number | null;
-  onCursorChange?: (index: number | null) => void;
+  /** The inspected reading's time (epoch ms), or null for the latest view. */
+  cursorAt: number | null;
+  onCursorChange?: (at: number | null) => void;
 }
 
 const W = 1000;
@@ -96,18 +102,17 @@ export function ProjectedFinalPointsChartView({
   awayTeam,
   homeColor,
   awayColor,
-  cursorIndex,
+  cursorAt,
   onCursorChange,
 }: ViewProps) {
   const full = useMemo(() => buildProjectedFinalPointsSeries(input), [input]);
   const instants = useMemo(() => (full.supported ? inspectionInstants(full) : []), [full]);
-  const cursorAt =
-    cursorIndex === null || !instants.length
-      ? null
-      : instants[Math.max(0, Math.min(cursorIndex, instants.length - 1))];
+  const cursorIndex = cursorAt === null ? -1 : instants.indexOf(cursorAt);
+  // The inspected reading is no longer in the data (dropped at the window edge, or withdrawn).
+  const cursorGone = cursorAt !== null && cursorIndex < 0;
   const view = useMemo(
-    () => (cursorAt === null || !full.supported ? full : seriesAt(input, cursorAt)),
-    [full, input, cursorAt],
+    () => (cursorAt === null || cursorGone || !full.supported ? full : seriesAt(input, cursorAt)),
+    [full, input, cursorAt, cursorGone],
   );
   if (!full.supported) return null;
 
@@ -118,18 +123,26 @@ export function ProjectedFinalPointsChartView({
   const y = (v: number) => BOTTOM - (v / full.yMax) * (BOTTOM - TOP);
 
   // A cursor before the first valid reading leaves nothing to read yet.
-  const shown = view.supported ? view : null;
+  const shown = cursorGone ? null : view.supported ? view : null;
   const inspecting = cursorAt !== null;
   const reading = shown?.latest ?? null;
   const actual = shown?.latestActual ?? null;
-  const showActual = (shown?.phase ?? "before") !== "before";
+  const showActual = !cursorGone && (shown?.phase ?? "before") !== "before";
   const withheldAtCursor = inspecting && full.withheld.some((w) => w.at === cursorAt);
   const lastIndex = instants.length - 1;
-  const sliderIndex = cursorIndex === null ? lastIndex : Math.max(0, Math.min(cursorIndex, lastIndex));
+  // A gone cursor parks the thumb at the last instant before it; the readout says it is gone.
+  const sliderIndex =
+    cursorAt === null
+      ? lastIndex
+      : cursorGone
+        ? Math.max(0, instants.filter((t) => t < cursorAt).length - 1)
+        : cursorIndex;
 
-  const valueText = !reading || withheldAtCursor
-    ? `${cursorAt !== null ? formatProjectionTime(cursorAt) : ""}, no usable projection`
-    : `recorded ${formatProjectionTime(reading.observedAt)}, ${homeTeam} ${points(reading.home)}, ${awayTeam} ${points(reading.away)} projected final points`;
+  const valueText = cursorGone
+    ? `${formatProjectionTime(cursorAt)}, that reading is no longer shown`
+    : !reading || withheldAtCursor
+      ? `${cursorAt !== null ? formatProjectionTime(cursorAt) : ""}, no usable projection`
+      : `recorded ${formatProjectionTime(reading.at)}, ${homeTeam} ${points(reading.home)}, ${awayTeam} ${points(reading.away)} projected final points`;
 
   return (
     <section
@@ -167,15 +180,15 @@ export function ProjectedFinalPointsChartView({
       </div>
 
       <p className="mt-2 text-xs text-text-secondary" data-testid="projected-stamp">
-        {reading && !withheldAtCursor
-          ? `${readingLabel(full, inspecting)} · recorded ${formatProjectionTime(reading.observedAt)}`
-          : "No usable projection at this point"}
+        {cursorGone
+          ? "That reading is no longer shown"
+          : reading && !withheldAtCursor
+            ? `${readingLabel(full, inspecting)} · recorded ${formatProjectionTime(reading.at)}`
+            : "No usable projection at this point"}
         {!inspecting && full.latestIntervalUnavailable && reading && (
           <>
             <br />
-            {reading.confirmedThrough === reading.observedAt
-              ? "No usable projection since then"
-              : `Last confirmed ${formatProjectionTime(reading.confirmedThrough)}, nothing usable since`}
+            No usable projection since then
           </>
         )}
       </p>
@@ -272,7 +285,7 @@ export function ProjectedFinalPointsChartView({
             vectorEffect="non-scaling-stroke"
           />
         ))}
-        {cursorAt !== null && (
+        {cursorAt !== null && !cursorGone && (
           <line
             data-testid="projected-cursor"
             x1={x(cursorAt)}
@@ -310,7 +323,7 @@ export function ProjectedFinalPointsChartView({
             aria-valuetext={valueText}
             onChange={(e) => {
               const index = Number(e.target.value);
-              onCursorChange?.(index === lastIndex ? null : index);
+              onCursorChange?.(index === lastIndex ? null : instants[index]);
             }}
           />
         </label>
@@ -338,6 +351,6 @@ export function ProjectedFinalPointsChartView({
 }
 
 export default function ProjectedFinalPointsChart(props: ProjectedFinalPointsChartProps) {
-  const [cursorIndex, setCursorIndex] = useState<number | null>(null);
-  return <ProjectedFinalPointsChartView {...props} cursorIndex={cursorIndex} onCursorChange={setCursorIndex} />;
+  const [cursorAt, setCursorAt] = useState<number | null>(null);
+  return <ProjectedFinalPointsChartView {...props} cursorAt={cursorAt} onCursorChange={setCursorAt} />;
 }
