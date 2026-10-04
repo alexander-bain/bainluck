@@ -13,7 +13,13 @@ import SwiftUI
 //     genuine two-outcome game may wear the ink. A draw-priced, multi-contender
 //     or threshold question is refused by the caller, never inferred here.
 //   - the displayed path segments, one array per observed run, exactly as the
-//     chart already draws them (`observationSegments` / the live-edge split).
+//     chart already draws them as solid known evidence (`observationSegments` /
+//     the live-edge split), and an attestation that the caller joins those
+//     vertices with straight lines (`.interpolationMethod(.linear)`). A
+//     projector maps coordinates; it cannot reproduce a step or a curve, so any
+//     other interpolation is refused. A trailing interval the caller styles as
+//     unsupported (the live edge) stays the caller's to draw — it is not passed
+//     here, so solid ink never extends across it.
 //   - the accepted home AND away values for the moment being read (the
 //     scrubbed point or the resting one — selection stays the caller's).
 //
@@ -27,6 +33,16 @@ import SwiftUI
 enum BinaryWinBalanceAdmission: Equatable {
     case admittedBinary
     case refused
+}
+
+/// How the caller joins the vertices it displays. Attested by the caller, never
+/// guessed from the vertices: two points say nothing about the line between them.
+enum BinaryWinPathInterpolation: Equatable {
+    /// Straight segments between observed vertices — the existing primary
+    /// `LineMark`'s `.interpolationMethod(.linear)`.
+    case linear
+    /// Step, curve, or anything the caller cannot attest as linear.
+    case nonLinearOrUnknown
 }
 
 /// One vertex of the displayed path: the home win probability (0.0–1.0) at a
@@ -68,7 +84,9 @@ enum BinaryWinChartBalanceInk {
     /// The plan the ink draws from, or `nil` to refuse — the caller then keeps
     /// its existing line and readout untouched.
     ///
-    /// Refuses when the caller did not admit a binary question; when either
+    /// Refuses when the caller did not admit a binary question; when the caller
+    /// cannot attest its displayed path is linear (this ink redraws it with
+    /// straight segments, so any other path would be a different path); when either
     /// value is missing, non-finite or off the 0–1 scale (an absent away price
     /// is a refusal, never `1 − home`); when there is no vertex to draw; or when
     /// any vertex is non-finite or off the scale (dropping it would redraw the
@@ -76,11 +94,13 @@ enum BinaryWinChartBalanceInk {
     static func plan(
         admission: BinaryWinBalanceAdmission,
         segments: [[BinaryWinPathVertex]],
+        interpolation: BinaryWinPathInterpolation,
         home: Double?,
         away: Double?,
         gameFinished: Bool = false
     ) -> BinaryWinBalancePlan? {
         guard admission == .admittedBinary else { return nil }
+        guard interpolation == .linear else { return nil }
         guard let home, let away, isProbability(home), isProbability(away) else { return nil }
         let runs = segments.filter { !$0.isEmpty }
         guard !runs.isEmpty else { return nil }
@@ -197,8 +217,10 @@ struct BinaryWinBalanceGeometry: Equatable {
 // MARK: - Views
 
 /// The balance ink itself. Mount it over the chart's plot frame (e.g. inside
-/// `.chartOverlay`) with a projector in the same coordinate space, and hide the
-/// primary line it replaces. Decorative to VoiceOver: the chart's own
+/// `.chartOverlay`) with a projector in the same coordinate space and the same
+/// domains as the chart, and hide ONLY the primary line it replaces — the runs
+/// and lone dots passed in the plan. Source comparisons, markers, the live
+/// edge and anything not passed here stay the caller's. Decorative to VoiceOver: the chart's own
 /// accessibility value carries the reading. No animation.
 struct BinaryWinChartBalanceInkLayer: View {
     let plan: BinaryWinBalancePlan

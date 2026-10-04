@@ -9,8 +9,8 @@ import SwiftUI
 /// displayed path runs, the supplied home and away values, and an explicit
 /// binary admission. These pin the three ways it could stop being honest:
 ///
-/// 1. **Refusal.** A refused admission, a missing away value or a broken
-///    vertex yields no plan, so the caller keeps today's line. The away slot is
+/// 1. **Refusal.** A refused admission, a path the caller cannot attest as
+///    linear, a missing away value or a broken vertex yields no plan, so the caller keeps today's line. The away slot is
 ///    never filled with `1 − home`.
 /// 2. **No invented path.** Each run is drawn from its own vertices only: no
 ///    crossing point inserted at 50%, no fill or line joining two runs, and a
@@ -36,7 +36,7 @@ final class BinaryWinChartBalanceInkTests: XCTestCase {
     private func admittedPlan(_ segments: [[BinaryWinPathVertex]]? = nil,
                               home: Double? = 0.66, away: Double? = 0.34) -> BinaryWinBalancePlan? {
         BinaryWinChartBalanceInk.plan(admission: .admittedBinary, segments: segments ?? twoRuns,
-                                      home: home, away: away)
+                                      interpolation: .linear, home: home, away: away)
     }
 
     private var projector: (Date, Double) -> CGPoint? {
@@ -56,8 +56,18 @@ final class BinaryWinChartBalanceInkTests: XCTestCase {
 
     func testARefusedAdmissionIsNeverInked() {
         XCTAssertNil(
-            BinaryWinChartBalanceInk.plan(admission: .refused, segments: twoRuns, home: 0.66, away: 0.34),
+            BinaryWinChartBalanceInk.plan(admission: .refused, segments: twoRuns, interpolation: .linear,
+                                          home: 0.66, away: 0.34),
             "A draw-priced, multi-contender or threshold question is refused by the caller; the ink must stand down.")
+    }
+
+    func testAPathTheCallerCannotAttestAsLinearIsNeverRedrawn() {
+        // The ink joins vertices with straight segments. Over a step or curved
+        // line that is a different path, and the vertices alone cannot tell.
+        XCTAssertNil(
+            BinaryWinChartBalanceInk.plan(admission: .admittedBinary, segments: twoRuns,
+                                          interpolation: .nonLinearOrUnknown, home: 0.66, away: 0.34),
+            "Unknown or non-linear geometry refuses; the caller's existing line stands.")
     }
 
     func testAMissingAwayValueRefusesRatherThanComplementing() {
