@@ -487,11 +487,22 @@ final class TheLiveChartEndCarriesTheHeroNumber9436Tests: XCTestCase {
         let host: UIViewController
         let window: UIWindow
         let previousKeyWindow: UIWindow?
-        init<V: View>(_ view: V) throws {
-            let scene = try XCTUnwrap(UIApplication.shared.connectedScenes
-                .compactMap { $0 as? UIWindowScene }
-                .first { $0.activationState == .foregroundActive },
-                "Motion capture requires a foreground-active window scene")
+        init<V: View>(_ view: V) async throws {
+            let deadline = CACurrentMediaTime() + 10
+            func activeScene() -> UIWindowScene? {
+                UIApplication.shared.connectedScenes
+                    .compactMap { $0 as? UIWindowScene }
+                    .first { $0.activationState == .foregroundActive }
+            }
+            while activeScene() == nil && CACurrentMediaTime() < deadline {
+                // Yield MainActor so the actual host can finish activating.
+                try await Task.sleep(nanoseconds: 50_000_000)
+            }
+            let sceneStates = UIApplication.shared.connectedScenes.map {
+                "\(type(of: $0)):\($0.activationState.rawValue)"
+            }.sorted().joined(separator: ", ")
+            let scene = try XCTUnwrap(activeScene(),
+                "Motion capture requires a foreground-active window scene; connected scenes: \(sceneStates)")
             previousKeyWindow = scene.windows.first { $0.isKeyWindow }
             host = hostForMeasurement(view)
             host.view.frame = CGRect(x: 0, y: 0, width: 390, height: 360)
@@ -742,7 +753,7 @@ final class TheLiveChartEndCarriesTheHeroNumber9436Tests: XCTestCase {
     func testAnAcceptedAppendGlidesTheDotAlongTheLineAndSettles() async throws {
         let feed = Feed(frames: frames([0.49, 0.55, 0.78]),
                         edge: LiveEdgeReading(homeProbability: 0.78, homeLabel: "78%"))
-        let hosted = try Hosted(FedChart(feed: feed, history: try history()))
+        let hosted = try await Hosted(FedChart(feed: feed, history: try history()))
         defer { hosted.close() }
         try await Task.sleep(for: .milliseconds(600))
         let before = try XCTUnwrap(markerColumn(hosted.shot(scale: 1)))
@@ -781,7 +792,7 @@ final class TheLiveChartEndCarriesTheHeroNumber9436Tests: XCTestCase {
     func testAPinReplacementGlidesTheDotAndSettles() async throws {
         let feed = Feed(frames: [], edge: LiveEdgeReading(homeProbability: 0.50, homeLabel: "50%"),
                         history: try pinnedHistory(pinAt: 12, 0.50))
-        let hosted = try Hosted(FedChart(feed: feed, history: try history()))
+        let hosted = try await Hosted(FedChart(feed: feed, history: try history()))
         defer { hosted.close() }
         try await Task.sleep(for: .milliseconds(600))
         let beforeImage = hosted.shot(scale: 1)
@@ -822,7 +833,7 @@ final class TheLiveChartEndCarriesTheHeroNumber9436Tests: XCTestCase {
                                               homeLabel: pinReplacement ? "50%" : "78%"),
                         history: pinReplacement ? try pinnedHistory(pinAt: 12, 0.50) : nil)
         feed.phase = .background
-        let hosted = try Hosted(FedChart(feed: feed, history: try history()))
+        let hosted = try await Hosted(FedChart(feed: feed, history: try history()))
         defer { hosted.close() }
         try await Task.sleep(for: .milliseconds(600))
         let before = try XCTUnwrap(tipColumn(hosted.shot(scale: 1)))
@@ -850,7 +861,7 @@ final class TheLiveChartEndCarriesTheHeroNumber9436Tests: XCTestCase {
     func testLeavingTheActiveSceneMidGlideCancelsIt() async throws {
         let feed = Feed(frames: frames([0.49, 0.55, 0.78]),
                         edge: LiveEdgeReading(homeProbability: 0.78, homeLabel: "78%"))
-        let hosted = try Hosted(FedChart(feed: feed, history: try history()))
+        let hosted = try await Hosted(FedChart(feed: feed, history: try history()))
         defer { hosted.close() }
         try await Task.sleep(for: .milliseconds(600))
 
@@ -891,7 +902,7 @@ final class TheLiveChartEndCarriesTheHeroNumber9436Tests: XCTestCase {
         }
         func bytes(_ image: UIImage) -> Data? { image.pngData() }
         let value = Value()
-        let hosted = try Hosted(Hero(value: value))
+        let hosted = try await Hosted(Hero(value: value))
         defer { hosted.close() }
         try await Task.sleep(for: .milliseconds(400))
 
