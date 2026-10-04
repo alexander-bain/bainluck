@@ -19,6 +19,10 @@
  *   result is untouched.
  * - `asOf` is the recorded completion boundary, so the drawn view does not
  *   depend on the reader's clock.
+ * - The final score is the page's own, the pair its hero prints, passed in
+ *   apart from the history. `score_history`'s last row is only the last score
+ *   recorded: on 14780549 with its 27–7 row missing, that row is 26–7 (before
+ *   the extra point), and a completion timestamp does not make it final.
  */
 
 import { useMemo } from "react";
@@ -76,10 +80,24 @@ export function projectedFinalPointsMount(opts: {
   return { mount: true, input };
 }
 
+/** A final score the page would print, as two whole non-negative numbers. Anything else is refused. */
+export type ProjectedFinalScore = { home: number; away: number };
+
+const isScore = (v: unknown): v is number => typeof v === "number" && Number.isInteger(v) && v >= 0;
+
+export function admittedFinalScore(
+  pair: { home: number | null | undefined; away: number | null | undefined } | null | undefined,
+): ProjectedFinalScore | null {
+  if (!pair || !isScore(pair.home) || !isScore(pair.away)) return null;
+  return { home: pair.home, away: pair.away };
+}
+
 export interface ProjectedFinalPointsModuleProps {
   sportKey: string | null | undefined;
   eventStatus: string | null | undefined;
   history: MountHistory | null | undefined;
+  /** The final pair the page's hero prints for a finished game, or null when it shows none. */
+  finalScore?: { home: number | null | undefined; away: number | null | undefined } | null;
   homeTeam: string;
   awayTeam: string;
   homeColor?: string | null;
@@ -90,6 +108,7 @@ export default function ProjectedFinalPointsModule({
   sportKey,
   eventStatus,
   history,
+  finalScore,
   homeTeam,
   awayTeam,
   homeColor,
@@ -100,6 +119,9 @@ export default function ProjectedFinalPointsModule({
     () => projectedFinalPointsMount({ sportKey, eventStatus, history }),
     [sportKey, eventStatus, history],
   );
+  const finalHome = finalScore?.home;
+  const finalAway = finalScore?.away;
+  const final = useMemo(() => admittedFinalScore({ home: finalHome, away: finalAway }), [finalHome, finalAway]);
   if (!decision.mount) return null;
   // Its own boundary, so a fault in this experiment can never take the page's score section with it.
   return (
@@ -110,6 +132,7 @@ export default function ProjectedFinalPointsModule({
         awayTeam={awayTeam}
         homeColor={homeColor}
         awayColor={awayColor}
+        finalScore={final}
       />
     </SectionErrorBoundary>
   );

@@ -56,8 +56,14 @@ function nflInput(over: Partial<ProjectedFinalPointsInput> = {}): ProjectedFinal
 
 const teams = { homeTeam: "Chicago Bears", awayTeam: "Philadelphia Eagles" };
 
-function render(input: ProjectedFinalPointsInput, cursorAt: number | null = null): string {
-  return renderToStaticMarkup(<ProjectedFinalPointsChartView input={input} {...teams} cursorAt={cursorAt} />);
+function render(
+  input: ProjectedFinalPointsInput,
+  cursorAt: number | null = null,
+  finalScore: { home: number; away: number } | null = null,
+): string {
+  return renderToStaticMarkup(
+    <ProjectedFinalPointsChartView input={input} {...teams} finalScore={finalScore} cursorAt={cursorAt} />,
+  );
 }
 
 const count = (html: string, needle: string) => html.split(needle).length - 1;
@@ -84,7 +90,7 @@ describe("unsupported games render nothing", () => {
 });
 
 describe("a finished game", () => {
-  const html = render(nflInput());
+  const html = render(nflInput(), null, { home: 27, away: 7 });
 
   it("draws two forecast series and two quieter actual steps", () => {
     expect(html).toContain("Projected final points");
@@ -126,6 +132,29 @@ describe("a finished game", () => {
     expect(html).toContain(
       `aria-valuetext="recorded ${formatProjectionTime(Date.parse("2026-09-29T03:09:00Z"))}, Chicago Bears 27.0, Philadelphia Eagles 7.5 projected final points"`,
     );
+  });
+});
+
+describe("a finished game whose last recorded score is not the page's final", () => {
+  it("calls the last row recorded and prints the final apart, never as a step", () => {
+    const html = render(nflInput(), null, { home: 28, away: 7 });
+    expect(html).toMatch(/data-actual="home"[^>]*>27 last recorded/);
+    expect(html).toMatch(/data-final="home"[^>]*>28 final/);
+    expect(html).toMatch(/data-final="away"[^>]*>7 final/);
+    expect(html).not.toMatch(/27 final/);
+  });
+
+  it("with no recorded score at all, the page's final is still shown, not hidden behind a dash", () => {
+    const html = render(nflInput({ kickoffAt: null }), null, { home: 27, away: 7 });
+    expect(html).not.toContain("data-actual=");
+    expect(html).toMatch(/data-final="home"[^>]*>27 final/);
+    expect(html).not.toMatch(/—\s*final/);
+  });
+
+  it("the page's final never appears before the game is over", () => {
+    const html = render(nflInput({ finalAt: null, asOf: "2026-09-29T02:00:00Z" }), null, { home: 27, away: 7 });
+    expect(html).not.toContain("data-final=");
+    expect(html).not.toMatch(/\d+ final</);
   });
 });
 

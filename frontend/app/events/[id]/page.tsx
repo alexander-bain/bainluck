@@ -3118,6 +3118,8 @@ export default function EventPage({ params }: EventPageProps) {
           sportKey={event.sport}
           eventStatus={event.status}
           history={historyData}
+          // The pair the hero prints, under the hero's own gates; the module calls nothing final without it.
+          finalScore={isFinished && !venueVoided && !heroScoreIsStoppageFiller ? { home: bestHomeScore, away: bestAwayScore } : null}
           homeTeam={event.home_team}
           awayTeam={event.away_team}
           homeColor={event.home_team_data?.primary_color}
