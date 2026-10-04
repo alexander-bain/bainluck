@@ -453,6 +453,9 @@ struct RelatedFuturesView: View {
     private let awayTeam: String
     private let homeTeam: String
     private let sportKey: String?
+    /// #10238 — market ids the page's sourced Series section is drawing now,
+    /// handed in by the page (this view's own payload refreshes separately).
+    private let seriesMarketIdsDrawnAbove: Set<Int>
     @StateObject private var vm: RelatedFuturesViewModel
 
     init(eventId: Int,
@@ -461,8 +464,10 @@ struct RelatedFuturesView: View {
          awayTeam: String = "",
          homeTeam: String = "",
          sportKey: String? = nil,
-         preloadedData: RelatedFuturesResponse? = nil) {
+         preloadedData: RelatedFuturesResponse? = nil,
+         seriesMarketIdsDrawnAbove: Set<Int> = []) {
         self.eventId = eventId
+        self.seriesMarketIdsDrawnAbove = seriesMarketIdsDrawnAbove
         self.awayTeamColor = awayTeamColor
         self.homeTeamColor = homeTeamColor
         self.awayTeam = awayTeam
@@ -504,13 +509,22 @@ struct RelatedFuturesView: View {
         }
     }
 
+    /// #10238 — a series market the page's sourced Series section
+    /// (`EventQuestionMatrixSection10238`) is drawing is not drawn a second
+    /// time here. The ids come from the PAGE's payload, the one that section
+    /// renders; withdraw the sourced question and the legacy card comes back.
+    static func seriesMarkets(_ markets: [SeriesMarket]?, notDrawnAbove drawn: Set<Int>) -> [SeriesMarket] {
+        (markets ?? []).filter { !drawn.contains($0.marketId) }
+    }
+
     // MARK: - Content (V6 Cross-Team Layout)
 
     @ViewBuilder
     private func content(_ relatedFutures: RelatedFuturesResponse) -> some View {
         let awayFutures = relatedFutures.awayTeamFutures ?? []
         let homeFutures = relatedFutures.homeTeamFutures ?? []
-        let seriesMarkets = relatedFutures.seriesMarkets ?? []
+        let seriesMarkets = Self.seriesMarkets(relatedFutures.seriesMarkets,
+                                               notDrawnAbove: seriesMarketIdsDrawnAbove)
         let totalCount = awayFutures.count + homeFutures.count
 
         if totalCount > 0 || !seriesMarkets.isEmpty {

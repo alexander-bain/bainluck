@@ -129,7 +129,7 @@ final class ALiveHeroCarriesTheStoryNotTheContext8320Tests: XCTestCase {
 
     func testTheInningTableFollowsTheChart() throws {
         let content = try span(pageCode(), from: "privatevarcontentView:someView{",
-                               to: "privatefuncgameMarketsHaveContent(")
+                               to: "staticfuncgameMarketsHaveContent(")
         let chart = try XCTUnwrap(content.range(of: "OddsChartView(eventId:"))
         let segments = try XCTUnwrap(content.range(of: "GameSegmentsView("))
         let hero = try XCTUnwrap(content.range(of: "heroSection(event)"))

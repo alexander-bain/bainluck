@@ -80,6 +80,22 @@ nonisolated enum GameMarketsPriceReconciliation {
             markets: markets(entry._marketId, entry._marketIds), contributors: ids(entry.contributorOutcomeIds),
             verdict: nil, winner: entry.isWinner, actual: nil)
     }
+    /// #10238 — one row per option, in its own `gameQuestions:` section: an
+    /// outcome can sit in a legacy array AND a question, and the two are kept
+    /// apart. The projection is the published value AND each contributor's
+    /// raw leg, so a detail sheet never shows a raw value that moved without
+    /// its clock. An option with no quoted value publishes no price.
+    private static func rows(_ question: QuestionMatrixQuestion) -> [Row] {
+        let section = QuestionMatrixScope.game.sectionKey(question.questionKey)
+        return question.options.map { option in
+            let quoted = option.published.quotedValue
+            return Row(key: "\(section):\(option.optionKey)",
+                prices: quoted == nil ? [nil] : [quoted] + (option.sourceEvidence ?? []).map(\.rawProbability),
+                source: option.published.source ?? option.published.basis,
+                markets: Set(option.marketIds ?? []), contributors: ids(option.contributorOutcomeIds),
+                verdict: nil, winner: option.result?.isWinner, actual: nil)
+        }
+    }
     private static func rows(_ matchup: GameMarketMatchup) -> [Row] {
         matchup.outcomes.map {
             Row(key: "matchups:\(matchup.id):\($0.name)", prices: [$0.probability], source: matchup.source,
@@ -93,6 +109,7 @@ nonisolated enum GameMarketsPriceReconciliation {
 
     static func rows(_ body: GameMarketsResponse) -> [Row] {
         var result = (body.playerProps ?? []).map(row)
+        for question in body.gameQuestionMatrix?.questions ?? [] { result += rows(question) }
         for (section, path) in sections { result += (body[keyPath: path] ?? []).map { row(section, $0) } }
         result += (body.other ?? []).map(row)
         for matchup in body.matchups ?? [] { result += rows(matchup) }
@@ -128,6 +145,11 @@ nonisolated enum GameMarketsPriceReconciliation {
             replaced(incoming, held, group: { identity(row($0)).key }, rows: { [row($0)] })
         }
         var body = body
+        if var matrix = body.gameQuestionMatrix {
+            matrix.questions = replaced(matrix.questions, held?.gameQuestionMatrix?.questions,
+                group: { QuestionMatrixScope.game.sectionKey($0.questionKey) }, rows: rows) ?? []
+            body.gameQuestionMatrix = matrix
+        }
         body.playerProps = flat(body.playerProps, held?.playerProps, row)
         body.spreads = flat(body.spreads, held?.spreads) { row("spreads", $0) }
         body.totals = flat(body.totals, held?.totals) { row("totals", $0) }
@@ -144,6 +166,10 @@ nonisolated enum GameMarketsPriceReconciliation {
     /// lend, spend or be refused by an ordering clock.
     private static func unpublished(_ body: GameMarketsResponse, ambiguous: Set<String>) -> Set<String> {
         var keys = ambiguous
+        for question in body.gameQuestionMatrix?.questions ?? [] {
+            let legs = rows(question).map { identity($0).key }
+            if legs.contains(where: ambiguous.contains) { keys.formUnion(legs) }
+        }
         for matchup in body.matchups ?? [] {
             let legs = rows(matchup).map { identity($0).key }
             if legs.contains(where: ambiguous.contains) { keys.formUnion(legs) }
