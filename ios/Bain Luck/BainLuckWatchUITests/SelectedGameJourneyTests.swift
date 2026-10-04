@@ -47,6 +47,10 @@ final class SelectedGameJourneyTests: XCTestCase {
         let changed = NSPredicate(format: "label CONTAINS %@ AND label CONTAINS %@", "Buffalo Bills", "55%")
         expectation(for: changed, evaluatedWith: probability)
         waitForExpectations(timeout: 15)
+        expectation(for: NSPredicate(format: "hittable == true"), evaluatedWith: state)
+        waitForExpectations(timeout: 10)
+        XCTAssertTrue(probability.isHittable, "The new named probability must be visible after selection")
+        XCTAssertTrue(app.frame.contains(probability.frame), "The whole named probability group must fit in the visible screen")
         capture(app, name: "Changed selection")
         app.terminate()
     }

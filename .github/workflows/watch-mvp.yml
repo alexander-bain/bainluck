@@ -36,14 +36,12 @@ on:
 permissions:
   contents: read
 
-concurrency:
-  group: watch-mvp-${{ github.event_name == 'pull_request' && github.event.pull_request.number || github.run_id }}
-  # Finish the expensive full-suite run; GitHub retains only the latest pending PR run.
-  cancel-in-progress: false
-
 jobs:
   watch-mvp:
     name: Watch behavior and unsigned builds
+    concurrency:
+      group: watch-build-${{ github.event_name == 'pull_request' && github.event.pull_request.number || github.run_id }}
+      cancel-in-progress: true
     runs-on: macos-15
     timeout-minutes: 20
     env:
@@ -77,6 +75,10 @@ jobs:
 
   iphone-compatibility:
     name: Watch change iPhone compatibility
+    concurrency:
+      # Preserve full-suite evidence without blocking independent Watch UI work.
+      group: watch-iphone-${{ github.event_name == 'pull_request' && github.event.pull_request.number || github.run_id }}
+      cancel-in-progress: false
     needs: watch-mvp
     runs-on: xcode-27
     timeout-minutes: 60
@@ -107,6 +109,9 @@ jobs:
 
   watch-ui-journey:
     name: Watch picker interaction journey
+    concurrency:
+      group: watch-ui-${{ github.event_name == 'pull_request' && github.event.pull_request.number || github.run_id }}
+      cancel-in-progress: true
     needs: watch-mvp
     runs-on: xcode-27
     timeout-minutes: 35

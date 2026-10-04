@@ -32,8 +32,10 @@ struct WatchSelectedGameView: View {
     private var refreshKey: String { "\(scenePhase)-\(choosingGame)-\(refreshGeneration)-\(store.selectedEventID ?? 0)" }
 
     var body: some View {
+        ScrollViewReader { scroll in
         ScrollView {
             VStack(alignment: .leading, spacing: 12) {
+                Color.clear.frame(height: 0).id("watch.game.top").accessibilityHidden(true)
                 if let game = store.game {
                     selectedGame(game)
                 } else if store.selectedEventID != nil {
@@ -75,6 +77,11 @@ struct WatchSelectedGameView: View {
                     guard scenePhase == .active else { return }
                     await picker.refresh()
                 }
+        }
+        .onChange(of: store.selectedEventID) { _, _ in
+            // A new choice must reveal its identity, not inherit the old game's scroll.
+            scroll.scrollTo("watch.game.top", anchor: .top)
+        }
         }
     }
 
