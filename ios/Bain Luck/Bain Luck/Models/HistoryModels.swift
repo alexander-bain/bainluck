@@ -110,15 +110,22 @@ nonisolated struct BookmakerHistoryPoint: Decodable, Sendable {
     let awayMoneyline: Int?
     let projectedHomeScore: Double?
     let projectedAwayScore: Double?
-    /// #10239 — `"recorded"` / `"synthetic"` (a row the route re-stamped at its
-    /// window cutoff). Not served today, so ABSENCE PROVES NOTHING: a reader may
-    /// treat an unmarked row as recorded only where the route had no cutoff
+    /// #10239 / #10461 — `"recorded"` / `"synthetic"` (a row the route re-stamped
+    /// at its window cutoff). ABSENCE PROVES NOTHING: a reader may treat an
+    /// unmarked row as recorded only where the route had no cutoff
     /// (`ProjectedFinalPointsMount`). A mistyped value decodes as nil.
     let kind: String?
+    /// #10461 — OUR original capture instant (ISO-8601 with its offset), never a
+    /// venue trade time. A mistyped value decodes as nil.
+    let observedAt: String?
+    /// True when the row carries a `kind` or `observed_at` key at all, whatever
+    /// its value. A mistyped `kind` decodes as nil, and without this a row with
+    /// malformed provenance would read exactly like a pre-contract row.
+    let servesProvenance: Bool
 
     private enum CodingKeys: String, CodingKey {
         case timestamp, homeProbability, awayProbability, homeMoneyline, awayMoneyline
-        case projectedHomeScore, projectedAwayScore, kind
+        case projectedHomeScore, projectedAwayScore, kind, observedAt
     }
 
     init(from decoder: Decoder) throws {
@@ -131,6 +138,8 @@ nonisolated struct BookmakerHistoryPoint: Decodable, Sendable {
         projectedHomeScore = try c.decodeIfPresent(Double.self, forKey: .projectedHomeScore)
         projectedAwayScore = try c.decodeIfPresent(Double.self, forKey: .projectedAwayScore)
         kind = (try? c.decodeIfPresent(String.self, forKey: .kind)) ?? nil
+        observedAt = (try? c.decodeIfPresent(String.self, forKey: .observedAt)) ?? nil
+        servesProvenance = c.contains(.kind) || c.contains(.observedAt)
     }
 }
 
