@@ -56,10 +56,11 @@ mutable book population or a ``valid_until`` window.
    this commit succeeds, or null (a removal queues none). It is not a delivery
    receipt. The frame is computed from the last tracked write's RETURNING, the
    row from the committed bag. ``queued_frame_matches`` is true only when the
-   frame carries this row's revision and blend. False means the stream showed
-   a different state than the one committed (for example, a raw write after
-   the last tracked write), and a reader must not treat the row as what the
-   frame exposed.
+   frame carries this row's revision and blend. False means the frame QUEUED
+   for fanout describes a different state than the one committed (for example,
+   a raw write after the last tracked write). It does not prove any client
+   received or showed that frame, and a reader must not treat the row as the
+   queued frame's state.
 
 3. **The evidence is the producer's own.** ``sources`` is the committed bag
    verbatim (JSONB, full precision). Each observation carries the writer's

@@ -219,7 +219,7 @@ async def test_unqueued_writer_later_in_the_transaction_is_in_the_bag_and_flagge
     assert (pub.blend_probability, pub.blend_tier) == _blend(bag)
     assert pub.coverage == COVERAGE_UNCOVERED
     assert pub.uncovered_keys == ["kalshi"] and pub.unobserved_bumps == 1
-    # The stream showed the mlb write's state, not the committed one: kept apart.
+    # The QUEUED frame describes the mlb write's state, not the committed one.
     assert pub.queued_frame == sink[0]
     assert sink[0]["rev"] == {str(event_id): 1}
     assert pub.queued_frame_matches is False
