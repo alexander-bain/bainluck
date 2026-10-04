@@ -1372,12 +1372,15 @@ def _merge_series_pair(questions: list, pair: Any) -> None:
     for team in sorted(pair.teams, key=lambda t: (-t.value, t.team_id)):
         k_opt = k_opts[team.contributor_outcome_ids[0]]
         p_opt = p_opts[team.contributor_outcome_ids[1]]
+        # The composite identity every multi-contributor option already uses
+        # (10238.v1; Native keys selection and currentness on it).
+        contributors = sorted(team.contributor_outcome_ids)
         options.append({
-            "option_key": f"t:{team.team_id}",
+            "option_key": "o:" + "+".join(str(c) for c in contributors),
             "label": team.name or k_opt["label"],
             "side": k_opt["side"],
             "market_ids": market_ids,
-            "contributor_outcome_ids": list(team.contributor_outcome_ids),
+            "contributor_outcome_ids": contributors,
             "published": {
                 "value": team.value,
                 "value_state": "quoted",

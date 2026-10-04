@@ -18,12 +18,19 @@ and that is the listing's own estimate (10-12 for a series whose cutoff is
 10-24), so reading it as the cutoff would mislabel a field. The instant exists
 only in the rule prose, so this module reads it from there.
 
+AFFIRMATIVE, NOT CO-OCCURRENCE (root review, 2026-10-04). A date and the
+string "50-50" in one sentence prove nothing: "will NOT resolve to 50-50" and
+"If the Rays win by <instant>, this market will resolve to 50-50" both carry
+them. So every sentence that mentions a 50-50 resolution must be, word for
+word, one of the two no-winner clauses the retained specimens state
+(`_CLAUSES`), with only the instant varying. Any other 50-50 sentence, an
+amended wording included, refuses.
+
 FAIL-CLOSED. Every way the prose can be unclear is a refusal and the key stays
-ABSENT: no 50-50 clause, a 50-50 clause with no instant, two different
-instants, a date with no year, a time or zone this grammar does not read, or
-an event text that does not say the same thing as its market's. A date in a
-50-50 clause that is not in the one admitted shape is a refusal too, so a
-second, differently spelled instant can never hide behind the first.
+ABSENT: no 50-50 clause, a 50-50 sentence that is not an admitted clause, two
+different instants, a date with no year, a time or zone this grammar does not
+read, a playoffs year that is not the instant's, or an event text that does
+not say the same thing as its market's.
 
 NEVER: Gamma `endDate`, `resolution_date`, or `neg_risk`. Pure: text in, value
 out, no clock read.
@@ -58,7 +65,7 @@ RULES_TEXT_SOURCE = "polymarket_rules_text"
 NOT_IN_FAMILY = "not_in_family"
 
 NO_CLAUSE = "no_50_50_clause"
-CLAUSE_WITHOUT_INSTANT = "clause_without_instant"
+UNSUPPORTED_CLAUSE = "unsupported_clause"
 CONFLICTING_INSTANTS = "conflicting_instants"
 MISSING_YEAR = "missing_year"
 UNPARSEABLE_INSTANT = "unparseable_instant"
@@ -68,7 +75,7 @@ NOT_ONE_MARKET = "not_one_market"
 #: Every in-family refusal, in the order ingest counts them.
 REFUSAL_REASONS = (
     NO_CLAUSE,
-    CLAUSE_WITHOUT_INSTANT,
+    UNSUPPORTED_CLAUSE,
     CONFLICTING_INSTANTS,
     MISSING_YEAR,
     UNPARSEABLE_INSTANT,
@@ -85,19 +92,33 @@ _MONTHS = (
 _MONTH_ALT = "|".join(_MONTHS)
 
 # A 50-50 resolution, in any spelling a dash or slash allows. Wider than the
-# one spelling seen so that a second clause spelled `50/50` is still a clause
-# whose instant must agree, rather than an unread sentence.
+# one spelling the clauses admit, so a sentence spelled `50/50` is still a
+# 50-50 sentence that has to be an admitted clause, rather than an unread one.
 _FIFTY_FIFTY_RE = re.compile(r"\b50\s*[-‐‑–—/]\s*50\b|\bfifty[\s-]fifty\b", re.I)
 
-# The ONE admitted instant: `by|after <Month> <D>, <YYYY>, <H>:<MM> PM ET`.
+# The ONE admitted instant: `<Month> <D>, <YYYY>, <H>:<MM> PM ET`.
 _INSTANT_RE = re.compile(
-    rf"\b(?:by|after)\s+({_MONTH_ALT})\s+(\d{{1,2}}),\s*(\d{{4}}),\s*(\d{{1,2}}):(\d{{2}})\s*PM\s+ET\b",
+    rf"({_MONTH_ALT})\s+(\d{{1,2}}),\s*(\d{{4}}),\s*(\d{{1,2}}):(\d{{2}})\s*PM\s+ET",
     re.I,
 )
-# Any month-day mention at all. Every one inside a 50-50 clause must sit inside
-# an admitted instant, or the clause refuses.
-_MONTH_DAY_RE = re.compile(rf"\b({_MONTH_ALT})\s+(\d{{1,2}})\b", re.I)
-_YEAR_AFTER_DAY_RE = re.compile(r"\s*,?\s*\d{4}\b")
+_YEAR_AFTER_DAY_RE = re.compile(rf"({_MONTH_ALT})\s+\d{{1,2}}\s*,?\s*\d{{4}}\b", re.I)
+
+# The two no-winner clauses, as Gamma states them for events 1120800 and
+# 1120859. Whole-sentence matches; `when` is the only free slot and must then
+# read as `_INSTANT_RE`. `{year}` must be the instant's year.
+_CLAUSES = (
+    re.compile(
+        r"if a partial series is played and not completed by (?P<when>.+?), "
+        r"this market will resolve to 50-50\.?",
+        re.I,
+    ),
+    re.compile(
+        r"if the (?P<year>\d{4}) mlb playoffs are (?:cancelled|canceled), postponed after "
+        r"(?P<when>.+?), or there is otherwise no winner declared within that "
+        r"timeframe, this market will resolve to 50-50\.?",
+        re.I,
+    ),
+)
 
 _SENTENCE_SPLIT_RE = re.compile(r"(?<=[.!?])\s+")
 
@@ -113,18 +134,41 @@ def _clauses(text: str) -> list[str]:
     return out
 
 
-def _instant(match: re.Match) -> Optional[datetime]:
+def _instant(when: str) -> tuple[Optional[datetime], Optional[str]]:
+    """The admitted instant ``when`` names, or why it is not one."""
+    match = _INSTANT_RE.fullmatch(when.strip())
+    if match is None:
+        if not _YEAR_AFTER_DAY_RE.search(when):
+            return None, MISSING_YEAR
+        return None, UNPARSEABLE_INSTANT
     month = _MONTHS.index(match.group(1).lower()) + 1
     day, year = int(match.group(2)), int(match.group(3))
     hour, minute = int(match.group(4)), int(match.group(5))
     if not 1 <= hour <= 12 or not 0 <= minute <= 59:
-        return None
+        return None, UNPARSEABLE_INSTANT
     hour = 12 if hour == 12 else hour + 12  # PM
     try:
         local = datetime(year, month, day, hour, minute, tzinfo=_ET)
     except ValueError:
-        return None
-    return local.astimezone(timezone.utc)
+        return None, UNPARSEABLE_INSTANT
+    return local.astimezone(timezone.utc), None
+
+
+def _read_clause(clause: str) -> tuple[Optional[datetime], Optional[str]]:
+    """One 50-50 sentence → its instant, or the refusal."""
+    sentence = re.sub(r"\s+", " ", clause).strip()
+    for template in _CLAUSES:
+        match = template.fullmatch(sentence)
+        if match is None:
+            continue
+        at, reason = _instant(match.group("when"))
+        if at is None:
+            return None, reason
+        year = match.groupdict().get("year")
+        if year is not None and int(year) != at.astimezone(_ET).year:
+            return None, UNSUPPORTED_CLAUSE
+        return at, None
+    return None, UNSUPPORTED_CLAUSE
 
 
 def _read_text(text: Optional[str]) -> tuple[Optional[dict], Optional[str]]:
@@ -136,22 +180,10 @@ def _read_text(text: Optional[str]) -> tuple[Optional[dict], Optional[str]]:
         return None, NO_CLAUSE
     instants: set[datetime] = set()
     for clause in clauses:
-        admitted = list(_INSTANT_RE.finditer(clause))
-        spans = [m.span() for m in admitted]
-        for mention in _MONTH_DAY_RE.finditer(clause):
-            if any(lo <= mention.start() < hi for lo, hi in spans):
-                continue
-            # A date the admitted shape did not read: say which way it failed.
-            if not _YEAR_AFTER_DAY_RE.match(clause, mention.end()):
-                return None, MISSING_YEAR
-            return None, UNPARSEABLE_INSTANT
-        if not admitted:
-            return None, CLAUSE_WITHOUT_INSTANT
-        for m in admitted:
-            at = _instant(m)
-            if at is None:
-                return None, UNPARSEABLE_INSTANT
-            instants.add(at)
+        at, reason = _read_clause(clause)
+        if at is None:
+            return None, reason
+        instants.add(at)
     if len(instants) != 1:
         return None, CONFLICTING_INSTANTS
     (at,) = instants

@@ -32,7 +32,6 @@ from app.utils import polymarket_no_winner_cutoff as cutoff_mod
 from app.utils.market_label_normalization import compute_market_tier
 from app.utils.odds_math import probability_to_american
 from app.utils.polymarket_no_winner_cutoff import (
-    CLAUSE_WITHOUT_INSTANT,
     CONFLICTING_INSTANTS,
     EVENT_MARKET_DISAGREE,
     MISSING_YEAR,
@@ -42,6 +41,7 @@ from app.utils.polymarket_no_winner_cutoff import (
     NOT_ONE_MARKET,
     REFUSAL_REASONS,
     UNPARSEABLE_INSTANT,
+    UNSUPPORTED_CLAUSE,
     parse_no_winner_cutoff,
 )
 
@@ -133,9 +133,9 @@ class TestEveryUnclearTextRefuses:
         assert _parse(None) == (None, NO_CLAUSE)
         assert _parse("   ") == (None, NO_CLAUSE)
 
-    def test_a_50_50_clause_with_no_instant(self):
+    def test_a_50_50_sentence_with_no_instant(self):
         text = NYY_TB_TEXT + "\n\nIf the series ends in a tie, this market will resolve to 50-50."
-        assert _parse(text) == (None, CLAUSE_WITHOUT_INSTANT)
+        assert _parse(text) == (None, UNSUPPORTED_CLAUSE)
 
     def test_a_date_with_no_year(self):
         text = NYY_TB_TEXT.replace("by October 24, 2026, 11:59 PM ET", "by October 24, 11:59 PM ET")
@@ -145,11 +145,15 @@ class TestEveryUnclearTextRefuses:
         text = NYY_TB_TEXT.replace("after October 24, 2026", "after October 25, 2026")
         assert _parse(text) == (None, CONFLICTING_INSTANTS)
 
-    def test_a_second_instant_spelled_50_slash_50_still_has_to_agree(self):
+    def test_a_50_slash_50_sentence_is_still_a_sentence_that_must_be_admitted(self):
         text = NYY_TB_TEXT + (
             "\n\nIf the series is suspended after October 30, 2026, 11:59 PM ET, this market "
             "will resolve 50/50."
         )
+        assert _parse(text) == (None, UNSUPPORTED_CLAUSE)
+
+    def test_the_unfinished_series_clause_must_agree_too(self):
+        text = NYY_TB_TEXT.replace("by October 24, 2026", "by October 23, 2026")
         assert _parse(text) == (None, CONFLICTING_INSTANTS)
 
     @pytest.mark.parametrize("bad", ["11:59 PM PT", "11:59 AM ET", "11:59 PM", "13:59 PM ET"])
@@ -171,6 +175,47 @@ class TestEveryUnclearTextRefuses:
         two = parse_no_winner_cutoff(slug=NYY_TB_SLUG, market_descriptions=[NYY_TB_TEXT] * 2)
         none = parse_no_winner_cutoff(slug=NYY_TB_SLUG, market_descriptions=[])
         assert two == none == (None, NOT_ONE_MARKET)
+
+
+class TestOnlyTheNoWinnerClausesAdmit:
+    """Root review 2026-10-04: a date and "50-50" in one sentence are not a
+    no-winner rule. Both of root's controls, verbatim, plus the reviewer's."""
+
+    def test_root_control_1_negated_resolution_refuses(self):
+        negated = NYY_TB_TEXT.replace("will resolve to 50-50", "will not resolve to 50-50")
+        assert negated.count("will not resolve to 50-50") == 2
+        assert _parse(negated, event=negated) == (None, UNSUPPORTED_CLAUSE)
+
+    def test_root_control_2_a_winner_condition_refuses(self):
+        text = ("If the Yankees win by October 24, 2026, 11:59 PM ET, this market will "
+                "resolve to 50-50.")
+        assert _parse(text, event=text) == (None, UNSUPPORTED_CLAUSE)
+
+    @pytest.mark.parametrize("old,new", [
+        ("this market will resolve to 50-50.\n\nIf the 2026",
+         "this market will NOT resolve to 50-50.\n\nIf the 2026"),
+        ("If a partial series is played and not completed by",
+         "If the Rays WIN the series by"),
+    ])
+    def test_the_reviewers_variants_refuse(self, old, new):
+        assert NYY_TB_TEXT.count(old) == 1
+        assert _parse(NYY_TB_TEXT.replace(old, new)) == (None, UNSUPPORTED_CLAUSE)
+
+    def test_an_amended_wording_refuses(self):
+        text = NYY_TB_TEXT.replace(
+            "11:59 PM ET, this market will resolve to 50-50.\n\nIf the 2026",
+            "11:59 PM ET, this market will resolve to 50-50 unless MLB rules otherwise.\n\nIf the 2026",
+        )
+        assert _parse(text) == (None, UNSUPPORTED_CLAUSE)
+
+    def test_the_playoffs_year_must_be_the_instants(self):
+        text = NYY_TB_TEXT.replace("If the 2026 MLB Playoffs", "If the 2025 MLB Playoffs")
+        assert _parse(text) == (None, UNSUPPORTED_CLAUSE)
+
+    def test_both_retained_positives_still_admit(self):
+        assert _parse(NYY_TB_TEXT, event=NYY_TB_TEXT)[0]["at"] == "2026-10-25T03:59:00+00:00"
+        assert _parse(SD_MIL_TEXT, slug=SD_MIL_SLUG, event=SD_MIL_TEXT)[0]["at"] == (
+            "2026-10-24T03:59:00+00:00")
 
 
 def test_the_module_never_reads_end_date_resolution_date_or_neg_risk():
@@ -320,6 +365,12 @@ class TestTheWriterStoresIt:
         assert NO_WINNER_CUTOFF_KEY not in meta
         assert "no_winner_cutoff_refused" not in stats
         assert stats.get("no_winner_cutoff_stored", 0) == 0
+
+    async def test_a_negated_rule_is_never_stored(self, monkeypatch):
+        negated = NYY_TB_TEXT.replace("will resolve to 50-50", "will not resolve to 50-50")
+        params, _, stats = await _ingest(monkeypatch, _venue_event(text=negated))
+        assert NO_WINNER_CUTOFF_KEY not in params["market_metadata"]
+        assert stats["no_winner_cutoff_refused"] == {UNSUPPORTED_CLAUSE: 1}
 
     async def test_a_refusal_leaves_the_key_absent_and_is_counted(self, monkeypatch):
         params, _, stats = await _ingest(monkeypatch, _venue_event(event_text=SD_MIL_TEXT))

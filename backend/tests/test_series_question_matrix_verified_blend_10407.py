@@ -172,7 +172,9 @@ class TestOneQuestionWithAComposition:
         q = _build()["questions"][0]
         tb, nyy = q["options"]
         assert (tb["label"], nyy["label"]) == ("Tampa Bay Rays", "New York Yankees")
-        assert tb["option_key"] == "t:101" and tb["side"] == "home" and nyy["side"] == "away"
+        assert tb["option_key"] == "o:239425230+240727165"
+        assert nyy["option_key"] == "o:239425229+240727164"
+        assert tb["side"] == "home" and nyy["side"] == "away"
         assert tb["published"] == {"value": pytest.approx(0.6375), "value_state": "quoted",
                                    "basis": "verified_series_blend", "source": None,
                                    "observed_at": None}
@@ -188,11 +190,79 @@ class TestOneQuestionWithAComposition:
             assert o["comparison"] == {"state": "unavailable", "reason": "series_baseline_unsupported",
                                        "baseline": None, "latest": None, "delta_points": None}
 
+    def test_the_whole_serialized_question_is_this_dto(self):
+        """Every field, not one count: what Native decodes is pinned whole."""
+        unsupported = {"state": "unavailable", "reason": "series_baseline_unsupported",
+                       "baseline": None, "latest": None, "delta_points": None}
+
+        def evidence(source, market_id, outcome_id, side, raw):
+            return {"source": source, "market_id": market_id, "outcome_id": outcome_id,
+                    "leg_side": side, "raw_probability": raw, "observed_at": None}
+
+        def option(key, label, side, ids, value, ev):
+            return {"option_key": key, "label": label, "side": side,
+                    "market_ids": [63551228, 63849278], "contributor_outcome_ids": ids,
+                    "published": {"value": value, "value_state": "quoted",
+                                  "basis": "verified_series_blend", "source": None,
+                                  "observed_at": None},
+                    "source_evidence": ev, "result": {"state": "open", "evidence_kind": "none"},
+                    "comparison": unsupported}
+
+        q = json.loads(json.dumps(_build()["questions"][0]))
+        assert q == {
+            "question_key": "q:series_winner:2026:101-102",
+            "merged_question_keys": ["m:63551228", "m:63849278"],
+            "proposition_key": None, "display_scope": "series", "kind": "named_options",
+            "label": "Series Winner: New York Y vs Tampa Bay",
+            "market_name": "Series Winner: New York Y vs Tampa Bay",
+            "source_array": "series_markets", "quantity": None, "period": None,
+            "subject": None, "predicate": None, "complement_question_key": None,
+            "typing": {"state": "typed", "reason": None},
+            "lifecycle": {"state": "open", "market_status": "open"},
+            "options": [
+                option("o:239425230+240727165", "Tampa Bay Rays", "home", [239425230, 240727165],
+                       0.6375, [evidence("kalshi", 63551228, 239425230, "home", 0.63),
+                                evidence("polymarket", 63849278, 240727165, "category", 0.645)]),
+                option("o:239425229+240727164", "New York Yankees", "away", [239425229, 240727164],
+                       0.36, [evidence("kalshi", 63551228, 239425229, "away", 0.365),
+                              evidence("polymarket", 63849278, 240727164, "category", 0.355)]),
+            ],
+            "missing_options": [],
+            "option_counts": {"declared": 2, "loaded": 2, "returned": 2, "missing_identified": 0},
+            "complete": True,
+            "source_totals": [{"source": "kalshi", "raw_sum": 0.995, "legs": 2},
+                              {"source": "polymarket", "raw_sum": 1.0, "legs": 2}],
+        }
+
+    def test_the_merged_shape_is_the_legacy_shape_plus_its_merged_keys(self):
+        """Native decodes the merged question with the model it already has."""
+        legacy = _build(compositions="omit")["questions"][0]
+        merged = _build()["questions"][0]
+        assert set(merged) == set(legacy) | {"merged_question_keys"}
+        assert {frozenset(o) for o in merged["options"]} == {frozenset(legacy["options"][0])}
+        assert {frozenset(e) for o in merged["options"] for e in o["source_evidence"]} == {
+            frozenset(legacy["options"][0]["source_evidence"][0])}
+
+    def test_a_divergent_pair_is_never_merged(self):
+        markets = _markets()
+        legs = _legs(markets)
+        for leg, prob in zip(legs[63849278], (0.10, 0.90)):
+            leg.current_probability = prob
+        pairs = compose_series_pairs(_facts(legs), ROSTER)
+        assert [p.refusal for p in pairs] == ["divergence_gate"]
+        cards = [_card(markets[mid], legs[mid]) for mid in sorted(markets)]
+        args = dict(formatted_series=cards, series_by_market=legs, series_withheld=set(),
+                    settled_before_the_game=lambda m: False, home_team="Tampa Bay Rays",
+                    away_team="New York Yankees")
+        assert _dump(build_series_question_matrix(**args, series_compositions=pairs)) == _dump(
+            build_series_question_matrix(**args))
+
     def test_the_published_number_is_the_compositions_exactly(self):
         pair = _pair()
         q = _build(compositions=[pair])["questions"][0]
         assert {o["option_key"]: o["published"]["value"] for o in q["options"]} == {
-            f"t:{t.team_id}": t.value for t in pair.teams}
+            "o:" + "+".join(str(c) for c in sorted(t.contributor_outcome_ids)): t.value
+            for t in pair.teams}
 
     def test_the_matrix_never_blends(self, monkeypatch):
         pair = _pair()
