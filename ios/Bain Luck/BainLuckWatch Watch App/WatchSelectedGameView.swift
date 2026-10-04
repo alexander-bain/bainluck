@@ -14,6 +14,7 @@ struct WatchSelectedGameView: View {
     @StateObject private var store: WatchSelectedGameStore
     @StateObject private var picker: WatchGamePickerStore
     @State private var choosingGame = false
+    @State private var showingHandoffHelp = false
     @State private var refreshGeneration = 0
     @State private var gamesRefreshGeneration = 0
 
@@ -30,6 +31,11 @@ struct WatchSelectedGameView: View {
     }
 
     private var refreshKey: String { "\(scenePhase)-\(choosingGame)-\(refreshGeneration)-\(store.selectedEventID ?? 0)" }
+
+    private var continuationEventID: Int? {
+        guard scenePhase == .active, !choosingGame else { return nil }
+        return store.game?.id
+    }
 
     var body: some View {
         ScrollViewReader { scroll in
@@ -56,6 +62,10 @@ struct WatchSelectedGameView: View {
                         refreshGeneration += 1
                     }
                     .disabled(store.isRefreshing || scenePhase != .active)
+                    if store.game != nil {
+                        Button("Continue on iPhone") { showingHandoffHelp = true }
+                            .accessibilityIdentifier("watch.continue-on-phone")
+                    }
                     Button("Choose another game") { choosingGame = true }
                         .accessibilityIdentifier("watch.choose-another")
                 }
@@ -63,6 +73,14 @@ struct WatchSelectedGameView: View {
             .padding(.horizontal, 6)
         }
         .navigationTitle("Your game")
+        .userActivity(GameContinuation.activityType, element: continuationEventID) { id, activity in
+            GameContinuation.configure(activity, eventID: id)
+        }
+        .alert("Continue on iPhone", isPresented: $showingHandoffHelp) {
+            Button("OK", role: .cancel) { }
+        } message: {
+            Text("Look for Bain Luck’s Handoff option in your iPhone’s App Switcher. Your iPhone needs a Bain Luck version with Watch Handoff support. Both devices need Handoff enabled and the same Apple Account. If it isn’t available, your game stays selected here.")
+        }
         .task(id: refreshKey) {
             guard scenePhase == .active, !choosingGame else { return }
             if store.selectedEventID == nil {
