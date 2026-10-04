@@ -12,6 +12,10 @@
  * - the two navs are SSR-rendered with Browse forced open (their only
  *   `useState(false)` is the open flag) so the real markup — collections AND
  *   every category — is read, not a description of it.
+ * - #10479 keyboard focus: the navs' own effects are recorded during that SSR
+ *   render and run against a stand-in `document`, with the Browse button's
+ *   ref pointed at a stand-in element, so a real Escape reaches the real
+ *   handler and the focus call is observed rather than grepped for.
  */
 
 import React from "react";
@@ -20,14 +24,39 @@ import { join } from "path";
 import { renderToStaticMarkup } from "react-dom/server";
 
 const forceOpen = { value: false };
+const drive = {
+  active: false,
+  effects: [] as Array<() => unknown>,
+  setOpenCalls: [] as unknown[],
+  browseButton: null as { focus: jest.Mock } | null,
+};
 
 jest.mock("react", () => {
   const actual = jest.requireActual("react");
   return {
     ...actual,
     useState: (initial: unknown) =>
-      forceOpen.value && initial === false ? [true, () => {}] : actual.useState(initial),
+      forceOpen.value && initial === false
+        ? [true, (v: unknown) => drive.setOpenCalls.push(v)]
+        : actual.useState(initial),
+    useEffect: (fn: () => unknown, deps?: unknown[]) =>
+      drive.active ? void drive.effects.push(fn) : actual.useEffect(fn, deps),
   };
+});
+// The Browse button is the one `<button aria-expanded>` in each nav; under
+// `drive` its ref is pointed at the stand-in so the effects can focus it.
+jest.mock("react/jsx-runtime", () => {
+  const actual = jest.requireActual("react/jsx-runtime");
+  const wrap =
+    (create: (...a: unknown[]) => unknown) =>
+    (type: unknown, props: Record<string, unknown> | null, ...rest: unknown[]) => {
+      const ref = props?.ref as { current: unknown } | undefined;
+      if (drive.active && type === "button" && props && "aria-expanded" in props && ref && typeof ref === "object") {
+        ref.current = drive.browseButton;
+      }
+      return create(type, props, ...rest);
+    };
+  return { ...actual, jsx: wrap(actual.jsx), jsxs: wrap(actual.jsxs) };
 });
 jest.mock("next/link", () => {
   const ReactLib = jest.requireActual("react");
@@ -413,5 +442,67 @@ describe("#10476 desktop and phone Browse both show collections above every cate
       expect(src).toMatch(/useEffect\(\(\) => \{\s*setBrowseOpen\(false\);\s*\}, \[pathname\]\);/);
       expect(src).toMatch(/e\.key === "Escape"/);
     }
+  });
+});
+
+// ── #10479 keyboard focus ───────────────────────────────────────────────────
+
+describe("#10479 Escape from inside the open Browse panel returns focus to Browse", () => {
+  type Listener = (e: { key: string }) => void;
+  let listeners: Record<string, Listener[]>;
+
+  beforeEach(async () => {
+    navLoader = await readyLoader();
+    forceOpen.value = true;
+    drive.active = true;
+    drive.effects = [];
+    drive.setOpenCalls = [];
+    drive.browseButton = { focus: jest.fn() };
+    listeners = {};
+    (globalThis as { document?: unknown }).document = {
+      addEventListener: (t: string, fn: Listener) => (listeners[t] ||= []).push(fn),
+      removeEventListener: (t: string, fn: Listener) => {
+        listeners[t] = (listeners[t] || []).filter((l) => l !== fn);
+      },
+    };
+  });
+  afterEach(() => {
+    forceOpen.value = false;
+    drive.active = false;
+    drive.browseButton = null;
+    navLoader = null;
+    delete (globalThis as { document?: unknown }).document;
+  });
+
+  function mountOpen(render: () => React.ReactElement) {
+    renderToStaticMarkup(render());
+    for (const effect of drive.effects) effect();
+    // The page-change effect shuts Browse on mount; only what a key does counts.
+    drive.setOpenCalls = [];
+    expect(listeners.keydown?.length).toBeGreaterThan(0);
+  }
+  const press = (key: string) => listeners.keydown.forEach((l) => l({ key }));
+
+  test.each([
+    ["phone", () => <BottomNav />],
+    ["desktop", () => <DesktopNav />],
+  ])("%s: Escape shuts Browse and focuses the Browse button, not <body>", (_label, render) => {
+    mountOpen(render);
+    // A keyboard reader tabbed onto a link inside the panel; Escape unmounts
+    // that link, so focus must be handed somewhere real.
+    press("Escape");
+    expect(drive.setOpenCalls).toEqual([false]);
+    expect(drive.browseButton!.focus).toHaveBeenCalledTimes(1);
+  });
+
+  test.each([
+    ["phone", () => <BottomNav />],
+    ["desktop", () => <DesktopNav />],
+  ])("%s: any other key leaves Browse open and focus where it is", (_label, render) => {
+    mountOpen(render);
+    press("Tab");
+    press("Enter");
+    expect(drive.setOpenCalls).toEqual([]);
+    expect(drive.browseButton!.focus).not.toHaveBeenCalled();
   });
 });

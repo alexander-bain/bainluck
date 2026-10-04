@@ -25,6 +25,7 @@ export default function BottomNav() {
   const { track } = useAnalyticsContext();
   const [browseOpen, setBrowseOpen] = useState(false);
   const browseRef = useRef<HTMLDivElement>(null);
+  const browseButtonRef = useRef<HTMLButtonElement>(null);
 
   const isBrowseActive =
     browsePages.some((p) => pathname === p.href) || !!pathname?.startsWith("/collections/");
@@ -42,7 +43,12 @@ export default function BottomNav() {
       }
     }
     function handleKey(e: KeyboardEvent) {
-      if (e.key === "Escape") setBrowseOpen(false);
+      // #10479 — closing unmounts the link that held focus; hand it back to
+      // Browse (as DesktopNav does) instead of dropping it to <body>.
+      if (e.key === "Escape") {
+        setBrowseOpen(false);
+        browseButtonRef.current?.focus();
+      }
     }
     document.addEventListener("mousedown", handleClick);
     document.addEventListener("keydown", handleKey);
@@ -178,6 +184,7 @@ export default function BottomNav() {
             ) : (
               <button
                 key={tab.label}
+                ref={browseButtonRef}
                 onClick={() => {
                   setBrowseOpen(!browseOpen);
                   if (!browseOpen) {
