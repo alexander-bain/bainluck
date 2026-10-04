@@ -37,6 +37,7 @@ CONTAINER_KINDS: Final[FrozenSet[str]] = frozenset(
         "draft",  # the NFL draft
         "season",  # a league season
         "series",  # a playoff series
+        "theme",  # a continuing subject collection ("AI"), #9935
     }
 )
 
@@ -125,6 +126,7 @@ EDGE_SOURCES: Final[FrozenSet[str]] = frozenset(
         "matcher",
         "human",
         "register",  # backend/data/tournament_registers/*.json
+        "theme_rule",  # a versioned theme decision (theme_definitions), #9935
     }
 )
 
