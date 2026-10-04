@@ -424,3 +424,27 @@ async def test_wrong_sport_team_binding_returns_p3_with_zero_writes(factory, tmp
     assert out["detail"][0]["verdict"] == "WRONG_SPORT" and out["detail"][0]["team_id"] == 903
     assert not (tmp_path / "plan.json").exists()
     assert await _snapshot(factory) == before
+    assert out["diagnostic"]["admission"]["refused_at"] == r.STAGE_P3
+    assert out["diagnostic"]["admission"]["p3_team_binding"] == "REFUSED"
+
+
+async def test_missing_gender_tag_refusal_reports_the_exact_jsonb_tags_with_zero_writes(factory, tmp_path):
+    """The production refusal shape on real jsonb: R1's tags lack gender:men. The receipt's
+    reason/detail/exit are unchanged; the diagnostic carries the decoded array in stored order
+    and leaves the market, linked set and team binding (P3, here a WRONG_SPORT home) unassessed."""
+    tags = [t for t in PRE_TAGS if t != "gender:men"][::-1]
+    await _exec(factory, "UPDATE events SET event_tags = CAST(:t AS jsonb), home_team_id = 903 "
+                         "WHERE id = :e", {"t": json.dumps(tags), "e": r.EVENT_ID})
+    before = await _snapshot(factory)
+    out = await r.run_preflight(factory, plan_out=str(tmp_path / "plan.json"), clock=lambda: FIXED)
+    assert out["state"] == r.REFUSED and r.exit_code(out) == 1, out
+    assert out["reason"] == "old_tag_not_exactly_once"
+    assert out["detail"] == {"tag": "gender:men", "count": 0}
+    assert out["diagnostic"]["admission"]["refused_at"] == r.STAGE_TAGS
+    assert out["diagnostic"]["admission"]["unassessed"] == [r.STAGE_MARKET, r.STAGE_LINKED, r.STAGE_P3]
+    assert out["diagnostic"]["admission"]["p3_team_binding"] == "UNASSESSED"
+    assert out["diagnostic"]["observed_r1"] == {"status": "observed", "values": {
+        "id": r.EVENT_ID, "sport_id": MEN_SPORT_ID, "llm_gender": "men", "llm_league": "Serie_A",
+        "event_tags": tags, "home_team_id": 903, "away_team_id": AWAY_TEAM}}
+    assert not (tmp_path / "plan.json").exists() and not (tmp_path / "plan.json.sha256").exists()
+    assert await _snapshot(factory) == before

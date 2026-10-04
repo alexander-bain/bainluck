@@ -1970,8 +1970,8 @@ jobs:
             echo "::error::#10319 identity repair gate SKIPPED — the gate did not run"
             exit 1
           fi
-          if ! grep -qE "^=+ 28 passed" /tmp/repair_10319.txt; then
-            echo "::error::#10319 identity repair gate did not report exactly 28 passed"
+          if ! grep -qE "^=+ 29 passed" /tmp/repair_10319.txt; then
+            echo "::error::#10319 identity repair gate did not report exactly 29 passed"
             exit 1
           fi
 
