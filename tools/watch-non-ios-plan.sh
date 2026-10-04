@@ -10,8 +10,8 @@ OUT="$ROOT/build/watch-non-ios-plan"
 mkdir -p "$OUT"
 RUN="$(mktemp -d "$OUT/run.XXXXXX")"
 SHA="$(git -C "$ROOT" rev-parse HEAD)"
-PLATFORM="${1:?Specify macOS or visionOS}"
-case "$PLATFORM" in macOS|visionOS) ;; *) exit 2 ;; esac
+PLATFORM="${1:?Specify macOS}"
+case "$PLATFORM" in macOS) ;; *) exit 2 ;; esac
   python3 - "$OUT/$PLATFORM-receipt.json" "$SHA" "$PLATFORM" <<'PY'
 import json, sys
 from pathlib import Path
