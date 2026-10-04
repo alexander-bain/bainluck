@@ -107,15 +107,20 @@ class TestWhatTheWriterStillPins:
         assert refused == 1
 
     def test_the_tick_bounds_are_pinned_on_both_sides(self):
-        """A 1c bid and a 99c ask is empty; a 2c bid or a 98c ask is a quote."""
+        """A 1c bid and a 99c ask is empty; a 2c bid or a 98c ask is a quote.
+
+        The price is a trade far from the book's middle (0.7). At 0.5 the two
+        quote books are refused by the midpoint arm instead (2026-10-04,
+        ``test_pregame_pin_midpoint_9083.py``), and this arm is about the tick.
+        """
         assert (
-            _pregame_pin_outcome_probs("polymarket", [_leg(1, 0.5, 0.01, 0.99)])[1] == 1
+            _pregame_pin_outcome_probs("polymarket", [_leg(1, 0.7, 0.01, 0.99)])[1] == 1
         )
         assert (
-            _pregame_pin_outcome_probs("polymarket", [_leg(1, 0.5, 0.02, 0.99)])[1] == 0
+            _pregame_pin_outcome_probs("polymarket", [_leg(1, 0.7, 0.02, 0.99)])[1] == 0
         )
         assert (
-            _pregame_pin_outcome_probs("polymarket", [_leg(1, 0.5, 0.01, 0.98)])[1] == 0
+            _pregame_pin_outcome_probs("polymarket", [_leg(1, 0.7, 0.01, 0.98)])[1] == 0
         )
 
     def test_kalshi_legs_are_out_of_scope(self):

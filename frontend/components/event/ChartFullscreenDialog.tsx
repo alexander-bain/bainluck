@@ -18,6 +18,13 @@ import { useEffect, useRef, type ReactNode, type RefObject } from "react";
  * the axis also clears the iPhone home indicator. The shopper found two more
  * problems in the same view: the close button had no accessible name, and
  * Escape did nothing.
+ *
+ * #10404 — `z-[110]`, one layer above that. The first-visit `ConsentBanner` is
+ * also `fixed … z-[100]` and is mounted later in the layout, so on the tie it
+ * painted over the chart's axis and legend at 390px. A modal owns the screen
+ * while it is open; the banner is back the moment it closes, so consent is
+ * never skipped. `SignInToPersonalizeInvite` took the same layer for the same
+ * reason.
  */
 
 type KeyTarget = Pick<Window, "addEventListener" | "removeEventListener">;
@@ -82,7 +89,7 @@ export default function ChartFullscreenDialog({
 
   return (
     <div
-      className="fixed inset-0 z-[100] bg-surface-card flex flex-col pb-[env(safe-area-inset-bottom,0px)]"
+      className="fixed inset-0 z-[110] bg-surface-card flex flex-col pb-[env(safe-area-inset-bottom,0px)]"
       role="dialog"
       aria-modal="true"
       aria-label={title}

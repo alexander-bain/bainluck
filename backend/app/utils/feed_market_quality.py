@@ -626,7 +626,10 @@ def is_bidless_empty_book_midpoint(
 
     The one-sided mirror, and deliberately a SEPARATE predicate: the six consumers
     of :func:`is_empty_book_midpoint` (three of them writers) keep its missing-side
-    pass-through untouched. This one is read-side only and search is its only caller.
+    pass-through untouched. It mutates no stored price. Two callers: search (read
+    side), and since 2026-10-04 the live poll's pregame pin, which declines to WRITE
+    ``market_metadata.pregame_mark`` for such a leg and its twin (#9083, the Machado
+    0.485 on NULL / 0.98) and leaves ``current_probability`` alone.
 
     Polymarket writes a bid-less leg's price as the midpoint of ``(0, ask)`` — on
     2026-09-26 every open ungraded bid-less leg with an ask sat on ``ask/2`` or was

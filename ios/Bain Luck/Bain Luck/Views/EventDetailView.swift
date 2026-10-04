@@ -576,12 +576,22 @@ struct EventDetailView: View {
                             commenceTime: event.commenceTime?.asDate
                         )
                     }
+                    // #10238 — the sourced Game and Series questions, as two
+                    // independent siblings. Each stays mounted while its payload
+                    // is nil so an open question resolves to "unavailable" rather
+                    // than vanishing, and Series is never gated on Game, the
+                    // price or the game's phase: a finished Game leaves an open
+                    // Series showing. Not SeriesProbabilityView (model-only).
+                    EventQuestionMatrixSection10238(
+                        matrix: vm.gameMarkets?.gameQuestionMatrix, scope: .game)
+                    EventQuestionMatrixSection10238(
+                        matrix: vm.relatedFutures?.seriesQuestionMatrix, scope: .series)
                     // Graceful empty state: a market-less game (e.g. an aged-out
                     // closed game whose Kalshi/odds markets have expired) has no
                     // market sections to show. Say so rather than leaving a gap or
                     // assuming a section exists (#1092).
                     if let gameMarkets = vm.gameMarkets,
-                       !gameMarketsHaveContent(gameMarkets) {
+                       !Self.gameMarketsHaveContent(gameMarkets) {
                         noGameMarketsNote(status: event.status)
                     }
                     // Series Probability (playoff series context)
@@ -613,7 +623,10 @@ struct EventDetailView: View {
                         awayTeam: event.awayTeam,
                         homeTeam: event.homeTeam,
                         sportKey: event.sport,
-                        preloadedData: vm.relatedFutures
+                        preloadedData: vm.relatedFutures,
+                        // #10238 — the same payload the Series section above draws.
+                        seriesMarketIdsDrawnAbove: EventQuestionMatrixAdapter.drawnMarketIds(
+                            in: vm.relatedFutures?.seriesQuestionMatrix, scope: .series)
                     )
                     // League page link
                     leaguePageLink(event)
@@ -652,8 +665,11 @@ struct EventDetailView: View {
 
     /// Whether the game-markets payload has any renderable section. All arrays
     /// are optional and can arrive empty for a market-less / aged-out game.
-    private func gameMarketsHaveContent(_ gm: GameMarketsResponse) -> Bool {
+    /// #10238 — a drawn Game question counts; Series does not (the note is
+    /// about Game inventory, and Series has its own section).
+    static func gameMarketsHaveContent(_ gm: GameMarketsResponse) -> Bool {
         !(gm.spreads ?? []).isEmpty
+            || !EventQuestionMatrixAdapter.rows(in: gm.gameQuestionMatrix, scope: .game).isEmpty
             || !(gm.totals ?? []).isEmpty
             || !(gm.teamTotals ?? []).isEmpty
             || !(gm.periodMarkets ?? []).isEmpty

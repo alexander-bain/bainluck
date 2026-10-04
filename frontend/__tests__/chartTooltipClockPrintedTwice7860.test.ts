@@ -123,15 +123,20 @@ describe("#7860 — the chart tooltip's period/clock line", () => {
     expect(formatLiveClockLabel("2nd Half", "67'")).toBe("2nd Half 67'");
   });
 
-  it("cannot delete a clock through the SPORT arm, because no sport key is passed", () => {
-    // `sportVocab(undefined).gameHasAClock` is `true` by declared default, so the
-    // one clause of the helper that removes a genuine clock is unreachable from
-    // this call site. If that default ever flips, this fails before a reader
-    // loses a clock on a chart.
+  it("deletes a clock through the SPORT arm only for a sport that declares none", () => {
+    // #10414 — this arm used to assert that NO sport key reached the tooltip, so
+    // the arm could never fire. That was #7860's honest scope (the component had
+    // no key then), and it is why every MLB tooltip still read `Top 9th 0:00`
+    // after #6684. The key is passed now. What must still hold: a CLOCKED sport
+    // keeps its clock, and an absent key changes nothing.
     expect(trustedLiveClock("Bottom 8th", "3:21").gameClock).toBe("3:21");
     expect(formatLiveClockLabel("2:00 - 4th Quarter", "1:00")).toBe(
       "2:00 - 4th Quarter 1:00",
     );
+    expect(formatLiveClockLabel("3rd Quarter", "4:12", " ", "americanfootball_nfl")).toBe(
+      "3rd Quarter 4:12",
+    );
+    expect(formatLiveClockLabel("Top 9th", "0:00", " ", "baseball_mlb")).toBe("Top 9th");
   });
 
   describe("the call site — a correct helper nothing calls is not a fix", () => {
@@ -140,7 +145,7 @@ describe("#7860 — the chart tooltip's period/clock line", () => {
         'import { formatLiveClockLabel } from "@/lib/gameTimeLabel"',
       );
       expect(SOURCE).toMatch(
-        /formatLiveClockLabel\(\s*matchingPoint\._period as string,\s*matchingPoint\._clock as string \| undefined,?\s*\)/,
+        /formatLiveClockLabel\(\s*matchingPoint\._period as string,\s*matchingPoint\._clock as string \| undefined,\s*" ",\s*sportKey,?\s*\)/,
       );
     });
 
@@ -165,7 +170,7 @@ describe("#7860 — the chart tooltip's period/clock line", () => {
       // Nothing is appended after the call — the `${_clock}` tail is what the
       // reader was reading twice.
       expect(body.replace(/\s+/g, " ")).toBe(
-        "{formatLiveClockLabel( matchingPoint._period as string, matchingPoint._clock as string | undefined, )}",
+        '{formatLiveClockLabel( matchingPoint._period as string, matchingPoint._clock as string | undefined, " ", sportKey, )}',
       );
     });
 
