@@ -496,7 +496,10 @@ final class TheLiveChartEndCarriesTheHeroNumber9436Tests: XCTestCase {
         func close() { window.isHidden = true }
         func shot() -> UIImage {
             host.view.setNeedsLayout(); host.view.layoutIfNeeded()
-            return UIGraphicsImageRenderer(bounds: host.view.bounds).image { _ in
+            // This probe needs tip positions, not a 3x presentation screenshot.
+            let format = UIGraphicsImageRendererFormat()
+            format.scale = 1
+            return UIGraphicsImageRenderer(bounds: host.view.bounds, format: format).image { _ in
                 host.view.drawHierarchy(in: host.view.bounds, afterScreenUpdates: true)
             }
         }
@@ -504,12 +507,25 @@ final class TheLiveChartEndCarriesTheHeroNumber9436Tests: XCTestCase {
 
     /// Sample the tip column for `seconds` after a change.
     private func sampleTip(_ hosted: Hosted, seconds: Double) async throws -> (columns: [Int], stamps: [Double]) {
-        var columns: [Int] = [], stamps: [Double] = []
+        var captures: [(image: UIImage, acquiredAt: Double, duration: Double)] = []
         let start = CACurrentMediaTime()
         while CACurrentMediaTime() - start < seconds {
             try await Task.sleep(for: .milliseconds(30))
-            if let x = tipColumn(hosted.shot()) { columns.append(x); stamps.append(CACurrentMediaTime() - start) }
+            let captureStart = CACurrentMediaTime()
+            let image = hosted.shot()
+            let acquiredAt = CACurrentMediaTime()
+            captures.append((image, acquiredAt - start, acquiredAt - captureStart))
         }
+        // Scanning pixels must not delay the next animation observation. Timestamp
+        // after acquisition, never before it: capture cost is still paid honestly.
+        var columns: [Int] = [], stamps: [Double] = []
+        for capture in captures {
+            if let x = tipColumn(capture.image) {
+                columns.append(x)
+                stamps.append(capture.acquiredAt)
+            }
+        }
+        print("#9436 sampling acquisitions: \(captures.map(\.acquiredAt)); capture durations: \(captures.map(\.duration))")
         return (columns, stamps)
     }
 
