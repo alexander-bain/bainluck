@@ -162,14 +162,18 @@ describe("#5488 a settled half margin card drops the line nobody quoted", () => 
     const html = renderMaps(SETTLED_1H, SETTLED_2H);
     const text = visibleText(html);
 
-    // Both cards are still here, still drawing their axis and — the point —
-    // still naming their rungs underneath. This is what makes the assertion
-    // below an assertion rather than a description of two cards that vanished.
+    // Both cards are still here and — the point — still naming their rungs
+    // underneath. This is what makes the assertion below an assertion rather
+    // than a description of two cards that vanished.
     expect(text).toContain("1st half margin");
     expect(text).toContain("2nd half margin");
-    expect(text).toContain("REN by 5+");
-    expect(text).toContain("OLM by 5+");
+    expect(text).toContain("REN by 1.5+");
     expect(text).toContain("OLM by 1.5+");
+    // #10350: with the marker gone and no half score to place, nothing is left
+    // on either rail, so the empty "REN by 5+ · OLM by 5+" track is not drawn.
+    // (This arm used to anchor on those axis labels; the rungs anchor it now.)
+    expect(html).not.toContain("data-map-rail");
+    expect(text).not.toContain("REN by 5+");
 
     // And the reading that was never a forecast is gone from both. Note the
     // rung strings above SURVIVE, in the ladder, where 1% and 2% are printed

@@ -504,11 +504,12 @@ final class TheLiveChartEndCarriesTheHeroNumber9436Tests: XCTestCase {
             window.isHidden = true
             previousKeyWindow?.makeKey()
         }
-        func shot(afterScreenUpdates: Bool = true) -> UIImage {
+        func shot(afterScreenUpdates: Bool = true, scale: CGFloat? = nil) -> UIImage {
             host.view.setNeedsLayout(); host.view.layoutIfNeeded()
-            // This probe needs tip positions, not a 3x presentation screenshot.
+            // Only motion sampling opts into 1x. Cancellation equalities retain
+            // screen resolution so small unfinished motion remains detectable.
             let format = UIGraphicsImageRendererFormat()
-            format.scale = 1
+            if let scale { format.scale = scale }
             var captured = false
             let image = UIGraphicsImageRenderer(bounds: host.view.bounds, format: format).image { _ in
                 captured = host.view.drawHierarchy(in: host.view.bounds, afterScreenUpdates: afterScreenUpdates)
@@ -527,7 +528,7 @@ final class TheLiveChartEndCarriesTheHeroNumber9436Tests: XCTestCase {
             let captureStart = CACurrentMediaTime()
             // Read the displayed frame; waiting for the next update can consume
             // most of this short animation before the observer gets another turn.
-            let image = hosted.shot(afterScreenUpdates: false)
+            let image = hosted.shot(afterScreenUpdates: false, scale: 1)
             let acquiredAt = CACurrentMediaTime()
             captures.append((image, acquiredAt - start, acquiredAt - captureStart))
         }
@@ -683,7 +684,7 @@ final class TheLiveChartEndCarriesTheHeroNumber9436Tests: XCTestCase {
         let hosted = try Hosted(FedChart(feed: feed, history: try history()))
         defer { hosted.close() }
         try await Task.sleep(for: .milliseconds(600))
-        let before = try XCTUnwrap(markerColumn(hosted.shot()))
+        let before = try XCTUnwrap(markerColumn(hosted.shot(scale: 1)))
 
         // One accepted frame a minute later, at 60% — hero and chart together.
         let next = try XCTUnwrap("2026-09-21T12:14:00Z".asDate)
@@ -691,7 +692,7 @@ final class TheLiveChartEndCarriesTheHeroNumber9436Tests: XCTestCase {
         feed.edge = LiveEdgeReading(homeProbability: 0.60, homeLabel: "60%")
         let (columns, stamps) = try await sampleTip(hosted, seconds: 0.8)
         let sampledLast = try XCTUnwrap(columns.last)
-        let settled = try XCTUnwrap(markerColumn(hosted.shot()))
+        let settled = try XCTUnwrap(markerColumn(hosted.shot(scale: 1)))
         XCTAssertEqual(sampledLast, settled, "Sampling must reach the independently captured final endpoint")
         print("#9436 glide tip columns: before=\(before) frames=\(columns)")
 
@@ -717,7 +718,7 @@ final class TheLiveChartEndCarriesTheHeroNumber9436Tests: XCTestCase {
         let hosted = try Hosted(FedChart(feed: feed, history: try history()))
         defer { hosted.close() }
         try await Task.sleep(for: .milliseconds(600))
-        let beforeImage = hosted.shot()
+        let beforeImage = hosted.shot(scale: 1)
         recordMotionFrame(beforeImage, name: "pin-before")
         let before = try XCTUnwrap(markerColumn(beforeImage))
 
@@ -725,7 +726,7 @@ final class TheLiveChartEndCarriesTheHeroNumber9436Tests: XCTestCase {
         feed.edge = LiveEdgeReading(homeProbability: 0.58, homeLabel: "58%")
         let (columns, stamps) = try await sampleTip(hosted, seconds: 0.8)
         let sampledLast = try XCTUnwrap(columns.last)
-        let finalImage = hosted.shot()
+        let finalImage = hosted.shot(scale: 1)
         recordMotionFrame(finalImage, name: "pin-final")
         let settled = try XCTUnwrap(markerColumn(finalImage))
         XCTAssertEqual(sampledLast, settled, "Sampling must reach the independently captured final endpoint")
@@ -759,7 +760,7 @@ final class TheLiveChartEndCarriesTheHeroNumber9436Tests: XCTestCase {
         let hosted = try Hosted(FedChart(feed: feed, history: try history()))
         defer { hosted.close() }
         try await Task.sleep(for: .milliseconds(600))
-        let before = try XCTUnwrap(tipColumn(hosted.shot()))
+        let before = try XCTUnwrap(tipColumn(hosted.shot(scale: 1)))
         if pinReplacement {
             feed.history = try pinnedHistory(pinAt: 16, 0.58)
             feed.edge = LiveEdgeReading(homeProbability: 0.58, homeLabel: "58%")
@@ -768,7 +769,7 @@ final class TheLiveChartEndCarriesTheHeroNumber9436Tests: XCTestCase {
             feed.edge = LiveEdgeReading(homeProbability: 0.60, homeLabel: "60%")
         }
         let (columns, _) = try await sampleTip(hosted, seconds: 0.8, measuresMarker: false)
-        let settled = try XCTUnwrap(tipColumn(hosted.shot()))
+        let settled = try XCTUnwrap(tipColumn(hosted.shot(scale: 1)))
         XCTAssertNotEqual(before, settled, "Control must actually display the accepted update")
         XCTAssertEqual(columns.last, settled, "Control must reach the independent final capture")
         // A not-yet-presented update may leave an initial old frame. Neither

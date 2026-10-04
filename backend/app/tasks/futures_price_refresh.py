@@ -222,6 +222,11 @@ from typing import Optional
 from sqlalchemy import text
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 
+# #8265. `venue_volume_24h` moved to the Kalshi client so its parser can carry
+# the same un-floored reading on every `KalshiMarket` (the 2-hourly poll
+# writes the leg too). Re-exported under its old name: it is still this
+# module's reading, and its tests import it from here.
+from app.services.kalshi_api import venue_volume_24h  # noqa: F401
 from app.utils.futures_liveness import (
     LIVE_MARKET_SQL,
     VENUE_SETTLED_KEY,
@@ -2002,56 +2007,6 @@ async def _write_prices(
 #: ``kalshi._refresh_linked_game_books`` now asks the same question of the same
 #: payload. Imported by its real name rather than aliased back: two names for
 #: one function is how the next reader ends up copying the wrong one.
-
-
-def venue_volume_24h(raw_market: dict) -> Optional[float]:
-    """The venue's own 24-hour volume for ONE market, without flooring it (#7747).
-
-    🔴 WHY THIS IS NOT ``KalshiMarket.volume_24h``, WHICH IS RIGHT THERE AND
-    PARSED ALREADY. That field is built by
-    ``parse_int_str(volume_24h_fp) or market_data.get("volume_24h")``, and both
-    halves of that expression destroy the only distinction this ship turns on:
-
-    * ``parse_int_str`` is ``int(float(val))``, so the venue's ``"0.04"`` becomes
-      **0** — and 0 is not a rounding of 0.04 here, it is the exact value the
-      consumer reads as "nobody is trading this leg". Congo Republic, one of the
-      three legs CERT-3244 named, trades $0.04.
-    * the ``or`` treats a parsed **0** as falsy and falls through to the legacy
-      ``volume_24h`` key. Read from the venue 2026-09-21, the modern payload
-      carries ONLY the ``_fp`` form, so a genuine zero becomes ``None`` — which
-      this ship must read as "we never asked" and serve. The specimen itself
-      publishes ``volume_24h_fp: '0.00'``, so the shipped field would have made
-      Mensik unwithholdable and the whole ship inert.
-
-    That expression is CORRECT for its own consumer — ``tasks/kalshi.py`` sums it
-    into ``FuturesMarket.volume_24h``, a per-board BigInteger where sub-unit
-    remainders and a None-for-zero are both immaterial (``sum(m.volume_24h or 0)``
-    treats them identically). So it is deliberately left alone rather than
-    "fixed": changing a shared parser under a live ranking consumer to serve one
-    new caller is how a narrow ship becomes a wide regression.
-
-    Reading the RAW dict is normally refused on this path — the docstring below
-    says so, because Kalshi quotes PRICES in two formats and re-deriving that is
-    how ``95`` arrives where ``0.95`` belongs. That warning does not reach here:
-    ``volume_24h_fp`` is a single unambiguous decimal string, the plain
-    ``volume_24h`` fallback is the same figure as an integer, and neither can be
-    confused for the other by a factor of a hundred.
-
-    ABSENT AND ZERO ARE DIFFERENT ANSWERS and this is the function that keeps them
-    apart (gotcha #53): a missing or unparseable key returns ``None`` ("we never
-    asked"), while ``"0.00"`` returns ``0.0`` ("the venue says nobody traded it").
-    """
-    for key in ("volume_24h_fp", "volume_24h"):
-        raw = raw_market.get(key)
-        if raw is None or raw == "":
-            continue
-        try:
-            return float(raw)
-        except (TypeError, ValueError):
-            # A key we cannot read is not a zero. Fall through to the next
-            # spelling, and to None if neither parses.
-            continue
-    return None
 
 
 # --- the resolution window, off the payload we already hold (#8871) ------------

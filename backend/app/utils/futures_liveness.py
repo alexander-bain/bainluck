@@ -118,10 +118,22 @@ from app.utils.hook_staleness import (  # noqa: E402
     HOOK_PROB_METADATA_KEY,
 )
 
+#: #8265. The semantics v2 contract ``backfill_market_shapes`` merges in with
+#: ``||`` and ``futures_unsupported_price.market_is_proved_exclusive_field``
+#: reads. The poll does not classify, so the REPLACE erased it on every board
+#: the poll touched, and every proved-field withholding arm then failed closed
+#: until the backfill's id cursor came round again. Production 2026-10-03
+#: 21:05Z, open tier<=2 Kalshi boards: all 52 polled in the last 150 minutes
+#: had no ``shape``, and every one of the 6,769 not polled had one. That is how
+#: ``/futures/61308736`` served "Jakub Mensik leads at 47%" with
+#: ``prices_withheld: 0`` while all 25 legs carried a fresh zero volume.
+MARKET_SHAPE_METADATA_KEY = "shape"
+
 CARRIED_METADATA_KEYS = (
     VENUE_SETTLED_KEY,
     HOOK_POLICY_METADATA_KEY,  # #5531
     HOOK_PROB_METADATA_KEY,  # #5531
+    MARKET_SHAPE_METADATA_KEY,  # #8265
 )
 
 
@@ -484,6 +496,15 @@ def market_reads_settled(market, *, now=None) -> bool:
        alone; a live independent bundle whose legs are ungraded would be hidden
        by a bare "any winner" and must not be.
 
+       A leg carrying the retraction (``ungradeable_result``, #1852) is NOT
+       graded: it asserts no result, and the live graders overwrite it the
+       moment the venue declares one. Counting it hid live independent bundles
+       ("Which bills will become law in 2026?", priced that day) the same way a
+       bare "any winner" would, and it is why this read could not be lent to
+       /economics and /entertainment as it stood (#10320, measured 2026-10-03:
+       17 open politics/geopolitics bundles and 87 economics/entertainment ones
+       read settled only because of it).
+
        ``IS TRUE`` only, never ``= FALSE``: ``is_winner`` is nullable with
        ``default=False``, so FALSE is ambiguous between "lost" and "nobody
        looked". The same reading as everywhere else in this module.
@@ -498,6 +519,8 @@ def market_reads_settled(market, *, now=None) -> bool:
     """
     from datetime import datetime, timedelta, timezone
 
+    from app.utils.kalshi_fabricated_loss import RETRACTION_SOURCE
+
     outcomes = list(getattr(market, "outcomes", None) or [])
     if any(getattr(o, "is_winner", None) is True for o in outcomes):
         meta = getattr(market, "market_metadata", None) or {}
@@ -508,7 +531,7 @@ def market_reads_settled(market, *, now=None) -> bool:
         )
         all_legs_graded = all(
             getattr(o, "is_winner", None) is True
-            or getattr(o, "resolution_source", None) is not None
+            or getattr(o, "resolution_source", None) not in (None, RETRACTION_SOURCE)
             for o in outcomes
         )
         if exclusive or all_legs_graded:

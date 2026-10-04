@@ -24,7 +24,7 @@ private enum DiscoverGroupedItem: Identifiable {
 /// testable). This alias keeps the call sites below reading as they did.
 private typealias NativeDiscoverAction = DiscoverInteractionProfile.Action
 
-struct NativeDiscoverDebugCard: Codable {
+nonisolated struct NativeDiscoverDebugCard: Codable {
     let itemType: String
     let itemId: String
     let itemName: String?
@@ -33,7 +33,7 @@ struct NativeDiscoverDebugCard: Codable {
     let score: Int
 }
 
-struct NativeDiscoverDebugInteraction: Codable {
+nonisolated struct NativeDiscoverDebugInteraction: Codable {
     let action: String
     let itemType: String
     let itemId: String
@@ -1980,7 +1980,7 @@ struct DiscoverView: View {
                 // already-populated Discover stamps no new render generation, so
                 // arming it would report a full screen as blank.
                 ScreenTimingSession.armScreen(surface: ScreenTimingSurface.discover)
-                await vm.load()
+                await Self.loadForInitialAppearance(vm)
             }
             // Gated with the refresh path's copy (#1472): the only view that
             // reads `resolutions` is the digest card above, and it is behind this
@@ -2154,6 +2154,15 @@ struct DiscoverView: View {
             // withdraws rather than guessing in either direction.
             return .idle
         }
+    }
+
+    /// #10399 / #10094: the seeded deck must still revalidate when SwiftUI
+    /// tears down its appearance task. Match the existing pull-refresh lifetime;
+    /// load() retains its deadline, principal and newer-generation fences.
+    @discardableResult
+    @MainActor
+    static func loadForInitialAppearance(_ model: DiscoverViewModel) async -> DiscoverLoadOutcome {
+        await Task { @MainActor in await model.load() }.value
     }
 
     /// One refresh path, with one caller-supplied difference: where the reader

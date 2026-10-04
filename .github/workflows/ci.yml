@@ -557,6 +557,29 @@ jobs:
             exit 1
           fi
 
+      - name: "#10305 D2 participant fill: fences, rollback, restore and the code denylist (real Postgres)"
+        # An own-id TBD row takes ESPN's two clubs in ONE fenced UPDATE whose
+        # every fence Postgres re-judges at write time; RETURNING reports a tag a
+        # concurrent writer committed while the UPDATE waited; a failure after
+        # the write rolls back to its SAVEPOINT through the real scheduled-pass
+        # caller; restore puts the exact prior bytes back; and a stale taxonomy
+        # flush that erases every tag still meets the code denylist on the next
+        # pass (with a control that re-fills). A fake session can do none of it.
+        # Same skip refusal as every gate in this job, plus the exact count.
+        if: matrix.group == 'shared'
+        run: |
+          set -o pipefail
+          python -m pytest tests/integration/test_espn_participant_fill_pg.py \
+            -v -rs -p no:cacheprovider 2>&1 | tee /tmp/fill10305.txt
+          if grep -qiE "[0-9]+ skipped" /tmp/fill10305.txt; then
+            echo "::error::#10305 D2 participant-fill gate SKIPPED — the gate did not run"
+            exit 1
+          fi
+          if ! grep -qE "\b92 passed\b" /tmp/fill10305.txt; then
+            echo "::error::#10305 D2 participant-fill gate did not pass exactly 92 tests"
+            exit 1
+          fi
+
       - name: Typeahead next-fixture contracts, or-NEXT and lead-team (real Postgres)
         # #5201 rides this step: the or-NEXT arm below is gated on "no pooled row
         # NAMES the query's participant", and a NAMESAKE satisfies that gate —
@@ -1314,6 +1337,35 @@ jobs:
             exit 1
           fi
 
+      - name: "#8265 a board keeps its shape across the ingest poll's metadata replace (real Postgres)"
+        # PILLAR: TRUTH. SHIP: a winner board where nobody bids or trades stops
+        # crowning an old print on Discover ("Jakub Mensik leads at 47%").
+        #
+        # The poll's REPLACE erased `market_metadata.shape`, so every proved-field
+        # withholding arm failed closed on the boards the poll had just touched.
+        # Same rig as #5531's step: the real merge over JSONB literals, the
+        # pre-#8265 expression as a strawman, and the merged row handed to the
+        # real route helper. Same three refusals: a skip, nothing collected, a
+        # short count.
+        if: matrix.group == 'shared'
+        run: |
+          set -o pipefail
+          python -m pytest tests/integration/test_the_poll_keeps_the_market_shape_8265_pg.py \
+            -v -rs 2>&1 | tee /tmp/shape8265.txt
+          if grep -qiE "[0-9]+ skipped" /tmp/shape8265.txt; then
+            echo "::error::#8265 shape merge contract SKIPPED — the gate did not run"
+            exit 1
+          fi
+          if grep -qiE "no tests ran|collected 0 items" /tmp/shape8265.txt; then
+            echo "::error::#8265 shape merge contract collected NOTHING"
+            exit 1
+          fi
+          PASSED=$(grep -oE "[0-9]+ passed" /tmp/shape8265.txt | tail -1 | grep -oE "[0-9]+")
+          if [ "${PASSED:-0}" -lt 12 ]; then
+            echo "::error::#8265 expected 12 passing contracts, saw ${PASSED:-0} — a case was lost, not fixed"
+            exit 1
+          fi
+
       - name: "#2077 the route supplies the fleet stamp (real Postgres)"
         # PILLAR: TRUTH. SHIP: a settled board nobody graded stops printing a
         # live coin flip.
@@ -1899,6 +1951,27 @@ jobs:
             -v -s -rs 2>&1 | tee /tmp/poly_reopen_10182.txt
           if grep -qiE "[0-9]+ skipped" /tmp/poly_reopen_10182.txt; then
             echo "::error::#10182 reopen repair gate SKIPPED — the gate did not run"
+            exit 1
+          fi
+
+      - name: "#10319 one-event identity repair preflight/apply/restore (real Postgres)"
+        # PILLARS MATCHING / TRUTH. SHIP: Parma–Ternana (15321333) identifies as
+        # women's Serie A Femminile. The attended tool's READ ONLY preflight, its
+        # one-row four-column compare-and-swap, the FOR UPDATE that fences a
+        # concurrently linked market, lock-budget refusal and the fenced inverse
+        # are server behaviour; the unit file's fake cannot see them. Same skip,
+        # zero-count and short-count detection as its neighbours.
+        if: matrix.group == 'shared'
+        run: |
+          set -o pipefail
+          python -m pytest tests/integration/test_repair_10319_event15321333_competition_identity_pg.py \
+            -v -rs 2>&1 | tee /tmp/repair_10319.txt
+          if grep -qiE "[0-9]+ skipped" /tmp/repair_10319.txt; then
+            echo "::error::#10319 identity repair gate SKIPPED — the gate did not run"
+            exit 1
+          fi
+          if ! grep -qE "^=+ 29 passed" /tmp/repair_10319.txt; then
+            echo "::error::#10319 identity repair gate did not report exactly 29 passed"
             exit 1
           fi
 

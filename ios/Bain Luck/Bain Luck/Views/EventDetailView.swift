@@ -17,6 +17,9 @@ private struct SourceRowWidthKey: PreferenceKey {
 struct EventDetailView: View {
     @Environment(\.scenePhase) private var scenePhase
     @State private var marketPageVisible = false
+    // Only presentation/event identity is retained, never a withdrawn quote.
+    @State private var duringDetailEventID: Int?
+    @AccessibilityFocusState(for: .voiceOver) private var duringPageTitleFocused: Bool
     let eventId: Int
     @StateObject private var vm: EventDetailViewModel
     /// Closed for every reader. Starts open only when the LOOK rig asks
@@ -254,6 +257,7 @@ struct EventDetailView: View {
                 #if os(iOS)
                 ToolbarItem(placement: .principal) {
                     navTitleView
+                        .accessibilityFocused($duringPageTitleFocused)
                 }
                 #endif
                 // Delivery status sits beside Win Probability, where the fan is
@@ -304,6 +308,8 @@ struct EventDetailView: View {
             }
             .onDisappear {
                 marketPageVisible = false
+                duringDetailEventID = nil
+                duringPageTitleFocused = false
                 vm.stopRefresh()
             }
     }
@@ -517,9 +523,33 @@ struct EventDetailView: View {
                             awayScore: event.awayScore
                         )
                     }
-                    // Player Props (from game-markets endpoint)
+                    // #10236 — during a live game, the server's typed player
+                    // questions as one matrix. Absent (not live, older server,
+                    // nothing typed) leaves the card below exactly as it was.
+                    if !(vm.gameMarkets?.duringPlayerProps?.rows ?? []).isEmpty
+                        || duringDetailEventID == eventId {
+                        EventPropsMatrixView(
+                            // Nil/empty after withdrawal carries NO old source,
+                            // stat, probability or observation into the sheet.
+                            props: vm.gameMarkets?.duringPlayerProps
+                                ?? DuringPlayerProps(contract: nil, stats: [], rows: [], coverage: nil),
+                            onDetailPresentationChanged: { presented in
+                                duringDetailEventID = presented ? eventId : nil
+                                if presented { duringPageTitleFocused = false }
+                            },
+                            onMatrixUnavailableDismissed: {
+                                // Invoked only by onDismiss, never on refresh.
+                                guard marketPageVisible, scenePhase == .active,
+                                      duringDetailEventID == eventId else { return }
+                                duringPageTitleFocused = true
+                            }
+                        )
+                    }
+                    // Player Props (from game-markets endpoint) — only the props
+                    // the matrix above does not already draw.
                     if let gameMarkets = vm.gameMarkets,
-                       let playerProps = gameMarkets.playerProps,
+                       case let playerProps = EventPropsMatrixLayout.untypedPlayerProps(
+                           gameMarkets.playerProps ?? [], typed: gameMarkets.duringPlayerProps),
                        !playerProps.isEmpty {
                         PlayerPropsCardView(
                             playerProps: playerProps,
@@ -546,12 +576,22 @@ struct EventDetailView: View {
                             commenceTime: event.commenceTime?.asDate
                         )
                     }
+                    // #10238 — the sourced Game and Series questions, as two
+                    // independent siblings. Each stays mounted while its payload
+                    // is nil so an open question resolves to "unavailable" rather
+                    // than vanishing, and Series is never gated on Game, the
+                    // price or the game's phase: a finished Game leaves an open
+                    // Series showing. Not SeriesProbabilityView (model-only).
+                    EventQuestionMatrixSection10238(
+                        matrix: vm.gameMarkets?.gameQuestionMatrix, scope: .game)
+                    EventQuestionMatrixSection10238(
+                        matrix: vm.relatedFutures?.seriesQuestionMatrix, scope: .series)
                     // Graceful empty state: a market-less game (e.g. an aged-out
                     // closed game whose Kalshi/odds markets have expired) has no
                     // market sections to show. Say so rather than leaving a gap or
                     // assuming a section exists (#1092).
                     if let gameMarkets = vm.gameMarkets,
-                       !gameMarketsHaveContent(gameMarkets) {
+                       !Self.gameMarketsHaveContent(gameMarkets) {
                         noGameMarketsNote(status: event.status)
                     }
                     // Series Probability (playoff series context)
@@ -583,7 +623,10 @@ struct EventDetailView: View {
                         awayTeam: event.awayTeam,
                         homeTeam: event.homeTeam,
                         sportKey: event.sport,
-                        preloadedData: vm.relatedFutures
+                        preloadedData: vm.relatedFutures,
+                        // #10238 — the same payload the Series section above draws.
+                        seriesMarketIdsDrawnAbove: EventQuestionMatrixAdapter.drawnMarketIds(
+                            in: vm.relatedFutures?.seriesQuestionMatrix, scope: .series)
                     )
                     // League page link
                     leaguePageLink(event)
@@ -622,12 +665,16 @@ struct EventDetailView: View {
 
     /// Whether the game-markets payload has any renderable section. All arrays
     /// are optional and can arrive empty for a market-less / aged-out game.
-    private func gameMarketsHaveContent(_ gm: GameMarketsResponse) -> Bool {
+    /// #10238 — a drawn Game question counts; Series does not (the note is
+    /// about Game inventory, and Series has its own section).
+    static func gameMarketsHaveContent(_ gm: GameMarketsResponse) -> Bool {
         !(gm.spreads ?? []).isEmpty
+            || !EventQuestionMatrixAdapter.rows(in: gm.gameQuestionMatrix, scope: .game).isEmpty
             || !(gm.totals ?? []).isEmpty
             || !(gm.teamTotals ?? []).isEmpty
             || !(gm.periodMarkets ?? []).isEmpty
             || !(gm.playerProps ?? []).isEmpty
+            || !(gm.duringPlayerProps?.rows ?? []).isEmpty
             || !(gm.other ?? []).isEmpty
             || gm.openWinnerQuote?.isPresentable(eventId: gm.eventId, eventStatus: gm.status,
                                                 closedMarketIds: Set(gm.closedWinnerMarketIds ?? [])) == true
@@ -718,7 +765,8 @@ struct EventDetailView: View {
     }
 
     /// One visible delivery status directly beside the probabilities, including
-    /// accepted receipts whose rounded percentage does not move. Detail age stays disclosed.
+    /// accepted receipts whose rounded percentage does not move. The exact device
+    /// receipt time is disclosed on tap only (#8320 v24: one compact line).
     private func probabilityDetails(confidenceTier: String?) -> some View {
         Button { showProbabilityDetails.toggle() } label: {
             VStack(spacing: 4) {
@@ -728,7 +776,7 @@ struct EventDetailView: View {
                         .foregroundStyle(.secondary)
                     SignalBarsView(tier: confidenceTier)
                 }
-                VisibleLivePriceStatusView(status: vm.liveUpdateStatus,
+                CompactEventPriceStatusView(status: vm.liveUpdateStatus,
                     sequence: vm.priceActivity?.sequence ?? 0,
                     receivedAt: vm.priceActivity?.receivedAt)
             }

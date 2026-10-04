@@ -195,7 +195,7 @@ describe("#925 — the tooltip's carried-state line", () => {
       const span = SOURCE.match(/\{matchingPoint\._period && \(\s*<span[^>]*>([\s\S]*?)<\/span>/);
       expect(span).not.toBeNull();
       expect((span as RegExpMatchArray)[1].trim().replace(/\s+/g, " ")).toBe(
-        "{formatLiveClockLabel( matchingPoint._period as string, matchingPoint._clock as string | undefined, )}",
+        '{formatLiveClockLabel( matchingPoint._period as string, matchingPoint._clock as string | undefined, " ", sportKey, )}',
       );
     });
 

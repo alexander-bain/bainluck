@@ -158,7 +158,7 @@ nonisolated struct DiscoverFeedCache: Sendable {
 
     /// Minimal shape used only to lift `cache.ttl_seconds` out of the raw body.
     private struct FeedCacheMeta: Decodable {
-        struct CacheInfo: Decodable { let ttlSeconds: Double? }
+        nonisolated struct CacheInfo: Decodable { let ttlSeconds: Double? }
         let cache: CacheInfo?
     }
 }

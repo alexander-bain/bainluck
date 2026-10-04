@@ -396,9 +396,10 @@ interface OddsChartProps {
    */
   awayWithheld?: boolean;
   /**
-   * #5634 — the event's sport key, read ONLY to name the teams on the axis: a
+   * #5634 — the event's sport key, read to name the teams on the axis: a
    * football club keeps its whole name ("UNION BERLIN", never "BERLIN"). Absent
-   * keeps the shipped last-word rule.
+   * keeps the shipped last-word rule. #10414: also handed to the tooltip's
+   * clock line, so a sport with no clock (baseball) prints none.
    */
   sportKey?: string | null;
 }
@@ -2484,11 +2485,14 @@ export default function OddsChart({
                     `alreadySpelledOut` (a clock-shaped token the period already contains)
                     and `repeatsPeriod` ("Final"/"Final").
 
-                    NO SPORT KEY IS PASSED, and that is deliberate rather than an omission:
-                    this component never receives one, and `sportVocab(undefined)` returns
-                    `UNSCORED_IN_POINTS`, whose `gameHasAClock` is `true` — so the sport arm
-                    of the helper (the one that DELETES a clock) cannot fire here. Every
-                    change this makes is the removal of a token already on the line.
+                    #10414 — THE SPORT KEY IS NOW PASSED. #7860 passed none because this
+                    component had none; #5634 has since handed it `sportKey`. Without it,
+                    `sportVocab(undefined).gameHasAClock` is `true`, so the helper's sport
+                    arm (#6684: a game with no clock never paints one) could not fire, and
+                    every MLB tooltip read `Top 9th 0:00` — ESPN's constant placeholder —
+                    after the header, cards and feed had stopped. Only sports that DECLARE
+                    `gameHasAClock: false` lose the token (baseball, tennis); a clocked
+                    sport, or an absent key, keeps exactly what #7860 rendered.
 
                     The outer `_period &&` guard is KEPT so this stays a pure deletion: with
                     a clock but no period the helper alone would render a bare "9:44" where
@@ -2498,6 +2502,8 @@ export default function OddsChart({
                     {formatLiveClockLabel(
                       matchingPoint._period as string,
                       matchingPoint._clock as string | undefined,
+                      " ",
+                      sportKey,
                     )}
                   </span>
                 )}
@@ -2798,12 +2804,10 @@ export default function OddsChart({
             className={`font-medium rounded-full transition-colors ${
               isDisabled
                 ? "opacity-30 cursor-not-allowed px-3 py-1.5 text-xs bg-surface-elevated text-text-secondary"
-                : fillContainer
-                ? `px-[0.4vw] py-[0.1vh] text-[0.9vh] ${
-                    timeRange === option.value
-                      ? "bg-surface-card/10 text-white/40"
-                      : "text-white/15 hover:text-white/25"
-                  }`
+                /* #10362 — the fullscreen view used its own white-on-dark pill
+                   (`text-white/15`) from when the modal was black. The dialog is
+                   `bg-surface-card` now, so those pills were invisible: the
+                   fullscreen chart had a range control nobody could see. One pill. */
                 : `px-3 py-1.5 text-xs ${
                     timeRange === option.value
                       ? "bg-text-primary text-surface-deep"

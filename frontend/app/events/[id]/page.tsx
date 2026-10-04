@@ -19,6 +19,7 @@ import {
   nextFullHistoryLatch,
 } from "@/lib/event/historyRange";
 import { canonicalEventHref } from "@/lib/canonicalEventUrl";
+import { matrixForStat, type DuringPlayerProps } from "@/lib/duringPlayerPropsMatrixSelection";
 import { withoutEventOwnMoneyline } from "@/lib/eventOwnMoneyline";
 import { eventPageProjectedPair } from "@/lib/projectedFinalPair";
 import { teamTextColor } from "@/lib/teamColors";
@@ -62,6 +63,7 @@ const RelatedFutures = dynamic(() => import("@/components/RelatedFutures"), { ss
 const GamePlayCard = dynamic(() => import("@/components/GamePlayCard"), { ssr: false });
 const SeriesProbability = dynamic(() => import("@/components/SeriesProbability"), { ssr: false });
 const TotalPointsSpectrum = dynamic(() => import("@/components/TotalPointsSpectrum"), { ssr: false });
+const DuringPlayerPropsMatrix = dynamic(() => import("@/components/DuringPlayerPropsMatrix"), { ssr: false, loading: ChartSkeleton });
 const PlayerPropsDashboard = dynamic(() => import("@/components/PlayerPropsDashboard"), { ssr: false, loading: ChartSkeleton });
 // UX-P098: the rail LEADS the props body, so it is a static import — a dynamic
 // one would paint a skeleton in the one slot the page is supposed to answer first.
@@ -95,6 +97,8 @@ const PropsSection = dynamic(() => import("@/components/event/PropsSection"), { 
 import type { PropMark } from "@/components/event/PropsSection";
 import { indexPropRowsByScriptKey, verifyScriptGrade } from "@/lib/propGrade";
 import { isChildTitleMark } from "@/lib/propFamily";
+import { groupPlayerPropsWithCoverage, type BoxScorePlayer } from "@/lib/playerPropsGrouping";
+import { dropScriptRowsTheFoldDraws, isKnownPregameForScript } from "@/lib/pregamePropsScript10340";
 import { countOf } from "@/lib/plural";
 import LoadingSpinner from "@/components/LoadingSpinner";
 import ErrorBoundary from "@/components/ErrorBoundary";
@@ -130,6 +134,7 @@ import { isCloseGame, calculateMinutesToStart } from "@/lib/analytics";
 import { isPregameStatus } from "@/lib/settledQuote";
 import { derivePeriodBoundaries } from "@/lib/periodMarkers";
 import { authorityStoppageLabel, formatLiveClockLabel } from "@/lib/gameTimeLabel";
+import { restingGameClock } from "@/lib/restingGameClock";
 import {
   SUSPENDED_DESCRIPTION,
   VENUE_SETTLED_DESCRIPTION,
@@ -246,9 +251,6 @@ export default function EventPage({ params }: EventPageProps) {
   const { isPinned, togglePin, isMaxReached } = usePinnedEvents();
   const eventIsPinned = isPinned(eventId);
 
-  // live/034 S2 — see the `refreshInterval` note below. Declared here because
-  // the SWR config closes over it and the hook that sets it needs `event`.
-  const streamConnectedRef = useRef(false);
   // Consume refresh intent in the fetcher, so deduped SWR requests retain it.
   // Ordinary interval reads continue using the shared server cache.
   const freshNextEventReadRef = useRef(false);
@@ -276,10 +278,10 @@ export default function EventPage({ params }: EventPageProps) {
   //
   // `useMemo` with an EMPTY dependency list is correct rather than lazy here:
   // the callback closes over nothing reactive (status arrives as swr's argument,
-  // liveness through the ref, the cadences are module constants), which is the
-  // precondition the factory documents.
+  // the cadences are module constants), which is the precondition the factory
+  // documents.
   const eventPollInterval = useMemo(
-    () => makeEventRefreshInterval(streamConnectedRef, {
+    () => makeEventRefreshInterval({
       live: LIVE_REFRESH_INTERVAL,
       scheduled: SCHEDULED_REFRESH_INTERVAL,
     }),
@@ -300,27 +302,15 @@ export default function EventPage({ params }: EventPageProps) {
       () => heldEventRef.current,
     ),
     {
-      // live/034 S2 — when the SSE stream is delivering, the 32s poll stands
-      // down. That is the ship: the same number, arriving instead of being
-      // waited for. The instant the stream stops delivering — errored, refused,
-      // closed, or silently dead — `streamConnected` goes false and the 32s
-      // poll comes straight back. A push path that dies must degrade to
-      // polling, never to a frozen number.
-      //
-      // CERT-1994: "stands down" is not "stops". It used to be 0, and a frame
-      // carries ONE probability, so every other field on a page somebody left
-      // open was frozen at first fetch — including the tennis games line and the
-      // `observed_at` its freshness chip counts from, which the server
-      // re-confirms every ~10 minutes. The chip then said `Stale · 40m ago`
-      // about a number re-confirmed a minute earlier: the honesty mechanism
-      // itself lying, which is worse than the staleness it exists to disclose.
-      // See `eventRefreshInterval` for why the pushed cadence is 120s and not a
-      // taste — it is derived from the chip's own stale threshold.
-      //
-      // Read through a REF, not the state value: `streamConnected` is derived
-      // from `event`, which is what this very call produces, so naming it here
-      // would be a use-before-declare. The ref is written just after the hook
-      // below, and SWR only ever invokes this after a render has completed.
+      // live/034 S2 stood this poll down while the SSE stream delivered: the
+      // frame carries the probability, so it arrives instead of being waited
+      // for. CERT-1994 found "stood down" cannot mean "stopped" — every field
+      // the frame does not carry froze at first fetch — and settled on 120s,
+      // the freshness chip's tolerance. #4889 found 120s is not the CLOCK's
+      // tolerance: the header's game clock comes from this read while the play
+      // strip comes from `/history` at 32s, so a live page showed two clocks
+      // 78 game-seconds apart. A live page now reads at 32s whether or not the
+      // stream delivers; see `eventRefreshInterval`.
       // #7621: a STABLE reference, built above. Inlining the arrow here again
       // is the bug — see the note on `eventPollInterval`.
       refreshInterval: eventPollInterval,
@@ -410,9 +400,8 @@ export default function EventPage({ params }: EventPageProps) {
     chartPoints,
     status: reportedStreamStatus,
   } = useLiveEventStream(eventId, quoteEligible);
-  streamConnectedRef.current = streamConnected;
   // #10200: the transport's own observation, for the chart status only — the
-  // poll above still gates on `streamConnected`. A stream that reports only
+  // disconnect refetch below still keys on `streamConnected`. A stream that reports only
   // `connected` (an older hook, a test double) reads as open or idle.
   const streamStatus = reportedStreamStatus ?? (streamConnected ? "open" : "idle");
 
@@ -596,12 +585,6 @@ export default function EventPage({ params }: EventPageProps) {
     }
     wasStreamConnected.current = streamConnected;
   }, [streamConnected, refreshEvent]);
-
-  // UX-P051 (#1710) — which of ESPN's two clock fields the phase badge may
-  // believe. `espn.period` is ESPN's status detail, and while ESPN still has the
-  // game as scheduled that detail is a sentence ("Mon, August 10th at 8:00 PM
-  // EDT") shipped with `game_clock: "0.0"` — both untrustworthy together.
-  const liveClockLabel = formatLiveClockLabel(event?.espn?.period, event?.espn?.game_clock, " · ");
 
   // Track page view with event-specific parameters
   usePageTracking({
@@ -827,6 +810,11 @@ export default function EventPage({ params }: EventPageProps) {
     },
     [servedHistory, event, quoteEligible, chartPoints],
   );
+
+  // UX-P051 (#1710) — which of ESPN's two clock fields the phase badge may
+  // believe. `espn.period` is ESPN's status detail, and while ESPN still has the
+  // game as scheduled that detail is a sentence ("Mon, August 10th at 8:00 PM
+  // EDT") shipped with `game_clock: "0.0"` — both untrustworthy together.
 
   // A newer membership revision may carry an older surviving quote. Keep the
   // real chart observations and ask history for its current-state endpoint;
@@ -1054,6 +1042,16 @@ export default function EventPage({ params }: EventPageProps) {
     [servedGameMarkets]
   );
 
+  // #10358: consume only the existing adopted event-scoped projection. Live
+  // owns its revision/withdrawal fences; this mount adds no transport.
+  const duringPlayerProps = useMemo(() => {
+    const data = (gameMarkets as (NonNullable<typeof gameMarkets> & { during_player_props?: DuringPlayerProps | null }) | undefined)?.during_player_props;
+    return event?.status === "live" && gameMarkets?.event_id === event.id &&
+      data?.contract === "10236.v1" && Array.isArray(data.stats) && Array.isArray(data.rows) &&
+      data.stats.some(stat => matrixForStat(data, stat.stat_key).players.length > 0)
+      ? data : null;
+  }, [event?.id, event?.status, gameMarkets]);
+
   // Both charts read the same served + received publication history (#920).
   const sparklinePoints = useMemo(() =>
     (historyData?.aggregate_line ?? []).map(p => ({
@@ -1083,6 +1081,23 @@ export default function EventPage({ params }: EventPageProps) {
       ),
     [historyData, servedScore, event?.status, event?.espn],
   );
+
+  // #4889 — ONE CLOCK ON THE PAGE. The header and the readout under the chart
+  // at rest both read `restingGameClock` over `lastChartPoint`, so they cannot
+  // print two clocks. The header first ran its own carry over `/history`, and
+  // that could disagree with the readout: with no ESPN rows it took the win-prob
+  // Q2 5:10 while the readout printed the detail payload's 5:31. Before that it
+  // read the detail payload alone and said 0:42 above a strip saying 0:38
+  // (production, Auburn at Tennessee, 2026-10-03). The header has no `~`, so a
+  // clock inherited from before the period changed is left off it, never shown
+  // as current. When the readout's clock fails the trust rules the header says
+  // LIVE, never a second clock. With no point (no history read) it keeps the
+  // detail clock, which is then the only clock on the page.
+  const restingClock = lastChartPoint ? restingGameClock(lastChartPoint, event?.sport) : null;
+  const liveClockLabel =
+    restingClock
+      ? [restingClock.period, restingClock.clockIsCurrent ? restingClock.gameClock : ""].filter(Boolean).join(" · ")
+      : formatLiveClockLabel(event?.espn?.period, event?.espn?.game_clock, " · ");
 
   // Best-known scores. #5521 — the comment that stood here said *"prefer latest
   // ESPN history (more frequent updates) over event SWR"*, which is an empirical
@@ -3153,28 +3168,32 @@ export default function EventPage({ params }: EventPageProps) {
       )}
 
       {/* Game Markets — Player Props + Matchups + Special Markets */}
-      {gameMarkets && (gameMarkets.player_props.length > 0 || (gameMarkets.matchups?.length ?? 0) > 0 || (gameMarkets.other?.length ?? 0) >= SPECIAL_MARKETS_MIN_WIRE_ROWS) && (
+      {gameMarkets && (duringPlayerProps || gameMarkets.player_props.length > 0 || (gameMarkets.matchups?.length ?? 0) > 0 || (gameMarkets.other?.length ?? 0) >= SPECIAL_MARKETS_MIN_WIRE_ROWS) && (
         <div className="space-y-3">
 
           {/* UX-P055: #1722's actual crash site. This is the one boundary that
               is not speculative — an unpriced `other` row here took the whole
               route down on 2026-08-10, and 7 of 8 sampled settled MLB events
               carry 55-73 rows of that shape. */}
-          {gameMarkets.player_props.length > 0 && (
+          {(duringPlayerProps || gameMarkets.player_props.length > 0) && (
             <>
             {/* UX-P098 (UX-AMBITION-1 slice 1) — THE DIVERGENCE leads.
                 Alex's V1: the pregame page opens with the five questions that
                 are actually live, not the whole prop set. On a real MLB payload
                 that set is FORTY props; leading with it is the wall this
                 replaces. The full set is one click away, below. */}
-            <SectionErrorBoundary label="What's moving" resetKey={gameMarkets}>
+            {gameMarkets.player_props.length > 0 && <SectionErrorBoundary label="What's moving" resetKey={gameMarkets}>
             <PropDivergenceRail
               playerProps={gameMarkets.player_props}
               status={event.status}
             />
-            </SectionErrorBoundary>
+            </SectionErrorBoundary>}
 
-            <SectionErrorBoundary label="Player props" resetKey={gameMarkets}>
+            {duringPlayerProps && <SectionErrorBoundary label="During player chances" resetKey={event.id}>
+              <DuringPlayerPropsMatrix key={event.id} data={duringPlayerProps} />
+            </SectionErrorBoundary>}
+
+            {gameMarkets.player_props.length > 0 && <SectionErrorBoundary label="Player props" resetKey={gameMarkets}>
             <details className="group bg-surface-card rounded-card shadow-card overflow-hidden">
               <summary className="cursor-pointer select-none px-4 sm:px-5 py-3 text-[13px] font-semibold text-text-primary marker:content-none">
                 All {countOf(gameMarkets.player_props.length, "prop", "props")}
@@ -3198,7 +3217,7 @@ export default function EventPage({ params }: EventPageProps) {
                 boxScore={event.box_score_data}
               />
             </details>
-            </SectionErrorBoundary>
+            </SectionErrorBoundary>}
             </>
           )}
 
@@ -3278,8 +3297,33 @@ export default function EventPage({ params }: EventPageProps) {
           The section self-gates on an empty array; PropsSection returns null when
           items is empty. Forward-only marks render honest "pending" chips. */}
       {(() => {
-        const propsScript = gameMarkets?.props_script;
-        if (!Array.isArray(propsScript) || propsScript.length === 0) return null;
+        const servedScript = gameMarkets?.props_script;
+        if (!Array.isArray(servedScript) || servedScript.length === 0) return null;
+        // #10340: before kickoff, a question the "All N props" fold above
+        // already draws is not drawn again here. Coverage is the fold's own
+        // grouping over the SAME inputs `PlayerPropsDashboard` passes (colours
+        // and the dead box-score path included), and only its emitted rungs
+        // count. Live/final/unknown pass the script through untouched.
+        const knownPregame = isKnownPregameForScript(event.status, hasStarted);
+        const foldBoxScore = event.box_score_data as { players?: BoxScorePlayer[] } | null | undefined;
+        const propsScript = knownPregame
+          ? dropScriptRowsTheFoldDraws(servedScript, {
+              knownPregame,
+              representedKeys: groupPlayerPropsWithCoverage({
+                playerProps: gameMarkets?.player_props,
+                other: gameMarkets?.other,
+                homeTeam: event.home_team,
+                awayTeam: event.away_team,
+                homeColor: event.home_team_data?.primary_color || undefined,
+                awayColor: event.away_team_data?.primary_color || undefined,
+                boxScorePlayers:
+                  foldBoxScore?.players != null && foldBoxScore.players.length > 0
+                    ? foldBoxScore.players
+                    : null,
+              }).representedScriptKeys,
+            })
+          : servedScript;
+        if (propsScript.length === 0) return null;
         // #1650: hold the WHAT HIT row to the same authority as the Player
         // Props card above it, using the raw typed rows on this same payload.
         const rawPropRowsByKey = indexPropRowsByScriptKey(gameMarkets?.player_props);
@@ -3292,6 +3336,10 @@ export default function EventPage({ params }: EventPageProps) {
             // the teams lets the section drop it — and ONLY when it is this
             // event's matchup, so a mis-attached fixture stays visible.
             matchup={{ home: event.home_team, away: event.away_team }}
+            // #10340: before kickoff, with the rail and the "All N props" fold
+            // above (both mount on `player_props`), this section is the extra
+            // questions and is headed so; the rail keeps "The script".
+            supplemental={knownPregame && (gameMarkets?.player_props?.length ?? 0) > 0}
             items={propsScript
               .map((p, i): PropMark => {
                 const verified = verifyScriptGrade(p, rawPropRowsByKey);
@@ -3542,6 +3590,16 @@ export default function EventPage({ params }: EventPageProps) {
               /* #6238 — the fullscreen chart is the same chart. A reader who
                  taps expand must not get the withheld number back. */
               awayWithheld={awaySlotWithheld}
+              /* #10362 — and it opens on the range the card shows. Without these the
+                 expanded chart fell back to its own default window: a reader on "All"
+                 tapped expand and got "Since Start", with no way back. The toggle here
+                 drives the same `chartTimeRange`, so closing returns to the same range. */
+              chartStartTime={sharedChartDomain?.start}
+              chartEndTime={sharedChartDomain?.end}
+              sharedTicks={sharedChartDomain?.ticks}
+              chartLabelFormat={sharedChartDomain?.labelFormat}
+              externalTimeRange={chartTimeRange}
+              onTimeRangeChange={handleChartTimeRangeChange}
             />
         </ChartFullscreenDialog>
       )}

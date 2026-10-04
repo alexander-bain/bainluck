@@ -1,0 +1,416 @@
+{
+  "away_team": "New York Yankees",
+  "away_team_futures": [],
+  "box_score": null,
+  "cache": {
+    "availability": "live",
+    "build_id": "nobuild",
+    "created_at": "2026-10-03T16:15:04.639592+00:00",
+    "generation": 3,
+    "lifecycle_watermark": null,
+    "quality": "full",
+    "quality_reasons": [],
+    "source_status": "completed"
+  },
+  "event_id": 55,
+  "event_status": "completed",
+  "game_clock": null,
+  "game_period": null,
+  "home_team": "Boston Red Sox",
+  "home_team_futures": [],
+  "league_context": null,
+  "series_markets": [
+    {
+      "market_id": 900,
+      "market_name": "Red Sox vs Yankees: Series Winner",
+      "outcomes": [
+        {
+          "is_winner": null,
+          "name": "Boston Red Sox",
+          "outcome_id": 901,
+          "probability": 0.7,
+          "probability_change_24h": null,
+          "settled": false
+        },
+        {
+          "is_winner": null,
+          "name": "New York Yankees",
+          "outcome_id": 902,
+          "probability": 0.29,
+          "probability_change_24h": null,
+          "settled": false
+        }
+      ],
+      "resolution_date": null,
+      "source": "kalshi",
+      "status": "open"
+    },
+    {
+      "market_id": 910,
+      "market_name": "Red Sox vs Yankees: Exact Series Result",
+      "outcomes": [
+        {
+          "is_winner": false,
+          "name": "Red Sox in 3",
+          "outcome_id": 911,
+          "probability": null,
+          "probability_change_24h": null,
+          "settled": true
+        },
+        {
+          "is_winner": null,
+          "name": "Red Sox in 4",
+          "outcome_id": 912,
+          "probability": 0.35,
+          "probability_change_24h": null,
+          "settled": false
+        },
+        {
+          "is_winner": null,
+          "name": "Yankees in 4",
+          "outcome_id": 913,
+          "probability": null,
+          "probability_change_24h": null,
+          "settled": false
+        },
+        {
+          "is_winner": null,
+          "name": "Yankees in 3",
+          "outcome_id": 914,
+          "probability": null,
+          "probability_change_24h": null,
+          "settled": false
+        }
+      ],
+      "resolution_date": null,
+      "source": "kalshi",
+      "status": "open"
+    }
+  ],
+  "series_question_matrix": {
+    "contract": "10238.v1",
+    "coverage": {
+      "build_errors": 0,
+      "by_kind": {
+        "count_threshold": 0,
+        "rank_predicate": 0,
+        "signed_handicap": 0
+      },
+      "options": 6,
+      "questions": 2,
+      "scope": "rows_served_by_this_response",
+      "untyped": {
+        "untyped_period": 0,
+        "untyped_predicate": 0,
+        "untyped_subject": 0,
+        "untyped_unit": 0
+      }
+    },
+    "display_scope": "series",
+    "questions": [
+      {
+        "complement_question_key": null,
+        "complete": null,
+        "display_scope": "series",
+        "kind": "named_options",
+        "label": "Red Sox vs Yankees: Series Winner",
+        "lifecycle": {
+          "market_status": "open",
+          "state": "open"
+        },
+        "market_name": "Red Sox vs Yankees: Series Winner",
+        "missing_options": [],
+        "option_counts": {
+          "declared": null,
+          "loaded": 2,
+          "missing_identified": 0,
+          "returned": 2
+        },
+        "options": [
+          {
+            "comparison": {
+              "baseline": null,
+              "delta_points": null,
+              "latest": null,
+              "reason": "series_baseline_unsupported",
+              "state": "unavailable"
+            },
+            "contributor_outcome_ids": [
+              901
+            ],
+            "label": "Boston Red Sox",
+            "market_ids": [
+              900
+            ],
+            "option_key": "o:901",
+            "published": {
+              "basis": "published_source_display",
+              "observed_at": null,
+              "source": "kalshi",
+              "value": 0.7,
+              "value_state": "quoted"
+            },
+            "result": {
+              "evidence_kind": "none",
+              "state": "open"
+            },
+            "side": "home",
+            "source_evidence": [
+              {
+                "leg_side": "home",
+                "market_id": 900,
+                "observed_at": null,
+                "outcome_id": 901,
+                "raw_probability": 0.7,
+                "source": "kalshi"
+              }
+            ]
+          },
+          {
+            "comparison": {
+              "baseline": null,
+              "delta_points": null,
+              "latest": null,
+              "reason": "series_baseline_unsupported",
+              "state": "unavailable"
+            },
+            "contributor_outcome_ids": [
+              902
+            ],
+            "label": "New York Yankees",
+            "market_ids": [
+              900
+            ],
+            "option_key": "o:902",
+            "published": {
+              "basis": "published_source_display",
+              "observed_at": null,
+              "source": "kalshi",
+              "value": 0.29,
+              "value_state": "quoted"
+            },
+            "result": {
+              "evidence_kind": "none",
+              "state": "open"
+            },
+            "side": "away",
+            "source_evidence": [
+              {
+                "leg_side": "away",
+                "market_id": 900,
+                "observed_at": null,
+                "outcome_id": 902,
+                "raw_probability": 0.29,
+                "source": "kalshi"
+              }
+            ]
+          }
+        ],
+        "period": null,
+        "predicate": null,
+        "proposition_key": null,
+        "quantity": null,
+        "question_key": "m:900",
+        "source_array": "series_markets",
+        "source_totals": [
+          {
+            "legs": 2,
+            "raw_sum": 0.99,
+            "source": "kalshi"
+          }
+        ],
+        "subject": null,
+        "typing": {
+          "reason": null,
+          "state": "typed"
+        }
+      },
+      {
+        "complement_question_key": null,
+        "complete": null,
+        "display_scope": "series",
+        "kind": "named_options",
+        "label": "Red Sox vs Yankees: Exact Series Result",
+        "lifecycle": {
+          "market_status": "open",
+          "state": "open"
+        },
+        "market_name": "Red Sox vs Yankees: Exact Series Result",
+        "missing_options": [],
+        "option_counts": {
+          "declared": null,
+          "loaded": 4,
+          "missing_identified": 0,
+          "returned": 4
+        },
+        "options": [
+          {
+            "comparison": {
+              "baseline": null,
+              "delta_points": null,
+              "latest": null,
+              "reason": "not_quoted",
+              "state": "unavailable"
+            },
+            "contributor_outcome_ids": [
+              911
+            ],
+            "label": "Red Sox in 3",
+            "market_ids": [
+              910
+            ],
+            "option_key": "o:911",
+            "published": {
+              "basis": "result",
+              "observed_at": null,
+              "source": "kalshi",
+              "value": null,
+              "value_state": "result"
+            },
+            "result": {
+              "evidence_kind": "outcome_is_settled",
+              "state": "lost"
+            },
+            "side": "category",
+            "source_evidence": [
+              {
+                "leg_side": "category",
+                "market_id": 910,
+                "observed_at": null,
+                "outcome_id": 911,
+                "raw_probability": 0.0,
+                "source": "kalshi"
+              }
+            ]
+          },
+          {
+            "comparison": {
+              "baseline": null,
+              "delta_points": null,
+              "latest": null,
+              "reason": "series_baseline_unsupported",
+              "state": "unavailable"
+            },
+            "contributor_outcome_ids": [
+              912
+            ],
+            "label": "Red Sox in 4",
+            "market_ids": [
+              910
+            ],
+            "option_key": "o:912",
+            "published": {
+              "basis": "published_source_display",
+              "observed_at": null,
+              "source": "kalshi",
+              "value": 0.35,
+              "value_state": "quoted"
+            },
+            "result": {
+              "evidence_kind": "none",
+              "state": "open"
+            },
+            "side": "category",
+            "source_evidence": [
+              {
+                "leg_side": "category",
+                "market_id": 910,
+                "observed_at": null,
+                "outcome_id": 912,
+                "raw_probability": 0.35,
+                "source": "kalshi"
+              }
+            ]
+          },
+          {
+            "comparison": {
+              "baseline": null,
+              "delta_points": null,
+              "latest": null,
+              "reason": "not_quoted",
+              "state": "unavailable"
+            },
+            "contributor_outcome_ids": [
+              913
+            ],
+            "label": "Yankees in 4",
+            "market_ids": [
+              910
+            ],
+            "option_key": "o:913",
+            "published": {
+              "basis": "unknown",
+              "observed_at": null,
+              "source": "kalshi",
+              "value": null,
+              "value_state": "refused"
+            },
+            "result": {
+              "evidence_kind": "none",
+              "state": "open"
+            },
+            "side": "category",
+            "source_evidence": []
+          },
+          {
+            "comparison": {
+              "baseline": null,
+              "delta_points": null,
+              "latest": null,
+              "reason": "not_quoted",
+              "state": "unavailable"
+            },
+            "contributor_outcome_ids": [
+              914
+            ],
+            "label": "Yankees in 3",
+            "market_ids": [
+              910
+            ],
+            "option_key": "o:914",
+            "published": {
+              "basis": "unknown",
+              "observed_at": null,
+              "source": "kalshi",
+              "value": null,
+              "value_state": "unpriced"
+            },
+            "result": {
+              "evidence_kind": "none",
+              "state": "open"
+            },
+            "side": "category",
+            "source_evidence": [
+              {
+                "leg_side": "category",
+                "market_id": 910,
+                "observed_at": null,
+                "outcome_id": 914,
+                "raw_probability": null,
+                "source": "kalshi"
+              }
+            ]
+          }
+        ],
+        "period": null,
+        "predicate": null,
+        "proposition_key": null,
+        "quantity": null,
+        "question_key": "m:910",
+        "source_array": "series_markets",
+        "source_totals": [],
+        "subject": null,
+        "typing": {
+          "reason": null,
+          "state": "typed"
+        }
+      }
+    ],
+    "series_markets_count": {
+      "eligible": 2,
+      "returned": 2
+    }
+  },
+  "summary": null,
+  "total_count": 0
+}

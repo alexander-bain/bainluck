@@ -95,13 +95,13 @@ function mount(p: Props) {
 describe('#10200 the status button', () => {
   it('closed: a semantic label, aria-expanded false, controlling hidden details', () => {
     const html = renderToStaticMarkup(<LiveConnectionStatus {...props()} />);
-    expect(html).toContain('<span class="truncate whitespace-nowrap">Connected · waiting</span>');
+    expect(html).toContain('<span class="min-w-0 leading-4">Connected · waiting</span>');
     expect(html).toMatch(/aria-expanded="false" aria-controls="([^"]+)"/);
     const id = html.match(/aria-controls="([^"]+)"/)![1];
     // A plain substring: the id is React's `useId` value, so no pattern is needed.
     expect(html).toContain(`<div id="${id}" hidden=""`);
     // The label is a state, never a seconds counter.
-    const visible = html.match(/truncate whitespace-nowrap">([^<]+)</)![1];
+    const visible = html.match(/min-w-0 leading-4">([^<]+)</)![1];
     expect(visible).not.toMatch(/\d+s\b|ago/);
   });
 
@@ -242,5 +242,47 @@ describe('#10200 motion, colour and announcements', () => {
     expect(renderToStaticMarkup(<LiveConnectionStatus {...props({ presentation: p })} />)).toContain(
       'aria-live="polite"></span>',
     );
+  });
+});
+
+describe('#9655 the whole state is readable at 390px', () => {
+  const RETRYING: ConnectionPresentation = {
+    label: 'Updates interrupted · reconnecting',
+    tone: 'attention',
+    breathes: false,
+    announcement: 'Updates interrupted · reconnecting',
+  };
+  // Every class on the path from the button down to the words: anything here
+  // that forbids a line break or clips the overflow puts "reconn…" back.
+  const CLIPS = /\b(truncate|whitespace-nowrap|text-ellipsis|text-clip|overflow-hidden|overflow-x-hidden|line-clamp-\d+)\b/;
+
+  it('the retrying label is printed whole, with nothing on its path that clips or forbids a wrap', () => {
+    const html = renderToStaticMarkup(<LiveConnectionStatus {...props({ presentation: RETRYING })} />);
+    const button = html.match(/<button[^>]*class="([^"]+)"[^>]*>([\s\S]*?)<\/button>/)!;
+    expect(button[1]).not.toMatch(CLIPS);
+    const words = button[2].match(/<span class="([^"]*)">(Updates interrupted · reconnecting)<\/span>/);
+    expect(words).not.toBeNull();
+    expect(words![1]).not.toMatch(CLIPS);
+    // Whole words: no utility that breaks inside "reconnecting".
+    expect(words![1]).not.toMatch(/\bbreak-(all|words)\b/);
+    expect(html.match(/<div[^>]*data-testid="live-connection-status"[^>]*class="([^"]+)"|<div[^>]*class="([^"]+)"[^>]*data-testid="live-connection-status"/)!.slice(1).join(' ')).not.toMatch(CLIPS);
+  });
+
+  it('a wrapped label keeps its dot on the first line and the dot never shrinks away', () => {
+    const html = renderToStaticMarkup(<LiveConnectionStatus {...props({ presentation: RETRYING })} />);
+    const dot = html.match(/<span aria-hidden="true" class="([^"]+)"><\/span>/)![1];
+    expect(dot).toContain('shrink-0');
+    expect(dot).toContain('bg-accent-warning');
+    // 8px dot centred on the first 16px line, not on the middle of two lines.
+    expect(dot).toContain('mt-1');
+    expect(html).toMatch(/<button[^>]*class="[^"]*\bitems-start\b/);
+    expect(html).toContain('<span class="min-w-0 leading-4">Updates interrupted · reconnecting</span>');
+  });
+
+  it('wrapping changes nothing a screen reader or a tap reaches', () => {
+    const html = renderToStaticMarkup(<LiveConnectionStatus {...props({ presentation: RETRYING })} />);
+    expect(html).toContain('<span class="sr-only">, show update times</span>');
+    expect(html).toContain('<span class="sr-only" role="status" aria-live="polite">Updates interrupted · reconnecting</span>');
+    expect(html).toMatch(/<button type="button" aria-expanded="false" aria-controls="[^"]+"/);
   });
 });

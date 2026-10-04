@@ -1,0 +1,1015 @@
+{
+ "away_score": 3,
+ "away_team": "New York Yankees",
+ "closed_winner_market_ids": [],
+ "during_player_props": {
+  "contract": "10236.v1",
+  "coverage": {
+   "actual_only": 0,
+   "questions": 12,
+   "quoted": 12,
+   "refused": {
+    "ambiguous_subject": 0,
+    "monotonic_conflict": 0,
+    "redundant_parent": 0,
+    "team_subject": 0,
+    "untyped_predicate": 0,
+    "untyped_stat": 0,
+    "window_closed": 0
+   },
+   "scope": "linked_markets_loaded_for_event",
+   "subjects": 3,
+   "unavailable": 0
+  },
+  "rows": [
+   {
+    "_market_id": 501,
+    "_market_ids": [
+     501
+    ],
+    "comparison": {
+     "baseline": {
+      "basis": "pregame_pin",
+      "observed_at": "2026-10-03T06:09:01+00:00",
+      "probability": 0.82
+     },
+     "delta_points": 17.0,
+     "reason": null,
+     "state": "comparable"
+    },
+    "complement_question_key": null,
+    "contributor_outcome_ids": [
+     5011
+    ],
+    "contributors": [
+     {
+      "market_id": 501,
+      "observed_at": "2026-10-03T07:08:50+00:00",
+      "outcome_id": 5011,
+      "outcome_name": "Aaron Judge: 1+",
+      "period_key": "full_game",
+      "probability": 0.99,
+      "side": "over",
+      "source": "kalshi"
+     }
+    ],
+    "current": {
+     "basis": "single_source",
+     "observed_at": "2026-10-03T07:08:50+00:00",
+     "probability": 0.99,
+     "state": "quoted"
+    },
+    "period_key": "full_game",
+    "predicate": {
+     "count": 1,
+     "kind": "count_at_least",
+     "label": "1+",
+     "side": "over"
+    },
+    "question_key": "s:aaron judge|hits|full_game|ge:1|over",
+    "result": null,
+    "stat_key": "hits",
+    "subject": {
+     "key": "aaron judge",
+     "kind": "player",
+     "label": "Aaron Judge"
+    }
+   },
+   {
+    "_market_id": 502,
+    "_market_ids": [
+     502
+    ],
+    "comparison": {
+     "baseline": {
+      "basis": "pregame_pin",
+      "observed_at": "2026-10-03T06:09:01+00:00",
+      "probability": 0.64
+     },
+     "delta_points": -14.0,
+     "reason": null,
+     "state": "comparable"
+    },
+    "complement_question_key": "s:aaron judge|hits|full_game|ge:2|over",
+    "contributor_outcome_ids": [
+     5022
+    ],
+    "contributors": [
+     {
+      "market_id": 502,
+      "observed_at": "2026-10-03T07:08:39+00:00",
+      "outcome_id": 5022,
+      "outcome_name": "Under",
+      "period_key": "full_game",
+      "probability": 0.5,
+      "side": "under",
+      "source": "polymarket"
+     }
+    ],
+    "current": {
+     "basis": "single_source",
+     "observed_at": "2026-10-03T07:08:39+00:00",
+     "probability": 0.5,
+     "state": "quoted"
+    },
+    "period_key": "full_game",
+    "predicate": {
+     "count": 1,
+     "kind": "count_at_most",
+     "label": "1 or fewer",
+     "side": "under"
+    },
+    "question_key": "s:aaron judge|hits|full_game|le:1|under",
+    "result": null,
+    "stat_key": "hits",
+    "subject": {
+     "key": "aaron judge",
+     "kind": "player",
+     "label": "Aaron Judge"
+    }
+   },
+   {
+    "_market_id": 501,
+    "_market_ids": [
+     501,
+     502
+    ],
+    "comparison": {
+     "baseline": {
+      "basis": "pregame_pin",
+      "observed_at": "2026-10-03T06:09:01+00:00",
+      "probability": 0.38
+     },
+     "delta_points": 10.0,
+     "reason": null,
+     "state": "comparable"
+    },
+    "complement_question_key": null,
+    "contributor_outcome_ids": [
+     5012,
+     5021
+    ],
+    "contributors": [
+     {
+      "market_id": 501,
+      "observed_at": "2026-10-03T07:08:49+00:00",
+      "outcome_id": 5012,
+      "outcome_name": "Aaron Judge: 2+",
+      "period_key": "full_game",
+      "probability": 0.46,
+      "side": "over",
+      "source": "kalshi"
+     },
+     {
+      "market_id": 502,
+      "observed_at": "2026-10-03T07:08:40+00:00",
+      "outcome_id": 5021,
+      "outcome_name": "Over",
+      "period_key": "full_game",
+      "probability": 0.5,
+      "side": "over",
+      "source": "polymarket"
+     }
+    ],
+    "current": {
+     "basis": "blend_mean",
+     "observed_at": "2026-10-03T07:08:40+00:00",
+     "probability": 0.48,
+     "state": "quoted"
+    },
+    "period_key": "full_game",
+    "predicate": {
+     "count": 2,
+     "kind": "count_at_least",
+     "label": "2+",
+     "side": "over"
+    },
+    "question_key": "s:aaron judge|hits|full_game|ge:2|over",
+    "result": null,
+    "stat_key": "hits",
+    "subject": {
+     "key": "aaron judge",
+     "kind": "player",
+     "label": "Aaron Judge"
+    }
+   },
+   {
+    "_market_id": 501,
+    "_market_ids": [
+     501
+    ],
+    "comparison": {
+     "baseline": {
+      "basis": "pregame_pin",
+      "observed_at": "2026-10-03T06:09:01+00:00",
+      "probability": 0.12
+     },
+     "delta_points": 3.0,
+     "reason": null,
+     "state": "comparable"
+    },
+    "complement_question_key": null,
+    "contributor_outcome_ids": [
+     5013
+    ],
+    "contributors": [
+     {
+      "market_id": 501,
+      "observed_at": "2026-10-03T07:08:48+00:00",
+      "outcome_id": 5013,
+      "outcome_name": "Aaron Judge: 3+",
+      "period_key": "full_game",
+      "probability": 0.15,
+      "side": "over",
+      "source": "kalshi"
+     }
+    ],
+    "current": {
+     "basis": "single_source",
+     "observed_at": "2026-10-03T07:08:48+00:00",
+     "probability": 0.15,
+     "state": "quoted"
+    },
+    "period_key": "full_game",
+    "predicate": {
+     "count": 3,
+     "kind": "count_at_least",
+     "label": "3+",
+     "side": "over"
+    },
+    "question_key": "s:aaron judge|hits|full_game|ge:3|over",
+    "result": null,
+    "stat_key": "hits",
+    "subject": {
+     "key": "aaron judge",
+     "kind": "player",
+     "label": "Aaron Judge"
+    }
+   },
+   {
+    "_market_id": 501,
+    "_market_ids": [
+     501
+    ],
+    "comparison": {
+     "baseline": {
+      "basis": "pregame_pin",
+      "observed_at": "2026-10-03T06:09:01+00:00",
+      "probability": 0.02
+     },
+     "delta_points": -2.0,
+     "reason": null,
+     "state": "comparable"
+    },
+    "complement_question_key": null,
+    "contributor_outcome_ids": [
+     5014
+    ],
+    "contributors": [
+     {
+      "market_id": 501,
+      "observed_at": "2026-10-03T07:08:47+00:00",
+      "outcome_id": 5014,
+      "outcome_name": "Aaron Judge: 4+",
+      "period_key": "full_game",
+      "probability": 0.0,
+      "side": "over",
+      "source": "kalshi"
+     }
+    ],
+    "current": {
+     "basis": "single_source",
+     "observed_at": "2026-10-03T07:08:47+00:00",
+     "probability": 0.0,
+     "state": "quoted"
+    },
+    "period_key": "full_game",
+    "predicate": {
+     "count": 4,
+     "kind": "count_at_least",
+     "label": "4+",
+     "side": "over"
+    },
+    "question_key": "s:aaron judge|hits|full_game|ge:4|over",
+    "result": null,
+    "stat_key": "hits",
+    "subject": {
+     "key": "aaron judge",
+     "kind": "player",
+     "label": "Aaron Judge"
+    }
+   },
+   {
+    "_market_id": 506,
+    "_market_ids": [
+     506
+    ],
+    "comparison": {
+     "baseline": null,
+     "delta_points": null,
+     "reason": "no_pregame_pin",
+     "state": "unavailable"
+    },
+    "complement_question_key": "s:fernando tatis jr|hits|full_game|ge:2|over",
+    "contributor_outcome_ids": [
+     5061
+    ],
+    "contributors": [
+     {
+      "market_id": 506,
+      "observed_at": "2026-10-03T07:08:00+00:00",
+      "outcome_id": 5061,
+      "outcome_name": "Under",
+      "period_key": "full_game",
+      "probability": 0.81,
+      "side": "under",
+      "source": "polymarket"
+     }
+    ],
+    "current": {
+     "basis": "single_source",
+     "observed_at": "2026-10-03T07:08:00+00:00",
+     "probability": 0.81,
+     "state": "quoted"
+    },
+    "period_key": "full_game",
+    "predicate": {
+     "count": 1,
+     "kind": "count_at_most",
+     "label": "1 or fewer",
+     "side": "under"
+    },
+    "question_key": "s:fernando tatis jr|hits|full_game|le:1|under",
+    "result": null,
+    "stat_key": "hits",
+    "subject": {
+     "key": "fernando tatis jr",
+     "kind": "player",
+     "label": "Fernando Tatis Jr."
+    }
+   },
+   {
+    "_market_id": 503,
+    "_market_ids": [
+     503
+    ],
+    "comparison": {
+     "baseline": null,
+     "delta_points": null,
+     "reason": "no_pregame_pin",
+     "state": "unavailable"
+    },
+    "complement_question_key": "s:juan soto|hits|full_game|ge:1|over",
+    "contributor_outcome_ids": [
+     5032
+    ],
+    "contributors": [
+     {
+      "market_id": 503,
+      "observed_at": "2026-10-03T07:08:29+00:00",
+      "outcome_id": 5032,
+      "outcome_name": "Under",
+      "period_key": "full_game",
+      "probability": 0.29,
+      "side": "under",
+      "source": "polymarket"
+     }
+    ],
+    "current": {
+     "basis": "single_source",
+     "observed_at": "2026-10-03T07:08:29+00:00",
+     "probability": 0.29,
+     "state": "quoted"
+    },
+    "period_key": "full_game",
+    "predicate": {
+     "count": 0,
+     "kind": "count_at_most",
+     "label": "0 or fewer",
+     "side": "under"
+    },
+    "question_key": "s:juan soto|hits|full_game|le:0|under",
+    "result": null,
+    "stat_key": "hits",
+    "subject": {
+     "key": "juan soto",
+     "kind": "player",
+     "label": "Juan Soto"
+    }
+   },
+   {
+    "_market_id": 503,
+    "_market_ids": [
+     503
+    ],
+    "comparison": {
+     "baseline": null,
+     "delta_points": null,
+     "reason": "no_pregame_pin",
+     "state": "unavailable"
+    },
+    "complement_question_key": null,
+    "contributor_outcome_ids": [
+     5031
+    ],
+    "contributors": [
+     {
+      "market_id": 503,
+      "observed_at": "2026-10-03T07:08:30+00:00",
+      "outcome_id": 5031,
+      "outcome_name": "Over",
+      "period_key": "full_game",
+      "probability": 0.71,
+      "side": "over",
+      "source": "polymarket"
+     }
+    ],
+    "current": {
+     "basis": "single_source",
+     "observed_at": "2026-10-03T07:08:30+00:00",
+     "probability": 0.71,
+     "state": "quoted"
+    },
+    "period_key": "full_game",
+    "predicate": {
+     "count": 1,
+     "kind": "count_at_least",
+     "label": "1+",
+     "side": "over"
+    },
+    "question_key": "s:juan soto|hits|full_game|ge:1|over",
+    "result": null,
+    "stat_key": "hits",
+    "subject": {
+     "key": "juan soto",
+     "kind": "player",
+     "label": "Juan Soto"
+    }
+   },
+   {
+    "_market_id": 505,
+    "_market_ids": [
+     505
+    ],
+    "comparison": {
+     "baseline": null,
+     "delta_points": null,
+     "reason": "no_pregame_pin",
+     "state": "unavailable"
+    },
+    "complement_question_key": "s:juan soto|hits|full_game|ge:2|over",
+    "contributor_outcome_ids": [
+     5052
+    ],
+    "contributors": [
+     {
+      "market_id": 505,
+      "observed_at": "2026-10-03T07:08:09+00:00",
+      "outcome_id": 5052,
+      "outcome_name": "Under",
+      "period_key": "full_game",
+      "probability": 0.76,
+      "side": "under",
+      "source": "polymarket"
+     }
+    ],
+    "current": {
+     "basis": "single_source",
+     "observed_at": "2026-10-03T07:08:09+00:00",
+     "probability": 0.76,
+     "state": "quoted"
+    },
+    "period_key": "full_game",
+    "predicate": {
+     "count": 1,
+     "kind": "count_at_most",
+     "label": "1 or fewer",
+     "side": "under"
+    },
+    "question_key": "s:juan soto|hits|full_game|le:1|under",
+    "result": null,
+    "stat_key": "hits",
+    "subject": {
+     "key": "juan soto",
+     "kind": "player",
+     "label": "Juan Soto"
+    }
+   },
+   {
+    "_market_id": 505,
+    "_market_ids": [
+     505
+    ],
+    "comparison": {
+     "baseline": null,
+     "delta_points": null,
+     "reason": "no_pregame_pin",
+     "state": "unavailable"
+    },
+    "complement_question_key": null,
+    "contributor_outcome_ids": [
+     5051
+    ],
+    "contributors": [
+     {
+      "market_id": 505,
+      "observed_at": "2026-10-03T07:08:10+00:00",
+      "outcome_id": 5051,
+      "outcome_name": "Over",
+      "period_key": "full_game",
+      "probability": 0.24,
+      "side": "over",
+      "source": "polymarket"
+     }
+    ],
+    "current": {
+     "basis": "single_source",
+     "observed_at": "2026-10-03T07:08:10+00:00",
+     "probability": 0.24,
+     "state": "quoted"
+    },
+    "period_key": "full_game",
+    "predicate": {
+     "count": 2,
+     "kind": "count_at_least",
+     "label": "2+",
+     "side": "over"
+    },
+    "question_key": "s:juan soto|hits|full_game|ge:2|over",
+    "result": null,
+    "stat_key": "hits",
+    "subject": {
+     "key": "juan soto",
+     "kind": "player",
+     "label": "Juan Soto"
+    }
+   },
+   {
+    "_market_id": 504,
+    "_market_ids": [
+     504
+    ],
+    "comparison": {
+     "baseline": null,
+     "delta_points": null,
+     "reason": "no_pregame_pin",
+     "state": "unavailable"
+    },
+    "complement_question_key": null,
+    "contributor_outcome_ids": [
+     5041
+    ],
+    "contributors": [
+     {
+      "market_id": 504,
+      "observed_at": "2026-10-03T07:08:20+00:00",
+      "outcome_id": 5041,
+      "outcome_name": "Aaron Judge: 2+",
+      "period_key": "full_game",
+      "probability": 0.38,
+      "side": "over",
+      "source": "kalshi"
+     }
+    ],
+    "current": {
+     "basis": "single_source",
+     "observed_at": "2026-10-03T07:08:20+00:00",
+     "probability": 0.38,
+     "state": "quoted"
+    },
+    "period_key": "full_game",
+    "predicate": {
+     "count": 2,
+     "kind": "count_at_least",
+     "label": "2+",
+     "side": "over"
+    },
+    "question_key": "s:aaron judge|total_bases|full_game|ge:2|over",
+    "result": null,
+    "stat_key": "total_bases",
+    "subject": {
+     "key": "aaron judge",
+     "kind": "player",
+     "label": "Aaron Judge"
+    }
+   },
+   {
+    "_market_id": 504,
+    "_market_ids": [
+     504
+    ],
+    "comparison": {
+     "baseline": null,
+     "delta_points": null,
+     "reason": "no_pregame_pin",
+     "state": "unavailable"
+    },
+    "complement_question_key": null,
+    "contributor_outcome_ids": [
+     5042
+    ],
+    "contributors": [
+     {
+      "market_id": 504,
+      "observed_at": "2026-10-03T07:08:19+00:00",
+      "outcome_id": 5042,
+      "outcome_name": "Juan Soto: 2+",
+      "period_key": "full_game",
+      "probability": 0.33,
+      "side": "over",
+      "source": "kalshi"
+     }
+    ],
+    "current": {
+     "basis": "single_source",
+     "observed_at": "2026-10-03T07:08:19+00:00",
+     "probability": 0.33,
+     "state": "quoted"
+    },
+    "period_key": "full_game",
+    "predicate": {
+     "count": 2,
+     "kind": "count_at_least",
+     "label": "2+",
+     "side": "over"
+    },
+    "question_key": "s:juan soto|total_bases|full_game|ge:2|over",
+    "result": null,
+    "stat_key": "total_bases",
+    "subject": {
+     "key": "juan soto",
+     "kind": "player",
+     "label": "Juan Soto"
+    }
+   }
+  ],
+  "stats": [
+   {
+    "label": "Hits",
+    "period_key": "full_game",
+    "period_label": "Game",
+    "predicate": "count_at_least",
+    "stat_key": "hits",
+    "unit": "hits",
+    "unit_singular": "hit"
+   },
+   {
+    "label": "Total Bases",
+    "period_key": "full_game",
+    "period_label": "Game",
+    "predicate": "count_at_least",
+    "stat_key": "total_bases",
+    "unit": "bases",
+    "unit_singular": "base"
+   }
+  ]
+ },
+ "event_id": 15320207,
+ "home_score": 2,
+ "home_team": "San Diego Padres",
+ "matchups": [],
+ "open_winner_quote": null,
+ "other": [],
+ "outcome_market_ids": {
+  "5011": 501,
+  "5012": 501,
+  "5013": 501,
+  "5014": 501,
+  "5021": 502,
+  "5022": 502,
+  "5031": 503,
+  "5032": 503,
+  "5041": 504,
+  "5042": 504,
+  "5043": 504,
+  "5051": 505,
+  "5052": 505,
+  "5061": 506
+ },
+ "outcome_observed_at": {
+  "5011": "2026-10-03T07:08:50+00:00",
+  "5012": "2026-10-03T07:08:49+00:00",
+  "5013": "2026-10-03T07:08:48+00:00",
+  "5014": "2026-10-03T07:08:47+00:00",
+  "5021": "2026-10-03T07:08:40+00:00",
+  "5022": "2026-10-03T07:08:39+00:00",
+  "5031": "2026-10-03T07:08:30+00:00",
+  "5032": "2026-10-03T07:08:29+00:00",
+  "5041": "2026-10-03T07:08:20+00:00",
+  "5042": "2026-10-03T07:08:19+00:00",
+  "5043": "2026-10-03T07:08:18+00:00",
+  "5051": "2026-10-03T07:08:10+00:00",
+  "5052": "2026-10-03T07:08:09+00:00",
+  "5061": "2026-10-03T07:08:00+00:00"
+ },
+ "outcome_revision_at": {
+  "5011": null,
+  "5012": null,
+  "5013": null,
+  "5014": null,
+  "5021": null,
+  "5022": null,
+  "5031": null,
+  "5032": null,
+  "5041": null,
+  "5042": null,
+  "5043": null,
+  "5051": null,
+  "5052": null,
+  "5061": null
+ },
+ "pace": {
+  "fraction_elapsed": 0.556,
+  "projected_total": 9,
+  "time_remaining_display": "24:00 left",
+  "total_scored": 5
+ },
+ "period_markets": [],
+ "player_props": [
+  {
+   "_inverted": false,
+   "_market_id": 502,
+   "contributor_outcome_ids": [
+    5021
+   ],
+   "market_name": "Aaron Judge: Hits O/U 1.5",
+   "movement": null,
+   "observed_at": "2026-10-03T07:08:40+00:00",
+   "opening_over_probability": null,
+   "outcome_name": "Over",
+   "over_probability": 0.5,
+   "pregame_mark": 0.36,
+   "source": "polymarket",
+   "threshold": 1.5
+  },
+  {
+   "_inverted": false,
+   "_market_id": 501,
+   "contributor_outcome_ids": [
+    5012
+   ],
+   "market_name": "New York at San Diego: Hits",
+   "movement": null,
+   "observed_at": "2026-10-03T07:08:49+00:00",
+   "opening_over_probability": null,
+   "outcome_name": "Aaron Judge: 2+",
+   "over_probability": 0.46,
+   "pregame_mark": 0.4,
+   "source": "kalshi",
+   "threshold": 2.0
+  },
+  {
+   "_inverted": false,
+   "_market_id": 501,
+   "contributor_outcome_ids": [
+    5013
+   ],
+   "market_name": "New York at San Diego: Hits",
+   "movement": null,
+   "observed_at": "2026-10-03T07:08:48+00:00",
+   "opening_over_probability": null,
+   "outcome_name": "Aaron Judge: 3+",
+   "over_probability": 0.15,
+   "pregame_mark": 0.12,
+   "source": "kalshi",
+   "threshold": 3.0
+  },
+  {
+   "_inverted": true,
+   "_market_id": 502,
+   "contributor_outcome_ids": [
+    5022
+   ],
+   "market_name": "Aaron Judge: Hits O/U 1.5",
+   "movement": null,
+   "observed_at": "2026-10-03T07:08:39+00:00",
+   "opening_over_probability": null,
+   "outcome_name": "Under",
+   "over_probability": 0.5,
+   "pregame_mark": 0.36,
+   "source": "polymarket",
+   "threshold": 1.5
+  },
+  {
+   "_inverted": false,
+   "_market_id": 503,
+   "contributor_outcome_ids": [
+    5031
+   ],
+   "market_name": "Juan Soto: Hits O/U 0.5",
+   "movement": null,
+   "observed_at": "2026-10-03T07:08:30+00:00",
+   "opening_over_probability": null,
+   "outcome_name": "Over",
+   "over_probability": 0.71,
+   "pregame_mark": null,
+   "source": "polymarket",
+   "threshold": 0.5
+  },
+  {
+   "_inverted": false,
+   "_market_id": 505,
+   "contributor_outcome_ids": [
+    5051
+   ],
+   "market_name": "Juan Soto: Hits O/U 1.5",
+   "movement": null,
+   "observed_at": "2026-10-03T07:08:10+00:00",
+   "opening_over_probability": null,
+   "outcome_name": "Over",
+   "over_probability": 0.24,
+   "pregame_mark": null,
+   "source": "polymarket",
+   "threshold": 1.5
+  },
+  {
+   "_inverted": true,
+   "_market_id": 503,
+   "contributor_outcome_ids": [
+    5032
+   ],
+   "market_name": "Juan Soto: Hits O/U 0.5",
+   "movement": null,
+   "observed_at": "2026-10-03T07:08:29+00:00",
+   "opening_over_probability": null,
+   "outcome_name": "Under",
+   "over_probability": 0.71,
+   "pregame_mark": null,
+   "source": "polymarket",
+   "threshold": 0.5
+  },
+  {
+   "_inverted": true,
+   "_market_id": 505,
+   "contributor_outcome_ids": [
+    5052
+   ],
+   "market_name": "Juan Soto: Hits O/U 1.5",
+   "movement": null,
+   "observed_at": "2026-10-03T07:08:09+00:00",
+   "opening_over_probability": null,
+   "outcome_name": "Under",
+   "over_probability": 0.24,
+   "pregame_mark": null,
+   "source": "polymarket",
+   "threshold": 1.5
+  },
+  {
+   "_market_id": 504,
+   "contributor_outcome_ids": [
+    5041
+   ],
+   "market_name": "New York at San Diego: Total Bases",
+   "movement": null,
+   "observed_at": "2026-10-03T07:08:20+00:00",
+   "opening_over_probability": null,
+   "outcome_name": "Aaron Judge: 2+",
+   "over_probability": 0.38,
+   "source": "kalshi",
+   "threshold": 2.0
+  },
+  {
+   "_market_id": 504,
+   "contributor_outcome_ids": [
+    5042
+   ],
+   "market_name": "New York at San Diego: Total Bases",
+   "movement": null,
+   "observed_at": "2026-10-03T07:08:19+00:00",
+   "opening_over_probability": null,
+   "outcome_name": "Juan Soto: 2+",
+   "over_probability": 0.33,
+   "source": "kalshi",
+   "threshold": 2.0
+  },
+  {
+   "_inverted": true,
+   "_market_id": 506,
+   "contributor_outcome_ids": [
+    5061
+   ],
+   "market_name": "Fernando Tatis Jr.: Hits O/U 1.5",
+   "movement": null,
+   "observed_at": "2026-10-03T07:08:00+00:00",
+   "opening_over_probability": null,
+   "outcome_name": "Under",
+   "over_probability": 0.19,
+   "pregame_mark": null,
+   "source": "polymarket",
+   "threshold": 1.5
+  }
+ ],
+ "props_script": [
+  {
+   "current": 0.5,
+   "graded_label": null,
+   "graded_result": null,
+   "key": "Aaron Judge: Hits O/U 1.5|Over",
+   "label": "Over",
+   "pregame_mark": 0.36,
+   "settled": false
+  },
+  {
+   "current": 0.46,
+   "graded_label": null,
+   "graded_result": null,
+   "key": "New York at San Diego: Hits|Aaron Judge: 2+",
+   "label": "Aaron Judge: 2+",
+   "pregame_mark": 0.4,
+   "settled": false
+  },
+  {
+   "current": 0.15,
+   "graded_label": null,
+   "graded_result": null,
+   "key": "New York at San Diego: Hits|Aaron Judge: 3+",
+   "label": "Aaron Judge: 3+",
+   "pregame_mark": 0.12,
+   "settled": false
+  },
+  {
+   "current": 0.5,
+   "graded_label": null,
+   "graded_result": null,
+   "key": "Aaron Judge: Hits O/U 1.5|Under",
+   "label": "Under",
+   "pregame_mark": 0.64,
+   "settled": false
+  },
+  {
+   "current": 0.71,
+   "graded_label": null,
+   "graded_result": null,
+   "key": "Juan Soto: Hits O/U 0.5|Over",
+   "label": "Over",
+   "pregame_mark": null,
+   "settled": false
+  },
+  {
+   "current": 0.24,
+   "graded_label": null,
+   "graded_result": null,
+   "key": "Juan Soto: Hits O/U 1.5|Over",
+   "label": "Over",
+   "pregame_mark": null,
+   "settled": false
+  },
+  {
+   "current": 0.29,
+   "graded_label": null,
+   "graded_result": null,
+   "key": "Juan Soto: Hits O/U 0.5|Under",
+   "label": "Under",
+   "pregame_mark": null,
+   "settled": false
+  },
+  {
+   "current": 0.76,
+   "graded_label": null,
+   "graded_result": null,
+   "key": "Juan Soto: Hits O/U 1.5|Under",
+   "label": "Under",
+   "pregame_mark": null,
+   "settled": false
+  },
+  {
+   "current": 0.38,
+   "graded_label": null,
+   "graded_result": null,
+   "key": "New York at San Diego: Total Bases|Aaron Judge: 2+",
+   "label": "Aaron Judge: 2+",
+   "pregame_mark": null,
+   "settled": false
+  },
+  {
+   "current": 0.33,
+   "graded_label": null,
+   "graded_result": null,
+   "key": "New York at San Diego: Total Bases|Juan Soto: 2+",
+   "label": "Juan Soto: 2+",
+   "pregame_mark": null,
+   "settled": false
+  },
+  {
+   "current": 0.81,
+   "graded_label": null,
+   "graded_result": null,
+   "key": "Fernando Tatis Jr.: Hits O/U 1.5|Under",
+   "label": "Under",
+   "pregame_mark": null,
+   "settled": false
+  }
+ ],
+ "spreads": [],
+ "status": "live",
+ "stream_market_ids": [
+  501,
+  502,
+  503,
+  504,
+  505,
+  506
+ ],
+ "team_totals": [],
+ "totals": []
+}

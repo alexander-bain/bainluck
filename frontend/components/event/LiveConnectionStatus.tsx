@@ -128,15 +128,20 @@ export default function LiveConnectionStatus({
         aria-expanded={open}
         aria-controls={detailsId}
         onClick={() => setOpen((v) => !v)}
-        className={`flex max-w-full items-center gap-1.5 rounded-full px-2 py-0.5 text-[11px] font-medium hover:bg-surface-elevated focus:outline-none focus-visible:ring-2 focus-visible:ring-accent-brand ${TEXT_TONE[tone]}`}
+        className={`flex max-w-full items-start gap-1.5 rounded-xl px-2 py-0.5 text-left text-[11px] font-medium hover:bg-surface-elevated focus:outline-none focus-visible:ring-2 focus-visible:ring-accent-brand ${TEXT_TONE[tone]}`}
       >
         <span
           aria-hidden="true"
           // The breathe is the gentlest motion the system has, and only a
           // healthy open connection earns it; Reduce Motion gets a still dot.
-          className={`h-2 w-2 shrink-0 rounded-full ${DOT_TONE[tone]} ${breathes ? 'motion-safe:animate-pulse' : ''}`}
+          className={`mt-1 h-2 w-2 shrink-0 rounded-full ${DOT_TONE[tone]} ${breathes ? 'motion-safe:animate-pulse' : ''}`}
         />
-        <span className="truncate whitespace-nowrap">{label}</span>
+        {/* #9655 — the whole state, never an ellipsis. "Updates interrupted ·
+            reconnecting" is wider than the room beside the title at 390px, and
+            truncated it read "reconn…", hiding the half that says it is being
+            handled. So the words wrap — whole words, never mid-word — and the
+            dot sits on the first line (`mt-1` centres 8px on a 16px line). */}
+        <span className="min-w-0 leading-4">{label}</span>
         <span className="sr-only">, show update times</span>
       </button>
       {announces ? (

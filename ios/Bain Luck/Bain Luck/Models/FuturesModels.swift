@@ -62,10 +62,14 @@ nonisolated struct GameMarketsResponse: Decodable, Equatable, Sendable {
     var outcomeMarketIds: [String: Int]? = nil
     var outcomeRevisionAt: [String: String?]? = nil
     var outcomeObservedAt: [String: String?]? = nil
+    /// #10238 — typed Game questions (`10238.v1`); nil keeps today's sections.
+    @LenientDecode var gameQuestionMatrix: EventQuestionMatrix? = nil
     /// Separate from the immutable final sport result and settled prop buckets.
     var openWinnerQuote: FinalGameWinnerQuote? = nil
     var closedWinnerMarketIds: [Int]? = nil
     var matchups: [GameMarketMatchup]? = nil
+    /// #10236 — typed During player matrix; nil keeps the old props card.
+    var duringPlayerProps: DuringPlayerProps? = nil
 }
 
 /// A head-to-head/field bucket keeps every nested quote and grade identifiable.
@@ -329,6 +333,9 @@ nonisolated struct RelatedFuturesResponse: Decodable, Sendable {
     let homeTeamFutures: [RelatedFuture]?
     let awayTeamFutures: [RelatedFuture]?
     let seriesMarkets: [SeriesMarket]?
+    /// #10238 — typed Series questions (`10238.v1`), read on their own:
+    /// never reconciled against the Game matrix.
+    @LenientDecode var seriesQuestionMatrix: EventQuestionMatrix? = nil
     let sharedFutures: [RelatedFuture]?
     let summary: String?
     let eventStatus: String?

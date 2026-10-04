@@ -9,9 +9,11 @@ need heatmaps, bundles, distributions, timelines, or recap treatment.
 from __future__ import annotations
 
 import re
+from datetime import date, datetime
 from typing import Any
 
 from app.utils.market_grouping import extract_threshold
+from app.utils.market_staleness import whole_name_date
 from app.utils.outcome_display import (
     LADDER_MIN_DRAWN_RUNGS,
     incoherent_ladder_indexes,
@@ -762,6 +764,176 @@ def _distribution_outcomes(outcomes: list[dict[str, Any]]) -> list[dict[str, Any
     return rows
 
 
+# #10374 — A ROW THAT SAYS WHAT HAPPENS IF NONE OF THE DATES DOES.
+# `No release by October 31` on the Claude Haiku board. It is not a date, it is
+# the residual after every date, so it sorts after them rather than refusing
+# the board. Anything else that is not a date refuses it.
+_DATE_BOARD_RESIDUAL_RE = re.compile(r"^\s*(no|none|not|neither|other)\b", re.I)
+
+
+def _resolution_day(resolution_date: Any) -> date | None:
+    if isinstance(resolution_date, datetime):
+        return resolution_date.date()
+    if isinstance(resolution_date, date):
+        return resolution_date
+    if isinstance(resolution_date, str) and resolution_date:
+        try:
+            return datetime.fromisoformat(resolution_date.replace("Z", "+00:00")).date()
+        except ValueError:
+            return None
+    return None
+
+
+def _place_year_less(
+    month_days: set[tuple[int, int]], anchor: date
+) -> dict[tuple[int, int], date] | None:
+    """Each year-less `(month, day)` as a calendar day, or None to refuse.
+
+    #10374 follow-up (ux, 2026-10-03 22:0xZ on live `eb2418ee11`): the first rule
+    gave each day "the latest year that does not put it after the question
+    resolves". A cumulative "by date" board can have legs that close AFTER the
+    stored resolution_date — `Saudi Oil Pipeline (East-West) restarts by...?`
+    (60789497) resolves 2026-11-01 and lists `November 15` and `November 30`,
+    which that rule placed in 2025, a year before `October 31`.
+
+    So the days are first put in order as one run of the calendar: on the
+    366-day ring they start just after the widest gap between them, and a later
+    day that reads earlier in the year is the next year. Then the run takes the
+    year that puts one of its ends nearest the anchor.
+    The run is placed whole, so no single leg can land a year from its siblings.
+
+    Refused (None): two gaps tied for widest, where the run has no one start;
+    two years tied for nearest; a day that cannot exist (`February 30`), or
+    `February 29` in the year the run lands on.
+    """
+    try:
+        # 2000 is a leap year, so every real month-day has a place on the ring.
+        ordinal = {md: date(2000, *md).timetuple().tm_yday for md in month_days}
+    except ValueError:
+        return None
+    ring = sorted(month_days, key=lambda md: ordinal[md])
+    if len(ring) < 2:
+        return None
+    gaps = [
+        (ordinal[ring[(i + 1) % len(ring)]] - ordinal[md]) % 366
+        for i, md in enumerate(ring)
+    ]
+    widest = max(gaps)
+    if gaps.count(widest) > 1:
+        return None
+    start = (gaps.index(widest) + 1) % len(ring)
+    run = ring[start:] + ring[:start]
+    # Years into the run: 0 until the run crosses New Year, then 1.
+    offsets = [0]
+    for prev, md in zip(run, run[1:]):
+        offsets.append(offsets[-1] + (ordinal[md] < ordinal[prev]))
+
+    def day_in(year: int, md: tuple[int, int]) -> date:
+        # February 29 reads as the 28th only to choose the year; the day itself
+        # is built below and refuses if the chosen year has no February 29.
+        return date(year, md[0], 28 if md == (2, 29) else md[1])
+
+    def distance(base: int) -> int:
+        # Nearer end only: an anchor inside a run is always nearer one of its
+        # ends than any end of the run a year either side, so no "inside" case.
+        first = day_in(base + offsets[0], run[0])
+        last = day_in(base + offsets[-1], run[-1])
+        return min(abs((anchor - first).days), abs((anchor - last).days))
+
+    ranked = sorted(
+        (distance(base), base) for base in range(anchor.year - 1, anchor.year + 2)
+    )
+    if ranked[0][0] == ranked[1][0]:
+        return None
+    base = ranked[0][1]
+    try:
+        return {md: date(base + off, *md) for md, off in zip(run, offsets)}
+    except ValueError:
+        return None
+
+
+def _chronological_dates(
+    rows: list[dict[str, Any]], resolution_date: Any
+) -> list[date | None] | None:
+    """Each row's calendar date when the board is a date question, else None.
+
+    #10374 — Alex, rage shake 170: "These date oriented cards should be shown in
+    chronological order ... even if that is the true descending order of the
+    probabilities." The `Next Claude Haiku (4.6+) released on...?` card read
+    October 27 · October 12 · October 28 · October 13.
+
+    THE CARD STILL DRAWS THE SAME FOUR ROWS. This answers only what order they
+    are listed in; which rows survive the cut stays the leader-first slice both
+    clients already make (#1526), so the leader can never fall off the card by
+    being late in the month.
+
+    A YEAR IS NEVER GUESSED BY THE CLIENT. The venue labels are `October 27`,
+    with no year, and a board that resolves 15 January lists `December 28` before
+    `January 5`. The year-less days are placed as ONE run of the calendar — the
+    run starts after the widest gap between them, so `December 28 · January 5`
+    crosses New Year rather than spanning eleven months — and the run takes the
+    year that puts it nearest the day the question resolves (`_place_year_less`
+    says why "nearest", not "not after"). A board that mixes dated and year-less
+    labels is refused rather than reconciled: that is the `December 31, 2025` beside a
+    bare `December 31` shape `_live_dated_twins` exists for, and picking which
+    is earlier is the guess this refuses. So is a board where two rows land on
+    one day, or a year-less board with no resolution date to anchor it.
+
+    `None` means "list it by probability, as today" — every refusal fails to the
+    rendering that already ships.
+    """
+    parsed: list[tuple[int, int, int | None] | None] = []
+    residuals = 0
+    for row in rows:
+        label = row.get("label") or ""
+        reading = whole_name_date(label)
+        if reading is None:
+            if not _DATE_BOARD_RESIDUAL_RE.match(label):
+                return None
+            residuals += 1
+            parsed.append(None)
+            continue
+        parsed.append(reading)
+
+    readings = [p for p in parsed if p is not None]
+    if len(readings) < 2 or residuals > 1:
+        return None
+    with_year = sum(1 for _, _, year in readings if year is not None)
+    if with_year not in (0, len(readings)):
+        return None
+
+    placed_year_less: dict[tuple[int, int], date] = {}
+    if not with_year:
+        anchor = _resolution_day(resolution_date)
+        if anchor is None:
+            return None
+        placed_year_less = _place_year_less(
+            {(month, day) for month, day, _ in readings}, anchor
+        )
+        if placed_year_less is None:
+            return None
+
+    dates: list[date | None] = []
+    for reading in parsed:
+        if reading is None:
+            dates.append(None)
+            continue
+        month, day, year = reading
+        if year is None:
+            dates.append(placed_year_less[(month, day)])
+            continue
+        try:
+            dates.append(date(year, month, day))
+        except ValueError:
+            # February 29 in a year that has none: not a day we can place.
+            return None
+
+    placed = [d for d in dates if d is not None]
+    if len(set(placed)) != len(placed):
+        return None
+    return dates
+
+
 def _comparison_theme(name: str, category: str | None) -> str | None:
     # This is broader than the public bundle allowlist. Some themes, especially
     # macro ranges and sports paths, are useful admin/archetype signals but too
@@ -798,6 +970,7 @@ def classify_discover_card_archetype(
     status: str | None = None,
     ladder_treatment_refused: bool = False,
     field_is_a_race: bool = True,
+    resolution_date: Any = None,
 ) -> dict[str, Any]:
     """Return frontend/admin rendering metadata for a Discover futures market.
 
@@ -837,6 +1010,16 @@ def classify_discover_card_archetype(
         ladder_already_refused=ladder_treatment_refused,
     )
     distribution_outcomes = _distribution_outcomes(outcome_rows)
+    # #10374 — served alongside, never instead: the rows keep probability order
+    # (which four survive is still the leader-first cut) and each date row says
+    # its day, so the card lists the drawn rows earliest-first. Additive on
+    # purpose: a client that has not learnt the field still renders today's
+    # board, where re-ordering the list here would have handed every shipped
+    # iPhone build a leader bar on whichever drawn date came first.
+    row_dates = _chronological_dates(distribution_outcomes, resolution_date)
+    if row_dates is not None:
+        for row, day in zip(distribution_outcomes, row_dates):
+            row["date"] = day.isoformat() if day is not None else None
     comparison_theme = _comparison_theme(market_name, category)
 
     suggested_format = "binary_probability"
@@ -933,6 +1116,12 @@ def classify_discover_card_archetype(
         # asserted structurally in the #7844 guard rather than left latent.
         "field_is_a_race": bool(field_is_a_race),
         "distribution_outcomes": distribution_outcomes,
+        # #10374 — `chronological`: list the drawn rows by
+        # `distribution_outcomes[].date`, earliest first, a row whose date is
+        # null (the `No release by…` residual) last. `probability`: as served.
+        "distribution_order": (
+            "chronological" if row_dates is not None else "probability"
+        ),
         "remaining_outcome_count": max(0, count - len(distribution_outcomes)),
         "qa_signals": qa_signals,
         "public_source_disagreement": False,

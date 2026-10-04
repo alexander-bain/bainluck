@@ -44,7 +44,7 @@
  * serves the field.
  */
 
-import { leaderFirstSlice, printsAPercent } from "./leaderOrder";
+import { leaderFirst, leaderFirstSlice, printsAPercent } from "./leaderOrder";
 import { renderedRaceBoardPercents } from "@/lib/renderedPercent";
 import { formatProbabilityPercent } from "@/lib/probabilityDisplay";
 import type { FeedFuturesData } from "@/lib/types";
@@ -54,10 +54,15 @@ export type FuturesBoardRow = {
   label: string;
   probability: number | null;
   movement?: number | null;
+  /** #10374 — the row's calendar day (`YYYY-MM-DD`) on a date board; `null` on
+   *  its "No release by…" residual. Absent on every other board. */
+  date?: string | null;
 };
 
 export type FuturesBoard = {
-  /** Leader-first, priced, capped at `FUTURES_BOARD_ROW_LIMIT`. */
+  /** Priced and capped at `FUTURES_BOARD_ROW_LIMIT`; WHICH rows is always the
+   *  leader-first cut (#1526). Listed leader-first, or by date when
+   *  `chronological`. */
   rows: FuturesBoardRow[];
   /** How many outcomes the board does not draw. Zero ⇒ no remainder row. */
   remainingCount: number;
@@ -66,6 +71,12 @@ export type FuturesBoard = {
    * route says so explicitly; an absent field fails to today's rendering.
    */
   fieldIsARace: boolean;
+  /**
+   * #10374 — the rows are listed earliest day first, so their position is not
+   * their rank: the podium digits come off and the crown is found by
+   * probability (`boardRowRanks`), never by index.
+   */
+  chronological: boolean;
   /**
    * #8033 — the printed percent for each row of `rows`, or `null` at a position
    * meaning "no override, keep `formatProbabilityPercent`'s own rounding".
@@ -96,7 +107,16 @@ type DiscoverCardBoardFields = {
   remaining_outcome_count: number;
   ladder_treatment_refused?: boolean | null;
   field_is_a_race?: boolean | null;
+  /** #10374 — `"chronological"` on a date question, `"probability"` otherwise. */
+  distribution_order?: string | null;
 };
+
+/** #10374 — a served ISO day, or `null` for anything else (the residual row,
+ *  an absent key, a shape this client does not recognise). */
+const ISO_DAY = /^\d{4}-\d{2}-\d{2}$/;
+function boardRowDay(row: FuturesBoardRow): string | null {
+  return typeof row.date === "string" && ISO_DAY.test(row.date) ? row.date : null;
+}
 
 /**
  * The board this payload earns, or `null` when it does not clear the bar and the
@@ -120,18 +140,44 @@ export function futuresDistributionBoard(data: FeedFuturesData): FuturesBoard | 
   }
 
   // #1526 — sort BEFORE slicing, or the slice drops the leader.
-  const rows = leaderFirstSlice(priced, FUTURES_BOARD_ROW_LIMIT);
+  const leaderFirstRows = leaderFirstSlice(priced, FUTURES_BOARD_ROW_LIMIT);
+  // #8033 — taken leader-first, before any re-listing below; see its comment.
+  const leaderFirstPercents = renderedRaceBoardPercents(
+    leaderFirstRows.map((row) => row.probability),
+    card.field_is_a_race === true,
+  );
+  // #10374 — Alex, rage shake 170: a date question lists its days in date order.
+  // The SAME four rows (the leader-first cut above, so the favourite can never
+  // fall off for being late in the month), re-listed earliest first with the
+  // undated residual last. Stable, so two rows the server could not tell apart
+  // keep their probability order. The server keeps probability order on the wire
+  // because shipped iPhone builds paint row 0 as the leader.
+  const chronological = card.distribution_order === "chronological";
+  const order = leaderFirstRows.map((_, index) => index);
+  if (chronological) {
+    order.sort((a, b) => {
+      const da = boardRowDay(leaderFirstRows[a]);
+      const db = boardRowDay(leaderFirstRows[b]);
+      if (da === db) return a - b;
+      if (da === null) return 1;
+      if (db === null) return -1;
+      return da < db ? -1 : 1;
+    });
+  }
+  const rows = order.map((index) => leaderFirstRows[index]);
   return {
     rows,
     // #6586 — counted off the UNFILTERED list, so a row we declined to draw is
     // still a row the reader is told exists.
     remainingCount: card.remaining_outcome_count + Math.max(0, allRows.length - rows.length),
     fieldIsARace: card.field_is_a_race !== false,
+    chronological,
     // #8033 — THE TOP TWO MAY NOT OWN MORE THAN THE RACE, ON BOTH CARDS.
     //
-    // Taken over `rows` and not `priced`, because the pair a reader can add up
-    // is the pair that is DRAWN, and after the slice, because the helper's
-    // leader-first clause is a check on the list it is handed.
+    // Taken over the drawn rows and not `priced`, because the pair a reader can
+    // add up is the pair that is DRAWN, and after the slice, because the helper's
+    // leader-first clause is a check on the list it is handed. #10374: so it is
+    // computed on the leader-first list and then travels with its row.
     //
     // The two `field_is_a_race` derivations on this object are deliberately
     // different and must stay so. The podium question above fails to today's
@@ -141,10 +187,7 @@ export function futuresDistributionBoard(data: FeedFuturesData): FuturesBoard | 
     // independent would be a wrong number rather than a missing repair. It costs
     // nothing to wait — the feed blob's TTL is 30s — and the live specimen
     // serves the key explicitly.
-    rowPercents: renderedRaceBoardPercents(
-      rows.map((row) => row.probability),
-      card.field_is_a_race === true,
-    ),
+    rowPercents: order.map((index) => leaderFirstPercents[index]),
   };
 }
 
@@ -225,10 +268,17 @@ export function boardRowRanks(board: FuturesBoard): number[] {
       ? formatProbabilityPercent(row.probability ?? 0, { rendered: board.rowPercents[index] })
       : null,
   );
-  const ranks: number[] = [];
-  printed.forEach((value, index) => {
-    const tiesWithRowAbove = index > 0 && value !== null && value === printed[index - 1];
-    ranks.push(tiesWithRowAbove ? ranks[index - 1] : index + 1);
+  // #10374 — ranked in PROBABILITY order and handed back by position, so a
+  // board listed by date crowns its favourite and not its earliest day. On a
+  // leader-first board the stable sort is the identity, so nothing moves there.
+  const byProbability = leaderFirst(
+    board.rows.map((row, index) => ({ probability: row.probability, index })),
+  ).map(({ index }) => index);
+  const ranks: number[] = new Array(board.rows.length);
+  byProbability.forEach((index, position) => {
+    const above = position > 0 ? byProbability[position - 1] : -1;
+    const tiesWithRowAbove = above >= 0 && printed[index] !== null && printed[index] === printed[above];
+    ranks[index] = tiesWithRowAbove ? ranks[above] : position + 1;
   });
   return ranks;
 }

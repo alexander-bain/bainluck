@@ -588,6 +588,44 @@ function resolveBucketSide(
  * that throws costs that player, and every healthy sibling still renders.
  */
 export function groupPlayerProps(input: GroupPlayerPropsInput): GroupPlayerPropsResult {
+  return groupPlayerPropsTraced(input, null);
+}
+
+/**
+ * #10340 — WHICH SCRIPT QUESTIONS THE DASHBOARD ACTUALLY DRAWS.
+ *
+ * A pregame page drew one family three times: the rail, the "All N props" fold
+ * (this grouping), and THE SCRIPT below it. Suppressing a script row is only
+ * honest when the dashboard really shows that question, and "the row is in
+ * `player_props`" does not prove it: a row with no threshold or an unreadable
+ * name is rejected here, a stat with no rungs is dropped, and a 1–2 rung "line"
+ * draws only its lowest rung. So the trace is built from what is EMITTED:
+ *
+ *   - `representedScriptKeys` holds the exact `${market_name}|${outcome_name}`
+ *     (the key `_build_props_script` writes, unnormalized) of every accepted
+ *     `player_props` row behind a rung a card draws — every rung of a ladder,
+ *     only the drawn rung of a line;
+ *   - `other[]` rows, rows missing either name, rows in an unidentified stat
+ *     (#1642 P1b) and rows whose side is genuinely ambiguous (two same-named
+ *     opponents) contribute nothing, so their script rows stay visible;
+ *   - a player that throws while being built contributes nothing.
+ *
+ * `players`, `dropped` and `emptyReason` are exactly what `groupPlayerProps`
+ * returns for the same input — the trace is bookkeeping beside the grouping,
+ * never an input to it.
+ */
+export function groupPlayerPropsWithCoverage(
+  input: GroupPlayerPropsInput,
+): GroupPlayerPropsResult & { representedScriptKeys: ReadonlySet<string> } {
+  const representedScriptKeys = new Set<string>();
+  const result = groupPlayerPropsTraced(input, representedScriptKeys);
+  return { ...result, representedScriptKeys };
+}
+
+function groupPlayerPropsTraced(
+  input: GroupPlayerPropsInput,
+  representedOut: Set<string> | null,
+): GroupPlayerPropsResult {
   const {
     playerProps,
     other,
@@ -619,6 +657,8 @@ export function groupPlayerProps(input: GroupPlayerPropsInput): GroupPlayerProps
    * cards while `home -> away -> unknown` produced three from identical rows.
    */
   const knownSidesByName = new Map<string, Set<"home" | "away">>();
+  /** #10340: rung -> the script keys of the rows behind it. Trace only. */
+  const rungScriptKeys = representedOut ? new Map<StatRung, string[]>() : null;
 
   const homeLower = homeTeam?.toLowerCase() ?? "";
   const awayLower = awayTeam?.toLowerCase() ?? "";
@@ -681,6 +721,8 @@ export function groupPlayerProps(input: GroupPlayerPropsInput): GroupPlayerProps
     readonly isWinner: boolean | null;
     readonly gradeRow: PropGradeFields;
     readonly source: string;
+    /** #10340: the row's exact script key, or null when either name is missing. */
+    readonly scriptKey: string | null;
   }
 
   /** PURE READ. Returns null for a benign skip; throws only on a hostile row. */
@@ -746,6 +788,15 @@ export function groupPlayerProps(input: GroupPlayerPropsInput): GroupPlayerProps
     // client adjudicating, and a push has no complement.
     const underLeg = p._inverted === true;
     const verdict = underLeg ? null : (p.hit ?? null);
+    // #10340: only a row that names BOTH halves has a key the server and this
+    // page spell the same way (`pp.get(k, '')` vs `?? ""` part on a null).
+    const marketName = p.market_name;
+    const outcomeName = p.outcome_name;
+    const scriptKey =
+      typeof marketName === "string" && marketName !== "" &&
+      typeof outcomeName === "string" && outcomeName !== ""
+        ? `${marketName}|${outcomeName}`
+        : null;
     const candidate: RowCandidate = {
       playerName: parsed.player,
       team,
@@ -771,6 +822,7 @@ export function groupPlayerProps(input: GroupPlayerPropsInput): GroupPlayerProps
       // Both `movement` and `movementAbs` are primitives normalized above, inside
       // this guarded read. The commit phase must never coerce anything.
       movementAbs,
+      scriptKey,
     };
     return Object.freeze(candidate);
   }
@@ -807,19 +859,30 @@ export function groupPlayerProps(input: GroupPlayerPropsInput): GroupPlayerProps
     // the bucket is only a person if every row that landed in it named one.
     if (!c.identified) statEntry.identified = false;
     const existingRung = statEntry.rungs.find((r) => r.threshold === c.threshold);
+    let rung: StatRung;
     if (existingRung) {
       if (c.overProb != null && (existingRung.overProb == null || c.overProb > existingRung.overProb)) {
         existingRung.overProb = c.overProb;
       }
       if (c.hit != null && existingRung.hit == null) existingRung.hit = c.hit;
+      rung = existingRung;
     } else {
-      statEntry.rungs.push({
+      rung = {
         threshold: c.threshold,
         overProb: c.overProb,
         sources: 1,
         movement: c.movement,
         hit: c.hit,
-      });
+      };
+      statEntry.rungs.push(rung);
+    }
+    // #10340: a row whose side is genuinely ambiguous (two same-named
+    // opponents, see `resolveBucketSide`) carries no coverage claim.
+    const ambiguous = bucketSide === "unknown" && (knownSidesByName.get(c.playerName.toLowerCase())?.size ?? 0) >= 2;
+    if (rungScriptKeys && c.scriptKey != null && !ambiguous) {
+      const keys = rungScriptKeys.get(rung);
+      if (keys) keys.push(c.scriptKey);
+      else rungScriptKeys.set(rung, [c.scriptKey]);
     }
     // Queue #190 Item 3: carry the server-side settled grade (actual stat +
     // is_winner) at the player+stat level (same actual across all thresholds).
@@ -994,6 +1057,12 @@ export function groupPlayerProps(input: GroupPlayerPropsInput): GroupPlayerProps
   for (const [, entry] of playerMap) {
     try {
       const stats: PlayerStat[] = [];
+      /** #10340: keys behind the rungs this card draws; kept only if the card is. */
+      const drawnKeys: string[] = [];
+      const traceDrawn = (rungs: readonly StatRung[]) => {
+        if (!rungScriptKeys) return;
+        for (const r of rungs) drawnKeys.push(...(rungScriptKeys.get(r) ?? []));
+      };
 
       for (const [statKey, statData] of entry.stats) {
         const sortedRungs = statData.rungs.sort((a, b) => a.threshold - b.threshold);
@@ -1051,6 +1120,7 @@ export function groupPlayerProps(input: GroupPlayerPropsInput): GroupPlayerProps
             grade: readPropGrade(statData.gradeRows, { samePlayerStat: statData.identified }),
             ...splitOf(statData, sortedRungs),
           });
+          if (statData.identified) traceDrawn(sortedRungs);
         } else {
           const best = sortedRungs[0];
           stats.push({
@@ -1068,6 +1138,8 @@ export function groupPlayerProps(input: GroupPlayerPropsInput): GroupPlayerProps
             // A two-rung "line" (Nix TDs: HIT 1+, MISS 2+) splits the same way.
             ...splitOf(statData, sortedRungs),
           });
+          // A line draws ONE rung; a second threshold is not on the card.
+          if (statData.identified) traceDrawn([best]);
         }
       }
 
@@ -1092,6 +1164,7 @@ export function groupPlayerProps(input: GroupPlayerPropsInput): GroupPlayerProps
         headshot: entry.headshot,
         stats,
       });
+      if (representedOut) for (const k of drawnKeys) representedOut.add(k);
     } catch (err) {
       dropped.push({ kind: "player", at: entry.name, message: messageOf(err) });
     }

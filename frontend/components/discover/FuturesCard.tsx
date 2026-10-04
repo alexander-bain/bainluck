@@ -376,11 +376,14 @@ export function FuturesCard({ item, data, liked, setLiked, onDismiss, trending, 
   // keeps its own ROW TEMPLATE (the podium, the rank digits, the bars) and stops
   // owning the rule privately.
   const board = futuresDistributionBoard(data);
+  // #10374 — a board listed by date has no podium either: beside `Oct 12 · Oct 14`
+  // the digits `1 2` read as ranks the rows do not hold.
+  const drawsRankDigits = board != null && board.fieldIsARace && !board.chronological;
   // The rank cell is a column, not a decoration: dropping its content would slide
   // every label one track left and misalign the remainder row against the rows
   // above it. So the template loses the track rather than the cell losing its
   // text, and the label gets the 1.25rem + gap back at phone width.
-  const distributionRowGrid = board?.fieldIsARace === false
+  const distributionRowGrid = !drawsRankDigits
     ? "grid-cols-[minmax(0,1fr)_2.75rem]"
     : "grid-cols-[1.25rem_minmax(0,1fr)_2.75rem]";
   if (board) {
@@ -396,7 +399,7 @@ export function FuturesCard({ item, data, liked, setLiked, onDismiss, trending, 
     // rows. Leaving it behind would have let one market print 60/41 on
     // /categories and 60/40 on /discover — the disagreement this ship exists to
     // end, reintroduced by the ship itself.
-    const { rows: shownRows, remainingCount, fieldIsARace, rowPercents: racePairPercents } = board;
+    const { rows: shownRows, remainingCount, rowPercents: racePairPercents } = board;
     // #8112 — the podium is earned, not taken by index. Rows printing the same
     // percentage share a rank, so a dead heat gets two co-leaders rather than an
     // arbitrary winner; see `boardRowRanks` for why the tie test is the printed
@@ -521,7 +524,7 @@ export function FuturesCard({ item, data, liked, setLiked, onDismiss, trending, 
                         board. The rows stay sorted by probability, which is an
                         ordering and not a ranking claim: on a coalition board
                         "most likely to be in the next government" is true. */}
-                    {fieldIsARace && (
+                    {drawsRankDigits && (
                       <span className="font-mono text-xs font-semibold tabular-nums text-text-muted" title={`Rank ${rank} by probability`} aria-label={`Rank ${rank}`}>{rank}</span>
                     )}
                     <div className="min-w-0">
@@ -574,7 +577,7 @@ export function FuturesCard({ item, data, liked, setLiked, onDismiss, trending, 
                   {/* #7844 half two — the remainder row's digit is the podium's
                       last rung, `shownRows.length + 1`, so it goes with the rest
                       of them. */}
-                  {fieldIsARace && (
+                  {drawsRankDigits && (
                     <span className="font-mono text-xs font-semibold tabular-nums">{shownRows.length + 1}</span>
                   )}
                   {/* #6586 — the count says its own units, and the third column
