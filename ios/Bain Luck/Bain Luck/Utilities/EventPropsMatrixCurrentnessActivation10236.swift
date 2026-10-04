@@ -1,4 +1,5 @@
 #if DEBUG
+import Combine
 import SwiftUI
 
 /// Bounded, local-only activation for #10236's still-unpaid mounted change
