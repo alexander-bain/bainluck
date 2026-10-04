@@ -110,6 +110,28 @@ nonisolated struct BookmakerHistoryPoint: Decodable, Sendable {
     let awayMoneyline: Int?
     let projectedHomeScore: Double?
     let projectedAwayScore: Double?
+    /// #10239 — `"recorded"` / `"synthetic"` (a row the route re-stamped at its
+    /// window cutoff). Not served today, so ABSENCE PROVES NOTHING: a reader may
+    /// treat an unmarked row as recorded only where the route had no cutoff
+    /// (`ProjectedFinalPointsMount`). A mistyped value decodes as nil.
+    let kind: String?
+
+    private enum CodingKeys: String, CodingKey {
+        case timestamp, homeProbability, awayProbability, homeMoneyline, awayMoneyline
+        case projectedHomeScore, projectedAwayScore, kind
+    }
+
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        timestamp = try c.decode(String.self, forKey: .timestamp)
+        homeProbability = try c.decodeIfPresent(Double.self, forKey: .homeProbability)
+        awayProbability = try c.decodeIfPresent(Double.self, forKey: .awayProbability)
+        homeMoneyline = try c.decodeIfPresent(Int.self, forKey: .homeMoneyline)
+        awayMoneyline = try c.decodeIfPresent(Int.self, forKey: .awayMoneyline)
+        projectedHomeScore = try c.decodeIfPresent(Double.self, forKey: .projectedHomeScore)
+        projectedAwayScore = try c.decodeIfPresent(Double.self, forKey: .projectedAwayScore)
+        kind = (try? c.decodeIfPresent(String.self, forKey: .kind)) ?? nil
+    }
 }
 
 /// Score snapshot captured during an event.
