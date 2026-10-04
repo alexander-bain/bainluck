@@ -44,10 +44,20 @@ the writer that stored it saw these same rows — and no longer against its
   but whose rows were seen EARLIER, is replaced (Codex's newer-B control);
 * legacy: a stored entry with a stamp and no basis cannot be ordered and
   abstains — the transition state for the minutes after release.
+
+## the receipt (root admission, 2026-10-04)
+
+`stale_readings_refused` is an aggregate: it never said WHICH game was spared
+WHICH older price. Every refusal now writes one `stale-reading-refused` line
+naming the writer, the event, the source, the value it would have stamped and
+both OBSERVATION clocks of the row that regressed. The arms above assert it is
+written exactly once on a refusal, attributed to the right event and row, and
+never on a write — and that the refusal still commits before anything else.
 """
 
 from __future__ import annotations
 
+import logging
 from datetime import datetime, timedelta, timezone
 
 from app.tasks import snapshots as _snapshots
@@ -133,6 +143,19 @@ async def _written(monkeypatch, population, stored, *, venue_legs=()):
 #: The beat's one outcome row (`_beat`), as keyed in an observation basis.
 ROW = "1001"
 
+_LOGGER = "app.tasks.prediction_market_matching"
+
+
+def _receipts(caplog) -> list[str]:
+    return [
+        r.getMessage() for r in caplog.records
+        if r.name == _LOGGER and r.getMessage().startswith("stale-reading-refused ")
+    ]
+
+
+def _fields(line: str) -> dict:
+    return dict(part.split("=", 1) for part in line.split()[1:])
+
 
 def _stored_at(when: datetime, value=0.035, *, published=None) -> dict:
     """The socket's stored entry: it SAW the row at ``when`` and published at
@@ -145,18 +168,44 @@ def _stored_at(when: datetime, value=0.035, *, published=None) -> dict:
 
 class TestTheBeatRefusesAReadingOlderThanTheStoredStamp:
     async def test_rows_seen_before_the_socket_stamp_are_not_written(
-        self, monkeypatch
+        self, monkeypatch, caplog
     ):
         """The ship: the second occurrence's shape (rows ~2.5 min old)."""
         now = _now()
-        stamped, points, stats = await _written(
-            monkeypatch,
-            _beat(last_seen=now - timedelta(seconds=150)),
-            _stored_at(now - timedelta(seconds=15)),
-        )
+        seen = now - timedelta(seconds=150)
+        stored_seen = now - timedelta(seconds=15)
+        # Published LATER than observed: the receipt must print the observation.
+        published = now - timedelta(seconds=5)
+        with caplog.at_level(logging.INFO, logger=_LOGGER):
+            stamped, points, stats = await _written(
+                monkeypatch, _beat(last_seen=seen),
+                _stored_at(stored_seen, published=published),
+            )
         assert stamped == [], f"the pre-goal price was re-stamped: {stamped}"
         assert points == [], f"the pre-goal price got a chart point: {points}"
         assert stats["stale_readings_refused"] == 1
+
+        # The receipt: this refusal, attributed — not just a count.
+        lines = _receipts(caplog)
+        assert len(lines) == 1, lines
+        got = _fields(lines[0])
+        assert got["writer"] == "poll", got
+        assert got["event"] == "101", got
+        assert got["source"] == "kalshi", got
+        assert got["rejected_home_prob"] == "0.155", got
+        assert got["stored_home_prob"] == "0.035", got
+        assert got["regressed_rows"] == ROW, got
+        assert got["rejected_observed"] == f"{ROW}@{seen.isoformat()}", got
+        assert got["stored_observed"] == f"{ROW}@{stored_seen.isoformat()}", got
+        assert got["max_observation_lag_s"] == "135.000", got
+        assert published.isoformat() not in lines[0], "publication clock printed"
+        assert "updated_at" not in lines[0] and "{" not in lines[0], lines[0]
+        # The poll's own summary carries the aggregate beside it.
+        summary = [
+            r.getMessage() for r in caplog.records
+            if r.getMessage().startswith("Live prediction market poll: events=")
+        ]
+        assert len(summary) == 1 and "stale_refused=1," in summary[0], summary
 
     async def test_a_leg_repriced_before_the_socket_wrote_is_not_written(
         self, monkeypatch
@@ -179,44 +228,67 @@ class TestTheBeatRefusesAReadingOlderThanTheStoredStamp:
         assert stats["stale_readings_refused"] == 1
 
     async def test_a_stored_stamp_older_than_the_reading_is_replaced(
-        self, monkeypatch
+        self, monkeypatch, caplog
     ):
         """Control: same beat, stored stamp BEFORE the rows were seen."""
         now = _now()
-        stamped, points, stats = await _written(
-            monkeypatch,
-            _beat(last_seen=now - timedelta(seconds=60)),
-            _stored_at(now - timedelta(seconds=200)),
-        )
+        with caplog.at_level(logging.INFO, logger=_LOGGER):
+            stamped, points, stats = await _written(
+                monkeypatch,
+                _beat(last_seen=now - timedelta(seconds=60)),
+                _stored_at(now - timedelta(seconds=200)),
+            )
         assert stamped == [0.155] and points == [0.155], (stamped, points)
         assert stats["stale_readings_refused"] == 0
+        assert _receipts(caplog) == [], "a write logged a refusal receipt"
 
     async def test_a_later_publication_of_an_earlier_observation_is_replaced(
-        self, monkeypatch
+        self, monkeypatch, caplog
     ):
         """Clock domain: the socket saw the row BEFORE this reading did but
         published after. Comparing with its publication clock refused the
         genuinely newer reading; the observation basis admits it."""
         now = _now()
-        stamped, points, stats = await _written(
-            monkeypatch,
-            _beat(last_seen=now - timedelta(seconds=60)),
-            _stored_at(
-                now - timedelta(seconds=90), published=now - timedelta(seconds=15),
-            ),
-        )
+        with caplog.at_level(logging.INFO, logger=_LOGGER):
+            stamped, points, stats = await _written(
+                monkeypatch,
+                _beat(last_seen=now - timedelta(seconds=60)),
+                _stored_at(
+                    now - timedelta(seconds=90), published=now - timedelta(seconds=15),
+                ),
+            )
         assert stamped == [0.155] and points == [0.155], (stamped, points)
         assert stats["stale_readings_refused"] == 0
+        assert _receipts(caplog) == [], "the newer reading was logged as refused"
 
-    async def test_a_legacy_stamp_with_no_basis_abstains(self, monkeypatch):
+    async def test_a_legacy_stamp_with_no_basis_abstains(self, monkeypatch, caplog):
         now = _now()
-        stamped, points, _ = await _written(
-            monkeypatch,
-            _beat(last_seen=now - timedelta(seconds=150)),
-            {"kalshi": {"value": 0.035,
-                        "updated_at": (now - timedelta(seconds=15)).isoformat()}},
-        )
+        with caplog.at_level(logging.INFO, logger=_LOGGER):
+            stamped, points, stats = await _written(
+                monkeypatch,
+                _beat(last_seen=now - timedelta(seconds=150)),
+                {"kalshi": {"value": 0.035,
+                            "updated_at": (now - timedelta(seconds=15)).isoformat()}},
+            )
         assert stamped == [0.155] and points == [0.155], (stamped, points)
+        assert stats["stale_readings_refused"] == 0
+        assert _receipts(caplog) == [], "an unknown arm logged a refusal"
+
+    async def test_a_basis_bound_to_another_value_abstains(self, monkeypatch, caplog):
+        """The binding: a later basis whose ``observed_value`` no longer equals
+        ``value`` dates some OTHER reading. The guard does not believe it, so
+        the write proceeds — and the receipt, reading the same binding, has
+        nothing to say."""
+        now = _now()
+        stored = _stored_at(now - timedelta(seconds=15))
+        stored["kalshi"]["value"] = 0.5  # rewritten without its basis
+        with caplog.at_level(logging.INFO, logger=_LOGGER):
+            stamped, points, stats = await _written(
+                monkeypatch, _beat(last_seen=now - timedelta(seconds=150)), stored,
+            )
+        assert stamped == [0.155] and points == [0.155], (stamped, points)
+        assert stats["stale_readings_refused"] == 0
+        assert _receipts(caplog) == [], "an unbound basis logged a refusal"
 
     async def test_the_written_entry_carries_its_basis(self, monkeypatch):
         """What the next writer compares against is written here."""
@@ -230,22 +302,28 @@ class TestTheBeatRefusesAReadingOlderThanTheStoredStamp:
         assert entry[OBSERVED_BASIS_KEY] == {ROW: seen.timestamp()}, entry
         assert entry[OBSERVED_VALUE_KEY] == 0.155, entry
 
-    async def test_a_stored_bare_float_abstains(self, monkeypatch):
+    async def test_a_stored_bare_float_abstains(self, monkeypatch, caplog):
         now = _now()
-        stamped, points, _ = await _written(
-            monkeypatch,
-            _beat(last_seen=now - timedelta(seconds=150)),
-            {"kalshi": 0.035},
-        )
+        with caplog.at_level(logging.INFO, logger=_LOGGER):
+            stamped, points, stats = await _written(
+                monkeypatch,
+                _beat(last_seen=now - timedelta(seconds=150)),
+                {"kalshi": 0.035},
+            )
         assert stamped == [0.155] and points == [0.155], (stamped, points)
+        assert stats["stale_readings_refused"] == 0
+        assert _receipts(caplog) == [], "an unknown arm logged a refusal"
 
-    async def test_rows_that_cannot_say_when_seen_abstain(self, monkeypatch):
-        stamped, points, _ = await _written(
-            monkeypatch,
-            _beat(last_seen=None),
-            _stored_at(_now() - timedelta(seconds=15)),
-        )
+    async def test_rows_that_cannot_say_when_seen_abstain(self, monkeypatch, caplog):
+        with caplog.at_level(logging.INFO, logger=_LOGGER):
+            stamped, points, stats = await _written(
+                monkeypatch,
+                _beat(last_seen=None),
+                _stored_at(_now() - timedelta(seconds=15)),
+            )
         assert stamped == [0.155] and points == [0.155], (stamped, points)
+        assert stats["stale_readings_refused"] == 0
+        assert _receipts(caplog) == [], "an unknown arm logged a refusal"
 
 
 class TestTheComparisonHoldsAtTheCommit:
@@ -274,18 +352,23 @@ class TestTheComparisonHoldsAtTheCommit:
         )
 
     async def test_a_refusal_lets_go_of_the_lock_before_anything_else(
-        self, monkeypatch
+        self, monkeypatch, caplog
     ):
-        """Codex review of 104d7bd4: the refused branch kept the row lock."""
+        """Codex review of 104d7bd4: the refused branch kept the row lock.
+
+        Also with the receipt in place: the log line sits between the
+        comparison and the commit, and no session call may land there."""
         now = _now()
-        stamped, _points, stats = await _written(
-            monkeypatch,
-            _beat(last_seen=now - timedelta(seconds=150)),
-            _stored_at(now - timedelta(seconds=15)),
-        )
+        with caplog.at_level(logging.INFO, logger=_LOGGER):
+            stamped, _points, stats = await _written(
+                monkeypatch,
+                _beat(last_seen=now - timedelta(seconds=150)),
+                _stored_at(now - timedelta(seconds=15)),
+            )
         assert stats["stale_readings_refused"] == 1 and stamped == [], (
             "control: the beat never refused"
         )
+        assert len(_receipts(caplog)) == 1, "control: the receipt never ran"
         journal = _written.last_session.journal
         read_at = journal.index(("execute", "select:win_probability_sources"))
         assert journal[read_at + 1] == ("commit", None), (

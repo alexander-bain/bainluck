@@ -7520,6 +7520,98 @@ async def _retire_unbacked_blend_source(
     return True
 
 
+#: #8910 — the most contributor clocks one refusal line prints per side. A
+#: reading is one row, or two on a devig; the cap only keeps a malformed basis
+#: from turning one refusal into a wall of log.
+_STALE_REFUSAL_LOG_ROWS = 4
+
+
+def _render_observation_basis(basis) -> str:
+    """``row@ISO`` per contributor, sorted by row id, capped; ``-`` when absent."""
+    if not isinstance(basis, dict) or not basis:
+        return "-"
+    parts = []
+    for key in sorted(basis, key=str)[:_STALE_REFUSAL_LOG_ROWS]:
+        seen = basis[key]
+        try:
+            when = datetime.fromtimestamp(float(seen), tz=timezone.utc).isoformat()
+        except (TypeError, ValueError, OverflowError, OSError):
+            when = "?"
+        parts.append(f"{key}@{when}")
+    if len(basis) > _STALE_REFUSAL_LOG_ROWS:
+        parts.append(f"+{len(basis) - _STALE_REFUSAL_LOG_ROWS}")
+    return ",".join(parts)
+
+
+def _log_stale_reading_refusal(
+    writer: str,
+    event_id,
+    source: str,
+    *,
+    home_prob,
+    basis,
+    stored_sources,
+) -> None:
+    """One event-attributed line per refused reading (#8910).
+
+    `stale_readings_refused` is an aggregate, and on the WebSocket lane it also
+    counts a row deleted mid-batch, so a count above zero never proved WHICH
+    game was protected from WHICH older price. This line is that receipt for the
+    poll and the matcher: the writer, the event, the source, the HOME-oriented
+    probability it would have stamped (``rejected_home_prob``) against the stored
+    one (``stored_home_prob``), and — per contributing row — when THIS reading
+    saw the row against when the stored entry's writer saw it.
+
+    The stored side is read through `stored_observation_basis`, the guard's own
+    validated binding: the basis, and the value it dates, only while
+    ``observed_value`` still equals ``value``. Never ``updated_at`` (a
+    publication time — comparing it with an observation is how the first cut of
+    this guard refused a newer reading) and never the whole sources map. An
+    unbound or absent basis means the guard abstained and nothing is logged; if
+    one reaches here anyway the stored side prints ``-``.
+
+    Logging only. It reads values the caller already holds, and it can never
+    raise into the refusal branch it sits in — the commit that releases the row
+    lock comes next and must not be skipped by a receipt.
+    """
+    try:
+        from app.utils.aggregation import stored_observation_basis
+
+        stored_basis = stored_observation_basis(stored_sources, source) or {}
+        rejected = basis if isinstance(basis, dict) else {}
+        # Bound: the validated basis exists only while observed_value == value.
+        stored_home_prob = (
+            stored_sources[source]["value"] if stored_basis else None
+        )
+        regressed = sorted(
+            (
+                key for key, seen in rejected.items()
+                if key in stored_basis and float(seen) < stored_basis[key]
+            ),
+            key=str,
+        )
+        lag = max(
+            (stored_basis[key] - float(rejected[key]) for key in regressed),
+            default=None,
+        )
+        logger.info(
+            "stale-reading-refused writer=%s event=%s source=%s "
+            "rejected_home_prob=%s stored_home_prob=%s rejected_observed=%s "
+            "stored_observed=%s regressed_rows=%s max_observation_lag_s=%s",
+            writer, event_id, source, home_prob,
+            "-" if stored_home_prob is None else stored_home_prob,
+            _render_observation_basis(rejected),
+            _render_observation_basis(stored_basis),
+            ",".join(regressed[:_STALE_REFUSAL_LOG_ROWS]) or "-",
+            "-" if lag is None else f"{lag:.3f}",
+        )
+    except Exception as e:  # noqa: BLE001 — a receipt never breaks a refusal
+        logger.warning(
+            "stale-reading-refused writer=%s event=%s source=%s receipt failed: %s",
+            writer, event_id, source, type(e).__name__,
+        )
+
+
 async def _phase2_persist_group_reading(
     session,
     group,
@@ -7616,6 +7708,10 @@ async def _phase2_persist_group_reading(
     basis = observation_basis(reading.contributing_outcomes or (reading.outcome,))
     if reading_regresses_stored_observation(stored_sources, anchor.source, basis):
         stats["stale_readings_refused"] = stats.get("stale_readings_refused", 0) + 1
+        _log_stale_reading_refusal(
+            "matcher", anchor.event_id, anchor.source,
+            home_prob=round(home_prob, 4), basis=basis, stored_sources=stored_sources,
+        )
         await session.commit()
         return None
 
@@ -8665,9 +8761,11 @@ async def _match_prediction_markets(limit: int = 500):
 
     logger.info(
         "Prediction market matching: scanned=%d, linked=%d, "
-        "snapshots_written=%d, deduped=%d, errors=%d, %.0fs remaining",
+        "snapshots_written=%d, deduped=%d, stale_refused=%d, errors=%d, "
+        "%.0fs remaining",
         stats["markets_scanned"], stats["newly_linked"],
         stats["snapshots_written"], stats["snapshots_deduped"],
+        stats.get("stale_readings_refused", 0),
         len(stats["errors"]), _time_remaining(),
     )
     return stats
@@ -12270,6 +12368,11 @@ async def _poll_live_prediction_market_prices():
                 # genuinely newer reading (see the helper).
                 if _regresses2(_stored_wps2, market.source, _basis_of_reading2):
                     stats["stale_readings_refused"] += 1
+                    _log_stale_reading_refusal(
+                        "poll", event.id, market.source,
+                        home_prob=round(home_prob, 4), basis=_basis_of_reading2,
+                        stored_sources=_stored_wps2,
+                    )
                     # #8910 review: the refusal still holds the FOR UPDATE
                     # above. Carried into the next event it would stall the
                     # socket's writes to THIS game, and consecutive refusals
@@ -12564,11 +12667,12 @@ async def _poll_live_prediction_market_prices():
         "Live prediction market poll: events=%d, markets=%d, "
         "kalshi=%d, polymarket=%d, outcomes=%d, "
         "futures_snaps=%d, wp_snaps=%d (deduped=%d), "
-        "commits=%d, recoveries=%d (deadlocks=%d), terminal=%s",
+        "stale_refused=%d, commits=%d, recoveries=%d (deadlocks=%d), terminal=%s",
         stats["live_events"], stats["linked_markets"],
         stats["kalshi_fetched"], stats["polymarket_fetched"],
         stats["outcomes_updated"], stats["futures_snapshots_written"],
         stats["snapshots_written"], stats["snapshots_deduped"],
+        stats["stale_readings_refused"],
         stats["commits"], stats["session_recoveries"], stats["deadlocks"],
         stats["terminal"],
     )
