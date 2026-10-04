@@ -28,10 +28,13 @@ struct EventQuestionMatrixSection10238: View {
     private var title: String { scope == .game ? "Game questions" : "Series questions" }
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 12) {
-            // Keep a reachable fallback while an open question is withdrawn.
-            // A never-populated optional section otherwise occupies no space.
-            if !rows.isEmpty || open != nil || returnSelection != nil {
+        // Keep a reachable fallback while an open question is withdrawn.
+        // A never-populated section resolves to no view at all, so the page's
+        // stack spends no spacing on it (an always-present empty VStack cost
+        // every event page 12pt per section). @State lives on this view's
+        // identity, not its content, so selection survives either way.
+        if !rows.isEmpty || open != nil || returnSelection != nil {
+            VStack(alignment: .leading, spacing: 12) {
                 Text(title)
                     .font(.subheadline.weight(.semibold))
                     .accessibilityAddTraits(.isHeader)
@@ -45,9 +48,9 @@ struct EventQuestionMatrixSection10238: View {
                     question(row)
                 }
             }
-        }
-        .sheet(item: $open, onDismiss: restoreFocus) { selected in
-            detail(selected.id)
+            .sheet(item: $open, onDismiss: restoreFocus) { selected in
+                detail(selected.id)
+            }
         }
     }
 

@@ -1,0 +1,146 @@
+import SwiftUI
+import XCTest
+@testable import Bain_Luck
+
+/// #10238 — the event page mounts the sourced Game and Series questions
+/// (#10396's `EventQuestionMatrixSection10238`) as two independent siblings.
+///
+/// The three things a reader would see go wrong, and the arm that catches each:
+///   1. A finished or price-less Game hides an open Series — the Series section
+///      must not sit inside any `if` on the page (static read of the mount).
+///   2. Game questions drawn beside "no markets for this game" — the empty
+///      note's predicate counts a drawn Game question, and never a Series one.
+///   3. Every event page without questions grows a blank gap — a nil section
+///      takes no room in the page's stack (hosted measurement).
+@MainActor
+final class EventQuestionMatrixMount10238Tests: XCTestCase {
+    private static var testsDir: URL { URL(fileURLWithPath: #filePath).deletingLastPathComponent() }
+    private static func fixture(_ name: String) -> URL {
+        testsDir.appendingPathComponent("Fixtures").appendingPathComponent(name)
+    }
+    private static let gameURL = fixture("game-markets-10238-question-matrix.route-harness.json")
+    private static let seriesURL = fixture("related-futures-10238-series-matrix.route-harness.json")
+
+    private func object(_ url: URL) throws -> [String: Any] {
+        try XCTUnwrap(JSONSerialization.jsonObject(with: Data(contentsOf: url)) as? [String: Any])
+    }
+
+    private func decode<T: Decodable>(_ type: T.Type, _ dict: [String: Any]) throws -> T {
+        let decoder = JSONDecoder()
+        decoder.keyDecodingStrategy = .convertFromSnakeCase
+        return try decoder.decode(type, from: JSONSerialization.data(withJSONObject: dict))
+    }
+
+    private func pageSource() throws -> String {
+        try String(contentsOf: Self.testsDir.deletingLastPathComponent()
+            .appendingPathComponent("Bain Luck/Views/EventDetailView.swift"), encoding: .utf8)
+    }
+
+    /// The game-markets specimen with every legacy section emptied, so the
+    /// only possible content is the question matrix.
+    private func gameWithOnlyTheMatrix() throws -> [String: Any] {
+        var dict = try object(Self.gameURL)
+        for key in ["spreads", "totals", "team_totals", "period_markets", "player_props", "other"] {
+            dict[key] = [Any]()
+        }
+        dict["open_winner_quote"] = NSNull()
+        return dict
+    }
+
+    // MARK: 1 — mount shape
+
+    func testGameAndSeriesAreTwoUngatedSiblingsOfThePage() throws {
+        let lines = try pageSource().components(separatedBy: "\n")
+        func line(_ needle: String) throws -> (index: Int, text: String) {
+            let hits = lines.enumerated().filter { $0.element.contains(needle) }
+            XCTAssertEqual(hits.count, 1, "\(needle) should be mounted exactly once")
+            let hit = try XCTUnwrap(hits.first)
+            return (hit.offset, hit.element)
+        }
+        func indent(_ text: String) -> Int { text.prefix { $0 == " " }.count }
+
+        let game = try line("matrix: vm.gameMarkets?.gameQuestionMatrix, scope: .game)")
+        let series = try line("matrix: vm.relatedFutures?.seriesQuestionMatrix, scope: .series)")
+        // `RelatedFuturesView(` is drawn unconditionally at the page stack's own
+        // level; a section indented deeper than it is inside some `if`.
+        let anchor = try line("RelatedFuturesView(")
+        let level = indent(anchor.text)
+        for (name, hit) in [("Game", game), ("Series", series)] {
+            let call = lines[hit.index - 1]
+            XCTAssertEqual(call.trimmingCharacters(in: .whitespaces), "EventQuestionMatrixSection10238(",
+                           "\(name) section is not a direct EventQuestionMatrixSection10238 call")
+            XCTAssertEqual(indent(call), level,
+                           "\(name) section is nested inside a condition; it must be a page sibling")
+        }
+        let note = try line("noGameMarketsNote(status: event.status)")
+        XCTAssertLessThan(game.index, series.index)
+        XCTAssertLessThan(series.index, note.index, "questions are drawn before the empty note")
+        XCTAssertTrue(lines.contains { $0.contains("SeriesProbabilityView(") },
+                      "the model-only series view is a different thing and stays")
+    }
+
+    // MARK: 2 — the empty note
+
+    func testADrawnGameQuestionSilencesTheEmptyNote() throws {
+        let only = try decode(GameMarketsResponse.self, gameWithOnlyTheMatrix())
+        XCTAssertFalse(EventQuestionMatrixAdapter.rows(in: only.gameQuestionMatrix, scope: .game).isEmpty)
+        XCTAssertTrue(EventDetailView.gameMarketsHaveContent(only),
+                      "the page would print 'no markets' beside real Game questions")
+
+        var bare = try gameWithOnlyTheMatrix()
+        bare.removeValue(forKey: "game_question_matrix")
+        XCTAssertFalse(EventDetailView.gameMarketsHaveContent(try decode(GameMarketsResponse.self, bare)),
+                       "control: with nothing to draw the note must still show")
+    }
+
+    func testASeriesMatrixInTheGameSlotIsNotGameContent() throws {
+        // A matrix scoped to Series draws nothing in the Game section, so it
+        // must not hide the Game empty note either.
+        var dict = try gameWithOnlyTheMatrix()
+        var matrix = try XCTUnwrap(dict["game_question_matrix"] as? [String: Any])
+        matrix["display_scope"] = "series"
+        dict["game_question_matrix"] = matrix
+        let gm = try decode(GameMarketsResponse.self, dict)
+        XCTAssertNotNil(gm.gameQuestionMatrix)
+        XCTAssertFalse(EventDetailView.gameMarketsHaveContent(gm))
+    }
+
+    // MARK: 3 — rendered room
+
+    private func height<V: View>(_ view: V) -> CGFloat {
+        hostForMeasurement(view).sizeThatFits(in: CGSize(width: 390, height: CGFloat.greatestFiniteMagnitude)).height
+    }
+
+    private func page(game: EventQuestionMatrix?, series: EventQuestionMatrix?) -> some View {
+        VStack(spacing: 12) {
+            Color.red.frame(height: 10)
+            EventQuestionMatrixSection10238(matrix: game, scope: .game)
+            EventQuestionMatrixSection10238(matrix: series, scope: .series)
+            Color.red.frame(height: 10)
+        }
+        .frame(width: 390)
+    }
+
+    func testAPageWithNoQuestionsGrowsNoGap() {
+        let control = height(VStack(spacing: 12) {
+            Color.red.frame(height: 10)
+            Color.red.frame(height: 10)
+        }.frame(width: 390))
+        XCTAssertEqual(control, 32, accuracy: 0.5)
+        XCTAssertEqual(height(page(game: nil, series: nil)), control, accuracy: 0.5,
+                       "an event with no questions now carries blank space where they would be")
+    }
+
+    func testSeriesDrawsWhenGameIsAbsentAndGameDrawsAlone() throws {
+        let series = try XCTUnwrap(try decode(RelatedFuturesResponse.self, object(Self.seriesURL)).seriesQuestionMatrix)
+        let game = try XCTUnwrap(try decode(GameMarketsResponse.self, object(Self.gameURL)).gameQuestionMatrix)
+        let empty = height(page(game: nil, series: nil))
+        let seriesOnly = height(page(game: nil, series: series))
+        let gameOnly = height(page(game: game, series: nil))
+        XCTAssertGreaterThan(seriesOnly - empty, 100, "a Series-only page draws no Series questions")
+        XCTAssertGreaterThan(gameOnly - empty, 100, "Game questions draw nothing")
+        // Each matrix only draws in its own scope's section.
+        XCTAssertEqual(height(page(game: series, series: game)), empty, accuracy: 0.5,
+                       "a matrix drew in the other scope's section")
+    }
+}
