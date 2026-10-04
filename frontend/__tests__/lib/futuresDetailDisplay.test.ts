@@ -7,6 +7,11 @@ import {
   pickHeroOutcome,
   futuresTitleText,
   gradedWinner,
+  chartHistoryForSelection,
+  currentUnavailableNote,
+  hasCurrentPrice,
+  pickChartSeedOutcomes,
+  visibleChartOutcomes,
 } from "../../lib/futuresDetailDisplay";
 
 describe("leaderLabel", () => {
@@ -196,5 +201,84 @@ describe("gradedWinner (#6079 — the word 'won' comes from the grade)", () => {
 
   test("an empty board resolves to no winner rather than to the leader", () => {
     expect(gradedWinner([], null, "resolved")).toBeNull();
+  });
+});
+
+// #10453 (#8222) — an open market's automatic chart selection follows CURRENT
+// prices. Specimen /futures/61308736: all 24 prices withheld (`null`), yet the
+// 1W chart opened on Mensik's stale line near 47% as if he led.
+describe("#10453 current-price eligibility for the automatic chart", () => {
+  type Seed = { id: number; name: string; probability: number | null; is_winner?: boolean | null };
+  const withheld = (id: number, name: string): Seed => ({ id, name, probability: null });
+
+  test("an explicit 0 is a price; null, missing and non-finite are not", () => {
+    expect(hasCurrentPrice({ probability: 0 })).toBe(true);
+    expect(hasCurrentPrice({ probability: 0.47 })).toBe(true);
+    expect(hasCurrentPrice({ probability: null })).toBe(false);
+    expect(hasCurrentPrice({})).toBe(false);
+    expect(hasCurrentPrice({ probability: Number.NaN })).toBe(false);
+  });
+
+  test("an all-withheld open market seeds nothing (mutex, non-mutex and unknown)", () => {
+    const board = [withheld(1, "Mensik"), withheld(2, "Sinner"), withheld(3, "Alcaraz"), withheld(4, "Fritz")];
+    for (const mutex of [true, false, null, undefined]) {
+      expect(pickChartSeedOutcomes(board, false, mutex)).toEqual([]);
+    }
+  });
+
+  test("a partly priced open market seeds only priced rows, keeping a 0", () => {
+    const a = { id: 1, name: "A", probability: 0.4 };
+    const zero = { id: 2, name: "Zero", probability: 0 };
+    const board = [withheld(9, "Withheld high"), a, withheld(8, "Withheld"), zero];
+    expect(pickChartSeedOutcomes(board, false, true).map((o) => o.id)).toEqual([1, 2]);
+    // An all-zero board still seeds: 0 is a current price.
+    const zeros = [{ id: 1, name: "A", probability: 0 }, { id: 2, name: "B", probability: 0 }];
+    expect(pickChartSeedOutcomes(zeros, false, true).map((o) => o.id)).toEqual([1, 2]);
+  });
+
+  test("the graded-row rule on a live non-mutex field is unchanged among priced rows", () => {
+    const graded = { id: 1, name: "Graded", probability: 1, is_winner: true };
+    const live = { id: 2, name: "Live", probability: 0.3 };
+    const board = [graded, live, withheld(3, "Withheld")];
+    expect(pickChartSeedOutcomes(board, false, false).map((o) => o.id)).toEqual([2]);
+    expect(pickChartSeedOutcomes(board, false, true).map((o) => o.id)).toEqual([1, 2]);
+  });
+
+  test("CONTROL: a resolved market keeps winner + runner-up even when prices are null", () => {
+    const winner = { id: 1, name: "W", probability: null, is_winner: true };
+    const runner = { id: 2, name: "R", probability: null, is_winner: false };
+    expect(pickChartSeedOutcomes([runner, winner], true, true).map((o) => o.id)).toEqual([1, 2]);
+  });
+
+  const hist = (outcome_id: number, name: string) => ({ outcome_id, name, history: [] as unknown[] });
+  const H = [hist(1, "Mensik"), hist(2, "Sinner"), hist(3, "Alcaraz"), hist(4, "Fritz"), hist(5, "Zverev"), hist(6, "Ruud")];
+
+  test("STRAWMAN: the chart's own fallback draws five withheld lines on an empty selection", () => {
+    expect(visibleChartOutcomes(H, new Set())).toHaveLength(5);
+  });
+
+  test("with nothing selected an open market offers the chart only priced rows", () => {
+    expect(chartHistoryForSelection(H, new Set(), new Set())).toEqual([]);
+    expect(visibleChartOutcomes(chartHistoryForSelection(H, new Set(), new Set()), new Set())).toEqual([]);
+    expect(chartHistoryForSelection(H, new Set(), new Set([2, 6])).map((o) => o.outcome_id)).toEqual([2, 6]);
+  });
+
+  test("a reader's selection is offered the whole history, withheld rows included, untouched", () => {
+    const out = chartHistoryForSelection(H, new Set([1]), new Set());
+    expect(out).toHaveLength(H.length);
+    out.forEach((o, i) => expect(o).toBe(H[i]));
+    expect(visibleChartOutcomes(out, new Set([1])).map((o) => o.outcome_id)).toEqual([1]);
+  });
+
+  test("CONTROL: a resolved market (no restriction) keeps the existing fallback", () => {
+    expect(chartHistoryForSelection(H, new Set(), null)).toHaveLength(H.length);
+  });
+
+  test("an unpriced drawn line is named once; several are counted; none says nothing", () => {
+    expect(currentUnavailableNote([])).toBeNull();
+    expect(currentUnavailableNote(["Mensik"])).toBe("No current price for Mensik. Its line shows past prices.");
+    expect(currentUnavailableNote(["Mensik", "Sinner"])).toBe(
+      "No current price for 2 of these lines. They show past prices.",
+    );
   });
 });

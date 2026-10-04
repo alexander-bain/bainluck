@@ -67,7 +67,12 @@ import {
   gradedWinner,
   movementExplanation as movementExplanationHelper,
   boardOutcomeLabel,
+  chartHistoryForSelection,
   chartSeedsWithLead,
+  currentUnavailableNote,
+  hasCurrentPrice,
+  CHECK_AN_OUTCOME_CHART_NOTE,
+  NO_CURRENT_PRICES_CHART_NOTE,
   movementWindowLabel,
   noPricedOutcomesNote,
   partitionOutcomesByPrice,
@@ -77,6 +82,7 @@ import {
   servedLeadOutcome,
   sortFuturesOutcomes,
   visibleChartOutcomes,
+  withoutBoardNamePrefix,
 } from "@/lib/futuresDetailDisplay";
 import type { FuturesSortField, FuturesSortDirection } from "@/lib/futuresDetailDisplay";
 import { PinButton } from "@/components/PinButton";
@@ -515,6 +521,10 @@ export default function FuturesDetailPage({ params }: FuturesDetailPageProps) {
   // (is_winner, which may not be the highest current probability) + runner-up.
   // Only seed ids that actually have history rows, so the chart renders on first
   // paint rather than filtering down to nothing. Seeds once per market.
+  // #10453 — an open market with NO current price seeds nothing and stays
+  // unseeded, so prices that arrive later still seed the normal defaults. A
+  // reader's own checkbox ends seeding for good (`toggleOutcomeSelection`), so a
+  // late price never overwrites a deliberate choice.
   const didInitSelection = useRef(false);
   useEffect(() => {
     if (didInitSelection.current) return;
@@ -562,14 +572,45 @@ export default function FuturesDetailPage({ params }: FuturesDetailPageProps) {
   // there is deliberately no fallback to `leader` — a chart drawing nothing gets
   // no sentence (notice 34). `leader` itself is untouched: the hero's movement
   // pill asks a different question and keeps its own answer.
+  //
+  // #10453 — `chartHistory` is the history the chart is actually offered: with
+  // nothing selected, an open market offers only rows priced now, so the
+  // chart's five-line fallback cannot draw withheld rows as the leaders. On the
+  // same market the caption's subject must be priced too — a withheld row has
+  // no current number to say "up N pts" about.
+  const pricedIds = useMemo(
+    () =>
+      market?.status === "resolved"
+        ? null
+        : new Set((market?.outcomes ?? []).filter(hasCurrentPrice).map((o) => o.id)),
+    [market?.outcomes, market?.status],
+  );
+  const chartHistory = useMemo(
+    () => chartHistoryForSelection(historyOutcomes, selectedOutcomes, pricedIds),
+    [historyOutcomes, selectedOutcomes, pricedIds],
+  );
+  const drawnChartOutcomes = useMemo(
+    () => visibleChartOutcomes(chartHistory, selectedOutcomes),
+    [chartHistory, selectedOutcomes],
+  );
   const captionSubject = useMemo(() => {
-    const drawnIds = new Set(
-      visibleChartOutcomes(historyOutcomes, selectedOutcomes).map(
-        (o) => o.outcome_id,
-      ),
+    const drawnIds = new Set(drawnChartOutcomes.map((o) => o.outcome_id));
+    const candidates = (market?.outcomes ?? []).filter(
+      (o) => pricedIds === null || pricedIds.has(o.id),
     );
-    return pickCaptionSubject(market?.outcomes ?? [], drawnIds);
-  }, [historyOutcomes, selectedOutcomes, market?.outcomes]);
+    return pickCaptionSubject(candidates, drawnIds);
+  }, [drawnChartOutcomes, market?.outcomes, pricedIds]);
+  const unpricedLineNote = useMemo(
+    () =>
+      pricedIds === null
+        ? null
+        : currentUnavailableNote(
+            drawnChartOutcomes
+              .filter((o) => !pricedIds.has(o.outcome_id))
+              .map((o) => withoutBoardNamePrefix(o.name, market?.name)),
+          ),
+    [drawnChartOutcomes, pricedIds, market?.name],
+  );
 
   // #10266: the chart colours each team from its place in the market's own
   // outcome order, which a range tap does not refetch (the history response's
@@ -644,6 +685,8 @@ export default function FuturesDetailPage({ params }: FuturesDetailPageProps) {
   };
 
   const toggleOutcomeSelection = (outcomeId: number) => {
+    // #10453 — the reader has chosen; no later seed may replace their choice.
+    didInitSelection.current = true;
     setSelectedOutcomes((prev) => {
       const next = new Set(prev);
       if (next.has(outcomeId)) {
@@ -1197,6 +1240,18 @@ export default function FuturesDetailPage({ params }: FuturesDetailPageProps) {
           </div>
           {trendView === "progression" && hasProgression && progressionData ? (
             <TournamentProgressionTable data={progressionData} />
+          ) : chartHistory.length === 0 ? (
+            // #10453 — an open market with no current price and nothing checked.
+            // The chart would fall back to five withheld lines; it draws none,
+            // and the reader can still check any row below to see its past.
+            <p
+              data-testid="futures-trend-no-current-prices"
+              className="py-6 text-center text-[13px] text-text-secondary"
+            >
+              {pricedIds !== null && pricedIds.size > 0
+                ? CHECK_AN_OUTCOME_CHART_NOTE
+                : NO_CURRENT_PRICES_CHART_NOTE}
+            </p>
           ) : (
             // #883 slice 2 (L2-47): the hero shows the SINGLE leader blend line for
             // ALL market sizes — including >10-outcome markets that previously
@@ -1217,7 +1272,7 @@ export default function FuturesDetailPage({ params }: FuturesDetailPageProps) {
             // seven call sites pass nothing and are byte-identical; the rule is
             // a property of THIS page, not of the names.
             <FuturesChart
-              historyData={historyOutcomes}
+              historyData={chartHistory}
               selectedOutcomes={selectedOutcomes}
               onToggleOutcome={toggleOutcomeSelection}
               stepInterpolation={historyData.sparse}
@@ -1235,6 +1290,14 @@ export default function FuturesDetailPage({ params }: FuturesDetailPageProps) {
           {movementExplanation && !isResolved && (
             <p className="text-[13px] leading-relaxed text-text-secondary mt-3">
               {movementExplanation}
+            </p>
+          )}
+          {unpricedLineNote && !(trendView === "progression" && hasProgression && progressionData) && (
+            <p
+              data-testid="futures-trend-unpriced-line"
+              className="text-[13px] leading-relaxed text-text-secondary mt-3"
+            >
+              {unpricedLineNote}
             </p>
           )}
           {isResolved && resolvedFeatured && (
