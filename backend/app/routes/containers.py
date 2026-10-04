@@ -42,11 +42,27 @@ runs every time and names the revision; the hydrated, rendered body is cached
 per (slug, revision) and ages on the Discover feed's clock — see
 ``app.utils.container_read_cache`` and the section at the end of this file.
 ``CONTAINERS_READ_CACHE_ENABLED=false`` is the kill switch.
+
+#9935 — A THEME COLLECTION IS READ FROM ITS SNAPSHOT, A PAGE AT A TIME. Oscars
+2027 and AI are assembled by ``app.tasks.theme_assembly``, which publishes one
+immutable snapshot per (container, revision): the shown ids in page order, the
+withheld ids by reason and the counts. A theme slug reads the snapshot at the
+LIVE ``membership_revision`` (the published read names it), pages it with an
+opaque ``(class rank, id)`` cursor, and hydrates only that page through the
+same card serializer. The counts come from the snapshot, so they are the same
+on every page. A ``revision`` other than the live one answers page 1 of the
+live revision with ``revision_moved: true`` — never a mix of two revisions. No
+snapshot at the live revision answers the existing 503 "building". Every other
+slug is served exactly as before, whatever ``revision``/``cursor``/``limit``
+say.
 """
 
 from __future__ import annotations
 
 import asyncio
+import base64
+import binascii
+import bisect
 import json
 import logging
 import math
@@ -405,11 +421,35 @@ async def get_discoverable_containers(
     return {"collections": read.collections}
 
 
+def _base_empty() -> dict:
+    return {
+        "container": None,
+        "children": [],
+        "sections": [],
+        "member_count": 0,
+        "withheld": [],
+        "withheld_count": 0,
+        "assembled": False,
+        "known_classes": sorted(EDGE_CLASSES),
+    }
+
+
 @router.get("/{slug}")
 async def get_container(
     slug: str = Path(..., min_length=1, max_length=200),
     include_children: bool = Query(
         True, description="Include members of nested containers (draws)."
+    ),
+    # Theme collections only (#9935). Raw strings, validated in the theme
+    # branch, so a value no NFL/MLB hub reads can never turn its 200 into a 422.
+    revision: Optional[str] = Query(
+        None, max_length=12, description="Theme collections: the revision paged so far."
+    ),
+    cursor: Optional[str] = Query(
+        None, max_length=64, description="Theme collections: the previous page's next_cursor."
+    ),
+    limit: Optional[str] = Query(
+        None, max_length=4, description="Theme collections: members per page."
     ),
     db: AsyncSession = Depends(get_db),
 ) -> dict:
@@ -418,6 +458,8 @@ async def get_container(
 
     ``include_children=false`` keeps only the collection's own members; the
     published read itself is unchanged, so the revision still covers the draws.
+    ``revision`` / ``cursor`` / ``limit`` page a theme collection and are
+    ignored for every other slug.
     """
     if not containers_read_enabled():
         raise HTTPException(status_code=404, detail="Not found")
@@ -430,22 +472,17 @@ async def get_container(
 
     edition = edition_for_slug(slug)
     payload = _state_payload(published, edition)
-    base_empty = {
-        "container": None,
-        "children": [],
-        "sections": [],
-        "member_count": 0,
-        "withheld": [],
-        "withheld_count": 0,
-        "assembled": False,
-        "known_classes": sorted(EDGE_CLASSES),
-    }
+    base_empty = _base_empty()
     if published.state not in (READ_PUBLISHED, READ_EMPTY):
         # unpublished / withdrawn: nothing a reader could open, not even the
         # nested collections — no member and no path leaks out of a collection
         # that is not for readers.
         return {**payload, **base_empty}
 
+    if _is_theme_edition(edition):
+        return await _serve_theme_page(
+            db, published, edition, revision=revision, cursor=cursor, limit=limit
+        )
     if not container_read_cache_enabled():
         return await _build_published_payload(db, published, include_children)
     return await _serve_cached(db, slug, published, include_children)
@@ -777,3 +814,244 @@ async def _serve_cached(db: AsyncSession, slug: str, published, include_children
         finish_build(key, future, result=entry)
     _store_entry(key, entry)
     return _cached_response(entry, "miss")
+
+
+# ---------------------------------------------------------------------------
+# #9935 — a theme collection, read from its published snapshot, paged
+# ---------------------------------------------------------------------------
+
+THEME_EDITION_KINDS = frozenset({"theme_edition", "theme_continuing"})
+THEME_PAGE_DEFAULT = 50
+THEME_PAGE_MAX = 100
+
+
+def _is_theme_edition(edition: Optional[dict]) -> bool:
+    return isinstance(edition, dict) and edition.get("kind") in THEME_EDITION_KINDS
+
+
+def _bad_request(reason: str) -> HTTPException:
+    return HTTPException(status_code=422, detail={"reason": reason})
+
+
+def _digits(value: str) -> bool:
+    return value.isascii() and value.isdigit()
+
+
+def _parse_theme_params(
+    revision: Optional[str], cursor: Optional[str], limit: Optional[str]
+) -> tuple[Optional[int], Optional[tuple[int, int]], int]:
+    """``(revision, cursor key, limit)``; a value that does not parse is a 422."""
+    rev = None
+    if revision is not None:
+        if not _digits(revision):
+            raise _bad_request("invalid_revision")
+        rev = int(revision)
+    size = THEME_PAGE_DEFAULT
+    if limit is not None:
+        if not _digits(limit) or not 1 <= int(limit) <= THEME_PAGE_MAX:
+            raise _bad_request("invalid_limit")
+        size = int(limit)
+    key = None
+    if cursor is not None:
+        key = decode_theme_cursor(cursor)
+        if key is None:
+            raise _bad_request("invalid_cursor")
+    return rev, key, size
+
+
+def encode_theme_cursor(key: tuple[int, int]) -> str:
+    """Opaque to clients: ``(class rank, id)`` of the last member on a page."""
+    raw = json.dumps([int(key[0]), int(key[1])], separators=(",", ":")).encode()
+    return base64.urlsafe_b64encode(raw).decode().rstrip("=")
+
+
+def decode_theme_cursor(cursor: str) -> Optional[tuple[int, int]]:
+    try:
+        raw = base64.urlsafe_b64decode(cursor + "=" * (-len(cursor) % 4))
+        value = json.loads(raw)
+    except (binascii.Error, ValueError, UnicodeDecodeError):
+        return None
+    if (
+        isinstance(value, list)
+        and len(value) == 2
+        and all(type(v) is int and v >= 0 for v in value)
+    ):
+        return int(value[0]), int(value[1])
+    return None
+
+
+def _snapshot_ids(value) -> Optional[list]:
+    if not isinstance(value, list) or not all(type(v) is int for v in value):
+        return None
+    return value
+
+
+def parse_theme_snapshot(raw, *, container_id: int, revision: int) -> Optional[dict]:
+    """The snapshot stored for ``(container_id, revision)``, or None.
+
+    None for anything a reader cannot trust: absent, undecodable, a different
+    container or revision than the key promised, or a field of the wrong
+    shape. None is never an empty page — the route answers "building".
+    """
+    if raw is None:
+        return None
+    try:
+        snap = json.loads(raw.decode("utf-8") if isinstance(raw, (bytes, bytearray)) else raw)
+    except (UnicodeDecodeError, ValueError, TypeError):
+        return None
+    if not isinstance(snap, dict):
+        return None
+    if snap.get("container_id") != container_id or snap.get("revision") != revision:
+        return None
+    shown = _snapshot_ids(snap.get("shown_ids"))
+    withheld = snap.get("withheld")
+    if shown is None or len(set(shown)) != len(shown) or not isinstance(withheld, dict):
+        return None
+    if any(_snapshot_ids(v) is None for v in withheld.values()):
+        return None
+    for count in ("shown_count", "eligible_count"):
+        if type(snap.get(count)) is not int:
+            return None
+    if snap["shown_count"] != len(shown) or type(snap.get("inventory_complete")) is not bool:
+        return None
+    return snap
+
+
+async def _read_theme_snapshot(container_id: int, revision: int) -> Optional[dict]:
+    """GET the producer's key through the bounded shared client. Fails CLOSED."""
+    from app.tasks.theme_assembly import snapshot_key
+    from app.utils.request_cache import bounded_redis_call, get_shared_async_redis
+
+    key = snapshot_key(container_id, revision)
+    try:
+        client = await get_shared_async_redis()
+        res = await bounded_redis_call(lambda: client.get(key))
+    except asyncio.CancelledError:
+        raise
+    except Exception:  # noqa: BLE001 — unreadable is absent: "building", never empty
+        logger.warning("theme collection: snapshot read failed (container %s)", container_id,
+                       exc_info=True)
+        return None
+    if not res.is_ok:
+        return None
+    snap = parse_theme_snapshot(res.value, container_id=container_id, revision=revision)
+    if snap is None and res.value is not None:
+        logger.warning("theme collection: snapshot %s refused as malformed", key)
+    return snap
+
+
+def _theme_rank(member_class: Optional[str]) -> int:
+    from app.tasks.theme_assembly import CLASS_RANK
+
+    return CLASS_RANK.get(member_class, max(CLASS_RANK.values()) + 1)
+
+
+def _theme_order_classes(present: set) -> list:
+    """Sections in the snapshot's page order, so a page reads top to bottom in
+    cursor order; ``unclassified`` last, as everywhere else."""
+    named = sorted(present - {CLASS_UNCLASSIFIED}, key=lambda c: (_theme_rank(c), c))
+    return named + ([CLASS_UNCLASSIFIED] if CLASS_UNCLASSIFIED in present else [])
+
+
+def theme_page_window(
+    shown_ids: list, classes: dict, *, cursor_key: Optional[tuple[int, int]], limit: int
+) -> Optional[tuple[list, Optional[tuple[int, int]]]]:
+    """``(page ids, next cursor key)``, or None when the snapshot disagrees with
+    the membership it was built from (an id with no edge, or out of order).
+
+    Pure. ``classes`` is ``{member id: edge class}`` from the same published
+    read that named the revision.
+    """
+    if any(i not in classes for i in shown_ids):
+        return None
+    keys = [(_theme_rank(classes[i]), i) for i in shown_ids]
+    if any(a >= b for a, b in zip(keys, keys[1:])):
+        return None
+    start = bisect.bisect_right(keys, cursor_key) if cursor_key is not None else 0
+    end = start + limit
+    page = list(shown_ids[start:end])
+    return page, (keys[end - 1] if end < len(keys) else None)
+
+
+async def _serve_theme_page(
+    db: AsyncSession,
+    published,
+    edition: dict,
+    *,
+    revision: Optional[str],
+    cursor: Optional[str],
+    limit: Optional[str],
+):
+    requested, cursor_key, size = _parse_theme_params(revision, cursor, limit)
+    live = int(published.revision)
+    revision_moved = requested is not None and requested != live
+    if revision_moved:
+        cursor_key = None  # a cursor is a position in ITS revision, not this one
+
+    snap = await _read_theme_snapshot(int(published.container_id), live)
+    if snap is None:
+        return _not_ready_response("building")
+
+    own = [
+        m for m in published.members
+        if m.get("container_id") == published.container_id and m.get("type") == MEMBER_MARKET
+    ]
+    by_id = {int(m["id"]): m for m in own}
+    window = theme_page_window(
+        snap["shown_ids"],
+        {i: m.get("class") for i, m in by_id.items()},
+        cursor_key=cursor_key,
+        limit=size,
+    )
+    if window is None:
+        logger.warning(
+            "theme collection: snapshot for container %s at revision %s disagrees with "
+            "its membership; served as building", published.container_id, live,
+        )
+        return _not_ready_response("building")
+    page_ids, next_key = window
+
+    head = (
+        await db.execute(
+            text(
+                "SELECT id, kind, name, slug, category, status, "
+                "       window_start, window_end, parent_container_id "
+                "FROM containers WHERE id = :id"
+            ),
+            {"id": published.container_id},
+        )
+    ).fetchone()
+    market_cards, market_event_ids, market_failed = await _hydrate_market_cards(db, page_ids)
+    sections, withheld = present_sections(
+        [by_id[i] for i in page_ids],
+        event_cards={},
+        market_cards=market_cards,
+        market_event_ids=market_event_ids,
+        failed=market_failed,
+        order_classes=_theme_order_classes,
+        unclassified=CLASS_UNCLASSIFIED,
+    )
+    return {
+        **_state_payload(published, edition),
+        "container": _container_header(head) if head is not None else None,
+        "children": [],
+        "sections": sections,
+        # This page's cards; the collection's total is `counts.shown_count`.
+        "member_count": sum(s["count"] for s in sections),
+        "withheld": withheld,
+        "withheld_count": len(withheld),
+        "assembled": bool(own),
+        "known_classes": sorted(EDGE_CLASSES),
+        "revision_moved": revision_moved,
+        # From the snapshot, so identical on every page of one revision.
+        "counts": {
+            "shown_count": snap["shown_count"],
+            "eligible_count": snap["eligible_count"],
+            "withheld_count": {r: len(ids) for r, ids in sorted(snap["withheld"].items())},
+            "inventory_complete": snap["inventory_complete"],
+        },
+        "page": {
+            "limit": size,
+            "next_cursor": encode_theme_cursor(next_key) if next_key is not None else None,
+        },
+    }

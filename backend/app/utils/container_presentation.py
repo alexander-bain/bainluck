@@ -14,9 +14,10 @@ No database, no network, no clock: every rule below is gradeable from a fixture.
 WHAT IT DECIDES, EXHAUSTIVELY.
 
 1. **Edition identity** — which NFL week, NFL season or MLB postseason a slug
-   names. Read by round-tripping the slug through the adapters' OWN slug
-   builders, so the identity can never disagree with the slug assembly wrote.
-   Any other slug has no edition (``None``), never a nearest guess.
+   names, or (#9935) which theme collection. Read by round-tripping the slug
+   through the adapters' OWN slug builders (the theme registry's for a theme),
+   so the identity can never disagree with the slug assembly wrote. Any other
+   slug has no edition (``None``), never a nearest guess.
 2. **Destinations** — the web page and API path a member card (or a nested
    collection) taps through to.
    Only for a member whose row we actually hold; a member without a card has no
@@ -46,6 +47,7 @@ from app.utils.container_nfl import (
     STAGE_REGULAR,
     NflWeek,
 )
+from app.utils.theme_definitions import parse_theme_slug
 
 EDITION_NFL_WEEK = "nfl_week"
 EDITION_NFL_SEASON = "nfl_season"
@@ -104,7 +106,13 @@ def edition_for_slug(slug: str) -> Optional[dict]:
                 return {"kind": EDITION_MLB_POSTSEASON, "league": "mlb", "season": season}
         except ValueError:
             return None
-    return None
+        return None
+
+    # #9935: a theme collection, AFTER the sports branches so no NFL/MLB slug's
+    # answer can change. ``{"kind": "theme_edition", "subject", "edition"}`` or
+    # ``{"kind": "theme_continuing", "subject"}``; the registry's own builder
+    # has to reproduce the slug, so ``oscars-27`` and ``ai-2026`` are None.
+    return parse_theme_slug(slug)
 
 
 def event_destination(event_id: int) -> dict:
