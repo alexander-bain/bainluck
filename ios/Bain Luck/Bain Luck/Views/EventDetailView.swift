@@ -466,6 +466,22 @@ struct EventDetailView: View {
                             range: chartRange
                         )
                     }
+                    // #10239 — finished NFL only, secondary to the win
+                    // probability above; absent rather than an empty tile.
+                    if let projectedInput = ProjectedFinalPointsMount.input(
+                        sportKey: event.sport, eventStatus: event.status, history: vm.history,
+                        finalHome: event.homeScore, finalAway: event.awayScore) {
+                        ProjectedFinalPointsChartView(
+                            input: projectedInput,
+                            homeTeam: event.homeTeam,
+                            awayTeam: event.awayTeam,
+                            homeColor: teamColors(event).home,
+                            awayColor: teamColors(event).away
+                        )
+                        .padding(16)
+                        .background(Color.cardBackground)
+                        .clipShape(RoundedRectangle(cornerRadius: 12))
+                    }
                     // Market Maps (margin + total density curves)
                     if let gameMarkets = vm.gameMarkets {
                         // #4982 — the page is the only thing that can see both
