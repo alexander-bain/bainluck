@@ -494,21 +494,32 @@ final class TheLiveChartEndCarriesTheHeroNumber9436Tests: XCTestCase {
             window.isHidden = false
         }
         func close() { window.isHidden = true }
+        /// Rendered at 1x: a 3x capture of this view took ~300 ms on a hosted
+        /// runner, so the 350 ms glide was sampled two or three times.
         func shot() -> UIImage {
             host.view.setNeedsLayout(); host.view.layoutIfNeeded()
-            return UIGraphicsImageRenderer(bounds: host.view.bounds).image { _ in
+            let format = UIGraphicsImageRendererFormat()
+            format.scale = 1
+            return UIGraphicsImageRenderer(bounds: host.view.bounds, format: format).image { _ in
                 host.view.drawHierarchy(in: host.view.bounds, afterScreenUpdates: true)
             }
         }
     }
 
-    /// Sample the tip column for `seconds` after a change.
+    /// Sample the tip column for `seconds` after a change. Each stamp is taken
+    /// as its capture returns, and the pixel scans run after the loop, so the
+    /// sampling cadence is the capture's cost alone.
     private func sampleTip(_ hosted: Hosted, seconds: Double) async throws -> (columns: [Int], stamps: [Double]) {
-        var columns: [Int] = [], stamps: [Double] = []
+        var shots: [(image: UIImage, stamp: Double)] = []
         let start = CACurrentMediaTime()
         while CACurrentMediaTime() - start < seconds {
-            try await Task.sleep(for: .milliseconds(30))
-            if let x = tipColumn(hosted.shot()) { columns.append(x); stamps.append(CACurrentMediaTime() - start) }
+            try await Task.sleep(for: .milliseconds(16))
+            let image = hosted.shot()
+            shots.append((image, CACurrentMediaTime() - start))
+        }
+        var columns: [Int] = [], stamps: [Double] = []
+        for shot in shots {
+            if let x = tipColumn(shot.image) { columns.append(x); stamps.append(shot.stamp) }
         }
         return (columns, stamps)
     }
