@@ -17,8 +17,10 @@ on:
       - 'ios/Bain Luck/Bain Luck/Utilities/SportVocab.swift'
       - 'tools/watch-live-journey.sh'
       - 'tools/watch_live_receipt.py'
+      - 'tools/watch_live_preferences.py'
       - 'tools/watch_iphone_receipt.py'
       - 'tools/tests/test_watch_live_receipt.py'
+      - 'tools/tests/test_watch_live_preferences.py'
       - '.github/workflows/watch-live-journey.yml'
 
 permissions:
@@ -43,7 +45,7 @@ jobs:
           ref: ${{ github.event.pull_request.head.sha || github.sha }}
           persist-credentials: false
       - name: Verify fail-closed live evidence receipt
-        run: python3 -m unittest tools/tests/test_watch_live_receipt.py
+        run: python3 -m unittest tools/tests/test_watch_live_receipt.py tools/tests/test_watch_live_preferences.py
       - name: Select and reopen a production game on a disposable Watch
         run: bash tools/watch-live-journey.sh
       - name: Preserve real-data acceptance evidence
