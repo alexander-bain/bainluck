@@ -33,7 +33,7 @@ from app.utils.cross_source_matching import (
 )
 from app.utils.duplicate_condition_outcomes import drop_duplicate_legs
 from app.utils.inflation_release_identity import fold_same_release
-from app.utils.ladder_monotonicity import cumulative_outcome_ladder
+from app.utils.ladder_monotonicity import INC, cumulative_outcome_ladder, parse_threshold
 from app.utils.feed_market_quality import book_bounds_nothing, is_fabricated_midpoint
 from app.utils.futures_liveness import market_reads_settled
 from app.utils.economics_headline import (
@@ -787,6 +787,70 @@ def _oil_row(market: FuturesMarket) -> dict | None:
     return None
 
 
+# #10388 — the one number inside an explicitly supported threshold label.
+# Used only to compare two labels' shapes, never to read a value.
+_LADDER_TIE_NUMBER_RE = re.compile(r"\d[\d,]*(?:\.\d+)?")
+
+
+def _ladder_tie_run_in_threshold_order(run: list) -> list:
+    """One equal-price run of ladder rungs, ordered by threshold.
+
+    Reorders ONLY when every rung's label is a shape the threshold grammar
+    reads completely; any other run is returned exactly as it came in. Three
+    conditions, all required:
+
+    * ``parse_threshold`` matches the WHOLE label. The grammar reads a partial
+      span and stops: "At least $750 billion" parses 750 and "At least $1
+      trillion" parses 1, two distinct numbers that would sort the trillion
+      before the 750 billion. Spelled magnitudes, trailing words, "+" and date
+      labels all leave text outside the span, so they never reorder.
+    * every label has the same shape once its number is blanked ("above #%"),
+      so one run cannot mix directions, units or wording.
+    * the tie breaks in the ladder's own direction: an ``above`` ladder lists
+      the loosest bound first, so ascending; a ``below`` ladder lists its
+      loosest bound first too, which is the HIGHEST threshold, so descending.
+      Either way the tied rungs read in the same order as their neighbours.
+
+    The sort is stable, so two rungs on one threshold keep their rank order.
+    """
+    if len(run) < 2:
+        return run
+    keyed = []
+    shapes = set()
+    for o in run:
+        label = (o.name or "").strip()
+        parsed = parse_threshold(label)
+        if parsed is None or parsed[0] != (0, len(label)):
+            return run
+        shapes.add(_LADDER_TIE_NUMBER_RE.sub("#", label.lower()))
+        keyed.append((o, parsed[1], parsed[2]))
+    if len(shapes) != 1:
+        return run
+    descending = keyed[0][2] == INC
+    return [o for o, _, _ in sorted(keyed, key=lambda t: t[1], reverse=descending)]
+
+
+def _ladder_rungs_in_threshold_order(market: FuturesMarket) -> list:
+    """A cumulative ladder's rungs in rank order, price ties broken by threshold.
+
+    #10388 — the stored ``rank`` is a PROBABILITY rank assigned at ingestion by
+    a stable sort on price, so on a price tie it follows venue ingestion order,
+    which has nothing to do with threshold order: the mortgage ladder served
+    "Above 9.00%" before "Above 8.75%", both at 1.5%. Where prices are strict,
+    rank order already IS threshold order, so only contiguous equal-price runs
+    are touched and every strictly priced ladder serves the rows it did before.
+    """
+    out: list = []
+    run: list = []
+    for o in _outcomes_sorted(market):
+        if run and o.current_probability != run[-1].current_probability:
+            out.extend(_ladder_tie_run_in_threshold_order(run))
+            run = []
+        run.append(o)
+    out.extend(_ladder_tie_run_in_threshold_order(run))
+    return out
+
+
 def _distribution_row(
     market: FuturesMarket, *, min_outcomes: int = 6
 ) -> dict | None:
@@ -813,7 +877,7 @@ def _distribution_row(
         kind = "ladder"
         rows = [
             [round(float(o.current_probability or 0) * 100, 1), o.name or ""]
-            for o in _outcomes_sorted(market)
+            for o in _ladder_rungs_in_threshold_order(market)
         ]
     else:
         kind = "brackets"
