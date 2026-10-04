@@ -187,13 +187,22 @@ export async function fetchCollection(slug: string, signal?: AbortSignal, page?:
 const acceptedHubs = new Map<string, CollectionHub>();
 const ACCEPTED_HUB_LIMIT = 4;
 export const acceptedCollection = (slug: string): CollectionHub | null => acceptedHubs.get(slug) ?? null;
-export const forgetAcceptedCollections = (): void => acceptedHubs.clear();
+// #9925: causal order across the refresh and Load more lanes. Every read takes
+// a ticket when it leaves. Accepting an authoritative non-published answer
+// (withdrawn, unavailable, …) closes every ticket issued so far, so a read
+// already in flight — which left while the old membership stood — can no
+// longer bring it back; a read that leaves afterwards is admitted as usual.
+let readsIssued = 0;
+const closedBelow = new Map<string, number>();
+export const openCollectionRead = (): number => ++readsIssued;
+export const collectionReadAdmitted = (slug: string, ticket: number): boolean => ticket >= (closedBelow.get(slug) ?? 0);
+export const forgetAcceptedCollections = (): void => { acceptedHubs.clear(); closedBelow.clear(); };
 const accept = (slug: string, hub: CollectionHub): CollectionHub => {
   acceptedHubs.delete(slug);
   if (hub.slug === slug && hub.state === "published") {
     acceptedHubs.set(slug, hub);
     for (const oldest of acceptedHubs.keys()) { if (acceptedHubs.size <= ACCEPTED_HUB_LIMIT) break; acceptedHubs.delete(oldest); }
-  }
+  } else closedBelow.set(slug, readsIssued + 1);
   return hub;
 };
 

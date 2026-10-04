@@ -4,7 +4,8 @@ import Link from "next/link";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { CollectionMemberCard } from "./CollectionMemberCard";
 import {
-  acceptedCollection, collectionMemberDomId, collectionRefreshInterval, fetchCollection, reconcileCollectionContext, settleCollectionPage, settleCollectionRead,
+  acceptedCollection, collectionMemberDomId, collectionReadAdmitted, collectionRefreshInterval, fetchCollection, openCollectionRead, reconcileCollectionContext,
+  settleCollectionPage, settleCollectionRead,
   type CollectionHub as Hub, type CollectionMember, type CollectionPageRequest, type CollectionReadingContext,
 } from "@/lib/collections";
 
@@ -25,18 +26,21 @@ export default function CollectionHub({ slug }: { slug: string }) {
     request.current?.abort();
     const controller = new AbortController();
     request.current = controller;
+    const ticket = openCollectionRead();
     setFetching(true);
     const timeout = window.setTimeout(() => controller.abort(), 12000);
     try {
       const fresh = await fetchCollection(slug, controller.signal);
-      if (request.current !== controller) return;
+      if (request.current !== controller || !collectionReadAdmitted(slug, ticket)) return;
       const next = settleCollectionRead(slug, { hub: fresh });
+      latest.current = next.hub?.slug === slug ? next.hub : null;
       setHub(next.hub); setError(next.error);
     } catch {
-      if (request.current !== controller) return;
+      if (request.current !== controller || !collectionReadAdmitted(slug, ticket)) return;
       // A failed read is not a withdrawal: keep this slug's last accepted hub
       // (with an honest error) or, with none, show the error alone.
       const next = settleCollectionRead(slug, { failed: true });
+      latest.current = next.hub?.slug === slug ? next.hub : null;
       setHub(next.hub); setError(next.error);
     } finally {
       window.clearTimeout(timeout);
@@ -68,12 +72,17 @@ export default function CollectionHub({ slug }: { slug: string }) {
     const requested: CollectionPageRequest = { revision: base.revision, cursor: base.theme.nextCursor };
     const controller = new AbortController();
     pageRequest.current = controller;
+    const ticket = openCollectionRead();
     setPaging(true); setPageError(null);
     const timeout = window.setTimeout(() => controller.abort(), 12000);
     try {
       const page = await fetchCollection(slug, controller.signal, requested);
-      if (pageRequest.current !== controller || !latest.current) return;
-      setHub(settleCollectionPage(slug, latest.current, requested, page)); setError(null);
+      if (pageRequest.current !== controller || !latest.current || !collectionReadAdmitted(slug, ticket)) return;
+      // Settled state is current at once, not at the next render: a second
+      // answer in the same interval is admitted against it.
+      const settled = settleCollectionPage(slug, latest.current, requested, page);
+      latest.current = settled;
+      setHub(settled); setError(null);
     } catch {
       // A failed page leaves every loaded question where it is.
       if (pageRequest.current === controller) setPageError("Couldn't load more questions. Please try again.");

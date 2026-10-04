@@ -14,7 +14,9 @@
  * that answers a hub that has since moved on is dropped. Refresh keeps the
  * pages already loaded at the same revision, so Back finds a later-page member.
  * A slow refresh answering an EARLIER revision than the one Load more already
- * admitted is refused (refresh and Load more run on separate controllers).
+ * admitted is refused (refresh and Load more run on separate controllers), and
+ * a read already in flight when either lane accepts a withdrawal/unavailable
+ * answer can no longer bring the old membership back.
  *
  * Fixtures are shaped like PR #10439's `_serve_theme_page` response at
  * 397f34e381 (the producer is a pinned read-only interface here).
@@ -35,7 +37,7 @@ jest.mock("@/components/Analytics", () => ({ useAnalyticsContext: () => ({ track
 
 import CollectionHub from "@/components/collections/CollectionHub";
 import {
-  acceptedCollection, fetchCollection, forgetAcceptedCollections, parseCollection, reconcileCollectionContext,
+  acceptedCollection, collectionReadAdmitted, fetchCollection, forgetAcceptedCollections, openCollectionRead, parseCollection, reconcileCollectionContext,
   settleCollectionPage, settleCollectionRead, type CollectionHub as Hub,
 } from "@/lib/collections";
 import { mlbHub, nflHub } from "./fixtures";
@@ -257,6 +259,139 @@ describe("a page that answers a hub which has moved on is dropped", () => {
       expect(late.hub?.state).toBe("withdrawn");
       expect(late.hub?.members).toEqual([]);
       expect(acceptedCollection("ai")).toBeNull();
+    });
+  });
+  // Inverse of the revision race: the page lane accepts an AUTHORITATIVE
+  // answer (withdrawn / unavailable), which clears the held hub — so a held
+  // revision can no longer refuse the slow refresh. Causal order does: a read
+  // that left before the withdrawal was accepted is not admitted after it.
+  describe("a read in flight when a withdrawal is accepted cannot bring the old membership back", () => {
+    const WITHDRAWN_6 = { state: "withdrawn", slug: "ai", revision: 6, edition: { kind: "theme_continuing", subject: "ai" }, container: null, sections: [] };
+    const inFlight = () => {
+      const pending: Array<{ url: string; answer: (status: number, body: unknown) => void }> = [];
+      global.fetch = jest.fn((url: string) => new Promise((resolve) => {
+        urls.push(url);
+        pending.push({ url, answer: (status, body) => resolve({ status, ok: status >= 200 && status < 300, json: async () => body }) });
+      })) as unknown as typeof fetch;
+      return pending;
+    };
+    // The component's two lanes, step for step: a ticket when each read leaves,
+    // admission checked when it answers, and the settled hub current AT ONCE
+    // (no render in between), exactly as `load` / `loadMore` do.
+    const lanes = (start: Hub) => {
+      let latest: Hub | null = start;
+      const order: string[] = [];
+      const refreshLane = () => {
+        const ticket = openCollectionRead();
+        return fetchCollection("ai").then((hub) => {
+          if (!collectionReadAdmitted("ai", ticket)) { order.push("refresh dropped"); return null; }
+          const next = settleCollectionRead("ai", { hub });
+          latest = next.hub; order.push(`refresh ${next.hub?.state}:${next.hub?.revision}`);
+          return next;
+        });
+      };
+      const pageLane = () => {
+        const base = latest!;
+        const requested = { revision: base.revision!, cursor: base.theme!.nextCursor! };
+        const ticket = openCollectionRead();
+        return fetchCollection("ai", undefined, requested).then((page) => {
+          if (!latest || !collectionReadAdmitted("ai", ticket)) { order.push("page dropped"); return null; }
+          latest = settleCollectionPage("ai", latest, requested, page); order.push(`page ${latest.state}:${latest.revision}`);
+          return latest;
+        });
+      };
+      return { refreshLane, pageLane, order, latest: () => latest };
+    };
+    const held5 = async () => { respond([200, AI_P1()]); return (await refresh("ai")).hub!; };
+
+    test.each([
+      ["withdrawn 6", 200, WITHDRAWN_6, "withdrawn", "This collection is no longer available."],
+      ["404 unavailable", 404, { detail: "Not found" }, "unavailable", "This collection isn't available right now."],
+    ] as Array<[string, number, unknown, string, string]>)(
+      "refresh leaves at published 5 → Load more answers %s → the late published-5 refresh is dropped", async (_name, status, body, state, note) => {
+        const reader = lanes(await held5());
+        const pending = inFlight();
+        // (1) the page-1 refresh leaves while published 5 is held …
+        const refreshing = reader.refreshLane();
+        // (2) … then Load more leaves from the same hub.
+        const paging = reader.pageLane();
+        expect(pending.map((p) => p.url)).toEqual(["http://fixture.invalid/api/containers/ai", `http://fixture.invalid/api/containers/ai?revision=5&cursor=${cursor(2, 102)}`]);
+        // (3) Load more answers authoritatively and (4) the slow refresh answers
+        // published 5 back-to-back — both settle before anything could render.
+        pending[1].answer(status, body);
+        pending[0].answer(200, AI_P1(5, { prices: { 101: 0.91 } }));
+        const [page, late] = await Promise.all([paging, refreshing]);
+        expect(reader.order).toEqual([`page ${state}:${state === "withdrawn" ? 6 : null}`, "refresh dropped"]);
+        expect(page?.members).toEqual([]);
+        expect(page?.note).toBe(note);
+        expect(late).toBeNull();
+        expect(reader.latest()).toBe(page);
+        // Nothing repopulated the accepted cache, so neither the next mount's
+        // first frame nor Back draws a revision-5 card.
+        expect(acceptedCollection("ai")).toBeNull();
+        expect(cards(frame("ai"))).toEqual([]);
+      });
+
+    test("control: a refresh that leaves AFTER the withdrawal re-admits the collection (published 5 again, or a later 7)", async () => {
+      for (const revision of [5, 7]) {
+        forgetAcceptedCollections();
+        const reader = lanes(await held5());
+        const pending = inFlight();
+        const stale = reader.refreshLane();
+        const paging = reader.pageLane();
+        pending[1].answer(200, WITHDRAWN_6);
+        pending[0].answer(200, AI_P1(5));
+        await Promise.all([paging, stale]);
+        expect(acceptedCollection("ai")).toBeNull();
+        // A NEW read, issued after the withdrawal was accepted.
+        const fresh = reader.refreshLane();
+        pending[2].answer(200, AI_P1(revision, { next: cursor(2, 102) }));
+        const next = await fresh;
+        expect(next?.hub?.state).toBe("published");
+        expect(next?.hub?.revision).toBe(revision);
+        expect(ids(acceptedCollection("ai"))).toEqual([101, 102]);
+        expect(cards(frame("ai"))).toEqual(["market:101", "market:102"]);
+        expect(reader.order).toEqual(["page withdrawn:6", "refresh dropped", `refresh published:${revision}`]);
+      }
+    });
+
+    test("control: the mirror order — the refresh answers withdrawn first, the late Load more page is dropped", async () => {
+      const reader = lanes(await held5());
+      const pending = inFlight();
+      const refreshing = reader.refreshLane();
+      const paging = reader.pageLane();
+      pending[0].answer(200, WITHDRAWN_6);
+      pending[1].answer(200, AI_P2());
+      await Promise.all([refreshing, paging]);
+      expect(reader.order).toEqual(["refresh withdrawn:6", "page dropped"]);
+      expect(reader.latest()?.state).toBe("withdrawn");
+      expect(acceptedCollection("ai")).toBeNull();
+    });
+
+    test("control: a transient failure closes nothing — the in-flight refresh is still admitted", async () => {
+      const reader = lanes(await held5());
+      const pending = inFlight();
+      const refreshing = reader.refreshLane();
+      const paging = reader.pageLane();
+      pending[1].answer(503, { detail: { state: "building" } });
+      await expect(paging).rejects.toThrow();
+      pending[0].answer(200, AI_P1(5, { prices: { 101: 0.91 } }));
+      const late = await refreshing;
+      expect(late?.hub?.revision).toBe(5);
+      expect(ids(acceptedCollection("ai"))).toEqual([101, 102]);
+    });
+
+    test("control: withdrawal on one slug closes nothing on another", async () => {
+      const oscarsTicket = openCollectionRead();
+      const reader = lanes(await held5());
+      const pending = inFlight();
+      const refreshing = reader.refreshLane();
+      const paging = reader.pageLane();
+      pending[1].answer(200, WITHDRAWN_6);
+      pending[0].answer(200, AI_P1(5));
+      await Promise.all([paging, refreshing]);
+      expect(collectionReadAdmitted("ai", oscarsTicket)).toBe(false);
+      expect(collectionReadAdmitted("oscars-2027", oscarsTicket)).toBe(true);
     });
   });
   test("the same page answered twice (double tap) appends once", async () => {
