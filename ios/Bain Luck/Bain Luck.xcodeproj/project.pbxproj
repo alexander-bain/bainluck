@@ -113,7 +113,10 @@
 			isa = PBXFileSystemSynchronizedBuildFileExceptionSet;
 			membershipExceptions = (
 				Models/PredictionModels.swift,
+				Utilities/DrawPricedWinner.swift,
 				Utilities/PeriodLabel.swift,
+				Utilities/RenderedPercent.swift,
+				Utilities/SportVocab.swift,
 			);
 			target = A70F40102FA6C20000170BF2 /* BainLuckWatch Watch App */;
 		};

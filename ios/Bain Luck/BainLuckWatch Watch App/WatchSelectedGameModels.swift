@@ -24,6 +24,30 @@ nonisolated struct WatchSelectedGame: Codable, Sendable, Identifiable {
     var showsForecast: Bool { !isFinal && !isClosed }
     var stateLabel: String { Self.stateLabel(for: status) }
 
+    /// Match the phone's shared rounding for this selected pair. Served integers
+    /// from current_odds may describe a different source than the hero.
+    var homeRenderedPercent: Int? {
+        guard showsForecast else { return nil }
+        // Older saved readings omitted production's `sport` field. Until a
+        // refresh identifies the sport, do not assume it is a two-way market.
+        guard let sportKey, !sportKey.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
+            return renderedPercent(homeProbability)
+        }
+        if DrawPricedWinner.sportPricesADraw(sportKey) || drawProbability != nil {
+            return renderedPercent(homeProbability)
+        }
+        // The shared helper keeps a missing away price missing and uses scalar
+        // rounding when these two prices are not a complementary pair.
+        return renderedDuelPercents(away: awayProbability, home: homeProbability)[1]
+    }
+
+    /// Format the already-decided integer once for both the screen and VoiceOver.
+    var homeProbabilityText: String? {
+        homeRenderedPercent.map {
+            (Double($0) / 100).formatted(.percent.precision(.fractionLength(0)))
+        }
+    }
+
     static func stateLabel(for status: String?) -> String {
         switch status?.lowercased() {
         case "completed", "final": return "Final"
@@ -54,7 +78,7 @@ nonisolated struct WatchSelectedGame: Codable, Sendable, Identifiable {
         case homeTeam = "home_team", awayTeam = "away_team"
         case homeScore = "home_score", awayScore = "away_score"
         case commenceTime = "commence_time", scoreObservedAt = "score_observed_at"
-        case currentOdds = "current_odds", espn, sportKey = "sport_key"
+        case currentOdds = "current_odds", espn, sportKey = "sport_key", sport
         case heroProbability = "hero_probability", heroAway = "hero_probability_away"
         case probabilityObservedAt = "hero_probability_observed_at"
     }
@@ -103,7 +127,9 @@ nonisolated struct WatchSelectedGame: Codable, Sendable, Identifiable {
         awayProbability = hero != nil ? heroAway.flatMap { (0...1).contains($0) ? $0 : nil } : odds?.awayProbability
         // The producer clock dates the hero, never the sportsbook capture or score.
         probabilityObservedAt = hero != nil ? Self.date(try? c.decode(String.self, forKey: .probabilityObservedAt)) : nil
-        sportKey = try? c.decode(String.self, forKey: .sportKey)
+        // Public event detail uses `sport`; older snapshots use `sport_key`.
+        sportKey = (try? c.decode(String.self, forKey: .sport))
+            ?? (try? c.decode(String.self, forKey: .sportKey))
         let espn = try? c.decode(GameState.self, forKey: .espn)
         period = espn?.period
         gameClock = espn?.gameClock
