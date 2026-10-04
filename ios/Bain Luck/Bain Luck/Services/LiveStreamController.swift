@@ -40,6 +40,18 @@ import Foundation
 ///    so a silent-but-retrying transport is given `retryGiveUp` before it is
 ///    retired — the same split web's `readyState` check makes.
 ///
+/// 4. (#10468 / #8320) A FRAME IS NOT A DELIVERY EITHER — until the page TAKES
+///    it. A decoded frame can still be refused by its owner: the wrong event, a
+///    revision the page already holds or one older than it, no usable price.
+///    The handler used to rearm the delivery clock for every decoded frame, so
+///    a stream of refused frames renewed the data-silence budget forever and
+///    kept polling off behind a price that was not moving. The frame now
+///    proves only the TRANSPORT, like a heartbeat; the owner calls
+///    `acknowledgeAcceptedPrice()` once it has actually adopted a newer price
+///    (or a successful authoritative re-read), and that is the only data-clock
+///    rearm after `open`. Web's twin still rearms on the frame; this is the
+///    native half of #8320 and is deliberately ahead of it.
+///
 /// THE RULE THE WHOLE FILE SERVES: a push path that dies must degrade to
 /// polling, never to a frozen number. Every failure mode — refused, errored,
 /// closed, aged out, or silently dead — ends with `delivering == false`, and
@@ -222,12 +234,28 @@ final class LiveStreamController {
             return
         }
         // 2. PUBLISHER dead (or the market is quiet) — the socket is fine and
-        //    heartbeats keep arriving, but no price has been pushed for longer
-        //    than we are willing to trust. Report NOT DELIVERING so polling
+        //    heartbeats keep arriving, but no price has been ADOPTED for longer
+        //    than we are willing to trust. Frames the owner refused count here
+        //    exactly as heartbeats do: not at all (#10468). Report NOT DELIVERING so polling
         //    resumes, and keep the stream open.
         if at - lastDataAt > LiveStreamTiming.dataSilenceTimeout {
             setDelivering(false)
         }
+    }
+
+    /// #10468 — the owner ADOPTED a newer price from this stream (or a
+    /// successful authoritative re-read it triggered). The only thing after
+    /// `open` that rearms the delivery clock or turns delivery back on.
+    ///
+    /// Called by the owner AFTER it has committed the adopted state, so the
+    /// `onDeliveringChange` this may fire — synchronously, from inside the
+    /// owner's `onFrame` — reads that state, never the one before it. Refused
+    /// once stopped, and between a rollover and its reopen: a stream that has
+    /// no socket has delivered nothing, and the next one must push again.
+    func acknowledgeAcceptedPrice() {
+        guard !stopped, handle != nil else { return }
+        lastDataAt = now()
+        setDelivering(true)
     }
 
     /// Terminal. No reopen, ever.
@@ -320,11 +348,13 @@ final class LiveStreamController {
             // `event_id` would otherwise be handed on and could blank a working
             // hero.
             guard let frame = try? decoder.decode(LiveStreamFrame.self, from: data) else { return }
-            // THE ONLY place the delivery clock is rearmed. A frame is the only
-            // evidence that anything is still publishing.
-            self.lastDataAt = self.now()
+            // TRANSPORT clock only (above), exactly like a heartbeat. Decoding a
+            // frame is not delivering a price: the owner may refuse it (wrong
+            // event, an old or equal revision, no usable value), and a stream of
+            // refused frames used to renew the data-silence budget forever
+            // (#10468). The owner calls `acknowledgeAcceptedPrice()` from inside
+            // this callback once — and only if — it adopts the price.
             self.onFrame(frame)
-            self.setDelivering(true)
         }
 
         next.on("heartbeat") { [weak self, weak next] _ in
