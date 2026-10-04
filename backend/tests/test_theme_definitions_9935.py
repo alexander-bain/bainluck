@@ -103,7 +103,8 @@ class TestRegistryAndSlugs:
         assert AI.container_kind == "theme" and AI.category == "ai"
         assert OSCARS_2027.display_name == "Oscars 2027"
         assert OSCARS_2027.rule_version == "oscars-edition@1"
-        assert AI.rule_version == "ai-subject@1"
+        # @2 (#9936): clause 3's unknown-time verdict no longer retires a standing member
+        assert AI.rule_version == "ai-subject@2"
 
     @pytest.mark.parametrize("slug", sorted(REGISTRY))
     def test_every_registered_slug_round_trips(self, slug):
@@ -405,7 +406,7 @@ class TestVenueEventTitle:
 
 
 # ---------------------------------------------------------------------------
-# ai-subject@1
+# ai-subject@2
 # ---------------------------------------------------------------------------
 
 
@@ -700,6 +701,21 @@ class TestResolveIpoPack:
     def test_no_map_sole_candidate_with_a_non_theme_slug_fails_closed(self):
         odd = cc(7, "nfl-2026-week-04", IPO_PACK)
         assert resolve_collection_target("story:x", IPO_PACK, [odd]) == (None, td.TARGET_SLUG_NOT_THEME)
+
+
+def test_9936_the_pass_only_reasons_are_pinned_and_never_decided():
+    """Two reasons only the pass writes (#9936): ``decide()`` keeps its verdict
+    on the row alone, so an unknown-time row is still excluded there."""
+    assert td.ADMITTED_SETTLE_TIME_PENDING == "admitted_settle_time_pending"
+    assert td.ADMITTED_SETTLE_TIME_PENDING in td.ADMITTED_REASONS
+    assert td.MEMBER_ROW_ABSENT == "member_row_absent"
+    assert td.MEMBER_ROW_ABSENT in td.EXCLUDED_REASONS
+    assert td.MEMBER_ROW_ABSENT != "row_missing"  # the snapshot withhold, a different fact
+    assert td.RETAIN_IF_MEMBER_REASONS == frozenset({td.RESOLVED_SETTLE_TIME_UNKNOWN})
+    unknown = ai(mk(5, "DeepSeek R3 released?", cat="tech", status="resolved", settled_at=None))
+    assert (unknown.outcome, unknown.reason, unknown.edge_class) == (
+        "excluded", td.RESOLVED_SETTLE_TIME_UNKNOWN, None)
+    assert unknown.rule_version == "ai-subject@2"
 
 
 def test_reason_vocabulary_is_closed_and_disjoint():
