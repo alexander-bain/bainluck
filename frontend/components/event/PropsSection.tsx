@@ -133,6 +133,13 @@ interface PropsSectionProps {
    * (the golf/combat concept page), where every family keeps its name.
    */
   matchup?: MatchupNames | null;
+  /**
+   * #10340: the page passes this only before kickoff, when the rail and the
+   * "All N props" fold above already tell the script. The section then heads
+   * itself as the supplemental questions it is (`SUPPLEMENTAL_SCRIPT_META`).
+   * Honoured in THE SCRIPT state only; live and final keep their headings.
+   */
+  supplemental?: boolean;
 }
 
 /**
@@ -176,6 +183,20 @@ const STATE_META: Record<PropsState, { eyebrow: string; blurb: string }> = {
  * that makes a claim about the data changes.
  */
 const GRADED_BLURB_UNGRADED = "The pregame script. No grades published for these props.";
+
+/**
+ * #10340 — before kickoff a game page said "script" twice: the rail's "The
+ * script" and this section's own, below the "All N props" fold, whose rows it
+ * no longer repeats. The rail keeps the name. Here, what is left is the
+ * questions the fold does not cover, so the section is headed as that, in
+ * neutral words that claim nothing about price or trading (D111's reasoning
+ * for "More props"), and the secondary "Props" title — which would only
+ * repeat the eyebrow — is dropped.
+ */
+const SUPPLEMENTAL_SCRIPT_META = {
+  eyebrow: "More props",
+  blurb: "Additional market questions for this game.",
+};
 
 export function deriveState(eventStatus?: string | null): PropsState {
   const s = (eventStatus ?? "").toLowerCase();
@@ -1019,6 +1040,7 @@ export default function PropsSection({
   title = "Props",
   domain = null,
   matchup = null,
+  supplemental = false,
 }: PropsSectionProps) {
   if (!servedItems || servedItems.length === 0) return null;
 
@@ -1042,9 +1064,13 @@ export default function PropsSection({
    * repeated the same fact in a 198px monospace chip — see `GradedValue`.
    */
   const blurbStatesNoGrades = activeState === "graded" && !anyGraded;
-  const meta = blurbStatesNoGrades
-    ? { ...baseMeta, blurb: GRADED_BLURB_UNGRADED }
-    : baseMeta;
+  // #10340: supplemental is a pregame presentation; any other state ignores it.
+  const asSupplemental = supplemental && activeState === "script";
+  const meta = asSupplemental
+    ? SUPPLEMENTAL_SCRIPT_META
+    : blurbStatesNoGrades
+      ? { ...baseMeta, blurb: GRADED_BLURB_UNGRADED }
+      : baseMeta;
   // L2-147 Item 2: the field cards name real competitors → give them headshots
   // for a person-field domain (golf today). Ladders ("Under 63.5") never do.
   const withAvatars = isPersonFieldDomain(domain);
@@ -1153,7 +1179,7 @@ export default function PropsSection({
         <span className="text-[11px] font-bold uppercase tracking-[0.1em] text-text-primary">
           {meta.eyebrow}
         </span>
-        <span className="text-sm text-text-secondary">{title}</span>
+        {!asSupplemental && <span className="text-sm text-text-secondary">{title}</span>}
       </div>
       <p className="text-xs text-text-muted mb-4">{meta.blurb}</p>
 

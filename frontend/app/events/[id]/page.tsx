@@ -3336,6 +3336,10 @@ export default function EventPage({ params }: EventPageProps) {
             // the teams lets the section drop it — and ONLY when it is this
             // event's matchup, so a mis-attached fixture stays visible.
             matchup={{ home: event.home_team, away: event.away_team }}
+            // #10340: before kickoff, with the rail and the "All N props" fold
+            // above (both mount on `player_props`), this section is the extra
+            // questions and is headed so; the rail keeps "The script".
+            supplemental={knownPregame && (gameMarkets?.player_props?.length ?? 0) > 0}
             items={propsScript
               .map((p, i): PropMark => {
                 const verified = verifyScriptGrade(p, rawPropRowsByKey);
