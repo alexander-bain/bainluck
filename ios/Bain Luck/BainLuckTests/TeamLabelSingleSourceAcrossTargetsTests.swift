@@ -63,7 +63,6 @@ final class TeamLabelSingleSourceAcrossTargetsTests: XCTestCase {
     private let knownOutstanding = [
         "BainLuckWatch Watch App/WatchFeedModels.swift",
         "BainLuckWatch Watch App/WatchLiveView.swift",
-        "BainLuckWatch Watch App/BainLuckComplication.swift",
     ]
 
     /// Every Swift file in the project, as (path-relative-to-root, contents).
