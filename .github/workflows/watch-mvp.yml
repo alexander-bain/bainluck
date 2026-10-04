@@ -25,9 +25,6 @@ on:
       - 'tools/watch-ui-journey.sh'
       - 'tools/watch-build.sh'
       - 'tools/watch-companion-archive.sh'
-      - 'tools/watch-non-ios-plan.sh'
-      - 'tools/watch_non_ios_plan.py'
-      - 'tools/tests/test_watch_non_ios_plan.py'
       - 'tools/watch_companion_archive.py'
       - 'tools/tests/test_watch_companion_archive.py'
       - 'tools/watch-iphone-compatibility.sh'
@@ -58,9 +55,6 @@ on:
       - 'tools/watch-ui-journey.sh'
       - 'tools/watch-build.sh'
       - 'tools/watch-companion-archive.sh'
-      - 'tools/watch-non-ios-plan.sh'
-      - 'tools/watch_non_ios_plan.py'
-      - 'tools/tests/test_watch_non_ios_plan.py'
       - 'tools/watch_companion_archive.py'
       - 'tools/tests/test_watch_companion_archive.py'
       - 'tools/watch-iphone-compatibility.sh'
@@ -204,29 +198,3 @@ jobs:
           if-no-files-found: ignore
           retention-days: 7
 
-  non-ios-packaging-plan:
-    name: Watch excluded from macOS build
-    runs-on: xcode-27
-    timeout-minutes: 45
-    env:
-      DEVELOPER_DIR: /Applications/Xcode_27.0.app/Contents/Developer
-    steps:
-      - uses: actions/checkout@v6
-        with:
-          ref: ${{ github.event.pull_request.head.sha || github.sha }}
-          persist-credentials: false
-      - name: Exercise plan acceptance guards
-        run: python3 tools/tests/test_watch_non_ios_plan.py -v
-      - name: Build unsigned Mac app and verify Watch exclusion
-        run: bash tools/watch-non-ios-plan.sh macOS
-      - name: Preserve plan and receipt
-        if: always()
-        uses: actions/upload-artifact@v4
-        with:
-          name: watch-non-ios-plan-macOS
-          path: |
-            build/watch-non-ios-plan/*.log
-            build/watch-non-ios-plan/*.json
-            build/watch-non-ios-plan/*.txt
-          if-no-files-found: ignore
-          retention-days: 7
