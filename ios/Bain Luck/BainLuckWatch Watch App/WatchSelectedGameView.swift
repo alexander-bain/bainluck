@@ -15,6 +15,9 @@ struct WatchSelectedGameView: View {
     @StateObject private var picker: WatchGamePickerStore
     @State private var choosingGame = false
     @State private var showingHandoffHelp = false
+    #if DEBUG
+    @State private var launcherOpenCount = 0
+    #endif
     @State private var refreshGeneration = 0
     @State private var gamesRefreshGeneration = 0
 
@@ -69,11 +72,22 @@ struct WatchSelectedGameView: View {
                     Button("Choose another game") { choosingGame = true }
                         .accessibilityIdentifier("watch.choose-another")
                 }
+                #if DEBUG
+                if WatchUIFixture.current != nil,
+                   ProcessInfo.processInfo.environment["BAINLUCK_WATCH_UI_LAUNCH_RECEIPT"] == "1" {
+                    Text("Launcher opens: \(launcherOpenCount)")
+                        .font(.footnote)
+                        .accessibilityIdentifier("watch.launch-receipt")
+                }
+                #endif
             }
             .padding(.horizontal, 6)
         }
         .onOpenURL { url in
             guard WatchLaunchRoute.accepts(url) else { return }
+            #if DEBUG
+            launcherOpenCount += 1
+            #endif
             // Warm launch must reveal the retained choice, not a picker/help overlay.
             // Existing foreground refresh rules still own all network scheduling.
             choosingGame = false
@@ -98,12 +112,14 @@ struct WatchSelectedGameView: View {
             await store.runForegroundRefresh()
         }
         .sheet(isPresented: $choosingGame) {
-            ScrollView { gamePicker.padding(.horizontal, 6) }
-                .navigationTitle("Choose a game")
-                .task(id: "\(scenePhase)-\(gamesRefreshGeneration)") {
-                    guard scenePhase == .active else { return }
-                    await picker.refresh()
-                }
+            NavigationStack {
+                ScrollView { gamePicker.padding(.horizontal, 6) }
+                    .navigationTitle("Choose a game")
+                    .task(id: "\(scenePhase)-\(gamesRefreshGeneration)") {
+                        guard scenePhase == .active else { return }
+                        await picker.refresh()
+                    }
+            }
         }
         .onChange(of: store.selectedEventID) { _, _ in
             // A new choice must reveal its identity, not inherit the old game's scroll.
