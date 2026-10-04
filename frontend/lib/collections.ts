@@ -237,6 +237,13 @@ export function settleCollectionRead(slug: string, read: { hub: CollectionHub } 
     // A refresh re-reads page 1. At the same revision the pages already loaded
     // stay (and Back finds a later-page member); its own cards are refreshed.
     const held = acceptedCollection(slug);
+    // A refresh and a Load more run side by side. A revision only moves forward,
+    // so a refresh that answers with an EARLIER theme revision than the one the
+    // page lane already admitted is the slower, older read: it never rolls the
+    // list or cursor back. Non-published answers and NFL/MLB hubs still replace.
+    if (held?.theme && read.hub.theme && held.state === "published" && read.hub.state === "published"
+      && held.revision !== null && read.hub.revision !== null && read.hub.revision < held.revision)
+      return { hub: held, error: null };
     const heldKeys = new Set(held?.members.map((m) => m.key));
     if (held && sameRevision(held, read.hub) && read.hub.members.every((m) => heldKeys.has(m.key)))
       return { hub: accept(slug, combine(held, read.hub, held.theme!.nextCursor, read.hub.note)), error: null };

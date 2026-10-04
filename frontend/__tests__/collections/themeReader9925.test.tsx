@@ -13,6 +13,8 @@
  * `revision_moved` answer replaces membership with the new first page; a page
  * that answers a hub that has since moved on is dropped. Refresh keeps the
  * pages already loaded at the same revision, so Back finds a later-page member.
+ * A slow refresh answering an EARLIER revision than the one Load more already
+ * admitted is refused (refresh and Load more run on separate controllers).
  *
  * Fixtures are shaped like PR #10439's `_serve_theme_page` response at
  * 397f34e381 (the producer is a pinned read-only interface here).
@@ -202,6 +204,60 @@ describe("a page that answers a hub which has moved on is dropped", () => {
     expect(settleCollectionPage("ai", now, requested, late)).toBe(now);
     expect(ids(acceptedCollection("ai"))).toEqual([101, 102]);
     expect(acceptedCollection("ai")?.revision).toBe(6);
+  });
+  // The component runs refresh and Load more on SEPARATE controllers, so each
+  // is "current" in its own lane. Inverse of the test above: the OLD answer is
+  // the refresh, and it arrives after the page lane admitted a newer revision.
+  describe("a late refresh never rolls back a revision the page lane already admitted", () => {
+    // Both reads are in flight at once; each answers only when the test says.
+    const inFlight = () => {
+      const pending: Array<{ url: string; answer: (body: unknown) => void }> = [];
+      global.fetch = jest.fn((url: string) => new Promise((resolve) => {
+        urls.push(url);
+        pending.push({ url, answer: (body) => resolve({ status: 200, ok: true, json: async () => body }) });
+      })) as unknown as typeof fetch;
+      return pending;
+    };
+    const race = async (lateRefresh: unknown) => {
+      respond([200, AI_P1()]);
+      const held = (await refresh("ai")).hub!;
+      const pending = inFlight();
+      // (1) page-1 refresh leaves while revision 5 is held …
+      const refreshing = fetchCollection("ai").then((hub) => settleCollectionRead("ai", { hub }));
+      // (2) … then Load more leaves from the same revision-5 hub.
+      const requested = { revision: 5, cursor: held.theme!.nextCursor! };
+      const paging = fetchCollection("ai", undefined, requested).then((page) => settleCollectionPage("ai", held, requested, page));
+      expect(pending.map((p) => p.url)).toEqual(["http://fixture.invalid/api/containers/ai", `http://fixture.invalid/api/containers/ai?revision=5&cursor=${cursor(2, 102)}`]);
+      // The page lane answers first: revision moved to 6, membership replaced.
+      pending[1].answer(themePage("ai", 6, [{ class: "side_question", ids: [102, 107] }], { next: cursor(2, 107), total: 5, moved: true }));
+      const afterPage = await paging;
+      expect(afterPage.revision).toBe(6);
+      // (3) the slower refresh finally answers.
+      pending[0].answer(lateRefresh);
+      return { afterPage, late: await refreshing };
+    };
+    test("held 5 → Load more admits 6 → the refresh's revision-5 answer is refused: list and cursor stay at 6", async () => {
+      const { afterPage, late } = await race(AI_P1(5, { prices: { 101: 0.91 } }));
+      expect(late.hub).toBe(afterPage);
+      expect(late.error).toBeNull();
+      expect(late.hub?.revision).toBe(6);
+      expect(ids(late.hub)).toEqual([102, 107]);
+      expect(late.hub?.theme).toMatchObject({ totalCount: 5, nextCursor: cursor(2, 107) });
+      expect(acceptedCollection("ai")).toBe(afterPage);
+      expect(cards(frame("ai"))).toEqual(["market:102", "market:107"]);
+    });
+    test("control: the same late refresh answering a LATER revision (7) is admitted", async () => {
+      const { late } = await race(AI_P1(7, { next: cursor(2, 102) }));
+      expect(late.hub?.revision).toBe(7);
+      expect(ids(late.hub)).toEqual([101, 102]);
+      expect(acceptedCollection("ai")?.revision).toBe(7);
+    });
+    test("control: the same late refresh answering WITHDRAWN still clears the collection", async () => {
+      const { late } = await race({ state: "withdrawn", slug: "ai", revision: 5, edition: { kind: "theme_continuing", subject: "ai" }, container: null, sections: [] });
+      expect(late.hub?.state).toBe("withdrawn");
+      expect(late.hub?.members).toEqual([]);
+      expect(acceptedCollection("ai")).toBeNull();
+    });
   });
   test("the same page answered twice (double tap) appends once", async () => {
     respond([200, AI_P1()]);
