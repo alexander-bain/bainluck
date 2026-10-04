@@ -85,6 +85,30 @@ else
 fi
 printf '%s\n' "$TEST_EXIT" > "$OUT/test-exit.txt"
 printf 'xcodebuild exit: %s\n' "$TEST_EXIT"
+# Read the app actually installed by this Debug UI run before judging system URL delivery.
+# Diagnostic failure never replaces the real XCTest result or becomes an acceptance pass.
+python3 - "$TEST_UDID" "$OUT/installed-watch-registration.json" "$SHA" <<'REGISTRATION'
+import json, plistlib, subprocess, sys
+from pathlib import Path
+bundle = "com.bainluck.Bain-Luck.watchkitapp"
+receipt = {"sha": sys.argv[3], "udid": sys.argv[1], "bundle_id": bundle}
+try:
+    result = subprocess.run(["xcrun", "simctl", "get_app_container", sys.argv[1], bundle, "app"],
+                            capture_output=True, text=True, timeout=15, check=True)
+    info = plistlib.loads((Path(result.stdout.strip()) / "Info.plist").read_bytes())
+    keys = ["CFBundleIdentifier", "CFBundleURLTypes", "CFBundleSupportedPlatforms", "MinimumOSVersion",
+            "WKCompanionAppBundleIdentifier", "WKRunsIndependentlyOfCompanionApp"]
+    receipt["installed_info"] = {key: info.get(key) for key in keys}
+    listing = subprocess.run(["xcrun", "simctl", "listapps", sys.argv[1]],
+                             capture_output=True, timeout=15, check=True)
+    converted = subprocess.run(["plutil", "-convert", "json", "-o", "-", "-"],
+                               input=listing.stdout, capture_output=True, timeout=15, check=True)
+    app = json.loads(converted.stdout).get(bundle)
+    receipt["system_listing"] = {key: app.get(key) for key in keys} if isinstance(app, dict) else app
+except Exception as error:
+    receipt["diagnostic_error"] = str(error)
+Path(sys.argv[2]).write_text(json.dumps(receipt, indent=2) + "\n")
+REGISTRATION
 if [[ "$TEST_EXIT" -ne 0 ]]; then
   echo 'Watch UI journey unpaid; if this toolchain requires pairing, no existing iPhone has been touched.' >&2
   tail -80 "$OUT/tests.log" >&2

@@ -125,7 +125,8 @@ struct WatchSelectedGameView: View {
                     .toolbar {
                         if store.selectedEventID != nil {
                             ToolbarItem(placement: .cancellationAction) {
-                                Button("Back to your game") { choosingGame = false }
+                                Button("Your game") { choosingGame = false }
+                                    .accessibilityLabel("Back to your game")
                                     .accessibilityIdentifier("watch.picker-cancel")
                             }
                         }
@@ -139,6 +140,12 @@ struct WatchSelectedGameView: View {
         .onChange(of: store.selectedEventID) { _, _ in
             // A new choice must reveal its identity, not inherit the old game's scroll.
             scroll.scrollTo("watch.game.top", anchor: .top)
+        }
+        .onChange(of: choosingGame) { wasChoosing, isChoosing in
+            if wasChoosing && !isChoosing && store.selectedEventID != nil {
+                // Returning from the picker reveals the retained game's identity.
+                scroll.scrollTo("watch.game.top", anchor: .top)
+            }
         }
         }
     }

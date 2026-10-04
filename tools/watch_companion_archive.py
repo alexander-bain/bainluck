@@ -66,6 +66,17 @@ def inspect_archive(archive: Path, platform_reader=read_platform):
     watch = safe_path(archive, watch_path)
     phone_info = read_plist(archive, phone_path / "Info.plist")
     watch_info = read_plist(archive, watch_path / "Info.plist")
+    url_types = watch_info.get("CFBundleURLTypes")
+    require(isinstance(url_types, list) and bool(url_types), "Missing or malformed Watch URL types")
+    schemes = []
+    for item in url_types:
+        require(isinstance(item, dict), "Malformed Watch URL type entry")
+        registered = item.get("CFBundleURLSchemes")
+        require(isinstance(registered, list) and bool(registered)
+                and all(isinstance(value, str) and bool(value) for value in registered),
+                "Malformed Watch URL schemes")
+        schemes.extend(registered)
+    require("bainluck-watch" in schemes, "Missing exact Watch launcher URL scheme")
     plugin_folder = safe_path(archive, watch_path / "PlugIns")
     plugins = list(plugin_folder.glob("*.appex"))
     require(len(plugins) == 1, "Watch archive must embed exactly one launcher extension")
@@ -100,6 +111,7 @@ def inspect_archive(archive: Path, platform_reader=read_platform):
         require(watch_info[key] == plugin_info.get(key), f"Watch/launcher {key} mismatch")
     return {"verdict": "PACKAGED_UNSIGNED_CANDIDATE", "physical_install": "UNVERIFIED",
             "distribution": "UNVERIFIED", "signing": "UNVERIFIED", "applications": evidence,
+            "launcher_url_scheme": "bainluck-watch",
             "version": phone_info["CFBundleShortVersionString"], "build": phone_info["CFBundleVersion"]}
 
 

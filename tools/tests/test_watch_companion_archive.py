@@ -29,7 +29,8 @@ class WatchCompanionArchiveTests(unittest.TestCase):
                            "CFBundleVersion": "10", "NSUserActivityTypes": [ACTIVITY]}
         self.watch_info = dict(self.phone_info, CFBundleIdentifier=WATCH, CFBundleExecutable="Watch",
                                CFBundleSupportedPlatforms=["WatchOS"], WKCompanionAppBundleIdentifier=PHONE,
-                               WKRunsIndependentlyOfCompanionApp=True)
+                               WKRunsIndependentlyOfCompanionApp=True,
+                               CFBundleURLTypes=[{"CFBundleURLSchemes": ["bainluck-watch"]}])
         self.extension_info = {"CFBundleIdentifier": WATCH + ".Complication",
                                "CFBundleExecutable": "Complication",
                                "CFBundleSupportedPlatforms": ["WatchOS"],
@@ -63,11 +64,29 @@ class WatchCompanionArchiveTests(unittest.TestCase):
         self.assertEqual(result["verdict"], "PACKAGED_UNSIGNED_CANDIDATE")
         self.assertEqual(result["physical_install"], "UNVERIFIED")
         self.assertEqual(result["distribution"], "UNVERIFIED")
+        self.assertEqual(result["launcher_url_scheme"], "bainluck-watch")
         self.assertEqual(len(result["applications"]), 3)
         self.assertEqual(result["applications"][2]["bundle_id"], WATCH + ".Complication")
         self.watch_info["WKWatchOnly"] = False
         self.save_infos()
         self.inspect()
+
+    def test_launcher_registration_missing_wrong_or_malformed(self):
+        original = self.watch_info["CFBundleURLTypes"]
+        for value in [[], "bainluck-watch", {}, ["bainluck-watch"], [{}],
+                      [{"CFBundleURLSchemes": "bainluck-watch"}],
+                      [{"CFBundleURLSchemes": []}], [{"CFBundleURLSchemes": [17]}],
+                      [{"CFBundleURLSchemes": ["BAINLUCK-WATCH"]}],
+                      [{"CFBundleURLSchemes": ["bainluck-watch-extra"]}],
+                      [{"CFBundleURLSchemes": ["bainluck-watch"]}, "malformed"]]:
+            with self.subTest(value=value):
+                self.watch_info["CFBundleURLTypes"] = value
+                self.save_infos()
+                self.reject()
+        self.watch_info.pop("CFBundleURLTypes")
+        self.save_infos()
+        self.reject()
+        self.watch_info["CFBundleURLTypes"] = original
 
     def test_missing_watch_reproduces_old_phone_only_archive(self):
         shutil.rmtree(self.watch)
