@@ -1,5 +1,4 @@
 #if DEBUG
-import Darwin
 import XCTest
 
 final class WarmLauncherURLJourneyTests: XCTestCase {
@@ -30,7 +29,7 @@ final class WarmLauncherURLJourneyTests: XCTestCase {
         let receipt = app.staticTexts["watch.launch-receipt"]
         XCTAssertTrue(receipt.waitForExistence(timeout: 15))
         XCTAssertEqual(receipt.label, "Launcher opens: 0")
-        let nonce = UUID().uuidString
+        let launcher = try XCTUnwrap(URL(string: "bainluck-watch://selected-game"))
 
         let change = app.buttons["watch.choose-another"]
         XCTAssertTrue(change.waitForExistence(timeout: 15))
@@ -40,8 +39,8 @@ final class WarmLauncherURLJourneyTests: XCTestCase {
         XCTAssertTrue(alternative.waitForExistence(timeout: 15))
         try reveal(alternative, in: app)
         capture(app, name: "Warm launcher before delivery with picker open")
-        print("WATCH_UI_WARM_READY=1:\(nonce)")
-        fflush(stdout)
+        // Deliver through XCTest while the existing process and picker are alive.
+        app.open(launcher)
         expectation(for: NSPredicate(format: "label == %@", "Launcher opens: 1"), evaluatedWith: receipt)
         waitForExpectations(timeout: 45)
         expectation(for: NSPredicate(format: "exists == false"), evaluatedWith: alternative)
@@ -59,8 +58,8 @@ final class WarmLauncherURLJourneyTests: XCTestCase {
         let alert = app.alerts["Continue on iPhone"]
         XCTAssertTrue(alert.waitForExistence(timeout: 15))
         capture(app, name: "Warm launcher before delivery with iPhone help open")
-        print("WATCH_UI_WARM_READY=2:\(nonce)")
-        fflush(stdout)
+        // A second OS URL delivery must dismiss help in the same app process.
+        app.open(launcher)
         expectation(for: NSPredicate(format: "label == %@", "Launcher opens: 2"), evaluatedWith: receipt)
         waitForExpectations(timeout: 45)
         expectation(for: NSPredicate(format: "exists == false"), evaluatedWith: alert)
@@ -71,7 +70,6 @@ final class WarmLauncherURLJourneyTests: XCTestCase {
         try reveal(probability, in: app)
         capture(app, name: "Warm launcher dismissed help and retained named game")
         print("WATCH_UI_LAUNCHER_WARM=PASS")
-        fflush(stdout)
     }
 
     @MainActor
