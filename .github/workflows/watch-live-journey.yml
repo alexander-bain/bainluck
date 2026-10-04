@@ -1,0 +1,58 @@
+name: Watch live journey (opt-in)
+
+# Independent of ordinary CI and iPhone release requirements. The explicit PR
+# label enables premerge execution; dispatch becomes available after integration.
+on:
+  workflow_dispatch:
+  pull_request:
+    types: [opened, reopened, synchronize, labeled]
+    paths:
+      - 'ios/Bain Luck/BainLuckWatchUITests/LiveSelectedGameJourneyTests.swift'
+      - 'ios/Bain Luck/BainLuckWatch Watch App/**'
+      - 'ios/Bain Luck/Bain Luck.xcodeproj/**'
+      - 'ios/Bain Luck/Bain Luck/Models/PredictionModels.swift'
+      - 'ios/Bain Luck/Bain Luck/Utilities/PeriodLabel.swift'
+      - 'tools/watch-live-journey.sh'
+      - 'tools/watch_live_receipt.py'
+      - 'tools/watch_iphone_receipt.py'
+      - 'tools/tests/test_watch_live_receipt.py'
+      - '.github/workflows/watch-live-journey.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  live-journey:
+    if: >-
+      github.event_name == 'workflow_dispatch' ||
+      (github.event.pull_request.head.repo.full_name == github.repository &&
+       contains(github.event.pull_request.labels.*.name, 'watch-live-journey'))
+    runs-on: xcode-27
+    timeout-minutes: 35
+    concurrency:
+      group: watch-live-${{ github.event.pull_request.number || github.ref }}
+      cancel-in-progress: true
+    env:
+      DEVELOPER_DIR: /Applications/Xcode_27.0.app/Contents/Developer
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          persist-credentials: false
+      - name: Verify fail-closed live evidence receipt
+        run: python3 -m unittest tools/tests/test_watch_live_receipt.py
+      - name: Select and reopen a production game on a disposable Watch
+        run: bash tools/watch-live-journey.sh
+      - name: Preserve real-data acceptance evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: watch-live-journey-evidence
+          path: |
+            build/watch-live-journey/*.txt
+            build/watch-live-journey/*.json
+            build/watch-live-journey/*.plist
+            build/watch-live-journey/*.log
+            build/watch-live-journey/run.*/BainLuckWatchUITests.xcresult
+          if-no-files-found: ignore
+          retention-days: 7
