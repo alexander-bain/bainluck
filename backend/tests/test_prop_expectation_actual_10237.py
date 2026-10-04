@@ -861,10 +861,18 @@ class TestTheRealFinishedMlbSummary:
         assert "hits" not in cole and "home runs" not in cole
         assert cole["pitching hits allowed"] == 5.0
 
-    def test_the_parser_has_no_mlb_player_identities_yet(self, real_mlb):
+    def test_the_parser_keeps_each_mlb_athletes_id_and_team(self, real_mlb):
+        # Flipped when live's #10421 (`BOX_SCORE_IDENTITY_SPORTS` += MLB) landed with this reader.
         context, box = real_mlb
-        assert context["box_score_player_identities"] == []
-        assert not box.get("player_identities")
+        identities = context["box_score_player_identities"]
+        assert len(identities) == len(box["player_identities"]) == 27
+        by_name = {i["name"]: i for i in identities}
+        assert {k: by_name["Ben Rice"][k] for k in ("athlete_id", "team_id", "side")} == {
+            "athlete_id": "5016968", "team_id": "10", "side": "away",
+        }
+        assert {k: by_name["Jonathan Aranda"][k] for k in ("athlete_id", "team_id", "side")} == {
+            "athlete_id": "40810", "team_id": "30", "side": "home",
+        }
 
     def test_the_real_writer_marks_it_final_and_the_reader_accepts_it(self, real_mlb):
         box = real_mlb[1]
@@ -880,12 +888,35 @@ class TestTheRealFinishedMlbSummary:
         assert box_finality(box, "401907986", "baseball_mlb")["reason"] == "provider_event_mismatch"
         assert box_finality(box, MLB_ESPN_ID, "americanfootball_nfl")["reason"] == "sport_not_supported"
 
-    def test_with_no_identities_every_actual_stays_unknown(self, real_mlb):
-        rows = [
-            _row(71, 7, "Ben Rice: 1+", market_name="New York at Tampa Bay: Hits"),
-            _row(72, 8, "Jonathan Aranda: 1+", market_name="New York at Tampa Bay: Home Runs"),
-        ]
-        payload = _real_build(real_mlb[1], rows)
+    _REAL_ROWS = (
+        (71, 7, "Ben Rice: 1+", "New York at Tampa Bay: Hits"),
+        (72, 8, "Jonathan Aranda: 1+", "New York at Tampa Bay: Home Runs"),
+    )
+
+    def _real_rows(self):
+        return [_row(o, m, name, market_name=market) for o, m, name, market in self._REAL_ROWS]
+
+    def test_with_identities_each_actual_is_espns_final_count(self, real_mlb):
+        payload = _real_build(real_mlb[1], self._real_rows())
+        assert len(payload["actuals"]) == len(payload["questions"]) == 2, payload
+        got = {
+            a["actual_key"]: (a["state"], a["reason"], a["value"], a["athlete_id"], a["team_id"])
+            for a in payload["actuals"]
+        }
+        assert got == {
+            "s:ben rice|hits|full_game": ("final", None, 0, "5016968", "10"),
+            "s:jonathan aranda|home_runs|full_game": ("final", None, 1, "40810", "30"),
+        }
+        assert {q["actual_key"]: q["comparison"]["state"] for q in payload["questions"]} == {
+            "s:ben rice|hits|full_game": "below",
+            "s:jonathan aranda|home_runs|full_game": "reached",
+        }
+        assert (payload["coverage"]["final"], payload["coverage"]["unknown"]) == (2, 0)
+
+    def test_CONTROL_the_same_real_box_without_identities_stays_unknown(self, real_mlb):
+        box = copy.deepcopy(real_mlb[1])
+        box.pop("player_identities", None)
+        payload = _real_build(box, self._real_rows())
         assert len(payload["actuals"]) == len(payload["questions"]) == 2, payload
         for actual in payload["actuals"]:
             assert (actual["state"], actual["reason"], actual["value"]) == (
