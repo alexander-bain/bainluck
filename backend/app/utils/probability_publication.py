@@ -37,8 +37,8 @@ mutable book population or a ``valid_until`` window.
    * ``nonvenue_complete``: the probe proved the first tracked write started
      from the committed row, and every later revision is a tracked write.
 
-   Each nonvenue write in the transaction, intermediate ones included, is kept
-   in ``observations``. Those are what a producer OBSERVED and wrote, never a
+   Each nonvenue write in the recording transaction, intermediate ones
+   included, is kept in ``observations`` (but see clause 5 for no-op repeats). Those are what a producer OBSERVED and wrote, never a
    vertex anyone was shown.
 
    The row is inserted inside the writing transaction, before COMMIT. It commits
@@ -80,11 +80,16 @@ mutable book population or a ``valid_until`` window.
    (#9051), and the row exists only if the transaction committed. Nothing here
    supports a latency or age SLA.
 
-5. **Same identity, same payload, or a loud diagnostic.** ``(event_id, rev)`` is
-   unique. A second transaction that commits the same bag at the same rev (a
-   removal of an absent source moves no rev) inserts nothing when its payload
-   hash matches. When the hash differs, for example a status change with no bag
-   change, the existing row is kept and an ERROR names both hashes.
+5. **One row per published STATE.** ``(event_id, rev)`` is unique, and
+   ``payload_sha256`` covers the published state only: bag, status, blend
+   inputs, blend and method. The row's ``observations``, ``removed_sources``,
+   coverage and frame fields belong to the transaction that FIRST recorded that
+   state. A later no-op attempt at the same identity coalesces into it and
+   inserts nothing; its own observations are not kept. Removing an absent
+   source moves no revision, and neither attempt sends a frame. This is
+   deliberate, not a divergence. When the published state itself differs under
+   one identity (for example, a status change with no bag change), the first
+   row is kept and an ERROR names both hashes.
 
 6. **Coverage is explicit.** Venue writers do not go through this path, so a
    jump of more than one between an event's consecutive ``rev`` values,
