@@ -27,7 +27,9 @@ struct ProjectedFinalPointsChartView: View {
                     NavigationStack {
                         ScrollView { content(full: full, height: 330).padding() }
                             .navigationTitle("Projected final points")
+                            #if os(iOS)
                             .navigationBarTitleDisplayMode(.inline)
+                            #endif
                             .toolbar {
                                 ToolbarItem(placement: .cancellationAction) {
                                     Button("Done") { expanded = false }
