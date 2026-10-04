@@ -10,11 +10,11 @@ def verify(log: str, exit_code: int, preferences: dict) -> dict:
     if exit_code != 0 or not re.search(r"^\*\* TEST SUCCEEDED \*\*\s*$", log, re.MULTILINE):
         raise ValueError("Live test process did not finish successfully")
     totals = re.findall(
-        r"^Test Suite '(?:Selected tests|All tests)' passed[^\n]*\n"
+        r"^Test Suite '(?:Selected tests|All tests)' (passed|failed)[^\n]*\n"
         r"[ \t]*Executed (\d+) tests?, with (\d+) failures?[^\n]*",
         log, re.MULTILINE,
     )
-    if len(totals) != 1 or totals[0] != ("1", "0"):
+    if len(totals) != 1 or totals[0] != ("passed", "1", "0"):
         raise ValueError("Expected exactly one completed root summary with one test and zero failures")
     count = 1
     if len(re.findall(

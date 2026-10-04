@@ -66,6 +66,7 @@ class WatchLiveReceiptTests(unittest.TestCase):
         selected = self.log().replace("'All tests'", "'Selected tests'")
         verify(selected, 0, self.preferences())
         self.reject(selected + summary())
+        self.reject(selected + summary().replace("'All tests' passed", "'All tests' failed"))
         self.reject(self.log() + summary())
         self.reject(selected.replace("'Selected tests'", "'Nested suite'"))
         self.reject(selected.replace("with 0 failures", "with 1 failure"))
