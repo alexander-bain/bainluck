@@ -172,3 +172,11 @@ Fresh build output and plain `test` avoid executing an older test bundle.
 This is the existing iPhone compatibility requirement for integrating the Watch
 contribution, not a new feature or local task for Native. Implementation of the
 workflow alone never pays the gate; only a complete successful hosted run does.
+
+The first hosted compatibility run (cd45b9cb92, Xcode26.3) stopped before tests:
+that compiler could not type-check the unchanged iPhone PlayerPropsCardView. The
+compatibility job now selects the hosted `xcode-27` image and explicit Xcode27.0
+(27A266a in the runner manifest), matching Native's local compiler. Its simulator
+runtime must match the selected SDK major/minor; a newer beta runtime is not chosen
+silently. The Watch-only job keeps its already-proven Xcode26.3 environment. This
+alignment is a harness repair to verify, not a claim that the iPhone suite passed.

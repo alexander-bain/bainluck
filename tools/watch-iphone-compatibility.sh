@@ -17,11 +17,13 @@ xcodebuild -version > "$OUT/toolchain.txt"
 xcrun swiftc --version >> "$OUT/toolchain.txt"
 xcodebuild -showsdks > "$OUT/sdks.txt"
 xcrun simctl list --json > "$OUT/simulators.json"
-python3 - "$OUT/simulators.json" > "$OUT/destination-spec.txt" <<'PY'
+SDK_VERSION="$(xcrun --sdk iphonesimulator --show-sdk-version)"
+python3 - "$OUT/simulators.json" "$SDK_VERSION" > "$OUT/destination-spec.txt" <<'PY'
 import json, sys
 info = json.load(open(sys.argv[1]))
 runtimes = sorted((r for r in info['runtimes']
-                   if r.get('isAvailable') and 'iOS' in r['identifier']),
+                   if r.get('isAvailable') and 'iOS' in r['identifier']
+                   and r['version'].split('.')[:2] == sys.argv[2].split('.')[:2]),
                   key=lambda r: tuple(int(v) for v in r['version'].split('.')), reverse=True)
 for runtime in runtimes:
     for device in info['devices'].get(runtime['identifier'], []):
