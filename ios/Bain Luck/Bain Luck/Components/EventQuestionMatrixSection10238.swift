@@ -142,20 +142,32 @@ struct EventQuestionMatrixSection10238: View {
                 switch EventQuestionMatrixAdapter.detail(for: selection, in: matrix) {
                 case .available(let resolved):
                     Section {
-                        Text(resolved.row.label).font(.headline)
-                        if let period = resolved.row.period?.label, !period.isEmpty {
-                            Text(period).font(.subheadline).foregroundStyle(.secondary)
+                        VStack(alignment: .leading, spacing: 6) {
+                            Text(resolved.row.label)
+                                .font(.headline)
+                                .fixedSize(horizontal: false, vertical: true)
+                            if let period = resolved.row.period?.label, !period.isEmpty {
+                                Text(period).font(.subheadline).foregroundStyle(.secondary)
+                            }
+                            Text(resolved.option.label).font(.subheadline)
+                            HStack(alignment: .firstTextBaseline, spacing: 8) {
+                                Text(valueText(resolved.option.value))
+                                    .font(.largeTitle.monospacedDigit())
+                                    .fontWeight(.bold)
+                                if case .quoted(let probability) = resolved.option.value,
+                                   exactPercent(probability) != valueText(resolved.option.value) {
+                                    Text(exactPercent(probability))
+                                        .font(.subheadline.monospacedDigit())
+                                        .foregroundStyle(.secondary)
+                                }
+                            }
+                            if let age = SourceAge.format(resolved.option.observedAt) {
+                                Text("Updated \(age)").font(.caption).foregroundStyle(.secondary)
+                            }
                         }
-                        Text(resolved.option.label).font(.subheadline)
-                        Text(valueText(resolved.option.value))
-                            .font(.largeTitle.monospacedDigit().weight(.semibold))
-                        if case .quoted(let probability) = resolved.option.value {
-                            Text(exactPercent(probability))
-                                .font(.caption).foregroundStyle(.secondary)
-                        }
-                        if let age = SourceAge.format(resolved.option.observedAt) {
-                            Text("Observed \(age)").font(.caption).foregroundStyle(.secondary)
-                        }
+                        .fixedSize(horizontal: false, vertical: true)
+                        .accessibilityElement(children: .combine)
+                        .accessibilityIdentifier("game-series-question-summary")
                     }
                     if let comparison = resolved.comparison {
                         comparisonSection(comparison)
@@ -175,11 +187,12 @@ struct EventQuestionMatrixSection10238: View {
             .navigationBarTitleDisplayMode(.inline)
             #endif
             .toolbar {
-                ToolbarItem(placement: .confirmationAction) {
+                ToolbarItem(placement: .cancellationAction) {
                     Button("Close") { open = nil }
                 }
             }
         }
+        .presentationDetents([.medium, .large])
     }
 
     private func comparisonSection(_ comparison: EventQuestionMatrixAdapter.Comparison) -> some View {
@@ -187,13 +200,13 @@ struct EventQuestionMatrixSection10238: View {
             VStack(alignment: .leading, spacing: 8) {
                 Text("Before: \(exactPercent(comparison.baseline))")
                 if let age = SourceAge.format(comparison.baselineObservedAt) {
-                    Text("Observed \(age)").font(.caption).foregroundStyle(.secondary)
+                    Text(age).font(.caption).foregroundStyle(.secondary)
                 }
                 // The served delta belongs only beside its own Latest value;
                 // it never annotates the published hero or a raw source quote.
-                Text("Latest: \(exactPercent(comparison.latest)) · \(comparison.points.formatted(.number.sign(strategy: .always()).precision(.fractionLength(0...1)))) pp")
+                Text("Latest: \(exactPercent(comparison.latest)) · \(comparison.points.formatted(.number.sign(strategy: .always()).precision(.fractionLength(0...1)))) \(abs(comparison.points) == 1 ? "point" : "points")")
                 if let age = SourceAge.format(comparison.latestObservedAt) {
-                    Text("Observed \(age)").font(.caption).foregroundStyle(.secondary)
+                    Text(age).font(.caption).foregroundStyle(.secondary)
                 }
             }
             .font(.subheadline.monospacedDigit())
@@ -209,21 +222,29 @@ struct EventQuestionMatrixSection10238: View {
             // Source entries are read-only disclosure; their index is never a
             // selection identity, and current rows are resolved anew each render.
             ForEach(Array(sources.enumerated()), id: \.offset) { _, source in
-                VStack(alignment: .leading, spacing: 4) {
-                    Text(SourceLabels.label(for: source.source) ?? "Source")
-                        .font(.subheadline.weight(.semibold))
-                    if let side = source.side, !side.isEmpty {
-                        Text("Raw source · \(side)").font(.caption).foregroundStyle(.secondary)
-                    } else {
-                        Text("Raw source").font(.caption).foregroundStyle(.secondary)
+                let layout = typeSize.isAccessibilitySize
+                    ? AnyLayout(VStackLayout(alignment: .leading, spacing: 4))
+                    : AnyLayout(HStackLayout(alignment: .firstTextBaseline))
+                layout {
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text(SourceLabels.label(for: source.source) ?? "Source")
+                            .font(.subheadline.weight(.semibold))
+                        if let side = source.side, !side.isEmpty {
+                            Text("Raw source · \(side)").font(.caption).foregroundStyle(.secondary)
+                        } else {
+                            Text("Raw source").font(.caption).foregroundStyle(.secondary)
+                        }
                     }
-                    if let probability = source.probability {
-                        Text(exactPercent(probability)).font(.subheadline.monospacedDigit())
-                    } else {
-                        Text("Unavailable").foregroundStyle(.secondary)
-                    }
-                    if let age = SourceAge.format(source.observedAt) {
-                        Text("Observed \(age)").font(.caption).foregroundStyle(.secondary)
+                    if !typeSize.isAccessibilitySize { Spacer() }
+                    VStack(alignment: typeSize.isAccessibilitySize ? .leading : .trailing, spacing: 2) {
+                        if let probability = source.probability {
+                            Text(exactPercent(probability)).font(.subheadline.monospacedDigit())
+                        } else {
+                            Text("Unavailable").foregroundStyle(.secondary)
+                        }
+                        if let age = SourceAge.format(source.observedAt) {
+                            Text(age).font(.caption).foregroundStyle(.secondary)
+                        }
                     }
                 }
                 .accessibilityElement(children: .combine)
