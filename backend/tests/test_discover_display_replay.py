@@ -1079,3 +1079,382 @@ async def test_the_script_exits_zero_only_on_pass(harness, tmp_path):
     assert nope.returncode == 1
     report = json.loads(nope.stdout)
     assert report["verdict"] == "MISMATCH" and report["first_divergence"] == 30
+
+
+# --------------------------------------------------------------------------- #
+# #10290 warm-capture: the explicit operator warm-rail rebuild mode
+# --------------------------------------------------------------------------- #
+#
+# The sole production attempt refused INCOMPLETE before any build was captured,
+# and the caller had thrown the Response away, so which branch returned was
+# unknowable. These drive the SCRIPT's own `capture_mixed_build` — the real
+# `get_feed`, called in-process exactly as the runner calls it — over warm
+# caches: the ordinary default must still refuse (and now say which tier
+# served it), and only the explicit mode reaches the seam and the final return.
+
+
+def _route_session(harness, monkeypatch):
+    from contextlib import asynccontextmanager
+
+    from app.tasks import base as tasks_base
+
+    @asynccontextmanager
+    async def _session():
+        yield harness.session
+
+    monkeypatch.setattr(tasks_base, "get_task_session", _session)
+
+
+async def _warm(harness, monkeypatch):
+    """Publish the anonymous Discover shape into every cache tier, the way the
+    warm rail leaves production: response fresh + :stale, page base, edition."""
+    from tests.integration.test_route_feed_collections_cache_10003 import _DictRedis
+
+    fake = _DictRedis()
+    harness.set_redis(fake)
+    scheduled: list = []
+    monkeypatch.setattr(_rc, "schedule_background", scheduled.append)
+    first = await harness.get("/api/feed?limit=20")
+    assert first.headers["x-feed-cache"] == "miss"
+    while scheduled:
+        await scheduled.pop(0)
+    assert any(k.startswith("feed_cache") and not k.endswith(":stale") for k in fake.store)
+    harness.reset_process_caches()
+    fake.reads.clear()
+    return fake, scheduled
+
+
+async def _script_capture(harness, monkeypatch, tmp_path, *, warm_rail, name="c.json"):
+    import scripts.replay_discover_ranking as runner
+
+    _route_session(harness, monkeypatch)
+    harness.reset_process_caches()
+    out = tmp_path / name
+    result = await runner.capture_mixed_build(
+        str(out), origin="synthetic", limit=20, offset=0, warm_rail_rebuild=warm_rail
+    )
+    return result, out
+
+
+def _hook_spy(monkeypatch, name):
+    calls: list = []
+    real = getattr(ddr.DiscoverDisplayCapture, name)
+
+    def spy(self, *a, **k):
+        calls.append(self.status)
+        return real(self, *a, **k)
+
+    spy.__name__ = name
+    monkeypatch.setattr(ddr.DiscoverDisplayCapture, name, spy)
+    return calls
+
+
+async def test_the_ordinary_capture_still_refuses_a_warm_cache_and_names_the_tier(
+    harness, monkeypatch, tmp_path
+):
+    await _warm(harness, monkeypatch)
+    entries = _hook_spy(monkeypatch, "record_chain_entry")
+    result, out = await _script_capture(harness, monkeypatch, tmp_path, warm_rail=False)
+
+    assert result["captured"] is False and result["code"] == ddr.INCOMPLETE
+    assert result["capture_mode"] == ddr.CAPTURE_MODE_ORDINARY
+    assert not out.exists(), "cached output must never become a capture"
+    assert entries == [], "a cache-tier return never reaches the seam"
+    disposition = result["disposition"]
+    assert disposition == {
+        "classification": "cache_tier_early_return",
+        "capture_mode": ddr.CAPTURE_MODE_ORDINARY,
+        "recorder_status": "armed",
+        "refusal_code": None,
+        "x_feed_cache": "hit",
+        "x_feed_singleflight": "none",
+        "payload_cache_status": "hit",
+        "payload_cache_reason": None,
+    }
+
+
+async def test_the_explicit_warm_rail_mode_reaches_the_seam_and_the_final_return(
+    harness, monkeypatch, tmp_path
+):
+    from app.utils.feed_cache import warm_rail_max_shared_artifact_age_s
+
+    fake, scheduled = await _warm(harness, monkeypatch)
+    entries = _hook_spy(monkeypatch, "record_chain_entry")
+    returns = _hook_spy(monkeypatch, "record_response")
+    result, out = await _script_capture(harness, monkeypatch, tmp_path, warm_rail=True)
+
+    assert result["captured"] is True, result
+    assert result["capture_mode"] == ddr.CAPTURE_MODE_WARM_RAIL
+    assert entries == ["armed"] and returns == ["recording"]
+    # The rebuild read no response tier and no page base: the warm entries
+    # were there (`_warm`) and were skipped, not missed.
+    assert not [k for k in fake.reads if k.startswith("feed_cache")], fake.reads
+    # Ordinary publication ran: the route scheduled its own response-cache write.
+    published = {getattr(c, "__qualname__", "") for c in scheduled}
+    assert any("_publish_feed_cache" in q for q in published), published
+
+    artifact = ddr.load_capture(str(out))
+    provenance = artifact["provenance"]
+    assert provenance["capture_mode"] == ddr.CAPTURE_MODE_WARM_RAIL
+    operational = provenance["operational"]
+    assert operational["claims"] == {
+        "public_request_served": False,
+        "upstream_admission_and_scoring_replayed": False,
+    }
+    assert operational["shared_artifact_max_age_s"] == warm_rail_max_shared_artifact_age_s()
+    assert operational["resolved_cache_key_written_back"] is True
+    assert operational["publication_eligible"] is True
+    assert ddr.decode_value(artifact["effective_request"])["cache_status"] == "miss"
+    clocks = artifact["clocks"]
+    assert clocks["armed_wall"] <= clocks["chain_entry_wall"] <= clocks["response_wall"]
+    report = ddr.verify_baseline(str(out))
+    assert report["verdict"] == ddr.PASS, report
+    assert report["scope"]["capture_mode"] == ddr.CAPTURE_MODE_WARM_RAIL
+    for coro in scheduled:
+        coro.close()
+
+
+async def test_an_armed_warm_rail_capture_does_not_change_the_rebuild(harness, monkeypatch):
+    """Enabled vs disabled parity for the new mode: the warm rail's own rebuild
+    (the precompute task's marker request, no recorder) and the armed capture
+    return the same page from the same inputs."""
+    from fastapi import Response
+
+    from app.routes.feed import get_feed
+    from app.tasks.precompute_category_pages import _build_prewarm_request
+    from app.utils.feed_cache import FEED_PREWARM_SCOPE_KEY
+
+    kwargs = dict(
+        limit=20, offset=0, sport=None, category=None, include_events=True,
+        include_futures=True, my_teams_only=False, mode=None, tags=None,
+        event_pct=None, edition=None, debug=False, debug_ground_truth=False,
+        debug_personalization=False, exclude_reviewed=False, reviewer=None,
+        reviewed_surface=None, secret=None, db=harness.session, user=None,
+    )
+    harness.reset_process_caches()
+    plain = await get_feed(
+        response=Response(), request=_build_prewarm_request(FEED_PREWARM_SCOPE_KEY), **kwargs
+    )
+    harness.reset_process_caches()
+    capture = ddr.DiscoverDisplayCapture(origin="synthetic", mode=ddr.CAPTURE_MODE_WARM_RAIL)
+    armed = await get_feed(response=Response(), request=ddr.capture_request(capture), **kwargs)
+    assert capture.status == "complete", capture.refusal
+    assert ddr.canonical(_without_cache(armed)) == ddr.canonical(_without_cache(plain))
+    assert len(plain["items"]) == 20
+
+
+async def test_both_modes_capture_the_same_build_from_the_same_inputs(
+    harness, monkeypatch, tmp_path
+):
+    """Cold caches: the ordinary capture succeeds too. The two modes then
+    differ in their declared operation and nothing else that a replay reads."""
+    ordinary, o_path = await _script_capture(
+        harness, monkeypatch, tmp_path, warm_rail=False, name="o.json"
+    )
+    warm, w_path = await _script_capture(
+        harness, monkeypatch, tmp_path, warm_rail=True, name="w.json"
+    )
+    assert ordinary["captured"] and warm["captured"]
+    a, b = ddr.load_capture(str(o_path)), ddr.load_capture(str(w_path))
+    assert a["provenance"]["operational"] == {
+        "kind": ddr.CAPTURE_MODE_ORDINARY,
+        "cache_reads": a["provenance"]["operational"]["cache_reads"],
+    }
+    assert a["scored_pool"]["identities"] == b["scored_pool"]["identities"]
+    assert a["expected"]["full_deck_identities"] == b["expected"]["full_deck_identities"]
+    assert a["expected"]["full_public_deck_digest"] == b["expected"]["full_public_deck_digest"]
+    want = ddr.decode_value(a["expected"]["public_response"])
+    got = ddr.decode_value(b["expected"]["public_response"])
+    assert ddr.canonical(_without_cache(want)) == ddr.canonical(_without_cache(got))
+    assert ddr.verify_baseline(a)["verdict"] == ddr.verify_baseline(b)["verdict"] == ddr.PASS
+
+
+async def test_a_warm_rail_capture_armed_outside_capture_request_refuses(harness):
+    capture = ddr.DiscoverDisplayCapture(origin="synthetic", mode=ddr.CAPTURE_MODE_WARM_RAIL)
+    response = await harness.get("/api/feed?limit=20", capture=capture)
+    assert response.status_code == 200
+    with pytest.raises(ddr.DisplayReplayError) as exc:
+        capture.artifact()
+    assert exc.value.code == ddr.INVALID
+    assert "capture_request" in exc.value.detail
+
+
+async def _direct(harness, capture, *, mutate_scope=None):
+    from fastapi import Response
+
+    from app.routes.feed import get_feed
+
+    request = ddr.capture_request(capture)
+    if mutate_scope:
+        mutate_scope(request.scope)
+    harness.reset_process_caches()
+    return await get_feed(
+        response=Response(), request=request, limit=20, offset=0, sport=None,
+        category=None, include_events=True, include_futures=True,
+        my_teams_only=False, mode=None, tags=None, event_pct=None, edition=None,
+        debug=False, debug_ground_truth=False, debug_personalization=False,
+        exclude_reviewed=False, reviewer=None, reviewed_surface=None, secret=None,
+        db=harness.session, user=None,
+    )
+
+
+async def test_an_ordinary_capture_carrying_the_marker_is_not_ordinary(harness):
+    from app.utils.feed_cache import FEED_PREWARM_SCOPE_KEY
+
+    capture = ddr.DiscoverDisplayCapture(origin="synthetic")
+    await _direct(
+        harness, capture, mutate_scope=lambda s: s.__setitem__(FEED_PREWARM_SCOPE_KEY, True)
+    )
+    with pytest.raises(ddr.DisplayReplayError) as exc:
+        capture.artifact()
+    assert exc.value.code == ddr.UNSUPPORTED
+
+
+async def test_a_warm_rail_capture_the_route_did_not_honour_refuses(harness, monkeypatch):
+    from app.utils import principal_independent_cache as _pic
+
+    monkeypatch.setattr(_pic, "bind_max_shared_age", lambda _bound: None)
+    capture = ddr.DiscoverDisplayCapture(origin="synthetic", mode=ddr.CAPTURE_MODE_WARM_RAIL)
+    await _direct(harness, capture)
+    with pytest.raises(ddr.DisplayReplayError) as exc:
+        capture.artifact()
+    assert exc.value.code == ddr.INCOMPLETE
+    assert "not honoured" in exc.value.detail
+
+
+def test_an_unknown_capture_mode_cannot_be_constructed():
+    with pytest.raises(ValueError):
+        ddr.DiscoverDisplayCapture(origin="synthetic", mode="force_build")
+
+
+async def _warm_artifact(harness):
+    capture = ddr.DiscoverDisplayCapture(origin="synthetic", mode=ddr.CAPTURE_MODE_WARM_RAIL)
+    await _direct(harness, capture)
+    return json.loads(json.dumps(capture.artifact()))
+
+
+def _op(**changes):
+    return lambda d: d["provenance"]["operational"].update(**changes)
+
+
+@pytest.mark.parametrize(
+    "tamper,code",
+    [
+        (lambda d: d["provenance"].pop("capture_mode"), ddr.INVALID),
+        (lambda d: d["provenance"].update(capture_mode="force_build"), ddr.UNSUPPORTED),
+        (lambda d: d["provenance"].update(capture_mode=None), ddr.UNSUPPORTED),
+        (lambda d: d["provenance"].pop("operational"), ddr.INVALID),
+        (lambda d: d["provenance"]["operational"].pop("shared_artifact_max_age_s"), ddr.INVALID),
+        (_op(shared_artifact_max_age_s=-1), ddr.INVALID),
+        (_op(shared_artifact_max_age_s="10"), ddr.INVALID),
+        (_op(shared_artifact_max_age_s=True), ddr.INVALID),
+        (_op(claims={"public_request_served": True,
+                     "upstream_admission_and_scoring_replayed": False}), ddr.INVALID),
+        (_op(trigger="an HTTP header"), ddr.INVALID),
+        (_op(resolved_cache_key_written_back=False), ddr.INVALID),
+        (_op(publication_eligible=False), ddr.INVALID),
+        (_op(extra=1), ddr.INVALID),
+        (lambda d: d["provenance"].update(capture_mode=ddr.CAPTURE_MODE_ORDINARY), ddr.INVALID),
+        (lambda d: d["clocks"].pop("armed_wall"), ddr.INVALID),
+        (lambda d: d["expected"].update(returned_build_digest="0" * 64), ddr.INVALID),
+        (lambda d: d.update(schema_version="mixed_display_replay_v1"), ddr.INVALID),
+    ],
+    ids=["mode-missing", "mode-unknown", "mode-null", "operational-missing",
+         "bound-missing", "bound-negative", "bound-string", "bound-bool",
+         "claims-served", "trigger-text", "key-writeback-flip", "publication-flip",
+         "operational-extra", "ordinary-with-warm-declaration", "armed-wall-missing",
+         "returned-digest", "schema-v1"],
+)
+async def test_a_warm_rail_capture_outside_its_declaration_never_passes(
+    harness, tamper, code
+):
+    artifact = await _warm_artifact(harness)
+    assert ddr.verify_baseline(copy.deepcopy(artifact))["verdict"] == ddr.PASS
+    tamper(artifact)
+    report = ddr.verify_baseline(artifact)
+    assert report["verdict"] == code, report
+    assert "scope" not in report
+
+
+async def test_a_warm_rail_build_that_resolved_no_cache_key_declares_no_publication(
+    harness,
+):
+    """`disabled` (an unreadable collections fingerprint) resolves no key: the
+    route writes no key back and publishes nothing, and the declaration must
+    say so — the consistency check binds in both directions."""
+    artifact = await _warm_artifact(harness)
+    request = ddr.decode_value(artifact["effective_request"])
+    request["cache_status"] = "disabled"
+    artifact["effective_request"] = ddr.encode_value(request)
+    assert ddr.verify_baseline(copy.deepcopy(artifact))["verdict"] == ddr.INVALID
+    artifact["provenance"]["operational"].update(
+        resolved_cache_key_written_back=False, publication_eligible=False
+    )
+    assert ddr.verify_baseline(artifact)["verdict"] == ddr.PASS
+
+
+def test_the_refusal_disposition_is_allowlisted():
+    capture = ddr.DiscoverDisplayCapture(origin="synthetic")
+    secret_text = "Bearer sk-live-10290 Will the Chiefs win"
+    headers = {
+        "x-feed-cache": secret_text,
+        "x-feed-singleflight": "leader",
+        "authorization": secret_text,
+    }
+    payload = {
+        "items": [{"type": "futures", "data": {"name": secret_text}}],
+        "cache": {"status": "stale_hit", "reason": secret_text},
+    }
+    disposition = ddr.refusal_disposition(
+        capture, response_headers=headers, payload=payload
+    )
+    assert secret_text not in json.dumps(disposition)
+    assert disposition["x_feed_cache"] == "unrecognized"
+    assert disposition["payload_cache_reason"] == "unrecognized"
+    assert disposition["payload_cache_status"] == "stale_hit"
+    assert disposition["x_feed_singleflight"] == "leader"
+    assert disposition["classification"] == "returned_before_seam"
+    assert set(disposition) == {
+        "classification", "capture_mode", "recorder_status", "refusal_code",
+        "x_feed_cache", "x_feed_singleflight", "payload_cache_status",
+        "payload_cache_reason",
+    }
+    # No Response, no payload: still a bounded answer, never a crash.
+    bare = ddr.refusal_disposition(capture, response_headers=None, payload=None)
+    assert bare["x_feed_cache"] is None and bare["payload_cache_status"] is None
+
+    capture.status = "recording"
+    capture.abandon("input_age_ceiling")
+    assert ddr.refusal_disposition(capture, response_headers={}, payload={})[
+        "classification"
+    ] == "build_abandoned"
+
+
+def test_every_cache_state_the_route_writes_is_on_the_allowlist():
+    """The disposition reads the route's own stamps through closed sets; a new
+    state in the route must be added here or it reports as `unrecognized`."""
+    import re
+
+    source = (BACKEND / "app/routes/feed.py").read_text()
+    statuses = set(re.findall(r'cache_status\s*=\s*"([a-z_]+)"', source))
+    statuses |= set(re.findall(r'"((?:shared|page_base)_(?:stale_)?hit)"', source))
+    reasons = set(re.findall(r'reason="([a-z_]+)"', source))
+    flights = set(re.findall(r'singleflight="([a-z_]+)"', source))
+    assert statuses and reasons and flights
+    assert statuses <= ddr.FEED_CACHE_DISPOSITIONS, statuses - ddr.FEED_CACHE_DISPOSITIONS
+    assert reasons <= ddr.FEED_CACHE_REASONS, reasons - ddr.FEED_CACHE_REASONS
+    assert flights <= ddr.FEED_SINGLEFLIGHT_STATES, flights - ddr.FEED_SINGLEFLIGHT_STATES
+    assert ddr.CACHED_EARLY_RETURNS <= ddr.FEED_CACHE_DISPOSITIONS
+
+
+async def test_an_exception_in_the_build_is_not_a_cache_refusal(
+    harness, monkeypatch, tmp_path
+):
+    from app.routes import feed as feed_route
+
+    async def _boom(**_kwargs):
+        raise RuntimeError("build failed")
+
+    monkeypatch.setattr(feed_route, "get_feed", _boom)
+    with pytest.raises(RuntimeError, match="build failed"):
+        await _script_capture(harness, monkeypatch, tmp_path, warm_rail=True)

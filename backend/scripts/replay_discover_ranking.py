@@ -31,6 +31,12 @@ Usage:
     # #10290: capture ONE anonymous Discover build in-process against the
     # configured database (writes nothing unless the build completes):
     python3 scripts/replay_discover_ranking.py --capture-mixed out.json --origin local
+
+    # #10290: the same, as an EXPLICIT operator-triggered warm-rail rebuild
+    # (the existing pre-warm marker: cache reads skipped, ordinary publication
+    # kept; declared in provenance, never a claim a public request was served):
+    python3 scripts/replay_discover_ranking.py --capture-mixed out.json \
+        --origin local --warm-rail-rebuild
 """
 
 from __future__ import annotations
@@ -613,7 +619,7 @@ def build_demo_labels() -> dict[int, dict[str, Any]]:
 # Mixed-display replay (#10290) — additive; the futures replay above is unchanged
 # --------------------------------------------------------------------------- #
 def run_mixed_capture_verification(path: str) -> dict[str, Any]:
-    """Load a ``mixed_display_replay_v1`` capture and verify its baseline arm.
+    """Load a ``mixed_display_replay_v2`` capture and verify its baseline arm.
 
     Fidelity only. Any comparison arm is computed AFTER this returns PASS, on
     the same frozen input; a non-PASS report is the whole output.
@@ -624,30 +630,49 @@ def run_mixed_capture_verification(path: str) -> dict[str, Any]:
 
 
 async def capture_mixed_build(
-    out_path: str, *, origin: str, limit: int, offset: int
+    out_path: str,
+    *,
+    origin: str,
+    limit: int,
+    offset: int,
+    warm_rail_rebuild: bool = False,
 ) -> dict[str, Any]:
     """Run ONE anonymous Discover build in-process with a display capture armed.
 
-    The request is the warmer's synthetic anonymous request WITHOUT the
-    pre-warm marker, so it is an ordinary anonymous build: if a cache tier
-    serves it, the capture is INCOMPLETE and nothing is written.
+    Default: the warmer's synthetic anonymous request WITHOUT the pre-warm
+    marker, so it is an ordinary anonymous build: if a cache tier serves it,
+    the capture is INCOMPLETE and nothing is written.
+
+    ``warm_rail_rebuild=True`` is the explicit operator mode: the same request
+    carrying the existing pre-warm marker, so the route skips its cache reads
+    and rebuilds exactly as the warm rail does — publication included. The
+    artifact's provenance says so.
+
+    A refusal carries ``disposition``: the allowlisted cache/singleflight
+    state the route stamped on the retained Response and the recorder's own
+    state. An exception from the build is NOT a refusal and propagates.
     """
     from fastapi import Response
 
     from app.routes.feed import get_feed
     from app.tasks.base import get_task_session
     from app.utils.discover_display_replay import (
+        CAPTURE_MODE_ORDINARY,
+        CAPTURE_MODE_WARM_RAIL,
         DiscoverDisplayCapture,
         DisplayReplayError,
         capture_request,
+        refusal_disposition,
         write_capture,
     )
 
-    capture = DiscoverDisplayCapture(origin=origin)
+    mode = CAPTURE_MODE_WARM_RAIL if warm_rail_rebuild else CAPTURE_MODE_ORDINARY
+    capture = DiscoverDisplayCapture(origin=origin, mode=mode)
     request = capture_request(capture)
+    response = Response()
     async with get_task_session() as db:
-        await get_feed(
-            response=Response(),
+        payload = await get_feed(
+            response=response,
             request=request,
             limit=limit,
             offset=offset,
@@ -673,7 +698,15 @@ async def capture_mixed_build(
     try:
         artifact = capture.artifact()
     except DisplayReplayError as exc:
-        return {"captured": False, "code": exc.code, "detail": exc.detail}
+        return {
+            "captured": False,
+            "code": exc.code,
+            "detail": exc.detail,
+            "capture_mode": mode,
+            "disposition": refusal_disposition(
+                capture, response_headers=response.headers, payload=payload
+            ),
+        }
     write_capture(artifact, out_path)
     return {
         "captured": True,
@@ -682,6 +715,7 @@ async def capture_mixed_build(
         "total": artifact["expected"]["total"],
         "size_bytes": artifact["size_bytes"],
         "origin": origin,
+        "capture_mode": mode,
     }
 
 
@@ -713,7 +747,7 @@ def main() -> int:
     parser.add_argument("--json", action="store_true")
     parser.add_argument(
         "--mixed-capture",
-        help="#10290: verify a mixed_display_replay_v1 capture file (exit 0 = PASS)",
+        help="#10290: verify a mixed_display_replay_v2 capture file (exit 0 = PASS)",
     )
     parser.add_argument(
         "--capture-mixed",
@@ -728,7 +762,18 @@ def main() -> int:
     )
     parser.add_argument("--limit", type=int, default=20, help="--capture-mixed page size")
     parser.add_argument("--offset", type=int, default=0, help="--capture-mixed offset")
+    parser.add_argument(
+        "--warm-rail-rebuild",
+        action="store_true",
+        help=(
+            "#10290: with --capture-mixed only — capture an EXPLICIT "
+            "operator-triggered anonymous warm-rail rebuild (existing pre-warm "
+            "marker; cache reads skipped, ordinary publication kept)"
+        ),
+    )
     args = parser.parse_args()
+    if args.warm_rail_rebuild and not args.capture_mixed:
+        parser.error("--warm-rail-rebuild requires --capture-mixed")
 
     if args.mixed_capture:
         report = run_mixed_capture_verification(args.mixed_capture)
@@ -748,6 +793,7 @@ def main() -> int:
                 origin=args.origin,
                 limit=args.limit,
                 offset=args.offset,
+                warm_rail_rebuild=args.warm_rail_rebuild,
             )
         )
         print(json.dumps(result, indent=2, sort_keys=True))

@@ -36,6 +36,14 @@ What a PASS proves, and what it does not (stated in every report):
    reviewed-filter requests are NOT supported; they refuse at capture.
 5. A synthetic or locally built capture proves the machinery, never a claim
    about production; ``provenance.origin`` says which it is.
+6. ``provenance.capture_mode`` says HOW the build was obtained. The default
+   is an ordinary anonymous request, which a warm cache tier serves without
+   reaching the seam — so it refuses, and cached output is never promoted to a
+   capture. The explicit operator mode (:data:`CAPTURE_MODE_WARM_RAIL`) arms
+   the existing LAT-P001 pre-warm scope marker, so the route rebuilds exactly
+   as the warm rail does. Its provenance declares that: an operator-triggered
+   rebuild with the route's ordinary publication effects, NOT a public request
+   that was served.
 """
 
 from __future__ import annotations
@@ -53,7 +61,11 @@ import uuid
 from contextlib import contextmanager
 from typing import Any, Callable, Iterable, Optional
 
-SCHEMA_VERSION = "mixed_display_replay_v1"
+#: v2 (#10290 warm-capture): adds ``provenance.capture_mode`` +
+#: ``provenance.operational``, ``clocks.armed_wall`` and
+#: ``expected.returned_build_digest``. No v1 artifact was ever produced (the
+#: sole production attempt refused before capture), so v1 is not read.
+SCHEMA_VERSION = "mixed_display_replay_v2"
 
 #: The ASGI scope key an in-process caller sets to a
 #: :class:`DiscoverDisplayCapture`. Never read from a header or a query.
@@ -81,6 +93,62 @@ CACHE_METADATA_FIELD = "cache"
 #: Envelope fields the route adds from UPSTREAM facts (the futures stage's
 #: outcome). Carried from the capture into the replayed envelope, and declared.
 UPSTREAM_CARRIED_FIELDS = ("build_quality", "degraded_reason")
+
+#: How a capture obtained its build. Closed set; the loader refuses any other.
+CAPTURE_MODE_ORDINARY = "ordinary_anonymous_request"
+CAPTURE_MODE_WARM_RAIL = "operator_warm_rail_rebuild"
+CAPTURE_MODES = frozenset({CAPTURE_MODE_ORDINARY, CAPTURE_MODE_WARM_RAIL})
+
+#: The operational declaration of an ordinary capture, required verbatim.
+_ORDINARY_OPERATIONAL = {
+    "kind": CAPTURE_MODE_ORDINARY,
+    "cache_reads": (
+        "ordinary: a request a cache tier serves never reaches the seam and "
+        "refuses as INCOMPLETE"
+    ),
+}
+
+#: The fixed half of an operator warm-rail capture's operational declaration,
+#: required verbatim. The variable half (the age bound, publication
+#: eligibility, the key write-back) is type- and consistency-checked.
+_WARM_RAIL_DECLARED = {
+    "kind": CAPTURE_MODE_WARM_RAIL,
+    "trigger": (
+        "operator-invoked in-process request carrying the existing LAT-P001 "
+        "pre-warm scope marker (feed_cache.FEED_PREWARM_SCOPE_KEY); no header, "
+        "query or HTTP request can set it"
+    ),
+    "claims": {
+        "public_request_served": False,
+        "upstream_admission_and_scoring_replayed": False,
+    },
+    "cache_reads": (
+        "skipped by the route for this rebuild: response fresh, :stale and "
+        "page-base tiers; shared input artifacts read only under the age bound"
+    ),
+    "publication_effects": [
+        "response cache fresh + :stale entries under the resolved anonymous key, "
+        "on the build's ordinary TTLs",
+        "offset-independent page base (LAT-P141) when page-base publication is on",
+        "edition manifest for this build's ordering (#5102)",
+        "process-local last-good for the resolved key",
+        "shared input artifacts rebuilt under the bound, republished on their "
+        "namespace TTLs",
+    ],
+    "publication_completion": (
+        "not observed: the route schedules publication in the background; "
+        "a degraded build publishes nothing"
+    ),
+    "warm_rail_task_side_effects": (
+        "not run: the warm-rail task's own report, refusal gates and "
+        "served-market record are outside this capture"
+    ),
+}
+_WARM_RAIL_VARIABLE_KEYS = {
+    "shared_artifact_max_age_s",
+    "publication_eligible",
+    "resolved_cache_key_written_back",
+}
 
 # Refusal / verdict codes.
 UNSUPPORTED = "UNSUPPORTED"
@@ -284,21 +352,29 @@ def display_capture_from_request(request: Any) -> Optional["DiscoverDisplayCaptu
 def capture_request(capture: "DiscoverDisplayCapture") -> Any:
     """An in-process, anonymous ``/api/feed`` request carrying ``capture``.
 
-    The pre-warm's synthetic request without its marker: no headers (so no
-    session or user principal), no query, never sent over a network.
+    The pre-warm's synthetic request: no headers (so no session or user
+    principal), no query, never sent over a network. An ordinary capture
+    carries NO pre-warm marker, so any cache tier may serve it (and the
+    capture then refuses). Only an explicit operator warm-rail capture carries
+    the existing ``FEED_PREWARM_SCOPE_KEY`` — the warm rail's own rebuild.
     """
     from starlette.requests import Request
 
-    return Request(
-        {
-            "type": "http",
-            "method": "GET",
-            "path": "/api/feed",
-            "headers": [],
-            "query_string": b"",
-            DISCOVER_DISPLAY_CAPTURE_SCOPE_KEY: capture,
-        }
-    )
+    from app.utils.feed_cache import FEED_PREWARM_SCOPE_KEY
+
+    scope: dict[str, Any] = {
+        "type": "http",
+        "method": "GET",
+        "path": "/api/feed",
+        "headers": [],
+        "query_string": b"",
+        DISCOVER_DISPLAY_CAPTURE_SCOPE_KEY: capture,
+    }
+    if capture.mode == CAPTURE_MODE_WARM_RAIL:
+        scope[FEED_PREWARM_SCOPE_KEY] = True
+    request = Request(scope)
+    capture._scope = request.scope
+    return request
 
 
 def _guarded(method: Callable) -> Callable:
@@ -326,6 +402,10 @@ class DiscoverDisplayCapture:
     ``refused`` / ``abandoned`` with a reason. Only ``complete`` yields an
     artifact; a request served from any cache never reaches the seam and
     stays ``armed``, which :meth:`artifact` reports as INCOMPLETE.
+
+    ``mode`` defaults to the ordinary anonymous request. The operator
+    warm-rail mode only works through :func:`capture_request`, which is the
+    one place the pre-warm marker is set.
     """
 
     def __init__(
@@ -334,10 +414,16 @@ class DiscoverDisplayCapture:
         origin: str,
         max_bytes: int = DEFAULT_MAX_CAPTURE_BYTES,
         request_id: Optional[str] = None,
+        mode: str = CAPTURE_MODE_ORDINARY,
     ):
         if origin not in ("production", "local", "synthetic"):
             raise ValueError("origin must be production, local or synthetic")
+        if mode not in CAPTURE_MODES:
+            raise ValueError(f"mode must be one of {sorted(CAPTURE_MODES)}")
         self.origin = origin
+        self.mode = mode
+        self.armed_wall = time.time()
+        self._scope: Optional[dict] = None
         self.max_bytes = max_bytes
         self.request_id = request_id
         self.build_id = uuid.uuid4().hex
@@ -393,6 +479,7 @@ class DiscoverDisplayCapture:
             refusals.append("an active personalization context")
         if refusals:
             raise DisplayReplayError(UNSUPPORTED, "; ".join(refusals))
+        operational = self._operational_at_entry()
 
         pool_ids = _check_identities(items, kinds=SUPPORTED_POOL_KINDS, where="pool")
         if len({id(item) for item in items}) != len(items):
@@ -418,8 +505,11 @@ class DiscoverDisplayCapture:
                 ),
                 "effective_config": encode_value(config, "$.discover_config"),
                 "effective_config_digest": _digest(config),
+                "capture_mode": self.mode,
+                "operational": operational,
             },
             "clocks": {
+                "armed_wall": self.armed_wall,
                 "scoring_now": now.isoformat(),
                 "chain_entry_wall": time.time(),
                 "source_and_feature_timestamps": "retained unchanged inside each card",
@@ -445,6 +535,39 @@ class DiscoverDisplayCapture:
             },
             "diagnostics": {"stage_identities": {}},
         }
+
+    def _operational_at_entry(self) -> dict:
+        """The mode's declaration, read from the route's own state at the seam.
+
+        The age bound is the ContextVar the route binds ONLY on its pre-warm
+        branch, so its presence is the proof the marker was honoured — and its
+        absence is required of an ordinary build, which would otherwise have
+        been built under a narrower shared-input read than an ordinary request.
+        """
+        from app.utils import principal_independent_cache as _pic
+        from app.utils.feed_cache import FEED_PREWARM_SCOPE_KEY
+
+        bound = _pic.max_shared_age_s()
+        marker = bool(self._scope and self._scope.get(FEED_PREWARM_SCOPE_KEY))
+        if self.mode == CAPTURE_MODE_ORDINARY:
+            if marker or bound is not None:
+                raise DisplayReplayError(
+                    UNSUPPORTED,
+                    "an ordinary capture saw the pre-warm marker or a bound "
+                    "shared-artifact age: not an ordinary anonymous build",
+                )
+            return dict(_ORDINARY_OPERATIONAL)
+        if not marker:
+            raise DisplayReplayError(
+                INVALID, "operator warm-rail mode must be armed by capture_request"
+            )
+        if not _is_number(bound) or not math.isfinite(bound) or bound < 0:
+            raise DisplayReplayError(
+                INCOMPLETE,
+                "operator warm-rail mode: the route bound no shared-artifact age, "
+                "so the pre-warm marker was not honoured",
+            )
+        return {**copy.deepcopy(_WARM_RAIL_DECLARED), "shared_artifact_max_age_s": bound}
 
     @_guarded
     def record_chain_exit(self, items: list, meta: dict) -> None:
@@ -545,7 +668,20 @@ class DiscoverDisplayCapture:
             "total": len(feed_items),
             "full_public_deck_digest": _digest(feed_items),
             "public_response": encode_value(payload, "$.response"),
+            "returned_build_digest": _digest(payload),
         }
+        if self.mode == CAPTURE_MODE_WARM_RAIL:
+            from app.utils.feed_cache import FEED_PREWARM_KEY_SCOPE_KEY
+
+            request = decode_value(self._doc["effective_request"])
+            keyed = request.get("cache_status") in _KEYED_CACHE_STATUSES
+            operational = self._doc["provenance"]["operational"]
+            operational["resolved_cache_key_written_back"] = bool(
+                self._scope and FEED_PREWARM_KEY_SCOPE_KEY in self._scope
+            )
+            operational["publication_eligible"] = bool(
+                keyed and request.get("build_quality") == "complete"
+            )
         doc = self._doc
         size = len(json.dumps(doc, separators=(",", ":"), allow_nan=False))
         if size > self.max_bytes:
@@ -574,6 +710,119 @@ class DiscoverDisplayCapture:
             "the request never reached a returned build (served from a cache tier, "
             "refused early, or raised)",
         )
+
+
+# --------------------------------------------------------------------------- #
+# Refusal disposition — what a non-capture can say about itself
+# --------------------------------------------------------------------------- #
+#
+# A refused capture writes no artifact, so the only evidence of WHICH branch
+# returned is what the route already stamps on the Response and the payload's
+# cache block. Every value is read through a closed allowlist (anything else is
+# reported as "unrecognized"), so the disposition can never carry credentials,
+# the candidate pool or an arbitrary response body.
+
+#: Every ``X-Feed-Cache`` value ``get_feed`` writes.
+FEED_CACHE_DISPOSITIONS = frozenset(
+    {
+        "hit",
+        "stale_hit",
+        "shared_hit",
+        "shared_stale_hit",
+        "page_base_hit",
+        "page_base_stale_hit",
+        "last_good",
+        "coalesced",
+        "unavailable",
+        "miss",
+        "error",
+        "disabled",
+        "disabled_debug",
+        "disabled_reviewed_filter",
+    }
+)
+#: The dispositions that return a payload some earlier build produced.
+CACHED_EARLY_RETURNS = frozenset(
+    {
+        "hit",
+        "stale_hit",
+        "shared_hit",
+        "shared_stale_hit",
+        "page_base_hit",
+        "page_base_stale_hit",
+        "last_good",
+        "coalesced",
+    }
+)
+FEED_SINGLEFLIGHT_STATES = frozenset(
+    {"leader", "coalesced", "waiter_last_good", "waiter_unavailable", "none"}
+)
+#: Every ``cache.reason`` value ``get_feed`` writes.
+FEED_CACHE_REASONS = frozenset(
+    {
+        "inert_principal",
+        "input_age_ceiling",
+        "leader_unavailable",
+        "page_base",
+        "redis_unavailable",
+    }
+)
+_RECORDER_STATES = frozenset({"armed", "recording", "complete", "refused", "abandoned"})
+_VERDICT_CODES = frozenset({UNSUPPORTED, INCOMPLETE, INVALID, MISMATCH, OFFLINE_VIOLATION})
+
+
+def _allowlisted(value: Any, allowed: frozenset) -> Optional[str]:
+    if value is None:
+        return None
+    return value if isinstance(value, str) and value in allowed else "unrecognized"
+
+
+def refusal_disposition(
+    capture: "DiscoverDisplayCapture", *, response_headers: Any, payload: Any
+) -> dict:
+    """A bounded, allowlisted account of why ``capture`` holds no artifact.
+
+    ``response_headers`` is the retained Response's headers (case-insensitive
+    ``.get``); ``payload`` is what ``get_feed`` returned. Only coarse states
+    leave: header values, the payload's cache status/reason, and the
+    recorder's own state and verdict code.
+    """
+    get = getattr(response_headers, "get", None)
+    header = (lambda name: get(name)) if callable(get) else (lambda name: None)
+    cache_block = payload.get(CACHE_METADATA_FIELD) if isinstance(payload, dict) else None
+    if not isinstance(cache_block, dict):
+        cache_block = {}
+    x_cache = _allowlisted(header("x-feed-cache"), FEED_CACHE_DISPOSITIONS)
+    status = _allowlisted(capture.status, _RECORDER_STATES)
+    code = (capture.refusal or {}).get("code")
+    if status == "armed":
+        if x_cache in CACHED_EARLY_RETURNS:
+            classification = "cache_tier_early_return"
+        elif x_cache == "unavailable":
+            classification = "unavailable_terminal"
+        else:
+            classification = "returned_before_seam"
+    else:
+        classification = {
+            "recording": "seam_reached_no_returned_build",
+            "refused": "recorder_refused",
+            "abandoned": "build_abandoned",
+            "complete": "complete",
+        }.get(status, "unrecognized")
+    return {
+        "classification": classification,
+        "capture_mode": _allowlisted(capture.mode, CAPTURE_MODES),
+        "recorder_status": status,
+        "refusal_code": _allowlisted(code, _VERDICT_CODES),
+        "x_feed_cache": x_cache,
+        "x_feed_singleflight": _allowlisted(
+            header("x-feed-singleflight"), FEED_SINGLEFLIGHT_STATES
+        ),
+        "payload_cache_status": _allowlisted(
+            cache_block.get("status"), FEED_CACHE_DISPOSITIONS
+        ),
+        "payload_cache_reason": _allowlisted(cache_block.get("reason"), FEED_CACHE_REASONS),
+    }
 
 
 class _Absent:
@@ -648,6 +897,12 @@ def load_capture(source: Any, *, max_bytes: int = DEFAULT_MAX_CAPTURE_BYTES) -> 
         raise DisplayReplayError(INVALID, "expected deck identities / total malformed")
     if len(expected["full_deck_identities"]) != expected["total"]:
         raise DisplayReplayError(INVALID, "expected deck length disagrees with total")
+    if expected["returned_build_digest"] != _digest(
+        decode_value(expected["public_response"])
+    ):
+        raise DisplayReplayError(
+            INVALID, "returned_build_digest disagrees with the returned build"
+        )
     return doc
 
 
@@ -659,7 +914,13 @@ def load_capture(source: Any, *, max_bytes: int = DEFAULT_MAX_CAPTURE_BYTES) -> 
 # stage runs. The replay itself dispatches only on these closed sets, so a
 # capture cannot reach PASS by naming a branch the replay silently skips.
 
-_EXPECTED_KEYS = {"full_deck_identities", "total", "full_public_deck_digest", "public_response"}
+_EXPECTED_KEYS = {
+    "full_deck_identities",
+    "total",
+    "full_public_deck_digest",
+    "public_response",
+    "returned_build_digest",
+}
 _REQUEST_KEYS = {
     "mode",
     "sport",
@@ -693,8 +954,11 @@ _PROVENANCE_KEYS = {
     "policy_version_note",
     "effective_config",
     "effective_config_digest",
+    "capture_mode",
+    "operational",
 }
 _CLOCK_KEYS = {
+    "armed_wall",
     "scoring_now",
     "chain_entry_wall",
     "source_and_feature_timestamps",
@@ -712,6 +976,9 @@ _VENUE_DELTA_KEYS = {"position", "identity", "changes"}
 #: Cache states a build that reached the seam can carry. The two
 #: ``disabled_*`` states belong to debug / reviewed builds, refused at capture.
 _REPLAYABLE_CACHE_STATUSES = frozenset({"disabled", "miss", "error"})
+#: The states in which the route resolved a response-cache key — the only
+#: states its pre-warm branch writes the key back and publication can run.
+_KEYED_CACHE_STATUSES = frozenset({"miss", "error"})
 _BUILD_QUALITIES = frozenset({"complete", "degraded"})
 _DEGRADED_REASONS = frozenset(
     {"futures_skipped_budget", "futures_timeout", "futures_error"}
@@ -770,7 +1037,7 @@ def validate_replay_inputs(capture: dict) -> None:
     )
 
     if not isinstance(capture, dict) or capture.get("schema_version") != SCHEMA_VERSION:
-        raise DisplayReplayError(INVALID, "not a mixed_display_replay_v1 capture")
+        raise DisplayReplayError(INVALID, f"not a {SCHEMA_VERSION} capture")
     for key in _REQUIRED_TOP - {"expected"}:
         _require(key in capture, INVALID, f"capture is missing {key!r}")
 
@@ -792,6 +1059,7 @@ def validate_replay_inputs(capture: dict) -> None:
 
     clocks = capture["clocks"]
     _exact_keys(clocks, _CLOCK_KEYS, "clocks")
+    _require(_is_number(clocks["armed_wall"]), INVALID, "clocks.armed_wall is not a number")
     try:
         scoring_now = _dt.datetime.fromisoformat(clocks["scoring_now"])
     except (TypeError, ValueError):
@@ -835,6 +1103,8 @@ def validate_replay_inputs(capture: dict) -> None:
     else:
         _require(request["degraded_reason"] in _DEGRADED_REASONS, UNSUPPORTED,
                  f"degraded_reason {request['degraded_reason']!r} is not known")
+
+    _validate_operational(provenance, request)
 
     # -- chain arguments: agree with the request ---------------------------- #
     kw = capture["chain_kwargs"]
@@ -924,6 +1194,43 @@ def validate_replay_inputs(capture: dict) -> None:
                 _require(change[side] in ({"absent": True},) or (
                     isinstance(change[side], dict) and set(change[side]) == {"value"}),
                     INVALID, f"venue.deltas[{index}].{key}.{side} malformed")
+
+
+def _validate_operational(provenance: dict, request: dict) -> None:
+    """The capture mode is a closed set, and each mode's declaration is exact.
+
+    A missing or unknown mode refuses; so does an operator declaration whose
+    fixed text differs, whose variable facts are malformed, or whose facts
+    disagree with the request the build recorded.
+    """
+    mode = provenance["capture_mode"]
+    _require(mode in CAPTURE_MODES, UNSUPPORTED,
+             f"provenance.capture_mode {mode!r} is not a known capture mode")
+    operational = provenance["operational"]
+    if mode == CAPTURE_MODE_ORDINARY:
+        _require(operational == _ORDINARY_OPERATIONAL, INVALID,
+                 "ordinary capture's operational declaration differs")
+        return
+    _exact_keys(operational, set(_WARM_RAIL_DECLARED) | _WARM_RAIL_VARIABLE_KEYS,
+                "provenance.operational")
+    for key, value in _WARM_RAIL_DECLARED.items():
+        _require(operational[key] == value, INVALID,
+                 f"operator warm-rail declaration {key!r} differs")
+    bound = operational["shared_artifact_max_age_s"]
+    _require(_is_number(bound) and math.isfinite(bound) and bound >= 0, INVALID,
+             "shared_artifact_max_age_s is not a finite non-negative number")
+    for key in ("publication_eligible", "resolved_cache_key_written_back"):
+        _require(isinstance(operational[key], bool), INVALID,
+                 f"provenance.operational.{key} is not a bool")
+    keyed = request["cache_status"] in _KEYED_CACHE_STATUSES
+    _require(operational["resolved_cache_key_written_back"] is keyed, INVALID,
+             "the key write-back disagrees with request.cache_status")
+    _require(
+        operational["publication_eligible"]
+        is (keyed and request["build_quality"] == "complete"),
+        INVALID,
+        "publication eligibility disagrees with the request's cache key / build quality",
+    )
 
 
 # --------------------------------------------------------------------------- #
@@ -1125,6 +1432,7 @@ def _scope_statement(capture: dict) -> dict:
             k for k, v in capture["support"].items() if v == "unsupported"
         ],
         "origin": capture["provenance"]["origin"],
+        "capture_mode": capture["provenance"]["capture_mode"],
         "carried_not_replayed": list(UPSTREAM_CARRIED_FIELDS),
     }
 
