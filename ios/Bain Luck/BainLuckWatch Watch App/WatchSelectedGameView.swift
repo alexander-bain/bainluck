@@ -71,6 +71,12 @@ struct WatchSelectedGameView: View {
                     }
                     Button("Choose another game") { choosingGame = true }
                         .accessibilityIdentifier("watch.choose-another")
+                    Button("Clear selected game") {
+                        choosingGame = false
+                        showingHandoffHelp = false
+                        store.clearSelection()
+                    }
+                    .accessibilityIdentifier("watch.clear-selection")
                 }
                 #if DEBUG
                 if WatchUIFixture.current?.launchReceipt == true {
@@ -116,6 +122,14 @@ struct WatchSelectedGameView: View {
             NavigationStack {
                 ScrollView { gamePicker.padding(.horizontal, 6) }
                     .navigationTitle("Choose a game")
+                    .toolbar {
+                        if store.selectedEventID != nil {
+                            ToolbarItem(placement: .cancellationAction) {
+                                Button("Back to your game") { choosingGame = false }
+                                    .accessibilityIdentifier("watch.picker-cancel")
+                            }
+                        }
+                    }
                     .task(id: "\(scenePhase)-\(gamesRefreshGeneration)") {
                         guard scenePhase == .active else { return }
                         await picker.refresh()
@@ -247,12 +261,14 @@ struct WatchSelectedGameView: View {
 
     private var gamePicker: some View {
         VStack(alignment: .leading, spacing: 10) {
-            Text("Choose one game to follow")
+            Text("Choose your game")
                 .font(.headline)
+                .accessibilityIdentifier("watch.picker-heading")
             if picker.isLoading && picker.games.isEmpty {
                 ProgressView("Loading games")
             } else if let error = picker.errorMessage {
                 Text(error).font(.footnote).foregroundStyle(.orange)
+                    .accessibilityIdentifier("watch.picker-error")
                 if !picker.games.isEmpty {
                     Text("Showing the previously received list.")
                         .font(.footnote).foregroundStyle(.secondary)

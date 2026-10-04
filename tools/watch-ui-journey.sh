@@ -121,7 +121,7 @@ if 'WATCH_UI_STRESS_TYPE=accessibility5' not in lines:
     raise SystemExit('App did not confirm accessibility5 layout stress; gate unpaid')
 if not any(line.startswith('WATCH_UI_STANDARD_TYPE=') for line in lines):
     raise SystemExit('Default text-size journey did not report its actual size; gate unpaid')
-for marker in ('WATCH_UI_ROUNDING_PAIR=45', 'WATCH_UI_ROUNDING_DRAW=46', 'WATCH_UI_LAUNCHER_COLD=PASS', 'WATCH_UI_COMPLICATION_CONTENT=PASS', 'WATCH_UI_LAUNCHER_WARM=PASS'):
+for marker in ('WATCH_UI_ROUNDING_PAIR=45', 'WATCH_UI_ROUNDING_DRAW=46', 'WATCH_UI_LAUNCHER_COLD=PASS', 'WATCH_UI_COMPLICATION_CONTENT=PASS', 'WATCH_UI_LAUNCHER_WARM=PASS', 'WATCH_UI_CLEAR_SELECTION=PASS', 'WATCH_UI_PICKER_RETURN=PASS'):
     if marker not in lines:
         raise SystemExit(f'Watch journey did not confirm {marker}; gate unpaid')
 PYVERIFY
