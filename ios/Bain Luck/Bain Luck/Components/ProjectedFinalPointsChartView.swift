@@ -81,12 +81,20 @@ struct ProjectedFinalPointsChartView: View {
                     Button("Latest") { self.selectedDate = nil }.font(.caption)
                 }
             }
-            Text("Solid: projected final points. Dashed: points actually scored. Gaps mean no usable capture; forecasts are not results.")
+            Text(Self.legend(for: full))
                 .font(.caption).foregroundStyle(.secondary)
                 .fixedSize(horizontal: false, vertical: true)
         }
         // No implicit movement or animation; inspection also respects Reduce Motion.
         .accessibilityIdentifier("projected-final-points-10239")
+    }
+
+    /// #10478 — before kickoff nothing has been scored, so the legend never
+    /// names a dashed line the chart does not draw.
+    static func legend(for full: ProjectedFinalPointsSeries) -> String {
+        full.actualSteps.isEmpty
+            ? "Solid: projected final points. Gaps mean no usable capture; forecasts are not results."
+            : "Solid: projected final points. Dashed: points actually scored. Gaps mean no usable capture; forecasts are not results."
     }
 
     private func readout(_ series: ProjectedFinalPointsSeries) -> some View {

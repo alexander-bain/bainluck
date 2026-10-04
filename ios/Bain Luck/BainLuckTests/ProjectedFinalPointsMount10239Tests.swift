@@ -201,6 +201,18 @@ final class ProjectedFinalPointsMount10239Tests: XCTestCase {
         XCTAssertEqual(series.latestActual, .init(at: "2026-09-14T02:00:00Z".asDate!, home: 14, away: 3))
     }
 
+    func testTheLegendNamesTheDashedScoreLineOnlyWhenOneIsDrawn() throws {
+        let before = try XCTUnwrap(ProjectedFinalPointsSeries.build(try XCTUnwrap(mount(
+            try history(status: scheduled, completedAt: "null",
+                        books: books(["draftkings": [rec("00:05", 27, 10), rec("00:10", 28, 10)]])),
+            page: "scheduled", now: "2026-09-14T00:15:00Z".asDate))))
+        XCTAssertFalse(ProjectedFinalPointsChartView.legend(for: before).contains("Dashed"),
+                       "nothing is scored before kickoff, so no dashed line is drawn or named")
+        let during = try XCTUnwrap(ProjectedFinalPointsSeries.build(
+            try XCTUnwrap(mount(try duringHistory(), page: "live", now: "2026-09-14T02:10:00Z".asDate))))
+        XCTAssertTrue(ProjectedFinalPointsChartView.legend(for: during).contains("Dashed: points actually scored"))
+    }
+
     func testDuringWithoutAnObservedFloorMountsNothing() throws {
         let now = "2026-09-14T02:10:00Z".asDate
         XCTAssertNil(mount(try duringHistory(markers: [Self.estimatedQ1]), page: "live", now: now))
