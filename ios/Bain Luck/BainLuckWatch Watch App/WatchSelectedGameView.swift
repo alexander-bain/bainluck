@@ -11,11 +11,23 @@ private nonisolated struct WatchDiscoverGameTransport: WatchGamePickerTransport 
 struct WatchSelectedGameView: View {
     @Environment(\.scenePhase) private var scenePhase
     @Environment(\.dynamicTypeSize) private var dynamicTypeSize
-    @StateObject private var store = WatchSelectedGameStore()
-    @StateObject private var picker = WatchGamePickerStore(transport: WatchDiscoverGameTransport())
+    @StateObject private var store: WatchSelectedGameStore
+    @StateObject private var picker: WatchGamePickerStore
     @State private var choosingGame = false
     @State private var refreshGeneration = 0
     @State private var gamesRefreshGeneration = 0
+
+    init() {
+        #if DEBUG
+        if let fixture = WatchUIFixture.current {
+            _store = StateObject(wrappedValue: fixture.makeStore())
+            _picker = StateObject(wrappedValue: WatchGamePickerStore(transport: fixture))
+            return
+        }
+        #endif
+        _store = StateObject(wrappedValue: WatchSelectedGameStore())
+        _picker = StateObject(wrappedValue: WatchGamePickerStore(transport: WatchDiscoverGameTransport()))
+    }
 
     private var refreshKey: String { "\(scenePhase)-\(choosingGame)-\(refreshGeneration)-\(store.selectedEventID ?? 0)" }
 
@@ -42,6 +54,7 @@ struct WatchSelectedGameView: View {
                     }
                     .disabled(store.isRefreshing || scenePhase != .active)
                     Button("Choose another game") { choosingGame = true }
+                        .accessibilityIdentifier("watch.choose-another")
                 }
             }
             .padding(.horizontal, 6)
@@ -81,6 +94,7 @@ struct WatchSelectedGameView: View {
             }
             .accessibilityElement(children: .ignore)
             .accessibilityLabel(stateAccessibilityLabel(game))
+            .accessibilityIdentifier("watch.game-state")
             if game.isClosed {
                 Text("Last reported score · final result unverified")
                     .font(.footnote).foregroundStyle(.secondary)
@@ -104,6 +118,7 @@ struct WatchSelectedGameView: View {
                             .font(.title2.bold()).monospacedDigit()
                     }
                     .accessibilityElement(children: .ignore)
+                    .accessibilityIdentifier("watch.home-probability")
                     .accessibilityLabel("\(game.homeTeam) win probability, \(probability.formatted(.percent.precision(.fractionLength(0))))")
                 } else {
                     Text("Win probability unavailable")
@@ -211,6 +226,7 @@ struct WatchSelectedGameView: View {
                             .font(.footnote).foregroundStyle(.secondary)
                     }
                 }
+                .accessibilityIdentifier("watch.pick.\(game.id)")
             }
             Button("Refresh games") {
                 if choosingGame { gamesRefreshGeneration += 1 }

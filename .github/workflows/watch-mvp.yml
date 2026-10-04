@@ -9,6 +9,8 @@ on:
       - 'ios/Bain Luck/Bain Luck/Models/PredictionModels.swift'
       - 'ios/Bain Luck/Bain Luck/Utilities/PeriodLabel.swift'
       - 'ios/Bain Luck/Bain Luck.xcodeproj/**'
+      - 'ios/Bain Luck/BainLuckWatchUITests/**'
+      - 'tools/watch-ui-journey.sh'
       - 'tools/watch-build.sh'
       - 'tools/watch-iphone-compatibility.sh'
       - 'tools/watch_iphone_receipt.py'
@@ -22,6 +24,8 @@ on:
       - 'ios/Bain Luck/Bain Luck/Models/PredictionModels.swift'
       - 'ios/Bain Luck/Bain Luck/Utilities/PeriodLabel.swift'
       - 'ios/Bain Luck/Bain Luck.xcodeproj/**'
+      - 'ios/Bain Luck/BainLuckWatchUITests/**'
+      - 'tools/watch-ui-journey.sh'
       - 'tools/watch-build.sh'
       - 'tools/watch-iphone-compatibility.sh'
       - 'tools/watch_iphone_receipt.py'
@@ -34,7 +38,8 @@ permissions:
 
 concurrency:
   group: watch-mvp-${{ github.event_name == 'pull_request' && github.event.pull_request.number || github.run_id }}
-  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+  # Finish the expensive full-suite run; GitHub retains only the latest pending PR run.
+  cancel-in-progress: false
 
 jobs:
   watch-mvp:
@@ -97,5 +102,32 @@ jobs:
             build/watch-iphone-compatibility/*.json
             build/watch-iphone-compatibility/*.log
             build/watch-iphone-compatibility/BainLuckTests.xcresult
+          if-no-files-found: ignore
+          retention-days: 7
+
+  watch-ui-journey:
+    name: Watch picker interaction journey
+    needs: watch-mvp
+    runs-on: xcode-27
+    timeout-minutes: 35
+    env:
+      DEVELOPER_DIR: /Applications/Xcode_27.0.app/Contents/Developer
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          persist-credentials: false
+      - name: Select, reopen offline, and change a game through Watch controls
+        run: bash tools/watch-ui-journey.sh
+      - name: Preserve UI journey evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: watch-ui-journey-evidence
+          path: |
+            build/watch-ui-journey/*.txt
+            build/watch-ui-journey/*.json
+            build/watch-ui-journey/*.log
+            build/watch-ui-journey/run.*/BainLuckWatchUITests.xcresult
           if-no-files-found: ignore
           retention-days: 7

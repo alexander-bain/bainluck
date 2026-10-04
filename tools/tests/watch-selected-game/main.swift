@@ -287,6 +287,22 @@ actor Stub: WatchSelectedGameTransport {
         await cancelledLoop.value
         let afterCancellation = await lifecycleTransport.fetchCount
         precondition(afterCancellation == beforeCancellation && cancelledSleeps == 0, "Cancellation before entry performs neither fetch nor sleep")
+        let uiSuite = "watch-ui-fixture-check-\(UUID().uuidString)"
+        defer { UserDefaults(suiteName: uiSuite)?.removePersistentDomain(forName: uiSuite) }
+        let uiFixture = WatchUIFixture(offline: false, suite: uiSuite)
+        let uiBatch = try await uiFixture.fetchGames()
+        precondition(uiBatch.games.map(\.id) == [101, 202] && uiBatch.omittedGameCount == 0)
+        let uiStore = uiFixture.makeStore()
+        uiStore.select(eventID: 101)
+        await uiStore.refresh()
+        precondition(uiStore.game?.homeTeam == "San Francisco Giants" && uiStore.game?.homeProbability == 0.64)
+        let offlineFixture = WatchUIFixture(offline: true, suite: uiSuite)
+        let uiRestored = offlineFixture.makeStore()
+        await uiRestored.refresh()
+        precondition(uiRestored.isRestoredReading && uiRestored.game?.id == 101 && uiRestored.errorMessage == "Offline. Try again.")
+        let secondFixture = try await uiFixture.fetch(eventID: 202)
+        precondition(secondFixture.homeTeam == "Buffalo Bills" && secondFixture.homeProbability == 0.55)
+        print("PASS: UI fixture decodes both choices and restores the chosen reading offline in isolated defaults")
         print("PASS: cold offline snapshot restoration, cache integrity, observation-clock round trips, selection persistence, empty/error distinction, retained failure, race fencing, canonical alias, same-selection refresh ordering, cancellation, final status, draw semantics, tolerant optionals, distinct score/probability ages")
         print("PASS: foreground immediate refresh, live/nonlive cadence, capped failure backoff, success and selection reset, throwing-sleep exit, cancellation before entry")
         print("PASS: deterministic compact and spoken observation ages, unit boundaries, strict two-minute stale threshold, missing/future/nonfinite observations")

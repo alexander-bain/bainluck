@@ -180,3 +180,27 @@ compatibility job now selects the hosted `xcode-27` image and explicit Xcode27.0
 runtime must match the selected SDK major/minor; a newer beta runtime is not chosen
 silently. The Watch-only job keeps its already-proven Xcode26.3 environment. This
 alignment is a harness repair to verify, not a claim that the iPhone suite passed.
+
+## Hosted picker interaction journey (#4932)
+
+`BainLuckWatchUITests` is an additive Watch-only UI test target. Its scheme uses
+Apple's Watch XCTest UI runner to tap a first game, assert the named home
+probability, terminate/relaunch offline, assert the saved/offline qualification,
+and choose a different game. `tools/watch-ui-journey.sh` refuses local execution
+and creates a disposable Watch on a GitHub-hosted runner. The workflow preserves
+source/toolchain/destination metadata, logs, a full-suite receipt and screenshots
+inside the result bundle; DerivedData is not uploaded.
+
+The test uses deterministic transports behind `#if DEBUG`, an explicit launch
+environment switch and a UUID-specific defaults domain. Reset happens once per
+process, and offline relaunch preserves that domain. Release does not contain the
+fixture implementation. This proves a controlled UI journey only when the hosted
+suite actually succeeds; it does not prove production data, physical installation,
+VoiceOver speech, large-text fit, battery behavior or distribution. Screenshots
+must be opened and inspected before claiming visible layout acceptance.
+
+The shared project additions require Native/Integrator boundary review before
+integration, independently of the earlier Watch membership approval. No existing
+iPhone target, build phase, scheme or application source is modified by this UI
+slice. If the runner requires Watch pairing or cannot expose a matching runtime,
+the journey fails as an unpaid gate; it never borrows an existing iPhone.
