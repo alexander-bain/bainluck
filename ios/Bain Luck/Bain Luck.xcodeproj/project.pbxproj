@@ -169,6 +169,7 @@
 			isa = PBXFileSystemSynchronizedBuildFileExceptionSet;
 			membershipExceptions = (
 				BainLuckComplication.swift,
+				WatchSavedComplicationContent.swift,
 				WatchComplicationSnapshot.swift,
 				WatchLaunchRoute.swift,
 			);

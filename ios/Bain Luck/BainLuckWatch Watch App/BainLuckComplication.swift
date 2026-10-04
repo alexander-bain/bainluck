@@ -31,22 +31,7 @@ struct BainLuckComplicationView: View {
     var body: some View {
         Group {
             if family == .accessoryRectangular {
-                if let snapshot = entry.snapshot {
-                    VStack(alignment: .leading, spacing: 2) {
-                        Text(snapshot.title).font(.headline).lineLimit(1)
-                        Text("Saved · \(snapshot.detail)").font(.caption).lineLimit(1)
-                        Text("Observed \(snapshot.observedAt.formatted(date: .abbreviated, time: .shortened))")
-                            .font(.caption2).lineLimit(1).minimumScaleFactor(0.7)
-                    }
-                } else {
-                    HStack(spacing: 8) {
-                        Image(systemName: "chart.bar.fill").font(.title2)
-                        VStack(alignment: .leading) {
-                            Text("Your game").font(.headline)
-                            Text("Open Bain Luck").font(.caption)
-                        }
-                    }
-                }
+                WatchSavedComplicationContent(snapshot: entry.snapshot)
             } else {
                 ZStack {
                     AccessoryWidgetBackground()

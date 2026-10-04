@@ -54,6 +54,35 @@ private actor ComplicationRaceTransport: WatchSelectedGameTransport {
     let finalProjection = WatchComplicationProjection.snapshot(game: final, savedAt: clock)!
     precondition(finalProjection.title == "San Francisco Giants won" && finalProjection.detail == "Final · 4–2")
     precondition(!finalProjection.detail.contains("%") && finalProjection.observedAt == observed)
+    let soccer = try detail("\"status\":\"live\",\"sport\":\"soccer_epl\",\"hero_probability\":0.455,\"hero_probability_away\":0.545,\"hero_probability_observed_at\":\"2026-10-04T17:58:00Z\"")
+    let soccerProjection = WatchComplicationProjection.snapshot(game: soccer, savedAt: clock)!
+    precondition(soccerProjection.detail == "46% · Live" && soccerProjection.observedAt == observed,
+                 "Draw-priced soccer keeps scalar 46 percent instead of complementary 45")
+    let homeOnly = try detail("\"status\":\"scheduled\",\"hero_probability\":0.455,\"hero_probability_observed_at\":\"2026-10-04T17:58:00Z\"")
+    precondition(homeOnly.awayProbability == nil)
+    precondition(WatchComplicationProjection.snapshot(game: homeOnly, savedAt: clock)?.detail == "46% · Scheduled",
+                 "Missing away stays missing and uses scalar home rounding")
+    let zero = try detail("\"status\":\"live\",\"hero_probability\":0,\"hero_probability_away\":1,\"hero_probability_observed_at\":\"2026-10-04T17:58:00Z\"")
+    precondition(WatchComplicationProjection.snapshot(game: zero, savedAt: clock)?.detail == "0% · Live",
+                 "A valid zero forecast is not missing data")
+    for status in ["closed", "unknown", "delayed"] {
+        let unsupported = try detail("\"status\":\"\(status)\",\"hero_probability\":0.6,\"hero_probability_observed_at\":\"2026-10-04T17:58:00Z\",\"home_score\":4,\"away_score\":2,\"score_observed_at\":\"2026-10-04T17:58:00Z\"")
+        precondition(WatchComplicationProjection.snapshot(game: unsupported, savedAt: clock) == nil,
+                     "Closed or unknown states fall back rather than publish a forecast")
+    }
+    let awayWin = try detail("\"status\":\"final\",\"home_score\":2,\"away_score\":4,\"hero_probability\":0.8,\"score_observed_at\":\"2026-10-04T17:58:00Z\"")
+    let awayProjection = WatchComplicationProjection.snapshot(game: awayWin, savedAt: clock)!
+    precondition(awayProjection.title == "Los Angeles Dodgers won" && awayProjection.detail == "Final · 4–2")
+    precondition(!awayProjection.detail.contains("%") && awayProjection.observedAt == observed)
+    let tie = try detail("\"status\":\"completed\",\"home_score\":2,\"away_score\":2,\"score_observed_at\":\"2026-10-04T17:58:00Z\"")
+    let tieProjection = WatchComplicationProjection.snapshot(game: tie, savedAt: clock)!
+    precondition(tieProjection.title == "Los Angeles Dodgers at San Francisco Giants" && tieProjection.detail == "Final · tied 2–2")
+    precondition(!tieProjection.title.contains("won") && tieProjection.observedAt == observed)
+    for scores in ["", "\"home_score\":4,", "\"away_score\":2,"] {
+        let incompleteFinal = try detail("\"status\":\"completed\",\(scores)\"hero_probability\":0.9,\"hero_probability_observed_at\":\"2026-10-04T17:58:00Z\",\"score_observed_at\":\"2026-10-04T17:58:00Z\"")
+        precondition(WatchComplicationProjection.snapshot(game: incompleteFinal, savedAt: clock) == nil,
+                     "A final missing either score cannot fall back to a forecast or invent a winner")
+    }
     let missingLiveTimestamp = try detail("\"status\":\"live\",\"hero_probability\":0.6")
     precondition(WatchComplicationProjection.snapshot(game: missingLiveTimestamp, savedAt: clock) == nil,
                  "Missing producer timestamp falls back to no saved complication")

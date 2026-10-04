@@ -9,6 +9,10 @@ struct WatchTabView: View {
                 // Seed configuration only; do not initialize selection or networking.
                 Text("URL fixture ready").accessibilityIdentifier("watch.url-fixture-ready")
             } else if WatchUIFixture.current != nil,
+                      let scenario = ProcessInfo.processInfo.environment["BAINLUCK_WATCH_UI_COMPLICATION"],
+                      ["live", "final", "empty"].contains(scenario) {
+                WatchComplicationLayoutFixture(scenario: scenario)
+            } else if WatchUIFixture.current != nil,
                ProcessInfo.processInfo.environment["BAINLUCK_WATCH_UI_LARGE_TEXT"] == "1" {
                 // Layout stress only: watchOS Simulator cannot apply simctl content_size.
                 WatchSelectedGameView().dynamicTypeSize(.accessibility5)
