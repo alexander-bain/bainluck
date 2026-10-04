@@ -23,7 +23,9 @@ ONE PASS, PER REGISTRY DEFINITION, ONE TRANSACTION PER CONTAINER.
 4. **Under ``lock_container_chain``** (4–8): read the withdrawals, then plan.
    A withdrawn member is excluded whatever ``decide()`` said. Only
    ``theme_rule`` edges are ever upserted or deleted, and a truncated gather
-   never retires a member it did not see.
+   never retires a member it did not see. A member the pass did not decide is
+   retired only on a complete pass AND observed row absence (#9936); a
+   standing member whose settlement time is unknown keeps its edge (#9936 C).
 5. **Revision** (7): at most ONE ``bump_revision`` per container per pass — on
    a membership change, OR when the stored snapshot at the current revision is
    absent, OR when its bytes differ from the snapshot built now. The payload
@@ -68,6 +70,7 @@ from sqlalchemy import text
 
 from app.tasks.container_assembly import containers_tables_present
 from app.utils.container_corrections import (
+    LEDGER_TABLE,
     bump_revision,
     correction_schema_present,
     current_members,
@@ -86,11 +89,14 @@ from app.utils.discover_bundles import (
 from app.utils.futures_market_snapshot import CARD_PRICE_AGE_LEG_COUNT, outcome_prints_a_price
 from app.utils.outcome_display import drop_dominant_field_outcomes
 from app.utils.theme_definitions import (
+    ADMITTED_SETTLE_TIME_PENDING,
     CONTAINER_MEMBER_WITHDRAWN,
+    MEMBER_ROW_ABSENT,
     OUTCOME_ADMITTED,
     OUTCOME_EXCLUDED,
     OUTCOME_WITHHELD,
     REGISTRY,
+    RETAIN_IF_MEMBER_REASONS,
     Decision,
     ThemeDefinition,
     candidate_population,
@@ -124,6 +130,10 @@ SNAPSHOT_KEY = "theme_snapshot:{container_id}:{revision}"
 SNAPSHOT_TTL_S = 3 * 86400
 GATHER_PAGE = 500
 PASS_BUDGET_S = 200  # under the wrapper's 240 s soft limit
+
+#: #9936 A: how many revisions below the locked one a rebuild walks the
+#: correction ledger. A longer run of corrections proves nothing: False.
+_LINEAGE_MAX = 64
 
 REVISION_REASONS = ("membership_changed", "snapshot_absent", "content_changed", "identical")
 PUBLICATION_OUTCOMES = ("written", "refreshed", "publication_conflict", "write_failed")
@@ -224,8 +234,10 @@ class MemberDecision:
 class PassPlan:
     edge_upserts: tuple[tuple[int, str], ...]  # (child_id, class)
     edge_deletes: tuple[int, ...]  # theme_rule edges only
-    decision_rows: tuple[dict, ...]  # one per decided child; written whether or not anything changed
+    decision_rows: tuple[dict, ...]  # one per decided child (+ one per absence retirement)
     membership_changed: bool
+    #: Operator-side counts (#9936 B; notice 34 — never reader text).
+    receipt: Mapping[str, Any] = dataclasses.field(default_factory=dict)
 
 
 def _decision_row(md: MemberDecision) -> dict:
@@ -257,54 +269,127 @@ def _decision_row(md: MemberDecision) -> dict:
     }
 
 
+def _retained_row(md: MemberDecision, edge_class: str) -> dict:
+    """#9936 C: what the rule alone said, and that the standing edge was kept."""
+    d = md.decision
+    return {
+        "child_id": md.child_id,
+        "outcome": OUTCOME_ADMITTED,
+        "reason": ADMITTED_SETTLE_TIME_PENDING,
+        "rule_version": d.rule_version,
+        "evidence": {
+            "retained_member": {"edge_class": edge_class},
+            "rule_decision": {"outcome": d.outcome, "reason": d.reason, "evidence": d.evidence},
+        },
+    }
+
+
+def _absent_row(child_id: int, edge_class: str, rule_version: str) -> dict:
+    return {
+        "child_id": child_id,
+        "outcome": OUTCOME_EXCLUDED,
+        "reason": MEMBER_ROW_ABSENT,
+        "rule_version": rule_version,
+        "evidence": {"local_row": "absent", "observed_by": "prior_decision_arm",
+                     "edge_class": edge_class},
+    }
+
+
 def plan_container_pass(
     decided: Sequence[MemberDecision],
     current_theme_edges: Mapping[int, str],
     *,
     inventory_complete: bool,
     foreign_held: Iterable[int] = (),
+    row_absent: Iterable[int] = (),
+    rule_version: Optional[str] = None,
 ) -> PassPlan:
-    """What one pass writes for one container (semantics 4–6).
+    """What one pass writes for one container (semantics 4–6, #9936).
 
     Admitted and not withdrawn → upsert the ``theme_rule`` edge with the
-    decision's class. Anything else holding a ``theme_rule`` edge → delete it.
-    On a COMPLETE pass a ``theme_rule`` member nobody decided is retired too
-    (the prior-decision arm re-gathers every earlier member, so an undecided
-    one is a row that no longer exists). On a TRUNCATED pass deletes are
-    restricted to children decided this pass: a member the pass did not reach
-    keeps its edge. The first decision for a child wins if one is repeated.
+    decision's class. A decision in ``RETAIN_IF_MEMBER_REASONS`` for a child
+    that is not withdrawn and already holds a ``theme_rule`` edge → keep that
+    edge at its current class and write ``admitted_settle_time_pending``; the
+    same decision for any other child stays excluded. Anything else holding a
+    ``theme_rule`` edge → delete it.
+
+    A ``theme_rule`` member nobody decided is retired only on a COMPLETE pass
+    that OBSERVED its row absent (``row_absent``: the prior-decision arm
+    gathered the id and no row came back) — ``member_row_absent`` under
+    ``rule_version``. Without that observation, or on a TRUNCATED pass, it is
+    carried. The first decision for a child wins if one is repeated.
     """
     held = frozenset(int(i) for i in foreign_held)
+    absent = frozenset(int(i) for i in row_absent)
     upserts: list[tuple[int, str]] = []
     deletes: list[int] = []
     rows: list[dict] = []
     seen: set[int] = set()
     changed = False
+    added = retained = reclassified = pending = held_count = withdrawn = carried = 0
+    retired: dict[str, int] = {}
 
     for md in sorted(decided, key=lambda m: m.child_id):
         child = int(md.child_id)
         if child in seen:
             continue
         seen.add(child)
-        rows.append(_decision_row(md))
+        withdrawn += bool(md.withdrawn)
+        standing = current_theme_edges.get(child)
         admit = md.decision.admitted and not md.withdrawn and md.decision.edge_class
         if admit:
+            rows.append(_decision_row(md))
             if child in held:
+                held_count += 1
                 continue  # another source's edge holds the slot; the upsert would be a no-op
             edge_class = md.decision.edge_class
             upserts.append((child, edge_class))
-            if current_theme_edges.get(child) != edge_class:
+            if standing is None:
+                added += 1
                 changed = True
-        elif child in current_theme_edges:
+            else:
+                retained += 1
+                if standing != edge_class:
+                    reclassified += 1
+                    changed = True
+        elif (not md.withdrawn and standing is not None
+              and md.decision.reason in RETAIN_IF_MEMBER_REASONS):
+            rows.append(_retained_row(md, standing))
+            retained += 1
+            pending += 1
+        else:
+            row = _decision_row(md)
+            rows.append(row)
+            if standing is not None:
+                deletes.append(child)
+                retired[row["reason"]] = retired.get(row["reason"], 0) + 1
+                changed = True
+
+    for child in sorted(int(c) for c in current_theme_edges if int(c) not in seen):
+        if inventory_complete and child in absent:
+            if rule_version is None:
+                raise ValueError("an absence retirement needs the definition's rule_version")
+            rows.append(_absent_row(child, current_theme_edges[child], rule_version))
             deletes.append(child)
+            retired[MEMBER_ROW_ABSENT] = retired.get(MEMBER_ROW_ABSENT, 0) + 1
             changed = True
+        else:
+            carried += 1
 
-    if inventory_complete:
-        unseen = sorted(int(c) for c in current_theme_edges if int(c) not in seen)
-        deletes.extend(unseen)
-        changed = changed or bool(unseen)
-
-    return PassPlan(tuple(upserts), tuple(deletes), tuple(rows), changed)
+    receipt = {
+        "rule_version": rule_version,
+        "prior_members": len(current_theme_edges),
+        "added": added,
+        "retained": retained,
+        "reclassified": reclassified,
+        "retained_settle_time_pending": pending,
+        "held_by_other_source": held_count,
+        "withdrawn": withdrawn,
+        "retired": dict(sorted(retired.items())),
+        "carried_unseen": carried,
+        "members_after": retained + added + carried,
+    }
+    return PassPlan(tuple(upserts), tuple(deletes), tuple(rows), changed, receipt)
 
 
 # ---------------------------------------------------------------------------
@@ -579,6 +664,16 @@ _DELETE_THEME_EDGES = (
 )
 
 
+#: #9936 A: which revisions in a window were corrections OF THIS CONTAINER. A
+#: correction bumps and writes its ledger row (carrying the new revision) in one
+#: transaction under the row lock, and a no-op retry does neither, so "a ledger
+#: row at X" is "X was a correction here".
+_SELECT_CORRECTION_REVISIONS = (
+    f"SELECT DISTINCT revision FROM {LEDGER_TABLE} "
+    "WHERE container_id = :cid AND revision <= :top AND revision > :floor"
+)
+
+
 def _upsert_decisions_sql() -> str:
     """Built from S0's one declaration, so a renamed column fails here, loudly."""
     table = decisions_table()
@@ -750,6 +845,9 @@ class _Gathered:
     rows: dict[int, MemberRow]
     complete: bool
     errors: list[str]
+    #: Ids the gather offered whose ``futures_markets`` row did not load — the
+    #: one observation a retirement of an undecided member may rest on (#9936).
+    row_absent: set[int] = dataclasses.field(default_factory=set)
 
 
 async def _gather_and_decide(session, defn: ThemeDefinition, container_id: int,
@@ -758,6 +856,7 @@ async def _gather_and_decide(session, defn: ThemeDefinition, container_id: int,
     decisions: dict[int, Decision] = {}
     rows: dict[int, MemberRow] = {}
     errors: list[str] = []
+    row_absent: set[int] = set()
     cursor = 0
     complete = False
     while True:
@@ -771,7 +870,8 @@ async def _gather_and_decide(session, defn: ThemeDefinition, container_id: int,
         for market_id in ids:
             row = loaded.get(market_id)
             if row is None:
-                continue  # gathered (a prior decision) but the row is gone
+                row_absent.add(market_id)  # gathered (a prior decision) but the row is gone
+                continue
             rows[market_id] = row
             try:
                 decisions[market_id] = defn.decide(row, now=now)
@@ -785,7 +885,7 @@ async def _gather_and_decide(session, defn: ThemeDefinition, container_id: int,
     # A member whose decision raised was not decided, and on a complete pass an
     # undecided theme_rule member is retired — so one bad row must not be able
     # to retire anything. The pass reports itself incomplete instead.
-    return _Gathered(decisions, rows, complete and not errors, errors)
+    return _Gathered(decisions, rows, complete and not errors, errors, row_absent)
 
 
 # ---------------------------------------------------------------------------
@@ -793,19 +893,19 @@ async def _gather_and_decide(session, defn: ThemeDefinition, container_id: int,
 # ---------------------------------------------------------------------------
 
 
-def _count(decided: Sequence[MemberDecision]) -> dict:
+def _count(decided: Sequence[MemberDecision], plan: PassPlan) -> dict:
+    """``decided`` is what the rule saw; the rest counts the rows the plan
+    writes, so a retained or absence-retired member is counted as written."""
     admitted = 0
     excluded: dict[str, int] = {}
     withheld: dict[str, int] = {}
-    for md in decided:
-        if md.withdrawn:
-            excluded[CONTAINER_MEMBER_WITHDRAWN] = excluded.get(CONTAINER_MEMBER_WITHDRAWN, 0) + 1
-        elif md.decision.outcome == OUTCOME_ADMITTED:
+    for row in plan.decision_rows:
+        if row["outcome"] == OUTCOME_ADMITTED:
             admitted += 1
-        elif md.decision.outcome == OUTCOME_WITHHELD:
-            withheld[md.decision.reason] = withheld.get(md.decision.reason, 0) + 1
+        elif row["outcome"] == OUTCOME_WITHHELD:
+            withheld[row["reason"]] = withheld.get(row["reason"], 0) + 1
         else:
-            excluded[md.decision.reason] = excluded.get(md.decision.reason, 0) + 1
+            excluded[row["reason"]] = excluded.get(row["reason"], 0) + 1
     return {"decided": len(decided), "admitted": admitted, "excluded": excluded, "withheld": withheld}
 
 
@@ -886,14 +986,16 @@ async def _assemble_one(session, defn: ThemeDefinition, *, apply: bool, now: dat
         decided = [MemberDecision(cid, d, cid in withdrawn)
                    for cid, d in sorted(gathered.decisions.items())]
         plan = plan_container_pass(decided, theme_edges, inventory_complete=gathered.complete,
-                                   foreign_held=foreign)
+                                   foreign_held=foreign, row_absent=gathered.row_absent,
+                                   rule_version=defn.rule_version)
         await session.rollback()  # a dry run ends its read transaction, having written nothing
-        report.update(_count(decided))
+        report.update(_count(decided, plan))
         report.update({
             "apply": False,
             "edges_upserted": len(plan.edge_upserts),
             "edges_deleted": len(plan.edge_deletes),
             "membership_changed": plan.membership_changed,
+            "receipt": dict(plan.receipt),
             "snapshot": None,
         })
         report["terminal"], report["reason"] = (
@@ -913,7 +1015,8 @@ async def _assemble_one(session, defn: ThemeDefinition, *, apply: bool, now: dat
     decided = [MemberDecision(cid, d, cid in withdrawn)
                for cid, d in sorted(gathered.decisions.items())]
     plan = plan_container_pass(decided, theme_edges, inventory_complete=gathered.complete,
-                               foreign_held=foreign)
+                               foreign_held=foreign, row_absent=gathered.row_absent,
+                               rule_version=defn.rule_version)
     upserted, deleted = await _write_edges(session, container_id, plan)
 
     members = await _market_members(session, container_id)
@@ -927,8 +1030,9 @@ async def _assemble_one(session, defn: ThemeDefinition, *, apply: bool, now: dat
     await session.commit()
 
     outcome = publish_snapshot(redis_client, snapshot)
-    report.update(_count(decided))
+    report.update(_count(decided, plan))
     report.update({
+        "receipt": dict(plan.receipt),
         "edges_upserted": upserted,
         "edges_deleted": deleted,
         "revision_before": revision_before,
@@ -987,15 +1091,75 @@ async def _run_assemble_theme_collections(
     }
 
 
+def carried_completeness(raw: Optional[bytes], *, container_id: int,
+                         revision: int) -> tuple[Optional[bool], Optional[str]]:
+    """(the stored page's ``inventory_complete``, None) or (None, why not).
+
+    Pure. Only bytes that parse to an object naming THIS container and THIS
+    revision (as ints, never bools) with a bool claim are carried.
+    """
+    if raw is None:
+        return None, "snapshot_absent"
+    try:
+        snap = json.loads(_as_bytes(raw).decode("utf-8"))
+    except (UnicodeDecodeError, ValueError, TypeError):
+        return None, "snapshot_invalid"
+    if not isinstance(snap, dict):
+        return None, "snapshot_invalid"
+    for key, want in (("container_id", container_id), ("revision", revision)):
+        if type(snap.get(key)) is not int or snap[key] != int(want):
+            return None, "snapshot_invalid"
+    claim = snap.get("inventory_complete")
+    if type(claim) is not bool:
+        return None, "snapshot_invalid"
+    return claim, None
+
+
+async def _completeness_from_lineage(session, redis_client, container_id: int,
+                                     revision: int) -> tuple[bool, dict]:
+    """#9936 A, under the caller's lock: the claim the page at the last
+    non-correction revision made, when the corrections since prove it still
+    describes the gather. (claim, report fields); False whenever unproven.
+
+    Every revision in (B, ``revision``] carries a ledger row for this container
+    and B does not, so B is the last producer revision (or a bump that publishes
+    nothing). A correction changes withdrawals, readmits and publication only —
+    never what the gather reached — so B's page still states the inventory.
+    """
+    floor = int(revision) - _LINEAGE_MAX
+    rows = (
+        await session.execute(
+            text(_SELECT_CORRECTION_REVISIONS),
+            {"cid": container_id, "top": int(revision), "floor": floor},
+        )
+    ).fetchall()
+    corrected = {int(r[0]) for r in rows}
+    base = int(revision)
+    while base in corrected:
+        base -= 1
+    if base <= floor:
+        return False, {"completeness_unproven": "bound"}
+    if base <= 0:
+        return False, {"completeness_unproven": "no_producer_revision"}
+    stored = _read_stored(redis_client, snapshot_key(container_id, base))
+    claim, why = carried_completeness(stored, container_id=container_id, revision=base)
+    if claim is None:
+        return False, {"completeness_unproven": why}
+    return claim, {"completeness_basis": {"revision": base,
+                                          "corrections_since": int(revision) - base}}
+
+
 async def _run_rebuild_theme_snapshot(container_id: int) -> dict:
     """Semantics 10: members and revision read together under the lock, then
     7–9 with ``membership_changed=False``. No gather, no decide, no edge or
     decision-row writes. A correction moves the revision without publishing,
     so a rebuild normally finds its key absent and allocates the next one.
 
-    ``inventory_complete`` is False here: a rebuild reads the edges the last
-    pass left and cannot know whether that pass reached the end of its gather,
-    so it never claims a complete inventory it did not see.
+    ``inventory_complete`` is carried, never asserted (#9936 A): the claim
+    of the page at the last non-correction revision, when every revision since
+    is a correction of this container (``_completeness_from_lineage``). Short
+    of that proof — a bound, a bump with no ledger row, an absent or invalid
+    page — it is False, as it always was before.
     """
     if not theme_assembly_enabled():
         return _skipped("theme_assembly_disabled")
@@ -1019,9 +1183,12 @@ async def _run_rebuild_theme_snapshot(container_id: int) -> dict:
                 return _skipped("container_absent", container_id=container_id)
             revision_before = int(locked[2])
             members = await _market_members(session, container_id)
+            complete, lineage = await _completeness_from_lineage(
+                session, redis_client, container_id, revision_before
+            )
             snapshot, revision_reason, bumped = await _settle_revision(
                 session, container, revision_before, members,
-                membership_changed=False, inventory_complete=False,
+                membership_changed=False, inventory_complete=complete,
                 redis_client=redis_client,
             )
             await session.commit()
@@ -1036,7 +1203,8 @@ async def _run_rebuild_theme_snapshot(container_id: int) -> dict:
     report = {
         "slug": container["slug"],
         "container_id": container_id,
-        "inventory_complete": False,
+        "inventory_complete": snapshot.inventory_complete,
+        **lineage,
         "decided": 0,
         "edges_upserted": 0,
         "edges_deleted": 0,

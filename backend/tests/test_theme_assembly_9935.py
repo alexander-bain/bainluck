@@ -118,7 +118,9 @@ class _FakeDB:
             "containers": {},  # id -> {id, slug, name, kind, category, window_end, revision}
             "edges": {},  # (cid, child_id) -> {"class", "source"}
             "decisions": {},  # (cid, child_id) -> row
-            "ledger": [],  # (cid, child_type, child_id, action), append-only
+            # (cid, child_type, child_id, action, revision), append-only; a
+            # publication row has child_type and child_id None
+            "ledger": [],
             "receipts": {13791997: {"outcome": "linked", "phase": "matcher"}},
         }
         self.markets: dict[int, ta.MemberRow] = {}
@@ -147,12 +149,31 @@ class _FakeDB:
     def decision(self, slug, child_id):
         return self.state["decisions"][(self.container_id(slug), child_id)]
 
+    def _correct(self, slug, child_type, child_id, action):
+        """A correction: bump and a ledger row carrying the NEW revision, together."""
+        cid = self.container_id(slug)
+        self.state["containers"][cid]["revision"] += 1
+        revision = self.state["containers"][cid]["revision"]
+        self.state["ledger"].append((cid, child_type, child_id, action, revision))
+        return revision
+
     def withdraw(self, slug, child_id):
         """``container_corrections._member_correction``'s effect, committed."""
+        self.state["edges"].pop((self.container_id(slug), child_id), None)
+        return self._correct(slug, "market", child_id, "withdraw")
+
+    def readmit(self, slug, child_id):
+        """Writes no edge: the next pass re-proves the member."""
+        return self._correct(slug, "market", child_id, "readmit")
+
+    def publish(self, slug):
+        return self._correct(slug, None, None, "publish")
+
+    def bump(self, slug):
+        """An ancestor or ``container_assembly`` bump: a revision, no ledger row."""
         cid = self.container_id(slug)
-        self.state["edges"].pop((cid, child_id), None)
         self.state["containers"][cid]["revision"] += 1
-        self.state["ledger"].append((cid, "market", child_id, "withdraw"))
+        return self.state["containers"][cid]["revision"]
 
     def writes(self):
         reads = ("SELECT", "WITH RECURSIVE", "GATHER")
@@ -201,10 +222,15 @@ class _FakeSession:
         if "FOR UPDATE OF c" in sql:
             c = w["containers"].get(params["cid"])
             return _Result([(c["id"], "unpublished", c["revision"], 0)] if c else [])
+        if sql.startswith("SELECT DISTINCT revision FROM container_corrections"):
+            return _Result(sorted({(rev,) for cid, _t, _c, _a, rev in w["ledger"]
+                                   if cid == params["cid"]
+                                   and params["floor"] < rev <= params["top"]}))
         if "FROM container_corrections" in sql:
+            assert "scope = 'member'" in sql
             latest = {}
-            for cid, ctype, child, action in w["ledger"]:
-                if cid == params["cid"]:
+            for cid, ctype, child, action, _rev in w["ledger"]:
+                if cid == params["cid"] and ctype is not None:
                     latest[(ctype, child)] = action
             return _Result([(k[0], k[1], a) for k, a in latest.items()])
         if sql.startswith("SELECT child_id, class, source FROM event_edges"):
@@ -752,7 +778,7 @@ def test_fold_input_drops_the_dominant_field_leg_before_the_cut():
 
 
 def _md(child_id, outcome="admitted", reason="admitted_entity_signal", edge_class="side_question",
-        withdrawn=False, rule="ai-subject@1"):
+        withdrawn=False, rule="ai-subject@2"):
     return ta.MemberDecision(
         child_id,
         Decision(outcome, reason, rule, edge_class if outcome == "admitted" else None,
@@ -810,11 +836,19 @@ async def test_case_21_through_the_pass_retires_once_through_the_prior_decision_
 
 def test_a_truncated_plan_never_retires_a_member_it_did_not_see():
     current = {1: "side_question", 2: "side_question"}
-    truncated = ta.plan_container_pass([_md(1)], current, inventory_complete=False)
+    truncated = ta.plan_container_pass([_md(1)], current, inventory_complete=False,
+                                       row_absent={2}, rule_version="ai-subject@2")
     assert truncated.edge_deletes == () and not truncated.membership_changed
+    assert truncated.receipt["carried_unseen"] == 1
 
-    complete = ta.plan_container_pass([_md(1)], current, inventory_complete=True)
+    # #9936 B: a complete pass retires an undecided member only on OBSERVED absence
+    complete = ta.plan_container_pass([_md(1)], current, inventory_complete=True,
+                                      row_absent={2}, rule_version="ai-subject@2")
     assert complete.edge_deletes == (2,) and complete.membership_changed
+    unobserved = ta.plan_container_pass([_md(1)], current, inventory_complete=True,
+                                        rule_version="ai-subject@2")
+    assert unobserved.edge_deletes == () and not unobserved.membership_changed
+    assert unobserved.receipt["carried_unseen"] == 1
 
 
 @pytest.mark.asyncio
@@ -1231,3 +1265,507 @@ async def test_the_container_row_is_created_once_and_never_updated(db, redis):
 
     assert db.state["containers"][cid]["name"] == "Edited by a human"
     assert len(db.state["containers"]) == 1
+
+
+# ---------------------------------------------------------------------------
+# #9936 A — a rebuild carries the completeness the corrections since prove
+# ---------------------------------------------------------------------------
+
+
+async def _rebuild(db, slug="ai"):
+    report = await ta._run_rebuild_theme_snapshot(db.container_id(slug))
+    return report["containers"][0]
+
+
+@pytest.mark.asyncio
+async def test_9936_a1_a_withdrawal_no_longer_costs_a_second_bump(db, redis):
+    db.add_markets(OPENAI_IPO, CLAUDE_6, slug="ai")
+    await _assemble()
+    r = db.revision("ai")
+    db.withdraw("ai", CLAUDE_6.id)
+
+    rebuilt = await _rebuild(db)
+    assert rebuilt["inventory_complete"] is True
+    assert rebuilt["completeness_basis"] == {"revision": r, "corrections_since": 1}
+    assert "completeness_unproven" not in rebuilt
+    assert _stored(redis, db, "ai")["inventory_complete"] is True
+    after_rebuild = db.revision("ai")
+    assert after_rebuild == r + 2  # the correction, then the rebuild's one bump
+
+    # the next pass changes nothing, so a reader paging this revision stays put
+    report = _container(await _assemble(), "ai")
+    assert (report["bumped"], report["revision_reason"]) == (False, "identical")
+    assert db.revision("ai") == after_rebuild
+
+
+@pytest.mark.asyncio
+async def test_9936_a2_a_zero_decision_incomplete_pass_is_the_basis_not_the_ledger_max(
+    db, redis, monkeypatch
+):
+    """Root's counterexample: an incomplete pass that decided nothing publishes
+    False at R+1 and leaves the decisions' MAX(revision) at R. A rebuild that
+    read the decision ledger would claim R's True."""
+    db.add_markets(OPENAI_IPO, CLAUDE_6, slug="ai")
+    await _assemble()
+    r = db.revision("ai")
+
+    ticks = iter([0] + [10_000] * 50)  # out of budget before the first page
+    monkeypatch.setattr(ta, "_monotonic", lambda: next(ticks))
+    starved = _container(await _assemble(), "ai")
+    monkeypatch.setattr(ta, "_monotonic", __import__("time").monotonic)
+    assert starved["decided"] == 0 and starved["inventory_complete"] is False
+    assert (starved["revision_reason"], db.revision("ai")) == ("content_changed", r + 1)
+    assert _stored(redis, db, "ai")["inventory_complete"] is False
+    assert max(d["revision"] for d in db.state["decisions"].values()) == r  # the trap
+
+    db.withdraw("ai", CLAUDE_6.id)
+    rebuilt = await _rebuild(db)
+    assert rebuilt["inventory_complete"] is False
+    assert rebuilt["completeness_basis"] == {"revision": r + 1, "corrections_since": 1}
+
+
+@pytest.mark.asyncio
+async def test_9936_a3_a4_a_run_of_corrections_and_a_second_rebuild_bump_once(db, redis):
+    db.add_markets(OPENAI_IPO, CLAUDE_6, GPT_6, slug="ai")
+    await _assemble()
+    p = db.revision("ai")
+    db.withdraw("ai", CLAUDE_6.id)
+    db.withdraw("ai", GPT_6.id)  # a run of two, however they were committed
+
+    first = await _rebuild(db)
+    assert first["completeness_basis"] == {"revision": p, "corrections_since": 2}
+    assert (first["bumped"], first["inventory_complete"]) == (True, True)
+    assert db.revision("ai") == p + 3
+
+    # the second rebuild those corrections sent: the live revision is the first
+    # rebuild's (not a correction), its page carries the same claim, nothing moves
+    second = await _rebuild(db)
+    assert second["completeness_basis"] == {"revision": p + 3, "corrections_since": 0}
+    assert (second["bumped"], second["revision_reason"]) == (False, "identical")
+    assert db.revision("ai") == p + 3
+
+
+@pytest.mark.asyncio
+async def test_9936_a3_interleaved_corrections_and_rebuilds_each_carry(db, redis):
+    db.add_markets(OPENAI_IPO, CLAUDE_6, GPT_6, slug="ai")
+    await _assemble()
+    db.withdraw("ai", CLAUDE_6.id)
+    one = await _rebuild(db)
+    db.withdraw("ai", GPT_6.id)
+    two = await _rebuild(db)  # A11: the basis is the first rebuild's page
+    assert one["inventory_complete"] is two["inventory_complete"] is True
+    assert two["completeness_basis"] == {"revision": one["revision_after"],
+                                         "corrections_since": 1}
+
+
+@pytest.mark.parametrize(
+    "raw,why",
+    [
+        (None, "snapshot_absent"),
+        (b"\xff\xfe", "snapshot_invalid"),
+        (b"not json", "snapshot_invalid"),
+        (b"[1, 2]", "snapshot_invalid"),
+        (json.dumps({"container_id": 7, "revision": 5, "inventory_complete": True}).encode(),
+         "snapshot_invalid"),  # a different revision
+        (json.dumps({"container_id": 8, "revision": 4, "inventory_complete": True}).encode(),
+         "snapshot_invalid"),  # a different container
+        (json.dumps({"container_id": 7, "revision": 4, "inventory_complete": 1}).encode(),
+         "snapshot_invalid"),  # not a bool
+        (json.dumps({"container_id": 7, "revision": 4}).encode(), "snapshot_invalid"),
+    ],
+)
+def test_9936_a5_only_a_validated_exact_page_is_carried(raw, why):
+    assert ta.carried_completeness(raw, container_id=7, revision=4) == (None, why)
+    ok = json.dumps({"container_id": 7, "revision": 4, "inventory_complete": True}).encode()
+    assert ta.carried_completeness(ok, container_id=7, revision=4) == (True, None)
+    assert ta.carried_completeness(ok.decode(), container_id=7, revision=4) == (True, None)
+
+
+@pytest.mark.parametrize("field", ["container_id", "revision"])
+def test_9936_a5_a_bool_is_never_an_id_even_where_it_equals_one(field):
+    """``True == 1`` in Python, so only a type check refuses it."""
+    snap = {"container_id": 1, "revision": 1, "inventory_complete": True}
+    assert ta.carried_completeness(json.dumps(snap), container_id=1, revision=1) == (True, None)
+    snap[field] = True
+    assert ta.carried_completeness(json.dumps(snap), container_id=1, revision=1) == (
+        None, "snapshot_invalid")
+
+
+@pytest.mark.asyncio
+async def test_9936_a5_the_basis_page_evicted_is_false(db, redis):
+    db.add_markets(OPENAI_IPO, CLAUDE_6, slug="ai")
+    await _assemble()
+    r = db.revision("ai")
+    redis.store.pop(ta.snapshot_key(db.container_id("ai"), r))
+    db.withdraw("ai", CLAUDE_6.id)
+    rebuilt = await _rebuild(db)
+    assert rebuilt["inventory_complete"] is False
+    assert rebuilt["completeness_unproven"] == "snapshot_absent"
+    assert "completeness_basis" not in rebuilt
+
+
+@pytest.mark.asyncio
+async def test_9936_a6_a_bump_with_no_ledger_row_stops_the_walk(db, redis):
+    db.add_markets(OPENAI_IPO, CLAUDE_6, slug="ai")
+    await _assemble()
+    db.bump("ai")  # an ancestor-shaped bump: a revision nobody published
+    db.withdraw("ai", CLAUDE_6.id)
+    rebuilt = await _rebuild(db)
+    assert rebuilt["inventory_complete"] is False
+    assert rebuilt["completeness_unproven"] == "snapshot_absent"
+
+
+@pytest.mark.asyncio
+async def test_9936_a7_a_run_as_long_as_the_bound_proves_nothing(db, redis, monkeypatch):
+    monkeypatch.setattr(ta, "_LINEAGE_MAX", 3)
+    db.add_markets(OPENAI_IPO, CLAUDE_6, slug="ai")
+    await _assemble()
+    r = db.revision("ai")
+    db.withdraw("ai", CLAUDE_6.id)
+    db.readmit("ai", CLAUDE_6.id)
+    inside = await ta._completeness_from_lineage(db.session(), redis, db.container_id("ai"),
+                                                 db.revision("ai"))
+    assert inside == (True, {"completeness_basis": {"revision": r, "corrections_since": 2}})
+
+    db.withdraw("ai", CLAUDE_6.id)  # three corrections: the walk reaches the floor
+    rebuilt = await _rebuild(db)
+    assert rebuilt["inventory_complete"] is False
+    assert rebuilt["completeness_unproven"] == "bound"
+
+
+@pytest.mark.asyncio
+async def test_9936_a8_a_correction_on_a_never_produced_container_is_false(db, redis):
+    db.state["containers"][7] = {"id": 7, "slug": "ai", "name": "AI", "revision": 0}
+    db.publish("ai")
+    rebuilt = await _rebuild(db)
+    assert rebuilt["inventory_complete"] is False
+    assert rebuilt["completeness_unproven"] == "no_producer_revision"
+
+
+@pytest.mark.asyncio
+async def test_9936_a9_readmit_and_publication_corrections_carry(db, redis):
+    db.add_markets(OPENAI_IPO, CLAUDE_6, slug="ai")
+    await _assemble()
+    db.withdraw("ai", CLAUDE_6.id)
+    await _rebuild(db)
+    for correct in (lambda: db.readmit("ai", CLAUDE_6.id), lambda: db.publish("ai")):
+        correct()
+        rebuilt = await _rebuild(db)
+        assert rebuilt["inventory_complete"] is True
+        assert rebuilt["completeness_basis"]["corrections_since"] == 1
+
+
+@pytest.mark.asyncio
+async def test_9936_a10_a_committed_pass_whose_page_has_not_landed_is_false(
+    db, redis, monkeypatch
+):
+    db.add_markets(OPENAI_IPO, slug="ai")
+    await _assemble()
+    db.add_markets(CLAUDE_6, slug="ai")
+    real_publish = ta.publish_snapshot
+    monkeypatch.setattr(ta, "publish_snapshot", lambda client, snap: "written")  # held back
+    await _assemble()  # complete, committed at R+1, its key never set
+    monkeypatch.setattr(ta, "publish_snapshot", real_publish)
+    db.withdraw("ai", CLAUDE_6.id)
+    rebuilt = await _rebuild(db)
+    assert rebuilt["inventory_complete"] is False  # never True in the gap
+    assert rebuilt["completeness_unproven"] == "snapshot_absent"
+
+
+@pytest.mark.asyncio
+async def test_9936_a_the_lineage_is_one_read_and_one_get(db, redis):
+    db.add_markets(OPENAI_IPO, CLAUDE_6, slug="ai")
+    await _assemble()
+    r = db.revision("ai")
+    db.withdraw("ai", CLAUDE_6.id)
+    db.statements.clear()
+    redis.log.clear()
+    await ta._completeness_from_lineage(db.session(), redis, db.container_id("ai"),
+                                        db.revision("ai"))
+    assert [s for s, _ in db.statements] == [ta._SELECT_CORRECTION_REVISIONS]
+    assert redis.log == [("GET", ta.snapshot_key(db.container_id("ai"), r))]
+    assert "container_member_decisions" not in ta._SELECT_CORRECTION_REVISIONS
+
+
+# ---------------------------------------------------------------------------
+# #9936 B — retirement on observed absence; the receipt
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_9936_b1_a_complete_pass_retires_a_vanished_row_with_evidence(db, redis):
+    db.add_markets(OPENAI_IPO, CLAUDE_6, slug="ai")
+    await _assemble()
+    db.population["ai"].discard(CLAUDE_6.id)
+    db.markets.pop(CLAUDE_6.id)
+
+    report = _container(await _assemble(), "ai")
+
+    assert CLAUDE_6.id not in db.theme_edges("ai")
+    row = db.decision("ai", CLAUDE_6.id)
+    assert (row["outcome"], row["reason"], row["rule_version"]) == (
+        "excluded", "member_row_absent", "ai-subject@2")
+    assert row["evidence"] == {"local_row": "absent", "observed_by": "prior_decision_arm",
+                               "edge_class": "side_question"}
+    assert report["receipt"]["retired"] == {"member_row_absent": 1}
+    assert report["excluded"] == {"member_row_absent": 1}
+
+
+@pytest.mark.asyncio
+async def test_9936_b2_a_truncated_pass_carries_a_vanished_row(db, redis, monkeypatch):
+    db.add_markets(OPENAI_IPO, CLAUDE_6, GPT_6, slug="ai")
+    await _assemble()
+    db.population["ai"].discard(OPENAI_IPO.id)
+    db.markets.pop(OPENAI_IPO.id)  # the lowest id: the first page observes it absent
+
+    ticks = iter([0, 0, 0, 0] + [10_000] * 50)  # three one-id pages, then over budget
+    monkeypatch.setattr(ta, "_monotonic", lambda: next(ticks))
+    monkeypatch.setattr(ta, "GATHER_PAGE", 1)
+    report = _container(await _assemble(), "ai")
+
+    assert report["inventory_complete"] is False
+    assert OPENAI_IPO.id in db.theme_edges("ai")
+    assert db.decision("ai", OPENAI_IPO.id)["reason"] == "admitted_entity_signal"
+    assert report["receipt"]["carried_unseen"] == 1 and report["receipt"]["retired"] == {}
+
+
+@pytest.mark.asyncio
+async def test_9936_b3_a_member_never_gathered_is_kept_not_retired(db, redis):
+    """Strawman on the code before #9936: the complete pass deleted it."""
+    db.add_markets(OPENAI_IPO, slug="ai")
+    await _assemble()
+    cid = db.container_id("ai")
+    db.state["edges"][(cid, 555)] = {"class": "side_question", "source": "theme_rule"}
+
+    report = _container(await _assemble(), "ai")
+
+    assert 555 in db.theme_edges("ai")
+    assert (cid, 555) not in db.state["decisions"]
+    assert report["receipt"]["carried_unseen"] == 1
+
+
+def _receipt_holds(r):
+    assert r["prior_members"] == r["retained"] + sum(r["retired"].values()) + r["carried_unseen"]
+    assert r["members_after"] == r["retained"] + r["added"] + r["carried_unseen"]
+
+
+def test_9936_b4_the_receipt_separates_prior_members_arrivals_and_withdrawals():
+    current = {1: "side_question", 2: "side_question", 3: "side_question",
+               4: "side_question", 5: "side_question", 6: "side_question"}
+    plan = ta.plan_container_pass(
+        [
+            _md(1),  # steady
+            _md(2, edge_class="title"),  # reclassified
+            _md(3, outcome="excluded", reason="not_this_subject"),  # rule exclusion
+            _md(4, withdrawn=True),  # a standing withdrawal (edge somehow present)
+            _md(7),  # arrival
+            _md(8, withdrawn=True),  # withdrawn, holds nothing
+            _md(9),  # admitted, slot held by another source
+            _md(6, outcome="excluded", reason="resolved_settle_time_unknown"),  # retained
+        ],
+        current,
+        inventory_complete=True,
+        foreign_held={9},
+        row_absent={5},
+        rule_version="ai-subject@2",
+    )
+    r = plan.receipt
+    assert r == {
+        "rule_version": "ai-subject@2",
+        "prior_members": 6,
+        "added": 1,
+        "retained": 3,
+        "reclassified": 1,
+        "retained_settle_time_pending": 1,
+        "held_by_other_source": 1,
+        "withdrawn": 2,
+        "retired": {"container_member_withdrawn": 1, "member_row_absent": 1,
+                    "not_this_subject": 1},
+        "carried_unseen": 0,
+        "members_after": 4,
+    }
+    _receipt_holds(r)
+    assert sorted(plan.edge_deletes) == [3, 4, 5]
+    assert (7, "side_question") in plan.edge_upserts and (2, "title") in plan.edge_upserts
+    assert not any(c == 9 for c, _ in plan.edge_upserts)
+
+
+@pytest.mark.asyncio
+async def test_9936_b4_a_dry_run_receipt_is_the_apply_receipt(db, redis, monkeypatch):
+    db.add_markets(OPENAI_IPO, CLAUDE_6, GPT_6, slug="ai")
+    await _assemble()
+    db.add_markets(_row(70000002, "Will Anthropic release Claude 7 in 2027?"), slug="ai")
+    db.population["ai"].discard(GPT_6.id)
+    db.markets.pop(GPT_6.id)
+    db.withdraw("ai", CLAUDE_6.id)
+
+    dry = _container(await _assemble(apply=False), "ai")
+    applied = _container(await _assemble(), "ai")
+
+    assert dry["receipt"] == applied["receipt"]
+    _receipt_holds(applied["receipt"])
+    assert applied["receipt"]["added"] == 1
+    assert applied["receipt"]["retired"] == {"member_row_absent": 1}
+    assert applied["receipt"]["withdrawn"] == 1
+    # an upsert of an existing edge is never an arrival
+    rerun = _container(await _assemble(), "ai")
+    assert rerun["receipt"]["added"] == 0 and rerun["receipt"]["retained"] == 2
+    _receipt_holds(rerun["receipt"])
+
+
+@pytest.mark.asyncio
+async def test_9936_b4_a_raising_decide_carries_and_retires_nothing(db, redis, monkeypatch):
+    db.add_markets(OPENAI_IPO, CLAUDE_6, GPT_6, slug="ai")
+    await _assemble()
+    db.population["ai"].discard(GPT_6.id)
+    db.markets.pop(GPT_6.id)
+    real = AI.decider
+
+    def flaky(defn, market, *, now):
+        if market.id == CLAUDE_6.id:
+            raise RuntimeError("bad row")
+        return real(defn, market, now=now)
+
+    monkeypatch.setattr(ta, "REGISTRY", {"ai": dataclasses.replace(AI, decider=flaky)})
+    report = _container(await _assemble(), "ai")
+    assert report["inventory_complete"] is False
+    assert report["receipt"]["retired"] == {} and report["receipt"]["carried_unseen"] == 2
+    assert set(db.theme_edges("ai")) == {OPENAI_IPO.id, CLAUDE_6.id, GPT_6.id}
+
+
+# ---------------------------------------------------------------------------
+# #9936 C — a standing member stays while its settlement time is unknown
+# ---------------------------------------------------------------------------
+
+
+def _settles(row, *, settled_at=None, **changes):
+    return dataclasses.replace(row, status="resolved", settled_at=settled_at, **changes)
+
+
+@pytest.mark.asyncio
+async def test_9936_c1_c3_a_member_that_settles_without_a_time_keeps_its_card(db, redis):
+    """C3: on the code before #9936 this pass deleted the edge."""
+    db.add_markets(OPENAI_IPO, CLAUDE_6, slug="ai")
+    await _assemble()
+    n = db.revision("ai")
+    assert CLAUDE_6.id in _stored(redis, db, "ai")["shown_ids"]
+
+    db.population["ai"].discard(CLAUDE_6.id)  # neither status arm offers a NULL time
+    db.markets[CLAUDE_6.id] = _settles(CLAUDE_6)
+    report = _container(await _assemble(), "ai")
+
+    assert db.theme_edges("ai")[CLAUDE_6.id] == "side_question"
+    row = db.decision("ai", CLAUDE_6.id)
+    assert (row["outcome"], row["reason"], row["rule_version"]) == (
+        "admitted", "admitted_settle_time_pending", "ai-subject@2")
+    assert row["evidence"]["retained_member"] == {"edge_class": "side_question"}
+    rule = row["evidence"]["rule_decision"]
+    assert (rule["outcome"], rule["reason"]) == ("excluded", "resolved_settle_time_unknown")
+    assert CLAUDE_6.id in _stored(redis, db, "ai")["shown_ids"]
+    assert (report["bumped"], db.revision("ai")) == (False, n)
+    assert report["receipt"]["retained_settle_time_pending"] == 1
+
+
+@pytest.mark.asyncio
+async def test_9936_c2_the_clock_resumes_from_settled_at_when_it_arrives(db, redis):
+    db.add_markets(CLAUDE_6, OPENAI_IPO, slug="ai")
+    await _assemble()
+    db.population["ai"].discard(CLAUDE_6.id)
+    db.markets[CLAUDE_6.id] = _settles(CLAUDE_6)
+    await _assemble()
+
+    settled = NOW - timedelta(days=3)
+    db.markets[CLAUDE_6.id] = _settles(CLAUDE_6, settled_at=settled)
+    await _assemble()
+    assert db.decision("ai", CLAUDE_6.id)["reason"] == "admitted_entity_signal"
+    assert CLAUDE_6.id in db.theme_edges("ai")
+
+    await _assemble(now=settled + timedelta(days=15))
+    assert db.decision("ai", CLAUDE_6.id)["reason"] == "resolved_beyond_retention"
+    assert CLAUDE_6.id not in db.theme_edges("ai")
+
+
+@pytest.mark.asyncio
+async def test_9936_c4_c5_an_unknown_time_row_is_never_newly_admitted(db, redis):
+    fresh = _settles(_row(70000003, "Will OpenAI release GPT-7 in 2026?"))
+    was_out = _settles(_row(70000004, "Will Anthropic release Claude 9 in 2026?"),
+                       settled_at=NOW - timedelta(days=30))
+    # gotcha #33: still status='open', but a graded sole winner reads settled
+    open_settled = dataclasses.replace(
+        _row(70000005, "Claude Sonnet 5 before July?", source="kalshi",
+             external_id="KXCLAUDE-SONNET5", metadata={"shape": {"expected_winners": 1}}),
+        outcomes=(ta.OutcomeRow("Yes", True, "kalshi"), ta.OutcomeRow("No", False, "kalshi")))
+    db.add_markets(OPENAI_IPO, fresh, was_out, open_settled, slug="ai")
+    await _assemble()
+    assert db.decision("ai", was_out.id)["reason"] == "resolved_beyond_retention"
+
+    db.markets[was_out.id] = dataclasses.replace(was_out, settled_at=None)
+    await _assemble()
+
+    for row in (fresh, was_out, open_settled):
+        assert row.id not in db.theme_edges("ai")
+        assert db.decision("ai", row.id)["reason"] == "resolved_settle_time_unknown"
+
+
+@pytest.mark.asyncio
+async def test_9936_c6_a_withdrawal_prevails_and_a_readmit_waits_for_the_time(db, redis):
+    db.add_markets(OPENAI_IPO, CLAUDE_6, slug="ai")
+    await _assemble()
+    db.markets[CLAUDE_6.id] = _settles(CLAUDE_6)
+    db.withdraw("ai", CLAUDE_6.id)
+    for _ in range(2):
+        await _assemble()
+        assert CLAUDE_6.id not in db.theme_edges("ai")
+        assert db.decision("ai", CLAUDE_6.id)["reason"] == CONTAINER_MEMBER_WITHDRAWN
+
+    db.readmit("ai", CLAUDE_6.id)  # writes no edge, so there is nothing to retain
+    await _assemble()
+    assert CLAUDE_6.id not in db.theme_edges("ai")
+    assert db.decision("ai", CLAUDE_6.id)["reason"] == "resolved_settle_time_unknown"
+
+    db.markets[CLAUDE_6.id] = _settles(CLAUDE_6, settled_at=NOW - timedelta(days=2))
+    await _assemble()
+    assert CLAUDE_6.id in db.theme_edges("ai")
+
+
+@pytest.mark.asyncio
+async def test_9936_c7_a_member_renamed_off_subject_retires(db, redis):
+    db.add_markets(OPENAI_IPO, CLAUDE_6, slug="ai")
+    await _assemble()
+    db.markets[CLAUDE_6.id] = _settles(CLAUDE_6, name="Will it rain in Paris on Friday?")
+    await _assemble()
+    assert CLAUDE_6.id not in db.theme_edges("ai")
+    assert db.decision("ai", CLAUDE_6.id)["reason"] == "not_this_subject"
+
+
+@pytest.mark.asyncio
+async def test_9936_c8_a_foreign_held_slot_is_excluded_and_untouched(db, redis):
+    db.add_markets(OPENAI_IPO, slug="ai")
+    await _assemble()
+    cid = db.container_id("ai")
+    db.state["edges"][(cid, CLAUDE_6.id)] = {"class": "prop", "source": "human"}
+    db.add_markets(_settles(CLAUDE_6), slug="ai")
+    await _assemble()
+    assert db.state["edges"][(cid, CLAUDE_6.id)] == {"class": "prop", "source": "human"}
+    assert db.decision("ai", CLAUDE_6.id)["reason"] == "resolved_settle_time_unknown"
+
+
+def test_9936_c9_retention_needs_a_standing_theme_edge_and_no_withdrawal():
+    unknown = dict(outcome="excluded", reason="resolved_settle_time_unknown")
+    kept = ta.plan_container_pass([_md(1, **unknown)], {1: "title"}, inventory_complete=True)
+    assert kept.edge_deletes == () and kept.edge_upserts == () and not kept.membership_changed
+    assert kept.decision_rows[0]["reason"] == "admitted_settle_time_pending"
+    assert kept.decision_rows[0]["evidence"]["retained_member"] == {"edge_class": "title"}
+
+    withdrawn = ta.plan_container_pass([_md(1, withdrawn=True, **unknown)], {1: "title"},
+                                       inventory_complete=True)
+    assert withdrawn.edge_deletes == (1,)
+    assert withdrawn.decision_rows[0]["reason"] == CONTAINER_MEMBER_WITHDRAWN
+
+    stranger = ta.plan_container_pass([_md(1, **unknown)], {}, inventory_complete=True)
+    assert stranger.edge_upserts == () and stranger.decision_rows[0]["outcome"] == "excluded"
+
+    beyond = ta.plan_container_pass(
+        [_md(1, outcome="excluded", reason="resolved_beyond_retention")], {1: "title"},
+        inventory_complete=True)
+    assert beyond.edge_deletes == (1,)

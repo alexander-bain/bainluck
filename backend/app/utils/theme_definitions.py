@@ -17,7 +17,7 @@ What lives here:
 * ``build_theme_slug`` / ``parse_theme_slug`` — the canonical slug and its
   byte-for-byte round-trip parser (§1). P2's ``edition_for_slug`` calls the
   parser after its NFL/MLB branches.
-* ``decide(market, now=...)`` for ``oscars-edition@1`` and ``ai-subject@1``
+* ``decide(market, now=...)`` for ``oscars-edition@1`` and ``ai-subject@2``
   (§3): own-row clauses in order, a closed reason enum and clause-by-clause
   evidence. ``now`` is always explicit.
 * ``candidate_population`` — the §4 gather arms as Core ``select()``
@@ -65,6 +65,10 @@ ADMITTED_TICKER_EDITION = "admitted_ticker_edition"
 ADMITTED_TITLE_EDITION = "admitted_title_edition"
 ADMITTED_VENUE_EVENT_EDITION = "admitted_venue_event_edition"
 ADMITTED_ENTITY_SIGNAL = "admitted_entity_signal"
+# #9936: an existing member that settled before its settlement time arrived. Never
+# emitted by ``decide()``: the pass writes it, under the lock, for a child that
+# already holds a ``theme_rule`` edge (``RETAIN_IF_MEMBER_REASONS``).
+ADMITTED_SETTLE_TIME_PENDING = "admitted_settle_time_pending"
 
 NOT_THIS_CEREMONY = "not_this_ceremony"
 # The AI analogue of `not_this_ceremony`: the row carries no entity term at all.
@@ -78,6 +82,10 @@ LEXICAL_FALSE_FRIEND = "lexical_false_friend"
 RESOLVED_BEYOND_RETENTION = "resolved_beyond_retention"
 RESOLVED_SETTLE_TIME_UNKNOWN = "resolved_settle_time_unknown"
 CONTAINER_MEMBER_WITHDRAWN = "container_member_withdrawn"
+# #9936: a complete pass retires a member only on OBSERVED absence — the
+# prior-decision arm gathered its id and no ``futures_markets`` row came back.
+# Also never emitted by ``decide()``.
+MEMBER_ROW_ABSENT = "member_row_absent"
 
 EDITION_UNKNOWN = "edition_unknown"
 
@@ -87,6 +95,7 @@ ADMITTED_REASONS = frozenset(
         ADMITTED_TITLE_EDITION,
         ADMITTED_VENUE_EVENT_EDITION,
         ADMITTED_ENTITY_SIGNAL,
+        ADMITTED_SETTLE_TIME_PENDING,
     }
 )
 EXCLUDED_REASONS = frozenset(
@@ -99,6 +108,7 @@ EXCLUDED_REASONS = frozenset(
         RESOLVED_BEYOND_RETENTION,
         RESOLVED_SETTLE_TIME_UNKNOWN,
         CONTAINER_MEMBER_WITHDRAWN,
+        MEMBER_ROW_ABSENT,
     }
 )
 WITHHELD_REASONS = frozenset({EDITION_UNKNOWN})
@@ -120,6 +130,13 @@ HYDRATION_WITHHOLDS = frozenset(
 CONTINUING_ONLY_REASONS = frozenset(
     {RESOLVED_BEYOND_RETENTION, RESOLVED_SETTLE_TIME_UNKNOWN}
 )
+
+#: #9936 (Alex: keep a settled AI result visible while its time is unknown).
+#: ``decide()`` still excludes such a row on the row alone, so nothing new is
+#: ever admitted by it; the pass keeps an EXISTING ``theme_rule`` member at its
+#: current class and writes ``ADMITTED_SETTLE_TIME_PENDING``. No expiry is
+#: invented: retention resumes from ``settled_at`` the pass it arrives.
+RETAIN_IF_MEMBER_REASONS = frozenset({RESOLVED_SETTLE_TIME_UNKNOWN})
 
 # §5 resolver reasons (ops debug only, never reader text — notice 34).
 SWINGS_NOT_A_COLLECTION = "swings_not_a_collection"
@@ -149,7 +166,7 @@ SWINGS_FEED_KEY = "swings"
 SCOPE_FINITE = "finite"
 SCOPE_CONTINUING = "continuing"
 
-#: Continuing-scope retention (§3 ``ai-subject@1`` clause 3; Discover's N).
+#: Continuing-scope retention (§3 ``ai-subject@2`` clause 3; Discover's N).
 AI_RETENTION_DAYS = 14
 
 # ---------------------------------------------------------------------------
@@ -210,7 +227,7 @@ _OSCAR_TICKER_CATEGORY_KEYWORDS: Mapping[str, re.Pattern] = {
     "VIS": re.compile(r"\bvisual effects?\b", re.IGNORECASE),
 }
 
-#: ``ai-subject@1`` clause 1 terms, shared by ``decide()`` and the §4 gather so the
+#: ``ai-subject@2`` clause 1 terms, shared by ``decide()`` and the §4 gather so the
 #: two can never drift. ``gpt-?\d\w*`` and ``ai models?`` keep the trailing word
 #: boundary from dropping "GPT-4o" and "AI models" (Authority review 5964991446,
 #: item 1). ``claude`` carries the #8742 deny clause; ``gemini`` is gathered here
@@ -450,7 +467,8 @@ def _decide_oscars(defn: "ThemeDefinition", market: Any, *, now: datetime) -> De
 
 
 # ---------------------------------------------------------------------------
-# ai-subject@1 (continuing).
+# ai-subject@2 (continuing). @2 (#9936): clause 3's unknown-time verdict no
+# longer retires a standing member — the pass retains it (RETAIN_IF_MEMBER_REASONS).
 # ---------------------------------------------------------------------------
 
 
@@ -706,7 +724,7 @@ AI = ThemeDefinition(
     subject="ai",
     scope=SCOPE_CONTINUING,
     retention_days=AI_RETENTION_DAYS,
-    rule_version="ai-subject@1",
+    rule_version="ai-subject@2",
     container_kind="theme",
     category="ai",
     display_name="AI",
