@@ -143,7 +143,11 @@ export interface ProjectedFinalPointsInput {
   finalAt: string | null;
   /** Nothing after this instant is read. The page's now, or the cursor. */
   asOf: string;
-  /** Start of the drawn window. Defaults to an hour before the score floor, or six hours before `asOf` before it. */
+  /**
+   * Start of the drawn window. Defaults to the earliest reading in the hour
+   * before the score floor, else the floor itself; six hours before `asOf`
+   * before the floor.
+   */
   windowStartAt?: string | null;
 }
 
@@ -211,8 +215,9 @@ const HOUR_MS = 60 * 60 * 1000;
 /** Pregame lookback when the caller names no window start. */
 export const DEFAULT_WINDOW_MS = 6 * HOUR_MS;
 /**
- * Once the game has started, the window opens this long before kickoff, so
- * the game gets most of the width. Six pregame hours left it a sliver at the
+ * Once the game has started, the window reaches back at most this long before
+ * kickoff, and only as far as the earliest reading in it, so the game gets
+ * most of the width. Six pregame hours left it a sliver at the
  * right edge (phone-width render, 2026-10-03).
  */
 export const PREGAME_CONTEXT_MS = HOUR_MS;
@@ -263,6 +268,23 @@ function admitActuals(input: ProjectedFinalPointsInput, floor: number | null, as
   return steps.sort((a, b) => a.at - b.at);
 }
 
+/**
+ * The window opens at the book's earliest recorded reading in the pregame
+ * hour, or at the floor when it has none. Opening the full hour drew blank
+ * axis up to the first reading: 14780549's book starts 50 s before the floor,
+ * which left the first hour of the plot empty (2026-10-04).
+ */
+function startedWindowStart(pairs: ProjectedPairObservation[], floor: number): number {
+  const context = floor - PREGAME_CONTEXT_MS;
+  let start = floor;
+  for (const pair of pairs) {
+    if (pair.kind === "synthetic") continue;
+    const at = parseTime(pair.timestamp);
+    if (at !== null && at >= context && at < start) start = at;
+  }
+  return start;
+}
+
 function niceMax(value: number, step: number): number {
   return Math.max(step, Math.ceil(value / step) * step);
 }
@@ -288,7 +310,8 @@ export function buildProjectedFinalPointsSeries(
     final !== null && final <= asOfRaw ? "after" : scoreFloor !== null && scoreFloor <= asOfRaw ? "during" : "before";
   const started = scoreFloor !== null && scoreFloor <= end;
   const start =
-    parseTime(input.windowStartAt) ?? (started ? scoreFloor - PREGAME_CONTEXT_MS : end - DEFAULT_WINDOW_MS);
+    parseTime(input.windowStartAt) ??
+    (started ? startedWindowStart(input.pairs, scoreFloor) : end - DEFAULT_WINDOW_MS);
 
   const actualSteps = phase === "before" ? [] : admitActuals(input, scoreFloor, end);
 
