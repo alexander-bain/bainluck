@@ -7,18 +7,37 @@ nonisolated struct WatchUIFixture: WatchSelectedGameTransport, WatchGamePickerTr
     let offline: Bool
     let suite: String
     var rounding = false
+    var launchReceipt = false
 
     static let current: WatchUIFixture? = {
-        let environment = ProcessInfo.processInfo.environment
+        var environment = ProcessInfo.processInfo.environment
+        // XCTest URL launches on watchOS do not preserve launchEnvironment.
+        // A normal fixture launch can seed one subsequent cold OS URL launch.
+        // Consume immediately, so ordinary later launches cannot inherit fixtures.
+        let seedKey = "watch.ui-test.one-shot-url-fixture"
+        let seed = UserDefaults.standard.dictionary(forKey: seedKey) as? [String: String]
+        UserDefaults.standard.removeObject(forKey: seedKey)
+        if environment["BAINLUCK_WATCH_UI_TEST"] != "1", let seed {
+            environment = seed
+        } else if environment["BAINLUCK_WATCH_UI_SEED_URL"] == "1",
+                  environment["BAINLUCK_WATCH_UI_TEST"] == "1",
+                  let token = environment["BAINLUCK_WATCH_UI_SUITE"], UUID(uuidString: token) != nil {
+            let keys = ["BAINLUCK_WATCH_UI_TEST", "BAINLUCK_WATCH_UI_SUITE",
+                        "BAINLUCK_WATCH_UI_RESET", "BAINLUCK_WATCH_UI_OFFLINE",
+                        "BAINLUCK_WATCH_UI_ROUNDING", "BAINLUCK_WATCH_UI_LAUNCH_RECEIPT"]
+            UserDefaults.standard.set(environment.filter { keys.contains($0.key) }, forKey: seedKey)
+        }
         guard environment["BAINLUCK_WATCH_UI_TEST"] == "1",
               let token = environment["BAINLUCK_WATCH_UI_SUITE"],
               UUID(uuidString: token) != nil else { return nil }
         let suite = "com.bainluck.watch.ui-test.\(token)"
-        if environment["BAINLUCK_WATCH_UI_RESET"] == "1" {
+        if environment["BAINLUCK_WATCH_UI_RESET"] == "1",
+           environment["BAINLUCK_WATCH_UI_SEED_URL"] != "1" {
             UserDefaults(suiteName: suite)?.removePersistentDomain(forName: suite)
         }
         return Self(offline: environment["BAINLUCK_WATCH_UI_OFFLINE"] == "1", suite: suite,
-                    rounding: environment["BAINLUCK_WATCH_UI_ROUNDING"] == "1")
+                    rounding: environment["BAINLUCK_WATCH_UI_ROUNDING"] == "1",
+                    launchReceipt: environment["BAINLUCK_WATCH_UI_LAUNCH_RECEIPT"] == "1")
     }()
 
     func makeStore() -> WatchSelectedGameStore {

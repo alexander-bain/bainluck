@@ -11,9 +11,12 @@ final class LauncherURLJourneyTests: XCTestCase {
             "BAINLUCK_WATCH_UI_TEST": "1",
             "BAINLUCK_WATCH_UI_SUITE": UUID().uuidString,
             "BAINLUCK_WATCH_UI_RESET": "1",
-            "BAINLUCK_WATCH_UI_LAUNCH_RECEIPT": "1"
+            "BAINLUCK_WATCH_UI_LAUNCH_RECEIPT": "1",
+            "BAINLUCK_WATCH_UI_SEED_URL": "1"
         ]
         let launcher = try XCTUnwrap(URL(string: "bainluck-watch://selected-game"))
+        app.launch() // Seed a one-shot fixture; URL launch drops launchEnvironment.
+        XCTAssertTrue(app.staticTexts["watch.url-fixture-ready"].waitForExistence(timeout: 15))
         app.terminate()
         // open launches the terminated app through actual OS URL delivery.
         app.open(launcher)
@@ -35,6 +38,9 @@ final class LauncherURLJourneyTests: XCTestCase {
         app.terminate()
         app.launchEnvironment["BAINLUCK_WATCH_UI_RESET"] = "0"
         app.launchEnvironment["BAINLUCK_WATCH_UI_OFFLINE"] = "1"
+        app.launch() // Seed offline configuration for the next cold URL launch.
+        XCTAssertTrue(app.staticTexts["watch.url-fixture-ready"].waitForExistence(timeout: 15))
+        app.terminate()
         app.open(launcher)
         let state = app.descendants(matching: .any)["watch.game-state"].firstMatch
         XCTAssertTrue(state.waitForExistence(timeout: 15))

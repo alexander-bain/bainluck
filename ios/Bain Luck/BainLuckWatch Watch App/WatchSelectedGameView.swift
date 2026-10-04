@@ -73,8 +73,7 @@ struct WatchSelectedGameView: View {
                         .accessibilityIdentifier("watch.choose-another")
                 }
                 #if DEBUG
-                if WatchUIFixture.current != nil,
-                   ProcessInfo.processInfo.environment["BAINLUCK_WATCH_UI_LAUNCH_RECEIPT"] == "1" {
+                if WatchUIFixture.current?.launchReceipt == true {
                     Text("Launcher opens: \(launcherOpenCount)")
                         .font(.footnote)
                         .accessibilityIdentifier("watch.launch-receipt")
