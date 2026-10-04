@@ -51,7 +51,13 @@ final class LiveStreamControllerTests: XCTestCase {
         var handles: [FakeHandle] = []
         var frames: [LiveStreamFrame] = []
         var deliveringChanges: [Bool] = []
+        /// Frames and delivery edges in the order the owner saw them (#10468).
+        var log: [String] = []
         var openFailure: Error?
+        /// What the OWNER does with a frame (#10468): the page acknowledges only
+        /// a price it actually adopted. Defaults to adopting every frame, which
+        /// is what the cases written before #10468 describe.
+        var adopts: (LiveStreamFrame) -> Bool = { _ in true }
         private(set) var controller: LiveStreamController!
 
         var current: FakeHandle? { handles.last }
@@ -66,8 +72,15 @@ final class LiveStreamControllerTests: XCTestCase {
                     return h
                 },
                 now: { [self] in clock },
-                onFrame: { [self] f in frames.append(f) },
-                onDeliveringChange: { [self] d in deliveringChanges.append(d) }
+                onFrame: { [self] f in
+                    frames.append(f)
+                    log.append("frame")
+                    if adopts(f) { controller.acknowledgeAcceptedPrice() }
+                },
+                onDeliveringChange: { [self] d in
+                    deliveringChanges.append(d)
+                    log.append("delivering:\(d)")
+                }
             )
         }
 
@@ -166,8 +179,9 @@ final class LiveStreamControllerTests: XCTestCase {
         }
         XCTAssertFalse(rig.controller.state.stopped)
 
+        // The Rig's owner adopts this frame and acknowledges it (#10468).
         rig.current?.fire("probability", frameJSON())
-        XCTAssertTrue(rig.controller.state.delivering, "a frame must take push back over")
+        XCTAssertTrue(rig.controller.state.delivering, "an adopted frame must take push back over")
         XCTAssertEqual(rig.controller.state.connections, 1, "recovery must not need a reconnect")
     }
 
@@ -306,6 +320,106 @@ final class LiveStreamControllerTests: XCTestCase {
 
         rig.controller.start()
         XCTAssertEqual(rig.controller.state.connections, 1, "a stopped controller reconnected")
+    }
+
+    // MARK: - #10468: A FRAME THE OWNER REFUSED IS NOT A DELIVERY
+
+    func testRefusedFramesAndHeartbeatsDoNotRenewTheDataBudget() {
+        // THE DEFECT. Every decoded frame used to rearm the delivery clock, so
+        // a stream of frames the page refused (old/equal revision, wrong event,
+        // no usable price) kept polling off forever behind an unmoving price.
+        let rig = Rig()
+        rig.adopts = { _ in false }
+        rig.startDelivering()
+
+        for _ in 0..<5 {                                   // 100 seconds
+            rig.clock += 20
+            rig.current?.fire("heartbeat")
+            rig.current?.fire("probability", frameJSON())
+            rig.controller.tick()
+        }
+
+        XCTAssertEqual(rig.frames.count, 5, "refused frames are still handed to the owner")
+        XCTAssertFalse(rig.controller.state.delivering, "refused frames were treated as delivery")
+        XCTAssertFalse(rig.controller.state.stopped, "frames and heartbeats keep the TRANSPORT alive")
+        XCTAssertEqual(rig.current?.closeCount, 0)
+        XCTAssertEqual(rig.controller.state.connections, 1)
+        XCTAssertEqual(rig.deliveringChanges, [true, false])
+    }
+
+    func testOnlyAnAcknowledgedFrameRenewsTheDataBudget() {
+        // Both directions, one clock: the adopted frame at +60 renews the
+        // budget to +150; refused frames after it do not extend it further.
+        let rig = Rig()
+        var adoptNext = false
+        rig.adopts = { _ in defer { adoptNext = false }; return adoptNext }
+        rig.startDelivering()
+
+        rig.clock += 60
+        adoptNext = true
+        rig.current?.fire("probability", frameJSON(p: 0.63))
+        for _ in 0..<4 {                                   // +80 … +140
+            rig.clock += 20
+            rig.current?.fire("heartbeat")
+            rig.current?.fire("probability", frameJSON(p: 0.63))
+            rig.controller.tick()
+        }
+        XCTAssertTrue(rig.controller.state.delivering, "an adopted price renews the data budget")
+
+        rig.clock += 11                                    // +151: 91s after the adopted frame
+        rig.current?.fire("heartbeat")
+        rig.current?.fire("probability", frameJSON(p: 0.63))
+        rig.controller.tick()
+        XCTAssertFalse(rig.controller.state.delivering, "refused frames extended the budget")
+        XCTAssertFalse(rig.controller.state.stopped)
+    }
+
+    func testAnAcknowledgedFrameTakesPushBackAfterTheDataDeadline() {
+        let rig = Rig()
+        rig.adopts = { $0.p == 0.70 }
+        rig.startDelivering()
+        rig.clock += 91
+        rig.current?.fire("heartbeat")
+        rig.controller.tick()
+        XCTAssertFalse(rig.controller.state.delivering)
+
+        rig.current?.fire("probability", frameJSON(p: 0.62))  // refused
+        XCTAssertFalse(rig.controller.state.delivering, "a refused frame took push back over")
+        rig.current?.fire("probability", frameJSON(p: 0.70))  // adopted
+        XCTAssertTrue(rig.controller.state.delivering, "an adopted frame must take push back over")
+        XCTAssertEqual(rig.controller.state.connections, 1, "recovery must not need a reconnect")
+        XCTAssertEqual(rig.deliveringChanges, [true, false, true])
+    }
+
+    func testTheAcknowledgementEdgeFollowsTheFrameItAcknowledges() {
+        // The owner acknowledges from INSIDE its frame callback, after it has
+        // committed the price, so the delivering edge it causes is observed
+        // after the frame — never before it.
+        let rig = Rig()
+        rig.controller.start()                             // no `open`: not delivering yet
+        rig.current?.fire("probability", frameJSON())
+        XCTAssertEqual(rig.log, ["frame", "delivering:true"])
+    }
+
+    func testAnAcknowledgementIsRefusedWithoutALiveSocket() {
+        // Between a rollover and its reopen there is no socket, and after stop
+        // there never will be: an acknowledgement (e.g. a late authoritative
+        // re-read) cannot claim delivery for either.
+        let rig = Rig()
+        rig.startDelivering()
+        rig.current?.fire("reconnect")
+        XCTAssertNotNil(rig.controller.state.reopenAt)
+        rig.controller.acknowledgeAcceptedPrice()
+        XCTAssertFalse(rig.controller.state.delivering, "a rolled-over stream must push again")
+
+        rig.advance(1.5)
+        rig.current?.fire("open")
+        XCTAssertTrue(rig.controller.state.delivering)
+
+        rig.controller.stop()
+        rig.controller.acknowledgeAcceptedPrice()
+        XCTAssertFalse(rig.controller.state.delivering, "a stopped stream acknowledged a price")
+        XCTAssertEqual(rig.deliveringChanges, [true, false, true, false])
     }
 
     func testDeliveringChangesAreEdgesNotRepeats() {

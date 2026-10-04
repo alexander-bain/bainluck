@@ -509,6 +509,7 @@ final class EventDetailViewModel: ObservableObject {
             )
             adopt(fetched, recordsPriceActivity: recordsActivity)
             history = h
+            var deliveredPrice = false
             if recordsActivity { pricePairRefreshFailed = false }
             // An opening/consensus hero first becomes a stream-proven blend
             // through this pair. Require its own revision to cover the frame
@@ -522,6 +523,7 @@ final class EventDetailViewModel: ObservableObject {
                    adopted.rows[key].map { $0 >= revision } ?? false
                }) {
                 streamHasPushedPrice = true
+                deliveredPrice = true
                 streamRefetchGeneration = nil
                 provenanceRefetchFrame = nil
                 if let prior, priceActivity?.sequence == priorActivity {
@@ -534,8 +536,16 @@ final class EventDetailViewModel: ObservableObject {
                let revision = LiveEventPriceReconciliation.pairedFoldRevision(in: current),
                FoldRevision.compare(revision, priorRevision) == .newer {
                 streamHasPushedPrice = true
+                deliveredPrice = true
                 streamRefetchGeneration = nil
             }
+            // #10468 — the pair the CURRENT connection asked for put a covered
+            // or newer price on the page: that is a delivery, and the only way
+            // a folded hero (which refuses every raw frame) can renew it. A
+            // retired connection's pair, an unchanged one and a failed one
+            // never reach here. After both reads are committed, so the
+            // delivering callback re-plans from the adopted pair.
+            if deliveredPrice { stream?.acknowledgeAcceptedPrice() }
             configureAutoRefresh()
         } catch {
             guard !Task.isCancelled else { return }
@@ -719,10 +729,10 @@ final class EventDetailViewModel: ObservableObject {
             onDeliveringChange: { [weak self] delivering in
                 guard let self else { return }
                 self.streamDelivering = delivering
-                // Cleared on the way DOWN only. The way up follows the first
-                // frame of a resumed stream (`apply` runs before the controller
-                // reports delivering), so clearing there would erase the price
-                // that just earned it.
+                // Cleared on the way DOWN only. The way up IS the adopted
+                // price (#10468: `apply` or the pair acknowledges only after
+                // committing it), so clearing there would erase the price that
+                // just earned it.
                 if !delivering {
                     self.streamHasPushedPrice = false
                     self.deliveryGeneration += 1
@@ -753,10 +763,19 @@ final class EventDetailViewModel: ObservableObject {
                 try? await Task.sleep(
                     nanoseconds: UInt64(LiveStreamTiming.tickInterval * 1_000_000_000)
                 )
-                guard !Task.isCancelled, let self, let stream = self.stream else { return }
-                stream.tick()
+                guard !Task.isCancelled, let self, self.stream != nil else { return }
+                self.tickStream()
             }
         }
+    }
+
+    /// One turn of the stream's clock — what the loop above does every
+    /// `LiveStreamTiming.tickInterval`. Internal so a test can carry a held page
+    /// across the data-silence budget on a clock it owns (#10468) instead of
+    /// waiting on a real one.
+    @MainActor
+    func tickStream() {
+        stream?.tick()
     }
 
     @MainActor
@@ -854,10 +873,14 @@ final class EventDetailViewModel: ObservableObject {
             odds.awayRenderedPercent = nil
             current.currentOdds = odds
             LiveEventPriceReconciliation.adoptFrameProvenance(frame, into: &current)
-            // The hero now shows a pushed price — the only thing the page's
-            // stream dot may claim (#8320).
-            streamHasPushedPrice = true
-            if acceptedNewPrice { acceptPushedPrice() }
+            // The hero now shows a NEWER pushed price — the only thing the
+            // page's stream dot may claim (#8320). A clockless unversioned
+            // frame still moves the hero (legacy display) but proves no newer
+            // observation, so it earns no green and no delivery (#10468).
+            if acceptedNewPrice {
+                streamHasPushedPrice = true
+                acceptPushedPrice()
+            }
             // #9056 — measured against the last LOAD, not the last frame, so a
             // play priced in over several small frames still counts as one move.
             if let base = probabilityAtLastLoad, abs(p - base) >= EventRefreshPlan.scoreCatchUpMove {
@@ -902,6 +925,12 @@ final class EventDetailViewModel: ObservableObject {
         // extends it and the loop is already on the fast cadence. Only a live
         // page: score catch-up is sports state, independent of quote eligibility.
         if armScoreCatchUp, current.status == "live" { configureAutoRefresh() }
+        // #10468 — LAST, after the price, its receipt and any re-plan are
+        // committed: tell the controller this frame was ADOPTED. Only that
+        // renews the delivery budget. A refused frame — wrong event, an old,
+        // equal or unorderable revision, no usable price, no clock — returned
+        // above or left `acceptedNewPrice` false, and proves only the transport.
+        if acceptedNewPrice { stream?.acknowledgeAcceptedPrice() }
         // NOT `lastLoadedAt`: that field means "a load completed" and drives the
         // refresh countdown chrome. A pushed frame is not a load, and claiming
         // one would make the countdown describe a request that never happened
