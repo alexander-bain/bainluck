@@ -411,16 +411,24 @@ describe("#7371 — the flip rule itself", () => {
     // flipped `INK - 1000` marker on row 1, whose caption began a whole ink to
     // its LEFT. The two read in the wrong order: the page's `T9 B8`. That
     // predecessor has no room to flip (it is under two inks from the first
-    // marker), so it is the one dropped. The newest marker at the right rule
-    // still has no room on either row and is still not drawn: that part of the
-    // claim is unchanged.
+    // marker), so it is the one dropped.
+    //
+    // #10403 — AND IT EXPECTED A THIRD: the newest marker at the right rule,
+    // with room on neither row, was the one "not drawn". That marker is the
+    // half-inning a live reader is watching (NLDS at 390px drew `… T5 B5` in
+    // the Bottom 6th). Nothing may still smear, but the label that gives way is
+    // now the OLDER one in its path: the `2 * INK` marker yields row 0, and the
+    // newest caption is drawn there, two inks clear, after its flipped
+    // predecessor on row 1. One caption is lost either way; it is no longer
+    // the newest.
     const out = anchorPeriodLabels(
       [at(2 * INK), at(INK + 1000), at(INK - 1000), at(0)],
       SPAN,
       END
     );
-    expect(out.map((b) => b.timestamp)).toEqual([at(2 * INK).timestamp, at(INK - 1000).timestamp]);
-    expect(out.map((b) => b.labelPosition)).toEqual(["insideTopLeft", "insideTopRight"]);
+    expect(out.map((b) => b.timestamp)).toEqual([at(INK - 1000).timestamp, at(0).timestamp]);
+    expect(out.map((b) => b.labelPosition)).toEqual(["insideTopRight", "insideTopRight"]);
+    expect(out.map((b) => b.labelRow)).toEqual([1, 0]);
 
     // And it is the CROWDING that drops it, not the flip: the same marker at the
     // right rule with room behind it keeps its caption. This is #7371's own case
