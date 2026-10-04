@@ -105,7 +105,7 @@ struct Bain_LuckApp: App {
 
     var body: some Scene {
         WindowGroup {
-            // #10236: a DEBUG-only synthetic host drives the real matrix through
+            // #10236 / #10238: a DEBUG-only synthetic host drives the real matrix through
             // real delivery from retained local inputs. Release, and any launch
             // without the argument, is the regular app.
             Group {
@@ -113,6 +113,10 @@ struct Bain_LuckApp: App {
                 if let directory = UserDefaults.standard.string(forKey: "launch_during_matrix_10236_directory"),
                    !directory.isEmpty {
                     EventPropsMatrixCurrentnessActivation10236(directory: URL(fileURLWithPath: directory, isDirectory: true))
+                } else if let directory = UserDefaults.standard.string(forKey: "launch_question_matrix_10238_directory"),
+                          !directory.isEmpty {
+                    // #10238: the same kind of host for the Game and Series sections.
+                    EventQuestionMatrixCurrentnessActivation10238(directory: URL(fileURLWithPath: directory, isDirectory: true))
                 } else {
                     ContentView()
                 }
