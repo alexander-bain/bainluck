@@ -781,3 +781,218 @@ def test_write_scope_constants_match_the_admitted_packet():
 ])
 def test_exit_codes(result, code):
     assert r.exit_code(result) == code
+
+
+# --- preflight refusal diagnostics (the R1 tag guard refused on production: gender:men count 0) --
+
+NO_GENDER = [t for t in PRE_TAGS if t != "gender:men"]
+_STAGES = list(r.ADMISSION_STAGES)
+
+
+def test_stage_order_is_the_order_admit_runs_its_gates():
+    """The stage names are marked in source order, and a full pass reaches every one."""
+    import inspect
+    src = inspect.getsource(r.admit)
+    names = {v: k for k, v in vars(r).items() if k.startswith("STAGE_")}
+    marks = re.findall(r"mark\((STAGE_\w+)\)", src)
+    assert marks == [names[s] for s in r.ADMISSION_STAGES]
+    reached = []
+    assert r.admit(_event(), _sports(), _market(), [r.MARKET_ID], {}, reached=reached)
+    assert reached == _STAGES
+
+
+def test_stage_trace_never_changes_the_plan_body():
+    assert r.admit(_event(), _sports(), _market(), [r.MARKET_ID], {}, reached=[]) == _admit()
+
+
+@pytest.mark.parametrize("kwargs, reason, stage", [
+    ({"event": _event(commence_time=datetime(2026, 10, 3, 10, 30))}, "naive_timestamp",
+     r.STAGE_PRE_IMAGE),
+    ({"sports": _sports()[:1]}, "target_sport_not_unique", r.STAGE_SPORTS),
+    ({"sports": _sports()[1:]}, "men_sport_not_unique", r.STAGE_SPORTS),
+    ({"event": _event(sport_id=99)}, "event_not_on_men_sport", r.STAGE_OLD_IDENTITY),
+    ({"event": _event(llm_gender="women")}, "event_gender_not_men", r.STAGE_OLD_IDENTITY),
+    ({"event": _event(llm_league="Serie_A_Femminile")}, "event_league_not_serie_a",
+     r.STAGE_OLD_IDENTITY),
+    ({"event": _event(event_tags=NO_GENDER)}, "old_tag_not_exactly_once", r.STAGE_TAGS),
+    ({"event": _event(event_tags=PRE_TAGS + ["gender:women"])}, "new_tag_already_present",
+     r.STAGE_TAGS),
+    ({"event": _event(event_tags="gender:men")}, "event_tags_not_a_string_array", r.STAGE_TAGS),
+    ({"market": None}, "identity_missing:market", r.STAGE_MARKET),
+    ({"market": _market(competition="Serie A")}, "identity_conflict:competition", r.STAGE_MARKET),
+    ({"linked": []}, "linked_set_not_exact", r.STAGE_LINKED),
+    ({"event": _event(home_team_id=901), "teams": {}}, r.TEAM_BINDING_SCOPE_REQUIRED, r.STAGE_P3),
+])
+def test_each_refusal_names_the_gate_that_refused(kwargs, reason, stage):
+    reached = []
+    args = {"event": _event(), "sports": _sports(), "market": _market(), "linked": [r.MARKET_ID],
+            "teams": {}, **kwargs}
+    with pytest.raises(r.Refused) as exc:
+        r.admit(args["event"], args["sports"], args["market"], args["linked"], args["teams"],
+                reached=reached)
+    assert exc.value.reason == reason
+    assert reached == _STAGES[:_STAGES.index(stage) + 1]
+
+
+async def _refused_preflight(tmp_path, db):
+    out = await r.run_preflight(db.factory, plan_out=str(tmp_path / "plan.json"), clock=lambda: FIXED)
+    assert out["state"] == r.REFUSED and r.exit_code(out) == 1, out
+    assert not (tmp_path / "plan.json").exists() and not (tmp_path / "plan.json.sha256").exists()
+    assert "plan" not in out and "proposed_diff" not in out
+    assert out["counts"] == {"event_id": r.EVENT_ID, "written_rows": 0, "written_columns": 0,
+                             "concurrent_drift": 0}
+    assert db.updates == 0 and db.commits == 0
+    assert db.statements[0].startswith("SET TRANSACTION ISOLATION LEVEL REPEATABLE READ, READ ONLY")
+    assert not any("FOR UPDATE" in s or "FOR SHARE" in s for s in db.statements)
+    json.dumps(out["diagnostic"], allow_nan=False)  # carried as-is: no default=, no repr
+    return out
+
+
+async def test_missing_gender_tag_refuses_and_reports_the_exact_observed_tags(tmp_path):
+    """The production refusal, rebuilt: R1's tags lack gender:men. The receipt keeps the
+    original reason/detail/exit and adds the exact R1 tag array plus where admission stopped."""
+    tags = ["status:completed", "league:serie_a", "sport:soccer", "tier:2", "class:international"]
+    db = FakeDB(event=_event(event_tags=list(tags)))
+    before = copy.deepcopy(db.event)
+    out = await _refused_preflight(tmp_path, db)
+    assert out["reason"] == "old_tag_not_exactly_once"
+    assert out["detail"] == {"tag": "gender:men", "count": 0}
+    assert db.event == before
+    diag = out["diagnostic"]
+    assert diag["schema"] == r.DIAGNOSTIC_SCHEMA and "authorizes nothing" in diag["note"]
+    assert diag["admission"] == {
+        "refused_at": r.STAGE_TAGS,
+        "passed": [r.STAGE_EVENT_PRESENT, r.STAGE_PRE_IMAGE, r.STAGE_SPORTS, r.STAGE_OLD_IDENTITY],
+        "unassessed": [r.STAGE_MARKET, r.STAGE_LINKED, r.STAGE_P3],
+        "p3_team_binding": "UNASSESSED",
+    }
+    obs = diag["observed_r1"]
+    assert obs["status"] == "observed"
+    assert obs["values"] == {"id": r.EVENT_ID, "sport_id": MEN, "llm_gender": "men",
+                             "llm_league": "Serie_A", "event_tags": tags,
+                             "home_team_id": None, "away_team_id": None}
+    assert obs["values"]["event_tags"] is not tags and obs["values"]["event_tags"] == tags  # order kept
+
+
+async def test_an_earlier_tag_refusal_leaves_a_broken_team_binding_unassessed(tmp_path):
+    """Order is not moved to look further along: a WRONG_SPORT home team is never judged."""
+    db = FakeDB(event=_event(event_tags=list(NO_GENDER), home_team_id=903),
+                teams={903: {"id": 903, "name": "Parma Calcio", "sport_id": MEN}})
+    out = await _refused_preflight(tmp_path, db)
+    assert out["reason"] == "old_tag_not_exactly_once"
+    assert out["diagnostic"]["admission"]["p3_team_binding"] == "UNASSESSED"
+    assert r.STAGE_P3 in out["diagnostic"]["admission"]["unassessed"]
+    assert out["diagnostic"]["observed_r1"]["values"]["home_team_id"] == 903
+    assert "team_row" not in json.dumps(out)  # R5 row read, never echoed
+
+
+async def test_diagnostic_echoes_only_the_allowlisted_columns(tmp_path):
+    db = FakeDB(event=_event(event_tags=list(NO_GENDER)))
+    out = await _refused_preflight(tmp_path, db)
+    assert set(out["diagnostic"]["observed_r1"]["values"]) == set(r.DIAGNOSTIC_FIELDS)
+    text_out = json.dumps(out["diagnostic"])
+    for withheld in ("Parma Calcio", "Ternana", "kalshi_KXSERIEAWGAME", "0.31", "2026-10-03T"):
+        assert withheld not in text_out, withheld
+
+
+@pytest.mark.parametrize("tags", [
+    "gender:men",
+    {"gender": "men"},
+    PRE_TAGS + [3],
+    None,
+    [],
+])
+async def test_malformed_tags_refuse_unchanged_and_are_reported_verbatim(tmp_path, tags):
+    db = FakeDB(event=_event(event_tags=copy.deepcopy(tags)))
+    out = await _refused_preflight(tmp_path, db)
+    expected = "old_tag_not_exactly_once" if tags == [] else "event_tags_not_a_string_array"
+    assert out["reason"] == expected
+    assert out["diagnostic"]["admission"]["refused_at"] == r.STAGE_TAGS
+    assert out["diagnostic"]["observed_r1"]["values"]["event_tags"] == tags
+
+
+async def test_unserializable_tags_are_withheld_explicitly_and_still_refuse(tmp_path):
+    db = FakeDB(event=_event(event_tags=NO_GENDER + [float("nan")]))  # fake R1 round-trips NaN
+    out = await _refused_preflight(tmp_path, db)
+    assert out["reason"] == "event_tags_not_a_string_array"
+    assert out["diagnostic"]["observed_r1"] == {"status": "unavailable", "reason": "unserializable"}
+    assert out["diagnostic"]["admission"]["refused_at"] == r.STAGE_TAGS
+
+
+async def test_oversize_tags_are_withheld_whole_never_truncated(tmp_path):
+    big = NO_GENDER + [f"x:{'y' * 200}:{i}" for i in range(40)]
+    db = FakeDB(event=_event(event_tags=list(big)))
+    out = await _refused_preflight(tmp_path, db)
+    assert out["reason"] == "old_tag_not_exactly_once"
+    obs = out["diagnostic"]["observed_r1"]
+    assert obs["status"] == "unavailable" and obs["reason"] == "oversize"
+    assert obs["bytes"] > r.DIAGNOSTIC_MAX_BYTES == obs["max_bytes"] and "values" not in obs
+    assert "y" * 200 not in json.dumps(out["diagnostic"])
+
+
+@pytest.mark.parametrize("value", [
+    ("gender:men",), [datetime(2026, 10, 3)], [{1: "x"}], [float("inf")], [object()],
+])
+def test_observed_values_json_cannot_carry_as_is_are_unavailable(value):
+    obs = r.refusal_diagnostic(_event(event_tags=value), _STAGES[:5])["observed_r1"]
+    assert obs == {"status": "unavailable", "reason": "unserializable"}
+
+
+async def test_a_failing_diagnostic_never_masks_the_refusal(tmp_path, monkeypatch):
+    def boom(event):
+        raise RuntimeError("secret://do-not-print")
+
+    monkeypatch.setattr(r, "_observed_r1", boom)
+    db = FakeDB(event=_event(event_tags=list(NO_GENDER)))
+    out = await _refused_preflight(tmp_path, db)
+    assert out["reason"] == "old_tag_not_exactly_once" and out["detail"] == {"tag": "gender:men",
+                                                                             "count": 0}
+    assert out["diagnostic"] == {"schema": r.DIAGNOSTIC_SCHEMA, "status": "unavailable",
+                                 "reason": "diagnostic_failed"}
+    assert "secret" not in json.dumps(out)
+
+
+def test_a_stage_trace_out_of_admission_order_is_unavailable_not_guessed():
+    for trace in ([], [r.STAGE_TAGS], [r.STAGE_EVENT_PRESENT, r.STAGE_SPORTS], ["made_up"]):
+        assert r.refusal_diagnostic(_event(), trace)["admission"] == {
+            "status": "unavailable", "reason": "stage_trace_not_in_admission_order"}
+
+
+async def test_missing_event_reports_absent_r1(tmp_path):
+    db = FakeDB()
+    db.event = None
+
+    async def r1_empty(self, stmt, params=None, _orig=FakeSession.execute):
+        if "r10319:R1 " in getattr(stmt, "text", ""):
+            self.db.statements.append(stmt.text)
+            return _Result([])
+        return await _orig(self, stmt, params)
+
+    FakeSession.execute, saved = r1_empty, FakeSession.execute
+    try:
+        out = await _refused_preflight(tmp_path, db)
+    finally:
+        FakeSession.execute = saved
+    assert out["reason"] == "event_missing"
+    assert out["diagnostic"]["admission"]["refused_at"] == r.STAGE_EVENT_PRESENT
+    assert out["diagnostic"]["observed_r1"] == {"status": "absent"}
+
+
+async def test_planned_preflight_and_its_plan_carry_no_diagnostic(tmp_path):
+    db = FakeDB()
+    out = await r.run_preflight(db.factory, plan_out=str(tmp_path / "plan.json"), clock=lambda: FIXED)
+    assert out["state"] == r.PLANNED and r.exit_code(out) == 0 and "diagnostic" not in out
+    payload = json.loads(Path(out["plan"]["path"]).read_bytes())
+    assert "diagnostic" not in payload
+    assert {k: payload[k] for k in _admit()} == json.loads(r.canonical_json(_admit()))
+    applied = await _apply(tmp_path, db, out["plan"])
+    assert applied["state"] == r.APPLIED and "diagnostic" not in applied
+
+
+async def test_refusals_outside_admission_carry_no_diagnostic(tmp_path, monkeypatch):
+    (tmp_path / "plan.json").write_text("old")
+    out = await r.run_preflight(FakeDB().factory, plan_out=str(tmp_path / "plan.json"))
+    assert out["reason"] == "plan_path_exists" and "diagnostic" not in out
+    monkeypatch.setattr(r, "_fsync", lambda fd: (_ for _ in ()).throw(OSError(5, "EIO")))
+    out = await r.run_preflight(FakeDB().factory, plan_out=str(tmp_path / "p2.json"))
+    assert out["reason"] == "plan_durability_failed" and "diagnostic" not in out

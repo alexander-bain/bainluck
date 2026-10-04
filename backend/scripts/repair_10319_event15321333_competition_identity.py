@@ -56,6 +56,13 @@ fsync, read-only mode) with a detached ``<plan>.sha256`` sidecar. The plan carri
 an embedded ``content_address`` over its canonical payload (``digest_fields``, the
 address field itself excluded) — never a hash of its own final bytes.
 
+A preflight that ``admit`` refuses also carries a ``diagnostic``: the gate it
+stopped at, the gates it passed, the gates left UNASSESSED (P3 included whenever an
+earlier gate refused), and the already-read R1 values of ``DIAGNOSTIC_FIELDS``
+verbatim — or an explicit ``unavailable`` if they cannot be carried exactly within
+``DIAGNOSTIC_MAX_BYTES``. No new read. It is observed evidence, never a plan: state,
+reason, detail and exit are unchanged, no plan file is written, and no mode reads it.
+
 ``--apply`` consumes only that reviewed plan (``--plan-hash`` = the detached
 final-byte SHA256). It re-derives nothing from the database. It banks a backup
 file + sidecar BEFORE connecting, then in one bounded transaction locks the event
@@ -180,6 +187,32 @@ EXIT_OK, EXIT_REFUSED, EXIT_USAGE, EXIT_COMMIT_UNKNOWN, EXIT_RUNTIME = 0, 1, 2, 
 
 TEAM_BINDING_SCOPE_REQUIRED = "TEAM_BINDING_SCOPE_REQUIRED"
 
+#: ``admit``'s gates, in the order it runs them. A refusal names the one it stopped
+#: at; every later gate is UNASSESSED — its rows may have been read, never judged.
+STAGE_EVENT_PRESENT = "R1_event_present"
+STAGE_PRE_IMAGE = "R1_canonical_pre_image"
+STAGE_SPORTS = "R2_target_and_men_sport"
+STAGE_OLD_IDENTITY = "R1_old_sport_gender_league"
+STAGE_TAGS = "R1_tag_substitution"
+STAGE_MARKET = "R3_market_identity"
+STAGE_LINKED = "R4_linked_set"
+STAGE_P3 = "R5_team_binding_P3"
+ADMISSION_STAGES = (
+    STAGE_EVENT_PRESENT, STAGE_PRE_IMAGE, STAGE_SPORTS, STAGE_OLD_IDENTITY,
+    STAGE_TAGS, STAGE_MARKET, STAGE_LINKED, STAGE_P3,
+)
+
+#: The R1 columns a preflight refusal may echo back, and its byte bound.
+DIAGNOSTIC_FIELDS = (
+    "id", "sport_id", "llm_gender", "llm_league", "event_tags", "home_team_id", "away_team_id",
+)
+DIAGNOSTIC_MAX_BYTES = 4096
+DIAGNOSTIC_SCHEMA = "repair-10319-event15321333-refusal-diagnostic/v1"
+DIAGNOSTIC_NOTE = (
+    "observed R1 values from the read-only preflight transaction; "
+    "not an admitted plan, not a proposed replacement, authorizes nothing"
+)
+
 
 class Refused(RuntimeError):
     """A gate refused. Nothing was written."""
@@ -268,6 +301,8 @@ def admit(
     market: dict | None,
     linked: list[int],
     teams: dict[int, dict],
+    *,
+    reached: list[str] | None = None,
 ) -> dict:
     """R1–R5 -> the plan body, or Refused. Pure: the unit file drives every branch.
 
@@ -276,12 +311,18 @@ def admit(
     ``market``: R3 ``{id, event_id, source, external_id, competition,
     competition_scope, sport_id, sport_key}`` or None.
     ``linked``: R4 ids. ``teams``: R5 rows by team id ``{id, name, sport_id}``.
+    ``reached``: if given, each ``ADMISSION_STAGES`` name is appended as its gate
+    starts, so on a refusal the last entry is the gate that refused. Order is unchanged.
     """
+    mark = reached.append if reached is not None else (lambda _stage: None)
+    mark(STAGE_EVENT_PRESENT)
     if event is None:
         raise Refused("event_missing", {"event_id": EVENT_ID})
+    mark(STAGE_PRE_IMAGE)
     pre = {c: canon(event.get(c)) for c in COMPARED_COLUMNS}
     banked = canon(event.get(BANKED_ONLY_COLUMN))
 
+    mark(STAGE_SPORTS)
     women = [s for s in sports if s.get("key") == WOMEN_SPORT_KEY]
     men = [s for s in sports if s.get("key") == MEN_SPORT_KEY]
     target = [s for s in sports if s.get("id") == WOMEN_SPORT_ID]
@@ -292,6 +333,7 @@ def admit(
         raise Refused("target_sport_mismatch", t)
     if len(men) != 1 or len(sports) != 2:
         raise Refused("men_sport_not_unique", sports)
+    mark(STAGE_OLD_IDENTITY)
     if pre["sport_id"] != men[0]["id"]:
         raise Refused(
             "event_not_on_men_sport", {"event_sport_id": pre["sport_id"], "men_sport_id": men[0]["id"]}
@@ -300,8 +342,10 @@ def admit(
         raise Refused("event_gender_not_men", pre["llm_gender"])
     if pre["llm_league"] != OLD_LEAGUE:
         raise Refused("event_league_not_serie_a", pre["llm_league"])
+    mark(STAGE_TAGS)
     post = post_image_of(pre)
 
+    mark(STAGE_MARKET)
     if market is None:
         raise Refused("identity_missing:market", {"market_id": MARKET_ID})
     identity = {
@@ -327,9 +371,11 @@ def admit(
         raise Refused("identity_conflict:competition_scope", identity)
     recorded = {"sport_id": market.get("sport_id"), "sport_key": market.get("sport_key")}
 
+    mark(STAGE_LINKED)
     if sorted(linked) != LINKED_SET:
         raise Refused("linked_set_not_exact", {"linked": sorted(linked), "expected": LINKED_SET})
 
+    mark(STAGE_P3)
     sides = [
         team_verdict(side, pre[f"{side}_team_id"], pre[f"{side}_team_name"],
                      teams.get(pre[f"{side}_team_id"]) if pre[f"{side}_team_id"] is not None else None)
@@ -677,7 +723,12 @@ async def run_preflight(session_factory: SessionFactory, *, plan_out: str,
                 event, sports, market, linked, teams = await _read_all(session, lock=False)
             finally:
                 await session.rollback()
-        body = admit(event, sports, market, linked, teams)
+        reached: list[str] = []
+        try:
+            body = admit(event, sports, market, linked, teams, reached=reached)
+        except Refused as exc:
+            return _result("preflight", REFUSED, reason=exc.reason, detail=canon_safe(exc.detail),
+                           diagnostic=refusal_diagnostic(event, reached))
     except Refused as exc:
         return _result("preflight", REFUSED, reason=exc.reason, detail=canon_safe(exc.detail))
     body.update({"pins": {**tool_pin(), "packet": PACKET_PIN}, "planned_at": clock()})
@@ -699,6 +750,57 @@ def canon_safe(value: Any) -> Any:
         return canon(value)
     except Exception:  # detail is diagnostic; never let it mask the refusal
         return repr(value)
+
+
+def _admission_progress(reached: list[str]) -> dict:
+    refused_at = reached[-1] if reached else None
+    if refused_at not in ADMISSION_STAGES or list(ADMISSION_STAGES[:len(reached)]) != reached:
+        return {"status": "unavailable", "reason": "stage_trace_not_in_admission_order"}
+    return {
+        "refused_at": refused_at,
+        "passed": reached[:-1],
+        "unassessed": list(ADMISSION_STAGES[len(reached):]),
+        "p3_team_binding": "REFUSED" if refused_at == STAGE_P3 else "UNASSESSED",
+    }
+
+
+def _plain_json(value: Any) -> bool:
+    """True only for a value JSON carries without conversion (no tuple, no non-str key)."""
+    if value is None or isinstance(value, (bool, int, str)):
+        return True
+    if isinstance(value, float):
+        return value == value and value not in (float("inf"), float("-inf"))
+    if isinstance(value, list):
+        return all(_plain_json(v) for v in value)
+    if isinstance(value, dict):
+        return all(isinstance(k, str) and _plain_json(v) for k, v in value.items())
+    return False
+
+
+def _observed_r1(event: dict | None) -> dict:
+    """The allowlisted R1 values verbatim, or an explicit ``unavailable``. Never a repr,
+    never normalized or truncated: a value JSON cannot carry as-is, or a section over
+    the byte bound, is withheld whole."""
+    if event is None:
+        return {"status": "absent"}
+    values = {c: event.get(c) for c in DIAGNOSTIC_FIELDS}
+    if not _plain_json(values):
+        return {"status": "unavailable", "reason": "unserializable"}
+    size = len(canonical_json(values).encode("utf-8"))
+    if size > DIAGNOSTIC_MAX_BYTES:
+        return {"status": "unavailable", "reason": "oversize",
+                "bytes": size, "max_bytes": DIAGNOSTIC_MAX_BYTES}
+    return {"status": "observed", "values": values}
+
+
+def refusal_diagnostic(event: dict | None, reached: list[str]) -> dict:
+    """What a refused preflight already read, and how far admission got. Evidence only:
+    it is never written into a plan and no mode reads it back."""
+    try:
+        return {"schema": DIAGNOSTIC_SCHEMA, "note": DIAGNOSTIC_NOTE,
+                "admission": _admission_progress(list(reached)), "observed_r1": _observed_r1(event)}
+    except Exception:  # the refusal stands whatever happens here
+        return {"schema": DIAGNOSTIC_SCHEMA, "status": "unavailable", "reason": "diagnostic_failed"}
 
 
 async def _verify_new_transaction(session_factory, written_want: dict, fenced_want: dict) -> tuple:
