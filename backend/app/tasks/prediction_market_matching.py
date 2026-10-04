@@ -48,6 +48,10 @@ from app.utils.event_twin_fold import (  # #7904/#9686, the catch-all shadow arm
     _catchall_sport_prefix,
 )
 from app.utils.futures_liveness import KALSHI_BOOK_SILENT_SQL
+from app.utils.blend_prune_trail import (  # #9051, durable prune attribution
+    TRAIL_DEADLINE_BUDGET_S,
+    record_blend_prunes,
+)
 from app.utils.venue_club_spellings import venue_spellings_of  # #8100
 from app.utils.polymarket_empty_book import (  # #9083, the pregame pin's book guard
     POLYMARKET_BOOKMAKER,
@@ -3391,6 +3395,9 @@ async def _prune_orphaned_blend_source(
             )
         except Exception:
             pass  # Diagnostic failure must not alter the existing write path.
+        # The log above lives ~3 min (heavy has no drain); keep it findable.
+        # Staged, so committed=False — the caller's commit is not ours to claim.
+        await record_blend_prunes([(event_id, source)], "unlink", committed=False)
     return changed
 
 
@@ -3441,6 +3448,7 @@ async def _cleanup_orphaned_blend_sources(session, time_remaining_fn=None, limit
     from app.models.models import Event
 
     pruned = 0
+    trail: list = []  # (event_id, source) staged since the last commit, #9051
     for source in sorted(_PM_BLEND_SOURCES):
         # Candidate events: the source key is present AND no linked market of that
         # source exists. Raw SQL (asyncpg-safe jsonb_exists + an explicit
@@ -3463,6 +3471,10 @@ async def _cleanup_orphaned_blend_sources(session, time_remaining_fn=None, limit
             if time_remaining_fn is not None and time_remaining_fn() < 20:
                 if pruned:
                     await session.commit()
+                    # Out of time: a smaller trail budget than the normal path.
+                    await record_blend_prunes(
+                        trail, "cleanup", committed=True, budget_s=TRAIL_DEADLINE_BUDGET_S
+                    )
                 return pruned
             new_wps, changed = prune_blend_source(wps, source, 0)
             if changed:
@@ -3470,6 +3482,7 @@ async def _cleanup_orphaned_blend_sources(session, time_remaining_fn=None, limit
                     update(Event).where(Event.id == eid).values(win_probability_sources=new_wps)
                 )
                 pruned += 1
+                trail.append((eid, source))
                 # #9051: attribution only; the existing commit happens later.
                 try:
                     logger.info(
@@ -3480,6 +3493,8 @@ async def _cleanup_orphaned_blend_sources(session, time_remaining_fn=None, limit
                     pass  # Logging cannot suppress commit or change its result.
     if pruned:
         await session.commit()
+        # #9051: written AFTER the commit, so each record can say committed=True.
+        await record_blend_prunes(trail, "cleanup", committed=True)
     return pruned
 
 

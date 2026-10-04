@@ -76,7 +76,8 @@ _DEFAULT_REDIS_SOCKET_TIMEOUT = 5.0
 #     tree: (5,5,False) the default, (5,5,True) sentinel filing + the Sentry
 #     filter, (2,2,False) price-refresh/watchdog, (1,1,True) search_head_warmer
 #     (two differently-NAMED constants that are both 1.0, hence one signature,
-#     not two), and (0.5,5,True) the latency middleware. No process uses all
+#     not two) + the #9051 blend prune trail, and (0.5,5,True) the latency
+#     middleware. No process uses all
 #     five, but none of that is in the arithmetic.
 #   * THE ASYNC CLIENT, which is deliberately uncached (see below) because
 #     event_stream.py aclose()s per SSE stream — so its pools are per-caller and
