@@ -322,9 +322,9 @@ describe("the rendered pager", () => {
   });
   test("no Load more once the last page is in", async () => {
     respond([200, OSC_P1()]);
-    let hub = (await refresh("oscars-2027")).hub!;
+    const hub = (await refresh("oscars-2027")).hub!;
     respond([200, OSC_P2()]);
-    hub = await loadMore("oscars-2027", hub);
+    await loadMore("oscars-2027", hub);
     const html = frame("oscars-2027");
     expect(html).toContain("4 of 4 questions");
     expect(html).not.toContain("Load more");
