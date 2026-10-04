@@ -40,7 +40,8 @@ final class WarmLauncherURLJourneyTests: XCTestCase {
         try reveal(alternative, in: app)
         capture(app, name: "Warm launcher before delivery with picker open")
         // Deliver through XCTest while the existing process and picker are alive.
-        app.open(launcher)
+        // System delivery must not use XCUIApplication.open, which has launch semantics.
+        XCUIDevice.shared.system.open(launcher)
         expectation(for: NSPredicate(format: "label == %@", "Launcher opens: 1"), evaluatedWith: receipt)
         waitForExpectations(timeout: 45)
         expectation(for: NSPredicate(format: "exists == false"), evaluatedWith: alternative)
@@ -59,7 +60,8 @@ final class WarmLauncherURLJourneyTests: XCTestCase {
         XCTAssertTrue(alert.waitForExistence(timeout: 15))
         capture(app, name: "Warm launcher before delivery with iPhone help open")
         // A second OS URL delivery must dismiss help in the same app process.
-        app.open(launcher)
+        // System delivery must not use XCUIApplication.open, which has launch semantics.
+        XCUIDevice.shared.system.open(launcher)
         expectation(for: NSPredicate(format: "label == %@", "Launcher opens: 2"), evaluatedWith: receipt)
         waitForExpectations(timeout: 45)
         expectation(for: NSPredicate(format: "exists == false"), evaluatedWith: alert)

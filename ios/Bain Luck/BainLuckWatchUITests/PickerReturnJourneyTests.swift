@@ -63,12 +63,12 @@ final class PickerReturnJourneyTests: XCTestCase {
         XCTAssertTrue(change.waitForExistence(timeout: 15))
         try reveal(change, in: app)
         change.tap()
-        XCTAssertTrue(app.buttons["watch.picker-cancel"].waitForExistence(timeout: 15))
+        XCTAssertTrue(app.buttons["watch.picker-cancel"].firstMatch.waitForExistence(timeout: 15))
     }
 
     @MainActor
     private func returnToGame(in app: XCUIApplication) throws {
-        let cancel = app.buttons["watch.picker-cancel"]
+        let cancel = app.buttons["watch.picker-cancel"].firstMatch
         try reveal(cancel, in: app)
         capture(app, "Reachable explicit return to selected game")
         cancel.tap()
