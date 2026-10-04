@@ -84,7 +84,7 @@ from app.utils.discover_bundles import (
     theme_member_withhold_reason,
 )
 from app.utils.futures_market_snapshot import CARD_PRICE_AGE_LEG_COUNT, outcome_prints_a_price
-from app.utils.outcome_display import display_rank_order
+from app.utils.outcome_display import drop_dominant_field_outcomes
 from app.utils.theme_definitions import (
     CONTAINER_MEMBER_WITHDRAWN,
     OUTCOME_ADMITTED,
@@ -151,9 +151,11 @@ class OutcomeRow:
     name: Optional[str]
     is_winner: Optional[bool]
     resolution_source: Optional[str]
-    # The stored price when a card would print one (``outcome_prints_a_price``),
-    # else None. Absent is not zero (ruling 051): an unpriced leg stays None.
-    probability: Optional[float] = None
+    # The stored price as a plain float, and the outcome's id: copied before
+    # commit (gotcha #6) so the fold can order and price the card's legs. NULL
+    # stays None — absent is not zero (ruling 051).
+    current_probability: Optional[float] = None
+    id: Optional[int] = None
 
 
 @dataclass(frozen=True)
@@ -197,6 +199,7 @@ def member_row(market: Any) -> MemberRow:
                 getattr(o, "is_winner", None),
                 getattr(o, "resolution_source", None),
                 float(o.current_probability) if outcome_prints_a_price(o) else None,
+                o.id,
             )
             # id order: the relationship has no order_by, and a tie at the
             # three-leg cut must not move the fold between two passes
@@ -346,30 +349,35 @@ class ThemeSnapshot:
 
 
 def fold_input(row: MemberRow) -> dict:
-    """The ``data`` Discover's fold reads for one member, in the feed's DTO shape.
+    """The ``data`` Discover's fold reads for one member (contract §10.4 semantics 8, v3.5).
 
     ``_comparison_title`` gates two of its removals on ``resolution_date`` and
     ``top_outcomes`` (the stated-year arm and the priced-field arm, #8387), so a
     row handed over without them can only ever be refused. Both are the stored
-    values, serialized as the feed serializes them: the date as ISO text, the
-    legs in the card's order (price descending, then ``display_rank_order``)
-    cut to the three a card prints, an unpriced leg keeping ``None``. A row
-    missing either is passed missing, and the fold refuses it as it would.
+    values, shaped as a card prints them: the date as ISO text; the legs ordered
+    by stored price descending (NULL last, then outcome id), less the dominant
+    field outcome, cut to the legs a card prints, each priced only when
+    ``outcome_prints_a_price`` says a card would print it. A row missing either
+    is passed missing, and the fold refuses it as it would.
     """
     ordered = sorted(
-        (o for o in row.outcomes if o.name is not None),
-        key=lambda o: o.probability or 0,
-        reverse=True,
+        row.outcomes,
+        key=lambda o: (o.current_probability is None, -(o.current_probability or 0.0), o.id or 0),
     )
-    ordered = display_rank_order(ordered, lambda o: o.name, lambda o: o.probability)
+    legs = drop_dominant_field_outcomes(ordered, lambda o: o.name, lambda o: o.current_probability)
     return {
         "id": row.id,
         "name": row.name,
         "source": row.source,
         "resolution_date": row.resolution_date.isoformat() if row.resolution_date else None,
         "top_outcomes": [
-            {"name": o.name, "probability": o.probability, "rank": rank}
-            for rank, o in enumerate(ordered[:CARD_PRICE_AGE_LEG_COUNT], start=1)
+            {
+                "id": o.id,
+                "name": o.name,
+                "probability": float(o.current_probability) if outcome_prints_a_price(o) else None,
+                "rank": rank,
+            }
+            for rank, o in enumerate(legs[:CARD_PRICE_AGE_LEG_COUNT], start=1)
         ],
     }
 

@@ -490,6 +490,12 @@ def test_the_producer_never_overwrites_a_snapshot_key():
 def test_case_16_gate_and_fold_are_imported_not_copied():
     assert ta.theme_member_withhold_reason is discover_bundles.theme_member_withhold_reason
     assert ta._dedupe_same_question_members is discover_bundles._dedupe_same_question_members
+    # v3.5: the fold input is shaped by the card's own helpers, never copies
+    from app.utils import futures_market_snapshot, outcome_display
+
+    assert ta.drop_dominant_field_outcomes is outcome_display.drop_dominant_field_outcomes
+    assert ta.outcome_prints_a_price is futures_market_snapshot.outcome_prints_a_price
+    assert ta.CARD_PRICE_AGE_LEG_COUNT is futures_market_snapshot.CARD_PRICE_AGE_LEG_COUNT
 
 
 def _quality(monkeypatch, classes: dict[str, str]):
@@ -548,7 +554,7 @@ def _fixture_row(data, **changes):
         status="open",
         llm_sport_category=data["llm_sport_category"],
         resolution_date=datetime.fromisoformat(data["resolution_date"]),
-        outcomes=tuple(ta.OutcomeRow(o["name"], None, None, o["probability"])
+        outcomes=tuple(ta.OutcomeRow(o["name"], None, None, o["probability"], o["id"])
                        for o in data["top_outcomes"]),
     )
     return dataclasses.replace(row, **changes)
@@ -603,8 +609,10 @@ def test_case_19_the_fold_reads_what_discovers_own_fixture_reads():
         assert _comparison_title(*mine) == _comparison_title(served[a], served[b])
     poly = ta.fold_input(rows[PM_PICTURE_ID])
     assert poly["resolution_date"] == "2027-07-01T03:59:00+00:00"
-    assert [(o["name"], o["probability"]) for o in poly["top_outcomes"]] == [
-        ("The Odyssey", 0.49), ("La Bola Negra", 0.315), ("Dune: Part Three", 0.115)]
+    # the legs are the served legs, field for field: {id, name, probability, rank}
+    assert poly["top_outcomes"] == served[PM_PICTURE_ID]["top_outcomes"]
+    assert ta.fold_input(rows[KALSHI_PICTURE_ID])["top_outcomes"] == (
+        served[KALSHI_PICTURE_ID]["top_outcomes"])
 
 
 def test_case_19_the_oscars_categories_the_film_also_leads_stay():
@@ -646,7 +654,7 @@ def test_case_19_a_row_without_a_resolution_date_is_not_folded():
 def test_case_19_a_row_without_prices_is_not_folded():
     """An unpriced leg stays None — not a dummy number — so a row with no
     prices gives the field arm nothing to agree on."""
-    unpriced = tuple(dataclasses.replace(o, probability=None)
+    unpriced = tuple(dataclasses.replace(o, current_probability=None)
                      for o in _awards_rows()[PM_PICTURE_ID].outcomes)
     snap = _pair_with(outcomes=unpriced)
     assert all(o["probability"] is None
@@ -657,7 +665,7 @@ def test_case_19_a_row_without_prices_is_not_folded():
 
 def test_case_19_a_field_led_by_a_different_film_is_not_folded():
     legs = list(_awards_rows()[PM_PICTURE_ID].outcomes)
-    legs[0] = dataclasses.replace(legs[0], probability=0.1)  # La Bola Negra now leads
+    legs[0] = dataclasses.replace(legs[0], current_probability=0.1)  # La Bola Negra now leads
     assert _pair_with(outcomes=tuple(legs)).folded_ids == ()
 
 
@@ -693,20 +701,49 @@ def test_member_row_copies_the_stored_price_and_keeps_absent_absent():
                              llm_sport_category="entertainment", outcomes=legs,
                              resolution_date=datetime(2027, 12, 31, 15, tzinfo=timezone.utc))
     row = ta.member_row(market)
-    assert [(o.name, o.probability) for o in row.outcomes] == [
-        ("A", 0.3774), ("B", 0.0), ("C", None)]
-    assert ta.fold_input(row)["resolution_date"] == "2027-12-31T15:00:00+00:00"
+    assert [(o.id, o.name, o.current_probability) for o in row.outcomes] == [
+        (1, "A", 0.3774), (2, "B", 0.0), (3, "C", None)]
+    assert all(type(o.current_probability) in (float, type(None)) for o in row.outcomes)
+    folded_in = ta.fold_input(row)
+    assert folded_in["resolution_date"] == "2027-12-31T15:00:00+00:00"
+    assert folded_in["top_outcomes"] == [
+        {"id": 1, "name": "A", "probability": 0.3774, "rank": 1},
+        {"id": 2, "name": "B", "probability": 0.0, "rank": 2},
+        {"id": 3, "name": "C", "probability": None, "rank": 3},
+    ]
+    assert ta.fold_input(dataclasses.replace(row, resolution_date=None))["resolution_date"] is None
 
 
 def test_fold_input_orders_the_legs_as_the_card_does_and_cuts_at_three():
-    """Price descending, unpriced last, three legs — the card's order, whatever
-    order the rows were loaded in."""
-    legs = tuple(ta.OutcomeRow(n, None, None, p) for n, p in
-                 (("Hamnet", 0.05), ("Unpriced", None), ("Dune: Part Three", 0.11),
-                  ("The Odyssey", 0.49)))
+    """Stored price descending, NULL last, then outcome id; three legs — the
+    card's order, whatever order the rows were loaded in."""
+    legs = tuple(ta.OutcomeRow(n, None, None, p, i) for i, n, p in
+                 ((4, "Hamnet", 0.05), (1, "Unpriced", None), (5, "Dune: Part Three", 0.11),
+                  (3, "The Odyssey", 0.49)))
     row = dataclasses.replace(_awards_rows()[PM_PICTURE_ID], outcomes=legs)
-    assert [(o["name"], o["rank"]) for o in ta.fold_input(row)["top_outcomes"]] == [
-        ("The Odyssey", 1), ("Dune: Part Three", 2), ("Hamnet", 3)]
+    assert [(o["id"], o["name"], o["rank"]) for o in ta.fold_input(row)["top_outcomes"]] == [
+        (3, "The Odyssey", 1), (5, "Dune: Part Three", 2), (4, "Hamnet", 3)]
+
+
+def test_fold_input_breaks_a_price_tie_by_outcome_id_and_unpriced_legs_by_id():
+    legs = tuple(ta.OutcomeRow(n, None, None, p, i) for i, n, p in
+                 ((9, "Later tie", 0.2), (2, "Null B", None), (7, "Earlier tie", 0.2),
+                  (1, "Null A", None)))
+    row = dataclasses.replace(_awards_rows()[PM_PICTURE_ID], outcomes=legs)
+    assert [o["id"] for o in ta.fold_input(row)["top_outcomes"]] == [7, 9, 1]
+    only_unpriced = dataclasses.replace(row, outcomes=legs[1::2])
+    assert [o["id"] for o in ta.fold_input(only_unpriced)["top_outcomes"]] == [1, 2]
+
+
+def test_fold_input_drops_the_dominant_field_leg_before_the_cut():
+    """A no-bid ``Other`` at 1.0 never takes a card slot (UX-P163): the card's
+    helper removes it before the three-leg cut, so the fold sees the real legs."""
+    legs = tuple(ta.OutcomeRow(n, None, None, p, i) for i, n, p in
+                 ((1, "Other", 1.0), (2, "The Odyssey", 0.49), (3, "La Bola Negra", 0.315),
+                  (4, "Dune: Part Three", 0.115)))
+    row = dataclasses.replace(_awards_rows()[PM_PICTURE_ID], outcomes=legs)
+    assert [o["name"] for o in ta.fold_input(row)["top_outcomes"]] == [
+        "The Odyssey", "La Bola Negra", "Dune: Part Three"]
 
 
 # ---------------------------------------------------------------------------
