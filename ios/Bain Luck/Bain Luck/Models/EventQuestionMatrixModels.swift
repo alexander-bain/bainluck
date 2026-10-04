@@ -124,16 +124,23 @@ nonisolated struct QuestionMatrixQuestion: Decodable, Equatable, Identifiable, S
         return kind
     }
 
-    /// Whether the question may offer a "more options" disclosure. Only a
-    /// server-identified missing leg earns one on a typed kind: there
-    /// `complete:false` with `missing_identified: 0` says the server cannot
-    /// vouch for the whole ladder, not that a leg is missing (A4 native rider).
-    /// Read from the served kind, so a typed kind marked untyped stays typed.
+    /// Whether the question may offer a "more options" disclosure. It needs
+    /// evidence that options are hidden — `complete:false` alone means the
+    /// server cannot vouch for the whole list, not that a row is missing
+    /// (#10465: m:64118681, 14 loaded, 14 returned, 0 missing).
+    /// Every kind: a server-identified missing leg. Named options also: a
+    /// served truncation, declared > loaded or loaded > returned. A typed kind
+    /// never reads truncation as evidence — its other leg is its own question
+    /// (A4 native rider). Read from the served kind, so a typed kind marked
+    /// untyped stays typed.
     var offersMoreOptions: Bool {
         guard complete == false else { return false }
+        if max(optionCounts?.missingIdentified ?? 0, missingOptions?.count ?? 0) > 0 { return true }
         let served = QuestionMatrixKind(rawValue: kind) ?? .namedOptions
-        if served == .namedOptions { return true }
-        return max(optionCounts?.missingIdentified ?? 0, missingOptions?.count ?? 0) > 0
+        guard served == .namedOptions, let counts = optionCounts else { return false }
+        if let declared = counts.declared, let loaded = counts.loaded, declared > loaded { return true }
+        if let loaded = counts.loaded, let returned = counts.returned, loaded > returned { return true }
+        return false
     }
 
     func option(_ key: String) -> QuestionMatrixOption? {

@@ -353,6 +353,93 @@ final class EventQuestionMatrix10238Tests: XCTestCase {
         XCTAssertTrue(try question(try matrix(identified), points211).offersMoreOptions)
     }
 
+    /// #10465 — the retained specimen m:64118681 (Team Total, named options):
+    /// `complete:false`, 14 loaded, 14 returned, 0 identified missing. Release
+    /// 36 told the reader options were hidden; nothing was.
+    private func teamTotalSpecimen(declared: Any = NSNull(), loaded: Any = 14, returned: Any = 14,
+                                   missingIdentified: Any = 0, missing: [[String: Any]] = [],
+                                   complete: Any = false) throws -> [String: Any] {
+        try editing("m:109") { question in
+            let template = (question["options"] as? [[String: Any]])?.first ?? [:]
+            question["label"] = "Team Total"
+            question["market_name"] = "Team Total"
+            question["options"] = (1...14).map { i -> [String: Any] in
+                var option = template
+                option["option_key"] = "o:\(64_118_680 + i)"
+                option["contributor_outcome_ids"] = [64_118_680 + i]
+                option["label"] = "Over \(200 + i).5"
+                return option
+            }
+            question["option_counts"] = ["declared": declared, "loaded": loaded,
+                                         "returned": returned, "missing_identified": missingIdentified]
+            question["missing_options"] = missing
+            question["complete"] = complete
+        }
+    }
+
+    func testIncompleteNamedOptionsOfferMoreOnlyWithMissingRowEvidence() throws {
+        let specimen = try question(try matrix(try teamTotalSpecimen()), "m:109")
+        XCTAssertEqual(specimen.columnKind, .namedOptions)
+        XCTAssertEqual(specimen.options.count, 14)
+        XCTAssertEqual(specimen.complete, false)
+        XCTAssertEqual(specimen.optionCounts?.loaded, 14)
+        XCTAssertEqual(specimen.optionCounts?.returned, 14)
+        XCTAssertEqual(specimen.missingOptions, [])
+        XCTAssertFalse(specimen.offersMoreOptions,
+                       "complete:false with 14/14 and 0 missing is unknown completeness, not a hidden row")
+
+        // Unknown is never fabricated into missing.
+        for (why, body) in [
+            ("declared matches", try teamTotalSpecimen(declared: 14)),
+            ("every count unknown", try teamTotalSpecimen(loaded: NSNull(), returned: NSNull(), missingIdentified: NSNull())),
+            ("loaded unknown", try teamTotalSpecimen(declared: 20, loaded: NSNull())),
+            ("returned unknown", try teamTotalSpecimen(returned: NSNull())),
+            ("counts absent", try editing("m:109") { $0["complete"] = false; $0.removeValue(forKey: "option_counts") }),
+        ] {
+            XCTAssertFalse(try question(try matrix(body), "m:109").offersMoreOptions, why)
+        }
+
+        // An actual missing row, by identity or by count.
+        let leg: [String: Any] = ["option_key": "o:64118699", "outcome_id": 64_118_699,
+                                  "label": "Over 215.5", "side": NSNull(), "value_state": "unpriced"]
+        for (why, body) in [
+            ("identified missing leg", try teamTotalSpecimen(loaded: 15, missingIdentified: 1, missing: [leg])),
+            ("missing count only", try teamTotalSpecimen(missingIdentified: 1)),
+            ("missing identity only", try teamTotalSpecimen(missing: [leg])),
+            // A served truncation.
+            ("declared > loaded", try teamTotalSpecimen(declared: 16)),
+            ("loaded > returned", try teamTotalSpecimen(loaded: 15)),
+        ] {
+            XCTAssertTrue(try question(try matrix(body), "m:109").offersMoreOptions, why)
+        }
+
+        // Evidence never overrides the server's own completeness.
+        XCTAssertFalse(try question(try matrix(try teamTotalSpecimen(loaded: 15, complete: true)), "m:109").offersMoreOptions,
+                       "complete:true")
+        XCTAssertFalse(try question(try matrix(try teamTotalSpecimen(declared: 16, complete: NSNull())), "m:109").offersMoreOptions,
+                       "complete unknown")
+
+        // A typed kind still reads truncation as no evidence (A4 rider).
+        let typedTruncated = try editing(points211) { question in
+            question["complete"] = false
+            question["option_counts"] = ["declared": 3, "loaded": 2, "returned": 1, "missing_identified": 0]
+        }
+        XCTAssertFalse(try question(try matrix(typedTruncated), points211).offersMoreOptions)
+
+        // The disclosure changes nothing else on the row the reader sees.
+        let rows = EventQuestionMatrixAdapter.rows(in: try matrix(try teamTotalSpecimen()), scope: .game)
+        let row = try XCTUnwrap(rows.first { $0.label == "Team Total" })
+        XCTAssertFalse(row.offersMoreOptions)
+        XCTAssertEqual(row.options.map(\.label), (1...14).map { "Over \(200 + $0).5" })
+        XCTAssertEqual(row.options.count, specimen.options.count)
+        XCTAssertEqual(row.missingOptions, [])
+        let truncated = EventQuestionMatrixAdapter.rows(in: try matrix(try teamTotalSpecimen(loaded: 15)), scope: .game)
+            .first { $0.label == "Team Total" }
+        XCTAssertEqual(truncated?.offersMoreOptions, true)
+        XCTAssertEqual(truncated?.options.map(\.label), row.options.map(\.label), "no option manufactured")
+        XCTAssertEqual(truncated?.options.map(\.value), row.options.map(\.value))
+    }
+
     // MARK: - Comparison (R5)
 
     func testADeltaIsShownOnlyBesideLatestWhenTheServerSaysComparable() throws {
