@@ -302,27 +302,94 @@ export function pickChartSeedOutcomes<
     return runnerUp ? [winner, runnerUp] : [winner];
   }
 
+  // #8222 / #10453 — an open market seeds only rows with a CURRENT price. A
+  // withheld row sorted as 0 here, so on `/futures/61308736` (all 24 prices
+  // withheld) the chart opened on Mensik's week-old line near 47%, presented as
+  // the leader. An explicit 0 is a price and stays eligible; null/missing is not.
+  // With nothing priced this returns [] and the page shows its no-current-prices
+  // state; the history itself is untouched and every row can still be checked.
+  const priced = byProb.filter(hasCurrentPrice);
+
   // The gate carries BOTH of `pickHeroOutcome`'s clauses, so the chart and the
   // hero can never disagree about which row is this board's story: skip graded
   // rows only on a non-mutex field, and only when a priced live row exists at
   // all. On the 51 all-zero boards the hero holds, so the seed holds too.
   const live =
     mutuallyExclusive === false && pickLiveLeader(outcomes) !== null
-      ? byProb.filter((o) => o.is_winner !== true)
-      : byProb;
+      ? priced.filter((o) => o.is_winner !== true)
+      : priced;
 
-  // 🪤 `live` is never empty here, so there is deliberately no fallback branch.
-  // An earlier draft carried `live.length > 0 ? live : byProb` and mutation
-  // testing exposed it as unreachable: the early return leaves `byProb`
-  // non-empty, the else-branch IS `byProb`, and the then-branch only runs when
-  // `pickLiveLeader` found a priced ungraded row — which is itself a member of
-  // the filtered list. Dead defensive code that no test can reach is how a
-  // guard rots, so it is gone rather than left looking load-bearing.
+  // 🪤 There is deliberately no `live.length > 0 ? live : priced` fallback: the
+  // then-branch only runs when `pickLiveLeader` found a priced ungraded row,
+  // which is itself a member of the filtered list, so it can never empty it.
+  // (An earlier draft carried that fallback over `byProb` and mutation testing
+  // exposed it as unreachable.) `live` IS empty when nothing is priced — that
+  // is the #10453 refusal, not a gap to backfill from unpriced rows.
   //
   // If the price clause in `pickLiveLeader` is ever loosened, that invariant
   // breaks and the fallback must come back.
   return live.slice(0, limit);
 }
+
+/**
+ * #10453 — does this row carry a CURRENT price? An explicit finite number,
+ * including 0, is a price; `null`, missing or non-finite is not (the backend
+ * withholds an empty book as `null`, #6989).
+ */
+export function hasCurrentPrice(outcome: { probability?: number | null }): boolean {
+  return typeof outcome.probability === "number" && Number.isFinite(outcome.probability);
+}
+
+/**
+ * #10453 — the history the futures page hands its trend chart.
+ *
+ * `visibleChartOutcomes` draws the first five histories when nothing is
+ * selected, and that fallback cannot tell a priced line from a withheld one: on
+ * an open market with every price withheld it drew five stale lines as if they
+ * were the current leaders, even after the seed refused them. So while the
+ * reader has selected nothing, an open market's chart is offered only the rows
+ * priced now; once the reader checks anything, the whole history is offered and
+ * their choice decides, withheld rows included.
+ *
+ * `pricedIds` null means "no restriction" (a resolved market keeps its winner
+ * and runner-up rules unchanged). The arrays are filtered, never edited: every
+ * point and timestamp of every kept line is the served one.
+ */
+export function chartHistoryForSelection<T extends { outcome_id: number }>(
+  historyData: readonly T[],
+  selected: ReadonlySet<number> | null | undefined,
+  pricedIds: ReadonlySet<number> | null,
+): T[] {
+  if ((selected && selected.size > 0) || pricedIds === null) return [...historyData];
+  return historyData.filter((o) => pricedIds.has(o.outcome_id));
+}
+
+/**
+ * #10453 — the one caption a chart line WITHOUT a current price carries.
+ *
+ * A reader can check a withheld row and see its line; the line is its past, and
+ * nothing on the chart may read as today's price. One name is named; more are
+ * counted, so the caption stays one short line (notice 34). `null` when every
+ * drawn line is priced.
+ */
+export function currentUnavailableNote(unpricedDrawnNames: readonly string[]): string | null {
+  if (unpricedDrawnNames.length === 0) return null;
+  if (unpricedDrawnNames.length === 1) {
+    return `No current price for ${unpricedDrawnNames[0]}. Its line shows past prices.`;
+  }
+  return `No current price for ${unpricedDrawnNames.length} of these lines. They show past prices.`;
+}
+
+/** #10453 — what the trend card says when nothing on an open market is priced now. */
+export const NO_CURRENT_PRICES_CHART_NOTE =
+  "No current prices. Check an outcome below to see its past prices.";
+
+/**
+ * #10453 — the same empty card when some rows ARE priced but none of them has
+ * history in this range (the reader cleared their selection). Saying "no
+ * current prices" there would be false.
+ */
+export const CHECK_AN_OUTCOME_CHART_NOTE = "Check an outcome below to see its past prices.";
 
 /* ───────────────────────────────────────────────────────────────────────────
  * #6079 — THE WORD "won" HAS ONE SOURCE, AND IT IS THE GRADE.
