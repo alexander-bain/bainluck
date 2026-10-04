@@ -494,12 +494,14 @@ final class TheLiveChartEndCarriesTheHeroNumber9436Tests: XCTestCase {
             window.isHidden = false
         }
         func close() { window.isHidden = true }
-        /// Rendered at 1x: a 3x capture of this view took ~300 ms on a hosted
-        /// runner, so the 350 ms glide was sampled two or three times.
-        func shot() -> UIImage {
+        /// `scale: 1` is for the two glide probes only: a 3x capture of this view
+        /// took ~300 ms on a hosted runner, so the 350 ms glide was sampled two
+        /// or three times. The scene-cancel checks keep the screen's scale, so
+        /// their equality still compares full-resolution frames.
+        func shot(scale: CGFloat? = nil) -> UIImage {
             host.view.setNeedsLayout(); host.view.layoutIfNeeded()
             let format = UIGraphicsImageRendererFormat()
-            format.scale = 1
+            if let scale { format.scale = scale }
             return UIGraphicsImageRenderer(bounds: host.view.bounds, format: format).image { _ in
                 host.view.drawHierarchy(in: host.view.bounds, afterScreenUpdates: true)
             }
@@ -514,7 +516,7 @@ final class TheLiveChartEndCarriesTheHeroNumber9436Tests: XCTestCase {
         let start = CACurrentMediaTime()
         while CACurrentMediaTime() - start < seconds {
             try await Task.sleep(for: .milliseconds(16))
-            let image = hosted.shot()
+            let image = hosted.shot(scale: 1)
             shots.append((image, CACurrentMediaTime() - start))
         }
         var columns: [Int] = [], stamps: [Double] = []
@@ -569,7 +571,7 @@ final class TheLiveChartEndCarriesTheHeroNumber9436Tests: XCTestCase {
         let hosted = Hosted(FedChart(feed: feed, history: try history()))
         defer { hosted.close() }
         try await Task.sleep(for: .milliseconds(600))
-        let before = try XCTUnwrap(tipColumn(hosted.shot()))
+        let before = try XCTUnwrap(tipColumn(hosted.shot(scale: 1)))
 
         // One accepted frame a minute later, at 60% — hero and chart together.
         let next = try XCTUnwrap("2026-09-21T12:14:00Z".asDate)
@@ -601,7 +603,7 @@ final class TheLiveChartEndCarriesTheHeroNumber9436Tests: XCTestCase {
         let hosted = Hosted(FedChart(feed: feed, history: try history()))
         defer { hosted.close() }
         try await Task.sleep(for: .milliseconds(600))
-        let before = try XCTUnwrap(tipColumn(hosted.shot()))
+        let before = try XCTUnwrap(tipColumn(hosted.shot(scale: 1)))
 
         feed.history = try pinnedHistory(pinAt: 16, 0.58)
         feed.edge = LiveEdgeReading(homeProbability: 0.58, homeLabel: "58%")
