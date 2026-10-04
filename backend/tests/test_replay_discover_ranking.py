@@ -116,3 +116,32 @@ def test_config_from_dict_parses_weights_and_overrides():
     assert config.weights.movement == 30.0
     assert config.blend_weight == 0.3
     assert config.base_overrides == {"sports": 55.0}
+
+
+def test_warm_rail_rebuild_is_refused_without_capture_mixed():
+    """#10290: the operator mode is a modifier of --capture-mixed only; it can
+    never ride a verification, a futures replay or a demo run."""
+    import subprocess
+    import sys
+    from pathlib import Path
+
+    backend = Path(__file__).resolve().parents[1]
+    proc = subprocess.run(
+        [sys.executable, "scripts/replay_discover_ranking.py", "--demo", "--warm-rail-rebuild"],
+        capture_output=True, text=True, cwd=backend, timeout=300,
+    )
+    assert proc.returncode == 2, proc.stderr[-2000:]
+    assert "--warm-rail-rebuild requires --capture-mixed" in proc.stderr
+    assert proc.stdout == ""
+
+
+def test_capture_mixed_build_defaults_to_the_ordinary_mode():
+    """The default stays the ordinary anonymous capture; the explicit mode is
+    keyword-only and off unless asked for."""
+    import inspect
+
+    import scripts.replay_discover_ranking as runner
+
+    param = inspect.signature(runner.capture_mixed_build).parameters["warm_rail_rebuild"]
+    assert param.kind is inspect.Parameter.KEYWORD_ONLY
+    assert param.default is False
