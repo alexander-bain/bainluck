@@ -977,7 +977,10 @@ def _member_answers_story_question(story_key: str, item: dict[str, Any]) -> bool
 # (63448382/63448383). The family is entertainment by definition, and the
 # category vocabulary folds film, TV, music and awards into `entertainment`, so
 # a member outside it is a name collision, not a nominee. Like #7552's refusal,
-# a refused member is not dropped: it falls through to its own card.
+# the gate sits at both admission sites with each site's existing semantics: a
+# refused MAIN item is not dropped — it falls through to its own card — while a
+# refused overflow-reserve row only loses the bundle seat (the reserve is not in
+# ``items`` and was never emittable standalone; see `_with_story_overflow`).
 _STORY_KEYS_REQUIRING_ENTERTAINMENT = frozenset({"story:major_entertainment_events"})
 
 

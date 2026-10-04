@@ -153,6 +153,9 @@ def test_overflow_top_up_refuses_the_near_misses():
     served = repr(bundles[0])
     assert "Collazo" not in served
     assert "Oscar Brown" not in served
+    # The reserve was never in ``items``, so a refused reserve row only loses
+    # its seat — it is not resurrected as a standalone card.
+    assert _standalone_ids(out) == set()
 
 
 # ── Set-pin: the gate sits beside #7552's guard at BOTH sites ───────────────
