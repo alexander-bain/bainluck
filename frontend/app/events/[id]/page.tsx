@@ -58,6 +58,8 @@ import FinalGameWinnerQuote from "@/components/event/FinalGameWinnerQuote";
 const ChartSkeleton = () => <div className="animate-pulse h-48 bg-surface-card rounded-xl" />;
 const OddsChart = dynamic(() => import("@/components/OddsChart"), { ssr: false, loading: ChartSkeleton });
 const ScoreDifferentialChart = dynamic(() => import("@/components/ScoreDifferentialChart"), { ssr: false, loading: ChartSkeleton });
+// #10239: no loading skeleton — the module renders nothing on most events, and a skeleton would flash an empty frame.
+const ProjectedFinalPointsModule = dynamic(() => import("@/components/event/ProjectedFinalPointsModule"), { ssr: false });
 const BookmakerTable = dynamic(() => import("@/components/BookmakerTable"), { ssr: false });
 const RelatedFutures = dynamic(() => import("@/components/RelatedFutures"), { ssr: false });
 const GamePlayCard = dynamic(() => import("@/components/GamePlayCard"), { ssr: false });
@@ -3108,6 +3110,19 @@ export default function EventPage({ params }: EventPageProps) {
           />
         </div>
         </SectionErrorBoundary>
+      )}
+
+      {/* #10239: a secondary module, finished NFL only; it decides its own mount, carries its own error boundary, and renders nothing otherwise. */}
+      {historyData && (
+        <ProjectedFinalPointsModule
+          sportKey={event.sport}
+          eventStatus={event.status}
+          history={historyData}
+          homeTeam={event.home_team}
+          awayTeam={event.away_team}
+          homeColor={event.home_team_data?.primary_color}
+          awayColor={event.away_team_data?.primary_color}
+        />
       )}
 
       <FinalGameWinnerQuote quote={servedGameMarkets?.open_winner_quote}

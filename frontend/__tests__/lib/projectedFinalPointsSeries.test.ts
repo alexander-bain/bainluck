@@ -11,6 +11,7 @@
 
 import {
   buildProjectedFinalPointsSeries,
+  firstRecordedGameStateAt,
   inspectionInstants,
   MAX_CAPTURE_GAP_MS,
   pickProjectionSportsbook,
@@ -454,5 +455,71 @@ describe("a changed reading after a long gap (valid_until is not confirmation)",
     const t = supported(projectedFinalPointsInputFromHistory(withOld, { ...opts, asOf: "2026-09-29T03:30:00Z" }));
     expect(t.segments).toEqual(s.segments);
     expect(allPoints(t).some((p) => p.home === 23)).toBe(false);
+  });
+});
+
+describe("the first recorded game state floors actual scores, and is not a kickoff", () => {
+  // 00:20Z: an instrument's first look at the first quarter. Nobody saw the kick.
+  const FLOOR = "2026-09-29T00:20:00Z";
+
+  it("without an observed kickoff and without a floor, a finished game admits no actual scores", () => {
+    const s = supported(nflInput({ kickoffAt: null }));
+    expect(s.phase).toBe("after");
+    expect(s.actualSteps).toEqual([]);
+    expect(s.latestActual).toBeNull();
+  });
+
+  it("the floor admits recorded scores from itself on, and nothing before it", () => {
+    const s = supported(nflInput({ kickoffAt: null, scoreObservationStartAt: FLOOR }));
+    expect(s.actualSteps.map((a) => [a.home, a.away])).toEqual([[7, 0], [14, 7], [21, 7], [27, 7]]);
+    expect(s.actualSteps.some((a) => a.at < ms(FLOOR))).toBe(false);
+    expect(s.latestActual).toMatchObject({ home: 27, away: 7 });
+  });
+
+  it("an observed kickoff, when there is one, still decides the floor", () => {
+    const s = supported(nflInput({ kickoffAt: KICKOFF, scoreObservationStartAt: "2026-09-29T01:30:00Z" }));
+    expect(s.actualSteps[0]).toEqual({ at: ms("2026-09-29T00:24:00Z"), home: 7, away: 0 });
+  });
+
+  it("a cursor before the floor is before the game state: no actuals, and none borrowed from later", () => {
+    const input = nflInput({ kickoffAt: null, scoreObservationStartAt: FLOOR });
+    const v = seriesAt(input, ms("2026-09-29T00:10:00Z"));
+    expect(v.supported && v.phase).toBe("before");
+    expect(v.supported && v.actualSteps).toEqual([]);
+    const during = seriesAt(input, ms("2026-09-29T01:20:00Z"));
+    expect(during.supported && during.phase).toBe("during");
+    expect(during.supported && during.latestActual).toMatchObject({ home: 14, away: 7 });
+  });
+
+  it("opens the default window an hour before the floor", () => {
+    const s = supported(nflInput({ kickoffAt: null, scoreObservationStartAt: FLOOR }));
+    expect(s.start).toBe(ms(FLOOR) - 60 * 60 * 1000);
+  });
+});
+
+describe("firstRecordedGameStateAt", () => {
+  const q1 = { timestamp: "2026-09-29T00:17:50Z", period: "1st Quarter", source: "espn_state", precision: "first_seen", not_before: "2026-09-29T00:16:50Z" };
+
+  it("reads the observed first-quarter marker's lower bound, not its timestamp", () => {
+    expect(firstRecordedGameStateAt([q1], "americanfootball_nfl")).toBe("2026-09-29T00:16:50Z");
+  });
+
+  it("takes the earliest bound when two instruments saw the first quarter", () => {
+    const other = { ...q1, source: "statpal", precision: "boundary_observed", not_before: "2026-09-29T00:15:30Z" };
+    expect(firstRecordedGameStateAt([q1, other], "americanfootball_nfl")).toBe("2026-09-29T00:15:30Z");
+  });
+
+  it("refuses an estimate even when it is the earliest", () => {
+    const est = { ...q1, source: "estimated", not_before: "2026-09-29T00:00:00Z" };
+    expect(firstRecordedGameStateAt([est, q1], "americanfootball_nfl")).toBe("2026-09-29T00:16:50Z");
+    expect(firstRecordedGameStateAt([est], "americanfootball_nfl")).toBeNull();
+  });
+
+  it("refuses an unknown source, a first-score marker, a missing bound and a later quarter", () => {
+    expect(firstRecordedGameStateAt([{ ...q1, source: "someone" }], "americanfootball_nfl")).toBeNull();
+    expect(firstRecordedGameStateAt([{ ...q1, precision: "first_score" }], "americanfootball_nfl")).toBeNull();
+    expect(firstRecordedGameStateAt([{ ...q1, not_before: null }], "americanfootball_nfl")).toBeNull();
+    expect(firstRecordedGameStateAt([{ ...q1, period: "2nd Quarter" }], "americanfootball_nfl")).toBeNull();
+    expect(firstRecordedGameStateAt(undefined, "americanfootball_nfl")).toBeNull();
   });
 });

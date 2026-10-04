@@ -170,9 +170,11 @@ export function ProjectedFinalPointsChartView({
               {reading && !withheldAtCursor ? points(reading[key]) : "—"}
             </div>
             <div className="text-xs text-text-secondary">projected final</div>
-            {showActual && (
+            {/* Only a recorded score is printed. Without one there is no "— final" placeholder:
+                a dash beside "final" reads as a result nobody recorded. */}
+            {showActual && actual && (
               <div className="text-sm tabular-nums text-text-primary" data-actual={key}>
-                {actual ? actual[key] : "—"} {shown?.phase === "after" && !inspecting ? "final" : "scored"}
+                {actual[key]} {shown?.phase === "after" && !inspecting ? "final" : "scored"}
               </div>
             )}
           </div>

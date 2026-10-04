@@ -139,6 +139,16 @@ describe("before kickoff", () => {
   });
 });
 
+describe("a finished game with no admitted score (#10239 '— final')", () => {
+  const html = render(nflInput({ kickoffAt: null }));
+
+  it("prints no placeholder result beside the projection", () => {
+    expect(html).not.toContain("data-actual=");
+    expect(html).not.toMatch(/—\s*final/);
+    expect(html).toContain("Last projection before the final");
+  });
+});
+
 describe("inspecting a moment", () => {
   const input = nflInput();
 
