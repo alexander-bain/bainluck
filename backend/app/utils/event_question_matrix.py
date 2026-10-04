@@ -32,7 +32,8 @@ type to one question are ``unblended_equivalents``, value null), never reads
 ``last_updated``, never computes a complement, never renormalises a squeezed
 field (F3: the display value is published and the raw leg sits beside it),
 and never reads a Series clock (U2: every Series comparison is
-``series_baseline_unsupported``).
+``series_baseline_unsupported``). A verified two-venue Series winner (#10407
+A1) is copied in from ``series_winner_correspondence``, never computed here.
 """
 
 from __future__ import annotations
@@ -45,6 +46,7 @@ from typing import Any, Callable, Iterable, Optional
 from app.utils.event_props_matrix import _comparison, _finite_probability, pin_evidence
 from app.utils.final_score_margin import _MARGIN_RE, _SPORT_SCORING_UNIT, _singular
 from app.utils.market_shape import _DRAW_TOKENS, _TOP_N_RE, _norm, venue_leg_count
+from app.utils.series_winner_correspondence import SERIES_BLEND_BASIS
 from app.utils.team_side import resolve_team_side
 
 CONTRACT = "10238.v1"
@@ -1178,6 +1180,7 @@ def build_series_question_matrix(
     settled_before_the_game: Callable[[Any], bool],
     home_team: Optional[str],
     away_team: Optional[str],
+    series_compositions: Optional[Iterable] = None,
 ) -> Optional[dict]:
     """``series_question_matrix`` for one ``/related-futures`` build, or ``None``.
 
@@ -1185,6 +1188,9 @@ def build_series_question_matrix(
     ``series_by_market`` is every leg the route loaded per Series market;
     ``series_withheld`` its refusal set. The Series question's lifecycle is the
     Series market's own (R6, §6): a final Game never closes an open Series.
+
+    ``series_compositions`` (#10407 A1) is ``series_winner_correspondence``'s
+    answer for this page. ``None`` leaves the output byte-identical.
     """
     coverage = _empty_coverage()
     questions: list = []
@@ -1194,6 +1200,11 @@ def build_series_question_matrix(
                                               home_team, away_team))
         except Exception:
             coverage["build_errors"] += len(market_row.get("outcomes") or [])
+    for pair in series_compositions or ():
+        try:
+            _merge_series_pair(questions, pair)
+        except Exception:
+            pass  # the pair stays two questions, exactly as without it
     eligible = 0
     for legs in series_by_market.values():
         market = legs[0].market if legs else None
@@ -1327,3 +1338,87 @@ def _series_option(row: dict, market_row: dict, leg: Any, sides: dict,
         "result": result,
         "comparison": _unavailable(reason),
     }
+
+
+# ── #10407 A1: one Series winner question across two venues ─────────────────
+#
+# Contract rider 10238.v1 / 10407-R1 (Authority). A PROJECTION ONLY: the
+# number is `series_winner_correspondence`'s, which took it from
+# `blend_with_verdict`; nothing here combines prices. The two per-market
+# questions are built first exactly as without a composition, and are replaced
+# by one question only when they are the composition's own — same keys, same
+# outcome ids, both open. Anything else leaves them standing.
+
+
+def _merge_series_pair(questions: list, pair: Any) -> None:
+    if not getattr(pair, "composed", False):
+        return
+    k_key, p_key = pair.merged_question_keys
+    by_key = {q["question_key"]: q for q in questions}
+    k_q, p_q = by_key.get(k_key), by_key.get(p_key)
+    if k_q is None or p_q is None:
+        return
+    for q in (k_q, p_q):
+        if q["lifecycle"] != {"state": "open", "market_status": "open"}:
+            return
+    k_opts = {o["contributor_outcome_ids"][0]: o for o in k_q["options"]}
+    p_opts = {o["contributor_outcome_ids"][0]: o for o in p_q["options"]}
+    if set(k_opts) != {t.contributor_outcome_ids[0] for t in pair.teams}:
+        return
+    if set(p_opts) != {t.contributor_outcome_ids[1] for t in pair.teams}:
+        return
+    market_ids = list(pair.contributor_market_ids)
+    options = []
+    for team in sorted(pair.teams, key=lambda t: (-t.value, t.team_id)):
+        k_opt = k_opts[team.contributor_outcome_ids[0]]
+        p_opt = p_opts[team.contributor_outcome_ids[1]]
+        # The composite identity every multi-contributor option already uses
+        # (10238.v1; Native keys selection and currentness on it).
+        contributors = sorted(team.contributor_outcome_ids)
+        options.append({
+            "option_key": "o:" + "+".join(str(c) for c in contributors),
+            "label": team.name or k_opt["label"],
+            "side": k_opt["side"],
+            "market_ids": market_ids,
+            "contributor_outcome_ids": contributors,
+            "published": {
+                "value": team.value,
+                "value_state": "quoted",
+                "basis": SERIES_BLEND_BASIS,
+                "source": None,
+                "observed_at": None,
+            },
+            "source_evidence": k_opt["source_evidence"] + p_opt["source_evidence"],
+            "result": {"state": "open", "evidence_kind": "none"},
+            "comparison": _unavailable(SERIES_BASELINE_UNSUPPORTED),
+        })
+    merged = {
+        "question_key": pair.question_key,
+        "merged_question_keys": [k_key, p_key],
+        "proposition_key": None,
+        "display_scope": "series",
+        "kind": "named_options",
+        "label": k_q["label"],
+        "market_name": k_q["market_name"],
+        "source_array": "series_markets",
+        "quantity": None,
+        "period": None,
+        "subject": None,
+        "predicate": None,
+        "complement_question_key": None,
+        "typing": {"state": "typed", "reason": None},
+        "lifecycle": dict(k_q["lifecycle"]),
+        "options": options,
+        "missing_options": [],
+        "option_counts": {
+            "declared": len(options),
+            "loaded": len(options),
+            "returned": len(options),
+            "missing_identified": 0,
+        },
+        "complete": True,
+        "source_totals": _source_totals(options),
+        "_market_ids": market_ids,
+    }
+    questions[:] = [q for q in questions if q is not k_q and q is not p_q]
+    questions.append(merged)
