@@ -938,13 +938,13 @@ class TestThemeCollectionWiring9935:
         entry = celery_app.conf.beat_schedule[self.BEAT]
         assert entry["task"] == "app.tasks.assemble_theme_collections"
         assert entry["options"] == {"queue": "background"}
-        assert entry["schedule"].minute == {43}
+        assert entry["schedule"].minute == {59}
         assert entry["schedule"].hour == set(range(24))
         sharing = [
             name for name, other in celery_app.conf.beat_schedule.items()
-            if name != self.BEAT and 43 in getattr(other["schedule"], "minute", ())
+            if name != self.BEAT and 59 in getattr(other["schedule"], "minute", ())
         ]
-        assert not sharing, f"minute 43 is shared with {sharing}"
+        assert not sharing, f"minute 59 is shared with {sharing}"
 
     def test_a_correction_sends_the_registered_rebuild_on_background(self):
         from app.utils import container_corrections as cc

@@ -8522,14 +8522,15 @@ celery_app.conf.beat_schedule = {
     },
     # --- #9935 C1: the theme collections assemble themselves ----------------
     #
-    # Crontab for the reason above. Minute 43 is unshared with every entry on
-    # every queue. FLAG-GATED: until `THEME_ASSEMBLY_ENABLED` is set in
+    # Crontab for the reason above. Minute 59 is unshared with every entry on
+    # every queue and outside the settlement sweep's 10:31–10:44 window.
+    # FLAG-GATED: until `THEME_ASSEMBLY_ENABLED` is set in
     # production (attended config, notice 39) the pass returns
     # `skipped / theme_assembly_disabled` and writes nothing, so the entry can
     # land before the migration and the flag.
     "assemble-theme-collections-hourly": {
         "task": "app.tasks.assemble_theme_collections",
-        "schedule": crontab(minute=43),
+        "schedule": crontab(minute=59),
         "options": {"queue": "background"},
     },
     # --- #2077 (queue 419): the settlement-capture sweep, on a schedule -------
