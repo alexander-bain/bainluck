@@ -541,6 +541,51 @@ class WinProbSnapshot(Base):
     event: Mapped["Event"] = relationship()
 
 
+class ProbabilityPublication(Base):
+    """#4971: one committed nonvenue publication of an event's source bag.
+
+    Written inside the writing transaction by
+    ``app/utils/probability_publication.py``, whose docstring is the contract:
+    the final committed bag, its exact blend, the producer evidence, explicit
+    coverage. Prospective only. Rows start when recording is switched on and
+    imply nothing about history before that.
+    """
+
+    __tablename__ = "probability_publications"
+    __table_args__ = (
+        UniqueConstraint("event_id", "rev", name="uq_probability_publications_event_rev"),
+    )
+
+    id: Mapped[int] = mapped_column(BigInteger, primary_key=True)
+    # No foreign key, on purpose: the record of what was published outlives a
+    # drained duplicate row, and creating the table takes no lock on `events`.
+    event_id: Mapped[int] = mapped_column(Integer, nullable=False)
+    # `events.win_probability_sources_rev` as COMMIT stored it: per-row commit order.
+    rev: Mapped[int] = mapped_column(BigInteger, nullable=False)
+    schema_version: Mapped[int] = mapped_column(SmallInteger, nullable=False)
+    sources: Mapped[dict] = mapped_column(JSONB, nullable=False)
+    event_status: Mapped[Optional[str]] = mapped_column(String(20))
+    blend_inputs: Mapped[dict] = mapped_column(JSONB, nullable=False)
+    # NULL only when no source, ESPN or opening value yields a probability.
+    blend_probability: Mapped[Optional[float]] = mapped_column(Float)
+    blend_tier: Mapped[Optional[str]] = mapped_column(String(16))
+    blend_method: Mapped[str] = mapped_column(String(80), nullable=False)
+    source_clocks: Mapped[dict] = mapped_column(JSONB, nullable=False)
+    removed_sources: Mapped[list] = mapped_column(JSONB, nullable=False)
+    observations: Mapped[list] = mapped_column(JSONB, nullable=False)
+    coverage: Mapped[str] = mapped_column(String(32), nullable=False)
+    uncovered_keys: Mapped[list] = mapped_column(JSONB, nullable=False)
+    stream_frame_eligible: Mapped[bool] = mapped_column(Boolean, nullable=False)
+    txn_started_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False
+    )
+    # clock_timestamp() at INSERT, before COMMIT. Commit time is not recorded.
+    recorded_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False
+    )
+    payload_sha256: Mapped[str] = mapped_column(String(64), nullable=False)
+
+
 class User(Base):
     """Users (optional auth for personalization)."""
 

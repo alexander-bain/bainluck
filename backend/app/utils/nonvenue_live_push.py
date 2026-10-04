@@ -3,6 +3,10 @@
 #8761: these producers used to change REST/history while an open page waited for
 an unrelated venue tick. Buffer only their exact UPDATE RETURNING snapshots;
 savepoint releases are not commits and Redis never sees rolled-back prices.
+
+#4971: with ``PROBABILITY_PUBLICATION_RECORDING`` on, ``before_commit`` also
+records each event's final committed bag inside the same transaction
+(``probability_publication``). Pending entries carry the write's observation.
 """
 
 from __future__ import annotations
@@ -27,21 +31,47 @@ _HOOKS = "nonvenue_probability_hooks"
 NONVENUE_SOURCES = frozenset({"betting", "stat_model", "mlb", "espn"})
 
 
+def _frame_is_sent(frame) -> bool:
+    return frame["status"] == "live" and frame["source_value"] is not None
+
+
+def _before_commit(session):
+    # Savepoint releases fire before_commit too; only the outer COMMIT counts.
+    if session.in_nested_transaction():
+        return
+    from app.utils.probability_publication import (
+        record_committing_publications,
+        recording_enabled,
+    )
+
+    if not recording_enabled():
+        return
+    pending = session.info.get(_PENDING, [])
+    if not pending:
+        return
+    latest = {frame["event_id"]: frame for _, frame, _, _, _ in pending}
+    record_committing_publications(
+        session,
+        [
+            (frame["event_id"], observation, _frame_is_sent(latest[frame["event_id"]]))
+            for _, frame, _, _, observation in pending
+        ],
+    )
+
+
 def _after_commit(session):
     if session.in_nested_transaction():
         return
     pending = session.info.pop(_PENDING, [])
     # One event may change twice in a transaction (ESPN followed by stat_model).
     # Only its last kept snapshot should reach a reader.
-    latest = {frame["event_id"]: frame for _, frame, _, _ in pending}
+    latest = {frame["event_id"]: frame for _, frame, _, _, _ in pending}
     # Current consumers interpret a null source_value as the blended p, which
     # would resurrect a removed source as a fabricated quote. Keep removal as
     # a tombstone through coalescing, then suppress it: an earlier quote in the
     # same transaction must not escape after its source was removed.
     session.info.setdefault(_READY, []).extend(
-        frame
-        for frame in latest.values()
-        if frame["status"] == "live" and frame["source_value"] is not None
+        frame for frame in latest.values() if _frame_is_sent(frame)
     )
 
 
@@ -55,22 +85,25 @@ def _after_rollback(session, transaction):
 
     pending = session.info.get(_PENDING, [])
     rolled_back = [entry for entry in pending if belongs_to(entry[0])]
-    for _, _, event, previous in reversed(rolled_back):
+    for _, _, event, previous, _ in reversed(rolled_back):
         if event is not None:
             set_committed_value(event, "win_probability_sources", previous)
     session.info[_PENDING] = [entry for entry in pending if not belongs_to(entry[0])]
 
 
-def _queue(session, frame, event, previous):
+def _queue(session, frame, event, previous, observation):
     sync = session.sync_session
     if not sync.info.get(_HOOKS):
+        sa_event.listen(sync, "before_commit", _before_commit)
         sa_event.listen(sync, "after_commit", _after_commit)
         sa_event.listen(sync, "after_soft_rollback", _after_rollback)
         sync.info[_HOOKS] = True
     transaction = sync.get_nested_transaction() or sync.get_transaction()
     if transaction is None:
         raise RuntimeError("a probability frame requires its writing transaction")
-    sync.info.setdefault(_PENDING, []).append((transaction, frame, event, previous))
+    sync.info.setdefault(_PENDING, []).append(
+        (transaction, frame, event, previous, observation)
+    )
 
 
 async def write_nonvenue_probability(
@@ -81,6 +114,7 @@ async def write_nonvenue_probability(
     *,
     metadata=None,
     values=None,
+    evidence=None,
 ):
     """Atomically replace/remove one allowed source and queue its returned blend.
 
@@ -88,7 +122,9 @@ async def write_nonvenue_probability(
     cancels any earlier queued event frame; consumers do not yet support source
     removal messages. Extra metadata is inert top-level data (currently
     sportsbook count); extra values
-    retain the ESPN writer's own id/fallback columns. No commit happens here.
+    retain the ESPN writer's own id/fallback columns. ``evidence`` is the
+    producer's own eligibility record for this write (#4971); it is kept only
+    in the publication row, never in the bag. No commit happens here.
     """
     if source not in NONVENUE_SOURCES:
         raise ValueError(f"not a nonvenue probability source: {source}")
@@ -161,6 +197,15 @@ async def write_nonvenue_probability(
         ),
         mapped,
         previous,
+        {
+            "source": source,
+            "value": value,
+            "removed": value is None,
+            "rev": rev,
+            "stamped_at": at,
+            "returned_sources": sources,
+            "evidence": evidence,
+        },
     )
     return sources
 
