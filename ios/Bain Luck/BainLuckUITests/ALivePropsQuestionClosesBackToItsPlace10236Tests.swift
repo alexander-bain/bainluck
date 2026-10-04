@@ -60,6 +60,53 @@ final class ALivePropsQuestionClosesBackToItsPlace10236Tests: XCTestCase {
         return out
     }
 
+    /// The statistic picker's buttons — label and selected state, left to
+    /// right — from ONE accessibility snapshot. `app.buttons.allElementsBoundByIndex`
+    /// resolved every button on the event page one query at a time (574 lookups
+    /// in the 16:28Z IND@WSH run) and raced a live refresh until the rig was
+    /// killed (exit 143) before printing a stat. Same filter as before: centred
+    /// in the band under the header, a non-empty label with no comma (question
+    /// cells are "Player, line, …"). No identifier is assumed — the picker has none.
+    private func pickerStats(_ app: XCUIApplication, in band: CGRect) -> (labels: [String], selected: String?) {
+        guard let root = try? app.snapshot() else { return ([], nil) }
+        var found: [(minX: CGFloat, label: String, selected: Bool)] = []
+        func walk(_ node: XCUIElementSnapshot) {
+            if node.elementType == .button, !node.label.isEmpty, !node.label.contains(","),
+               band.contains(CGPoint(x: node.frame.midX, y: node.frame.midY)) {
+                found.append((node.frame.minX, node.label, node.isSelected))
+            }
+            node.children.forEach(walk)
+        }
+        walk(root)
+        let ordered = found.sorted { $0.minX < $1.minX }
+        return (ordered.map(\.label), ordered.first(where: \.selected)?.label)
+    }
+
+    /// A question cell as one snapshot saw it.
+    private struct SeenCell {
+        let label: String
+        let frame: CGRect
+    }
+
+    /// The question cells wholly inside the reachable band, from ONE snapshot.
+    /// `cells.allElementsBoundByIndex` + `isHittable` per cell was the run's
+    /// second wall (14780551, 18:3xZ: stuck >7 min after `10236_STATS`). An
+    /// element is rebound by its price-free key (`cell(_:key:)`) only when it
+    /// is swiped, tapped or re-measured.
+    private func reachableCells(_ app: XCUIApplication, in band: CGRect) -> [SeenCell] {
+        guard let root = try? app.snapshot() else { return [] }
+        var out: [SeenCell] = []
+        func walk(_ node: XCUIElementSnapshot) {
+            if node.elementType == .button, band.contains(node.frame),
+               Self.cellPredicate.evaluate(with: ["label": node.label]) {
+                out.append(SeenCell(label: node.label, frame: node.frame))
+            }
+            node.children.forEach(walk)
+        }
+        walk(root)
+        return out
+    }
+
     private func cell(_ app: XCUIApplication, key: String) -> XCUIElement {
         app.buttons.matching(NSPredicate(format: "label BEGINSWITH %@", key + ", ")).firstMatch
     }
@@ -106,12 +153,7 @@ final class ALivePropsQuestionClosesBackToItsPlace10236Tests: XCTestCase {
 
         // 2. The statistics on offer, in picker order.
         let pickerBand = CGRect(x: 0, y: header.frame.maxY, width: window.width, height: 110)
-        let stats = app.buttons.allElementsBoundByIndex
-            .filter { pickerBand.contains(CGPoint(x: $0.frame.midX, y: $0.frame.midY))
-                && !$0.label.contains(",") && !$0.label.isEmpty }
-            .sorted { $0.frame.minX < $1.frame.minX }
-        let statLabels = stats.map(\.label)
-        let defaultStat = stats.first(where: { $0.isSelected })?.label
+        let (statLabels, defaultStat) = pickerStats(app, in: pickerBand)
         print("10236_STATS \(statLabels) default=\(defaultStat ?? "nil")")
         XCTAssertFalse(statLabels.isEmpty, "No statistic picker under the header (single-stat matrices draw none; this game served several).")
 
@@ -129,12 +171,10 @@ final class ALivePropsQuestionClosesBackToItsPlace10236Tests: XCTestCase {
             // 3. Browse the threshold columns sideways.
             let cells = app.buttons.matching(Self.cellPredicate)
             XCTAssertTrue(cells.firstMatch.waitForExistence(timeout: 5), "'\(stat)' drew no question cells.")
-            func visibleCells() -> [XCUIElement] {
-                cells.allElementsBoundByIndex.filter { $0.isHittable && band.contains($0.frame) }
-            }
+            func visibleCells() -> [SeenCell] { reachableCells(app, in: band) }
             let leftBefore = visibleCells().min { ($0.frame.minY, $0.frame.minX) < ($1.frame.minY, $1.frame.minX) }
             let leftBeforeKey = leftBefore.map { Self.questionKey($0.label) } ?? ""
-            leftBefore?.swipeLeft(velocity: .slow)
+            leftBefore.map { cell(app, key: Self.questionKey($0.label)) }?.swipeLeft(velocity: .slow)
             sleep(1)
             let visible = visibleCells()
             let leftAfter = visible.min { ($0.frame.minY, $0.frame.minX) < ($1.frame.minY, $1.frame.minX) }
@@ -173,11 +213,12 @@ final class ALivePropsQuestionClosesBackToItsPlace10236Tests: XCTestCase {
                 print("10236_CONTROL no-detail dwell=\(Int(dwell))s headerY=\(ys.map { Int($0) }) drift=\(controlDrift)")
             }
             let headerY = header.frame.minY
-            let targetFrame = target.frame
-            let referenceFrame = reference.frame
+            // Re-measured live, after the control dwell, as before.
+            let targetFrame = cell(app, key: key).frame
+            let referenceFrame = cell(app, key: referenceKey).frame
 
             // 5. Open the exact question.
-            target.tap()
+            cell(app, key: key).tap()
             let close = app.buttons["Close"]
             XCTAssertTrue(close.waitForExistence(timeout: 5), "Tapping '\(targetLabel)' opened no detail with a Close button.")
             XCTAssertTrue(app.navigationBars[player].waitForExistence(timeout: 3),
