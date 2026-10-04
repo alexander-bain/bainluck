@@ -167,6 +167,7 @@ from app.utils import (
 )
 from app.utils.odds_filtering import filter_stale_bookmaker_snapshots as _filter_stale_bookmaker_snapshots
 from app.utils.odds_math import refuse_incoherent_projections
+from app.utils.projected_final_points import bookmaker_history_provenance
 from app.utils import period_markers as pm_source
 from app.utils.winprob_evidence import (
     SERVED_CONTRACT as WINPROB_EVIDENCE_CONTRACT,
@@ -31752,12 +31753,18 @@ async def get_event_odds_history(
             }
             # #8231: the per-book line gets the consensus's refusal.
             refuse_incoherent_projections([point_data])
+            # #10461: additive `kind` ("recorded" / "synthetic") + `observed_at`
+            # (the snapshot's original capture, never a venue trade clock), so a
+            # client can tell a cutoff re-stamp from a new reading. Appended
+            # AFTER every existing key; refused (empty) on an unusable instant.
+            provenance = bookmaker_history_provenance(captured_at=snap.captured_at, cutoff=cutoff) or {}
 
             if cutoff is None or snap.captured_at >= cutoff:
                 # Normal case: use actual capture time
                 bm_points.append({
                     "timestamp": snap.captured_at.replace(second=0, microsecond=0).isoformat(),
-                    **point_data
+                    **point_data,
+                    **provenance,
                 })
             else:
                 # Snapshot predates cutoff - check if it was valid during window
@@ -31766,7 +31773,8 @@ async def get_event_odds_history(
                     # Create synthetic point at cutoff
                     bm_points.append({
                         "timestamp": cutoff.replace(second=0, microsecond=0).isoformat(),
-                        **point_data
+                        **point_data,
+                        **provenance,
                     })
 
         # Sort by timestamp
