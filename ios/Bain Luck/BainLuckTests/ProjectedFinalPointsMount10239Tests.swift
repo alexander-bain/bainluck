@@ -5,7 +5,7 @@ import XCTest
 /// decoded from a served `/history` shape (twin of web `projectedFinalPointsMount`).
 @MainActor
 final class ProjectedFinalPointsMount10239Tests: XCTestCase {
-    private func history(bookKind: String = "", marker: String = #"{"period":"1st Quarter","source":"espn_state","precision":"first_seen","not_before":"2026-09-14T00:20:00Z"}"#,
+    private func history(bookKind: String = "", historyStatus: String = #""completed""#, marker: String = #"{"period":"1st Quarter","source":"espn_state","precision":"first_seen","not_before":"2026-09-14T00:20:00Z"}"#,
                          books: String? = nil) throws -> EventHistoryResponse {
         let kindField = bookKind.isEmpty ? "" : #","kind":\#(bookKind)"#
         let bookRows = books ?? """
@@ -18,7 +18,7 @@ final class ProjectedFinalPointsMount10239Tests: XCTestCase {
           {"timestamp":"2026-09-14T00:30:00Z","projected_home_score":30,"projected_away_score":3}]}
         """
         let json = """
-        {"event_id":14780549,"home_team":"Home","away_team":"Away","status":"completed",
+        {"event_id":14780549,"home_team":"Home","away_team":"Away","status":\(historyStatus),
          "completed_at":"2026-09-14T03:30:00Z","history":[],
          "bookmaker_history":\(bookRows),
          "score_history":[{"timestamp":"2026-09-14T01:30:00Z","home_score":7,"away_score":0},
@@ -76,6 +76,21 @@ final class ProjectedFinalPointsMount10239Tests: XCTestCase {
         XCTAssertEqual(synthetic.pairs.map(\.kind), [.synthetic, .recorded])
         let mistyped = try history(bookKind: "7")
         XCTAssertNil(mistyped.bookmakerHistory?["draftkings"]?.first?.kind, "a bad kind never blanks the envelope")
+    }
+
+    func testAFinishedPageOverAnUnfinishedHistoryMountsNothing() throws {
+        // completed_at is set in every case; only the history's own status differs.
+        for status in [#""live""#, #""scheduled""#, "null"] {
+            XCTAssertNil(mount(try history(historyStatus: status)), status)
+        }
+    }
+
+    func testAnUnknownServedKindIsNeverPromotedToRecorded() throws {
+        let unknown = try history(bookKind: #""estimated""#)
+        XCTAssertEqual(unknown.bookmakerHistory?["draftkings"]?.first?.kind, "estimated", "the DTO keeps it")
+        XCTAssertEqual(try XCTUnwrap(mount(unknown)).pairs.map(\.kind), [.synthetic, .recorded])
+        let recorded = try XCTUnwrap(mount(try history(bookKind: #""recorded""#)))
+        XCTAssertEqual(recorded.pairs.map(\.kind), [.recorded, .recorded])
     }
 
     func testNoUsablePairMountsNothing() throws {

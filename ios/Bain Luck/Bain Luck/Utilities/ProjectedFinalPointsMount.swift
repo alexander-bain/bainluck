@@ -30,6 +30,10 @@ enum ProjectedFinalPointsMount {
         guard sportKey == "americanfootball_nfl",
               EventState.isFinished(eventStatus),
               let history,
+              // The no-cutoff reading below is the FINISHED history's branch;
+              // a page that reads final over a live/scheduled/unlabelled
+              // history may carry cutoff re-stamps, so it refuses.
+              EventState.isFinished(history.status),
               let finalAt = history.completedAt?.asDate,
               let sourceKey = pickSportsbook(history.bookmakerHistory),
               let floor = firstRecordedGameStateAt(history.periodMarkers, sportKey: sportKey)
@@ -37,10 +41,7 @@ enum ProjectedFinalPointsMount {
         let pairs: [ProjectedFinalPointsSeries.Pair] = (history.bookmakerHistory?[sourceKey] ?? []).compactMap { row in
             guard let at = row.timestamp.asDate else { return nil }
             return .init(at: at, home: row.projectedHomeScore, away: row.projectedAwayScore,
-                         homeProbability: row.homeProbability,
-                         // A served marker is honoured; its absence is "recorded"
-                         // only because this route had no cutoff to re-stamp at.
-                         kind: row.kind == "synthetic" ? .synthetic : .recorded)
+                         homeProbability: row.homeProbability, kind: pairKind(row.kind))
         }
         var actuals: [ProjectedFinalPointsSeries.Actual] = (history.scoreHistory ?? []).compactMap { row in
             guard let at = row.timestamp.asDate else { return nil }
@@ -56,6 +57,14 @@ enum ProjectedFinalPointsMount {
             pairs: pairs, actuals: actuals, kickoffAt: nil, scoreObservationStartAt: floor,
             finalAt: finalAt, asOf: finalAt, windowStartAt: nil, requestCutoffAt: nil)
         return ProjectedFinalPointsSeries.build(input) == nil ? nil : input
+    }
+
+    /// Only literal `"recorded"`, or no marker at all (behind the
+    /// finished-history guard: that route had no cutoff to re-stamp at), is
+    /// recorded. `"synthetic"` and any string this build does not know are
+    /// synthetic, which the utility refuses.
+    static func pairKind(_ served: String?) -> ProjectedFinalPointsSeries.Kind {
+        served == nil || served == "recorded" ? .recorded : .synthetic
     }
 
     /// The named book with the most usable full-game pairs; ties go to the
