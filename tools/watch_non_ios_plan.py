@@ -2,6 +2,7 @@
 """Fail closed on Xcode's non-iOS dependency graph and Watch copy commands."""
 import argparse
 import json
+import plistlib
 import re
 from pathlib import Path
 
@@ -37,11 +38,43 @@ def inspect(log: str, platform: str, exit_code: int) -> dict:
     if re.search(r"^\s*(?:SwiftCompile|SwiftDriver|CompileSwift|Ld|CodeSign)[^\n]*(?:BainLuckWatch|BainLuckComplication)", log, re.MULTILINE):
         raise ValueError("Watch compilation or signing scheduled")
     return {"platform": platform, "target_count": count, "targets": [n for n, _ in entries],
-            "verdict": "PASS", "scope": "non-iOS build plan excludes Watch targets and content; compilation and runtime unverified"}
+            "verdict": "PASS", "scope": "unsigned non-iOS build succeeded and excludes Watch targets and content; runtime and distribution unverified"}
+
+
+def inspect_product(products: Path, platform: str) -> dict:
+    candidates = list(products.glob("**/Bain Luck.app"))
+    if len(candidates) != 1:
+        raise ValueError("Expected exactly one built Bain Luck application")
+    app = candidates[0]
+    info_path = app / ("Contents/Info.plist" if platform == "macOS" else "Info.plist")
+    info = plistlib.loads(info_path.read_bytes())
+    if not isinstance(info, dict) or info.get("CFBundleIdentifier") != "com.bainluck.Bain-Luck":
+        raise ValueError("Built app identity does not match Bain Luck")
+    expected = "MacOSX" if platform == "macOS" else "XROS"
+    if expected not in info.get("CFBundleSupportedPlatforms", []):
+        raise ValueError("Built app platform does not match destination")
+    executable = info.get("CFBundleExecutable", "")
+    if not executable or Path(executable).name != executable:
+        raise ValueError("Missing or invalid app executable name")
+    binary = app / ("Contents/MacOS" if platform == "macOS" else "") / executable
+    if not binary.is_file() or binary.stat().st_size == 0:
+        raise ValueError("Built app executable missing or empty")
+    for item in app.rglob("*"):
+        if item.is_dir() and (item.name == "Watch" or "BainLuckWatch" in item.name or "BainLuckComplication" in item.name):
+            raise ValueError("Watch content present in non-iOS product")
+        if item.name == "Info.plist":
+            child = plistlib.loads(item.read_bytes())
+            if not isinstance(child, dict):
+                raise ValueError("Invalid nested bundle metadata")
+            if "WatchOS" in child.get("CFBundleSupportedPlatforms", []) or ".watchkitapp" in child.get("CFBundleIdentifier", ""):
+                raise ValueError("Watch bundle identity present in non-iOS product")
+    return {"app": str(app), "bundle_id": info.get("CFBundleIdentifier"), "built_platform": expected,
+            "watch_payload": "ABSENT"}
 
 
 def main() -> None:
     parser = argparse.ArgumentParser()
+    parser.add_argument("--products", required=True, type=Path)
     parser.add_argument("--log", required=True, type=Path)
     parser.add_argument("--platform", required=True)
     parser.add_argument("--exit-code", required=True, type=int)
@@ -52,8 +85,11 @@ def main() -> None:
     try:
         if not re.fullmatch(r"[0-9a-f]{40}", args.sha):
             raise ValueError("Expected full source SHA")
-        receipt.update(inspect(args.log.read_text(), args.platform, args.exit_code))
-    except (ValueError, OSError) as error:
+        result = inspect(args.log.read_text(), args.platform, args.exit_code)
+        product = inspect_product(args.products, args.platform)
+        receipt.update(result)
+        receipt.update(product)
+    except (ValueError, OSError, plistlib.InvalidFileException) as error:
         receipt["reason"] = str(error)
         args.output.write_text(json.dumps(receipt, indent=2) + "\n")
         raise SystemExit(str(error))

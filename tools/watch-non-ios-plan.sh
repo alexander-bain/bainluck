@@ -1,5 +1,5 @@
 #!/bin/bash
-# Companion safety gate only: inspect actual unsigned non-iOS Xcode build plans.
+# Companion safety gate: build unsigned non-iOS products and inspect the dependency graph.
 set -euo pipefail
 if [[ "${GITHUB_ACTIONS:-}" != true || "${RUNNER_ENVIRONMENT:-}" != github-hosted ]]; then
   echo 'Non-iOS plan gate requires a disposable GitHub-hosted runner.' >&2
@@ -15,11 +15,11 @@ case "$PLATFORM" in macOS|visionOS) ;; *) exit 2 ;; esac
   python3 - "$OUT/$PLATFORM-receipt.json" "$SHA" "$PLATFORM" <<'PY'
 import json, sys
 from pathlib import Path
-Path(sys.argv[1]).write_text(json.dumps({'sha': sys.argv[2], 'platform': sys.argv[3], 'verdict': 'UNPAID', 'reason': 'Build plan has not passed inspection'}, indent=2) + '\n')
+Path(sys.argv[1]).write_text(json.dumps({'sha': sys.argv[2], 'platform': sys.argv[3], 'verdict': 'UNPAID', 'reason': 'Unsigned build and packaging exclusion have not passed inspection'}, indent=2) + '\n')
 PY
 xcodebuild -version > "$OUT/toolchain.txt"
 FAILED=0
-  if xcodebuild -dry-run build -project "$ROOT/ios/Bain Luck/Bain Luck.xcodeproj" \
+  if xcodebuild build -project "$ROOT/ios/Bain Luck/Bain Luck.xcodeproj" \
     -scheme 'Bain Luck' -configuration Release -destination "generic/platform=$PLATFORM" \
     -derivedDataPath "$RUN/$PLATFORM-DerivedData" -jobs 2 \
     CODE_SIGNING_ALLOWED=NO CODE_SIGNING_REQUIRED=NO \
@@ -31,6 +31,7 @@ FAILED=0
   fi
   printf '%s\n' "$RESULT" > "$OUT/$PLATFORM-exit.txt"
   if ! python3 "$ROOT/tools/watch_non_ios_plan.py" --log "$OUT/$PLATFORM-plan.log" \
+    --products "$RUN/$PLATFORM-DerivedData/Build/Products" \
     --platform "$PLATFORM" --exit-code "$RESULT" --sha "$SHA" \
     --output "$OUT/$PLATFORM-receipt.json"; then
     FAILED=1
