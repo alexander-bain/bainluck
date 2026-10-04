@@ -3,12 +3,23 @@ import XCTest
 final class SelectedGameJourneyTests: XCTestCase {
     @MainActor
     func testPickerSelectionSurvivesOfflineRelaunchAndCanChange() throws {
+        try runJourney(stressLargeText: false)
+    }
+
+    @MainActor
+    func testAccessibilityLayoutStressKeepsReadingsAndControlsReachable() throws {
+        try runJourney(stressLargeText: true)
+    }
+
+    @MainActor
+    private func runJourney(stressLargeText: Bool) throws {
         continueAfterFailure = false
         let app = XCUIApplication()
         app.launchEnvironment = [
             "BAINLUCK_WATCH_UI_TEST": "1",
             "BAINLUCK_WATCH_UI_SUITE": UUID().uuidString,
-            "BAINLUCK_WATCH_UI_RESET": "1"
+            "BAINLUCK_WATCH_UI_RESET": "1",
+            "BAINLUCK_WATCH_UI_LARGE_TEXT": stressLargeText ? "1" : "0"
         ]
         app.launch()
         let first = app.buttons["watch.pick.101"]
@@ -22,8 +33,9 @@ final class SelectedGameJourneyTests: XCTestCase {
         let state = app.descendants(matching: .any)["watch.game-state"].firstMatch
         XCTAssertTrue(state.waitForExistence(timeout: 15))
         let receivedSize = try XCTUnwrap(state.value as? String)
-        print("WATCH_UI_DYNAMIC_TYPE=\(receivedSize)")
-        let largeText = receivedSize == "accessibility5"
+        print("WATCH_UI_\(stressLargeText ? "STRESS" : "STANDARD")_TYPE=\(receivedSize)")
+        if stressLargeText { XCTAssertEqual(receivedSize, "accessibility5") }
+        let largeText = stressLargeText
         capture(app, name: "Selected game state - \(receivedSize)")
         if largeText {
             let homeScore = app.descendants(matching: .any)["watch.home-score"].firstMatch

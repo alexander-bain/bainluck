@@ -204,3 +204,17 @@ integration, independently of the earlier Watch membership approval. No existing
 iPhone target, build phase, scheme or application source is modified by this UI
 slice. If the runner requires Watch pairing or cannot expose a matching runtime,
 the journey fails as an unpaid gate; it never borrows an existing iPhone.
+
+### Large-text verification boundary
+
+On Xcode 27's watchOS 27 hosted runtime, `simctl ui <watch> content_size`
+returns POSIX45, “Runtime does not support dynamic text,” including for `large`.
+Do not claim that simulator system preferences were verified. The UI suite instead
+runs a default-size journey and a separate **forced accessibility5 layout stress**
+journey. The override is above the real view, requires a valid Debug fixture plus
+its explicit large-text launch flag, and is excluded from Release. The tests read
+the actual SwiftUI size back through a fixture-only accessibility diagnostic and
+verify it survives offline and changed-selection relaunches. Named readings are
+scrolled fully into view, and screenshots must still be inspected. This proves
+layout/control behavior at that forced size, not physical Watch Settings or actual
+VoiceOver speech. Those attended checks remain separate.

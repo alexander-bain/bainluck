@@ -108,19 +108,14 @@ jobs:
           retention-days: 7
 
   watch-ui-journey:
-    name: Watch picker interaction journey (${{ matrix.text-size }})
-    strategy:
-      fail-fast: false
-      matrix:
-        text-size: [standard, accessibility]
+    name: Watch picker interaction journey
     concurrency:
-      group: watch-ui-${{ matrix.text-size }}-${{ github.event_name == 'pull_request' && github.event.pull_request.number || github.run_id }}
+      group: watch-ui-${{ github.event_name == 'pull_request' && github.event.pull_request.number || github.run_id }}
       cancel-in-progress: true
     needs: watch-mvp
     runs-on: xcode-27
     timeout-minutes: 35
     env:
-      WATCH_UI_TEXT_SIZE: ${{ matrix.text-size }}
       DEVELOPER_DIR: /Applications/Xcode_27.0.app/Contents/Developer
     steps:
       - uses: actions/checkout@v6
@@ -133,7 +128,7 @@ jobs:
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: watch-ui-journey-evidence-${{ matrix.text-size }}
+          name: watch-ui-journey-evidence
           path: |
             build/watch-ui-journey/*.txt
             build/watch-ui-journey/*.json
