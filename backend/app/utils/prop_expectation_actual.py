@@ -76,6 +76,14 @@ REFUSAL_REASONS = (
     "stat_not_in_after_set",
 )
 
+# A player's "N+" can never be likelier than their "M+" for M < N. When two
+# admitted rungs of one player × stat × period say otherwise, at least one pin
+# is wrong and the ladder cannot say which (SD@MIL 15322620: Machado HR 1+
+# pinned 0.075, 2+ pinned 0.485 off an empty Polymarket book, #9083). Both
+# rungs are withheld. Float slack only — not a policy margin.
+LADDER_INVERTED = "ladder_inverted"
+_LADDER_SLACK = 1e-9
+
 
 def _parse_stamp(value: Any) -> Optional[datetime]:
     if isinstance(value, datetime):
@@ -343,6 +351,38 @@ def _expectation(legs: list[dict], pins: list[dict]) -> dict:
     }
 
 
+def _withhold_inverted_ladders(questions: list[dict]) -> None:
+    """Withhold BOTH rungs of every inverted pair within one ladder (see
+    ``LADDER_INVERTED``). Each withheld contributor moves to ``excluded``
+    under that reason, so the evidence stays on the payload."""
+    ladders: dict[str, list[dict]] = {}
+    for q in questions:
+        if q["expectation"]["state"] == "available":
+            ladders.setdefault(q["actual_key"], []).append(q)
+    for rungs in ladders.values():
+        rungs.sort(key=lambda q: q["predicate"]["count"])
+        inverted: set[int] = set()
+        for i, lower in enumerate(rungs):
+            for j in range(i + 1, len(rungs)):
+                upper = rungs[j]
+                if (
+                    upper["predicate"]["count"] > lower["predicate"]["count"]
+                    and upper["expectation"]["probability"]
+                    - lower["expectation"]["probability"] > _LADDER_SLACK
+                ):
+                    inverted.update((i, j))
+        for k in inverted:
+            exp = rungs[k]["expectation"]
+            rungs[k]["expectation"] = {
+                "state": "unavailable", "reason": LADDER_INVERTED, "probability": None,
+                "basis": None, "observed_at": None, "contributors": [],
+                "excluded": exp["excluded"] + [
+                    {"source": c["source"], "outcome_id": c["outcome_id"], "reason": LADDER_INVERTED}
+                    for c in exp["contributors"]
+                ],
+            }
+
+
 def _venue_grade(legs: list[dict]) -> Optional[dict]:
     """§5: a venue's own settlement, verbatim, kept apart from the comparison.
 
@@ -445,6 +485,7 @@ def build_after_player_props(
                 oid for l in legs for oid in (l["row"].get("contributor_outcome_ids") or [])
             }),
         })
+    _withhold_inverted_ladders(questions)
     # Server-written order; clients key on it and never index.
     questions.sort(key=lambda q: (q["stat_key"], q["subject"]["label"], q["predicate"]["count"]))
 

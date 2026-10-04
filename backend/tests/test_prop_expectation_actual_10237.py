@@ -435,6 +435,84 @@ class TestExpectation:
         assert _q(payload)["expectation"]["excluded"][0]["reason"] == "pin_after_start"
 
 
+RICE_1 = "s:ben rice|home_runs|full_game|ge:1|over"
+RICE_3 = "s:ben rice|home_runs|full_game|ge:3|over"
+
+
+def _ou(outcome_id, market_id, line, player="Ben Rice", stat="Home Runs"):
+    return _row(outcome_id, market_id, "Over", market_name=f"{player}: {stat} O/U {line}", source="polymarket")
+
+
+class TestLadderInversion:
+    """SD@MIL 15322620 (native, #10237 comment 5979520656): Machado HR 1+
+    pinned 0.075 (pm 63967831 O/U 0.5) and 2+ pinned 0.485 (pm 63865773 O/U
+    1.5), both admitted. P(2+) > P(1+) is impossible; both rungs withheld."""
+
+    def test_the_machado_specimen_withholds_both_rungs(self):
+        rows = [_ou(31, 3, "0.5"), _ou(21, 2, "1.5")]
+        payload = _build(rows, pins={3: _pin({31: 0.075}), 2: _pin({21: 0.485})})
+        for key, oid in ((RICE_1, 31), (RICE_2, 21)):
+            exp = _q(payload, key)["expectation"]
+            assert (exp["state"], exp["reason"], exp["probability"]) == (
+                "unavailable", after.LADDER_INVERTED, None)
+            assert exp["contributors"] == [] and exp["basis"] is None and exp["observed_at"] is None
+            assert exp["excluded"] == [{"source": "polymarket", "outcome_id": oid, "reason": "ladder_inverted"}]
+        assert payload["coverage"]["expectation_available"] == 0
+        # The comparison still runs: the final count is a separate channel.
+        assert _q(payload, RICE_2)["comparison"]["state"] == "reached"
+
+    @pytest.mark.parametrize("p1, p2", [(0.30, 0.05), (0.10, 0.10)])
+    def test_a_monotone_or_flat_ladder_is_untouched(self, p1, p2):
+        rows = [_ou(31, 3, "0.5"), _ou(21, 2, "1.5")]
+        payload = _build(rows, pins={3: _pin({31: p1}), 2: _pin({21: p2})})
+        assert _q(payload, RICE_1)["expectation"]["probability"] == p1
+        assert _q(payload, RICE_2)["expectation"]["probability"] == p2
+        assert payload["coverage"]["expectation_available"] == 2
+
+    def test_only_the_rungs_of_an_inverted_pair_are_withheld(self):
+        rows = [_ou(31, 3, "0.5"), _ou(21, 2, "1.5"), _ou(41, 4, "2.5")]
+        payload = _build(rows, pins={3: _pin({31: 0.30}), 2: _pin({21: 0.50}), 4: _pin({41: 0.01})})
+        assert _q(payload, RICE_1)["expectation"]["reason"] == "ladder_inverted"
+        assert _q(payload, RICE_2)["expectation"]["reason"] == "ladder_inverted"
+        assert _q(payload, RICE_3)["expectation"]["probability"] == 0.01
+
+    def test_a_non_adjacent_inversion_is_caught(self):
+        # 1+ ≥ 2+ holds and 2+ < 3+ is adjacent; only 1+ < 3+ names the 1+ rung.
+        rows = [_ou(31, 3, "0.5"), _ou(21, 2, "1.5"), _ou(41, 4, "2.5")]
+        payload = _build(rows, pins={3: _pin({31: 0.10}), 2: _pin({21: 0.08}), 4: _pin({41: 0.12})})
+        assert {_q(payload, k)["expectation"]["reason"] for k in (RICE_1, RICE_2, RICE_3)} == {"ladder_inverted"}
+
+    def test_an_unavailable_rung_is_not_part_of_the_ladder(self):
+        rows = [_ou(31, 3, "0.5"), _ou(21, 2, "1.5")]
+        payload = _build(rows, pins={2: _pin({21: 0.485})})
+        assert _q(payload, RICE_1)["expectation"]["reason"] == "no_admitted_pin"
+        assert _q(payload, RICE_2)["expectation"]["probability"] == 0.485
+
+    def test_ladders_are_per_player_and_stat(self):
+        rows = [
+            _ou(31, 3, "0.5"),
+            _ou(51, 5, "1.5", stat="Hits"),
+            _ou(61, 6, "1.5", player="Aaron Judge"),
+        ]
+        pins = {3: _pin({31: 0.075}), 5: _pin({51: 0.40}), 6: _pin({61: 0.30})}
+        payload = _build(rows, pins=pins)
+        assert payload["coverage"]["expectation_available"] == 3
+
+    def test_a_blended_rung_moves_every_contributor_to_excluded(self):
+        rows = [_ou(31, 3, "0.5"), _row(11, 1, "Ben Rice: 2+"), _ou(21, 2, "1.5")]
+        pins = {3: _pin({31: 0.05}), 1: _pin({11: 0.06}), 2: _pin({21: 0.485})}
+        exp = _q(_build(rows, pins=pins), RICE_2)["expectation"]
+        assert exp["state"] == "unavailable"
+        assert [(e["source"], e["outcome_id"], e["reason"]) for e in exp["excluded"]] == [
+            ("kalshi", 11, "ladder_inverted"), ("polymarket", 21, "ladder_inverted")]
+
+    def test_strawman_without_the_rule_serves_the_impossible_chance(self, monkeypatch):
+        monkeypatch.setattr(after, "_withhold_inverted_ladders", lambda questions: None)
+        rows = [_ou(31, 3, "0.5"), _ou(21, 2, "1.5")]
+        payload = _build(rows, pins={3: _pin({31: 0.075}), 2: _pin({21: 0.485})})
+        assert _q(payload, RICE_2)["expectation"]["probability"] == 0.485
+
+
 # ═══════════════════════════════════════════════════ ruling 003 ═══
 
 
