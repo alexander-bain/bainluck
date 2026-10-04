@@ -470,11 +470,13 @@ struct EventDetailView: View {
                             range: chartRange
                         )
                     }
-                    // #10239 — finished NFL only, secondary to the win
-                    // probability above; absent rather than an empty tile.
+                    // #10239 / #10478 — NFL before, during and after, secondary
+                    // to the win probability above; absent rather than an empty
+                    // tile. Before and during read the clock the history arrived on.
                     if let projectedInput = ProjectedFinalPointsMount.input(
                         sportKey: event.sport, eventStatus: event.status, history: vm.history,
-                        finalHome: event.homeScore, finalAway: event.awayScore) {
+                        finalHome: event.homeScore, finalAway: event.awayScore,
+                        asOf: vm.historyArrivedAt) {
                         ProjectedFinalPointsChartView(
                             input: projectedInput,
                             homeTeam: event.homeTeam,

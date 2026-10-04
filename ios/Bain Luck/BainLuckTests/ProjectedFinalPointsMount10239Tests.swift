@@ -52,8 +52,8 @@ final class ProjectedFinalPointsMount10239Tests: XCTestCase {
 
     /// `status` / `completedAt` are raw JSON (`"null"` serves null).
     private func history(status: String = #""completed""#, completedAt: String = #""2026-09-14T03:30:00Z""#,
-                         books: String, scores: String = Self.scores,
-                         markers: [String] = [Self.observedQ1]) throws -> EventHistoryResponse {
+                         books: String, scores: String = ProjectedFinalPointsMount10239Tests.scores,
+                         markers: [String] = [ProjectedFinalPointsMount10239Tests.observedQ1]) throws -> EventHistoryResponse {
         let json = """
         {"event_id":14780549,"home_team":"Home","away_team":"Away","status":\(status),
          "completed_at":\(completedAt),"history":[],
@@ -75,7 +75,7 @@ final class ProjectedFinalPointsMount10239Tests: XCTestCase {
     /// The pre-contract finished fixture: draftkings unmarked, plus an unnamed
     /// book with more pairs that must never win.
     private func legacyFinished(firstRowKind: String? = nil, historyStatus: String = #""completed""#,
-                                markers: [String] = [Self.observedQ1]) throws -> EventHistoryResponse {
+                                markers: [String] = [ProjectedFinalPointsMount10239Tests.observedQ1]) throws -> EventHistoryResponse {
         try history(status: historyStatus, books: books([
             "draftkings": [row("00:10", 27, 7.5, kind: firstRowKind), row("01:00", 28, 8, prob: 0.85)],
             "unknownbook": [row("00:10", 30, 3), row("00:20", 30, 3), row("00:30", 30, 3)],
@@ -183,7 +183,7 @@ final class ProjectedFinalPointsMount10239Tests: XCTestCase {
 
     // MARK: - During
 
-    private func duringHistory(markers: [String] = [Self.observedQ1]) throws -> EventHistoryResponse {
+    private func duringHistory(markers: [String] = [ProjectedFinalPointsMount10239Tests.observedQ1]) throws -> EventHistoryResponse {
         try history(status: live, completedAt: "null", books: books(["draftkings": [
             rec("00:10", 27, 10), rec("00:40", 28, 10), rec("01:00", 30, 12), rec("02:05", 31, 13),
         ]]), markers: markers)

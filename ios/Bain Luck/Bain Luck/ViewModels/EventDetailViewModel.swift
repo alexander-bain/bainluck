@@ -45,8 +45,16 @@ final class EventDetailViewModel: ObservableObject {
     @Published private(set) var loading = true
     @Published private(set) var error: String?
     @Published private(set) var history: EventHistoryResponse? {
-        didSet { historyDigest = history.map(EventHistoryDigest.init) }
+        didSet {
+            historyDigest = history.map(EventHistoryDigest.init)
+            historyArrivedAt = history == nil ? nil : Date(timeIntervalSince1970: now())
+        }
     }
+    /// #10239 / #10478 — the reader's clock when the current `history` arrived.
+    /// The projected final-points module reads it as `asOf` on a scheduled or
+    /// live page, so the chart holds still between payloads instead of moving
+    /// with every rebuild. Not `@Published`, for the same reason as the digest.
+    private(set) var historyArrivedAt: Date?
     /// #8651 — the history's live edge and latest reading, read once per
     /// payload. Not `@Published`: it changes only with `history`, which already
     /// publishes, and the page reads it on every rebuild.
