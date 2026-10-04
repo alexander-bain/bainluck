@@ -143,3 +143,170 @@ nonisolated struct DuringPropCoverage: Decodable, Equatable, Sendable {
     let actualOnly: Int?
     let unavailable: Int?
 }
+
+// MARK: - After player-props comparison (#10237)
+
+/// `after_player_props` on `GET /api/events/{id}/game-markets` — contract
+/// `10237.v1` (Authority ack v1 + 0215Z addendum), built by
+/// `backend/app/utils/prop_expectation_actual.py`.
+///
+/// 🔴 EVERY DECISION HERE IS THE SERVER'S, AS IN ``DuringPlayerProps``. The
+/// saved pregame chance, the final count, whether that count is official, and
+/// whether it reached the line (`comparison.state`) are all typed upstream
+/// (ruling 003). The phone never compares a count with a threshold, matches a
+/// player by name, averages sources, or reads a venue's grade as the result.
+///
+/// ABSENT, NULL AND AN UNKNOWN CONTRACT MEAN THE SAME THING: the key is `null`
+/// unless the game is finished and a question types, older servers omit it,
+/// and a body the app cannot decode (or a contract it does not know) is
+/// treated as absent — the page falls back to what it drew before. When it is
+/// non-null the server sends `during_player_props: null` (frozen reader
+/// contract), so the page never has to choose a phase itself.
+nonisolated struct AfterPlayerProps: Decodable, Equatable, Sendable {
+    static let supportedContract = "10237.v1"
+
+    let contract: String?
+    let stats: [AfterPropStat]
+    /// One per player × stat, in the server's order — the final count is
+    /// stated once per player from here, never repeated per threshold.
+    var actuals: [AfterPropActual]
+    var questions: [AfterPropQuestion]
+    let coverage: AfterPropCoverage?
+
+    var isSupported: Bool { contract == Self.supportedContract }
+
+    /// The actual a question names, by its `actual_key`, and only one whose
+    /// player and stat agree with the question. Never another row's.
+    func actual(for question: AfterPropQuestion) -> AfterPropActual? {
+        actuals.first {
+            $0.actualKey == question.actualKey && $0.subject.key == question.subject.key
+                && $0.statKey == question.statKey && $0.periodKey == question.periodKey
+        }
+    }
+
+    func stat(_ statKey: String) -> AfterPropStat? { stats.first { $0.statKey == statKey } }
+}
+
+/// One statistic the payload has questions for, in the server's table order.
+nonisolated struct AfterPropStat: Decodable, Equatable, Identifiable, Sendable {
+    var id: String { statKey }
+    let statKey: String
+    /// "Home Runs", "Hits".
+    let label: String
+    let unitSingular: String
+    let unitPlural: String
+    let periodKey: String
+    let periodLabel: String?
+    /// `count_at_least` in v1.
+    let predicate: String
+}
+
+/// ESPN's official final count for one player × stat, or why there is none.
+nonisolated struct AfterPropActual: Decodable, Equatable, Identifiable, Sendable {
+    var id: String { actualKey }
+    let actualKey: String
+    let subject: DuringPropSubject
+    let statKey: String
+    let periodKey: String
+    /// `final` · `pending` · `unknown`. Anything else reads as unknown.
+    let state: String
+    /// Machine reason (`player_not_in_box`, `provider_not_final`, …) — never
+    /// printed (notice 34), never turned into "did not play".
+    let reason: String?
+    let value: Int?
+    /// "ESPN final statistic" when final.
+    let sourceLabel: String?
+    let provider: String?
+    let providerEventId: String?
+    let athleteId: String?
+    let teamId: String?
+    /// When the box was RETRIEVED — not when the play or a correction happened.
+    let capturedAt: String?
+    let finalityBasis: String?
+    /// Changes only when the statistic changes; a re-fetch keeps it.
+    let recordVersion: String?
+
+    var isFinal: Bool { state == "final" }
+
+    /// The official count, or nil. A verified final 0 is a real 0.
+    var finalCount: Int? {
+        guard isFinal, let value, value >= 0 else { return nil }
+        return value
+    }
+}
+
+/// One typed over question: one player, one stat, one threshold.
+nonisolated struct AfterPropQuestion: Decodable, Equatable, Identifiable, Sendable {
+    var id: String { questionKey }
+    let questionKey: String
+    /// The ``AfterPropActual`` this question is judged against.
+    let actualKey: String
+    let subject: DuringPropSubject
+    let statKey: String
+    let periodKey: String
+    let predicate: DuringPropPredicate
+    let expectation: AfterPropExpectation
+    let comparison: AfterPropComparison?
+    /// A venue's own settlement, verbatim — detail only, never the mark.
+    let venueGrade: AfterPropVenueGrade?
+    // Leading underscores are retained by convertFromSnakeCase.
+    var _marketIds: [Int]? = nil
+    var contributorOutcomeIds: [Int]? = nil
+}
+
+/// The saved pregame chance: the pin as stored before first pitch.
+nonisolated struct AfterPropExpectation: Decodable, Equatable, Sendable {
+    /// `available` · `unavailable`. Anything else reads as unavailable.
+    let state: String
+    let reason: String?
+    let probability: Double?
+    /// `single_source` · `blend_mean` — the server's basis, never recomputed.
+    let basis: String?
+    let observedAt: String?
+    let contributors: [AfterPropContributor]
+    let excluded: [AfterPropExcluded]
+
+    /// The chance a reader may be shown, or nil. A finite 0 stays.
+    var savedProbability: Double? {
+        guard state == "available", let probability, probability.isFinite,
+              probability >= 0, probability <= 1 else { return nil }
+        return probability
+    }
+}
+
+nonisolated struct AfterPropContributor: Decodable, Equatable, Sendable {
+    let source: String?
+    let marketId: Int?
+    let outcomeId: Int?
+    let outcomeName: String?
+    let probability: Double?
+    let observedAt: String?
+    let admission: String?
+}
+
+nonisolated struct AfterPropExcluded: Decodable, Equatable, Sendable {
+    let source: String?
+    let outcomeId: Int?
+    let reason: String?
+}
+
+nonisolated struct AfterPropComparison: Decodable, Equatable, Sendable {
+    /// `reached` · `below` · `unknown`, drawn verbatim.
+    let state: String
+    let reason: String?
+}
+
+nonisolated struct AfterPropVenueGrade: Decodable, Equatable, Sendable {
+    let isWinner: Bool?
+    let resolutionSource: String?
+}
+
+nonisolated struct AfterPropCoverage: Decodable, Equatable, Sendable {
+    let scope: String?
+    let questions: Int?
+    let actuals: Int?
+    let `final`: Int?
+    let pending: Int?
+    let unknown: Int?
+    let expectationAvailable: Int?
+}
