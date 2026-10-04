@@ -17,6 +17,9 @@ private struct SourceRowWidthKey: PreferenceKey {
 struct EventDetailView: View {
     @Environment(\.scenePhase) private var scenePhase
     @State private var marketPageVisible = false
+    // Only presentation/event identity is retained, never a withdrawn quote.
+    @State private var duringDetailEventID: Int?
+    @AccessibilityFocusState(for: .voiceOver) private var duringPageTitleFocused: Bool
     let eventId: Int
     @StateObject private var vm: EventDetailViewModel
     /// Closed for every reader. Starts open only when the LOOK rig asks
@@ -254,6 +257,7 @@ struct EventDetailView: View {
                 #if os(iOS)
                 ToolbarItem(placement: .principal) {
                     navTitleView
+                        .accessibilityFocused($duringPageTitleFocused)
                 }
                 #endif
                 // Delivery status sits beside Win Probability, where the fan is
@@ -304,6 +308,8 @@ struct EventDetailView: View {
             }
             .onDisappear {
                 marketPageVisible = false
+                duringDetailEventID = nil
+                duringPageTitleFocused = false
                 vm.stopRefresh()
             }
     }
@@ -517,9 +523,33 @@ struct EventDetailView: View {
                             awayScore: event.awayScore
                         )
                     }
-                    // Player Props (from game-markets endpoint)
+                    // #10236 — during a live game, the server's typed player
+                    // questions as one matrix. Absent (not live, older server,
+                    // nothing typed) leaves the card below exactly as it was.
+                    if !(vm.gameMarkets?.duringPlayerProps?.rows ?? []).isEmpty
+                        || duringDetailEventID == eventId {
+                        EventPropsMatrixView(
+                            // Nil/empty after withdrawal carries NO old source,
+                            // stat, probability or observation into the sheet.
+                            props: vm.gameMarkets?.duringPlayerProps
+                                ?? DuringPlayerProps(contract: nil, stats: [], rows: [], coverage: nil),
+                            onDetailPresentationChanged: { presented in
+                                duringDetailEventID = presented ? eventId : nil
+                                if presented { duringPageTitleFocused = false }
+                            },
+                            onMatrixUnavailableDismissed: {
+                                // Invoked only by onDismiss, never on refresh.
+                                guard marketPageVisible, scenePhase == .active,
+                                      duringDetailEventID == eventId else { return }
+                                duringPageTitleFocused = true
+                            }
+                        )
+                    }
+                    // Player Props (from game-markets endpoint) — only the props
+                    // the matrix above does not already draw.
                     if let gameMarkets = vm.gameMarkets,
-                       let playerProps = gameMarkets.playerProps,
+                       case let playerProps = EventPropsMatrixLayout.untypedPlayerProps(
+                           gameMarkets.playerProps ?? [], typed: gameMarkets.duringPlayerProps),
                        !playerProps.isEmpty {
                         PlayerPropsCardView(
                             playerProps: playerProps,
@@ -644,6 +674,7 @@ struct EventDetailView: View {
             || !(gm.teamTotals ?? []).isEmpty
             || !(gm.periodMarkets ?? []).isEmpty
             || !(gm.playerProps ?? []).isEmpty
+            || !(gm.duringPlayerProps?.rows ?? []).isEmpty
             || !(gm.other ?? []).isEmpty
             || gm.openWinnerQuote?.isPresentable(eventId: gm.eventId, eventStatus: gm.status,
                                                 closedMarketIds: Set(gm.closedWinnerMarketIds ?? [])) == true

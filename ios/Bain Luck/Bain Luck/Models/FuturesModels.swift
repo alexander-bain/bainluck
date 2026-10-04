@@ -68,6 +68,8 @@ nonisolated struct GameMarketsResponse: Decodable, Equatable, Sendable {
     var openWinnerQuote: FinalGameWinnerQuote? = nil
     var closedWinnerMarketIds: [Int]? = nil
     var matchups: [GameMarketMatchup]? = nil
+    /// #10236 — typed During player matrix; nil keeps the old props card.
+    var duringPlayerProps: DuringPlayerProps? = nil
 }
 
 /// A head-to-head/field bucket keeps every nested quote and grade identifiable.
