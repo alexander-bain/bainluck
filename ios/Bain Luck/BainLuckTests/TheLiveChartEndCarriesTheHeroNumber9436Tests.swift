@@ -520,7 +520,7 @@ final class TheLiveChartEndCarriesTheHeroNumber9436Tests: XCTestCase {
     }
 
     /// Sample the tip column for `seconds` after a change.
-    private func sampleTip(_ hosted: Hosted, seconds: Double, measuresMarker: Bool = true) async throws -> (columns: [Int], stamps: [Double]) {
+    private func sampleTip(_ hosted: Hosted, seconds: Double, measuresMarker: Bool = true) async throws -> (columns: [Int], stamps: [Double], starts: [Double]) {
         var captures: [(image: UIImage, acquiredAt: Double, duration: Double)] = []
         let start = CACurrentMediaTime()
         while CACurrentMediaTime() - start < seconds {
@@ -534,7 +534,7 @@ final class TheLiveChartEndCarriesTheHeroNumber9436Tests: XCTestCase {
         }
         // Scanning pixels must not delay the next animation observation. Timestamp
         // after acquisition, never before it: capture cost is still paid honestly.
-        var columns: [Int] = [], stamps: [Double] = []
+        var columns: [Int] = [], stamps: [Double] = [], starts: [Double] = []
         for (index, capture) in captures.enumerated() {
             // Retain the real frame so an apparent reversal can be distinguished
             // from label pixels or changing chart axes, without relaxing the gate.
@@ -543,9 +543,24 @@ final class TheLiveChartEndCarriesTheHeroNumber9436Tests: XCTestCase {
             let x = try XCTUnwrap(measured, "Sample must contain one unambiguous rendered endpoint")
             columns.append(x)
             stamps.append(capture.acquiredAt)
+            starts.append(capture.acquiredAt - capture.duration)
         }
         print("#9436 sampling acquisitions: \(captures.map(\.acquiredAt)); capture durations: \(captures.map(\.duration))")
-        return (columns, stamps)
+        return (columns, stamps, starts)
+    }
+
+    /// Every frame whose capture began after the glide window plus a frame of
+    /// slack shows the settled end. When no capture began that late, the
+    /// independent final shot (taken after sampling, and already asserted equal
+    /// to the last sample) is the only reading past the window.
+    private func assertSettledByTheGlideWindow(_ columns: [Int], starts: [Double], stamps: [Double],
+                                               settled: Int, file: StaticString = #filePath, line: UInt = #line) {
+        let window = LiveChartEdgeMarkerPlan.glideDuration + 0.25
+        let late = zip(columns, starts).filter { $0.1 >= window }
+        let moving = late.filter { $0.0 != settled }
+        XCTAssertTrue(moving.isEmpty, "still short of the settled end \(settled) after \(window) s: \(moving) starts=\(starts) stamps=\(stamps)",
+                      file: file, line: line)
+        if late.isEmpty { print("#9436 no capture began after \(window) s; the final shot bounds the settle: starts=\(starts)") }
     }
 
     /// A history ending on the same last observation (12:10, 46%) with a
@@ -690,7 +705,7 @@ final class TheLiveChartEndCarriesTheHeroNumber9436Tests: XCTestCase {
         let next = try XCTUnwrap("2026-09-21T12:14:00Z".asDate)
         feed.frames.append(LiveBlendPoint(date: next, homeProbability: 0.60))
         feed.edge = LiveEdgeReading(homeProbability: 0.60, homeLabel: "60%")
-        let (columns, stamps) = try await sampleTip(hosted, seconds: 0.8)
+        let (columns, stamps, starts) = try await sampleTip(hosted, seconds: 0.8)
         let sampledLast = try XCTUnwrap(columns.last)
         let settled = try XCTUnwrap(markerColumn(hosted.shot(scale: 1)))
         XCTAssertEqual(sampledLast, settled, "Sampling must reach the independently captured final endpoint")
@@ -704,9 +719,14 @@ final class TheLiveChartEndCarriesTheHeroNumber9436Tests: XCTestCase {
         XCTAssertGreaterThanOrEqual(inBetween.count, 2, "no visible glide: \(columns)")
         XCTAssertLessThan(columns.first!, settled, "the first frame after the change was already settled")
         XCTAssertEqual(columns, columns.sorted(), "the tip reversed: \(columns)")
-        // Bounded: settled within the glide window plus a frame of slack.
-        let settleIndex = try XCTUnwrap(columns.firstIndex(of: settled))
-        XCTAssertLessThan(stamps[settleIndex], LiveChartEdgeMarkerPlan.glideDuration + 0.25, "\(stamps)")
+        // Bounded: no frame read after the glide window (plus a frame of
+        // slack) is still short of the settled end. A frame's time is when its
+        // capture BEGAN — the displayed frame is read then — so a slow capture
+        // on a loaded runner cannot carry a settled dot past the window (hosted
+        // run 37203716941: the last moving frame was read at 0.54 s, the first
+        // settled one began at 0.75 s and was stamped 0.81 s, red against 0.6),
+        // while a dot still moving after the window stays red.
+        assertSettledByTheGlideWindow(columns, starts: starts, stamps: stamps, settled: settled)
     }
 
     /// Finding 1, rendered: the folded reread path. The history is REPLACED
@@ -724,7 +744,7 @@ final class TheLiveChartEndCarriesTheHeroNumber9436Tests: XCTestCase {
 
         feed.history = try pinnedHistory(pinAt: 16, 0.58)
         feed.edge = LiveEdgeReading(homeProbability: 0.58, homeLabel: "58%")
-        let (columns, stamps) = try await sampleTip(hosted, seconds: 0.8)
+        let (columns, stamps, starts) = try await sampleTip(hosted, seconds: 0.8)
         let sampledLast = try XCTUnwrap(columns.last)
         let finalImage = hosted.shot(scale: 1)
         recordMotionFrame(finalImage, name: "pin-final")
@@ -739,8 +759,7 @@ final class TheLiveChartEndCarriesTheHeroNumber9436Tests: XCTestCase {
         XCTAssertGreaterThanOrEqual(inBetween.count, 2, "no visible glide on a pin replacement: \(columns)")
         XCTAssertLessThan(columns.first!, settled, "the first frame after the replacement was already settled")
         XCTAssertEqual(columns, columns.sorted(), "the tip reversed: \(columns)")
-        let settleIndex = try XCTUnwrap(columns.firstIndex(of: settled))
-        XCTAssertLessThan(stamps[settleIndex], LiveChartEdgeMarkerPlan.glideDuration + 0.25, "\(stamps)")
+        assertSettledByTheGlideWindow(columns, starts: starts, stamps: stamps, settled: settled)
     }
 
     func testTheSamplingRigDoesNotInventAnAppendGlideInAnInactiveScene() async throws {
@@ -768,7 +787,7 @@ final class TheLiveChartEndCarriesTheHeroNumber9436Tests: XCTestCase {
             feed.frames.append(LiveBlendPoint(date: try XCTUnwrap("2026-09-21T12:14:00Z".asDate), homeProbability: 0.60))
             feed.edge = LiveEdgeReading(homeProbability: 0.60, homeLabel: "60%")
         }
-        let (columns, _) = try await sampleTip(hosted, seconds: 0.8, measuresMarker: false)
+        let (columns, _, _) = try await sampleTip(hosted, seconds: 0.8, measuresMarker: false)
         let settled = try XCTUnwrap(tipColumn(hosted.shot(scale: 1)))
         XCTAssertNotEqual(before, settled, "Control must actually display the accepted update")
         XCTAssertEqual(columns.last, settled, "Control must reach the independent final capture")
