@@ -593,7 +593,10 @@ struct EventDetailView: View {
                         awayTeam: event.awayTeam,
                         homeTeam: event.homeTeam,
                         sportKey: event.sport,
-                        preloadedData: vm.relatedFutures
+                        preloadedData: vm.relatedFutures,
+                        // #10238 — the same payload the Series section above draws.
+                        seriesMarketIdsDrawnAbove: EventQuestionMatrixAdapter.drawnMarketIds(
+                            in: vm.relatedFutures?.seriesQuestionMatrix, scope: .series)
                     )
                     // League page link
                     leaguePageLink(event)

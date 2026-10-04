@@ -96,6 +96,14 @@ nonisolated enum EventQuestionMatrixAdapter {
         }
     }
 
+    /// The market ids behind the questions `rows(in:scope:)` draws.
+    static func drawnMarketIds(in matrix: EventQuestionMatrix?, scope: QuestionMatrixScope) -> Set<Int> {
+        let drawn = Set(rows(in: matrix, scope: scope).map(\.id.questionKey))
+        return Set((matrix?.questions ?? [])
+            .filter { drawn.contains($0.questionKey) }
+            .flatMap { $0.options.flatMap { $0.marketIds ?? [] } })
+    }
+
     static func hasIndistinguishableOptions(_ question: QuestionMatrixQuestion) -> Bool {
         let labels = question.options.map { $0.label.trimmingCharacters(in: .whitespaces).lowercased() }
         return Set(labels).count != labels.count

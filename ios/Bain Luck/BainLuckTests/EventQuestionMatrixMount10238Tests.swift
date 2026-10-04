@@ -135,27 +135,61 @@ final class EventQuestionMatrixMount10238Tests: XCTestCase {
 
     // MARK: 5 — one series question, drawn once
 
-    func testASeriesMarketDrawnAboveIsNotRepeatedInSeasonFutures() throws {
+    func testASeriesMarketThePageDrawsIsNotRepeatedInSeasonFutures() throws {
         // Production (event 15323083): the sourced "Series Winner" section and
         // the legacy Season Futures SERIES card printed the same market twice.
+        // The ids come from the PAGE's payload (the one the section renders);
+        // Season Futures refreshes its own copy, so the two can disagree.
         var dict = try object(Self.seriesURL)
-        let both = try decode(RelatedFuturesResponse.self, dict)
-        XCTAssertEqual(both.seriesMarkets?.map(\.marketId), [900, 910])
-        XCTAssertEqual(RelatedFuturesView.seriesMarketsNotDrawnAbove(both).map(\.marketId), [],
-                       "a series market is drawn by both the sourced section and Season Futures")
+        let child = try decode(RelatedFuturesResponse.self, dict)   // Season Futures' own copy
+        XCTAssertEqual(child.seriesMarkets?.map(\.marketId), [900, 910])
+        func legacy(page: RelatedFuturesResponse?) -> [Int] {
+            RelatedFuturesView.seriesMarkets(
+                child.seriesMarkets,
+                notDrawnAbove: EventQuestionMatrixAdapter.drawnMarketIds(
+                    in: page?.seriesQuestionMatrix, scope: .series)).map(\.marketId)
+        }
 
-        // Only m:900 drawn above → only 910 stays in the legacy card.
+        XCTAssertEqual(legacy(page: child), [], "matched payloads: a series market is drawn twice")
+
+        // Page has no sourced Series (not loaded / withdrawn) while the child's
+        // copy has one: nothing is drawn above, so the legacy card keeps both.
+        XCTAssertEqual(legacy(page: nil), [900, 910],
+                       "the only series card was hidden for a question the page is not drawing")
+        var withdrawn = dict
+        withdrawn.removeValue(forKey: "series_question_matrix")
+        XCTAssertEqual(legacy(page: try decode(RelatedFuturesResponse.self, withdrawn)), [900, 910])
+
+        // Page draws only m:900 → only 910 stays in the legacy card.
         var matrix = try XCTUnwrap(dict["series_question_matrix"] as? [String: Any])
         let questions = try XCTUnwrap(matrix["questions"] as? [[String: Any]])
         matrix["questions"] = questions.filter { $0["question_key"] as? String == "m:900" }
         dict["series_question_matrix"] = matrix
-        XCTAssertEqual(RelatedFuturesView.seriesMarketsNotDrawnAbove(
-            try decode(RelatedFuturesResponse.self, dict)).map(\.marketId), [910])
+        XCTAssertEqual(legacy(page: try decode(RelatedFuturesResponse.self, dict)), [910])
 
-        // Control: no sourced Series → the legacy card keeps every market.
-        dict.removeValue(forKey: "series_question_matrix")
-        XCTAssertEqual(RelatedFuturesView.seriesMarketsNotDrawnAbove(
-            try decode(RelatedFuturesResponse.self, dict)).map(\.marketId), [900, 910])
+        // A question the section refuses to draw does not count as drawn.
+        var refused = try object(Self.seriesURL)
+        var rm = try XCTUnwrap(refused["series_question_matrix"] as? [String: Any])
+        var rq = try XCTUnwrap(rm["questions"] as? [[String: Any]])
+        var options = try XCTUnwrap(rq[0]["options"] as? [[String: Any]])
+        for i in options.indices { options[i]["label"] = "Over" }
+        rq[0]["options"] = options
+        rm["questions"] = rq
+        refused["series_question_matrix"] = rm
+        let page = try decode(RelatedFuturesResponse.self, refused)
+        let refusedKey = try XCTUnwrap(rq[0]["question_key"] as? String)
+        XCTAssertFalse(EventQuestionMatrixAdapter.rows(in: page.seriesQuestionMatrix, scope: .series)
+            .contains { $0.id.questionKey == refusedKey })
+        XCTAssertEqual(legacy(page: page).count, 1, "a refused question hid its legacy card")
+    }
+
+    func testThePageHandsSeasonFuturesTheIdsItsOwnSeriesSectionDraws() throws {
+        let page = try pageSource().filter { !$0.isWhitespace }
+        let call = try XCTUnwrap(page.range(of: "RelatedFuturesView("))
+        let args = page[call.upperBound...].prefix(600)
+        XCTAssertTrue(args.contains(
+            "seriesMarketIdsDrawnAbove:EventQuestionMatrixAdapter.drawnMarketIds(in:vm.relatedFutures?.seriesQuestionMatrix,scope:.series)"),
+            "Season Futures is not told what the page's Series section draws")
     }
 
     // MARK: 3 — rendered room
