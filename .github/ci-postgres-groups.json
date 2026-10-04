@@ -125,6 +125,7 @@
     "#2927 containers migration round trip (real Postgres)",
     "#2927 container assembly writes and re-writes (real Postgres)",
     "#9653 collection discovery offers only eligible published hubs (real Postgres)",
+    "#9935 a theme collection pages one revision and rebuilds after a correction (real Postgres)",
     "#4229 Kalshi senate backfill moves the stored row (real Postgres)",
     "#4229 Polymarket senate repair preserves the observation clock (real Postgres)",
     "#4253 a delisted Kalshi leg stops claiming 100% (real Postgres)",

@@ -3676,6 +3676,25 @@ jobs:
             exit 1
           fi
 
+      - name: "#9935 a theme collection pages one revision and rebuilds after a correction (real Postgres)"
+        # The producer (A2) publishes one snapshot per revision; the reader (C1)
+        # pages it at the revision `read_published` names. Only a server shows
+        # the correction's slug read under the real chain lock before the edge
+        # delete (a last-member withdrawal still rebuilds), the after_commit
+        # listener firing on a real commit and never on a real rollback, and
+        # producer and reader agreeing on key, bytes and page order.
+        #
+        # Same skip-detection as every gate in this job.
+        if: matrix.group == 'shared'
+        run: |
+          set -o pipefail
+          python -m pytest tests/integration/test_theme_collections_9935_pg.py \
+            -v -s -rs 2>&1 | tee /tmp/theme9935.txt
+          if grep -qiE "[0-9]+ skipped" /tmp/theme9935.txt; then
+            echo "::error::#9935 theme collections SKIPPED — the gate did not run"
+            exit 1
+          fi
+
       - name: "#4229 Kalshi senate backfill moves the stored row (real Postgres)"
         # CERT-2372 blocked the classifier-only SHA because the diff made these
         # markets CLASSIFY as politics while every stored row stayed `hockey`:

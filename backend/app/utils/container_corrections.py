@@ -39,6 +39,16 @@ WHAT IT DELIBERATELY DOES NOT DO.
 * **The read route is not changed here.** ``read_published`` is the contract a
   route or the hydration producer calls; wiring it is that consumer's commit.
 
+#9935 — A CORRECTED THEME COLLECTION REBUILDS ITS PAGE AT ONCE. A theme
+collection's reader serves a snapshot published per revision; a correction
+moves the revision without publishing one, so until the next producer pass the
+page would answer "building". When a correction on a theme container applies,
+the container's slug is read under the lock BEFORE any edge is deleted, and a
+rebuild of that container is sent after the caller commits — keyed on the
+container, never on a surviving edge, so withdrawing the LAST member still
+rebuilds (to an empty page). The ledger, the lock and every non-theme
+container are untouched; a rolled-back correction sends nothing.
+
 THE SCHEMA SHIPS BEFORE ITS MIGRATION RUNS (D45: migration-class merges on
 Alex's word only). ``correction_schema_present`` is therefore a question, and
 when the answer is "absent" assembly behaves byte-for-byte as it did before:
@@ -48,6 +58,7 @@ with no ledger there can be no correction to honour.
 from __future__ import annotations
 
 import json
+import logging
 from dataclasses import dataclass, field
 from typing import Any, Optional
 
@@ -58,6 +69,8 @@ from app.utils.container_graph import (
     validate_node_type,
     validate_publication_state,
 )
+
+logger = logging.getLogger(__name__)
 
 LEDGER_TABLE = "container_corrections"
 PUBLICATION_COLUMN = "publication_state"
@@ -339,6 +352,79 @@ async def delete_member_edges(session, container_id: int, members) -> int:
 
 
 # ---------------------------------------------------------------------------
+# #9935: a theme collection's snapshot rebuild, sent after the correction commits
+# ---------------------------------------------------------------------------
+
+#: The task ``app.tasks`` registers around the theme producer's rebuild.
+THEME_REBUILD_TASK = "app.tasks.rebuild_theme_snapshot"
+
+#: ``Session.info`` key: container ids whose rebuild waits on this transaction.
+_THEME_REBUILDS_KEY = "theme_snapshot_rebuilds"
+
+
+async def _theme_container_slug(session, container_id: int) -> Optional[str]:
+    """The container's slug if it names a theme collection, else None.
+
+    Called under the correction's lock and before any edge is deleted, so the
+    answer is the container's identity, not a fact about its members.
+    """
+    from app.utils.theme_definitions import parse_theme_slug
+
+    row = (
+        await session.execute(
+            text("SELECT slug FROM containers WHERE id = :cid"), {"cid": container_id}
+        )
+    ).fetchone()
+    slug = row[0] if row else None
+    return slug if parse_theme_slug(slug) is not None else None
+
+
+def _send_theme_rebuild(container_id: int) -> None:
+    """Never raises: the correction is already committed when this runs."""
+    try:
+        from app.tasks import celery_app
+
+        celery_app.send_task(THEME_REBUILD_TASK, args=[container_id], queue="background")
+    except Exception:  # noqa: BLE001 — the next producer pass rebuilds anyway
+        logger.warning(
+            "theme snapshot rebuild dispatch failed for container %s", container_id,
+            exc_info=True,
+        )
+
+
+def _dispatch_theme_rebuilds(sync_session) -> None:
+    for container_id in sorted(sync_session.info.pop(_THEME_REBUILDS_KEY, ())):
+        _send_theme_rebuild(container_id)
+
+
+def _discard_theme_rebuilds(sync_session) -> None:
+    sync_session.info.pop(_THEME_REBUILDS_KEY, None)
+
+
+def enqueue_theme_rebuild_after_commit(session, container_id: int) -> bool:
+    """Send one rebuild of ``container_id`` when ``session`` next commits.
+
+    One ``after_commit`` listener (``once=True``) on ``session.sync_session``
+    per pending batch; several corrections to one container in one transaction
+    send one rebuild. A rollback discards the batch, so nothing is sent for a
+    correction that never happened. A session without ``sync_session`` (a test
+    double) has no commit to wait on: nothing is registered, False returned.
+    """
+    sync_session = getattr(session, "sync_session", None)
+    if sync_session is None:
+        return False
+    from sqlalchemy import event
+
+    pending = sync_session.info.get(_THEME_REBUILDS_KEY)
+    if pending is None:
+        pending = sync_session.info[_THEME_REBUILDS_KEY] = set()
+        event.listen(sync_session, "after_commit", _dispatch_theme_rebuilds, once=True)
+        event.listen(sync_session, "after_rollback", _discard_theme_rebuilds, once=True)
+    pending.add(int(container_id))
+    return True
+
+
+# ---------------------------------------------------------------------------
 # Corrections
 # ---------------------------------------------------------------------------
 
@@ -437,6 +523,11 @@ async def _member_correction(
     if (action == "withdraw") == is_withdrawn:
         # Already in the asked-for state: a retry, not a new decision.
         return CorrectionResult(container_id, "member", action, False, int(row[2]))
+
+    # #9935: identity first, under the lock and before the delete — after it,
+    # a last-member withdrawal leaves no edge to recognise the theme by.
+    if await _theme_container_slug(session, container_id) is not None:
+        enqueue_theme_rebuild_after_commit(session, container_id)
 
     removed = 0
     if action == "withdraw":
@@ -549,6 +640,11 @@ async def _publication_correction(
         ).scalar()
         if not count:
             raise NothingToPublish(f"container {container_id} has no members")
+
+    # #9935: a publish or withdrawal moves the revision too, so a theme page
+    # needs its snapshot at the new one (a refused publish never gets here).
+    if await _theme_container_slug(session, container_id) is not None:
+        enqueue_theme_rebuild_after_commit(session, container_id)
 
     await session.execute(
         text(
