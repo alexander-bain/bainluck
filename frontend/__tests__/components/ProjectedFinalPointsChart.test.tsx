@@ -93,7 +93,7 @@ describe("a finished game", () => {
   });
 
   it("shows the last valid projection with its time, not the final as a forecast", () => {
-    expect(html).toContain("Last projection before the final · " + formatProjectionTime(Date.parse("2026-09-29T03:09:00Z")));
+    expect(html).toContain("Last projection before the final · recorded " + formatProjectionTime(Date.parse("2026-09-29T03:09:00Z")));
     expect(html).toContain(">27.0<");
     expect(html).toContain(">7.5<");
     expect(html).toMatch(/27 final/);
@@ -121,7 +121,7 @@ describe("a finished game", () => {
 
   it("gives screen readers both quantities in the inspector", () => {
     expect(html).toContain(
-      `aria-valuetext="${formatProjectionTime(Date.parse("2026-09-29T03:09:00Z"))}, Chicago Bears 27.0, Philadelphia Eagles 7.5 projected final points"`,
+      `aria-valuetext="recorded ${formatProjectionTime(Date.parse("2026-09-29T03:09:00Z"))}, Chicago Bears 27.0, Philadelphia Eagles 7.5 projected final points"`,
     );
   });
 });
@@ -132,7 +132,7 @@ describe("before kickoff", () => {
   it("has no actual score anywhere", () => {
     expect(html).not.toContain("data-actual=");
     expect(html).not.toContain('data-series="actual-');
-    expect(html).toContain("Latest projection · " + formatProjectionTime(Date.parse("2026-09-28T23:30:00Z")));
+    expect(html).toContain("Latest projection · recorded " + formatProjectionTime(Date.parse("2026-09-28T23:30:00Z")));
   });
 });
 
@@ -141,7 +141,7 @@ describe("inspecting a moment", () => {
 
   it("reads the projection and score at the cursor, and nothing later", () => {
     const html = render(input, instantIndex(input, "2026-09-29T00:30:00Z"));
-    expect(html).toContain("Projection at this point · " + formatProjectionTime(Date.parse("2026-09-29T00:30:00Z")));
+    expect(html).toContain("Projection at this point · recorded " + formatProjectionTime(Date.parse("2026-09-29T00:30:00Z")));
     expect(html).toContain(">27.5<");
     expect(html).toContain(">17.0<");
     expect(html).toMatch(/7 scored/);
@@ -157,5 +157,13 @@ describe("inspecting a moment", () => {
     const html = render(input, instantIndex(input, "2026-09-29T01:00:00Z"));
     expect(html).toContain("No usable projection at this point");
     expect(html).not.toContain(">27.5<");
+  });
+});
+
+describe("a live game whose newest reading was unusable", () => {
+  it("says so once, without repeating the time", () => {
+    const html = render(nflInput({ finalAt: null, asOf: "2026-09-29T01:50:00Z" }));
+    expect(html).toContain("Latest projection · recorded " + formatProjectionTime(Date.parse("2026-09-29T01:20:00Z")));
+    expect(html).toContain("No usable projection since then");
   });
 });

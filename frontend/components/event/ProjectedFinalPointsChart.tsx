@@ -129,7 +129,7 @@ export function ProjectedFinalPointsChartView({
 
   const valueText = !reading || withheldAtCursor
     ? `${cursorAt !== null ? formatProjectionTime(cursorAt) : ""}, no usable projection`
-    : `${formatProjectionTime(reading.observedAt)}, ${homeTeam} ${points(reading.home)}, ${awayTeam} ${points(reading.away)} projected final points`;
+    : `recorded ${formatProjectionTime(reading.observedAt)}, ${homeTeam} ${points(reading.home)}, ${awayTeam} ${points(reading.away)} projected final points`;
 
   return (
     <section
@@ -168,12 +168,14 @@ export function ProjectedFinalPointsChartView({
 
       <p className="mt-2 text-xs text-text-secondary" data-testid="projected-stamp">
         {reading && !withheldAtCursor
-          ? `${readingLabel(full, inspecting)} · ${formatProjectionTime(reading.observedAt)}`
+          ? `${readingLabel(full, inspecting)} · recorded ${formatProjectionTime(reading.observedAt)}`
           : "No usable projection at this point"}
         {!inspecting && full.latestIntervalUnavailable && reading && (
           <>
             <br />
-            {`No usable projection since ${formatProjectionTime(reading.confirmedThrough)}`}
+            {reading.confirmedThrough === reading.observedAt
+              ? "No usable projection since then"
+              : `Last confirmed ${formatProjectionTime(reading.confirmedThrough)}, nothing usable since`}
           </>
         )}
       </p>

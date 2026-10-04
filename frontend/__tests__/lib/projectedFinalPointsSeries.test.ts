@@ -341,6 +341,7 @@ describe("reading a served history payload", () => {
       sourceKey: "draftkings",
       kickoffAt: KICKOFF,
       asOf: "2026-09-29T04:00:00Z",
+      cutoffAt: null,
     });
     expect(input.basis).toBe("same_book_same_capture_full_game_spread_and_total");
     expect(input.finalAt).toBe(FINAL);
@@ -363,5 +364,33 @@ describe("the default window", () => {
   it("looks back six hours from now before kickoff", () => {
     const s = supported(nflInput({ kickoffAt: null, finalAt: null, asOf: "2026-09-29T00:00:00Z" }));
     expect(s.start).toBe(ms("2026-09-29T00:00:00Z") - 6 * 60 * 60 * 1000);
+  });
+});
+
+describe("rows the route re-stamped at its window cutoff", () => {
+  const cutoffAt = "2026-09-28T23:30:00Z";
+  const history = {
+    completed_at: null,
+    bookmaker_history: {
+      draftkings: [
+        // Captured days earlier, still valid at the cutoff: served AT the cutoff minute.
+        { timestamp: cutoffAt, home_probability: 0.6, away_probability: 0.4, projected_home_score: 24, projected_away_score: 20.5, valid_until: "2026-09-29T00:25:00Z" },
+        { timestamp: "2026-09-29T00:30:00Z", home_probability: 0.75, away_probability: 0.25, projected_home_score: 27.5, projected_away_score: 17 },
+      ],
+    },
+    score_history: [{ timestamp: "2026-09-29T00:24:00Z", home_score: 7, away_score: 0 }],
+  } as unknown as EventHistoryResponse;
+  const opts = { sportKey: "americanfootball_nfl", sourceKey: "draftkings", kickoffAt: KICKOFF, asOf: "2026-09-29T01:00:00Z" };
+
+  it("marks a row at the request cutoff synthetic and never admits it", () => {
+    const input = projectedFinalPointsInputFromHistory(history, { ...opts, cutoffAt });
+    expect(input.pairs.map((p) => p.kind)).toEqual(["synthetic", "recorded"]);
+    const s = supported(input);
+    expect(allPoints(s).map((p) => p.observedAt)).toEqual([ms("2026-09-29T00:30:00Z")]);
+  });
+
+  it("without a cutoff (a finished game's whole series) every row is a recorded capture", () => {
+    const input = projectedFinalPointsInputFromHistory(history, { ...opts, cutoffAt: null });
+    expect(input.pairs.map((p) => p.kind)).toEqual(["recorded", "recorded"]);
   });
 });

@@ -29,6 +29,9 @@
  * value that type allows names the producer rule above. If that rule ever
  * changes, the basis stops being true and the mount must be withdrawn.
  *
+ * Times are OUR capture minute, not the venue's publication time (the venue's
+ * `last_update` is not kept), so the reader is told "recorded", nothing more.
+ *
  * ── WHAT THE CHART MAY NEVER DO ─────────────────────────────────────────────
  *
  * - Draw a sport whose spread is not an expected margin in points. Only the
@@ -76,6 +79,13 @@ export interface ProjectedPairObservation {
   homeProbability?: number | null;
   /** When the source last confirmed this exact pair (`valid_until`). */
   heldUntil?: string | null;
+  /**
+   * `recorded` = a row we actually captured, stamped with our capture minute.
+   * `synthetic` = a row the history route RE-STAMPED at its window cutoff
+   * (an older capture still valid then). That timestamp is not an
+   * observation, so the row is never admitted. Absent means `recorded`.
+   */
+  kind?: "recorded" | "synthetic";
 }
 
 export interface ActualScoreObservation {
@@ -254,6 +264,7 @@ export function buildProjectedFinalPointsSeries(
     | { at: number; kind: "withheld"; reason: WithheldReason };
   const rows: Row[] = [];
   for (const pair of input.pairs) {
+    if (pair.kind === "synthetic") continue;
     const at = parseTime(pair.timestamp);
     // Strictly before the final: a reading stamped at the whistle is not a forecast.
     if (at === null || at > end || (final !== null && at >= final)) continue;
@@ -388,14 +399,36 @@ export function pickProjectionSportsbook(history: Pick<EventHistoryResponse, "bo
 }
 
 /**
+ * Slack past the request cutoff inside which a row may be a re-stamp. The
+ * route truncates to the minute and its clock is not the reader's.
+ */
+export const CUTOFF_RESTAMP_SLACK_MS = 2 * 60 * 1000;
+
+/**
  * Builds the input from a served history payload. The caller chooses the
  * book and supplies the observed kickoff, because neither is in the payload.
+ *
+ * `cutoffAt` is the window cutoff the request asked for (`now - hours`), or
+ * null when the route serves the whole series (a finished game). The route
+ * re-stamps an older row that was still valid at the cutoff with the cutoff
+ * minute and gives it no marker (`routes/events.py`, per-book history), so
+ * every row at or near the cutoff is marked `synthetic` and refused. A
+ * served observation-kind field would make this exact; until then this
+ * errs toward refusing.
  */
 export function projectedFinalPointsInputFromHistory(
   history: Pick<EventHistoryResponse, "bookmaker_history" | "score_history" | "completed_at">,
-  opts: { sportKey: string | null | undefined; sourceKey: string; kickoffAt: string | null; asOf: string },
+  opts: {
+    sportKey: string | null | undefined;
+    sourceKey: string;
+    kickoffAt: string | null;
+    asOf: string;
+    cutoffAt: string | null;
+  },
 ): ProjectedFinalPointsInput {
   const rows = history.bookmaker_history?.[opts.sourceKey] ?? [];
+  const cutoff = parseTime(opts.cutoffAt);
+  const restampedThrough = cutoff === null ? null : cutoff + CUTOFF_RESTAMP_SLACK_MS;
   return {
     sportKey: opts.sportKey,
     sourceKey: opts.sourceKey,
@@ -406,6 +439,7 @@ export function projectedFinalPointsInputFromHistory(
       away: p.projected_away_score,
       homeProbability: p.home_probability,
       heldUntil: p.valid_until ?? null,
+      kind: restampedThrough !== null && (parseTime(p.timestamp) ?? -Infinity) <= restampedThrough ? "synthetic" : "recorded",
     })),
     actuals: history.score_history ?? [],
     kickoffAt: opts.kickoffAt,
