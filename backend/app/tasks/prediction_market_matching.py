@@ -54,9 +54,11 @@ from app.utils.polymarket_empty_book import (  # #9083, the pregame pin's book g
     is_empty_polymarket_book,
 )
 from app.utils.feed_market_quality import (  # #6676, the two-minute beat's third writer
+    is_bidless_empty_book_midpoint,
     is_empty_book_midpoint,
     is_fabricated_midpoint,
 )
+from app.tasks.event_chart_backfill import strip_leg_suffix  # #9083, the pin's pair key
 from app.utils.prediction_market_matching import (
     is_game_level_market,
     _KALSHI_GAME_TICKER_PREFIXES,
@@ -156,14 +158,40 @@ def _pregame_pin_outcome_probs(
     poller declined it, and its fresh book was not empty by the tick rule, so
     the check above let the ten-day-old number through.
 
+    A MIDPOINT OF A BOOK THAT BOUNDS NOTHING (discover, 2026-10-04 04:16Z). The
+    two arms above reach only the legs this poll READ, and the poll reads a leg
+    by its bare condition id. Split-token legs (``<conditionId>_yes`` /
+    ``_no``) are never read here, and they are 14,524 of the 14,801 Polymarket
+    markets pinned in the 30 hours to 04:30Z, so for nearly every pin the only
+    evidence is the stored row. The specimen: market 63865773 "Manny Machado:
+    Home Runs O/U 1.5" was pinned 0.485 / 0.515 at 00:18:43Z from its one and
+    only write, at creation 26 hours earlier: Over bid NULL / ask 0.98, no
+    trade. The tick rule calls a 98c ask a quote, so the pin kept it, and the
+    settled page printed "2+ home runs marked 48% → MISS" beside a 1+ rung
+    pinned at 0.075. So a Polymarket leg whose price sits on the midpoint of a
+    book that bounds nothing is refused too. The predicates are #5247's and
+    #8916's (``is_empty_book_midpoint``, ``is_bidless_empty_book_midpoint``),
+    with their measured constants, and they are imported, not restated. A
+    bid-less longshot (ask 0.15 → 0.075, the same capture's 1+ rung) is
+    unreachable by their arithmetic and stays in the pin.
+
+    ONE REFUSED LEG REFUSES ITS TWIN. The Under's row is the same book read from
+    the other token (bid 0.02 / no ask, 0.515), and neither predicate reads an
+    ask-less leg, so judged alone it would survive and print "Under 52%". Legs
+    sharing a condition id (``strip_leg_suffix``) are one book, so a midpoint
+    refusal on either takes both, the ANY quantifier ``bout_price_is_supported``
+    states for the same reason. Legs on different condition ids (a field's
+    rungs) are separate books and are judged alone.
+
     Scope follows the rule's own: Polymarket only (CERT-2508's reason, the
     predicate is venue policy), and a leg with no recorded book is not refused.
     """
     refuse_empty = market_source == POLYMARKET_BOOKMAKER
     fresh_books = fresh_books or {}
     unpriced_reads = unpriced_reads or set()
-    probs: dict = {}
+    kept: list = []
     refused = 0
+    midpoint_books: set = set()
     for o in outcomes:
         if o.current_probability is None:
             continue
@@ -179,8 +207,33 @@ def _pregame_pin_outcome_probs(
             if is_empty_polymarket_book(bid, ask):
                 refused += 1
                 continue
+            prob = float(o.current_probability)
+            if is_empty_book_midpoint(prob, bid, ask) or is_bidless_empty_book_midpoint(
+                prob, bid, ask
+            ):
+                refused += 1
+                midpoint_books.add(_pin_book_key(o))
+                continue
+        kept.append(o)
+    probs: dict = {}
+    for o in kept:
+        if refuse_empty and _pin_book_key(o) in midpoint_books:
+            refused += 1
+            continue
         probs[str(o.id)] = round(float(o.current_probability), 6)
     return probs, refused
+
+
+def _pin_book_key(outcome):
+    """The book a pinned leg is read from: its condition id, both tokens alike.
+
+    A leg with no external id is its own book, keyed on its row id, so it can
+    never take a sibling with it.
+    """
+    external_id = getattr(outcome, "external_id", None)
+    if not external_id:
+        return ("row", outcome.id)
+    return ("book", strip_leg_suffix(external_id))
 
 
 # live/035: the cadence floor this 120s poll enforces on a LIVE event's chart.
