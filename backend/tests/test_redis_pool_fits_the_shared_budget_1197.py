@@ -944,7 +944,7 @@ _EXPECTED_SYNC_SIGNATURES = {
     (5.0, 5.0, False),  # the default — the overwhelming majority of call sites
     (5.0, 5.0, True),   # sentinel filing + the Sentry filter
     (2.0, 2.0, False),  # the price-refresh / watchdog variant
-    (1.0, 1.0, True),   # search_head_warmer's two named 1.0s constants
+    (1.0, 1.0, True),   # search_head_warmer's two named 1.0s constants + #9051 trail
     (0.5, 5.0, True),   # the latency middleware on the hot request path
 }
 
@@ -977,5 +977,9 @@ class TestTheSignatureCountInTheClaimIsTheOneInTheTree:
         removed, which would silently inflate the number the comment cites.
         """
         sites = _sync_client_signatures()[(1.0, 1.0, True)]
-        assert len(sites) == 2, sites
-        assert all("search_head_warmer" in s for s in sites), sites
+        assert len(sites) == 3, sites
+        warmer = [s for s in sites if "search_head_warmer" in s]
+        assert len(warmer) == 2, sites
+        # #9051's trail joins this pool via its own named constant, not a new one.
+        assert [s for s in sites if s not in warmer][0].startswith(
+            "app/utils/blend_prune_trail.py:"), sites
