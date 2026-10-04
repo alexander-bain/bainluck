@@ -4,6 +4,7 @@ import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { useAnalyticsContext } from "@/components/Analytics";
 import { useState, useRef, useEffect } from "react";
+import PublishedCollectionsMenu from "@/components/collections/PublishedCollectionsMenu";
 
 const browsePages = [
   { label: "MMA", href: "/hub/mma", emoji: "🥊" },
@@ -24,8 +25,27 @@ export default function DesktopNav() {
   const { track } = useAnalyticsContext();
   const [browseOpen, setBrowseOpen] = useState(false);
   const browseRef = useRef<HTMLDivElement>(null);
+  const browseButtonRef = useRef<HTMLButtonElement>(null);
 
-  const isBrowseActive = browsePages.some((p) => pathname === p.href);
+  const isBrowseActive =
+    browsePages.some((p) => pathname === p.href) || !!pathname?.startsWith("/collections/");
+
+  // #10476 — a page change (a followed link, Back) always leaves Browse shut.
+  useEffect(() => {
+    setBrowseOpen(false);
+  }, [pathname]);
+
+  useEffect(() => {
+    if (!browseOpen) return;
+    function handleKey(e: KeyboardEvent) {
+      if (e.key === "Escape") {
+        setBrowseOpen(false);
+        browseButtonRef.current?.focus();
+      }
+    }
+    document.addEventListener("keydown", handleKey);
+    return () => document.removeEventListener("keydown", handleKey);
+  }, [browseOpen]);
 
   useEffect(() => {
     function handleClick(e: MouseEvent) {
@@ -83,11 +103,11 @@ export default function DesktopNav() {
       {/* Browse dropdown */}
       <div ref={browseRef} className="relative">
         <button
+          ref={browseButtonRef}
           onClick={() => setBrowseOpen(!browseOpen)}
           onMouseEnter={() => setBrowseOpen(true)}
           aria-expanded={browseOpen}
-          aria-haspopup="true"
-          aria-label="Browse categories"
+          aria-controls={browseOpen ? "desktop-browse-panel" : undefined}
           className={`px-3 py-1.5 rounded-lg text-sm font-medium transition-colors flex items-center gap-1 ${
             isBrowseActive
               ? "text-accent-brand bg-accent-brand/10"
@@ -101,9 +121,23 @@ export default function DesktopNav() {
         </button>
         {browseOpen && (
           <div
-            className="absolute top-full left-0 mt-1 w-48 bg-surface-card border border-surface-border rounded-xl shadow-lg py-1 z-50" role="menu" aria-label="Browse categories"
+            id="desktop-browse-panel"
+            className="absolute top-full left-0 mt-1 w-60 max-h-[min(70vh,36rem)] overflow-y-auto overscroll-contain bg-surface-card border border-surface-border rounded-xl shadow-lg py-1 z-50"
             onMouseLeave={() => setBrowseOpen(false)}
           >
+            <PublishedCollectionsMenu
+              open={browseOpen}
+              pathname={pathname}
+              variant="desktop"
+              onNavigate={(href) => {
+                setBrowseOpen(false);
+                track("navigation_click", {
+                  click_type: "nav_tab" as const,
+                  from_page: pathname || "/",
+                  to_page: href,
+                });
+              }}
+            />
             {browsePages.map((page) => (
               <Link
                 key={page.href}

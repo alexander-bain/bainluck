@@ -4,6 +4,7 @@ import { useState, useRef, useEffect } from "react";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { useAnalyticsContext } from "@/components/Analytics";
+import PublishedCollectionsMenu from "@/components/collections/PublishedCollectionsMenu";
 
 const browsePages = [
   { label: "MMA", href: "/hub/mma", emoji: "🥊" },
@@ -25,7 +26,13 @@ export default function BottomNav() {
   const [browseOpen, setBrowseOpen] = useState(false);
   const browseRef = useRef<HTMLDivElement>(null);
 
-  const isBrowseActive = browsePages.some((p) => pathname === p.href);
+  const isBrowseActive =
+    browsePages.some((p) => pathname === p.href) || !!pathname?.startsWith("/collections/");
+
+  // #10476 — a page change (a followed link, Back) always leaves Browse shut.
+  useEffect(() => {
+    setBrowseOpen(false);
+  }, [pathname]);
 
   useEffect(() => {
     if (!browseOpen) return;
@@ -34,8 +41,15 @@ export default function BottomNav() {
         setBrowseOpen(false);
       }
     }
+    function handleKey(e: KeyboardEvent) {
+      if (e.key === "Escape") setBrowseOpen(false);
+    }
     document.addEventListener("mousedown", handleClick);
-    return () => document.removeEventListener("mousedown", handleClick);
+    document.addEventListener("keydown", handleKey);
+    return () => {
+      document.removeEventListener("mousedown", handleClick);
+      document.removeEventListener("keydown", handleKey);
+    };
   }, [browseOpen]);
 
   const tabs = [
@@ -87,7 +101,25 @@ export default function BottomNav() {
             className="fixed inset-0 bg-black/20 z-40" aria-hidden="true"
             onClick={() => setBrowseOpen(false)}
           />
-          <div className="relative z-50 mx-4 mb-2 bg-surface-card rounded-2xl border border-surface-border shadow-lg overflow-hidden" role="menu" aria-label="Browse categories">
+          {/* #10476 — bounded to the screen above the tab bar and scrollable,
+              so every link in a long menu can still be reached and tapped. */}
+          <div
+            id="mobile-browse-panel"
+            className="relative z-50 mx-4 mb-2 max-h-[calc(100dvh-7rem)] overflow-y-auto overscroll-contain bg-surface-card rounded-2xl border border-surface-border shadow-lg"
+          >
+            <PublishedCollectionsMenu
+              open={browseOpen}
+              pathname={pathname}
+              variant="mobile"
+              onNavigate={(href) => {
+                setBrowseOpen(false);
+                track("navigation_click", {
+                  click_type: "nav_tab" as const,
+                  from_page: pathname || "/",
+                  to_page: href,
+                });
+              }}
+            />
             {browsePages.map((page) => (
               <Link
                 key={page.href}
@@ -156,7 +188,10 @@ export default function BottomNav() {
                     });
                   }
                 }}
-                aria-expanded={browseOpen} aria-label="Browse categories" className={`flex flex-col items-center justify-center gap-0.5 flex-1 h-full transition-colors ${
+                aria-expanded={browseOpen}
+                aria-controls={browseOpen ? "mobile-browse-panel" : undefined}
+                aria-label="Browse"
+                className={`flex flex-col items-center justify-center gap-0.5 flex-1 h-full transition-colors ${
                   tab.isActive || browseOpen
                     ? "text-accent-brand"
                     : "text-text-muted hover:text-text-secondary"
