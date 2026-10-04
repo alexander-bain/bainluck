@@ -19,21 +19,39 @@ final class SelectedGameJourneyTests: XCTestCase {
         XCTAssertTrue(probability.waitForExistence(timeout: 15), "Selection did not open a game")
         XCTAssertTrue(probability.label.contains("San Francisco Giants"))
         XCTAssertTrue(probability.label.contains("64%"))
+        let state = app.descendants(matching: .any)["watch.game-state"].firstMatch
+        XCTAssertTrue(state.waitForExistence(timeout: 15))
+        let receivedSize = try XCTUnwrap(state.value as? String)
+        print("WATCH_UI_DYNAMIC_TYPE=\(receivedSize)")
+        let largeText = receivedSize == "accessibility5"
+        capture(app, name: "Selected game state - \(receivedSize)")
+        if largeText {
+            let homeScore = app.descendants(matching: .any)["watch.home-score"].firstMatch
+            try reveal(homeScore, in: app)
+            XCTAssertTrue(homeScore.label.contains("San Francisco Giants"))
+            XCTAssertTrue(homeScore.label.contains("score 3"))
+            capture(app, name: "Large text named score")
+            try reveal(probability, in: app)
+        }
         capture(app, name: "Selected named game")
 
         app.terminate()
         app.launchEnvironment["BAINLUCK_WATCH_UI_RESET"] = "0"
         app.launchEnvironment["BAINLUCK_WATCH_UI_OFFLINE"] = "1"
         app.launch()
-        let state = app.descendants(matching: .any)["watch.game-state"].firstMatch
         XCTAssertTrue(state.waitForExistence(timeout: 15))
         let offline = NSPredicate(format: "label CONTAINS %@ AND label CONTAINS %@", "Saved reading", "Offline")
         expectation(for: offline, evaluatedWith: state)
         waitForExpectations(timeout: 15)
+        XCTAssertEqual(state.value as? String, receivedSize)
         XCTAssertTrue(probability.exists)
         XCTAssertTrue(probability.label.contains("San Francisco Giants"))
         XCTAssertTrue(probability.label.contains("64%"))
         capture(app, name: "Saved reading after offline relaunch")
+        if largeText {
+            try reveal(probability, in: app)
+            capture(app, name: "Large text saved probability")
+        }
 
         app.terminate()
         app.launchEnvironment["BAINLUCK_WATCH_UI_OFFLINE"] = "0"
@@ -49,10 +67,26 @@ final class SelectedGameJourneyTests: XCTestCase {
         waitForExpectations(timeout: 15)
         expectation(for: NSPredicate(format: "hittable == true"), evaluatedWith: state)
         waitForExpectations(timeout: 10)
-        XCTAssertTrue(probability.isHittable, "The new named probability must be visible after selection")
+        XCTAssertEqual(state.value as? String, receivedSize)
+        capture(app, name: "Changed game identity")
+        if largeText { try reveal(probability, in: app) }
+        XCTAssertTrue(probability.isHittable, "The new named probability must be reachable after selection")
         XCTAssertTrue(app.frame.contains(probability.frame), "The whole named probability group must fit in the visible screen")
         capture(app, name: "Changed selection")
         app.terminate()
+    }
+
+    @MainActor
+    private func reveal(_ element: XCUIElement, in app: XCUIApplication) throws {
+        for _ in 0..<24 {
+            if element.isHittable && app.frame.contains(element.frame) { return }
+            let towardEarlierContent = element.frame.minY < app.frame.minY
+            let start = app.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.60))
+            let end = app.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: towardEarlierContent ? 0.75 : 0.45))
+            start.press(forDuration: 0.1, thenDragTo: end)
+        }
+        XCTFail("Cannot bring full reading into view: \(element.identifier)")
+        throw NSError(domain: "WatchJourney", code: 2)
     }
 
     @MainActor

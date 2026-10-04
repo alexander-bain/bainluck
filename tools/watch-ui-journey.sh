@@ -64,6 +64,15 @@ printf '%s\n' "$TEST_UDID" > "$OUT/destination.txt"
 PHASE='disposable unpaired Watch simulator boot (pairing, if required, is an unpaid gate)'
 xcrun simctl boot "$TEST_UDID" >> "$OUT/preflight.log" 2>&1
 xcrun simctl bootstatus "$TEST_UDID" -b >> "$OUT/preflight.log" 2>&1
+# Verify a real simulator preference, never force SwiftUI's environment in source.
+case "${WATCH_UI_TEXT_SIZE:-standard}" in
+  standard) TEXT_CATEGORY=large; EXPECTED_TYPE=large ;;
+  accessibility) TEXT_CATEGORY=accessibility-extra-extra-extra-large; EXPECTED_TYPE=accessibility5 ;;
+  *) echo 'Unknown Watch text-size test mode' >&2; exit 2 ;;
+esac
+PHASE='simulator text size setting and readback'
+xcrun simctl ui "$TEST_UDID" content_size "$TEXT_CATEGORY" >> "$OUT/preflight.log" 2>&1
+xcrun simctl ui "$TEST_UDID" content_size > "$OUT/text-size.txt" 2>> "$OUT/preflight.log"
 # The watch-only app and tests supply their own launch environment. Never pair
 # with an existing iPhone or inject fixtures through simulator shell commands.
 PHASE='BainLuckWatchUITests full suite'
@@ -85,6 +94,18 @@ printf 'xcodebuild exit: %s\n' "$TEST_EXIT"
 if [[ "$TEST_EXIT" -ne 0 ]]; then
   echo 'Watch UI journey unpaid; if this toolchain requires pairing, no existing iPhone has been touched.' >&2
   tail -80 "$OUT/tests.log" >&2
+fi
+PHASE='effective SwiftUI text size verification'
+if [[ "$TEST_EXIT" -eq 0 ]]; then
+  python3 - "$OUT/tests.log" "$OUT/text-size.txt" "$TEXT_CATEGORY" "$EXPECTED_TYPE" <<'PYVERIFY'
+import sys
+from pathlib import Path
+log, readback = (Path(p).read_text() for p in sys.argv[1:3])
+if readback.strip() != sys.argv[3]:
+    raise SystemExit(f'Simulator text size readback mismatch: {readback.strip()}')
+if f'WATCH_UI_DYNAMIC_TYPE={sys.argv[4]}' not in log.splitlines():
+    raise SystemExit('App did not confirm expected effective text size; accessibility gate unpaid')
+PYVERIFY
 fi
 PHASE='full-suite receipt verification'
 python3 "$ROOT/tools/watch_iphone_receipt.py" --log "$OUT/tests.log" \

@@ -102,12 +102,17 @@ struct WatchSelectedGameView: View {
             .accessibilityElement(children: .ignore)
             .accessibilityLabel(stateAccessibilityLabel(game))
             .accessibilityIdentifier("watch.game-state")
+            #if DEBUG
+            .accessibilityValue(WatchUIFixture.current == nil ? "" : String(describing: dynamicTypeSize))
+            #endif
             if game.isClosed {
                 Text("Last reported score · final result unverified")
                     .font(.footnote).foregroundStyle(.secondary)
             }
             scoreRow(team: game.awayTeam, score: game.awayScore)
+                .accessibilityIdentifier("watch.away-score")
             scoreRow(team: game.homeTeam, score: game.homeScore)
+                .accessibilityIdentifier("watch.home-score")
             if game.isFinal && (game.homeScore == nil || game.awayScore == nil) {
                 Text("Final score unavailable")
                     .font(.footnote).foregroundStyle(.secondary)
