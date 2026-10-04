@@ -135,6 +135,8 @@ export function ProjectedFinalPointsChartView({
   const reading = shown?.latest ?? null;
   const actual = shown?.latestActual ?? null;
   const showActual = !cursorGone && (shown?.phase ?? "before") !== "before";
+  // Before the score floor there is no actual line, so the legend does not name one.
+  const actualDrawn = !!shown && showActual && shown.actualSteps.length > 0;
   // The last recorded score is the final only when it equals the page's own final. A completion
   // timestamp does not make an earlier observation final: a game whose last recorded row is 26–7
   // (before the extra point) still ended 27–7. A moment being inspected never shows the final.
@@ -244,7 +246,7 @@ export function ProjectedFinalPointsChartView({
             vectorEffect="non-scaling-stroke"
           />
         ))}
-        {shown && showActual && shown.actualSteps.length > 0 &&
+        {shown && actualDrawn &&
           ([
             ["home", homeStroke],
             ["away", awayStroke],
@@ -327,7 +329,7 @@ export function ProjectedFinalPointsChartView({
 
       <div className="mt-2 flex flex-wrap gap-x-4 gap-y-1 text-xs text-text-secondary">
         <span>━ Projected final</span>
-        <span>┅ Actual score</span>
+        {actualDrawn && <span>┅ Actual score</span>}
         <span>Gaps are not joined</span>
       </div>
 

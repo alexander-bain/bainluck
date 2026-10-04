@@ -568,6 +568,15 @@ export interface BookmakerHistoryPoint {
   valid_until?: string; // If set, value was constant from timestamp to valid_until
   projected_home_score?: number | null;
   projected_away_score?: number | null;
+  /**
+   * #10461: `recorded` = stamped at its own capture minute; `synthetic` = an
+   * older capture the route re-stamped at its window cutoff. Absent on a
+   * payload from before the contract, or when the server refused the instant.
+   * Typed as `string` because a client must refuse a value it does not know.
+   */
+  kind?: string;
+  /** #10461: OUR original capture instant (ISO-8601), never a venue trade time. */
+  observed_at?: string | null;
 }
 
 export interface ScoreHistoryPoint {

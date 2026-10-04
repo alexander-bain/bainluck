@@ -40,9 +40,14 @@ import type { EventHistoryResponse } from "@/lib/types";
 
 /** Event statuses that mean the game is over. */
 const FINISHED_STATUSES: ReadonlySet<string> = new Set(["completed", "closed"]);
+/** Event statuses before and during a game. Anything else (postponed, cancelled, unknown) is not mounted. */
+const SCHEDULED_STATUS = "scheduled";
+const LIVE_STATUS = "live";
 
 export type ProjectedFinalPointsMountRefusal =
   | "sport_not_supported"
+  | "status_not_supported"
+  | "no_history"
   | "not_finished"
   | "no_named_book"
   | "no_recorded_game_state"
@@ -58,23 +63,34 @@ export function projectedFinalPointsMount(opts: {
   sportKey: string | null | undefined;
   eventStatus: string | null | undefined;
   history: MountHistory | null | undefined;
+  /** The reader's now. Used before and during the game only; a finished game reads its completion boundary. */
+  now: string;
 }): ProjectedFinalPointsMount {
   const { sportKey, eventStatus, history } = opts;
   if (!PROJECTED_FINAL_POINTS_SPORTS.has(sportKey ?? "")) return { mount: false, reason: "sport_not_supported" };
-  if (!history || !FINISHED_STATUSES.has(eventStatus ?? "") || !history.completed_at) {
-    return { mount: false, reason: "not_finished" };
+  const status = eventStatus ?? "";
+  const finishedPage = FINISHED_STATUSES.has(status);
+  if (!finishedPage && status !== LIVE_STATUS && status !== SCHEDULED_STATUS) {
+    return { mount: false, reason: "status_not_supported" };
   }
-  const sourceKey = pickProjectionSportsbook(history);
+  if (!history) return { mount: false, reason: "no_history" };
+  if (finishedPage && !history.completed_at) return { mount: false, reason: "not_finished" };
+  const asOf = finishedPage && history.completed_at ? history.completed_at : opts.now;
+  // A finished game's history is served whole; a windowed one is never read the pre-contract way.
+  const admission = { finishedPage, cutoffAt: null, asOf };
+  const sourceKey = pickProjectionSportsbook(history, admission);
   if (!sourceKey) return { mount: false, reason: "no_named_book" };
   const scoreObservationStartAt = firstRecordedGameStateAt(history.period_markers, sportKey);
-  if (!scoreObservationStartAt) return { mount: false, reason: "no_recorded_game_state" };
+  // During and after, actual scores need an observed floor; a scheduled game shows forecasts only.
+  if (!scoreObservationStartAt && status !== SCHEDULED_STATUS) {
+    return { mount: false, reason: "no_recorded_game_state" };
+  }
   const input = projectedFinalPointsInputFromHistory(history, {
     sportKey,
     sourceKey,
     kickoffAt: null,
     scoreObservationStartAt,
-    asOf: history.completed_at,
-    cutoffAt: null,
+    ...admission,
   });
   if (!buildProjectedFinalPointsSeries(input).supported) return { mount: false, reason: "no_valid_pair" };
   return { mount: true, input };
@@ -114,10 +130,25 @@ export default function ProjectedFinalPointsModule({
   homeColor,
   awayColor,
 }: ProjectedFinalPointsModuleProps) {
-  // Keyed on the adopted history, so the chart's own memo and held cursor survive unrelated re-renders.
+  // Keyed on the history fields it reads, so a live push that only moves the
+  // win-probability line keeps the chart's memo and held cursor. The reader's
+  // now is taken when those fields arrive.
+  const bookmakerHistory = history?.bookmaker_history;
+  const scoreHistory = history?.score_history;
+  const completedAt = history?.completed_at;
+  const periodMarkers = history?.period_markers;
+  const hasHistory = !!history;
   const decision = useMemo(
-    () => projectedFinalPointsMount({ sportKey, eventStatus, history }),
-    [sportKey, eventStatus, history],
+    () =>
+      projectedFinalPointsMount({
+        sportKey,
+        eventStatus,
+        history: hasHistory
+          ? { bookmaker_history: bookmakerHistory, score_history: scoreHistory, completed_at: completedAt, period_markers: periodMarkers }
+          : null,
+        now: new Date().toISOString(),
+      }),
+    [sportKey, eventStatus, hasHistory, bookmakerHistory, scoreHistory, completedAt, periodMarkers],
   );
   const finalHome = finalScore?.home;
   const finalAway = finalScore?.away;
@@ -125,7 +156,7 @@ export default function ProjectedFinalPointsModule({
   if (!decision.mount) return null;
   // Its own boundary, so a fault in this experiment can never take the page's score section with it.
   return (
-    <SectionErrorBoundary label="The projected final points" resetKey={history}>
+    <SectionErrorBoundary label="The projected final points" resetKey={decision}>
       <ProjectedFinalPointsChart
         input={decision.input}
         homeTeam={homeTeam}

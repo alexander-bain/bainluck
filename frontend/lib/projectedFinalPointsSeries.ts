@@ -29,8 +29,24 @@
  * value that type allows names the producer rule above. If that rule ever
  * changes, the basis stops being true and the mount must be withdrawn.
  *
- * Times are OUR capture minute, not the venue's publication time (the venue's
+ * Times are OUR capture, not the venue's publication time (the venue's
  * `last_update` is not kept), so the reader is told "recorded", nothing more.
+ *
+ * ── WHICH ROWS COUNT AS RECORDED (#10461) ───────────────────────────────────
+ *
+ * A windowed request re-stamps an older capture at the cutoff minute, in the
+ * same shape as a real one. The route now says which is which: `kind` and
+ * `observed_at` (our original capture instant). A row is admitted as recorded
+ * only when it carries `kind: "recorded"` AND an `observed_at` inside its own
+ * displayed minute, and it is then placed at `observed_at`, so `asOf` and a
+ * scrub cursor compare against the capture itself. `synthetic`, an unknown
+ * kind, a missing or malformed `observed_at` are refused, never promoted.
+ *
+ * A row with no provenance at all (a payload from before the contract) is
+ * admitted ONLY on a finished page whose history was served whole: finished
+ * status, a completion boundary, and no request cutoff, so no row can be a
+ * re-stamp. Anywhere else it is refused, so a live or pregame chart draws
+ * nothing until the server says what each row is.
  *
  * ── WHAT A ROW'S `valid_until` IS NOT ───────────────────────────────────────
  *
@@ -81,7 +97,7 @@
 
 import { normalizePeriodLabel, PERIOD_SOURCE_ESTIMATED, type ServedPeriodMarker } from "@/lib/periodMarkers";
 import { sourceLabel } from "@/lib/sourceLabels";
-import type { EventHistoryResponse } from "@/lib/types";
+import type { BookmakerHistoryPoint, EventHistoryResponse } from "@/lib/types";
 
 /**
  * Sports whose sportsbook spread is an expected margin in points. Admission
@@ -108,12 +124,15 @@ export interface ProjectedPairObservation {
   /** The same book's home win probability at this capture, when served. */
   homeProbability?: number | null;
   /**
-   * `recorded` = a row we actually captured, stamped with our capture minute.
+   * `recorded` = a row we actually captured, stamped with our capture.
    * `synthetic` = a row the history route RE-STAMPED at its window cutoff
    * (an older capture still valid then). That timestamp is not an
-   * observation, so the row is never admitted. Absent means `recorded`.
+   * observation, so the row is never admitted. `unproven` = the row's
+   * provenance was missing, unknown or malformed where it is required
+   * (module doc), so it is never admitted either. Absent means `recorded`;
+   * `projectedFinalPointsInputFromHistory` always sets it.
    */
-  kind?: "recorded" | "synthetic";
+  kind?: "recorded" | "synthetic" | "unproven";
 }
 
 export interface ActualScoreObservation {
@@ -278,11 +297,15 @@ function startedWindowStart(pairs: ProjectedPairObservation[], floor: number): n
   const context = floor - PREGAME_CONTEXT_MS;
   let start = floor;
   for (const pair of pairs) {
-    if (pair.kind === "synthetic") continue;
+    if (!isAdmittedKind(pair)) continue;
     const at = parseTime(pair.timestamp);
     if (at !== null && at >= context && at < start) start = at;
   }
   return start;
+}
+
+function isAdmittedKind(pair: ProjectedPairObservation): boolean {
+  return pair.kind === undefined || pair.kind === "recorded";
 }
 
 function niceMax(value: number, step: number): number {
@@ -320,7 +343,7 @@ export function buildProjectedFinalPointsSeries(
     | { at: number; kind: "withheld"; reason: WithheldReason };
   const rows: Row[] = [];
   for (const pair of input.pairs) {
-    if (pair.kind === "synthetic") continue;
+    if (!isAdmittedKind(pair)) continue;
     const at = parseTime(pair.timestamp);
     // Strictly before the completion boundary: a reading stamped at it is not a forecast.
     if (at === null || at > end || (final !== null && at >= final)) continue;
@@ -429,20 +452,71 @@ export function seriesAt(
 }
 
 /**
- * The sportsbook whose own series carries the most complete pairs in the
- * payload. Only named sources are eligible, so the chart can always say whose
- * numbers it draws. Ties go to the alphabetically first key, so the choice
- * does not change from one payload ordering to the next.
+ * How a served row may be admitted as recorded evidence (module doc). The
+ * picker and the input builder share it, so a book cannot be picked on rows
+ * the chart would then refuse.
  */
-export function pickProjectionSportsbook(history: Pick<EventHistoryResponse, "bookmaker_history">): string | null {
+export interface ProjectionAdmission {
+  /** The page shows a finished game (completed/closed status). */
+  finishedPage: boolean;
+  /** The request's window cutoff, or null when the route served the whole series. */
+  cutoffAt: string | null;
+  /** Nothing captured after this instant counts. */
+  asOf: string;
+}
+
+type HistoryForAdmission = Pick<EventHistoryResponse, "bookmaker_history" | "completed_at">;
+
+/** True when a row without provenance may still be read as a recorded capture: a finished, whole-served history. */
+function legacyRowsAdmitted(history: HistoryForAdmission, admission: ProjectionAdmission): boolean {
+  return admission.finishedPage && admission.cutoffAt === null && parseTime(history.completed_at) !== null;
+}
+
+const MINUTE_MS = 60 * 1000;
+
+/**
+ * One served row's admission: the kind it is read as and the instant it is
+ * placed at. Explicit provenance decides whenever any of it is present; a
+ * row with none is recorded only when `legacy` allows it.
+ */
+function admitRow(row: BookmakerHistoryPoint, legacy: boolean): { kind: "recorded" | "synthetic" | "unproven"; timestamp: string } {
+  const hasProvenance = row.kind !== undefined || row.observed_at !== undefined;
+  if (!hasProvenance) return { kind: legacy ? "recorded" : "unproven", timestamp: row.timestamp };
+  if (row.kind === "synthetic") return { kind: "synthetic", timestamp: row.timestamp };
+  if (row.kind !== "recorded" || typeof row.observed_at !== "string") return { kind: "unproven", timestamp: row.timestamp };
+  const observed = parseTime(row.observed_at);
+  const minute = parseTime(row.timestamp);
+  // The displayed minute is the capture truncated to the minute. Anything else is not this row's capture.
+  if (observed === null || minute === null || Math.floor(observed / MINUTE_MS) * MINUTE_MS !== minute) {
+    return { kind: "unproven", timestamp: row.timestamp };
+  }
+  return { kind: "recorded", timestamp: row.observed_at };
+}
+
+/**
+ * The named sportsbook with the most ADMITTED complete pairs captured by
+ * `asOf`. Counting raw rows would let a book whose rows are all re-stamps or
+ * unproven hide another book with real readings. Only named sources are
+ * eligible, so the chart can always say whose numbers it draws. Ties go to
+ * the alphabetically first key, so the choice does not change from one
+ * payload ordering to the next.
+ */
+export function pickProjectionSportsbook(history: HistoryForAdmission, admission: ProjectionAdmission): string | null {
+  const legacy = legacyRowsAdmitted(history, admission);
+  const asOf = parseTime(admission.asOf);
+  if (asOf === null) return null;
   let best: string | null = null;
   let bestCount = 0;
   const books = Object.keys(history.bookmaker_history ?? {}).sort();
   for (const book of books) {
     if (!sourceLabel(book)) continue;
-    const count = (history.bookmaker_history?.[book] ?? []).filter(
-      (p) => isPoints(p.projected_home_score) && isPoints(p.projected_away_score),
-    ).length;
+    let count = 0;
+    for (const row of history.bookmaker_history?.[book] ?? []) {
+      if (!isPoints(row.projected_home_score) || !isPoints(row.projected_away_score)) continue;
+      const admitted = admitRow(row, legacy);
+      const at = parseTime(admitted.timestamp);
+      if (admitted.kind === "recorded" && at !== null && at <= asOf) count++;
+    }
     if (count > bestCount) {
       best = book;
       bestCount = count;
@@ -480,23 +554,16 @@ export function firstRecordedGameStateAt(
 }
 
 /**
- * Slack past the request cutoff inside which a row may be a re-stamp. The
- * route truncates to the minute and its clock is not the reader's.
- */
-export const CUTOFF_RESTAMP_SLACK_MS = 2 * 60 * 1000;
-
-/**
  * Builds the input from a served history payload. The caller chooses the
  * book and supplies the observed kickoff, because neither is in the payload,
  * and may supply the first recorded game state as the score floor.
  *
- * `cutoffAt` is the window cutoff the request asked for (`now - hours`), or
- * null when the route serves the whole series (a finished game). The route
- * re-stamps an older row that was still valid at the cutoff with the cutoff
- * minute and gives it no marker (`routes/events.py`, per-book history), so
- * every row at or near the cutoff is marked `synthetic` and refused. A
- * served observation-kind field would make this exact; until then this
- * errs toward refusing.
+ * Each row is admitted by its served provenance (module doc): `kind:
+ * "recorded"` with an `observed_at` inside its own minute is placed at that
+ * capture; anything else is marked and refused. `cutoffAt` is the window
+ * cutoff the request asked for (`now - hours`), or null when the route
+ * serves the whole series; with `finishedPage` it decides only whether a row
+ * WITHOUT provenance may be read the pre-contract way.
  */
 export function projectedFinalPointsInputFromHistory(
   history: Pick<EventHistoryResponse, "bookmaker_history" | "score_history" | "completed_at">,
@@ -507,23 +574,26 @@ export function projectedFinalPointsInputFromHistory(
     scoreObservationStartAt?: string | null;
     asOf: string;
     cutoffAt: string | null;
+    finishedPage: boolean;
   },
 ): ProjectedFinalPointsInput {
   const rows = history.bookmaker_history?.[opts.sourceKey] ?? [];
-  const cutoff = parseTime(opts.cutoffAt);
-  const restampedThrough = cutoff === null ? null : cutoff + CUTOFF_RESTAMP_SLACK_MS;
+  const legacy = legacyRowsAdmitted(history, opts);
   return {
     sportKey: opts.sportKey,
     sourceKey: opts.sourceKey,
     basis: "same_book_same_capture_full_game_spread_and_total",
-    pairs: rows.map((p) => ({
-      timestamp: p.timestamp,
-      home: p.projected_home_score,
-      away: p.projected_away_score,
-      homeProbability: p.home_probability,
-      // `valid_until` deliberately not carried: continuity, not confirmation (module doc).
-      kind: restampedThrough !== null && (parseTime(p.timestamp) ?? -Infinity) <= restampedThrough ? "synthetic" : "recorded",
-    })),
+    pairs: rows.map((p) => {
+      const { kind, timestamp } = admitRow(p, legacy);
+      return {
+        timestamp,
+        home: p.projected_home_score,
+        away: p.projected_away_score,
+        homeProbability: p.home_probability,
+        // `valid_until` deliberately not carried: continuity, not confirmation (module doc).
+        kind,
+      };
+    }),
     actuals: history.score_history ?? [],
     kickoffAt: opts.kickoffAt,
     scoreObservationStartAt: opts.scoreObservationStartAt ?? null,
