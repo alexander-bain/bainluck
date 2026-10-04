@@ -8,6 +8,7 @@ nonisolated protocol WatchSelectedGameTransport: Sendable {
 nonisolated enum WatchSelectedGameRequestError: Error {
     case unavailable
     case serviceBusy
+    case retryAfter(TimeInterval)
     case invalidResponse
 }
 
@@ -28,12 +29,34 @@ nonisolated struct WatchSelectedGameHTTPTransport: WatchSelectedGameTransport {
         switch http.statusCode {
         case 200: break
         case 404, 410: throw WatchSelectedGameRequestError.unavailable
-        case 429, 503: throw WatchSelectedGameRequestError.serviceBusy
+        case 429, 503:
+            if let delay = Self.retryDelay(from: http.value(forHTTPHeaderField: "Retry-After"), now: Date()) {
+                throw WatchSelectedGameRequestError.retryAfter(delay)
+            }
+            throw WatchSelectedGameRequestError.serviceBusy
         default: throw WatchSelectedGameRequestError.invalidResponse
         }
         do { return try JSONDecoder().decode(WatchSelectedGame.self, from: data) }
         catch { throw WatchSelectedGameRequestError.invalidResponse }
     }
+
+    /// Bound server-directed pauses; malformed headers retain ordinary backoff.
+    static func retryDelay(from value: String?, now: Date) -> TimeInterval? {
+        guard let value = value?.trimmingCharacters(in: .whitespacesAndNewlines), !value.isEmpty else { return nil }
+        if value.utf8.allSatisfy({ (48...57).contains($0) }), let seconds = Double(value), seconds.isFinite {
+            return min(3600, seconds)
+        }
+        let formatter = DateFormatter()
+        formatter.locale = Locale(identifier: "en_US_POSIX")
+        formatter.timeZone = TimeZone(secondsFromGMT: 0)
+        formatter.dateFormat = "EEE, dd MMM yyyy HH:mm:ss 'GMT'"
+        formatter.isLenient = false
+        guard let date = formatter.date(from: value), formatter.string(from: date) == value else { return nil }
+        let seconds = date.timeIntervalSince(now)
+        guard seconds.isFinite, seconds >= 0 else { return nil }
+        return min(3600, seconds)
+    }
+
 }
 
 /// Persist one last-good public reading without changing its observation clocks.
@@ -50,6 +73,9 @@ final class WatchSelectedGameStore: ObservableObject {
     private let now: () -> Date
     private var revision = 0
     private var consecutiveFailures = 0
+    // Monotonic process clock keeps a wall-clock correction from extending the pause.
+    private let retryClock: () -> TimeInterval
+    private var retryNotBefore: TimeInterval?
     private static let selectionKey = "bainluck_watch_selected_event_id"
 
     private static let snapshotKey = "bainluck_watch_selected_game_snapshot_v1"
@@ -60,10 +86,12 @@ final class WatchSelectedGameStore: ObservableObject {
     }
 
     init(transport: any WatchSelectedGameTransport = WatchSelectedGameHTTPTransport(),
-         defaults: UserDefaults = .standard, now: @escaping () -> Date = Date.init) {
+         defaults: UserDefaults = .standard, now: @escaping () -> Date = Date.init,
+         retryClock: @escaping () -> TimeInterval = { ProcessInfo.processInfo.systemUptime }) {
         self.transport = transport
         self.defaults = defaults
         self.now = now
+        self.retryClock = retryClock
         let stored = defaults.integer(forKey: Self.selectionKey)
         selectedEventID = stored > 0 ? stored : nil
         if let data = defaults.data(forKey: Self.snapshotKey),
@@ -81,6 +109,7 @@ final class WatchSelectedGameStore: ObservableObject {
         guard eventID > 0, eventID != selectedEventID else { return }
         revision += 1
         consecutiveFailures = 0
+        retryNotBefore = nil
         selectedEventID = eventID
         defaults.set(eventID, forKey: Self.selectionKey)
         defaults.removeObject(forKey: Self.snapshotKey)
@@ -94,6 +123,7 @@ final class WatchSelectedGameStore: ObservableObject {
     @MainActor func clearSelection() {
         revision += 1
         consecutiveFailures = 0
+        retryNotBefore = nil
         selectedEventID = nil
         defaults.removeObject(forKey: Self.selectionKey)
         defaults.removeObject(forKey: Self.snapshotKey)
@@ -106,12 +136,19 @@ final class WatchSelectedGameStore: ObservableObject {
 
     /// Foreground scheduling only; this is not a watchOS background guarantee.
     /// Waiting happens after completion, so slow responses never overlap polls.
-    var nextRefreshDelay: TimeInterval {
-        if consecutiveFailures > 0 {
-            return min(300, 30 * pow(2, Double(consecutiveFailures - 1)))
-        }
-        return game?.isLive == true ? 30 : 300
+    private var remainingServerDelay: TimeInterval {
+        max(0, retryNotBefore.map { $0 - retryClock() } ?? 0)
     }
+
+    var nextRefreshDelay: TimeInterval {
+        let ordinary = consecutiveFailures > 0
+            ? min(300, 30 * pow(2, Double(consecutiveFailures - 1)))
+            : (game?.isLive == true ? 30.0 : 300.0)
+        return max(ordinary, remainingServerDelay)
+    }
+
+    /// Only an explicit user action bypasses the current server-directed pause.
+    @MainActor func allowManualRetry() { retryNotBefore = nil }
 
     @MainActor func runForegroundRefresh(
         sleep: (TimeInterval) async throws -> Void = { seconds in
@@ -119,6 +156,14 @@ final class WatchSelectedGameStore: ObservableObject {
         }
     ) async {
         while !Task.isCancelled, selectedEventID != nil {
+            // A scene restart must not bypass a service's requested pause.
+            let delay = remainingServerDelay
+            if delay > 0 {
+                do { try await sleep(delay) }
+                catch { return }
+                guard !Task.isCancelled, selectedEventID != nil else { return }
+                continue
+            }
             await refresh()
             guard !Task.isCancelled, selectedEventID != nil else { return }
             do { try await sleep(nextRefreshDelay) }
@@ -141,6 +186,7 @@ final class WatchSelectedGameStore: ObservableObject {
             selectedEventID = result.id
             defaults.set(result.id, forKey: Self.selectionKey)
             consecutiveFailures = 0
+            retryNotBefore = nil
             errorMessage = nil
             game = result
             let receivedAt = now()
@@ -160,6 +206,11 @@ final class WatchSelectedGameStore: ObservableObject {
             switch error {
             case WatchSelectedGameRequestError.unavailable:
                 errorMessage = "Selected game is unavailable. Try again or choose another game."
+            case WatchSelectedGameRequestError.retryAfter(let delay):
+                if delay.isFinite, delay > 0 {
+                    retryNotBefore = retryClock() + min(3600, delay)
+                }
+                errorMessage = "Service temporarily busy. Automatic retry will wait; you can refresh now."
             case WatchSelectedGameRequestError.serviceBusy:
                 errorMessage = "Service temporarily busy. Try again."
             case WatchSelectedGameRequestError.invalidResponse:

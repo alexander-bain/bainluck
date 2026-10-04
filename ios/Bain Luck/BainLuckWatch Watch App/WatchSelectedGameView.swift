@@ -52,6 +52,7 @@ struct WatchSelectedGameView: View {
 
                 if store.selectedEventID != nil {
                     Button(store.isRefreshing ? "Refreshing…" : "Refresh") {
+                        store.allowManualRetry()
                         refreshGeneration += 1
                     }
                     .disabled(store.isRefreshing || scenePhase != .active)

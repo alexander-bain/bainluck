@@ -8,8 +8,10 @@ private actor FlowPickerTransport: WatchGamePickerTransport {
 
 private actor FlowDetailTransport: WatchSelectedGameTransport {
     private var script: [(Int, Result<WatchSelectedGame, Error>)]
+    private(set) var fetchCount = 0
     init(_ script: [(Int, Result<WatchSelectedGame, Error>)]) { self.script = script }
     func fetch(eventID: Int) async throws -> WatchSelectedGame {
+        fetchCount += 1
         precondition(!script.isEmpty, "The flow must never make an unplanned request")
         let (expectedID, result) = script.removeFirst()
         precondition(eventID == expectedID, "Detail must follow the selected or resolved canonical ID")
@@ -102,4 +104,91 @@ private actor FlowDetailTransport: WatchSelectedGameTransport {
                  "Clear selection removes the snapshot itself")
     await transport.assertConsumed()
     print("PASS: Discover picker to canonical live detail, named home probability, independent ages, offline restoration, retained final, changed selection, and cleared snapshot")
+    try await checkWatchRetryDeadline()
+}
+
+@MainActor private final class RetryClock {
+    var date = Date(timeIntervalSince1970: 1_800_000_000)
+    var elapsed: TimeInterval = 1000
+}
+
+@MainActor private func checkWatchRetryDeadline() async throws {
+    let suite = "watch-retry-deadline-\(UUID().uuidString)"
+    let defaults = UserDefaults(suiteName: suite)!
+    defer { defaults.removePersistentDomain(forName: suite) }
+    let clock = RetryClock()
+    let live = try event(4932, extras: ",\"status\":\"live\"")
+    let transport = FlowDetailTransport([
+        (4932, .failure(WatchSelectedGameRequestError.retryAfter(180))),
+        (4932, .success(live)),
+        (4932, .failure(WatchSelectedGameRequestError.retryAfter(600))),
+        (4932, .failure(WatchSelectedGameRequestError.serviceBusy)),
+        (4932, .failure(WatchSelectedGameRequestError.retryAfter(900))),
+        (4933, .failure(WatchSelectedGameRequestError.retryAfter(900))),
+        (4932, .failure(WatchSelectedGameRequestError.retryAfter(7200))),
+        (4932, .failure(WatchSelectedGameRequestError.retryAfter(0))),
+        (4932, .failure(WatchSelectedGameRequestError.retryAfter(-1))),
+        (4932, .failure(WatchSelectedGameRequestError.retryAfter(.infinity))),
+        (4932, .failure(WatchSelectedGameRequestError.retryAfter(.nan))),
+    ])
+    let store = WatchSelectedGameStore(transport: transport, defaults: defaults, now: { clock.date }, retryClock: { clock.elapsed })
+    store.select(eventID: 4932)
+    await store.refresh()
+    precondition(store.nextRefreshDelay == 180, "Server delay dominates the first failure backoff")
+    clock.date += 7200
+    precondition(store.nextRefreshDelay == 180, "A wall-clock correction cannot shorten the server retry deadline")
+    clock.date -= 14400
+    precondition(store.nextRefreshDelay == 180, "A backward wall-clock correction cannot extend the server retry deadline")
+    clock.elapsed += 20
+    precondition(store.nextRefreshDelay == 160, "Server delay is a remaining deadline, not a repeated duration")
+    var interruptedSleeps: [TimeInterval] = []
+    await store.runForegroundRefresh { delay in
+        interruptedSleeps.append(delay)
+        throw CancellationError()
+    }
+    let interruptedFetchCount = await transport.fetchCount
+    precondition(interruptedSleeps == [160] && interruptedFetchCount == 1,
+                 "Foreground restart waits before requesting, and interrupted sleep cannot fetch")
+    clock.elapsed += 10
+    precondition(store.nextRefreshDelay == 150, "Interrupted foreground wait preserves the deadline")
+    var resumedSleeps: [TimeInterval] = []
+    await store.runForegroundRefresh { delay in
+        resumedSleeps.append(delay)
+        if resumedSleeps.count == 1 {
+            precondition(delay == 150)
+            clock.elapsed += delay
+        } else {
+            throw CancellationError()
+        }
+    }
+    let resumedFetchCount = await transport.fetchCount
+    precondition(resumedFetchCount == 2 && resumedSleeps == [150, 30],
+                 "Elapsed deadline permits exactly one request, then the successful live cadence without a second server sleep")
+    precondition(store.nextRefreshDelay == 30, "Success clears the server deadline and failure backoff")
+    await store.refresh()
+    precondition(store.nextRefreshDelay == 600)
+    store.allowManualRetry()
+    precondition(store.nextRefreshDelay == 30, "Explicit manual retry clears the server deadline")
+    await store.refresh()
+    precondition(store.nextRefreshDelay == 60, "Manual retry preserves the existing failure backoff")
+    await store.refresh()
+    precondition(store.nextRefreshDelay == 900)
+    store.select(eventID: 4933)
+    precondition(store.nextRefreshDelay == 300, "Changing selection clears the prior game's server deadline")
+    await store.refresh()
+    precondition(store.nextRefreshDelay == 900)
+    store.clearSelection()
+    precondition(store.nextRefreshDelay == 300, "Clearing selection clears its server deadline")
+    store.select(eventID: 4932)
+    await store.refresh()
+    precondition(store.nextRefreshDelay == 3600, "Server hints are capped at one hour")
+    clock.elapsed += 3590
+    precondition(store.nextRefreshDelay == 30, "Remaining server deadline cannot shorten ordinary backoff")
+    store.allowManualRetry()
+    for expected in [60, 120, 240, 300] as [TimeInterval] {
+        await store.refresh()
+        precondition(store.nextRefreshDelay == expected, "Nonpositive or nonfinite hints use ordinary capped backoff")
+    }
+    await transport.assertConsumed()
+    print("PASS: server retry deadline, interrupted foreground preservation, remaining-delay wait, no double sleep, success/selection/clear reset, explicit manual retry, finite positive validation and one-hour cap")
 }
