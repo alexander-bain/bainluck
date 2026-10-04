@@ -223,13 +223,33 @@ function git(cwd, ...args) {
   return res.stdout.trim();
 }
 
-/** A throwaway repo shaped like this one: web inputs, and the four non-web trees. */
+/**
+ * A throwaway repo shaped like this one: web inputs, and the four non-web trees.
+ *
+ * Auto-maintenance is OFF, and the two missing-tree cases depend on it (#10431).
+ * Since Git 2.54 every `git commit` spawns a DETACHED `git maintenance run
+ * --auto`, whose geometric-repack test samples `objects/17/` and fires at two
+ * loose objects. BASE_TREE's `app = None` blob is 1775a8…, so a commit hashing
+ * into 17/ (≈1 in 256) starts a background repack that can pack the tree
+ * `destroyObject` just deleted and land AFTER its absence check. The hook then
+ * diffs a tree that really is there, correctly says "nothing changed", and the
+ * BUILD row reads SKIP (run 37194901773, Git 2.55.0; reproduced locally by
+ * forcing that repack after the last commit). The hook was right; the
+ * precondition was not held. `gc.auto=0` covers Gits that still run `gc --auto`.
+ */
 function makeRepo() {
   const dir = tmpdir("vib-repo-");
   git(dir, "init", "-q", "-b", "master");
   git(dir, "config", "user.email", "contract@example.com");
   git(dir, "config", "user.name", "contract");
+  git(dir, "config", "maintenance.auto", "false");
+  git(dir, "config", "gc.auto", "0");
   return dir;
+}
+
+/** True when `sha` reads in `repo` — the precondition the missing-tree cases need to be FALSE. */
+function objectReadable(repo, sha) {
+  return spawnSync("git", ["cat-file", "-e", sha], { cwd: repo }).status === 0;
 }
 
 function commit(dir, files, message) {
@@ -263,8 +283,7 @@ function commit(dir, files, message) {
  * before, and it must not read after.
  */
 function destroyObject(repo, sha) {
-  const readable = () =>
-    spawnSync("git", ["cat-file", "-e", sha], { cwd: repo }).status === 0;
+  const readable = () => objectReadable(repo, sha);
 
   assert.ok(
     readable(),
@@ -706,7 +725,8 @@ describe("#7846 — a production build is skipped only when the live website is 
     const repo = makeRepo();
     const live = commit(repo, BASE_TREE, "base");
     const head = commit(repo, { "backend/app/main.py": "app = 1\n" }, "backend");
-    destroyObject(repo, git(repo, "rev-parse", `${live}^{tree}`));
+    const liveTree = git(repo, "rev-parse", `${live}^{tree}`);
+    destroyObject(repo, liveTree);
 
     // The case only grades the diff guard if the two cheaper guards still pass.
     assert.strictEqual(
@@ -724,8 +744,23 @@ describe("#7846 — a production build is skipped only when the live website is 
       prodEnv(head, { BUILD_FILTER_MARKER_URL: markerUrl({ commit: live, env: "production" }) }),
       repo
     );
+    // Checked BEFORE the decision: a tree that came back mid-run (#10431) is a
+    // broken fixture, and must say so rather than read as the hook skipping.
+    assert.ok(
+      !objectReadable(repo, liveTree),
+      "the live tree reappeared while the hook ran — the fixture lost its precondition, not the hook"
+    );
     assert.strictEqual(run.decision, BUILD);
     assert.match(run.stdout, /git diff against live commit .* failed -> BUILD \(fail-safe\)/);
+  });
+
+  test("fixture repos spawn no background maintenance that could restore a destroyed tree", () => {
+    // Pins makeRepo's precondition (#10431). Without it the two missing-tree
+    // cases flake ~1% on Git >= 2.54 — rare enough to pass review and land as
+    // somebody else's red CI.
+    const repo = makeRepo();
+    assert.strictEqual(git(repo, "config", "--get", "maintenance.auto"), "false");
+    assert.strictEqual(git(repo, "config", "--get", "gc.auto"), "0");
   });
 
   test("builds when the comparison fails against VERCEL_GIT_PREVIOUS_SHA too", () => {
@@ -736,7 +771,8 @@ describe("#7846 — a production build is skipped only when the live website is 
     const c0 = commit(repo, BASE_TREE, "base");
     const live = commit(repo, { "backend/app/main.py": "app = 1\n" }, "backend");
     const head = commit(repo, { "backend/app/main.py": "app = 2\n" }, "more backend");
-    destroyObject(repo, git(repo, "rev-parse", `${c0}^{tree}`));
+    const previousTree = git(repo, "rev-parse", `${c0}^{tree}`);
+    destroyObject(repo, previousTree);
 
     const run = decideVerbose(
       prodEnv(head, {
@@ -744,6 +780,10 @@ describe("#7846 — a production build is skipped only when the live website is 
         VERCEL_GIT_PREVIOUS_SHA: c0,
       }),
       repo
+    );
+    assert.ok(
+      !objectReadable(repo, previousTree),
+      "the previous tree reappeared while the hook ran — the fixture lost its precondition, not the hook"
     );
     assert.strictEqual(run.decision, BUILD);
     assert.match(run.stdout, /git diff against VERCEL_GIT_PREVIOUS_SHA .* failed -> BUILD \(fail-safe\)/);
