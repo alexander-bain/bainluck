@@ -534,7 +534,10 @@ final class TheLiveChartEndCarriesTheHeroNumber9436Tests: XCTestCase {
         // Scanning pixels must not delay the next animation observation. Timestamp
         // after acquisition, never before it: capture cost is still paid honestly.
         var columns: [Int] = [], stamps: [Double] = []
-        for capture in captures {
+        for (index, capture) in captures.enumerated() {
+            // Retain the real frame so an apparent reversal can be distinguished
+            // from label pixels or changing chart axes, without relaxing the gate.
+            recordMotionFrame(capture.image, name: "motion-frame-\(index)-at-\(capture.acquiredAt)")
             let x = try XCTUnwrap(tipColumn(capture.image), "Sample must contain the rendered chart endpoint")
             columns.append(x)
             stamps.append(capture.acquiredAt)
@@ -561,9 +564,19 @@ final class TheLiveChartEndCarriesTheHeroNumber9436Tests: XCTestCase {
         """.utf8))
     }
 
-    /// Rightmost column holding the line colour (#059669): the drawn end of the
-    /// line, which is the dot. Label text is left of the dot on this fixture.
-    private func tipColumn(_ image: UIImage) -> Int? {
+    private func recordMotionFrame(_ image: UIImage, name: String) {
+        let attachment = XCTAttachment(image: image)
+        attachment.name = name
+        attachment.lifetime = .keepAlways
+        add(attachment)
+        print("#9436 \(name) detected pixel: \(String(describing: tipPixel(image)))")
+    }
+
+    /// Rightmost line-colour pixel. Retained frames distinguish the endpoint
+    /// from label pixels when the chart's domain changes.
+    private func tipColumn(_ image: UIImage) -> Int? { tipPixel(image)?.x }
+
+    private func tipPixel(_ image: UIImage) -> (x: Int, y: Int)? {
         // Redrawn into a known RGBA layout: a snapshot's own byte order is BGRA.
         guard let cg = image.cgImage else { return nil }
         let (w, h) = (cg.width, cg.height)
@@ -576,7 +589,7 @@ final class TheLiveChartEndCarriesTheHeroNumber9436Tests: XCTestCase {
             for y in 0..<h {
                 let i = (y * w + x) * 4
                 let (r, g, b) = (Int(bytes[i]), Int(bytes[i + 1]), Int(bytes[i + 2]))
-                if abs(r - 5) < 24 && abs(g - 150) < 24 && abs(b - 105) < 24 { return x }
+                if abs(r - 5) < 24 && abs(g - 150) < 24 && abs(b - 105) < 24 { return (x, y) }
             }
         }
         return nil
@@ -622,13 +635,17 @@ final class TheLiveChartEndCarriesTheHeroNumber9436Tests: XCTestCase {
         let hosted = try Hosted(FedChart(feed: feed, history: try history()))
         defer { hosted.close() }
         try await Task.sleep(for: .milliseconds(600))
-        let before = try XCTUnwrap(tipColumn(hosted.shot()))
+        let beforeImage = hosted.shot()
+        recordMotionFrame(beforeImage, name: "pin-before")
+        let before = try XCTUnwrap(tipColumn(beforeImage))
 
         feed.history = try pinnedHistory(pinAt: 16, 0.58)
         feed.edge = LiveEdgeReading(homeProbability: 0.58, homeLabel: "58%")
         let (columns, stamps) = try await sampleTip(hosted, seconds: 0.8)
         let sampledLast = try XCTUnwrap(columns.last)
-        let settled = try XCTUnwrap(tipColumn(hosted.shot()))
+        let finalImage = hosted.shot()
+        recordMotionFrame(finalImage, name: "pin-final")
+        let settled = try XCTUnwrap(tipColumn(finalImage))
         XCTAssertEqual(sampledLast, settled, "Sampling must reach the independently captured final endpoint")
         print("#9436 pin-replacement tip columns: before=\(before) frames=\(columns)")
 
