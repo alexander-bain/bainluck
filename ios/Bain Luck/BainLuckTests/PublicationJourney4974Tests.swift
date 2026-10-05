@@ -256,8 +256,13 @@ final class PublicationJourney4974Tests: XCTestCase {
 
     func testAMalformedTimestampRefusesTheWholeBodyNotJustItsRow() {
         // No zone, a non-UTC offset, and garbage that carries a UTC suffix.
+        // Then a UTC stamp naming no real moment: Feb 29 in a common year and
+        // 24:00 — `String.asDate`'s formatter fallback accepts both
+        // (`ISO8601Stamp.swift`), so these pin that the reader never takes it.
         for bad in ["", "Z", "garbage", "not-a-date+00:00", "2026-10-04T20:15:30",
-                    "2026-10-04T20:15:30-07:00", "2026-10-04T20:15:30+05:30"] {
+                    "2026-10-04T20:15:30-07:00", "2026-10-04T20:15:30+05:30",
+                    "2026-02-29T20:15:30+00:00", "2026-02-29T20:15:30Z",
+                    "2026-10-04T24:00:00+00:00", "2026-10-04T24:00:00Z"] {
             XCTAssertEqual(refusal(response(vertices: [
                 vertex(1, "2026-10-04T20:15:10+00:00", 0.5), vertex(2, bad, 0.5),
                 vertex(3, "2026-10-04T20:15:50+00:00", 0.5),
@@ -268,7 +273,8 @@ final class PublicationJourney4974Tests: XCTestCase {
     func testUTCStampsWithAndWithoutAFractionAreAccepted() {
         for good in ["2026-10-04T20:15:30+00:00", "2026-10-04T20:15:30.5+00:00",
                      "2026-10-04T20:15:30.123456+00:00", "2026-10-04T20:15:30Z",
-                     "2026-10-04T20:15:30.250Z"] {
+                     "2026-10-04T20:15:30.250Z", "2028-02-29T20:15:30+00:00",
+                     "2026-10-04T23:59:59Z"] {
             XCTAssertNotNil(Journey4974.date(ofStamp: good), "refused \(good)")
         }
         XCTAssertEqual(Journey4974.date(ofStamp: "2026-10-04T20:15:30+00:00"), t201530)

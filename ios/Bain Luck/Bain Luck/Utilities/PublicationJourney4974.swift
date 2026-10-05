@@ -196,11 +196,16 @@ nonisolated enum PublicationJourney4974 {
         return .success(Journey(eventId: response.eventId, checkpoints: checkpoints, window: earliest...latest))
     }
 
-    /// The moment a served `t` names, parsed exactly as every other chart
-    /// stamp on the page (`String.asDate`), with or without a fraction.
+    /// The moment a served `t` names, with or without a fraction, or `nil`.
     /// The contract is UTC, so only a `Z` or `+00:00` suffix is accepted.
+    ///
+    /// Strict on purpose: `ISO8601Stamp.date` alone, NOT `String.asDate`.
+    /// `asDate` falls through to `ISO8601DateFormatter`, which accepts Feb 29
+    /// in a common year and `24:00` (`ISO8601Stamp.swift` documents both), so a
+    /// malformed row would be re-valued instead of refusing the body. For every
+    /// stamp the fast path accepts it returns the formatter's value bit for bit.
     static func date(ofStamp stamp: String) -> Date? {
         guard stamp.hasSuffix("Z") || stamp.hasSuffix("+00:00") else { return nil }
-        return stamp.asDate
+        return ISO8601Stamp.date(stamp)
     }
 }
