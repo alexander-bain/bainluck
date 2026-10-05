@@ -292,6 +292,16 @@ final class OddsChartViewModel: ObservableObject {
             self.history = preloaded
             self.loading = false
         }
+        HistoryOpenTrace.mark("chart.vm.init", eventId: eventId, "preloaded=\(preloaded != nil)")
+    }
+
+    /// #10090 — rig-only: the first chart-content build that has points.
+    private var firstPlotNoted = false
+    func notePlotBuild(points: Int) {
+        guard HistoryOpenTrace.enabled, !firstPlotNoted, points > 0 else { return }
+        firstPlotNoted = true
+        HistoryOpenTrace.mark("chart.firstplot.build", eventId: eventId,
+                              "points=\(points) generation=\(historyGeneration)")
     }
 
     /// Take a payload the page has re-polled, if it is not older than the one on
@@ -310,7 +320,11 @@ final class OddsChartViewModel: ObservableObject {
     @discardableResult
     @MainActor
     func adopt(_ fresh: EventHistoryResponse) -> Bool {
-        guard EventHistoryFreshness.shouldAdopt(fresh, over: history) else { return false }
+        guard EventHistoryFreshness.shouldAdopt(fresh, over: history) else {
+            HistoryOpenTrace.mark("chart.adopt", eventId: eventId, "took=false")
+            return false
+        }
+        HistoryOpenTrace.mark("chart.adopt", eventId: eventId, "took=true had_history=\(history != nil)")
         history = fresh
         loading = false
         // A failed first fetch left its message here, and the view reads
@@ -322,10 +336,16 @@ final class OddsChartViewModel: ObservableObject {
 
     @MainActor
     func load() async {
+        HistoryOpenTrace.mark("chart.load", eventId: eventId, "has_history=\(history != nil)")
         guard history == nil else { return }  // Skip if preloaded
         loading = true
         do {
-            history = try await APIClient.shared.fetchEventHistory(id: eventId, hours: 168)
+            let fetched = try await HistoryOpenTrace.$owner.withValue("chart") {
+                try await APIClient.shared.fetchEventHistory(id: eventId, hours: 168)
+            }
+            HistoryOpenTrace.mark("chart.history.assigned", eventId: eventId,
+                                  "replaced_existing=\(history != nil)")
+            history = fetched
             error = nil
             loading = false
         } catch {
@@ -1471,6 +1491,7 @@ struct OddsChartView: View {
         balanceSource: String? = nil
     ) -> some ChartContent {
         let _ = vm.onPlotBuild?()
+        let _ = vm.notePlotBuild(points: dataPoints.count)
         // 50% reference line (single 0–100 axis: even is 0.5)
         RuleMark(y: .value("Even", 0.5))
             .lineStyle(StrokeStyle(lineWidth: 0.5, dash: [4, 4]))

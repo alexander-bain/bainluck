@@ -896,7 +896,20 @@ actor APIClient {
 
     /// Fetches win-probability history for an event over the requested trailing window.
     func fetchEventHistory(id: Int, hours: Int = 24) async throws -> EventHistoryResponse {
-        return try await fetch("/api/events/\(id)/history", query: ["hours": "\(hours)"], cacheTTL: 60)
+        guard HistoryOpenTrace.enabled else {
+            return try await fetch("/api/events/\(id)/history", query: ["hours": "\(hours)"], cacheTTL: 60)
+        }
+        // #10090 — rig-only: each ask's start, owner and RequestTrace.
+        let attempt = HistoryOpenTrace.requestStarted(eventId: id, hours: hours)
+        do {
+            let value: EventHistoryResponse = try await fetch(
+                "/api/events/\(id)/history", query: ["hours": "\(hours)"], cacheTTL: 60,
+                trace: { HistoryOpenTrace.requestFinished(attempt, $0) })
+            return value
+        } catch {
+            HistoryOpenTrace.requestFailed(attempt, error)
+            throw error
+        }
     }
 
     func fetchFreshEventHistory(id: Int, hours: Int) async throws -> EventHistoryResponse {

@@ -271,11 +271,17 @@ final class EventDetailViewModel: ObservableObject {
     @MainActor
     func load() async {
         loading = event == nil
+        HistoryOpenTrace.mark("page.load.start", eventId: eventId,
+                              "has_event=\(event != nil) has_history=\(history != nil)")
 
         // Start secondary fetches immediately (they only need eventId)
         let client = self.client
         let historyTask = Task { () -> EventHistoryResponse? in
-            do { return try await client.fetchEventHistory(id: eventId, hours: 168) }
+            do {
+                return try await HistoryOpenTrace.$owner.withValue("page") {
+                    try await client.fetchEventHistory(id: eventId, hours: 168)
+                }
+            }
             catch { logger.error("History fetch failed for \(self.eventId): \(error)"); return nil }
         }
         let relatedFuturesTask = Task { () -> RelatedFuturesResponse? in
@@ -314,6 +320,8 @@ final class EventDetailViewModel: ObservableObject {
 
         // Unblock the page — render with whatever secondary data is already available
         loading = false
+        HistoryOpenTrace.mark("page.detail.released", eventId: eventId,
+                              "has_event=\(event != nil) has_history=\(history != nil)")
         // #9657: a page returning with a pair still failed (`stopRefresh`
         // cancelled its retry) re-arms it. A load is not the pair, so it never
         // clears the failure itself.
@@ -324,6 +332,7 @@ final class EventDetailViewModel: ObservableObject {
         // (preserve existing data when a refresh returns nil or empty results)
         if let h = await historyTask.value {
             history = h
+            HistoryOpenTrace.mark("page.history.adopted", eventId: eventId)
             requestChartRevisionRefreshIfNeeded()
         }
         if let related = await relatedFuturesTask.value {
