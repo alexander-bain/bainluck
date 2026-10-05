@@ -233,11 +233,16 @@ enum OddsTimeRange: String, CaseIterable, Identifiable {
 
 final class OddsChartViewModel: ObservableObject {
     @Published var history: EventHistoryResponse? {
-        didSet { historyGeneration &+= 1 }
+        didSet { if oldValue != history { historyGeneration &+= 1 } }
     }
-    /// #8651 — bumped on every write to `history`, so the memo below can tell a
-    /// new payload from the one it already turned into points without
-    /// `EventHistoryResponse` having to be `Equatable`.
+    /// #8651 — bumped on every write to `history` that changes it, so the memo
+    /// below can tell a new payload from the one it already turned into points.
+    ///
+    /// #10090 — "changes it" is whole-payload equality, not "was written". The
+    /// page and this chart are handed the SAME response (the chart's own write,
+    /// then the page's `adopt` of it), and an unconditional bump threw away the
+    /// points and enrichment that response had just built. The write itself
+    /// still happens and still publishes; only the memo keys survive it.
     private var historyGeneration = 0
     /// #8651 — the last `chartPoints` result and what it was built from. Plain
     /// stored state, not `@Published`: it is written while a body is being
