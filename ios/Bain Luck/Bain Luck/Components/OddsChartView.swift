@@ -407,6 +407,12 @@ struct OddsChartView: View {
     /// Under a finger it floats over the plot (`inlineScrubCard`), so the plot
     /// still never moves. Fullscreen covers the hero and keeps its resting row.
     var readout: GamePlayCardView?
+    /// #4974 — a finished game's recorded checkpoints, ADOPTED by the caller
+    /// (`PublicationJourney4974.adopt`); this view never fetches or adopts.
+    /// Drawn only for this event, on a finished page, over an existing blend
+    /// line (`publicationCheckpointMount`); nil — or any of those false — draws
+    /// and scrubs exactly as before.
+    var publicationJourney: PublicationJourney4974.Journey?
     /// #8481 — the page's one All / Since Start choice, which this chart's
     /// picker writes and the Score Differential chart below also reads. It was a
     /// `@Published` on this chart's own view model, which is why All could widen
@@ -538,6 +544,7 @@ struct OddsChartView: View {
          preloadedHistoryEdge: Date?? = nil,
          liveFrames: [LiveBlendPoint] = [],
          readout: GamePlayCardView? = nil,
+         publicationJourney: PublicationJourney4974.Journey? = nil,
          model: OddsChartViewModel? = nil,
          selection: OddsChartSelection? = nil) {
         self.eventId = eventId
@@ -564,6 +571,7 @@ struct OddsChartView: View {
         self.preloadedHistory = preloadedHistory
         self.preloadedHistoryEdge = preloadedHistoryEdge
         self.readout = readout
+        self.publicationJourney = publicationJourney
         _selectedRange = selectedRange
         _selection = State(initialValue: selection ?? OddsChartSelection())
         _vm = StateObject(wrappedValue: model ?? OddsChartViewModel(eventId: eventId, preloaded: preloadedHistory))
@@ -771,7 +779,9 @@ struct OddsChartView: View {
                 let enrichedPoints = vm.enrichedChartPoints(liveFrames: liveFrames)
                 let dataPoints = filterPoints(enrichedPoints)
                 let periodMarkers = extractPeriodMarkers(history, filteredPoints: dataPoints)
-                let moments = Self.chartMoments(from: history.moments, points: dataPoints)
+                let checkpoints = checkpointMount(for: dataPoints)
+                let moments = checkpoints?.moments(from: history.moments)
+                    ?? Self.chartMoments(from: history.moments, points: dataPoints)
                 // #3278 — "drawable", not "non-empty". See `hasDrawableLine`: one
                 // snapshot in the window rendered the whole frame around no line.
                 if !Self.hasDrawableLine(in: dataPoints) {
@@ -831,6 +841,7 @@ struct OddsChartView: View {
 
                         chartView(dataPoints: dataPoints, sources: history.winProbSources ?? [:],
                                   periodMarkers: periodMarkers, moments: moments,
+                                  checkpoints: checkpoints,
                                   plotWidth: $inlinePlotWidth, sharesPageAxis: true,
                                   pageGaveCard: readout != nil,
                                   floatingCard: Self.inlineScrubCard(
@@ -881,7 +892,11 @@ struct OddsChartView: View {
                     let enrichedPoints = vm.enrichedChartPoints(liveFrames: liveFrames)
                     let dataPoints = filterPoints(enrichedPoints)
                     let periodMarkers = extractPeriodMarkers(history, filteredPoints: dataPoints)
-                    let moments = Self.chartMoments(from: history.moments, points: dataPoints)
+                    // #4974 — the same mount as the inline chart, so the two
+                    // cannot disagree about what was recorded.
+                    let checkpoints = checkpointMount(for: dataPoints)
+                    let moments = checkpoints?.moments(from: history.moments)
+                        ?? Self.chartMoments(from: history.moments, points: dataPoints)
                     // #3278 — the same drawability test the inline chart uses. This
                     // branch used to render literally nothing (a blank sheet under a
                     // nav bar) when there were no points, and the full frame around
@@ -931,6 +946,7 @@ struct OddsChartView: View {
                                                           readout: card.finished(EventState.isFinished(status)),
                                                           dataPoints: dataPoints,
                                                           sportKey: sportKey, pageGaveCard: readout != nil)
+                                    .publicationCheckpoints(checkpoints)
                             }
                             HStack(spacing: 0) {
                                 // #2903 — fullscreen has no fixed chart height, so the
@@ -977,6 +993,7 @@ struct OddsChartView: View {
 
                                 chartView(dataPoints: dataPoints, sources: history.winProbSources ?? [:],
                                           periodMarkers: periodMarkers, moments: moments,
+                                          checkpoints: checkpoints,
                                           plotWidth: $fullscreenPlotWidth, sharesPageAxis: false,
                                           pageGaveCard: readout != nil)
                             }
@@ -1217,6 +1234,54 @@ struct OddsChartView: View {
             return filtered.filter { $0.date >= adjustedStart }
         }
         return filtered
+    }
+
+    // MARK: - Publication Checkpoints (#4974)
+
+    /// This chart's checkpoint mount over the points it draws, or nil. The
+    /// no-journey chart returns before reading anything else.
+    private func checkpointMount(for dataPoints: [ChartDataPoint]) -> PublicationCheckpointMount4974? {
+        guard publicationJourney != nil else { return nil }
+        let gameEnd = gameEndDate
+        let sinceStart = isGameStarted && drawnRange == .sinceStart ? sinceStartDate : nil
+        return Self.publicationCheckpointMount(
+            journey: publicationJourney, eventId: eventId, status: status,
+            points: dataPoints, gameStart: gameStartDate,
+            admits: { date in
+                Self.admitsPublicationCheckpoint(date, gameEnd: gameEnd, forcedDomain: forcedDomain,
+                                                 sinceStart: sinceStart)
+            })
+    }
+
+    /// Whether `journey` is drawn on this chart: this event's, on a finished
+    /// page, over a blend line among the points the chart draws. Anything else
+    /// is nil, and the chart draws and scrubs exactly as it did without one.
+    static func publicationCheckpointMount(
+        journey: PublicationJourney4974.Journey?,
+        eventId: Int,
+        status: String?,
+        points: [ChartDataPoint],
+        gameStart: Date?,
+        admits: (Date) -> Bool
+    ) -> PublicationCheckpointMount4974? {
+        guard let journey, journey.eventId == eventId, EventState.isFinished(status),
+              points.contains(where: { $0.source == PublicationCheckpointMount4974.blendSource })
+        else { return nil }
+        return PublicationCheckpointMount4974(journey: journey, points: points,
+                                              gameStart: gameStart, admits: admits)
+    }
+
+    /// Whether a checkpoint at `date` lies in the range this chart draws its
+    /// points in — `filterPoints`' finished-game clip, forced window and Since
+    /// Start cut. One outside is neither drawn nor hit; the recorded window
+    /// still cuts the line (`PublicationCheckpointMount4974.init`).
+    static func admitsPublicationCheckpoint(_ date: Date, gameEnd: Date?,
+                                            forcedDomain: ClosedRange<Date>?,
+                                            sinceStart: Date?) -> Bool {
+        if let gameEnd, date > gameEnd { return false }
+        guard SharedChartWindow.contains(date, in: forcedDomain) else { return false }
+        if let sinceStart, date < sinceStart { return false }
+        return true
     }
 
     // MARK: - Period Markers
@@ -1468,7 +1533,8 @@ struct OddsChartView: View {
         visibleMarkers: [PeriodMarker],
         moments: [ChartMoment],
         liveSplit: LiveEdgeSplit? = nil,
-        balanceSource: String? = nil
+        balanceSource: String? = nil,
+        checkpoints: PublicationCheckpointMount4974? = nil
     ) -> some ChartContent {
         let _ = vm.onPlotBuild?()
         // 50% reference line (single 0–100 axis: even is 0.5)
@@ -1483,47 +1549,59 @@ struct OddsChartView: View {
         // #10456 — an admitted binary chart's primary line is drawn by the
         // balance ink behind the plot (`chartBackground`), so its LineMarks and
         // lone PointMarks are skipped here. Nothing else is.
-        ForEach(Self.defaultVisibleSources(in: dataPoints).filter { $0 != balanceSource }, id: \.self) { source in
-            let points = dataPoints.filter { $0.source == source }
-            let color = colorForSource(source, sources: sources)
-            let stroke = strokeStyleForSource(source, sources: sources)
-            // One series per RUN of observations rather than per source (#7878).
-            // Swift Charts joins whatever shares a series value, so a single
-            // identifier per source drew one straight segment across a capture
-            // hole — a flat line and no line became the same picture. Splitting
-            // the identifier leaves the hole empty, which is what we actually
-            // know. This is the same no-invention rule as `.interpolationMethod`
-            // below, applied at the scale where it was still being broken.
-            // #9436 — on a live edge the newest vertex is drawn by the
-            // overlay (`LiveChartEdgeMarker`), so its dot can glide without
-            // animating this plot.
-            let split = liveSplit?.source == source ? liveSplit : nil
-            let segments = split?.segments ?? Self.observationSegments(points, gameStart: gameStartDate)
-            ForEach(Array(segments.enumerated()), id: \.offset) { index, segment in
-                ForEach(segment) { point in
-                    LineMark(
-                        x: .value("Time", point.date),
-                        y: .value("Win probability", point.probability),
-                        series: .value("Source", "\(source)#\(index)")
-                    )
-                    .foregroundStyle(color)
-                    .lineStyle(stroke)
-                    // Observed journey only — connect real snapshots with straight
-                    // segments. Monotone/curve interpolation invented probability
-                    // movement between sparse samples that was never captured, violating
-                    // the settled no-smoothing ruling (C43 P1).
-                    .interpolationMethod(.linear)
-                }
-                // A run of one is a real observation that no `LineMark` can
-                // draw (it needs two points to join), so it would silently
-                // vanish — losing data to a fix meant to stop losing data.
-                if segment.count == 1, index != split?.continuedRun, let only = segment.first {
-                    PointMark(
-                        x: .value("Time", only.date),
-                        y: .value("Win probability", only.probability)
-                    )
-                    .foregroundStyle(color)
-                    .symbolSize(18)
+        //
+        // #4974 — a mount exists only over a blend, and a blend is the ONLY
+        // default line, so the accepted checkpoint layer replaces exactly that
+        // series: its dots, and the blend's own runs with the recorded window
+        // cut out. No balance ink and no live split run beside it (`chartView`).
+        if let checkpoints {
+            PublicationCheckpointLayer4974(
+                plan: checkpoints.plan,
+                color: colorForSource(PublicationCheckpointMount4974.blendSource, sources: sources),
+                stroke: strokeStyleForSource(PublicationCheckpointMount4974.blendSource, sources: sources))
+        } else {
+            ForEach(Self.defaultVisibleSources(in: dataPoints).filter { $0 != balanceSource }, id: \.self) { source in
+                let points = dataPoints.filter { $0.source == source }
+                let color = colorForSource(source, sources: sources)
+                let stroke = strokeStyleForSource(source, sources: sources)
+                // One series per RUN of observations rather than per source (#7878).
+                // Swift Charts joins whatever shares a series value, so a single
+                // identifier per source drew one straight segment across a capture
+                // hole — a flat line and no line became the same picture. Splitting
+                // the identifier leaves the hole empty, which is what we actually
+                // know. This is the same no-invention rule as `.interpolationMethod`
+                // below, applied at the scale where it was still being broken.
+                // #9436 — on a live edge the newest vertex is drawn by the
+                // overlay (`LiveChartEdgeMarker`), so its dot can glide without
+                // animating this plot.
+                let split = liveSplit?.source == source ? liveSplit : nil
+                let segments = split?.segments ?? Self.observationSegments(points, gameStart: gameStartDate)
+                ForEach(Array(segments.enumerated()), id: \.offset) { index, segment in
+                    ForEach(segment) { point in
+                        LineMark(
+                            x: .value("Time", point.date),
+                            y: .value("Win probability", point.probability),
+                            series: .value("Source", "\(source)#\(index)")
+                        )
+                        .foregroundStyle(color)
+                        .lineStyle(stroke)
+                        // Observed journey only — connect real snapshots with straight
+                        // segments. Monotone/curve interpolation invented probability
+                        // movement between sparse samples that was never captured, violating
+                        // the settled no-smoothing ruling (C43 P1).
+                        .interpolationMethod(.linear)
+                    }
+                    // A run of one is a real observation that no `LineMark` can
+                    // draw (it needs two points to join), so it would silently
+                    // vanish — losing data to a fix meant to stop losing data.
+                    if segment.count == 1, index != split?.continuedRun, let only = segment.first {
+                        PointMark(
+                            x: .value("Time", only.date),
+                            y: .value("Win probability", only.probability)
+                        )
+                        .foregroundStyle(color)
+                        .symbolSize(18)
+                    }
                 }
             }
         }
@@ -1590,6 +1668,7 @@ struct OddsChartView: View {
     /// sheet does neither, and its 800pt axis stays its own.
     private func chartView(dataPoints: [ChartDataPoint], sources: [String: WinProbSourceInfo],
                            periodMarkers: [PeriodMarker], moments: [ChartMoment],
+                           checkpoints: PublicationCheckpointMount4974? = nil,
                            plotWidth: Binding<CGFloat>, sharesPageAxis: Bool,
                            pageGaveCard: Bool, floatingCard: GamePlayCardView? = nil) -> some View {
         // Filter period markers to visible data range
@@ -1610,22 +1689,29 @@ struct OddsChartView: View {
 
         // One plan and one set of tick instants, read by the gridlines AND the
         // labels drawn in the overlay (#8481), so the two cannot disagree.
-        let domain = xAxisDomain(for: dataPoints)
+        // #4974 — drawn checkpoints widen the natural domain; a forced one wins.
+        let domain = xAxisDomain(for: dataPoints, checkpointDates: checkpoints?.drawn.map(\.date) ?? [])
         let plan = Self.xAxisPlan(
             for: domain,
             plotWidth: Self.axisPlanWidth(
                 own: plotWidth.wrappedValue,
                 pageNarrowest: sharesPageAxis ? pageAxisPlotWidth : 0))
         let ticks = Self.xAxisTicks(for: domain, plan: plan)
-        let liveSplit = liveEdgeSplit(dataPoints: dataPoints, domain: domain)
-        let balance = balancePlan(dataPoints: dataPoints, liveSplit: liveSplit, domain: domain)
+        // #4974 — neither runs under a checkpoint mount. The balance ink would
+        // draw the blend a second time, uncut, and color a crossing of 50% that
+        // nothing recorded; the live split is a live page's, and a mount is a
+        // finished page's.
+        let liveSplit = checkpoints == nil ? liveEdgeSplit(dataPoints: dataPoints, domain: domain) : nil
+        let balance = checkpoints == nil
+            ? balancePlan(dataPoints: dataPoints, liveSplit: liveSplit, domain: domain) : nil
         let balanceColors = balance == nil ? nil : teamColors
 
         return Chart {
             chartContent(dataPoints: dataPoints, sources: sources,
                          visibleMarkers: visibleMarkers, moments: moments,
                          liveSplit: liveSplit,
-                         balanceSource: balance == nil ? nil : Self.primarySource(in: dataPoints))
+                         balanceSource: balance == nil ? nil : Self.primarySource(in: dataPoints),
+                         checkpoints: checkpoints)
         }
         .chartYScale(domain: yMin...yMax)
         .chartXScale(domain: domain)
@@ -1701,6 +1787,22 @@ struct OddsChartView: View {
                         lineStyle: strokeStyleForSource(liveSplit.source, sources: sources),
                         activity: priceActivity, pulseColor: teamColors?.home ?? .accentColor)
                         .accessibilityHidden(true)
+                } else if let checkpoints {
+                    // #4974 — the line's end is the resting endpoint the readout
+                    // names: a drawn checkpoint at its own time and value, or the
+                    // last surviving line point. Never a suppressed point, and
+                    // never animated — a finished page has no live price.
+                    if let end = checkpoints.resting, let date = end.date, let probability = end.probability,
+                       let x = proxy.position(forX: date),
+                       let y = proxy.position(forY: probability),
+                       x >= 0, x <= plotFrame.width, y >= 0, y <= plotFrame.height {
+                        LiveChartEndpointFeedback(selection: selection, activity: nil,
+                                                  probability: probability, isLive: false,
+                                                  color: teamColors?.home ?? .accentColor)
+                            .position(x: plotFrame.minX + x, y: plotFrame.minY + y)
+                            .allowsHitTesting(false)
+                            .accessibilityHidden(true)
+                    }
                 } else if let latest = Self.latestPrimaryPoint(in: dataPoints),
                           let x = proxy.position(forX: latest.date),
                           let y = proxy.position(forY: latest.probability),
@@ -1720,6 +1822,7 @@ struct OddsChartView: View {
                                           awayShort: awayShort, moments: moments,
                                           pageGaveCard: pageGaveCard,
                                           gameFinished: EventState.isFinished(status),
+                                          checkpoints: checkpoints,
                                           sportKey: sportKey, floatingCard: floatingCard)
                 // #925 — the scrub. `chartXSelection` lost the touch to the
                 // page's scroll the moment a thumb drifted vertically (Alex's
@@ -1734,12 +1837,24 @@ struct OddsChartView: View {
                 ChartScrubSurface(
                     holdToScrub: ChartScrubSurface.gameChartHold,
                     onChange: { location, translation in
-                        selection.change(
-                            date: Self.scrubbedDate(atX: location.x, plotFrame: plotFrame, proxy: proxy),
-                            translation: translation)
+                        // #4974 — over a checkpoint mount the finger lands on a
+                        // stored checkpoint, a surviving line moment, or nothing.
+                        if let checkpoints {
+                            let picked = checkpoints.selection(atChartX: location.x, plotFrame: plotFrame, proxy: proxy)
+                            selection.change(date: picked.date, translation: translation, checkpoint: picked.scrub)
+                        } else {
+                            selection.change(
+                                date: Self.scrubbedDate(atX: location.x, plotFrame: plotFrame, proxy: proxy),
+                                translation: translation)
+                        }
                     },
                     onHold: { location in
-                        selection.hold(date: Self.scrubbedDate(atX: location.x, plotFrame: plotFrame, proxy: proxy))
+                        if let checkpoints {
+                            let picked = checkpoints.selection(atChartX: location.x, plotFrame: plotFrame, proxy: proxy)
+                            selection.hold(date: picked.date, checkpoint: picked.scrub)
+                        } else {
+                            selection.hold(date: Self.scrubbedDate(atX: location.x, plotFrame: plotFrame, proxy: proxy))
+                        }
                     },
                     holdsTheScrollStill: { selection.holdsTheScrollStill },
                     onEnd: {
@@ -2953,13 +3068,20 @@ struct OddsChartView: View {
     // MARK: - X-Axis Domain
 
     /// Compute x-axis domain. Uses forcedDomain when available for chart alignment.
-    private func xAxisDomain(for dataPoints: [ChartDataPoint]) -> ClosedRange<Date> {
+    /// #4974 — `checkpointDates` (the drawn checkpoints) join the natural domain.
+    private func xAxisDomain(for dataPoints: [ChartDataPoint], checkpointDates: [Date] = []) -> ClosedRange<Date> {
         if let forced = forcedDomain { return forced }
-        let dates = dataPoints.map(\.date)
-        guard let minDate = dates.min(), let maxDate = dates.max() else {
+        guard let natural = Self.naturalDomain(of: dataPoints.map(\.date) + checkpointDates) else {
             let now = Date()
             return now...now
         }
+        return natural
+    }
+
+    /// The unforced domain over `dates`, padded 2% (at least a minute) each
+    /// side; nil for no dates.
+    static func naturalDomain(of dates: [Date]) -> ClosedRange<Date>? {
+        guard let minDate = dates.min(), let maxDate = dates.max() else { return nil }
         let range = maxDate.timeIntervalSince(minDate)
         let padding = max(range * 0.02, 60)
         return minDate.addingTimeInterval(-padding)...maxDate.addingTimeInterval(padding)
@@ -3333,5 +3455,224 @@ struct OddsChartView: View {
     /// is still read from its noun.
     private func normalizePeriodLabel(_ raw: String) -> String {
         PeriodLabel.normalize(raw, sport: sportKey)
+    }
+}
+
+// MARK: - Publication Checkpoints (#4974)
+
+/// What a checkpoint-mounted readout shows. There is no fourth state: a moment
+/// that is none of these is `withheld`, never a fallback number.
+enum PublicationCheckpointReadout4974 {
+    /// A blend point the checkpoint layer still draws (outside the window).
+    case legacy(ChartDataPoint)
+    /// A stored checkpoint, untouched.
+    case checkpoint(PublicationJourney4974.Checkpoint)
+    /// Nothing recorded here.
+    case withheld
+
+    /// The shown point's own time; nil when withheld.
+    var date: Date? {
+        switch self {
+        case .legacy(let point): return point.date
+        case .checkpoint(let checkpoint): return checkpoint.date
+        case .withheld: return nil
+        }
+    }
+
+    /// The shown point's own HOME probability; nil when withheld.
+    var probability: Double? {
+        switch self {
+        case .legacy(let point): return point.probability
+        case .checkpoint(let checkpoint): return checkpoint.vertex.p
+        case .withheld: return nil
+        }
+    }
+}
+
+/// #4974 — a finished game's adopted checkpoints, mounted on `OddsChartView`.
+///
+/// Built once per body from the points the chart draws — never per scrub — and
+/// handed to the plot, the selection overlay and the fullscreen readout alike,
+/// so the inline and fullscreen charts are one integration. It plans nothing
+/// itself: what is drawn is `PublicationCheckpointRenderPlan4974`'s, and a
+/// scrub's reach is `Journey.hit`'s. It adds the chart's side of both: which
+/// checkpoints this chart shows, what a finger lands on, and what the readout
+/// may say.
+struct PublicationCheckpointMount4974 {
+    /// The series the checkpoints stand in for: the backend blend.
+    static let blendSource = "aggregate"
+
+    /// As adopted. Its window cuts the blend line whether or not any checkpoint
+    /// inside it is drawn.
+    let journey: PublicationJourney4974.Journey
+    /// The checkpoints inside the range this chart draws, in the server's order.
+    let drawn: [PublicationJourney4974.Checkpoint]
+    let plan: PublicationCheckpointRenderPlan4974
+    /// The blend points the plan still draws, in time order: the only points a
+    /// scrub outside the window, or the resting readout, may name.
+    let survivors: [ChartDataPoint]
+    /// Where the readout rests and the line's end ring sits: the latest drawn
+    /// checkpoint (a tie goes to the greatest rev) or the latest surviving real
+    /// reading, whichever is later. A label for a stored dot, never a claim that
+    /// its value held. Nil when neither exists; the readout then withholds.
+    let resting: PublicationCheckpointReadout4974?
+
+    /// `points` are the points the chart draws; `admits` is its drawn range.
+    init(journey: PublicationJourney4974.Journey, points: [ChartDataPoint],
+         gameStart: Date?, admits: (Date) -> Bool) {
+        self.journey = journey
+        let drawn = journey.checkpoints.filter { admits($0.date) }
+        self.drawn = drawn
+        // The ADOPTED window with only the drawn checkpoints: a clipped dot is
+        // not drawn, and the window it sat in still breaks the line.
+        let shown = PublicationJourney4974.Journey(eventId: journey.eventId, checkpoints: drawn,
+                                                   window: journey.window)
+        // The blend's runs exactly as `chartContent` would draw them.
+        let runs = OddsChartView.observationSegments(points.filter { $0.source == Self.blendSource },
+                                                     gameStart: gameStart)
+        let plan = PublicationCheckpointRenderPlan4974(journey: shown, observationRuns: runs)
+        self.plan = plan
+        let survivors = (plan.lines.flatMap(\.points) + plan.dots.map(\.point))
+            .enumerated()
+            .sorted { ($0.element.date, $0.offset) < ($1.element.date, $1.offset) }
+            .map(\.element)
+        self.survivors = survivors
+        self.resting = Self.restingEndpoint(drawn: drawn, survivors: survivors)
+    }
+
+    static func restingEndpoint(drawn: [PublicationJourney4974.Checkpoint],
+                                survivors: [ChartDataPoint]) -> PublicationCheckpointReadout4974? {
+        let checkpoint = drawn.max { ($0.date, $0.vertex.rev) < ($1.date, $1.vertex.rev) }
+        let reading = OddsChartView.latestPoint(in: survivors.filter { !$0.isLiveEdge }, source: blendSource)
+        switch (checkpoint, reading) {
+        case (let checkpoint?, let reading?):
+            return reading.date > checkpoint.date ? .legacy(reading) : .checkpoint(checkpoint)
+        case (let checkpoint?, nil):
+            return .checkpoint(checkpoint)
+        case (nil, let reading?):
+            return .legacy(reading)
+        case (nil, nil):
+            return nil
+        }
+    }
+
+    // MARK: Scrub
+
+    /// What a finger lands on.
+    enum Landing: Equatable {
+        /// Outside the window and out of every drawn checkpoint's reach: the
+        /// blend line's own selection, at the cursor's time.
+        case line(Date)
+        /// A stored checkpoint within `PublicationJourney4974.hitRadius`.
+        case checkpoint(PublicationJourney4974.Checkpoint)
+        /// Inside the window with no checkpoint in reach, or a cursor with no
+        /// time to judge by. Carries the cursor's time for the crosshair.
+        case withheld(Date?)
+    }
+
+    /// A scrub at PLOT-LOCAL `cursorX` (the frame `ChartProxy.position(forX:)`
+    /// measures in); `position` is a checkpoint's plot-local x.
+    ///
+    /// Only a checkpoint inside `0...plotWidth` is a candidate, so a dot clipped
+    /// past the edge cannot capture a finger near it. The candidates go to
+    /// `Journey.hit` as a journey of their own that keeps the adopted window;
+    /// `hit` refuses the whole scrub on any missing position, so it is never
+    /// handed one — a checkpoint with no position is simply not a candidate.
+    /// Positions are keyed by `rev`, which adoption guarantees is unique.
+    func landing(cursorX: Double, cursorDate: Date?, plotWidth: Double,
+                 position: (PublicationJourney4974.Checkpoint) -> Double?) -> Landing {
+        var xs: [Int64: Double] = [:]
+        var candidates: [PublicationJourney4974.Checkpoint] = []
+        for checkpoint in drawn {
+            guard let x = position(checkpoint), x.isFinite, x >= 0, x <= plotWidth else { continue }
+            xs[checkpoint.vertex.rev] = x
+            candidates.append(checkpoint)
+        }
+        let reachable = PublicationJourney4974.Journey(eventId: journey.eventId, checkpoints: candidates,
+                                                       window: journey.window)
+        if let hit = reachable.hit(cursorX: cursorX, position: { xs[$0.vertex.rev] }) {
+            return .checkpoint(hit.checkpoint)
+        }
+        guard let cursorDate, !journey.contains(cursorDate) else { return .withheld(cursorDate) }
+        return .line(cursorDate)
+    }
+
+    /// The selection for a finger at CHART-space `x`. The cursor is made
+    /// plot-local and clamped exactly as `OddsChartView.scrubbedDate` does, and
+    /// a checkpoint landing stands the crosshair on the checkpoint's own time.
+    func selection(atChartX x: CGFloat, plotFrame: CGRect,
+                   dateAt: (CGFloat) -> Date?,
+                   position: (PublicationJourney4974.Checkpoint) -> CGFloat?)
+        -> (date: Date?, scrub: PublicationCheckpointScrub4974?) {
+        let plotX = OddsChartView.clampedPlotX(x, plotFrame: plotFrame)
+        let landed = landing(cursorX: Double(plotX), cursorDate: dateAt(plotX),
+                             plotWidth: Double(plotFrame.width),
+                             position: { position($0).map { Double($0) } })
+        switch landed {
+        case .line(let date): return (date, nil)
+        case .checkpoint(let checkpoint): return (checkpoint.date, .checkpoint(checkpoint))
+        case .withheld(let date): return (date, .withheld)
+        }
+    }
+
+    func selection(atChartX x: CGFloat, plotFrame: CGRect, proxy: ChartProxy)
+        -> (date: Date?, scrub: PublicationCheckpointScrub4974?) {
+        selection(atChartX: x, plotFrame: plotFrame,
+                  dateAt: { proxy.value(atX: $0, as: Date.self) },
+                  position: { proxy.position(forX: $0.date) })
+    }
+
+    // MARK: Readout
+
+    /// What the readout shows for a selection. A checkpoint landing names that
+    /// checkpoint; a withheld one names nothing; a line selection names the
+    /// nearest SURVIVING blend point, or nothing if the time is in the window
+    /// or no blend point survives; no selection rests on `resting`.
+    func readout(date: Date?, scrub: PublicationCheckpointScrub4974?) -> PublicationCheckpointReadout4974 {
+        switch scrub {
+        case .checkpoint(let checkpoint)?: return .checkpoint(checkpoint)
+        case .withheld?: return .withheld
+        case nil: break
+        }
+        guard let date else { return resting ?? .withheld }
+        guard !journey.contains(date),
+              let nearest = OddsChartView.nearestSnapshot(to: date, in: survivors, source: Self.blendSource)
+        else { return .withheld }
+        return .legacy(nearest)
+    }
+
+    /// The point the fullscreen readout reserves its height with.
+    func reservePoint(sportKey: String?) -> GamePlayPoint? {
+        OddsChartView.latestPoint(in: survivors, source: Self.blendSource)
+            .map { OddsChartView.playPoint(for: $0, sportKey: sportKey) }
+    }
+
+    /// Moments anchored on surviving blend points only, none inside the window:
+    /// a moment there would sit on the line the window removed.
+    func moments(from raw: [GameMomentPoint]?) -> [ChartMoment] {
+        OddsChartView.chartMoments(from: raw, points: survivors).filter { !journey.contains($0.date) }
+    }
+
+    /// VoiceOver's reading of the same readout the card shows.
+    func accessibilityValue(date: Date?, scrub: PublicationCheckpointScrub4974?,
+                            homeShort: String, awayShort: String, moments: [ChartMoment],
+                            gameFinished: Bool, sportKey: String?) -> String {
+        switch readout(date: date, scrub: scrub) {
+        case .legacy(let point):
+            return OddsChartView.selectionReadout(
+                for: point, homeShort: homeShort, awayShort: awayShort,
+                moment: date.flatMap { OddsChartView.nearestMoment(to: $0, in: moments) },
+                gameFinished: gameFinished, sportKey: sportKey)
+        case .checkpoint(let checkpoint):
+            let play = PublicationCheckpointReadoutSlot4974.playPoint(for: checkpoint, sportKey: sportKey)
+            let printed = GamePlayCardView.printedLabels(home: play.homeProb, away: play.awayProb,
+                                                         gameFinished: gameFinished)
+            var parts = ["\(homeShort) \(printed.home)"]
+            if let away = printed.away { parts.append("\(awayShort) \(away)") }
+            parts.append(PublicationCheckpointReadoutSlot4974.clock(checkpoint.date, dated: false))
+            return parts.joined(separator: ", ")
+        case .withheld:
+            return PublicationCheckpointReadoutSlot4974.withheldText
+        }
     }
 }
