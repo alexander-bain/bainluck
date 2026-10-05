@@ -87,7 +87,20 @@ final class ALiveEventPageSaysItsFreshnessOnce8320Tests: XCTestCase {
         XCTAssertEqual(occurrences(of: "CompactEventPriceStatusView(status:vm.liveUpdateStatus", in: page), 1)
         XCTAssertEqual(occurrences(of: "LiveUpdateStatusView(status:vm.liveUpdateStatus)", in: page), 0)
         XCTAssertTrue(page.contains(".accessibilityLabel(\"Refreshnow\")"))
-        XCTAssertTrue(page.contains("Button{Task{awaitvm.load()}}label:{Image(systemName:\"arrow.clockwise\")"))
+        // #4974 — Refresh now still reloads the game; it does so through the
+        // page's one page-load helper, which awaits the same `vm.load()` and
+        // owns the stored-checkpoint readiness around it. No route reloads the
+        // page around that helper.
+        XCTAssertTrue(page.contains("Button{Task{awaitloadPage()}}label:{Image(systemName:\"arrow.clockwise\")"),
+                      "Refresh now must reload through the page-load helper")
+        XCTAssertTrue(page.contains(
+            "privatefuncloadPage()async{awaitSelf.loadPage(pageEventId:eventId,vm:vm,caller:$publicationCaller)}"),
+                      "the helper routes this page's id, view model and checkpoint caller")
+        XCTAssertTrue(page.contains(
+            "staticfuncloadPage(pageEventId:Int,vm:EventDetailViewModel,caller:Binding<PublicationCaller4974>)async{letgeneration=caller.wrappedValue.suspend()awaitvm.load()"),
+                      "the helper's reload is the view model's own load")
+        XCTAssertEqual(occurrences(of: "awaitvm.load()", in: page), 1,
+                       "a second direct reload would bypass the helper's readiness")
         XCTAssertEqual(occurrences(of: "LivePushDot(", in: page), 0)
     }
 
