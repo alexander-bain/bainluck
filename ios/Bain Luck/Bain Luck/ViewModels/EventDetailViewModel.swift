@@ -21,6 +21,20 @@ protocol EventDetailProviding: Sendable {
     func fetchGameMarkets(eventId: Int) async throws -> GameMarketsResponse
     func fetchFreshGameMarkets(eventId: Int) async throws -> GameMarketsResponse
     func fetchLineMovement(eventId: Int) async throws -> LineMovementResponse
+    func fetchEventPublications(id: Int) async throws -> PublicationCheckpointsResponse
+}
+
+/// #4974 — a provider that cannot read stored checkpoints says so. Thrown by
+/// the default below, never answered with an empty body: an empty journey is a
+/// server's statement about a game, and a provider that never asked has none.
+nonisolated struct EventPublicationsUnsupported: Error, Equatable, Sendable {}
+
+// Existing providers keep source compatibility and refuse. APIClient's own
+// `fetchEventPublications(id:)` is the production witness.
+extension EventDetailProviding {
+    func fetchEventPublications(id: Int) async throws -> PublicationCheckpointsResponse {
+        throw EventPublicationsUnsupported()
+    }
 }
 
 // Existing in-memory providers have no response cache. APIClient implements
@@ -69,6 +83,16 @@ final class EventDetailViewModel: ObservableObject {
     @Published private(set) var lastLoadedAt: Date?
     /// Accepted price receipt; socket state and load completion never manufacture one.
     @Published private(set) var priceActivity: LivePriceActivity?
+
+    /// #4974 — a finished game's stored checkpoints, adopted whole by
+    /// `PublicationJourney4974.adopt`, or `nil`. Written only by
+    /// `adoptPublicationJourney()`; nothing else in this view model writes or
+    /// clears it, so it can be stale against a status changed since that call —
+    /// the chart checks the page's own event and finished state before using it.
+    @Published private(set) var publicationJourney: PublicationJourney4974.Journey?
+    /// Last request wins: bumped by every `adoptPublicationJourney()` that is
+    /// not already cancelled, so an older read finds itself superseded.
+    private var publicationGeneration = 0
 
     private var refreshTask: Task<Void, Never>?
     /// The cadence the installed `refreshTask` is running at, so a `load()` that
@@ -430,6 +454,61 @@ final class EventDetailViewModel: ObservableObject {
             previousHomeLabel: beforeLabels.home, previousAwayLabel: beforeLabels.away,
             homeLabel: afterLabels.home, awayLabel: afterLabels.away
         )
+    }
+
+    // MARK: - #4974 stored checkpoints
+
+    /// Read and adopt this finished game's stored checkpoints, once.
+    ///
+    /// Finite and caller-owned: nothing here starts a task, poll or observer,
+    /// and `load()`, the refreshes and the stream never call it. The page calls
+    /// it when it appears and again whenever its eligibility changes, and
+    /// cancels the task it called it from when it disappears.
+    ///
+    /// `publicationJourney` is cleared on entry, before any await, so an old
+    /// journey is never on the page while a new one is asked for or refused.
+    /// Only a page holding this view model's own `eventId`, finished, asks at
+    /// all; any other returns with the journey cleared and no request. A failed
+    /// read, a refusal, or a cancelled or superseded call leaves it `nil` and
+    /// touches nothing else — not `loading`, `error`, the price, its sources or
+    /// receipt, `history`, `lastLoadedAt` or the retry state.
+    @MainActor
+    func adoptPublicationJourney() async {
+        // Already cancelled: return before taking a generation, so a newer
+        // result already on the page stays.
+        guard !Task.isCancelled else { return }
+        publicationGeneration += 1
+        let generation = publicationGeneration
+        if publicationJourney != nil { publicationJourney = nil }
+
+        // A requested id and a served one are never the same game by
+        // assumption: a page holding another event's detail refuses.
+        let id = eventId
+        guard let held = event, held.id == id, EventState.isFinished(held.status) else { return }
+
+        let response: PublicationCheckpointsResponse
+        do {
+            response = try await client.fetchEventPublications(id: id)
+        } catch {
+            // Nothing to clear: this call cleared on entry and only a current
+            // success writes. A superseded failure says nothing at all.
+            guard generation == publicationGeneration else { return }
+            logger.error("Checkpoint read failed for \(id): \(error)")
+            return
+        }
+        // Rechecked after the await, whatever the provider did with
+        // cancellation: a cancelled or superseded read, or a page no longer
+        // holding this game, publishes nothing. Finished is `adopt`'s check.
+        guard !Task.isCancelled, generation == publicationGeneration,
+              let current = event, current.id == id else { return }
+        switch PublicationJourney4974.adopt(
+            response, expectedEventID: id, finished: EventState.isFinished(current.status)
+        ) {
+        case .success(let journey):
+            publicationJourney = journey
+        case .failure(let refusal):
+            logger.info("Checkpoints refused for \(id): \(String(describing: refusal))")
+        }
     }
 
     // MARK: - #9051 fold-revision re-read
