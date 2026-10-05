@@ -34,7 +34,10 @@ from app.models.models import (
     MarketMatchReceipt,
 )
 
+from app.models.activitykit import ActivityKitRegistration
+
 __all__ = [
+    "ActivityKitRegistration",
     "Sport",
     "SettlementCapture",
     "EventProviderAnchor",
