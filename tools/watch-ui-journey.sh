@@ -116,9 +116,11 @@ pair = json.loads(Path(sys.argv[2]).read_text())['pairs'][pair_id]
 if pair['watch']['udid'] != watch or pair['phone']['udid'] != phone or not pair['state'].startswith('(active,'):
     raise SystemExit('Created pair must bind exactly the new Watch and iPhone and be active')
 PAIR
-PHASE='boot only the new disposable phone and Watch pair'
-xcrun simctl boot "$PAIR_ID" >> "$OUT/preflight.log" 2>&1
+# bootstatus -b starts an unbooted device and waits for it. Prepare each new
+# member serially; the pair-wide boot RPC timed out before reaching readiness.
+PHASE='boot and await only the new disposable companion phone'
 xcrun simctl bootstatus "$PHONE_UDID" -b >> "$OUT/preflight.log" 2>&1
+PHASE='boot and await only the new disposable Watch'
 xcrun simctl bootstatus "$TEST_UDID" -b >> "$OUT/preflight.log" 2>&1
 # watchOS Simulator rejects simctl content_size (POSIX45). The suite separately
 # verifies default layout and a DEBUG-only accessibility5 layout stress override.
