@@ -106,9 +106,25 @@ struct BainLuckWidgetBundle: WidgetBundle {
     var body: some Widget {
         BainLuckDesktopWidget()
         #if os(iOS)
-        GameLiveActivity()
+        liveActivityRegistration
         #endif
     }
+
+    #if os(iOS)
+    // WidgetBundleBuilder has availability erasure but no buildEither. Select
+    // one registration through its supported erased value, then build it once.
+    private var liveActivityRegistration: some Widget {
+        WidgetBundleBuilder.buildOptional(selectedLiveActivity())
+    }
+
+    private func selectedLiveActivity() -> any Widget & SwiftUI._LimitedAvailabilityWidgetMarker {
+        if #available(iOS 18.0, *) {
+            return WidgetBundleBuilder.buildLimitedAvailability(GameLiveActivity())
+        } else {
+            return WidgetBundleBuilder.buildLimitedAvailability(GameLiveActivityBase())
+        }
+    }
+    #endif
 }
 
 // MARK: - Previews

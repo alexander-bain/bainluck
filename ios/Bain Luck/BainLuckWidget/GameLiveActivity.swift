@@ -4,18 +4,16 @@ import SwiftUI
 import WidgetKit
 
 /// Local ActivityKit content. Updates require the phone's foreground owner.
-@available(iOS 17.0, *)
+@available(iOS 18.0, *)
 struct GameLiveActivity: Widget {
-    @WidgetConfigurationBuilder
     var body: some WidgetConfiguration {
-        if #available(iOS 18.0, *) {
-            configuration.supplementalActivityFamilies([.small, .medium])
-        } else {
-            configuration
-        }
+        GameLiveActivityBase().body.supplementalActivityFamilies([.small, .medium])
     }
+}
 
-    private var configuration: some WidgetConfiguration {
+@available(iOS 17.0, *)
+struct GameLiveActivityBase: Widget {
+    var body: ActivityConfiguration<GameActivityAttributes> {
         ActivityConfiguration(for: GameActivityAttributes.self) { context in
             if #available(iOS 18.0, *) {
                 GameActivityFamilyView(context: context)
