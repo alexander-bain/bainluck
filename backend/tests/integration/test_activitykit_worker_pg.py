@@ -218,3 +218,88 @@ async def test_retry_after_and_finite_budget_survive_worker_restart(pg):
     assert await worker(pg).reserve("a", now=NOW + timedelta(seconds=60)) is None
     retry = await worker(pg).reserve("a", now=NOW + timedelta(seconds=90))
     assert retry.attempt_id.endswith("attempt:2")
+
+
+async def test_old_unavailable_token_recovers_on_true_replacement(pg):
+    w = await seed(pg)
+    old = await w.reserve("a", now=NOW)
+    unavailable = MockTransport(APNsResult("unavailable", "token_unregistered"))
+    assert (
+        await w.send(old, unavailable, provider_token="mock", now=NOW) == "unavailable"
+    )
+    before = decode_state((await record(pg))["state"])
+    await mutate(pg, version=2, push_token="cd" * 32, token_hash="c" * 64)
+    resumed = await worker(pg).reserve("a", now=NOW + timedelta(seconds=1))
+    assert resumed is not None and resumed.attempt_id.endswith("attempt:1")
+    transport = MockTransport()
+    assert (
+        await w.send(
+            resumed, transport, provider_token="mock", now=NOW + timedelta(seconds=1)
+        )
+        == "accepted"
+    )
+    after = decode_state((await record(pg))["state"])
+    assert after.snapshot == before.snapshot and after.score_fence == before.score_fence
+    assert transport.calls[0][1]["activity_token"] == "cd" * 32
+
+
+async def test_accepted_same_snapshot_replays_for_new_token(pg):
+    w = await seed(pg)
+    old = await w.reserve("a", now=NOW)
+    assert (
+        await w.send(old, MockTransport(), provider_token="mock", now=NOW) == "accepted"
+    )
+    await mutate(pg, version=2, push_token="cd" * 32, token_hash="c" * 64)
+    replacement = await worker(pg).reserve("a", now=NOW + timedelta(seconds=1))
+    assert replacement is not None
+    assert decode_state((await record(pg))["state"]).snapshot == snapshot()
+
+
+async def test_version_only_same_token_does_not_replay_accepted_content(pg):
+    w = await seed(pg)
+    old = await w.reserve("a", now=NOW)
+    assert (
+        await w.send(old, MockTransport(), provider_token="mock", now=NOW) == "accepted"
+    )
+    await mutate(pg, version=2)
+    assert await worker(pg).reserve("a", now=NOW + timedelta(seconds=1)) is None
+
+
+@pytest.mark.parametrize("stop", [False, True])
+async def test_new_token_never_resurrects_completed_end_or_stop(pg, stop):
+    w = await seed(pg)
+    final = snapshot(
+        lifecycle="final", home_rendered_percent=None, probability_observed_at=None
+    )
+    await w.observe("a", final, revision=2, stop=stop)
+    end = await w.reserve("a", now=NOW)
+    assert (
+        await w.send(end, MockTransport(), provider_token="mock", now=NOW) == "accepted"
+    )
+    await mutate(pg, version=2, push_token="cd" * 32, token_hash="c" * 64)
+    assert await worker(pg).reserve("a", now=NOW + timedelta(seconds=1)) is None
+    assert decode_state((await record(pg))["state"]).ended
+
+
+async def test_clock_after_lock_rejects_expired_send_and_recovers_stale_caller_time(pg):
+    w = await seed(pg)
+    old = await w.reserve("a", now=NOW)
+    current = NOW
+    restarted = DurableActivityKitWorker(pg, retry_policy=POLICY, clock=lambda: current)
+    original = restarted._locked
+
+    async def locked(*args):
+        nonlocal current
+        value = await original(*args)
+        current = NOW + timedelta(seconds=60)
+        return value
+
+    restarted._locked = locked
+    transport = MockTransport()
+    assert (
+        await restarted.send(old, transport, provider_token="mock", now=NOW) == "fenced"
+    )
+    assert not transport.calls
+    recovered = await restarted.reserve("a", now=NOW)
+    assert recovered is not None and recovered.lease_id != old.lease_id
+    assert (await record(pg))["lease_expires_at"] == NOW + timedelta(seconds=120)

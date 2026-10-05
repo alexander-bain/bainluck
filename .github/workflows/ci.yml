@@ -6883,8 +6883,8 @@ jobs:
             echo "::error::#10556 durable worker gate skipped"
             exit 1
           fi
-          grep -qE "[^0-9]7 passed([,[:space:]]|$)" /tmp/activitykit-worker10556.txt || {
-            echo "::error::#10556 durable worker gate did not run all seven cases"
+          grep -qE "[^0-9]13 passed([,[:space:]]|$)" /tmp/activitykit-worker10556.txt || {
+            echo "::error::#10556 durable worker gate did not run all thirteen cases"
             exit 1
           }
 

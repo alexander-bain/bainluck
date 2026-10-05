@@ -4,7 +4,12 @@ from dataclasses import replace
 from datetime import timedelta
 import json
 import pytest
-from app.services.activitykit_worker import decode_state, encode_state, reserve_state
+from app.services.activitykit_worker import (
+    decode_state,
+    encode_state,
+    reserve_state,
+    rebind_token,
+)
 from app.utils.activitykit_delivery_state import RetryPolicy
 from tests.test_activitykit_delivery_state import NOW, snapshot, state
 
@@ -108,3 +113,62 @@ def test_stop_and_high_water_fences_survive_restart():
     stopped = state().observe(snapshot(), revision=1).stop()
     assert persisted(stopped) == stopped
     assert persisted(stopped).observe(snapshot(home_score=9), revision=2) == stopped
+
+
+def test_unavailable_token_replacement_resumes_latest_snapshot_and_original_clocks():
+    reserved, attempt = state().observe(snapshot(), revision=1).dispatch(now=NOW)
+    halted = reserved.complete(attempt.attempt_id, now=NOW, failure="unavailable")
+    replaced = rebind_token(persisted(halted), token_changed=True)
+    assert replaced.halted is None and replaced.pending == "update"
+    assert replaced.snapshot == halted.snapshot
+    assert replaced.score_fence == halted.score_fence
+    _, new = replaced.dispatch(now=NOW + timedelta(seconds=1))
+    assert new.count == 1
+
+
+def test_accepted_unchanged_reading_is_requeued_only_for_new_token():
+    reserved, attempt = state().observe(snapshot(), revision=1).dispatch(now=NOW)
+    done = reserved.complete(attempt.attempt_id, now=NOW)
+    assert rebind_token(done, token_changed=False) == done
+    replacement = rebind_token(done, token_changed=True)
+    assert replacement.snapshot == done.snapshot and replacement.pending == "update"
+    assert replacement.last_timestamp == done.last_timestamp
+
+
+@pytest.mark.parametrize("flag", ["stopped", "ended"])
+def test_token_replacement_does_not_resurrect_stop_or_end(flag):
+    done = replace(
+        state().observe(snapshot(), revision=1),
+        **{flag: True},
+        halted="unavailable",
+        pending=None
+    )
+    assert rebind_token(done, token_changed=True) == done
+
+
+def test_terminal_replacement_requeues_only_authoritative_end():
+    terminal = state().observe(
+        snapshot(
+            lifecycle="final", home_rendered_percent=None, probability_observed_at=None
+        ),
+        revision=1,
+    )
+    replaced = rebind_token(
+        replace(terminal, halted="unavailable", pending=None), token_changed=True
+    )
+    _, attempt = replaced.dispatch(now=NOW)
+    assert attempt.kind == "terminal"
+    assert (
+        "homeRenderedPercent"
+        not in json.loads(attempt.push.body)["aps"]["content-state"]["snapshot"]
+    )
+
+
+def test_true_token_replacement_resets_exhaustion_but_not_configuration_halt():
+    exhausted = replace(
+        state().observe(snapshot(), revision=1), halted="retry_exhausted"
+    )
+    assert rebind_token(exhausted, token_changed=False) == exhausted
+    assert rebind_token(exhausted, token_changed=True).halted is None
+    configuration = replace(exhausted, halted="permanent")
+    assert rebind_token(configuration, token_changed=True) == configuration

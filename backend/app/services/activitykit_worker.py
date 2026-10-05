@@ -100,6 +100,25 @@ class Reservation:
     attempt_id: str
 
 
+def rebind_token(state: DeliveryState, *, token_changed: bool) -> DeliveryState:
+    """A true token generation gets a bounded budget and the latest reading.
+
+    Registration-version changes with the same token never replay accepted
+    content or reset retry budgets. Config failures remain halted. Stops and
+    completed ends cannot be resurrected by credential replacement.
+    """
+    if not token_changed or state.stopped or state.ended or state.snapshot is None:
+        return state
+    if state.halted not in {None, "unavailable", "retry_exhausted"}:
+        return state
+    return replace(
+        state,
+        attempt=None,
+        halted=None,
+        pending="terminal" if state.terminal_latched else "update",
+    )
+
+
 def reserve_state(
     state: DeliveryState,
     *,
@@ -225,12 +244,16 @@ class DurableActivityKitWorker:
         now = _clock(now)
         async with self.sessions() as db, db.begin():
             reg, row = await self._locked(db, activity_id)
+            now = max(now, _clock(self.clock()))
             if not self._active(reg) or row is None:
                 return None
             state = self._state(reg, row)
             changed = (row["registration_version"], row["token_hash"]) != (
                 reg["version"],
                 reg["token_hash"],
+            )
+            state = rebind_token(
+                state, token_changed=row["token_hash"] != reg["token_hash"]
             )
             state, attempt = reserve_state(
                 state,
@@ -239,11 +262,11 @@ class DurableActivityKitWorker:
                 lease_expires_at=row["lease_expires_at"],
                 owner_changed=changed,
             )
-            lease = str(uuid4()) if attempt else row["lease_id"]
+            lease = str(uuid4()) if attempt else (None if changed else row["lease_id"])
             expires = (
                 now + timedelta(seconds=self.lease_seconds)
                 if attempt
-                else row["lease_expires_at"]
+                else (None if changed else row["lease_expires_at"])
             )
             await db.execute(
                 update(_DEL)
@@ -273,6 +296,7 @@ class DurableActivityKitWorker:
         now = _clock(now)
         async with self.sessions() as db, db.begin():
             reg, row = await self._locked(db, reservation.activity_id)
+            now = max(now, _clock(self.clock()))
             if not self._active(reg) or row is None:
                 return "fenced"
             if (reg["version"], reg["token_hash"], row["lease_id"]) != (
