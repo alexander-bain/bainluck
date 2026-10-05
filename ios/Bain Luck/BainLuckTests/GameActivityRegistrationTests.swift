@@ -266,5 +266,59 @@ import XCTest
         XCTAssertEqual(restarted.unconfirmedRevocations, ["activity"])
     }
 
+    func testRejectedAuthAndFailedSilentRestorePersistActivityStop() async {
+        for status in [401, 403] {
+            let name = "GameActivityRejectedRestoreTests.\(UUID().uuidString)"
+            let defaults = UserDefaults(suiteName: name)!
+            defer { defaults.removePersistentDomain(forName: name) }
+            defaults.set(["activity": 1], forKey: "gameActivityRegistrationOwners")
+            let transport = RegistrationTransportFake()
+            let subject = GameActivityRegistrationCoordinator(transport: transport, defaults: defaults)
+            var credentialRetained = true
+            var silentAttempts = 0
+            await AuthManager.resolveSessionRestoreFailure(.httpError(statusCode: status, body: nil),
+                attemptSilentRestore: { silentAttempts += 1; return false },
+                clearCredentials: {
+                    subject.invalidateSession()
+                    XCTAssertEqual(subject.unconfirmedRevocations, ["activity"])
+                    credentialRetained = false
+                })
+            XCTAssertEqual(silentAttempts, 1)
+            XCTAssertFalse(credentialRetained)
+            let restarted = GameActivityRegistrationCoordinator(transport: transport, defaults: defaults)
+            restarted.setSession(owner: 1, bearer: "test-session")
+            restarted.bind(id: "activity", eventID: 42)
+            restarted.receive(id: "activity", token: Data([1]))
+            await Task.yield()
+            XCTAssertTrue(transport.calls.isEmpty)
+            XCTAssertEqual(restarted.unconfirmedRevocations, ["activity"])
+        }
+    }
+    func testTransientRestoreRetainsCredentialsAndDoesNotStopActivity() async {
+        for error in [APIError.networkError(underlying: URLError(.notConnectedToInternet)),
+                      APIError.httpError(statusCode: 503, body: nil)] {
+            let transport = RegistrationTransportFake()
+            let subject = coordinator(transport)
+            var credentialRetained = true
+            var silentAttempts = 0
+            await AuthManager.resolveSessionRestoreFailure(error,
+                attemptSilentRestore: { silentAttempts += 1; return false },
+                clearCredentials: { subject.invalidateSession(); credentialRetained = false })
+            XCTAssertTrue(credentialRetained)
+            XCTAssertEqual(silentAttempts, 0)
+            XCTAssertTrue(subject.unconfirmedRevocations.isEmpty)
+        }
+    }
+    func testSuccessfulSilentRestoreRetainsCredentialsAndActivity() async {
+        let transport = RegistrationTransportFake()
+        let subject = coordinator(transport)
+        var credentialRetained = true
+        await AuthManager.resolveSessionRestoreFailure(.httpError(statusCode: 401, body: nil),
+            attemptSilentRestore: { true },
+            clearCredentials: { subject.invalidateSession(); credentialRetained = false })
+        XCTAssertTrue(credentialRetained)
+        XCTAssertTrue(subject.unconfirmedRevocations.isEmpty)
+    }
+
 }
 #endif

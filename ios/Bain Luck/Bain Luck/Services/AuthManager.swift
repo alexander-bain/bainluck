@@ -117,14 +117,14 @@ final class AuthManager: ObservableObject {
             case .httpError(let statusCode, _) where statusCode == 401 || statusCode == 403:
                 // Token is invalid/expired — try silent Google re-auth before giving up
                 logger.warning("Session token rejected (\(statusCode)). Attempting silent Google restore.")
-                let silentRestored = await attemptSilentGoogleRestore()
-                if !silentRestored {
-                    clearStoredAuth()
-                }
+                // Resolution below owns the rejection boundary after silent restore.
             default:
                 // Network error, timeout, decoding — keep token and stay signed out temporarily
                 logger.warning("Session restore failed (transient): \(apiError.errorDescription ?? "unknown"). Keeping stored token.")
             }
+            await Self.resolveSessionRestoreFailure(apiError,
+                attemptSilentRestore: { await self.attemptSilentGoogleRestore() },
+                clearCredentials: { self.clearStoredAuth() })
         } catch {
             // Non-API errors — keep token for retry on next launch
             logger.warning("Session restore failed (unknown): \(error). Keeping stored token.")
@@ -200,9 +200,6 @@ final class AuthManager: ObservableObject {
 
     /// Clears local session state, provider state, and analytics identity.
     func signOut() {
-        #if os(iOS) && canImport(ActivityKit)
-        GameActivityRegistrationCoordinator.shared.invalidateSession()
-        #endif
         clearStoredAuth()
         GIDSignIn.sharedInstance.signOut()
         user = nil
@@ -320,7 +317,21 @@ final class AuthManager: ObservableObject {
         Task { await APIClient.shared.setFeedCacheIdentity(userId: nil) }
     }
 
+    /// Rejected auth clears only after silent restore also fails. Transient errors
+    /// retain credentials and activities, allowing a real foreground retry.
+    static func resolveSessionRestoreFailure(_ error: APIError,
+        attemptSilentRestore: () async -> Bool, clearCredentials: () -> Void) async {
+        guard case .httpError(let statusCode, _) = error,
+              statusCode == 401 || statusCode == 403 else { return }
+        guard !(await attemptSilentRestore()) else { return }
+        clearCredentials()
+    }
+
     private func clearStoredAuth() {
+        #if os(iOS) && canImport(ActivityKit)
+        // This also covers rejected cold restore, where user was never published.
+        GameActivityRegistrationCoordinator.shared.invalidateSession()
+        #endif
         KeychainHelper.delete(key: keychainTokenKey)
         KeychainHelper.delete(key: keychainAppleUserIdKey)
         // Rebind the feed identity to anonymous (L2-206 Item 1): a failed restore

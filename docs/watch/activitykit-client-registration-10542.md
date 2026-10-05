@@ -26,10 +26,13 @@ conflicts leave remote revocation unconfirmed. Failed registration attempts retr
 only on a real foreground activation or verified same-owner auth refresh, using
 the unchanged token and stable mutation UUID. Refreshed same-owner credentials
 apply to future attempts; stopped old-account work retains its old credential.
-There is no retry timer. Failed revocations are not a
+There is no retry timer. Clearing rejected stored auth uses the same persisted
+activity stop boundary as logout, including failed silent restore before a user
+was published. Transient restore errors and successful silent restore retain
+credentials and activities. Failed revocations are not a
 claim that the server stopped delivery; endpoint deployment and retry policy
 remain integration gates.
 
 No sender is connected by this change. Foreground wording remains accurate.
 No APNs sends, credentials, signing, device acceptance or release is established.
-The fifteen new deterministic native tests require the hosted iPhone gate.
+The eighteen new deterministic native tests require the hosted iPhone gate.
