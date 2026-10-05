@@ -14,9 +14,14 @@ import XCTest
     var pending: CheckedContinuation<GameActivityRegistrationMetadata, Error>?
     var reads = 0
     var readVersion = 1
+    var readActive = true
+    var readError: Error?
+    var readBearers: [String] = []
     func read(id: String, bearer: String) async throws -> GameActivityRegistrationMetadata {
         reads += 1
-        return .init(activityID: id, eventID: 42, version: readVersion, isActive: true)
+        readBearers.append(bearer)
+        if let readError { throw readError }
+        return .init(activityID: id, eventID: 42, version: readVersion, isActive: readActive)
     }
     func mutate(id: String, eventID: Int, token: String?, version: Int,
                 mutationID: UUID, bearer: String) async throws -> GameActivityRegistrationMetadata {
@@ -187,8 +192,11 @@ import XCTest
         subject.foregroundActivated()
         subject.receive(id: "activity", token: Data([2]))
         await Task.yield()
-        XCTAssertEqual(transport.calls.count, 2)
+        await waitForCalls(3, transport)
+        XCTAssertNil(transport.calls[2].token)
+        XCTAssertEqual(transport.calls[2].mutationID, transport.calls[1].mutationID)
         XCTAssertEqual(subject.unconfirmedRevocations, ["activity"])
+        transport.complete(version: 1, active: false)
     }
 
     func testRestartPreservesStopBeforeInFlightRegistrationAcknowledges() async {
@@ -208,22 +216,21 @@ import XCTest
         restarted.setSession(owner: 1, bearer: "test-session")
         restarted.bind(id: "activity", eventID: 42)
         restarted.receive(id: "activity", token: Data([1]))
-        restarted.foregroundActivated()
-        await Task.yield()
-        XCTAssertTrue(restartedTransport.calls.isEmpty, "Persisted stop cannot register again")
-        XCTAssertEqual(restarted.unconfirmedRevocations, ["activity"])
+        await waitForCalls(1, restartedTransport)
+        XCTAssertNil(restartedTransport.calls[0].token, "Crash recovery is DELETE only")
+        restartedTransport.fail(GameActivityRegistrationError.unavailable)
+        for _ in 0..<100 { await Task.yield() }
         transport.complete(version: 1, active: true)
         await waitForCalls(2, transport)
-        XCTAssertNil(transport.calls[1].token)
         transport.fail(GameActivityRegistrationError.unavailable)
         for _ in 0..<100 { await Task.yield() }
-        let offlineRestart = GameActivityRegistrationCoordinator(transport: restartedTransport, defaults: defaults)
+        let recoveryTransport = RegistrationTransportFake()
+        let offlineRestart = GameActivityRegistrationCoordinator(transport: recoveryTransport, defaults: defaults)
         offlineRestart.setSession(owner: 1, bearer: "test-refreshed-session")
-        offlineRestart.bind(id: "activity", eventID: 42)
-        offlineRestart.receive(id: "activity", token: Data([2]))
-        await Task.yield()
-        XCTAssertTrue(restartedTransport.calls.isEmpty)
+        await waitForCalls(1, recoveryTransport)
+        XCTAssertNil(recoveryTransport.calls[0].token)
         XCTAssertEqual(offlineRestart.unconfirmedRevocations, ["activity"])
+        recoveryTransport.complete(version: 2, active: false)
     }
 
     func testLogoutPersistsStopForOwnedActivityBeforeObservationRestores() async {
@@ -240,8 +247,10 @@ import XCTest
         restarted.receive(id: "activity", token: Data([1]))
         restarted.foregroundActivated()
         await Task.yield()
-        XCTAssertTrue(transport.calls.isEmpty)
+        await waitForCalls(1, transport)
+        XCTAssertNil(transport.calls[0].token)
         XCTAssertEqual(restarted.unconfirmedRevocations, ["activity"])
+        transport.complete(version: 2, active: false)
     }
 
     func testColdOfflineStopWithoutEntrySurvivesSameAccountRestore() async {
@@ -262,8 +271,10 @@ import XCTest
         restarted.receive(id: "activity", token: Data([1]))
         restarted.foregroundActivated()
         await Task.yield()
-        XCTAssertTrue(transport.calls.isEmpty, "Cold stop must not become registration after restore")
+        await waitForCalls(1, transport)
+        XCTAssertNil(transport.calls[0].token, "Cold stop is DELETE-only after restore")
         XCTAssertEqual(restarted.unconfirmedRevocations, ["activity"])
+        transport.complete(version: 2, active: false)
     }
 
     func testRejectedAuthAndFailedSilentRestorePersistActivityStop() async {
@@ -290,8 +301,10 @@ import XCTest
             restarted.bind(id: "activity", eventID: 42)
             restarted.receive(id: "activity", token: Data([1]))
             await Task.yield()
-            XCTAssertTrue(transport.calls.isEmpty)
+            await waitForCalls(1, transport)
+            XCTAssertNil(transport.calls[0].token)
             XCTAssertEqual(restarted.unconfirmedRevocations, ["activity"])
+            transport.complete(version: 2, active: false)
         }
     }
     func testTransientRestoreRetainsCredentialsAndDoesNotStopActivity() async {
@@ -346,7 +359,7 @@ import XCTest
         let cold = GameActivityRegistrationCoordinator(transport: transport, defaults: defaults)
         cold.setSession(owner: 1, bearer: "test-restored-owner-session")
         XCTAssertEqual(cold.restoreOwnership(id: "activity", eventID: 42), .observe)
-        XCTAssertNil(defaults.stringArray(forKey: "gameActivityRegistrationStoppedIDs"))
+        XCTAssertEqual(defaults.stringArray(forKey: "gameActivityRegistrationStoppedIDs") ?? [], [])
         cold.bind(id: "activity", eventID: 42)
         cold.receive(id: "activity", token: Data([0xab]))
         await waitForCalls(1, transport)
@@ -354,6 +367,146 @@ import XCTest
         XCTAssertEqual(transport.calls[0].token, "ab")
         XCTAssertTrue(cold.unconfirmedRevocations.isEmpty)
         transport.complete(version: 1, active: true)
+    }
+
+    func testAbsentActivityReconcilesOnlyWhenOriginalOwnerReturnsAndRetainsStopAfterAck() async {
+        let name = "GameActivityDurableRevokeTests.\(UUID().uuidString)"
+        let defaults = UserDefaults(suiteName: name)!
+        defer { defaults.removePersistentDomain(forName: name) }
+        let firstTransport = RegistrationTransportFake()
+        let first = GameActivityRegistrationCoordinator(transport: firstTransport, defaults: defaults)
+        first.setSession(owner: 1, bearer: "owner-a")
+        first.bind(id: "activity", eventID: 42)
+        first.stop(id: "activity")
+        await waitForCalls(1, firstTransport)
+        firstTransport.fail(GameActivityRegistrationError.unavailable)
+        for _ in 0..<100 { await Task.yield() }
+        let transport = RegistrationTransportFake()
+        let restarted = GameActivityRegistrationCoordinator(transport: transport, defaults: defaults)
+        restarted.setSession(owner: 2, bearer: "owner-b")
+        for _ in 0..<100 { await Task.yield() }
+        XCTAssertTrue(transport.calls.isEmpty)
+        XCTAssertTrue(transport.readBearers.isEmpty)
+        restarted.setSession(owner: 1, bearer: "owner-a-refreshed")
+        await waitForCalls(1, transport)
+        XCTAssertNil(transport.calls[0].token)
+        XCTAssertEqual(transport.calls[0].bearer, "owner-a-refreshed")
+        XCTAssertEqual(transport.calls[0].mutationID, firstTransport.calls[0].mutationID)
+        transport.complete(version: 1, active: false)
+        for _ in 0..<100 { await Task.yield() }
+        XCTAssertTrue(restarted.unconfirmedRevocations.isEmpty)
+        restarted.bind(id: "activity", eventID: 42)
+        restarted.receive(id: "activity", token: Data([1]))
+        restarted.foregroundActivated()
+        for _ in 0..<100 { await Task.yield() }
+        XCTAssertEqual(transport.calls.count, 1, "Acknowledged identity can never register again")
+        XCTAssertEqual(defaults.stringArray(forKey: "gameActivityRegistrationStoppedIDs"), ["activity"])
+        let final = GameActivityRegistrationCoordinator(transport: transport, defaults: defaults)
+        final.setSession(owner: 1, bearer: "owner-a")
+        XCTAssertTrue(final.unconfirmedRevocations.isEmpty)
+    }
+    func testActiveDeleteResponseDoesNotAcknowledgeAndConflictReadInactiveDoes() async {
+        let transport = RegistrationTransportFake()
+        let subject = coordinator(transport)
+        subject.setSession(owner: 1, bearer: "owner-a")
+        subject.bind(id: "activity", eventID: 42)
+        subject.stop(id: "activity")
+        await waitForCalls(1, transport)
+        transport.complete(version: 1, active: true)
+        for _ in 0..<100 { await Task.yield() }
+        XCTAssertEqual(subject.unconfirmedRevocations, ["activity"])
+        subject.foregroundActivated()
+        await waitForCalls(2, transport)
+        transport.readActive = false
+        transport.readVersion = 3
+        transport.fail(GameActivityRegistrationError.conflict)
+        for _ in 0..<100 { await Task.yield() }
+        XCTAssertTrue(subject.unconfirmedRevocations.isEmpty)
+        XCTAssertEqual(transport.calls.count, 2)
+    }
+    func testLegacyStoppedOwnershipReadsInactiveWithoutInventingEventOrSendingDelete() async {
+        let name = "GameActivityLegacyRevokeTests.\(UUID().uuidString)"
+        let defaults = UserDefaults(suiteName: name)!
+        defer { defaults.removePersistentDomain(forName: name) }
+        defaults.set(["activity": 1], forKey: "gameActivityRegistrationOwners")
+        defaults.set(["activity"], forKey: "gameActivityRegistrationStoppedIDs")
+        let transport = RegistrationTransportFake()
+        transport.readActive = false
+        let subject = GameActivityRegistrationCoordinator(transport: transport, defaults: defaults)
+        subject.setSession(owner: 2, bearer: "owner-b")
+        for _ in 0..<100 { await Task.yield() }
+        XCTAssertEqual(transport.reads, 0)
+        subject.setSession(owner: 1, bearer: "owner-a")
+        for _ in 0..<100 { await Task.yield() }
+        XCTAssertEqual(transport.readBearers, ["owner-a"])
+        XCTAssertTrue(transport.calls.isEmpty)
+        XCTAssertTrue(subject.unconfirmedRevocations.isEmpty)
+        XCTAssertEqual(defaults.stringArray(forKey: "gameActivityRegistrationStoppedIDs"), ["activity"])
+    }
+
+    func testDurableTupleWithoutSeparateLatchStillPreventsRegistrationAfterCrash() async throws {
+        let name = "GameActivityTupleCrashTests.\(UUID().uuidString)"
+        let defaults = UserDefaults(suiteName: name)!
+        defer { defaults.removePersistentDomain(forName: name) }
+        let mutation = UUID()
+        let data = try JSONSerialization.data(withJSONObject: ["activity": [
+            "owner": 1, "eventID": 42, "version": 0, "mutationID": mutation.uuidString
+        ]])
+        defaults.set(data, forKey: "gameActivityRegistrationRevocations")
+        let transport = RegistrationTransportFake()
+        let subject = GameActivityRegistrationCoordinator(transport: transport, defaults: defaults)
+        subject.setSession(owner: 1, bearer: "owner-a")
+        subject.bind(id: "activity", eventID: 42)
+        subject.receive(id: "activity", token: Data([1]))
+        await waitForCalls(1, transport)
+        XCTAssertNil(transport.calls[0].token)
+        XCTAssertEqual(transport.calls[0].mutationID, mutation)
+        XCTAssertEqual(defaults.stringArray(forKey: "gameActivityRegistrationStoppedIDs"), ["activity"])
+        transport.complete(version: 1, active: false)
+        for _ in 0..<100 { await Task.yield() }
+        subject.bind(id: "activity", eventID: 42)
+        subject.receive(id: "activity", token: Data([2]))
+        for _ in 0..<100 { await Task.yield() }
+        XCTAssertEqual(transport.calls.count, 1)
+    }
+
+    func testLegacyReadFailureRetainsOwnershipAndStopsWithoutGuessingEvent() async {
+        let name = "GameActivityLegacyReadFailureTests.\(UUID().uuidString)"
+        let defaults = UserDefaults(suiteName: name)!
+        defer { defaults.removePersistentDomain(forName: name) }
+        defaults.set(["activity": 1], forKey: "gameActivityRegistrationOwners")
+        defaults.set(["activity"], forKey: "gameActivityRegistrationStoppedIDs")
+        let transport = RegistrationTransportFake()
+        transport.readError = GameActivityRegistrationError.unavailable
+        let subject = GameActivityRegistrationCoordinator(transport: transport, defaults: defaults)
+        subject.setSession(owner: 1, bearer: "owner-a")
+        for _ in 0..<100 { await Task.yield() }
+        XCTAssertTrue(transport.calls.isEmpty)
+        XCTAssertEqual(subject.unconfirmedRevocations, ["activity"])
+        transport.readError = nil
+        subject.foregroundActivated()
+        await waitForCalls(1, transport)
+        XCTAssertNil(transport.calls[0].token)
+        XCTAssertEqual(transport.calls[0].version, transport.readVersion)
+        transport.complete(version: 2, active: false)
+    }
+    func testColdAccountSwitchStopsSavedIdentityEvenWithoutActivityKitObject() async {
+        let name = "GameActivityAbsentOwnerSwitchTests.\(UUID().uuidString)"
+        let defaults = UserDefaults(suiteName: name)!
+        defer { defaults.removePersistentDomain(forName: name) }
+        defaults.set(["activity": 1], forKey: "gameActivityRegistrationOwners")
+        defaults.set(["activity": 42], forKey: "gameActivityRegistrationEventIDs")
+        let transport = RegistrationTransportFake()
+        let subject = GameActivityRegistrationCoordinator(transport: transport, defaults: defaults)
+        subject.setSession(owner: 2, bearer: "owner-b")
+        for _ in 0..<100 { await Task.yield() }
+        XCTAssertTrue(transport.calls.isEmpty)
+        XCTAssertEqual(subject.unconfirmedRevocations, ["activity"])
+        subject.setSession(owner: 1, bearer: "owner-a")
+        await waitForCalls(1, transport)
+        XCTAssertNil(transport.calls[0].token)
+        XCTAssertEqual(transport.calls[0].bearer, "owner-a")
+        transport.complete(version: 1, active: false)
     }
 
 }

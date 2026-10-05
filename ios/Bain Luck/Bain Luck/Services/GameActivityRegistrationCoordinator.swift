@@ -23,6 +23,16 @@ import Foundation
         var stateObservation: Task<Void, Never>?
         init(eventID: Int, session: Session) { self.eventID = eventID; self.session = session }
     }
+    private nonisolated struct Revocation: Codable {
+        let owner: Int
+        var eventID: Int?
+        var version: Int
+        var mutationID: UUID?
+    }
+    private var revocations: [String: Revocation] = [:]
+    private var resolving: Set<String> = []
+    private let revocationsKey = "gameActivityRegistrationRevocations"
+    private let eventIDsKey = "gameActivityRegistrationEventIDs"
     private let transport: any GameActivityRegistrationTransport
     private let defaults: UserDefaults
     private var session: Session?
@@ -39,7 +49,23 @@ import Foundation
         self.transport = transport
         self.defaults = defaults
         stoppedIDs = Set(defaults.stringArray(forKey: stoppedKey) ?? [])
-        unconfirmedRevocations = stoppedIDs
+        if let data = defaults.data(forKey: revocationsKey),
+           let stored = try? JSONDecoder().decode([String: Revocation].self, from: data) {
+            revocations = stored
+        }
+        // A crash can occur after the tuple write but before the separate latch.
+        stoppedIDs.formUnion(revocations.keys)
+        persistStoppedIDs()
+        // Migrate owner-only stopped records without inventing event identity.
+        let owners = defaults.dictionary(forKey: ownershipKey) ?? [:]
+        let events = defaults.dictionary(forKey: eventIDsKey) ?? [:]
+        for id in stoppedIDs where revocations[id] == nil {
+            if let owner = owners[id] as? Int {
+                revocations[id] = Revocation(owner: owner, eventID: events[id] as? Int,
+                                             version: 0, mutationID: nil)
+            }
+        }
+        unconfirmedRevocations = Set(revocations.keys)
     }
 
     /// Called only after backend authentication succeeds, never on optimistic restore.
@@ -47,6 +73,10 @@ import Foundation
         if (session != nil && session?.owner != owner) || owner == nil { invalidateSession() }
         guard let owner, let bearer, !bearer.isEmpty else { session = nil; return }
         session = Session(owner: owner, bearer: bearer)
+        let owned = defaults.dictionary(forKey: ownershipKey) ?? [:]
+        for (id, storedOwner) in owned where (storedOwner as? Int) != owner {
+            stop(id: id)
+        }
         for entry in entries.values where !entry.stopped && entry.session.owner == owner {
             entry.session = Session(owner: owner, bearer: bearer)
         }
@@ -69,6 +99,10 @@ import Foundation
     func restoreOwnership(id: String, eventID: Int) -> OwnershipRestoration {
         let owners = defaults.dictionary(forKey: ownershipKey) ?? [:]
         guard let session, let owner = owners[id] as? Int else { return .anonymous }
+        var events = defaults.dictionary(forKey: eventIDsKey) ?? [:]
+        events[id] = eventID
+        defaults.set(events, forKey: eventIDsKey)
+        if var record = revocations[id] { record.eventID = eventID; revocations[id] = record; persistRevocations() }
         guard owner == session.owner else {
             stop(id: id)
             return .end
@@ -89,6 +123,7 @@ import Foundation
     /// anonymous adoption or stopped identity can restart a registration.
     func foregroundActivated() {
         guard let session else { return }
+        reconcileRevocations(session)
         for (id, entry) in entries where !entry.stopped && entry.needsRetry
             && entry.session.owner == session.owner {
             startWorker(id: id, entry: entry)
@@ -100,10 +135,7 @@ import Foundation
     func invalidateSession() {
         session = nil
         let owned = defaults.dictionary(forKey: ownershipKey) ?? [:]
-        stoppedIDs.formUnion(owned.keys)
-        persistStoppedIDs()
-        unconfirmedRevocations.formUnion(owned.keys)
-        for id in Array(entries.keys) { stop(id: id) }
+        for id in Set(owned.keys).union(entries.keys) { stop(id: id) }
         for activity in Activity<GameActivityAttributes>.activities where owned[activity.id] != nil {
             Task { await activity.end(nil, dismissalPolicy: .immediate) }
         }
@@ -137,6 +169,13 @@ import Foundation
     func bind(id: String, eventID: Int) {
         guard let session, entries[id] == nil, !stoppedIDs.contains(id) else { return }
         entries[id] = Entry(eventID: eventID, session: session)
+        var owners = defaults.dictionary(forKey: ownershipKey) ?? [:]
+        var events = defaults.dictionary(forKey: eventIDsKey) ?? [:]
+        owners[id] = session.owner
+        events[id] = eventID
+        defaults.set(owners, forKey: ownershipKey)
+        defaults.set(events, forKey: eventIDsKey)
+        _ = defaults.synchronize()
     }
     func receive(id: String, token: Data) {
         guard let entry = entries[id], !entry.stopped, session?.owner == entry.session.owner else { return }
@@ -150,6 +189,12 @@ import Foundation
         // auth restore creates an entry. Persist its stop without guessing a bearer.
         guard entry != nil || owned[id] != nil else { return }
         stoppedIDs.insert(id)
+        if revocations[id] == nil, let owner = entry?.session.owner ?? owned[id] as? Int {
+            let events = defaults.dictionary(forKey: eventIDsKey) ?? [:]
+            revocations[id] = Revocation(owner: owner, eventID: entry?.eventID ?? events[id] as? Int,
+                                         version: entry?.version ?? 0, mutationID: nil)
+        }
+        persistRevocations()
         persistStoppedIDs()
         unconfirmedRevocations.insert(id)
         guard let entry else { return }
@@ -180,11 +225,52 @@ import Foundation
     }
     private func acknowledgeRevocation(id: String) {
         unconfirmedRevocations.remove(id)
-        stoppedIDs.remove(id)
-        persistStoppedIDs()
+        revocations.removeValue(forKey: id)
+        persistRevocations()
+        // The identity stays stopped even after its remote credential is gone.
         var owners = defaults.dictionary(forKey: ownershipKey) ?? [:]
         owners.removeValue(forKey: id)
         defaults.set(owners, forKey: ownershipKey)
+        var events = defaults.dictionary(forKey: eventIDsKey) ?? [:]
+        events.removeValue(forKey: id)
+        defaults.set(events, forKey: eventIDsKey)
+        _ = defaults.synchronize()
+    }
+    private func persistRevocations() {
+        if let data = try? JSONEncoder().encode(revocations) { defaults.set(data, forKey: revocationsKey) }
+        _ = defaults.synchronize()
+    }
+    private func reconcileRevocations(_ session: Session) {
+        for (id, record) in revocations where record.owner == session.owner
+            && entries[id] == nil && !resolving.contains(id) {
+            if let eventID = record.eventID {
+                let entry = Entry(eventID: eventID, session: session)
+                entry.stopped = true
+                entry.version = record.version
+                if let mutationID = record.mutationID {
+                    entry.pendingMutation = (nil, record.version, mutationID)
+                }
+                entries[id] = entry
+                startWorker(id: id, entry: entry)
+            } else {
+                // Legacy ownership has no event id. Only its owner may resolve it.
+                resolving.insert(id)
+                Task { [weak self] in
+                    guard let self else { return }
+                    defer { self.resolving.remove(id) }
+                    guard let metadata = try? await self.transport.read(id: id, bearer: session.bearer),
+                          self.session?.owner == session.owner,
+                          var current = self.revocations[id], current.owner == session.owner else { return }
+                    current.eventID = metadata.eventID
+                    current.version = metadata.version
+                    self.revocations[id] = current
+                    self.persistRevocations()
+                    if !metadata.isActive { self.acknowledgeRevocation(id: id); return }
+                    self.resolving.remove(id)
+                    self.reconcileRevocations(session)
+                }
+            }
+        }
     }
     private func drain(id: String, entry: Entry) async {
         var conflicts = 0
@@ -197,6 +283,12 @@ import Foundation
                 entry.pendingMutation = (token, entry.version, UUID())
             }
             let mutationID = entry.pendingMutation!.id
+            if stopping, var record = revocations[id] {
+                record.version = entry.version
+                record.mutationID = mutationID
+                revocations[id] = record
+                persistRevocations()
+            }
             entry.needsRetry = false
             do {
                 let metadata = try await transport.mutate(id: id, eventID: entry.eventID,
