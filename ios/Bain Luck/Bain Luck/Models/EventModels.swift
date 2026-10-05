@@ -22,6 +22,10 @@ nonisolated struct EventDetail: Decodable, Identifiable, Sendable {
     var status: String?
     let homeScore: Int?
     let awayScore: Int?
+    /// The producer's clock and attribution for this response's score tuple.
+    /// Missing on older servers/caches; never replace with receipt or price time.
+    let scoreSource: String?
+    let scoreObservedAt: String?
     let homeTeamData: TeamData?
     let awayTeamData: TeamData?
     let metadata: EventMetadata?
