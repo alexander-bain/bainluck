@@ -784,7 +784,7 @@ struct OddsChartView: View {
                     ?? Self.chartMoments(from: history.moments, points: dataPoints)
                 // #3278 — "drawable", not "non-empty". See `hasDrawableLine`: one
                 // snapshot in the window rendered the whole frame around no line.
-                if !Self.hasDrawableLine(in: dataPoints) {
+                if !Self.chartIsDrawable(dataPoints, mount: checkpoints) {
                     Text(Self.emptyChartMessage(
                         range: drawnRange,
                         hasAnyPointInRange: !dataPoints.isEmpty,
@@ -902,7 +902,7 @@ struct OddsChartView: View {
                     // nav bar) when there were no points, and the full frame around
                     // no line when there was one. Both now say what is true, and the
                     // picker stays so "All" is reachable from here too.
-                    if !Self.hasDrawableLine(in: dataPoints) {
+                    if !Self.chartIsDrawable(dataPoints, mount: checkpoints) {
                         VStack(spacing: 12) {
                             if showPicker {
                                 HStack {
@@ -1242,15 +1242,27 @@ struct OddsChartView: View {
     /// no-journey chart returns before reading anything else.
     private func checkpointMount(for dataPoints: [ChartDataPoint]) -> PublicationCheckpointMount4974? {
         guard publicationJourney != nil else { return nil }
-        let gameEnd = gameEndDate
-        let sinceStart = isGameStarted && drawnRange == .sinceStart ? sinceStartDate : nil
         return Self.publicationCheckpointMount(
             journey: publicationJourney, eventId: eventId, status: status,
-            points: dataPoints, gameStart: gameStartDate,
-            admits: { date in
-                Self.admitsPublicationCheckpoint(date, gameEnd: gameEnd, forcedDomain: forcedDomain,
-                                                 sinceStart: sinceStart)
-            })
+            points: dataPoints, gameStart: gameStartDate, forcedDomain: forcedDomain,
+            sinceStart: isGameStarted && drawnRange == .sinceStart ? sinceStartDate : nil)
+    }
+
+    /// The mount under this chart's own admission (`admitsPublicationCheckpoint`):
+    /// the forced window and the Since Start cut, which are what the reader sees
+    /// and chose. It takes no game end on purpose; see that function.
+    static func publicationCheckpointMount(
+        journey: PublicationJourney4974.Journey?,
+        eventId: Int,
+        status: String?,
+        points: [ChartDataPoint],
+        gameStart: Date?,
+        forcedDomain: ClosedRange<Date>?,
+        sinceStart: Date?
+    ) -> PublicationCheckpointMount4974? {
+        publicationCheckpointMount(
+            journey: journey, eventId: eventId, status: status, points: points, gameStart: gameStart,
+            admits: { admitsPublicationCheckpoint($0, forcedDomain: forcedDomain, sinceStart: sinceStart) })
     }
 
     /// Whether `journey` is drawn on this chart: this event's, on a finished
@@ -1271,14 +1283,19 @@ struct OddsChartView: View {
                                               gameStart: gameStart, admits: admits)
     }
 
-    /// Whether a checkpoint at `date` lies in the range this chart draws its
-    /// points in — `filterPoints`' finished-game clip, forced window and Since
-    /// Start cut. One outside is neither drawn nor hit; the recorded window
-    /// still cuts the line (`PublicationCheckpointMount4974.init`).
-    static func admitsPublicationCheckpoint(_ date: Date, gameEnd: Date?,
+    /// Whether a checkpoint at `date` lies in the window this chart shows — the
+    /// forced window and the Since Start cut. One outside is neither drawn nor
+    /// hit; the recorded window still cuts the line
+    /// (`PublicationCheckpointMount4974.init`).
+    ///
+    /// NOT `filterPoints`' finished-game clip. That end is the last legacy
+    /// ESPN/model reading + 120 s (or `completedAt`) — a clock of legacy
+    /// history — while a checkpoint's `t` is when its row was inserted, before
+    /// commit. A valid finished body can be stored after that legacy end, and
+    /// clipping it there would hide every dot of it. Legacy points keep the clip.
+    static func admitsPublicationCheckpoint(_ date: Date,
                                             forcedDomain: ClosedRange<Date>?,
                                             sinceStart: Date?) -> Bool {
-        if let gameEnd, date > gameEnd { return false }
         guard SharedChartWindow.contains(date, in: forcedDomain) else { return false }
         if let sinceStart, date < sinceStart { return false }
         return true
@@ -2247,6 +2264,14 @@ struct OddsChartView: View {
     /// no line; a total-count test (`count >= 2`) would call that drawable and
     /// reproduce the same empty frame. Only a source that has two of its own points
     /// draws anything.
+    /// #4974 — the gate both charts ask. Under a checkpoint mount the mount's
+    /// plan is all that is drawn, so its marks decide (`isDrawable`); without
+    /// one, `hasDrawableLine` exactly as before.
+    static func chartIsDrawable(_ points: [ChartDataPoint], mount: PublicationCheckpointMount4974?) -> Bool {
+        if let mount { return mount.isDrawable }
+        return hasDrawableLine(in: points)
+    }
+
     static func hasDrawableLine(in points: [ChartDataPoint]) -> Bool {
         let visible = Set(defaultVisibleSources(in: points))
         var perSource: [String: Int] = [:]
@@ -3540,6 +3565,14 @@ struct PublicationCheckpointMount4974 {
         self.resting = Self.restingEndpoint(drawn: drawn, survivors: survivors)
     }
 
+    /// #3278's rule on what this mount draws: one series, so it needs two of
+    /// its own marks — a surviving legacy line, or any two of a lone legacy
+    /// reading and the drawn checkpoints, which never join. One mark alone is
+    /// the empty frame #3278 removed; nothing is invented to reach two.
+    var isDrawable: Bool {
+        !plan.lines.isEmpty || plan.dots.count + plan.checkpoints.count >= 2
+    }
+
     static func restingEndpoint(drawn: [PublicationJourney4974.Checkpoint],
                                 survivors: [ChartDataPoint]) -> PublicationCheckpointReadout4974? {
         let checkpoint = drawn.max { ($0.date, $0.vertex.rev) < ($1.date, $1.vertex.rev) }
@@ -3624,13 +3657,24 @@ struct PublicationCheckpointMount4974 {
 
     // MARK: Readout
 
+    /// A stored hit, if this mount still draws it: the exact checkpoint — rev,
+    /// `t`, `p` and date — among `drawn`. A selection outlives the body that
+    /// made it, so after a range change clips the checkpoint or a new adopted
+    /// journey replaces it, the old hit is stale and answers nothing. `drawn`
+    /// is the visible bound too: a forced window or Since Start cut admits it,
+    /// and the natural domain is widened to cover all of it.
+    func current(_ checkpoint: PublicationJourney4974.Checkpoint) -> PublicationJourney4974.Checkpoint? {
+        drawn.contains(checkpoint) ? checkpoint : nil
+    }
+
     /// What the readout shows for a selection. A checkpoint landing names that
-    /// checkpoint; a withheld one names nothing; a line selection names the
-    /// nearest SURVIVING blend point, or nothing if the time is in the window
-    /// or no blend point survives; no selection rests on `resting`.
+    /// checkpoint while it is still drawn (`current`), else nothing; a withheld
+    /// one names nothing; a line selection names the nearest SURVIVING blend
+    /// point, or nothing if the time is in the window or no blend point
+    /// survives; no selection rests on `resting`.
     func readout(date: Date?, scrub: PublicationCheckpointScrub4974?) -> PublicationCheckpointReadout4974 {
         switch scrub {
-        case .checkpoint(let checkpoint)?: return .checkpoint(checkpoint)
+        case .checkpoint(let checkpoint)?: return current(checkpoint).map { PublicationCheckpointReadout4974.checkpoint($0) } ?? .withheld
         case .withheld?: return .withheld
         case nil: break
         }
@@ -3639,6 +3683,14 @@ struct PublicationCheckpointMount4974 {
               let nearest = OddsChartView.nearestSnapshot(to: date, in: survivors, source: Self.blendSource)
         else { return .withheld }
         return .legacy(nearest)
+    }
+
+    /// Where the crosshair stands: a still-drawn checkpoint's own time, nowhere
+    /// for a stale one (its time names a dot no longer there), else the
+    /// selection's time.
+    func crosshairDate(date: Date?, scrub: PublicationCheckpointScrub4974?) -> Date? {
+        if case .checkpoint(let checkpoint)? = scrub { return current(checkpoint)?.date }
+        return date
     }
 
     /// The point the fullscreen readout reserves its height with.

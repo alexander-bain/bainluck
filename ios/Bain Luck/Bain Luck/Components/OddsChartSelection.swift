@@ -135,8 +135,12 @@ struct OddsChartSelectionOverlay: View {
             if let checkpoints {
                 // #4974 — a withheld scrub is a scrub even with no time to
                 // stand the crosshair on, so this asks `isScrubbing`, not `date`.
+                // The crosshair stands only on a still-drawn checkpoint or the
+                // finger's time, and only inside the plot.
                 if selection.isScrubbing {
-                    let x = selection.date.flatMap { proxy.position(forX: $0) }
+                    let x = checkpoints.crosshairDate(date: selection.date, scrub: selection.checkpoint)
+                        .flatMap { proxy.position(forX: $0) }
+                        .flatMap { $0 >= 0 && $0 <= plotFrame.width ? $0 : nil }
                     if let x { crosshair(atX: x) }
                     if let floatingCard {
                         floated(PublicationCheckpointReadoutSlot4974(

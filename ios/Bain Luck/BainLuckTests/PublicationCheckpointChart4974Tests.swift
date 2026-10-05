@@ -370,15 +370,76 @@ final class PublicationCheckpointChart4974Tests: XCTestCase {
         XCTAssertNil(OddsChartView.naturalDomain(of: []))
     }
 
-    func testTheDrawnRangeAdmitsCheckpointsTheWayItAdmitsPoints() {
+    func testTheVisibleWindowAdmitsCheckpoints() {
         let forced = at(-90)...at(30)
-        XCTAssertTrue(OddsChartView.admitsPublicationCheckpoint(at(10), gameEnd: nil, forcedDomain: forced, sinceStart: nil))
-        XCTAssertFalse(OddsChartView.admitsPublicationCheckpoint(at(50), gameEnd: nil, forcedDomain: forced, sinceStart: nil),
+        XCTAssertTrue(OddsChartView.admitsPublicationCheckpoint(at(10), forcedDomain: forced, sinceStart: nil))
+        XCTAssertFalse(OddsChartView.admitsPublicationCheckpoint(at(50), forcedDomain: forced, sinceStart: nil),
                        "an externally forced domain wins")
-        XCTAssertFalse(OddsChartView.admitsPublicationCheckpoint(at(50), gameEnd: at(40), forcedDomain: nil, sinceStart: nil))
-        XCTAssertTrue(OddsChartView.admitsPublicationCheckpoint(at(40), gameEnd: at(40), forcedDomain: nil, sinceStart: nil))
-        XCTAssertFalse(OddsChartView.admitsPublicationCheckpoint(at(5), gameEnd: nil, forcedDomain: nil, sinceStart: at(6)))
-        XCTAssertTrue(OddsChartView.admitsPublicationCheckpoint(at(6), gameEnd: nil, forcedDomain: nil, sinceStart: at(6)))
+        XCTAssertFalse(OddsChartView.admitsPublicationCheckpoint(at(5), forcedDomain: nil, sinceStart: at(6)))
+        XCTAssertTrue(OddsChartView.admitsPublicationCheckpoint(at(6), forcedDomain: nil, sinceStart: at(6)))
+        XCTAssertTrue(OddsChartView.admitsPublicationCheckpoint(at(86_400), forcedDomain: nil, sinceStart: nil),
+                      "no clock of legacy history bounds a stored checkpoint")
+    }
+
+    /// The legacy finished-game clip is the last ESPN reading + 120 s; a
+    /// checkpoint's `t` is when its row was inserted. Checkpoints stored at
+    /// 20:20 and 20:21, after a legacy end of 20:17, are a valid finished body
+    /// and are drawn: they widen the natural domain and the line rests on them.
+    func testACheckpointStoredAfterTheLegacyEndIsStillDrawn() throws {
+        let payload = try finishedPayload(aggregate: [(-600, 0.40), (0, 0.55)],
+                                          venue: "espn", venueLine: [(-600, 0.30), (0, 0.35)])
+        let legacyEnd = try XCTUnwrap(OddsChartView.gameEndDate(status: "completed", history: payload))
+        XCTAssertEqual(legacyEnd, at(120), "the legacy clip: the last ESPN reading + 120 s")
+        let journey = try adoptedJourney([(7, 300, 0.80), (9, 360, 0.83)])
+        XCTAssertTrue(journey.checkpoints.allSatisfy { $0.date > legacyEnd },
+                      "control: every checkpoint was stored after the legacy end")
+        // The points exactly as `filterPoints` clips a finished game's.
+        let points = OddsChartView.chartPoints(from: payload).filter { $0.date <= legacyEnd }
+        XCTAssertEqual(points.filter { $0.source == "aggregate" }.map(\.date), [at(-600), at(0)])
+
+        let m = try XCTUnwrap(OddsChartView.publicationCheckpointMount(
+            journey: journey, eventId: eventID, status: "completed", points: points,
+            gameStart: nil, forcedDomain: nil, sinceStart: nil))
+        XCTAssertEqual(m.drawn.map(\.vertex.rev), [7, 9])
+        XCTAssertEqual(m.plan.checkpoints.map(\.id), [7, 9])
+        XCTAssertEqual(checkpoint(of: try XCTUnwrap(m.resting))?.vertex.rev, 9,
+                       "the line rests on the stored 83%, not the 55% legacy end")
+        let natural = try XCTUnwrap(OddsChartView.naturalDomain(of: points.map(\.date) + m.drawn.map(\.date)))
+        XCTAssertGreaterThan(natural.upperBound, at(360))
+        XCTAssertLessThan(try XCTUnwrap(OddsChartView.naturalDomain(of: points.map(\.date))).upperBound, at(300),
+                          "control: the legacy domain alone ends before both")
+
+        // MUTANT — the legacy clip applied to insertion clocks discards both
+        // dots and rests on the legacy 55%.
+        let clipped = try XCTUnwrap(mount(journey, points, admits: { $0 <= legacyEnd }))
+        XCTAssertTrue(clipped.drawn.isEmpty)
+        XCTAssertEqual(legacy(of: try XCTUnwrap(clipped.resting))?.probability, 0.55)
+
+        // The explicit visible constraints still clip.
+        let forced = try XCTUnwrap(OddsChartView.publicationCheckpointMount(
+            journey: journey, eventId: eventID, status: "completed", points: points,
+            gameStart: nil, forcedDomain: at(-700)...at(330), sinceStart: nil))
+        XCTAssertEqual(forced.drawn.map(\.vertex.rev), [7])
+        let sinceStart = try XCTUnwrap(OddsChartView.publicationCheckpointMount(
+            journey: journey, eventId: eventID, status: "completed", points: points,
+            gameStart: nil, forcedDomain: nil, sinceStart: at(330)))
+        XCTAssertEqual(sinceStart.drawn.map(\.vertex.rev), [9])
+    }
+
+    /// The chart's own mount is built under the visible window only. Scanned
+    /// because `checkpointMount(for:)` reads view state the tests cannot set.
+    func testTheChartsAdmissionTakesNoLegacyGameEnd() throws {
+        let chart = try code("Bain Luck/Components/OddsChartView.swift")
+        let start = try XCTUnwrap(chart.range(of: "privatefunccheckpointMount(for"))
+        let admission = try XCTUnwrap(chart.range(of: "staticfuncadmitsPublicationCheckpoint(",
+                                                  range: start.upperBound..<chart.endIndex))
+        let mounting = chart[start.lowerBound..<admission.lowerBound]
+        XCTAssertFalse(mounting.contains("gameEnd"), "the mount re-reads the legacy clip")
+        XCTAssertTrue(mounting.contains(
+            "forcedDomain:forcedDomain,sinceStart:isGameStarted&&drawnRange==.sinceStart?sinceStartDate:nil)"))
+        let close = try XCTUnwrap(chart.range(of: "returntrue}", range: admission.upperBound..<chart.endIndex))
+        XCTAssertFalse(chart[admission.lowerBound..<close.upperBound].contains("gameEnd"),
+                       "the admission re-reads the legacy clip")
     }
 
     /// rev 9 falls outside the forced domain: it is not drawn and cannot be
@@ -388,7 +449,7 @@ final class PublicationCheckpointChart4974Tests: XCTestCase {
         let points = [point(-60, 0.40), point(0, 0.42), point(60, 0.55), point(120, 0.57)]
         let forced = at(-90)...at(30)
         let m = try XCTUnwrap(mount(try subMinuteJourney(), points, admits: {
-            OddsChartView.admitsPublicationCheckpoint($0, gameEnd: nil, forcedDomain: forced, sinceStart: nil)
+            OddsChartView.admitsPublicationCheckpoint($0, forcedDomain: forced, sinceStart: nil)
         }))
         XCTAssertEqual(m.drawn.map(\.vertex.rev), [7])
         XCTAssertEqual(m.plan.checkpoints.map(\.id), [7])
@@ -403,6 +464,101 @@ final class PublicationCheckpointChart4974Tests: XCTestCase {
         XCTAssertTrue(m.survivors.allSatisfy { inputIDs.contains($0.id) }, "no point fabricated")
         XCTAssertEqual(m.survivors.map(\.date), [at(-60), at(0), at(60), at(120)])
         XCTAssertEqual(land(m, atPlotX: 100), .withheld(at(50)), "the clipped rev 9 answers nothing")
+    }
+
+    // MARK: - Drawability under a mount
+
+    /// One aggregate reading and two checkpoints: the legacy gate wants two
+    /// readings of one source and calls it empty; the mount draws three marks.
+    func testUnderAMountItsDrawnMarksDecideDrawability() throws {
+        let journey = try subMinuteJourney()
+        let lone = [point(0, 0.40), point(0, 0.40, source: "polymarket")]
+        XCTAssertFalse(OddsChartView.hasDrawableLine(in: lone), "control: the legacy gate calls this empty")
+        let m = try XCTUnwrap(mount(journey, lone))
+        XCTAssertTrue(m.plan.lines.isEmpty)
+        XCTAssertEqual(m.plan.dots.map(\.point.id), [lone[0].id], "the reading itself; nothing invented")
+        XCTAssertEqual(m.plan.checkpoints.map(\.id), [7, 9])
+        XCTAssertTrue(m.isDrawable)
+        XCTAssertTrue(OddsChartView.chartIsDrawable(lone, mount: m))
+
+        // The lone reading inside the window: the two checkpoints still draw.
+        let inside = [point(30, 0.47)]
+        let swallowedReading = try XCTUnwrap(mount(journey, inside))
+        XCTAssertTrue(swallowedReading.plan.dots.isEmpty)
+        XCTAssertTrue(OddsChartView.chartIsDrawable(inside, mount: swallowedReading))
+
+        // NO-CHECKPOINT CONTROL — the same lone reading with no checkpoint
+        // drawn is one mark: empty, as today.
+        let none = try XCTUnwrap(mount(journey, lone, admits: { _ in false }))
+        XCTAssertFalse(none.isDrawable)
+        XCTAssertFalse(OddsChartView.chartIsDrawable(lone, mount: none))
+        // ...and a mount that draws NOTHING is empty even where the legacy gate
+        // saw a line (both readings sit in the window).
+        let cut = [point(20, 0.45), point(40, 0.50)]
+        XCTAssertTrue(OddsChartView.hasDrawableLine(in: cut), "control")
+        XCTAssertFalse(OddsChartView.chartIsDrawable(cut, mount: try XCTUnwrap(mount(journey, cut, admits: { _ in false }))))
+        // One checkpoint beside one surviving reading is two marks.
+        let one = try XCTUnwrap(mount(journey, lone, admits: { $0 == self.at(10) }))
+        XCTAssertTrue(one.isDrawable)
+
+        // NIL MOUNT — today's gate, unchanged.
+        XCTAssertFalse(OddsChartView.chartIsDrawable(lone, mount: nil))
+        XCTAssertTrue(OddsChartView.chartIsDrawable([point(0, 0.40), point(60, 0.55)], mount: nil))
+    }
+
+    // MARK: - A selection that outlives its checkpoint
+
+    /// A hit on rev 9, then the range narrows and clips it: the stored hit names
+    /// a dot no longer drawn, so readout, VoiceOver and crosshair withhold.
+    func testAHitClippedByARangeChangeIsWithheldNotNamed() throws {
+        let points = [point(-60, 0.40), point(0, 0.42), point(60, 0.55), point(120, 0.57)]
+        let journey = try subMinuteJourney()
+        let before = try XCTUnwrap(mount(journey, points))
+        let selection = OddsChartSelection()
+        let picked = before.selection(atChartX: 101, plotFrame: CGRect(x: 0, y: 0, width: 400, height: 200),
+                                      dateAt: { self.date(atPlotX: Double($0)) },
+                                      position: { self.linearX($0).map { CGFloat($0) } })
+        selection.hold(date: picked.date, checkpoint: picked.scrub)
+        XCTAssertEqual(checkpoint(of: before.readout(date: selection.date, scrub: selection.checkpoint))?.vertex.rev, 9,
+                       "control: while drawn, the hit is named")
+        XCTAssertEqual(before.crosshairDate(date: selection.date, scrub: selection.checkpoint), at(50))
+
+        let narrowed = try XCTUnwrap(mount(journey, points, admits: {
+            OddsChartView.admitsPublicationCheckpoint($0, forcedDomain: self.at(-90)...self.at(30), sinceStart: nil)
+        }))
+        XCTAssertEqual(narrowed.drawn.map(\.vertex.rev), [7])
+        XCTAssertTrue(isWithheld(narrowed.readout(date: selection.date, scrub: selection.checkpoint)),
+                      "a stale hit named an undrawn checkpoint")
+        XCTAssertNil(narrowed.crosshairDate(date: selection.date, scrub: selection.checkpoint),
+                     "the crosshair stood on an undrawn checkpoint")
+        XCTAssertEqual(narrowed.accessibilityValue(date: selection.date, scrub: selection.checkpoint,
+                                                   homeShort: "SEA", awayShort: "LAR", moments: [],
+                                                   gameFinished: true, sportKey: nil),
+                       PublicationCheckpointReadoutSlot4974.withheldText)
+        XCTAssertTrue(selection.isScrubbing, "still a scrub: withheld, not rest")
+    }
+
+    /// A newly adopted journey replaces the hit. The same rev and `t` with a
+    /// different `p` is a different checkpoint: identity is exact, never by rev.
+    func testAHitReplacedByANewJourneyIsWithheldNotNamed() throws {
+        let points = [point(0, 0.40), point(60, 0.55)]
+        let old = try XCTUnwrap(mount(try subMinuteJourney(), points))
+        let stale = PublicationCheckpointScrub4974.checkpoint(old.drawn[1])
+        XCTAssertNotNil(checkpoint(of: old.readout(date: at(50), scrub: stale)), "control")
+
+        let repriced = try XCTUnwrap(mount(try adoptedJourney([(7, 10, 0.61), (9, 50, 0.52)]), points))
+        XCTAssertEqual(repriced.drawn[1].vertex.rev, old.drawn[1].vertex.rev)
+        XCTAssertEqual(repriced.drawn[1].date, old.drawn[1].date)
+        XCTAssertTrue(isWithheld(repriced.readout(date: at(50), scrub: stale)), "the old 58% outlived its journey")
+        XCTAssertNil(repriced.crosshairDate(date: at(50), scrub: stale))
+
+        let moved = try XCTUnwrap(mount(try adoptedJourney([(7, 10, 0.61), (12, 40, 0.58)]), points))
+        XCTAssertTrue(isWithheld(moved.readout(date: at(50), scrub: stale)))
+        XCTAssertNil(moved.crosshairDate(date: at(50), scrub: stale))
+
+        // A line or withheld selection keeps the finger's time for the crosshair.
+        XCTAssertEqual(moved.crosshairDate(date: at(30), scrub: .withheld), at(30))
+        XCTAssertEqual(moved.crosshairDate(date: at(90), scrub: nil), at(90))
     }
 
     // MARK: - Formatting
@@ -547,6 +703,9 @@ final class PublicationCheckpointChart4974Tests: XCTestCase {
         XCTAssertTrue(chart.contains("gameFinished:EventState.isFinished(status),checkpoints:checkpoints,"))
         XCTAssertEqual(chart.components(separatedBy: "checkpoints.selection(atChartX:location.x,plotFrame:plotFrame,proxy:proxy)").count - 1, 2,
                        "both the pan and the hold decide over the mount")
+        XCTAssertEqual(chart.components(separatedBy: "if!Self.chartIsDrawable(dataPoints,mount:checkpoints){").count - 1, 2,
+                       "both charts ask the mount whether they can draw")
+        XCTAssertFalse(chart.contains("if!Self.hasDrawableLine(in:dataPoints){"))
     }
 
     /// The finger's state stays in the selection leaves: the plot owner still
@@ -557,8 +716,9 @@ final class PublicationCheckpointChart4974Tests: XCTestCase {
         XCTAssertFalse(chart.contains("@ObservedObjectvarselection"))
         XCTAssertFalse(chart.contains("selection.checkpoint"), "the plot owner reads the finger's state")
         let leaves = try code("Bain Luck/Components/OddsChartSelection.swift")
-        XCTAssertEqual(leaves.components(separatedBy: "scrub:selection.checkpoint").count - 1, 3,
-                       "the fullscreen readout, the floating card and VoiceOver")
+        XCTAssertEqual(leaves.components(separatedBy: "scrub:selection.checkpoint").count - 1, 4,
+                       "the fullscreen readout, the crosshair, the floating card and VoiceOver")
+        XCTAssertTrue(leaves.contains("checkpoints.crosshairDate(date:selection.date,scrub:selection.checkpoint)"))
     }
 
     // MARK: - Hosted renders
@@ -644,14 +804,18 @@ final class PublicationCheckpointChart4974Tests: XCTestCase {
         XCTAssertFalse(rest.contains("77%"), "the page's point leaked into the resting readout: \(rest)")
     }
 
-    private func finishedPayload() throws -> EventHistoryResponse {
-        let line: [[String: Any]] = [(0.0, 0.40), (60.0, 0.55)].map {
-            ["timestamp": at($0.0).ISO8601Format(), "home_probability": $0.1]
+    /// A finished payload whose blend is `aggregate`; `venue` carries
+    /// `venueLine` (default: the blend's own readings).
+    private func finishedPayload(aggregate: [(Double, Double)] = [(0.0, 0.40), (60.0, 0.55)],
+                                 venue: String = "polymarket",
+                                 venueLine: [(Double, Double)]? = nil) throws -> EventHistoryResponse {
+        let rows: ([(Double, Double)]) -> [[String: Any]] = { pairs in
+            pairs.map { ["timestamp": self.at($0.0).ISO8601Format(), "home_probability": $0.1] }
         }
         let data = try JSONSerialization.data(withJSONObject: [
             "event_id": eventID, "home_team": "Seattle Seahawks", "away_team": "Los Angeles Rams",
-            "status": "completed", "history": [], "win_prob_history": ["polymarket": line],
-            "aggregate_line": line,
+            "status": "completed", "history": [], "win_prob_history": [venue: rows(venueLine ?? aggregate)],
+            "aggregate_line": rows(aggregate),
         ])
         let decoder = JSONDecoder()
         decoder.keyDecodingStrategy = .convertFromSnakeCase
@@ -698,5 +862,108 @@ final class PublicationCheckpointChart4974Tests: XCTestCase {
         let rest = try visibleText(host, name: "inline-rest")
         XCTAssertFalse(rest.contains(PublicationCheckpointReadoutSlot4974.withheldText),
                        "the inline card rests nowhere (#9517): \(rest)")
+    }
+
+    // MARK: - Hosted drawability and the post-legacy-end checkpoint
+
+    private static let notEnoughReadings = "enough readings"
+
+    private func finishedChart(_ payload: EventHistoryResponse, journey: Journey?,
+                               forcedDomain: ClosedRange<Date>? = nil,
+                               model: OddsChartViewModel? = nil) -> OddsChartView {
+        OddsChartView(eventId: eventID, status: "completed",
+                      homeTeamName: "Seattle Seahawks", awayTeamName: "Los Angeles Rams",
+                      forcedDomain: forcedDomain, preloadedHistory: payload, readout: card(),
+                      publicationJourney: journey, model: model)
+    }
+
+    /// The real inline chart over one aggregate reading. The plot is built and
+    /// no empty sentence shows only when two checkpoints are drawn beside it.
+    func testHostedInlineChartDrawsOneReadingAndTwoCheckpoints() throws {
+        let payload = try finishedPayload(aggregate: [(0.0, 0.40)])
+        let journey = try subMinuteJourney()
+        func render(_ journey: Journey?, forcedDomain: ClosedRange<Date>? = nil,
+                    name: String) throws -> (builds: Int, text: String) {
+            let model = OddsChartViewModel(eventId: eventID, preloaded: payload)
+            var builds = 0
+            model.onPlotBuild = { builds += 1 }
+            defer { model.onPlotBuild = nil }
+            let (host, window) = hosted(finishedChart(payload, journey: journey, forcedDomain: forcedDomain,
+                                                      model: model))
+            defer { window.isHidden = true }
+            let text = try visibleText(host, name: name)
+            return (builds, text)
+        }
+
+        // NIL-MOUNT CONTROL — one reading is today's empty chart.
+        let today = try render(nil, name: "inline-one-reading-no-journey")
+        XCTAssertEqual(today.builds, 0, "control: one reading builds no plot today")
+        XCTAssertTrue(today.text.contains(Self.notEnoughReadings), today.text)
+
+        let mounted = try render(journey, name: "inline-one-reading-two-checkpoints")
+        XCTAssertGreaterThan(mounted.builds, 0, "the drawn checkpoints never reached the plot")
+        XCTAssertFalse(mounted.text.contains(Self.notEnoughReadings), mounted.text)
+
+        // NO-CHECKPOINT CONTROL — a mount whose checkpoints the window clips
+        // draws one mark and stays empty.
+        let clipped = try render(journey, forcedDomain: at(-90)...at(5), name: "inline-one-reading-checkpoints-clipped")
+        XCTAssertEqual(clipped.builds, 0)
+        XCTAssertTrue(clipped.text.contains(Self.notEnoughReadings), clipped.text)
+    }
+
+    /// The fullscreen cover itself, opened the way the LOOK rig opens it
+    /// (#9185's launch flag) in a window on the host's active scene.
+    private func hostedFullscreenText(_ chart: OddsChartView, name: String) throws -> String {
+        let defaults = UserDefaults.standard
+        defaults.set(true, forKey: LaunchRig.chartFullscreenKey)
+        defer { defaults.removeObject(forKey: LaunchRig.chartFullscreenKey) }
+        let scenes = UIApplication.shared.connectedScenes.compactMap { $0 as? UIWindowScene }
+        let scene = scenes.first { $0.activationState == .foregroundActive } ?? scenes.first
+        let previousKey = scene?.windows.first { $0.isKeyWindow }
+        let host = hostForMeasurement(chart.frame(width: 390), at: .large)
+        let window = scene.map { UIWindow(windowScene: $0) } ?? UIWindow()
+        window.frame = CGRect(x: 0, y: 0, width: 390, height: 844)
+        window.rootViewController = host
+        window.makeKeyAndVisible()
+        defer {
+            host.dismiss(animated: false)
+            window.isHidden = true
+            previousKey?.makeKey()
+        }
+        let deadline = Date().addingTimeInterval(5)
+        while host.presentedViewController == nil, Date() < deadline {
+            RunLoop.current.run(until: Date().addingTimeInterval(0.05))
+        }
+        let cover = try XCTUnwrap(host.presentedViewController, "the fullscreen cover never opened")
+        pump(cover, times: 12)
+        return try visibleText(cover, name: name)
+    }
+
+    func testHostedFullscreenDrawsOneReadingAndTwoCheckpoints() throws {
+        let payload = try finishedPayload(aggregate: [(0.0, 0.40)])
+        let today = try hostedFullscreenText(finishedChart(payload, journey: nil),
+                                             name: "fullscreen-one-reading-no-journey")
+        XCTAssertTrue(today.contains(Self.notEnoughReadings), "control: today's sheet is empty: \(today)")
+
+        let mounted = try hostedFullscreenText(finishedChart(payload, journey: try subMinuteJourney()),
+                                               name: "fullscreen-one-reading-two-checkpoints")
+        XCTAssertFalse(mounted.contains(Self.notEnoughReadings), mounted)
+        XCTAssertTrue(mounted.contains("58%"), "the sheet rests on rev 9, the latest checkpoint: \(mounted)")
+    }
+
+    /// Legacy readings end at 20:15 (clip 20:17); checkpoints were stored at
+    /// 20:20 (80%) and 20:21 (83%). The sheet rests on the stored 83%.
+    func testHostedFullscreenRestsOnACheckpointStoredAfterTheLegacyEnd() throws {
+        let payload = try finishedPayload(aggregate: [(-600, 0.40), (0, 0.55)],
+                                          venue: "espn", venueLine: [(-600, 0.30), (0, 0.35)])
+        let today = try hostedFullscreenText(finishedChart(payload, journey: nil),
+                                             name: "fullscreen-legacy-end-no-journey")
+        XCTAssertTrue(today.contains("55%"), "control: without checkpoints it rests on the legacy end: \(today)")
+
+        let journey = try adoptedJourney([(7, 300, 0.80), (9, 360, 0.83)])
+        let mounted = try hostedFullscreenText(finishedChart(payload, journey: journey),
+                                               name: "fullscreen-checkpoint-after-legacy-end")
+        XCTAssertTrue(mounted.contains("83%"), mounted)
+        XCTAssertFalse(mounted.contains("55%"), "rested on the legacy end: \(mounted)")
     }
 }
