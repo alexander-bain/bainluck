@@ -84,6 +84,9 @@ async def test_expired_latest_put_replay_conflicts_and_same_owner_get_delete_ack
     status, deleted = await invoke(pg, body(0), identity="new", revoke=True)
     assert status == 200 and deleted == ack
     assert (await invoke(pg, body(2), identity="new"))[0] == 409
+    # A zero-version attempt cannot claim an existing immutable identity;
+    # a known-version owner lookup remains concealed. Neither cleans account A.
+    assert (await invoke(pg, body(0), identity="new", user=2, revoke=True))[0] == 409
     assert (await invoke(pg, body(2), identity="new", user=2, revoke=True))[0] == 404
     async with pg() as db:
         retained = (
