@@ -364,6 +364,12 @@ COVERED = (
     # a future column with a client-side default from making that seed illegal
     # without anybody noticing until a runner says so.
     "test_reconcile_lookback_reach_5779_pg.py",
+    # #10529. Seeds `sports`, `events`, `futures_markets`, `futures_outcomes`
+    # and `win_prob_snapshots` by raw INSERT. Its vacuity hazard is the
+    # opposite of a missing column: every RED arm needs a priced outcome, so a
+    # seed that dropped `current_probability` would make the not-accused arms
+    # pass for the wrong reason — the arms pair each with a priced control.
+    "test_linked_unsourced_priced_10529_pg.py",
     # #6073 (CERT-2834's required repair). Seeds `sports`, five `events` and
     # four `futures_markets` by raw INSERT. Every arm turns on the corpus being
     # INSIDE the repair band, so a `NotNullViolation` there would not read as a

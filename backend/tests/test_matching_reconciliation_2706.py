@@ -576,7 +576,32 @@ def test_linked_unsourced_catches_attached_but_not_charting():
     ])))
     assert out["red"] is True
     assert out["rows"][0]["event_id"] == 15299463
-    assert out["rows"][0]["linked_markets"] == 11
+    assert out["rows"][0]["priced_linked_markets"] == 11
+
+
+def test_linked_unsourced_requires_a_stored_price_before_grouping():
+    """#10529: CS2 event 15323417 sat RED on a market whose legs were BOTH
+    unpriced — the writer had nothing to draw. The priced-outcome EXISTS must sit
+    in the WHERE (before GROUP BY and LIMIT, so unpriced pairs cannot crowd priced
+    ones out of the 200) and must be an EXISTS, not a JOIN that would multiply
+    the market count by its outcomes. The real-Postgres gate executes it:
+    tests/integration/test_linked_unsourced_priced_10529_pg.py."""
+    import inspect
+
+    src = inspect.getsource(mrec.check_linked_unsourced)
+    exists_at = src.index("fo.current_probability IS NOT NULL")
+    assert src.index("AND EXISTS (") < exists_at < src.index("GROUP BY 1, 2")
+    assert "JOIN futures_outcomes" not in src
+    assert "current_probability > 0" not in src
+
+
+def test_linked_unsourced_does_not_claim_the_card_shows_a_source():
+    """The query never observes a rendered card; its finding must not say it does."""
+    out = asyncio.run(mrec.check_linked_unsourced(_Session([
+        [(15323417, "kalshi", 1, None)],
+    ])))
+    assert "card shows" not in out["detail"]
+    assert "stored price" in out["detail"]
 
 
 def test_linked_unsourced_counts_events_not_markets():

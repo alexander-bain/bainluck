@@ -602,6 +602,19 @@ async def check_linked_unsourced(session) -> dict:
     actually see is one thing: this event has that source attached and no curve
     from it. Measured 2026-09-02: 300 markets, **36** event×source pairs, among
     them Auger-Aliassime v Khachanov.
+
+    PRICED IS THE PRECONDITION, NOT ATTACHED (#10529). A writer can only be
+    accused of a missing curve when it had a price to write. CS2 event 15323417
+    (2026-10-05) sat RED on one Kalshi market whose two legs were both stored
+    ``current_probability`` NULL — the venue book was 0.12/0.80 and 0.08/0.80
+    with no trade, which the Kalshi probability policy correctly declines — so
+    the alert accused a writer of skipping a price that did not exist. A market
+    counts only if at least one of its outcomes carries a stored price, tested
+    with EXISTS (no outcome-count multiplication) BEFORE grouping and LIMIT so
+    unpriced pairs can never crowd priced ones out of the 200. Zero is a price.
+    Nothing further is required of the market — not the writer's ticker gate,
+    not orientation — because a priced market the writer refuses is exactly
+    the failure this alert exists to catch.
     """
     rows = (await session.execute(text(
         """
@@ -615,6 +628,11 @@ async def check_linked_unsourced(session) -> dict:
           AND e.commence_time BETWEEN NOW() - (:hrs * INTERVAL '1 hour')
                                   AND NOW() + (:hrs * INTERVAL '1 hour')
           AND fm.created_at < NOW() - (:mins * INTERVAL '1 minute')
+          AND EXISTS (
+              SELECT 1 FROM futures_outcomes fo
+              WHERE fo.market_id = fm.id
+                AND fo.current_probability IS NOT NULL
+          )
         GROUP BY 1, 2
         HAVING NOT EXISTS (
             SELECT 1 FROM win_prob_snapshots w
@@ -626,15 +644,15 @@ async def check_linked_unsourced(session) -> dict:
     ), {"mins": UNSOURCED_AFTER_MINUTES,
          "hrs": UNSOURCED_WINDOW_HOURS})).all()
     listed = [
-        {"event_id": int(r[0]), "source": r[1], "linked_markets": int(r[2]),
+        {"event_id": int(r[0]), "source": r[1], "priced_linked_markets": int(r[2]),
          "commence_time": r[3].isoformat() if r[3] else None}
         for r in rows
     ]
     return _finding(
         "linked_unsourced", bool(listed), len(listed),
-        f"{len(listed)} near-term event/source pair(s) are linked but have written "
-        "no win-prob snapshot — attached is not sourced, so the card shows the "
-        "source and draws no curve",
+        f"{len(listed)} near-term event/source pair(s) have an open linked market "
+        "with a stored price but no win-prob snapshot for that event and source — "
+        "a priced source the curve writer has not drawn",
         listed,
     )
 

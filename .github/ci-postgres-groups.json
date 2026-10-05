@@ -44,6 +44,7 @@
     "#9120 a moved MLB game keeps the Kalshi ticker Kalshi kept (real Postgres)",
     "#2772 illegal settled tennis score recall (real Postgres)",
     "#5779 duplicate-sweep look-back reach (real Postgres)",
+    "#10529 linked_unsourced accuses only priced markets (real Postgres)",
     "#3672 repair bind contract (real asyncpg)",
     "#6215 backup/restore round trip (real Postgres)",
     "#9017 repair apply CAS (real Postgres)",
