@@ -196,3 +196,46 @@ def test_lower_limit_counts_sessions_in_higher_slots(env):
         fcntl.flock(held, fcntl.LOCK_EX)
         invoke(env, "mode", "quiet")
         assert invoke(env, "run", "live", "--", "true").returncode == 75
+
+
+def test_worker_lease_preserves_group_leader_with_forking_python_launcher(
+    env, tmp_path
+):
+    # Reproduce managed macOS python3 shims, which wait for a child interpreter.
+    import shlex
+
+    binpath = tmp_path / "shim"
+    binpath.mkdir()
+    shim = binpath / "python3"
+    shim.write_text("#!/bin/sh\n" + shlex.quote(sys.executable) + ' "$@" &\nwait $!\n')
+    shim.chmod(0o755)
+    env["PATH"] = str(binpath) + ":" + env["PATH"]
+    source = (ROOT / "lane-runner.sh").read_text()
+    start = source.index("  BL_CONTROL_PYTHON=")
+    end = source.index("\nfi", start)
+    admission = source[start:end]
+    child = tmp_path / "child.sh"
+    child.write_text(
+        '#!/bin/bash\nexec "$BL_CONTROL_PYTHON" -c '
+        + shlex.quote("import os; print(os.getpid(), os.getpgrp())")
+        + "\n"
+    )
+    script = (
+        "export BL_CONTROL_PYTHON\nCONTROL="
+        + shlex.quote(str(CONTROL))
+        + "\nLANES=(live)\nBL_RUNNER_SCRIPT="
+        + shlex.quote(str(child))
+        + "\nBL_RUNNER_ARGS=()\n"
+        + admission
+    )
+    proc = subprocess.Popen(
+        ["/bin/bash", "-c", script],
+        env=env,
+        start_new_session=True,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        text=True,
+    )
+    stdout, stderr = proc.communicate(timeout=10)
+    assert proc.returncode == 0, stderr
+    assert stdout.strip() == f"{proc.pid} {proc.pid}"

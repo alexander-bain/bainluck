@@ -100,7 +100,10 @@ HANDOFF="${LANE_HANDOFF:-$HOME/bainluck/.claude/handoff}"
 LOGDIR="$HANDOFF/runner-logs"
 CONTROL="$(dirname "$BL_RUNNER_SCRIPT")/scripts/lane_control.py"
 if [ "$DRYRUN" -eq 0 ] && [ "$RESTOCK_ONCE" -eq 0 ] && [ "${LANE_LEASE_HELD:-}" != "${LANES[0]}" ]; then
-  exec python3 "$CONTROL" lease "${LANES[0]}" -- /bin/bash "$BL_RUNNER_SCRIPT" "${BL_RUNNER_ARGS[@]}"
+  # Managed python3 launchers may fork the interpreter. Resolve its real binary
+  # before exec so the worker remains its process-group leader for safe reloads.
+  BL_CONTROL_PYTHON=$(python3 -c 'import sys; print(sys.executable)') || exit 1
+  exec "$BL_CONTROL_PYTHON" "$CONTROL" lease "${LANES[0]}" -- /bin/bash "$BL_RUNNER_SCRIPT" "${BL_RUNNER_ARGS[@]}"
 fi
 
 # No log dir for a rehearsal: --dry-run writes nothing at all, anywhere.
