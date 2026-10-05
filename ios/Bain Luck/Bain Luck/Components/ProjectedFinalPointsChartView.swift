@@ -36,7 +36,8 @@ struct ProjectedFinalPointsChartView: View {
 
     var body: some View {
         if let full {
-            let markers = Self.gameStateMarkers(periodMarkers, sportKey: sportKey, series: full)
+            let markers = Self.gameStateMarkers(periodMarkers, sportKey: sportKey, series: full,
+                                                floor: input.kickoffAt ?? input.scoreObservationStartAt)
             content(full: full, markers: markers, height: Self.inlinePlotHeight)
                 .sheet(isPresented: $expanded) {
                     NavigationStack {
@@ -70,8 +71,9 @@ struct ProjectedFinalPointsChartView: View {
                 Text("Latest interval unavailable. Last recorded projection shown.")
                     .font(.caption).foregroundStyle(.secondary)
             }
+            // The chip strip is added on top, so it never eats the plot's height.
             plot(full, markers: markers)
-                .frame(height: height)
+                .frame(height: height + (markers.isEmpty ? 0 : Self.markerStripHeight))
             Text(Self.legend(for: full))
                 .font(.caption).foregroundStyle(.secondary)
                 .fixedSize(horizontal: false, vertical: true)
@@ -166,15 +168,18 @@ struct ProjectedFinalPointsChartView: View {
     /// rule (#3348 / #6718, `OddsChartView.servedPeriodMarkers`): only a served
     /// marker a NAMED instrument observed, at its own timestamp. An estimated
     /// or source-less marker is absent, never drawn as timing. Nothing before
-    /// the game (a scheduled page draws forecasts only), nothing outside the
-    /// drawn span (so nothing later than now on a live game), and the span is
-    /// never stretched to reach one. One marker per period, the earliest.
+    /// the game (a scheduled page draws forecasts only, and the span's
+    /// pre-game hour is not game state: `floor` is the observed start the
+    /// mount floored the scores at), nothing after the drawn span (so nothing
+    /// later than now on a live game), and the span is never stretched to
+    /// reach one. One marker per period, the earliest.
     static func gameStateMarkers(_ markers: [PeriodMarkerPayload]?, sportKey: String?,
-                                 series: ProjectedFinalPointsSeries) -> [GameStateMarker] {
-        guard series.phase != .before else { return [] }
+                                 series: ProjectedFinalPointsSeries, floor: Date?) -> [GameStateMarker] {
+        guard series.phase != .before, let floor else { return [] }
+        let from = max(floor, series.start)
         var seen: Set<String> = []
         return OddsChartView.servedPeriodMarkers(from: markers, sportKey: sportKey)
-            .filter { $0.isObserved && $0.date >= series.start && $0.date <= series.end }
+            .filter { $0.isObserved && $0.date >= from && $0.date <= series.end }
             .compactMap { boundary -> GameStateMarker? in
                 guard seen.insert(boundary.label).inserted else { return nil }
                 return GameStateMarker(label: boundary.label, at: boundary.date,

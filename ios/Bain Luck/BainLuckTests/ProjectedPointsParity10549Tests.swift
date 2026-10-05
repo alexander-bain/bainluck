@@ -46,7 +46,9 @@ final class ProjectedPointsParity10549Tests: XCTestCase {
 
     // MARK: - One decision
 
-    func testTheProjectionReplacesTheDifferentialOnlyWhenItDraws() throws {
+    func testTheProjectionReplacesTheDifferentialOnlyWhenAdmitted() throws {
+        // `input` only admits a book whose series draws, so the helper's own
+        // `build` check is a safety net; what this pins is that a refusal is nil.
         let (h, input) = try finished(markers: [observedQ1])
         XCTAssertTrue(ProjectedFinalPointsMount.replacesScoreDifferential(input))
         XCTAssertFalse(ProjectedFinalPointsMount.replacesScoreDifferential(nil),
@@ -62,14 +64,14 @@ final class ProjectedPointsParity10549Tests: XCTestCase {
     }
 
     func testThePageAsksOnceAndGatesBothCardsAndTheAbsenceNoteOnIt() throws {
-        let page = try Self.source("Bain Luck/Views/EventDetailView.swift")
+        let page = try Self.source("Bain Luck/Views/EventDetailView.swift").filter { !$0.isWhitespace }
         XCTAssertEqual(page.components(separatedBy: "ProjectedFinalPointsMount.input(").count - 1, 1,
                        "one admission, read by both cards")
-        XCTAssertTrue(page.contains("let projectionReplacesDifferential = ProjectedFinalPointsMount.replacesScoreDifferential(projectedInput)"))
-        XCTAssertTrue(page.contains("if let history = vm.history, (isLive || isFinished), !projectionReplacesDifferential {\n                        ScoreDifferentialChartView("),
+        XCTAssertTrue(page.contains("letprojectionReplacesDifferential=ProjectedFinalPointsMount.replacesScoreDifferential(projectedInput)"))
+        XCTAssertTrue(page.contains("iflethistory=vm.history,(isLive||isFinished),!projectionReplacesDifferential{ScoreDifferentialChartView("),
                       "the differential steps aside on the shared decision")
-        XCTAssertTrue(page.contains("if projectionReplacesDifferential, let projectedInput {\n                        ProjectedFinalPointsChartView("))
-        XCTAssertTrue(page.contains("let absenceStatedAbove = !projectionReplacesDifferential && vm.history.map {"),
+        XCTAssertTrue(page.contains("ifprojectionReplacesDifferential,letprojectedInput{ProjectedFinalPointsChartView("))
+        XCTAssertTrue(page.contains("letabsenceStatedAbove=!projectionReplacesDifferential&&vm.history.map{"),
                       "a differential that was not drawn stated nothing for the market maps")
     }
 
@@ -77,6 +79,7 @@ final class ProjectedPointsParity10549Tests: XCTestCase {
 
     func testOnlyObservedMarkersInsideTheSpanAreDrawnOncePerPeriod() throws {
         let (h, input) = try finished(markers: [
+            marker("00:15", "2nd Quarter"),                               // in the span's pre-game hour, before the observed start
             observedQ1,
             marker("01:05", "2nd Quarter"),
             marker("01:10", "2nd Quarter", source: "statpal"),            // a second sighting of Q2
@@ -86,7 +89,9 @@ final class ProjectedPointsParity10549Tests: XCTestCase {
             marker("03:45", "Overtime"),                                  // after the final
         ])
         let series = try XCTUnwrap(ProjectedFinalPointsSeries.build(input))
-        let drawn = ProjectedFinalPointsChartView.gameStateMarkers(h.periodMarkers, sportKey: "americanfootball_nfl", series: series)
+        XCTAssertLessThan(series.start, "\(Self.day)T00:15:00Z".asDate!, "the pre-game marker is inside the drawn span")
+        let drawn = ProjectedFinalPointsChartView.gameStateMarkers(h.periodMarkers, sportKey: "americanfootball_nfl", series: series,
+                                                                  floor: input.scoreObservationStartAt)
         XCTAssertEqual(drawn.map(\.label), ["Q1", "Q2", "HT"])
         XCTAssertEqual(drawn.map(\.at), ["\(Self.day)T00:20:00Z".asDate!, "\(Self.day)T01:05:00Z".asDate!,
                                         "\(Self.day)T01:40:00Z".asDate!], "each at its own observed time, the earliest")
@@ -107,7 +112,8 @@ final class ProjectedPointsParity10549Tests: XCTestCase {
         let beforeSeries = try XCTUnwrap(ProjectedFinalPointsSeries.build(before))
         XCTAssertEqual(beforeSeries.phase, .before)
         XCTAssertTrue(ProjectedFinalPointsChartView.gameStateMarkers(
-            scheduled.periodMarkers, sportKey: "americanfootball_nfl", series: beforeSeries).isEmpty)
+            scheduled.periodMarkers, sportKey: "americanfootball_nfl", series: beforeSeries,
+            floor: "\(Self.day)T00:00:00Z".asDate).isEmpty, "a scheduled page marks nothing, whatever floor it is handed")
 
         let live = try history(status: "live", completedAt: "null", markers: markers)
         let during = try XCTUnwrap(ProjectedFinalPointsMount.input(
@@ -115,7 +121,8 @@ final class ProjectedPointsParity10549Tests: XCTestCase {
             finalHome: nil, finalAway: nil, asOf: "\(Self.day)T01:20:00Z".asDate))
         let duringSeries = try XCTUnwrap(ProjectedFinalPointsSeries.build(during))
         XCTAssertEqual(ProjectedFinalPointsChartView.gameStateMarkers(
-            live.periodMarkers, sportKey: "americanfootball_nfl", series: duringSeries).map(\.label), ["Q1", "Q2"],
+            live.periodMarkers, sportKey: "americanfootball_nfl", series: duringSeries,
+            floor: during.scoreObservationStartAt).map(\.label), ["Q1", "Q2"],
                        "a halftime the reader has not reached yet is not drawn")
     }
 

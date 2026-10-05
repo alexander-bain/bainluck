@@ -154,8 +154,10 @@ final class APregameForecastFinalReadsTheLadders9496Tests: XCTestCase {
             .deletingLastPathComponent().deletingLastPathComponent()
             .appendingPathComponent("Bain Luck/Views/EventDetailView.swift"), encoding: .utf8)
         let squashed = source.filter { !$0.isWhitespace }
+        // #10549 added one more clause — the projection's shared decision can
+        // replace the card — which only ever narrows this gate.
         XCTAssertTrue(squashed.contains(
-            "iflethistory=vm.history,(isLive||isFinished){ScoreDifferentialChartView("),
+            "iflethistory=vm.history,(isLive||isFinished),!projectionReplacesDifferential{ScoreDifferentialChartView("),
             "the Score Differential chart is no longer gated to live and finished games")
         XCTAssertEqual(squashed.components(separatedBy: "ScoreDifferentialChartView(").count - 1, 1)
     }
