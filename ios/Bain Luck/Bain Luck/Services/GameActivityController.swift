@@ -31,24 +31,36 @@ struct GameActivityRecord {
                                             snapshot: $0.content.state.snapshot) }
     }
     func request(_ snapshot: GameActivitySnapshot, staleDate: Date) throws {
+        let registration = GameActivityRegistrationCoordinator.shared
+        let attributes = GameActivityAttributes(eventID: snapshot.eventID)
+        let content = ActivityContent(state: GameActivityAttributes.ContentState(snapshot: snapshot), staleDate: staleDate)
+        if registration.canRequestPushToken {
+            do {
+                let activity = try Activity<GameActivityAttributes>.request(
+                    attributes: attributes, content: content, pushType: .token)
+                registration.observe(activity)
+                return
+            } catch {
+                // Registration capability must never remove account-free foreground following.
+            }
+        }
         _ = try Activity<GameActivityAttributes>.request(
-            attributes: GameActivityAttributes(eventID: snapshot.eventID),
-            content: ActivityContent(state: .init(snapshot: snapshot), staleDate: staleDate),
-            pushType: nil
-        )
+            attributes: attributes, content: content, pushType: nil)
     }
+
     func update(id: String, snapshot: GameActivitySnapshot, staleDate: Date) async {
         guard let activity = activities.first(where: { $0.id == id }) else { return }
         await activity.update(ActivityContent(state: .init(snapshot: snapshot), staleDate: staleDate))
     }
     func end(id: String, final: GameActivitySnapshot?) async {
+        GameActivityRegistrationCoordinator.shared.stop(id: id)
         guard let activity = activities.first(where: { $0.id == id }) else { return }
         let content = final.map { ActivityContent(state: GameActivityAttributes.ContentState(snapshot: $0), staleDate: nil) }
         await activity.end(content, dismissalPolicy: final == nil ? .immediate : .default)
     }
 }
 
-/// One explicit game, with foreground-only delivery. No push token is requested.
+/// One explicit game. Signed-in push registration is optional; foreground delivery remains available.
 @MainActor final class GameActivityController: ObservableObject {
     static let shared = GameActivityController()
     @Published private(set) var activeEventIDs: Set<Int> = []

@@ -28,6 +28,12 @@ final class AuthManager: ObservableObject {
     /// account and never crosses a logout/switch boundary (#1465).
     @Published var user: AuthUser? {
         didSet {
+            #if os(iOS) && canImport(ActivityKit)
+            GameActivityRegistrationCoordinator.shared.setSession(
+                owner: user?.id,
+                bearer: KeychainHelper.load(key: keychainTokenKey)
+                    .flatMap { String(data: $0, encoding: .utf8) })
+            #endif
             let userId = user.map { String($0.id) }
             activeFeedUserId = userId
             Task { await APIClient.shared.setFeedCacheIdentity(userId: userId) }
@@ -194,6 +200,9 @@ final class AuthManager: ObservableObject {
 
     /// Clears local session state, provider state, and analytics identity.
     func signOut() {
+        #if os(iOS) && canImport(ActivityKit)
+        GameActivityRegistrationCoordinator.shared.invalidateSession()
+        #endif
         clearStoredAuth()
         GIDSignIn.sharedInstance.signOut()
         user = nil
