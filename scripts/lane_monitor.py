@@ -2,6 +2,8 @@
 """Bounded, read-only collection outside the model sandbox. Exit 75: no new work."""
 
 import hashlib
+import importlib.util
+import os
 import json
 import datetime as dt
 import subprocess
@@ -9,6 +11,15 @@ from pathlib import Path
 import sys
 import time
 import urllib.request
+
+# Load the existing pure carrier without importing app.utils' heavy package initializer.
+_origin_spec = importlib.util.spec_from_file_location(
+    "fleet_agent_origin",
+    Path(__file__).resolve().parents[1] / "backend/app/utils/agent_origin.py",
+)
+_origin = importlib.util.module_from_spec(_origin_spec)
+_origin_spec.loader.exec_module(_origin)
+tagged = _origin.tagged
 
 URLS = {
     "health": "https://api.bainluck.com/health",
@@ -46,10 +57,7 @@ def collect(root, fetch=None, heavy_fetch=heavy_release):
     def get(url):
         request = urllib.request.Request(
             url,
-            headers={
-                "User-Agent": "BainLuck-fleet-monitor/1",
-                "X-Bainluck-Origin": "measurement",
-            },
+            headers=tagged(url, {"User-Agent": "BainLuck-fleet-monitor/1"}),
         )
         with urllib.request.urlopen(request, timeout=10) as response:
             raw = response.read(5_000_001)
@@ -150,6 +158,7 @@ def acknowledge(root):
 
 
 if __name__ == "__main__":
+    os.environ.setdefault("BL_AGENT", "measurement")
     root = Path(sys.argv[1])
     if len(sys.argv) > 2 and sys.argv[2] == "ack":
         acknowledge(root)
