@@ -15,7 +15,12 @@ import { renderToStaticMarkup } from "react-dom/server";
 import ProjectedFinalPointsChart, {
   drawnPeriodMarkers,
   formatProjectionTime,
+  LINE_RESCUE_COLORS,
+  MIN_LINE_PAIR_DISTANCE,
+  projectedTeamStrokes,
 } from "../../components/event/ProjectedFinalPointsChart";
+import { colorDistance } from "@/lib/probabilityBarPair";
+import { hexToRgb, teamTextColor } from "@/lib/teamColors";
 import {
   buildProjectedFinalPointsSeries,
   type ProjectedFinalPointsInput,
@@ -152,8 +157,8 @@ describe("#10539 no slider, and the readout still carries both quantities", () =
 
   it("the readout is text: each team's projection, its score, and the recorded time", () => {
     const readout = html.slice(html.indexOf('data-testid="projected-reading"'), html.indexOf("</p>", html.indexOf('data-testid="projected-stamp"')));
-    expect(readout).toMatch(/Chicago Bears<\/div><div[^>]*>27\.0<\/div><div[^>]*>projected final<\/div><div[^>]*data-actual="home"[^>]*>27 final/);
-    expect(readout).toMatch(/Philadelphia Eagles<\/div><div[^>]*>7\.5<\/div><div[^>]*>projected final<\/div><div[^>]*data-actual="away"[^>]*>7 final/);
+    expect(readout).toMatch(/Chicago Bears<\/span><\/div><div[^>]*>27\.0<\/div><div[^>]*>projected final<\/div><div[^>]*data-actual="home"[^>]*>27 final/);
+    expect(readout).toMatch(/Philadelphia Eagles<\/span><\/div><div[^>]*>7\.5<\/div><div[^>]*>projected final<\/div><div[^>]*data-actual="away"[^>]*>7 final/);
     expect(readout).toContain("Last projection before the final · recorded " + formatProjectionTime(Date.parse("2026-09-29T03:09:00Z")));
   });
 
@@ -324,5 +329,115 @@ describe("#10539 period markers at their evidenced times", () => {
       `Game state marked on the chart: Q2 first seen in progress ${formatProjectionTime(Date.parse("2026-09-29T01:05:00Z"))}, Q4 began ${formatProjectionTime(Date.parse("2026-09-29T02:40:00Z"))}.`,
     );
     expect(html).toContain("where it was first seen in progress, which can be a little after it began");
+  });
+});
+
+describe("#10547 — each team keeps one colour that its line can be told apart by", () => {
+  const BILLS = "#00338D";
+  const PATRIOTS = "#002244";
+  const dist = (a: string, b: string) => {
+    const [pa, pb] = [a, b].map((h) => hexToRgb(h)!.split(" ").map(Number));
+    return colorDistance([pa[0], pa[1], pa[2]], [pb[0], pb[1], pb[2]]);
+  };
+  const paint = (homeColor: string | null, awayColor: string | null) =>
+    renderToStaticMarkup(
+      <ProjectedFinalPointsChart
+        input={nflInput()}
+        homeTeam="New England Patriots"
+        awayTeam="Buffalo Bills"
+        homeColor={homeColor}
+        awayColor={awayColor}
+        finalScore={{ home: 27, away: 7 }}
+      />,
+    );
+  /** Every colour this side is painted in: its name, its key, its solid and dashed lines. */
+  const sideColours = (html: string, side: "home" | "away") => {
+    const name = html.match(new RegExp(`data-side="${side}"><div[^>]*style="color:([^";]+)`))![1];
+    const key = html.match(new RegExp(`data-team-key="${side}"[^>]*style="background-color:([^";]+)`))![1];
+    const strokes = Array.from(
+      html.matchAll(new RegExp(`data-series="(?:forecast|actual)-${side}"[^>]*?stroke="([^"]+)"`, "g")),
+      (m) => m[1],
+    );
+    return { name, key, strokes };
+  };
+
+  it("the specimen: two navies were one line (131 apart), so the home side moves and the away side keeps its own", () => {
+    expect(dist(BILLS, PATRIOTS)).toBeLessThan(MIN_LINE_PAIR_DISTANCE);
+    const pair = projectedTeamStrokes(PATRIOTS, BILLS);
+    expect(pair.away).toBe(BILLS);
+    expect(pair.home).not.toBe(PATRIOTS);
+    expect(LINE_RESCUE_COLORS).toContain(pair.home);
+    expect(dist(pair.home, pair.away)).toBeGreaterThanOrEqual(MIN_LINE_PAIR_DISTANCE);
+  });
+
+  it("the name above the plot, its key, its projection and its score all wear the same colour", () => {
+    const html = paint(PATRIOTS, BILLS);
+    const pair = projectedTeamStrokes(PATRIOTS, BILLS);
+    for (const side of ["home", "away"] as const) {
+      const c = sideColours(html, side);
+      // forecast segments + the one dashed actual step, never zero of either
+      expect(c.strokes.length).toBeGreaterThanOrEqual(2);
+      expect(html).toContain(`data-series="actual-${side}"`);
+      expect(new Set([c.name, c.key, ...c.strokes])).toEqual(new Set([pair[side]]));
+    }
+    // solid forecast vs dashed actual is still the QUANTITY, not the team
+    expect(count(html, 'stroke-dasharray="6 5"')).toBe(2);
+  });
+
+  it.each([
+    ["Eagles green / Bears orange", "#C83803", "#004C54"],
+    ["Bills blue / Packers green (164 apart)", "#203731", BILLS],
+    ["stored without a hash", "C83803", "004C54"],
+  ])("a pair already apart is drawn exactly as supplied: %s", (_label, home, away) => {
+    const pair = projectedTeamStrokes(home, away);
+    expect(pair).toEqual({ home: `#${home.replace("#", "")}`, away: `#${away.replace("#", "")}` });
+    const html = paint(home, away);
+    expect(sideColours(html, "home").strokes.every((s) => s === pair.home)).toBe(true);
+    expect(sideColours(html, "away").strokes.every((s) => s === pair.away)).toBe(true);
+  });
+
+  it("with no colours at all, the teams keep the two text colours they always had", () => {
+    expect(projectedTeamStrokes(null, null)).toEqual({ home: "#111827", away: "#6B7280" });
+    expect(projectedTeamStrokes(undefined, "not-a-colour")).toEqual({ home: "#111827", away: "#6B7280" });
+  });
+
+  it("an unreadable colour counts as none: a white team is not drawn white on the card", () => {
+    expect(projectedTeamStrokes("#ffffff", BILLS)).toEqual({ home: "#111827", away: BILLS });
+  });
+
+  it("a real colour beside a missing one keeps its own; the fallback side is the one that moves", () => {
+    // a real home grey sits on top of the away side's fallback grey
+    const grey = "#5B6270";
+    expect(dist(grey, "#6B7280")).toBeLessThan(MIN_LINE_PAIR_DISTANCE);
+    const pair = projectedTeamStrokes(grey, null);
+    expect(pair.home).toBe(grey);
+    expect(pair.away).not.toBe("#6B7280");
+    expect(dist(pair.home, pair.away)).toBeGreaterThanOrEqual(MIN_LINE_PAIR_DISTANCE);
+    // and the mirror: a real away colour beside the home fallback
+    const ink = "#1F2937";
+    const mirror = projectedTeamStrokes(null, ink);
+    expect(mirror.away).toBe(ink);
+    expect(dist(mirror.home, mirror.away)).toBeGreaterThanOrEqual(MIN_LINE_PAIR_DISTANCE);
+  });
+
+  it("every rescue colour can be printed as a team name (clears the 3:1 text floor)", () => {
+    for (const c of LINE_RESCUE_COLORS) expect(teamTextColor(c)).toBe(c);
+  });
+
+  it("over every readable colour on a 16-step grid, the pair always ends at least the threshold apart", () => {
+    const steps = Array.from({ length: 16 }, (_, i) => (i * 17).toString(16).padStart(2, "0"));
+    let checked = 0;
+    for (const r of steps)
+      for (const g of steps)
+        for (const b of steps) {
+          const c = `#${r}${g}${b}`;
+          if (!teamTextColor(c)) continue;
+          for (const partner of [c, PATRIOTS, null]) {
+            const pair = projectedTeamStrokes(partner, c);
+            expect(dist(pair.home, pair.away)).toBeGreaterThanOrEqual(MIN_LINE_PAIR_DISTANCE);
+          }
+          checked++;
+        }
+    expect(checked).toBeGreaterThan(1000);
   });
 });
