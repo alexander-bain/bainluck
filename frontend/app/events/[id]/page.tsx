@@ -6,7 +6,7 @@ import Link from "next/link";
 import { useRouter, useSearchParams } from "next/navigation";
 import useSWR from "swr";
 import { useGameMarketsStream } from "@/hooks/useGameMarketsStream";
-import { fetchEvent, fetchEventHistory, fetchTeamProgression, fetchEventTournament, formatProbability } from "@/lib/api";
+import { fetchEvent, fetchEventHistory, fetchEventPublications, fetchTeamProgression, fetchEventTournament, formatProbability } from "@/lib/api";
 import type { EventDetailResponse, EventTournamentResponse, TeamProgressionResponse } from "@/lib/types";
 import { EVENT_BOOT_HISTORY_HOURS } from "@/lib/event/detailBoot";
 import {
@@ -792,6 +792,15 @@ export default function EventPage({ params }: EventPageProps) {
     }
   );
 
+
+  // #4974 slice 1 — a finished game's recorded checkpoints. Asked only once the
+  // event is finished, never retried, never polled: a failure, a refusal or an
+  // empty body leaves the chart exactly as it was (`eligibleCheckpoints`).
+  const { data: publications } = useSWR(
+    isFinished ? ["publications", eventId] : null,
+    () => fetchEventPublications(eventId),
+    { shouldRetryOnError: false, revalidateOnFocus: false, revalidateOnReconnect: false },
+  );
 
   // #920: merge the session's actual published blend observations into the
   // history consumed by both charts. Each publication retains its timestamp;
@@ -2924,6 +2933,7 @@ export default function EventPage({ params }: EventPageProps) {
               awayWithheld={awaySlotWithheld}
               onActivePointChange={setActiveChartPoint}
               onRenderedDomain={handleRenderedDomain}
+              publications={isFinished ? publications : undefined}
               chartStartTime={sharedChartDomain?.start}
               chartEndTime={sharedChartDomain?.end}
               sharedTicks={sharedChartDomain?.ticks}
@@ -3617,6 +3627,8 @@ export default function EventPage({ params }: EventPageProps) {
               chartLabelFormat={sharedChartDomain?.labelFormat}
               externalTimeRange={chartTimeRange}
               onTimeRangeChange={handleChartTimeRangeChange}
+              /* #4974 — the expanded chart is the same chart. */
+              publications={isFinished ? publications : undefined}
             />
         </ChartFullscreenDialog>
       )}

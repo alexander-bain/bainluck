@@ -757,6 +757,28 @@ export interface EventHistoryResponse {
   };
 }
 
+/**
+ * #4974 slice 1 — `GET /api/events/{id}/publications`. One vertex per recorded
+ * blend checkpoint, in `rev` order. `t` is `recorded_at`, stamped at insert
+ * before commit (`time_basis`): a checkpoint, never a publication, delivery or
+ * receipt time, and `t` may be non-monotonic across `rev`. `p` is the HOME blend
+ * probability (0–1), the same orientation as `aggregate_line`. Read through
+ * `lib/publicationJourney.ts` only.
+ */
+export interface PublicationVertex {
+  rev: number;
+  t: string;
+  p: number;
+}
+
+export interface EventPublicationsResponse {
+  event_id: number;
+  schema_version: number;
+  time_basis: string;
+  truncated: boolean;
+  vertices: PublicationVertex[];
+}
+
 export interface ScoringPlay {
   timestamp: string;
   description: string;

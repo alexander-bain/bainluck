@@ -50,7 +50,19 @@ import type {
   ScoreHistoryPoint,
   ActiveChartPoint,
   EventHistoryResponse,
+  EventPublicationsResponse,
 } from "@/lib/types";
+import {
+  eligibleCheckpoints,
+  insideRecordedWindow,
+  latestCheckpoint,
+  publicationReadout,
+  recordedWindow,
+  rowIndexAt,
+  timeToChartX,
+  type CheckpointVertex,
+  type PublicationReadout,
+} from "@/lib/publicationJourney";
 import type { PeriodBoundary } from "@/lib/periodMarkers";
 import { observedPlayStartMs } from "@/lib/observedPlayStart";
 import {
@@ -402,6 +414,15 @@ interface OddsChartProps {
    * clock line, so a sport with no clock (baseball) prints none.
    */
   sportKey?: string | null;
+  /**
+   * #4974 slice 1 — `GET /api/events/{id}/publications`, passed straight
+   * through. On a finished game with a blend and two or more recorded
+   * checkpoints (`eligibleCheckpoints`), the blend inside the recorded window is
+   * drawn as one dot per checkpoint with nothing joining them, and a scrub
+   * there reads only a checkpoint. Absent, refused, truncated or a live game:
+   * today's chart.
+   */
+  publications?: EventPublicationsResponse | null;
 }
 
 type TimeRange = "all" | "live";
@@ -504,6 +525,12 @@ export interface ChartRowMark {
   index: number;
   y: number;
   payload: Record<string, unknown>;
+  /**
+   * #4974 — an exact instant inside row `index`'s minute. When set (and the
+   * marks are given `rowStartMs`) the mark is drawn at that instant's x
+   * (`timeToChartX`), not at the minute's.
+   */
+  atMs?: number;
 }
 
 /**
@@ -522,6 +549,13 @@ export function chartRowX(state: ChartRenderState, index: number): number | null
     if (typeof x === "number" && Number.isFinite(x)) return x;
   }
   return null;
+}
+
+/** `chartRowX` for every row, in one list (#4974 — `timeToChartX` reads neighbours). */
+export function chartRowXs(state: ChartRenderState, rowCount: number): Array<number | null> {
+  const xs: Array<number | null> = [];
+  for (let i = 0; i < rowCount; i++) xs.push(chartRowX(state, i));
+  return xs;
 }
 
 /**
@@ -549,9 +583,18 @@ export function chartRowX(state: ChartRenderState, index: number): number | null
 export function ChartRowMarks({
   rows,
   shape,
+  rowStartMs,
+  layerClassName,
   ...state
 }: ChartRenderState & {
   rows: ChartRowMark[];
+  /** Each row's minute, required for marks carrying `atMs` (#4974). */
+  rowStartMs?: ReadonlyArray<number>;
+  /**
+   * Extra class on the layer, beside `recharts-scatter`. Not `className`:
+   * `Customized` spreads the chart's own props onto this element.
+   */
+  layerClassName?: string;
   shape: (props: {
     cx: number;
     cy: number;
@@ -565,11 +608,22 @@ export function ChartRowMarks({
   const scale = yAxis?.scale;
   if (!yAxis || typeof scale !== "function") return null;
   const marks: React.ReactNode[] = [];
+  let rowXs: Array<number | null> | null = null;
   for (const row of rows) {
-    const cx = chartRowX(state, row.index);
+    let cx: number | null;
+    if (row.atMs !== undefined && rowStartMs) {
+      rowXs ??= chartRowXs(state, rowStartMs.length);
+      cx = timeToChartX(row.atMs, rowStartMs, rowXs);
+    } else {
+      cx = chartRowX(state, row.index);
+    }
     const cy = scale(row.y);
     if (cx === null || !Number.isFinite(cy)) continue;
-    marks.push(<Fragment key={row.index}>{shape({ cx, cy, payload: row.payload, yAxis })}</Fragment>);
+    marks.push(
+      <Fragment key={row.atMs !== undefined ? `${row.index}:${row.atMs}:${marks.length}` : row.index}>
+        {shape({ cx, cy, payload: row.payload, yAxis })}
+      </Fragment>,
+    );
   }
   if (marks.length === 0) return null;
   // The rect recharts' own scatter clip uses: the plot on an axis that allows
@@ -580,7 +634,10 @@ export function ChartRowMarks({
   const clipY = !!yAxis.allowDataOverflow;
   const clip = clipX || clipY;
   return (
-    <g className="recharts-layer recharts-scatter" clipPath={clip ? `url(#${clipId})` : undefined}>
+    <g
+      className={`recharts-layer recharts-scatter${layerClassName ? ` ${layerClassName}` : ""}`}
+      clipPath={clip ? `url(#${clipId})` : undefined}
+    >
       {clip && (
         <defs>
           <clipPath id={clipId}>
@@ -595,6 +652,34 @@ export function ChartRowMarks({
       )}
       {marks}
     </g>
+  );
+}
+
+/** #4974 — a recorded checkpoint on the drawn axis, with the row whose minute holds it. */
+type DrawnCheckpoint = CheckpointVertex & { rowIndex: number };
+
+/** #4974 — a checkpoint dot's radius: small enough that dense checkpoints read as a journey, sparse ones as dots. */
+const CHECKPOINT_DOT_RADIUS_PX = 2;
+
+/**
+ * #4974 — the scrub cursor, drawn at the snapped checkpoint's own x across the
+ * plot (recharts' minute cursor stands down while a checkpoint is snapped).
+ * Same stroke as recharts' default cursor.
+ */
+function SnappedCheckpointCursor({ x, offset }: { x: number; offset?: ChartRenderState["offset"] }) {
+  const { top = 0, height = 0 } = offset ?? {};
+  if (!Number.isFinite(x) || height <= 0) return null;
+  return (
+    <line
+      className="publication-checkpoint-cursor"
+      x1={x}
+      x2={x}
+      y1={top}
+      y2={top + height}
+      stroke="#ccc"
+      strokeWidth={1}
+      pointerEvents="none"
+    />
   );
 }
 
@@ -797,6 +882,7 @@ export default function OddsChart({
   onTimeRangeChange,
   completedAt,
   awayWithheld = false,
+  publications,
 }: OddsChartProps) {
   // #3419: the axis is categorical on this label, so it must be spelled the
   // same way the parent spelled its ticks. Absent a parent domain the window is
@@ -859,11 +945,24 @@ export default function OddsChart({
   const chartRef = useRef<unknown>(null);
   const [touchReleased, setTouchReleased] = useState(false);
   const touchReleasedRef = useRef(false);
+  // #4974 slice 1 — the checkpoint a scrub has snapped to, or null. Set only
+  // when it changes, so an ordinary hover re-renders nothing extra.
+  const [snappedCheckpoint, setSnappedCheckpoint] = useState<PublicationReadout<DrawnCheckpoint> | null>(null);
+  const snapTo = (next: PublicationReadout<DrawnCheckpoint> | null) =>
+    setSnappedCheckpoint((prev) =>
+      prev === next ||
+      (prev !== null && next !== null && prev.vertex === next.vertex && prev.x === next.x)
+        ? prev
+        : next,
+    );
   const onChartInspection = (...args: Parameters<typeof chartInspectionPhase>) => {
     const phase = chartInspectionPhase(...args);
     if (phase === "none") return;
     const released = phase === "release";
-    if (released) releaseChartInspection(chartRef.current, onActivePointChange);
+    if (released) {
+      releaseChartInspection(chartRef.current, onActivePointChange);
+      snapTo(null);
+    }
     if (touchReleasedRef.current !== released) {
       touchReleasedRef.current = released;
       setTouchReleased(released);
@@ -1296,6 +1395,21 @@ export default function OddsChart({
   const showBlendLine =
     isMultiSource && backendBlendServed && filteredAggregateLine.length > 0;
 
+  // #4974 slice 1 — the recorded checkpoints, or null for today's chart. Only
+  // where the blend line is drawn (they ARE the blend's recorded values) and
+  // only on a finished game: a live chart keeps its motion exactly.
+  const checkpoints = useMemo(
+    () =>
+      showBlendLine && isClosed && !isLive
+        ? eligibleCheckpoints(publications, { finished: true })
+        : null,
+    [showBlendLine, isClosed, isLive, publications],
+  );
+  const checkpointWindow = useMemo(
+    () => (checkpoints ? recordedWindow(checkpoints) : null),
+    [checkpoints],
+  );
+
   // The primary series every "what is the number here" reader uses: the fill
   // gradient, the lead-change count, the current-probability callout, and the
   // hover payload sent to the live hero. Single definition so those four can
@@ -1726,6 +1840,17 @@ export default function OddsChart({
       }
     }
 
+    // #4974 slice 1 — inside the recorded window the legacy blend is not drawn:
+    // the checkpoints are. Withdrawn AFTER the forward-fill so no carried value
+    // survives inside it, and the blend line stops joining across nulls while
+    // checkpoints are shown, so nothing bridges legacy to legacy across the
+    // window or legacy to a checkpoint.
+    if (checkpointWindow) {
+      for (const pt of sorted) {
+        if (insideRecordedWindow(parseISO(pt.timestamp).getTime(), checkpointWindow)) pt.bainLuckDelta = null;
+      }
+    }
+
     // Forward-fill game state: carry most recent score/period/clock to
     // subsequent points, dating each field by the row that actually observed
     // it (#925 — `lib/chartGameState.ts`, pure and tested; this component is
@@ -1743,7 +1868,7 @@ export default function OddsChart({
   // by the naive-mean fallback that no longer exists. `showBlendLine` added: it
   // now decides whether `bainLuckDelta` is written at all. (`timeRange` is also
   // unread here, but it predates this change and is left alone.)
-  }, [filteredHistory, filteredBookmakerHistory, filteredWinProbHistory, filteredEspnHistory, useNewWinProbData, nonBettingSources, showBlendLine, filteredAggregateLine, scoringPlays, timeRange, periodBoundaries, plottedProbKeys, observationSupport]);
+  }, [filteredHistory, filteredBookmakerHistory, filteredWinProbHistory, filteredEspnHistory, useNewWinProbData, nonBettingSources, showBlendLine, filteredAggregateLine, scoringPlays, timeRange, periodBoundaries, plottedProbKeys, observationSupport, checkpointWindow]);
 
   // Report the chart's actual rendered time domain to parent so
   // ScoreDifferentialChart can match its x-axis exactly.
@@ -1753,6 +1878,28 @@ export default function OddsChart({
     const last = chartData[chartData.length - 1].timestamp;
     onRenderedDomain(first, last);
   }, [chartData, onRenderedDomain]);
+
+  // #4974 slice 1 — each row's minute, and the checkpoints that land on the
+  // drawn axis (inside this range's window and the rows' extent), each with the
+  // row whose minute holds it. A checkpoint outside them is neither drawn nor
+  // readable; the served vertex fields are carried unchanged.
+  const rowStartMs = useMemo(
+    () => chartData.map((pt) => parseISO(pt.timestamp).getTime()),
+    [chartData],
+  );
+  const drawableCheckpoints = useMemo((): DrawnCheckpoint[] => {
+    if (!checkpoints || rowStartMs.length === 0) return [];
+    const endExclusive = rowStartMs[rowStartMs.length - 1] + 60_000;
+    const out: DrawnCheckpoint[] = [];
+    for (const vertex of checkpoints) {
+      if (inChartRange && !inChartRange(vertex.t)) continue;
+      if (vertex.tMs >= endExclusive) continue;
+      const rowIndex = rowIndexAt(vertex.tMs, rowStartMs);
+      if (rowIndex === null) continue;
+      out.push({ ...vertex, rowIndex });
+    }
+    return out;
+  }, [checkpoints, rowStartMs, inChartRange]);
 
 
 
@@ -2009,8 +2156,13 @@ export default function OddsChart({
     // #10093 — a live minute's high and low are inked, so they are inside the
     // axis too: a spike the zoom treated as an outlier would run off the frame.
     const rangeEnds = drawnMinuteRanges.flatMap((r) => [r.lo, r.hi]);
+    // #4974 — the checkpoint dots are inked, so they are inside the axis, and
+    // the latest one is a series end like any other (it can carry the callout).
+    for (const v of drawableCheckpoints) values.push(homeProbToChartAxis(v.p));
+    const lastCheckpoint = latestCheckpoint(drawableCheckpoints);
+    if (lastCheckpoint) lastByKey.set("publicationCheckpoint", homeProbToChartAxis(lastCheckpoint.p));
     return computeWinProbYAxis(values, [...lastByKey.values(), ...rangeEnds]);
-  }, [chartData, plottedProbKeys, drawnMinuteRanges]);
+  }, [chartData, plottedProbKeys, drawnMinuteRanges, drawableCheckpoints]);
 
   /**
    * #7940 — which end of the plot the period-label strip is painted at.
@@ -2096,22 +2248,41 @@ export default function OddsChart({
     // "Favorite flips" above). Parma–Ternana counted seven flips while Parma
     // were twice Ternana's price. No count, so no chip, markers or legend.
     if (awayWithheld) return 0;
+    // #4974 — with checkpoints drawn, the series is the legacy rows outside
+    // the recorded window plus the checkpoints inside it, in time order (equal
+    // times by `rev`), so the count describes the ink on the plot.
+    const sequence: Array<{ index: number; delta: number }> = [];
+    if (drawableCheckpoints.length > 0) {
+      const timed: Array<{ ms: number; rev: number; index: number; delta: number }> = [];
+      chartData.forEach((pt, index) => {
+        const delta = primaryValueAt(pt);
+        if (delta !== null) timed.push({ ms: rowStartMs[index], rev: Number.MIN_SAFE_INTEGER, index, delta });
+      });
+      for (const v of drawableCheckpoints) {
+        timed.push({ ms: v.tMs, rev: v.rev, index: v.rowIndex, delta: homeProbToChartAxis(v.p) });
+      }
+      timed.sort((a, b) => a.ms - b.ms || a.rev - b.rev);
+      sequence.push(...timed);
+    } else {
+      chartData.forEach((pt, index) => {
+        const delta = primaryValueAt(pt);
+        if (delta !== null) sequence.push({ index, delta });
+      });
+    }
     let count = 0;
     let prevDelta: number | null = null;
-    for (const pt of chartData) {
-      const delta = primaryValueAt(pt);
-      if (delta === null) continue;
+    for (const { index, delta } of sequence) {
       if (prevDelta !== null) {
         // A crossing is the primary series passing the 50% line (0–100 axis).
         if ((prevDelta > 50 && delta <= 50) || (prevDelta < 50 && delta >= 50)) {
-          pt.crossingDelta = 50; // Stamp at y=50 (the 50% line)
+          chartData[index].crossingDelta = 50; // Stamp at y=50 (the 50% line)
           count++;
         }
       }
       prevDelta = delta;
     }
     return count;
-  }, [chartData, primarySeriesKey, awayWithheld]);
+  }, [chartData, primarySeriesKey, awayWithheld, drawableCheckpoints, rowStartMs]);
 
   // ── Current probability callout (last non-null data point) ──
   // Stamp `calloutDelta` directly onto the chartData point (same reason as above).
@@ -2122,9 +2293,17 @@ export default function OddsChart({
     for (const pt of chartData) {
       delete pt.calloutDelta;
     }
+    // #4974 — when the latest thing drawn is a checkpoint (the recorded window
+    // runs past the last legacy point), the callout labels THAT dot, at its own
+    // instant, with its own value. Otherwise the walk below is unchanged.
+    let lastLegacy = chartData.length - 1;
+    while (lastLegacy >= 0 && primaryValueAt(chartData[lastLegacy]) === null) lastLegacy--;
+    const lastCheckpoint = latestCheckpoint(drawableCheckpoints);
+    const checkpointEnds =
+      lastCheckpoint !== null && (lastLegacy < 0 || rowStartMs[lastLegacy] < lastCheckpoint.tMs);
     // Walk backwards to find last non-null value
-    for (let i = chartData.length - 1; i >= 0; i--) {
-      const delta = primaryValueAt(chartData[i]);
+    for (let i = checkpointEnds ? lastCheckpoint.rowIndex : chartData.length - 1; i >= 0; i--) {
+      const delta = checkpointEnds ? homeProbToChartAxis(lastCheckpoint.p) : primaryValueAt(chartData[i]);
       if (delta !== null) {
         const homeProb = delta; // 0–100 axis: the value IS the home probability
         chartData[i].calloutDelta = delta; // Stamp onto chartData point
@@ -2171,9 +2350,11 @@ export default function OddsChart({
           // timezone, which a guard cannot pin. The defect this carries evidence
           // of was two tabs labelling two points ten minutes apart, so the
           // instant is the thing worth exporting.
-          timestamp: chartData[i].timestamp,
+          timestamp: checkpointEnds ? lastCheckpoint.t : chartData[i].timestamp,
           // #10092 — the row the dot is drawn on (`ChartRowMarks`).
           rowIndex: i,
+          // #4974 — and the checkpoint's own instant inside that row's minute.
+          atMs: checkpointEnds ? lastCheckpoint.tMs : undefined,
           delta,
           homeProb: percents.home,
           awayProb: percents.away,
@@ -2185,7 +2366,7 @@ export default function OddsChart({
       }
     }
     return null;
-  }, [chartData, primarySeriesKey]);
+  }, [chartData, primarySeriesKey, drawableCheckpoints, rowStartMs]);
 
   // #8392 — the axis gutter gives each team name the room the other does not
   // need. A hook, so it sits above the empty-chart return below; the raw names
@@ -2390,12 +2571,17 @@ export default function OddsChart({
           typeof entry.value === "number" && Number.isFinite(entry.value)
       );
 
-      // Bain Luck aggregated line (multi-source mode)
+      // Bain Luck aggregated line (multi-source mode). #4974: a scrub snapped
+      // to a recorded checkpoint reads that checkpoint, with its own clock;
+      // inside the recorded window nothing else gives the blend a number.
       const bainLuckEntry = showBlendLine
-        ? (pricedPayload.find((e) => e.dataKey === "bainLuckDelta") as
-            | { value: number; dataKey: string }
-            | undefined) ?? null
+        ? snappedCheckpoint
+          ? { value: homeProbToChartAxis(snappedCheckpoint.vertex.p), dataKey: "bainLuckDelta" }
+          : (pricedPayload.find((e) => e.dataKey === "bainLuckDelta") as
+              | { value: number; dataKey: string }
+              | undefined) ?? null
         : null;
+      const checkpointClock = showBlendLine && snappedCheckpoint ? snappedCheckpoint.clock : null;
 
       // Find entries for each resolved source
       const sourceEntries = resolvedSources
@@ -2559,6 +2745,9 @@ export default function OddsChart({
                   <Fragment key="blend">
                     <span className="font-semibold min-w-0" style={{ color: BAIN_LUCK_CONFIG.color }}>
                       {BAIN_LUCK_CONFIG.displayName}
+                      {checkpointClock && (
+                        <span className="ml-1 font-normal text-text-muted" data-checkpoint-clock>{checkpointClock}</span>
+                      )}
                     </span>
                     <span className="font-semibold text-right" style={{ color: BAIN_LUCK_CONFIG.color }}>{cells.home}</span>
                     {cells.away !== null && (
@@ -2594,6 +2783,9 @@ export default function OddsChart({
               <p className="text-xs text-text-muted mb-0.5">
                 {BAIN_LUCK_CONFIG.displayName}
                 <span className="text-text-muted ml-1">(aggregated)</span>
+                {checkpointClock && (
+                  <span className="text-text-muted ml-1" data-checkpoint-clock>{checkpointClock}</span>
+                )}
               </p>
               <p className="text-sm font-semibold" style={{ color: BAIN_LUCK_CONFIG.color }}>
                 {formatProb(bainLuckEntry.value)}
@@ -2926,8 +3118,11 @@ export default function OddsChart({
 
         {/* Chart area. #10249: Recharts' own touch handling never ends an
             inspection, so the last finger lifting ends it here. */}
+        {/* #4974 — while a scrub is snapped to a checkpoint the cursor is drawn
+            AT the checkpoint (`SnappedCheckpointCursor`), so recharts' minute
+            cursor is hidden rather than draw a second, unsnapped one. */}
         <div
-          className="flex-1 min-w-0"
+          className={snappedCheckpoint ? "flex-1 min-w-0 [&_.recharts-tooltip-cursor]:hidden" : "flex-1 min-w-0"}
           onTouchStart={() => onChartInspection("touchstart")}
           onTouchEnd={(e) => onChartInspection("touchend", { touchesLeft: e.touches.length })}
           onTouchCancel={(e) => onChartInspection("touchcancel", { touchesLeft: e.touches.length })}
@@ -2938,18 +3133,55 @@ export default function OddsChart({
             ref={chartRef as never}
             data={chartData}
             margin={{ top: 15, right: 10, left: 0, bottom: 5 }}
-            onMouseMove={(state: { activeTooltipIndex?: number }) => {
+            onMouseMove={(state: { activeTooltipIndex?: number; chartX?: number }) => {
               // #10249 — after a finger lifts, the only mouse events are the
               // browser's compatibility copies of the tap. They must not
               // re-latch the point that the release just cleared.
               if (touchReleasedRef.current) {
                 releaseChartInspection(chartRef.current, onActivePointChange);
+                snapTo(null);
                 return;
               }
-              if (!onActivePointChange) return;
               const idx = state?.activeTooltipIndex;
-              if (idx == null || idx < 0 || idx >= chartData.length) {
+              const inPlot = idx != null && idx >= 0 && idx < chartData.length;
+              // #4974 slice 1 — a checkpoint within reach of the pointer is
+              // what the scrub reads: its own value, its own instant, and the
+              // cursor drawn at it. Beyond reach there is no blend reading
+              // inside the recorded window (those rows are null below).
+              const readout =
+                inPlot && drawableCheckpoints.length > 0 && typeof state.chartX === "number"
+                  ? publicationReadout(drawableCheckpoints, state.chartX, (v) =>
+                      timeToChartX(
+                        v.tMs,
+                        rowStartMs,
+                        chartRowXs((chartRef.current as { state?: ChartRenderState } | null)?.state ?? {}, rowStartMs.length),
+                      ),
+                    )
+                  : null;
+              snapTo(readout);
+              if (!onActivePointChange) return;
+              if (!inPlot) {
                 onActivePointChange(null);
+                return;
+              }
+              if (readout) {
+                const at = chartData[readout.vertex.rowIndex];
+                onActivePointChange({
+                  timestamp: readout.vertex.t,
+                  homeProb: readout.vertex.p,
+                  awayProb: 1 - readout.vertex.p,
+                  homeScore: at._homeScore as number | null | undefined,
+                  awayScore: at._awayScore as number | null | undefined,
+                  period: at._period as string | null | undefined,
+                  clock: at._clock as string | null | undefined,
+                  clockApprox: at._clockApprox as boolean | undefined,
+                  periodObservedAt: at._periodObservedAt as string | null | undefined,
+                  periodApprox: at._periodApprox as boolean | undefined,
+                  clockObservedAt: at._clockObservedAt as string | null | undefined,
+                  scoreObservedAt: at._scoreObservedAt as string | null | undefined,
+                  scoreApprox: at._scoreApprox as boolean | undefined,
+                  scoringPlay: at._scoringPlay as ScoringPlay | null | undefined,
+                });
                 return;
               }
               const pt = chartData[idx];
@@ -2982,6 +3214,7 @@ export default function OddsChart({
               });
             }}
             onMouseLeave={() => {
+              snapTo(null);
               if (onActivePointChange) onActivePointChange(null);
             }}
           >
@@ -3200,8 +3433,43 @@ export default function OddsChart({
                 strokeWidth={3}
                 dot={false}
                 activeDot={{ r: 5, fill: BAIN_LUCK_CONFIG.color }}
-                connectNulls
+                connectNulls={!checkpointWindow}
               />
+            )}
+
+            {/* #4974 slice 1 — one dot per recorded checkpoint, at its own
+                instant, and nothing joining two of them: no stroke, no step, no
+                area. An unrecorded stretch is empty space. A snapped scrub draws
+                its cursor at the checkpoint and enlarges that one dot. */}
+            {drawableCheckpoints.length > 0 && (
+              <Customized component={<ChartRowMarks
+                layerClassName="publication-checkpoints"
+                rowStartMs={rowStartMs}
+                rows={drawableCheckpoints.map((v) => ({
+                  index: v.rowIndex,
+                  y: homeProbToChartAxis(v.p),
+                  atMs: v.tMs,
+                  payload: { checkpointRev: v.rev },
+                }))}
+                shape={(props: { cx?: number; cy?: number; payload?: Record<string, unknown> }) => {
+                  const { cx = 0, cy = 0 } = props;
+                  const rev = props.payload?.checkpointRev;
+                  const snapped = snappedCheckpoint !== null && snappedCheckpoint.vertex.rev === rev;
+                  return (
+                    <circle
+                      data-checkpoint-rev={typeof rev === "number" ? rev : undefined}
+                      cx={cx}
+                      cy={cy}
+                      r={snapped ? 4 : CHECKPOINT_DOT_RADIUS_PX}
+                      fill={BAIN_LUCK_CONFIG.color}
+                      stroke="none"
+                    />
+                  );
+                }}
+              />} />
+            )}
+            {snappedCheckpoint && (
+              <Customized component={<SnappedCheckpointCursor x={snappedCheckpoint.x} />} />
             )}
 
             {/* ── MODE B: Sportsbooks-only — betting odds line (solid, prominent, on top).
@@ -3290,7 +3558,8 @@ export default function OddsChart({
                 series over every row of the chart. */}
             {currentCallout && (
               <Customized component={<ChartRowMarks
-                rows={[{ index: currentCallout.rowIndex, y: currentCallout.delta, payload: chartData[currentCallout.rowIndex] }]}
+                rows={[{ index: currentCallout.rowIndex, y: currentCallout.delta, payload: chartData[currentCallout.rowIndex], atMs: currentCallout.atMs }]}
+                rowStartMs={rowStartMs}
                 shape={(props: {
                   cx?: number;
                   cy?: number;
