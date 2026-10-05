@@ -10,28 +10,34 @@
  * rule about what counts as a reading lives in `lib/projectedFinalPointsSeries`.
  * This file only draws what that module returns.
  *
- * Inspection rebuilds the series AT the cursor (`seriesAt`), so the readout
- * and the drawn lines stop there. A scrubbed moment cannot show a later
- * projection or a later score.
- *
- * The cursor is the inspected TIMESTAMP, never a slider index. A refresh that
- * adds an earlier reading, or drops one off the window's left edge, shifts
- * every index; holding the index would silently move the reader to another
- * reading. If the inspected reading itself leaves the data, the readout says
- * so rather than showing a neighbour.
+ * #10539 (Alex, on 14781135): one chart, read at a glance. The full timeline
+ * and its latest (or last) valid projection are the whole view. The old
+ * "step through" slider is gone and nothing replaces it; the readout above
+ * the plot carries both quantities and the recorded time as text. The plot is
+ * taller, the source sits in "How to read this" instead of an unexplained
+ * name in the heading, and the game's evidenced period boundaries are marked
+ * where they were observed.
  */
 
-import { useMemo, useState } from "react";
+import { useMemo } from "react";
 import { format } from "date-fns";
 import {
   buildProjectedFinalPointsSeries,
-  inspectionInstants,
-  seriesAt,
   type ActualStep,
   type ForecastPoint,
   type ProjectedFinalPointsInput,
   type ProjectedFinalPointsSeries,
+  type ProjectedFinalPointsUnsupported,
 } from "@/lib/projectedFinalPointsSeries";
+import {
+  anchorPeriodLabels,
+  collapseDuplicateTransitions,
+  isEstimatedBoundary,
+  PERIOD_LABEL_ROW_HEIGHT_PX,
+  periodBoundaryChipLabel,
+  placePeriodLabels,
+  type PeriodBoundary,
+} from "@/lib/periodMarkers";
 import { teamTextColor } from "@/lib/teamColors";
 
 export interface ProjectedFinalPointsChartProps {
@@ -43,15 +49,14 @@ export interface ProjectedFinalPointsChartProps {
   /**
    * The game's final score as the page's hero prints it, or null when the page has none it would
    * show. It is the only thing that lets the last recorded score be called final. It is printed in
-   * the readout, never drawn as a step or given a time, and never shown while a moment is inspected.
+   * the readout, never drawn as a step or given a time.
    */
   finalScore?: { home: number; away: number } | null;
-}
-
-interface ViewProps extends ProjectedFinalPointsChartProps {
-  /** The inspected reading's time (epoch ms), or null for the latest view. */
-  cursorAt: number | null;
-  onCursorChange?: (at: number | null) => void;
+  /**
+   * The page's evidenced period boundaries (`derivePeriodBoundaries`). Only
+   * observed ones inside the drawn span are marked; see `drawnPeriodMarkers`.
+   */
+  periodBoundaries?: PeriodBoundary[];
 }
 
 const W = 1000;
@@ -96,31 +101,55 @@ function actualPath(
   return d + ` H${x(end).toFixed(1)}`;
 }
 
-function readingLabel(series: ProjectedFinalPointsSeries, inspecting: boolean): string {
-  if (inspecting) return "Projection at this point";
+function readingLabel(series: ProjectedFinalPointsSeries): string {
   if (series.phase === "after") return "Last projection before the final";
   return "Latest projection";
 }
 
-export function ProjectedFinalPointsChartView({
+/** How much a marker's time says about the period's start, in a reader's words. */
+function markerTiming(b: PeriodBoundary): string {
+  if (b.precision === "boundary_observed") return "began";
+  if (b.precision === "first_score") return "first score";
+  // Every client-derived boundary, and a provenance-less one, is a first observed state.
+  return "first seen in progress";
+}
+
+/**
+ * The period boundaries this chart marks, laid out by the page's shared label
+ * rules (#888: one implementation, every chart). Only a boundary an instrument
+ * OBSERVED, inside the drawn span, at its own timestamp: an `estimated` one is
+ * arithmetic on the schedule and is left off rather than drawn as timing. No
+ * marker before the game (a scheduled page draws forecasts only), none after
+ * `end` (so nothing later than now on a live game), and the span is never
+ * stretched to reach one. A missing boundary is a missing marker.
+ */
+export function drawnPeriodMarkers(
+  series: ProjectedFinalPointsSeries | ProjectedFinalPointsUnsupported,
+  boundaries: PeriodBoundary[] | null | undefined,
+) {
+  if (!series.supported || series.phase === "before" || !boundaries?.length) return [];
+  const span = Math.max(1, series.end - series.start);
+  const inSpan = boundaries
+    .filter((b) => !isEstimatedBoundary(b))
+    .map((b) => ({ b, t: Date.parse(b.timestamp) }))
+    .filter(({ t }) => Number.isFinite(t) && t >= series.start && t <= series.end)
+    .sort((a, z) => a.t - z.t)
+    .map(({ b }) => b);
+  // The time axis here is linear, so the time-span form of the shared spacing rule is the painted one.
+  return anchorPeriodLabels(placePeriodLabels(collapseDuplicateTransitions(inSpan), span), span, series.end);
+}
+
+export default function ProjectedFinalPointsChart({
   input,
   homeTeam,
   awayTeam,
   homeColor,
   awayColor,
   finalScore = null,
-  cursorAt,
-  onCursorChange,
-}: ViewProps) {
+  periodBoundaries,
+}: ProjectedFinalPointsChartProps) {
   const full = useMemo(() => buildProjectedFinalPointsSeries(input), [input]);
-  const instants = useMemo(() => (full.supported ? inspectionInstants(full) : []), [full]);
-  const cursorIndex = cursorAt === null ? -1 : instants.indexOf(cursorAt);
-  // The inspected reading is no longer in the data (dropped at the window edge, or withdrawn).
-  const cursorGone = cursorAt !== null && cursorIndex < 0;
-  const view = useMemo(
-    () => (cursorAt === null || cursorGone || !full.supported ? full : seriesAt(input, cursorAt)),
-    [full, input, cursorAt, cursorGone],
-  );
+  const markers = useMemo(() => drawnPeriodMarkers(full, periodBoundaries), [full, periodBoundaries]);
   if (!full.supported) return null;
 
   const homeStroke = teamTextColor(homeColor) ?? "var(--text-primary)";
@@ -129,36 +158,19 @@ export function ProjectedFinalPointsChartView({
   const x = (t: number) => LEFT + ((Math.min(Math.max(t, full.start), full.end) - full.start) / span) * (RIGHT - LEFT);
   const y = (v: number) => BOTTOM - (v / full.yMax) * (BOTTOM - TOP);
 
-  // A cursor before the first valid reading leaves nothing to read yet.
-  const shown = cursorGone ? null : view.supported ? view : null;
-  const inspecting = cursorAt !== null;
-  const reading = shown?.latest ?? null;
-  const actual = shown?.latestActual ?? null;
-  const showActual = !cursorGone && (shown?.phase ?? "before") !== "before";
+  const reading = full.latest;
+  const actual = full.latestActual;
+  const after = full.phase === "after";
+  const showActual = full.phase !== "before";
   // Before the score floor there is no actual line, so the legend does not name one.
-  const actualDrawn = !!shown && showActual && shown.actualSteps.length > 0;
+  const actualDrawn = showActual && full.actualSteps.length > 0;
   // The last recorded score is the final only when it equals the page's own final. A completion
   // timestamp does not make an earlier observation final: a game whose last recorded row is 26–7
-  // (before the extra point) still ended 27–7. A moment being inspected never shows the final.
-  const atRestAfter = !inspecting && !cursorGone && shown?.phase === "after";
+  // (before the extra point) still ended 27–7.
   const recordedIsFinal =
     !!finalScore && !!actual && actual.home === finalScore.home && actual.away === finalScore.away;
-  const showFinalApart = atRestAfter && !!finalScore && !recordedIsFinal;
-  const withheldAtCursor = inspecting && full.withheld.some((w) => w.at === cursorAt);
-  const lastIndex = instants.length - 1;
-  // A gone cursor parks the thumb at the last instant before it; the readout says it is gone.
-  const sliderIndex =
-    cursorAt === null
-      ? lastIndex
-      : cursorGone
-        ? Math.max(0, instants.filter((t) => t < cursorAt).length - 1)
-        : cursorIndex;
-
-  const valueText = cursorGone
-    ? `${formatProjectionTime(cursorAt)}, that reading is no longer shown`
-    : !reading || withheldAtCursor
-      ? `${cursorAt !== null ? formatProjectionTime(cursorAt) : ""}, no usable projection`
-      : `recorded ${formatProjectionTime(reading.at)}, ${homeTeam} ${points(reading.home)}, ${awayTeam} ${points(reading.away)} projected final points`;
+  const showFinalApart = after && !!finalScore && !recordedIsFinal;
+  const markerRows = markers.reduce((n, m) => Math.max(n, m.labelRow + 1), 0);
 
   return (
     <section
@@ -166,12 +178,9 @@ export function ProjectedFinalPointsChartView({
       aria-labelledby="projected-final-points-title"
       data-projected-final-points={full.phase}
     >
-      <div className="flex items-baseline justify-between gap-2">
-        <h3 id="projected-final-points-title" className="text-base font-semibold text-text-primary">
-          Projected final points
-        </h3>
-        <span className="text-xs text-text-secondary">{full.sourceName}</span>
-      </div>
+      <h3 id="projected-final-points-title" className="text-base font-semibold text-text-primary">
+        Projected final points
+      </h3>
 
       <div className="mt-3 grid grid-cols-2 gap-3" aria-live="polite" data-testid="projected-reading">
         {([
@@ -183,14 +192,14 @@ export function ProjectedFinalPointsChartView({
               {name}
             </div>
             <div className="text-2xl font-semibold tabular-nums text-text-primary">
-              {reading && !withheldAtCursor ? points(reading[key]) : "—"}
+              {points(reading[key])}
             </div>
             <div className="text-xs text-text-secondary">projected final</div>
             {/* Only a recorded score is printed. Without one there is no "— final" placeholder:
                 a dash beside "final" reads as a result nobody recorded. */}
             {showActual && actual && (
               <div className="text-sm tabular-nums text-text-primary" data-actual={key}>
-                {actual[key]} {inspecting || shown?.phase !== "after" ? "scored" : recordedIsFinal ? "final" : "last recorded"}
+                {actual[key]} {!after ? "scored" : recordedIsFinal ? "final" : "last recorded"}
               </div>
             )}
             {showFinalApart && finalScore && (
@@ -203,12 +212,8 @@ export function ProjectedFinalPointsChartView({
       </div>
 
       <p className="mt-2 text-xs text-text-secondary" data-testid="projected-stamp">
-        {cursorGone
-          ? "That reading is no longer shown"
-          : reading && !withheldAtCursor
-            ? `${readingLabel(full, inspecting)} · recorded ${formatProjectionTime(reading.at)}`
-            : "No usable projection at this point"}
-        {!inspecting && full.latestIntervalUnavailable && reading && (
+        {`${readingLabel(full)} · recorded ${formatProjectionTime(reading.at)}`}
+        {full.latestIntervalUnavailable && (
           <>
             <br />
             No usable projection since then
@@ -216,7 +221,30 @@ export function ProjectedFinalPointsChartView({
         )}
       </p>
 
-      <div className="relative mt-3 h-48">
+      {/* The marker labels get their own rows above the plot: the plot stretches to its box, and
+          text inside it would stretch with it. Positions are the plot's own x, as percentages. */}
+      {markerRows > 0 && (
+        <div
+          className="relative mt-3"
+          style={{ height: markerRows * PERIOD_LABEL_ROW_HEIGHT_PX }}
+          aria-hidden="true"
+          data-testid="projected-period-labels"
+        >
+          {markers.map((m) => (
+            <span
+              key={`label-${m.timestamp}`}
+              data-period-label={m.label}
+              className={`absolute whitespace-nowrap text-[10px] font-semibold leading-[13px] text-text-secondary ${
+                m.labelPosition === "insideTopRight" ? "-translate-x-full pr-0.5" : "pl-0.5"
+              }`}
+              style={{ left: `${(x(Date.parse(m.timestamp)) / W) * 100}%`, top: m.labelRow * PERIOD_LABEL_ROW_HEIGHT_PX }}
+            >
+              {periodBoundaryChipLabel(m)}
+            </span>
+          ))}
+        </div>
+      )}
+      <div className={`relative h-64 sm:h-80 ${markerRows > 0 ? "mt-0.5" : "mt-3"}`} data-testid="projected-plot">
       {full.yTicks.map((v) => (
         <span
           key={`tick-${v}`}
@@ -246,7 +274,21 @@ export function ProjectedFinalPointsChartView({
             vectorEffect="non-scaling-stroke"
           />
         ))}
-        {shown && actualDrawn &&
+        {markers.map((m) => (
+          <line
+            key={`period-${m.timestamp}`}
+            data-period-marker={m.label}
+            x1={x(Date.parse(m.timestamp))}
+            x2={x(Date.parse(m.timestamp))}
+            y1={TOP}
+            y2={BOTTOM}
+            stroke="var(--text-muted)"
+            strokeWidth={1}
+            strokeDasharray="4 4"
+            vectorEffect="non-scaling-stroke"
+          />
+        ))}
+        {actualDrawn &&
           ([
             ["home", homeStroke],
             ["away", awayStroke],
@@ -254,7 +296,7 @@ export function ProjectedFinalPointsChartView({
             <path
               key={`actual-${key}`}
               data-series={`actual-${key}`}
-              d={actualPath(shown.actualSteps, key, shown.end, x, y)}
+              d={actualPath(full.actualSteps, key, full.end, x, y)}
               fill="none"
               stroke={stroke}
               strokeWidth={2.5}
@@ -263,12 +305,11 @@ export function ProjectedFinalPointsChartView({
               vectorEffect="non-scaling-stroke"
             />
           ))}
-        {shown &&
-          ([
+        {([
             ["home", homeStroke],
             ["away", awayStroke],
           ] as const).map(([key, stroke]) =>
-            shown.segments.map((seg, i) =>
+            full.segments.map((seg, i) =>
               seg.length === 1 && seg[0].holdEnd === seg[0].at ? (
                 // A round-capped stroke, not a circle: the plot stretches to its
                 // box, and a circle would stretch with it into an ellipse.
@@ -295,7 +336,7 @@ export function ProjectedFinalPointsChartView({
               ),
             ),
           )}
-        {shown?.withheld.map((w) => (
+        {full.withheld.map((w) => (
           <line
             key={`gap-${w.at}`}
             data-withheld={w.reason}
@@ -308,18 +349,6 @@ export function ProjectedFinalPointsChartView({
             vectorEffect="non-scaling-stroke"
           />
         ))}
-        {cursorAt !== null && !cursorGone && (
-          <line
-            data-testid="projected-cursor"
-            x1={x(cursorAt)}
-            x2={x(cursorAt)}
-            y1={TOP}
-            y2={BOTTOM}
-            stroke="var(--text-secondary)"
-            strokeWidth={1}
-            vectorEffect="non-scaling-stroke"
-          />
-        )}
       </svg>
       </div>
       <div className="flex justify-between pl-6 text-xs text-text-secondary" aria-hidden="true">
@@ -333,47 +362,28 @@ export function ProjectedFinalPointsChartView({
         <span>Gaps are not joined</span>
       </div>
 
-      {instants.length > 1 && (
-        <label className="mt-3 block text-xs text-text-secondary">
-          Step through the projections
-          <input
-            type="range"
-            className="mt-1 block w-full accent-graphite"
-            min={0}
-            max={lastIndex}
-            value={sliderIndex}
-            aria-label="Inspect projected final points over time"
-            aria-valuetext={valueText}
-            onChange={(e) => {
-              const index = Number(e.target.value);
-              onCursorChange?.(index === lastIndex ? null : instants[index]);
-            }}
-          />
-        </label>
-      )}
-      {inspecting && (
-        <button
-          type="button"
-          className="mt-2 text-xs font-medium text-text-primary underline"
-          onClick={() => onCursorChange?.(null)}
-        >
-          Back to latest
-        </button>
+      {markers.length > 0 && (
+        <p className="sr-only" data-testid="projected-period-markers-text">
+          Game state marked on the chart:{" "}
+          {markers.map((m) => `${m.label} ${markerTiming(m)} ${formatProjectionTime(Date.parse(m.timestamp))}`).join(", ")}.
+        </p>
       )}
 
       <details className="mt-3 text-xs text-text-secondary">
         <summary className="cursor-pointer">How to read this</summary>
+        <p className="mt-1" data-testid="projected-source">
+          Projection source: {full.sourceName}. Estimated from that one sportsbook&apos;s expected winning margin and total
+          points for the full game, recorded together, which imply a final score for each team. It is not the Bain Luck probability above and not an
+          average of sources.
+        </p>
         <p className="mt-1">
-          Each line is the final score {full.sourceName}&apos;s expected winning margin and total points imply for one team. The dashed
-          steps are the score so far. A break in a line means that reading was missing or could not be right, such as a
-          projection below points already scored. The last projection is never joined to the final score.
+          The solid lines are the projections; the dashed steps are the score so far. A break in a line means that reading
+          was missing or could not be right, such as a projection below points already scored. The last projection is never
+          joined to the final score.
+          {markers.length > 0 &&
+            " The thin vertical rules mark each quarter, halftime or overtime where it was first seen in progress, which can be a little after it began."}
         </p>
       </details>
     </section>
   );
-}
-
-export default function ProjectedFinalPointsChart(props: ProjectedFinalPointsChartProps) {
-  const [cursorAt, setCursorAt] = useState<number | null>(null);
-  return <ProjectedFinalPointsChartView {...props} cursorAt={cursorAt} onCursorChange={setCursorAt} />;
 }

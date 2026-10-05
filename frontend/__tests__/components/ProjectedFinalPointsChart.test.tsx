@@ -2,25 +2,26 @@
  * #10239 — the projected final points module draws two forecast lines and a
  * quieter actual score, or nothing at all.
  *
- * Rendered with real inputs through `renderToStaticMarkup`. The cursor is a
- * prop on the view, so the inspected state is rendered the same way the
- * latest one is. The last block MOUNTS the stateful chart and re-renders it
- * with refreshed history, because a held selection is state, not markup.
+ * Rendered with real inputs through `renderToStaticMarkup`. #10539 (Alex's
+ * direct correction on 14781135): one taller chart with the game's observed
+ * period markers, no slider, and the source explained rather than printed
+ * bare in the heading.
  */
 
-import "../helpers/minimalDom";
-import React, { act } from "react";
-import { createRoot } from "react-dom/client";
+import fs from "fs";
+import path from "path";
+import React from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import ProjectedFinalPointsChart, {
+  drawnPeriodMarkers,
   formatProjectionTime,
-  ProjectedFinalPointsChartView,
 } from "../../components/event/ProjectedFinalPointsChart";
 import {
   buildProjectedFinalPointsSeries,
-  inspectionInstants,
   type ProjectedFinalPointsInput,
+  type ProjectedFinalPointsSeries,
 } from "@/lib/projectedFinalPointsSeries";
+import type { PeriodBoundary } from "@/lib/periodMarkers";
 
 const KICKOFF = "2026-09-29T00:16:00Z";
 const FINAL = "2026-09-29T03:10:00Z";
@@ -58,23 +59,15 @@ const teams = { homeTeam: "Chicago Bears", awayTeam: "Philadelphia Eagles" };
 
 function render(
   input: ProjectedFinalPointsInput,
-  cursorAt: number | null = null,
   finalScore: { home: number; away: number } | null = null,
+  periodBoundaries?: PeriodBoundary[],
 ): string {
   return renderToStaticMarkup(
-    <ProjectedFinalPointsChartView input={input} {...teams} finalScore={finalScore} cursorAt={cursorAt} />,
+    <ProjectedFinalPointsChart input={input} {...teams} finalScore={finalScore} periodBoundaries={periodBoundaries} />,
   );
 }
 
 const count = (html: string, needle: string) => html.split(needle).length - 1;
-
-/** The instant at `iso`, asserted to be one a reader can step to. */
-function instant(input: ProjectedFinalPointsInput, iso: string): number {
-  const s = buildProjectedFinalPointsSeries(input);
-  if (!s.supported) throw new Error("expected supported");
-  if (!inspectionInstants(s).includes(Date.parse(iso))) throw new Error(`${iso} is not an instant`);
-  return Date.parse(iso);
-}
 
 describe("unsupported games render nothing", () => {
   it.each(["baseball_mlb", "soccer_epl", "tennis_atp_us_open", "golf_pga_championship_winner"])(
@@ -90,7 +83,7 @@ describe("unsupported games render nothing", () => {
 });
 
 describe("a finished game", () => {
-  const html = render(nflInput(), null, { home: 27, away: 7 });
+  const html = render(nflInput(), { home: 27, away: 7 });
 
   it("draws two forecast series and two quieter actual steps", () => {
     expect(html).toContain("Projected final points");
@@ -123,21 +116,64 @@ describe("a finished game", () => {
     expect(html).toContain('data-withheld="below_recorded_score"');
   });
 
-  it("names the source and keeps sportsbook jargon off the page", () => {
-    expect(html).toContain("DraftKings");
+  it("keeps sportsbook jargon off the page", () => {
     expect(html).not.toMatch(/\bbooks?\b|bookmaker/i);
   });
+});
 
-  it("gives screen readers both quantities in the inspector", () => {
-    expect(html).toContain(
-      `aria-valuetext="recorded ${formatProjectionTime(Date.parse("2026-09-29T03:09:00Z"))}, Chicago Bears 27.0, Philadelphia Eagles 7.5 projected final points"`,
-    );
+describe("#10539 the source is explained, not printed bare in the heading", () => {
+  const html = render(nflInput(), { home: 27, away: 7 });
+
+  it("the heading row carries no source name", () => {
+    const heading = html.match(/<h3[^>]*>([\s\S]*?)<\/h3>/)!;
+    expect(heading[1]).toBe("Projected final points");
+    // Nothing between the heading and the readout names the source either.
+    const head = html.slice(0, html.indexOf('data-testid="projected-reading"'));
+    expect(head).not.toContain("DraftKings");
+  });
+
+  it("names the one source inside How to read this, and never calls it a blend", () => {
+    const details = html.slice(html.indexOf("<details"), html.indexOf("</details>"));
+    expect(details).toContain("How to read this");
+    expect(details).toMatch(/data-testid="projected-source"[^>]*>Projection source: DraftKings\. Estimated from that one sportsbook/);
+    expect(details).toContain("not an average of sources");
+    expect(details).not.toMatch(/\bblend(ed)?\b|consensus/i);
+  });
+});
+
+describe("#10539 no slider, and the readout still carries both quantities", () => {
+  const html = render(nflInput(), { home: 27, away: 7 });
+
+  it("renders no range input, no step-through label and no inspection cursor", () => {
+    expect(html).not.toMatch(/<input/);
+    expect(html).not.toContain('type="range"');
+    expect(html).not.toMatch(/Step through|Back to latest|projected-cursor/);
+  });
+
+  it("the readout is text: each team's projection, its score, and the recorded time", () => {
+    const readout = html.slice(html.indexOf('data-testid="projected-reading"'), html.indexOf("</p>", html.indexOf('data-testid="projected-stamp"')));
+    expect(readout).toMatch(/Chicago Bears<\/div><div[^>]*>27\.0<\/div><div[^>]*>projected final<\/div><div[^>]*data-actual="home"[^>]*>27 final/);
+    expect(readout).toMatch(/Philadelphia Eagles<\/div><div[^>]*>7\.5<\/div><div[^>]*>projected final<\/div><div[^>]*data-actual="away"[^>]*>7 final/);
+    expect(readout).toContain("Last projection before the final · recorded " + formatProjectionTime(Date.parse("2026-09-29T03:09:00Z")));
+  });
+
+  it("the component holds no inspection state any more", () => {
+    const src = fs.readFileSync(path.join(__dirname, "../../components/event/ProjectedFinalPointsChart.tsx"), "utf8");
+    expect(src).not.toMatch(/useState|type="range"|seriesAt|inspectionInstants/);
+  });
+});
+
+describe("#10539 the plot is taller", () => {
+  it("is 256px on a phone and 320px from sm, up from 192px", () => {
+    const html = render(nflInput());
+    expect(html).toMatch(/class="relative h-64 sm:h-80[^"]*" data-testid="projected-plot"/);
+    expect(html).not.toMatch(/class="relative mt-3 h-48"/);
   });
 });
 
 describe("a finished game whose last recorded score is not the page's final", () => {
   it("calls the last row recorded and prints the final apart, never as a step", () => {
-    const html = render(nflInput(), null, { home: 28, away: 7 });
+    const html = render(nflInput(), { home: 28, away: 7 });
     expect(html).toMatch(/data-actual="home"[^>]*>27 last recorded/);
     expect(html).toMatch(/data-final="home"[^>]*>28 final/);
     expect(html).toMatch(/data-final="away"[^>]*>7 final/);
@@ -145,14 +181,14 @@ describe("a finished game whose last recorded score is not the page's final", ()
   });
 
   it("with no recorded score at all, the page's final is still shown, not hidden behind a dash", () => {
-    const html = render(nflInput({ kickoffAt: null }), null, { home: 27, away: 7 });
+    const html = render(nflInput({ kickoffAt: null }), { home: 27, away: 7 });
     expect(html).not.toContain("data-actual=");
     expect(html).toMatch(/data-final="home"[^>]*>27 final/);
     expect(html).not.toMatch(/—\s*final/);
   });
 
   it("the page's final never appears before the game is over", () => {
-    const html = render(nflInput({ finalAt: null, asOf: "2026-09-29T02:00:00Z" }), null, { home: 27, away: 7 });
+    const html = render(nflInput({ finalAt: null, asOf: "2026-09-29T02:00:00Z" }), { home: 27, away: 7 });
     expect(html).not.toContain("data-final=");
     expect(html).not.toMatch(/\d+ final</);
   });
@@ -178,30 +214,6 @@ describe("a finished game with no admitted score (#10239 '— final')", () => {
   });
 });
 
-describe("inspecting a moment", () => {
-  const input = nflInput();
-
-  it("reads the projection and score at the cursor, and nothing later", () => {
-    const html = render(input, instant(input, "2026-09-29T00:30:00Z"));
-    expect(html).toContain("Projection at this point · recorded " + formatProjectionTime(Date.parse("2026-09-29T00:30:00Z")));
-    expect(html).toContain(">27.5<");
-    expect(html).toContain(">17.0<");
-    expect(html).toMatch(/7 scored/);
-    expect(html).toContain('data-testid="projected-cursor"');
-    // Later readings, later scores and later gap ticks are not drawn.
-    expect(html).not.toContain(">7.5<");
-    expect(html).not.toMatch(/27 (final|scored)/);
-    expect(html).not.toContain('data-withheld="below_recorded_score"');
-    expect(html).toContain("Back to latest");
-  });
-
-  it("says so when the inspected reading was unusable", () => {
-    const html = render(input, instant(input, "2026-09-29T01:00:00Z"));
-    expect(html).toContain("No usable projection at this point");
-    expect(html).not.toContain(">27.5<");
-  });
-});
-
 describe("a live game whose newest reading was unusable", () => {
   it("says so once, without repeating the time", () => {
     const html = render(nflInput({ finalAt: null, asOf: "2026-09-29T01:50:00Z" }));
@@ -210,75 +222,87 @@ describe("a live game whose newest reading was unusable", () => {
   });
 });
 
-describe("a held selection survives refreshed history (mounted)", () => {
-  type El = HTMLElement & Record<string, unknown>;
-  const descendants = (node: El): El[] => [node, ...Array.from(node.childNodes).flatMap((n) => descendants(n as El))];
-  const reactProps = (node: El) =>
-    node[Object.keys(node).find((k) => k.startsWith("__reactProps$"))!] as Record<string, (arg?: unknown) => void>;
-
-  let host: El;
-  let root: ReturnType<typeof createRoot>;
-  beforeEach(() => {
-    host = document.createElement("div") as unknown as El;
-    document.body.appendChild(host);
-    root = createRoot(host);
+/**
+ * #10539 — the game's own period boundaries on the projected plot. Fixture
+ * boundaries are in the shape `derivePeriodBoundaries` hands every chart on
+ * the page, with the provenance the server serves.
+ */
+describe("#10539 period markers at their evidenced times", () => {
+  const observed = (timestamp: string, label: string, precision = "first_seen"): PeriodBoundary => ({
+    timestamp,
+    label,
+    source: "espn_state",
+    precision,
   });
-  afterEach(() => act(() => root.unmount()));
+  const NFL_BOUNDARIES: PeriodBoundary[] = [
+    observed("2026-09-29T01:05:00Z", "Q2"),
+    observed("2026-09-29T01:50:00Z", "HT"),
+    observed("2026-09-29T02:05:00Z", "Q3"),
+    observed("2026-09-29T02:40:00Z", "Q4"),
+  ];
+  const supported = (input: ProjectedFinalPointsInput): ProjectedFinalPointsSeries => {
+    const s = buildProjectedFinalPointsSeries(input);
+    if (!s.supported) throw new Error("expected supported");
+    return s;
+  };
 
-  const mount = (input: ProjectedFinalPointsInput) =>
-    act(() => root.render(<ProjectedFinalPointsChart input={input} {...teams} />));
-  const slider = () => descendants(host).find((n) => n.tagName === "INPUT")!;
-  const stamp = () => descendants(host).find((n) => n["data-testid"] === "projected-stamp")!.textContent;
-  const reading = () => descendants(host).find((n) => n["data-testid"] === "projected-reading")!.textContent;
-  const pick = (index: number) => act(() => reactProps(slider()).onChange({ target: { value: String(index) } }));
-
-  // Live at 02:40: the window opens an hour before kickoff.
-  const live = (pairs: ProjectedFinalPointsInput["pairs"]) =>
-    nflInput({ finalAt: null, asOf: "2026-09-29T02:40:00Z", pairs });
-  const base = nflInput().pairs.filter((p) => p.timestamp <= "2026-09-29T02:30:00Z");
-  const at0030 = formatProjectionTime(Date.parse("2026-09-29T00:30:00Z"));
-
-  function inspect0030() {
-    mount(live(base));
-    pick(1); // 23:30, 00:30, ...
-    expect(stamp()).toContain(`Projection at this point · recorded ${at0030}`);
-    expect(reading()).toContain("27.5");
-    expect(reading()).toContain("17.0");
-  }
-
-  it("an earlier reading inserted ahead of the cursor keeps the same moment", () => {
-    inspect0030();
-    const inserted = [{ timestamp: "2026-09-28T23:50:00Z", home: 25, away: 19.5, homeProbability: 0.64 }, ...base];
-    mount(live(inserted));
-    expect(stamp()).toContain(`Projection at this point · recorded ${at0030}`);
-    expect(reading()).toContain("27.5");
-    expect(reading()).not.toContain("25.0");
-    expect(slider().value).toBe("2");
+  it("draws each observed boundary as a rule and a label at its own timestamp, HT and Q3 both kept", () => {
+    const html = render(nflInput(), { home: 27, away: 7 }, NFL_BOUNDARIES);
+    for (const label of ["Q2", "HT", "Q3", "Q4"]) {
+      expect(count(html, `data-period-marker="${label}"`)).toBe(1);
+      expect(count(html, `data-period-label="${label}"`)).toBe(1);
+    }
+    // Rules sit where the plot's own x puts each timestamp, so a label and its rule cannot part.
+    const s = supported(nflInput());
+    const xOf = (iso: string) => (64 + ((Date.parse(iso) - s.start) / (s.end - s.start)) * (990 - 64)).toFixed(1);
+    const rule = (label: string) => Number(html.match(new RegExp(`data-period-marker="${label}" x1="([\\d.]+)"`))![1]).toFixed(1);
+    expect(rule("Q2")).toBe(xOf("2026-09-29T01:05:00Z"));
+    expect(rule("Q4")).toBe(xOf("2026-09-29T02:40:00Z"));
+    const left = (label: string) => Number(html.match(new RegExp(`data-period-label="${label}"[^>]*left:([\\d.]+)%`))![1]);
+    expect(left("HT")).toBeCloseTo((Number(xOf("2026-09-29T01:50:00Z")) / 1000) * 100, 1);
   });
 
-  it("an earlier reading removed ahead of the cursor keeps the same moment", () => {
-    inspect0030();
-    mount(live(base.filter((p) => p.timestamp !== "2026-09-28T23:30:00Z")));
-    expect(stamp()).toContain(`Projection at this point · recorded ${at0030}`);
-    expect(reading()).toContain("27.5");
-    expect(slider().value).toBe("0");
+  it("the crowded HT → Q3 pair staggers onto two rows instead of smearing", () => {
+    const placed = drawnPeriodMarkers(supported(nflInput()), NFL_BOUNDARIES);
+    const row = (label: string) => placed.find((m) => m.label === label)!.labelRow;
+    expect(placed.map((m) => m.label)).toEqual(["Q2", "HT", "Q3", "Q4"]);
+    expect(row("HT")).not.toBe(row("Q3"));
   });
 
-  it("if the inspected reading itself leaves, it says so instead of showing a neighbour", () => {
-    inspect0030();
-    mount(live(base.filter((p) => p.timestamp !== "2026-09-29T00:30:00Z")));
-    expect(stamp()).toContain("That reading is no longer shown");
-    expect(reading()).not.toContain("24.5");
-    expect(reading()).not.toContain("27.5");
-    expect(slider()["aria-valuetext"]).toBe(`${at0030}, that reading is no longer shown`);
+  it("leaves off an estimated boundary rather than drawing schedule arithmetic as timing", () => {
+    const html = render(nflInput(), null, [...NFL_BOUNDARIES, { timestamp: "2026-09-29T02:55:00Z", label: "OT", source: "estimated" }]);
+    expect(html).not.toContain('data-period-marker="OT"');
+    expect(html).not.toContain("~OT");
   });
 
-  it("Back to latest still returns to the newest reading", () => {
-    inspect0030();
-    mount(live([{ timestamp: "2026-09-28T23:50:00Z", home: 25, away: 19.5, homeProbability: 0.64 }, ...base]));
-    const back = descendants(host).find((n) => n.tagName === "BUTTON")!;
-    act(() => reactProps(back).onClick());
-    expect(stamp()).toContain("Latest projection · recorded " + formatProjectionTime(Date.parse("2026-09-29T02:30:00Z")));
-    expect(descendants(host).some((n) => n.tagName === "BUTTON")).toBe(false);
+  it("draws nothing it has no evidence for: no boundaries means no markers and no label rows", () => {
+    const html = render(nflInput());
+    expect(html).not.toContain("data-period-marker");
+    expect(html).not.toContain('data-testid="projected-period-labels"');
+    expect(html).not.toMatch(/quarter, halftime or overtime/);
+  });
+
+  it("never marks a boundary outside the drawn span, and never stretches the span to reach one", () => {
+    const live = nflInput({ finalAt: null, asOf: "2026-09-29T02:00:00Z" });
+    const s = supported(live);
+    const placed = drawnPeriodMarkers(s, NFL_BOUNDARIES);
+    // Q3 and Q4 are after "now" on a live game: not drawn.
+    expect(placed.map((m) => m.label)).toEqual(["Q2", "HT"]);
+    expect(supported(live).end).toBe(s.end);
+    expect(drawnPeriodMarkers(s, [observed("2026-09-28T20:00:00Z", "Q1")])).toEqual([]);
+    expect(drawnPeriodMarkers(s, [observed("not a time", "Q2")])).toEqual([]);
+  });
+
+  it("before the game marks nothing, even when the history retains a boundary", () => {
+    const pregame = nflInput({ kickoffAt: null, finalAt: null, asOf: "2026-09-29T00:00:00Z" });
+    expect(drawnPeriodMarkers(supported(pregame), [observed("2026-09-28T23:45:00Z", "Q1")])).toEqual([]);
+  });
+
+  it("tells a screen reader each marker is a first observed state, not a guaranteed start", () => {
+    const html = render(nflInput(), null, [observed("2026-09-29T01:05:00Z", "Q2"), observed("2026-09-29T02:40:00Z", "Q4", "boundary_observed")]);
+    expect(html).toContain(
+      `Game state marked on the chart: Q2 first seen in progress ${formatProjectionTime(Date.parse("2026-09-29T01:05:00Z"))}, Q4 began ${formatProjectionTime(Date.parse("2026-09-29T02:40:00Z"))}.`,
+    );
+    expect(html).toContain("where it was first seen in progress, which can be a little after it began");
   });
 });
