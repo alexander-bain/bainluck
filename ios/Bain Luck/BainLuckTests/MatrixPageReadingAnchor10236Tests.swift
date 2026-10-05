@@ -1,3 +1,4 @@
+import Combine
 import SwiftUI
 import XCTest
 @testable import Bain_Luck
@@ -74,7 +75,7 @@ final class MatrixPageReadingAnchor10236Tests: XCTestCase {
             }
             let scene = try XCTUnwrap(activeScene(), "The anchor tests need a foreground-active window scene")
             previousKeyWindow = scene.windows.first { $0.isKeyWindow }
-            host = UIHostingController(rootView: view)
+            host = hostForMeasurement(view)
             window = UIWindow(windowScene: scene)
             window.frame = CGRect(x: 0, y: 0, width: 390, height: 800)
             window.rootViewController = host
