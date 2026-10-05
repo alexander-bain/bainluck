@@ -889,9 +889,10 @@ class TestTheScoreHasToBeCurrent:
         assert fresh.score == unstamped.score
         assert fresh.reasons == unstamped.reasons
         assert fresh.primary_reason == unstamped.primary_reason
+        assert fresh.flags.score_is_current is True
+        assert unstamped.flags.score_is_current is False
         fresh_flags, unstamped_flags = asdict(fresh.flags), asdict(unstamped.flags)
-        assert fresh_flags.pop("score_is_current") is True
-        assert unstamped_flags.pop("score_is_current") is False
+        del fresh_flags["score_is_current"], unstamped_flags["score_is_current"]
         assert fresh_flags == unstamped_flags
 
     @pytest.mark.parametrize("case,source,observed_at,admitted", STAMPS, ids=_STAMP_IDS)
