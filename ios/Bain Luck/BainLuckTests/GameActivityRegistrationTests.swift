@@ -468,6 +468,15 @@ import XCTest
         subject.receive(id: "activity", token: Data([2]))
         for _ in 0..<100 { await Task.yield() }
         XCTAssertEqual(transport.calls.count, 1)
+        let secondTransport = RegistrationTransportFake()
+        let secondRestart = GameActivityRegistrationCoordinator(transport: secondTransport, defaults: defaults)
+        secondRestart.setSession(owner: 1, bearer: "owner-a-refreshed")
+        secondRestart.bind(id: "activity", eventID: 42)
+        secondRestart.receive(id: "activity", token: Data([3]))
+        secondRestart.foregroundActivated()
+        for _ in 0..<100 { await Task.yield() }
+        XCTAssertTrue(secondTransport.calls.isEmpty, "Acknowledged stop survives a second restart")
+        XCTAssertTrue(secondRestart.unconfirmedRevocations.isEmpty)
     }
 
     func testLegacyReadFailureRetainsOwnershipAndStopsWithoutGuessingEvent() async {
