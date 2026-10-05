@@ -23,7 +23,10 @@ struct ProjectedFinalPointsChartView: View {
     var sportKey: String? = nil
 
     @State private var expanded = false
+    // The card and the full-screen sheet open their details apart, so Done
+    // never returns to a card that grew behind the sheet.
     @State private var detailsShown = false
+    @State private var expandedDetailsShown = false
     @Environment(\.dynamicTypeSize) private var dynamicTypeSize
 
     static let inlinePlotHeight: CGFloat = 260
@@ -39,10 +42,10 @@ struct ProjectedFinalPointsChartView: View {
         if let full {
             let markers = Self.gameStateMarkers(periodMarkers, sportKey: sportKey, series: full,
                                                 floor: input.kickoffAt ?? input.scoreObservationStartAt)
-            content(full: full, markers: markers, height: Self.inlinePlotHeight)
+            content(full: full, markers: markers, height: Self.inlinePlotHeight, details: $detailsShown)
                 .sheet(isPresented: $expanded) {
                     NavigationStack {
-                        ScrollView { content(full: full, markers: markers, height: Self.expandedPlotHeight).padding() }
+                        ScrollView { content(full: full, markers: markers, height: Self.expandedPlotHeight, details: $expandedDetailsShown).padding() }
                             .navigationTitle("Projected final points")
                             #if os(iOS)
                             .navigationBarTitleDisplayMode(.inline)
@@ -57,7 +60,8 @@ struct ProjectedFinalPointsChartView: View {
         }
     }
 
-    private func content(full: ProjectedFinalPointsSeries, markers: [GameStateMarker], height: CGFloat) -> some View {
+    private func content(full: ProjectedFinalPointsSeries, markers: [GameStateMarker], height: CGFloat,
+                         details: Binding<Bool>) -> some View {
         VStack(alignment: .leading, spacing: 12) {
             HStack(alignment: .top) {
                 Text("Projected final points").font(.headline).fixedSize(horizontal: false, vertical: true)
@@ -78,7 +82,7 @@ struct ProjectedFinalPointsChartView: View {
             Text(Self.legend(for: full))
                 .font(.caption).foregroundStyle(.secondary)
                 .fixedSize(horizontal: false, vertical: true)
-            DisclosureGroup("How to read this", isExpanded: $detailsShown) {
+            DisclosureGroup("How to read this", isExpanded: details) {
                 VStack(alignment: .leading, spacing: 8) {
                     Text(Self.sourceExplanation(for: full))
                     if !markers.isEmpty {

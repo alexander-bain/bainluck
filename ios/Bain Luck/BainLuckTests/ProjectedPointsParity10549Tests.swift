@@ -151,6 +151,9 @@ final class ProjectedPointsParity10549Tests: XCTestCase {
         XCTAssertFalse(view.contains("Recorded captures"), "no bare source branding under the heading")
         XCTAssertTrue(view.contains(#"DisclosureGroup("How to read this""#))
         XCTAssertTrue(view.contains(#"Button("Done") { expanded = false }"#), "full screen still returns")
+        // Opening the details in full screen must not grow the card behind the sheet.
+        XCTAssertTrue(view.contains("height: Self.inlinePlotHeight, details: $detailsShown"), "the card owns its details")
+        XCTAssertTrue(view.contains("height: Self.expandedPlotHeight, details: $expandedDetailsShown"), "the sheet owns its own")
         XCTAssertTrue(view.contains(".dynamicTypeSize(...Self.axisTypeCeiling)"), "axis labels stop growing before they truncate")
         XCTAssertFalse(ProjectedFinalPointsChartView.axisTypeCeiling.isAccessibilitySize)
         XCTAssertGreaterThan(ProjectedFinalPointsChartView.inlinePlotHeight, 210)
