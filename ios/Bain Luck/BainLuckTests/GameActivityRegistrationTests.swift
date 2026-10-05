@@ -8,6 +8,7 @@ import XCTest
         let token: String?
         let version: Int
         let bearer: String
+        let mutationID: UUID
     }
     var calls: [Call] = []
     var pending: CheckedContinuation<GameActivityRegistrationMetadata, Error>?
@@ -19,7 +20,7 @@ import XCTest
     }
     func mutate(id: String, eventID: Int, token: String?, version: Int,
                 mutationID: UUID, bearer: String) async throws -> GameActivityRegistrationMetadata {
-        calls.append(.init(token: token, version: version, bearer: bearer))
+        calls.append(.init(token: token, version: version, bearer: bearer, mutationID: mutationID))
         return try await withCheckedThrowingContinuation { pending = $0 }
     }
     func complete(version: Int, active: Bool) {
@@ -126,5 +127,69 @@ import XCTest
         XCTAssertEqual(subject.unconfirmedRevocations, ["activity"])
         transport.complete(version: 5, active: false)
     }
+    func testOfflineRegistrationRetriesUnchangedTokenOnForegroundOnly() async {
+        let transport = RegistrationTransportFake()
+        let subject = coordinator(transport)
+        subject.setSession(owner: 1, bearer: "test-session")
+        subject.bind(id: "activity", eventID: 42)
+        subject.receive(id: "activity", token: Data([0xab]))
+        await waitForCalls(1, transport)
+        transport.fail(GameActivityRegistrationError.unavailable)
+        for _ in 0..<100 { await Task.yield() }
+        XCTAssertEqual(transport.calls.count, 1, "No automatic retry timer")
+        subject.foregroundActivated()
+        await waitForCalls(2, transport)
+        XCTAssertEqual(transport.calls[1].token, "ab")
+        XCTAssertEqual(transport.calls[1].mutationID, transport.calls[0].mutationID,
+                       "Retry an ambiguous result using the identical mutation")
+        transport.complete(version: 1, active: true)
+        for _ in 0..<100 { await Task.yield() }
+        subject.foregroundActivated()
+        await Task.yield()
+        XCTAssertEqual(transport.calls.count, 2, "Acknowledged token needs no retry")
+    }
+    func testSameOwnerAuthRefreshRetriesWithRefreshedBearer() async {
+        let transport = RegistrationTransportFake()
+        let subject = coordinator(transport)
+        subject.setSession(owner: 1, bearer: "test-expired-session")
+        subject.bind(id: "activity", eventID: 42)
+        subject.receive(id: "activity", token: Data([1]))
+        await waitForCalls(1, transport)
+        transport.fail(GameActivityRegistrationError.unavailable)
+        for _ in 0..<100 { await Task.yield() }
+        subject.setSession(owner: 1, bearer: "test-refreshed-session")
+        await waitForCalls(2, transport)
+        XCTAssertEqual(transport.calls[1].bearer, "test-refreshed-session")
+        XCTAssertEqual(transport.calls[1].mutationID, transport.calls[0].mutationID)
+        transport.complete(version: 1, active: true)
+        for _ in 0..<100 { await Task.yield() }
+        subject.stop(id: "activity")
+        await waitForCalls(3, transport)
+        XCTAssertNil(transport.calls[2].token)
+        XCTAssertEqual(transport.calls[2].bearer, "test-refreshed-session")
+        transport.complete(version: 2, active: false)
+    }
+    func testForegroundRecoveryCannotRegisterAfterStop() async {
+        let transport = RegistrationTransportFake()
+        let subject = coordinator(transport)
+        subject.setSession(owner: 1, bearer: "test-session")
+        subject.bind(id: "activity", eventID: 42)
+        subject.receive(id: "activity", token: Data([1]))
+        await waitForCalls(1, transport)
+        transport.fail(GameActivityRegistrationError.unavailable)
+        for _ in 0..<100 { await Task.yield() }
+        subject.stop(id: "activity")
+        subject.foregroundActivated()
+        await waitForCalls(2, transport)
+        XCTAssertNil(transport.calls[1].token)
+        transport.fail(GameActivityRegistrationError.unavailable)
+        for _ in 0..<100 { await Task.yield() }
+        subject.foregroundActivated()
+        subject.receive(id: "activity", token: Data([2]))
+        await Task.yield()
+        XCTAssertEqual(transport.calls.count, 2)
+        XCTAssertEqual(subject.unconfirmedRevocations, ["activity"])
+    }
+
 }
 #endif

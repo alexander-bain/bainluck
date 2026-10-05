@@ -12,10 +12,12 @@ import Foundation
     }
     private final class Entry {
         let eventID: Int
-        let session: Session
+        var session: Session
         var token: String?
         var stopped = false
         var version = 0
+        var needsRetry = false
+        var pendingMutation: (token: String?, version: Int, id: UUID)?
         var worker: Task<Void, Never>?
         var observation: Task<Void, Never>?
         var stateObservation: Task<Void, Never>?
@@ -41,11 +43,25 @@ import Foundation
         if (session != nil && session?.owner != owner) || owner == nil { invalidateSession() }
         guard let owner, let bearer, !bearer.isEmpty else { session = nil; return }
         session = Session(owner: owner, bearer: bearer)
+        for entry in entries.values where !entry.stopped && entry.session.owner == owner {
+            entry.session = Session(owner: owner, bearer: bearer)
+        }
+        foregroundActivated()
         // Only a persisted same-account binding may be restored. Anonymous activities
         // are never upgraded and another account's activity is never adopted.
         for activity in Activity<GameActivityAttributes>.activities {
             let owners = defaults.dictionary(forKey: ownershipKey) ?? [:]
             if (owners[activity.id] as? Int) == owner { observe(activity) }
+        }
+    }
+
+    /// Real activation/auth refresh permits one bounded recovery attempt. No timer,
+    /// anonymous adoption or stopped identity can restart a registration.
+    func foregroundActivated() {
+        guard let session else { return }
+        for (id, entry) in entries where !entry.stopped && entry.needsRetry
+            && entry.session.owner == session.owner {
+            startWorker(id: id, entry: entry)
         }
     }
 
@@ -129,11 +145,18 @@ import Foundation
             let stopping = entry.stopped
             guard stopping || entry.token != nil else { return }
             let token = stopping ? nil : entry.token
+            let bearer = entry.session.bearer
+            if entry.pendingMutation?.token != token || entry.pendingMutation?.version != entry.version {
+                entry.pendingMutation = (token, entry.version, UUID())
+            }
+            let mutationID = entry.pendingMutation!.id
+            entry.needsRetry = false
             do {
                 let metadata = try await transport.mutate(id: id, eventID: entry.eventID,
-                    token: token, version: entry.version, mutationID: UUID(), bearer: entry.session.bearer)
+                    token: token, version: entry.version, mutationID: mutationID, bearer: bearer)
                 guard metadata.eventID == entry.eventID else { return }
                 entry.version = metadata.version
+                entry.pendingMutation = nil
                 if stopping {
                     guard !metadata.isActive else { return }
                     acknowledgeRevocation(id: id)
@@ -144,6 +167,7 @@ import Foundation
                 return
             } catch GameActivityRegistrationError.conflict {
                 conflicts += 1
+                entry.pendingMutation = nil
                 do {
                     let metadata = try await transport.read(id: id, bearer: entry.session.bearer)
                     guard metadata.eventID == entry.eventID else { return }
@@ -152,14 +176,16 @@ import Foundation
                         if entry.stopped { acknowledgeRevocation(id: id) }
                         return
                     }
-                } catch { return }
+                } catch { entry.needsRetry = !entry.stopped; return }
             } catch {
                 // A failed in-flight registration still owes a DELETE tombstone
                 // when stop arrived while awaiting it. Ordinary failures stay quiet.
                 if !stopping && (entry.stopped || entry.token != token) { continue }
+                entry.needsRetry = !entry.stopped
                 return
             }
         }
+        entry.needsRetry = !entry.stopped
     }
 }
 #endif

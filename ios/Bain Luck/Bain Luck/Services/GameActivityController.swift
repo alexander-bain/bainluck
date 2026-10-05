@@ -98,7 +98,10 @@ struct GameActivityRecord {
         // activation independently so returning from Settings refreshes availability.
         activationObserver = notificationCenter.publisher(for: UIApplication.didBecomeActiveNotification)
             .sink { [weak self] _ in
-                Task { @MainActor [weak self] in self?.reconcile() }
+                Task { @MainActor [weak self] in
+                    GameActivityRegistrationCoordinator.shared.foregroundActivated()
+                    self?.reconcile()
+                }
             }
     }
 

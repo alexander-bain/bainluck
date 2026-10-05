@@ -18,10 +18,14 @@ new versioned DELETE; it never confirms revocation. Each reconciliation is
 bounded to three conflicts and each production request has an eight-second
 request timeout and twelve-second resource timeout. Local dismissal does not
 await the network. Offline, unauthorized, absent endpoints and exhausted
-conflicts leave remote revocation unconfirmed. Failed revocations are not a
+conflicts leave remote revocation unconfirmed. Failed registration attempts retry
+only on a real foreground activation or verified same-owner auth refresh, using
+the unchanged token and stable mutation UUID. Refreshed same-owner credentials
+apply to future attempts; stopped old-account work retains its old credential.
+There is no retry timer. Failed revocations are not a
 claim that the server stopped delivery; endpoint deployment and retry policy
 remain integration gates.
 
 No sender is connected by this change. Foreground wording remains accurate.
 No APNs sends, credentials, signing, device acceptance or release is established.
-The nine new deterministic native tests require the hosted iPhone gate.
+The twelve new deterministic native tests require the hosted iPhone gate.
