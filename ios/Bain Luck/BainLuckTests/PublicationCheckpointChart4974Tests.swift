@@ -227,15 +227,41 @@ final class PublicationCheckpointChart4974Tests: XCTestCase {
         XCTAssertEqual(land(m, atPlotX: 29), .withheld(date(atPlotX: 29)))
     }
 
+    /// The legacy line ends inside the window (20:15:30), so the resting
+    /// endpoint is the latest checkpoint and the tie is the rev's to break. A
+    /// surviving reading after 20:15:50 wins the rest outright (the control
+    /// below), and the closed window drops a reading AT 20:15:50, so the
+    /// reading-vs-checkpoint tie is asked of `restingEndpoint` directly.
     func testEqualTimeRevisionsGoToTheGreatestRev() throws {
         let journey = try adoptedJourney([(7, 10, 0.61), (8, 10, 0.63), (9, 50, 0.58), (11, 50, 0.57)])
-        let m = try XCTUnwrap(mount(journey, [point(0, 0.40), point(60, 0.55)]))
+        let m = try XCTUnwrap(mount(journey, [point(0, 0.40), point(30, 0.47)]))
         guard case .checkpoint(let hit) = land(m, atPlotX: 21) else { return XCTFail("expected a hit") }
         XCTAssertEqual(hit.vertex.rev, 8)
         XCTAssertEqual(hit.vertex.p, 0.63)
         let rest = checkpoint(of: try XCTUnwrap(m.resting))
         XCTAssertEqual(rest?.vertex.rev, 11, "the resting tie goes to the greatest rev too")
+        XCTAssertEqual(rest?.vertex.p, 0.57)
+        XCTAssertEqual(m.resting?.date, at(50))
         XCTAssertEqual(m.plan.checkpoints.map(\.id), [7, 8, 9, 11], "two revisions at one instant are two dots")
+
+        // POSITIVE CONTROL — a surviving reading at 20:16:00, later than every
+        // checkpoint, takes the rest: the rule, not the tie, decides here.
+        let later = try XCTUnwrap(mount(journey, [point(0, 0.40), point(60, 0.55)]))
+        let laterRest = legacy(of: try XCTUnwrap(later.resting))
+        XCTAssertEqual(laterRest?.date, at(60))
+        XCTAssertEqual(laterRest?.probability, 0.55)
+
+        // A reading at the checkpoints' own instant loses the rest to them, and
+        // among them the greatest rev wins in either served order; one second
+        // later the reading wins.
+        let atTie = [point(50, 0.52)]
+        for drawn in [journey.checkpoints, Array(journey.checkpoints.reversed())] {
+            let tie = checkpoint(of: try XCTUnwrap(Mount.restingEndpoint(drawn: drawn, survivors: atTie)))
+            XCTAssertEqual(tie?.vertex.rev, 11, "served order \(drawn.map(\.vertex.rev))")
+        }
+        let past = legacy(of: try XCTUnwrap(Mount.restingEndpoint(drawn: journey.checkpoints,
+                                                                   survivors: [point(51, 0.52)])))
+        XCTAssertEqual(past?.date, at(51))
     }
 
     // MARK: - Hit candidates are the visible checkpoints only
@@ -824,7 +850,9 @@ final class PublicationCheckpointChart4974Tests: XCTestCase {
 
     /// The inline chart's floating card: withheld in the gap, absent at rest,
     /// and every scrub over the mounted chart leaves the data marks unbuilt
-    /// (#8651's guard, preserved).
+    /// (#8651's guard, preserved). Snapshotting redraws the hierarchy, so as in
+    /// #8651 no snapshot sits inside the counted hold/scrub/release: one warms
+    /// the host before the baseline, and the rendered text is read after.
     func testHostedInlineChartWithholdsTheGapWithoutRebuildingThePlot() throws {
         let payload = try finishedPayload()
         let journey = try subMinuteJourney()
@@ -840,12 +868,15 @@ final class PublicationCheckpointChart4974Tests: XCTestCase {
         let (host, window) = hosted(chart)
         defer { window.isHidden = true }
         XCTAssertGreaterThan(plotBuilds, 0, "the real plot must render for this test to mean anything")
+        _ = try visibleText(host, name: "inline-warm")
+        pump(host)
         let before = plotBuilds
 
+        // The counted interval: no snapshot until its last assertion.
         selection.hold(date: at(30), checkpoint: .withheld)
         pump(host)
-        let gap = try visibleText(host, name: "inline-gap")
-        XCTAssertTrue(gap.contains(PublicationCheckpointReadoutSlot4974.withheldText), gap)
+        XCTAssertTrue(selection.isScrubbing)
+        XCTAssertEqual(plotBuilds, before, "holding over the gap re-evaluated the Chart marks")
 
         for step in 0..<10 {
             let scrub: PublicationCheckpointScrub4974 = step.isMultiple(of: 2) ? .checkpoint(journey.checkpoints[0]) : .withheld
@@ -858,10 +889,27 @@ final class PublicationCheckpointChart4974Tests: XCTestCase {
 
         selection.end()
         pump(host)
+        XCTAssertFalse(selection.isScrubbing)
         XCTAssertEqual(plotBuilds, before, "releasing rebuilt the data plot")
+
+        // Rendered text, read after the count.
+        selection.hold(date: at(30), checkpoint: .withheld)
+        pump(host)
+        let gap = try visibleText(host, name: "inline-gap")
+        XCTAssertTrue(gap.contains(PublicationCheckpointReadoutSlot4974.withheldText), gap)
+
+        selection.hold(date: at(10), checkpoint: .checkpoint(journey.checkpoints[0]))
+        pump(host)
+        let hit = try visibleText(host, name: "inline-hit")
+        XCTAssertTrue(hit.contains("61%"), hit)
+        XCTAssertFalse(hit.contains(PublicationCheckpointReadoutSlot4974.withheldText), hit)
+
+        selection.end()
+        pump(host)
         let rest = try visibleText(host, name: "inline-rest")
         XCTAssertFalse(rest.contains(PublicationCheckpointReadoutSlot4974.withheldText),
                        "the inline card rests nowhere (#9517): \(rest)")
+        XCTAssertFalse(rest.contains("61%"), "the checkpoint readout outlived the finger: \(rest)")
     }
 
     // MARK: - Hosted drawability and the post-legacy-end checkpoint

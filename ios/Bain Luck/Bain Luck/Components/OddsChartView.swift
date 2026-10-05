@@ -377,6 +377,11 @@ struct OddsChartView: View {
     var servedAwayProbability: Double?
     /// Shared domain from parent — ensures OddsChart and ScoreDiffChart have identical x-axes
     var forcedDomain: ClosedRange<Date>?
+    /// #4974 — the page's ORIGINAL window, handed over when stored checkpoints
+    /// widened `forcedDomain` past it. Bounds legacy readings only
+    /// (`filterPoints`); the axis, and the checkpoints it admits and scrubs,
+    /// stay `forcedDomain`'s. Nil draws exactly as before.
+    var legacyDataDomain: ClosedRange<Date>?
     /// Blends pushed to the page since it opened (#920), drawn as the live end
     /// of the backend's own aggregate line. Empty on every non-live surface.
     var liveFrames: [LiveBlendPoint] = []
@@ -538,6 +543,7 @@ struct OddsChartView: View {
          servedHomeProbability: Double? = nil,
          servedAwayProbability: Double? = nil,
          forcedDomain: ClosedRange<Date>? = nil,
+         legacyDataDomain: ClosedRange<Date>? = nil,
          pageAxisPlotWidth: CGFloat = 0,
          selectedRange: Binding<OddsTimeRange> = .constant(.sinceStart),
          preloadedHistory: EventHistoryResponse? = nil,
@@ -566,6 +572,7 @@ struct OddsChartView: View {
         self.servedHomeProbability = servedHomeProbability
         self.servedAwayProbability = servedAwayProbability
         self.forcedDomain = forcedDomain
+        self.legacyDataDomain = legacyDataDomain
         self.pageAxisPlotWidth = pageAxisPlotWidth
         self.liveFrames = liveFrames
         self.preloadedHistory = preloadedHistory
@@ -1184,6 +1191,16 @@ struct OddsChartView: View {
         // y-axis to the screen edge on Alex's phone.
         if let forcedDomain {
             filtered = filtered.filter { SharedChartWindow.contains($0.date, in: forcedDomain) }
+        }
+
+        // #4974 — and nothing past the page's original window. Stored
+        // checkpoints widen the axis; a price stamped in that widened tail is
+        // post-game drift the original window excluded, and every mark, moment
+        // and readout below is chosen from these points. Applied on top of the
+        // axis cut, never instead of it, and never to checkpoints
+        // (`admitsPublicationCheckpoint`).
+        if let legacyDataDomain {
+            filtered = filtered.filter { SharedChartWindow.contains($0.date, in: legacyDataDomain) }
         }
 
         guard isGameStarted else { return filtered }
