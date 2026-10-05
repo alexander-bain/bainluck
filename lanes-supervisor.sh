@@ -33,7 +33,7 @@ DRYRUN=0
 
 launch () {
   if [ "$DRYRUN" -eq 1 ]; then echo "[dry-run] would relaunch: $1"; return 0; fi
-  osascript -e "tell application \"Terminal\" to do script \"$1\"" >/dev/null
+  python3 "$SELF_DIR/scripts/lane_control.py" launch "$CURRENT_LANE" "$1"
 }
 
 # `count_running` — how many processes are running EXACTLY this command line —
@@ -47,6 +47,8 @@ launch () {
 while true; do
   LAUNCH_PS_SNAP=$(ps -axww -o command= 2>/dev/null)
   for L in $LANES_ALL; do
+    CURRENT_LANE="$L"
+    python3 "$SELF_DIR/scripts/lane_control.py" check "$L" || continue
     D="$(lane_dir "$L")"; [ -d "$D" ] || continue
     # One runner per lane, one lane per runner (9/3): the argv is exactly the one
     # start-lanes.sh launches. It must stay in step with that script, which is
@@ -64,11 +66,12 @@ while true; do
   # A whole-line match also means "lane4-runner-v3.sh" is correctly NOT counted:
   # scratch versions are a DIFFERENT cert bus, and the fix for one running is to
   # stop it, never to teach this to accept it.
+  CURRENT_LANE=review
   ALIVE=$(count_running "$LANE4_RUNNER")
-  if [ "${ALIVE:-0}" -lt "$LANE4_GRADERS" ]; then
+  if python3 "$SELF_DIR/scripts/lane_control.py" check review && [ "${ALIVE:-0}" -lt "$LANE4_GRADERS" ]; then
     echo "[supervisor] $(date '+%H:%M:%S') lane4 graders: $ALIVE of $LANE4_GRADERS — relaunching $((LANE4_GRADERS - ALIVE))"
     G="$ALIVE"
-    while [ "$G" -lt "$LANE4_GRADERS" ]; do launch "$LANE4_RUNNER"; G=$((G + 1)); done
+    while [ "$G" -lt "$LANE4_GRADERS" ]; do CURRENT_LANE="review-$G"; launch "$LANE4_RUNNER"; G=$((G + 1)); done
   fi
   # The measurement bus — exactly one (lanes.conf). Supervised for the same
   # reason the graders are, and it matters more over a weekend than on a weekday:
@@ -76,7 +79,8 @@ while true; do
   # on Saturday is a hole in the record nobody notices until Monday. Guarded on
   # existence so an older checkout without the script supervises everything else
   # normally instead of looping on a relaunch that cannot work.
-  if [ -n "${BUS_RUNNER:-}" ] && [ -f "$BUS_RUNNER" ]; then
+  CURRENT_LANE=measurement
+  if python3 "$SELF_DIR/scripts/lane_control.py" check measurement && [ -n "${BUS_RUNNER:-}" ] && [ -f "$BUS_RUNNER" ]; then
     if [ "$(count_running "$BUS_RUNNER")" -eq 0 ]; then
       echo "[supervisor] $(date '+%H:%M:%S') measurement bus is not running — relaunching"
       launch "$BUS_RUNNER"

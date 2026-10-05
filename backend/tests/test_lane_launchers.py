@@ -72,6 +72,7 @@ needs_machine = pytest.mark.skipif(
 # test_restock_refuses_a_lane_the_charter_does_not_name.
 @pytest.fixture(autouse=True)
 def _scratch_lane_charter(tmp_path_factory, monkeypatch):
+    monkeypatch.setenv("LANE_CONTROL_ROOT", str(tmp_path_factory.mktemp("fleet-control")))
     charter = tmp_path_factory.mktemp("charter") / "lane-ownership.json"
     charter.write_text('{"schema_version": 1, "lanes": {"demo": {"mode": "quality"}}}')
     monkeypatch.setenv("BL_LANE_POLICY", str(charter))
@@ -252,7 +253,7 @@ def test_start_lanes_does_not_decide_the_bus_with_pgrep():
     assert not bus_guard, f"the bus guard uses pgrep: {bus_guard}"
 
 
-def test_lanes_conf_names_the_nine_lanes_and_two_graders():
+def test_lanes_conf_names_the_lanes_and_one_default_reviewer():
     """The roster Alex asked for on 9/3, and the grader count the bus is written for."""
     names = [lane for lane, _ in real_lanes()]
     for expected in (
@@ -260,8 +261,8 @@ def test_lanes_conf_names_the_nine_lanes_and_two_graders():
         "calibration", "live", "authority", "native",
     ):
         assert expected in names, f"lanes.conf is missing lane '{expected}'"
-    assert int(source_conf('printf %s "$LANE4_GRADERS"')) >= 2, (
-        "the cert bus runs two graders (D44); one is a half-rate bus that looks healthy"
+    assert int(source_conf('printf %s "$LANE4_GRADERS"')) == 1, (
+        "one default reviewer avoids duplicate wakeups; extra reviewers are optional"
     )
 
 
@@ -314,8 +315,10 @@ def test_start_lanes_covers_the_real_roster_with_no_skips():
     # the checkout's own paths is a false red about nothing.
     runner = source_conf('printf %s "$LANE_RUNNER"')
     lane4 = source_conf('printf %s "$LANE4_RUNNER"')
-    expected = [f"{runner} {wt} {lane}" for lane, wt in real_lanes()]
-    expected += [lane4] * int(source_conf('printf %s "$LANE4_GRADERS"'))
+    expected = [f"{runner} {wt} {lane}" for lane, wt in real_lanes() if f"{lane}: already running" not in out]
+    snapshot = subprocess.check_output(['ps', '-axww', '-o', 'command='], text=True).splitlines()
+    existing = sum(line.strip() in (lane4, '/bin/bash ' + lane4) for line in snapshot)
+    expected += [lane4] * max(0, int(source_conf('printf %s "$LANE4_GRADERS"')) - existing)
     bus = source_conf('printf %s "${BUS_RUNNER:-}"')
     # The bus window is opened only when no bus is already running (the guard
     # added 2026-09-10 — two of them race on one bucket's artifacts). On this
@@ -2438,6 +2441,7 @@ def test_start_lanes_does_not_open_a_SECOND_supervisor(tmp_path):
         "--dry-run",
         env={
             "LANES_CONF": str(conf),
+            "LAUNCH_PS_SNAP": f"/bin/bash {sup}",
             "PATH": f"{stub_pgrep(tmp_path, found=True)}:{os.environ['PATH']}",
         },
     )
@@ -3240,7 +3244,9 @@ def test_real_daemon_adopts_carrier_before_taking_pending_work(tmp_path):
     repo.mkdir()
     script = repo / "lane-runner.sh"
     script.write_text(RUNNER.read_text())
-    (repo / "scripts").mkdir()
+    (repo / 'scripts').mkdir(exist_ok=True)
+    shutil.copyfile(REPO / 'scripts/lane_control.py', repo / 'scripts/lane_control.py')
+    (repo / "scripts").mkdir(exist_ok=True)
     (repo / "scripts" / "lane_ready_issue.py").write_text((REPO / "scripts" / "lane_ready_issue.py").read_text())
     # The selector has its own real contract gates. This daemon gate needs a
     # deterministic quality lane with no program, not host Python launch latency
@@ -3305,6 +3311,8 @@ def test_real_daemon_holds_due_work_when_startup_descriptor_is_unverified(tmp_pa
     repo.mkdir()
     script = repo / "lane-runner.sh"
     script.write_text(RUNNER.read_text())
+    (repo / 'scripts').mkdir(exist_ok=True)
+    shutil.copyfile(REPO / 'scripts/lane_control.py', repo / 'scripts/lane_control.py')
     for args in (("init", "-q"), ("add", "lane-runner.sh"),
                  ("-c", "user.name=Guard", "-c", "user.email=guard@example.test", "commit", "-qm", "initial")):
         subprocess.run(["git", "-C", str(repo), *args], check=True, capture_output=True)

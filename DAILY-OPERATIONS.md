@@ -1,3 +1,13 @@
+# Current daily operations — October 5, 2026
+
+Use [Fleet controls](docs/fleet-controls.md) for launching, status, persistent pause/resume and laptop-friendly capacity. Use [Product lanes and delivery](docs/lane-workflow.md) for current ownership and dispatch. These two documents supersede the historical launch instructions below, including manual Codex pastes, the four-window count, shared lane1/Integrator runner and "duplicates are harmless" claim.
+
+Start missing workers: `~/bainluck/start-lanes.sh`. Status: `~/bainluck/lanes.sh status`. Pause future work: `~/bainluck/lanes.sh pause all`. Resume: `~/bainluck/lanes.sh resume all`, then start missing workers. Active work finishes normally. Keep the current coordinator's user-action projection; do not create another backlog.
+
+---
+
+# Historical operating model (reference only)
+
 # Bain Luck — Daily Operations Runbook (Operating Model v5)
 
 Your entire job: check ONE file — `~/bainluck/YOUR-TURN.md` — and answer Fable
