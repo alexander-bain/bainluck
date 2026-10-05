@@ -128,6 +128,17 @@ enum ProjectedFinalPointsMount {
         return seriesInput(sourceKey)
     }
 
+    /// #10549 — the page's ONE projected-points decision (web #10539's
+    /// `useProjectedFinalPointsMount`). True only when `input` admitted a book
+    /// AND that book's series draws, so the chart that replaces the Score
+    /// Differential card is the chart the page actually renders. Every refusal
+    /// (sport, phase, provenance, no observed floor, nothing drawable) keeps the
+    /// differential: it is never hidden on the sport alone.
+    @MainActor
+    static func replacesScoreDifferential(_ input: ProjectedFinalPointsSeries.Input?) -> Bool {
+        input.flatMap(ProjectedFinalPointsSeries.build) != nil
+    }
+
     /// One served row's admission: the kind it is read as and the instant it
     /// is placed at (web `admitRow`). Explicit provenance decides whenever any
     /// of it is present; a row with none is recorded only when the admission

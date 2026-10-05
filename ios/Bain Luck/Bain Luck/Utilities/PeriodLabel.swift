@@ -355,6 +355,16 @@ enum PeriodLabel {
         return "\(n)\(ordinalSuffix(n))"
     }
 
+    /// #10549 — a football chip as VoiceOver should say it ("Q2" is read as
+    /// letters). Any other chip is spoken as drawn.
+    static func spoken(_ chip: String) -> String {
+        if chip == "HT" { return "Halftime" }
+        if chip == "OT" { return "Overtime" }
+        if chip.hasPrefix("OT"), let n = Int(chip.dropFirst(2)), n > 0 { return "\(n)\(ordinalSuffix(n)) overtime" }
+        if chip.hasPrefix("Q"), let n = Int(chip.dropFirst()), n > 0 { return "\(n)\(ordinalSuffix(n)) quarter" }
+        return chip
+    }
+
     static func ordinalSuffix(_ n: Int) -> String {
         let mod100 = n % 100
         if (11...13).contains(mod100) { return "th" }
