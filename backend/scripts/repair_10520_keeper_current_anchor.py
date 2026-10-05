@@ -29,98 +29,96 @@ WHAT IS WRITTEN
 
 One ``event_provider_anchors`` row: ``(odds_api, 1d13bd275c7b67b77bea8ff4d03850cc,
 game) -> 14969919``. Its ``claim_context`` names this tool, the issue and a
-per-invocation id that is minted ON THE OPERATOR'S HOST, inside a backup the host
-already holds before the database is touched.
+per-invocation id minted ON THE OPERATOR'S HOST inside a backup the host already
+holds before the database is touched. Nothing else is written: both ``events``
+rows, ``odds_snapshots`` and the existing anchors are read and locked, never
+changed.
 
-Nothing else is written. ``events`` (keeper and twin), ``odds_snapshots``, the
-incoming anchor 187393 and the official-fixture anchors are read, never changed.
+ADMISSION (every gate fails closed; one pure function serves every DB mode)
+--------------------------------------------------------------------------
 
-ADMISSION (every gate fails closed; the same pure function serves every DB mode)
--------------------------------------------------------------------------------
-
-* KEEPER: the row exists and its identity columns equal the retained evidence
-  exactly: sport 1326 (key ``soccer_usa_mls`` — not in the retained reads, so a
-  different key REFUSES rather than being guessed), teams 16/23, both names,
+* KEEPER: identity columns equal the retained evidence exactly — sport 1326
+  (``sports.key`` ``soccer_usa_mls``, NOT in the retained reads, so a different
+  key REFUSES rather than being guessed), teams 16/23, both names,
   ``external_id`` = the current Odds id, ``espn_id`` 761660,
   ``statpal_fixture_id`` 9163448, ``commence_time`` 2026-10-07T00:30Z. ``status`` is
-  banked, not fenced — a game going live does not change which game it is.
-* INCOMING: ``(odds_api, 0d9ff865…, game)`` exists, is row 187393 and is owned by
-  the keeper. A market/container anchor or another provider's row is not it.
-* OFFICIAL FIXTURE: ``(statpal, soccer:9163448, game)`` is row 295737, owned by
-  the keeper; ``(espn, 761660, game)`` is absent or owned by the keeper.
-* SURVIVOR (Authority's §5 item 1): the ordinary ``merge-duplicate-events`` drain
-  would elect the twin exactly when the twin carries an ``external_id`` and
-  ``odds_snapshots`` while the keeper has none. That state REFUSES and goes back to
-  Root; ``has_snaps`` is read with the drain's own predicate and recorded.
-* CURRENT: ``(odds_api, 1d13bd27…, game)`` absent -> CANDIDATE (the only state that
-  writes); owned by the keeper -> NOT_NEEDED (idempotent no-op, exit 0); owned by
-  any other row -> REFUSED. Never repointed.
+  banked, not fenced.
+* KNOWN TWIN 15324922 (Root's survivor amendment): PRESENT -> its sport, teams,
+  names, start, StatPal id, ``external_id`` = the incoming Odds id and its
+  ``provenance:duplicate-of:14969919`` tag must all still hold; ABSENT -> recorded
+  as ``known_twin: absent``, an explicit anchor-only branch that concludes
+  nothing about any replacement row. Presence must match the reviewed plan.
+* SURVIVOR (twin present only): ``odds_snapshots`` existence for both rows, read
+  with the drain's own predicate. Keeper without and twin with -> REFUSED (the
+  ordinary ``merge-duplicate-events`` election would keep the twin). This is what
+  the apply transaction OBSERVED; snapshots arriving after COMMIT can change a
+  later election, and nothing here schedules, forces or guarantees one.
+* INCOMING: ``(odds_api, 0d9ff865…, game)`` is row 187393 owned by the keeper.
+* OFFICIAL FIXTURE: ``(statpal, soccer:9163448, game)`` is row 295737 owned by the
+  keeper; ``(espn, 761660, game)`` is absent or owned by the keeper.
+* CURRENT: ``(odds_api, 1d13bd27…, game)`` absent -> CANDIDATE (the only state
+  that writes); keeper-owned -> NOT_NEEDED (exit 0); any other owner -> REFUSED.
 
-TRANSPORT: THE EXISTING ATTENDED EXECUTOR, NOT DYNO FILES
---------------------------------------------------------
+TRANSPORT: THE EXISTING ATTENDED EXECUTOR, PHASE-FRAMED
+-------------------------------------------------------
 
-A one-off dyno's filesystem dies with the dyno, so nothing this tool needs for
-recovery is ever kept only there. The channel is the one #9649 used
-(``APPROVED-B1-20261001.sh``): an attended ``heroku run --exit-code --no-tty``
-whose STDIN is a host file and whose STDOUT is captured to a no-clobber host
-file. So:
+The channel is the one #9649 used (``APPROVED-B1-20261001.sh``): an attended
+``heroku run --exit-code --no-tty`` with the host on both ends of the stream. A
+one-off dyno keeps nothing this procedure needs.
 
-* DATABASE modes (``--preflight``, ``--apply``, ``--restore``) run on the dyno,
-  read their one input bundle from STDIN, write nothing to disk, and print JSON
-  Lines to STDOUT — one canonical object per line, nothing else (logging and
-  warnings are captured into the final record, because attached ``heroku run``
-  merges dyno stderr into local stdout).
-* HOST modes (``--stage-plan``, ``--stage-apply``, ``--stage-restore``) run on the
-  operator's machine and REFUSE on a dyno (``DYNO`` set). They write the plan,
-  backup and input bundles with exclusive create + fsync + a detached
-  ``.sha256`` — retention on the host, where it is real.
+* DATABASE modes (``preflight``, ``apply``, ``restore``) run on the dyno, write no
+  files, read FRAMES from STDIN (one canonical JSON object per line) and print
+  JSON Lines to STDOUT — nothing else (logging and warnings are captured into the
+  final record because attached ``heroku run`` merges dyno stderr into stdout).
+* HOST modes (``stage-plan``, ``stage-apply``, ``drive-apply``, ``stage-restore``)
+  REFUSE on a dyno (``DYNO`` set) and write every artifact with exclusive create,
+  fsync, mode 0400 and a detached ``.sha256``.
 
-Every hash is SHA256 over an artifact's canonical bytes
-(``canonical_json(doc) + "\\n"``), which is exactly what the host file holds. A
-DB mode recomputes it from STDIN and refuses unless it equals the hash on its
-argv — so apply can only consume a plan the operator reviewed and a backup the
-operator already holds.
+THE PRE-COMMIT ACKNOWLEDGMENT. ``apply`` reads frame 1 (the host's apply bundle),
+writes inside one transaction, and prints the sealed ``created_row`` receipt
+(anchor id, ``first_seen_at``, key, owner, ``claim_context``). It then WAITS, at
+most ``ACK_TIMEOUT_S``, for frame 2: an acknowledgment naming that receipt's exact
+sha256 and the invocation id. ``drive-apply`` — the host side, a finite process
+that spawns the ``heroku run`` itself — sends it only after it has written the
+receipt to a host file, fsynced it and verified the bytes back. A missing, late,
+malformed or mismatched acknowledgment, or EOF, ROLLS BACK: no COMMIT is
+attempted. So a committed anchor implies a host-retained receipt.
 
-PHASES (each phase boundary is a person; nothing chains across one)
-------------------------------------------------------------------
+PHASES (each boundary is a person; nothing chains across one)
+------------------------------------------------------------
 
-1. ``--preflight`` (dyno, REPEATABLE READ READ ONLY) -> host ``preflight.jsonl``.
-2. ``--stage-plan`` (host) -> ``plan.json`` + sha. Review boundary.
-3. ``--stage-apply`` (host) -> ``backup.json`` (new invocation id) +
-   ``apply-input.json``, each with sha. Retention check on the host.
-4. ``--apply`` (dyno, STDIN = apply-input.json) -> host ``apply.jsonl``. One
-   bounded transaction: keeper ``FOR UPDATE``, sport + existing anchors
-   ``FOR SHARE``, admission, plan drift, ``record_anchor`` must answer ``WROTE``,
-   exact in-transaction read-back. Then — BEFORE COMMIT — the ``created_row``
-   record (anchor id, ``first_seen_at``, ``claim_context``) is written to STDOUT
-   and flushed. Then COMMIT, then a new-transaction verify. An ambiguous COMMIT is
-   classified from an exact-key read (absent NOT_APPLIED, this row APPLIED, else
-   COMMIT_UNKNOWN); it never re-applies.
-5. ``--stage-restore`` (host) -> ``restore-input.json`` = backup + the
-   ``created_row`` record from ``apply.jsonl``.
-6. ``--restore`` (dyno, STDIN = restore-input.json) deletes ONLY the row that
-   record names: same anchor id, same ``first_seen_at``, same key, owner and
-   ``claim_context``, repeated in the DELETE's own predicate. A recreated row with
-   copied context, a changed timestamp, a pre-existing or changed row: REFUSED and
-   left. Nothing at the key: NOT_APPLIED. A failed verify after the delete COMMIT
-   is COMMIT_UNKNOWN with the full evidence, never a generic runtime error.
-   Restoring re-opens #8278's refusal for the incoming id — run it only to undo.
+1. ``preflight`` (dyno, REPEATABLE READ READ ONLY) -> host ``preflight.jsonl``.
+2. ``stage-plan`` (host) -> ``plan.json``. Review + application approval naming
+   the plan sha happen HERE, after the read-only phase that creates it.
+3. ``stage-apply`` (host) -> ``backup.json`` (new invocation id) +
+   ``apply-input.json``. Retention check.
+4. ``drive-apply`` (host, spawns the dyno ``apply``) -> ``apply.jsonl`` +
+   ``created-row.json`` (fsynced BEFORE the acknowledgment, so before COMMIT).
+5. ``stage-restore`` (host) -> ``restore-input.json`` from the backup and the
+   retained ``created-row.json``.
+6. ``restore`` (dyno, STDIN = restore-input.json) deletes ONLY the row that
+   receipt names — same anchor id, ``first_seen_at``, key, owner and
+   ``claim_context``, also in the DELETE's predicate. Anything else: REFUSED and
+   left. Nothing at the key: NOT_APPLIED. A failed verify after its COMMIT is
+   COMMIT_UNKNOWN with the evidence.
 
-APPLIED means the anchor write was confirmed. ``step2_resolves_incoming_to`` is
-reported, not enforced; it is not a twin, natural-poll or reader claim.
+Every lost-stream or ambiguous outcome is COMMIT_UNKNOWN until one admitted
+exact-key read (``RECOVERY_READ_SQL``) classifies it; a missing output line is
+never evidence of no commit. APPLIED means the anchor write was confirmed;
+``step2_resolves_incoming_to`` is reported, not enforced.
 
 WHAT THIS DOES NOT DO
 ---------------------
 
-``events.external_id`` is unique and twin 15324922 holds ``0d9ff865…`` in its own
-column, so registry Step 1 keeps resolving that id to the twin while the twin
-exists. This anchor changes what happens AFTER the twin is gone: 187393 already
-names the keeper, so the next claim misses Step 1, reaches Step 2 and is rescued
-instead of minting a third row. Apply it before (or with) the twin's disposition.
-Twin disposition, natural-poll rescue and reader acceptance are separate.
+``events.external_id`` is unique and the known twin holds ``0d9ff865…`` in its own
+column, so registry Step 1 resolves that id to the twin while the twin exists.
+This anchor makes #8278's Step 2 able to resolve it to the keeper once the twin no
+longer holds it. Ordering it before the twin's disposition is a risk to disclose,
+not something this tool enforces. Twin disposition, survivor election, ordinary
+ingestion and reader acceptance are separate and unpaid.
 
-The operator packet (``artifacts/10520-keeper-anchor/APPLY-RESTORE-PACKET.md``)
-carries the exact commands. Running any phase needs Root's separate admission.
+The operator packet (``artifacts/10520-keeper-anchor/``) carries the exact commands.
+Running any phase needs Root's separate admission.
 Exit codes: 0 PLANNED / STAGED / APPLIED / NOT_NEEDED / RESTORED / restore
 NOT_APPLIED; 1 REFUSED; 2 usage; 3 COMMIT_UNKNOWN; 4 runtime harness error.
 """
@@ -138,7 +136,7 @@ import uuid
 import warnings
 from contextlib import asynccontextmanager
 from datetime import datetime, timezone
-from typing import Any, AsyncIterator, Callable
+from typing import Any, AsyncIterator, Callable, Optional, Protocol
 
 
 class _Captured(logging.Handler):
@@ -168,6 +166,7 @@ from app.services.anchor_channel import (  # noqa: E402
     CONFIRMED,
     WROTE,
     anchor_key_for_claim,
+    duplicate_tag,
     find_event_by_anchor,
     record_anchor,
 )
@@ -177,12 +176,13 @@ TOOL = "repair_10520_keeper_current_anchor"
 ISSUE = 10520
 PRODUCTION_APPS = frozenset({"bainluck"})
 
-PLAN_SCHEMA = "repair-10520-keeper-anchor-plan/v2"
-BACKUP_SCHEMA = "repair-10520-keeper-anchor-backup/v2"
-CREATED_ROW_SCHEMA = "repair-10520-keeper-anchor-created-row/v2"
-APPLY_INPUT_SCHEMA = "repair-10520-keeper-anchor-apply-input/v2"
-RESTORE_INPUT_SCHEMA = "repair-10520-keeper-anchor-restore-input/v2"
-RECORD_SCHEMA = "repair-10520-keeper-anchor-record/v2"
+PLAN_SCHEMA = "repair-10520-keeper-anchor-plan/v3"
+BACKUP_SCHEMA = "repair-10520-keeper-anchor-backup/v3"
+CREATED_ROW_SCHEMA = "repair-10520-keeper-anchor-created-row/v3"
+APPLY_INPUT_SCHEMA = "repair-10520-keeper-anchor-apply-input/v3"
+RESTORE_INPUT_SCHEMA = "repair-10520-keeper-anchor-restore-input/v3"
+ACK_SCHEMA = "repair-10520-keeper-anchor-host-ack/v3"
+RECORD_SCHEMA = "repair-10520-keeper-anchor-record/v3"
 ADDRESS_NAMESPACE = "bainluck:repair:10520:keeper-current-anchor"
 
 #: The retained evidence this population is pinned to (artifacts, read-only).
@@ -192,11 +192,11 @@ EVIDENCE = {
     "current_key_unowned": "artifacts/shopper/10520-second-anchor/q10520e (2026-10-05T10:21:21Z, "
                            "fingerprint 81ee2b22a8dd7b79)",
     "source_admission": "ROOT-OFFLINE-REPAIR-PREPARATION-BOUNDARY.md (20261005T082140Z-10520-59fb43)",
-    "survivor_input": "artifacts/10520-keeper-anchor/AUTHORITY-SURVIVOR-IDENTITY-DISPOSITION.md §5",
+    "survivor_admission": "artifacts/10520-keeper-anchor/ROOT-SURVIVOR-PREPARATION-AMENDMENT.md",
 }
 
 KEEPER_ID = 14969919
-TWIN_ID = 15324922  # read (presence, external_id, has_snaps) for the survivor gate; never written
+TWIN_ID = 15324922
 CURRENT_ODDS_ID = "1d13bd275c7b67b77bea8ff4d03850cc"
 INCOMING_ODDS_ID = "0d9ff865c4599c72a746da08260279b3"
 INCOMING_ANCHOR_ID = 187393
@@ -204,19 +204,22 @@ STATPAL_ANCHOR_ID = 295737
 
 SPORT_KEY = "soccer_usa_mls"
 
-#: The keeper's identity columns, exactly as the retained rows carry them.
-IDENTITY = {
+_FIXTURE = {
     "sport_id": 1326,
     "home_team_id": 16,
     "away_team_id": 23,
     "home_team_name": "Chicago Fire",
     "away_team_name": "Vancouver Whitecaps FC",
-    "external_id": CURRENT_ODDS_ID,
-    "espn_id": "761660",
     "statpal_fixture_id": "9163448",
     "commence_time": "2026-10-07T00:30:00+00:00",
 }
+#: The keeper's identity columns, exactly as the retained rows carry them.
+IDENTITY = {**_FIXTURE, "external_id": CURRENT_ODDS_ID, "espn_id": "761660"}
 FENCED_COLUMNS = tuple(IDENTITY)
+#: The known twin's, from the same retained reads (q10520a/b).
+TWIN_IDENTITY = {**_FIXTURE, "external_id": INCOMING_ODDS_ID}
+TWIN_FENCED_COLUMNS = tuple(TWIN_IDENTITY)
+TWIN_TAG = duplicate_tag(KEEPER_ID)
 
 #: Every key is built by the channel's own key function — never hand-formatted.
 CURRENT_KEY = anchor_key_for_claim("odds_api", CURRENT_ODDS_ID)
@@ -226,8 +229,19 @@ ESPN_KEY = anchor_key_for_claim("espn", IDENTITY["espn_id"])
 ANCHOR_KEYS = {"current": CURRENT_KEY, "incoming": INCOMING_KEY,
                "statpal": STATPAL_KEY, "espn": ESPN_KEY}
 
+#: The one exact-key read that classifies any ambiguous outcome. Running it needs
+#: its own admission; it is printed in every COMMIT_UNKNOWN record.
+RECOVERY_READ_SQL = (
+    "SELECT a.id, a.event_id, a.source, a.source_id, a.id_kind, a.first_seen_at, a.claim_context "
+    "FROM event_provider_anchors a WHERE a.source = 'odds_api' "
+    f"AND a.source_id = '{CURRENT_ODDS_ID}' AND a.id_kind = 'game' LIMIT 2"
+)
+
 LOCK_TIMEOUT_MS = 5000
 STATEMENT_TIMEOUT_MS = 10000
+FRAME_TIMEOUT_S = 60.0
+ACK_TIMEOUT_S = 60.0
+MAX_FRAME_BYTES = 1_000_000
 
 PLANNED, STAGED, APPLIED, NOT_NEEDED = "PLANNED", "STAGED", "APPLIED", "NOT_NEEDED"
 NOT_APPLIED, RESTORED, REFUSED, COMMIT_UNKNOWN = "NOT_APPLIED", "RESTORED", "REFUSED", "COMMIT_UNKNOWN"
@@ -270,7 +284,7 @@ def canonical_json(obj: Any) -> str:
 
 
 def artifact_bytes(doc: dict) -> bytes:
-    """Exactly what a host artifact file holds, and what its hash is taken over."""
+    """Exactly what a host artifact file holds, what a frame carries, and what a hash covers."""
     return (canonical_json(doc) + "\n").encode("utf-8")
 
 
@@ -318,26 +332,51 @@ def require_hash(doc: dict, expected: str, what: str) -> str:
     return want
 
 
+def parse_frame(raw: Optional[bytes], what: str) -> dict:
+    """One frame = one canonical JSON object terminated by a newline, nothing else."""
+    if raw is None or raw == b"":
+        raise Refused(f"{what}_eof")
+    try:
+        doc = json.loads(raw.decode("utf-8"))
+    except (UnicodeDecodeError, ValueError) as exc:
+        raise Refused(f"{what}_not_json", f"{type(exc).__name__}: {str(exc)[:120]}") from exc
+    if not isinstance(doc, dict) or artifact_bytes(doc) != raw:
+        raise Refused(f"{what}_not_canonical")
+    return doc
+
+
 def _owned(anchor: dict | None) -> dict | None:
     return None if anchor is None else {"id": anchor["id"], "event_id": anchor["event_id"]}
 
 
 # --- pure: admission ----------------------------------------------------------------
 
-def twin_would_survive(survivor: dict) -> bool:
-    """Authority §5 item 1: the drain's election (``sports.py`` keep_a/keep_b) picks
-    the twin only when the twin has an ``external_id`` AND snapshots and the keeper
-    (whose ``external_id`` is fenced non-null) has no snapshots."""
-    twin = survivor.get("twin") or {}
-    return bool(
-        twin.get("present") and twin.get("external_id") is not None
-        and twin.get("has_snaps") and not survivor.get("keeper_has_snaps")
-    )
+def twin_state_of(twin: dict | None) -> dict:
+    """The known twin as admission sees it: absent is its own branch, never 'no snapshots'."""
+    if twin is None:
+        return {"id": TWIN_ID, "known_twin": "absent"}
+    tags = twin.get("event_tags") or []
+    return {
+        "id": TWIN_ID,
+        "known_twin": "present",
+        "identity": {c: canon(twin.get(c)) for c in TWIN_FENCED_COLUMNS},
+        "duplicate_tag": TWIN_TAG if TWIN_TAG in tags else None,
+    }
+
+
+def twin_would_survive(keeper_has_snaps: bool, twin_has_snaps: Optional[bool]) -> bool:
+    """The drain (``sports.py`` keep_a/keep_b) elects the twin only when it has snapshots
+    and the keeper (whose ``external_id`` is fenced non-null) has none."""
+    return bool(twin_has_snaps) and not keeper_has_snaps
 
 
 def admit(keeper: dict | None, sport_key: Any, anchors: dict[str, dict | None],
-          survivor: dict) -> dict:
-    """Every gate, in order -> ``{"state": CANDIDATE|NOT_NEEDED, ...}``, or Refused."""
+          twin: dict | None, snaps: dict) -> dict:
+    """Every gate, in order -> ``{"state": CANDIDATE|NOT_NEEDED, ...}``, or Refused.
+
+    ``snaps``: ``{"keeper_has_snaps": bool, "twin_has_snaps": bool | None}`` — the
+    twin's is None exactly when the twin is absent (it was not read).
+    """
     if keeper is None:
         raise Refused("keeper_missing", {"event_id": KEEPER_ID})
     observed = {c: canon(keeper.get(c)) for c in FENCED_COLUMNS}
@@ -347,6 +386,20 @@ def admit(keeper: dict | None, sport_key: Any, anchors: dict[str, dict | None],
                       {c: {"expected": IDENTITY[c], "observed": observed[c]} for c in changed})
     if sport_key != SPORT_KEY:
         raise Refused("keeper_sport_key_changed", {"expected": SPORT_KEY, "observed": sport_key})
+
+    twin_state = twin_state_of(twin)
+    if twin_state["known_twin"] == "present":
+        moved = [c for c in TWIN_FENCED_COLUMNS if twin_state["identity"][c] != TWIN_IDENTITY[c]]
+        if moved:
+            raise Refused("known_twin_identity_changed:" + ",".join(moved),
+                          {c: {"expected": TWIN_IDENTITY[c], "observed": twin_state["identity"][c]}
+                           for c in moved})
+        if twin_state["duplicate_tag"] is None:
+            raise Refused("known_twin_duplicate_tag_absent", {"expected": TWIN_TAG})
+        if snaps.get("twin_has_snaps") is None:
+            raise Refused("known_twin_snapshots_unread")
+    elif snaps.get("twin_has_snaps") is not None:
+        raise Refused("absent_twin_cannot_have_snapshot_evidence")
 
     for name, row in anchors.items():
         if row is not None and (row.get("source"), row.get("source_id"), row.get("id_kind")) != (
@@ -371,8 +424,8 @@ def admit(keeper: dict | None, sport_key: Any, anchors: dict[str, dict | None],
     if espn is not None and espn["event_id"] != KEEPER_ID:
         raise Refused("official_espn_anchor_owned_elsewhere", _owned(espn))
 
-    if twin_would_survive(survivor):
-        raise Refused("drain_would_elect_twin_return_to_root", canon_safe(survivor))
+    if twin_would_survive(bool(snaps.get("keeper_has_snaps")), snaps.get("twin_has_snaps")):
+        raise Refused("drain_would_elect_twin_return_to_root", canon_safe(snaps))
 
     cur = anchors.get("current")
     if cur is not None and cur["event_id"] != KEEPER_ID:
@@ -386,14 +439,20 @@ def admit(keeper: dict | None, sport_key: Any, anchors: dict[str, dict | None],
         "sport_key": sport_key,
         "status_banked": keeper.get("status"),
         "anchors": {name: _owned(anchors.get(name)) for name in ANCHOR_KEYS},
-        "survivor_banked": canon(survivor),
+        "twin_state": twin_state,
+        "survivor_observed": {
+            **canon(snaps),
+            "limit": "observed in this transaction only; later snapshots can change a later election",
+        },
     }
 
 
 #: What must still hold at apply that the plan observed. ``status_banked`` and
-#: ``survivor_banked`` are recorded, not fenced: snapshots arrive continually, and
-#: the survivor gate is re-judged on its own inside the apply transaction.
-_DRIFT_FIELDS = ("identity", "sport_key", "anchors")
+#: ``survivor_observed`` are recorded, not fenced: snapshots arrive continually, and
+#: the survivor gate is re-judged on its own inside the apply transaction. The
+#: twin's presence and identity ARE fenced: a twin that appeared or vanished since
+#: review is not the reviewed pair.
+_DRIFT_FIELDS = ("identity", "sport_key", "anchors", "twin_state")
 
 
 def plan_drift(plan: dict, now: dict) -> list[str]:
@@ -430,6 +489,19 @@ def row_is_the_created_row(row: dict | None, created: dict) -> list[str]:
     return [f for f in _ROW_FIELDS if canon(row.get(f)) != created.get(f)]
 
 
+def ack_for(receipt: dict) -> dict:
+    """The host's acknowledgment frame for a retained receipt."""
+    return {"schema": ACK_SCHEMA, "ack": "created_row_retained",
+            "invocation_id": receipt["invocation_id"], "receipt_sha256": artifact_sha256(receipt)}
+
+
+def check_ack(raw: Optional[bytes], receipt: dict) -> None:
+    """Frame 2 must name exactly this receipt's bytes and invocation, or nothing commits."""
+    doc = parse_frame(raw, "host_ack")
+    if doc != ack_for(receipt):
+        raise Refused("host_ack_mismatch", {"got": canon_safe(doc), "want": ack_for(receipt)})
+
+
 # --- host-side artifacts ------------------------------------------------------------
 
 _fsync = os.fsync  # module seam
@@ -451,6 +523,14 @@ def _require_new_absolute(path: str, what: str) -> None:
         raise Refused(f"{what}_directory_missing", os.path.dirname(path))
 
 
+def _fsync_dir(path: str) -> None:
+    dfd = os.open(os.path.dirname(path), os.O_RDONLY)
+    try:
+        _fsync(dfd)
+    finally:
+        os.close(dfd)
+
+
 def _write_once(path: str, data: bytes) -> None:
     fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
     try:
@@ -461,27 +541,32 @@ def _write_once(path: str, data: bytes) -> None:
     finally:
         os.close(fd)
     os.chmod(path, 0o400)
-    dfd = os.open(os.path.dirname(path), os.O_RDONLY)
-    try:
-        _fsync(dfd)
-    finally:
-        os.close(dfd)
+    _fsync_dir(path)
 
 
 def write_host_artifact(path: str, doc: dict, what: str) -> dict:
-    """Exclusive, fsynced, read-only canonical JSON + detached ``<path>.sha256``."""
+    """Exclusive, fsynced, read-only canonical JSON + detached ``<path>.sha256``, read back."""
     _require_new_absolute(path, what)
     data = artifact_bytes(doc)
     digest = hashlib.sha256(data).hexdigest()
     try:
         _write_once(path, data)
         _write_once(path + ".sha256", f"{digest}  {os.path.basename(path)}\n".encode())
+        with open(path, "rb") as fh:
+            back = fh.read()
     except OSError as exc:
         raise Refused(f"{what}_durability_failed", f"{type(exc).__name__}: {exc}") from exc
-    with open(path, "rb") as fh:
-        if hashlib.sha256(fh.read()).hexdigest() != digest:
-            raise Refused(f"{what}_readback_mismatch", path)
+    if hashlib.sha256(back).hexdigest() != digest:
+        raise Refused(f"{what}_readback_mismatch", path)
     return {"path": path, "sha256": digest}
+
+
+def sidecar_hash(path: str, what: str) -> str:
+    try:
+        with open(path + ".sha256", "r", encoding="utf-8") as fh:
+            return fh.read().split()[0]
+    except (OSError, IndexError) as exc:
+        raise Refused(f"{what}_sidecar_unreadable", f"{type(exc).__name__}: {exc}") from exc
 
 
 def read_host_artifact(path: str, expected_hash: str, schema: str, what: str) -> dict:
@@ -493,11 +578,9 @@ def read_host_artifact(path: str, expected_hash: str, schema: str, what: str) ->
             data = fh.read()
         with open(path + ".sha256", "r", encoding="utf-8") as fh:
             sidecar = fh.read().split()
-        doc = json.loads(data)
-    except (OSError, ValueError) as exc:
+    except OSError as exc:
         raise Refused(f"{what}_unreadable", f"{type(exc).__name__}: {exc}") from exc
-    if not isinstance(doc, dict) or artifact_bytes(doc) != data:
-        raise Refused(f"{what}_not_canonical", path)
+    doc = parse_frame(data, what)
     want = require_hash(doc, expected_hash, what)
     if sidecar[:2] != [want, os.path.basename(path)]:
         raise Refused(f"{what}_sidecar_mismatch", sidecar)
@@ -505,7 +588,7 @@ def read_host_artifact(path: str, expected_hash: str, schema: str, what: str) ->
 
 
 def read_jsonl(path: str, what: str) -> list[dict]:
-    """A DB mode's captured STDOUT: every line must be one JSON object, nothing else."""
+    """A DB mode's captured STDOUT: every line must be one of this tool's records."""
     try:
         with open(path, "rb") as fh:
             lines = fh.read().decode("utf-8").splitlines()
@@ -533,9 +616,36 @@ def _utcnow() -> str:
     return datetime.now(timezone.utc).isoformat()
 
 
-# --- records (the only thing a DB mode writes to STDOUT) ---------------------------
+# --- frames in, records out ----------------------------------------------------------
 
 Emit = Callable[[dict], None]
+
+
+class Frames(Protocol):
+    async def line(self, timeout_s: float) -> Optional[bytes]:
+        """The next newline-terminated frame, ``None`` at EOF; raises TimeoutError."""
+
+
+class StdinFrames:
+    """STDIN as frames. A read is bounded by ``timeout_s``; the reader thread that
+    outlives a timeout is abandoned with the process, which has already rolled back."""
+
+    async def line(self, timeout_s: float) -> Optional[bytes]:
+        stream = getattr(sys.stdin, "buffer", None)
+        if stream is None:
+            return None
+        raw = await asyncio.wait_for(asyncio.to_thread(stream.readline, MAX_FRAME_BYTES + 1), timeout_s)
+        return raw or None
+
+
+async def _frame(frames: Frames, timeout_s: float, what: str) -> dict:
+    try:
+        raw = await asyncio.wait_for(frames.line(timeout_s), timeout_s)
+    except (asyncio.TimeoutError, TimeoutError) as exc:
+        raise Refused(f"{what}_timeout", {"timeout_s": timeout_s}) from exc
+    if raw is not None and len(raw) > MAX_FRAME_BYTES:
+        raise Refused(f"{what}_oversize")
+    return parse_frame(raw, what)
 
 
 def stdout_emit(record: dict) -> None:
@@ -556,6 +666,8 @@ def _result(mode: str, state: str, *, reason: str | None = None, detail: Any = N
         out["reason"] = reason
     if detail is not None:
         out["detail"] = canon_safe(detail)
+    if state == COMMIT_UNKNOWN:
+        out["recovery_read_sql"] = RECOVERY_READ_SQL
     out.update(canon_safe(extra))
     return out
 
@@ -569,6 +681,8 @@ def _db_reason(exc: BaseException) -> str:
         return "lock_timeout"
     if code == "57014":
         return "statement_timeout"
+    if code == "40P01":
+        return "deadlock_detected"
     return f"db_error:{type(exc).__name__}"
 
 
@@ -576,14 +690,22 @@ def _err(exc: BaseException) -> str:
     return f"{type(exc).__name__}: {str(exc)[:160]}"
 
 
+def _finish(emit: Emit, result: dict) -> dict:
+    if CAPTURED.lines:
+        result["log"] = list(CAPTURED.lines)
+    emit(result)
+    return result
+
+
 # --- SQL (exact ids and exact keys only) ------------------------------------------
 
-_KEEPER_COLS = ", ".join(FENCED_COLUMNS) + ", status"
-_KEEPER = text(f"/* r10520:KEEPER */ SELECT id, {_KEEPER_COLS} FROM events WHERE id = :eid")
-_KEEPER_LOCK = text(_KEEPER.text.replace("r10520:KEEPER", "r10520:KEEPER_LOCK") + " FOR UPDATE")
+_PAIR_COLS = ", ".join(dict.fromkeys(("id", *FENCED_COLUMNS, "status", "event_tags")))
+#: Both rows of the fixed pair, in ascending id order — the order the drain's own
+#: ``WHERE id IN (keep, orphan) FOR UPDATE`` takes on its primary-key scan.
+_PAIR = text(f"/* r10520:PAIR */ SELECT {_PAIR_COLS} FROM events WHERE id IN (:kid, :tid) ORDER BY id")
+_PAIR_LOCK = text(_PAIR.text.replace("r10520:PAIR", "r10520:PAIR_LOCK") + " FOR UPDATE")
 _SPORT = text("/* r10520:SPORT */ SELECT key FROM sports WHERE id = :sid")
 _SPORT_LOCK = text(_SPORT.text.replace("r10520:SPORT", "r10520:SPORT_LOCK") + " FOR SHARE")
-_TWIN = text("/* r10520:TWIN */ SELECT id, external_id FROM events WHERE id = :tid")
 #: The drain's own predicate (``sports.py`` merge_duplicate_events, has_snaps_a/b).
 _HAS_SNAPS = text(
     "/* r10520:SNAPS */ SELECT EXISTS(SELECT 1 FROM odds_snapshots WHERE event_id = :eid LIMIT 1) AS has_snaps"
@@ -605,17 +727,19 @@ _DELETE = text(
 
 async def _rows(session, stmt, params: dict) -> list[dict]:
     result = await session.execute(stmt, params)
-    return [dict(r) for r in result.mappings().all()]
+    rows = [dict(r) for r in result.mappings().all()]
+    for row in rows:
+        for col in ("claim_context", "event_tags"):
+            if isinstance(row.get(col), str):
+                row[col] = json.loads(row[col])
+    return rows
 
 
 async def _one(session, stmt, params: dict) -> dict | None:
     rows = await _rows(session, stmt, params)
     if len(rows) > 1:
         raise Refused("exact_read_not_unique", {"rows": len(rows)})
-    row = rows[0] if rows else None
-    if row is not None and isinstance(row.get("claim_context"), str):
-        row["claim_context"] = json.loads(row["claim_context"])
-    return row
+    return rows[0] if rows else None
 
 
 async def _read_anchor(session, key, *, stmt=_ANCHOR) -> dict | None:
@@ -623,7 +747,9 @@ async def _read_anchor(session, key, *, stmt=_ANCHOR) -> dict | None:
 
 
 async def _read_all(session, *, lock: bool) -> tuple:
-    keeper = await _one(session, _KEEPER_LOCK if lock else _KEEPER, {"eid": KEEPER_ID})
+    pair = {r["id"]: r for r in await _rows(session, _PAIR_LOCK if lock else _PAIR,
+                                            {"kid": KEEPER_ID, "tid": TWIN_ID})}
+    keeper, twin = pair.get(KEEPER_ID), pair.get(TWIN_ID)
     sport_key = None
     if keeper is not None and keeper.get("sport_id") is not None:
         sport = await _one(session, _SPORT_LOCK if lock else _SPORT, {"sid": keeper["sport_id"]})
@@ -634,18 +760,11 @@ async def _read_all(session, *, lock: bool) -> tuple:
         # lock, and the unique index arbitrates any concurrent insert.
         locking = lock and name != "current"
         anchors[name] = await _read_anchor(session, key, stmt=_ANCHOR_LOCK if locking else _ANCHOR)
-    # Never locked: the drain locks both rows FOR UPDATE and must not wait on us.
-    twin = await _one(session, _TWIN, {"tid": TWIN_ID})
-    survivor = {
-        "keeper_has_snaps": bool((await _one(session, _HAS_SNAPS, {"eid": KEEPER_ID}))["has_snaps"]),
-        "twin": {
-            "id": TWIN_ID,
-            "present": twin is not None,
-            "external_id": twin.get("external_id") if twin else None,
-            "has_snaps": bool((await _one(session, _HAS_SNAPS, {"eid": TWIN_ID}))["has_snaps"]),
-        },
-    }
-    return keeper, sport_key, anchors, survivor
+    snaps = {"keeper_has_snaps": bool((await _one(session, _HAS_SNAPS, {"eid": KEEPER_ID}))["has_snaps"]),
+             "twin_has_snaps": None}
+    if twin is not None:
+        snaps["twin_has_snaps"] = bool((await _one(session, _HAS_SNAPS, {"eid": TWIN_ID}))["has_snaps"])
+    return keeper, sport_key, anchors, twin, snaps
 
 
 async def _set_timeouts(session, lock_ms: int, stmt_ms: int) -> None:
@@ -665,31 +784,24 @@ async def run_preflight(session_factory: SessionFactory, *, emit: Emit = stdout_
         async with session_factory() as session:
             try:
                 await session.execute(text("SET TRANSACTION ISOLATION LEVEL REPEATABLE READ, READ ONLY"))
-                keeper, sport_key, anchors, survivor = await _read_all(session, lock=False)
+                keeper, sport_key, anchors, twin, snaps = await _read_all(session, lock=False)
             finally:
                 await session.rollback()
-        body = admit(keeper, sport_key, anchors, survivor)
+        body = admit(keeper, sport_key, anchors, twin, snaps)
     except Refused as exc:
         return _finish(emit, _result("preflight", REFUSED, reason=exc.reason, detail=exc.detail))
     if body["state"] == NOT_NEEDED:
         return _finish(emit, _result("preflight", NOT_NEEDED, reason="current_key_already_keepers",
-                                     anchors=body["anchors"]))
+                                     anchors=body["anchors"], twin_state=body["twin_state"]))
     body.update({"evidence": EVIDENCE, "pins": tool_pin(), "planned_at": clock()})
     plan = seal(PLAN_SCHEMA, body)
     return _finish(emit, _result("preflight", PLANNED, plan=plan, plan_sha256=artifact_sha256(plan)))
 
 
-def _finish(emit: Emit, result: dict) -> dict:
-    if CAPTURED.lines:
-        result["log"] = list(CAPTURED.lines)
-    emit(result)
-    return result
-
-
 # --- phases 2, 3, 5: host staging --------------------------------------------------
 
 def stage_plan(*, preflight_output: str, plan_out: str, env: dict) -> dict:
-    """Extract the reviewed plan from the captured preflight STDOUT onto the host."""
+    """Extract the plan from the captured preflight STDOUT onto the host, for review."""
     try:
         refuse_on_dyno(env)
         final = read_jsonl(preflight_output, "preflight_output")[-1]
@@ -701,13 +813,12 @@ def stage_plan(*, preflight_output: str, plan_out: str, env: dict) -> dict:
     except Refused as exc:
         return _result("stage-plan", REFUSED, reason=exc.reason, detail=exc.detail)
     return _result("stage-plan", STAGED, plan=written, review={
-        "state": plan["state"], "identity": plan["identity"], "anchors": plan["anchors"],
-        "survivor_banked": plan["survivor_banked"], "sport_key": plan["sport_key"]})
+        k: plan[k] for k in ("state", "identity", "sport_key", "anchors", "twin_state", "survivor_observed")})
 
 
 def stage_apply(*, plan_path: str, plan_hash: str, backup_out: str, bundle_out: str, env: dict,
                 clock: Callable[[], str] = _utcnow) -> dict:
-    """Mint the invocation on the host: backup + the apply STDIN bundle, both retained here."""
+    """Mint the invocation on the host: backup + the apply bundle (frame 1), both retained here."""
     try:
         refuse_on_dyno(env)
         plan = read_host_artifact(plan_path, plan_hash, PLAN_SCHEMA, "plan")
@@ -716,7 +827,8 @@ def stage_apply(*, plan_path: str, plan_hash: str, backup_out: str, bundle_out: 
         invocation_id = str(uuid.uuid4())
         backup = seal(BACKUP_SCHEMA, {
             "keeper_id": KEEPER_ID, "write": WRITE_SCOPE,
-            "pre_state": {"current_key_row": None, "anchors": plan["anchors"], "identity": plan["identity"]},
+            "pre_state": {"current_key_row": None, "anchors": plan["anchors"], "identity": plan["identity"],
+                          "twin_state": plan["twin_state"]},
             "invocation_id": invocation_id,
             "claim_context": claim_context_for(invocation_id, plan["content_address"]),
             "plan": {"sha256": artifact_sha256(plan), "content_address": plan["content_address"]},
@@ -733,27 +845,6 @@ def stage_apply(*, plan_path: str, plan_hash: str, backup_out: str, bundle_out: 
                        "--plan-hash": artifact_sha256(plan), "--backup-hash": backup_file["sha256"]})
 
 
-def stage_restore(*, backup_path: str, backup_hash: str, apply_output: str, bundle_out: str,
-                  env: dict) -> dict:
-    """Bind the backup to the ``created_row`` record the apply printed before COMMIT."""
-    try:
-        refuse_on_dyno(env)
-        backup = read_host_artifact(backup_path, backup_hash, BACKUP_SCHEMA, "backup")
-        created = [r for r in read_jsonl(apply_output, "apply_output") if r.get("record") == "created_row"]
-        if len(created) != 1:
-            raise Refused("apply_output_created_row_count", {"count": len(created)})
-        receipt = created_row_receipt_binds(created[0]["receipt"], backup, backup_hash)
-        bundle = seal(RESTORE_INPUT_SCHEMA, {"keeper_id": KEEPER_ID, "write": WRITE_SCOPE,
-                                             "backup": backup, "created_row_receipt": receipt})
-        bundle_file = write_host_artifact(bundle_out, bundle, "restore_input")
-    except Refused as exc:
-        return _result("stage-restore", REFUSED, reason=exc.reason, detail=exc.detail)
-    return _result("stage-restore", STAGED, restore_input=bundle_file,
-                   created_row=receipt["created_row"], restore_argv={
-                       "--backup-hash": artifact_sha256(backup),
-                       "--receipt-hash": artifact_sha256(receipt)})
-
-
 def created_row_receipt_binds(receipt: Any, backup: dict, backup_hash: str) -> dict:
     receipt = check_sealed(receipt, CREATED_ROW_SCHEMA, "created_row_receipt")
     if receipt.get("invocation_id") != backup["invocation_id"] or \
@@ -767,17 +858,124 @@ def created_row_receipt_binds(receipt: Any, backup: dict, backup_hash: str) -> d
     return receipt
 
 
-# --- phase 4: apply (dyno) ---------------------------------------------------------
-
-def _parse_bundle(raw: bytes, schema: str) -> dict:
+def stage_restore(*, backup_path: str, backup_hash: str, receipt_path: str, receipt_hash: str,
+                  bundle_out: str, env: dict) -> dict:
+    """Bind the backup to the receipt ``drive-apply`` retained before it acknowledged."""
     try:
-        doc = json.loads(raw.decode("utf-8"))
-    except (UnicodeDecodeError, ValueError) as exc:
-        raise Refused("stdin_not_json", _err(exc)) from exc
-    if not isinstance(doc, dict) or artifact_bytes(doc) != raw:
-        raise Refused("stdin_not_the_canonical_host_file")
-    return check_sealed(doc, schema, "stdin_bundle")
+        refuse_on_dyno(env)
+        backup = read_host_artifact(backup_path, backup_hash, BACKUP_SCHEMA, "backup")
+        receipt = read_host_artifact(receipt_path, receipt_hash, CREATED_ROW_SCHEMA, "created_row_receipt")
+        receipt = created_row_receipt_binds(receipt, backup, backup_hash)
+        bundle = seal(RESTORE_INPUT_SCHEMA, {"keeper_id": KEEPER_ID, "write": WRITE_SCOPE,
+                                             "backup": backup, "created_row_receipt": receipt})
+        bundle_file = write_host_artifact(bundle_out, bundle, "restore_input")
+    except Refused as exc:
+        return _result("stage-restore", REFUSED, reason=exc.reason, detail=exc.detail)
+    return _result("stage-restore", STAGED, restore_input=bundle_file,
+                   created_row=receipt["created_row"], restore_argv={
+                       "--backup-hash": artifact_sha256(backup),
+                       "--receipt-hash": artifact_sha256(receipt)})
 
+
+# --- phase 4 host side: drive-apply ------------------------------------------------
+
+#: The attended executor command. The CLI can only drive THIS; tests drive a local child.
+HEROKU_PREFIX = ("heroku", "run", "--exit-code", "--no-tty", "-a", "bainluck", "--",
+                 "python3", "scripts/repair_10520_keeper_current_anchor.py")
+
+
+async def drive_apply(*, apply_input: str, plan_hash: str, backup_hash: str, output: str,
+                      receipt_out: str, env: dict, prefix: tuple = HEROKU_PREFIX,
+                      child_env: Optional[dict] = None, overall_timeout_s: float = 900.0) -> dict:
+    """Run the dyno ``apply`` as a child; retain its receipt on this host, THEN acknowledge.
+
+    Every STDOUT line of the child is appended to ``output`` and fsynced as it
+    arrives. On the ``created_row`` record for this backup's invocation, the
+    receipt is written to ``receipt_out`` (exclusive, fsync, sidecar, read back)
+    and only then is the acknowledgment frame written to the child's STDIN. Any
+    failure on this side sends no acknowledgment, and the child rolls back.
+    """
+    ack_sent = False
+    receipt_file = None
+    try:
+        refuse_on_dyno(env)
+        bundle = read_host_artifact(apply_input, sidecar_hash(apply_input, "apply_input"),
+                                    APPLY_INPUT_SCHEMA, "apply_input")
+        plan_hash = require_hash(check_sealed(bundle["plan"], PLAN_SCHEMA, "plan"), plan_hash, "plan")
+        backup = check_sealed(bundle["backup"], BACKUP_SCHEMA, "backup")
+        backup_hash = require_hash(backup, backup_hash, "backup")
+        _require_new_absolute(output, "output")
+        _require_new_absolute(receipt_out, "receipt")
+    except Refused as exc:
+        return _result("drive-apply", REFUSED, reason=exc.reason, detail=exc.detail)
+
+    argv = [*prefix, "--only", str(KEEPER_ID), "--mode", "apply",
+            "--plan-hash", plan_hash, "--backup-hash", backup_hash]
+    proc = await asyncio.create_subprocess_exec(
+        *argv, stdin=asyncio.subprocess.PIPE, stdout=asyncio.subprocess.PIPE,
+        stderr=asyncio.subprocess.PIPE, env=child_env, limit=MAX_FRAME_BYTES * 2)
+    fd = os.open(output, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+    records: list[dict] = []
+    stderr_task = asyncio.ensure_future(proc.stderr.read())
+    try:
+        proc.stdin.write(artifact_bytes(bundle))
+        await proc.stdin.drain()
+
+        async def pump() -> None:
+            nonlocal ack_sent, receipt_file
+            while True:
+                line = await proc.stdout.readline()
+                if not line:
+                    return
+                os.write(fd, line)
+                _fsync(fd)
+                try:
+                    record = json.loads(line)
+                except ValueError:
+                    continue  # retained raw; never parsed into a decision
+                if isinstance(record, dict):
+                    records.append(record)
+                if isinstance(record, dict) and record.get("record") == "created_row" and not ack_sent:
+                    try:
+                        receipt = created_row_receipt_binds(record.get("receipt"), backup, backup_hash)
+                        receipt_file = write_host_artifact(receipt_out, receipt, "receipt")
+                        proc.stdin.write(artifact_bytes(ack_for(receipt)))
+                        await proc.stdin.drain()
+                        ack_sent = True
+                    except Exception as exc:  # no acknowledgment: the child rolls back
+                        records.append(_record("host_note", {"ack_withheld": _err(exc)}))
+                    finally:
+                        proc.stdin.close()
+
+        await asyncio.wait_for(pump(), overall_timeout_s)
+        if not proc.stdin.is_closing():
+            proc.stdin.close()
+        child_exit = await asyncio.wait_for(proc.wait(), 60)
+    except (asyncio.TimeoutError, TimeoutError, OSError, ValueError) as exc:
+        proc.kill()
+        child_exit = None
+        records.append(_record("host_note", {"driver_error": _err(exc)}))
+    finally:
+        _fsync(fd)
+        os.close(fd)
+        os.chmod(output, 0o400)
+        _fsync_dir(output)
+    stderr = await stderr_task
+    with open(output + ".stderr", "wb") as fh:
+        fh.write(stderr)
+        fh.flush()
+        _fsync(fh.fileno())
+    final = next((r for r in reversed(records) if r.get("record") == "result"), None)
+    common = {"child_exit": child_exit, "ack_sent": ack_sent, "output": output, "receipt": receipt_file,
+              "child_final": final}
+    if final is None:
+        return _result("drive-apply", COMMIT_UNKNOWN, reason="no_final_record_from_child",
+                       detail="classify with the recovery read; ack_sent says whether COMMIT was permitted",
+                       **common)
+    return _result("drive-apply", final.get("state", COMMIT_UNKNOWN), reason=final.get("reason"), **common)
+
+
+# --- phase 4 dyno side: apply ------------------------------------------------------
 
 async def _verify(session_factory, claim_context: dict) -> dict:
     """New transaction: the created row, the incoming owner, and Step 2's answer."""
@@ -794,13 +992,16 @@ async def _verify(session_factory, claim_context: dict) -> dict:
             "incoming": _owned(inc), "step2_resolves_incoming_to": resolves}
 
 
-async def run_apply(session_factory: SessionFactory, *, stdin: bytes, plan_hash: str,
+async def run_apply(session_factory: SessionFactory, *, frames: Frames, plan_hash: str,
                     backup_hash: str, emit: Emit = stdout_emit,
                     lock_timeout_ms: int = LOCK_TIMEOUT_MS,
-                    statement_timeout_ms: int = STATEMENT_TIMEOUT_MS) -> dict:
-    """Consume the host's apply bundle; one ``record_anchor`` write; receipt before COMMIT."""
+                    statement_timeout_ms: int = STATEMENT_TIMEOUT_MS,
+                    frame_timeout_s: float = FRAME_TIMEOUT_S,
+                    ack_timeout_s: float = ACK_TIMEOUT_S) -> dict:
+    """Frame 1 = the host's apply bundle; one ``record_anchor`` write; COMMIT only on frame 2."""
     try:
-        bundle = _parse_bundle(stdin, APPLY_INPUT_SCHEMA)
+        bundle = check_sealed(await _frame(frames, frame_timeout_s, "apply_bundle"),
+                              APPLY_INPUT_SCHEMA, "apply_bundle")
         plan = check_sealed(bundle.get("plan"), PLAN_SCHEMA, "plan")
         backup = check_sealed(bundle.get("backup"), BACKUP_SCHEMA, "backup")
         plan_hash = require_hash(plan, plan_hash, "plan")
@@ -825,8 +1026,8 @@ async def run_apply(session_factory: SessionFactory, *, stdin: bytes, plan_hash:
             staged = False
             try:
                 await _set_timeouts(session, lock_timeout_ms, statement_timeout_ms)
-                keeper, sport_key, anchors, survivor = await _read_all(session, lock=True)
-                now = admit(keeper, sport_key, anchors, survivor)
+                keeper, sport_key, anchors, twin, snaps = await _read_all(session, lock=True)
+                now = admit(keeper, sport_key, anchors, twin, snaps)
                 if now["state"] == NOT_NEEDED:
                     return _finish(emit, _result("apply", NOT_NEEDED, reason="current_key_already_keepers",
                                                  anchors=now["anchors"], **extra))
@@ -856,15 +1057,19 @@ async def run_apply(session_factory: SessionFactory, *, stdin: bytes, plan_hash:
                     "invocation_id": backup["invocation_id"], "backup_sha256": backup_hash,
                     "plan_sha256": plan_hash,
                     "created_row": {f: created[f] for f in _ROW_FIELDS},
-                    "note": "emitted BEFORE COMMIT; restore requires this exact row",
+                    "survivor_observed": now["survivor_observed"],
+                    "twin_state": now["twin_state"],
                 })
-                # The restore identity reaches the host before the row can exist
-                # for anyone else. If the dyno dies after COMMIT, this line is the
-                # record of what to undo.
                 emit(_record("created_row", {"receipt": receipt, "receipt_sha256": artifact_sha256(receipt)}))
+                # No COMMIT until the host says it has retained exactly these bytes.
+                try:
+                    raw_ack = await asyncio.wait_for(frames.line(ack_timeout_s), ack_timeout_s)
+                except (asyncio.TimeoutError, TimeoutError) as exc:
+                    raise Refused("host_ack_timeout", {"timeout_s": ack_timeout_s}) from exc
+                check_ack(raw_ack, receipt)
                 staged = True
             finally:
-                if not staged:  # any refusal, DB error or cancellation: nothing is kept
+                if not staged:  # any refusal, DB error, cancellation or missing ack: nothing is kept
                     await session.rollback()
             commit_attempted = True
             try:
@@ -914,13 +1119,15 @@ async def _read_after_restore(session_factory) -> dict | None:
             await session.rollback()
 
 
-async def run_restore(session_factory: SessionFactory, *, stdin: bytes, backup_hash: str,
+async def run_restore(session_factory: SessionFactory, *, frames: Frames, backup_hash: str,
                       receipt_hash: str, emit: Emit = stdout_emit,
                       lock_timeout_ms: int = LOCK_TIMEOUT_MS,
-                      statement_timeout_ms: int = STATEMENT_TIMEOUT_MS) -> dict:
-    """Compare-and-delete ONLY the exact row the apply's pre-COMMIT receipt names."""
+                      statement_timeout_ms: int = STATEMENT_TIMEOUT_MS,
+                      frame_timeout_s: float = FRAME_TIMEOUT_S) -> dict:
+    """Compare-and-delete ONLY the exact row the retained receipt names."""
     try:
-        bundle = _parse_bundle(stdin, RESTORE_INPUT_SCHEMA)
+        bundle = check_sealed(await _frame(frames, frame_timeout_s, "restore_bundle"),
+                              RESTORE_INPUT_SCHEMA, "restore_bundle")
         backup = check_sealed(bundle.get("backup"), BACKUP_SCHEMA, "backup")
         backup_hash = require_hash(backup, backup_hash, "backup")
         receipt = created_row_receipt_binds(bundle.get("created_row_receipt"), backup, backup_hash)
@@ -1010,17 +1217,18 @@ class _Parser(argparse.ArgumentParser):
 
 
 DB_MODES = ("preflight", "apply", "restore")
-HOST_MODES = ("stage-plan", "stage-apply", "stage-restore")
+HOST_MODES = ("stage-plan", "stage-apply", "drive-apply", "stage-restore")
 _MODE_ARGS = {
     "preflight": (),
     "stage-plan": ("preflight_output", "plan_out"),
     "stage-apply": ("plan", "plan_hash", "backup_out", "bundle_out"),
+    "drive-apply": ("apply_input", "plan_hash", "backup_hash", "output", "receipt_out"),
     "apply": ("plan_hash", "backup_hash"),
-    "stage-restore": ("backup", "backup_hash", "apply_output", "bundle_out"),
+    "stage-restore": ("backup", "backup_hash", "receipt", "receipt_hash", "bundle_out"),
     "restore": ("backup_hash", "receipt_hash"),
 }
 _ALL_ARGS = ("preflight_output", "plan_out", "plan", "plan_hash", "backup_out", "bundle_out",
-             "backup", "backup_hash", "apply_output", "receipt_hash")
+             "apply_input", "output", "receipt_out", "backup", "backup_hash", "receipt", "receipt_hash")
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -1073,13 +1281,8 @@ async def _engine_factory() -> AsyncIterator[SessionFactory]:
         await engine.dispose()
 
 
-def _read_stdin() -> bytes:
-    stream = getattr(sys.stdin, "buffer", None)
-    return stream.read() if stream is not None else sys.stdin.read().encode("utf-8")
-
-
 async def main(argv: list[str] | None = None, env: dict | None = None,
-               stdin: Callable[[], bytes] = _read_stdin, emit: Emit = stdout_emit) -> int:
+               frames: Optional[Frames] = None, emit: Emit = stdout_emit) -> int:
     env = dict(os.environ) if env is None else env
     try:
         mode, args = parse(sys.argv[1:] if argv is None else argv)
@@ -1092,9 +1295,14 @@ async def main(argv: list[str] | None = None, env: dict | None = None,
         elif mode == "stage-apply":
             out = stage_apply(plan_path=args.plan, plan_hash=args.plan_hash, backup_out=args.backup_out,
                               bundle_out=args.bundle_out, env=env)
+        elif mode == "drive-apply":
+            out = await drive_apply(apply_input=args.apply_input, plan_hash=args.plan_hash,
+                                    backup_hash=args.backup_hash, output=args.output,
+                                    receipt_out=args.receipt_out, env=env)
         else:
             out = stage_restore(backup_path=args.backup, backup_hash=args.backup_hash,
-                                apply_output=args.apply_output, bundle_out=args.bundle_out, env=env)
+                                receipt_path=args.receipt, receipt_hash=args.receipt_hash,
+                                bundle_out=args.bundle_out, env=env)
         emit(out)
         return exit_code(out)
     try:
@@ -1103,16 +1311,16 @@ async def main(argv: list[str] | None = None, env: dict | None = None,
         out = _result(mode, REFUSED, reason=exc.reason, detail=exc.detail)
         emit(out)
         return exit_code(out)
+    frames = frames or StdinFrames()
     try:
-        raw = stdin() if mode != "preflight" else b""
         async with _engine_factory() as factory:
             if mode == "preflight":
                 out = await run_preflight(factory, emit=emit)
             elif mode == "apply":
-                out = await run_apply(factory, stdin=raw, plan_hash=args.plan_hash,
+                out = await run_apply(factory, frames=frames, plan_hash=args.plan_hash,
                                       backup_hash=args.backup_hash, emit=emit)
             else:
-                out = await run_restore(factory, stdin=raw, backup_hash=args.backup_hash,
+                out = await run_restore(factory, frames=frames, backup_hash=args.backup_hash,
                                         receipt_hash=args.receipt_hash, emit=emit)
     except Exception as exc:
         out = _result(mode, "RUNTIME_ERROR", detail=_err(exc))
@@ -1122,4 +1330,7 @@ async def main(argv: list[str] | None = None, env: dict | None = None,
 
 
 if __name__ == "__main__":
-    sys.exit(asyncio.run(main()))
+    # A reader thread abandoned by a frame timeout must not hold the process open.
+    code = asyncio.run(main())
+    sys.stdout.flush()
+    os._exit(code)
