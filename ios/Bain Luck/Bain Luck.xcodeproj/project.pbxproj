@@ -809,7 +809,7 @@
 				GENERATE_INFOPLIST_FILE = YES;
 				INFOPLIST_FILE = "BainLuckWatch-Info.plist";
 				CODE_SIGN_ENTITLEMENTS = "BainLuckWatchShared.entitlements";
-				INFOPLIST_KEY_CFBundleDisplayName = BainLuckWatch;
+				INFOPLIST_KEY_CFBundleDisplayName = "Bain Luck";
 				INFOPLIST_KEY_UISupportedInterfaceOrientations = "UIInterfaceOrientationPortrait UIInterfaceOrientationPortraitUpsideDown";
 				INFOPLIST_KEY_WKWatchOnly = NO;
 				LD_RUNPATH_SEARCH_PATHS = (
@@ -846,7 +846,7 @@
 				GENERATE_INFOPLIST_FILE = YES;
 				INFOPLIST_FILE = "BainLuckWatch-Info.plist";
 				CODE_SIGN_ENTITLEMENTS = "BainLuckWatchShared.entitlements";
-				INFOPLIST_KEY_CFBundleDisplayName = BainLuckWatch;
+				INFOPLIST_KEY_CFBundleDisplayName = "Bain Luck";
 				INFOPLIST_KEY_UISupportedInterfaceOrientations = "UIInterfaceOrientationPortrait UIInterfaceOrientationPortraitUpsideDown";
 				INFOPLIST_KEY_WKWatchOnly = NO;
 				LD_RUNPATH_SEARCH_PATHS = (
