@@ -20,7 +20,6 @@ from app.utils.draw_priced_winner import printable_away, sport_prices_a_draw
 from app.utils.league_classification import is_power_4_team
 from app.utils.lifecycle import live_start_satisfied
 from app.utils.odds_math import favorite_from_pair
-from app.utils.score_observation import SCORE_OBSERVATION_SOURCES
 
 
 # League tier definitions — the most important ranking signal for anonymous users.
@@ -735,6 +734,13 @@ def score_observation_is_current(
     """
     if now is None or not isinstance(score_observed_at, datetime):
         return False
+    # Imported here, not at module top: `app.utils.__init__` imports this module,
+    # and bare-runner scripts (`python -S`, and the frontend job's specimen
+    # producer) import `app.utils` with no site-packages. `score_observation`
+    # pulls in sqlalchemy for its UPDATE helpers; a module-level import made
+    # every one of those scripts fail to start. One registry, read lazily.
+    from app.utils.score_observation import SCORE_OBSERVATION_SOURCES
+
     if not isinstance(score_source, str) or score_source not in SCORE_OBSERVATION_SOURCES:
         return False
     age = _as_utc(now) - _as_utc(score_observed_at)
