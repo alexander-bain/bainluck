@@ -86,10 +86,15 @@ TENNIS_MATCH_WINNER_PREFIXES = frozenset({
     # Phase 1 links the Kalshi winner to it by ticker — and this set then refused
     # it every cycle, so `linked_unsourced` stayed RED with a priced 75/25 market
     # attached (KXITFWMATCH-26OCT05KABTOR on 15324729, W35 Seville, 2026-10-05).
-    # Only the women's winner is admitted: the men's (``kxitfmatch``) and both
-    # ITF doubles series are out by SCOPE, not by nature — adding one is its own
-    # change with its own specimen.
+    # Only the women's winner was admitted then: the men's (``kxitfmatch``) and
+    # both ITF doubles series were out by SCOPE, not by nature — adding one is
+    # its own change with its own specimen.
     "kxitfwmatch",
+    # #10523: the ITF men's match winner, with its own specimen. Same shape,
+    # same writer refusal: KXITFMATCH-26OCT05SURSHA (market 64221504, M25
+    # Kigali) linked by `pass1_ticker`, priced 65.5/34.5, and event 15324991's
+    # blend held `polymarket` only. Both ITF doubles series stay out by scope.
+    "kxitfmatch",
 })
 
 
@@ -257,7 +262,7 @@ def feeds_win_prob_blend(external_id: Optional[str]) -> bool:
     Admits team-sport game winners (prefix ends in ``game``), combat fight
     winners (``kxufcfight`` / ``kxboxing``) and racquet-sport match winners
     (``kxatpmatch`` / ``kxwtamatch`` / challenger + doubles variants, Laver Cup,
-    ITF women's ``kxitfwmatch``). Everything
+    ITF singles ``kxitfwmatch`` / ``kxitfmatch``). Everything
     else — spreads, totals, player props, set winners, exact scores,
     method/round/distance combat props — is excluded. Replaces the old
     ``prefix.endswith("game")`` heuristic, which silently dropped every combat
