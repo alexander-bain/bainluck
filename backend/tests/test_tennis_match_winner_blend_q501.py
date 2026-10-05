@@ -108,6 +108,8 @@ class TestMatchWinnersAreAdmitted:
             "KXLAVERCUPDOUBLESMATCH-26SEP25ALCMENBUBFRI",
             # #10507: the ITF women's winner, verbatim from production.
             "KXITFWMATCH-26OCT05KABTOR",
+            # #10523: the ITF men's winner, verbatim from production.
+            "KXITFMATCH-26OCT05SURSHA",
         ],
     )
     def test_match_winner_feeds_the_blend(self, ticker):
@@ -148,6 +150,12 @@ class TestPropsStayOut:
             "KXITFWGTOTAL-26OCT05KABTOR",
             "KXITFWGSPREAD-26OCT05KABTOR",
             "KXITFW-26SEVILLE",
+            # #10523: the same holds for the men's family.
+            "KXITFEXACTMATCH-26OCT05SURSHA",
+            "KXITFSETWINNER-26OCT05SURSHA-1",
+            "KXITFGTOTAL-26OCT05SURSHA",
+            "KXITFGSPREAD-26OCT05SURSHA",
+            "KXITF-26KIGALI",
         ],
     )
     def test_tennis_prop_does_not_feed_the_blend(self, ticker):
@@ -333,15 +341,86 @@ class TestItfWomensWinnerReachesTheBlend:
     @pytest.mark.parametrize(
         "ticker",
         [
-            "KXITFMATCH-26OCT05ABCDEF",
             "KXITFDOUBLES-26OCT05ABCDEF",
             "KXITFWDOUBLES-26OCT05ABCDEF",
         ],
     )
     def test_other_itf_families_stay_out_by_scope(self, ticker):
-        """Out by SCOPE, not by nature: #10507 admitted one named family.
+        """Out by SCOPE, not by nature: #10507 and #10523 each admitted one
+        named family (``kxitfmatch`` left this list with its own specimen).
 
         Admitting one of these is a deliberate later change with its own
         specimen — this pins that it did not ride along here.
         """
         assert feeds_win_prob_blend(ticker) is False
+
+
+# #10523 — event 15324991, Darrshan Suresh v Mayank Sharma (M25 Kigali,
+# 2026-10-05T09:00Z, live). The event row stores SURNAMES only — home
+# "Suresh", away "Sharma" — while the Kalshi outcomes carry full names. Kalshi
+# market 64221504 was linked by Phase 1 (`pass1_ticker`) and priced, yet the
+# blend held a `polymarket` key only. Outcome names and prices are verbatim from
+# the 11:38Z read (shopper pass-0239).
+SURSHA_MATCH = "KXITFMATCH-26OCT05SURSHA"
+
+
+def _sursha_group():
+    return [
+        MarketOutcomes(
+            _Market(64221504, "kalshi", SURSHA_MATCH, "Suresh vs Sharma"),
+            [
+                _Outcome("Darrshan Suresh", 0.345),
+                _Outcome("Mayank Sharma", 0.655),
+            ],
+        ),
+    ]
+
+
+class TestItfMensWinnerReachesTheBlend:
+    """The linked, priced ITF men's winner now speaks for Kalshi."""
+
+    def test_the_production_specimen_produces_a_reading(self):
+        reading = compute_source_home_probability(_sursha_group(), "Suresh", "Sharma")
+        assert reading is not None, "the linked Kalshi winner still writes nothing"
+        assert reading.market.external_id == SURSHA_MATCH
+        assert reading.outcome.name == "Darrshan Suresh"
+        assert reading.home_probability == pytest.approx(0.345)
+
+    def test_orientation_follows_the_event_not_the_outcome_order(self):
+        """Swap which surname the event calls home and the number swaps with it.
+
+        The specimen's favourite is the AWAY side listed second; a reading that
+        took the first outcome would hand Suresh's 34.5% to Sharma.
+        """
+        reading = compute_source_home_probability(_sursha_group(), "Sharma", "Suresh")
+        assert reading is not None
+        assert reading.outcome.name == "Mayank Sharma"
+        assert reading.home_probability == pytest.approx(0.655)
+
+    @pytest.mark.parametrize(
+        "ticker",
+        [
+            "KXITFEXACTMATCH-26OCT05SURSHA",
+            "KXITFSETWINNER-26OCT05SURSHA-1",
+        ],
+    )
+    def test_a_prop_carrying_the_same_names_writes_nothing(self, ticker):
+        """The same two players on a non-winner line must not become the reading.
+
+        The set-winner and exact-score lines name Suresh and Sharma exactly as
+        the winner does; admitting ``kxitfmatch`` must not admit them.
+        """
+        group = [
+            MarketOutcomes(
+                _Market(64221599, "kalshi", ticker, "Suresh vs Sharma"),
+                [
+                    _Outcome("Darrshan Suresh", 0.345),
+                    _Outcome("Mayank Sharma", 0.655),
+                ],
+            ),
+        ]
+        assert compute_source_home_probability(group, "Suresh", "Sharma") is None
+
+    def test_the_womens_winner_is_still_admitted(self):
+        """#10507's family survives the men's being added beside it."""
+        assert feeds_win_prob_blend("KXITFWMATCH-26OCT05KABTOR") is True
