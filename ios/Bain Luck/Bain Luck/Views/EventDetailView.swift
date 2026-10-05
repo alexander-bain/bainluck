@@ -20,6 +20,10 @@ struct EventDetailView: View {
     // Only presentation/event identity is retained, never a withdrawn quote.
     @State private var duringDetailEventID: Int?
     @State private var afterDetailEventID: Int?
+    // #10236 — Close returns the page to where the matrix sat on screen; one
+    // anchor per matrix host (`MatrixPageReadingAnchor10236`).
+    @State private var duringPageAnchor = MatrixPageReadingAnchor10236(host: .during)
+    @State private var afterPageAnchor = MatrixPageReadingAnchor10236(host: .after)
     @AccessibilityFocusState(for: .voiceOver) private var duringPageTitleFocused: Bool
     let eventId: Int
     @StateObject private var vm: EventDetailViewModel
@@ -302,12 +306,18 @@ struct EventDetailView: View {
                 await vm.load()
             }
             .onChange(of: scenePhase) { _, phase in
+                if phase != .active {
+                    duringPageAnchor.cancel()
+                    afterPageAnchor.cancel()
+                }
                 vm.setMarketPageVisible(marketPageVisible && phase == .active)
                 // #1833: a page brought back from the background reads the game
                 // again now, rather than whenever the suspended poll gets to it.
                 vm.scenePhaseChanged(to: phase, pageVisible: marketPageVisible)
             }
             .onDisappear {
+                duringPageAnchor.cancel()
+                afterPageAnchor.cancel()
                 marketPageVisible = false
                 duringDetailEventID = nil
                 afterDetailEventID = nil
@@ -560,15 +570,24 @@ struct EventDetailView: View {
                             props: AfterPropsMatrixLayout.drawable(vm.gameMarkets?.afterPlayerProps)
                                 ?? AfterPlayerProps(contract: nil, stats: [], actuals: [], questions: [], coverage: nil),
                             onDetailPresentationChanged: { presented in
+                                if presented {
+                                    afterPageAnchor.capture(eventID: eventId)
+                                } else {
+                                    afterPageAnchor.finish(eventID: eventId)
+                                }
                                 afterDetailEventID = presented ? eventId : nil
                                 if presented { duringPageTitleFocused = false }
                             },
                             onMatrixUnavailableDismissed: {
+                                // Before the deferred `false`: a withdrawn matrix
+                                // is never scrolled back to.
+                                afterPageAnchor.cancel()
                                 guard marketPageVisible, scenePhase == .active,
                                       afterDetailEventID == eventId else { return }
                                 duringPageTitleFocused = true
                             }
                         )
+                        .background(MatrixPageReadingAnchorMarker10236(anchor: afterPageAnchor))
                     } else if !(vm.gameMarkets?.duringPlayerProps?.rows ?? []).isEmpty
                         || duringDetailEventID == eventId {
                         EventPropsMatrixView(
@@ -577,16 +596,23 @@ struct EventDetailView: View {
                             props: vm.gameMarkets?.duringPlayerProps
                                 ?? DuringPlayerProps(contract: nil, stats: [], rows: [], coverage: nil),
                             onDetailPresentationChanged: { presented in
+                                if presented {
+                                    duringPageAnchor.capture(eventID: eventId)
+                                } else {
+                                    duringPageAnchor.finish(eventID: eventId)
+                                }
                                 duringDetailEventID = presented ? eventId : nil
                                 if presented { duringPageTitleFocused = false }
                             },
                             onMatrixUnavailableDismissed: {
                                 // Invoked only by onDismiss, never on refresh.
+                                duringPageAnchor.cancel()
                                 guard marketPageVisible, scenePhase == .active,
                                       duringDetailEventID == eventId else { return }
                                 duringPageTitleFocused = true
                             }
                         )
+                        .background(MatrixPageReadingAnchorMarker10236(anchor: duringPageAnchor))
                     }
                     // Player Props (from game-markets endpoint) — only the props
                     // the matrix above does not already draw.
