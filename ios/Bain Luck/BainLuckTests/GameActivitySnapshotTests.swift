@@ -1,6 +1,7 @@
 import XCTest
 @testable import Bain_Luck
 
+@MainActor
 final class GameActivitySnapshotTests: XCTestCase {
     private let scoreClock = Date(timeIntervalSince1970: 1_790_000_000)
     private let probabilityClock = Date(timeIntervalSince1970: 1_790_000_020)
@@ -50,6 +51,13 @@ final class GameActivitySnapshotTests: XCTestCase {
         XCTAssertNil(closed.probabilityText)
         XCTAssertEqual(closed.resultText, "Closed · result unverified")
         XCTAssertFalse(try snapshot(status: "suspended").isTerminal)
+        XCTAssertEqual(try snapshot(status: " FINAL ").lifecycle, .final)
+        XCTAssertEqual(try snapshot(status: " CLOSED ").lifecycle, .closed)
+        XCTAssertEqual(try snapshot(status: "in_progress").lifecycle, .live)
+        XCTAssertEqual(try snapshot(status: "pregame").lifecycle, .scheduled)
+        let typed = try XCTUnwrap(GameActivitySnapshot(eventID: 101, homeTeam: "Giants",
+            awayTeam: "Dodgers", lifecycle: .final, homeScore: 3, awayScore: 2))
+        XCTAssertEqual(typed.resultText, final.resultText)
     }
 
     func testDrawAndUnknownSportKeepScalarRounding() throws {

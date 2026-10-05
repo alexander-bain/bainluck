@@ -53,7 +53,7 @@ import XCTest
 
 final class GameActivityControllerTests: XCTestCase {
     private let clock = Date(timeIntervalSince1970: 1_759_752_000)
-    private func snapshot(_ id: Int = 1, status: String = "live", clock: Date? = nil,
+    @MainActor private func snapshot(_ id: Int = 1, status: String = "live", clock: Date? = nil,
                           scoreClock: Date? = nil, scores: Bool = false) throws -> GameActivitySnapshot {
         try XCTUnwrap(GameActivitySnapshot(eventID: id, homeTeam: "Home", awayTeam: "Away",
                                            status: status, homeScore: scores ? 2 : nil,

@@ -47,8 +47,8 @@ nonisolated struct GameActivitySnapshot: Codable, Hashable, Sendable {
     }
 
     /// Supply clocks from the producers of these exact values, never fetch/receipt time.
-    /// Raw fields keep this contract usable by the widget without importing phone models.
-    init?(eventID: Int, homeTeam: String, awayTeam: String, status: String?,
+    /// A typed lifecycle keeps the widget independent of phone status parsing.
+    init?(eventID: Int, homeTeam: String, awayTeam: String, lifecycle: Lifecycle,
           homeScore: Int? = nil, awayScore: Int? = nil,
           homeProbability: Double? = nil, awayProbability: Double? = nil,
           drawProbability: Double? = nil, sport: String? = nil,
@@ -61,14 +61,7 @@ nonisolated struct GameActivitySnapshot: Codable, Hashable, Sendable {
         self.awayTeam = away
         self.homeScore = homeScore.flatMap { $0 >= 0 ? $0 : nil }
         self.awayScore = awayScore.flatMap { $0 >= 0 ? $0 : nil }
-        switch status?.trimmingCharacters(in: .whitespacesAndNewlines).lowercased() {
-        case "completed", "final": lifecycle = .final
-        case "closed": lifecycle = .closed
-        case "live", "in_progress": lifecycle = .live
-        case "scheduled", "upcoming", "pregame": lifecycle = .scheduled
-        case "suspended": lifecycle = .suspended
-        default: lifecycle = .unknown
-        }
+        self.lifecycle = lifecycle
         self.scoreObservedAt = Self.validDate(scoreObservedAt)
         let validHome = Self.validProbability(homeProbability)
         let validAway = Self.validProbability(awayProbability)

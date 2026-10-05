@@ -1,6 +1,7 @@
 import XCTest
 @testable import Bain_Luck
 
+@MainActor
 final class GameActivityEventProjectionTests: XCTestCase {
     private func event(status: String = "live", hero: Double = 0.64, current: Double = 0.64, away: Double? = nil) throws -> EventDetail {
         let decoder = JSONDecoder()
@@ -32,7 +33,7 @@ final class GameActivityEventProjectionTests: XCTestCase {
     }
 
     func testUpcomingOpeningLineDoesNotStartThisLiveSlice() throws {
-        XCTAssertNil(GameActivitySnapshot.liveActivityReading(for: event(status: "scheduled")))
+        XCTAssertNil(GameActivitySnapshot.liveActivityReading(for: try event(status: "scheduled")))
     }
 
     func testFinalSuppressesForecastWithoutInventingANewClock() throws {
