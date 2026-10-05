@@ -136,6 +136,16 @@ struct WatchSelectedGameView: View {
                         await picker.refresh()
                     }
             }
+            #if DEBUG
+            .transformEnvironment(\.dynamicTypeSize) { size in
+                // The injected layout-stress category does not cross watchOS
+                // sheet presentation automatically. Extend fixtures only.
+                if WatchUIFixture.current != nil,
+                   ProcessInfo.processInfo.environment["BAINLUCK_WATCH_UI_LARGE_TEXT"] == "1" {
+                    size = dynamicTypeSize
+                }
+            }
+            #endif
         }
         .onChange(of: store.selectedEventID) { _, _ in
             // A new choice must reveal its identity, not inherit the old game's scroll.
@@ -268,9 +278,7 @@ struct WatchSelectedGameView: View {
 
     private var gamePicker: some View {
         VStack(alignment: .leading, spacing: 10) {
-            Text("Choose your game")
-                .font(.headline)
-                .accessibilityIdentifier("watch.picker-heading")
+            WatchPickerHeading()
             if picker.isLoading && picker.games.isEmpty {
                 ProgressView("Loading games")
             } else if let error = picker.errorMessage {
@@ -314,4 +322,20 @@ struct WatchSelectedGameView: View {
         }
     }
 
+}
+
+private struct WatchPickerHeading: View {
+    #if DEBUG
+    @Environment(\.dynamicTypeSize) private var dynamicTypeSize
+    #endif
+
+    var body: some View {
+        Text("Choose your game")
+            .font(.headline)
+            .accessibilityIdentifier("watch.picker-heading")
+            #if DEBUG
+            // Read the heading's own environment, including a presented sheet.
+            .accessibilityValue(WatchUIFixture.current == nil ? "" : String(describing: dynamicTypeSize))
+            #endif
+    }
 }
