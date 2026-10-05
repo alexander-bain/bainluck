@@ -128,16 +128,20 @@ import Foundation
         startWorker(id: id, entry: entry)
     }
     func stop(id: String) {
-        guard let entry = entries[id] else { return }
-        entry.stopped = true
-        // Write the latch before launching either network or local ending work.
+        let entry = entries[id]
+        let owned = defaults.dictionary(forKey: ownershipKey) ?? [:]
+        // A cold/offline launch can show an owned ActivityKit record before
+        // auth restore creates an entry. Persist its stop without guessing a bearer.
+        guard entry != nil || owned[id] != nil else { return }
         stoppedIDs.insert(id)
         persistStoppedIDs()
+        unconfirmedRevocations.insert(id)
+        guard let entry else { return }
+        entry.stopped = true
         entry.observation?.cancel()
         entry.observation = nil
         entry.stateObservation?.cancel()
         entry.stateObservation = nil
-        unconfirmedRevocations.insert(id)
         startWorker(id: id, entry: entry)
     }
     private func startWorker(id: String, entry: Entry) {

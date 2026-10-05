@@ -8,7 +8,8 @@ This source adds optional token requests to explicit signed-in starts and observ
 ActivityKit token rotation. Anonymous starts retain foreground-only updates and
 are never silently upgraded after login. Persisted ownership contains only the
 ActivityKit activity id and backend user id, plus stopped activity ids. Stop intent
-is persisted synchronously before network or ActivityKit ending work. A relaunch
+is persisted synchronously before network or ActivityKit ending work, including
+a cold/offline stop before auth restoration creates an in-memory entry. A relaunch
 never registers a stopped identity; a remaining same-account activity is ended
 locally and reconciled only through DELETE. Restored activities are adopted only
 for the same verified account. Bearers and push tokens are never persisted by
@@ -31,4 +32,4 @@ remain integration gates.
 
 No sender is connected by this change. Foreground wording remains accurate.
 No APNs sends, credentials, signing, device acceptance or release is established.
-The fourteen new deterministic native tests require the hosted iPhone gate.
+The fifteen new deterministic native tests require the hosted iPhone gate.

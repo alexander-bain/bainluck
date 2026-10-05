@@ -244,5 +244,27 @@ import XCTest
         XCTAssertEqual(restarted.unconfirmedRevocations, ["activity"])
     }
 
+    func testColdOfflineStopWithoutEntrySurvivesSameAccountRestore() async {
+        let name = "GameActivityRegistrationColdStopTests.\(UUID().uuidString)"
+        let defaults = UserDefaults(suiteName: name)!
+        defer { defaults.removePersistentDomain(forName: name) }
+        defaults.set(["activity": 1], forKey: "gameActivityRegistrationOwners")
+        let transport = RegistrationTransportFake()
+        let cold = GameActivityRegistrationCoordinator(transport: transport, defaults: defaults)
+        XCTAssertFalse(cold.canRequestPushToken)
+        cold.stop(id: "activity")
+        // No credentials or in-memory entry were available for remote work.
+        await Task.yield()
+        XCTAssertTrue(transport.calls.isEmpty)
+        let restarted = GameActivityRegistrationCoordinator(transport: transport, defaults: defaults)
+        restarted.setSession(owner: 1, bearer: "test-restored-session")
+        restarted.bind(id: "activity", eventID: 42)
+        restarted.receive(id: "activity", token: Data([1]))
+        restarted.foregroundActivated()
+        await Task.yield()
+        XCTAssertTrue(transport.calls.isEmpty, "Cold stop must not become registration after restore")
+        XCTAssertEqual(restarted.unconfirmedRevocations, ["activity"])
+    }
+
 }
 #endif
