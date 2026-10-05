@@ -36,6 +36,15 @@ import XCTest
 /// `4974-root-shared-window-correction/ROOT-FINDING-AND-SCOPE.md`). Also
 /// authored, not executed.
 ///
+/// The wider window is the AXIS, never the legacy INK: the page also hands
+/// both charts the original window as `legacyDataDomain`
+/// (`EventDetailView.pageLegacyChartDataDomain`), so post-final market drift
+/// and score rows inside each chart's own finish clip stay off the page and
+/// the score carry stops at the original end (Root's B,
+/// `4974-ROOT-AXIS-INK-CORRECTION-BOUNDARY.md`). The chart argument
+/// `legacyDataDomain:` arrives with latency's sibling chart commit; like the
+/// rest, authored here and executed only by Native once composed.
+///
 /// The existing event-page fakes are each private to their own file, so this
 /// file carries its own in the same shape (`EventPublicationAdoption4974Tests`).
 /// Nothing here touches a server, a socket or the wall clock except as a
@@ -789,6 +798,14 @@ final class EventPublicationCaller4974Tests: XCTestCase {
                                  history: history, range: range, sportKey: detail.sport, now: at(0))
     }
 
+    /// The ink window the page hands both charts: its own helper, on its own inputs.
+    private func inkWindow(_ detail: EventDetail?, _ history: EventHistoryResponse?,
+                           _ range: OddsTimeRange, journey: Journey?,
+                           key: PublicationTaskKey4974) -> ClosedRange<Date>? {
+        EventDetailView.pageLegacyChartDataDomain(event: detail, history: history, range: range,
+                                                  journey: journey, key: key, now: at(0))
+    }
+
     /// What the page hands both charts now: its own helper, on its own inputs.
     private func pageWindow(_ detail: EventDetail?, _ history: EventHistoryResponse?,
                             _ range: OddsTimeRange, journey: Journey?,
@@ -1021,6 +1038,17 @@ final class EventPublicationCaller4974Tests: XCTestCase {
         let page = try code("Bain Luck/Views/EventDetailView.swift")
         XCTAssertEqual(page.components(separatedBy: "forcedDomain:sharedChartDomain,").count - 1, 2,
                        "the probability chart and the score chart")
+        XCTAssertEqual(page.components(
+            separatedBy: "forcedDomain:sharedChartDomain,legacyDataDomain:legacyChartDataDomain,").count - 1, 2,
+                       "both charts take the one axis AND the one legacy ink window")
+        XCTAssertTrue(page.contains(
+            "privatevarlegacyChartDataDomain:ClosedRange<Date>?{Self.pageLegacyChartDataDomain(event:vm.event,history:vm.history,range:chartRange,journey:vm.publicationJourney,key:publicationTaskKey)}"))
+        XCTAssertTrue(page.contains(
+            "guardchartPublicationJourney(journey,key:key)!=nilelse{returnnil}returnpageLegacyChartDomain(event:event,history:history,range:range,now:now)"),
+                      "the ink window is handed only for the journey the chart is handed")
+        XCTAssertTrue(page.contains(
+            "letlegacyDomain=pageLegacyChartDomain(event:event,history:history,range:range,now:now)returnpublicationSharedChartDomain(legacyDomain,journey:journey,key:key)"),
+                      "the axis widens the same one legacy window the ink keeps")
         XCTAssertTrue(page.contains(
             "privatevarsharedChartDomain:ClosedRange<Date>?{Self.pageSharedChartDomain(event:vm.event,history:vm.history,range:chartRange,journey:vm.publicationJourney,key:publicationTaskKey)}"))
         XCTAssertTrue(page.contains("returnpublicationSharedChartDomain(legacyDomain,journey:journey,key:key)"))
@@ -1038,23 +1066,32 @@ final class EventPublicationCaller4974Tests: XCTestCase {
                       "the score chart's finish clip")
     }
 
-    /// The score line gains no reading and no new margin. What moves is the
-    /// existing #9175 rule: the final margin is drawn to the right edge, and the
-    /// edge is now 20:21:30 rather than 20:17:00.
-    func testTheScoreLineGainsNoReadingOnlyItsFinalCarryMeetsTheWiderEdge() throws {
+    /// The score line gains no reading and no new margin, and the #9175 carry
+    /// does NOT follow the wider axis: the chart carries to
+    /// `min(axis end, legacyDataDomain end)` and the page hands the original
+    /// window as `legacyDataDomain`, so the final margin still ends at 20:17:00,
+    /// not 20:21:30 (Root's B). The real chart's carry: the hosted score render
+    /// in the ink section below.
+    func testTheScoreLineGainsNoReadingAndItsFinalCarryStopsAtTheOriginalWindow() throws {
         let detail = try event(status: "completed")
         let history = try legacyHistory()
+        let journey = try lateJourney()
         let legacy = try XCTUnwrap(legacyWindow(detail, history, .sinceStart))
-        let page = try XCTUnwrap(pageWindow(detail, history, .sinceStart, journey: try lateJourney(),
+        let page = try XCTUnwrap(pageWindow(detail, history, .sinceStart, journey: journey,
                                             key: key(detail: detail)))
+        let ink = try XCTUnwrap(inkWindow(detail, history, .sinceStart, journey: journey,
+                                          key: key(detail: detail)))
+        XCTAssertEqual(ink, legacy, "the page's ink window is the original window")
+        let edge = min(page.upperBound, ink.upperBound)
+        XCTAssertLessThan(edge, page.upperBound, "control: the axis did widen past the original end")
         let readings: [(date: Date, diff: Double)] = [(at(-11_400), 0), (at(-5_700), 1), (at(90), 2)]
         let before = ScoreDifferentialChartView.actualSteps(readings, carriedTo: legacy.upperBound)
-        let after = ScoreDifferentialChartView.actualSteps(readings, carriedTo: page.upperBound)
+        let after = ScoreDifferentialChartView.actualSteps(readings, carriedTo: edge)
         XCTAssertEqual(after.dropLast().map { $0.date }, readings.map { $0.date })
         XCTAssertEqual(after.dropLast().map { $0.diff }, readings.map { $0.diff })
         XCTAssertEqual(after.count, before.count, "one carry before, one after")
         XCTAssertEqual(after.last?.diff, 2, "the carry repeats the final margin")
-        XCTAssertEqual(after.last?.date, page.upperBound)
+        XCTAssertEqual(after.last?.date, legacy.upperBound, "the carry ends where the original window ends")
         XCTAssertEqual(before.last?.date, legacy.upperBound)
     }
 
@@ -1110,13 +1147,16 @@ final class EventPublicationCaller4974Tests: XCTestCase {
         return (request.results ?? []).compactMap { $0.topCandidates(1).first?.string }.joined(separator: " ")
     }
 
-    /// The real chart as the page builds it, on `domain`.
+    /// The real chart as the page builds it, on `domain`, with `legacy` as its
+    /// ink window (`nil`, the default, is every chart's prior behaviour).
     private func pageChart(_ history: EventHistoryResponse, journey: Journey?, domain: ClosedRange<Date>?,
+                           legacy: ClosedRange<Date>? = nil, range: OddsTimeRange = .sinceStart,
                            model: OddsChartViewModel? = nil,
                            selection: OddsChartSelection? = nil) -> OddsChartView {
         OddsChartView(eventId: Self.eventID, commenceTime: "2026-10-04T17:05:00Z", status: "completed",
                       homeTeamName: "Red Sox", awayTeamName: "Yankees",
-                      forcedDomain: domain, preloadedHistory: history,
+                      forcedDomain: domain, legacyDataDomain: legacy,
+                      selectedRange: .constant(range), preloadedHistory: history,
                       readout: GamePlayCardView(homeTeam: "Red Sox", awayTeam: "Yankees", lastPoint: nil),
                       publicationJourney: journey, model: model, selection: selection)
     }
@@ -1252,5 +1292,360 @@ final class EventPublicationCaller4974Tests: XCTestCase {
         XCTAssertTrue(text.contains("96%"), text)
         XCTAssertFalse(text.contains("88%"),
                        "the page's chart rested on the legacy end: its window still clips the stored dots: \(text)")
+    }
+
+    // MARK: - The legacy ink window inside the wider axis
+
+    /// The ink specimen (Root's B). The last ESPN row is 20:17:00 (final 5–3)
+    /// and the last sportsbook row 20:16:30, so the ORIGINAL page window ends
+    /// 20:17:30; with no `completed_at`, both charts' own finish clips end
+    /// 20:19:00 (last ESPN row + 120 s). Inside those clips and outside the
+    /// original window: post-final blend drift at 20:18:00 (71%) and 20:19:00
+    /// (73%), and post-final score rows at 20:18:00 (5–5) and 20:19:00 (5–9).
+    /// None of them moves either page window. `lateDrift` adds a `stat_model`
+    /// row at 20:21:15 — it moves only the probability chart's finish clip, to
+    /// 20:23:15 — and a blend row at 20:21:20 (77%; 75% would collide with a
+    /// y-axis label): after the latest stored checkpoint, inside the wider
+    /// axis, so with no ink bound it would outrank the stored 96% as the
+    /// resting reading.
+    private func inkHistory(blendDrift: Bool = true, scoreDrift: Bool = true,
+                            lateDrift: Bool = false) throws -> EventHistoryResponse {
+        func stamp(_ seconds: TimeInterval) -> String { at(seconds).ISO8601Format() }
+        let espn: [[String: Any]] = [
+            ["timestamp": stamp(-11_400), "home_probability": 0.55, "period": "1",
+             "home_score": 0, "away_score": 0],
+            ["timestamp": stamp(-5_700), "home_probability": 0.62, "period": "5",
+             "home_score": 2, "away_score": 1],
+            ["timestamp": stamp(120), "home_probability": 0.99, "period": "9",
+             "home_score": 5, "away_score": 3],
+        ]
+        let odds: [[String: Any]] = [
+            ["timestamp": stamp(-14_400), "home_probability": 0.52],
+            ["timestamp": stamp(90), "home_probability": 0.88],
+        ]
+        var blend: [(TimeInterval, Double)] = [(-14_400, 0.52), (-11_400, 0.55), (-5_700, 0.62), (90, 0.88)]
+        if blendDrift { blend += [(180, 0.71), (240, 0.73)] }
+        if lateDrift { blend += [(380, 0.77)] }
+        var scores: [(TimeInterval, Int, Int)] = [(-5_700, 2, 1), (120, 5, 3)]
+        if scoreDrift { scores += [(180, 5, 5), (240, 5, 9)] }
+        var object: [String: Any] = [
+            "event_id": Self.eventID, "home_team": "Red Sox", "away_team": "Yankees",
+            "status": "completed", "history": odds, "espn_history": espn,
+            "aggregate_line": blend.map { row -> [String: Any] in
+                ["timestamp": stamp(row.0), "home_probability": row.1]
+            },
+            "score_history": scores.map { row -> [String: Any] in
+                ["timestamp": stamp(row.0), "home_score": row.1, "away_score": row.2]
+            },
+        ]
+        if lateDrift {
+            object["win_prob_history"] = ["stat_model": [["timestamp": stamp(375), "home_probability": 0.97]]]
+        }
+        let data = try JSONSerialization.data(withJSONObject: object)
+        return try Self.decoder().decode(EventHistoryResponse.self, from: data)
+    }
+
+    /// The specimen is what it claims: the drift rows sit inside each chart's
+    /// own finish clip and the wider axis, outside the original window; the
+    /// page's ink window IS the original window, inside the axis on the same
+    /// start; and the stored dots are admitted by the axis, never by the ink.
+    func testTheInkSpecimenSitsInsideTheChartsOwnClipsAndOutsideTheOriginalWindow() throws {
+        let detail = try event(status: "completed")
+        let history = try inkHistory()
+        let journey = try lateJourney()
+        XCTAssertEqual(OddsChartView.gameEndDate(status: "completed", history: history), at(240),
+                       "fixture: the probability chart's own finish clip is 20:19:00")
+        XCTAssertNil(history.completedAt, "fixture: so the score chart's own clip is also last ESPN + 120 s")
+        XCTAssertTrue(OddsChartView.chartPoints(from: history).contains {
+            $0.date == at(240) && $0.source == PublicationCheckpointMount4974.blendSource && $0.probability == 0.73
+        }, "control: the 20:19 drift is a blend point the chart would draw unbounded")
+        for range in [OddsTimeRange.sinceStart, .all] {
+            let legacy = try XCTUnwrap(legacyWindow(detail, history, range), "fixture: \(range)")
+            XCTAssertEqual(legacy.upperBound, at(150), "the original window ends 20:17:30 (\(range))")
+            let page = try XCTUnwrap(pageWindow(detail, history, range, journey: journey, key: key(detail: detail)))
+            XCTAssertEqual(page.lowerBound, legacy.lowerBound, "\(range) keeps its start")
+            XCTAssertEqual(page.upperBound, at(390), "the axis ends 20:21:30 (\(range))")
+            let ink = try XCTUnwrap(inkWindow(detail, history, range, journey: journey, key: key(detail: detail)))
+            XCTAssertEqual(ink, legacy, "the ink window is the original window, unchanged (\(range))")
+            XCTAssertEqual(ink, EventDetailView.pageLegacyChartDomain(event: detail, history: history,
+                                                                       range: range, now: at(0)))
+            XCTAssertEqual(ink.lowerBound, page.lowerBound, "one start in both domains (\(range))")
+            XCTAssertLessThanOrEqual(ink.upperBound, page.upperBound, "the ink lies inside the axis (\(range))")
+            for drift in [at(180), at(240)] {
+                XCTAssertTrue(page.contains(drift), "control: the drift is inside the axis (\(range))")
+                XCTAssertFalse(ink.contains(drift), "the drift is outside the ink (\(range))")
+            }
+            XCTAssertTrue(journey.checkpoints.allSatisfy { page.contains($0.date) && !ink.contains($0.date) },
+                          "the stored dots are admitted by the axis, never by the ink window (\(range))")
+        }
+        let late = try inkHistory(lateDrift: true)
+        XCTAssertEqual(OddsChartView.gameEndDate(status: "completed", history: late), at(495),
+                       "fixture: the stat_model row moves the probability clip to 20:23:15")
+        XCTAssertEqual(legacyWindow(detail, late, .sinceStart), legacyWindow(detail, history, .sinceStart),
+                       "fixture: and moves neither page window")
+        XCTAssertEqual(pageWindow(detail, late, .sinceStart, journey: journey, key: key(detail: detail)),
+                       pageWindow(detail, history, .sinceStart, journey: journey, key: key(detail: detail)))
+    }
+
+    /// The ink window is handed only where the chart's own journey guard admits
+    /// a journey. Every refused input hands `nil` — each chart's exact prior
+    /// behaviour — beside the axis that stays the original window; where the
+    /// axis is `nil` the ink is too; and where stored dots did not widen the
+    /// axis, the ink window equals it, so every cut is the old cut.
+    func testTheInkWindowIsHandedOnlyWhereTheChartsJourneyGuardAdmits() throws {
+        let finished = try event(status: "completed")
+        let history = try inkHistory()
+        let journey = try lateJourney()
+        let otherDetail = try event(id: 5151, status: "completed")
+        let otherJourney = try lateJourney(eventId: 5151)
+        for range in [OddsTimeRange.sinceStart, .all] {
+            XCTAssertEqual(inkWindow(finished, history, range, journey: journey, key: key(detail: finished)),
+                           legacyWindow(finished, history, range),
+                           "control: the eligible page hands the original window (\(range))")
+            let cases: [(String, Journey?, PublicationTaskKey4974)] = [
+                ("no journey", nil, key(detail: finished)),
+                ("unready appearance", journey, key(detail: finished, ready: false)),
+                ("another page", journey, key(page: 5151, detail: finished)),
+                ("view model of another game", journey, key(vm: 5151, detail: finished)),
+                ("detail of another game", journey, key(detail: otherDetail)),
+                ("another game's journey", otherJourney, key(detail: finished)),
+            ]
+            for (name, held, pageKey) in cases {
+                XCTAssertNil(inkWindow(finished, history, range, journey: held, key: pageKey), "\(name) (\(range))")
+                XCTAssertEqual(pageWindow(finished, history, range, journey: held, key: pageKey),
+                               legacyWindow(finished, history, range), "\(name): the axis stays the original (\(range))")
+            }
+            let unwidened = try self.journey()   // 20:15:10 and 20:15:50, inside the original window
+            XCTAssertEqual(pageWindow(finished, history, range, journey: unwidened, key: key(detail: finished)),
+                           legacyWindow(finished, history, range), "fixture: these dots do not widen the axis (\(range))")
+            XCTAssertEqual(inkWindow(finished, history, range, journey: unwidened, key: key(detail: finished)),
+                           pageWindow(finished, history, range, journey: unwidened, key: key(detail: finished)),
+                           "an axis the dots did not widen IS the ink window: every cut is the old cut (\(range))")
+        }
+        let live = try event(status: "live")
+        XCTAssertNil(inkWindow(live, history, .sinceStart, journey: journey, key: key(detail: live)), "live")
+        XCTAssertNil(pageWindow(finished, nil, .sinceStart, journey: journey, key: key(detail: finished)),
+                     "fixture: no history, no axis")
+        XCTAssertNil(inkWindow(finished, nil, .sinceStart, journey: journey, key: key(detail: finished)),
+                     "no axis, no ink window: the charts' own nil-domain paths are untouched")
+        XCTAssertNil(inkWindow(nil, history, .sinceStart, journey: journey, key: key(detail: nil)))
+    }
+
+    /// The real inline chart on `domain` with `legacy` ink, its selection held
+    /// at `date` (on `scrub`), read back as text.
+    private func heldText(_ history: EventHistoryResponse, journey: Journey, domain: ClosedRange<Date>,
+                          legacy: ClosedRange<Date>?, range: OddsTimeRange, date: Date,
+                          scrub: PublicationCheckpointScrub4974?, name: String) throws -> (builds: Int, text: String) {
+        let model = OddsChartViewModel(eventId: Self.eventID, preloaded: history)
+        var builds = 0
+        model.onPlotBuild = { builds += 1 }
+        defer { model.onPlotBuild = nil }
+        let selection = OddsChartSelection()
+        let host = hostForMeasurement(
+            pageChart(history, journey: journey, domain: domain, legacy: legacy, range: range,
+                      model: model, selection: selection)
+                .frame(width: 390), at: .large)
+        host.view.frame = CGRect(x: 0, y: 0, width: 390, height: 844)
+        let window = UIWindow(frame: host.view.frame)
+        window.rootViewController = host
+        window.isHidden = false
+        defer { window.isHidden = true }
+        pumpShown(host, times: 12)
+        selection.hold(date: date, checkpoint: scrub)
+        pumpShown(host)
+        return (builds, try readText(host, name: name))
+    }
+
+    /// The real inline chart, in both ranges, on the page's axis with the
+    /// page's ink window: the stored 20:21 dot still scrubs to its own 96%,
+    /// and a finger at 20:19 reads the last real reading inside the original
+    /// window (88%), never the post-final 73%. POSITIVE CONTROL — the same
+    /// chart, axis, journey and finger with the ink bound removed reads 73%.
+    func testHostedChartKeepsThePostFinalDriftOffTheWiderAxisAndStillScrubsTheDots() throws {
+        let detail = try event(status: "completed")
+        let history = try inkHistory()
+        let journey = try lateJourney()
+        let latest = try XCTUnwrap(journey.checkpoints.last, "fixture: rev 9 at 20:21")
+        for range in [OddsTimeRange.sinceStart, .all] {
+            let page = try XCTUnwrap(pageWindow(detail, history, range, journey: journey, key: key(detail: detail)))
+            let ink = try XCTUnwrap(inkWindow(detail, history, range, journey: journey, key: key(detail: detail)))
+
+            let hit = try heldText(history, journey: journey, domain: page, legacy: ink, range: range,
+                                   date: latest.date, scrub: .checkpoint(latest), name: "ink-hit-\(range)")
+            XCTAssertGreaterThan(hit.builds, 0, "the real plot must render for this test to mean anything")
+            XCTAssertTrue(hit.text.contains("96%"), "\(range): the stored dot stopped scrubbing: \(hit.text)")
+
+            let drift = try heldText(history, journey: journey, domain: page, legacy: ink, range: range,
+                                     date: at(240), scrub: nil, name: "ink-drift-\(range)")
+            XCTAssertTrue(drift.text.contains("88%"), "\(range): \(drift.text)")
+            XCTAssertFalse(drift.text.contains("73%") || drift.text.contains("71%"),
+                           "\(range): post-final drift outside the original window was read: \(drift.text)")
+
+            let unbound = try heldText(history, journey: journey, domain: page, legacy: nil, range: range,
+                                       date: at(240), scrub: nil, name: "no-ink-drift-\(range)")
+            XCTAssertTrue(unbound.text.contains("73%"),
+                          "\(range): control: without the ink bound the drift is read, so the bound is what holds it off: \(unbound.text)")
+        }
+    }
+
+    /// The fullscreen cover shares the inline chart's state and cuts. In both
+    /// ranges, with the page's ink window, it rests on the stored 96% and a
+    /// held 20:19 finger reads 88%. POSITIVE CONTROL — without the ink bound
+    /// the post-final 20:21:20 blend row (77%) outranks the stored dot as the
+    /// resting reading, and the held finger reads the 73% drift.
+    func testHostedFullscreenRestsOnTheStoredDotAndReadsNoDriftUnderTheInkWindow() throws {
+        let detail = try event(status: "completed")
+        let late = try inkHistory(lateDrift: true)
+        let journey = try lateJourney()
+        let driftTime = at(240)
+        for range in [OddsTimeRange.sinceStart, .all] {
+            let page = try XCTUnwrap(pageWindow(detail, late, range, journey: journey, key: key(detail: detail)))
+            let ink = try XCTUnwrap(inkWindow(detail, late, range, journey: journey, key: key(detail: detail)))
+            XCTAssertTrue(page.contains(at(380)) && !ink.contains(at(380)), "fixture: the late drift is axis-only (\(range))")
+
+            let rest = try fullscreenText(pageChart(late, journey: journey, domain: page, legacy: ink, range: range),
+                                          name: "ink-fullscreen-rest-\(range)")
+            XCTAssertTrue(rest.contains("96%"), "\(range): \(rest)")
+            XCTAssertFalse(rest.contains("77%"), "\(range): rested on post-final drift: \(rest)")
+
+            let unboundRest = try fullscreenText(pageChart(late, journey: journey, domain: page, legacy: nil, range: range),
+                                                 name: "no-ink-fullscreen-rest-\(range)")
+            XCTAssertTrue(unboundRest.contains("77%"),
+                          "\(range): control: without the ink bound the late drift is the resting reading: \(unboundRest)")
+
+            let selection = OddsChartSelection()
+            let held = try fullscreenText(
+                pageChart(late, journey: journey, domain: page, legacy: ink, range: range, selection: selection),
+                name: "ink-fullscreen-held-\(range)", whileMounted: { selection.hold(date: driftTime, checkpoint: nil) })
+            XCTAssertTrue(held.contains("88%"), "\(range): \(held)")
+            XCTAssertFalse(held.contains("73%"), "\(range): the held finger read post-final drift: \(held)")
+
+            let unboundSelection = OddsChartSelection()
+            let unboundHeld = try fullscreenText(
+                pageChart(late, journey: journey, domain: page, legacy: nil, range: range, selection: unboundSelection),
+                name: "no-ink-fullscreen-held-\(range)",
+                whileMounted: { unboundSelection.hold(date: driftTime, checkpoint: nil) })
+            XCTAssertTrue(unboundHeld.contains("73%"), "\(range): control: \(unboundHeld)")
+        }
+    }
+
+    /// The real score chart on `domain` with `legacy` ink, rendered at 3x on
+    /// white as the page lays it out: its RGBA bytes, its teal (#0d9488, the
+    /// actual series) pixel count above the legend band, and the rightmost
+    /// teal column there (`ALoneFinalScoreIsDrawnNotJustNamed8997Tests`' rule).
+    private func scoreRender(_ history: EventHistoryResponse, domain: ClosedRange<Date>?,
+                             legacy: ClosedRange<Date>?, range: OddsTimeRange,
+                             name: String) throws -> (bytes: [UInt8], teal: Int, rightmostTeal: Int?) {
+        let view = ScoreDifferentialChartView(
+            history: history, homeTeam: "Red Sox", awayTeam: "Yankees",
+            commenceTime: "2026-10-04T17:05:00Z", eventStatus: "completed",
+            homeTeamColor: .red, awayTeamColor: .blue,
+            forcedDomain: domain, legacyDataDomain: legacy, range: range)
+            .padding(16)
+            .frame(width: 390)
+            .background(Color.white)
+        let renderer = rendererForMeasurement(view)
+        renderer.scale = 3
+        let image = try XCTUnwrap(renderer.cgImage)
+        let url = FileManager.default.temporaryDirectory.appendingPathComponent("4974-ink-\(name).png")
+        try? UIImage(cgImage: image).pngData()?.write(to: url)
+        print("#4974 rendered evidence: \(url.path)")
+
+        let w = image.width, h = image.height
+        var bytes = [UInt8](repeating: 0, count: w * h * 4)
+        let ctx = try XCTUnwrap(CGContext(
+            data: &bytes, width: w, height: h, bitsPerComponent: 8, bytesPerRow: w * 4,
+            space: CGColorSpaceCreateDeviceRGB(),
+            bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue))
+        ctx.draw(image, in: CGRect(x: 0, y: 0, width: w, height: h))
+        let legendBand = 50 * 3
+        var teal = 0
+        var rightmost: Int?
+        for y in 0..<max(0, h - legendBand) {
+            for x in 0..<w {
+                let i = (y * w + x) * 4
+                let r = Int(bytes[i]), g = Int(bytes[i + 1]), b = Int(bytes[i + 2])
+                if r < 70, g > 110, b > 100, g - r > 60, abs(g - b) < 40 {
+                    teal += 1
+                    rightmost = max(rightmost ?? x, x)
+                }
+            }
+        }
+        return (bytes, teal, rightmost)
+    }
+
+    /// The real score chart, in both ranges, on the page's axis with the page's
+    /// ink window: the post-final 20:18 and 20:19 score rows draw nothing (the
+    /// render is byte-identical to the same game without them), and the final
+    /// margin's carry stops short of the wider axis edge. POSITIVE CONTROLS —
+    /// with the ink bound removed the post-final rows change the render, and
+    /// the carry runs on toward 20:21:30. Where exactly the carry stops
+    /// (20:17:30) is the chart rule's own test (latency's
+    /// `PublicationAxisInk4974Tests`) and the static case above.
+    func testTheRealScoreChartDrawsNoPostFinalRowAndItsCarryStopsShortOfTheWiderAxis() throws {
+        let detail = try event(status: "completed")
+        let journey = try lateJourney()
+        let drift = try inkHistory()
+        let clean = try inkHistory(scoreDrift: false)
+        for range in [OddsTimeRange.sinceStart, .all] {
+            let page = try XCTUnwrap(pageWindow(detail, drift, range, journey: journey, key: key(detail: detail)))
+            let ink = try XCTUnwrap(inkWindow(detail, drift, range, journey: journey, key: key(detail: detail)))
+            XCTAssertEqual(pageWindow(detail, clean, range, journey: journey, key: key(detail: detail)), page,
+                           "fixture: the score rows move no window (\(range))")
+            XCTAssertEqual(inkWindow(detail, clean, range, journey: journey, key: key(detail: detail)), ink)
+
+            let bounded = try scoreRender(drift, domain: page, legacy: ink, range: range, name: "score-drift-\(range)")
+            let bare = try scoreRender(clean, domain: page, legacy: ink, range: range, name: "score-clean-\(range)")
+            XCTAssertGreaterThan(bounded.teal, 150, "\(range): the actual series must draw for this to mean anything")
+            XCTAssertTrue(bounded.bytes == bare.bytes, "\(range): a post-final score row outside the original window drew ink")
+
+            let unbound = try scoreRender(drift, domain: page, legacy: nil, range: range, name: "no-ink-score-drift-\(range)")
+            XCTAssertFalse(unbound.bytes == bounded.bytes,
+                           "\(range): control: without the ink bound the post-final rows draw, so the bound is what holds them off")
+
+            let axisCarry = try scoreRender(clean, domain: page, legacy: nil, range: range, name: "no-ink-score-carry-\(range)")
+            let inkEnd = try XCTUnwrap(bare.rightmostTeal)
+            let axisEnd = try XCTUnwrap(axisCarry.rightmostTeal)
+            XCTAssertGreaterThanOrEqual(axisEnd - inkEnd, 2 * 3,
+                                        "\(range): the final margin was carried past the original window toward the axis edge")
+        }
+    }
+
+    /// The mounted page itself (Since Start, its default — the page's range
+    /// control has no hosted driver; All is the same two helpers, pinned
+    /// above): its own load, its own read, its own windows. On the late-drift
+    /// specimen its probability chart's fullscreen cover rests on the stored
+    /// 96%. Had the page handed its charts no ink window it would rest on the
+    /// post-final 77% — the positive control is the same chart, axis and
+    /// payload unbound in `testHostedFullscreenRestsOnTheStoredDotAndReadsNoDriftUnderTheInkWindow`.
+    func testTheMountedPageKeepsItsLegacyInkInsideTheOriginalWindow() throws {
+        let detail = try event(status: "completed")
+        let late = try inkHistory(lateDrift: true)
+        let client = Client(detail: detail, publications: lateBody(), history: late)
+        client.holdDetails(true)
+        let vm = makeVM(client: client)
+        defer { vm.stopRefresh() }
+        let page = NavigationStack { EventDetailView(eventId: Self.eventID, viewModel: vm) }
+            .environmentObject(PinManager())
+            .environment(\.scenePhase, .active).environment(\.colorScheme, .light)
+
+        let text = try fullscreenText(page, name: "mounted-page-ink-fullscreen", whileMounted: {
+            let deadline = Date().addingTimeInterval(5)
+            while client.parkedDetailCount == 0 || client.historyRequestCount == 0, Date() < deadline {
+                RunLoop.current.run(until: Date().addingTimeInterval(0.02))
+            }
+            RunLoop.current.run(until: Date().addingTimeInterval(0.2))
+            client.holdDetails(false)
+            client.answerDetail(0, with: .serve(detail))
+        }, ready: { vm.history != nil && vm.publicationJourney != nil })
+
+        XCTAssertEqual(client.publicationRequests, [Self.eventID], "the page's own load, then one read")
+        XCTAssertEqual(vm.publicationJourney, try lateJourney())
+        XCTAssertTrue(text.contains("96%"), text)
+        XCTAssertFalse(text.contains("77%"),
+                       "the page's chart rested on post-final drift: it was handed no ink window: \(text)")
+        XCTAssertEqual(inkWindow(vm.event, vm.history, .sinceStart, journey: vm.publicationJourney,
+                                 key: key(detail: vm.event)),
+                       legacyWindow(detail, late, .sinceStart), "the page's own inputs give the original window")
     }
 }
