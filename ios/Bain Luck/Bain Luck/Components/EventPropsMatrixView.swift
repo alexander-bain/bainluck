@@ -506,11 +506,30 @@ struct AfterPropsMatrixView: View {
     @ScaledMetric(relativeTo: .subheadline) private var cellWidth: CGFloat = 58
     @ScaledMetric(relativeTo: .subheadline) private var nameWidth: CGFloat = 112
     private let maxNameWidth: CGFloat = 150
+    /// At accessibility sizes a threshold cell is sized to what it holds — a
+    /// saved chance over "Reached"/"Below" — not to the subheadline-scaled
+    /// default, which left 150pt for the name and broke "Christian" mid-word.
+    @ScaledMetric(relativeTo: .caption2) private var accessibilityCellWidth: CGFloat = 36
+    @State private var matrixWidth: CGFloat = 0
 
     /// Accessibility sizes give each row room for a two-line name over a
     /// two-line count: the count is the fact this grid exists to state, so it
     /// wraps rather than truncating to "2 home…".
     private var rowHeight: CGFloat { typeSize.isAccessibilitySize ? baseRowHeight * 2 : baseRowHeight }
+    /// The statistic's name heads the player column on two lines at
+    /// accessibility sizes ("Home / Runs"), never "Home…"; the threshold
+    /// headers share the height so the rows stay aligned.
+    private var columnHeaderHeight: CGFloat { typeSize.isAccessibilitySize ? headerHeight * 2 : headerHeight }
+    private var thresholdWidth: CGFloat {
+        typeSize.isAccessibilitySize ? min(cellWidth, accessibilityCellWidth) : cellWidth
+    }
+    /// The player column takes what one whole threshold column leaves, so a
+    /// name wraps by word; until the width is known it keeps the default cap.
+    private var playerColumnWidth: CGFloat {
+        let capped = min(nameWidth, maxNameWidth)
+        guard typeSize.isAccessibilitySize, matrixWidth > 0 else { return capped }
+        return min(nameWidth, max(capped, matrixWidth - 6 - thresholdWidth))
+    }
 
     /// The reader's chosen statistic, else the server's first. A chosen one
     /// that leaves stays chosen (and shows nothing) rather than switching.
@@ -578,27 +597,40 @@ struct AfterPropsMatrixView: View {
         accessibilityFocus = drawn ? .question(open) : .header
     }
 
+    /// At accessibility sizes the pills stack when one row cannot hold them,
+    /// so the selected one is never cut at the card's edge.
+    @ViewBuilder
     private func statPicker(selected: String?) -> some View {
-        ScrollView(.horizontal, showsIndicators: false) {
-            HStack(spacing: 6) {
-                ForEach(props.stats) { stat in
-                    let isOn = stat.statKey == selected
-                    Button {
-                        statKey = stat.statKey
-                    } label: {
-                        Text(stat.label)
-                            .font(.caption)
-                            .fontWeight(.semibold)
-                            .foregroundStyle(isOn ? Color.white : Color.primary)
-                            .padding(.horizontal, 10)
-                            .padding(.vertical, 6)
-                            .background(isOn ? Color.blue : Color.secondary.opacity(0.1))
-                            .clipShape(Capsule())
-                    }
-                    .buttonStyle(.plain)
-                    .accessibilityAddTraits(isOn ? .isSelected : [])
-                }
+        if typeSize.isAccessibilitySize {
+            ViewThatFits(in: .horizontal) {
+                HStack(spacing: 6) { statPills(selected: selected) }
+                VStack(alignment: .leading, spacing: 6) { statPills(selected: selected) }
             }
+        } else {
+            ScrollView(.horizontal, showsIndicators: false) {
+                HStack(spacing: 6) { statPills(selected: selected) }
+            }
+        }
+    }
+
+    private func statPills(selected: String?) -> some View {
+        ForEach(props.stats) { stat in
+            let isOn = stat.statKey == selected
+            Button {
+                statKey = stat.statKey
+            } label: {
+                Text(stat.label)
+                    .font(.caption)
+                    .fontWeight(.semibold)
+                    .foregroundStyle(isOn ? Color.white : Color.primary)
+                    .fixedSize(horizontal: false, vertical: true)
+                    .padding(.horizontal, 10)
+                    .padding(.vertical, 6)
+                    .background(isOn ? Color.blue : Color.secondary.opacity(0.1))
+                    .clipShape(Capsule())
+            }
+            .buttonStyle(.plain)
+            .accessibilityAddTraits(isOn ? .isSelected : [])
         }
     }
 
@@ -609,7 +641,10 @@ struct AfterPropsMatrixView: View {
                     .font(.caption2)
                     .fontWeight(.semibold)
                     .foregroundStyle(.secondary)
-                    .frame(height: headerHeight, alignment: .leading)
+                    .lineLimit(typeSize.isAccessibilitySize ? 2 : nil)
+                    .minimumScaleFactor(typeSize.isAccessibilitySize ? 0.8 : 1)
+                    .frame(width: typeSize.isAccessibilitySize ? playerColumnWidth : nil,
+                           height: columnHeaderHeight, alignment: .leading)
                 ForEach(grid.players) { player in
                     playerCell(player, stat: grid.stat)
                 }
@@ -624,7 +659,7 @@ struct AfterPropsMatrixView: View {
                                 .font(.caption2)
                                 .fontWeight(.semibold)
                                 .foregroundStyle(.secondary)
-                                .frame(width: cellWidth, height: headerHeight)
+                                .frame(width: thresholdWidth, height: columnHeaderHeight)
                                 .accessibilityHidden(true)
                         }
                     }
@@ -639,6 +674,7 @@ struct AfterPropsMatrixView: View {
             }
             .id(grid.stat.statKey)
         }
+        .onGeometryChange(for: CGFloat.self) { $0.size.width } action: { matrixWidth = $0 }
     }
 
     /// Name over the player's one final count. The count is spoken here once,
@@ -646,10 +682,12 @@ struct AfterPropsMatrixView: View {
     private func playerCell(_ player: AfterPropsMatrixLayout.PlayerRow, stat: AfterPropStat) -> some View {
         let actual = PropExpectationActualDisplay.actual(player.actual, stat: stat)
         return VStack(alignment: .leading, spacing: 1) {
+            // A long surname ("Cronenworth") fits its line whole by shrinking
+            // at accessibility sizes, rather than truncating to "Cronenw…".
             Text(player.label)
                 .font(.subheadline)
                 .lineLimit(2)
-                .minimumScaleFactor(0.85)
+                .minimumScaleFactor(typeSize.isAccessibilitySize ? 0.6 : 0.85)
             Text(actual.countText ?? absentProbabilityMarker)
                 .font(.caption.monospacedDigit())
                 .foregroundStyle(.secondary)
@@ -657,7 +695,7 @@ struct AfterPropsMatrixView: View {
                 .minimumScaleFactor(0.85)
                 .fixedSize(horizontal: false, vertical: true)
         }
-        .frame(width: min(nameWidth, maxNameWidth), height: rowHeight, alignment: .leading)
+        .frame(width: playerColumnWidth, height: rowHeight, alignment: .leading)
         .accessibilityElement(children: .ignore)
         .accessibilityLabel(actual.countText.map { "\(player.label), final \($0)" } ?? "\(player.label), final count \(actual.stateText.lowercased())")
     }
@@ -684,7 +722,7 @@ struct AfterPropsMatrixView: View {
                 }
                 .lineLimit(1)
                 .minimumScaleFactor(0.8)
-                .frame(width: cellWidth, height: rowHeight)
+                .frame(width: thresholdWidth, height: rowHeight)
                 .background(RoundedRectangle(cornerRadius: 8)
                     .fill(mark == .reached ? Color.green.opacity(0.12) : Color.secondary.opacity(0.08)))
                 .contentShape(Rectangle())
@@ -696,7 +734,7 @@ struct AfterPropsMatrixView: View {
             .accessibilityFocused($accessibilityFocus, equals: .question(.init(question)))
         } else {
             Color.clear
-                .frame(width: cellWidth, height: rowHeight)
+                .frame(width: thresholdWidth, height: rowHeight)
                 .accessibilityHidden(true)
         }
     }
