@@ -320,5 +320,41 @@ import XCTest
         XCTAssertTrue(subject.unconfirmedRevocations.isEmpty)
     }
 
+    func testColdAccountSwitchEndsOldIdentityWithoutNewOwnerRevocation() async {
+        let name = "GameActivityColdAccountSwitchTests.\(UUID().uuidString)"
+        let defaults = UserDefaults(suiteName: name)!
+        defer { defaults.removePersistentDomain(forName: name) }
+        defaults.set(["activity": 1], forKey: "gameActivityRegistrationOwners")
+        let transport = RegistrationTransportFake()
+        let cold = GameActivityRegistrationCoordinator(transport: transport, defaults: defaults)
+        cold.setSession(owner: 2, bearer: "test-new-owner-session")
+        XCTAssertEqual(cold.restoreOwnership(id: "activity", eventID: 42), .end)
+        XCTAssertEqual(defaults.stringArray(forKey: "gameActivityRegistrationStoppedIDs"), ["activity"])
+        cold.bind(id: "activity", eventID: 42)
+        cold.receive(id: "activity", token: Data([1]))
+        cold.foregroundActivated()
+        await Task.yield()
+        XCTAssertTrue(transport.calls.isEmpty, "New owner may neither register nor revoke old ownership")
+        XCTAssertEqual(cold.unconfirmedRevocations, ["activity"])
+    }
+    func testColdSameOwnerCanRestoreObservationAndRegister() async {
+        let name = "GameActivityColdSameOwnerTests.\(UUID().uuidString)"
+        let defaults = UserDefaults(suiteName: name)!
+        defer { defaults.removePersistentDomain(forName: name) }
+        defaults.set(["activity": 1], forKey: "gameActivityRegistrationOwners")
+        let transport = RegistrationTransportFake()
+        let cold = GameActivityRegistrationCoordinator(transport: transport, defaults: defaults)
+        cold.setSession(owner: 1, bearer: "test-restored-owner-session")
+        XCTAssertEqual(cold.restoreOwnership(id: "activity", eventID: 42), .observe)
+        XCTAssertNil(defaults.stringArray(forKey: "gameActivityRegistrationStoppedIDs"))
+        cold.bind(id: "activity", eventID: 42)
+        cold.receive(id: "activity", token: Data([0xab]))
+        await waitForCalls(1, transport)
+        XCTAssertEqual(transport.calls[0].bearer, "test-restored-owner-session")
+        XCTAssertEqual(transport.calls[0].token, "ab")
+        XCTAssertTrue(cold.unconfirmedRevocations.isEmpty)
+        transport.complete(version: 1, active: true)
+    }
+
 }
 #endif

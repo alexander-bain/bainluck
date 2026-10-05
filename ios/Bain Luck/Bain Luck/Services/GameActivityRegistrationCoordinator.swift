@@ -54,19 +54,35 @@ import Foundation
         // Only a persisted same-account binding may be restored. Anonymous activities
         // are never upgraded and another account's activity is never adopted.
         for activity in Activity<GameActivityAttributes>.activities {
-            let owners = defaults.dictionary(forKey: ownershipKey) ?? [:]
-            guard (owners[activity.id] as? Int) == owner else { continue }
-            if stoppedIDs.contains(activity.id) {
-                // A relaunch must spend persisted stop intent on DELETE only.
-                if entries[activity.id] == nil {
-                    let entry = Entry(eventID: activity.attributes.eventID, session: session!)
-                    entry.stopped = true
-                    entries[activity.id] = entry
-                    startWorker(id: activity.id, entry: entry)
-                }
-                Task { await activity.end(nil, dismissalPolicy: .immediate) }
-            } else { observe(activity) }
+            switch restoreOwnership(id: activity.id, eventID: activity.attributes.eventID) {
+            case .observe: observe(activity)
+            case .end: Task { await activity.end(nil, dismissalPolicy: .immediate) }
+            case .anonymous: break
+            }
         }
+    }
+
+    nonisolated enum OwnershipRestoration: Equatable, Sendable { case anonymous, observe, end }
+
+    /// Restored system records must spend persisted ownership before observation.
+    /// Another account's identity is ended without borrowing the new bearer.
+    func restoreOwnership(id: String, eventID: Int) -> OwnershipRestoration {
+        let owners = defaults.dictionary(forKey: ownershipKey) ?? [:]
+        guard let session, let owner = owners[id] as? Int else { return .anonymous }
+        guard owner == session.owner else {
+            stop(id: id)
+            return .end
+        }
+        guard stoppedIDs.contains(id) else { return .observe }
+        // A relaunch must spend persisted stop intent on DELETE only, and only
+        // the same authenticated owner can perform that reconciliation.
+        if entries[id] == nil {
+            let entry = Entry(eventID: eventID, session: session)
+            entry.stopped = true
+            entries[id] = entry
+            startWorker(id: id, entry: entry)
+        }
+        return .end
     }
 
     /// Real activation/auth refresh permits one bounded recovery attempt. No timer,

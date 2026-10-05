@@ -12,7 +12,9 @@ is persisted synchronously before network or ActivityKit ending work, including
 a cold/offline stop before auth restoration creates an in-memory entry. A relaunch
 never registers a stopped identity; a remaining same-account activity is ended
 locally and reconciled only through DELETE. Restored activities are adopted only
-for the same verified account. Bearers and push tokens are never persisted by
+for the same verified account. A cold launch verified as a different owner
+persists stop intent for the old activity and ends it locally, without sending a
+revoke using the new owner's bearer. Remote revocation stays unconfirmed. Bearers and push tokens are never persisted by
 this service or logged.
 
 Registration uses the existing backend session bearer and the #10553
@@ -35,4 +37,4 @@ remain integration gates.
 
 No sender is connected by this change. Foreground wording remains accurate.
 No APNs sends, credentials, signing, device acceptance or release is established.
-The eighteen new deterministic native tests require the hosted iPhone gate.
+The twenty new deterministic native tests require the hosted iPhone gate.
