@@ -2608,6 +2608,18 @@ async def _attach_headline_bouts(
             # than attaching a nameless one.
             continue
         commence = commence_by_market.get(main_id)
+        # #10559. A main event cannot begin before its own card opens, so a
+        # venue stamp that does is not a start — on a Kalshi row it is the
+        # expiry estimate (gotcha #14). `event:ufc:26oct05` served 06:20Z Oct 6
+        # against an `opens_at` of 22:00Z (ESPN: 23:00Z) and printed "Mon, Oct 5"
+        # under its own "Tomorrow" chip. Withheld, the renderer falls back to
+        # `start_date` — the chip's clock (#6747) — and the two name one day.
+        opens_at = concept.get("opens_at")
+        try:
+            if commence is not None and opens_at is not None and commence < opens_at:
+                commence = None
+        except TypeError:  # naive vs aware: no comparison, no claim — as before
+            pass
         concept["headline_bout"] = {
             "competitors": competitors,
             "commence_time": commence.isoformat() if commence else None,
