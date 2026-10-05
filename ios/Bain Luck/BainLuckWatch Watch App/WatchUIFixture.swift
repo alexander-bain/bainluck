@@ -9,6 +9,7 @@ nonisolated struct WatchUIFixture: WatchSelectedGameTransport, WatchGamePickerTr
     let suite: String
     var rounding = false
     var launchReceipt = false
+    var sharedPublication = false
 
     static let current: WatchUIFixture? = {
         var environment = ProcessInfo.processInfo.environment
@@ -25,7 +26,8 @@ nonisolated struct WatchUIFixture: WatchSelectedGameTransport, WatchGamePickerTr
                   let token = environment["BAINLUCK_WATCH_UI_SUITE"], UUID(uuidString: token) != nil {
             let keys = ["BAINLUCK_WATCH_UI_TEST", "BAINLUCK_WATCH_UI_SUITE",
                         "BAINLUCK_WATCH_UI_RESET", "BAINLUCK_WATCH_UI_OFFLINE",
-                        "BAINLUCK_WATCH_UI_ROUNDING", "BAINLUCK_WATCH_UI_LAUNCH_RECEIPT"]
+                        "BAINLUCK_WATCH_UI_ROUNDING", "BAINLUCK_WATCH_UI_LAUNCH_RECEIPT",
+                        "BAINLUCK_WATCH_UI_SHARED_PUBLICATION"]
             UserDefaults.standard.set(environment.filter { keys.contains($0.key) }, forKey: seedKey)
         }
         guard environment["BAINLUCK_WATCH_UI_TEST"] == "1",
@@ -38,11 +40,19 @@ nonisolated struct WatchUIFixture: WatchSelectedGameTransport, WatchGamePickerTr
         }
         return Self(offline: environment["BAINLUCK_WATCH_UI_OFFLINE"] == "1", suite: suite,
                     rounding: environment["BAINLUCK_WATCH_UI_ROUNDING"] == "1",
-                    launchReceipt: environment["BAINLUCK_WATCH_UI_LAUNCH_RECEIPT"] == "1")
+                    launchReceipt: environment["BAINLUCK_WATCH_UI_LAUNCH_RECEIPT"] == "1",
+                    sharedPublication: environment["BAINLUCK_WATCH_UI_SHARED_PUBLICATION"] == "1")
     }()
 
-    func makeStore() -> WatchSelectedGameStore {
-        WatchSelectedGameStore(transport: self, defaults: UserDefaults(suiteName: suite)!)
+    @MainActor func makeStore() -> WatchSelectedGameStore {
+        // Opt in only for a dedicated simulator's actual WidgetKit journey.
+        // Ordinary fixtures retain their no-op publisher and isolated defaults.
+        let publish: (WatchSelectedGame?, Date?) -> Void = { game, savedAt in
+            if sharedPublication {
+                WatchComplicationPublisher.publish(game: game, savedAt: savedAt)
+            }
+        }
+        return WatchSelectedGameStore(transport: self, defaults: UserDefaults(suiteName: suite)!, publish: publish)
     }
 
     func fetchGames() async throws -> WatchGamePickerBatch {
