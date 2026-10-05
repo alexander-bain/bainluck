@@ -3,6 +3,59 @@ import XCTest
 
 final class WidgetTapJourneyTests: XCTestCase {
     @MainActor
+    func testColdActualWidgetTapRetainsOfflineReading() throws {
+        continueAfterFailure = false
+        let app = XCUIApplication()
+        defer { app.terminate() }
+        app.launchEnvironment = [
+            "BAINLUCK_WATCH_UI_TEST": "1",
+            "BAINLUCK_WATCH_UI_SUITE": UUID().uuidString,
+            "BAINLUCK_WATCH_UI_RESET": "1",
+            "BAINLUCK_WATCH_UI_LAUNCH_RECEIPT": "1",
+            "BAINLUCK_WATCH_UI_SHARED_PUBLICATION": "1"
+        ]
+        app.launch()
+        XCTAssertTrue(app.buttons["watch.pick.101"].waitForExistence(timeout: 20))
+        app.buttons["watch.pick.101"].tap()
+        let baseline = try recordWidgetWarmBaseline(in: app)
+        XCUIDevice.shared.press(.home)
+        let host = XCUIApplication(bundleIdentifier: "com.apple.Carousel")
+        let widget = try mountLauncherOnFreshSiriModularFace(in: host)
+        app.terminate()
+        app.launchEnvironment["BAINLUCK_WATCH_UI_RESET"] = "0"
+        app.launchEnvironment["BAINLUCK_WATCH_UI_OFFLINE"] = "1"
+        app.launchEnvironment["BAINLUCK_WATCH_UI_SEED_URL"] = "1"
+        app.launch()
+        XCTAssertTrue(app.staticTexts["watch.url-fixture-ready"].waitForExistence(timeout: 15))
+        app.terminate()
+        XCTAssertEqual(app.state, .notRunning)
+        XCTAssertTrue(host.wait(for: .runningForeground, timeout: 15))
+        XCTAssertTrue(widget.waitForExistence(timeout: 15) && widget.isHittable)
+        widgetWarmCapture(host, name: "Actual cold Widget tap from terminated app")
+        widget.tap()
+        XCTAssertTrue(app.wait(for: .runningForeground, timeout: 45))
+        let state = app.descendants(matching: .any)["watch.game-state"].firstMatch
+        XCTAssertTrue(state.waitForExistence(timeout: 15))
+        try widgetWarmWait(NSPredicate(format: "label CONTAINS %@ AND label CONTAINS %@", "Saved reading", "Offline"),
+            on: state, timeout: 15, message: "Actual cold Widget tap must restore an honestly offline saved reading", app: app)
+        let receipt = app.staticTexts["watch.launch-receipt"]
+        try widgetWarmWait(NSPredicate(format: "label == %@", "Launcher opens: 1"),
+            on: receipt, timeout: 15, message: "Actual cold Widget tap must deliver exactly one route", app: app)
+        let process = app.staticTexts["watch.launch-process"]
+        XCTAssertTrue(process.waitForExistence(timeout: 15))
+        XCTAssertNotNil(UUID(uuidString: process.label))
+        XCTAssertNotEqual(process.label, baseline.processUUID)
+        let probability = app.descendants(matching: .any)["watch.home-probability"].firstMatch
+        XCTAssertTrue(probability.waitForExistence(timeout: 15))
+        XCTAssertEqual(probability.label, baseline.namedReading)
+        try widgetWarmReveal(state, in: app)
+        widgetWarmCapture(app, name: "Actual cold Widget tap honest saved offline qualifier")
+        try widgetWarmReveal(probability, in: app)
+        widgetWarmCapture(app, name: "Actual cold Widget tap retained complete named64 reading")
+        print("WATCH_UI_ACTUAL_WIDGET_COLD=PASS")
+    }
+
+    @MainActor
     func testActualComplicationHost() throws {
         continueAfterFailure = false
         let app = XCUIApplication()
