@@ -397,19 +397,16 @@ describe("#7940 — the stagger reflects with the band", () => {
 });
 
 // ───────────────────────────────────────────────────────────────────────────
-describe("#7940 — the callout does not clear a strip that has moved away", () => {
-  it("OddsChart passes zero chip rows when the strip is at the bottom", () => {
-    // `calloutLabelCenterY` drops the terminal-value label to clear the TOP
-    // strip (#5581 → #7134). When the strip is at the bottom there is nothing up
-    // there to clear, and paying the drop anyway would push the callout 15–28px
-    // below its own datum — #5581's defect reintroduced upside down.
-    //
-    // Asserted on the source because the drop happens inside a recharts `dot`
-    // shape, which a server render does not call at all (no viewport) — the same
-    // reason the row wiring is source-asserted in the #6882 file.
-    expect(ODDS_SOURCE).toMatch(
-      /periodChipRows:\s*periodStripBand === "bottom" \? 0 : periodChipRowCount/,
-    );
+describe("#7940 — the callout clears the strip at the end it is drawn at", () => {
+  it("OddsChart hands the callout the strip's side, not a zeroed row count", () => {
+    // `calloutLabelCenterY` drops the terminal-value label to clear a TOP strip
+    // (#5581 → #7134). This used to pass 0 rows for a bottom strip, which kept a
+    // top band off a bottom strip but also let a late collapse print `0%` over
+    // `B9` (#10502). The side now travels with the rows and the helper clears
+    // whichever end it is told. The geometry is asserted with a viewport in
+    // `components/chartCalloutClearsTheBottomStrip10502.test.tsx`.
+    expect(ODDS_SOURCE).toMatch(/periodChipRows:\s*periodChipRowCount,\s*periodStripBand,/);
+    expect(ODDS_SOURCE).not.toMatch(/periodStripBand === "bottom" \? 0 : periodChipRowCount/);
   });
 });
 
