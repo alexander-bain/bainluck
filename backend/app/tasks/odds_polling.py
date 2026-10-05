@@ -855,6 +855,9 @@ async def _ingest_event_odds(
     all_away_probs: list[float] = []
     all_spreads: list[float] = []
     all_ous: list[float] = []
+    # #4971: the exact population behind the consensus, book by book, kept
+    # only in the publication record (never re-derived from history later).
+    book_population: list[dict] = []
     snapshots_processed = 0
 
     for bookmaker in event_data.get("bookmakers", []):
@@ -870,6 +873,12 @@ async def _ingest_event_odds(
         # Collect values from ALL bookmakers (new or existing) for consensus.
         if snapshot.home_win_probability:
             all_home_probs.append(float(snapshot.home_win_probability))
+            book_population.append(
+                {
+                    "book": bookmaker.get("key"),
+                    "home_probability": float(snapshot.home_win_probability),
+                }
+            )
             if snapshot.away_win_probability:
                 all_away_probs.append(float(snapshot.away_win_probability))
             if snapshot.home_spread is not None:
@@ -1044,6 +1053,20 @@ async def _ingest_event_odds(
                 session, event, "betting",
                 _betting_value,
                 metadata={"betting_book_count": _book_count},
+                evidence={
+                    "rule": "median",
+                    "floor": BETTING_BOOK_FLOOR,
+                    "decision": (
+                        "admitted" if _betting_value is not None
+                        else "split" if _split_books is not None
+                        else "below_floor"
+                    ),
+                    "median": avg_home,
+                    "split_pair": (
+                        list(_split_books) if _split_books is not None else None
+                    ),
+                    "population": book_population,
+                },
             )
     elif snapshots_processed:
         # gotcha #53, in the odds pipeline: "no book quotes a moneyline" (a FACT

@@ -3,6 +3,10 @@
 #8761: these producers used to change REST/history while an open page waited for
 an unrelated venue tick. Buffer only their exact UPDATE RETURNING snapshots;
 savepoint releases are not commits and Redis never sees rolled-back prices.
+
+#4971: with ``PROBABILITY_PUBLICATION_RECORDING`` on, ``before_commit`` also
+records each event's final committed bag inside the same transaction
+(``probability_publication``). Pending entries carry the write's observation.
 """
 
 from __future__ import annotations
@@ -11,7 +15,16 @@ import asyncio
 import logging
 from types import SimpleNamespace
 
-from sqlalchemy import case, cast, event as sa_event, func, inspect, literal, update
+from sqlalchemy import (
+    case,
+    cast,
+    event as sa_event,
+    func,
+    inspect,
+    literal,
+    text,
+    update,
+)
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm.attributes import set_committed_value
 
@@ -27,21 +40,51 @@ _HOOKS = "nonvenue_probability_hooks"
 NONVENUE_SOURCES = frozenset({"betting", "stat_model", "mlb", "espn"})
 
 
+def _frame_is_sent(frame) -> bool:
+    return frame["status"] == "live" and frame["source_value"] is not None
+
+
+def _before_commit(session):
+    # Savepoint releases fire before_commit too; only the outer COMMIT counts.
+    if session.in_nested_transaction():
+        return
+    from app.utils.probability_publication import (
+        record_committing_publications,
+        recording_enabled,
+    )
+
+    if not recording_enabled():
+        return
+    pending = session.info.get(_PENDING, [])
+    if not pending:
+        return
+    latest = {frame["event_id"]: frame for _, frame, _, _, _ in pending}
+    queued = {
+        event_id: (frame if _frame_is_sent(frame) else None)
+        for event_id, frame in latest.items()
+    }
+    record_committing_publications(
+        session,
+        [
+            (frame["event_id"], observation, queued[frame["event_id"]])
+            for _, frame, _, _, observation in pending
+        ],
+    )
+
+
 def _after_commit(session):
     if session.in_nested_transaction():
         return
     pending = session.info.pop(_PENDING, [])
     # One event may change twice in a transaction (ESPN followed by stat_model).
     # Only its last kept snapshot should reach a reader.
-    latest = {frame["event_id"]: frame for _, frame, _, _ in pending}
+    latest = {frame["event_id"]: frame for _, frame, _, _, _ in pending}
     # Current consumers interpret a null source_value as the blended p, which
     # would resurrect a removed source as a fabricated quote. Keep removal as
     # a tombstone through coalescing, then suppress it: an earlier quote in the
     # same transaction must not escape after its source was removed.
     session.info.setdefault(_READY, []).extend(
-        frame
-        for frame in latest.values()
-        if frame["status"] == "live" and frame["source_value"] is not None
+        frame for frame in latest.values() if _frame_is_sent(frame)
     )
 
 
@@ -55,22 +98,81 @@ def _after_rollback(session, transaction):
 
     pending = session.info.get(_PENDING, [])
     rolled_back = [entry for entry in pending if belongs_to(entry[0])]
-    for _, _, event, previous in reversed(rolled_back):
+    for _, _, event, previous, _ in reversed(rolled_back):
         if event is not None:
             set_committed_value(event, "win_probability_sources", previous)
     session.info[_PENDING] = [entry for entry in pending if not belongs_to(entry[0])]
 
 
-def _queue(session, frame, event, previous):
+_PRIOR_WRITE_PROBE_SQL = (
+    "SELECT coalesce(pg_xact_status((((pg_current_xact_id()::text::bigint >> 32)"
+    " << 32) | xmin::text::bigint)::text::xid8) = 'in progress', false)"
+    " FROM events WHERE id = :id"
+)
+
+
+async def _probe_prior_txn_row_write(session, event_id):
+    """#4971: had THIS transaction already modified the row before this write?
+
+    Asked only for the first tracked write of an event in a transaction, and
+    only while recording is on. A row version visible to us whose ``xmin`` is
+    still in progress can only be our own write, top-level or savepoint. Pending
+    ORM state is flushed first (see below). False
+    therefore proves the bag this write starts from is the committed one. True
+    means an earlier write in this transaction, which this path did not see,
+    touched the row. Whether it touched the bag is not known.
+
+    ``xmin`` is 32 bits and is placed in the current epoch. After a
+    wraparound, an ancient frozen row can alias to another live transaction,
+    which reads True (conservative), or to a future xid, which makes
+    ``pg_xact_status`` raise. The probe therefore runs in its own SAVEPOINT. An
+    error yields None ("not established"), and the price write is untouched.
+    """
+    from app.utils.probability_publication import recording_enabled
+
+    if not recording_enabled():
+        return None
+    sync = session.sync_session
+    pending = sync.info.get(_PENDING, [])
+    if any(frame["event_id"] == event_id for _, frame, _, _, _ in pending):
+        return None
+    # The Core probe bypasses autoflush, but the UPDATE below does not: pending
+    # ORM state would land between them, unseen. Flush it first, which is
+    # exactly what that UPDATE's autoflush does a moment later. With autoflush
+    # off, pending state flushes at some later point we cannot place, so a
+    # session with any pending state is not established.
+    if sync.autoflush:
+        await session.flush()
+    elif sync.new or sync.dirty or sync.deleted:
+        return None
+    connection = await session.connection()
+    try:
+        async with connection.begin_nested():
+            return (
+                await connection.execute(text(_PRIOR_WRITE_PROBE_SQL), {"id": event_id})
+            ).scalar()
+    except Exception:
+        logger.warning(
+            "prior-write probe failed for event %s; coverage not established",
+            event_id,
+            exc_info=True,
+        )
+        return None
+
+
+def _queue(session, frame, event, previous, observation):
     sync = session.sync_session
     if not sync.info.get(_HOOKS):
+        sa_event.listen(sync, "before_commit", _before_commit)
         sa_event.listen(sync, "after_commit", _after_commit)
         sa_event.listen(sync, "after_soft_rollback", _after_rollback)
         sync.info[_HOOKS] = True
     transaction = sync.get_nested_transaction() or sync.get_transaction()
     if transaction is None:
         raise RuntimeError("a probability frame requires its writing transaction")
-    sync.info.setdefault(_PENDING, []).append((transaction, frame, event, previous))
+    sync.info.setdefault(_PENDING, []).append(
+        (transaction, frame, event, previous, observation)
+    )
 
 
 async def write_nonvenue_probability(
@@ -81,6 +183,7 @@ async def write_nonvenue_probability(
     *,
     metadata=None,
     values=None,
+    evidence=None,
 ):
     """Atomically replace/remove one allowed source and queue its returned blend.
 
@@ -88,10 +191,13 @@ async def write_nonvenue_probability(
     cancels any earlier queued event frame; consumers do not yet support source
     removal messages. Extra metadata is inert top-level data (currently
     sportsbook count); extra values
-    retain the ESPN writer's own id/fallback columns. No commit happens here.
+    retain the ESPN writer's own id/fallback columns. ``evidence`` is the
+    producer's own eligibility record for this write (#4971); it is kept only
+    in the publication row, never in the bag. No commit happens here.
     """
     if source not in NONVENUE_SOURCES:
         raise ValueError(f"not a nonvenue probability source: {source}")
+    prior_txn_row_write = await _probe_prior_txn_row_write(session, event.id)
     # Literal source dispatch keeps the existing writer/eligibility scanner
     # able to verify every mint. This entry point never accepts venue sources.
     if source == "betting":
@@ -161,6 +267,17 @@ async def write_nonvenue_probability(
         ),
         mapped,
         previous,
+        {
+            "source": source,
+            "value": value,
+            "removed": value is None,
+            "rev": rev,
+            "stamped_at": at,
+            "returned_sources": sources,
+            "metadata_keys": sorted(metadata or {}),
+            "prior_txn_row_write": prior_txn_row_write,
+            "evidence": evidence,
+        },
     )
     return sources
 
