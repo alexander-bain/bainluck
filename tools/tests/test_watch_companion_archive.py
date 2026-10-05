@@ -12,6 +12,7 @@ from watch_companion_archive import inspect_archive
 PHONE = "com.bainluck.Bain-Luck"
 WATCH = PHONE + ".watchkitapp"
 ACTIVITY = "com.bainluck.view-game"
+STORY_ACTIVITY = "com.bainluck.view-story"
 
 
 class WatchCompanionArchiveTests(unittest.TestCase):
@@ -26,7 +27,7 @@ class WatchCompanionArchiveTests(unittest.TestCase):
         self.write(self.archive / "Info.plist", {"ApplicationProperties": {"ApplicationPath": "Applications/Bain Luck.app"}})
         self.phone_info = {"CFBundleIdentifier": PHONE, "CFBundleExecutable": "Bain Luck",
                            "CFBundleSupportedPlatforms": ["iPhoneOS"], "CFBundleShortVersionString": "1.0",
-                           "CFBundleVersion": "10", "NSUserActivityTypes": [ACTIVITY]}
+                           "CFBundleVersion": "10", "NSUserActivityTypes": [ACTIVITY, STORY_ACTIVITY]}
         self.watch_info = dict(self.phone_info, CFBundleIdentifier=WATCH, CFBundleExecutable="Watch",
                                CFBundleSupportedPlatforms=["WatchOS"], WKCompanionAppBundleIdentifier=PHONE,
                                WKRunsIndependentlyOfCompanionApp=True,
@@ -157,6 +158,24 @@ class WatchCompanionArchiveTests(unittest.TestCase):
             self.save_infos()
             self.reject()
             info["NSUserActivityTypes"] = old
+
+    def test_game_registration_alone_does_not_pay_story_handoff(self):
+        for name, info in [("phone", self.phone_info), ("watch", self.watch_info)]:
+            with self.subTest(platform=name):
+                old = info["NSUserActivityTypes"]
+                info["NSUserActivityTypes"] = [ACTIVITY]
+                self.save_infos()
+                self.reject()
+                info["NSUserActivityTypes"] = old
+
+    def test_story_registration_does_not_replace_legacy_game_handoff(self):
+        for name, info in [("phone", self.phone_info), ("watch", self.watch_info)]:
+            with self.subTest(platform=name):
+                old = info["NSUserActivityTypes"]
+                info["NSUserActivityTypes"] = [STORY_ACTIVITY]
+                self.save_infos()
+                self.reject()
+                info["NSUserActivityTypes"] = old
 
     def test_plist_and_binary_platforms(self):
         for info, wrong in [(self.phone_info, ["iPhoneSimulator"]), (self.watch_info, ["WatchSimulator"])]:
