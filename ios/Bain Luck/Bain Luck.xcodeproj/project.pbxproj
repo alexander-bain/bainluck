@@ -189,6 +189,10 @@
 			isa = PBXFileSystemSynchronizedBuildFileExceptionSet;
 			membershipExceptions = (
 				Utilities/DrawPricedWinner.swift,
+				Utilities/GameActivityAttributes.swift,
+				Utilities/GameActivitySnapshot.swift,
+				Utilities/GameContinuation.swift,
+				Utilities/RenderedPercent.swift,
 				Utilities/PeriodLabel.swift,
 				Utilities/SportVocab.swift,
 				Utilities/TeamShortName.swift,

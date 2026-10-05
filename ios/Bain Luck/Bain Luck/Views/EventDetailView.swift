@@ -371,6 +371,11 @@ struct EventDetailView: View {
                                     heroBottom: proxy.frame(in: .named(Self.scrollSpace)).maxY,
                                     viewportTop: scrollViewportTop))
                         })
+                    #if os(iOS)
+                    if let reading = GameActivitySnapshot.liveActivityReading(for: event) {
+                        GameActivityControl(snapshot: reading)
+                    }
+                    #endif
                     if let gameMarkets = vm.gameMarkets,
                        let quote = gameMarkets.openWinnerQuote {
                         FinalGameWinnerQuoteView(
