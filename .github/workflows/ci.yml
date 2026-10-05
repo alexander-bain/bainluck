@@ -1571,6 +1571,25 @@ jobs:
             exit 1
           fi
 
+      - name: "#10529 linked_unsourced accuses only priced markets (real Postgres)"
+        # The fix is one predicate: an EXISTS on a priced outcome in the WHERE,
+        # before GROUP BY and LIMIT 200. A session double cannot see the three
+        # ways it goes wrong — a JOIN multiplies the market count by outcomes,
+        # a filter after the LIMIT lets unpriced pairs crowd a priced one out,
+        # and `> 0` drops an honest 0%. The priced-but-writer-refused market
+        # must stay RED: that is the failure the alert exists for.
+        #
+        # Same skip detection as every gate in this job.
+        if: matrix.group == 'shared'
+        run: |
+          set -o pipefail
+          python -m pytest tests/integration/test_linked_unsourced_priced_10529_pg.py \
+            -v -rs 2>&1 | tee /tmp/unsourcedpriced.txt
+          if grep -qiE "[0-9]+ skipped" /tmp/unsourcedpriced.txt; then
+            echo "::error::#10529 linked_unsourced priced gate SKIPPED — the gate did not run"
+            exit 1
+          fi
+
       - name: "#3672 repair bind contract (real asyncpg)"
         # #1884's class, recurred. `repair_3672_bare_namespace_event_names.py`
         # shipped with 42 green unit tests, passed CERT-2139, merged and
