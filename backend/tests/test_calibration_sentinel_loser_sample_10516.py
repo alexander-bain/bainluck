@@ -16,6 +16,9 @@ import asyncio
 from sqlalchemy import create_engine, text
 
 from app.tasks.calibration_sentinel import (
+    _finalize_cohort,
+    _new_cohort,
+    _run_calibration_sentinel,
     _sample_rows,
     build_issue_body,
     build_reobservation_comment,
@@ -151,14 +154,12 @@ def test_reobservation_comment_carries_the_fresh_sample():
 
 
 def test_filed_body_uses_the_same_section():
-    import app.tasks.calibration_sentinel as cs
-
     dims = {"provenance": "futures", "category": "weather", "structure": "single"}
-    c = cs._new_cohort(tuple(sorted(dims.items())), {})
+    c = _new_cohort(tuple(sorted(dims.items())), {})
     c["buckets"][9] = {"bucket": 9, "n": 487, "winners": 243, "sum_prob": 483.6}
     c["total_n"] = 487
     c["min_created_at"] = None
-    cs._finalize_cohort(c, now_ts=1_800_000_000.0)
+    _finalize_cohort(c, now_ts=1_800_000_000.0)
     c["sample_rows"] = _SAMPLES
     body = build_issue_body(c, explained_by=None, coverage=0.087)
     assert "\n".join(sample_rows_section(_SAMPLES)) in body
@@ -169,8 +170,6 @@ def test_durable_finding_retains_the_sample_rows():
     # be one of its keys, read from the cohort that sampled it.
     import inspect
 
-    import app.tasks.calibration_sentinel as cs
-
-    src = inspect.getsource(cs._run_calibration_sentinel)
+    src = inspect.getsource(_run_calibration_sentinel)
     finding_block = src[src.index("finding = {"):src.index('stats["findings"].append(finding)')]
     assert '"sample_rows": c.get("sample_rows") or []' in finding_block
