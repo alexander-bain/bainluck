@@ -424,3 +424,112 @@ def test_reconcile_many_reuses_snapshot(monkeypatch):
     # create's belt-and-suspenders re-read only fires when a real Redis claim is won).
     assert calls["fetch"] >= 1
     assert all(r["action"] == "filed" for r in out)
+
+
+# --------------------------------------------------------------------------
+# Delivery hold — an owned issue outlives an empty cohort (#10526)
+# --------------------------------------------------------------------------
+HOLD = sf.DELIVERY_HOLD_LABEL
+
+
+def _no_write(monkeypatch):
+    """Every GitHub write raises, so a held/UNKNOWN path that writes anything fails."""
+    def refuse(name):
+        return lambda *a, **k: (_ for _ in ()).throw(AssertionError(f"{name} must not run"))
+
+    for name in ("close_issue", "comment_on_issue", "create_github_issue",
+                 "update_issue_body", "add_to_project_board"):
+        monkeypatch.setattr(gh, name, refuse(name))
+
+
+def test_delivery_hold_label_is_the_explicit_opt_in():
+    assert HOLD == "sentinel:delivery-hold"
+
+
+def test_issue_has_label_reads_rest_and_string_shapes():
+    assert sf.issue_has_label(_issue(1, labels=("alert-intake", HOLD)), HOLD) is True
+    assert sf.issue_has_label({"number": 1, "labels": [HOLD]}, HOLD) is True
+    assert sf.issue_has_label(_issue(1), HOLD) is False
+    assert sf.issue_has_label({"number": 1, "labels": None}, HOLD) is False
+    assert sf.issue_has_label({"number": 1, "labels": [None, 7, {}]}, HOLD) is False
+    assert sf.issue_has_label(None, HOLD) is False
+
+
+def test_green_held_canonical_issue_stays_open_with_no_writes(monkeypatch):
+    # #10523's shape: GREEN cohort, owned delivery still unpaid. Zero close calls and
+    # zero comment calls — a recovery note every GREEN run would bury the issue.
+    monkeypatch.setattr(gh, "GITHUB_TOKEN", "tok")
+    _no_write(monkeypatch)
+    held = [_issue(1147, body=_decl(), labels=("alert-intake", "priority:p1", HOLD))]
+    for _ in range(3):  # repeated GREEN runs stay silent
+        res = sf.reconcile_issue(red=False, fingerprint=FP, marker_key=MARKER,
+                                 open_issues=sf.OpenIssuesResult(ok=True, issues=held),
+                                 green_comment="recovered")
+        assert res["action"] == "held_no_close"
+        assert res["issue"] == 1147
+        assert res["hold"] == HOLD
+
+
+def test_green_unheld_canonical_issue_still_closes(monkeypatch):
+    # Control for the held arm: same issue, same snapshot shape, no hold → closes.
+    monkeypatch.setattr(gh, "GITHUB_TOKEN", "tok")
+    closed = []
+    monkeypatch.setattr(gh, "close_issue", lambda n, comment=None: closed.append(n))
+    unheld = [_issue(1147, body=_decl(), labels=("alert-intake", "priority:p1"))]
+    res = sf.reconcile_issue(red=False, fingerprint=FP, marker_key=MARKER,
+                             open_issues=sf.OpenIssuesResult(ok=True, issues=unheld))
+    assert res["action"] == "resolved"
+    assert closed == [1147]
+
+
+def test_another_issues_hold_label_cannot_hold_the_canonical_target(monkeypatch):
+    # The hold is read from the canonical target ONLY: a later duplicate that also
+    # declares the fingerprint, and a meta issue quoting the declaration in a table,
+    # both carry the label — the lowest canonical owner has none, so it closes.
+    monkeypatch.setattr(gh, "GITHUB_TOKEN", "tok")
+    closed = []
+    monkeypatch.setattr(gh, "close_issue", lambda n, comment=None: closed.append(n))
+    snapshot = [
+        _issue(1200, body=_decl(), labels=("alert-intake", HOLD)),
+        _issue(1100, body=f"| {_decl()} |", labels=("alert-intake", HOLD)),
+        _issue(1147, body=_decl(), labels=("alert-intake",)),
+    ]
+    res = sf.reconcile_issue(red=False, fingerprint=FP, marker_key=MARKER,
+                             open_issues=sf.OpenIssuesResult(ok=True, issues=snapshot))
+    assert res["action"] == "resolved"
+    assert closed == [1147]
+
+
+def test_red_on_held_issue_still_dedups_and_refreshes_body(monkeypatch):
+    monkeypatch.setattr(gh, "GITHUB_TOKEN", "tok")
+    commented, refreshed = [], []
+    monkeypatch.setattr(gh, "comment_on_issue", lambda n, b: commented.append(n))
+    monkeypatch.setattr(gh, "update_issue_body", lambda n, b: refreshed.append((n, b)))
+    monkeypatch.setattr(gh, "create_github_issue",
+                        lambda *a, **k: (_ for _ in ()).throw(AssertionError("must not duplicate")))
+    monkeypatch.setattr(gh, "close_issue",
+                        lambda *a, **k: (_ for _ in ()).throw(AssertionError("RED never closes")))
+    held = [_issue(1147, body=_decl(), labels=("alert-intake", HOLD))]
+    new_body = f"fresh evidence\n{_decl()}"
+    res = sf.reconcile_issue(red=True, fingerprint=FP, marker_key=MARKER,
+                             title="t", body=new_body, red_body=new_body,
+                             open_issues=sf.OpenIssuesResult(ok=True, issues=held))
+    assert res["action"] == "commented"
+    assert res["issue"] == 1147
+    assert res["body_refresh"] == "refreshed"
+    assert commented == [1147]
+    assert refreshed == [(1147, new_body)]
+
+
+def test_unknown_listing_with_held_issue_performs_no_write(monkeypatch):
+    # A failed/truncated read is UNKNOWN for held and unheld alike: no write on either arm.
+    monkeypatch.setattr(gh, "GITHUB_TOKEN", "tok")
+    _no_write(monkeypatch)
+    partial = [_issue(1147, body=_decl(), labels=("alert-intake", HOLD))]
+    for red in (False, True):
+        res = sf.reconcile_issue(
+            red=red, fingerprint=FP, marker_key=MARKER, title="t", body=_decl(),
+            open_issues=sf.OpenIssuesResult(ok=False, issues=partial, truncated=True,
+                                            error="truncated"),
+        )
+        assert res["action"] == "dedup_unknown_no_op"
