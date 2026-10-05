@@ -9,6 +9,7 @@ import type {
   EventsResponse,
   EventDetailResponse,
   EventHistoryResponse,
+  EventPublicationsResponse,
   SportsResponse,
   LiveOddsResponse,
   FuturesMarketsResponse,
@@ -494,6 +495,14 @@ export async function fetchEventHistory(
   const booted = await claimEventBooted<EventHistoryResponse>(endpoint);
   if (booted) return booted;
   return apiFetch<EventHistoryResponse>(endpoint);
+}
+
+/**
+ * #4974 slice 1 — a finished event's recorded blend checkpoints. The page asks
+ * only once the event is finished; any failure leaves today's chart.
+ */
+export async function fetchEventPublications(id: number): Promise<EventPublicationsResponse> {
+  return apiFetch<EventPublicationsResponse>(`/api/events/${id}/publications`);
 }
 
 /**
