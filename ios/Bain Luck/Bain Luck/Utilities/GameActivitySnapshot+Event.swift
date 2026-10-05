@@ -60,8 +60,12 @@ extension GameActivitySnapshot {
             lifecycle: lifecycle, homeScore: event.homeScore, awayScore: event.awayScore,
             homeProbability: home, awayProbability: away,
             sport: event.sport,
-            // EventDetail does not yet decode a score producer timestamp.
-            scoreObservedAt: nil,
+            // All three values are immutable fields from the same served response.
+            // An orphan clock, partial tuple or absent attribution proves no age.
+            scoreObservedAt: event.homeScore.map({ $0 >= 0 }) == true
+                && event.awayScore.map({ $0 >= 0 }) == true
+                && event.scoreSource?.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty == false
+                ? event.scoreObservedAt?.asDate : nil,
             probabilityObservedAt: matchingHeroClock ? event.heroProbabilityObservedAt?.asDate : nil
         )
     }
