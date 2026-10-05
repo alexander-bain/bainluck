@@ -9,7 +9,7 @@ import subprocess
 
 PHONE = "com.bainluck.Bain-Luck"
 WATCH = PHONE + ".watchkitapp"
-ACTIVITY = "com.bainluck.view-game"
+ACTIVITIES = {"com.bainluck.view-game", "com.bainluck.view-story"}
 COMPLICATION = WATCH + ".SavedGlance"
 
 
@@ -92,7 +92,10 @@ def inspect_archive(archive: Path, platform_reader=read_platform):
         require(info.get("CFBundleIdentifier") == bundle_id, "Unexpected application identity")
         require(info.get("CFBundleSupportedPlatforms") == [plist_platform], "Simulator or wrong-platform plist")
         if bundle_id != COMPLICATION:
-            require(ACTIVITY in info.get("NSUserActivityTypes", []), "Missing Handoff registration")
+            activities = info.get("NSUserActivityTypes")
+            require(isinstance(activities, list) and all(isinstance(value, str) for value in activities),
+                    "Malformed Handoff registrations")
+            require(ACTIVITIES.issubset(activities), "Missing game or story Handoff registration")
         name = info.get("CFBundleExecutable")
         require(isinstance(name, str) and name not in ("", ".", "..") and Path(name).name == name, "Invalid executable name")
         binary = safe_path(archive, relative_folder / name)

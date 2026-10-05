@@ -39,7 +39,7 @@ app = pathlib.Path(sys.argv[1])
 with (app / 'Info.plist').open('rb') as stream:
     info = plistlib.load(stream)
 assert info.get('CFBundleDisplayName') == 'Bain Luck', 'Watch app/gallery name must be Bain Luck'
-assert info.get('NSUserActivityTypes') == ['com.bainluck.view-game'], 'Missing or unexpected Watch Handoff registration'
+assert info.get('NSUserActivityTypes') == ['com.bainluck.view-game', 'com.bainluck.view-story'], 'Missing or unexpected Watch Handoff registration'
 binary = app / info['CFBundleExecutable']
 assert binary.is_file(), f'Missing app executable: {binary}'
 description = subprocess.check_output(['file', str(binary)], text=True)
