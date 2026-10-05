@@ -394,3 +394,24 @@ async def test_parent_lock_excludes_registration_insert_during_merge(pg, binding
     finally:
         release.set()
         await asyncio.gather(merging, registering, return_exceptions=True)
+
+
+async def test_account_deletion_erases_credentials_and_delivery_state(pg):
+    from sqlalchemy import delete
+    from app.routes.auth import _ACCOUNT_OWNED_ROWS
+
+    await seed(pg)
+    model, user_column = next(
+        (model, column)
+        for model, column in _ACCOUNT_OWNED_ROWS
+        if model is ActivityKitRegistration
+    )
+    async with pg() as db, db.begin():
+        await db.execute(delete(model).where(user_column == 1))
+        await db.execute(text("DELETE FROM users WHERE id=1"))
+    async with pg() as db:
+        assert not (await db.execute(select(REG))).all()
+        assert not (await db.execute(select(DEL))).all()
+        assert (
+            await db.execute(text("SELECT id FROM events WHERE id=42"))
+        ).scalar_one() == 42

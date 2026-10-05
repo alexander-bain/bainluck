@@ -25,3 +25,7 @@ merging rolls that pair back and continues with unrelated pairs. Registration
 and durable delivery state remain attached to the original event; neither is
 reparented or cascaded away. A retention/unblocking policy is required before
 production mounting; this source composition does not choose that policy.
+
+Account deletion explicitly deletes account-owned ActivityKit registrations,
+including push credentials; delivery state cascades from registration deletion.
+The isolated PostgreSQL guard verifies both disappear while the event remains.

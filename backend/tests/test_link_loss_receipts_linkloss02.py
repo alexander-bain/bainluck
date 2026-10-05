@@ -796,7 +796,7 @@ class _RepointSession:
             rowcount = 2
 
             def all(self_inner):
-                return [_Row(1), _Row(2)]
+                return [_Row(1), _Row(2)] if text.startswith("SELECT id, source") else []
 
         return _R()
 
