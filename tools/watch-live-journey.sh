@@ -92,12 +92,12 @@ PHASE='read-only selected identity and refreshed snapshot evidence'
 # simctl may run tests in a clone: disable cloning via parallel-testing NO above
 # and fail closed if the selected app is absent on our recorded destination.
 if [[ "$TEST_EXIT" -eq 0 ]]; then
-  APP_DATA="$(xcrun simctl get_app_container "$TEST_UDID" com.bainluck.BainLuckWatch.watchkitapp data)"
+  APP_DATA="$(xcrun simctl get_app_container "$TEST_UDID" com.bainluck.Bain-Luck.watchkitapp data)"
   # UserDefaults writes can reach the on-disk plist asynchronously. Observe for
   # at most 30 seconds, preserving the initial copy and each verdict. No forced
   # synchronization, app relaunch, defaults writes, or weakened freshness rule.
   python3 "$ROOT/tools/watch_live_preferences.py" --log "$OUT/tests.log" \
-    --source "$APP_DATA/Library/Preferences/com.bainluck.BainLuckWatch.watchkitapp.plist" \
+    --source "$APP_DATA/Library/Preferences/com.bainluck.Bain-Luck.watchkitapp.plist" \
     --output "$OUT/preferences.plist" --observations "$OUT/preferences-observations.json"
 fi
 PHASE='live journey evidence receipt'

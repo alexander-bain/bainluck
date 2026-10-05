@@ -23,6 +23,9 @@ on:
       - 'ios/Bain Luck/BainLuckWatchUITests/**'
       - 'tools/watch-ui-journey.sh'
       - 'tools/watch-build.sh'
+      - 'tools/watch-companion-archive.sh'
+      - 'tools/watch_companion_archive.py'
+      - 'tools/tests/test_watch_companion_archive.py'
       - 'tools/watch-iphone-compatibility.sh'
       - 'tools/watch_iphone_receipt.py'
       - 'tools/tests/test_watch_iphone_receipt.py'
@@ -49,6 +52,9 @@ on:
       - 'ios/Bain Luck/BainLuckWatchUITests/**'
       - 'tools/watch-ui-journey.sh'
       - 'tools/watch-build.sh'
+      - 'tools/watch-companion-archive.sh'
+      - 'tools/watch_companion_archive.py'
+      - 'tools/tests/test_watch_companion_archive.py'
       - 'tools/watch-iphone-compatibility.sh'
       - 'tools/watch_iphone_receipt.py'
       - 'tools/tests/test_watch_iphone_receipt.py'
@@ -156,5 +162,36 @@ jobs:
             build/watch-ui-journey/*.json
             build/watch-ui-journey/*.log
             build/watch-ui-journey/run.*/BainLuckWatchUITests.xcresult
+          if-no-files-found: ignore
+          retention-days: 7
+
+  companion-archive:
+    name: Watch inside unsigned iPhone archive
+    needs: watch-mvp
+    runs-on: xcode-27
+    timeout-minutes: 45
+    concurrency:
+      group: watch-companion-${{ github.event_name == 'pull_request' && github.event.pull_request.number || github.run_id }}
+      cancel-in-progress: true
+    env:
+      DEVELOPER_DIR: /Applications/Xcode_27.0.app/Contents/Developer
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          persist-credentials: false
+      - name: Reject missing or misleading archive payloads
+        run: python3 tools/tests/test_watch_companion_archive.py -v
+      - name: Archive unsigned companion and inspect actual payload
+        run: bash tools/watch-companion-archive.sh
+      - name: Preserve diagnostics and receipt only
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: watch-companion-archive-evidence
+          path: |
+            build/watch-companion-archive/*.log
+            build/watch-companion-archive/*.json
+            build/watch-companion-archive/*.txt
           if-no-files-found: ignore
           retention-days: 7

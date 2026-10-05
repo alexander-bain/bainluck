@@ -7,6 +7,7 @@
 	objects = {
 
 /* Begin PBXBuildFile section */
+		A7C000000000000000000090 /* Watch app in iPhone companion */ = {isa = PBXBuildFile; fileRef = A70F40112FA6C20000170BF2 /* BainLuckWatch Watch App.app */; platformFilter = ios; settings = {ATTRIBUTES = (RemoveHeadersOnCopy, ); }; };
 		A70F40122FA6C20000170BF2 /* BainLuckWatch Watch App.app in Embed Watch Content */ = {isa = PBXBuildFile; fileRef = A70F40112FA6C20000170BF2 /* BainLuckWatch Watch App.app */; settings = {ATTRIBUTES = (RemoveHeadersOnCopy, ); }; };
 		A73159A62F53CBFF0051185B /* GoogleSignIn in Frameworks */ = {isa = PBXBuildFile; productRef = A7869E392F525C6D000542D3 /* GoogleSignIn */; };
 		A73159A72F53CBFF0051185B /* FirebaseAnalytics in Frameworks */ = {isa = PBXBuildFile; productRef = A7869E3A2F525C6E000542D3 /* FirebaseAnalytics */; };
@@ -62,6 +63,17 @@
 /* End PBXContainerItemProxy section */
 
 /* Begin PBXCopyFilesBuildPhase section */
+		A7C000000000000000000091 /* Embed Companion Watch App */ = {
+			isa = PBXCopyFilesBuildPhase;
+			buildActionMask = 2147483647;
+			dstPath = "$(CONTENTS_FOLDER_PATH)/Watch";
+			dstSubfolderSpec = 16;
+			files = (
+				A7C000000000000000000090 /* Watch app in iPhone companion */,
+			);
+			name = "Embed Companion Watch App";
+			runOnlyForDeploymentPostprocessing = 0;
+		};
 		A70F401E2FA6C20100170BF2 /* Embed Watch Content */ = {
 			isa = PBXCopyFilesBuildPhase;
 			buildActionMask = 2147483647;
@@ -372,6 +384,7 @@
 			isa = PBXNativeTarget;
 			buildConfigurationList = A7869E352F525C6C000542D3 /* Build configuration list for PBXNativeTarget "Bain Luck" */;
 			buildPhases = (
+				A7C000000000000000000091 /* Embed Companion Watch App */,
 				A7869E262F525C6A000542D3 /* Sources */,
 				A7869E272F525C6A000542D3 /* Frameworks */,
 				A7869E282F525C6A000542D3 /* Resources */,
@@ -381,6 +394,7 @@
 			buildRules = (
 			);
 			dependencies = (
+				A7C000000000000000000092 /* iOS companion Watch dependency */,
 				A7C0000000000000000000FA /* PBXTargetDependency */,
 			);
 			fileSystemSynchronizedGroups = (
@@ -652,7 +666,7 @@
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 			shellPath = /bin/sh;
-			shellScript = "# Only upload dSYMs for Release builds (archive/TestFlight/App Store).\n# Debug builds produce no dSYM; the Firebase run script's own \"set\n# DEBUG_INFORMATION_FORMAT to dwarf-with-dsym\" warning fires only when it runs\n# in Debug, so gating to Release silences it (#902-follow-up / #839).\nif [ \"${CONFIGURATION}\" = \"Release\" ]; then\n  \"${BUILD_DIR%/Build/*}/SourcePackages/checkouts/firebase-ios-sdk/Crashlytics/run\"\nfi\n";
+			shellScript = "# Only upload dSYMs for signed Release builds. Unsigned packaging gates never upload.\n# Debug builds produce no dSYM; the Firebase run script's own \"set\n# DEBUG_INFORMATION_FORMAT to dwarf-with-dsym\" warning fires only when it runs\n# in Debug, so gating to Release silences it (#902-follow-up / #839).\nif [ \"${CONFIGURATION}\" = \"Release\" ] && [ \"${CODE_SIGNING_ALLOWED}\" != \"NO\" ]; then\n  \"${BUILD_DIR%/Build/*}/SourcePackages/checkouts/firebase-ios-sdk/Crashlytics/run\"\nfi\n";
 		};
 /* End PBXShellScriptBuildPhase section */
 
@@ -709,6 +723,12 @@
 /* End PBXSourcesBuildPhase section */
 
 /* Begin PBXTargetDependency section */
+		A7C000000000000000000092 /* iOS companion Watch dependency */ = {
+			isa = PBXTargetDependency;
+			platformFilter = ios;
+			target = A70F40102FA6C20000170BF2 /* BainLuckWatch Watch App */;
+			targetProxy = A70F40132FA6C20000170BF2 /* PBXContainerItemProxy */;
+		};
 		A70F40142FA6C20000170BF2 /* PBXTargetDependency */ = {
 			isa = PBXTargetDependency;
 			target = A70F40102FA6C20000170BF2 /* BainLuckWatch Watch App */;
@@ -784,20 +804,20 @@
 				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
 				CLANG_ENABLE_MODULES = YES;
 				CODE_SIGN_STYLE = Automatic;
-				CURRENT_PROJECT_VERSION = 1;
+				CURRENT_PROJECT_VERSION = 10;
 				ENABLE_PREVIEWS = YES;
 				ENABLE_USER_SCRIPT_SANDBOXING = YES;
 				GENERATE_INFOPLIST_FILE = YES;
 				INFOPLIST_FILE = "BainLuckWatch-Info.plist";
 				INFOPLIST_KEY_CFBundleDisplayName = BainLuckWatch;
 				INFOPLIST_KEY_UISupportedInterfaceOrientations = "UIInterfaceOrientationPortrait UIInterfaceOrientationPortraitUpsideDown";
-				INFOPLIST_KEY_WKWatchOnly = YES;
+				INFOPLIST_KEY_WKWatchOnly = NO;
 				LD_RUNPATH_SEARCH_PATHS = (
 					"$(inherited)",
 					"@executable_path/Frameworks",
 				);
 				MARKETING_VERSION = 1.0;
-				PRODUCT_BUNDLE_IDENTIFIER = com.bainluck.BainLuckWatch.watchkitapp;
+				PRODUCT_BUNDLE_IDENTIFIER = com.bainluck.Bain-Luck.watchkitapp;
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				SDKROOT = watchos;
 				SKIP_INSTALL = YES;
@@ -820,20 +840,20 @@
 				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
 				CLANG_ENABLE_MODULES = YES;
 				CODE_SIGN_STYLE = Automatic;
-				CURRENT_PROJECT_VERSION = 1;
+				CURRENT_PROJECT_VERSION = 10;
 				ENABLE_PREVIEWS = YES;
 				ENABLE_USER_SCRIPT_SANDBOXING = YES;
 				GENERATE_INFOPLIST_FILE = YES;
 				INFOPLIST_FILE = "BainLuckWatch-Info.plist";
 				INFOPLIST_KEY_CFBundleDisplayName = BainLuckWatch;
 				INFOPLIST_KEY_UISupportedInterfaceOrientations = "UIInterfaceOrientationPortrait UIInterfaceOrientationPortraitUpsideDown";
-				INFOPLIST_KEY_WKWatchOnly = YES;
+				INFOPLIST_KEY_WKWatchOnly = NO;
 				LD_RUNPATH_SEARCH_PATHS = (
 					"$(inherited)",
 					"@executable_path/Frameworks",
 				);
 				MARKETING_VERSION = 1.0;
-				PRODUCT_BUNDLE_IDENTIFIER = com.bainluck.BainLuckWatch.watchkitapp;
+				PRODUCT_BUNDLE_IDENTIFIER = com.bainluck.Bain-Luck.watchkitapp;
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				SDKROOT = watchos;
 				SKIP_INSTALL = YES;
