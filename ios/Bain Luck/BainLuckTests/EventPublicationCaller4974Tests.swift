@@ -659,61 +659,132 @@ final class EventPublicationCaller4974Tests: XCTestCase {
 
     // MARK: - The mounted page
 
-    private func settle(_ host: UIViewController, _ seconds: TimeInterval) {
+    /// The actual page in a key window on the foreground-active scene, so
+    /// SwiftUI really appears it and runs its own `.task` (which calls
+    /// `loadPage`) and its own `.task(id:)` (which adopts). The strict pattern
+    /// of `TheLiveChartEndCarriesTheHeroNumber9436Tests.Hosted`: it waits for an
+    /// active scene, cooperatively, and has NO inactive-scene fallback — a
+    /// sceneless `UIWindow(frame:)` is not a mounted page. `show(_:)` swaps
+    /// what the window holds (the page leaving and coming back); `close()`
+    /// hides it and hands the key back to whichever window held it.
+    @MainActor
+    private final class MountedPage {
+        let host: UIViewController
+        let window: UIWindow
+        private let previousKeyWindow: UIWindow?
+
+        init(_ vm: EventDetailViewModel, eventId: Int) async throws {
+            let deadline = CACurrentMediaTime() + 10
+            func activeScene() -> UIWindowScene? {
+                UIApplication.shared.connectedScenes
+                    .compactMap { $0 as? UIWindowScene }
+                    .first { $0.activationState == .foregroundActive }
+            }
+            while activeScene() == nil && CACurrentMediaTime() < deadline {
+                // Yield the main actor so the host can finish activating.
+                try await Task.sleep(nanoseconds: 50_000_000)
+            }
+            let sceneStates = UIApplication.shared.connectedScenes.map {
+                "\(type(of: $0)):\($0.activationState.rawValue)"
+            }.sorted().joined(separator: ", ")
+            let scene = try XCTUnwrap(activeScene(),
+                "The mounted page requires a foreground-active window scene; connected scenes: \(sceneStates)")
+            previousKeyWindow = scene.windows.first { $0.isKeyWindow }
+            let page = NavigationStack { EventDetailView(eventId: eventId, viewModel: vm) }
+                .environmentObject(PinManager())
+                .environment(\.scenePhase, .active).environment(\.colorScheme, .light)
+            host = hostForMeasurement(page)
+            host.view.frame = CGRect(x: 0, y: 0, width: 390, height: 844)
+            window = UIWindow(windowScene: scene)
+            window.frame = host.view.frame
+            window.rootViewController = host
+            window.makeKeyAndVisible()
+        }
+
+        func show(_ controller: UIViewController) { window.rootViewController = controller }
+
+        func close() {
+            window.isHidden = true
+            previousKeyWindow?.makeKey()
+        }
+    }
+
+    /// Lays `host` out and AWAITS between passes until `condition` holds; a
+    /// readable failure at the deadline. The page's tasks are main-actor jobs:
+    /// a nested `RunLoop.run` inside this async test runs inside a main-queue
+    /// job, never drains the main queue, and so never lets the page load —
+    /// the `[]` reads of the first composed run. Every pass here yields instead.
+    @discardableResult
+    private func layOut(_ host: UIViewController, until description: String,
+                        timeout: TimeInterval = 5, _ condition: () -> Bool) async -> Bool {
+        let deadline = Date().addingTimeInterval(timeout)
+        while true {
+            host.view.setNeedsLayout(); host.view.layoutIfNeeded()
+            if condition() { return true }
+            guard Date() < deadline else {
+                XCTFail("timed out after \(timeout)s waiting for: \(description)")
+                return false
+            }
+            try? await Task.sleep(nanoseconds: 10_000_000)
+        }
+    }
+
+    /// Lays `host` out and yields for `seconds` whatever happens: the
+    /// "and nothing more is asked" half of a check.
+    private func layOut(_ host: UIViewController, for seconds: TimeInterval) async {
         let until = Date().addingTimeInterval(seconds)
         repeat {
             host.view.setNeedsLayout(); host.view.layoutIfNeeded()
-            RunLoop.current.run(until: min(until, Date().addingTimeInterval(0.01)))
+            try? await Task.sleep(nanoseconds: 10_000_000)
         } while Date() < until
-    }
-
-    private func mount(_ vm: EventDetailViewModel) -> (UIWindow, UIViewController) {
-        let page = NavigationStack { EventDetailView(eventId: Self.eventID, viewModel: vm) }
-            .environmentObject(PinManager())
-            .environment(\.scenePhase, .active).environment(\.colorScheme, .light)
-        let host = hostForMeasurement(page)
-        host.view.frame = CGRect(x: 0, y: 0, width: 390, height: 844)
-        let window = UIWindow(frame: host.view.frame)
-        window.rootViewController = host
-        window.isHidden = false
-        return (window, host)
     }
 
     func testTheMountedPageReadsOnceAfterItsOwnLoadAndNotOnReRender() async throws {
         let client = Client(detail: try event(status: "completed"), publications: body())
         let vm = makeVM(client: client)
-        let (window, host) = mount(vm)
-        defer { vm.stopRefresh(); window.isHidden = true }
+        let mounted = try await MountedPage(vm, eventId: Self.eventID)
+        defer { vm.stopRefresh(); mounted.close() }
 
-        settle(host, 1.0)
+        await layOut(mounted.host, until: "the page's own load, then its one read adopted") {
+            vm.publicationJourney != nil
+        }
         XCTAssertEqual(client.publicationRequests, [Self.eventID], "the page's own load, then one read")
         XCTAssertEqual(vm.publicationJourney, try journey())
 
-        settle(host, 0.5)
+        await layOut(mounted.host, for: 0.5)
         XCTAssertEqual(client.publicationRequests, [Self.eventID], "re-renders are not reads")
     }
 
     func testTheMountedPageReadsAgainOnReappearanceAndPublishesNothingAfterLeaving() async throws {
         let client = Client(detail: try event(status: "completed"), publications: body())
         let vm = makeVM(client: client)
-        let (window, host) = mount(vm)
-        defer { vm.stopRefresh(); window.isHidden = true }
-        settle(host, 1.0)
+        let mounted = try await MountedPage(vm, eventId: Self.eventID)
+        defer { vm.stopRefresh(); mounted.close() }
+        await layOut(mounted.host, until: "first appearance: its one read adopted") {
+            vm.publicationJourney != nil
+        }
         XCTAssertEqual(client.publicationRequests, [Self.eventID], "fixture: first appearance read once")
 
         let elsewhere = UIViewController()
-        window.rootViewController = elsewhere
-        settle(elsewhere, 0.3)
+        mounted.show(elsewhere)
+        await layOut(elsewhere, for: 0.3)
         client.answerPublications(nil)   // the next read parks
-        window.rootViewController = host
-        settle(host, 1.0)
+        mounted.show(mounted.host)
+        await layOut(mounted.host, until: "reappearance: the page's fresh load parks one read") {
+            client.parkedPublicationCount >= 1
+        }
+        await layOut(mounted.host, for: 0.3)
         XCTAssertEqual(client.publicationRequests, [Self.eventID, Self.eventID], "reappearance: one fresh read")
         XCTAssertEqual(client.parkedPublicationCount, 1)
+        // Answering a read that was never parked would index an empty array and
+        // kill the test PROCESS — the composed run's crash. The criterion has
+        // already failed above; stop this test there, failed, not crashed.
+        guard client.parkedPublicationCount == 1 else { return }
 
-        window.rootViewController = elsewhere   // leave before it answers
-        settle(elsewhere, 0.3)
+        mounted.show(elsewhere)   // leave before it answers
+        await layOut(elsewhere, for: 0.3)
         client.answerPublication(0, with: .serve(body()))
-        settle(elsewhere, 0.3)
+        await layOut(elsewhere, for: 0.3)
         XCTAssertNil(vm.publicationJourney, "the read answered after the page left publishes nothing")
     }
 
@@ -733,6 +804,10 @@ final class EventPublicationCaller4974Tests: XCTestCase {
     /// window ends at 20:17:00 (last ESPN/odds row + 30 s) and the probability
     /// chart's own finish clip at 20:18:30 (last ESPN row + 120 s).
     /// `extraBlend` appends blend rows; `blend: false` serves no blend at all.
+    /// The same ESPN rows are also served as `win_prob_history["espn"]`, as the
+    /// server serves a multi-source game: `OddsChartView.chartPoints(from:)`
+    /// returns the sportsbook consensus ALONE when that map is empty, and then
+    /// there is no blend line for any checkpoint to mount on.
     private func legacyHistory(extraBlend: [(TimeInterval, Double)] = [],
                                blend: Bool = true) throws -> EventHistoryResponse {
         func stamp(_ seconds: TimeInterval) -> String { at(seconds).ISO8601Format() }
@@ -757,6 +832,7 @@ final class EventPublicationCaller4974Tests: XCTestCase {
         let object: [String: Any] = [
             "event_id": Self.eventID, "home_team": "Red Sox", "away_team": "Yankees",
             "status": "completed", "history": odds, "espn_history": espn, "aggregate_line": aggregate,
+            "win_prob_history": ["espn": espn],
         ]
         let data = try JSONSerialization.data(withJSONObject: object)
         return try Self.decoder().decode(EventHistoryResponse.self, from: data)
@@ -1307,7 +1383,10 @@ final class EventPublicationCaller4974Tests: XCTestCase {
     /// 20:23:15 — and a blend row at 20:21:20 (77%; 75% would collide with a
     /// y-axis label): after the latest stored checkpoint, inside the wider
     /// axis, so with no ink bound it would outrank the stored 96% as the
-    /// resting reading.
+    /// resting reading. The ESPN rows are also `win_prob_history["espn"]`
+    /// (multi-source, as in `legacyHistory()`), so the blend line exists
+    /// whether or not `lateDrift` adds its `stat_model` row; neither series
+    /// is later than the clips above say.
     private func inkHistory(blendDrift: Bool = true, scoreDrift: Bool = true,
                             lateDrift: Bool = false) throws -> EventHistoryResponse {
         func stamp(_ seconds: TimeInterval) -> String { at(seconds).ISO8601Format() }
@@ -1338,9 +1417,11 @@ final class EventPublicationCaller4974Tests: XCTestCase {
                 ["timestamp": stamp(row.0), "home_score": row.1, "away_score": row.2]
             },
         ]
+        var sources: [String: Any] = ["espn": espn]
         if lateDrift {
-            object["win_prob_history"] = ["stat_model": [["timestamp": stamp(375), "home_probability": 0.97]]]
+            sources["stat_model"] = [["timestamp": stamp(375), "home_probability": 0.97]]
         }
+        object["win_prob_history"] = sources
         let data = try JSONSerialization.data(withJSONObject: object)
         return try Self.decoder().decode(EventHistoryResponse.self, from: data)
     }
