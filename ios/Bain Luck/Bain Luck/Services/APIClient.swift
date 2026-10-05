@@ -365,10 +365,73 @@ actor APIClient {
             cacheKey = nil
         }
 
+        // #10090 — on a cold open the event page and its chart ask for the same
+        // 168h history ~0.3 s apart. The TTL cache only serves the second asker
+        // once the first body has landed, so both went to the server and doubled
+        // its database work. An ordinary cached read now joins a read already on
+        // the wire for the same key. Revalidation reads (`requiresNetwork`) never
+        // join — they exist to leave the device — and a traced read measures its
+        // own trip.
+        let transfer: Transfer
+        if let key = cacheKey, !requiresNetwork, trace == nil {
+            if let pending = inFlightReads[key] {
+                transfer = try await pending.value
+            } else {
+                let pending = Task {
+                    try await self.transfer(
+                        path, requestQuery: query, requiresNetwork: false,
+                        freshMarketRead: false, cacheKey: key)
+                }
+                inFlightReads[key] = pending
+                defer { if inFlightReads[key] == pending { inFlightReads[key] = nil } }
+                transfer = try await pending.value
+            }
+        } else {
+            transfer = try await self.transfer(
+                path, requestQuery: query.merging(revalidationQuery) { _, fresh in fresh },
+                requiresNetwork: requiresNetwork, freshMarketRead: freshMarketRead, cacheKey: cacheKey)
+        }
+
+        do {
+            let decodeStart = Date()
+            let value = try decoder.decode(T.self, from: transfer.data)
+            trace?(RequestTrace(
+                cacheStatus: RequestTrace.arm(fromHeader: transfer.feedCache),
+                backendElapsedMs: transfer.feedElapsedMs.flatMap(Double.init),
+                authReadyMs: transfer.authReadyMs,
+                networkMs: transfer.networkMs,
+                decodeMs: Date().timeIntervalSince(decodeStart) * 1000,
+                responseBytes: transfer.data.count))
+            return value
+        } catch {
+            throw APIError.decodingError(underlying: error)
+        }
+    }
+
+    /// One body as it came off the wire, with the two headers and the timing
+    /// split `fetch` reports. Plain values, so a joined read can share it.
+    private struct Transfer: Sendable {
+        let data: Data
+        let feedCache: String?
+        let feedElapsedMs: String?
+        let authReadyMs: Double
+        let networkMs: Double
+    }
+
+    /// #10090 — ordinary cached reads on the wire, by `responseCache` key.
+    private var inFlightReads: [String: Task<Transfer, any Error>] = [:]
+
+    /// `fetch`'s network leg: request, auth, transport, status, cache fill.
+    private func transfer(
+        _ path: String,
+        requestQuery: [String: String],
+        requiresNetwork: Bool,
+        freshMarketRead: Bool,
+        cacheKey: String?
+    ) async throws -> Transfer {
         var components = URLComponents(string: baseURL + path)
         // Revalidation changes freshness, not resource identity. Refill the
         // canonical cache entry so an ordinary read retains the new response.
-        let requestQuery = query.merging(revalidationQuery) { _, fresh in fresh }
         if !requestQuery.isEmpty {
             components?.queryItems = requestQuery.map { URLQueryItem(name: $0.key, value: $0.value) }
         }
@@ -419,21 +482,12 @@ actor APIClient {
             cleanCacheIfNeeded()
         }
 
-        do {
-            let decodeStart = Date()
-            let value = try decoder.decode(T.self, from: data)
-            trace?(RequestTrace(
-                cacheStatus: RequestTrace.arm(
-                    fromHeader: http?.value(forHTTPHeaderField: "X-Feed-Cache")),
-                backendElapsedMs: http?.value(forHTTPHeaderField: "X-Feed-Elapsed-Ms").flatMap(Double.init),
-                authReadyMs: authReadyMs,
-                networkMs: networkMs,
-                decodeMs: Date().timeIntervalSince(decodeStart) * 1000,
-                responseBytes: data.count))
-            return value
-        } catch {
-            throw APIError.decodingError(underlying: error)
-        }
+        return Transfer(
+            data: data,
+            feedCache: http?.value(forHTTPHeaderField: "X-Feed-Cache"),
+            feedElapsedMs: http?.value(forHTTPHeaderField: "X-Feed-Elapsed-Ms"),
+            authReadyMs: authReadyMs,
+            networkMs: networkMs)
     }
 
     /// Like `fetch`, but also returns the raw response bytes and a network/decode
