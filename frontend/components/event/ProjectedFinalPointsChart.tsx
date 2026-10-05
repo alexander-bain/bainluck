@@ -64,7 +64,9 @@ const H = 300;
 const LEFT = 64;
 const RIGHT = 990;
 const TOP = 16;
-const BOTTOM = 262;
+// #10539: the gutter below the plot holds only the gap marks (BOTTOM+4..+12). The plot stretches
+// to its box, so a wider gutter grew into an empty strip above the time labels once the box got taller.
+const BOTTOM = 284;
 
 export function formatProjectionTime(t: number): string {
   return format(new Date(t), "h:mm a");

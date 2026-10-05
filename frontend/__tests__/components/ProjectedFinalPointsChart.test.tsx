@@ -169,6 +169,26 @@ describe("#10539 the plot is taller", () => {
     expect(html).toMatch(/class="relative h-64 sm:h-80[^"]*" data-testid="projected-plot"/);
     expect(html).not.toMatch(/class="relative mt-3 h-48"/);
   });
+
+  it("spends the height on the lines: the gutter below the baseline only fits the gap marks", () => {
+    // The plot stretches to its box, so every viewBox unit of gutter grows with the taller plot.
+    // At 262/300 the 390px render showed an empty strip between the gap marks and the time labels.
+    const html = render(nflInput());
+    const viewH = Number(html.match(/viewBox="0 0 \d+ (\d+)"/)?.[1]);
+    const gridYs = [...html.matchAll(/<line[^>]*\by1="([\d.]+)"[^>]*\by2="\1"/g)].map((m) => Number(m[1]));
+    const baseline = Math.max(...gridYs);
+    const gaps = [...html.matchAll(/<line[^>]*data-withheld="[^"]+"[^>]*>/g)].map((m) => ({
+      y1: Number(m[0].match(/\by1="([\d.]+)"/)?.[1]),
+      y2: Number(m[0].match(/\by2="([\d.]+)"/)?.[1]),
+    }));
+    expect(viewH).toBe(300);
+    expect(gaps.length).toBeGreaterThan(0);
+    for (const g of gaps) {
+      expect(g.y1).toBeGreaterThan(baseline);
+      expect(g.y2).toBeLessThanOrEqual(viewH);
+    }
+    expect(viewH - baseline).toBeLessThanOrEqual(16);
+  });
 });
 
 describe("a finished game whose last recorded score is not the page's final", () => {
