@@ -56,6 +56,46 @@ final class WidgetTapJourneyTests: XCTestCase {
     }
 
     @MainActor
+    func testColdActualWidgetTapOffersPickerWithoutSelection() throws {
+        continueAfterFailure = false
+        let app = XCUIApplication()
+        defer { app.terminate() }
+        app.launchEnvironment = [
+            "BAINLUCK_WATCH_UI_TEST": "1",
+            "BAINLUCK_WATCH_UI_SUITE": UUID().uuidString,
+            "BAINLUCK_WATCH_UI_RESET": "1",
+            "BAINLUCK_WATCH_UI_LAUNCH_RECEIPT": "1",
+            "BAINLUCK_WATCH_UI_SHARED_PUBLICATION": "1"
+        ]
+        app.launch()
+        XCTAssertTrue(app.buttons["watch.pick.101"].waitForExistence(timeout: 20))
+        XCUIDevice.shared.press(.home)
+        let host = XCUIApplication(bundleIdentifier: "com.apple.Carousel")
+        let widget = try mountLauncherOnFreshSiriModularFace(in: host)
+        app.terminate()
+        app.launchEnvironment["BAINLUCK_WATCH_UI_RESET"] = "0"
+        app.launchEnvironment["BAINLUCK_WATCH_UI_SEED_URL"] = "1"
+        app.launch()
+        XCTAssertTrue(app.staticTexts["watch.url-fixture-ready"].waitForExistence(timeout: 15))
+        app.terminate()
+        XCTAssertEqual(app.state, .notRunning)
+        XCTAssertTrue(host.wait(for: .runningForeground, timeout: 15))
+        XCTAssertTrue(widget.waitForExistence(timeout: 15) && widget.isHittable && host.frame.contains(widget.frame))
+        widgetWarmCapture(host, name: "Actual cold Widget launcher with no saved selection")
+        widget.tap()
+        XCTAssertTrue(app.wait(for: .runningForeground, timeout: 45))
+        let choice = app.buttons["watch.pick.101"]
+        XCTAssertTrue(choice.waitForExistence(timeout: 20), "Actual cold Widget tap without selection must offer the picker")
+        let receipt = app.staticTexts["watch.launch-receipt"]
+        try widgetWarmWait(NSPredicate(format: "label == %@", "Launcher opens: 1"),
+            on: receipt, timeout: 15, message: "Actual empty Widget tap must deliver exactly one route", app: app)
+        XCTAssertFalse(app.descendants(matching: .any)["watch.home-probability"].firstMatch.exists)
+        try widgetWarmReveal(choice, in: app)
+        widgetWarmCapture(app, name: "Actual cold empty Widget tap offers named game choices")
+        print("WATCH_UI_ACTUAL_WIDGET_EMPTY=PASS")
+    }
+
+    @MainActor
     func testActualComplicationHost() throws {
         continueAfterFailure = false
         let app = XCUIApplication()
