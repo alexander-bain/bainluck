@@ -171,6 +171,8 @@ final class APIClientPublications4974Tests: XCTestCase {
         let off = try await api.fetchEventPublications(id: 4242)
         XCTAssertEqual(off.vertices, [])
         XCTAssertFalse(off.truncated)
+        XCTAssertEqual(PublicationJourney4974.adopt(off, expectedEventID: 4242, finished: true),
+                       .failure(.vertexCount(0)), "adoption still refuses an empty recording; nothing is drawn")
 
         Origin.replace(.serve(status: 200, body: Self.body(truncated: true)))
         let capped = try await api.fetchEventPublications(id: 4242)
