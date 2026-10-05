@@ -6888,6 +6888,23 @@ jobs:
             exit 1
           }
 
+      - name: "#10564 abandoned ActivityKit credentials expire (real Postgres)"
+        if: matrix.group == 'isolated'
+        run: |
+          python -m pytest tests/integration/test_activitykit_credential_expiry_pg.py -v -rs > /tmp/activitykit-expiry10564.txt 2>&1 || {
+            cat /tmp/activitykit-expiry10564.txt
+            exit 1
+          }
+          cat /tmp/activitykit-expiry10564.txt
+          if grep -qiE "[0-9]+ skipped" /tmp/activitykit-expiry10564.txt; then
+            echo "::error::#10564 credential expiry gate skipped"
+            exit 1
+          fi
+          grep -qE "[^0-9]17 passed([,[:space:]]|$)" /tmp/activitykit-expiry10564.txt || {
+            echo "::error::#10564 credential expiry gate did not run all seventeen cases"
+            exit 1
+          }
+
   # The existing required context stays non-matrix. A failed, cancelled or
   # unexpectedly skipped worker must never satisfy branch protection as green.
   # Frontend-only candidates retain the original intentional job-level skip.

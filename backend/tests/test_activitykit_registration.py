@@ -37,6 +37,9 @@ class Database:
         ]:
             self.connection.exec_driver_sql(sql)
         TABLE.create(self.connection)
+        self.connection.exec_driver_sql(
+            "CREATE TABLE activitykit_deliveries(activity_id TEXT PRIMARY KEY, registration_version BIGINT, token_hash TEXT, state JSON, lease_id TEXT, lease_expires_at DATETIME, updated_at DATETIME)"
+        )
         self.connection.commit()
         self.before_write = None
 

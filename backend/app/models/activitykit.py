@@ -25,6 +25,11 @@ class ActivityKitRegistration(Base):
     token_hash: Mapped[str | None] = mapped_column(String(64), unique=True)
     mutation_id: Mapped[str] = mapped_column(String(36), nullable=False)
     request_hash: Mapped[str] = mapped_column(String(64), nullable=False)
+    # First server authorization only; rotation cannot renew this horizon.
+    created_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    expires_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), index=True
+    )
     updated_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False, server_default=func.now()
     )

@@ -22,6 +22,12 @@ from app.dependencies.auth import get_current_user
 from app.models.activitykit import ActivityKitRegistration
 from app.models.models import Event, User
 from app.services.database import get_db_rw
+from app.services.activitykit_registration_lifecycle import (
+    AUTHORIZATION_LIFETIME,
+    utc_now,
+    horizon_open,
+    erase_authorization,
+)
 
 router = APIRouter(prefix="/api/activitykit/registrations", tags=["activitykit"])
 _TABLE = ActivityKitRegistration.__table__
@@ -94,9 +100,9 @@ def _public(row) -> dict:
 
 async def _owned(db: AsyncSession, activity_id: str, user_id: int):
     result = await db.execute(
-        select(_TABLE).where(
-            _TABLE.c.activity_id == activity_id, _TABLE.c.user_id == user_id
-        )
+        select(_TABLE)
+        .where(_TABLE.c.activity_id == activity_id, _TABLE.c.user_id == user_id)
+        .with_for_update()
     )
     return result.mappings().one_or_none()
 
@@ -110,6 +116,10 @@ async def get_registration(
     row = await _owned(db, _activity_id(activity_id), user.id)
     if row is None:
         raise HTTPException(404, "Registration not found")
+    now = utc_now()  # after registration lock
+    if not horizon_open(row, now):
+        row = await erase_authorization(db, row, now=now)
+        await db.commit()
     return _public(row)
 
 
@@ -122,8 +132,15 @@ async def _mutate(
     request_hash = _hash(body, action)
     mutation_id = str(body.mutation_id)
     row = await _owned(db, activity_id, user.id)
+    now = utc_now()  # after registration lock, never from the HTTP body
     if row is not None:
         if row["event_id"] != body.event_id:
+            raise HTTPException(409, "Registration conflict")
+        if not horizon_open(row, now):
+            row = await erase_authorization(db, row, now=now)
+            await db.commit()  # expiry remains durable even though PUT conflicts
+            if revoke:
+                return _public(row)
             raise HTTPException(409, "Registration conflict")
         # Idempotency only for the exact latest successful operation. An older
         # retry after a later mutation conflicts; it never restores an old token.
@@ -135,6 +152,13 @@ async def _mutate(
             raise HTTPException(409, "Registration conflict")
     elif body.expected_version != 0:
         raise HTTPException(404, "Registration not found")
+
+    if revoke and row is not None:
+        row = await erase_authorization(
+            db, row, now=now, mutation_id=mutation_id, request_hash=request_hash
+        )
+        await db.commit()
+        return _public(row)
 
     token = None if revoke else body.push_token.get_secret_value()
     token_hash = None if token is None else hashlib.sha256(token.encode()).hexdigest()
@@ -158,6 +182,8 @@ async def _mutate(
                     activity_id=activity_id,
                     user_id=user.id,
                     event_id=body.event_id,
+                    created_at=now,
+                    expires_at=now if revoke else now + AUTHORIZATION_LIFETIME,
                     **values
                 )
                 .on_conflict_do_nothing(index_elements=[_TABLE.c.activity_id])
