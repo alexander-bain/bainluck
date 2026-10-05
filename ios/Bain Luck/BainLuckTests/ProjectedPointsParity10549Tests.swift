@@ -151,6 +151,8 @@ final class ProjectedPointsParity10549Tests: XCTestCase {
         XCTAssertFalse(view.contains("Recorded captures"), "no bare source branding under the heading")
         XCTAssertTrue(view.contains(#"DisclosureGroup("How to read this""#))
         XCTAssertTrue(view.contains(#"Button("Done") { expanded = false }"#), "full screen still returns")
+        XCTAssertTrue(view.contains(".dynamicTypeSize(...Self.axisTypeCeiling)"), "axis labels stop growing before they truncate")
+        XCTAssertFalse(ProjectedFinalPointsChartView.axisTypeCeiling.isAccessibilitySize)
         XCTAssertGreaterThan(ProjectedFinalPointsChartView.inlinePlotHeight, 210)
         XCTAssertGreaterThan(ProjectedFinalPointsChartView.expandedPlotHeight, 330)
     }

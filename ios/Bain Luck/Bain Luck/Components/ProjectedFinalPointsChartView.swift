@@ -31,6 +31,7 @@ struct ProjectedFinalPointsChartView: View {
     /// The strip above the plot that holds the period chips, so a chip never
     /// sits on a line near the top of the scale.
     static let markerStripHeight: CGFloat = 16
+    static let axisTypeCeiling: DynamicTypeSize = .xxLarge
 
     private var full: ProjectedFinalPointsSeries? { ProjectedFinalPointsSeries.build(input) }
 
@@ -270,6 +271,11 @@ struct ProjectedFinalPointsChartView: View {
             }
         }
         .padding(.top, markers.isEmpty ? 0 : Self.markerStripHeight)
+        // At accessibility sizes the axis labels outgrew the plot ("10…", and a
+        // y-axis wider than its gutter). The values, times and markers are all
+        // in the readout and the spoken element, which keep scaling; the axes
+        // stop at the largest size that still reads whole.
+        .dynamicTypeSize(...Self.axisTypeCeiling)
         // Values, team names and recorded times are in the readout above; this
         // element speaks the span and the game-state markers it draws.
         .accessibilityElement(children: .ignore)
