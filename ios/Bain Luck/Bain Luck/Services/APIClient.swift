@@ -332,6 +332,7 @@ actor APIClient {
         cacheTTL: TimeInterval? = nil,
         requiresNetwork: Bool = false,
         revalidationQuery: [String: String] = [:],
+        sharesPendingRead: Bool = false,
         trace: (@Sendable (RequestTrace) -> Void)? = nil
     ) async throws -> sending T {
         let freshMarketRead = requiresNetwork && revalidationQuery["fresh"] == "true"
@@ -368,14 +369,24 @@ actor APIClient {
         // #10090 — on a cold open the event page and its chart ask for the same
         // 168h history ~0.3 s apart. The TTL cache only serves the second asker
         // once the first body has landed, so both went to the server and doubled
-        // its database work. An ordinary cached read now joins a read already on
-        // the wire for the same key. Revalidation reads (`requiresNetwork`) never
-        // join — they exist to leave the device — and a traced read measures its
-        // own trip.
+        // its database work. A read that opts in (`sharesPendingRead` — history
+        // only) joins one already on the wire for the same key: same principal,
+        // path and query. Revalidation reads never join — they exist to leave the
+        // device.
+        //
+        // Cancellation: the shared transfer is not the caller's child, so one
+        // reader leaving never aborts it for another. Each reader checks for
+        // itself before joining and again after the body arrives, and a departed
+        // reader refuses the body with the same error a cancelled request always
+        // threw. If every reader leaves, the transfer still settles and fills the
+        // ordinary TTL cache; the creator's `defer` retires the entry when it
+        // settles, so a later read never joins a finished or failed transfer.
         let transfer: Transfer
-        if let key = cacheKey, !requiresNetwork, trace == nil {
+        if sharesPendingRead, let key = cacheKey, !requiresNetwork {
+            try Self.refuseIfCancelled()
+            let outcome: Result<Transfer, any Error>
             if let pending = inFlightReads[key] {
-                transfer = try await pending.value
+                outcome = await pending.result
             } else {
                 let pending = Task {
                     try await self.transfer(
@@ -384,8 +395,11 @@ actor APIClient {
                 }
                 inFlightReads[key] = pending
                 defer { if inFlightReads[key] == pending { inFlightReads[key] = nil } }
-                transfer = try await pending.value
+                outcome = await pending.result
             }
+            // Before either outcome: a departed reader refuses a failure too.
+            try Self.refuseIfCancelled()
+            transfer = try outcome.get()
         } else {
             transfer = try await self.transfer(
                 path, requestQuery: query.merging(revalidationQuery) { _, fresh in fresh },
@@ -418,8 +432,14 @@ actor APIClient {
         let networkMs: Double
     }
 
-    /// #10090 — ordinary cached reads on the wire, by `responseCache` key.
+    /// #10090 — shared reads on the wire, by `responseCache` key.
     private var inFlightReads: [String: Task<Transfer, any Error>] = [:]
+
+    /// A departed reader's refusal, in the shape a cancelled `URLSession`
+    /// request has always reached callers.
+    private static func refuseIfCancelled() throws {
+        if Task.isCancelled { throw APIError.networkError(underlying: URLError(.cancelled)) }
+    }
 
     /// `fetch`'s network leg: request, auth, transport, status, cache fill.
     private func transfer(
@@ -950,7 +970,8 @@ actor APIClient {
 
     /// Fetches win-probability history for an event over the requested trailing window.
     func fetchEventHistory(id: Int, hours: Int = 24) async throws -> EventHistoryResponse {
-        return try await fetch("/api/events/\(id)/history", query: ["hours": "\(hours)"], cacheTTL: 60)
+        return try await fetch("/api/events/\(id)/history", query: ["hours": "\(hours)"], cacheTTL: 60,
+                               sharesPendingRead: true)
     }
 
     func fetchFreshEventHistory(id: Int, hours: Int) async throws -> EventHistoryResponse {
