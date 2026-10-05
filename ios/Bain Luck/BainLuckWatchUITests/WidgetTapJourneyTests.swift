@@ -423,31 +423,46 @@ enum WatchComplicationGalleryNavigation {
         capture("Actual Widget app gallery before bounded app search")
         let choice = host.cells["AppGroupCell -- Bain Luck"].firstMatch
         let chromeBottom = host.frame.minY + host.frame.height * 0.26
-        // Hosted rectangle ended at Now Playing/Shortcuts/Translate/Off. Begin
-        // by returning toward earlier rows when the actual Off row is visible.
-        let off = host.cells.matching(NSPredicate(format: "label == %@", "Off")).firstMatch
-        let startsBelow = off.exists && off.isHittable && host.frame.contains(off.frame)
-        for searchEarlier in [startsBelow, !startsBelow] {
-            for _ in 0..<24 {
-                let exists = choice.exists
-                let belowChrome = exists && choice.frame.minY > chromeBottom
-                if belowChrome && choice.isHittable && host.frame.contains(choice.frame) { return choice }
-                let earlier = exists ? choice.frame.minY <= chromeBottom : searchEarlier
-                let startY: CGFloat = exists ? 0.65 : (earlier ? 0.35 : 0.75)
-                let endY: CGFloat = exists ? (earlier ? 0.85 : 0.40) : (earlier ? 0.75 : 0.35)
-                host.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: startY))
-                    .press(forDuration: 0.1,
-                           thenDragTo: host.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: endY)),
-                           withVelocity: .slow, thenHoldForDuration: 0.4)
-                // A gesture must never turn app-list search into detail-page
-                // scrolling. Capture and fail instead of selecting a substitute.
-                try require(parentPage.exists && !detailPage.exists && !back.exists,
-                            "App-gallery search unexpectedly left NTKStarbearPickerView", capture: capture)
+        // Virtualized rows may disappear between large drags. Use the actual
+        // visible alphabetical app rows to choose direction and move by at most
+        // half a row, rather than sweeping past the target on a fixed schedule.
+        var visits: [String: Int] = [:]
+        for step in 0..<32 {
+            let exists = choice.exists
+            let belowChrome = exists && choice.frame.minY > chromeBottom
+            if belowChrome && choice.isHittable && host.frame.contains(choice.frame) { return choice }
+            let visibleApps = host.cells.matching(NSPredicate(format: "identifier BEGINSWITH %@", "AppGroupCell -- "))
+                .allElementsBoundByIndex.filter { $0.frame.maxY > chromeBottom && $0.frame.minY < host.frame.maxY }
+                .sorted { $0.frame.minY < $1.frame.minY }
+            let earlier: Bool
+            if exists {
+                earlier = choice.frame.minY <= chromeBottom
+            } else if let first = visibleApps.first {
+                earlier = first.label.localizedCaseInsensitiveCompare("Bain Luck") == .orderedDescending
+            } else {
+                // Featured precedes All Apps on the observed parent page.
+                earlier = false
             }
+            let rowHeight = visibleApps.first?.frame.height ?? host.frame.height * 0.20
+            let distance = min(host.frame.height * 0.12, max(12, rowHeight * 0.5))
+            let position = visibleApps.map { "\($0.identifier):\(Int(($0.frame.minY / 4).rounded()) * 4)" }.joined(separator: "|")
+            print("WATCH_GALLERY_STEP=\(step) earlier=\(earlier) targetExists=\(exists) rows=\(position)")
+            if !position.isEmpty {
+                visits[position, default: 0] += 1
+                try require(visits[position, default: 0] <= 3,
+                            "App-gallery search repeated visible rows without finding exact Bain Luck: \(position)", capture: capture)
+            }
+            let endY = 0.65 + (earlier ? distance : -distance) / host.frame.height
+            host.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.65))
+                .press(forDuration: 0.1,
+                       thenDragTo: host.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: endY)),
+                       withVelocity: .slow, thenHoldForDuration: 0.4)
+            try require(parentPage.exists && !detailPage.exists && !back.exists,
+                        "App-gallery search unexpectedly left NTKStarbearPickerView", capture: capture)
         }
         try require(choice.exists && choice.isHittable && host.frame.contains(choice.frame)
                     && choice.frame.minY > chromeBottom,
-                    "Exact Bain Luck app row unreachable after bounded gallery search", capture: capture)
+                    "Exact Bain Luck app row unreachable after bounded row-guided search", capture: capture)
         return choice
     }
 

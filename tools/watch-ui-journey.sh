@@ -99,16 +99,21 @@ receipt = {"sha": sys.argv[3], "udid": sys.argv[1], "bundle_id": bundle}
 try:
     result = subprocess.run(["xcrun", "simctl", "get_app_container", sys.argv[1], bundle, "app"],
                             capture_output=True, text=True, timeout=15, check=True)
-    info = plistlib.loads((Path(result.stdout.strip()) / "Info.plist").read_bytes())
-    keys = ["CFBundleIdentifier", "CFBundleURLTypes", "CFBundleSupportedPlatforms", "MinimumOSVersion",
+    installed = Path(result.stdout.strip())
+    info = plistlib.loads((installed / "Info.plist").read_bytes())
+    keys = ["CFBundleIdentifier", "CFBundleDisplayName", "CFBundleName", "CFBundleExecutable", "CFBundleURLTypes", "CFBundleSupportedPlatforms", "MinimumOSVersion",
             "WKCompanionAppBundleIdentifier", "WKRunsIndependentlyOfCompanionApp"]
     receipt["installed_info"] = {key: info.get(key) for key in keys}
+    receipt["embedded_extensions"] = []
+    for extension in sorted((installed / "PlugIns").glob("*.appex")):
+        extension_info = plistlib.loads((extension / "Info.plist").read_bytes())
+        receipt["embedded_extensions"].append({key: extension_info.get(key) for key in keys + ["NSExtension"]})
     listing = subprocess.run(["xcrun", "simctl", "listapps", sys.argv[1]],
                              capture_output=True, timeout=15, check=True)
     converted = subprocess.run(["plutil", "-convert", "json", "-o", "-", "-"],
                                input=listing.stdout, capture_output=True, timeout=15, check=True)
     app = json.loads(converted.stdout).get(bundle)
-    receipt["system_listing"] = {key: app.get(key) for key in keys} if isinstance(app, dict) else app
+    receipt["system_listing"] = app
 except Exception as error:
     receipt["diagnostic_error"] = str(error)
 Path(sys.argv[2]).write_text(json.dumps(receipt, indent=2) + "\n")
@@ -116,10 +121,41 @@ REGISTRATION
 if [[ "$TEST_EXIT" -ne 0 ]]; then
   echo 'Watch UI journey unpaid; if this toolchain requires pairing, no existing iPhone has been touched.' >&2
   tail -80 "$OUT/tests.log" >&2
+  # Failure-only, bundle-scoped runtime evidence distinguishes an absent
+  # WidgetKit offering from a gallery traversal failure. No daemon restart,
+  # registration mutation, pairing, or test retry is performed.
+  python3 - "$TEST_UDID" "$OUT/widget-runtime.log" "$OUT/widget-runtime.json" <<'RUNTIME'
+import json, subprocess, sys
+from pathlib import Path
+output = Path(sys.argv[2])
+receipt = {"scope": "failed Watch UI gate; bundle-filtered last 25 minutes"}
+predicate = 'eventMessage CONTAINS[c] "com.bainluck" OR eventMessage CONTAINS[c] "BainLuckComplication"'
+try:
+    with output.open("wb") as log:
+        result = subprocess.run(["xcrun", "simctl", "spawn", sys.argv[1], "log", "show",
+                                 "--last", "25m", "--style", "compact", "--info", "--predicate", predicate],
+                                stdout=log, stderr=subprocess.STDOUT, timeout=20)
+    receipt["exit_code"] = result.returncode
+except Exception as error:
+    receipt["diagnostic_error"] = str(error)
+if output.exists():
+    size = output.stat().st_size
+    receipt["original_bytes"] = size
+    limit = 2 * 1024 * 1024
+    if size > limit:
+        with output.open("rb") as log:
+            log.seek(-limit, 2)
+            tail = log.read()
+        output.write_bytes(tail)
+        receipt["truncated_to_last_bytes"] = limit
+Path(sys.argv[3]).write_text(json.dumps(receipt, indent=2) + "\n")
+RUNTIME
 fi
 PHASE='installed simulator WidgetKit entitlement verification'
-if [[ "$TEST_EXIT" -eq 0 ]]; then
-  python3 - "$TEST_UDID" "$OUT/simulator-widget-signing.json" "$SHA" "$DERIVED" <<'SIMSIGN'
+# Retain installation/signing evidence even when gallery navigation fails.
+# A diagnostic error must not hide the original test failure; on a passing
+# suite the same signing checks remain mandatory.
+if python3 - "$TEST_UDID" "$OUT/simulator-widget-signing.json" "$SHA" "$DERIVED" <<'SIMSIGN'
 import json, plistlib, subprocess, sys
 from pathlib import Path
 bundle_id = "com.bainluck.Bain-Luck.watchkitapp"
@@ -159,6 +195,10 @@ except Exception as error:
     raise SystemExit("Installed WidgetKit signing gate unpaid: " + str(error))
 Path(sys.argv[2]).write_text(json.dumps(receipt, indent=2) + "\n")
 SIMSIGN
+then
+  :
+else
+  if [[ "$TEST_EXIT" -eq 0 ]]; then exit 1; fi
 fi
 PHASE='effective layout stress size verification'
 if [[ "$TEST_EXIT" -eq 0 ]]; then
