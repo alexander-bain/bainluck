@@ -28,6 +28,7 @@ if os.getenv("DYNO"):
 
 logger = logging.getLogger(__name__)
 
+from app.routes import activitykit
 from app.routes import containers, events, event_stream, event_publications, market_stream, sports, health, futures, admin, admin_analytics, admin_backfill_linkage, admin_backfill_odds, admin_judgments, admin_llm_diagnosis, admin_source_health, admin_rate_limit, admin_feed_config, admin_label_pass, admin_team_clusters, admin_cockpit, admin_file_issue, admin_cohort, auth, user, feed, feed_prices, market_moves, oscars, oscars_pool, golf, event, hub, march_madness, playoffs, tournaments, weather, economics, politics, entertainment, league_futures, predictions, og_image, teams, prop_families, feedback, calibration, source_intelligence, notifications, challenges, unsubscribe, telemetry
 from app.services.database import init_db
 
@@ -356,6 +357,7 @@ app.include_router(predictions.router)
 app.include_router(feedback.router)
 app.include_router(telemetry.router)
 app.include_router(notifications.router, dependencies=ADMIN_ROUTER_DEPENDENCIES)
+app.include_router(activitykit.router)
 app.include_router(challenges.router, prefix="/api/challenges", tags=["Challenges"])
 app.include_router(unsubscribe.router)
 app.include_router(og_image.router)
