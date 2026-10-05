@@ -371,14 +371,17 @@ async def test_unpriced_pairs_cannot_crowd_a_priced_pair_out_of_the_limit(
     priced pair under `ORDER BY markets DESC LIMIT 200` if the price test ran
     after the cut. It must run before it."""
     seed = await _seed(pg_session)
+    crowd = []
     for _ in range(CROWD):
         crowd_ev = await seed.event()
+        crowd.append(crowd_ev)
         await seed.market(crowd_ev, prices=(None, None))
         await seed.market(crowd_ev, prices=(None, None))
     priced = await seed.event()
     await seed.market(priced, prices=(0.51, 0.49))
     await pg_session.commit()
 
-    out, pairs = await _red_pairs(pg_session)
+    _, pairs = await _red_pairs(pg_session)
     assert (priced, "kalshi") in pairs
-    assert len(out["rows"]) < 200  # the crowd is not in the result at all
+    # Scoped to this file's ids: the CI database is shared with other gates.
+    assert not any((ev, "kalshi") in pairs for ev in crowd)
