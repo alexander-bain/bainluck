@@ -106,14 +106,21 @@ struct BainLuckWidgetBundle: WidgetBundle {
     var body: some Widget {
         BainLuckDesktopWidget()
         #if os(iOS)
-        if #available(iOS 18.0, *) {
-            GameLiveActivity()
-        }
-        if #unavailable(iOS 18.0) {
-            GameLiveActivityBase()
-        }
+        liveActivityRegistration
         #endif
     }
+
+    #if os(iOS)
+    private var liveActivityRegistration: some Widget {
+        // Configuration modifiers change opaque types. The bundle's public
+        // availability erasure selects one widget without duplicate registration.
+        var selected = WidgetBundleBuilder.buildLimitedAvailability(GameLiveActivityBase())
+        if #available(iOS 18.0, *) {
+            selected = WidgetBundleBuilder.buildLimitedAvailability(GameLiveActivity())
+        }
+        return WidgetBundleBuilder.buildOptional(selected)
+    }
+    #endif
 }
 
 // MARK: - Previews
