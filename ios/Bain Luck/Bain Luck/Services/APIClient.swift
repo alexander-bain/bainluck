@@ -904,6 +904,15 @@ actor APIClient {
                         cacheTTL: 60, requiresNetwork: true, revalidationQuery: ["fresh": "true"])
     }
 
+    /// #4974 — a finished game's recorded probability checkpoints. Transport only:
+    /// no TTL, and every read leaves the device (the server sends `max-age=60`, so
+    /// a URLCache hit could hand back a body from before the game was recorded).
+    /// Whether the body may be drawn is `PublicationJourney4974.adopt`'s call, and
+    /// a result for a page the reader has left is the caller's to drop.
+    func fetchEventPublications(id: Int) async throws -> PublicationCheckpointsResponse {
+        try await fetch("/api/events/\(id)/publications", requiresNetwork: true)
+    }
+
     // MARK: - Related Futures
 
     /// Fetches season futures and related markets attached to an event detail page.
