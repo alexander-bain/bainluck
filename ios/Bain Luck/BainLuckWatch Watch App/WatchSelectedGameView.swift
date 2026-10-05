@@ -122,8 +122,19 @@ struct WatchSelectedGameView: View {
             }
             await store.runForegroundRefresh()
         }
-        .navigationDestination(isPresented: $showingDiscoveries) {
-            WatchDiscoverStoriesView(selected: store) { showingDiscoveries = false }
+        .sheet(isPresented: $showingDiscoveries) {
+            NavigationStack {
+                WatchDiscoverStoriesView(selected: store) { showingDiscoveries = false }
+            }
+            #if DEBUG
+            .transformEnvironment(\.dynamicTypeSize) { size in
+                // Match the established picker sheet's layout-stress fixture.
+                if WatchUIFixture.current != nil,
+                   ProcessInfo.processInfo.environment["BAINLUCK_WATCH_UI_LARGE_TEXT"] == "1" {
+                    size = dynamicTypeSize
+                }
+            }
+            #endif
         }
         .sheet(isPresented: $choosingGame) {
             NavigationStack {
