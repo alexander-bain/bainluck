@@ -62,6 +62,10 @@ struct EventDetailView: View {
     /// control governs both). It lived in the probability chart's own view model,
     /// where neither the shared window nor the score chart could see it.
     @State private var chartRange: OddsTimeRange = .sinceStart
+    /// #4974 — whether this appearance may read a finished game's stored
+    /// checkpoints. One value, so a load's completion opens readiness and moves
+    /// the revision in a single write (`PublicationCaller4974`).
+    @State private var publicationCaller = PublicationCaller4974()
     private var sharedChartDomain: ClosedRange<Date>? {
         guard let event = vm.event else { return nil }
         return SharedChartWindow.domain(
@@ -88,6 +92,10 @@ struct EventDetailView: View {
     }
 
     private var isLive: Bool { vm.event?.status == "live" }
+    private var publicationTaskKey: PublicationTaskKey4974 {
+        PublicationTaskKey4974(pageEventId: eventId, vmEventId: vm.eventId,
+                               event: vm.event, caller: publicationCaller)
+    }
     /// #9436 — what the hero's whole-string change reads: the pair the chart's
     /// live-edge label also prints (`LivePriceActivity.displayedLabels`), which
     /// is exactly the pair the hero draws; moving only while live.
@@ -228,6 +236,12 @@ struct EventDetailView: View {
         URL(string: eventShareURL(eventId)) ?? bainLuckFallbackURL
     }
 
+    /// #4974 — every page load the reader starts: appearance, pull to refresh
+    /// and Refresh now (`EventDetailView.loadPage(pageEventId:vm:caller:)`).
+    private func loadPage() async {
+        await Self.loadPage(pageEventId: eventId, vm: vm, caller: $publicationCaller)
+    }
+
     /// #8651 — the page's own rebuild count, kept only when the rig asks
     /// (`LaunchRig.countsPageBuilds`), so a test can read what a scroll costs.
     private static let countsBuilds = LaunchRig.countsPageBuilds()
@@ -265,7 +279,7 @@ struct EventDetailView: View {
                 // reading prices. Keep the manual refresh independently reachable.
                 if isLive {
                     ToolbarItem(placement: .cancellationAction) {
-                        Button { Task { await vm.load() } } label: {
+                        Button { Task { await loadPage() } } label: {
                             Image(systemName: "arrow.clockwise")
                                 .font(.system(size: 13, weight: .medium))
                                 .frame(width: 22, height: 22)
@@ -292,14 +306,24 @@ struct EventDetailView: View {
                     }
                 }
             }
+            // #4974 — the page's one checkpoint task. SwiftUI cancels the run
+            // in flight whenever the key moves and when the page leaves; a run
+            // calls the view model only for a ready appearance of this page's
+            // own view model (`PublicationTaskKey4974.action`).
+            .task(id: publicationTaskKey) {
+                await Self.runPublicationTask(for: publicationTaskKey, vm: vm)
+            }
+            // Its own modifier so the existing disappearance block is untouched:
+            // a load still in flight can no longer reopen readiness.
+            .onDisappear { publicationCaller.suspend() }
             .task {
                 marketPageVisible = true
                 vm.setMarketPageVisible(scenePhase == .active)
-                await vm.load()
+                await loadPage()
                 AnalyticsService.trackEventDetailView(eventId: eventId, sport: vm.event?.sport)
             }
             .refreshable {
-                await vm.load()
+                await loadPage()
             }
             .onChange(of: scenePhase) { _, phase in
                 vm.setMarketPageVisible(marketPageVisible && phase == .active)
@@ -395,7 +419,13 @@ struct EventDetailView: View {
                                             homeTeamLogo: event.homeTeamData?.logoSmall,
                                             awayTeamLogo: event.awayTeamData?.logoSmall,
                                             lastPoint: lastPlayPoint(event: event))
-                                        : nil)
+                                        : nil,
+                                     // #4974 — the journey only when page, view
+                                     // model, detail and journey agree on a
+                                     // finished game and this appearance is
+                                     // ready; the chart keeps its own guard.
+                                     publicationJourney: Self.chartPublicationJourney(
+                                        vm.publicationJourney, key: publicationTaskKey))
                         // Bookmaker table (collapsible Sources panel)
                         sourcesToggle(event)
 
@@ -3141,5 +3171,117 @@ private struct LineMovementExplainerView: View {
         guard let value else { return nil }
         let trimmed = value.trimmingCharacters(in: .whitespacesAndNewlines)
         return trimmed.isEmpty ? nil : trimmed
+    }
+}
+
+// MARK: - #4974 Stored Checkpoints (caller)
+
+/// Whether this appearance of the page may read a finished game's stored
+/// checkpoints, and which of its loads opened it.
+///
+/// `generation` moves on every page load and every disappearance, so a load
+/// that finishes after a newer one started — or after the page left — cannot
+/// reopen readiness. `revision` moves only when a load opens it, so each
+/// successful page load is one new key and so one fresh read.
+nonisolated struct PublicationCaller4974: Equatable, Sendable {
+    private(set) var generation = 0
+    private(set) var ready = false
+    private(set) var revision = 0
+
+    /// A page load is starting, or the page left: not ready, and every load
+    /// already in flight is stale. Returns the new generation.
+    @discardableResult
+    mutating func suspend() -> Int {
+        generation &+= 1
+        ready = false
+        return generation
+    }
+
+    /// The load holding `generation` succeeded: ready, with a new revision, in
+    /// one write. Refused for any load that is no longer the latest.
+    @discardableResult
+    mutating func open(ifCurrent generation: Int) -> Bool {
+        guard generation == self.generation else { return false }
+        ready = true
+        revision &+= 1
+        return true
+    }
+}
+
+/// What a run of the page's checkpoint task does.
+nonisolated enum PublicationTaskAction4974: Equatable, Sendable {
+    /// Make no call: the appearance is not ready, or the page and its view
+    /// model disagree on the game — the view model would fetch its own.
+    case withhold
+    /// Call `adoptPublicationJourney()`: it reads for this page's finished
+    /// game, and clears without a request for anything else.
+    case adopt
+}
+
+/// The page's checkpoint-task key. Identity, finished state (not the raw
+/// status: `completed` and `closed` are one key) and readiness only — never a
+/// receipt, a load time, a score or the whole event, so an unchanged re-render
+/// or refresh is never a second read.
+nonisolated struct PublicationTaskKey4974: Hashable, Sendable {
+    let pageEventId: Int
+    let vmEventId: Int
+    let detailEventId: Int?
+    let finished: Bool
+    let ready: Bool
+    let revision: Int
+
+    init(pageEventId: Int, vmEventId: Int, event: EventDetail?, caller: PublicationCaller4974) {
+        self.pageEventId = pageEventId
+        self.vmEventId = vmEventId
+        self.detailEventId = event?.id
+        self.finished = EventState.isFinished(event?.status)
+        self.ready = caller.ready
+        self.revision = caller.revision
+    }
+
+    var action: PublicationTaskAction4974 {
+        guard pageEventId == vmEventId, ready else { return .withhold }
+        return .adopt
+    }
+}
+
+extension EventDetailView {
+    /// One run of the page's checkpoint task: the whole body of its
+    /// `.task(id:)`, here so a test drives the code the page runs.
+    @MainActor
+    static func runPublicationTask(for key: PublicationTaskKey4974, vm: EventDetailViewModel) async {
+        guard key.action == .adopt, !Task.isCancelled else { return }
+        await vm.adoptPublicationJourney()
+    }
+
+    /// One page load. Suspends readiness, awaits the existing `vm.load()`, then
+    /// reopens it only if this load is still uncancelled and the latest, and it
+    /// actually succeeded for this page: no page error, and the view model and
+    /// its detail are this page's game. `load()` returns nothing and keeps its
+    /// own failure, so completion alone is not success. A failed load leaves
+    /// readiness closed and starts no read.
+    @MainActor
+    static func loadPage(pageEventId: Int, vm: EventDetailViewModel,
+                         caller: Binding<PublicationCaller4974>) async {
+        let generation = caller.wrappedValue.suspend()
+        await vm.load()
+        guard !Task.isCancelled,
+              vm.error == nil, vm.eventId == pageEventId, vm.event?.id == pageEventId
+        else { return }
+        caller.wrappedValue.open(ifCurrent: generation)
+    }
+
+    /// The journey the chart is handed: the held one only when page, view
+    /// model, detail and journey all name one game, that game is finished and
+    /// this appearance is ready. Else `nil`, whatever the view model holds.
+    static func chartPublicationJourney(
+        _ held: PublicationJourney4974.Journey?, key: PublicationTaskKey4974
+    ) -> PublicationJourney4974.Journey? {
+        guard let held, key.ready, key.finished,
+              key.vmEventId == key.pageEventId,
+              key.detailEventId == key.pageEventId,
+              held.eventId == key.pageEventId
+        else { return nil }
+        return held
     }
 }
