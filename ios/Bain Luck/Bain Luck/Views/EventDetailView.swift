@@ -496,8 +496,20 @@ struct EventDetailView: View {
                     }
                     // "Why the Line Moved" removed — content was low quality
                     // (obvious statements, minor injuries). See #745 for revamp plan.
+                    // #10239 / #10478 / #10549 — the ONE projected-points
+                    // decision. NFL before, during and after the game, secondary
+                    // to the win probability above; before and during read the
+                    // clock the history arrived on. When it admits a drawable
+                    // chart, that chart takes the Score Differential card's place
+                    // (never two answers to one question); every refusal keeps
+                    // the differential.
+                    let projectedInput = ProjectedFinalPointsMount.input(
+                        sportKey: event.sport, eventStatus: event.status, history: vm.history,
+                        finalHome: event.homeScore, finalAway: event.awayScore,
+                        asOf: vm.historyArrivedAt)
+                    let projectionReplacesDifferential = ProjectedFinalPointsMount.replacesScoreDifferential(projectedInput)
                     // Score Differential Chart
-                    if let history = vm.history, (isLive || isFinished) {
+                    if let history = vm.history, (isLive || isFinished), !projectionReplacesDifferential {
                         ScoreDifferentialChartView(
                             history: history,
                             homeTeam: event.homeTeam,
@@ -517,19 +529,15 @@ struct EventDetailView: View {
                             range: chartRange
                         )
                     }
-                    // #10239 / #10478 — NFL before, during and after, secondary
-                    // to the win probability above; absent rather than an empty
-                    // tile. Before and during read the clock the history arrived on.
-                    if let projectedInput = ProjectedFinalPointsMount.input(
-                        sportKey: event.sport, eventStatus: event.status, history: vm.history,
-                        finalHome: event.homeScore, finalAway: event.awayScore,
-                        asOf: vm.historyArrivedAt) {
+                    if projectionReplacesDifferential, let projectedInput {
                         ProjectedFinalPointsChartView(
                             input: projectedInput,
                             homeTeam: event.homeTeam,
                             awayTeam: event.awayTeam,
                             homeColor: teamColors(event).home,
-                            awayColor: teamColors(event).away
+                            awayColor: teamColors(event).away,
+                            periodMarkers: vm.history?.periodMarkers,
+                            sportKey: event.sport
                         )
                         .padding(16)
                         .background(Color.cardBackground)
@@ -543,7 +551,9 @@ struct EventDetailView: View {
                         // the payload's presence is decided inside the chart's
                         // own predicate, so this cannot drift from what the
                         // chart above actually rendered.
-                        let absenceStatedAbove = vm.history.map {
+                        // #10549 — a differential the projection replaced
+                        // stated nothing.
+                        let absenceStatedAbove = !projectionReplacesDifferential && vm.history.map {
                             ScoreDifferentialChartView.statesPlayedCountAbsence(
                                 history: $0,
                                 sportKey: event.sport,
