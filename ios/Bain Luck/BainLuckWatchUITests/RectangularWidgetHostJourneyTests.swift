@@ -53,21 +53,29 @@ final class RectangularWidgetHostJourneyTests: XCTestCase {
         try reveal(add, in: host)
         XCTAssertEqual(modular.buttons.matching(identifier: "Add").count, 1)
         add.tap()
+        let slot = host.buttons["Middle complication"].firstMatch
         for _ in 0..<8 {
-            if host.buttons.allElementsBoundByIndex.contains(where: { $0.label.hasSuffix(" complication") && $0.isHittable && host.frame.contains($0.frame) }) { break }
+            if slot.exists && slot.isHittable && host.frame.contains(slot.frame) { break }
             swipeLeft(host)
         }
-        let slot = host.buttons["Middle complication"].firstMatch
         XCTAssertTrue(slot.exists && slot.isHittable && host.frame.contains(slot.frame))
         capture(host, "Actual Modular rectangular Middle slot")
         slot.tap()
         let choice = host.cells["AppGroupCell -- Bain Luck"].firstMatch
+        let chromeBottom = host.frame.minY + host.frame.height * 0.26
         for _ in 0..<16 {
-            if choice.exists && choice.isHittable && host.frame.contains(choice.frame) && choice.frame.minY >= 44 { break }
-            host.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.80)).press(forDuration: 0.1, thenDragTo: host.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.30)), withVelocity: .slow, thenHoldForDuration: 0.4)
+            // Gallery rows can be hittable beneath navigation chrome. Reverse
+            // the scroll if the named row has moved above the relative boundary.
+            let belowChrome = choice.exists && choice.frame.minY > chromeBottom
+            if belowChrome && choice.isHittable && host.frame.contains(choice.frame) { break }
+            let earlier = choice.exists && !belowChrome
+            let start = host.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.65))
+            let end = host.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: earlier ? 0.85 : 0.40))
+            start.press(forDuration: 0.1, thenDragTo: end, withVelocity: .slow, thenHoldForDuration: 0.4)
         }
         capture(host, "Actual rectangular app gallery Bain Luck")
-        XCTAssertTrue(choice.exists && choice.isHittable && host.frame.contains(choice.frame))
+        XCTAssertTrue(choice.exists && choice.isHittable && host.frame.contains(choice.frame)
+                      && choice.frame.minY > chromeBottom)
         choice.tap()
         let installed = host.cells["ComplicationListCell -- Your game"].firstMatch
         XCTAssertTrue(installed.waitForExistence(timeout: 15))
