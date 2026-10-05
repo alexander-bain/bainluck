@@ -5310,10 +5310,131 @@ async def get_feed(
                 sentry_sdk.capture_exception(e)
         _previous_at = _record_feed_timing(_timings, _started_at, _previous_at, "futures")
 
-        await _apply_manual_review_decisions(db, feed_items)
+        # === MANDATORY HUMAN REVIEW, inside the one request budget (#10530) ===
+        # This stage is NOT optional steering: `needs_design_fix` /
+        # `needs_data_fix` decisions DROP cards, so a build that skipped it
+        # could hand a reader a card a human already ruled bad. It used to be
+        # awaited with no deadline after the futures stage had already spent the
+        # budget — a stalled decisions query held the whole response past it.
+        # Now it draws the time REMAINING under the same absolute budget:
+        #   * nothing left  -> it is not started at all (no Redis read, no SQL);
+        #   * time runs out -> the deadline cancels the query, the session gets a
+        #     finite rollback-or-invalidate, and nothing after it touches `db`.
+        # Either way the build is incomplete and is NOT served: see the terminal
+        # just below. An outer request cancellation is not a timeout and
+        # propagates as itself (the leader guard releases the singleflight).
+        # The call stays a statement in `get_feed`'s own body: the #6444
+        # ordering guard compares its line against the publish step.
+        _review_incomplete: str | None = None
+        _review_budget_s = _feed_budget_remaining_s()
+        if _review_budget_s <= 0:
+            if feed_items:
+                _review_incomplete = "review_budget"
+        else:
+            try:
+                async with asyncio.timeout(_review_budget_s):
+                    await _apply_manual_review_decisions(db, feed_items)
+            except TimeoutError:
+                _review_incomplete = "review_timeout"
+                logger.warning(
+                    "Feed: review decisions did not finish inside the remaining "
+                    "%.2fs of the request budget — serving last-good or "
+                    "unavailable, never the unreviewed build (#10530)",
+                    _review_budget_s,
+                )
+        # Waiters first: they hold their own deadlines and must not spend them
+        # on this session's cleanup. `result=None` is the existing "the leader
+        # produced nothing usable" contract and sends each of them to its own
+        # bounded last-good / truthful-unavailable terminal.
+        if _review_incomplete is not None and _is_build_leader and _sf_future is not None:
+            _rc.finish_build(_cache_key, _sf_future, result=None)
+        if _review_incomplete == "review_timeout":
+            await _release_cancelled_review_session(db)
         _previous_at = _record_feed_timing(
             _timings, _started_at, _previous_at, "review_decisions"
         )
+
+        if _review_incomplete is not None:
+            # The unreviewed build goes nowhere: not to this caller, not to the
+            # coalesced waiters (released above), not to process last-good, not
+            # to Redis. This is the input-age ceiling's terminal (below) with
+            # one difference — the prior payload is bounded by the ordinary
+            # live ceiling only, as every other last-good tier is, because
+            # nothing here proved the world holds an in-progress game. No DB
+            # work follows: the session may be the one the deadline just
+            # cancelled.
+            _review_capture = display_capture_from_request(request)
+            if _review_capture is not None:
+                _review_capture.abandon(_review_incomplete)
+            _prior, _prior_origin = (
+                _rc.recall_last_good_entry(_cache_key)
+                if _cache_key
+                else (None, None)
+            )
+            if isinstance(_prior, dict) and payload_contains_live_event(_prior):
+                _prior, _prior_origin = _rc.recall_last_good_entry(
+                    _cache_key, max_age_s=FEED_LAST_GOOD_MAX_AGE_LIVE_SECONDS
+                )
+            if isinstance(_prior, dict):
+                _prior_out = dict(_prior)
+                # The STORE's origin, never now: a fallback keeps the age it has
+                # already spent, so it cannot earn a fresh window by being served.
+                _prior_age_s = (
+                    max(0.0, time.time() - _prior_origin)
+                    if isinstance(_prior_origin, (int, float))
+                    else 0.0
+                )
+                _prior_fresh_ttl, _prior_stale_ttl = _live_ttls(
+                    _prior, oldest_artifact_age_s=_prior_age_s
+                )
+                _prior_out["cache"] = build_feed_cache_metadata(
+                    "last_good",
+                    ttl_seconds=_prior_fresh_ttl,
+                    stale_ttl_seconds=_prior_stale_ttl,
+                    reason=_review_incomplete,
+                    live=payload_contains_live_event(_prior),
+                    built_at=_prior_origin,
+                )
+                _finalize_feed_response(
+                    response,
+                    cache_status="last_good",
+                    singleflight="none",
+                    timings=_timings,
+                    started_at=_started_at,
+                    counts=_feed_obs_counts(
+                        _prior_out.get("items"),
+                        total=_prior_out.get("total", 0),
+                        returned=len(_prior_out.get("items") or []),
+                    ),
+                    golf_provenance=_golf_provenance,
+                    shared_reuse=_shared_reuse,
+                    shared_tiers=_shared_tiers,
+                )
+                return _prior_out
+            _finalize_feed_response(
+                response,
+                cache_status="unavailable",
+                singleflight="none",
+                timings=_timings,
+                started_at=_started_at,
+                counts=_feed_obs_counts([], total=0, returned=0),
+                golf_provenance=_golf_provenance,
+                shared_reuse=_shared_reuse,
+                shared_tiers=_shared_tiers,
+            )
+            return {
+                "items": [],
+                "total": 0,
+                "limit": limit,
+                "offset": offset,
+                "has_more": False,
+                "cache": build_feed_cache_metadata(
+                    "unavailable",
+                    ttl_seconds=0,
+                    stale_ttl_seconds=0,
+                    reason=_review_incomplete,
+                ),
+            }
 
         # === QUALITY FLOOR: drop all-0% cards (#240 Item 4) ===
         # A card whose every outcome reads 0% is never interesting (stale/settled
@@ -6137,6 +6258,54 @@ def _review_decision_scope_keys(item: dict) -> list[str]:
         seen.add(key)
         deduped.append(key)
     return deduped
+
+
+# #10530: each step of the cleanup after the request deadline cancelled the
+# review-decisions query. Two steps at most, so the cleanup adds at most 2s to a
+# 25s budget that sits 5s under the router's 30s cutoff.
+_REVIEW_SQL_CLEANUP_BUDGET_S = 1.0
+
+
+async def _release_cancelled_review_session(db: AsyncSession) -> str:
+    """Finite cleanup of a session whose review query the deadline cancelled.
+
+    Cancelling an asyncpg query does not leave the connection reusable: asyncpg
+    sends the server a cancel request and the connection's next operation waits
+    for it to land. So this ROLLS BACK under a bound, and if the rollback does
+    not land it INVALIDATES the connection (SQLAlchemy's asyncpg terminate tries
+    a graceful close and force-closes when that is cancelled or fails) instead
+    of handing the pool a connection in an unknown state — the same two steps as
+    ``repair_polymarket_sport_category._safe_rollback``. Both steps are bounded,
+    so cleanup never becomes the new unbounded wait.
+
+    Returns which step finished (``rolled_back`` / ``invalidated`` /
+    ``abandoned``). The caller must issue no further DB work on ``db`` whatever
+    it returns. An outer cancellation (client disconnect) is re-raised.
+    """
+    try:
+        async with asyncio.timeout(_REVIEW_SQL_CLEANUP_BUDGET_S):
+            await db.rollback()
+        return "rolled_back"
+    except asyncio.CancelledError:
+        raise
+    except Exception:  # noqa: BLE001 — cleanup must never mask the fallback
+        logger.warning(
+            "Feed: rollback after the cancelled review query did not land inside "
+            "%.1fs — invalidating the connection (#10530)",
+            _REVIEW_SQL_CLEANUP_BUDGET_S,
+        )
+    try:
+        async with asyncio.timeout(_REVIEW_SQL_CLEANUP_BUDGET_S):
+            await db.invalidate()
+        return "invalidated"
+    except asyncio.CancelledError:
+        raise
+    except Exception:  # noqa: BLE001 — there is nothing further to try
+        logger.warning(
+            "Feed: could not invalidate the connection after the cancelled "
+            "review query (#10530)"
+        )
+        return "abandoned"
 
 
 async def _apply_manual_review_decisions(
