@@ -855,7 +855,14 @@ async def _placeholder_fraction(session, dims: dict) -> float | None:
 
 async def _sample_rows(session, dims: dict, limit: int = 12) -> list[dict]:
     """Pull a few concrete rows from a flagged FUTURES cohort's high-cp band for
-    the evidence pack (the row-trace protocol's starting point)."""
+    the evidence pack (the row-trace protocol's starting point).
+
+    #10516: high-cp NON-winners sort first. The band a break lives in is the
+    one where high prices did not win; ``ORDER BY cp DESC`` alone printed twelve
+    0.995 winners for a band resolving at 49.9% — positive controls only, and no
+    id anyone could trace the defect from. ``is_winner`` stays tri-state (NULL
+    is "not graded", never a loss) and the numeric ids ride along so the rows
+    are a usable driver, not just a picture."""
     if dims.get("provenance") != "futures":
         return []
     where, params = _cohort_where(dims)
@@ -875,7 +882,7 @@ async def _sample_rows(session, dims: dict, limit: int = 12) -> list[dict]:
             SELECT fm.source AS source, fm.external_id AS external_id, fo.name AS outcome,
                    COALESCE(fo.calibration_probability, fo.opening_probability) AS cp,
                    fo.is_winner AS is_winner, fo.resolution_source AS resolution_source,
-                   fo.market_id AS market_id,
+                   fo.id AS outcome_id, fo.market_id AS market_id,
                    COALESCE(fm.mutually_exclusive, false) AS mutually_exclusive
             FROM futures_outcomes fo
             JOIN futures_markets fm ON fm.id = fo.market_id
@@ -890,10 +897,11 @@ async def _sample_rows(session, dims: dict, limit: int = 12) -> list[dict]:
             ) AS n_out
             FROM sample s
         )
-        SELECT source, external_id, outcome, cp, is_winner, resolution_source
+        SELECT source, external_id, outcome, cp, is_winner, resolution_source,
+               outcome_id, market_id
         FROM sized
         {struct_where}
-        ORDER BY cp DESC
+        ORDER BY (is_winner IS TRUE), cp DESC, outcome_id
         LIMIT :lim
     """)
     rows = (await session.execute(sql, params)).all()
@@ -903,8 +911,10 @@ async def _sample_rows(session, dims: dict, limit: int = 12) -> list[dict]:
             "market": r.external_id,
             "outcome": r.outcome,
             "cp": round(float(r.cp), 3),
-            "is_winner": bool(r.is_winner),
+            "is_winner": None if r.is_winner is None else bool(r.is_winner),
             "resolution_source": r.resolution_source,
+            "outcome_id": r.outcome_id,
+            "market_id": r.market_id,
         }
         for r in rows
     ]
@@ -958,6 +968,33 @@ def build_issue_title(cohort: dict) -> str:
     return title[:256]
 
 
+def sample_rows_section(samples: list[dict]) -> list[str]:
+    """The sample-row table, shared by the filed body and every re-observation.
+
+    #10516: non-winners first (see ``_sample_rows``), ``winner`` three-valued —
+    ✓ won, ✗ lost, ``—`` not graded — and the outcome/market ids printed, so the
+    table is a driver a row-level read can start from. Rows cached before the ids
+    existed print ``—`` for them rather than failing the body."""
+    if not samples:
+        return []
+    lines = [
+        "",
+        "### Sample high-cp rows (non-winners first)",
+        "| source | market | outcome | cp | winner | resolution_source | outcome_id | market_id |",
+        "|--------|--------|---------|---:|:------:|-------------------|-----------:|----------:|",
+    ]
+    for s in samples:
+        w = s.get("is_winner")
+        mark = "—" if w is None else ("✓" if w else "✗")
+        lines.append(
+            f"| {s['source']} | `{s['market']}` | {(s.get('outcome') or '')[:40]} | "
+            f"{s['cp']} | {mark} | {s.get('resolution_source') or '—'} | "
+            f"{s.get('outcome_id') if s.get('outcome_id') is not None else '—'} | "
+            f"{s.get('market_id') if s.get('market_id') is not None else '—'} |"
+        )
+    return lines
+
+
 def build_reobservation_comment(cohort: dict) -> str:
     """The recurrence comment on an ALREADY-OPEN cohort issue.
 
@@ -1002,6 +1039,10 @@ def build_reobservation_comment(cohort: dict) -> str:
         published_line,
         f"- **Disposition:** `{cohort.get('disposition', DISP_PUBLISHED_UNKNOWN)}` — "
         f"{cohort.get('disposition_why', 'not evaluated')}",
+        # #10516: the body's sample table was printed once, at filing, and never
+        # again — so a cohort whose filing-day sample held only winners never got
+        # a traceable row. Each sweep's fresh sample rides its recurrence.
+        *sample_rows_section(cohort.get("sample_rows") or []),
     ])
 
 
@@ -1131,16 +1172,7 @@ def build_issue_body(cohort: dict, explained_by: str | None, coverage: float) ->
                 "assume-our-bug + verify-before-regrade (gotcha #21).",
             ]
 
-    samples = cohort.get("sample_rows") or []
-    if samples:
-        parts += ["", "### Sample high-cp rows"]
-        parts.append("| source | market | outcome | cp | winner | resolution_source |")
-        parts.append("|--------|--------|---------|---:|:------:|-------------------|")
-        for s in samples:
-            parts.append(
-                f"| {s['source']} | `{s['market']}` | {s['outcome'][:40]} | "
-                f"{s['cp']} | {'✓' if s['is_winner'] else '✗'} | {s['resolution_source'] or '—'} |"
-            )
+    parts += sample_rows_section(cohort.get("sample_rows") or [])
 
     parts += [
         "",
@@ -1556,6 +1588,10 @@ async def _run_calibration_sentinel(
                 "explained_by": explained_by,
                 "coverage": round(coverage, 3),
                 "overlap_fractions": c["overlap_fractions"],
+                # #10516: the sampled rows (<= 12, ids included) ride the durable
+                # evidence too, so a row-level driver is retained with the run's
+                # own timestamp instead of living only in an issue body.
+                "sample_rows": c.get("sample_rows") or [],
             }
             stats["findings"].append(finding)
 
