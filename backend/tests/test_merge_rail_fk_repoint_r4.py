@@ -22,6 +22,7 @@ import pytest
 
 from app.utils.event_child_repoint import (
     EVENT_SCOPED_UNIQUE_KEYS,
+    ImmutableActivityBindingRefused,
     event_fk_tables,
     repoint_event_children,
 )
@@ -62,7 +63,7 @@ class TestTheListIsDerivedAndComplete:
     # the rail really emits. A pinned explicit ten follows, so a metadata-wide breakage
     # cannot pass by making every side equally empty.
 
-    def test_the_derived_set_is_the_expected_twelve(self):
+    def test_the_derived_set_includes_the_immutable_activity_binding(self):
         """Named explicitly so a metadata-wide breakage cannot make the equality above
         pass by making BOTH sides wrong (e.g. an import failure yielding two empties).
 
@@ -85,6 +86,7 @@ class TestTheListIsDerivedAndComplete:
         start raising IntegrityError on the first merged event with participants.
         """
         assert set(event_fk_tables()) == {
+            "activitykit_registrations",
             "espn_snapshots",
             "event_participants",
             "event_provider_anchors",
@@ -140,9 +142,9 @@ class TestNoCallSiteKeepsItsOwnList:
         module_name, _, attr = func_path.rpartition(".")
         module = __import__(module_name, fromlist=[attr])
         source = inspect.getsource(getattr(module, attr))
-        assert "repoint_event_children" in source, (
-            f"{func_path} does not go through the shared derived repoint"
-        )
+        assert (
+            "repoint_event_children" in source
+        ), f"{func_path} does not go through the shared derived repoint"
 
     @pytest.mark.parametrize(
         "func_path",
@@ -163,9 +165,9 @@ class TestNoCallSiteKeepsItsOwnList:
         code = "\n".join(
             line for line in source.splitlines() if not line.lstrip().startswith("#")
         )
-        assert not re.search(r"UPDATE\s*\{?\w*\}?\s*SET event_id", code), (
-            f"{func_path} still composes its own event_id repoint statement"
-        )
+        assert not re.search(
+            r"UPDATE\s*\{?\w*\}?\s*SET event_id", code
+        ), f"{func_path} still composes its own event_id repoint statement"
 
 
 class TestEventScopedUniqueConstraintsArePreDeduped:
@@ -236,9 +238,9 @@ class TestEventScopedUniqueConstraintsArePreDeduped:
             # The remainder must be removed by a statement that NAMES the table:
             # CASCADE would take game_moments unmentioned, and NO ACTION would make
             # odds_aggregated fail the parent DELETE.
-            assert f"DELETE FROM {table} WHERE event_id = :orphan" in sql, (
-                f"{table}'s colliding remainder is left to the FK to resolve"
-            )
+            assert (
+                f"DELETE FROM {table} WHERE event_id = :orphan" in sql
+            ), f"{table}'s colliding remainder is left to the FK to resolve"
 
     @pytest.mark.asyncio
     async def test_non_colliding_tables_get_a_plain_update(self):
@@ -248,7 +250,10 @@ class TestEventScopedUniqueConstraintsArePreDeduped:
         await repoint_event_children(session, keep_id=1, orphan_id=2)
 
         for table in event_fk_tables():
-            if table in EVENT_SCOPED_UNIQUE_KEYS:
+            if (
+                table in EVENT_SCOPED_UNIQUE_KEYS
+                or table == "activitykit_registrations"
+            ):
                 continue
             update = next(
                 s for s, _ in session.statements
@@ -264,7 +269,13 @@ class TestEventScopedUniqueConstraintsArePreDeduped:
         await repoint_event_children(session, keep_id=1, orphan_id=2)
         sql = session.sql()
         for table in derive_event_child_tables():
-            assert f"UPDATE {table} " in sql, f"{table} was derived but never repointed"
+            if table == "activitykit_registrations":
+                assert "SELECT activity_id FROM activitykit_registrations" in sql
+                assert "UPDATE activitykit_registrations" not in sql
+            else:
+                assert (
+                    f"UPDATE {table} " in sql
+                ), f"{table} was derived but never repointed"
 
 
 class TestTheMovesAreReported:
@@ -301,6 +312,8 @@ class TestTheMovesAreReported:
         class _NoRowcountSession(_RecordingSession):
             async def execute(self, stmt, params=None):
                 self.statements.append((str(stmt), params or {}))
+                if str(stmt).startswith("SELECT activity_id"):
+                    return _Result(rows=())
                 return object()
 
         session = _NoRowcountSession()
@@ -312,9 +325,10 @@ class TestTheMovesAreReported:
         # link this merge is about to move, read before the UPDATE erases where
         # they came from. +2 for the `duplicate-of` tag move (#8308): clear it on
         # the survivor, retarget it on every other row.
-        assert len(session.statements) == 1 + len(event_fk_tables()) + len(
-            EVENT_SCOPED_UNIQUE_KEYS
-        ) + 2
+        assert (
+            len(session.statements)
+            == 2 + len(event_fk_tables()) + len(EVENT_SCOPED_UNIQUE_KEYS) + 2
+        )
 
     @pytest.mark.parametrize(
         "func_path",
@@ -371,3 +385,28 @@ class TestThePruneRailStillCannotRepoint:
             "the prune rail's inventory now contains a repoint statement — that is the "
             f"operation ruling 048 exists to prevent this rail from learning: {offenders}"
         )
+
+
+@pytest.mark.asyncio
+async def test_immutable_activity_binding_refuses_before_any_child_write():
+    class BoundSession(_RecordingSession):
+        async def execute(self, stmt, params=None):
+            self.statements.append((str(stmt), params or {}))
+            return _Result(rows=[("bound-activity",)])
+
+    session = BoundSession()
+    with pytest.raises(ImmutableActivityBindingRefused, match="immutable ActivityKit"):
+        await repoint_event_children(session, keep_id=1, orphan_id=2)
+    assert len(session.statements) == 2
+    assert session.statements[0][0].startswith("SELECT id FROM events")
+    assert "FOR UPDATE" in session.sql()
+    assert not any(stmt.startswith(("UPDATE ", "DELETE ")) for stmt, _ in session.statements)
+
+
+@pytest.mark.asyncio
+async def test_empty_activity_binding_allows_other_child_moves_without_retargeting():
+    session = _RecordingSession()
+    await repoint_event_children(session, keep_id=1, orphan_id=2)
+    assert "UPDATE game_moments" in session.sql()
+    assert "UPDATE activitykit_registrations" not in session.sql()
+    assert "DELETE FROM activitykit_registrations" not in session.sql()

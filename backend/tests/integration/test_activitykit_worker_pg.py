@@ -303,3 +303,94 @@ async def test_clock_after_lock_rejects_expired_send_and_recovers_stale_caller_t
     recovered = await restarted.reserve("a", now=NOW)
     assert recovered is not None and recovered.lease_id != old.lease_id
     assert (await record(pg))["lease_expires_at"] == NOW + timedelta(seconds=120)
+
+
+@pytest.fixture
+def binding_merge(monkeypatch):
+    from app.utils import event_child_repoint as rail
+
+    monkeypatch.setattr(rail, "event_fk_tables", lambda: ("activitykit_registrations",))
+
+    async def no_tags(*args, **kwargs):
+        return {}
+
+    monkeypatch.setattr(rail, "_repoint_duplicate_tags", no_tags)
+    return rail
+
+
+async def test_bound_merge_preserves_registration_delivery_and_parent(
+    pg, binding_merge
+):
+    await seed(pg)
+    async with pg() as db, db.begin():
+        await db.execute(text("INSERT INTO events VALUES (43)"))
+    async with pg() as db:
+        with pytest.raises(binding_merge.ImmutableActivityBindingRefused):
+            await binding_merge.repoint_event_children(db, keep_id=43, orphan_id=42)
+        await db.rollback()
+        assert (await db.execute(select(REG.c.event_id))).scalar_one() == 42
+        assert (await db.execute(select(DEL.c.activity_id))).scalar_one() == "a"
+        assert (
+            await db.execute(text("SELECT id FROM events WHERE id=42"))
+        ).scalar_one() == 42
+
+
+async def test_childless_merge_proceeds_beside_protected_event(pg, binding_merge):
+    async with pg() as db, db.begin():
+        await db.execute(text("INSERT INTO events VALUES (43), (44)"))
+        await binding_merge.repoint_event_children(db, keep_id=43, orphan_id=44)
+        await db.execute(text("DELETE FROM events WHERE id=44"))
+    async with pg() as db:
+        assert (await db.execute(select(REG.c.event_id))).scalar_one() == 42
+        assert (
+            await db.execute(text("SELECT count(*) FROM events WHERE id=44"))
+        ).scalar_one() == 0
+
+
+async def test_parent_lock_excludes_registration_insert_during_merge(pg, binding_merge):
+    from sqlalchemy.exc import IntegrityError
+
+    async with pg() as db, db.begin():
+        await db.execute(text("INSERT INTO events VALUES (43), (44)"))
+    locked = asyncio.Event()
+    insert_started = asyncio.Event()
+    release = asyncio.Event()
+
+    async def merge():
+        async with pg() as db, db.begin():
+            await binding_merge.repoint_event_children(db, keep_id=43, orphan_id=44)
+            locked.set()
+            await release.wait()
+            await db.execute(text("DELETE FROM events WHERE id=44"))
+
+    async def register():
+        await locked.wait()
+        async with pg() as db, db.begin():
+            insert_started.set()
+            await db.execute(
+                insert(REG).values(
+                    activity_id="racing",
+                    user_id=1,
+                    event_id=44,
+                    version=1,
+                    is_active=True,
+                    push_token="cd" * 32,
+                    token_hash="c" * 64,
+                    mutation_id=str(uuid4()),
+                    request_hash="d" * 64,
+                )
+            )
+
+    merging = asyncio.create_task(merge())
+    registering = asyncio.create_task(register())
+    try:
+        await asyncio.wait_for(insert_started.wait(), timeout=5)
+        await asyncio.sleep(0.05)
+        assert not registering.done()
+        release.set()
+        await asyncio.wait_for(merging, timeout=5)
+        with pytest.raises(IntegrityError):
+            await asyncio.wait_for(registering, timeout=5)
+    finally:
+        release.set()
+        await asyncio.gather(merging, registering, return_exceptions=True)

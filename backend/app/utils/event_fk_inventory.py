@@ -90,6 +90,9 @@ Disposition = Literal["SUBSTANCE", "POINTER"]
 #: than derived; a pseudo-FK that no catalog query returns is precisely the kind of thing
 #: that goes missing from a derived inventory.
 EVENT_CHILD_DISPOSITIONS: dict[str, Disposition] = {
+    # #10556: an account/activity is bound to this exact canonical event. Pruning
+    # it would cascade both credential ownership and durable delivery state.
+    "activitykit_registrations": "SUBSTANCE",
     "espn_snapshots": "SUBSTANCE",
     "futures_markets": "SUBSTANCE",
     "game_moments": "SUBSTANCE",

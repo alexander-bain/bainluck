@@ -178,8 +178,8 @@ async def _mutate(
                 .values(**values)
                 .returning(*_TABLE.c)
             )
-        result = await db.execute(statement)
-        changed = result.mappings().one_or_none()
+        mutation_result = await db.execute(statement)
+        changed = mutation_result.mappings().one_or_none()
         if changed is None:
             await db.rollback()
             raise HTTPException(409, "Registration conflict")

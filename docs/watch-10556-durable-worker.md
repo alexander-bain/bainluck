@@ -15,3 +15,13 @@ Expired leases or changed registration recover uncertain attempts with identical
 Local restart/codec gates are separate from thirteen PostgreSQL cases: concurrent reservations, restart recovery/old acknowledgment, replacement, revocation, final precedence, send-lock/revoke/duplicate serialization, Retry-After across restart, generation recovery after unavailability/accepted content, same-token version mutation, stop/end replacement, and clock advancement while acquiring locks. The PostgreSQL gate requires hosted disposable `bl_searchtest` and random isolated schema, refuses other databases, and rejects skips in CI. Locally skipped PostgreSQL cases are unpaid.
 
 Remaining integration: independent/shared boundary review, exact-head hosted checks including PostgreSQL races, event-revision producer and orchestration, approved APNs credentials/configuration, real suspended-device receipt under #10543, and Integrator composition/merge. iPhone token lifecycle remains the HTTP lane's work.
+
+## Immutable event binding and merge compatibility
+
+Any registration, including an inactive tombstone, prevents deletion of its bound
+event during merge or pruning. The shared merge helper locks both event parents
+before checking the registration and refuses before any child writes. Combat
+merging rolls that pair back and continues with unrelated pairs. Registration
+and durable delivery state remain attached to the original event; neither is
+reparented or cascaded away. A retention/unblocking policy is required before
+production mounting; this source composition does not choose that policy.
