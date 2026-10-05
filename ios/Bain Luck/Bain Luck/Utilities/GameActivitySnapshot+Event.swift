@@ -35,9 +35,13 @@ extension GameActivitySnapshot {
     /// First slice follows a started game. Upcoming/opening-line pricing is not
     /// presented as a live forecast, and a phone receipt never dates a score.
     @MainActor
-    static func liveActivityReading(for event: EventDetail) -> GameActivitySnapshot? {
+    static func liveActivityReading(for event: EventDetail, now: Date = Date()) -> GameActivitySnapshot? {
         let lifecycle = activityLifecycle(for: event.status)
         guard lifecycle == .live || lifecycle == .suspended || lifecycle == .final || lifecycle == .closed else {
+            return nil
+        }
+        guard lifecycle != .suspended || EventState.isSuspendedAndStarted(
+            "suspended", commenceTime: event.commenceTime?.asDate, now: now) else {
             return nil
         }
         let hero = event.heroProbability.flatMap {

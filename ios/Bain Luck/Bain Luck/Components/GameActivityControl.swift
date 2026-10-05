@@ -47,8 +47,8 @@ struct GameActivityControl: View {
                 }
             }
         }
-        // Keep lifecycle delivery attached even when the control is hidden:
-        // a terminal reading must still end an existing activity.
+        // An active activity keeps this content mounted through its final update.
+        // Availability changes while hidden are observed by the controller itself.
         .task(id: snapshot) {
             controller.reconcile()
             guard scenePhase == .active else { return }

@@ -1,5 +1,7 @@
 #if os(iOS) && canImport(ActivityKit)
 import XCTest
+import Combine
+import UIKit
 @testable import Bain_Luck
 
 @MainActor private final class FakeGameActivityService: GameActivityServing {
@@ -93,6 +95,25 @@ final class GameActivityControllerTests: XCTestCase {
         failing.start(snapshot: try snapshot())
         XCTAssertTrue(failing.activeEventIDs.isEmpty)
         XCTAssertTrue(failing.status?.contains("Couldn't start") == true)
+    }
+
+    @MainActor func testReturningFromSettingsRevealsPreviouslyDisabledControl() async {
+        let service = FakeGameActivityService()
+        service.isEnabled = false
+        let notifications = NotificationCenter()
+        let controller = GameActivityController(service: service, isForeground: { true },
+                                                notificationCenter: notifications)
+        XCTAssertFalse(GameActivityControlPresentation(isPhone: true, isEnabled: controller.isEnabled,
+            isTerminal: false, isActive: false).showsControl)
+        let reconciled = expectation(description: "Availability refreshed after app activation")
+        let observation = controller.$isEnabled.filter { $0 }.first().sink { _ in reconciled.fulfill() }
+        service.isEnabled = true
+        notifications.post(name: UIApplication.didBecomeActiveNotification, object: nil)
+        await fulfillment(of: [reconciled], timeout: 2)
+        XCTAssertTrue(GameActivityControlPresentation(isPhone: true, isEnabled: controller.isEnabled,
+            isTerminal: false, isActive: false).showsControl)
+        XCTAssertEqual(service.requests, 0, "Returning from Settings never implicitly starts an activity")
+        withExtendedLifetime(observation) {}
     }
 
     @MainActor func testReconcileAndExplicitStopTouchOnlyRequestedGame() async throws {

@@ -8,7 +8,7 @@ final class GameActivityEventProjectionTests: XCTestCase {
         decoder.keyDecodingStrategy = .convertFromSnakeCase
         return try decoder.decode(EventDetail.self, from: Data("""
         {"id":101,"home_team":"Giants","away_team":"Dodgers","sport":"baseball_mlb",
-         "status":"\(status)","home_score":4,"away_score":2,
+         "status":"\(status)","commence_time":"2026-10-05T12:00:00Z","home_score":4,"away_score":2,
          "hero_probability":\(hero),"hero_probability_away":\(1 - hero),
          "hero_probability_observed_at":"2026-10-05T12:00:00Z",
          "current_odds":{"home_probability":\(current),"away_probability":\(away ?? (1 - current)),
@@ -34,6 +34,15 @@ final class GameActivityEventProjectionTests: XCTestCase {
 
     func testUpcomingOpeningLineDoesNotStartThisLiveSlice() throws {
         XCTAssertNil(GameActivitySnapshot.liveActivityReading(for: try event(status: "scheduled")))
+    }
+
+    func testFutureSuspendedGameDoesNotOfferStartBeforeKickoff() throws {
+        let kickoff = try XCTUnwrap("2026-10-05T12:00:00Z".asDate)
+        let paused = try event(status: "suspended")
+        XCTAssertNil(GameActivitySnapshot.liveActivityReading(for: paused, now: kickoff.addingTimeInterval(-1)))
+        let started = try XCTUnwrap(GameActivitySnapshot.liveActivityReading(for: paused, now: kickoff))
+        XCTAssertEqual(started.lifecycle, .suspended)
+        XCTAssertNil(started.probabilityText)
     }
 
     func testFinalSuppressesForecastWithoutInventingANewClock() throws {

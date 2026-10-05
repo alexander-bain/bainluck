@@ -58,6 +58,7 @@ struct GameActivityRecord {
     private let service: any GameActivityServing
     private let isForeground: () -> Bool
     private let now: () -> Date
+    private var activationObserver: AnyCancellable?
     private var pendingSnapshot: (snapshot: GameActivitySnapshot, generation: Int)?
     private var pendingStops: Set<Int> = []
     private var pendingStale: [Int: Int] = [:]
@@ -75,11 +76,18 @@ struct GameActivityRecord {
                   isForeground: { UIApplication.shared.applicationState == .active })
     }
     init(service: any GameActivityServing, isForeground: @escaping () -> Bool,
-         now: @escaping () -> Date = Date.init) {
+         now: @escaping () -> Date = Date.init,
+         notificationCenter: NotificationCenter = .default) {
         self.service = service
         self.isForeground = isForeground
         self.now = now
         reconcile()
+        // A hidden SwiftUI Group has no child lifecycle callbacks. Observe app
+        // activation independently so returning from Settings refreshes availability.
+        activationObserver = notificationCenter.publisher(for: UIApplication.didBecomeActiveNotification)
+            .sink { [weak self] _ in
+                Task { @MainActor [weak self] in self?.reconcile() }
+            }
     }
 
     func reconcile() {
