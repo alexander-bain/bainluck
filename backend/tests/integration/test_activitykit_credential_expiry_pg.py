@@ -84,7 +84,18 @@ async def test_expired_latest_put_replay_conflicts_and_same_owner_get_delete_ack
     status, deleted = await invoke(pg, body(0), identity="new", revoke=True)
     assert status == 200 and deleted == ack
     assert (await invoke(pg, body(2), identity="new"))[0] == 409
-    assert (await invoke(pg, body(0), identity="new", user=2, revoke=True))[0] == 404
+    assert (await invoke(pg, body(2), identity="new", user=2, revoke=True))[0] == 404
+    async with pg() as db:
+        retained = (
+            (await db.execute(select(REG).where(REG.c.activity_id == "new")))
+            .mappings()
+            .one()
+        )
+    assert (
+        retained["user_id"] == 1
+        and retained["version"] == 2
+        and not retained["is_active"]
+    )
 
 
 async def test_rotation_and_replay_preserve_original_horizon(pg, monkeypatch):
