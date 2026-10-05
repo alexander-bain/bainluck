@@ -14,6 +14,7 @@ import { awardPriceIsStale } from "@/lib/awardPriceAge";
 import { isEventOwnMoneylineMarket } from "@/lib/eventOwnMoneyline";
 import { groupAwardsByPlayer, playerAwardKey, withoutOwnClubTag } from "@/lib/playerAwardRows";
 import { withoutGamePropsDrawnAbove } from "@/lib/gamePropsDrawnAbove";
+import { teamCardRecord } from "@/lib/teamCardRecord";
 import EntityImage from "./EntityImage";
 import { SettledMark, isSettledOutcome } from "@/components/SettledOutcomeMark";
 import AdvancementPath from "@/components/event/AdvancementPath";
@@ -61,6 +62,9 @@ interface RelatedFuturesProps {
   eventStatus?: string;
   homeStandings?: TeamStandings;
   awayStandings?: TeamStandings;
+  /** #10252: the served `team_data.record` — the string the hero prints. */
+  homeRecord?: string | null;
+  awayRecord?: string | null;
   /** When true, game-level stat props are already shown by TotalPointsSpectrum/PlayerPropsGrid above — suppress duplicate display here */
   hasGameMarkets?: boolean;
   /**
@@ -2520,6 +2524,8 @@ export default function RelatedFutures({
   sportKey,
   homeStandings,
   awayStandings,
+  homeRecord,
+  awayRecord,
   hasGameMarkets = false,
   drawnGameMarketIds,
   teamProgression,
@@ -3025,7 +3031,7 @@ export default function RelatedFutures({
           {/* Home Team Card */}
           {homeCardDraws && (() => {
             const standings = homeStandings;
-            const record = standings ? `${standings.wins ?? 0}-${standings.losses ?? 0}${standings.ties ? `-${standings.ties}` : ""}` : null;
+            const record = teamCardRecord(homeRecord, standings);
             const seed = standingsSeed(standings);
             return (
               <div className="bg-surface-card border border-surface-border rounded-xl shadow-sm p-5" data-testid="home-team-card">
@@ -3073,7 +3079,7 @@ export default function RelatedFutures({
           {/* Away Team Card */}
           {awayCardDraws && (() => {
             const standings = awayStandings;
-            const record = standings ? `${standings.wins ?? 0}-${standings.losses ?? 0}${standings.ties ? `-${standings.ties}` : ""}` : null;
+            const record = teamCardRecord(awayRecord, standings);
             const seed = standingsSeed(standings);
             return (
               <div className="bg-surface-card border border-surface-border rounded-xl shadow-sm p-5" data-testid="away-team-card">

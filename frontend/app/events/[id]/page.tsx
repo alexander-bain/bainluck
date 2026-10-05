@@ -3485,6 +3485,8 @@ export default function EventPage({ params }: EventPageProps) {
         eventStatus={event.status}
         homeStandings={event.home_team_data?.standings || undefined}
         awayStandings={event.away_team_data?.standings || undefined}
+        homeRecord={event.home_team_data?.record}
+        awayRecord={event.away_team_data?.record}
         hasGameMarkets={!!gameMarkets && (gameMarkets.totals.length > 0 || gameMarkets.player_props.length > 0 || (gameMarkets.team_totals?.length ?? 0) > 0)}
         // #8596: markets Additional Markets already draws, so Bigger Picture's
         // game props don't print the same question a second time.
