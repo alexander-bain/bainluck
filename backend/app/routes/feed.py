@@ -4852,35 +4852,208 @@ async def get_feed(
                     if cat:
                         my_team_sport_categories.setdefault(name, set()).add(cat)
 
+        # --- An incomplete build's ONE terminal (#10530, shared by #10534) ----
+        # A mandatory stage that did not finish inside the request budget —
+        # event scoring, its team enrichment, or human review — leaves a build
+        # that is not this page. It goes nowhere: not to this caller, not to the
+        # coalesced waiters, not to process last-good, not to Redis. Both halves
+        # are defined once so the stages cannot drift apart.
+        async def _release_incomplete_build(
+            reason: str, *, session_cancelled: bool
+        ) -> None:
+            # Waiters first: they hold their own deadlines and must not spend
+            # them on this session's cleanup. `result=None` is the existing "the
+            # leader produced nothing usable" contract and sends each of them to
+            # its own bounded last-good / truthful-unavailable terminal.
+            if _is_build_leader and _sf_future is not None:
+                _rc.finish_build(_cache_key, _sf_future, result=None)
+            if session_cancelled:
+                await _release_cancelled_review_session(db, stage=reason)
+
+        def _serve_incomplete_build(reason: str) -> dict:
+            # This is the input-age ceiling's terminal (below) with one
+            # difference — the prior payload is bounded by the ordinary live
+            # ceiling only, as every other last-good tier is, because nothing
+            # here proved the world holds an in-progress game. No DB work: the
+            # session may be the one the deadline just cancelled.
+            _incomplete_capture = display_capture_from_request(request)
+            if _incomplete_capture is not None:
+                _incomplete_capture.abandon(reason)
+            _prior, _prior_origin = (
+                _rc.recall_last_good_entry(_cache_key)
+                if _cache_key
+                else (None, None)
+            )
+            if isinstance(_prior, dict) and payload_contains_live_event(_prior):
+                _prior, _prior_origin = _rc.recall_last_good_entry(
+                    _cache_key, max_age_s=FEED_LAST_GOOD_MAX_AGE_LIVE_SECONDS
+                )
+            if isinstance(_prior, dict):
+                _prior_out = dict(_prior)
+                # The STORE's origin, never now: a fallback keeps the age it has
+                # already spent, so it cannot earn a fresh window by being served.
+                _prior_age_s = (
+                    max(0.0, time.time() - _prior_origin)
+                    if isinstance(_prior_origin, (int, float))
+                    else 0.0
+                )
+                _prior_fresh_ttl, _prior_stale_ttl = _live_ttls(
+                    _prior, oldest_artifact_age_s=_prior_age_s
+                )
+                _prior_out["cache"] = build_feed_cache_metadata(
+                    "last_good",
+                    ttl_seconds=_prior_fresh_ttl,
+                    stale_ttl_seconds=_prior_stale_ttl,
+                    reason=reason,
+                    live=payload_contains_live_event(_prior),
+                    built_at=_prior_origin,
+                )
+                _finalize_feed_response(
+                    response,
+                    cache_status="last_good",
+                    singleflight="none",
+                    timings=_timings,
+                    started_at=_started_at,
+                    counts=_feed_obs_counts(
+                        _prior_out.get("items"),
+                        total=_prior_out.get("total", 0),
+                        returned=len(_prior_out.get("items") or []),
+                    ),
+                    golf_provenance=_golf_provenance,
+                    shared_reuse=_shared_reuse,
+                    shared_tiers=_shared_tiers,
+                )
+                return _prior_out
+            _finalize_feed_response(
+                response,
+                cache_status="unavailable",
+                singleflight="none",
+                timings=_timings,
+                started_at=_started_at,
+                counts=_feed_obs_counts([], total=0, returned=0),
+                golf_provenance=_golf_provenance,
+                shared_reuse=_shared_reuse,
+                shared_tiers=_shared_tiers,
+            )
+            return {
+                "items": [],
+                "total": 0,
+                "limit": limit,
+                "offset": offset,
+                "has_more": False,
+                "cache": build_feed_cache_metadata(
+                    "unavailable",
+                    ttl_seconds=0,
+                    stale_ttl_seconds=0,
+                    reason=reason,
+                ),
+            }
+
         feed_items = []
 
-        # === SCORE EVENTS ===
+        # === SCORE EVENTS, inside the one request budget (#10534) ===
+        # Event scoring and the team enrichment right after it are the build's
+        # events half, on this request's session, and were awaited with no
+        # deadline: a stalled query held the whole response past the budget.
+        # Both now draw the time REMAINING under the same absolute budget, the
+        # way the review stage does (#10530):
+        #   * nothing left  -> the stage is not started;
+        #   * time runs out -> the deadline cancels it, the waiters are released,
+        #     the session gets a finite rollback-or-invalidate, and the request
+        #     ends at the incomplete-build terminal — no golf, concepts,
+        #     futures, review, ranking or DB work follows on that session.
+        # The deadline is NOT an ordinary scoring failure: it never reaches the
+        # catch-and-log below, which would publish a partial build. Ordinary
+        # errors keep that policy. An outer request cancellation is not a
+        # timeout and propagates as itself. A stage with nothing to do (events
+        # excluded; no event cards to enrich) creates no budget condition.
+        _event_stage_incomplete: str | None = None
         if include_events:
-            try:
-                event_items = await _score_events(
-                    db,
-                    now,
-                    # A category browse narrows the EVENTS half too, or
-                    # /categories/table-tennis would list every live game on
-                    # the site under a table-tennis heading. Events have no
-                    # `llm_sport_category`, so the category is applied through
-                    # the existing `Sport.key` filter — the same substring match
-                    # `sport=` has always used on this half.
-                    sport or category,
-                    ctx,
-                    my_teams_only=my_teams_only,
-                    my_team_names=my_team_names,
-                    tag_filter=dynamic_tag_filter or None,
-                    static_tag_filter=static_tag_filter or None,
-                    sports_mode=(mode or "").lower() == "sports",
-                )
-                feed_items.extend(event_items)
-            except Exception as e:
-                logger.error("Feed: event scoring failed, returning partial feed: %s", e)
+            _events_budget_s = _feed_budget_remaining_s()
+            if _events_budget_s <= 0:
+                _event_stage_incomplete = "events_budget"
+            else:
+                _events_deadline = asyncio.timeout(_events_budget_s)
+                try:
+                    async with _events_deadline:
+                        event_items = await _score_events(
+                            db,
+                            now,
+                            # A category browse narrows the EVENTS half too, or
+                            # /categories/table-tennis would list every live game on
+                            # the site under a table-tennis heading. Events have no
+                            # `llm_sport_category`, so the category is applied through
+                            # the existing `Sport.key` filter — the same substring match
+                            # `sport=` has always used on this half.
+                            sport or category,
+                            ctx,
+                            my_teams_only=my_teams_only,
+                            my_team_names=my_team_names,
+                            tag_filter=dynamic_tag_filter or None,
+                            static_tag_filter=static_tag_filter or None,
+                            sports_mode=(mode or "").lower() == "sports",
+                        )
+                    feed_items.extend(event_items)
+                except Exception as e:
+                    if not _events_deadline.expired():
+                        logger.error(
+                            "Feed: event scoring failed, returning partial feed: %s", e
+                        )
+                # Read off the deadline, not the exception: this also catches a
+                # cancellation something inside swallowed — the stage returned,
+                # but it did not finish inside the budget.
+                if _events_deadline.expired():
+                    _event_stage_incomplete = "events_timeout"
+        if _event_stage_incomplete is not None:
+            logger.warning(
+                "Feed: event scoring did not finish inside the request budget "
+                "(%s) — serving last-good or unavailable, never a partial build "
+                "(#10534)",
+                _event_stage_incomplete,
+            )
+            await _release_incomplete_build(
+                _event_stage_incomplete,
+                session_cancelled=_event_stage_incomplete == "events_timeout",
+            )
         _previous_at = _record_feed_timing(_timings, _started_at, _previous_at, "events")
+        if _event_stage_incomplete is not None:
+            return _serve_incomplete_build(_event_stage_incomplete)
 
-        # === ENRICH EVENTS WITH TEAM DATA ===
-        await enrich_event_team_data(db, feed_items)
+        # === ENRICH EVENTS WITH TEAM DATA, inside the same budget (#10534) ===
+        # Not cosmetic: `_filter_discover_event_noise` drops live games with no
+        # team data, so an unenriched pool is a different population, not
+        # plainer cards. No event cards means nothing to enrich and no budget
+        # condition. No ordinary catch here: a non-deadline error keeps its
+        # existing path to the leader guard.
+        if any(item.get("type") == "event" for item in feed_items):
+            _enrich_budget_s = _feed_budget_remaining_s()
+            if _enrich_budget_s <= 0:
+                _event_stage_incomplete = "enrichment_budget"
+            else:
+                _enrich_deadline = asyncio.timeout(_enrich_budget_s)
+                try:
+                    async with _enrich_deadline:
+                        await enrich_event_team_data(db, feed_items)
+                except TimeoutError:
+                    if not _enrich_deadline.expired():
+                        raise
+                if _enrich_deadline.expired():
+                    _event_stage_incomplete = "enrichment_timeout"
+            if _event_stage_incomplete is not None:
+                logger.warning(
+                    "Feed: team enrichment did not finish inside the request "
+                    "budget (%s) — serving last-good or unavailable, never the "
+                    "unenriched build (#10534)",
+                    _event_stage_incomplete,
+                )
+                await _release_incomplete_build(
+                    _event_stage_incomplete,
+                    session_cancelled=_event_stage_incomplete == "enrichment_timeout",
+                )
+                _previous_at = _record_feed_timing(
+                    _timings, _started_at, _previous_at, "team_enrichment"
+                )
+                return _serve_incomplete_build(_event_stage_incomplete)
         # #6567 — and immediately after it, because the records the caption
         # prints are what that pass just attached.
         apply_pregame_record_caption(feed_items)
@@ -5342,99 +5515,18 @@ async def get_feed(
                     "unavailable, never the unreviewed build (#10530)",
                     _review_budget_s,
                 )
-        # Waiters first: they hold their own deadlines and must not spend them
-        # on this session's cleanup. `result=None` is the existing "the leader
-        # produced nothing usable" contract and sends each of them to its own
-        # bounded last-good / truthful-unavailable terminal.
-        if _review_incomplete is not None and _is_build_leader and _sf_future is not None:
-            _rc.finish_build(_cache_key, _sf_future, result=None)
-        if _review_incomplete == "review_timeout":
-            await _release_cancelled_review_session(db)
+        if _review_incomplete is not None:
+            await _release_incomplete_build(
+                _review_incomplete,
+                session_cancelled=_review_incomplete == "review_timeout",
+            )
         _previous_at = _record_feed_timing(
             _timings, _started_at, _previous_at, "review_decisions"
         )
 
         if _review_incomplete is not None:
-            # The unreviewed build goes nowhere: not to this caller, not to the
-            # coalesced waiters (released above), not to process last-good, not
-            # to Redis. This is the input-age ceiling's terminal (below) with
-            # one difference — the prior payload is bounded by the ordinary
-            # live ceiling only, as every other last-good tier is, because
-            # nothing here proved the world holds an in-progress game. No DB
-            # work follows: the session may be the one the deadline just
-            # cancelled.
-            _review_capture = display_capture_from_request(request)
-            if _review_capture is not None:
-                _review_capture.abandon(_review_incomplete)
-            _prior, _prior_origin = (
-                _rc.recall_last_good_entry(_cache_key)
-                if _cache_key
-                else (None, None)
-            )
-            if isinstance(_prior, dict) and payload_contains_live_event(_prior):
-                _prior, _prior_origin = _rc.recall_last_good_entry(
-                    _cache_key, max_age_s=FEED_LAST_GOOD_MAX_AGE_LIVE_SECONDS
-                )
-            if isinstance(_prior, dict):
-                _prior_out = dict(_prior)
-                # The STORE's origin, never now: a fallback keeps the age it has
-                # already spent, so it cannot earn a fresh window by being served.
-                _prior_age_s = (
-                    max(0.0, time.time() - _prior_origin)
-                    if isinstance(_prior_origin, (int, float))
-                    else 0.0
-                )
-                _prior_fresh_ttl, _prior_stale_ttl = _live_ttls(
-                    _prior, oldest_artifact_age_s=_prior_age_s
-                )
-                _prior_out["cache"] = build_feed_cache_metadata(
-                    "last_good",
-                    ttl_seconds=_prior_fresh_ttl,
-                    stale_ttl_seconds=_prior_stale_ttl,
-                    reason=_review_incomplete,
-                    live=payload_contains_live_event(_prior),
-                    built_at=_prior_origin,
-                )
-                _finalize_feed_response(
-                    response,
-                    cache_status="last_good",
-                    singleflight="none",
-                    timings=_timings,
-                    started_at=_started_at,
-                    counts=_feed_obs_counts(
-                        _prior_out.get("items"),
-                        total=_prior_out.get("total", 0),
-                        returned=len(_prior_out.get("items") or []),
-                    ),
-                    golf_provenance=_golf_provenance,
-                    shared_reuse=_shared_reuse,
-                    shared_tiers=_shared_tiers,
-                )
-                return _prior_out
-            _finalize_feed_response(
-                response,
-                cache_status="unavailable",
-                singleflight="none",
-                timings=_timings,
-                started_at=_started_at,
-                counts=_feed_obs_counts([], total=0, returned=0),
-                golf_provenance=_golf_provenance,
-                shared_reuse=_shared_reuse,
-                shared_tiers=_shared_tiers,
-            )
-            return {
-                "items": [],
-                "total": 0,
-                "limit": limit,
-                "offset": offset,
-                "has_more": False,
-                "cache": build_feed_cache_metadata(
-                    "unavailable",
-                    ttl_seconds=0,
-                    stale_ttl_seconds=0,
-                    reason=_review_incomplete,
-                ),
-            }
+            # The unreviewed build goes nowhere: see `_serve_incomplete_build`.
+            return _serve_incomplete_build(_review_incomplete)
 
         # === QUALITY FLOOR: drop all-0% cards (#240 Item 4) ===
         # A card whose every outcome reads 0% is never interesting (stale/settled
@@ -6266,8 +6358,14 @@ def _review_decision_scope_keys(item: dict) -> list[str]:
 _REVIEW_SQL_CLEANUP_BUDGET_S = 1.0
 
 
-async def _release_cancelled_review_session(db: AsyncSession) -> str:
-    """Finite cleanup of a session whose review query the deadline cancelled.
+async def _release_cancelled_review_session(
+    db: AsyncSession, *, stage: str = "review"
+) -> str:
+    """Finite cleanup of a session whose stage query the deadline cancelled.
+
+    Written for the review stage (#10530); the event-scoring and team-enrichment
+    stages (#10534) end the same way and share it. ``stage`` only names the
+    stage in the log line.
 
     Cancelling an asyncpg query does not leave the connection reusable: asyncpg
     sends the server a cancel request and the connection's next operation waits
@@ -6290,8 +6388,9 @@ async def _release_cancelled_review_session(db: AsyncSession) -> str:
         raise
     except Exception:  # noqa: BLE001 — cleanup must never mask the fallback
         logger.warning(
-            "Feed: rollback after the cancelled review query did not land inside "
+            "Feed: rollback after the cancelled %s query did not land inside "
             "%.1fs — invalidating the connection (#10530)",
+            stage,
             _REVIEW_SQL_CLEANUP_BUDGET_S,
         )
     try:
@@ -6303,7 +6402,8 @@ async def _release_cancelled_review_session(db: AsyncSession) -> str:
     except Exception:  # noqa: BLE001 — there is nothing further to try
         logger.warning(
             "Feed: could not invalidate the connection after the cancelled "
-            "review query (#10530)"
+            "%s query (#10530)",
+            stage,
         )
         return "abandoned"
 
