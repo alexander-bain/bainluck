@@ -17,8 +17,6 @@
  * PURE: no I/O, no React.
  */
 
-import { format } from "date-fns";
-
 import type { EventPublicationsResponse, PublicationVertex } from "./types";
 
 /** A served vertex with its time already parsed. `rev`, `t` and `p` are never altered. */
@@ -88,6 +86,24 @@ export function insideRecordedWindow(ms: number, window: { startMs: number; endM
 }
 
 /**
+ * Whether the closed span between two instants touches the recorded window.
+ *
+ * Two legacy points on either side of the window are each outside it, yet the
+ * segment, carry or crossing between them would run through it — a window
+ * inside one minute (20:15:10–20:15:50 between the 20:15 and 20:16 rows) has
+ * no row of its own to break on. So a legacy pair is judged by its span, never
+ * by its endpoints alone. A single instant is the span `[ms, ms]`.
+ */
+export function spanTouchesRecordedWindow(
+  aMs: number,
+  bMs: number,
+  window: { startMs: number; endMs: number } | null,
+): boolean {
+  if (window === null) return false;
+  return Math.min(aMs, bMs) <= window.endMs && Math.max(aMs, bMs) >= window.startMs;
+}
+
+/**
  * The checkpoint a cursor at `cursorPx` reads, or `null`.
  *
  * The nearest vertex whose x is within `radiusPx`; beyond it, nothing — never
@@ -117,13 +133,22 @@ export function publicationReadoutAt<T extends CheckpointVertex>(
   return best;
 }
 
+/** The accepted boundary's clock zone (section B): Pacific, whatever the reader's own zone. */
+export const CHECKPOINT_CLOCK_TIME_ZONE = "America/Los_Angeles";
+
+const checkpointClockFormat = new Intl.DateTimeFormat("en-US", {
+  timeZone: CHECKPOINT_CLOCK_TIME_ZONE,
+  hour: "numeric",
+  minute: "2-digit",
+  hour12: true,
+});
+
 /**
- * A checkpoint's clock: `h:mm a`, minutes only, no verb — the same format the
- * readout under the chart prints for every other point (`GamePlayCard`). It is
+ * A checkpoint's clock: `h:mm a` in Pacific time, minutes only, no verb. It is
  * the vertex's own time, never the cursor's.
  */
 export function checkpointClockLabel(vertex: Pick<CheckpointVertex, "tMs">): string {
-  return format(new Date(vertex.tMs), "h:mm a");
+  return checkpointClockFormat.format(new Date(vertex.tMs));
 }
 
 /** What a snapped scrub shows: the checkpoint, where the cursor is drawn, and its clock. */
@@ -194,4 +219,67 @@ export function timeToChartX(
   const xp = rowXs[lo - 1];
   if (xp === null || xp === undefined || !Number.isFinite(xp)) return null;
   return x0 + ((tMs - rowStartMs[lo]) / (rowStartMs[lo] - rowStartMs[lo - 1])) * (x0 - xp);
+}
+
+/**
+ * The instant under a pointer at `x` — `timeToChartX` read backwards.
+ *
+ * Linear in time between two laid-out rows; past the last row at most one
+ * minute, at the last step's spacing; before the first row, or with no
+ * laid-out neighbour, `null`. A scrub needs the pointer's own instant: the
+ * minute row recharts reports as active can sit outside the recorded window
+ * while the pointer is inside it.
+ */
+export function chartXToTime(
+  x: number,
+  rowStartMs: ReadonlyArray<number>,
+  rowXs: ReadonlyArray<number | null>,
+): number | null {
+  const n = rowStartMs.length;
+  if (!Number.isFinite(x) || n === 0) return null;
+  const at = (i: number) => {
+    const v = rowXs[i];
+    return v === null || v === undefined || !Number.isFinite(v) ? null : v;
+  };
+  const x0 = at(0);
+  if (x0 === null || x < x0) return null;
+  for (let i = 0; i < n - 1; i++) {
+    const a = at(i);
+    const b = at(i + 1);
+    if (a === null || b === null) return null;
+    if (x <= b) {
+      if (b === a) return rowStartMs[i];
+      return rowStartMs[i] + ((x - a) / (b - a)) * (rowStartMs[i + 1] - rowStartMs[i]);
+    }
+  }
+  const last = at(n - 1);
+  if (last === null) return null;
+  if (x === last) return rowStartMs[n - 1];
+  if (n < 2) return null;
+  const prev = at(n - 2);
+  if (prev === null || last === prev) return null;
+  const tMs = rowStartMs[n - 1] + ((x - last) / (last - prev)) * (rowStartMs[n - 1] - rowStartMs[n - 2]);
+  return tMs - rowStartMs[n - 1] >= 60_000 ? null : tMs;
+}
+
+/**
+ * What a pointer at `chartX` reads on a chart with recorded checkpoints: the
+ * checkpoint within reach (`publicationReadout`), or none — and, with none,
+ * whether the blend must read nothing because the pointer's own instant is
+ * inside the recorded window. recharts reports the nearest MINUTE row, which
+ * can sit outside the window (and hold a legacy value) while the pointer is
+ * 30 s inside it; only the pointer's instant answers that.
+ */
+export function scrubAtPointer<T extends CheckpointVertex>(
+  drawable: ReadonlyArray<T>,
+  window: { startMs: number; endMs: number } | null,
+  chartX: number,
+  rowStartMs: ReadonlyArray<number>,
+  rowXs: ReadonlyArray<number | null>,
+): { readout: PublicationReadout<T> | null; blendWithheld: boolean } {
+  const readout =
+    drawable.length > 0 ? publicationReadout(drawable, chartX, (v) => timeToChartX(v.tMs, rowStartMs, rowXs)) : null;
+  if (readout) return { readout, blendWithheld: false };
+  const cursorMs = chartXToTime(chartX, rowStartMs, rowXs);
+  return { readout: null, blendWithheld: cursorMs !== null && insideRecordedWindow(cursorMs, window) };
 }

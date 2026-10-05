@@ -5,11 +5,12 @@
  *
  * This renders the real chart and reads the emitted SVG, because every claim
  * here is about ink: (iv) no path joins two checkpoints, the legacy blend is
- * withdrawn inside the window and BREAKS at both ends of it (it carries
- * `connectNulls` everywhere else, which would bridge the window with a straight
- * segment), the callout labels the last checkpoint when the window runs to the
- * end, and every control — no response, live, truncated, empty, single-source —
- * is byte-identical to today's chart.
+ * withdrawn inside the window and is drawn as two lines, one each side of it,
+ * so no segment can cross any part of it — including a window inside one
+ * minute, which has no row of its own to break on — the callout labels the last
+ * checkpoint when the window runs to the end, disconnected checkpoints never
+ * count as an odds flip, and every control — no response, live, truncated,
+ * empty, single-source — is byte-identical to today's chart.
  *
  * 🪤 recharts draws nothing inside a `ResponsiveContainer` without a viewport,
  * so it is mocked to a fixed 390×300 (same device as
@@ -135,12 +136,19 @@ function dots(markup: string): Array<{ rev: number; cx: number; r: string; strok
   }));
 }
 
-function blendPath(markup: string): string {
-  const paths = Array.from(markup.matchAll(/<path[^>]*>/g))
+/** Every drawn blend line's `d`, in document order (empty paths dropped). */
+function blendPaths(markup: string): string[] {
+  return Array.from(markup.matchAll(/<path[^>]*>/g))
     .map(([tag]) => tag)
-    .filter((tag) => tag.includes(`stroke="${BLEND}"`) && tag.includes('stroke-width="3"') && tag.includes("recharts-line-curve"));
+    .filter((tag) => tag.includes(`stroke="${BLEND}"`) && tag.includes('stroke-width="3"') && tag.includes("recharts-line-curve"))
+    .map((tag) => tag.match(/ d="([^"]*)"/)?.[1] ?? "")
+    .filter((d) => d.length > 0);
+}
+
+function blendPath(markup: string): string {
+  const paths = blendPaths(markup);
   if (paths.length !== 1) throw new Error(`expected one blend path, found ${paths.length}`);
-  return paths[0].match(/ d="([^"]*)"/)?.[1] ?? "";
+  return paths[0];
 }
 
 const lineCurves = (markup: string) => (markup.match(/recharts-line-curve/g) ?? []).length;
@@ -148,6 +156,15 @@ const subpaths = (d: string) => (d.match(/M/g) ?? []).length;
 const pathXs = (d: string) => Array.from(d.matchAll(/[ML](-?[\d.]+),(-?[\d.]+)/g)).map((m) => Number(m[1]));
 
 const attr = (markup: string, name: string) => markup.match(new RegExp(`${name}="([^"]*)"`))?.[1] ?? null;
+
+/** The "Odds flipped (N)" chip's N; 0 when the chip is absent (it is only offered for N > 0). */
+const flips = (markup: string) => Number(markup.match(/Odds flipped \((?:<!-- -->)?(\d+)/)?.[1] ?? 0);
+
+/** No single blend path has ink on both sides of [lo, hi]: nothing crosses the window. */
+const nothingCrosses = (paths: string[], lo: number, hi: number) =>
+  paths.every((d) => !(pathXs(d).some((x) => x < lo) && pathXs(d).some((x) => x > hi)));
+
+const at = (offsetMin: number, offsetSec: number) => new Date(KICKOFF + offsetMin * MIN + offsetSec * 1000).toISOString();
 
 describe("the rig is not vacuous", () => {
   it("draws the chart, the blend, and one dot per checkpoint", () => {
@@ -169,9 +186,10 @@ describe("inside the recorded window: dots only, nothing joining them", () => {
   const markup = draw({ publications: body(INTERIOR) });
   const drawn = dots(markup);
 
-  it("(iv) the checkpoint layer holds circles and no path, and no new series path exists", () => {
+  it("(iv) the checkpoint layer holds circles and no path, and the only new series path is the blend's second side", () => {
     expect(checkpointLayer(markup)).not.toMatch(/<path/);
-    expect(lineCurves(markup)).toBe(lineCurves(draw()));
+    expect(lineCurves(markup)).toBe(lineCurves(draw()) + 1);
+    expect(blendPaths(markup)).toHaveLength(2);
   });
 
   it("each dot is small, filled, unstroked", () => {
@@ -188,16 +206,19 @@ describe("inside the recorded window: dots only, nothing joining them", () => {
     for (let i = 1; i < order.length; i++) expect(order[i]).toBeGreaterThan(order[i - 1]);
   });
 
-  it("the legacy blend is withdrawn across [min t, max t] and breaks at both ends", () => {
-    const d = blendPath(markup);
-    expect(subpaths(d)).toBe(2);
+  it("the legacy blend is withdrawn across [min t, max t]: one line each side, nothing crossing", () => {
+    const paths = blendPaths(markup);
     const xs = drawn.map((p) => p.cx);
     const lo = Math.min(...xs);
     const hi = Math.max(...xs);
-    expect(pathXs(d).filter((x) => x > lo + 0.01 && x < hi - 0.01)).toEqual([]);
+    for (const d of paths) {
+      expect(subpaths(d)).toBe(1);
+      expect(pathXs(d).filter((x) => x > lo + 0.01 && x < hi - 0.01)).toEqual([]);
+    }
+    expect(nothingCrosses(paths, lo, hi)).toBe(true);
     // and there is legacy ink on both sides
-    expect(pathXs(d).some((x) => x < lo)).toBe(true);
-    expect(pathXs(d).some((x) => x > hi)).toBe(true);
+    expect(Math.max(...pathXs(paths[0]))).toBeLessThan(lo);
+    expect(Math.min(...pathXs(paths[1]))).toBeGreaterThan(hi);
   });
 
   it("the callout stays on the legacy end when legacy ink follows the window", () => {
@@ -221,7 +242,7 @@ describe("a hole in the legacy blend right after the window", () => {
     const at60 = byRev.get(1)!;
     const at120 = byRev.get(6)!;
     const x140 = at120 + ((at120 - at60) / 60) * 20;
-    const after = pathXs(blendPath(markup)).filter((x) => x > at120 + 0.01);
+    const after = blendPaths(markup).flatMap(pathXs).filter((x) => x > at120 + 0.01);
     expect(after.length).toBeGreaterThan(0);
     expect(Math.min(...after)).toBeCloseTo(x140, 1);
   });
@@ -266,5 +287,83 @@ describe("controls: today's chart, byte for byte", () => {
   it("a chart with no backend blend ignores checkpoints", () => {
     const single = { backendBlendServed: false } as Props;
     expect(draw({ ...single, publications: body(INTERIOR) })).toBe(draw(single));
+  });
+});
+
+describe("a recorded window inside one minute (independent vectors, 20:15:10–20:15:50)", () => {
+  // Minute 60 is the 20:15-style row before the window, minute 61 the one
+  // after; neither row's own instant is inside [60:10, 60:50], so no row is
+  // nulled and only a span test can stop a segment, a carry or a flip
+  // reaching across. Both rows stay where they are.
+  const SUB: PublicationVertex[] = [
+    { rev: 1, t: at(60, 10), p: 0.45 },
+    { rev: 2, t: at(60, 50), p: 0.55 },
+  ];
+  const markup = draw({ publications: body(SUB) });
+  const byRev = new Map(dots(markup).map((p) => [p.rev, p.cx]));
+  const lo = byRev.get(1)!;
+  const hi = byRev.get(2)!;
+  /** One minute's width: the 40 s between the dots is two thirds of it. */
+  const step = (hi - lo) * 1.5;
+
+  it("both dots are drawn, at their own sub-minute instants", () => {
+    expect(byRev.size).toBe(2);
+    expect(hi).toBeGreaterThan(lo);
+  });
+
+  it("no legacy segment joins the 60 and 61 rows across the window", () => {
+    expect(nothingCrosses(blendPaths(markup), lo, hi)).toBe(true);
+  });
+
+  it("the outside rows are kept: the line before ends ON the 60 row, the line after starts ON the 61 row", () => {
+    const [before, after] = blendPaths(markup);
+    expect(Math.max(...pathXs(before))).toBeCloseTo(lo - step / 6, 1);
+    expect(Math.min(...pathXs(after))).toBeCloseTo(hi + step / 6, 1);
+  });
+
+  it("nothing is carried from the 60 row into a 61 row that has no reading", () => {
+    // Legacy readings stop at 60 and resume at 70; 61–69 are seeded rows with
+    // no blend. A carry judged on the 61 row alone (outside the window) would
+    // fill them with the 60 row's value, bridging the window.
+    const holed = AGGREGATE.filter((p) => {
+      const m = (Date.parse(p.timestamp) - KICKOFF) / MIN;
+      return m <= 60 || m >= 70;
+    });
+    const paths = blendPaths(draw({ publications: body(SUB), aggregateLine: holed }));
+    expect(nothingCrosses(paths, lo, hi)).toBe(true);
+    const after = paths.flatMap(pathXs).filter((x) => x > hi);
+    expect(after.length).toBeGreaterThan(0);
+    expect(Math.min(...after)).toBeCloseTo(hi + step / 6 + 9 * step, 1);
+  });
+
+  it("a legacy 40% → 60% pair either side of the window is not an odds flip", () => {
+    const stepped = series(1, (m) => (m <= 60 ? 0.4 : 0.6));
+    expect(flips(draw({ aggregateLine: stepped }))).toBe(1); // control: joined, it IS one
+    expect(flips(draw({ aggregateLine: stepped, publications: body(SUB) }))).toBe(0);
+  });
+});
+
+describe("odds flips are counted on drawn segments only, never across checkpoints", () => {
+  const flat = series(1, () => 0.7);
+
+  it("disconnected 40% and 60% checkpoints make no flip", () => {
+    const apart: PublicationVertex[] = [
+      { rev: 1, t: iso(60), p: 0.4 },
+      { rev: 2, t: iso(120), p: 0.6 },
+    ];
+    expect(flips(draw({ aggregateLine: flat }))).toBe(0); // control
+    const markup = draw({ aggregateLine: flat, publications: body(apart) });
+    expect(dots(markup)).toHaveLength(2); // the rig drew them
+    expect(flips(markup)).toBe(0);
+  });
+
+  it("a genuine connected legacy flip outside the window still counts once", () => {
+    const early = series(1, (m) => (m < 30 ? 0.4 : 0.7));
+    const window: PublicationVertex[] = [
+      { rev: 1, t: iso(60), p: 0.45 },
+      { rev: 2, t: iso(120), p: 0.55 },
+    ];
+    expect(flips(draw({ aggregateLine: early }))).toBe(1);
+    expect(flips(draw({ aggregateLine: early, publications: body(window) }))).toBe(1);
   });
 });

@@ -11,11 +11,18 @@
  * window cut on array order, or a tie that flips with array order.
  *
  * The x scale here is linear, 1px per 10 s, from a fixed anchor (gotcha #44:
- * no clock reads). TZ is pinned to UTC by jest.config.js.
+ * no clock reads). TZ is pinned to UTC by jest.config.js — so a Pacific label
+ * here is the formatter's zone, never the process's.
  */
+
+import { readFileSync } from "fs";
+import { join } from "path";
+
+import { format } from "date-fns";
 
 import {
   CHECKPOINT_HIT_RADIUS_PX,
+  chartXToTime,
   checkpointClockLabel,
   eligibleCheckpoints,
   insideRecordedWindow,
@@ -24,6 +31,8 @@ import {
   publicationReadoutAt,
   recordedWindow,
   rowIndexAt,
+  scrubAtPointer,
+  spanTouchesRecordedWindow,
   timeToChartX,
   type CheckpointVertex,
 } from "@/lib/publicationJourney";
@@ -171,23 +180,120 @@ describe("(iii) a snapped readout carries the checkpoint's own x, value and cloc
     { rev: 2, t: iso(10 * MIN), p: 0.6349 },
   ]);
 
-  it("snaps the cursor to x = 60 and labels 11:10 PM with the vertex value", () => {
+  it("snaps the cursor to x = 60 and labels 4:10 PM (Pacific) with the vertex value", () => {
     const readout = publicationReadout(vertices, 67, xOf);
     expect(readout).not.toBeNull();
     expect(readout!.vertex).toBe(vertices[1]);
     expect(readout!.x).toBe(60);
-    expect(readout!.clock).toBe("11:10 PM");
+    expect(readout!.clock).toBe("4:10 PM");
     expect(readout!.vertex.p).toBe(0.6349);
     expect(readout!.vertex.t).toBe(iso(10 * MIN));
   });
 
   it("the cursor's own minute would label differently — the specimen discriminates", () => {
     const cursorMs = ANCHOR + 67 * 10_000;
-    expect(checkpointClockLabel({ tMs: cursorMs })).toBe("11:11 PM");
+    expect(checkpointClockLabel({ tMs: cursorMs })).toBe("4:11 PM");
   });
 
   it("the clock is minutes only, no verb", () => {
     expect(checkpointClockLabel(vertices[1])).toMatch(/^\d{1,2}:\d{2} (AM|PM)$/);
+  });
+});
+
+describe("the checkpoint clock is Pacific, whatever the reader's zone (accepted boundary B; root 0043Z)", () => {
+  it("the process zone is UTC, so a reader-local label would differ — the arm discriminates", () => {
+    expect(format(new Date(ANCHOR + 10 * MIN), "h:mm a")).toBe("11:10 PM");
+    expect(checkpointClockLabel({ tMs: ANCHOR + 10 * MIN })).toBe("4:10 PM");
+  });
+
+  it("follows Pacific daylight saving: PST in winter", () => {
+    expect(checkpointClockLabel({ tMs: Date.UTC(2026, 11, 1, 23, 10) })).toBe("3:10 PM");
+  });
+
+  it("no leading zero on the hour", () => {
+    expect(checkpointClockLabel({ tMs: Date.UTC(2026, 9, 5, 16, 5) })).toBe("9:05 AM");
+  });
+});
+
+describe("a legacy pair is judged by its span, not its endpoints (independent vectors)", () => {
+  const S = 1000;
+  const T0 = Date.UTC(2026, 9, 4, 20, 15, 0);
+  const w = { startMs: T0 + 10 * S, endMs: T0 + 50 * S };
+
+  it("rows 0 s and 60 s around a 10–50 s window: each outside, the span between them touches it", () => {
+    expect(insideRecordedWindow(T0, w)).toBe(false);
+    expect(insideRecordedWindow(T0 + 60 * S, w)).toBe(false);
+    expect(spanTouchesRecordedWindow(T0, T0 + 60 * S, w)).toBe(true);
+    expect(spanTouchesRecordedWindow(T0 + 60 * S, T0, w)).toBe(true);
+  });
+
+  it("spans strictly before or after are untouched; both ends are closed", () => {
+    expect(spanTouchesRecordedWindow(T0 - 60 * S, T0, w)).toBe(false);
+    expect(spanTouchesRecordedWindow(T0 + 60 * S, T0 + 120 * S, w)).toBe(false);
+    expect(spanTouchesRecordedWindow(T0, T0 + 10 * S, w)).toBe(true);
+    expect(spanTouchesRecordedWindow(T0 + 50 * S, T0 + 60 * S, w)).toBe(true);
+    expect(spanTouchesRecordedWindow(T0 + 50 * S + 1, T0 + 60 * S, w)).toBe(false);
+  });
+
+  it("a single instant is [ms, ms]; no window touches nothing", () => {
+    expect(spanTouchesRecordedWindow(T0 + 30 * S, T0 + 30 * S, w)).toBe(true);
+    expect(spanTouchesRecordedWindow(T0, T0 + 60 * S, null)).toBe(false);
+  });
+});
+
+describe("a scrub reads the pointer's own instant (independent vectors: rows 0 s / 60 s at x 0 / 100)", () => {
+  const S = 1000;
+  const T0 = Date.UTC(2026, 9, 4, 20, 15, 0);
+  const rowStartMs = [T0, T0 + 60 * S];
+  const rowXs = [0, 100];
+  const vertices = cps([
+    { rev: 1, t: new Date(T0 + 10 * S).toISOString(), p: 0.45 },
+    { rev: 2, t: new Date(T0 + 50 * S).toISOString(), p: 0.55 },
+  ]);
+  const w = recordedWindow(vertices);
+  const x = (v: CheckpointVertex) => timeToChartX(v.tMs, rowStartMs, rowXs);
+
+  it("x 50 is 30 s: inside the window, beyond both 8px radii — no checkpoint, the blend is withheld", () => {
+    expect(publicationReadoutAt(vertices, 50, x)).toBeNull();
+    const cursorMs = chartXToTime(50, rowStartMs, rowXs)!;
+    expect(cursorMs).toBe(T0 + 30 * S);
+    expect(insideRecordedWindow(cursorMs, w)).toBe(true);
+  });
+
+  it("x 2 is 1.2 s: before the window, so the legacy row keeps its reading", () => {
+    const cursorMs = chartXToTime(2, rowStartMs, rowXs)!;
+    expect(cursorMs).toBe(T0 + 1.2 * S);
+    expect(insideRecordedWindow(cursorMs, w)).toBe(false);
+    expect(publicationReadoutAt(vertices, 2, x)).toBeNull();
+  });
+
+  it("x 20 snaps to the 10 s checkpoint at x 16.67 with its own value and clock", () => {
+    const readout = publicationReadout(vertices, 20, x)!;
+    expect(readout.x).toBeCloseTo(100 / 6, 10);
+    expect(readout.vertex.p).toBe(0.45);
+    expect(readout.vertex.tMs).toBe(T0 + 10 * S);
+  });
+
+  it("scrubAtPointer: x 50 withholds the blend, x 2 does not, x 20 snaps and never withholds", () => {
+    expect(scrubAtPointer(vertices, w, 50, rowStartMs, rowXs)).toEqual({ readout: null, blendWithheld: true });
+    expect(scrubAtPointer(vertices, w, 2, rowStartMs, rowXs)).toEqual({ readout: null, blendWithheld: false });
+    const snapped = scrubAtPointer(vertices, w, 20, rowStartMs, rowXs);
+    expect(snapped.readout?.vertex.rev).toBe(1);
+    expect(snapped.blendWithheld).toBe(false);
+    // inside the window by time even with no drawable checkpoint at all
+    expect(scrubAtPointer([], w, 50, rowStartMs, rowXs).blendWithheld).toBe(true);
+    // and no window, nothing withheld
+    expect(scrubAtPointer(vertices, null, 50, rowStartMs, rowXs).blendWithheld).toBe(false);
+  });
+
+  it("is timeToChartX read backwards, and refuses before the first row or a minute past the last", () => {
+    for (const ms of [T0, T0 + 10 * S, T0 + 59 * S, T0 + 60 * S, T0 + 90 * S]) {
+      expect(chartXToTime(timeToChartX(ms, rowStartMs, rowXs)!, rowStartMs, rowXs)).toBeCloseTo(ms, 6);
+    }
+    expect(chartXToTime(-1, rowStartMs, rowXs)).toBeNull();
+    expect(chartXToTime(200, rowStartMs, rowXs)).toBeNull();
+    expect(chartXToTime(50, rowStartMs, [0, null])).toBeNull();
+    expect(chartXToTime(NaN, rowStartMs, rowXs)).toBeNull();
   });
 });
 
@@ -258,5 +364,19 @@ describe("timeToChartX: an instant on the minute-category axis", () => {
   it("rowIndexAt is the last row at or before the instant", () => {
     expect(rowIndexAt(ANCHOR + 2 * MIN + 59_999, rows)).toBe(2);
     expect(rowIndexAt(ANCHOR - 1, rows)).toBeNull();
+  });
+});
+
+describe("OddsChart is wired to the pointer's instant (static markup cannot move a cursor)", () => {
+  const source = readFileSync(join(process.cwd(), "components/OddsChart.tsx"), "utf8");
+
+  it("the hover handler asks scrubAtPointer, and a withheld blend hands the hero nothing", () => {
+    expect(source).toMatch(/scrubAtPointer\(drawableCheckpoints, checkpointWindow, state\.chartX!, rowStartMs, rowXs\)/);
+    expect(source).toMatch(/const delta = blendWithheld \? null : \(pt\[primarySeriesKey\] as number \| null\);/);
+    expect(source).toMatch(/setBlendWithheldAtCursor\(blendWithheld\);/);
+  });
+
+  it("the tooltip gives the blend no number while it is withheld", () => {
+    expect(source).toMatch(/!blendWithheldAtCursor && typeof legacyBlendAtRow === "number"/);
   });
 });

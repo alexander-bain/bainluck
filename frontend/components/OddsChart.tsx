@@ -56,9 +56,10 @@ import {
   eligibleCheckpoints,
   insideRecordedWindow,
   latestCheckpoint,
-  publicationReadout,
   recordedWindow,
   rowIndexAt,
+  scrubAtPointer,
+  spanTouchesRecordedWindow,
   timeToChartX,
   type CheckpointVertex,
   type PublicationReadout,
@@ -955,6 +956,10 @@ export default function OddsChart({
         ? prev
         : next,
     );
+  // #4974 slice 1 — true while the pointer's own instant is inside the
+  // recorded window and no checkpoint is snapped: the blend has no reading
+  // there, whatever the nearest minute row holds. Set only when it changes.
+  const [blendWithheldAtCursor, setBlendWithheldAtCursor] = useState(false);
   const onChartInspection = (...args: Parameters<typeof chartInspectionPhase>) => {
     const phase = chartInspectionPhase(...args);
     if (phase === "none") return;
@@ -962,6 +967,7 @@ export default function OddsChart({
     if (released) {
       releaseChartInspection(chartRef.current, onActivePointChange);
       snapTo(null);
+      setBlendWithheldAtCursor(false);
     }
     if (touchReleasedRef.current !== released) {
       touchReleasedRef.current = released;
@@ -1782,18 +1788,22 @@ export default function OddsChart({
     for (const key of probKeys) {
       lastKnown[key] = null;
     }
+    let prevRowMs: number | null = null;
     for (const pt of sorted) {
       // #4974 slice 1 — inside the recorded window the legacy blend is not
       // drawn: the checkpoints are. The writer above already skips the window;
-      // here nothing is carried into it, and the carry restarts after it, so no
-      // legacy value bridges the window (the blend line stops joining across
-      // nulls while checkpoints are shown).
-      const inCheckpointWindow =
-        checkpointWindow !== null && insideRecordedWindow(parseISO(pt.timestamp).getTime(), checkpointWindow);
+      // here nothing is carried into it or across it. The test is the span from
+      // the previous row to this one, not this row alone: a window inside one
+      // minute has no row of its own, and a value carried from the row before
+      // it into the row after it would bridge it all the same.
+      const rowMs = parseISO(pt.timestamp).getTime();
+      const touchesCheckpointWindow = spanTouchesRecordedWindow(prevRowMs ?? rowMs, rowMs, checkpointWindow);
+      const inCheckpointWindow = insideRecordedWindow(rowMs, checkpointWindow);
+      prevRowMs = rowMs;
       for (const key of probKeys) {
-        if (inCheckpointWindow && key === "bainLuckDelta") {
+        if (touchesCheckpointWindow && key === "bainLuckDelta") {
           lastKnown[key] = null;
-          continue;
+          if (inCheckpointWindow) continue;
         }
         const val = pt[key];
         if (typeof val === "number") {
@@ -1878,6 +1888,24 @@ export default function OddsChart({
     const last = chartData[chartData.length - 1].timestamp;
     onRenderedDomain(first, last);
   }, [chartData, onRenderedDomain]);
+
+  // #4974 slice 1 — the legacy blend's two sides of the recorded window, as
+  // readers of the one `bainLuckDelta` column (null when no window is shown).
+  const legacyBlendSides = useMemo(() => {
+    if (!checkpointWindow) return null;
+    const { startMs, endMs } = checkpointWindow;
+    const side = (key: string, keep: (ms: number) => boolean) => ({
+      key,
+      read: (pt: ChartDataPoint): number | null => {
+        const v = pt.bainLuckDelta;
+        return typeof v === "number" && keep(parseISO(pt.timestamp).getTime()) ? v : null;
+      },
+    });
+    return [
+      side("blend-before-recorded-window", (ms) => ms < startMs),
+      side("blend-after-recorded-window", (ms) => ms > endMs),
+    ];
+  }, [checkpointWindow]);
 
   // #4974 slice 1 — each row's minute, and the checkpoints that land on the
   // drawn axis (inside this range's window and the rows' extent), each with the
@@ -2248,41 +2276,31 @@ export default function OddsChart({
     // "Favorite flips" above). Parma–Ternana counted seven flips while Parma
     // were twice Ternana's price. No count, so no chip, markers or legend.
     if (awayWithheld) return 0;
-    // #4974 — with checkpoints drawn, the series is the legacy rows outside
-    // the recorded window plus the checkpoints inside it, in time order (equal
-    // times by `rev`), so the count describes the ink on the plot.
-    const sequence: Array<{ index: number; delta: number }> = [];
-    if (drawableCheckpoints.length > 0) {
-      const timed: Array<{ ms: number; rev: number; index: number; delta: number }> = [];
-      chartData.forEach((pt, index) => {
-        const delta = primaryValueAt(pt);
-        if (delta !== null) timed.push({ ms: rowStartMs[index], rev: Number.MIN_SAFE_INTEGER, index, delta });
-      });
-      for (const v of drawableCheckpoints) {
-        timed.push({ ms: v.tMs, rev: v.rev, index: v.rowIndex, delta: homeProbToChartAxis(v.p) });
-      }
-      timed.sort((a, b) => a.ms - b.ms || a.rev - b.rev);
-      sequence.push(...timed);
-    } else {
-      chartData.forEach((pt, index) => {
-        const delta = primaryValueAt(pt);
-        if (delta !== null) sequence.push({ index, delta });
-      });
-    }
+    // #4974 — a crossing needs a drawn segment that passes 50%. Two recorded
+    // checkpoints are disconnected dots: what was published between them is
+    // unknown, so 40% then 60% says nothing about whether, or when, 50% was
+    // crossed. So checkpoints never enter the count, and neither does a legacy
+    // pair whose span touches the recorded window (no segment joins it).
+    // Legacy segments wholly outside the window count as they always have.
+    const blendWindow = primarySeriesKey === "bainLuckDelta" ? checkpointWindow : null;
     let count = 0;
     let prevDelta: number | null = null;
-    for (const { index, delta } of sequence) {
-      if (prevDelta !== null) {
+    let prevMs: number | null = null;
+    chartData.forEach((pt, index) => {
+      const delta = primaryValueAt(pt);
+      if (delta === null) return;
+      if (prevDelta !== null && prevMs !== null && !spanTouchesRecordedWindow(prevMs, rowStartMs[index], blendWindow)) {
         // A crossing is the primary series passing the 50% line (0–100 axis).
         if ((prevDelta > 50 && delta <= 50) || (prevDelta < 50 && delta >= 50)) {
-          chartData[index].crossingDelta = 50; // Stamp at y=50 (the 50% line)
+          pt.crossingDelta = 50; // Stamp at y=50 (the 50% line)
           count++;
         }
       }
       prevDelta = delta;
-    }
+      prevMs = rowStartMs[index];
+    });
     return count;
-  }, [chartData, primarySeriesKey, awayWithheld, drawableCheckpoints, rowStartMs]);
+  }, [chartData, primarySeriesKey, awayWithheld, checkpointWindow, rowStartMs]);
 
   // ── Current probability callout (last non-null data point) ──
   // Stamp `calloutDelta` directly onto the chartData point (same reason as above).
@@ -2572,14 +2590,20 @@ export default function OddsChart({
       );
 
       // Bain Luck aggregated line (multi-source mode). #4974: a scrub snapped
-      // to a recorded checkpoint reads that checkpoint, with its own clock;
-      // inside the recorded window nothing else gives the blend a number.
+      // to a recorded checkpoint reads that checkpoint, with its own clock; a
+      // pointer inside the recorded window reads nothing else; outside it the
+      // legacy row's own value (its two lines are `tooltipType="none"`).
+      const legacyBlendAtRow = matchingPoint?.bainLuckDelta;
       const bainLuckEntry = showBlendLine
         ? snappedCheckpoint
           ? { value: homeProbToChartAxis(snappedCheckpoint.vertex.p), dataKey: "bainLuckDelta" }
-          : (pricedPayload.find((e) => e.dataKey === "bainLuckDelta") as
-              | { value: number; dataKey: string }
-              | undefined) ?? null
+          : legacyBlendSides
+            ? !blendWithheldAtCursor && typeof legacyBlendAtRow === "number" && Number.isFinite(legacyBlendAtRow)
+              ? { value: legacyBlendAtRow, dataKey: "bainLuckDelta" }
+              : null
+            : (pricedPayload.find((e) => e.dataKey === "bainLuckDelta") as
+                | { value: number; dataKey: string }
+                | undefined) ?? null
         : null;
       const checkpointClock = showBlendLine && snappedCheckpoint ? snappedCheckpoint.clock : null;
 
@@ -3140,6 +3164,7 @@ export default function OddsChart({
               if (touchReleasedRef.current) {
                 releaseChartInspection(chartRef.current, onActivePointChange);
                 snapTo(null);
+                setBlendWithheldAtCursor(false);
                 return;
               }
               const idx = state?.activeTooltipIndex;
@@ -3148,17 +3173,20 @@ export default function OddsChart({
               // what the scrub reads: its own value, its own instant, and the
               // cursor drawn at it. Beyond reach there is no blend reading
               // inside the recorded window (those rows are null below).
-              const readout =
-                inPlot && drawableCheckpoints.length > 0 && typeof state.chartX === "number"
-                  ? publicationReadout(drawableCheckpoints, state.chartX, (v) =>
-                      timeToChartX(
-                        v.tMs,
-                        rowStartMs,
-                        chartRowXs((chartRef.current as { state?: ChartRenderState } | null)?.state ?? {}, rowStartMs.length),
-                      ),
-                    )
+              // Beyond reach, the pointer's own instant decides: inside the
+              // window the blend reads nothing, even where recharts' nearest
+              // minute row sits outside it and still holds a legacy value.
+              const rowXs =
+                inPlot && checkpointWindow && typeof state.chartX === "number"
+                  ? chartRowXs((chartRef.current as { state?: ChartRenderState } | null)?.state ?? {}, rowStartMs.length)
                   : null;
+              const scrub = rowXs
+                ? scrubAtPointer(drawableCheckpoints, checkpointWindow, state.chartX!, rowStartMs, rowXs)
+                : null;
+              const readout = scrub?.readout ?? null;
+              const blendWithheld = scrub?.blendWithheld ?? false;
               snapTo(readout);
+              setBlendWithheldAtCursor(blendWithheld);
               if (!onActivePointChange) return;
               if (!inPlot) {
                 onActivePointChange(null);
@@ -3185,7 +3213,7 @@ export default function OddsChart({
                 return;
               }
               const pt = chartData[idx];
-              const delta = pt[primarySeriesKey] as number | null;
+              const delta = blendWithheld ? null : (pt[primarySeriesKey] as number | null);
               // #7878 — a minute the primary series does not support (an
               // unobserved hole, or the stretch after a stale edge) has no
               // number to hand the hero. The old `: 0.5` fallback would have
@@ -3215,6 +3243,7 @@ export default function OddsChart({
             }}
             onMouseLeave={() => {
               snapTo(null);
+              setBlendWithheldAtCursor(false);
               if (onActivePointChange) onActivePointChange(null);
             }}
           >
@@ -3424,7 +3453,7 @@ export default function OddsChart({
             {/* Area fill removed — was causing green semi-circle artifacts */}
 
             {/* ── MODE A: Multi-source — aggregated Bain Luck line (prominent, on top) ── */}
-            {showBlendLine && (
+            {showBlendLine && !legacyBlendSides && (
               <Line
                 type="linear"
                 dataKey="bainLuckDelta"
@@ -3433,9 +3462,30 @@ export default function OddsChart({
                 strokeWidth={3}
                 dot={false}
                 activeDot={{ r: 5, fill: BAIN_LUCK_CONFIG.color }}
-                connectNulls={!checkpointWindow}
+                connectNulls
               />
             )}
+            {/* #4974 slice 1 — with checkpoints shown, the legacy blend is two
+                lines: the rows before the recorded window and the rows after
+                it. No segment can join the two sides, however close their rows
+                sit (a window inside one minute has no row of its own to break
+                on), and each side keeps today's `connectNulls`. They only READ
+                `bainLuckDelta`; the tooltip reads the row (`tooltipType`). */}
+            {showBlendLine && legacyBlendSides &&
+              legacyBlendSides.map((side) => (
+                <Line
+                  key={side.key}
+                  type="linear"
+                  dataKey={side.read}
+                  name={BAIN_LUCK_CONFIG.displayName}
+                  stroke={BAIN_LUCK_CONFIG.color}
+                  strokeWidth={3}
+                  dot={false}
+                  activeDot={{ r: 5, fill: BAIN_LUCK_CONFIG.color }}
+                  connectNulls
+                  tooltipType="none"
+                />
+              ))}
 
             {/* #4974 slice 1 — one dot per recorded checkpoint, at its own
                 instant, and nothing joining two of them: no stroke, no step, no
