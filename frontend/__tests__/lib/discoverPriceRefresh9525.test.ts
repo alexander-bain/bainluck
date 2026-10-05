@@ -130,3 +130,84 @@ test('unresolved, hidden, unsolicited and older response leaves cannot overwrite
   expect(adoptPriceCards(book, [old], { items: [next], dispositions: { 'futures-1': 'updated' }, built_at: 99 }, new Set(['futures-1']))).toBe(book);
   expect(adoptPriceCards(book, [old], { items: [next], dispositions: { 'futures-1': 'updated' }, built_at: 101 }, new Set())).toBe(book);
 });
+
+// #5439: an event leaf's sentence travels atomically with its price.
+type Copy = { headline?: string | null; reason?: string | null; context_summary?: string | null };
+function said(item: FeedItem, copy: Copy): FeedItem { return Object.assign(item, copy); }
+function copyOf(item: FeedItem): Copy {
+  const out: Record<string, unknown> = {};
+  for (const key of ['headline', 'reason', 'context_summary']) if (key in item) out[key] = (item as unknown as Record<string, unknown>)[key];
+  return out as Copy;
+}
+const COPY89 = { headline: 'Vegas chance rose from 60% to 89%', reason: 'Odds moved', context_summary: 'Vegas leads 3-1 at 89%' };
+const COPY91 = { headline: 'Vegas chance rose from 60% to 91%', reason: 'Odds moved', context_summary: 'Vegas leads 4-1 at 91%' };
+const ALLOW = new Set(['event-1']);
+const homeChance = (item: FeedItem) => (item.data as { current_odds: { home_probability: number } | null }).current_odds?.home_probability;
+
+test('newer .89 -> .91 carries headline, reason and context_summary through adoption AND projection', () => {
+  const painted = said(event({ '1': 3 }, T1, 'in_progress', .89), COPY89);
+  const fresh = said(event({ '1': 4 }, T2, 'in_progress', .91), COPY91);
+  const book = adoptPriceCards(new Map(), [painted], { items: [fresh], dispositions: { 'event-1': 'updated' }, built_at: 100 }, ALLOW);
+  const held = book.get('event-1')!.item;
+  expect(homeChance(held)).toBe(.91);
+  expect(copyOf(held)).toEqual(COPY91);
+  const shown = projectPriceGroups(singles(painted), book)[0].item!;
+  expect(homeChance(shown)).toBe(.91);
+  expect(copyOf(shown)).toEqual(COPY91);
+  // Held identity, rank score and image treatment are untouched.
+  expect(shown.score).toBe(90);
+  expect(shown.type).toBe('event');
+});
+test('projection alone cannot resurrect a stale painted sentence over the book leaf', () => {
+  const painted = said(event({ '1': 3 }, T1, 'in_progress', .89), COPY89);
+  const bookLeaf = said(event({ '1': 4 }, T2, 'in_progress', .91), { headline: COPY91.headline, reason: COPY91.reason });
+  const book: PriceBook = new Map([['event-1', { item: bookLeaf, builtAt: 100 }]]);
+  const shown = projectPriceGroups(singles(painted), book)[0].item!;
+  expect(copyOf(shown)).toEqual({ headline: COPY91.headline, reason: COPY91.reason });
+  expect('context_summary' in shown).toBe(false);
+});
+test.each([['explicit null', { context_summary: null }], ['absent', {}]])('%s context_summary clears the stale high-precedence text', (_label, summary) => {
+  const painted = said(event({ '1': 3 }, T1, 'in_progress', .89), COPY89);
+  const fresh = said(event({ '1': 4 }, T2, 'in_progress', .91), { headline: COPY91.headline, reason: COPY91.reason, ...summary });
+  const book = adoptPriceCards(new Map(), [painted], { items: [fresh], dispositions: { 'event-1': 'updated' }, built_at: 100 }, ALLOW);
+  for (const item of [book.get('event-1')!.item, projectPriceGroups(singles(painted), book)[0].item!]) {
+    expect(item.headline).toBe(COPY91.headline);
+    expect(item.context_summary ?? null).toBeNull();
+    expect(item.context_summary).toEqual((summary as Copy).context_summary);
+  }
+});
+test.each([
+  ['older revision', said(event({ '1': 2 }, T3, 'in_progress', .91), COPY91), 'updated', 101, ALLOW],
+  ['incomparable revision', said(event({ '1': 3, '2': 1 }, T3, 'in_progress', .91), COPY91), 'updated', 101, ALLOW],
+  ['same revision, changed hero', said(event({ '1': 3 }, T3, 'in_progress', .91), COPY91), 'updated', 101, ALLOW],
+  ['older built_at', said(event({ '1': 4 }, T3, 'in_progress', .91), COPY91), 'updated', 99, ALLOW],
+  ['unsolicited identity', said(event({ '1': 4 }, T3, 'in_progress', .91), COPY91), 'updated', 101, new Set<string>()],
+  ['unresolved disposition', said(event({ '1': 4 }, T3, 'in_progress', .91), COPY91), 'unresolved', 101, ALLOW],
+] as const)('%s imports neither price nor copy', (_label, fresh, disposition, builtAt, allowed) => {
+  const painted = said(event({ '1': 3 }, T1, 'in_progress', .89), COPY89);
+  const book: PriceBook = new Map([['event-1', { item: painted, builtAt: 100 }]]);
+  const next = adoptPriceCards(book, [painted], { items: [fresh], dispositions: { 'event-1': disposition }, built_at: builtAt }, allowed);
+  expect(next).toBe(book);
+  const shown = projectPriceGroups(singles(painted), next)[0].item!;
+  expect(homeChance(shown)).toBe(.89);
+  expect(copyOf(shown)).toEqual(COPY89);
+});
+test('same-revision complete leaf with an unchanged hero carries its recomposed status sentence', () => {
+  const painted = said(event({ '1': 3 }, T1, 'in_progress', .89), COPY89);
+  const status = { headline: 'Vegas leads after starting at 40%', reason: 'Upset brewing', context_summary: 'Vegas leads 3-1 in the third' };
+  const fresh = said(event({ '1': 3 }, T2, 'in_progress', .89), status);
+  const book = adoptPriceCards(new Map(), [painted], { items: [fresh], dispositions: { 'event-1': 'updated' }, built_at: 100 }, ALLOW);
+  expect(copyOf(projectPriceGroups(singles(painted), book)[0].item!)).toEqual(status);
+});
+test('terminal and withheld-quote leaves keep their valid producer sentences', () => {
+  const painted = said(event({ '1': 3 }, T1, 'in_progress', .89), COPY89);
+  const final = said(event({ '1': 3 }, null, 'completed', .89), { headline: 'Vegas won after starting at 40%', reason: 'Final', context_summary: null });
+  let book = adoptPriceCards(new Map(), [painted], { items: [final], dispositions: { 'event-1': 'updated' }, built_at: 100 }, ALLOW);
+  expect(copyOf(projectPriceGroups(singles(painted), book)[0].item!)).toEqual(copyOf(final));
+  const underdog = { headline: 'New England leads after starting at 38%', reason: 'Upset brewing', context_summary: 'New England leads 14-10' };
+  const withheld = said(event({ '1': 3 }, null, 'in_progress', null), underdog);
+  book = adoptPriceCards(new Map(), [painted], { items: [withheld], dispositions: { 'event-1': 'withheld' }, built_at: 100 }, ALLOW);
+  const shown = projectPriceGroups(singles(painted), book)[0].item!;
+  expect((shown.data as { current_odds: unknown }).current_odds).toBeNull();
+  expect(copyOf(shown)).toEqual(underdog);
+});

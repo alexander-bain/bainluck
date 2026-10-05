@@ -159,6 +159,11 @@ function retainedMarketFence(incoming: FeedItem, held: FeedItem, previous?: Mark
   return { clocks, withdrawn: [...withdrawn] };
 }
 
+// An event leaf's sentence is the producer's claim about that leaf's own
+// price and score, so it travels with them; holding it beside a newer chance
+// paints "91%" next to a "90%" claim (#5439).
+const EVENT_LEAF_COPY = ['headline', 'reason', 'context_summary'] as const;
+
 function withPriceBody(held: FeedItem, fresh: FeedItem): FeedItem {
   // Keep editorial identity/copy and image treatment while replacing the whole
   // normalized source/price body. Never manufacture a standalone group price.
@@ -167,7 +172,15 @@ function withPriceBody(held: FeedItem, fresh: FeedItem): FeedItem {
   for (const key of ['name', 'hook_description', 'image_url', 'image_width', 'image_height']) {
     if (key in old) data[key] = old[key];
   }
-  return { ...held, data: data as unknown as FeedItem['data'] };
+  const item = { ...held, data: data as unknown as FeedItem['data'] } as unknown as Record<string, unknown>;
+  if (fresh.type === 'event') {
+    // Null or absent clears the held text: no fallback to the older claim.
+    for (const key of EVENT_LEAF_COPY) {
+      if (key in fresh) item[key] = fresh[key];
+      else delete item[key];
+    }
+  }
+  return item as unknown as FeedItem;
 }
 
 export function projectPriceGroups(groups: DiscoverGroupedItem[], book: PriceBook): DiscoverGroupedItem[] {
