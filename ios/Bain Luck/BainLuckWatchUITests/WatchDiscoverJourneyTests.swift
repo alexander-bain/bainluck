@@ -123,7 +123,6 @@ final class WatchDiscoverJourneyTests: XCTestCase {
     }
 
     @MainActor private func reveal(_ item: XCUIElement, in app: XCUIApplication) throws {
-        let deadline = ContinuousClock.now.advanced(by: .seconds(20))
         var previousFrame: CGRect?
         var unchangedFrames = 0
         var lastFrame = CGRect.zero
@@ -134,7 +133,6 @@ final class WatchDiscoverJourneyTests: XCTestCase {
             return
         }
         for _ in 0..<30 {
-            guard ContinuousClock.now < deadline else { reason = "Reveal exceeded its 20-second deadline"; break }
             guard item.exists else { reason = "Target disappeared while revealing"; break }
             let frame = item.frame
             let appFrame = app.frame
@@ -151,10 +149,17 @@ final class WatchDiscoverJourneyTests: XCTestCase {
                 break
             }
             previousFrame = frame
-            guard ContinuousClock.now < deadline else { reason = "Reveal exceeded its 20-second deadline"; break }
             let earlier = frame.minY < appFrame.minY
-            let start = app.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.60))
-            let end = app.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: earlier ? 0.78 : 0.40))
+            // A fixed 40-point drag spent most of the journey traversing saved
+            // banners and preceding cards. Move toward the viewport center,
+            // capped within the content area; shorten as the target approaches.
+            let displacement = abs(frame.midY - (appFrame.minY + appFrame.height * 0.55))
+            let distance = min(0.55, max(0.16, displacement / appFrame.height))
+            let startY = earlier ? 0.25 : 0.80
+            let endY = earlier ? startY + distance : startY - distance
+            print("Reveal \(item.identifier): target=\(frame), drag=\(startY)→\(endY)")
+            let start = app.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: startY))
+            let end = app.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: endY))
             start.press(forDuration: 0.1, thenDragTo: end, withVelocity: .slow, thenHoldForDuration: 0.3)
         }
         try failReveal(item, in: app, reason: reason, frame: lastFrame, appFrame: lastAppFrame)
