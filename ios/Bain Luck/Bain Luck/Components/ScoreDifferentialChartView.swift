@@ -23,6 +23,11 @@ struct ScoreDifferentialChartView: View {
     var homeTeamLogo: String?
     var awayTeamLogo: String?
     var forcedDomain: ClosedRange<Date>?
+    /// #4974 — the page's ORIGINAL window, handed over when stored checkpoints
+    /// widened `forcedDomain` past it. Bounds the score rows drawn and where the
+    /// final margin is carried to (`actualCarryEdge`); the axis stays
+    /// `forcedDomain`'s. Nil draws exactly as before.
+    var legacyDataDomain: ClosedRange<Date>?
     /// #1833 — the narrowest inline plot on the page (`PageAxisPlotWidthPreferenceKey`),
     /// so this axis takes the SAME stride as the Win Probability chart above it
     /// rather than the one rung finer its wider plot would clear alone.
@@ -457,6 +462,16 @@ struct ScoreDifferentialChartView: View {
         return sorted + [(date: edge, diff: last.diff)]
     }
 
+    /// #4974 — where the final margin is carried to: the axis's right edge, or
+    /// the page's original window's when that is earlier. Stored checkpoints
+    /// widen the axis to their insertion times; carrying the score across that
+    /// tail would draw a margin nobody observed there.
+    static func actualCarryEdge(axis: ClosedRange<Date>,
+                                legacyDataDomain: ClosedRange<Date>?) -> Date {
+        guard let legacyDataDomain else { return axis.upperBound }
+        return min(axis.upperBound, legacyDataDomain.upperBound)
+    }
+
     /// Merge projected and actual into unified points. Extracted so the
     /// unit-gated early return above shares one exit with the normal path.
     private func mergeDiffPoints(
@@ -482,6 +497,10 @@ struct ScoreDifferentialChartView: View {
         // #8481 — nothing is drawn outside the window the axis shows; the chart's
         // x-scale does not clip its marks.
         let contained = merged.filter { SharedChartWindow.contains($0.date, in: forcedDomain) }
+            // #4974 — and nothing past the page's original window, on top of the
+            // axis cut: a score row stamped in the checkpoint-widened tail is
+            // one the original window excluded.
+            .filter { SharedChartWindow.contains($0.date, in: legacyDataDomain) }
         if let endDate {
             return contained.filter { $0.date <= endDate }
         }
@@ -551,7 +570,7 @@ struct ScoreDifferentialChartView: View {
             } else {
                 let steps = Self.actualSteps(
                     dataPoints.compactMap { p in p.actualDiff.map { (date: p.date, diff: $0) } },
-                    carriedTo: domain.upperBound)
+                    carriedTo: Self.actualCarryEdge(axis: domain, legacyDataDomain: legacyDataDomain))
                 ForEach(Array(steps.enumerated()), id: \.offset) { _, step in
                     LineMark(
                         x: .value("Time", step.date),
