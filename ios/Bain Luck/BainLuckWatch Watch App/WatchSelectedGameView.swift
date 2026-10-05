@@ -15,6 +15,9 @@ struct WatchSelectedGameView: View {
     @StateObject private var picker: WatchGamePickerStore
     @State private var choosingGame = false
     @State private var showingHandoffHelp = false
+    #if DEBUG
+    @State private var launcherOpenCount = 0
+    #endif
     @State private var refreshGeneration = 0
     @State private var gamesRefreshGeneration = 0
 
@@ -26,7 +29,7 @@ struct WatchSelectedGameView: View {
             return
         }
         #endif
-        _store = StateObject(wrappedValue: WatchSelectedGameStore())
+        _store = StateObject(wrappedValue: WatchSelectedGameStore(publish: WatchComplicationPublisher.publish))
         _picker = StateObject(wrappedValue: WatchGamePickerStore(transport: WatchDiscoverGameTransport()))
     }
 
@@ -68,9 +71,35 @@ struct WatchSelectedGameView: View {
                     }
                     Button("Choose another game") { choosingGame = true }
                         .accessibilityIdentifier("watch.choose-another")
+                    Button("Clear selected game") {
+                        choosingGame = false
+                        showingHandoffHelp = false
+                        store.clearSelection()
+                    }
+                    .accessibilityIdentifier("watch.clear-selection")
                 }
+                #if DEBUG
+                if WatchUIFixture.current?.launchReceipt == true {
+                    Text("Launcher opens: \(launcherOpenCount)")
+                        .font(.footnote)
+                        .accessibilityIdentifier("watch.launch-receipt")
+                    Text(WatchUIFixture.processID).font(.footnote)
+                        .accessibilityIdentifier("watch.launch-process")
+                }
+                #endif
             }
             .padding(.horizontal, 6)
+        }
+        .onOpenURL { url in
+            guard WatchLaunchRoute.accepts(url) else { return }
+            #if DEBUG
+            launcherOpenCount += 1
+            #endif
+            // Warm launch must reveal the retained choice, not a picker/help overlay.
+            // Existing foreground refresh rules still own all network scheduling.
+            choosingGame = false
+            showingHandoffHelp = false
+            scroll.scrollTo("watch.game.top", anchor: .top)
         }
         .navigationTitle("Your game")
         .userActivity(GameContinuation.activityType, element: continuationEventID) { id, activity in
@@ -90,16 +119,43 @@ struct WatchSelectedGameView: View {
             await store.runForegroundRefresh()
         }
         .sheet(isPresented: $choosingGame) {
-            ScrollView { gamePicker.padding(.horizontal, 6) }
-                .navigationTitle("Choose a game")
-                .task(id: "\(scenePhase)-\(gamesRefreshGeneration)") {
-                    guard scenePhase == .active else { return }
-                    await picker.refresh()
+            NavigationStack {
+                ScrollView { gamePicker.padding(.horizontal, 6) }
+                    .navigationTitle("Choose a game")
+                    .toolbar {
+                        if store.selectedEventID != nil {
+                            ToolbarItem(placement: .cancellationAction) {
+                                Button("Your game") { choosingGame = false }
+                                    .accessibilityLabel("Back to your game")
+                                    .accessibilityIdentifier("watch.picker-cancel")
+                            }
+                        }
+                    }
+                    .task(id: "\(scenePhase)-\(gamesRefreshGeneration)") {
+                        guard scenePhase == .active else { return }
+                        await picker.refresh()
+                    }
+            }
+            #if DEBUG
+            .transformEnvironment(\.dynamicTypeSize) { size in
+                // The injected layout-stress category does not cross watchOS
+                // sheet presentation automatically. Extend fixtures only.
+                if WatchUIFixture.current != nil,
+                   ProcessInfo.processInfo.environment["BAINLUCK_WATCH_UI_LARGE_TEXT"] == "1" {
+                    size = dynamicTypeSize
                 }
+            }
+            #endif
         }
         .onChange(of: store.selectedEventID) { _, _ in
             // A new choice must reveal its identity, not inherit the old game's scroll.
             scroll.scrollTo("watch.game.top", anchor: .top)
+        }
+        .onChange(of: choosingGame) { wasChoosing, isChoosing in
+            if wasChoosing && !isChoosing && store.selectedEventID != nil {
+                // Returning from the picker reveals the retained game's identity.
+                scroll.scrollTo("watch.game.top", anchor: .top)
+            }
         }
         }
     }
@@ -222,12 +278,12 @@ struct WatchSelectedGameView: View {
 
     private var gamePicker: some View {
         VStack(alignment: .leading, spacing: 10) {
-            Text("Choose one game to follow")
-                .font(.headline)
+            WatchPickerHeading()
             if picker.isLoading && picker.games.isEmpty {
                 ProgressView("Loading games")
             } else if let error = picker.errorMessage {
                 Text(error).font(.footnote).foregroundStyle(.orange)
+                    .accessibilityIdentifier("watch.picker-error")
                 if !picker.games.isEmpty {
                     Text("Showing the previously received list.")
                         .font(.footnote).foregroundStyle(.secondary)
@@ -266,4 +322,20 @@ struct WatchSelectedGameView: View {
         }
     }
 
+}
+
+private struct WatchPickerHeading: View {
+    #if DEBUG
+    @Environment(\.dynamicTypeSize) private var dynamicTypeSize
+    #endif
+
+    var body: some View {
+        Text("Choose your game")
+            .font(.headline)
+            .accessibilityIdentifier("watch.picker-heading")
+            #if DEBUG
+            // Read the heading's own environment, including a presented sheet.
+            .accessibilityValue(WatchUIFixture.current == nil ? "" : String(describing: dynamicTypeSize))
+            #endif
+    }
 }

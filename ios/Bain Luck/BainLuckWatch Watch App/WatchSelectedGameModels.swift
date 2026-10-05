@@ -52,12 +52,12 @@ nonisolated struct WatchSelectedGame: Codable, Sendable, Identifiable {
         switch status?.lowercased() {
         case "completed", "final": return "Final"
         case "closed": return "Closed · result unverified"
-        case "live": return "Live"
+        case "live", "in_progress": return "Live"
         default: return status?.capitalized ?? "Game state unavailable"
         }
     }
 
-    var isLive: Bool { status?.lowercased() == "live" }
+    var isLive: Bool { ["live", "in_progress"].contains(status?.lowercased() ?? "") }
     var liveClockText: String? {
         // The shared formatter normalizes once. Pre-normalizing an inning
         // ("Bottom 3rd" -> "3rd") makes a second pass misread it as Q3.

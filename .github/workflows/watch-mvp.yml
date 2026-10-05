@@ -13,6 +13,8 @@ on:
       - 'ios/Bain Luck/Bain Luck/Bain_LuckApp.swift'
       - 'ios/Bain Luck/Bain-Luck-Info.plist'
       - 'ios/Bain Luck/BainLuckWatch-Info.plist'
+      - 'ios/Bain Luck/BainLuckComplication-Info.plist'
+      - 'ios/Bain Luck/BainLuckWatchShared.entitlements'
       - 'ios/Bain Luck/BainLuckTests/GameContinuationTests.swift'
       - 'ios/Bain Luck/Bain Luck/Utilities/RenderedPercent.swift'
       - 'ios/Bain Luck/Bain Luck/Utilities/DrawPricedWinner.swift'
@@ -42,6 +44,8 @@ on:
       - 'ios/Bain Luck/Bain Luck/Bain_LuckApp.swift'
       - 'ios/Bain Luck/Bain-Luck-Info.plist'
       - 'ios/Bain Luck/BainLuckWatch-Info.plist'
+      - 'ios/Bain Luck/BainLuckComplication-Info.plist'
+      - 'ios/Bain Luck/BainLuckWatchShared.entitlements'
       - 'ios/Bain Luck/BainLuckTests/GameContinuationTests.swift'
       - 'ios/Bain Luck/Bain Luck/Utilities/RenderedPercent.swift'
       - 'ios/Bain Luck/Bain Luck/Utilities/DrawPricedWinner.swift'
@@ -142,7 +146,9 @@ jobs:
       cancel-in-progress: true
     needs: watch-mvp
     runs-on: xcode-27
-    timeout-minutes: 35
+    # Fresh paired companion preparation took ~23m on the hosted runner.
+    # Preserve the full UI suite and its 180s per-test limit after setup.
+    timeout-minutes: 60
     env:
       DEVELOPER_DIR: /Applications/Xcode_27.0.app/Contents/Developer
     steps:

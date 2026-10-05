@@ -16,6 +16,7 @@ actor Stub: WatchSelectedGameTransport {
 
 @main struct Checks {
     @MainActor static func main() async throws {
+        try await runComplicationChecks()
         try checkWatchProbabilityFormatting()
         let suite = "watch-selected-game-tests-\(UUID().uuidString)"
         let defaults = UserDefaults(suiteName: suite)!
@@ -124,6 +125,15 @@ actor Stub: WatchSelectedGameTransport {
         precondition(WatchSelectedGameStore(defaults: defaults).game == nil)
         let live = try event(extras: ",\"status\":\"live\",\"home_score\":10,\"away_score\":0,\"commence_time\":\"2020-01-01T00:00:00Z\"")
         precondition(live.isLive && !live.isFinal)
+        let liveAlias = try event(extras: ",\"status\":\"in_progress\"")
+        precondition(liveAlias.isLive && liveAlias.stateLabel == "Live" && !liveAlias.isFinal,
+                     "Supported in_progress alias has the same detail live semantics")
+        precondition(WatchSelectedGame.stateLabel(for: "in_progress") == "Live",
+                     "Picker and detail use the same live alias label")
+        for status in ["scheduled", "closed", "unknown"] {
+            let nonLive = try event(extras: ",\"status\":\"\(status)\"")
+            precondition(!nonLive.isLive, "Only supported live states get live cadence and freshness treatment")
+        }
         let final = try event(extras: ",\"status\":\"completed\"")
         precondition(final.isFinal && !final.showsForecast)
         let closed = try event(extras: ",\"status\":\"closed\",\"home_score\":3,\"away_score\":1,\"hero_probability\":0.9")
@@ -221,6 +231,7 @@ actor Stub: WatchSelectedGameTransport {
         precondition(errorStore.errorMessage == nil)
         errorStore.clearSelection()
         try await checkWatchHTTPTransport()
+        checkWatchLaunchRoute()
         checkWatchContinuation()
         try await checkWatchGamePicker()
         try await checkWatchGameFlow()
@@ -252,7 +263,7 @@ actor Stub: WatchSelectedGameTransport {
         lifecycle.select(eventID: 10)
         await refreshLifecycle(.failure(URLError(.notConnectedToInternet)))
         precondition(lifecycle.nextRefreshDelay == 30, "A new selection starts with the first failure delay")
-        for (status, delay) in [("live", 30), ("scheduled", 300)] as [(String, TimeInterval)] {
+        for (status, delay) in [("live", 30), ("in_progress", 30), ("scheduled", 300), ("closed", 300), ("unknown", 300)] as [(String, TimeInterval)] {
             var sleeps: [TimeInterval] = []
             let loop = Task {
                 await lifecycle.runForegroundRefresh { interval in
