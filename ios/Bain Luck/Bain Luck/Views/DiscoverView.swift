@@ -112,12 +112,13 @@ struct DiscoverView: View {
     /// The view model this launch runs. Production: the ordinary client, network
     /// feed and last-good cache. A DEBUG launch passing `-launch_fixed_feed`
     /// (#9648's controlled acceptance) gets `FixedDiscoverFeed` with no last-good
-    /// and no price client instead; the `#if` makes that branch absent from a
-    /// Release binary, not merely unreached.
+    /// and no price client instead — unless it also armed #10399's restored-deck
+    /// runtime, whose FIXTURE seed is the last-good; the `#if` makes that branch
+    /// absent from a Release binary, not merely unreached.
     private static func makeViewModel() -> DiscoverViewModel {
         #if DEBUG
         if let fixed = FixedDiscoverFeed.launchClient() {
-            return DiscoverViewModel(client: fixed, lastGood: nil)
+            return DiscoverViewModel(client: fixed, lastGood: fixed.restored?.lastGood)
         }
         #endif
         return DiscoverViewModel()
@@ -1346,16 +1347,45 @@ struct DiscoverView: View {
                 case .failure(let failure): return "FIXTURE FAILED · \(failure)"
                 }
             }()
-            Text(word)
-                .font(.system(size: 9, weight: .bold).monospacedDigit())
+            VStack(alignment: .leading, spacing: 4) {
+                Text(word)
+                    .font(.system(size: 9, weight: .bold).monospacedDigit())
+                    .foregroundStyle(.white)
+                    .padding(.horizontal, 6)
+                    .padding(.vertical, 2)
+                    .background(Capsule().fill(Color.black.opacity(0.7)))
+                    .padding(.leading, 6)
+                    .allowsHitTesting(false)
+                    .accessibilityIdentifier("discover-fixed-feed-receipt")
+                    .accessibilityValue(receipt)
+                if let restored = FixedDiscoverRestoredDeck.active {
+                    restoredDeckControls(restored)
+                }
+            }
+        }
+    }
+
+    /// #10399: the explicit release of the held first response, and the ordered
+    /// log as its own element. The log is written off the main actor, so it is
+    /// re-read on a short timeline rather than waiting for the next body pass.
+    @ViewBuilder
+    private func restoredDeckControls(_ restored: FixedDiscoverRestoredDeck) -> some View {
+        TimelineView(.periodic(from: .now, by: 0.5)) { _ in
+            let text: String = {
+                guard let data = try? JSONSerialization.data(
+                    withJSONObject: restored.snapshot(), options: [.sortedKeys])
+                else { return "{}" }
+                return String(decoding: data, as: UTF8.self)
+            }()
+            Button("RELEASE FRESH · DEBUG") { restored.release() }
+                .font(.system(size: 9, weight: .bold))
                 .foregroundStyle(.white)
                 .padding(.horizontal, 6)
-                .padding(.vertical, 2)
-                .background(Capsule().fill(Color.black.opacity(0.7)))
+                .padding(.vertical, 3)
+                .background(Capsule().fill(Color.red.opacity(0.8)))
                 .padding(.leading, 6)
-                .allowsHitTesting(false)
-                .accessibilityIdentifier("discover-fixed-feed-receipt")
-                .accessibilityValue(receipt)
+                .accessibilityIdentifier("discover-restored-deck-release")
+                .accessibilityValue(text)
         }
     }
     #endif
@@ -1962,6 +1992,9 @@ struct DiscoverView: View {
             }
         }
         .onAppear {
+            #if DEBUG
+            FixedDiscoverRestoredDeck.active?.record("discover_appeared")
+            #endif
             AnalyticsService.trackScreen(name: "discover", type: "discover")
             priceViewVisible = true
             vm.setPriceDeliveryActive(priceScenePhase == .active)
@@ -1980,7 +2013,11 @@ struct DiscoverView: View {
                 // already-populated Discover stamps no new render generation, so
                 // arming it would report a full screen as blank.
                 ScreenTimingSession.armScreen(surface: ScreenTimingSurface.discover)
+                #if DEBUG
+                await Self.loadForInitialAppearanceObservingRestoredDeck(vm)
+                #else
                 await Self.loadForInitialAppearance(vm)
+                #endif
             }
             // Gated with the refresh path's copy (#1472): the only view that
             // reads `resolutions` is the digest card above, and it is behind this
@@ -1993,6 +2030,9 @@ struct DiscoverView: View {
             }
         }
         .onDisappear {
+            #if DEBUG
+            FixedDiscoverRestoredDeck.active?.record("discover_disappeared")
+            #endif
             priceViewVisible = false
             vm.setPriceDeliveryActive(false)
             // The reader left. Stands the deadline down, and reports a screen they
@@ -2008,6 +2048,13 @@ struct DiscoverView: View {
                 outcome: vm.error == nil ? "empty" : "error"
             )
         }
+        #if DEBUG
+        .onChange(of: vm.isShowingCachedContent) { _, cached in
+            // #10399: what the screen was given to draw, as the view saw it.
+            FixedDiscoverRestoredDeck.active?.record(
+                cached ? "seed_painted" : "network_painted", "items=\(vm.items.count)")
+        }
+        #endif
         .onChange(of: vm.firstRenderGeneration) { _, _ in
             // Generation-keyed acknowledgement (L2-212 Item 2 / C76): fires when the
             // view model stamps a new render token even if the refresh retains the
@@ -2164,6 +2211,35 @@ struct DiscoverView: View {
     static func loadForInitialAppearance(_ model: DiscoverViewModel) async -> DiscoverLoadOutcome {
         await Task { @MainActor in await model.load() }.value
     }
+
+    #if DEBUG
+    /// #10399's runtime observation of the MOUNTED appearance task. Without the
+    /// restored-deck runtime this is exactly ``loadForInitialAppearance``. With it,
+    /// the same call is wrapped in a cancellation handler that only RECORDS that
+    /// SwiftUI cancelled this task — it does not cancel, shield or replace
+    /// anything — and the negative comparison arm awaits `load()` directly, the
+    /// pre-#10399 shape.
+    @MainActor
+    static func loadForInitialAppearanceObservingRestoredDeck(
+        _ model: DiscoverViewModel,
+        runtime: FixedDiscoverRestoredDeck? = FixedDiscoverRestoredDeck.active
+    ) async {
+        guard let runtime, case .success(let arm) = runtime.arm else {
+            await loadForInitialAppearance(model)
+            return
+        }
+        runtime.record("appearance_owner_started", arm.rawValue)
+        let outcome = await withTaskCancellationHandler {
+            switch arm {
+            case .current: return await loadForInitialAppearance(model)
+            case .oldDirectLoad: return await model.load()
+            }
+        } onCancel: {
+            runtime.record("appearance_owner_cancelled")
+        }
+        runtime.record("appearance_owner_returned", "outcome=\(outcome) task_cancelled=\(Task.isCancelled)")
+    }
+    #endif
 
     /// One refresh path, with one caller-supplied difference: where the reader
     /// ends up.
