@@ -35618,6 +35618,12 @@ def _format_event_with_aggregated_odds(event: Event, odds_data: Optional[dict], 
         # #4580 — the scoreboard, so a sentence that names the field can check it.
         home_score=event.home_score,
         away_score=event.away_score,
+        # #10561 — and the score's own observation stamp, so "Upset brewing"
+        # needs a score read within five minutes of the clock `compute_highlight`
+        # takes once for every flag. Without it the label fails closed to
+        # "Odds moved"; with it a fresh lead keeps its label.
+        score_source=getattr(event, "score_source", None),
+        score_observed_at=getattr(event, "score_observed_at", None),
     )
 
     response["highlight"] = {

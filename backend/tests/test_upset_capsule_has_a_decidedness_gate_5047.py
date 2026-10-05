@@ -69,6 +69,9 @@ def _live(
         home_score=home_score,
         away_score=away_score,
         now=NOW,
+        # #10561 — a score observed at NOW, so a present-tense lead may speak.
+        score_source="espn",
+        score_observed_at=NOW,
     )
 
 

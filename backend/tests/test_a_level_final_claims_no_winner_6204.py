@@ -34,11 +34,14 @@ defect wearing the other sign.
 """
 
 import ast
+from datetime import datetime, timezone
 from pathlib import Path
 
 import pytest
 
 import app.utils.feed_reasons as fr
+
+_LIVE_NOW = datetime(2026, 9, 20, 19, 40, tzinfo=timezone.utc)
 
 
 def reason(**overrides):
@@ -215,6 +218,10 @@ class TestAGenuineUpsetIsUnchanged:
                 away_score=away_score,
                 home_probability=0.4,
                 away_probability=0.6,
+                # #10561 — a live lead is claimable only from a current score.
+                score_source="espn",
+                score_observed_at=_LIVE_NOW,
+                now=_LIVE_NOW,
             )
             == expected
         )

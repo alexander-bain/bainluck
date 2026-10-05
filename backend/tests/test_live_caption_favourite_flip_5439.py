@@ -153,7 +153,11 @@ class TestWhatTheFlipArmRefuses:
         ) is None
 
     def test_an_underdog_lead_still_outranks_the_flip(self):
-        claim = _claim(home_score=2, away_score=0)
+        # #10561 — a lead is only claimable from a current score observation.
+        claim = _claim(
+            home_score=2, away_score=0,
+            score_source="espn", score_observed_at=NOW, now=NOW,
+        )
         assert claim is not None and claim.claim_type == "underdog_lead"
 
 
