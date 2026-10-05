@@ -1,0 +1,17 @@
+# W3.2 durable activity delivery reservation — #10556
+
+PILLAR: TRUTH · FORMATTING
+
+SHIP: A followed game keeps its ordered background update/end delivery after a worker restart without sending with a replaced or revoked token.
+
+This unmounted source composes #10548 state, #10554 mocked transport and #10553 account-owned registration. It installs no task, scheduler, production caller or configuration. No migration was applied, real APNs call occurred or suspended-device acceptance is claimed.
+
+`ActivityKitDelivery` persists state, exact command bytes, registration version/token hash and an expiring lease. Credentials remain solely in the registration table. The migration chains after the unapplied registration migration. The JSON codec preserves original producer clocks, high-water fences, terminal/stop latches, command timestamps and finite retry counts across restart.
+
+`observe` and `reserve` lock registration then delivery in fixed order; the registration lock serializes first-row creation. Reservation commits before I/O. `send` reacquires both locks and validates active registration, version/token hash, lease/attempt and identity. It holds those locks over at most 25 seconds of transport I/O. Revocation/replacement that wins first fences the request. A send that wins first completes before the mutation; it cannot retroactively retract an APNs request. Final/stop observed before dispatch suppresses the reserved live update. Holding a transaction over I/O is deliberate and bounded; production pool/worker capacity is not assessed or configured.
+
+Expired leases or changed registration recover uncertain attempts with identical command bytes and ordering timestamps, consuming the existing retry budget. Newer pending state supersedes an uncertain update. Stale lease/attempt acknowledgments never advance state. A crash after APNs acceptance but before commit can repeat the same command; the transport retains its deterministic APNs id. This is at-least-once source behavior, not exactly-once delivery or a device receipt. Invalid-token results halt this state; automatic credential tombstone mutation is not mounted. Retry-After is honored alongside finite state-policy delays. Operational completion time never becomes an observation time.
+
+Local restart/codec gates are separate from seven PostgreSQL cases: concurrent reservations, restart recovery/old acknowledgment, replacement, revocation, final precedence, send-lock/revoke/duplicate serialization, and Retry-After across restart. The PostgreSQL gate requires hosted disposable `bl_searchtest` and random isolated schema, refuses other databases, and rejects skips in CI. Locally skipped PostgreSQL cases are unpaid.
+
+Remaining integration: independent/shared boundary review, exact-head hosted checks including PostgreSQL races, event-revision producer and orchestration, approved APNs credentials/configuration, real suspended-device receipt under #10543, and Integrator composition/merge. iPhone token lifecycle remains the HTTP lane's work.

@@ -233,6 +233,7 @@
     "#837 every benchmark price reaches the number at the default floor (real Postgres)",
     "#9050 source retirement preserves concurrent live prices (real Postgres)",
     "#9051 the fold's revision vector orders two reads of a folded blend (real Postgres)",
-    "#10542 ActivityKit registration ownership (real Postgres)"
+    "#10542 ActivityKit registration ownership (real Postgres)",
+    "#10556 durable ActivityKit reservations (real Postgres)"
   ]
 }
