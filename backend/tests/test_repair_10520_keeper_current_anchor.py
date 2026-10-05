@@ -1186,6 +1186,31 @@ def test_stdin_frames_split_bound_and_time_out_on_a_real_pipe(monkeypatch):
 
     asyncio.run(run())
 
+
+def test_stdin_frames_reads_a_descriptor_the_selector_refuses_directly(tmp_path):
+    """Linux epoll refuses a regular file or /dev/null; such a descriptor cannot wait
+    on a peer, so it is read without the selector."""
+    path = tmp_path / "frames"
+    path.write_bytes(b"a\nb")
+    refused = []
+
+    async def run():
+        loop = asyncio.get_running_loop()
+
+        def add_reader(fd, cb):
+            refused.append(fd)
+            raise PermissionError(1, "Operation not permitted")
+
+        loop.add_reader = add_reader
+        fd = os.open(path, os.O_RDONLY)
+        try:
+            frames = r.StdinFrames(fd)
+            return [await frames.line(1), await frames.line(1), await frames.line(1)]
+        finally:
+            os.close(fd)
+
+    assert asyncio.run(run()) == [b"a\n", b"b", None] and refused
+
 @needs_postgres
 @pytest.mark.parametrize("host", ["silent", "acknowledges"])
 async def test_the_real_cli_with_stdin_held_open_exits_and_commits_only_on_the_ack(drive_db, tmp_path, host):
