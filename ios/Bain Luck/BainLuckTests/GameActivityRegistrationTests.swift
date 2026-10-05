@@ -191,5 +191,58 @@ import XCTest
         XCTAssertEqual(subject.unconfirmedRevocations, ["activity"])
     }
 
+    func testRestartPreservesStopBeforeInFlightRegistrationAcknowledges() async {
+        let name = "GameActivityRegistrationRestartTests.\(UUID().uuidString)"
+        let defaults = UserDefaults(suiteName: name)!
+        defer { defaults.removePersistentDomain(forName: name) }
+        let transport = RegistrationTransportFake()
+        let original = GameActivityRegistrationCoordinator(transport: transport, defaults: defaults)
+        original.setSession(owner: 1, bearer: "test-session")
+        original.bind(id: "activity", eventID: 42)
+        original.receive(id: "activity", token: Data([1]))
+        await waitForCalls(1, transport)
+        original.stop(id: "activity")
+        // Relaunch happens before PUT/DELETE or local ActivityKit end can finish.
+        let restartedTransport = RegistrationTransportFake()
+        let restarted = GameActivityRegistrationCoordinator(transport: restartedTransport, defaults: defaults)
+        restarted.setSession(owner: 1, bearer: "test-session")
+        restarted.bind(id: "activity", eventID: 42)
+        restarted.receive(id: "activity", token: Data([1]))
+        restarted.foregroundActivated()
+        await Task.yield()
+        XCTAssertTrue(restartedTransport.calls.isEmpty, "Persisted stop cannot register again")
+        XCTAssertEqual(restarted.unconfirmedRevocations, ["activity"])
+        transport.complete(version: 1, active: true)
+        await waitForCalls(2, transport)
+        XCTAssertNil(transport.calls[1].token)
+        transport.fail(GameActivityRegistrationError.unavailable)
+        for _ in 0..<100 { await Task.yield() }
+        let offlineRestart = GameActivityRegistrationCoordinator(transport: restartedTransport, defaults: defaults)
+        offlineRestart.setSession(owner: 1, bearer: "test-refreshed-session")
+        offlineRestart.bind(id: "activity", eventID: 42)
+        offlineRestart.receive(id: "activity", token: Data([2]))
+        await Task.yield()
+        XCTAssertTrue(restartedTransport.calls.isEmpty)
+        XCTAssertEqual(offlineRestart.unconfirmedRevocations, ["activity"])
+    }
+
+    func testLogoutPersistsStopForOwnedActivityBeforeObservationRestores() async {
+        let name = "GameActivityRegistrationColdLogoutTests.\(UUID().uuidString)"
+        let defaults = UserDefaults(suiteName: name)!
+        defer { defaults.removePersistentDomain(forName: name) }
+        defaults.set(["activity": 1], forKey: "gameActivityRegistrationOwners")
+        let transport = RegistrationTransportFake()
+        let subject = GameActivityRegistrationCoordinator(transport: transport, defaults: defaults)
+        subject.invalidateSession()
+        let restarted = GameActivityRegistrationCoordinator(transport: transport, defaults: defaults)
+        restarted.setSession(owner: 1, bearer: "test-session")
+        restarted.bind(id: "activity", eventID: 42)
+        restarted.receive(id: "activity", token: Data([1]))
+        restarted.foregroundActivated()
+        await Task.yield()
+        XCTAssertTrue(transport.calls.isEmpty)
+        XCTAssertEqual(restarted.unconfirmedRevocations, ["activity"])
+    }
+
 }
 #endif

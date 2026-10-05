@@ -28,6 +28,8 @@ import Foundation
     private var session: Session?
     private var entries: [String: Entry] = [:]
     private let ownershipKey = "gameActivityRegistrationOwners"
+    private let stoppedKey = "gameActivityRegistrationStoppedIDs"
+    private var stoppedIDs: Set<String> = []
     private(set) var unconfirmedRevocations: Set<String> = []
     var canRequestPushToken: Bool { session != nil }
 
@@ -36,6 +38,8 @@ import Foundation
     init(transport: any GameActivityRegistrationTransport, defaults: UserDefaults = .standard) {
         self.transport = transport
         self.defaults = defaults
+        stoppedIDs = Set(defaults.stringArray(forKey: stoppedKey) ?? [])
+        unconfirmedRevocations = stoppedIDs
     }
 
     /// Called only after backend authentication succeeds, never on optimistic restore.
@@ -51,7 +55,17 @@ import Foundation
         // are never upgraded and another account's activity is never adopted.
         for activity in Activity<GameActivityAttributes>.activities {
             let owners = defaults.dictionary(forKey: ownershipKey) ?? [:]
-            if (owners[activity.id] as? Int) == owner { observe(activity) }
+            guard (owners[activity.id] as? Int) == owner else { continue }
+            if stoppedIDs.contains(activity.id) {
+                // A relaunch must spend persisted stop intent on DELETE only.
+                if entries[activity.id] == nil {
+                    let entry = Entry(eventID: activity.attributes.eventID, session: session!)
+                    entry.stopped = true
+                    entries[activity.id] = entry
+                    startWorker(id: activity.id, entry: entry)
+                }
+                Task { await activity.end(nil, dismissalPolicy: .immediate) }
+            } else { observe(activity) }
         }
     }
 
@@ -69,16 +83,18 @@ import Foundation
     /// for network revocation; the captured old credential lives only in bounded work.
     func invalidateSession() {
         session = nil
-        for id in Array(entries.keys) { stop(id: id) }
         let owned = defaults.dictionary(forKey: ownershipKey) ?? [:]
+        stoppedIDs.formUnion(owned.keys)
+        persistStoppedIDs()
         unconfirmedRevocations.formUnion(owned.keys)
+        for id in Array(entries.keys) { stop(id: id) }
         for activity in Activity<GameActivityAttributes>.activities where owned[activity.id] != nil {
             Task { await activity.end(nil, dismissalPolicy: .immediate) }
         }
     }
 
     func observe(_ activity: Activity<GameActivityAttributes>) {
-        guard let session, entries[activity.id] == nil else { return }
+        guard let session, entries[activity.id] == nil, !stoppedIDs.contains(activity.id) else { return }
         bind(id: activity.id, eventID: activity.attributes.eventID)
         var owners = defaults.dictionary(forKey: ownershipKey) ?? [:]
         owners[activity.id] = session.owner
@@ -103,7 +119,7 @@ import Foundation
 
     // Separate from ActivityKit for deterministic lifecycle tests.
     func bind(id: String, eventID: Int) {
-        guard let session, entries[id] == nil else { return }
+        guard let session, entries[id] == nil, !stoppedIDs.contains(id) else { return }
         entries[id] = Entry(eventID: eventID, session: session)
     }
     func receive(id: String, token: Data) {
@@ -114,6 +130,9 @@ import Foundation
     func stop(id: String) {
         guard let entry = entries[id] else { return }
         entry.stopped = true
+        // Write the latch before launching either network or local ending work.
+        stoppedIDs.insert(id)
+        persistStoppedIDs()
         entry.observation?.cancel()
         entry.observation = nil
         entry.stateObservation?.cancel()
@@ -133,8 +152,16 @@ import Foundation
             }
         }
     }
+    private func persistStoppedIDs() {
+        defaults.set(Array(stoppedIDs).sorted(), forKey: stoppedKey)
+        // Unlike ordinary preferences, this is a crash-recovery latch. Flush it
+        // before allowing asynchronous network or ActivityKit work to begin.
+        _ = defaults.synchronize()
+    }
     private func acknowledgeRevocation(id: String) {
         unconfirmedRevocations.remove(id)
+        stoppedIDs.remove(id)
+        persistStoppedIDs()
         var owners = defaults.dictionary(forKey: ownershipKey) ?? [:]
         owners.removeValue(forKey: id)
         defaults.set(owners, forKey: ownershipKey)
