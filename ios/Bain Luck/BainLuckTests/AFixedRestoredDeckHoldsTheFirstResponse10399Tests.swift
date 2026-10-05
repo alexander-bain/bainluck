@@ -144,7 +144,8 @@ final class AFixedRestoredDeckHoldsTheFirstResponse10399Tests: XCTestCase {
 
     func testTheSeedIsAgedAndServedOnlyToItsOwnNamespace() async throws {
         let anon = runtime(seed: seedBytes([7, 8]))
-        let served = try XCTUnwrap(await anon.serveSeed())
+        let reading = await anon.serveSeed()
+        let served = try XCTUnwrap(reading)
         XCTAssertEqual(served.identity, "anon:s1")
         XCTAssertEqual(served.age(now: Date()), 93600, accuracy: 5)
         XCTAssertEqual(served.response.items.count, 2)
