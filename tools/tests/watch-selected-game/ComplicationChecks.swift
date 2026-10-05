@@ -199,5 +199,67 @@ private actor ComplicationRaceTransport: WatchSelectedGameTransport {
     await request.value
     precondition(published.count == countAfterInvalidation && raced.game == nil,
                  "Late response for the old selection cannot republish its complication")
+    // Drive the real publication hook into ordinary temporary shared bytes.
+    // This checks the transition, not merely the projection of isolated payloads.
+    defaults.removePersistentDomain(forName: suite)
+    let finalReading = try detail("\"status\":\"completed\",\"home_score\":4,\"away_score\":2,\"score_observed_at\":\"2026-10-04T17:59:00Z\"")
+    // Same producer timestamp is intentional: corrections are authoritative even
+    // without a newer clock, and must replace the already displayed winner.
+    let correctedFinal = try detail("\"status\":\"completed\",\"home_score\":1,\"away_score\":2,\"score_observed_at\":\"2026-10-04T17:59:00Z\"")
+    var publicationCount = 0
+    let writeShared: (WatchSelectedGame?, Date?) -> Void = { game, savedAt in
+        publicationCount += 1
+        let snapshot = game.flatMap { game in savedAt.flatMap { WatchComplicationProjection.snapshot(game: game, savedAt: $0) } }
+        WatchComplicationPublisher.write(snapshot, to: directory, now: clock.addingTimeInterval(60))
+    }
+    let transitions = ComplicationTransport([.success(live), .success(finalReading), .success(correctedFinal)])
+    let seeded = WatchSelectedGameStore(transport: transitions, defaults: defaults, now: { clock }, publish: writeShared)
+    seeded.select(eventID: 101)
+    await seeded.refresh()
+    let restoredFresh = WatchSelectedGameStore(transport: transitions, defaults: defaults,
+                                               now: { clock.addingTimeInterval(60) }, publish: writeShared)
+    precondition(restoredFresh.isRestoredReading)
+    precondition(WatchComplicationSnapshot.read(from: directory, now: clock.addingTimeInterval(60))?.observedAt == observed)
+    await restoredFresh.refresh()
+    precondition(!restoredFresh.isRestoredReading && restoredFresh.game?.isFinal == true)
+    precondition(restoredFresh.fetchedAt == clock.addingTimeInterval(60))
+    let freshShared = WatchComplicationSnapshot.read(from: directory, now: clock.addingTimeInterval(60))!
+    precondition(freshShared.title == "San Francisco Giants won" && freshShared.detail == "Final · 4–2")
+    await restoredFresh.refresh()
+    let correctedShared = WatchComplicationSnapshot.read(from: directory, now: clock.addingTimeInterval(60))!
+    precondition(correctedShared.title == "Los Angeles Dodgers won" && correctedShared.detail == "Final · 2–1")
+    precondition(correctedShared.observedAt == freshShared.observedAt,
+                 "Corrected final replaces both cached and shared winner at the same producer clock")
+    precondition(WatchSelectedGameStore(defaults: defaults).game?.homeScore == 1)
+
+    let clearRace = ComplicationRaceTransport()
+    let clearing = WatchSelectedGameStore(transport: clearRace, defaults: defaults, now: { clock }, publish: writeShared)
+    let late = Task { await clearing.refresh() }
+    await clearRace.waitForRequest()
+    clearing.clearSelection()
+    let countAfterClear = publicationCount
+    await clearRace.finish(finalReading)
+    await late.value
+    precondition(publicationCount == countAfterClear && clearing.game == nil && clearing.selectedEventID == nil)
+    precondition(WatchComplicationSnapshot.read(from: directory, now: clock.addingTimeInterval(60)) == nil,
+                 "Late successful response after clear cannot resurrect the shared complication")
+    precondition(WatchSelectedGameStore(defaults: defaults).game == nil)
+
+    // Rejected app caches must also tombstone a formerly valid shared reading.
+    let cacheKey = "bainluck_watch_selected_game_snapshot_v1"
+    let encodedGame = try JSONSerialization.jsonObject(with: JSONEncoder().encode(live))
+    for (version, selectedID) in [(2, 101), (1, 202)] {
+        defaults.set(selectedID, forKey: "bainluck_watch_selected_event_id")
+        let badCache = try JSONSerialization.data(withJSONObject: ["version": version, "game": encodedGame,
+                                                                 "fetchedAt": clock.timeIntervalSinceReferenceDate])
+        defaults.set(badCache, forKey: cacheKey)
+        WatchComplicationPublisher.write(projected, to: directory, now: clock)
+        let rejected = WatchSelectedGameStore(defaults: defaults, now: { clock }, publish: writeShared)
+        precondition(rejected.game == nil && !rejected.isRestoredReading)
+        precondition(defaults.data(forKey: cacheKey) == nil)
+        precondition(WatchComplicationSnapshot.read(from: directory, now: clock) == nil,
+                     "Unsupported version or wrong selected ID must invalidate shared cached content")
+    }
+    print("PASS: restored-to-fresh shared final, same-clock corrected winner replacement, clear-race tombstone, wrong-ID/version app-cache rejection and shared invalidation")
     print("PASS: complication shared projection, producer age, final winner, fail-closed reads, tombstone, store publication and stale-response suppression")
 }
