@@ -82,6 +82,7 @@ import {
   isEstimatedBoundary,
   periodBoundaryChipLabel,
   PERIOD_LABEL_ROW_HEIGHT_PX,
+  type PeriodStripBand,
 } from "@/lib/periodMarkers";
 import { formatLiveClockLabel } from "@/lib/gameTimeLabel";
 import {
@@ -187,6 +188,19 @@ const CALLOUT_GAP_PX = 12;
  */
 const PERIOD_CHIP_BAND_PX = 15;
 /**
+ * #10502 — the same strip's row 0 when #7940 has moved it to the BOTTOM, measured
+ * UP from the plot's bottom edge.
+ *
+ * `insideBottomLeft` puts the chip's BASELINE at the label offset (5px) above
+ * the edge — read off the rendered SVG at 390px: plot bottom `y=265`, row-0 chip
+ * `y=260`. The glyph box above a baseline is 11px, from #5581's top-strip
+ * measurement (`y=20` + the `0.71em` shift = baseline `27.81`, box top `16.81`).
+ * 5 + 11 = 16, one more than the top band because the top band is measured to
+ * the box's bottom (baseline + 2) and a bottom chip's descent sits inside the
+ * label offset.
+ */
+const PERIOD_CHIP_BOTTOM_BAND_PX = 16;
+/**
  * Half the callout label's painted box — the plate, which is the widest thing
  * drawn (the glyphs sit inside it) and so the thing that must clear an edge.
  * Derived from the plate's own geometry below, not restated: `#4338` paints it
@@ -281,26 +295,46 @@ export function calloutLabelCenterY(args: {
    * label has to clear, and #7134 is what asking the boolean cost.
    */
   periodChipRows: number;
+  /**
+   * #10502 — WHICH frame the strip is drawn against (#7940). Omitted means the
+   * top, which is every chart before #7940 and every call that predates this.
+   *
+   * #7940's call site passed 0 rows for a bottom strip on the reasoning that the
+   * strip only moves down when the series is pinned UP, so the label and the
+   * strip sit at opposite ends. The band is chosen from the whole labelled span,
+   * though, and the label sits where the series ENDS: a team that led all game
+   * and lost puts the strip at the bottom and the final 0% on it.
+   * `/events/15323826` (Dodgers 2–3 Braves) printed `0%` over `B9`.
+   */
+  periodStripBand?: PeriodStripBand;
 }): number {
-  const { cy, plotTop, plotHeight, periodChipRows } = args;
+  const { cy, plotTop, plotHeight, periodChipRows, periodStripBand = "top" } = args;
   if (!Number.isFinite(plotTop) || !Number.isFinite(plotHeight) || plotHeight <= 0) return cy;
 
   // A NaN or negative count is a caller bug, and the honest answer to one is the
   // no-strip case rather than a NaN floor that would silently return the datum
   // and read exactly like "the label already fitted".
   const rows = Number.isFinite(periodChipRows) ? Math.max(0, Math.floor(periodChipRows)) : 0;
-  const band = rows > 0 ? PERIOD_CHIP_BAND_PX + (rows - 1) * PERIOD_LABEL_ROW_HEIGHT_PX : 0;
+  const rowZero = periodStripBand === "bottom" ? PERIOD_CHIP_BOTTOM_BAND_PX : PERIOD_CHIP_BAND_PX;
+  const band = rows > 0 ? rowZero + (rows - 1) * PERIOD_LABEL_ROW_HEIGHT_PX : 0;
 
   const ceiling = plotTop + plotHeight - CALLOUT_PLATE_HALF_PX;
   const insideFrame = plotTop + CALLOUT_PLATE_HALF_PX;
-  const clearOfChips = insideFrame + band;
 
   // A plot too short to hold the label at all has no honest answer; leave the
   // label where the data put it rather than invent a position. native/024's
   // "visibly wrong beats arbitrarily wrong", same call.
   if (insideFrame > ceiling) return cy;
-  // Too short to also clear the strip: staying inside the frame is the half that
-  // must not be given up, because outside it the label is not drawn at all.
+
+  // The strip takes `band` off whichever end it is drawn at. Too short to also
+  // clear it: staying inside the frame is the half that must not be given up,
+  // because outside it the label is not drawn at all.
+  if (periodStripBand === "bottom") {
+    const clearOfChips = ceiling - band;
+    const lowest = clearOfChips < insideFrame ? ceiling : clearOfChips;
+    return Math.min(Math.max(cy, insideFrame), lowest);
+  }
+  const clearOfChips = insideFrame + band;
   const floor = clearOfChips > ceiling ? insideFrame : clearOfChips;
   return Math.min(Math.max(cy, floor), ceiling);
 }
@@ -3652,16 +3686,15 @@ export default function OddsChart({
                           // list the `<ReferenceLine>` labels below are drawn
                           // from, so the band can never disagree with the ink.
                           //
-                          // #7940 — and ZERO when the strip has moved to the
-                          // bottom, because then there is no top band to clear.
-                          // This callout is the terminal-value label, which sits
-                          // wherever the series ends; the strip only moves down
-                          // when the series is pinned UP, so the two are at
-                          // opposite ends exactly when this reads 0. Keeping the
-                          // old depth here would push the callout 15–28px below
-                          // its own datum to clear a strip that is no longer
-                          // there — #5581's defect, reintroduced upside down.
-                          periodChipRows: periodStripBand === "bottom" ? 0 : periodChipRowCount,
+                          // #10502 — and the END it is drawn at (#7940). A
+                          // bottom strip is cleared from below, not skipped: the
+                          // band is chosen over the whole labelled span while
+                          // this label sits where the series ENDS, so a late
+                          // collapse puts both at the bottom. A top band is
+                          // still never paid for a bottom strip, which is the
+                          // half of #7940's reasoning that was right.
+                          periodChipRows: periodChipRowCount,
+                          periodStripBand,
                         })
                       : cy;
                   return (
