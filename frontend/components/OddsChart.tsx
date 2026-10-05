@@ -1703,7 +1703,7 @@ export default function OddsChart({
       for (const point of filteredAggregateLine) {
         const delta = homeProbToChartAxis(point.home_probability);
         const dp = ensurePoint(point.timestamp);
-        dp.bainLuckDelta = delta;
+        if (!insideRecordedWindow(parseISO(dp.timestamp).getTime(), checkpointWindow)) dp.bainLuckDelta = delta;
       }
     }
 
@@ -1783,7 +1783,18 @@ export default function OddsChart({
       lastKnown[key] = null;
     }
     for (const pt of sorted) {
+      // #4974 slice 1 — inside the recorded window the legacy blend is not
+      // drawn: the checkpoints are. The writer above already skips the window;
+      // here nothing is carried into it, and the carry restarts after it, so no
+      // legacy value bridges the window (the blend line stops joining across
+      // nulls while checkpoints are shown).
+      const inCheckpointWindow =
+        checkpointWindow !== null && insideRecordedWindow(parseISO(pt.timestamp).getTime(), checkpointWindow);
       for (const key of probKeys) {
+        if (inCheckpointWindow && key === "bainLuckDelta") {
+          lastKnown[key] = null;
+          continue;
+        }
         const val = pt[key];
         if (typeof val === "number") {
           lastKnown[key] = val;
@@ -1837,17 +1848,6 @@ export default function OddsChart({
             pt[gapKey] = fromValue + (toValue - fromValue) * f;
           }
         }
-      }
-    }
-
-    // #4974 slice 1 — inside the recorded window the legacy blend is not drawn:
-    // the checkpoints are. Withdrawn AFTER the forward-fill so no carried value
-    // survives inside it, and the blend line stops joining across nulls while
-    // checkpoints are shown, so nothing bridges legacy to legacy across the
-    // window or legacy to a checkpoint.
-    if (checkpointWindow) {
-      for (const pt of sorted) {
-        if (insideRecordedWindow(parseISO(pt.timestamp).getTime(), checkpointWindow)) pt.bainLuckDelta = null;
       }
     }
 
