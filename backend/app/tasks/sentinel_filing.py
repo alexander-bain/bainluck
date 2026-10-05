@@ -55,6 +55,18 @@ rail runs whatever the caller supplied through
     run — the exact duplicate class the rail exists to prevent, arrived at from the
     label side instead of the search-index side.
 
+**A delivery hold keeps an owned issue open on GREEN (#10526).** A sentinel's
+GREEN says its cohort is empty, not that the reader got what the issue promised:
+#10523 auto-closed twice (12:12Z, and again 12:30Z after a guarded reopen) on
+``linked_unsourced`` GREEN while its exact event still had no Kalshi price and no
+chart history and the repair was unmerged. An owner who needs the issue to outlive
+the cohort puts ONE explicit label, ``sentinel:delivery-hold``
+(:data:`DELIVERY_HOLD_LABEL`), on the canonical issue. GREEN then returns
+``held_no_close`` — no close, and no recovery comment, so a sentinel that re-checks
+GREEN every run does not bury the issue in identical notes. Only the canonical
+target's OWN label counts; RED dedup/comment/body refresh is untouched, and the
+owner removes the label when the original delivery is accepted.
+
 Read-only against production data — the rail files/updates GitHub metadata only,
 never touches market data.
 """
@@ -76,6 +88,10 @@ DEFAULT_LABELS = ["alert-intake", "needs-agent", "area:infra", "priority:p2"]
 # The dedup source (``fetch_open_alert_issues``) lists issues by this label, so an
 # issue filed without it is invisible to its own sentinel on the next run.
 SOURCE_LABEL = "alert-intake"
+
+# Opt-in, per-issue: the canonical issue carrying this label is NOT closed on GREEN
+# (#10526). The marker and ``alert-intake`` stay, so dedup is unaffected.
+DELIVERY_HOLD_LABEL = "sentinel:delivery-hold"
 
 
 def filing_labels(labels: list[str] | None) -> list[str]:
@@ -238,6 +254,20 @@ def issue_matches(
     return False
 
 
+def issue_has_label(issue: dict, label: str) -> bool:
+    """True when ``issue``'s OWN labels include ``label``. Pure (unit-tested).
+
+    Accepts the REST list shape (``[{"name": ...}]``) and bare strings; anything
+    else is not a label."""
+    if not isinstance(issue, dict):
+        return False
+    for entry in issue.get("labels") or []:
+        name = entry.get("name") if isinstance(entry, dict) else entry
+        if name == label:
+            return True
+    return False
+
+
 def find_matching_issue(
     open_issues: list[dict],
     fingerprint: str,
@@ -317,8 +347,11 @@ def reconcile_issue(
       * a plain ``list`` (back-compat) — trusted as a complete snapshot;
       * ``None`` — the rail fetches the typed list itself and no-ops on failure.
 
+    A GREEN whose canonical issue carries ``DELIVERY_HOLD_LABEL`` returns
+    ``held_no_close`` and writes nothing (#10526).
+
     Returns a dict describing the action taken. ``action`` ∈
-    {``filed``, ``commented``, ``resolved``, ``green_no_issue``,
+    {``filed``, ``commented``, ``resolved``, ``held_no_close``, ``green_no_issue``,
     ``skipped_no_token``, ``dedup_unknown_no_op``, ``filing_deferred``,
     ``comment_failed``, ``close_failed``, ``error``}."""
     from app.tasks import bug_report_github as gh
@@ -461,6 +494,14 @@ def reconcile_issue(
     existing = find_matching_issue(snapshot, fingerprint, marker_key, title_prefix=None)
     if existing is None:
         result["action"] = "green_no_issue"
+        return result
+    target = next(
+        i for i in snapshot if isinstance(i, dict) and i.get("number") == existing
+    )
+    if issue_has_label(target, DELIVERY_HOLD_LABEL):
+        # The owner has said GREEN cohort health is not delivery: leave it open,
+        # silently — a comment per GREEN run would bury the issue (#10526).
+        result.update(action="held_no_close", issue=existing, hold=DELIVERY_HOLD_LABEL)
         return result
     try:
         gh.close_issue(
