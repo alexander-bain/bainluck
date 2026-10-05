@@ -74,3 +74,25 @@ This module alone does not satisfy #10542. Subsequent implementation must:
 
 No deployment, APNs send, token collection, Apple configuration, signing or
 distribution action is included or authorized by this implementation.
+
+## Served detail projection
+
+`project_activitykit_snapshot` consumes one coherent `get_event` response, not
+an ORM row. It follows the foreground phone's valid current-home then hero
+fallback, keeping the away side from that same selected object. Shared backend
+scalar/duel rounding and draw classification determine the displayed home percent.
+The hero producer clock dates that reading only when the selected home and raw
+away pair exactly match the hero pair; sanitizing two malformed away readings
+into absence cannot establish that correspondence. Divergent current odds have
+unknown observation age; current timestamps and row writes are not substitutes.
+
+`get_event` calls `_format_event`, which emits the displayed score tuple and
+merges `score_observation_fields(event)`. That helper emits the producer clock
+alongside its source attribution. Projection retains it only with both displayed
+scores and a nonempty source. A test invokes the real formatter and passes its
+response through the projection. The foreground Swift `EventDetail` currently
+does not decode this score clock, so this backend contract provides more score-age
+information than the current foreground adapter; phone decoding remains separate.
+
+Canonical backend finished-state authority determines final/closed suppression;
+score comparisons and probability extremes never establish a result or winner.
