@@ -375,6 +375,18 @@ def test_host_staging_writes_exactly_the_bytes_it_hashes(tmp_path):
     assert again["state"] == r.REFUSED and again["reason"] == "backup_path_exists"
 
 
+@pytest.mark.parametrize("which", ["plan_hash", "backup_hash"])
+def test_drive_apply_refuses_a_foreign_hash_before_it_spawns_anything(tmp_path, which):
+    _, sa = _staged(tmp_path)
+    hashes = {"plan_hash": sa["apply_argv"]["--plan-hash"], "backup_hash": sa["apply_argv"]["--backup-hash"]}
+    hashes[which] = "0" * 64
+    out = asyncio.run(r.drive_apply(apply_input=sa["apply_input"]["path"], output=str(tmp_path / "apply.jsonl"),
+                                    receipt_out=str(tmp_path / "created-row.json"), env=HOST,
+                                    prefix=("/nonexistent/never-spawned",), **hashes))
+    assert out["state"] == r.REFUSED and out["reason"] == f"{which.split('_')[0]}_hash_mismatch", out
+    assert not (tmp_path / "apply.jsonl").exists() and not (tmp_path / "created-row.json").exists()
+
+
 class _Frames:
     def __init__(self, *frames):
         self.frames = list(frames)
