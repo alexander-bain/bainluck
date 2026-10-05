@@ -452,8 +452,16 @@ def sportsbook_spread_is_a_margin(sport_key: Optional[str]) -> bool:
     15318355, home 0.50, 2026-09-25). Same misreading as #8613 in the stat
     model. Mirrors the web's ``sportsbookSpreadIsAMargin`` (baseball false,
     everything else true). An unknown sport keeps the old answer.
+
+    #9006. A fight has no points score: its total is a ROUNDS line and its
+    spread is no margin, so event 15314292 (UFC, spread -7.5, total 3.7) was
+    stored as ``5.8 – -1.8`` and the card printed "Proj 6--2". Mirrors the web's
+    ``match: ["mma", "boxing"]`` row (a lowercased substring, as ``sportVocab``).
     """
-    return not str(sport_key or "").startswith("baseball")
+    key = str(sport_key or "")
+    if key.startswith("baseball"):
+        return False
+    return not any(fight in key.lower() for fight in ("mma", "boxing"))
 
 
 def projection_contradicts_moneyline(
