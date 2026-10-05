@@ -5,6 +5,8 @@ SHIP: Discover improvements, useful event hubs and live-price fixes reach users 
 
 Approved by Alex on September 29, 2026. This replaces program-file priority selection for future build assignments. Preserve active work until its normal handoff; do not interrupt workers to change labels. `config/lane-ownership.json` is the tracked responsibility map. Lane names remain compatible with existing launchers; no worktree or process rename is required.
 
+Operational controls, descriptive window names, persistent pause and laptop capacity: [Fleet controls](fleet-controls.md). Those controls do not change ownership or waive release gates.
+
 ## Accountability and contribution
 
 | Lane | Durable responsibility |

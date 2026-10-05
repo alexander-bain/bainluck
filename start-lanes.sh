@@ -58,7 +58,7 @@ DRYRUN=0
 PIDDIR="$HOME/bainluck/.claude/handoff/runner-pids"
 if [ "$DRYRUN" -eq 1 ]; then
   echo "[dry-run] skipping orphan reap and pgid garbage collection (both kill/delete)"
-else
+elif [ "${1:-}" = "--reap-orphans" ]; then
 PS_SNAP=$(ps -axo pid=,ppid=,pgid=,command=)
 OWNED_PGIDS=$(cat "$PIDDIR"/*.pgid 2>/dev/null | tr -cd '0-9\n' | grep -v '^$' | sort -u | tr '\n' ',')
 
@@ -134,7 +134,7 @@ fi   # end of the reap/GC block skipped by --dry-run
 
 launch () {
   if [ "$DRYRUN" -eq 1 ]; then echo "[dry-run] would open Terminal window: $1"; return 0; fi
-  osascript -e "tell application \"Terminal\" to do script \"$1\"" >/dev/null
+  python3 "$SELF_DIR/scripts/lane_control.py" launch "$CURRENT_LANE" "$1"
 }
 
 # Same, but names the window. Only the supervisor uses it: a lane window is
@@ -143,12 +143,7 @@ launch () {
 # at before closing.
 launch_titled () {
   if [ "$DRYRUN" -eq 1 ]; then echo "[dry-run] would open Terminal window \"$2\": $1"; return 0; fi
-  osascript >/dev/null <<OSA
-tell application "Terminal"
-  set w to do script "$1"
-  set custom title of w to "$2"
-end tell
-OSA
+  python3 "$SELF_DIR/scripts/lane_control.py" launch supervisor "$1"
 }
 
 # ONE WINDOW PER LANE, 2026-09-03 (Alex). The previous line here was
@@ -164,6 +159,8 @@ OSA
 # cannot disagree about which lanes exist.
 N=0
 for L in $LANES_ALL; do
+  CURRENT_LANE="$L"
+  python3 "$SELF_DIR/scripts/lane_control.py" check "$L" || continue
   D="$(lane_dir "$L")"
   if [ ! -d "$D" ]; then
     # Loud, never silent: a missing worktree is why a lane vanishes after a
@@ -171,13 +168,17 @@ for L in $LANES_ALL; do
     echo "SKIPPED lane '$L' — no worktree at $D. Create it, then re-run this script."
     continue
   fi
+  if [ "$(count_running "$R $D $L")" -gt 0 ]; then echo "$L: already running"; continue; fi
   launch "$R $D $L"
   N=$((N + 1))
 done
 
 # The cert bus: LANE4_GRADERS identical headless graders (lanes.conf).
-G=0
+CURRENT_LANE=review
+G=$(count_running "$LANE4_RUNNER")
+python3 "$SELF_DIR/scripts/lane_control.py" check review || G="$LANE4_GRADERS"
 while [ "$G" -lt "$LANE4_GRADERS" ]; do
+  CURRENT_LANE="review-$G"
   launch "$LANE4_RUNNER"
   G=$((G + 1))
 done
@@ -211,7 +212,10 @@ BUS_START_LOCK="${BUS_START_LOCK:-$PIDDIR/.bus-start.lock}"
 BUS_VISIBLE_WAIT="${BUS_VISIBLE_WAIT:-20}"
 
 BUS=0
-if [ -z "${BUS_RUNNER:-}" ] || [ ! -f "$BUS_RUNNER" ]; then
+CURRENT_LANE=measurement
+if ! python3 "$SELF_DIR/scripts/lane_control.py" check measurement; then
+  echo "Live monitoring: paused"
+elif [ -z "${BUS_RUNNER:-}" ] || [ ! -f "$BUS_RUNNER" ]; then
   echo "SKIPPED the measurement bus — no script at ${BUS_RUNNER:-<unset>}."
   echo "  The recurring M-R set will only run when someone drives it by hand."
 elif ! claim_bus_start "$BUS_START_LOCK"; then
@@ -246,8 +250,9 @@ fi
 # bring back one lane, not a cold boot — and a second supervisor would double
 # every relaunch it decides to make.
 SUP=0
+CURRENT_LANE=supervisor
 SUP_PATH="${SUPERVISOR:-$HOME/bainluck/lanes-supervisor.sh}"
-if pgrep -f "lanes-supervisor.sh" >/dev/null 2>&1; then
+if [ "$(count_running "$SUP_PATH")" -gt 0 ]; then
   echo "supervisor: already running"
 elif [ ! -f "$SUP_PATH" ]; then
   # Tolerated, not fatal, exactly like the measurement bus above: an older
@@ -260,6 +265,15 @@ else
   SUP=1
 fi
 
-echo "$((N + LANE4_GRADERS + BUS + SUP)) Terminal windows opened — $N lanes, $LANE4_GRADERS cert graders, $BUS measurement bus and $SUP supervisor, streaming live."
-echo "If a lane is already running in another window, close the duplicate:"
-echo "the runners take queues atomically, so duplicates waste nothing but a window."
+# Diagnosis has its own launchd service; opening its view never clears a pause.
+DIAGNOSIS="$SELF_DIR/diagnosis-lane.sh"
+if [ -f "$DIAGNOSIS" ]; then
+  if [ "$DRYRUN" -eq 1 ]; then
+    echo '[dry-run] would open/reuse Terminal window "TBH diagnosis"'
+  else
+    bash "$DIAGNOSIS" ensure
+    bash "$DIAGNOSIS" window
+  fi
+fi
+echo "$N lane window requests, $BUS measurement bus and $SUP supervisor requests; existing workers and pauses preserved."
+echo 'Status: ~/bainluck/lanes.sh status | Pause: ~/bainluck/lanes.sh pause all'

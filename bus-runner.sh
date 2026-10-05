@@ -153,9 +153,43 @@ drift_line () {
   esac
 }
 
+CONTROL="$HOME/bainluck/scripts/lane_control.py"
+COLLECTOR="$HOME/bainluck/scripts/lane_monitor.py"
+if [ "${LANE_LEASE_HELD:-}" != measurement ]; then
+  exec python3 "$CONTROL" lease measurement -- /bin/bash "$0"
+fi
 DRIFT_BUCKET=""
 
 while true; do
+  python3 "$CONTROL" check measurement || { sleep 60; continue; }
+  mkdir -p "$H/runner-inbox/measurement"
+  ONCE=$(find "$H/runner-inbox/measurement" -maxdepth 1 -name '*.md' -type f | sort | head -1)
+  if [ -n "$ONCE" ]; then
+    python3 "$CONTROL" run measurement -- codex exec --full-auto "$(cat "$ONCE")"
+    RC=$?
+    if [ "$RC" -eq 0 ]; then
+      mv "$ONCE" "$ONCE.consumed"
+      rm -f "$ONCE.attempts"
+    elif [ "$RC" -ne 75 ]; then
+      ATTEMPTS=$(cat "$ONCE.attempts" 2>/dev/null || echo 0)
+      ATTEMPTS=$((ATTEMPTS + 1)); echo "$ATTEMPTS" > "$ONCE.attempts"
+      if [ "$ATTEMPTS" -ge 3 ]; then
+        mv "$ONCE" "$ONCE.failed"
+        python3 "$CONTROL" state measurement 'One-time input failed; needs attention; evidence preserved'
+      fi
+      sleep 300
+    else
+      sleep 60
+    fi
+    continue
+  fi
+  python3 "$COLLECTOR" "$H/monitor-input"
+  RC=$?
+  if [ "$RC" -ne 0 ]; then
+    if [ "$RC" -eq 69 ]; then python3 "$CONTROL" state measurement 'Monitoring unavailable — cheap access retry in 5 minutes'; fi
+    sleep 300
+    continue
+  fi
   B=$(bucket)
   WANT=$(missing "$B")
 
@@ -189,13 +223,17 @@ while true; do
   BEFORE=$(missing "$B" | wc -l | tr -d ' ')
   echo "[bus] $TS bucket $B — $BEFORE mission(s) unbanked ($(echo $WANT | tr '\n' ' ')) — starting codex session, log $LOG_DIR/bus-$TS.log"
   record_try "$B" "$((N + 1))"
-  codex exec --full-auto "$(prompt_for "$B" "$WANT")" 2>&1 | tee -a "$LOG_DIR/bus-$TS.log"
+  python3 "$CONTROL" run measurement -- codex exec --full-auto "$(prompt_for "$B" "$WANT")
+Scripted collection is at $H/monitor-input/latest.json. Read it first; no duplicate fetch is needed. Missing collection is UNKNOWN, never healthy. Bank actionable findings once and route them to the existing owner; no general backlog or board sweep." 2>&1 | tee -a "$LOG_DIR/bus-$TS.log"
+  RC=${PIPESTATUS[0]}
+  if [ "$RC" -eq 75 ]; then record_try "$B" "$N"; sleep 60; continue; fi
   AFTER=$(missing "$B" | wc -l | tr -d ' ')
 
   if [ "$AFTER" -lt "$BEFORE" ]; then
     # Progress: reset the strike count. A session that banks some but not all of
     # the set is normal and gets a fresh budget to finish the rest.
     record_try "$B" 0
+    if [ "$AFTER" -eq 0 ] && [ "$RC" -eq 0 ]; then python3 "$COLLECTOR" "$H/monitor-input" ack; fi
     echo "[bus] session banked $((BEFORE - AFTER)) artifact(s); $AFTER still missing in $B"
   else
     echo "[bus] session banked NOTHING for $B (attempt $((N + 1))/$MAX_TRIES)"

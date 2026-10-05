@@ -218,6 +218,7 @@ inbox_restocks() { find "$1" -maxdepth 1 -name 'RESTOCK-*.md' | wc -l; }
 lane_program() { echo PROGRAM-SHOPPER.md; }
 '''
             env = dict(os.environ, BL_REPO=str(ROOT), HANDOFF=str(root / "handoff"),
+                       CONTROL=str(ROOT / "scripts/lane_control.py"), LANE_CONTROL_ROOT=str(root / "control"),
                        DRYRUN=str(int(dry)), RESTOCK_MIN_INTERVAL="120",
                        PATH=str(bindir) + os.pathsep + os.environ["PATH"],
                        DISPATCH_TEST_CALLS=str(counter), DISPATCH_TEST_FIXTURE=str(fixture))

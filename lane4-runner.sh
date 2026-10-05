@@ -161,6 +161,15 @@ def actionable(block):
     # Never use `repairs:` (the predecessor) as this presentation's identity.
     presentation = block.get("cert_id") or identity
     if status not in terminal and presentation not in banked:
+        import os, fcntl
+        root = Path(os.environ.get('LANE_CONTROL_ROOT', str(Path.home() / 'bainluck/.claude/handoff/fleet-control')))
+        claim = root / 'locks' / ('session-review-' + identity + '.lock')
+        if claim.exists():
+            with claim.open('a') as handle:
+                try:
+                    fcntl.flock(handle, fcntl.LOCK_EX | fcntl.LOCK_NB)
+                except BlockingIOError:
+                    return False
         print(identity)
         return True
     return False
@@ -201,34 +210,27 @@ PY
 
 verdicts () { grep -c '^| CERT-' "$CERTLOG" 2>/dev/null || echo 0; }
 
+CONTROL="$HOME/bainluck/scripts/lane_control.py"
 BACKOFF=60
 while true; do
+  python3 "$CONTROL" check review || { sleep 60; continue; }
   P=$(pending)
   if [ -n "$P" ]; then
     TS=$(date +%Y%m%d-%H%M%S)
     BEFORE=$(verdicts)
     echo "[lane4] $TS actionable subject detected ($P) — starting codex session, log $LOG_DIR/lane4-$TS.log"
-    codex exec --full-auto "$PROMPT" 2>&1 | tee -a "$LOG_DIR/lane4-$TS.log"
+    python3 "$CONTROL" run "review-$P" -- codex exec --full-auto "$PROMPT
+SINGLE ASSIGNMENT: review ONLY $P. Other eligible subjects belong to other workers. Recheck this subject's exact presentation/ledger before grading; if banked, exit without another verdict." 2>&1 | tee -a "$LOG_DIR/lane4-$TS.log"
+    RC=${PIPESTATUS[0]}
+    if [ "$RC" -ne 0 ]; then sleep 60; continue; fi
     AFTER=$(verdicts)
     if [ "$AFTER" -gt "$BEFORE" ]; then
       BACKOFF=60
       echo "[lane4] session banked $((AFTER-BEFORE)) verdict(s) — re-checking in ${BACKOFF}s"
     else
-      # SELF-HEAL (Fable-5, 9/2): the bus reports nothing pending while our awk sees
-      # 'status: staged' for $P -> the block is already banked/merged by the bus's identity
-      # rules. Park it (status: parked-mismatch) so both graders stop idling on it, and
-      # leave a note for Fable instead of backing off for 30 minutes.
-      python3 - "$Q" "$P" <<'PY'
-import re,sys
-q,subj=sys.argv[1],sys.argv[2]
-s=open(q).read()
-pat=re.compile(r"(queue_id: %s\n(?:.*\n){0,6}?status: )staged[^\n]*"%re.escape(subj))
-s2,n=pat.subn(r"\1parked-mismatch   # auto-parked by lane4-runner: bus reports nothing pending for this subject; Fable to close or restage",s,count=1)
-if n: open(q,"w").write(s2); print("[lane4] parked '%s' (mismatch) -> tell Fable"%subj)
-else: print("[lane4] could not find a staged block for '%s' to park"%subj)
-PY
-      echo "$(date '+%F %T') parked-mismatch $P" >> "$HOME/bainluck/.claude/handoff/LANE4-PARKED.log"
-      BACKOFF=30
+      BACKOFF=$((BACKOFF * 2)); [ "$BACKOFF" -le 1800 ] || BACKOFF=1800
+      echo "[review] no verdict returned; subject preserved, retry in ${BACKOFF}s"
+
     fi
     sleep "$BACKOFF"
   else

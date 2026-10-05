@@ -98,6 +98,11 @@ LANES=("$@")
 # tree. Production never sets it.
 HANDOFF="${LANE_HANDOFF:-$HOME/bainluck/.claude/handoff}"
 LOGDIR="$HANDOFF/runner-logs"
+CONTROL="$(dirname "$BL_RUNNER_SCRIPT")/scripts/lane_control.py"
+if [ "$DRYRUN" -eq 0 ] && [ "$RESTOCK_ONCE" -eq 0 ] && [ "${LANE_LEASE_HELD:-}" != "${LANES[0]}" ]; then
+  exec python3 "$CONTROL" lease "${LANES[0]}" -- /bin/bash "$BL_RUNNER_SCRIPT" "${BL_RUNNER_ARGS[@]}"
+fi
+
 # No log dir for a rehearsal: --dry-run writes nothing at all, anywhere.
 [ "$DRYRUN" -eq 1 ] || mkdir -p "$LOGDIR"
 
@@ -136,6 +141,7 @@ LOGDIR="$HANDOFF/runner-logs"
 # Every worktree shares one object store, so the ref reads identically from any
 # of them no matter what that worktree has checked out.
 BL_REPO="$(cd "$(dirname "$0")" && pwd -P)"
+CONTROL="$BL_REPO/scripts/lane_control.py"
 BL_CARRIER_REF="${BL_CARRIER_REF:-origin/master}"
 BL_CARRIER_ROOT="${BL_CARRIER_ROOT:-$HOME/.cache/bainluck-lane-carrier}"
 # FLEET-WIDE (notice 39 guard 3, widened 2026-09-10 by latency/312 on the proof
@@ -673,6 +679,9 @@ human_until () {
 # is WAITING from one that has died (#6409 acceptance). GNU/BSD order as above.
 idle_announce () {
   local WHEN=""
+  for status_lane in "${LANES[@]}"; do
+    python3 "$CONTROL" state "$status_lane" "Waiting — ${NEXT_DUE_WHAT:-no ready assignment} ${NEXT_DUE_EPOCH:-}"
+  done
   if [ -n "$NEXT_DUE_EPOCH" ]; then
     WHEN=$(date -u -d "@$NEXT_DUE_EPOCH" '+%Y-%m-%dT%H:%M:%SZ' 2>/dev/null) \
       || WHEN=$(date -u -r "$NEXT_DUE_EPOCH" '+%Y-%m-%dT%H:%M:%SZ' 2>/dev/null) \
@@ -824,6 +833,10 @@ rs_say () { [ "$RESTOCK_QUIET" -eq 0 ] && echo "$@"; return 0; }
 
 maybe_restock () {
   local L="$1" INBOX PROG NOW LAST STAMP F LASTF READY_ISSUE READY_RC QUEUED
+  python3 "$CONTROL" check "$L" || return 1
+  if [ "$L" = integrator ]; then
+    python3 "$CONTROL" integrator-ready "$HANDOFF" || return 1
+  fi
   INBOX="$HANDOFF/runner-inbox/$L"
   [ -d "$INBOX" ] || { rs_say "[restock:$L] no inbox at $INBOX — nothing to do"; return 1; }
 
@@ -1105,6 +1118,15 @@ while true; do
   NEXT_DUE_WHAT=""
   for L in "${LANES[@]}"; do
     INBOX="$HANDOFF/runner-inbox/$L"
+    python3 "$CONTROL" check "$L" || { python3 "$CONTROL" state "$L" Paused; continue; }
+    # Explicit context messages are retained for the next real assignment.
+    for context_file in "$INBOX"/*.md; do
+      [ -f "$context_file" ] || continue
+      if python3 "$CONTROL" context "$context_file"; then
+        mkdir -p "$INBOX/context"
+        mv "$context_file" "$INBOX/context/"
+      fi
+    done
     # Oldest staged .md first; skip .running / .consumed. The FIRST ELIGIBLE one
     # rather than simply the first (#6409): a directive deferred to tonight must
     # not stand in front of an assignment staged for now. `read` rather than a
@@ -1114,6 +1136,9 @@ while true; do
     while IFS= read -r CAND; do
       [ -n "$CAND" ] || continue
       directive_is_due "$CAND" "$L" || continue
+      if [ "$L" = integrator ] && [[ "$(basename "$CAND")" = SELF-* ]]; then
+        python3 "$CONTROL" integrator-ready "$HANDOFF" || continue
+      fi
       Q="$CAND"
       break
     done < <(ls -tr "$INBOX"/*.md 2>/dev/null | grep -v '\.consumed-')
@@ -1125,6 +1150,7 @@ while true; do
     # Read BEFORE the session so the post-session sweep can tell this session's
     # own leftover markers from ones that were already sitting there.
     SESSION_START=$(date +%s)
+    python3 "$CONTROL" state "$L" "Working — $(basename "$Q")"
     echo "[runner:$L] $TS taking $(basename "$Q") → log $(basename "$LOG")"
     # Assembled here, not inline in the `claude` call: three `cat`s, a heredoc
     # and a `basename` inside one `-p "$( … )"` is where a quoting slip stops
@@ -1133,7 +1159,9 @@ while true; do
               echo
               lane_identity_header "$L" "$WORKDIR" "$INBOX" "$(basename "$Q")"
               echo
-              cat "$RUN")"
+              echo 'Fleet dispatch: put dispatch: context in the first 40 lines of FYI-only inbox messages. Such messages are retained for the next assignment and do not wake a model. Never create SELF work solely to restate an unchanged wait; name a concrete next action or reactivation condition. Product owners update their own issues; Shopper handles independent journeys and exceptions, Dot the daily summary, and the coordinator cross-lane decisions.'
+              cat "$RUN"
+              python3 "$CONTROL" contexts "$INBOX/context")"
     # Fresh headless session per queue. Timeout guards a hung session; state is
     # in handoff files, so a killed session resumes via its own report + re-stage.
     # Notice 39 rung 2. Inside the subshell so the runner's own environment is
@@ -1148,7 +1176,7 @@ while true; do
       # correction about `runner-text-drift.sh`. In the log it is greppable by
       # the next session, which is the only reader that can act on it.
       bl_tag_state "$L" "$BL_ZD" | tee -a "$LOG"
-      timeout "$SESSION_TIMEOUT" claude --dangerously-skip-permissions --verbose \
+      python3 "$CONTROL" run "$L" -- timeout "$SESSION_TIMEOUT" claude --dangerously-skip-permissions --verbose \
         --output-format stream-json -p "$PROMPT" \
         2>&1 | python3 -u -c "$FMT" | tee -a "$LOG"
       # PIPESTATUS MUST be read inside the subshell. Read outside it, the array
@@ -1158,6 +1186,11 @@ while true; do
       # the session's real code so the caller can gate on it.
       exit "${PIPESTATUS[0]}" )
     RC=$?
+    if [ "$RC" -eq 75 ]; then
+      [ ! -e "$RUN" ] || mv "$RUN" "$Q"
+      sleep "$IDLE_SLEEP"
+      continue
+    fi
     # A successful return records one context pointer for its quality owner.
     # Failed sessions and non-opted-in service/Native lanes create no event.
     if [ "$RC" -eq 0 ]; then
