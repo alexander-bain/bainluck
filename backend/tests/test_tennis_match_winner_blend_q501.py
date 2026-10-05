@@ -106,6 +106,8 @@ class TestMatchWinnersAreAdmitted:
             # #8722: the Laver Cup's own singles and doubles winner series.
             "KXLAVERCUPMATCH-26SEP25RUUCER",
             "KXLAVERCUPDOUBLESMATCH-26SEP25ALCMENBUBFRI",
+            # #10507: the ITF women's winner, verbatim from production.
+            "KXITFWMATCH-26OCT05KABTOR",
         ],
     )
     def test_match_winner_feeds_the_blend(self, ticker):
@@ -139,6 +141,13 @@ class TestPropsStayOut:
             # #8722: the Laver Cup TEAM outright shares the family name with the
             # two match series and is a futures market, not a match moneyline.
             "KXLAVERCUP-26",
+            # #10507: admitting the ITF women's winner admits nothing that
+            # merely shares its family name or its match segment.
+            "KXITFWEXACTMATCH-26OCT05KABTOR",
+            "KXITFWSETWINNER-26OCT05KABTOR-1",
+            "KXITFWGTOTAL-26OCT05KABTOR",
+            "KXITFWGSPREAD-26OCT05KABTOR",
+            "KXITFW-26SEVILLE",
         ],
     )
     def test_tennis_prop_does_not_feed_the_blend(self, ticker):
@@ -273,3 +282,66 @@ class TestGenuineDevigsSurviveTheGuard:
         ]
         reading = compute_source_home_probability(group, "Celtics", "76ers")
         assert reading.devigged is True
+
+
+# #10507 — event 15324729, Yasmine Kabbaj v Neus Torner Sensano (W35 Seville,
+# 2026-10-05T10:00Z), minted from the Polymarket group with Kabbaj named first,
+# so she is `home_team_name`. Kalshi market 64221493 was linked by Phase 1
+# (`pass1_ticker`) and priced, yet the event's blend held a `polymarket` key
+# only: this predicate refused the ticker every cycle, so `linked_unsourced`
+# could never clear. Outcome names and prices are verbatim from the 04:55Z read.
+KABTOR_MATCH = "KXITFWMATCH-26OCT05KABTOR"
+
+
+def _kabtor_group():
+    return [
+        MarketOutcomes(
+            _Market(64221493, "kalshi", KABTOR_MATCH, "Kabbaj vs Torner Sensano"),
+            [
+                _Outcome("Yasmine Kabbaj", 0.75),
+                _Outcome("Neus Torner Sensano", 0.245),
+            ],
+        ),
+    ]
+
+
+class TestItfWomensWinnerReachesTheBlend:
+    """The linked, priced ITF women's winner now speaks for Kalshi."""
+
+    def test_the_production_specimen_produces_a_reading(self):
+        reading = compute_source_home_probability(
+            _kabtor_group(), "Yasmine Kabbaj", "Neus Torner Sensano",
+        )
+        assert reading is not None, "the linked Kalshi winner still writes nothing"
+        assert reading.market.external_id == KABTOR_MATCH
+        assert reading.outcome.name == "Yasmine Kabbaj"
+        assert reading.home_probability == pytest.approx(0.75)
+
+    def test_orientation_follows_the_event_not_the_outcome_order(self):
+        """Swap which player the event calls home and the number swaps with it.
+
+        A reading that ignored the event's sides would hand Torner Sensano
+        Kabbaj's 75% — a hero pointing the wrong way with nothing raising.
+        """
+        reading = compute_source_home_probability(
+            _kabtor_group(), "Neus Torner Sensano", "Yasmine Kabbaj",
+        )
+        assert reading is not None
+        assert reading.outcome.name == "Neus Torner Sensano"
+        assert reading.home_probability == pytest.approx(0.245)
+
+    @pytest.mark.parametrize(
+        "ticker",
+        [
+            "KXITFMATCH-26OCT05ABCDEF",
+            "KXITFDOUBLES-26OCT05ABCDEF",
+            "KXITFWDOUBLES-26OCT05ABCDEF",
+        ],
+    )
+    def test_other_itf_families_stay_out_by_scope(self, ticker):
+        """Out by SCOPE, not by nature: #10507 admitted one named family.
+
+        Admitting one of these is a deliberate later change with its own
+        specimen — this pins that it did not ride along here.
+        """
+        assert feeds_win_prob_blend(ticker) is False
