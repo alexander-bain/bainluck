@@ -6,7 +6,9 @@ import re
 
 
 def verified_summary(log: str, exit_code: int) -> tuple[int, str]:
-    if exit_code != 0 or not re.search(r"^\*\* TEST SUCCEEDED \*\*\s*$", log, re.MULTILINE):
+    success = re.search(r"^\*\* TEST (?:EXECUTE )?SUCCEEDED \*\*[ \t]*$", log, re.MULTILINE)
+    failure = re.search(r"^\*\* TEST (?:EXECUTE )?FAILED \*\*[ \t]*$", log, re.MULTILINE)
+    if exit_code != 0 or not success or failure:
         raise ValueError("Test process did not finish successfully")
     totals = re.findall(
         r"^Test Suite 'All tests' passed[^\n]*\n[ \t]*(Executed (\d+) tests?, with (\d+) failures?[^\n]*)",
