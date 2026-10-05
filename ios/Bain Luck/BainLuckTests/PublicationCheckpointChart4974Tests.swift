@@ -227,9 +227,13 @@ final class PublicationCheckpointChart4974Tests: XCTestCase {
         XCTAssertEqual(land(m, atPlotX: 29), .withheld(date(atPlotX: 29)))
     }
 
+    /// The legacy line ends inside the window (20:15:30), so the resting
+    /// endpoint is the latest checkpoint and the tie is the rev's to break. A
+    /// surviving reading after 20:15:50 would win the rest outright
+    /// (`testIdleRestsOnALaterSurvivingReading`) and test no tie at all.
     func testEqualTimeRevisionsGoToTheGreatestRev() throws {
         let journey = try adoptedJourney([(7, 10, 0.61), (8, 10, 0.63), (9, 50, 0.58), (11, 50, 0.57)])
-        let m = try XCTUnwrap(mount(journey, [point(0, 0.40), point(60, 0.55)]))
+        let m = try XCTUnwrap(mount(journey, [point(0, 0.40), point(30, 0.47)]))
         guard case .checkpoint(let hit) = land(m, atPlotX: 21) else { return XCTFail("expected a hit") }
         XCTAssertEqual(hit.vertex.rev, 8)
         XCTAssertEqual(hit.vertex.p, 0.63)
@@ -840,12 +844,16 @@ final class PublicationCheckpointChart4974Tests: XCTestCase {
         let (host, window) = hosted(chart)
         defer { window.isHidden = true }
         XCTAssertGreaterThan(plotBuilds, 0, "the real plot must render for this test to mean anything")
-        let before = plotBuilds
+        let beforeHold = plotBuilds
 
         selection.hold(date: at(30), checkpoint: .withheld)
         pump(host)
+        XCTAssertEqual(plotBuilds, beforeHold, "holding over the gap re-evaluated the Chart marks")
+        // Snapshotting redraws the hierarchy (#8651 keeps it out of the
+        // counted window), so the scrub's baseline is taken after it.
         let gap = try visibleText(host, name: "inline-gap")
         XCTAssertTrue(gap.contains(PublicationCheckpointReadoutSlot4974.withheldText), gap)
+        let before = plotBuilds
 
         for step in 0..<10 {
             let scrub: PublicationCheckpointScrub4974 = step.isMultiple(of: 2) ? .checkpoint(journey.checkpoints[0]) : .withheld
