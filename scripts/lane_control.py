@@ -303,6 +303,13 @@ def main():
             p.touch()
         else:
             p.unlink(missing_ok=True)
+            if lane == "diagnosis":
+                diagnosis_root = Path(
+                    os.environ.get(
+                        "LANE_DIAGNOSIS_ROOT", str(Path.home() / "bainluck-diagnosis")
+                    )
+                )
+                (diagnosis_root / "PAUSED").unlink(missing_ok=True)
         print(
             f"{lane}: {ns.action} requested; active work is preserved. Run start-lanes.sh for missing workers."
         )

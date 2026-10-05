@@ -45,6 +45,11 @@ launch () {
 # One snapshot per pass, shared by every call in it via LAUNCH_PS_SNAP.
 
 while true; do
+  if ! python3 "$SELF_DIR/scripts/lane_control.py" check supervisor; then
+    [ "$DRYRUN" -eq 1 ] && { echo '[dry-run] supervisor paused'; exit 0; }
+    sleep 60
+    continue
+  fi
   LAUNCH_PS_SNAP=$(ps -axww -o command= 2>/dev/null)
   for L in $LANES_ALL; do
     CURRENT_LANE="$L"

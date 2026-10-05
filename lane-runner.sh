@@ -1159,6 +1159,7 @@ while true; do
               echo
               lane_identity_header "$L" "$WORKDIR" "$INBOX" "$(basename "$Q")"
               echo
+              echo 'Fleet dispatch: put dispatch: context in the first 40 lines of FYI-only inbox messages. Such messages are retained for the next assignment and do not wake a model. Never create SELF work solely to restate an unchanged wait; name a concrete next action or reactivation condition. Product owners update their own issues; Shopper handles independent journeys and exceptions, Dot the daily summary, and the coordinator cross-lane decisions.'
               cat "$RUN"
               python3 "$CONTROL" contexts "$INBOX/context")"
     # Fresh headless session per queue. Timeout guards a hung session; state is
