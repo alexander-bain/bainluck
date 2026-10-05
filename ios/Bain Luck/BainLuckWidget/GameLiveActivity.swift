@@ -6,6 +6,7 @@ import WidgetKit
 /// Local ActivityKit content. Updates require the phone's foreground owner.
 @available(iOS 17.0, *)
 struct GameLiveActivity: Widget {
+    @WidgetConfigurationBuilder
     var body: some WidgetConfiguration {
         if #available(iOS 18.0, *) {
             configuration.supplementalActivityFamilies([.small, .medium])
