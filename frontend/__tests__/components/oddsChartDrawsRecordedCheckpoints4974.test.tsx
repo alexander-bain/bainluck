@@ -205,6 +205,28 @@ describe("inside the recorded window: dots only, nothing joining them", () => {
   });
 });
 
+describe("a hole in the legacy blend right after the window", () => {
+  // Legacy readings stop inside the window and resume at minute 140. The blend
+  // has no observation bound, so only the carry decides what fills 121–139:
+  // nothing may — a carried pre-window value would draw a legacy line the
+  // blend never had, straight out of the far end of the window.
+  const holed = AGGREGATE.filter((p) => {
+    const m = (Date.parse(p.timestamp) - KICKOFF) / MIN;
+    return m <= 120 || m >= 140;
+  });
+  const markup = draw({ publications: body(INTERIOR), aggregateLine: holed });
+
+  it("nothing is carried across the window; the blend resumes on its next reading", () => {
+    const byRev = new Map(dots(markup).map((p) => [p.rev, p.cx]));
+    const at60 = byRev.get(1)!;
+    const at120 = byRev.get(6)!;
+    const x140 = at120 + ((at120 - at60) / 60) * 20;
+    const after = pathXs(blendPath(markup)).filter((x) => x > at120 + 0.01);
+    expect(after.length).toBeGreaterThan(0);
+    expect(Math.min(...after)).toBeCloseTo(x140, 1);
+  });
+});
+
 describe("a window that runs to the end", () => {
   const markup = draw({ publications: body(TO_THE_END) });
 
