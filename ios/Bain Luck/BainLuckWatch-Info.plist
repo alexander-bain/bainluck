@@ -18,6 +18,7 @@
     <key>NSUserActivityTypes</key>
     <array>
         <string>com.bainluck.view-game</string>
+        <string>com.bainluck.view-story</string>
     </array>
 </dict>
 </plist>

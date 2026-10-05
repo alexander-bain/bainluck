@@ -37,6 +37,14 @@ final class NavigationCoordinator: ObservableObject {
         return handleURL(url)
     }
 
+    /// Validate the public story identity before using the existing entity router.
+    func handleStoryContinuation(_ activity: NSUserActivity) -> Bool {
+        guard activity.activityType == StoryContinuation.activityType,
+              let destination = StoryContinuation.destination(from: activity.webpageURL),
+              let url = StoryContinuation.url(for: destination) else { return false }
+        return handleURL(url)
+    }
+
     /// Handles supported app links by selecting the destination tab and queuing any route payload.
     /// Returns `true` when the URL maps to a known Bain Luck route.
     func handleURL(_ url: URL) -> Bool {

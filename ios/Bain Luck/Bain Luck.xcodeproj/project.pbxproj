@@ -127,6 +127,7 @@
 				Models/PredictionModels.swift,
 				Utilities/DrawPricedWinner.swift,
 				Utilities/GameContinuation.swift,
+				Utilities/StoryContinuation.swift,
 				Utilities/PeriodLabel.swift,
 				Utilities/RenderedPercent.swift,
 				Utilities/SportVocab.swift,
@@ -148,6 +149,9 @@
 				WatchGuessBackend.swift,
 				WatchGuessViewModel.swift,
 				WatchMarquee.swift,
+				WatchDiscoveryModels.swift,
+				WatchDiscoveryStore.swift,
+				WatchDiscoveryAPIClient.swift,
 			);
 			target = A7C0000000000000000000E1 /* BainLuckTests */;
 		};

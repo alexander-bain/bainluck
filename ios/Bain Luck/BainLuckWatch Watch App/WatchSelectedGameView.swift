@@ -15,6 +15,7 @@ struct WatchSelectedGameView: View {
     @StateObject private var picker: WatchGamePickerStore
     @State private var choosingGame = false
     @State private var showingHandoffHelp = false
+    @State private var showingDiscoveries = false
     #if DEBUG
     @State private var launcherOpenCount = 0
     #endif
@@ -33,10 +34,10 @@ struct WatchSelectedGameView: View {
         _picker = StateObject(wrappedValue: WatchGamePickerStore(transport: WatchDiscoverGameTransport()))
     }
 
-    private var refreshKey: String { "\(scenePhase)-\(choosingGame)-\(refreshGeneration)-\(store.selectedEventID ?? 0)" }
+    private var refreshKey: String { "\(scenePhase)-\(choosingGame)-\(showingDiscoveries)-\(refreshGeneration)-\(store.selectedEventID ?? 0)" }
 
     private var continuationEventID: Int? {
-        guard scenePhase == .active, !choosingGame else { return nil }
+        guard scenePhase == .active, !choosingGame, !showingDiscoveries else { return nil }
         return store.game?.id
     }
 
@@ -78,6 +79,8 @@ struct WatchSelectedGameView: View {
                     }
                     .accessibilityIdentifier("watch.clear-selection")
                 }
+                Button("Discoveries") { showingDiscoveries = true }
+                    .accessibilityIdentifier("watch.discoveries-entry")
                 #if DEBUG
                 if WatchUIFixture.current?.launchReceipt == true {
                     Text("Launcher opens: \(launcherOpenCount)")
@@ -99,6 +102,7 @@ struct WatchSelectedGameView: View {
             // Existing foreground refresh rules still own all network scheduling.
             choosingGame = false
             showingHandoffHelp = false
+            showingDiscoveries = false
             scroll.scrollTo("watch.game.top", anchor: .top)
         }
         .navigationTitle("Your game")
@@ -111,12 +115,15 @@ struct WatchSelectedGameView: View {
             Text("Look for Bain Luck’s Handoff option in your iPhone’s App Switcher. Your iPhone needs a Bain Luck version with Watch Handoff support. Both devices need Handoff enabled and the same Apple Account. If it isn’t available, your game stays selected here.")
         }
         .task(id: refreshKey) {
-            guard scenePhase == .active, !choosingGame else { return }
+            guard scenePhase == .active, !choosingGame, !showingDiscoveries else { return }
             if store.selectedEventID == nil {
                 await picker.refresh()
                 return
             }
             await store.runForegroundRefresh()
+        }
+        .navigationDestination(isPresented: $showingDiscoveries) {
+            WatchDiscoverStoriesView(selected: store) { showingDiscoveries = false }
         }
         .sheet(isPresented: $choosingGame) {
             NavigationStack {
@@ -154,6 +161,11 @@ struct WatchSelectedGameView: View {
         .onChange(of: choosingGame) { wasChoosing, isChoosing in
             if wasChoosing && !isChoosing && store.selectedEventID != nil {
                 // Returning from the picker reveals the retained game's identity.
+                scroll.scrollTo("watch.game.top", anchor: .top)
+            }
+        }
+        .onChange(of: showingDiscoveries) { wasShowing, isShowing in
+            if wasShowing && !isShowing {
                 scroll.scrollTo("watch.game.top", anchor: .top)
             }
         }

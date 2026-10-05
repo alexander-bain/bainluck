@@ -1,0 +1,138 @@
+import XCTest
+
+final class WatchDiscoverJourneyTests: XCTestCase {
+    @MainActor
+    func testSelectedGameStaysFirstAndDiscoveriesSurviveOfflineRelaunch() throws {
+        try savedJourney(largeText: false)
+        print("WATCH_UI_DISCOVERIES_SAVED=PASS")
+    }
+
+    @MainActor
+    func testDiscoveriesAtAccessibilitySizeKeepReadingAndReturnReachable() throws {
+        try savedJourney(largeText: true)
+        print("WATCH_UI_DISCOVERIES_LARGE=PASS")
+    }
+
+    @MainActor
+    private func savedJourney(largeText: Bool) throws {
+        continueAfterFailure = false
+        let app = XCUIApplication()
+        app.launchEnvironment = environment(largeText: largeText)
+        app.launch()
+        let pick = app.buttons["watch.pick.101"]
+        XCTAssertTrue(pick.waitForExistence(timeout: 20))
+        try tap(pick, in: app)
+        XCTAssertTrue(element("watch.home-probability", in: app).waitForExistence(timeout: 15))
+        try openDiscoveries(in: app)
+        let selected = element("watch.discovery.selected", in: app)
+        XCTAssertTrue(selected.waitForExistence(timeout: 15))
+        XCTAssertTrue(element("watch.discovery.selected-matchup", in: app).label.contains("Giants"))
+        let chance = element("watch.discovery.probability.301", in: app)
+        XCTAssertTrue(chance.waitForExistence(timeout: 15))
+        try reveal(chance, in: app)
+        XCTAssertTrue(chance.label.contains("46%"), chance.label)
+        XCTAssertFalse(element("watch.discovery.card.303", in: app).exists, "Selected game reserves the first of three slots")
+        let age = element("watch.discovery.age.301", in: app)
+        try reveal(age, in: app)
+        let originalClock = try XCTUnwrap(age.value as? String)
+        XCTAssertTrue(originalClock.contains("2026-10-05T12:00:00"), originalClock)
+        if !largeText {
+            try tap(app.buttons["watch.discovery.continue.301"], in: app)
+            let help = app.alerts["Continue on iPhone"]
+            XCTAssertTrue(help.waitForExistence(timeout: 10))
+            XCTAssertTrue(help.staticTexts.containing(NSPredicate(format: "label CONTAINS %@", "Will inflation fall below 3%?")).firstMatch.exists)
+            help.buttons["OK"].tap()
+            let continuation = element("watch.discovery.continuation", in: app)
+            XCTAssertTrue(continuation.waitForExistence(timeout: 10))
+            XCTAssertEqual(continuation.label, "https://bainluck.com/futures/301")
+            print("WATCH_UI_DISCOVERIES_CONTINUATION=PASS")
+        }
+        let result = element("watch.discovery.result.302", in: app)
+        try reveal(result, in: app)
+        XCTAssertTrue(result.label.contains("Yes"), result.label)
+        XCTAssertFalse(element("watch.discovery.probability.302", in: app).exists)
+        capture(app, "Discoveries settled result")
+        try tap(app.buttons["watch.discovery.close"], in: app)
+        XCTAssertTrue(element("watch.home-probability", in: app).waitForExistence(timeout: 15))
+        XCTAssertTrue(element("watch.home-probability", in: app).label.contains("Giants"))
+
+        app.terminate()
+        app.launchEnvironment["BAINLUCK_WATCH_UI_RESET"] = "0"
+        app.launchEnvironment["BAINLUCK_WATCH_UI_OFFLINE"] = "1"
+        app.launch()
+        XCTAssertTrue(element("watch.game-state", in: app).waitForExistence(timeout: 15))
+        try openDiscoveries(in: app)
+        XCTAssertTrue(element("watch.discovery.saved", in: app).waitForExistence(timeout: 15))
+        let savedChance = element("watch.discovery.probability.301", in: app)
+        try reveal(savedChance, in: app)
+        XCTAssertTrue(savedChance.label.contains("46%"))
+        let savedAge = element("watch.discovery.age.301", in: app)
+        try reveal(savedAge, in: app)
+        XCTAssertEqual(savedAge.value as? String, originalClock, "Offline restoration must preserve producer time")
+        capture(app, "Discoveries saved clock retained")
+        try tap(app.buttons["watch.discovery.close"], in: app)
+        XCTAssertTrue(element("watch.home-probability", in: app).waitForExistence(timeout: 15))
+        XCTAssertTrue(element("watch.home-probability", in: app).label.contains("64%"))
+        app.terminate()
+    }
+
+    @MainActor
+    func testWithoutSelectionShowsThirdQuestionWithUnknownObservationAge() throws {
+        continueAfterFailure = false
+        let app = XCUIApplication()
+        app.launchEnvironment = environment(largeText: false)
+        app.launch()
+        XCTAssertTrue(app.buttons["watch.pick.101"].waitForExistence(timeout: 20))
+        try openDiscoveries(in: app)
+        XCTAssertFalse(element("watch.discovery.selected", in: app).exists)
+        let age = element("watch.discovery.age.303", in: app)
+        XCTAssertTrue(age.waitForExistence(timeout: 15))
+        try reveal(age, in: app)
+        XCTAssertTrue(age.label.localizedCaseInsensitiveContains("unavailable"), age.label)
+        capture(app, "Third discovery has unknown observation age")
+        try tap(app.buttons["watch.discovery.close"], in: app)
+        XCTAssertTrue(app.buttons["watch.pick.101"].waitForExistence(timeout: 15))
+        XCTAssertFalse(element("watch.home-probability", in: app).exists)
+        print("WATCH_UI_DISCOVERIES_UNSELECTED=PASS")
+        app.terminate()
+    }
+
+    private func environment(largeText: Bool) -> [String: String] {
+        ["BAINLUCK_WATCH_UI_TEST": "1", "BAINLUCK_WATCH_UI_SUITE": UUID().uuidString,
+         "BAINLUCK_WATCH_UI_RESET": "1", "BAINLUCK_WATCH_UI_LARGE_TEXT": largeText ? "1" : "0"]
+    }
+
+    @MainActor private func element(_ id: String, in app: XCUIApplication) -> XCUIElement {
+        app.descendants(matching: .any)[id].firstMatch
+    }
+
+    @MainActor private func openDiscoveries(in app: XCUIApplication) throws {
+        try tap(app.buttons["watch.discoveries-entry"], in: app)
+        XCTAssertTrue(element("watch.discovery.list", in: app).waitForExistence(timeout: 15))
+    }
+
+    @MainActor private func tap(_ item: XCUIElement, in app: XCUIApplication) throws {
+        try reveal(item, in: app)
+        item.tap()
+    }
+
+    @MainActor private func reveal(_ item: XCUIElement, in app: XCUIApplication) throws {
+        for _ in 0..<30 {
+            if item.isHittable && app.frame.contains(item.frame) { return }
+            let earlier = item.frame.minY < app.frame.minY
+            let start = app.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.60))
+            let end = app.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: earlier ? 0.78 : 0.40))
+            start.press(forDuration: 0.1, thenDragTo: end, withVelocity: .slow, thenHoldForDuration: 0.3)
+        }
+        capture(app, "Unreachable discovery control")
+        XCTFail("Cannot reveal \(item.identifier)")
+        throw NSError(domain: "WatchDiscoveryJourney", code: 1)
+    }
+
+    @MainActor private func capture(_ app: XCUIApplication, _ name: String) {
+        let attachment = XCTAttachment(screenshot: app.screenshot())
+        attachment.name = name
+        attachment.lifetime = .keepAlways
+        add(attachment)
+    }
+}
