@@ -3,14 +3,18 @@
 Two halves.
 
 * The UNIT half has no database and runs everywhere: admission refuses every
-  identity change by name, the CLI accepts only the one keeper, the target fence
-  holds, and a tampered plan is refused before anything connects.
-* The POSTGRES half (``SEARCH_TEST_DATABASE_URL``) runs the SHIPPED tool's
-  ``run_preflight`` / ``run_apply`` / ``run_restore`` against the real schema in
-  a throwaway Postgres schema. It is the half that can see what a stub cannot:
-  the unique index arbitrating a conflict, ``ON CONFLICT DO NOTHING`` declining
-  to repoint, a real rollback, a lock wait bounded by ``lock_timeout``, and
-  ``find_event_by_anchor`` — the registry's own Step 2 — changing its answer.
+  identity change by name, the survivor gate mirrors the drain's election, host
+  staging refuses on a dyno and writes exactly the bytes it hashes, a DB mode
+  refuses a tampered or mismatched STDIN bundle before it connects, and the CLI
+  writes nothing but JSON Lines.
+* The POSTGRES half (``SEARCH_TEST_DATABASE_URL``) runs the SHIPPED phases —
+  ``run_preflight`` -> ``stage_plan`` -> ``stage_apply`` -> ``run_apply`` ->
+  ``stage_restore`` -> ``run_restore`` — against the real schema in a throwaway
+  Postgres schema. It is the half that can see what a stub cannot: the unique
+  index arbitrating a conflict, ``ON CONFLICT DO NOTHING`` declining to repoint,
+  a real rollback, a lock wait bounded by ``lock_timeout``, the created-row record
+  leaving BEFORE any COMMIT, and ``find_event_by_anchor`` — the registry's own
+  Step 2 — changing its answer.
 
 The arm the file exists for is
 ``test_apply_writes_one_anchor_and_step2_then_resolves_the_incoming_id``: before
@@ -29,6 +33,7 @@ in the offer.
 from __future__ import annotations
 
 import asyncio
+import hashlib
 import importlib.util
 import json
 import os
@@ -54,6 +59,7 @@ def _load():
 r = _load()
 
 COMMENCE = datetime(2026, 10, 7, 0, 30, tzinfo=timezone.utc)
+HOST = {}  # a host environment: no DYNO
 
 
 def _keeper(**over):
@@ -77,6 +83,36 @@ def _anchors(**over):
     return out
 
 
+def _survivor(keeper_snaps=False, twin_present=True, twin_ext=r.INCOMING_ODDS_ID, twin_snaps=False):
+    return {"keeper_has_snaps": keeper_snaps,
+            "twin": {"id": r.TWIN_ID, "present": twin_present, "external_id": twin_ext, "has_snaps": twin_snaps}}
+
+
+class _Records(list):
+    def __call__(self, record):
+        json.loads(r.canonical_json(record))  # every record must be one JSON object
+        self.append(record)
+
+    def kind(self, name):
+        return [x for x in self if x.get("record") == name]
+
+
+def _write_jsonl(path: Path, records) -> str:
+    path.write_bytes(b"".join(r.artifact_bytes(x) for x in records))
+    return str(path)
+
+
+class _NoDb:
+    """A session factory that records being reached. A refused bundle must never reach it."""
+
+    def __init__(self):
+        self.calls = 0
+
+    def __call__(self):
+        self.calls += 1
+        raise ConnectionError("no database in the unit half")
+
+
 # ═══ unit half ════════════════════════════════════════════════════════════════
 
 def test_keys_are_the_channels_own_keys():
@@ -93,12 +129,12 @@ def test_keys_are_the_channels_own_keys():
 
 
 def test_admit_the_retained_state_is_a_candidate():
-    body = r.admit(_keeper(), r.SPORT_KEY, _anchors())
+    body = r.admit(_keeper(), r.SPORT_KEY, _anchors(), _survivor())
     assert body["state"] == "CANDIDATE"
-    assert body["write"] == {"table": "event_provider_anchors", "key": r.key_dict(r.CURRENT_KEY),
-                             "event_id": r.KEEPER_ID}
+    assert body["write"] == r.WRITE_SCOPE
     assert body["anchors"]["current"] is None
     assert body["anchors"]["incoming"] == {"id": 187393, "event_id": r.KEEPER_ID}
+    assert body["survivor_banked"] == _survivor()
 
 
 @pytest.mark.parametrize("column,value", [
@@ -110,19 +146,19 @@ def test_admit_the_retained_state_is_a_candidate():
 ])
 def test_admit_refuses_every_changed_identity_column(column, value):
     with pytest.raises(r.Refused) as exc:
-        r.admit(_keeper(**{column: value}), r.SPORT_KEY, _anchors())
+        r.admit(_keeper(**{column: value}), r.SPORT_KEY, _anchors(), _survivor())
     assert exc.value.reason == f"keeper_identity_changed:{column}"
 
 
 def test_admit_does_not_fence_status():
-    assert r.admit(_keeper(status="live"), r.SPORT_KEY, _anchors())["state"] == "CANDIDATE"
+    assert r.admit(_keeper(status="live"), r.SPORT_KEY, _anchors(), _survivor())["state"] == "CANDIDATE"
 
 
 def test_admit_refuses_missing_keeper_and_wrong_sport_key():
     with pytest.raises(r.Refused, match="keeper_missing"):
-        r.admit(None, r.SPORT_KEY, _anchors())
+        r.admit(None, r.SPORT_KEY, _anchors(), _survivor())
     with pytest.raises(r.Refused, match="keeper_sport_key_changed"):
-        r.admit(_keeper(), "soccer_epl", _anchors())
+        r.admit(_keeper(), "soccer_epl", _anchors(), _survivor())
 
 
 @pytest.mark.parametrize("anchors,reason", [
@@ -137,59 +173,141 @@ def test_admit_refuses_missing_keeper_and_wrong_sport_key():
 ])
 def test_admit_refuses_each_anchor_shape(anchors, reason):
     with pytest.raises(r.Refused) as exc:
-        r.admit(_keeper(), r.SPORT_KEY, anchors)
+        r.admit(_keeper(), r.SPORT_KEY, anchors, _survivor())
     assert exc.value.reason == reason
 
 
+@pytest.mark.parametrize("survivor,twin_wins", [
+    (_survivor(keeper_snaps=False, twin_snaps=True), True),
+    (_survivor(keeper_snaps=True, twin_snaps=True), False),   # both: lower id (keeper) kept
+    (_survivor(keeper_snaps=True, twin_snaps=False), False),
+    (_survivor(keeper_snaps=False, twin_snaps=False), False),  # neither: StatPal tie -> lower id
+    (_survivor(keeper_snaps=False, twin_snaps=True, twin_ext=None), False),
+    (_survivor(keeper_snaps=False, twin_snaps=True, twin_present=False), False),
+])
+def test_the_survivor_gate_is_the_drains_election(survivor, twin_wins):
+    assert r.twin_would_survive(survivor) is twin_wins
+    if twin_wins:
+        with pytest.raises(r.Refused, match="drain_would_elect_twin_return_to_root"):
+            r.admit(_keeper(), r.SPORT_KEY, _anchors(), survivor)
+    else:
+        assert r.admit(_keeper(), r.SPORT_KEY, _anchors(), survivor)["state"] == "CANDIDATE"
+
+
 def test_admit_keepers_own_current_anchor_is_not_needed():
-    body = r.admit(_keeper(), r.SPORT_KEY, _anchors(current=_anchor("current")))
-    assert body["state"] == r.NOT_NEEDED
-    body = r.admit(_keeper(), r.SPORT_KEY, _anchors(espn=_anchor("espn")))
-    assert body["state"] == "CANDIDATE"  # a keeper-owned ESPN anchor is corroboration
+    assert r.admit(_keeper(), r.SPORT_KEY, _anchors(current=_anchor("current")), _survivor())["state"] \
+        == r.NOT_NEEDED
+    # a keeper-owned ESPN anchor is corroboration, not a block
+    assert r.admit(_keeper(), r.SPORT_KEY, _anchors(espn=_anchor("espn")), _survivor())["state"] == "CANDIDATE"
 
 
-def test_plan_drift_sees_anchors_and_identity_not_status():
-    plan = r.admit(_keeper(), r.SPORT_KEY, _anchors())
-    assert r.plan_drift(plan, r.admit(_keeper(status="live"), r.SPORT_KEY, _anchors())) == []
-    moved = r.admit(_keeper(), r.SPORT_KEY, _anchors(espn=_anchor("espn")))
+def test_plan_drift_sees_anchors_and_identity_not_status_or_snapshots():
+    plan = r.admit(_keeper(), r.SPORT_KEY, _anchors(), _survivor())
+    later = r.admit(_keeper(status="live"), r.SPORT_KEY, _anchors(), _survivor(keeper_snaps=True))
+    assert r.plan_drift(plan, later) == []
+    moved = r.admit(_keeper(), r.SPORT_KEY, _anchors(espn=_anchor("espn")), _survivor())
     assert r.plan_drift(plan, moved) == ["anchors"]
 
 
-def test_created_row_must_carry_this_invocations_context():
+def test_restore_identity_is_the_whole_row_id_and_timestamp_included():
     cc = r.claim_context_for("inv-a", "addr")
-    row = {**r.key_dict(r.CURRENT_KEY), "event_id": r.KEEPER_ID, "claim_context": cc, "id": 1}
-    assert r.created_row_matches(row, cc) == []
-    assert r.created_row_matches(row, r.claim_context_for("inv-b", "addr")) == ["claim_context"]
-    assert r.created_row_matches({**row, "event_id": r.TWIN_ID}, cc) == ["event_id"]
-    assert r.created_row_matches(None, cc) == ["row_missing"]
+    created = {"id": 7, "event_id": r.KEEPER_ID, **r.key_dict(r.CURRENT_KEY),
+               "first_seen_at": "2026-10-05T12:00:00.123456+00:00", "claim_context": cc}
+    assert r.row_is_the_created_row(dict(created), created) == []
+    assert r.row_is_the_created_row({**created, "id": 8}, created) == ["id"]
+    assert r.row_is_the_created_row({**created, "first_seen_at": "2026-10-05T12:00:01.123456+00:00"},
+                                    created) == ["first_seen_at"]
+    assert r.row_is_the_created_row(None, created) == ["row_missing"]
+    assert r.created_row_matches({**created, "id": 8}, cc) == []  # the write check alone cannot tell
 
 
 @pytest.mark.parametrize("argv", [
-    ["--only", "15324922"], ["--only", "14969919", "--only", "14969919"],
-    ["--only", "14969919", "--apply", "--plan", "/p", "--plan-hash", "h"],
-    ["--only", "14969919", "--restore", "--backup", "/b", "--backup-hash", "h", "--plan", "/p"],
+    ["--only", "15324922", "--mode", "preflight"],
+    ["--only", "14969919", "--only", "14969919", "--mode", "preflight"],
+    ["--only", "14969919"],
+    ["--only", "14969919", "--mode", "apply", "--plan-hash", "h"],
+    ["--only", "14969919", "--mode", "restore", "--backup-hash", "b", "--receipt-hash", "r", "--plan", "/p"],
 ])
-def test_cli_accepts_only_the_one_keeper_and_its_mode_args(argv):
-    with pytest.raises(SystemExit) as exc:
-        r.parse(argv)
-    assert exc.value.code == 2
+def test_cli_usage_is_one_record_and_exit_2(argv):
+    out = _Records()
+    assert asyncio.run(r.main(argv, env=HOST, emit=out)) == r.EXIT_USAGE
+    assert [x["state"] for x in out] == ["USAGE"]
 
 
-def test_target_fence_refuses_before_connecting(capsys):
-    rc = asyncio.run(r.main(["--only", "14969919", "--plan-out", "/tmp/x.json"],
-                            env={"HEROKU_APP_NAME": "bainluck-heavy"}))
-    assert rc == r.EXIT_REFUSED
-    assert json.loads(capsys.readouterr().out)["reason"] == "target_app_refused"
+def test_db_mode_target_fence_refuses_before_connecting():
+    out = _Records()
+    rc = asyncio.run(r.main(["--only", "14969919", "--mode", "preflight"],
+                            env={"HEROKU_APP_NAME": "bainluck-heavy"}, emit=out))
+    assert rc == r.EXIT_REFUSED and out[-1]["reason"] == "target_app_refused"
 
 
-def test_tampered_plan_is_refused(tmp_path):
-    body = r.admit(_keeper(), r.SPORT_KEY, _anchors())
-    plan = r.write_artifact(str(tmp_path / "plan.json"), r.PLAN_SCHEMA, body, "plan")
-    assert r.load_artifact(plan["path"], plan["sha256"], r.PLAN_SCHEMA, "plan")["state"] == "CANDIDATE"
-    with pytest.raises(r.Refused, match="plan_hash_mismatch"):
-        r.load_artifact(plan["path"], "0" * 64, r.PLAN_SCHEMA, "plan")
-    with pytest.raises(r.Refused, match="plan_wrong_schema"):
-        r.load_artifact(plan["path"], plan["sha256"], r.BACKUP_SCHEMA, "plan")
+def test_host_modes_refuse_on_a_dyno(tmp_path):
+    out = r.stage_plan(preflight_output=str(tmp_path / "p.jsonl"), plan_out=str(tmp_path / "plan.json"),
+                       env={"DYNO": "run.1"})
+    assert out["state"] == r.REFUSED and out["reason"] == "host_mode_refused_on_dyno"
+    assert list(tmp_path.iterdir()) == []
+
+
+def _sealed_plan():
+    body = r.admit(_keeper(), r.SPORT_KEY, _anchors(), _survivor())
+    body.update({"evidence": r.EVIDENCE, "pins": {"tool": r.TOOL}, "planned_at": "2026-10-05T12:00:00+00:00"})
+    return r.seal(r.PLAN_SCHEMA, body)
+
+
+def _staged(tmp_path):
+    plan = _sealed_plan()
+    preflight = _write_jsonl(tmp_path / "preflight.jsonl", [r._result(
+        "preflight", r.PLANNED, plan=plan, plan_sha256=r.artifact_sha256(plan))])
+    sp = r.stage_plan(preflight_output=preflight, plan_out=str(tmp_path / "plan.json"), env=HOST)
+    assert sp["state"] == r.STAGED, sp
+    sa = r.stage_apply(plan_path=sp["plan"]["path"], plan_hash=sp["plan"]["sha256"],
+                       backup_out=str(tmp_path / "backup.json"), bundle_out=str(tmp_path / "apply-input.json"),
+                       env=HOST)
+    assert sa["state"] == r.STAGED, sa
+    return sp, sa
+
+
+def test_host_staging_writes_exactly_the_bytes_it_hashes(tmp_path):
+    sp, sa = _staged(tmp_path)
+    for f in (sp["plan"], sa["backup"], sa["apply_input"]):
+        data = Path(f["path"]).read_bytes()
+        assert hashlib.sha256(data).hexdigest() == f["sha256"]
+        assert Path(f["path"] + ".sha256").read_text().split() == [f["sha256"], Path(f["path"]).name]
+        assert oct(os.stat(f["path"]).st_mode & 0o777) == "0o400"
+    assert sa["apply_argv"]["--plan-hash"] == sp["plan"]["sha256"]
+    assert sa["apply_argv"]["--backup-hash"] == sa["backup"]["sha256"]
+    again = r.stage_apply(plan_path=sp["plan"]["path"], plan_hash=sp["plan"]["sha256"],
+                          backup_out=sa["backup"]["path"], bundle_out=str(tmp_path / "x.json"), env=HOST)
+    assert again["state"] == r.REFUSED and again["reason"] == "backup_path_exists"
+
+
+def test_a_db_mode_refuses_a_tampered_bundle_before_connecting(tmp_path):
+    _, sa = _staged(tmp_path)
+    honest = Path(sa["apply_input"]["path"]).read_bytes()
+    argv = dict(plan_hash=sa["apply_argv"]["--plan-hash"], backup_hash=sa["apply_argv"]["--backup-hash"])
+    # control: the honest bundle passes every pre-DB gate and reaches the database
+    control = _NoDb()
+    asyncio.run(r.run_apply(control, stdin=honest, emit=_Records(), **argv))
+    assert control.calls == 1
+    for raw, reason in (
+        (honest.replace(b'"state":"CANDIDATE"', b'"state":"CANDIDATE" '), "stdin_not_the_canonical_host_file"),
+        (honest[:-1], "stdin_not_the_canonical_host_file"),
+        (b"Running python3 on bainluck... up\n" + honest, "stdin_not_json"),
+    ):
+        never = _NoDb()
+        res = asyncio.run(r.run_apply(never, stdin=raw, emit=_Records(), **argv))
+        assert res["state"] == r.REFUSED and res["reason"] == reason, res
+        assert never.calls == 0
+
+
+@pytest.mark.parametrize("which", ["--plan-hash", "--backup-hash"])
+def test_apply_refuses_a_hash_the_host_did_not_compute(tmp_path, which):
+    _, sa = _staged(tmp_path)
+    argv = dict(sa["apply_argv"], **{which: "0" * 64})
+    never = _NoDb()
+    res = asyncio.run(r.run_apply(never, stdin=Path(sa["apply_input"]["path"]).read_bytes(), emit=_Records(),
+                                  plan_hash=argv["--plan-hash"], backup_hash=argv["--backup-hash"]))
+    assert res["state"] == r.REFUSED and res["reason"].endswith("_hash_mismatch") and never.calls == 0
 
 
 # ═══ Postgres half ════════════════════════════════════════════════════════════
@@ -228,9 +346,10 @@ async def db():
     from sqlalchemy import text
     from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 
-    import app.models.models  # noqa: F401
+    from app.models import models
     from app.services.database import Base
 
+    assert models.EventProviderAnchor.__tablename__ == "event_provider_anchors"
     admin = create_async_engine(_asyncpg_url(DB_URL))
     async with admin.begin() as conn:
         await conn.execute(text(f"DROP SCHEMA IF EXISTS {SCHEMA} CASCADE"))
@@ -238,7 +357,8 @@ async def db():
     engine = create_async_engine(
         _asyncpg_url(DB_URL), connect_args={"server_settings": {"search_path": SCHEMA}}
     )
-    tables = _closure([Base.metadata.tables[n] for n in ("events", "event_provider_anchors")])
+    names = ("events", "event_provider_anchors", "odds_snapshots")
+    tables = _closure([Base.metadata.tables[n] for n in names])
     async with engine.begin() as conn:
         await conn.run_sync(lambda c: Base.metadata.create_all(c, tables=tables))
     maker = async_sessionmaker(engine, expire_on_commit=False)
@@ -280,6 +400,14 @@ async def _seed(maker):
         await s.commit()
 
 
+async def _snapshot(maker, event_id):
+    from app.models.models import OddsSnapshot
+
+    async with maker() as s:
+        s.add(OddsSnapshot(event_id=event_id, bookmaker="draftkings"))
+        await s.commit()
+
+
 async def _exec(maker, sql, **params):
     from sqlalchemy import text
 
@@ -293,7 +421,7 @@ async def _anchors_table(maker):
 
     async with maker() as s:
         rows = (await s.execute(text(
-            "SELECT id, event_id, source, source_id, id_kind, claim_context "
+            "SELECT id, event_id, source, source_id, id_kind, first_seen_at, claim_context "
             "FROM event_provider_anchors ORDER BY source, source_id, id_kind"))).mappings().all()
     return [dict(x) for x in rows]
 
@@ -305,67 +433,162 @@ async def _step2(maker):
         return await find_event_by_anchor(s, r.INCOMING_KEY, expected_sport_id=1326)
 
 
-async def _plan(maker, tmp_path, name="plan.json"):
-    out = await r.run_preflight(maker, plan_out=str(tmp_path / name))
-    assert out["state"] == r.PLANNED, out
-    return out["plan"]
-
-
-async def _apply(maker, tmp_path, plan, name="backup.json", **kw):
-    return await r.run_apply(maker, plan_path=plan["path"], plan_hash=plan["sha256"],
-                             backup_out=str(tmp_path / name), **kw)
-
-
 def _current_rows(table):
     return [a for a in table if (a["source"], a["source_id"], a["id_kind"]) ==
             ("odds_api", r.CURRENT_ODDS_ID, "game")]
 
 
+class Flow:
+    """The six phases, each through the shipped function, files on a tmp 'host'."""
+
+    def __init__(self, db, tmp_path):
+        self.db, self.dir, self.n = db, tmp_path, 0
+
+    def _p(self, name):
+        self.n += 1
+        return str(self.dir / f"{self.n:02d}-{name}")
+
+    async def preflight(self):
+        out = _Records()
+        res = await r.run_preflight(self.db, emit=out)
+        return res, out
+
+    async def stage(self):
+        res, out = await self.preflight()
+        assert res["state"] == r.PLANNED, res
+        sp = r.stage_plan(preflight_output=_write_jsonl(Path(self._p("preflight.jsonl")), out),
+                          plan_out=self._p("plan.json"), env=HOST)
+        sa = r.stage_apply(plan_path=sp["plan"]["path"], plan_hash=sp["plan"]["sha256"],
+                           backup_out=self._p("backup.json"), bundle_out=self._p("apply-input.json"), env=HOST)
+        assert sa["state"] == r.STAGED, sa
+        return sa
+
+    async def apply(self, sa, **kw):
+        out = _Records()
+        res = await r.run_apply(self.db, stdin=Path(sa["apply_input"]["path"]).read_bytes(), emit=out,
+                                plan_hash=sa["apply_argv"]["--plan-hash"],
+                                backup_hash=sa["apply_argv"]["--backup-hash"], **kw)
+        self.apply_output = _write_jsonl(Path(self._p("apply.jsonl")), out)
+        return res, out
+
+    def stage_restore(self, sa):
+        return r.stage_restore(backup_path=sa["backup"]["path"], backup_hash=sa["backup"]["sha256"],
+                               apply_output=self.apply_output, bundle_out=self._p("restore-input.json"), env=HOST)
+
+    async def restore(self, sr, **kw):
+        out = _Records()
+        res = await r.run_restore(self.db, stdin=Path(sr["restore_input"]["path"]).read_bytes(), emit=out,
+                                  backup_hash=sr["restore_argv"]["--backup-hash"],
+                                  receipt_hash=sr["restore_argv"]["--receipt-hash"], **kw)
+        return res, out
+
+
 @needs_postgres
 async def test_apply_writes_one_anchor_and_step2_then_resolves_the_incoming_id(db, tmp_path):
+    f = Flow(db, tmp_path)
     before = await _anchors_table(db)
     assert await _step2(db) is None  # BEFORE: #8278 refuses — the column's own id is unanchored
 
-    plan = await _plan(db, tmp_path)
-    out = await _apply(db, tmp_path, plan)
-    assert out["state"] == r.APPLIED, out
-    assert out["counts"]["anchor_rows_written"] == 1
-    assert out["step2_resolves_incoming_to"] == r.KEEPER_ID
-    assert out["incoming_after"] == {"id": r.INCOMING_ANCHOR_ID, "event_id": r.KEEPER_ID}
-    assert r.exit_code(out) == r.EXIT_OK
+    res, out = await f.apply(await f.stage())
+    assert res["state"] == r.APPLIED, res
+    assert res["counts"]["anchor_rows_written"] == 1
+    assert res["step2_resolves_incoming_to"] == r.KEEPER_ID
+    assert res["incoming_after"] == {"id": r.INCOMING_ANCHOR_ID, "event_id": r.KEEPER_ID}
+    assert r.exit_code(res) == r.EXIT_OK
+    assert [x["record"] for x in out] == ["created_row", "result"]
 
     after = await _anchors_table(db)
     assert [a for a in after if a not in before] == _current_rows(after)
     assert [a for a in before if a not in after] == []  # nothing else moved or vanished
     (created,) = _current_rows(after)
-    assert created["event_id"] == r.KEEPER_ID
-    assert created["claim_context"]["written_by"] == r.TOOL
+    receipt_row = out.kind("created_row")[0]["receipt"]["created_row"]
+    assert r.row_is_the_created_row(created, receipt_row) == []
     assert await _step2(db) == r.KEEPER_ID  # AFTER: the same registry read rescues
 
 
 @needs_postgres
+async def test_the_created_row_record_leaves_before_any_commit(db, tmp_path, monkeypatch):
+    """The ordering proof: when ``created_row`` is emitted, no COMMIT has been
+    attempted, and a second connection cannot yet see the anchor."""
+    from sqlalchemy import text
+    from sqlalchemy.ext.asyncio import AsyncSession
+
+    f = Flow(db, tmp_path)
+    sa = await f.stage()
+    commits = []
+    real_commit = AsyncSession.commit
+
+    async def commit_spy(self):
+        commits.append(True)
+        return await real_commit(self)
+
+    monkeypatch.setattr(AsyncSession, "commit", commit_spy)
+    at_emit = {}
+    records = _Records()
+
+    def emit(record):
+        if record.get("record") == "created_row":
+            at_emit["commits"] = len(commits)
+        records(record)
+
+    res = await r.run_apply(db, stdin=Path(sa["apply_input"]["path"]).read_bytes(), emit=emit,
+                            plan_hash=sa["apply_argv"]["--plan-hash"], backup_hash=sa["apply_argv"]["--backup-hash"])
+    assert res["state"] == r.APPLIED, res
+    assert at_emit == {"commits": 0}
+    async with db() as other:
+        n = (await other.execute(text("SELECT count(*) FROM event_provider_anchors WHERE source_id = :s"),
+                                 {"s": r.CURRENT_ODDS_ID})).scalar_one()
+    assert n == 1
+
+
+@needs_postgres
+async def test_a_lost_dyno_after_commit_is_recoverable_from_the_pre_commit_record(db, tmp_path, monkeypatch):
+    """The process dies after COMMIT: no final verify, no APPLIED. The host still
+    holds the backup and the ``created_row`` line, and that alone restores."""
+    f = Flow(db, tmp_path)
+    sa = await f.stage()
+
+    async def gone(*_a, **_k):
+        raise ConnectionError("dyno gone")
+
+    monkeypatch.setattr(r, "_verify", gone)
+    res, out = await f.apply(sa)
+    assert res["state"] == r.COMMIT_UNKNOWN and res["reason"] == "post_commit_verify_unreadable", res
+    assert len(_current_rows(await _anchors_table(db))) == 1  # it did commit
+    monkeypatch.undo()
+
+    sr = f.stage_restore(sa)
+    assert sr["state"] == r.STAGED, sr
+    undo, _ = await f.restore(sr)
+    assert undo["state"] == r.RESTORED, undo
+    assert _current_rows(await _anchors_table(db)) == []
+
+
+@needs_postgres
 async def test_repeated_execution_is_an_idempotent_no_op(db, tmp_path):
-    plan = await _plan(db, tmp_path)
-    assert (await _apply(db, tmp_path, plan))["state"] == r.APPLIED
+    f = Flow(db, tmp_path)
+    sa = await f.stage()
+    assert (await f.apply(sa))[0]["state"] == r.APPLIED
     table = await _anchors_table(db)
 
-    again = await _apply(db, tmp_path, plan, name="backup2.json")
+    again, out = await f.apply(sa)
     assert again["state"] == r.NOT_NEEDED and again["counts"]["anchor_rows_written"] == 0
-    assert r.exit_code(again) == r.EXIT_OK
-    assert (await r.run_preflight(db, plan_out=str(tmp_path / "plan2.json")))["state"] == r.NOT_NEEDED
+    assert out.kind("created_row") == [] and r.exit_code(again) == r.EXIT_OK
+    assert (await f.preflight())[0]["state"] == r.NOT_NEEDED
     assert await _anchors_table(db) == table
 
 
 @needs_postgres
 async def test_another_owner_of_the_current_key_refuses_and_is_never_repointed(db, tmp_path):
-    plan = await _plan(db, tmp_path)
+    f = Flow(db, tmp_path)
+    sa = await f.stage()
     await _exec(db, "INSERT INTO event_provider_anchors (event_id, source, source_id, id_kind) "
                     "VALUES (:e, 'odds_api', :s, 'game')", e=r.TWIN_ID, s=r.CURRENT_ODDS_ID)
 
-    pre = await r.run_preflight(db, plan_out=str(tmp_path / "plan2.json"))
+    pre, _ = await f.preflight()
     assert pre["state"] == r.REFUSED and pre["reason"] == "current_key_owned_elsewhere"
-    out = await _apply(db, tmp_path, plan)
-    assert out["state"] == r.REFUSED and out["reason"] == "current_key_owned_elsewhere"
+    res, _ = await f.apply(sa)
+    assert res["state"] == r.REFUSED and res["reason"] == "current_key_owned_elsewhere"
     (row,) = _current_rows(await _anchors_table(db))
     assert row["event_id"] == r.TWIN_ID
 
@@ -374,23 +597,27 @@ async def test_another_owner_of_the_current_key_refuses_and_is_never_repointed(d
 async def test_an_uncommitted_competing_insert_is_bounded_and_nothing_is_written(db, tmp_path):
     from sqlalchemy import text
 
-    plan = await _plan(db, tmp_path)
+    f = Flow(db, tmp_path)
+    sa = await f.stage()
     async with db() as rival:
         await rival.execute(text(
             "INSERT INTO event_provider_anchors (event_id, source, source_id, id_kind) "
             "VALUES (:e, 'odds_api', :s, 'game')"), {"e": r.TWIN_ID, "s": r.CURRENT_ODDS_ID})
-        out = await _apply(db, tmp_path, plan, lock_timeout_ms=300)
-        assert out["state"] == r.REFUSED and out["reason"] == "lock_timeout", out
+        res, out = await f.apply(sa, lock_timeout_ms=300)
+        assert res["state"] == r.REFUSED and res["reason"] == "lock_timeout", res
+        assert out.kind("created_row") == []
         await rival.rollback()
     assert _current_rows(await _anchors_table(db)) == []
 
 
 @needs_postgres
 async def test_a_failure_after_the_insert_rolls_the_insert_back(db, tmp_path, monkeypatch):
-    plan = await _plan(db, tmp_path)
+    f = Flow(db, tmp_path)
+    sa = await f.stage()
     monkeypatch.setattr(r, "created_row_matches", lambda row, cc: ["forced"])
-    out = await _apply(db, tmp_path, plan)
-    assert out["state"] == r.REFUSED and out["reason"] == "in_transaction_readback_mismatch"
+    res, out = await f.apply(sa)
+    assert res["state"] == r.REFUSED and res["reason"] == "in_transaction_readback_mismatch"
+    assert out.kind("created_row") == []
     assert _current_rows(await _anchors_table(db)) == []
     assert await _step2(db) is None
 
@@ -403,10 +630,11 @@ async def test_a_failure_after_the_insert_rolls_the_insert_back(db, tmp_path, mo
     ("UPDATE sports SET key = 'soccer_usa_mls_old' WHERE id = 1326", "keeper_sport_key_changed"),
 ])
 async def test_a_changed_scalar_or_sport_after_the_plan_refuses(db, tmp_path, sql, reason):
-    plan = await _plan(db, tmp_path)
+    f = Flow(db, tmp_path)
+    sa = await f.stage()
     await _exec(db, sql, **({"k": r.KEEPER_ID} if ":k" in sql else {}))
-    out = await _apply(db, tmp_path, plan)
-    assert out["state"] == r.REFUSED and out["reason"] == reason, out
+    res, _ = await f.apply(sa)
+    assert res["state"] == r.REFUSED and res["reason"] == reason, res
     assert _current_rows(await _anchors_table(db)) == []
 
 
@@ -420,10 +648,11 @@ async def test_a_changed_scalar_or_sport_after_the_plan_refuses(db, tmp_path, sq
      "official_statpal_anchor_absent"),
 ])
 async def test_wrong_kind_provider_owner_or_namespace_refuses(db, tmp_path, sql, reason):
-    plan = await _plan(db, tmp_path)
+    f = Flow(db, tmp_path)
+    sa = await f.stage()
     await _exec(db, sql)
-    out = await _apply(db, tmp_path, plan)
-    assert out["state"] == r.REFUSED and out["reason"] == reason, out
+    res, _ = await f.apply(sa)
+    assert res["state"] == r.REFUSED and res["reason"] == reason, res
     assert _current_rows(await _anchors_table(db)) == []
 
 
@@ -432,81 +661,156 @@ async def test_rows_sharing_the_id_under_another_provider_or_kind_do_not_count(d
     for source, kind in (("odds_api", "market"), ("espn", "game")):
         await _exec(db, "INSERT INTO event_provider_anchors (event_id, source, source_id, id_kind) "
                         "VALUES (:e, :src, :s, :k)", e=r.TWIN_ID, src=source, s=r.CURRENT_ODDS_ID, k=kind)
-    out = await _apply(db, tmp_path, await _plan(db, tmp_path))
-    assert out["state"] == r.APPLIED, out
+    f = Flow(db, tmp_path)
+    res, _ = await f.apply(await f.stage())
+    assert res["state"] == r.APPLIED, res
     (row,) = _current_rows(await _anchors_table(db))
     assert row["event_id"] == r.KEEPER_ID
 
 
 @needs_postgres
-async def test_restore_deletes_only_this_invocations_row(db, tmp_path):
-    before = await _anchors_table(db)
-    out = await _apply(db, tmp_path, await _plan(db, tmp_path))
-    backup = out["backup"]
+async def test_the_survivor_gate_reads_snapshots_with_the_drains_predicate(db, tmp_path):
+    f = Flow(db, tmp_path)
+    sa = await f.stage()  # neither row has snapshots: keeper kept, CANDIDATE
+    await _snapshot(db, r.TWIN_ID)
+    pre, _ = await f.preflight()
+    assert pre["state"] == r.REFUSED and pre["reason"] == "drain_would_elect_twin_return_to_root", pre
+    res, _ = await f.apply(sa)  # re-judged inside the apply transaction
+    assert res["state"] == r.REFUSED and res["reason"] == "drain_would_elect_twin_return_to_root", res
+    assert _current_rows(await _anchors_table(db)) == []
 
-    undo = await r.run_restore(db, backup_path=backup["path"], backup_hash=backup["sha256"])
+    await _snapshot(db, r.KEEPER_ID)  # both: the drain keeps the lower id, the keeper
+    res, _ = await f.apply(sa)
+    assert res["state"] == r.APPLIED, res
+
+
+@needs_postgres
+async def test_restore_deletes_only_this_invocations_row(db, tmp_path):
+    f = Flow(db, tmp_path)
+    before = await _anchors_table(db)
+    sa = await f.stage()
+    assert (await f.apply(sa))[0]["state"] == r.APPLIED
+    sr = f.stage_restore(sa)
+
+    undo, _ = await f.restore(sr)
     assert undo["state"] == r.RESTORED and undo["counts"]["anchor_rows_deleted"] == 1, undo
     assert await _anchors_table(db) == before
     assert await _step2(db) is None  # the #8278 refusal is back, as it was
 
-    twice = await r.run_restore(db, backup_path=backup["path"], backup_hash=backup["sha256"])
+    twice, _ = await f.restore(sr)
     assert twice["state"] == r.NOT_APPLIED and r.exit_code(twice) == r.EXIT_OK
 
 
 @needs_postgres
-async def test_restore_refuses_a_row_changed_after_the_apply(db, tmp_path):
-    out = await _apply(db, tmp_path, await _plan(db, tmp_path))
-    await _exec(db, "UPDATE event_provider_anchors SET claim_context = claim_context || "
-                    "'{\"touched\": true}'::jsonb WHERE source = 'odds_api' AND source_id = :s",
-                s=r.CURRENT_ODDS_ID)
-    undo = await r.run_restore(db, backup_path=out["backup"]["path"], backup_hash=out["backup"]["sha256"])
-    assert undo["state"] == r.REFUSED and undo["reason"].startswith(
-        "row_is_not_this_invocations_unchanged_write:claim_context"), undo
+async def test_restore_refuses_a_recreated_row_carrying_the_same_context(db, tmp_path):
+    """Delete the created row and insert a replacement with the IDENTICAL context:
+    same key, owner and claim_context, new id and timestamp. Not the row we made."""
+    f = Flow(db, tmp_path)
+    sa = await f.stage()
+    assert (await f.apply(sa))[0]["state"] == r.APPLIED
+    (orig,) = _current_rows(await _anchors_table(db))
+    await _exec(db, "DELETE FROM event_provider_anchors WHERE id = :i", i=orig["id"])
+    await _exec(db, "INSERT INTO event_provider_anchors (event_id, source, source_id, id_kind, claim_context) "
+                    "VALUES (:e, 'odds_api', :s, 'game', CAST(:cc AS jsonb))",
+                e=r.KEEPER_ID, s=r.CURRENT_ODDS_ID, cc=json.dumps(orig["claim_context"]))
+
+    undo, _ = await f.restore(f.stage_restore(sa))
+    assert undo["state"] == r.REFUSED and undo["reason"].startswith("row_is_not_the_created_row:id"), undo
+    (row,) = _current_rows(await _anchors_table(db))
+    assert row["id"] != orig["id"] and row["claim_context"] == orig["claim_context"]
+
+
+@needs_postgres
+async def test_restore_refuses_a_row_whose_timestamp_changed(db, tmp_path):
+    f = Flow(db, tmp_path)
+    sa = await f.stage()
+    assert (await f.apply(sa))[0]["state"] == r.APPLIED
+    await _exec(db, "UPDATE event_provider_anchors SET first_seen_at = first_seen_at + interval '1 second' "
+                    "WHERE source = 'odds_api' AND source_id = :s", s=r.CURRENT_ODDS_ID)
+    undo, _ = await f.restore(f.stage_restore(sa))
+    assert undo["state"] == r.REFUSED and undo["reason"] == "row_is_not_the_created_row:first_seen_at", undo
     assert len(_current_rows(await _anchors_table(db))) == 1
 
 
 @needs_postgres
-async def test_restore_never_deletes_a_pre_existing_row(db, tmp_path):
-    plan = await _plan(db, tmp_path)
-    await _exec(db, "INSERT INTO event_provider_anchors (event_id, source, source_id, id_kind, claim_context) "
-                    "VALUES (:e, 'odds_api', :s, 'game', CAST(:cc AS jsonb))", e=r.KEEPER_ID,
-                s=r.CURRENT_ODDS_ID, cc=json.dumps({"source": "odds_api", "schedule_derived": False}))
-    out = await _apply(db, tmp_path, plan)
-    assert out["state"] == r.NOT_NEEDED, out
-    undo = await r.run_restore(db, backup_path=out["backup"]["path"], backup_hash=out["backup"]["sha256"])
-    assert undo["state"] == r.REFUSED, undo
-    (row,) = _current_rows(await _anchors_table(db))
-    assert row["claim_context"] == {"source": "odds_api", "schedule_derived": False}
+async def test_restore_refuses_a_row_whose_context_changed(db, tmp_path):
+    f = Flow(db, tmp_path)
+    sa = await f.stage()
+    assert (await f.apply(sa))[0]["state"] == r.APPLIED
+    await _exec(db, "UPDATE event_provider_anchors SET claim_context = claim_context || "
+                    "'{\"touched\": true}'::jsonb WHERE source = 'odds_api' AND source_id = :s",
+                s=r.CURRENT_ODDS_ID)
+    undo, _ = await f.restore(f.stage_restore(sa))
+    assert undo["state"] == r.REFUSED and undo["reason"] == "row_is_not_the_created_row:claim_context", undo
+    assert len(_current_rows(await _anchors_table(db))) == 1
 
 
 @needs_postgres
 async def test_the_delete_carries_its_own_fence_behind_the_python_check(db, tmp_path, monkeypatch):
     """Defence in depth: with the in-Python comparison blinded, the DELETE's own
-    ``claim_context`` predicate still declines a row that is not this invocation's."""
-    out = await _apply(db, tmp_path, await _plan(db, tmp_path))
-    await _exec(db, "UPDATE event_provider_anchors SET claim_context = '{\"other\": 1}'::jsonb "
+    id/timestamp/context predicate still declines a row that is not the one made."""
+    f = Flow(db, tmp_path)
+    sa = await f.stage()
+    assert (await f.apply(sa))[0]["state"] == r.APPLIED
+    sr = f.stage_restore(sa)
+    await _exec(db, "UPDATE event_provider_anchors SET first_seen_at = first_seen_at + interval '1 second' "
                     "WHERE source = 'odds_api' AND source_id = :s", s=r.CURRENT_ODDS_ID)
-    monkeypatch.setattr(r, "created_row_matches", lambda row, cc: [])
-    undo = await r.run_restore(db, backup_path=out["backup"]["path"], backup_hash=out["backup"]["sha256"])
+    monkeypatch.setattr(r, "row_is_the_created_row", lambda row, created: [])
+    undo, _ = await f.restore(sr)
     assert undo["state"] == r.REFUSED and undo["reason"] == "delete_fence_lost", undo
     assert len(_current_rows(await _anchors_table(db))) == 1
+
+
+@needs_postgres
+async def test_a_failed_verify_after_the_restore_commit_is_commit_unknown(db, tmp_path, monkeypatch):
+    f = Flow(db, tmp_path)
+    sa = await f.stage()
+    assert (await f.apply(sa))[0]["state"] == r.APPLIED
+    sr = f.stage_restore(sa)
+
+    async def gone(*_a, **_k):
+        raise ConnectionError("dyno gone")
+
+    monkeypatch.setattr(r, "_read_after_restore", gone)
+    undo, _ = await f.restore(sr)
+    assert undo["state"] == r.COMMIT_UNKNOWN and undo["reason"] == "post_commit_verify_unreadable", undo
+    assert r.exit_code(undo) == r.EXIT_COMMIT_UNKNOWN
+    assert undo["invocation_id"] and undo["created_row"]["id"] and undo["backup_sha256"]
+    assert _current_rows(await _anchors_table(db)) == []  # the delete DID commit; the receipt says unknown
+
+
+@needs_postgres
+async def test_restore_never_deletes_a_pre_existing_row(db, tmp_path):
+    f = Flow(db, tmp_path)
+    sa = await f.stage()
+    await _exec(db, "INSERT INTO event_provider_anchors (event_id, source, source_id, id_kind, claim_context) "
+                    "VALUES (:e, 'odds_api', :s, 'game', CAST(:cc AS jsonb))", e=r.KEEPER_ID,
+                s=r.CURRENT_ODDS_ID, cc=json.dumps({"source": "odds_api", "schedule_derived": False}))
+    res, out = await f.apply(sa)
+    assert res["state"] == r.NOT_NEEDED and out.kind("created_row") == [], res
+    sr = f.stage_restore(sa)
+    assert sr["state"] == r.REFUSED and sr["reason"] == "apply_output_created_row_count", sr
+    (row,) = _current_rows(await _anchors_table(db))
+    assert row["claim_context"] == {"source": "odds_api", "schedule_derived": False}
 
 
 @needs_postgres
 async def test_a_same_owner_row_that_appears_between_read_and_write_is_a_no_op(db, tmp_path, monkeypatch):
     """``record_anchor`` answering CONFIRMED at the write (a same-owner row landed
     after the admission read) is NOT_NEEDED: nothing written, the incumbent kept."""
-    plan = await _plan(db, tmp_path)
+    f = Flow(db, tmp_path)
+    sa = await f.stage()
     await _exec(db, "INSERT INTO event_provider_anchors (event_id, source, source_id, id_kind) "
                     "VALUES (:e, 'odds_api', :s, 'game')", e=r.KEEPER_ID, s=r.CURRENT_ODDS_ID)
     real_read_all = r._read_all
 
     async def read_before_the_rival(session, *, lock):
-        keeper, sport_key, anchors = await real_read_all(session, lock=lock)
-        return keeper, sport_key, {**anchors, "current": None}
+        keeper, sport_key, anchors, survivor = await real_read_all(session, lock=lock)
+        return keeper, sport_key, {**anchors, "current": None}, survivor
 
     monkeypatch.setattr(r, "_read_all", read_before_the_rival)
-    out = await _apply(db, tmp_path, plan)
-    assert out["state"] == r.NOT_NEEDED and out["reason"] == "current_key_confirmed_at_write", out
+    res, out = await f.apply(sa)
+    assert res["state"] == r.NOT_NEEDED and res["reason"] == "current_key_confirmed_at_write", res
+    assert out.kind("created_row") == []
     (row,) = _current_rows(await _anchors_table(db))
     assert row["claim_context"] is None

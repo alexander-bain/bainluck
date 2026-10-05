@@ -29,17 +29,18 @@ WHAT IS WRITTEN
 
 One ``event_provider_anchors`` row: ``(odds_api, 1d13bd275c7b67b77bea8ff4d03850cc,
 game) -> 14969919``. Its ``claim_context`` names this tool, the issue and a
-per-invocation id banked in the backup BEFORE the database is touched, so the
-restore can tell this invocation's row from any other.
+per-invocation id that is minted ON THE OPERATOR'S HOST, inside a backup the host
+already holds before the database is touched.
 
-Nothing else is written. ``events`` (keeper and twin), the incoming anchor 187393
-and the official-fixture anchors are read, locked and compared, never changed.
+Nothing else is written. ``events`` (keeper and twin), ``odds_snapshots``, the
+incoming anchor 187393 and the official-fixture anchors are read, never changed.
 
-ADMISSION (every gate fails closed; the same pure function serves all modes)
---------------------------------------------------------------------------
+ADMISSION (every gate fails closed; the same pure function serves every DB mode)
+-------------------------------------------------------------------------------
 
 * KEEPER: the row exists and its identity columns equal the retained evidence
-  exactly: sport 1326 (key ``soccer_usa_mls``), teams 16/23, both names,
+  exactly: sport 1326 (key ``soccer_usa_mls`` — not in the retained reads, so a
+  different key REFUSES rather than being guessed), teams 16/23, both names,
   ``external_id`` = the current Odds id, ``espn_id`` 761660,
   ``statpal_fixture_id`` 9163448, ``commence_time`` 2026-10-07T00:30Z. ``status`` is
   banked, not fenced — a game going live does not change which game it is.
@@ -47,31 +48,66 @@ ADMISSION (every gate fails closed; the same pure function serves all modes)
   the keeper. A market/container anchor or another provider's row is not it.
 * OFFICIAL FIXTURE: ``(statpal, soccer:9163448, game)`` is row 295737, owned by
   the keeper; ``(espn, 761660, game)`` is absent or owned by the keeper.
+* SURVIVOR (Authority's §5 item 1): the ordinary ``merge-duplicate-events`` drain
+  would elect the twin exactly when the twin carries an ``external_id`` and
+  ``odds_snapshots`` while the keeper has none. That state REFUSES and goes back to
+  Root; ``has_snaps`` is read with the drain's own predicate and recorded.
 * CURRENT: ``(odds_api, 1d13bd27…, game)`` absent -> CANDIDATE (the only state that
   writes); owned by the keeper -> NOT_NEEDED (idempotent no-op, exit 0); owned by
   any other row -> REFUSED. Never repointed.
 
-THREE MODES
------------
+TRANSPORT: THE EXISTING ATTENDED EXECUTOR, NOT DYNO FILES
+--------------------------------------------------------
 
-``--preflight`` (default) reads in one REPEATABLE READ READ ONLY transaction and
-writes an immutable plan (exclusive create, fsync, read-only) with a detached
-``<plan>.sha256``. ``--apply`` consumes only that plan by its detached hash, banks
-a backup BEFORE connecting, then in one bounded transaction locks the keeper
-``FOR UPDATE`` (an anchor FK insert for the keeper needs ``FOR KEY SHARE`` on it,
-so no other writer can anchor anything to the keeper meanwhile) and the three
-existing anchors ``FOR SHARE``, re-runs admission, compares with the plan, calls
-``record_anchor`` and requires ``WROTE`` plus an exact in-transaction read-back.
-After COMMIT a new transaction verifies and records whether Step 2 now resolves
-the incoming id to the keeper. A failure around COMMIT is classified from an
-exact-key read (absent = NOT_APPLIED, this invocation's row = APPLIED, else
-COMMIT_UNKNOWN) and the tool stops; it never re-applies.
+A one-off dyno's filesystem dies with the dyno, so nothing this tool needs for
+recovery is ever kept only there. The channel is the one #9649 used
+(``APPROVED-B1-20261001.sh``): an attended ``heroku run --exit-code --no-tty``
+whose STDIN is a host file and whose STDOUT is captured to a no-clobber host
+file. So:
 
-``--restore`` deletes ONLY the row this invocation created: same key, same owner,
-and a ``claim_context`` equal to the one banked in the backup (invocation id
-included). A pre-existing row, a row another writer created, or a row that has
-changed since is refused and left alone. No row at the key is NOT_APPLIED.
-Restoring re-opens #8278's refusal for the incoming id — run it only to undo.
+* DATABASE modes (``--preflight``, ``--apply``, ``--restore``) run on the dyno,
+  read their one input bundle from STDIN, write nothing to disk, and print JSON
+  Lines to STDOUT — one canonical object per line, nothing else (logging and
+  warnings are captured into the final record, because attached ``heroku run``
+  merges dyno stderr into local stdout).
+* HOST modes (``--stage-plan``, ``--stage-apply``, ``--stage-restore``) run on the
+  operator's machine and REFUSE on a dyno (``DYNO`` set). They write the plan,
+  backup and input bundles with exclusive create + fsync + a detached
+  ``.sha256`` — retention on the host, where it is real.
+
+Every hash is SHA256 over an artifact's canonical bytes
+(``canonical_json(doc) + "\\n"``), which is exactly what the host file holds. A
+DB mode recomputes it from STDIN and refuses unless it equals the hash on its
+argv — so apply can only consume a plan the operator reviewed and a backup the
+operator already holds.
+
+PHASES (each phase boundary is a person; nothing chains across one)
+------------------------------------------------------------------
+
+1. ``--preflight`` (dyno, REPEATABLE READ READ ONLY) -> host ``preflight.jsonl``.
+2. ``--stage-plan`` (host) -> ``plan.json`` + sha. Review boundary.
+3. ``--stage-apply`` (host) -> ``backup.json`` (new invocation id) +
+   ``apply-input.json``, each with sha. Retention check on the host.
+4. ``--apply`` (dyno, STDIN = apply-input.json) -> host ``apply.jsonl``. One
+   bounded transaction: keeper ``FOR UPDATE``, sport + existing anchors
+   ``FOR SHARE``, admission, plan drift, ``record_anchor`` must answer ``WROTE``,
+   exact in-transaction read-back. Then — BEFORE COMMIT — the ``created_row``
+   record (anchor id, ``first_seen_at``, ``claim_context``) is written to STDOUT
+   and flushed. Then COMMIT, then a new-transaction verify. An ambiguous COMMIT is
+   classified from an exact-key read (absent NOT_APPLIED, this row APPLIED, else
+   COMMIT_UNKNOWN); it never re-applies.
+5. ``--stage-restore`` (host) -> ``restore-input.json`` = backup + the
+   ``created_row`` record from ``apply.jsonl``.
+6. ``--restore`` (dyno, STDIN = restore-input.json) deletes ONLY the row that
+   record names: same anchor id, same ``first_seen_at``, same key, owner and
+   ``claim_context``, repeated in the DELETE's own predicate. A recreated row with
+   copied context, a changed timestamp, a pre-existing or changed row: REFUSED and
+   left. Nothing at the key: NOT_APPLIED. A failed verify after the delete COMMIT
+   is COMMIT_UNKNOWN with the full evidence, never a generic runtime error.
+   Restoring re-opens #8278's refusal for the incoming id — run it only to undo.
+
+APPLIED means the anchor write was confirmed. ``step2_resolves_incoming_to`` is
+reported, not enforced; it is not a twin, natural-poll or reader claim.
 
 WHAT THIS DOES NOT DO
 ---------------------
@@ -83,16 +119,10 @@ names the keeper, so the next claim misses Step 1, reaches Step 2 and is rescued
 instead of minting a third row. Apply it before (or with) the twin's disposition.
 Twin disposition, natural-poll rescue and reader acceptance are separate.
 
-INTERFACE (specimens only; running any of them needs root's separate admission)
-------------------------------------------------------------------------------
-
-    python3 scripts/repair_10520_keeper_current_anchor.py --only 14969919 --preflight --plan-out /abs/plan.json
-    python3 scripts/repair_10520_keeper_current_anchor.py --only 14969919 --apply --plan /abs/plan.json --plan-hash <hex> --backup-out /abs/backup.json
-    python3 scripts/repair_10520_keeper_current_anchor.py --only 14969919 --restore --backup /abs/backup.json --backup-hash <hex>
-
-Refuses unless ``HEROKU_APP_NAME`` is ``bainluck`` — a target fence, not approval.
-Exit codes: 0 PLANNED / APPLIED / NOT_NEEDED / restore NOT_APPLIED (nothing at the
-key); 1 REFUSED; 2 usage; 3 COMMIT_UNKNOWN; 4 runtime harness error.
+The operator packet (``artifacts/10520-keeper-anchor/APPLY-RESTORE-PACKET.md``)
+carries the exact commands. Running any phase needs Root's separate admission.
+Exit codes: 0 PLANNED / STAGED / APPLIED / NOT_NEEDED / RESTORED / restore
+NOT_APPLIED; 1 REFUSED; 2 usage; 3 COMMIT_UNKNOWN; 4 runtime harness error.
 """
 
 from __future__ import annotations
@@ -101,12 +131,34 @@ import argparse
 import asyncio
 import hashlib
 import json
+import logging
 import os
 import sys
 import uuid
+import warnings
 from contextlib import asynccontextmanager
 from datetime import datetime, timezone
 from typing import Any, AsyncIterator, Callable
+
+
+class _Captured(logging.Handler):
+    """Every log record and warning goes here, never to stderr (attached
+    ``heroku run`` merges dyno stderr into the host's stdout receipt)."""
+
+    def __init__(self) -> None:
+        super().__init__(level=logging.INFO)
+        self.lines: list[str] = []
+
+    def emit(self, record: logging.LogRecord) -> None:
+        if len(self.lines) < 200:
+            self.lines.append(f"{record.levelname} {record.name}: {record.getMessage()}"[:500])
+
+
+CAPTURED = _Captured()
+if __name__ == "__main__":  # before the app imports, which can warn at import time
+    logging.basicConfig(handlers=[CAPTURED], level=logging.INFO, force=True)
+    logging.captureWarnings(True)
+    warnings.simplefilter("default")
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
@@ -125,9 +177,12 @@ TOOL = "repair_10520_keeper_current_anchor"
 ISSUE = 10520
 PRODUCTION_APPS = frozenset({"bainluck"})
 
-PLAN_SCHEMA = "repair-10520-keeper-anchor-plan/v1"
-BACKUP_SCHEMA = "repair-10520-keeper-anchor-backup/v1"
-RECEIPT_SCHEMA = "repair-10520-keeper-anchor-receipt/v1"
+PLAN_SCHEMA = "repair-10520-keeper-anchor-plan/v2"
+BACKUP_SCHEMA = "repair-10520-keeper-anchor-backup/v2"
+CREATED_ROW_SCHEMA = "repair-10520-keeper-anchor-created-row/v2"
+APPLY_INPUT_SCHEMA = "repair-10520-keeper-anchor-apply-input/v2"
+RESTORE_INPUT_SCHEMA = "repair-10520-keeper-anchor-restore-input/v2"
+RECORD_SCHEMA = "repair-10520-keeper-anchor-record/v2"
 ADDRESS_NAMESPACE = "bainluck:repair:10520:keeper-current-anchor"
 
 #: The retained evidence this population is pinned to (artifacts, read-only).
@@ -137,10 +192,11 @@ EVIDENCE = {
     "current_key_unowned": "artifacts/shopper/10520-second-anchor/q10520e (2026-10-05T10:21:21Z, "
                            "fingerprint 81ee2b22a8dd7b79)",
     "source_admission": "ROOT-OFFLINE-REPAIR-PREPARATION-BOUNDARY.md (20261005T082140Z-10520-59fb43)",
+    "survivor_input": "artifacts/10520-keeper-anchor/AUTHORITY-SURVIVOR-IDENTITY-DISPOSITION.md §5",
 }
 
 KEEPER_ID = 14969919
-TWIN_ID = 15324922  # recorded only; never read, judged or written
+TWIN_ID = 15324922  # read (presence, external_id, has_snaps) for the survivor gate; never written
 CURRENT_ODDS_ID = "1d13bd275c7b67b77bea8ff4d03850cc"
 INCOMING_ODDS_ID = "0d9ff865c4599c72a746da08260279b3"
 INCOMING_ANCHOR_ID = 187393
@@ -173,8 +229,8 @@ ANCHOR_KEYS = {"current": CURRENT_KEY, "incoming": INCOMING_KEY,
 LOCK_TIMEOUT_MS = 5000
 STATEMENT_TIMEOUT_MS = 10000
 
-PLANNED, APPLIED, NOT_NEEDED, NOT_APPLIED = "PLANNED", "APPLIED", "NOT_NEEDED", "NOT_APPLIED"
-RESTORED, REFUSED, COMMIT_UNKNOWN = "RESTORED", "REFUSED", "COMMIT_UNKNOWN"
+PLANNED, STAGED, APPLIED, NOT_NEEDED = "PLANNED", "STAGED", "APPLIED", "NOT_NEEDED"
+NOT_APPLIED, RESTORED, REFUSED, COMMIT_UNKNOWN = "NOT_APPLIED", "RESTORED", "REFUSED", "COMMIT_UNKNOWN"
 EXIT_OK, EXIT_REFUSED, EXIT_USAGE, EXIT_COMMIT_UNKNOWN, EXIT_RUNTIME = 0, 1, 2, 3, 4
 
 
@@ -187,7 +243,7 @@ class Refused(RuntimeError):
         self.detail = detail
 
 
-# --- pure ---------------------------------------------------------------------
+# --- pure: canonical form, hashes, seals -----------------------------------------
 
 def canon(value: Any) -> Any:
     """The one JSON form a value is banked, compared and addressed in."""
@@ -213,6 +269,15 @@ def canonical_json(obj: Any) -> str:
     return json.dumps(obj, sort_keys=True, separators=(",", ":"), ensure_ascii=False)
 
 
+def artifact_bytes(doc: dict) -> bytes:
+    """Exactly what a host artifact file holds, and what its hash is taken over."""
+    return (canonical_json(doc) + "\n").encode("utf-8")
+
+
+def artifact_sha256(doc: dict) -> str:
+    return hashlib.sha256(artifact_bytes(doc)).hexdigest()
+
+
 def content_address(schema: str, payload: dict) -> str:
     body = {k: v for k, v in payload.items() if k != "content_address"}
     line = digest_fields(ADDRESS_NAMESPACE, schema, canonical_json(body))
@@ -223,17 +288,56 @@ def key_dict(key) -> dict:
     return {"source": key.source, "source_id": key.source_id, "id_kind": key.id_kind}
 
 
+WRITE_SCOPE = {"table": "event_provider_anchors", "key": key_dict(CURRENT_KEY), "event_id": KEEPER_ID}
+
+
+def seal(schema: str, body: dict) -> dict:
+    doc = {"schema": schema, **canon(body)}
+    doc["content_address"] = content_address(schema, doc)
+    return doc
+
+
+def check_sealed(doc: Any, schema: str, what: str) -> dict:
+    """Schema, embedded address, and the one-row write scope."""
+    if not isinstance(doc, dict) or doc.get("schema") != schema:
+        raise Refused(f"{what}_wrong_schema", doc.get("schema") if isinstance(doc, dict) else None)
+    if doc.get("content_address") != content_address(schema, doc):
+        raise Refused(f"{what}_address_mismatch", doc.get("content_address"))
+    if doc.get("keeper_id") != KEEPER_ID or doc.get("write") != WRITE_SCOPE:
+        raise Refused(f"{what}_scope_mismatch", doc.get("write"))
+    return doc
+
+
+def require_hash(doc: dict, expected: str, what: str) -> str:
+    want = (expected or "").strip().lower()
+    if len(want) != 64 or any(ch not in "0123456789abcdef" for ch in want):
+        raise Refused(f"{what}_hash_malformed", expected)
+    got = artifact_sha256(doc)
+    if got != want:
+        raise Refused(f"{what}_hash_mismatch", {"expected": want, "actual": got})
+    return want
+
+
 def _owned(anchor: dict | None) -> dict | None:
     return None if anchor is None else {"id": anchor["id"], "event_id": anchor["event_id"]}
 
 
-def admit(keeper: dict | None, sport_key: Any, anchors: dict[str, dict | None]) -> dict:
-    """Every gate, in order -> ``{"state": CANDIDATE|NOT_NEEDED, ...}``, or Refused.
+# --- pure: admission ----------------------------------------------------------------
 
-    ``keeper``: the keeper row (fenced columns + status) or None. ``sport_key``:
-    ``sports.key`` of the keeper's sport. ``anchors``: the exact-key row for each
-    of ``ANCHOR_KEYS`` (``{id, event_id, source, source_id, id_kind}``) or None.
-    """
+def twin_would_survive(survivor: dict) -> bool:
+    """Authority §5 item 1: the drain's election (``sports.py`` keep_a/keep_b) picks
+    the twin only when the twin has an ``external_id`` AND snapshots and the keeper
+    (whose ``external_id`` is fenced non-null) has no snapshots."""
+    twin = survivor.get("twin") or {}
+    return bool(
+        twin.get("present") and twin.get("external_id") is not None
+        and twin.get("has_snaps") and not survivor.get("keeper_has_snaps")
+    )
+
+
+def admit(keeper: dict | None, sport_key: Any, anchors: dict[str, dict | None],
+          survivor: dict) -> dict:
+    """Every gate, in order -> ``{"state": CANDIDATE|NOT_NEEDED, ...}``, or Refused."""
     if keeper is None:
         raise Refused("keeper_missing", {"event_id": KEEPER_ID})
     observed = {c: canon(keeper.get(c)) for c in FENCED_COLUMNS}
@@ -267,6 +371,9 @@ def admit(keeper: dict | None, sport_key: Any, anchors: dict[str, dict | None]) 
     if espn is not None and espn["event_id"] != KEEPER_ID:
         raise Refused("official_espn_anchor_owned_elsewhere", _owned(espn))
 
+    if twin_would_survive(survivor):
+        raise Refused("drain_would_elect_twin_return_to_root", canon_safe(survivor))
+
     cur = anchors.get("current")
     if cur is not None and cur["event_id"] != KEEPER_ID:
         raise Refused("current_key_owned_elsewhere", _owned(cur))
@@ -274,16 +381,18 @@ def admit(keeper: dict | None, sport_key: Any, anchors: dict[str, dict | None]) 
     return {
         "state": "CANDIDATE" if cur is None else NOT_NEEDED,
         "keeper_id": KEEPER_ID,
-        "write": {"table": "event_provider_anchors", "key": key_dict(CURRENT_KEY), "event_id": KEEPER_ID},
+        "write": WRITE_SCOPE,
         "identity": observed,
         "sport_key": sport_key,
         "status_banked": keeper.get("status"),
         "anchors": {name: _owned(anchors.get(name)) for name in ANCHOR_KEYS},
+        "survivor_banked": canon(survivor),
     }
 
 
-#: What must still hold at apply that the plan observed. ``status_banked`` is not
-#: here on purpose: it is recorded, never fenced.
+#: What must still hold at apply that the plan observed. ``status_banked`` and
+#: ``survivor_banked`` are recorded, not fenced: snapshots arrive continually, and
+#: the survivor gate is re-judged on its own inside the apply transaction.
 _DRIFT_FIELDS = ("identity", "sport_key", "anchors")
 
 
@@ -303,6 +412,9 @@ def claim_context_for(invocation_id: str, plan_address: str) -> dict:
     }
 
 
+_ROW_FIELDS = ("id", "event_id", "source", "source_id", "id_kind", "first_seen_at", "claim_context")
+
+
 def created_row_matches(row: dict | None, claim_context: dict) -> list[str]:
     """Fields of the row at CURRENT_KEY that are not this invocation's write."""
     if row is None:
@@ -311,13 +423,22 @@ def created_row_matches(row: dict | None, claim_context: dict) -> list[str]:
     return [f for f, v in want.items() if canon(row.get(f)) != v]
 
 
-# --- durable files ------------------------------------------------------------
+def row_is_the_created_row(row: dict | None, created: dict) -> list[str]:
+    """Restore's identity: every field of the receipt's row, id and timestamp included."""
+    if row is None:
+        return ["row_missing"]
+    return [f for f in _ROW_FIELDS if canon(row.get(f)) != created.get(f)]
+
+
+# --- host-side artifacts ------------------------------------------------------------
 
 _fsync = os.fsync  # module seam
 
 
-def _sha256_hex(data: bytes) -> str:
-    return hashlib.sha256(data).hexdigest()
+def refuse_on_dyno(env: dict) -> None:
+    """Host modes only: fsync on a one-off dyno is not retention."""
+    if env.get("DYNO"):
+        raise Refused("host_mode_refused_on_dyno", {"DYNO": env.get("DYNO")})
 
 
 def _require_new_absolute(path: str, what: str) -> None:
@@ -347,61 +468,60 @@ def _write_once(path: str, data: bytes) -> None:
         os.close(dfd)
 
 
-def write_artifact(path: str, schema: str, body: dict, what: str) -> dict:
-    """Exclusive, fsynced, read-only JSON + detached ``<path>.sha256``."""
+def write_host_artifact(path: str, doc: dict, what: str) -> dict:
+    """Exclusive, fsynced, read-only canonical JSON + detached ``<path>.sha256``."""
     _require_new_absolute(path, what)
-    payload = {"schema": schema, **body}
-    payload["content_address"] = content_address(schema, payload)
-    data = (canonical_json(payload) + "\n").encode("utf-8")
-    digest = _sha256_hex(data)
+    data = artifact_bytes(doc)
+    digest = hashlib.sha256(data).hexdigest()
     try:
         _write_once(path, data)
         _write_once(path + ".sha256", f"{digest}  {os.path.basename(path)}\n".encode())
     except OSError as exc:
         raise Refused(f"{what}_durability_failed", f"{type(exc).__name__}: {exc}") from exc
     with open(path, "rb") as fh:
-        if _sha256_hex(fh.read()) != digest:
+        if hashlib.sha256(fh.read()).hexdigest() != digest:
             raise Refused(f"{what}_readback_mismatch", path)
-    return {"path": path, "sha256": digest, "content_address": payload["content_address"]}
+    return {"path": path, "sha256": digest}
 
 
-def load_artifact(path: str, expected_hash: str, schema: str, what: str) -> dict:
-    """Verify the detached hash, the sidecar, the schema, the address and the scope."""
+def read_host_artifact(path: str, expected_hash: str, schema: str, what: str) -> dict:
+    """The file's bytes must BE the canonical form; hash, sidecar, seal and scope checked."""
     if not path or not os.path.isabs(path):
         raise Refused(f"{what}_path_not_absolute", path)
-    want = (expected_hash or "").strip().lower()
-    if len(want) != 64 or any(ch not in "0123456789abcdef" for ch in want):
-        raise Refused(f"{what}_hash_malformed", expected_hash)
     try:
         with open(path, "rb") as fh:
             data = fh.read()
         with open(path + ".sha256", "r", encoding="utf-8") as fh:
             sidecar = fh.read().split()
-    except OSError as exc:
-        raise Refused(f"{what}_missing", f"{type(exc).__name__}: {exc}") from exc
-    got = _sha256_hex(data)
-    if got != want:
-        raise Refused(f"{what}_hash_mismatch", {"expected": want, "actual": got})
+        doc = json.loads(data)
+    except (OSError, ValueError) as exc:
+        raise Refused(f"{what}_unreadable", f"{type(exc).__name__}: {exc}") from exc
+    if not isinstance(doc, dict) or artifact_bytes(doc) != data:
+        raise Refused(f"{what}_not_canonical", path)
+    want = require_hash(doc, expected_hash, what)
     if sidecar[:2] != [want, os.path.basename(path)]:
         raise Refused(f"{what}_sidecar_mismatch", sidecar)
+    return check_sealed(doc, schema, what)
+
+
+def read_jsonl(path: str, what: str) -> list[dict]:
+    """A DB mode's captured STDOUT: every line must be one JSON object, nothing else."""
     try:
-        payload = json.loads(data)
-    except ValueError as err:
-        raise Refused(f"{what}_corrupt", str(err)) from err
-    if not isinstance(payload, dict) or payload.get("schema") != schema:
-        raise Refused(f"{what}_wrong_schema", payload.get("schema") if isinstance(payload, dict) else None)
-    if payload.get("content_address") != content_address(schema, payload):
-        raise Refused(f"{what}_address_mismatch", payload.get("content_address"))
-    if payload.get("keeper_id") != KEEPER_ID or payload.get("write") != {
-        "table": "event_provider_anchors", "key": key_dict(CURRENT_KEY), "event_id": KEEPER_ID
-    }:
-        raise Refused(f"{what}_scope_mismatch", payload.get("write"))
-    return payload
+        with open(path, "rb") as fh:
+            lines = fh.read().decode("utf-8").splitlines()
+        records = [json.loads(line) for line in lines]
+    except (OSError, ValueError) as exc:
+        raise Refused(f"{what}_not_pure_json_lines", f"{type(exc).__name__}: {exc}") from exc
+    if not records or not all(isinstance(r, dict) and r.get("schema") == RECORD_SCHEMA for r in records):
+        raise Refused(f"{what}_not_this_tools_records", path)
+    if records[-1].get("record") != "result":
+        raise Refused(f"{what}_has_no_final_result", records[-1].get("record"))
+    return records
 
 
 def tool_pin() -> dict:
     with open(os.path.abspath(__file__), "rb") as fh:
-        tool_sha = _sha256_hex(fh.read())
+        tool_sha = hashlib.sha256(fh.read()).hexdigest()
     return {
         "tool": TOOL,
         "tool_file_sha256": tool_sha,
@@ -409,14 +529,66 @@ def tool_pin() -> dict:
     }
 
 
-# --- SQL (exact ids and exact keys only) --------------------------------------
+def _utcnow() -> str:
+    return datetime.now(timezone.utc).isoformat()
+
+
+# --- records (the only thing a DB mode writes to STDOUT) ---------------------------
+
+Emit = Callable[[dict], None]
+
+
+def stdout_emit(record: dict) -> None:
+    sys.stdout.write(canonical_json(record) + "\n")
+    sys.stdout.flush()
+
+
+def _record(kind: str, body: dict) -> dict:
+    return {"schema": RECORD_SCHEMA, "record": kind, **body}
+
+
+def _result(mode: str, state: str, *, reason: str | None = None, detail: Any = None,
+            written_rows: int = 0, deleted_rows: int = 0, **extra) -> dict:
+    out = _record("result", {"mode": mode, "state": state,
+                             "counts": {"keeper_id": KEEPER_ID, "anchor_rows_written": written_rows,
+                                        "anchor_rows_deleted": deleted_rows}})
+    if reason is not None:
+        out["reason"] = reason
+    if detail is not None:
+        out["detail"] = canon_safe(detail)
+    out.update(canon_safe(extra))
+    return out
+
+
+def _db_reason(exc: BaseException) -> str:
+    orig = getattr(exc, "orig", None)
+    code = getattr(orig, "sqlstate", None) or getattr(orig, "pgcode", None)
+    if code is None and orig is not None:
+        code = getattr(getattr(orig, "__cause__", None), "sqlstate", None)
+    if code == "55P03":
+        return "lock_timeout"
+    if code == "57014":
+        return "statement_timeout"
+    return f"db_error:{type(exc).__name__}"
+
+
+def _err(exc: BaseException) -> str:
+    return f"{type(exc).__name__}: {str(exc)[:160]}"
+
+
+# --- SQL (exact ids and exact keys only) ------------------------------------------
 
 _KEEPER_COLS = ", ".join(FENCED_COLUMNS) + ", status"
 _KEEPER = text(f"/* r10520:KEEPER */ SELECT id, {_KEEPER_COLS} FROM events WHERE id = :eid")
 _KEEPER_LOCK = text(_KEEPER.text.replace("r10520:KEEPER", "r10520:KEEPER_LOCK") + " FOR UPDATE")
 _SPORT = text("/* r10520:SPORT */ SELECT key FROM sports WHERE id = :sid")
 _SPORT_LOCK = text(_SPORT.text.replace("r10520:SPORT", "r10520:SPORT_LOCK") + " FOR SHARE")
-_ANCHOR_COLS = "id, event_id, source, source_id, id_kind, first_seen_at, claim_context"
+_TWIN = text("/* r10520:TWIN */ SELECT id, external_id FROM events WHERE id = :tid")
+#: The drain's own predicate (``sports.py`` merge_duplicate_events, has_snaps_a/b).
+_HAS_SNAPS = text(
+    "/* r10520:SNAPS */ SELECT EXISTS(SELECT 1 FROM odds_snapshots WHERE event_id = :eid LIMIT 1) AS has_snaps"
+)
+_ANCHOR_COLS = ", ".join(_ROW_FIELDS)
 _ANCHOR = text(
     f"/* r10520:ANCHOR */ SELECT {_ANCHOR_COLS} FROM event_provider_anchors "
     "WHERE source = :source AND source_id = :source_id AND id_kind = :id_kind"
@@ -425,8 +597,9 @@ _ANCHOR_LOCK = text(_ANCHOR.text.replace("r10520:ANCHOR", "r10520:ANCHOR_LOCK") 
 _ANCHOR_FOR_DELETE = text(_ANCHOR.text.replace("r10520:ANCHOR", "r10520:ANCHOR_DEL") + " FOR UPDATE")
 _DELETE = text(
     "/* r10520:RESTORE */ DELETE FROM event_provider_anchors "
-    "WHERE id = :aid AND event_id = :eid AND source = :source AND source_id = :source_id "
-    "AND id_kind = :id_kind AND claim_context = CAST(:claim_context AS jsonb) RETURNING id"
+    "WHERE id = :aid AND first_seen_at = CAST(:first_seen_at AS timestamptz) AND event_id = :eid "
+    "AND source = :source AND source_id = :source_id AND id_kind = :id_kind "
+    "AND claim_context = CAST(:claim_context AS jsonb) RETURNING id"
 )
 
 
@@ -461,41 +634,18 @@ async def _read_all(session, *, lock: bool) -> tuple:
         # lock, and the unique index arbitrates any concurrent insert.
         locking = lock and name != "current"
         anchors[name] = await _read_anchor(session, key, stmt=_ANCHOR_LOCK if locking else _ANCHOR)
-    return keeper, sport_key, anchors
-
-
-# --- results ------------------------------------------------------------------
-
-SessionFactory = Callable[[], Any]
-
-
-def _result(mode: str, state: str, *, reason: str | None = None, detail: Any = None,
-            written_rows: int = 0, deleted_rows: int = 0, **extra) -> dict:
-    out = {"schema": RECEIPT_SCHEMA, "mode": mode, "state": state,
-           "counts": {"keeper_id": KEEPER_ID, "anchor_rows_written": written_rows,
-                      "anchor_rows_deleted": deleted_rows}}
-    if reason is not None:
-        out["reason"] = reason
-    if detail is not None:
-        out["detail"] = detail
-    out.update(extra)
-    return out
-
-
-def _db_reason(exc: BaseException) -> str:
-    orig = getattr(exc, "orig", None)
-    code = getattr(orig, "sqlstate", None) or getattr(orig, "pgcode", None)
-    if code is None and orig is not None:
-        code = getattr(getattr(orig, "__cause__", None), "sqlstate", None)
-    if code == "55P03":
-        return "lock_timeout"
-    if code == "57014":
-        return "statement_timeout"
-    return f"db_error:{type(exc).__name__}"
-
-
-def _utcnow() -> str:
-    return datetime.now(timezone.utc).isoformat()
+    # Never locked: the drain locks both rows FOR UPDATE and must not wait on us.
+    twin = await _one(session, _TWIN, {"tid": TWIN_ID})
+    survivor = {
+        "keeper_has_snaps": bool((await _one(session, _HAS_SNAPS, {"eid": KEEPER_ID}))["has_snaps"]),
+        "twin": {
+            "id": TWIN_ID,
+            "present": twin is not None,
+            "external_id": twin.get("external_id") if twin else None,
+            "has_snaps": bool((await _one(session, _HAS_SNAPS, {"eid": TWIN_ID}))["has_snaps"]),
+        },
+    }
+    return keeper, sport_key, anchors, survivor
 
 
 async def _set_timeouts(session, lock_ms: int, stmt_ms: int) -> None:
@@ -503,36 +653,131 @@ async def _set_timeouts(session, lock_ms: int, stmt_ms: int) -> None:
     await session.execute(text(f"SET LOCAL statement_timeout = '{int(stmt_ms)}ms'"))
 
 
-# --- preflight ----------------------------------------------------------------
+SessionFactory = Callable[[], Any]
 
-async def run_preflight(session_factory: SessionFactory, *, plan_out: str,
+
+# --- phase 1: preflight (dyno) -----------------------------------------------------
+
+async def run_preflight(session_factory: SessionFactory, *, emit: Emit = stdout_emit,
                         clock: Callable[[], str] = _utcnow) -> dict:
-    """All reads in one REPEATABLE READ READ ONLY transaction; writes the plan."""
+    """All reads in one REPEATABLE READ READ ONLY transaction; the plan rides STDOUT."""
     try:
-        _require_new_absolute(plan_out, "plan")
         async with session_factory() as session:
             try:
                 await session.execute(text("SET TRANSACTION ISOLATION LEVEL REPEATABLE READ, READ ONLY"))
-                keeper, sport_key, anchors = await _read_all(session, lock=False)
+                keeper, sport_key, anchors, survivor = await _read_all(session, lock=False)
             finally:
                 await session.rollback()
-        body = admit(keeper, sport_key, anchors)
+        body = admit(keeper, sport_key, anchors, survivor)
     except Refused as exc:
-        return _result("preflight", REFUSED, reason=exc.reason, detail=canon_safe(exc.detail))
+        return _finish(emit, _result("preflight", REFUSED, reason=exc.reason, detail=exc.detail))
     if body["state"] == NOT_NEEDED:
-        return _result("preflight", NOT_NEEDED, reason="current_key_already_keepers",
-                       anchors=body["anchors"])
-    body.update({"twin_recorded_not_read": TWIN_ID, "evidence": EVIDENCE,
-                 "pins": tool_pin(), "planned_at": clock()})
+        return _finish(emit, _result("preflight", NOT_NEEDED, reason="current_key_already_keepers",
+                                     anchors=body["anchors"]))
+    body.update({"evidence": EVIDENCE, "pins": tool_pin(), "planned_at": clock()})
+    plan = seal(PLAN_SCHEMA, body)
+    return _finish(emit, _result("preflight", PLANNED, plan=plan, plan_sha256=artifact_sha256(plan)))
+
+
+def _finish(emit: Emit, result: dict) -> dict:
+    if CAPTURED.lines:
+        result["log"] = list(CAPTURED.lines)
+    emit(result)
+    return result
+
+
+# --- phases 2, 3, 5: host staging --------------------------------------------------
+
+def stage_plan(*, preflight_output: str, plan_out: str, env: dict) -> dict:
+    """Extract the reviewed plan from the captured preflight STDOUT onto the host."""
     try:
-        written = write_artifact(plan_out, PLAN_SCHEMA, body, "plan")
+        refuse_on_dyno(env)
+        final = read_jsonl(preflight_output, "preflight_output")[-1]
+        if final.get("mode") != "preflight" or final.get("state") != PLANNED:
+            raise Refused("preflight_did_not_plan", {"state": final.get("state"), "reason": final.get("reason")})
+        plan = check_sealed(final.get("plan"), PLAN_SCHEMA, "plan")
+        require_hash(plan, final.get("plan_sha256"), "plan")
+        written = write_host_artifact(plan_out, plan, "plan")
     except Refused as exc:
-        return _result("preflight", REFUSED, reason=exc.reason, detail=canon_safe(exc.detail))
-    return _result("preflight", PLANNED, plan=written, proposed_insert=body["write"],
-                   identity=body["identity"], anchors=body["anchors"])
+        return _result("stage-plan", REFUSED, reason=exc.reason, detail=exc.detail)
+    return _result("stage-plan", STAGED, plan=written, review={
+        "state": plan["state"], "identity": plan["identity"], "anchors": plan["anchors"],
+        "survivor_banked": plan["survivor_banked"], "sport_key": plan["sport_key"]})
 
 
-# --- apply --------------------------------------------------------------------
+def stage_apply(*, plan_path: str, plan_hash: str, backup_out: str, bundle_out: str, env: dict,
+                clock: Callable[[], str] = _utcnow) -> dict:
+    """Mint the invocation on the host: backup + the apply STDIN bundle, both retained here."""
+    try:
+        refuse_on_dyno(env)
+        plan = read_host_artifact(plan_path, plan_hash, PLAN_SCHEMA, "plan")
+        if plan.get("state") != "CANDIDATE":
+            raise Refused("plan_not_a_candidate", plan.get("state"))
+        invocation_id = str(uuid.uuid4())
+        backup = seal(BACKUP_SCHEMA, {
+            "keeper_id": KEEPER_ID, "write": WRITE_SCOPE,
+            "pre_state": {"current_key_row": None, "anchors": plan["anchors"], "identity": plan["identity"]},
+            "invocation_id": invocation_id,
+            "claim_context": claim_context_for(invocation_id, plan["content_address"]),
+            "plan": {"sha256": artifact_sha256(plan), "content_address": plan["content_address"]},
+            "pins": tool_pin(), "staged_at": clock(),
+        })
+        bundle = seal(APPLY_INPUT_SCHEMA, {"keeper_id": KEEPER_ID, "write": WRITE_SCOPE,
+                                           "plan": plan, "backup": backup})
+        backup_file = write_host_artifact(backup_out, backup, "backup")
+        bundle_file = write_host_artifact(bundle_out, bundle, "apply_input")
+    except Refused as exc:
+        return _result("stage-apply", REFUSED, reason=exc.reason, detail=exc.detail)
+    return _result("stage-apply", STAGED, invocation_id=invocation_id, backup=backup_file,
+                   apply_input=bundle_file, apply_argv={
+                       "--plan-hash": artifact_sha256(plan), "--backup-hash": backup_file["sha256"]})
+
+
+def stage_restore(*, backup_path: str, backup_hash: str, apply_output: str, bundle_out: str,
+                  env: dict) -> dict:
+    """Bind the backup to the ``created_row`` record the apply printed before COMMIT."""
+    try:
+        refuse_on_dyno(env)
+        backup = read_host_artifact(backup_path, backup_hash, BACKUP_SCHEMA, "backup")
+        created = [r for r in read_jsonl(apply_output, "apply_output") if r.get("record") == "created_row"]
+        if len(created) != 1:
+            raise Refused("apply_output_created_row_count", {"count": len(created)})
+        receipt = created_row_receipt_binds(created[0]["receipt"], backup, backup_hash)
+        bundle = seal(RESTORE_INPUT_SCHEMA, {"keeper_id": KEEPER_ID, "write": WRITE_SCOPE,
+                                             "backup": backup, "created_row_receipt": receipt})
+        bundle_file = write_host_artifact(bundle_out, bundle, "restore_input")
+    except Refused as exc:
+        return _result("stage-restore", REFUSED, reason=exc.reason, detail=exc.detail)
+    return _result("stage-restore", STAGED, restore_input=bundle_file,
+                   created_row=receipt["created_row"], restore_argv={
+                       "--backup-hash": artifact_sha256(backup),
+                       "--receipt-hash": artifact_sha256(receipt)})
+
+
+def created_row_receipt_binds(receipt: Any, backup: dict, backup_hash: str) -> dict:
+    receipt = check_sealed(receipt, CREATED_ROW_SCHEMA, "created_row_receipt")
+    if receipt.get("invocation_id") != backup["invocation_id"] or \
+            receipt.get("backup_sha256") != (backup_hash or "").strip().lower():
+        raise Refused("created_row_receipt_not_this_backups", {
+            "receipt_invocation": receipt.get("invocation_id"), "backup_invocation": backup["invocation_id"]})
+    row = receipt.get("created_row") or {}
+    if created_row_matches(row, backup["claim_context"]) or not isinstance(row.get("id"), int) \
+            or not isinstance(row.get("first_seen_at"), str):
+        raise Refused("created_row_receipt_incoherent", row)
+    return receipt
+
+
+# --- phase 4: apply (dyno) ---------------------------------------------------------
+
+def _parse_bundle(raw: bytes, schema: str) -> dict:
+    try:
+        doc = json.loads(raw.decode("utf-8"))
+    except (UnicodeDecodeError, ValueError) as exc:
+        raise Refused("stdin_not_json", _err(exc)) from exc
+    if not isinstance(doc, dict) or artifact_bytes(doc) != raw:
+        raise Refused("stdin_not_the_canonical_host_file")
+    return check_sealed(doc, schema, "stdin_bundle")
+
 
 async def _verify(session_factory, claim_context: dict) -> dict:
     """New transaction: the created row, the incoming owner, and Step 2's answer."""
@@ -549,38 +794,30 @@ async def _verify(session_factory, claim_context: dict) -> dict:
             "incoming": _owned(inc), "step2_resolves_incoming_to": resolves}
 
 
-def _classify_after_ambiguous_commit(row: dict | None, claim_context: dict) -> str:
-    if row is None:
-        return NOT_APPLIED
-    return APPLIED if not created_row_matches(row, claim_context) else COMMIT_UNKNOWN
-
-
-async def run_apply(session_factory: SessionFactory, *, plan_path: str, plan_hash: str,
-                    backup_out: str, lock_timeout_ms: int = LOCK_TIMEOUT_MS,
-                    statement_timeout_ms: int = STATEMENT_TIMEOUT_MS,
-                    clock: Callable[[], str] = _utcnow) -> dict:
-    """Consume the reviewed plan; bank the backup; one ``record_anchor`` write."""
+async def run_apply(session_factory: SessionFactory, *, stdin: bytes, plan_hash: str,
+                    backup_hash: str, emit: Emit = stdout_emit,
+                    lock_timeout_ms: int = LOCK_TIMEOUT_MS,
+                    statement_timeout_ms: int = STATEMENT_TIMEOUT_MS) -> dict:
+    """Consume the host's apply bundle; one ``record_anchor`` write; receipt before COMMIT."""
     try:
-        plan = load_artifact(plan_path, plan_hash, PLAN_SCHEMA, "plan")
+        bundle = _parse_bundle(stdin, APPLY_INPUT_SCHEMA)
+        plan = check_sealed(bundle.get("plan"), PLAN_SCHEMA, "plan")
+        backup = check_sealed(bundle.get("backup"), BACKUP_SCHEMA, "backup")
+        plan_hash = require_hash(plan, plan_hash, "plan")
+        backup_hash = require_hash(backup, backup_hash, "backup")
         if plan.get("state") != "CANDIDATE":
             raise Refused("plan_not_a_candidate", plan.get("state"))
-        invocation_id = str(uuid.uuid4())
-        claim_context = claim_context_for(invocation_id, plan["content_address"])
-        backup_body = {
-            "keeper_id": KEEPER_ID, "write": plan["write"],
-            "pre_state": {"current_key_row": None, "anchors": plan["anchors"],
-                          "identity": plan["identity"]},
-            "invocation_id": invocation_id, "claim_context": claim_context,
-            "plan": {"path": plan_path, "sha256": plan_hash.strip().lower(),
-                     "content_address": plan["content_address"]},
-            "pins": tool_pin(), "written_at": clock(),
-        }
-        backup = write_artifact(backup_out, BACKUP_SCHEMA, backup_body, "backup")
-        load_artifact(backup_out, backup["sha256"], BACKUP_SCHEMA, "backup")
+        if backup["plan"] != {"sha256": plan_hash, "content_address": plan["content_address"]}:
+            raise Refused("backup_not_this_plans", backup["plan"])
+        claim_context = backup["claim_context"]
+        if claim_context != claim_context_for(backup["invocation_id"], plan["content_address"]):
+            raise Refused("backup_claim_context_incoherent")
     except Refused as exc:
-        return _result("apply", REFUSED, reason=exc.reason, detail=canon_safe(exc.detail))
+        return _finish(emit, _result("apply", REFUSED, reason=exc.reason, detail=exc.detail))
 
-    extra = {"plan": {"path": plan_path, "sha256": plan_hash.strip().lower()}, "backup": backup}
+    extra = {"plan_sha256": plan_hash, "backup_sha256": backup_hash,
+             "invocation_id": backup["invocation_id"]}
+    receipt = None
     committed = commit_attempted = False
     commit_error = ""
     try:
@@ -588,11 +825,11 @@ async def run_apply(session_factory: SessionFactory, *, plan_path: str, plan_has
             staged = False
             try:
                 await _set_timeouts(session, lock_timeout_ms, statement_timeout_ms)
-                keeper, sport_key, anchors = await _read_all(session, lock=True)
-                now = admit(keeper, sport_key, anchors)
+                keeper, sport_key, anchors, survivor = await _read_all(session, lock=True)
+                now = admit(keeper, sport_key, anchors, survivor)
                 if now["state"] == NOT_NEEDED:
-                    return _result("apply", NOT_NEEDED, reason="current_key_already_keepers",
-                                   anchors=now["anchors"], **extra)
+                    return _finish(emit, _result("apply", NOT_NEEDED, reason="current_key_already_keepers",
+                                                 anchors=now["anchors"], **extra))
                 drift = plan_drift(plan, now)
                 if drift:
                     raise Refused("plan_drift:" + ",".join(drift),
@@ -602,7 +839,8 @@ async def run_apply(session_factory: SessionFactory, *, plan_path: str, plan_has
                 )
                 if outcome.outcome == CONFIRMED:
                     # Same owner, written by someone else since our read: no-op.
-                    return _result("apply", NOT_NEEDED, reason="current_key_confirmed_at_write", **extra)
+                    return _finish(emit, _result("apply", NOT_NEEDED,
+                                                 reason="current_key_confirmed_at_write", **extra))
                 if outcome.outcome != WROTE:
                     raise Refused(f"record_anchor_{outcome.outcome.lower()}",
                                   {"canonical_event_id": outcome.canonical_event_id})
@@ -613,6 +851,17 @@ async def run_apply(session_factory: SessionFactory, *, plan_path: str, plan_has
                 inc = await _read_anchor(session, INCOMING_KEY)
                 if _owned(inc) != plan["anchors"]["incoming"]:
                     raise Refused("incoming_anchor_moved_in_transaction", _owned(inc))
+                receipt = seal(CREATED_ROW_SCHEMA, {
+                    "keeper_id": KEEPER_ID, "write": WRITE_SCOPE,
+                    "invocation_id": backup["invocation_id"], "backup_sha256": backup_hash,
+                    "plan_sha256": plan_hash,
+                    "created_row": {f: created[f] for f in _ROW_FIELDS},
+                    "note": "emitted BEFORE COMMIT; restore requires this exact row",
+                })
+                # The restore identity reaches the host before the row can exist
+                # for anyone else. If the dyno dies after COMMIT, this line is the
+                # record of what to undo.
+                emit(_record("created_row", {"receipt": receipt, "receipt_sha256": artifact_sha256(receipt)}))
                 staged = True
             finally:
                 if not staged:  # any refusal, DB error or cancellation: nothing is kept
@@ -622,68 +871,68 @@ async def run_apply(session_factory: SessionFactory, *, plan_path: str, plan_has
                 await session.commit()
                 committed = True
             except Exception as exc:  # outcome unknown: read, never re-apply
-                commit_error = f"{type(exc).__name__}: {str(exc)[:160]}"
+                commit_error = _err(exc)
     except Refused as exc:
-        result = _result("apply", REFUSED, reason=exc.reason, detail=canon_safe(exc.detail), **extra)
-        result["receipt"] = _write_receipt(backup_out, "apply", result)
-        return result
+        return _finish(emit, _result("apply", REFUSED, reason=exc.reason, detail=exc.detail, **extra))
     except Exception as exc:
         if not commit_attempted:
-            result = _result("apply", REFUSED, reason=_db_reason(exc),
-                             detail=f"{type(exc).__name__}: {str(exc)[:160]}", **extra)
-            result["receipt"] = _write_receipt(backup_out, "apply", result)
-            return result
+            return _finish(emit, _result("apply", REFUSED, reason=_db_reason(exc), detail=_err(exc), **extra))
         if not committed:
-            commit_error = commit_error or f"{type(exc).__name__}: {str(exc)[:160]}"
+            commit_error = commit_error or _err(exc)
 
+    extra["created_row_receipt_sha256"] = artifact_sha256(receipt)
     try:
         check = await _verify(session_factory, claim_context)
     except Exception as exc:
-        result = _result("apply", COMMIT_UNKNOWN, reason="post_commit_verify_unreadable",
-                         detail=f"{type(exc).__name__}: {str(exc)[:160]}", **extra)
-        result["receipt"] = _write_receipt(backup_out, "apply", result)
-        return result
+        return _finish(emit, _result("apply", COMMIT_UNKNOWN, reason="post_commit_verify_unreadable",
+                                     detail=_err(exc), **extra))
     if not committed:
-        state = _classify_after_ambiguous_commit(check["row"], claim_context)
-        result = _result("apply", state, reason="commit_ambiguous", detail=commit_error,
-                         written_rows=1 if state == APPLIED else 0, **extra)
-    elif check["mismatch"]:
-        result = _result("apply", COMMIT_UNKNOWN, reason="post_commit_verify_mismatch",
-                         detail=check["mismatch"], **extra)
-    else:
-        result = _result("apply", APPLIED, written_rows=1, created_row=canon(check["row"]),
-                         incoming_after=check["incoming"],
-                         step2_resolves_incoming_to=check["step2_resolves_incoming_to"], **extra)
-    result["receipt"] = _write_receipt(backup_out, "apply", result)
-    return result
+        row = check["row"]
+        if row is None:
+            state = NOT_APPLIED
+        elif not row_is_the_created_row(row, receipt["created_row"]):
+            state = APPLIED
+        else:
+            state = COMMIT_UNKNOWN
+        return _finish(emit, _result("apply", state, reason="commit_ambiguous", detail=commit_error,
+                                     written_rows=1 if state == APPLIED else 0, **extra))
+    if check["mismatch"] or row_is_the_created_row(check["row"], receipt["created_row"]):
+        return _finish(emit, _result("apply", COMMIT_UNKNOWN, reason="post_commit_verify_mismatch",
+                                     detail=check["mismatch"], **extra))
+    return _finish(emit, _result("apply", APPLIED, written_rows=1, created_row=check["row"],
+                                 incoming_after=check["incoming"],
+                                 step2_resolves_incoming_to=check["step2_resolves_incoming_to"], **extra))
 
 
-def _write_receipt(base: str, suffix: str, result: dict) -> dict:
-    stamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%S%fZ")
-    path = f"{base}.{suffix}-receipt.{stamp}.json"
-    body = {"keeper_id": KEEPER_ID, "write": {"table": "event_provider_anchors",
-            "key": key_dict(CURRENT_KEY), "event_id": KEEPER_ID}, "result": canon_safe(result)}
-    try:
-        return write_artifact(path, RECEIPT_SCHEMA, body, "receipt")
-    except Refused as exc:
-        return {"path": path, "error": exc.reason}
+# --- phase 6: restore (dyno) -------------------------------------------------------
+
+async def _read_after_restore(session_factory) -> dict | None:
+    async with session_factory() as session:
+        try:
+            return await _read_anchor(session, CURRENT_KEY)
+        finally:
+            await session.rollback()
 
 
-# --- restore ------------------------------------------------------------------
-
-async def run_restore(session_factory: SessionFactory, *, backup_path: str, backup_hash: str,
+async def run_restore(session_factory: SessionFactory, *, stdin: bytes, backup_hash: str,
+                      receipt_hash: str, emit: Emit = stdout_emit,
                       lock_timeout_ms: int = LOCK_TIMEOUT_MS,
                       statement_timeout_ms: int = STATEMENT_TIMEOUT_MS) -> dict:
-    """Compare-and-delete ONLY this invocation's unchanged created row."""
+    """Compare-and-delete ONLY the exact row the apply's pre-COMMIT receipt names."""
     try:
-        backup = load_artifact(backup_path, backup_hash, BACKUP_SCHEMA, "backup")
-        claim_context = backup["claim_context"]
-        if claim_context != claim_context_for(backup["invocation_id"], backup["plan"]["content_address"]):
-            raise Refused("backup_claim_context_incoherent")
+        bundle = _parse_bundle(stdin, RESTORE_INPUT_SCHEMA)
+        backup = check_sealed(bundle.get("backup"), BACKUP_SCHEMA, "backup")
+        backup_hash = require_hash(backup, backup_hash, "backup")
+        receipt = created_row_receipt_binds(bundle.get("created_row_receipt"), backup, backup_hash)
+        receipt_hash = require_hash(receipt, receipt_hash, "created_row_receipt")
     except Refused as exc:
-        return _result("restore", REFUSED, reason=exc.reason, detail=canon_safe(exc.detail))
-    extra = {"backup": {"path": backup_path, "sha256": backup_hash.strip().lower()}}
-    commit_attempted = False
+        return _finish(emit, _result("restore", REFUSED, reason=exc.reason, detail=exc.detail))
+    created = receipt["created_row"]
+    extra = {"backup_sha256": backup_hash, "created_row_receipt_sha256": receipt_hash,
+             "invocation_id": backup["invocation_id"], "key": key_dict(CURRENT_KEY),
+             "created_row": created}
+    commit_attempted = committed = False
+    commit_error = ""
     try:
         async with session_factory() as session:
             staged = False
@@ -691,97 +940,112 @@ async def run_restore(session_factory: SessionFactory, *, backup_path: str, back
                 await _set_timeouts(session, lock_timeout_ms, statement_timeout_ms)
                 row = await _read_anchor(session, CURRENT_KEY, stmt=_ANCHOR_FOR_DELETE)
                 if row is None:
-                    result = _result("restore", NOT_APPLIED, reason="no_row_at_key", **extra)
-                    result["receipt"] = _write_receipt(backup_path, "restore", result)
-                    return result
-                bad = created_row_matches(row, claim_context)
+                    return _finish(emit, _result("restore", NOT_APPLIED, reason="no_row_at_key", **extra))
+                bad = row_is_the_created_row(row, created)
                 if bad:
-                    raise Refused("row_is_not_this_invocations_unchanged_write:" + ",".join(bad),
-                                  {"id": row.get("id"), "event_id": row.get("event_id")})
+                    raise Refused("row_is_not_the_created_row:" + ",".join(bad),
+                                  {"now": {f: row.get(f) for f in ("id", "event_id", "first_seen_at")}})
                 deleted = await _rows(session, _DELETE, {
-                    "aid": row["id"], "eid": KEEPER_ID, **key_dict(CURRENT_KEY),
-                    "claim_context": canonical_json(claim_context),
+                    "aid": created["id"], "first_seen_at": datetime.fromisoformat(created["first_seen_at"]),
+                    "eid": KEEPER_ID, **key_dict(CURRENT_KEY),
+                    "claim_context": canonical_json(created["claim_context"]),
                 })
-                if [d["id"] for d in deleted] != [row["id"]]:
+                if [d["id"] for d in deleted] != [created["id"]]:
                     raise Refused("delete_fence_lost", {"deleted": [d["id"] for d in deleted]})
                 staged = True
             finally:
                 if not staged:
                     await session.rollback()
             commit_attempted = True
-            await session.commit()
+            try:
+                await session.commit()
+                committed = True
+            except Exception as exc:
+                commit_error = _err(exc)
     except Refused as exc:
-        result = _result("restore", REFUSED, reason=exc.reason, detail=canon_safe(exc.detail), **extra)
-        result["receipt"] = _write_receipt(backup_path, "restore", result)
-        return result
+        return _finish(emit, _result("restore", REFUSED, reason=exc.reason, detail=exc.detail, **extra))
     except Exception as exc:
         if not commit_attempted:  # lock/statement timeout or any DB error: nothing deleted
-            result = _result("restore", REFUSED, reason=_db_reason(exc),
-                             detail=f"{type(exc).__name__}: {str(exc)[:160]}", **extra)
-            result["receipt"] = _write_receipt(backup_path, "restore", result)
-            return result
-        # COMMIT's outcome is unknown: the exact-key read below decides.
-    async with session_factory() as session:
-        try:
-            after = await _read_anchor(session, CURRENT_KEY)
-        finally:
-            await session.rollback()
-    state = RESTORED if after is None else COMMIT_UNKNOWN
-    result = _result("restore", state, deleted_rows=1 if after is None else 0,
-                     deleted_row=canon(row), **extra)
-    result["receipt"] = _write_receipt(backup_path, "restore", result)
-    return result
+            return _finish(emit, _result("restore", REFUSED, reason=_db_reason(exc), detail=_err(exc), **extra))
+        commit_error = commit_error or _err(exc)
+    try:
+        after = await _read_after_restore(session_factory)
+    except Exception as exc:  # the delete may have committed: say so, never retry blindly
+        return _finish(emit, _result("restore", COMMIT_UNKNOWN, reason="post_commit_verify_unreadable",
+                                     detail={"verify": _err(exc), "commit": commit_error or None,
+                                             "commit_acknowledged": committed}, **extra))
+    if after is None:
+        return _finish(emit, _result("restore", RESTORED, deleted_rows=1,
+                                     reason=None if committed else "commit_ambiguous_row_gone", **extra))
+    if not committed and not row_is_the_created_row(after, created):
+        return _finish(emit, _result("restore", NOT_APPLIED, reason="commit_failed_row_still_present",
+                                     detail=commit_error, **extra))
+    return _finish(emit, _result("restore", COMMIT_UNKNOWN, reason="post_commit_row_present",
+                                 detail={"now": {f: after.get(f) for f in ("id", "event_id", "first_seen_at")}},
+                                 **extra))
 
 
 def exit_code(result: dict) -> int:
     state = result.get("state")
-    if state in (PLANNED, APPLIED, NOT_NEEDED, RESTORED):
+    if state in (PLANNED, STAGED, APPLIED, NOT_NEEDED, RESTORED):
         return EXIT_OK
-    if state == NOT_APPLIED and result.get("mode") == "restore":
+    if state == NOT_APPLIED and result.get("mode") == "restore" and result.get("reason") == "no_row_at_key":
         return EXIT_OK
     if state == COMMIT_UNKNOWN:
         return EXIT_COMMIT_UNKNOWN
+    if state == "USAGE":
+        return EXIT_USAGE
     return EXIT_REFUSED
 
 
 # --- CLI ----------------------------------------------------------------------
 
+class Usage(ValueError):
+    pass
+
+
+class _Parser(argparse.ArgumentParser):
+    def error(self, message: str) -> None:  # never print to stderr
+        raise Usage(message)
+
+
+DB_MODES = ("preflight", "apply", "restore")
+HOST_MODES = ("stage-plan", "stage-apply", "stage-restore")
+_MODE_ARGS = {
+    "preflight": (),
+    "stage-plan": ("preflight_output", "plan_out"),
+    "stage-apply": ("plan", "plan_hash", "backup_out", "bundle_out"),
+    "apply": ("plan_hash", "backup_hash"),
+    "stage-restore": ("backup", "backup_hash", "apply_output", "bundle_out"),
+    "restore": ("backup_hash", "receipt_hash"),
+}
+_ALL_ARGS = ("preflight_output", "plan_out", "plan", "plan_hash", "backup_out", "bundle_out",
+             "backup", "backup_hash", "apply_output", "receipt_hash")
+
+
 def build_parser() -> argparse.ArgumentParser:
-    ap = argparse.ArgumentParser(
-        description=__doc__.splitlines()[0],
-        epilog="Attended only. Exits: 0 ok, 1 refused, 2 usage, 3 commit unknown, 4 runtime error.",
-    )
-    ap.add_argument("--only", type=int, action="append", required=True,
-                    help=f"must be exactly {KEEPER_ID}, once")
-    mode = ap.add_mutually_exclusive_group()
-    mode.add_argument("--preflight", action="store_true", help="read-only; the default")
-    mode.add_argument("--apply", action="store_true")
-    mode.add_argument("--restore", action="store_true")
-    for name in ("--plan-out", "--plan", "--plan-hash", "--backup-out", "--backup", "--backup-hash"):
-        ap.add_argument(name)
+    ap = _Parser(description=__doc__.splitlines()[0],
+                 epilog="Exits: 0 ok, 1 refused, 2 usage, 3 commit unknown, 4 runtime error.")
+    ap.add_argument("--only", type=int, action="append")
+    ap.add_argument("--mode", choices=DB_MODES + HOST_MODES)
+    for name in _ALL_ARGS:
+        ap.add_argument("--" + name.replace("_", "-"))
     return ap
 
 
-_MODE_ARGS = {
-    "preflight": ("plan_out",),
-    "apply": ("plan", "plan_hash", "backup_out"),
-    "restore": ("backup", "backup_hash"),
-}
-
-
 def parse(argv: list[str]) -> tuple[str, argparse.Namespace]:
-    ap = build_parser()
-    args = ap.parse_args(argv)
+    args = build_parser().parse_args(argv)
     if args.only != [KEEPER_ID]:
-        ap.error(f"--only must be exactly {KEEPER_ID}, given once; got {args.only}")
-    mode = "apply" if args.apply else "restore" if args.restore else "preflight"
-    for name in ("plan_out", "plan", "plan_hash", "backup_out", "backup", "backup_hash"):
-        wanted = name in _MODE_ARGS[mode]
+        raise Usage(f"--only must be exactly {KEEPER_ID}, given once; got {args.only}")
+    if args.mode is None:
+        raise Usage("--mode is required: " + ", ".join(DB_MODES + HOST_MODES))
+    for name in _ALL_ARGS:
+        wanted = name in _MODE_ARGS[args.mode]
         if wanted and not getattr(args, name):
-            ap.error(f"--{mode} needs --{name.replace('_', '-')}")
+            raise Usage(f"--mode {args.mode} needs --{name.replace('_', '-')}")
         if not wanted and getattr(args, name):
-            ap.error(f"--{name.replace('_', '-')} does not belong to --{mode}")
-    return mode, args
+            raise Usage(f"--{name.replace('_', '-')} does not belong to --mode {args.mode}")
+    return args.mode, args
 
 
 def refuse_unless_target(env: dict) -> None:
@@ -809,27 +1073,51 @@ async def _engine_factory() -> AsyncIterator[SessionFactory]:
         await engine.dispose()
 
 
-async def main(argv: list[str] | None = None, env: dict | None = None) -> int:
-    mode, args = parse(sys.argv[1:] if argv is None else argv)
+def _read_stdin() -> bytes:
+    stream = getattr(sys.stdin, "buffer", None)
+    return stream.read() if stream is not None else sys.stdin.read().encode("utf-8")
+
+
+async def main(argv: list[str] | None = None, env: dict | None = None,
+               stdin: Callable[[], bytes] = _read_stdin, emit: Emit = stdout_emit) -> int:
+    env = dict(os.environ) if env is None else env
     try:
-        refuse_unless_target(dict(os.environ) if env is None else env)
+        mode, args = parse(sys.argv[1:] if argv is None else argv)
+    except Usage as exc:
+        emit(_result("usage", "USAGE", reason=str(exc)))
+        return EXIT_USAGE
+    if mode in HOST_MODES:
+        if mode == "stage-plan":
+            out = stage_plan(preflight_output=args.preflight_output, plan_out=args.plan_out, env=env)
+        elif mode == "stage-apply":
+            out = stage_apply(plan_path=args.plan, plan_hash=args.plan_hash, backup_out=args.backup_out,
+                              bundle_out=args.bundle_out, env=env)
+        else:
+            out = stage_restore(backup_path=args.backup, backup_hash=args.backup_hash,
+                                apply_output=args.apply_output, bundle_out=args.bundle_out, env=env)
+        emit(out)
+        return exit_code(out)
+    try:
+        refuse_unless_target(env)
     except Refused as exc:
-        print(json.dumps(_result(mode, REFUSED, reason=exc.reason, detail=exc.detail), indent=2))
-        return EXIT_REFUSED
+        out = _result(mode, REFUSED, reason=exc.reason, detail=exc.detail)
+        emit(out)
+        return exit_code(out)
     try:
+        raw = stdin() if mode != "preflight" else b""
         async with _engine_factory() as factory:
             if mode == "preflight":
-                out = await run_preflight(factory, plan_out=args.plan_out)
+                out = await run_preflight(factory, emit=emit)
             elif mode == "apply":
-                out = await run_apply(factory, plan_path=args.plan, plan_hash=args.plan_hash,
-                                      backup_out=args.backup_out)
+                out = await run_apply(factory, stdin=raw, plan_hash=args.plan_hash,
+                                      backup_hash=args.backup_hash, emit=emit)
             else:
-                out = await run_restore(factory, backup_path=args.backup, backup_hash=args.backup_hash)
+                out = await run_restore(factory, stdin=raw, backup_hash=args.backup_hash,
+                                        receipt_hash=args.receipt_hash, emit=emit)
     except Exception as exc:
-        print(json.dumps(_result(mode, "RUNTIME_ERROR",
-                                 detail=f"{type(exc).__name__}: {str(exc)[:200]}"), indent=2))
+        out = _result(mode, "RUNTIME_ERROR", detail=_err(exc))
+        emit(out)
         return EXIT_RUNTIME
-    print(json.dumps(out, indent=2, ensure_ascii=False, default=str))
     return exit_code(out)
 
 
