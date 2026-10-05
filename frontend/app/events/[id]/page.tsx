@@ -58,8 +58,8 @@ import FinalGameWinnerQuote from "@/components/event/FinalGameWinnerQuote";
 const ChartSkeleton = () => <div className="animate-pulse h-48 bg-surface-card rounded-xl" />;
 const OddsChart = dynamic(() => import("@/components/OddsChart"), { ssr: false, loading: ChartSkeleton });
 const ScoreDifferentialChart = dynamic(() => import("@/components/ScoreDifferentialChart"), { ssr: false, loading: ChartSkeleton });
-// #10239: no loading skeleton — the module renders nothing on most events, and a skeleton would flash an empty frame.
-const ProjectedFinalPointsModule = dynamic(() => import("@/components/event/ProjectedFinalPointsModule"), { ssr: false });
+// #10539: mounted only on the page's own admission decision, so a skeleton holds its place while it loads.
+const ProjectedFinalPointsModule = dynamic(() => import("@/components/event/ProjectedFinalPointsModule"), { ssr: false, loading: ChartSkeleton });
 const BookmakerTable = dynamic(() => import("@/components/BookmakerTable"), { ssr: false });
 const RelatedFutures = dynamic(() => import("@/components/RelatedFutures"), { ssr: false });
 const GamePlayCard = dynamic(() => import("@/components/GamePlayCard"), { ssr: false });
@@ -135,6 +135,7 @@ import {
 import { isCloseGame, calculateMinutesToStart } from "@/lib/analytics";
 import { isPregameStatus } from "@/lib/settledQuote";
 import { derivePeriodBoundaries } from "@/lib/periodMarkers";
+import { useProjectedFinalPointsMount } from "@/lib/projectedFinalPointsSeries";
 import { authorityStoppageLabel, formatLiveClockLabel } from "@/lib/gameTimeLabel";
 import { restingGameClock } from "@/lib/restingGameClock";
 import {
@@ -1208,6 +1209,10 @@ export default function EventPage({ params }: EventPageProps) {
     );
   }, [historyData?.espn_history, historyData?.win_prob_history, historyData?.scoring_plays, historyData?.period_markers, event?.sport]);
 
+  // #10539: the ONE projected-final-points decision. The module draws it and the
+  // Score Differential card steps aside on it — never two answers to one question.
+  const projectedFinalPoints = useProjectedFinalPointsMount(event?.sport, event?.status, historyData);
+
   // Shared chart domain (see eventKeyStats.ts)
   const sharedChartDomain = useMemo(
     () =>
@@ -1994,6 +1999,75 @@ export default function EventPage({ params }: EventPageProps) {
     sportKey: event?.sport || undefined,
     actualSeriesDrawn: drawsActualScore,
   });
+
+  // Score Differential Chart — only when projected/actual score data exists (L2-112 Item 4).
+  const scoreDiffCard = hasScoreDiffData ? (
+    <SectionErrorBoundary label="The score differential chart" resetKey={historyData}>
+    <div className="bg-surface-card rounded-card shadow-card p-3 sm:p-4">
+      {/* #6144: the card is named after the series it draws — see
+          `scoreDiffHeading`. "Score Differential" where the played score is
+          on the chart, "Projected Run Margin" (the unit is the one the
+          margin map below uses) where the only line is the market's. */}
+      <h3 className="text-sm font-semibold text-text-secondary mb-2 flex items-center gap-2">
+        {scoreDiffHeading}
+      </h3>
+      <ScoreDifferentialChart
+        history={historyData.history || []}
+        homeTeam={event.home_team}
+        awayTeam={event.away_team}
+        commenceTime={event.commence_time}
+        isLive={effectivelyLive}
+        bookmakerHistory={historyData?.bookmaker_history}
+        scoreHistory={historyData?.score_history}
+        espnHistory={historyData?.espn_history}
+        currentHomeScore={servedScore.home_score}
+        currentAwayScore={servedScore.away_score}
+        eventStatus={event.status}
+        periodBoundaries={periodBoundaries}
+        homeTeamColor={event.home_team_data?.primary_color || undefined}
+        awayTeamColor={event.away_team_data?.primary_color || undefined}
+        homeTeamLogo={event.home_team_data?.logo_small || undefined}
+        awayTeamLogo={event.away_team_data?.logo_small || undefined}
+        homeTeamAbbrev={event.home_team_data?.abbreviation || undefined}
+        awayTeamAbbrev={event.away_team_data?.abbreviation || undefined}
+        chartStartTime={sharedChartDomain?.start}
+        chartEndTime={sharedChartDomain?.end}
+        sharedTicks={sharedChartDomain?.ticks}
+        chartLabelFormat={sharedChartDomain?.labelFormat}
+        externalTimeRange={chartTimeRange}
+        onTimeRangeChange={handleChartTimeRangeChange}
+        /* ux/1034 B5: the same key the market maps below already take, so
+           the three widgets on this page cannot disagree about whether
+           `home_score` counts the thing the projection is quoted in. */
+        sportKey={event.sport || undefined}
+        /* live/073: same reason as `sportKey` — this note and the Games
+           map's are the same claim about the same missing number, and one
+           of them going stale is how the page tells a reader both that we
+           hold the games and that we do not. */
+        linescore={event.linescore}
+        /* #3240: whether there is a games map below to point at — answered
+           by the selectors MarketMapSection builds the card from, not by a
+           second reading of the same payload. `/events/15304382` held a
+           fresh 2-1 games line and no game-total market, so the note sent
+           the reader to a card that was not on the page. */
+        totalsMapPresent={!venueVoided && totalsMapRenders(gameMarkets, event.status, sportVocab(event.sport || undefined))}
+        pmSpreadData={historyData?.pm_spread_data}
+      />
+    </div>
+    </SectionErrorBoundary>
+  ) : null;
+  const projectedFinalPointsModule = (
+    <ProjectedFinalPointsModule
+      decision={projectedFinalPoints}
+      // The pair the hero prints, under the hero's own gates; the module calls nothing final without it.
+      finalScore={isFinished && !venueVoided && !heroScoreIsStoppageFiller ? { home: bestHomeScore, away: bestAwayScore } : null}
+      periodBoundaries={periodBoundaries}
+      homeTeam={event.home_team}
+      awayTeam={event.away_team}
+      homeColor={event.home_team_data?.primary_color}
+      awayColor={event.away_team_data?.primary_color}
+    />
+  );
 
   return (
     <ErrorBoundary fallback={
@@ -3065,76 +3139,22 @@ export default function EventPage({ params }: EventPageProps) {
 
       {/* Source Comparison removed — not useful, sources already visible in OddsChart */}
 
-      {/* Score Differential Chart — only when projected/actual score data exists (L2-112 Item 4) */}
-      {hasScoreDiffData && (
-        <SectionErrorBoundary label="The score differential chart" resetKey={historyData}>
-        <div className="bg-surface-card rounded-card shadow-card p-3 sm:p-4">
-          {/* #6144: the card is named after the series it draws — see
-              `scoreDiffHeading`. "Score Differential" where the played score is
-              on the chart, "Projected Run Margin" (the unit is the one the
-              margin map below uses) where the only line is the market's. */}
-          <h3 className="text-sm font-semibold text-text-secondary mb-2 flex items-center gap-2">
-            {scoreDiffHeading}
-          </h3>
-          <ScoreDifferentialChart
-            history={historyData.history || []}
-            homeTeam={event.home_team}
-            awayTeam={event.away_team}
-            commenceTime={event.commence_time}
-            isLive={effectivelyLive}
-            bookmakerHistory={historyData?.bookmaker_history}
-            scoreHistory={historyData?.score_history}
-            espnHistory={historyData?.espn_history}
-            currentHomeScore={servedScore.home_score}
-            currentAwayScore={servedScore.away_score}
-            eventStatus={event.status}
-            periodBoundaries={periodBoundaries}
-            homeTeamColor={event.home_team_data?.primary_color || undefined}
-            awayTeamColor={event.away_team_data?.primary_color || undefined}
-            homeTeamLogo={event.home_team_data?.logo_small || undefined}
-            awayTeamLogo={event.away_team_data?.logo_small || undefined}
-            homeTeamAbbrev={event.home_team_data?.abbreviation || undefined}
-            awayTeamAbbrev={event.away_team_data?.abbreviation || undefined}
-            chartStartTime={sharedChartDomain?.start}
-            chartEndTime={sharedChartDomain?.end}
-            sharedTicks={sharedChartDomain?.ticks}
-            chartLabelFormat={sharedChartDomain?.labelFormat}
-            externalTimeRange={chartTimeRange}
-            onTimeRangeChange={handleChartTimeRangeChange}
-            /* ux/1034 B5: the same key the market maps below already take, so
-               the three widgets on this page cannot disagree about whether
-               `home_score` counts the thing the projection is quoted in. */
-            sportKey={event.sport || undefined}
-            /* live/073: same reason as `sportKey` — this note and the Games
-               map's are the same claim about the same missing number, and one
-               of them going stale is how the page tells a reader both that we
-               hold the games and that we do not. */
-            linescore={event.linescore}
-            /* #3240: whether there is a games map below to point at — answered
-               by the selectors MarketMapSection builds the card from, not by a
-               second reading of the same payload. `/events/15304382` held a
-               fresh 2-1 games line and no game-total market, so the note sent
-               the reader to a card that was not on the page. */
-            totalsMapPresent={!venueVoided && totalsMapRenders(gameMarkets, event.status, sportVocab(event.sport || undefined))}
-            pmSpreadData={historyData?.pm_spread_data}
-          />
-        </div>
-        </SectionErrorBoundary>
-      )}
-
-      {/* #10239: a secondary module, finished NFL only; it decides its own mount, carries its own error boundary, and renders nothing otherwise. */}
-      {historyData && (
-        <ProjectedFinalPointsModule
-          sportKey={event.sport}
-          eventStatus={event.status}
-          history={historyData}
-          // The pair the hero prints, under the hero's own gates; the module calls nothing final without it.
-          finalScore={isFinished && !venueVoided && !heroScoreIsStoppageFiller ? { home: bestHomeScore, away: bestAwayScore } : null}
-          homeTeam={event.home_team}
-          awayTeam={event.away_team}
-          homeColor={event.home_team_data?.primary_color}
-          awayColor={event.away_team_data?.primary_color}
-        />
+      {/* #10539: projected final points replaces the Score Differential card when — and only when —
+          the page's one decision admits it. Every refusal keeps the differential, and a projection
+          that fails to load or draw hands its place back to the differential rather than leaving
+          the game's score story empty. */}
+      {projectedFinalPoints.mount ? (
+        scoreDiffCard ? (
+          <ErrorBoundary resetKey={projectedFinalPoints} fallback={scoreDiffCard}>
+            {projectedFinalPointsModule}
+          </ErrorBoundary>
+        ) : (
+          <SectionErrorBoundary label="The projected final points" resetKey={projectedFinalPoints}>
+            {projectedFinalPointsModule}
+          </SectionErrorBoundary>
+        )
+      ) : (
+        scoreDiffCard
       )}
 
       <FinalGameWinnerQuote quote={servedGameMarkets?.open_winner_quote}

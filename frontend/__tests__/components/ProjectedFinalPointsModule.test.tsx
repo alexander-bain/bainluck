@@ -12,16 +12,16 @@ import fs from "fs";
 import path from "path";
 import React from "react";
 import { renderToStaticMarkup } from "react-dom/server";
-import ProjectedFinalPointsModule, {
-  admittedFinalScore,
-  projectedFinalPointsMount,
-} from "../../components/event/ProjectedFinalPointsModule";
-import { ProjectedFinalPointsChartView } from "../../components/event/ProjectedFinalPointsChart";
+import ProjectedFinalPointsModule, { admittedFinalScore } from "../../components/event/ProjectedFinalPointsModule";
+import ProjectedFinalPointsChart from "../../components/event/ProjectedFinalPointsChart";
 import {
   buildProjectedFinalPointsSeries,
   inspectionInstants,
+  projectedFinalPointsMount,
   seriesAt,
+  useProjectedFinalPointsMount,
   type ProjectedFinalPointsInput,
+  type ProjectedFinalPointsMountHistory,
   type ProjectedFinalPointsSeries,
 } from "@/lib/projectedFinalPointsSeries";
 import type { EventHistoryResponse } from "@/lib/types";
@@ -54,6 +54,19 @@ function series(input: ProjectedFinalPointsInput): ProjectedFinalPointsSeries {
 }
 
 const teams = { homeTeam: "Chicago Bears", awayTeam: "Philadelphia Eagles" };
+
+/** The page's own path: its one hook decides, the module draws that decision. */
+function PageMount(props: {
+  sportKey: string | null | undefined;
+  eventStatus: string | null | undefined;
+  history: ProjectedFinalPointsMountHistory | null | undefined;
+  finalScore?: { home: number | null | undefined; away: number | null | undefined } | null;
+  homeTeam: string;
+  awayTeam: string;
+}) {
+  const decision = useProjectedFinalPointsMount(props.sportKey, props.eventStatus, props.history);
+  return <ProjectedFinalPointsModule decision={decision} finalScore={props.finalScore} homeTeam={props.homeTeam} awayTeam={props.awayTeam} />;
+}
 const at = (iso: string) => Date.parse(iso);
 /** The final the page's hero prints for 14780549. */
 const PAGE_FINAL = { home: 27, away: 7 };
@@ -101,7 +114,7 @@ describe("authentic finished NFL game, kickoff unknown", () => {
 
   it("prints the recorded final beside the last projection: no '— final'", () => {
     const html = renderToStaticMarkup(
-      <ProjectedFinalPointsChartView input={input} {...teams} finalScore={PAGE_FINAL} cursorAt={null} />,
+      <ProjectedFinalPointsChart input={input} {...teams} finalScore={PAGE_FINAL} />,
     );
     expect(html).toContain("DraftKings");
     expect(html).toMatch(/data-actual="home"[^>]*>27 final/);
@@ -113,14 +126,14 @@ describe("authentic finished NFL game, kickoff unknown", () => {
   });
 
   it("without the page's final, the same last row is only the last recorded score", () => {
-    const html = renderToStaticMarkup(<ProjectedFinalPointsChartView input={input} {...teams} cursorAt={null} />);
+    const html = renderToStaticMarkup(<ProjectedFinalPointsChart input={input} {...teams} />);
     expect(html).toMatch(/data-actual="home"[^>]*>27 last recorded/);
     expect(html).toMatch(/data-actual="away"[^>]*>7 last recorded/);
     expect(html).not.toMatch(/\d+ final</);
   });
 
   it("never says kickoff anywhere a reader can see", () => {
-    const html = renderToStaticMarkup(<ProjectedFinalPointsChartView input={input} {...teams} cursorAt={null} />);
+    const html = renderToStaticMarkup(<ProjectedFinalPointsChart input={input} {...teams} />);
     expect(html.toLowerCase()).not.toContain("kickoff");
     expect(html.toLowerCase()).not.toContain("kick-off");
   });
@@ -132,10 +145,8 @@ describe("the last recorded row is not the final: 14780549 with its 27–7 row m
   const scores = RAW.score_history ?? [];
   const missingFinalRow = history({ score_history: scores.slice(0, -1) });
   const input = mounted(missingFinalRow);
-  const view = (finalScore: { home: number; away: number } | null, cursorAt: number | null = null) =>
-    renderToStaticMarkup(
-      <ProjectedFinalPointsChartView input={input} {...teams} finalScore={finalScore} cursorAt={cursorAt} />,
-    );
+  const view = (finalScore: { home: number; away: number } | null) =>
+    renderToStaticMarkup(<ProjectedFinalPointsChart input={input} {...teams} finalScore={finalScore} />);
 
   it("the trimmed history really ends on 26–7, and the dropped row was 27–7", () => {
     expect(scores[scores.length - 1]).toMatchObject({ home_score: 27, away_score: 7 });
@@ -163,15 +174,6 @@ describe("the last recorded row is not the final: 14780549 with its 27–7 row m
     expect(html).not.toContain("data-final=");
     expect(html).not.toMatch(/\d+ final</);
   });
-
-  it("no inspected moment shows the final or any score recorded after it", () => {
-    for (const cursor of inspectionInstants(series(input))) {
-      const html = view(PAGE_FINAL, cursor);
-      expect(html).not.toContain("data-final=");
-      expect(html).not.toMatch(/\d+ (final|last recorded)</);
-      expect(html).not.toMatch(/>27 scored</);
-    }
-  });
 });
 
 describe("the page's final score is refused unless it is a whole pair", () => {
@@ -193,7 +195,7 @@ describe("the page's final score is refused unless it is a whole pair", () => {
 
   it("a refused pair leaves the last row as the last recorded score, never a dash", () => {
     const html = renderToStaticMarkup(
-      <ProjectedFinalPointsModule sportKey={NFL} eventStatus="completed" history={history()} finalScore={{ home: 27, away: null }} {...teams} />,
+      <PageMount sportKey={NFL} eventStatus="completed" history={history()} finalScore={{ home: 27, away: null }} {...teams} />,
     );
     expect(html).toMatch(/data-actual="home"[^>]*>27 last recorded/);
     expect(html).not.toContain("data-final=");
@@ -202,14 +204,14 @@ describe("the page's final score is refused unless it is a whole pair", () => {
 
   it("the module passes the page's whole pair through: 27–7 reads final", () => {
     const html = renderToStaticMarkup(
-      <ProjectedFinalPointsModule sportKey={NFL} eventStatus="completed" history={history()} finalScore={PAGE_FINAL} {...teams} />,
+      <PageMount sportKey={NFL} eventStatus="completed" history={history()} finalScore={PAGE_FINAL} {...teams} />,
     );
     expect(html).toMatch(/data-actual="home"[^>]*>27 final/);
     expect(html).not.toContain("data-final=");
   });
 });
 
-describe("inspection is retained and nothing later leaks in", () => {
+describe("the pure series at a moment reads nothing later (lib; #10539 removed the web slider, not this guarantee)", () => {
   const input = mounted();
   const instants = inspectionInstants(series(input));
 
@@ -224,25 +226,11 @@ describe("inspection is retained and nothing later leaks in", () => {
     }
   });
 
-  it("mid-game, the readout shows the score at the cursor, not the 20–7 recorded later", () => {
-    const cursor = instants.filter((t) => t < at("2026-09-29T02:16:51.214009Z")).pop()!;
-    expect(cursor).toBeGreaterThan(at("2026-09-29T02:05:51.252553Z"));
-    const html = renderToStaticMarkup(
-      <ProjectedFinalPointsChartView input={input} {...teams} finalScore={PAGE_FINAL} cursorAt={cursor} />,
-    );
-    expect(html).toMatch(/data-actual="home"[^>]*>13 scored/);
-    expect(html).not.toMatch(/>20 scored/);
-    expect(html).not.toMatch(/27 (final|scored)/);
-    expect(html).toContain("Projection at this point");
-  });
-
-  it("before the first recorded game state, a cursor shows no actual score at all", () => {
+  it("before the first recorded game state, the series at that moment holds no actual score", () => {
     const cursor = instants.filter((t) => t < at(FIRST_RECORDED_STATE)).pop()!;
     expect(cursor).toBeDefined();
     const v = seriesAt(input, cursor);
     expect(v.supported && v.actualSteps).toEqual([]);
-    const html = renderToStaticMarkup(<ProjectedFinalPointsChartView input={input} {...teams} cursorAt={cursor} />);
-    expect(html).not.toContain("data-actual=");
   });
 });
 
@@ -279,10 +267,8 @@ describe("the score floor refuses an estimated or unobserved marker", () => {
 });
 
 describe("supported and unsupported mounts", () => {
-  const html = (props: Partial<React.ComponentProps<typeof ProjectedFinalPointsModule>>) =>
-    renderToStaticMarkup(
-      <ProjectedFinalPointsModule sportKey={NFL} eventStatus="completed" history={history()} {...teams} {...props} />,
-    );
+  const html = (props: Partial<React.ComponentProps<typeof PageMount>>) =>
+    renderToStaticMarkup(<PageMount sportKey={NFL} eventStatus="completed" history={history()} {...teams} {...props} />);
 
   it("a finished NFL game with every input renders the module", () => {
     expect(RAW.status).toBe("completed");
@@ -292,7 +278,7 @@ describe("supported and unsupported mounts", () => {
     expect(html({ history: history({ status: "closed" }) })).toContain("Projected final points");
   });
 
-  it("the module carries the history's own status through its memo, in both directions", () => {
+  it("the page's hook carries the history's own status through its memo, in both directions", () => {
     // Dropping status would refuse every mount; reading it from anywhere but the history would admit this one.
     expect(html({ history: history({ status: "live" }) })).toBe("");
     expect(html({ history: history({ status: "completed" }) })).toContain("Projected final points");
@@ -333,15 +319,38 @@ describe("supported and unsupported mounts", () => {
     expect(src).not.toMatch(/\bfetch\w*\(|useSWR|setInterval|@\/lib\/api/);
   });
 
-  it("the page only imports the module and calls it beside the score section", () => {
+  it("the page decides once, draws that decision, and passes its own period boundaries", () => {
     const page = fs.readFileSync(path.join(__dirname, "../../app/events/[id]/page.tsx"), "utf8");
-    expect(page.match(/ProjectedFinalPointsModule/g)?.length).toBe(3);
-    expect(page).toMatch(/<ProjectedFinalPointsModule\s+sportKey=\{event\.sport\}\s+eventStatus=\{event\.status\}\s+history=\{historyData\}/);
+    expect(page.match(/useProjectedFinalPointsMount\(/g)?.length).toBe(1);
+    expect(page).toMatch(/const projectedFinalPoints = useProjectedFinalPointsMount\(event\?\.sport, event\?\.status, historyData\);/);
+    expect(page).not.toMatch(/projectedFinalPointsMount\(/);
+    expect(page.match(/<ProjectedFinalPointsModule/g)?.length).toBe(1);
+    expect(page).toMatch(/<ProjectedFinalPointsModule\s+decision=\{projectedFinalPoints\}/);
+    expect(page).toMatch(/periodBoundaries=\{periodBoundaries\}\s+homeTeam=\{event\.home_team\}\s+awayTeam=\{event\.away_team\}\s+homeColor/);
     // The final is the hero's own pair, under the hero's gates: finished, not voided, not stoppage filler.
     expect(page).toMatch(
       /finalScore=\{isFinished && !venueVoided && !heroScoreIsStoppageFiller \? \{ home: bestHomeScore, away: bestAwayScore \} : null\}/,
     );
-    expect(page.indexOf("<ProjectedFinalPointsModule")).toBeGreaterThan(page.indexOf("<ScoreDifferentialChart"));
+    // The page never statically imports the chart or the module: the projection stays in its own chunk.
+    expect(page).not.toMatch(/^import .*ProjectedFinalPoints(Chart|Module)/m);
+  });
+
+  it("#10539 the differential steps aside on that same decision, and comes back on every refusal or fault", () => {
+    const page = fs.readFileSync(path.join(__dirname, "../../app/events/[id]/page.tsx"), "utf8");
+    const mountSite = page.slice(page.indexOf("{projectedFinalPoints.mount ? ("), page.indexOf("<FinalGameWinnerQuote"));
+    // The differential card is built in exactly one place and rendered only from the mount site.
+    expect(page.match(/<ScoreDifferentialChart\b/g)?.length).toBe(1);
+    expect(page).toMatch(/const scoreDiffCard = hasScoreDiffData \? \(/);
+    expect(mountSite).toMatch(
+      /\{projectedFinalPoints\.mount \? \(\s*scoreDiffCard \? \(\s*<ErrorBoundary resetKey=\{projectedFinalPoints\} fallback=\{scoreDiffCard\}>\s*\{projectedFinalPointsModule\}\s*<\/ErrorBoundary>/,
+    );
+    expect(mountSite).toMatch(/<SectionErrorBoundary label="The projected final points" resetKey=\{projectedFinalPoints\}>\s*\{projectedFinalPointsModule\}/);
+    expect(mountSite).toMatch(/\) : \(\s*scoreDiffCard\s*\)\}\s*$/);
+    // No sport-name shortcut decides it.
+    expect(mountSite).not.toMatch(/americanfootball|nfl/i);
+    // No other render path for the differential survives.
+    expect(page).not.toMatch(/\{hasScoreDiffData && \(/);
+    expect(page.match(/\{scoreDiffCard\}/g)?.length).toBe(1);
   });
 });
 
@@ -383,7 +392,7 @@ describe("before and during: rows count only by served provenance", () => {
     expect(s.actualSteps.length).toBeGreaterThan(0);
     expect(s.actualSteps[0].at).toBeGreaterThanOrEqual(at(FIRST_RECORDED_STATE));
     expect(s.actualSteps.every((a) => a.at <= at(MID_GAME))).toBe(true);
-    const html = renderToStaticMarkup(<ProjectedFinalPointsChartView input={d.input} {...teams} cursorAt={null} />);
+    const html = renderToStaticMarkup(<ProjectedFinalPointsChart input={d.input} {...teams} />);
     expect(html).toContain('data-projected-final-points="during"');
     // Each side's readout is a score so far: never "final", never "last recorded".
     expect(html.match(/data-actual="(home|away)">\d+ scored</g)).toHaveLength(2);
@@ -405,7 +414,7 @@ describe("before and during: rows count only by served provenance", () => {
     expect(s.actualSteps).toEqual([]);
     expect(s.latestActual).toBeNull();
     expect(s.segments.flat().every((p) => p.at <= at(PREGAME))).toBe(true);
-    const html = renderToStaticMarkup(<ProjectedFinalPointsChartView input={d.input} {...teams} cursorAt={null} />);
+    const html = renderToStaticMarkup(<ProjectedFinalPointsChart input={d.input} {...teams} />);
     expect(html).toContain('data-projected-final-points="before"');
     expect(html).not.toContain("data-actual=");
     expect(html).not.toMatch(/\d+ scored/);
@@ -433,7 +442,7 @@ describe("before and during: rows count only by served provenance", () => {
       expect(v.phase).toBe("before");
       expect(v.actualSteps).toEqual([]);
     }
-    const html = renderToStaticMarkup(<ProjectedFinalPointsChartView input={d.input} {...teams} cursorAt={null} />);
+    const html = renderToStaticMarkup(<ProjectedFinalPointsChart input={d.input} {...teams} />);
     expect(html).toContain('data-projected-final-points="before"');
     expect(html).not.toContain("data-actual=");
     expect(html).not.toContain("┅ Actual score");
@@ -445,9 +454,7 @@ describe("before and during: rows count only by served provenance", () => {
       const h = livePayload({ status, completed_at: COMPLETED_AT });
       const d = projectedFinalPointsMount({ sportKey: NFL, eventStatus, history: h, now: AFTER_COMPLETION });
       expect([eventStatus, d.mount ? "mount" : d.reason]).toEqual([eventStatus, "stale_completion"]);
-      const html = renderToStaticMarkup(
-        <ProjectedFinalPointsModule sportKey={NFL} eventStatus={eventStatus} history={h} {...teams} />,
-      );
+      const html = renderToStaticMarkup(<PageMount sportKey={NFL} eventStatus={eventStatus} history={h} {...teams} />);
       expect(html).toBe("");
     }
   });

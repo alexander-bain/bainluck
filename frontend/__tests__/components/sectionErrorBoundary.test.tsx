@@ -173,6 +173,10 @@ describe("the event page actually wraps its sections", () => {
       // section gets its own boundary.
       "The sportsbook prices",
       "The score differential chart",
+      // #10539: the projected final points replaces the differential on the page's one
+      // decision. With a differential to hand back to, a plain ErrorBoundary falls back to
+      // it; with none, this labelled boundary stands in its place.
+      "The projected final points",
       "The market maps",
       // UX-P098: THE DIVERGENCE rail leads the props body, above the full set.
       "What's moving",
