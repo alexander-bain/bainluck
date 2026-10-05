@@ -24,6 +24,8 @@ on:
       - 'ios/Bain Luck/BainLuckTests/DiscoverViewModelPaginationTests.swift'
       - 'ios/Bain Luck/BainLuckWatchUITests/**'
       - 'tools/watch-ui-journey.sh'
+      - 'tools/watch_resolve_packages.py'
+      - 'tools/tests/test_watch_resolve_packages.py'
       - 'tools/watch-build.sh'
       - 'tools/watch-companion-archive.sh'
       - 'tools/watch_companion_archive.py'
@@ -55,6 +57,8 @@ on:
       - 'ios/Bain Luck/BainLuckTests/DiscoverViewModelPaginationTests.swift'
       - 'ios/Bain Luck/BainLuckWatchUITests/**'
       - 'tools/watch-ui-journey.sh'
+      - 'tools/watch_resolve_packages.py'
+      - 'tools/tests/test_watch_resolve_packages.py'
       - 'tools/watch-build.sh'
       - 'tools/watch-companion-archive.sh'
       - 'tools/watch_companion_archive.py'
@@ -156,6 +160,8 @@ jobs:
         with:
           ref: ${{ github.event.pull_request.head.sha || github.sha }}
           persist-credentials: false
+      - name: Verify bounded package-download recovery
+        run: python3 -m unittest discover -s tools/tests -p test_watch_resolve_packages.py
       - name: Select, reopen offline, and change a game through Watch controls
         run: bash tools/watch-ui-journey.sh
       - name: Preserve UI journey evidence
@@ -167,6 +173,7 @@ jobs:
             build/watch-ui-journey/*.txt
             build/watch-ui-journey/*.json
             build/watch-ui-journey/*.log
+            build/watch-ui-journey/package-resolution/**
             build/watch-ui-journey/run.*/BainLuckWatchUITests.xcresult
           if-no-files-found: ignore
           retention-days: 7

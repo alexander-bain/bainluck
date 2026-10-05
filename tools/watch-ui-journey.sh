@@ -23,6 +23,7 @@ trap failure ERR
 RUN="$(mktemp -d "$OUT/run.XXXXXX")"
 DERIVED="$RUN/DerivedData"
 PHONE_DERIVED="$RUN/CompanionDerivedData"
+PACKAGES="$RUN/SourcePackages"
 RESULT="$RUN/BainLuckWatchUITests.xcresult"
 printf '%s\n' "$DERIVED" > "$OUT/derived-data.txt"
 printf '%s\n' "$RESULT" > "$OUT/result-bundle.txt"
@@ -73,6 +74,22 @@ DEVICE_TYPE="$(sed -n '1p' "$OUT/destination-spec.txt")"
 RUNTIME="$(sed -n '2p' "$OUT/destination-spec.txt")"
 PHONE_TYPE="$(sed -n '3p' "$OUT/destination-spec.txt")"
 PHONE_RUNTIME="$(sed -n '4p' "$OUT/destination-spec.txt")"
+# Resolve the pinned dependency graph before booting devices. Both independent
+# build-product directories reuse this run's downloads; no shared/global cache.
+PHASE='resolve pinned packages before simulator preparation'
+PINNED_PACKAGES="$ROOT/ios/Bain Luck/Bain Luck.xcodeproj/project.xcworkspace/xcshareddata/swiftpm/Package.resolved"
+cp "$PINNED_PACKAGES" "$OUT/package-resolved-before.json"
+python3 "$ROOT/tools/watch_resolve_packages.py" --output-dir "$OUT/package-resolution" -- \
+  xcodebuild -resolvePackageDependencies \
+  -project "$ROOT/ios/Bain Luck/Bain Luck.xcodeproj" -scheme 'Bain Luck' \
+  -derivedDataPath "$PHONE_DERIVED" -clonedSourcePackagesDirPath "$PACKAGES" \
+  -onlyUsePackageVersionsFromResolvedFile
+python3 - "$PINNED_PACKAGES" "$OUT/package-resolved-before.json" <<'PINS'
+from pathlib import Path
+import sys
+if Path(sys.argv[1]).read_bytes() != Path(sys.argv[2]).read_bytes():
+    raise SystemExit('Package resolution changed the committed pins; gate unpaid')
+PINS
 PHASE='disposable companion phone and Watch simulator creation'
 TEST_UDID="$(xcrun simctl create "codex-watch-ui-journey" "$DEVICE_TYPE" "$RUNTIME" 2>> "$OUT/preflight.log")"
 PHONE_UDID="$(xcrun simctl create "codex-watch-ui-companion" "$PHONE_TYPE" "$PHONE_RUNTIME" 2>> "$OUT/preflight.log")"
@@ -99,9 +116,11 @@ pair = json.loads(Path(sys.argv[2]).read_text())['pairs'][pair_id]
 if pair['watch']['udid'] != watch or pair['phone']['udid'] != phone or not pair['state'].startswith('(active,'):
     raise SystemExit('Created pair must bind exactly the new Watch and iPhone and be active')
 PAIR
-PHASE='boot only the new disposable phone and Watch pair'
-xcrun simctl boot "$PAIR_ID" >> "$OUT/preflight.log" 2>&1
+# bootstatus -b starts an unbooted device and waits for it. Prepare each new
+# member serially; the pair-wide boot RPC timed out before reaching readiness.
+PHASE='boot and await only the new disposable companion phone'
 xcrun simctl bootstatus "$PHONE_UDID" -b >> "$OUT/preflight.log" 2>&1
+PHASE='boot and await only the new disposable Watch'
 xcrun simctl bootstatus "$TEST_UDID" -b >> "$OUT/preflight.log" 2>&1
 # watchOS Simulator rejects simctl content_size (POSIX45). The suite separately
 # verifies default layout and a DEBUG-only accessibility5 layout stress override.
@@ -116,6 +135,7 @@ XCODE_ARGS=(
   -scheme BainLuckWatchUITests -configuration Debug
   -destination "platform=watchOS Simulator,id=$TEST_UDID"
   -derivedDataPath "$DERIVED" -parallel-testing-enabled NO -jobs 2
+  -clonedSourcePackagesDirPath "$PACKAGES" -disableAutomaticPackageResolution
   CODE_SIGNING_ALLOWED=YES CODE_SIGNING_REQUIRED=YES
   CODE_SIGN_IDENTITY=- CODE_SIGN_STYLE=Manual PROVISIONING_PROFILE_SPECIFIER=
   'OTHER_SWIFT_FLAGS=$(inherited) -Xfrontend -disable-sandbox'
@@ -127,6 +147,7 @@ xcodebuild build -project "$ROOT/ios/Bain Luck/Bain Luck.xcodeproj" \
   -scheme 'Bain Luck' -configuration Debug \
   -destination "platform=iOS Simulator,id=$PHONE_UDID" \
   -derivedDataPath "$PHONE_DERIVED" -jobs 2 \
+  -clonedSourcePackagesDirPath "$PACKAGES" -disableAutomaticPackageResolution \
   CODE_SIGNING_ALLOWED=YES CODE_SIGNING_REQUIRED=YES \
   CODE_SIGN_IDENTITY=- CODE_SIGN_STYLE=Manual PROVISIONING_PROFILE_SPECIFIER= \
   'OTHER_SWIFT_FLAGS=$(inherited) -Xfrontend -disable-sandbox' \
