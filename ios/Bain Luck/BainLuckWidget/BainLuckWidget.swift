@@ -105,6 +105,9 @@ struct BainLuckDesktopWidget: Widget {
 struct BainLuckWidgetBundle: WidgetBundle {
     var body: some Widget {
         BainLuckDesktopWidget()
+        #if os(iOS)
+        GameLiveActivity()
+        #endif
     }
 }
 
