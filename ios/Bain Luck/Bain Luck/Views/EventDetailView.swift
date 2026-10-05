@@ -88,6 +88,9 @@ struct EventDetailView: View {
     }
 
     private var isLive: Bool { vm.event?.status == "live" }
+    private var publicationReadiness: PublicationReadiness4974 {
+        Self.publicationReadiness(pageEventId: eventId, event: vm.event)
+    }
     /// #9436 — what the hero's whole-string change reads: the pair the chart's
     /// live-edge label also prints (`LivePriceActivity.displayedLabels`), which
     /// is exactly the pair the hero draws; moving only while live.
@@ -292,6 +295,15 @@ struct EventDetailView: View {
                     }
                 }
             }
+            // #4974 — a finished game's stored checkpoints, read once per
+            // readiness. `.task(id:)` cancels the read in flight whenever the
+            // readiness changes and when the page disappears; the next run asks
+            // again (eligible) or invalidates (ineligible). Load, refresh and the
+            // stream never trigger it, and a page reappearing over a journey it
+            // already holds does not read twice.
+            .task(id: publicationReadiness) {
+                await Self.adoptPublications(for: publicationReadiness, vm: vm)
+            }
             .task {
                 marketPageVisible = true
                 vm.setMarketPageVisible(scenePhase == .active)
@@ -395,7 +407,11 @@ struct EventDetailView: View {
                                             homeTeamLogo: event.homeTeamData?.logoSmall,
                                             awayTeamLogo: event.awayTeamData?.logoSmall,
                                             lastPoint: lastPlayPoint(event: event))
-                                        : nil)
+                                        : nil,
+                                     // #4974 — only this page's own finished
+                                     // game's journey; the chart re-checks.
+                                     publicationJourney: Self.chartPublicationJourney(
+                                        vm.publicationJourney, pageEventId: eventId, event: event))
                         // Bookmaker table (collapsible Sources panel)
                         sourcesToggle(event)
 
@@ -3141,5 +3157,61 @@ private struct LineMovementExplainerView: View {
         guard let value else { return nil }
         let trimmed = value.trimmingCharacters(in: .whitespacesAndNewlines)
         return trimmed.isEmpty ? nil : trimmed
+    }
+}
+
+// MARK: - #4974 Stored Checkpoints (caller)
+
+extension EventDetailView {
+    /// What the page's checkpoint read is keyed on. One value from identity
+    /// and finished state together, so a game that finishes, a detail that
+    /// re-keys and a game that stops being finished each change it exactly once,
+    /// never in two half-steps.
+    nonisolated enum PublicationReadiness4974: Hashable, Sendable {
+        /// No detail yet, another event's detail, or a game not finished.
+        case ineligible
+        case eligible(eventId: Int)
+    }
+
+    /// Eligible only when the held detail is the page's own event and that
+    /// game is finished. A detail for another id is never silently re-keyed.
+    static func publicationReadiness(pageEventId: Int, event: EventDetail?) -> PublicationReadiness4974 {
+        guard let event, event.id == pageEventId, EventState.isFinished(event.status) else {
+            return .ineligible
+        }
+        return .eligible(eventId: pageEventId)
+    }
+
+    /// Whether a run of the page's readiness task calls the view model. Every
+    /// ineligible run does: that call is the explicit invalidation the view
+    /// model's contract asks for and makes no request. An eligible run skips
+    /// only when the journey already held is this event's: the page coming back
+    /// into view does not read the same game twice.
+    static func shouldAdoptPublications(
+        _ readiness: PublicationReadiness4974, held: PublicationJourney4974.Journey?
+    ) -> Bool {
+        guard case .eligible(let eventId) = readiness else { return true }
+        return held?.eventId != eventId
+    }
+
+    /// One run of the page's readiness task: the whole body of its
+    /// `.task(id:)`, here so a test drives the code the page runs.
+    @MainActor
+    static func adoptPublications(for readiness: PublicationReadiness4974, vm: EventDetailViewModel) async {
+        guard shouldAdoptPublications(readiness, held: vm.publicationJourney) else { return }
+        await vm.adoptPublicationJourney()
+    }
+
+    /// The journey the chart is handed: the held one only while the page is
+    /// eligible for that same event, else `nil`. The view model's journey can
+    /// be stale against a status changed since its last call, so the page
+    /// checks for itself before the chart does.
+    static func chartPublicationJourney(
+        _ held: PublicationJourney4974.Journey?, pageEventId: Int, event: EventDetail?
+    ) -> PublicationJourney4974.Journey? {
+        guard let held,
+              publicationReadiness(pageEventId: pageEventId, event: event) == .eligible(eventId: held.eventId)
+        else { return nil }
+        return held
     }
 }
