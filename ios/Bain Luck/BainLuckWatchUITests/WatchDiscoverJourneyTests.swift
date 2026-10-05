@@ -38,10 +38,16 @@ final class WatchDiscoverJourneyTests: XCTestCase {
         XCTAssertTrue(originalClock.contains("2026-10-05T12:00:00"), originalClock)
         if !largeText {
             try tap(app.buttons["watch.discovery.continue.301"], in: app)
-            let help = app.alerts["Continue on iPhone"]
+            // watchOS exposes this presentation as Other, not Alert. The OK
+            // button is in a sibling cell below the long help text.
+            let help = app.otherElements["Continue on iPhone"].firstMatch
             XCTAssertTrue(help.waitForExistence(timeout: 10))
-            XCTAssertTrue(help.staticTexts.containing(NSPredicate(format: "label CONTAINS %@", "Will inflation fall below 3%?")).firstMatch.exists)
-            help.buttons["OK"].tap()
+            let helpMessage = help.staticTexts.containing(NSPredicate(
+                format: "label CONTAINS %@ AND label CONTAINS %@",
+                "Will inflation fall below 3%?", "Look for Bain Luck’s Handoff option"
+            )).firstMatch
+            XCTAssertTrue(helpMessage.exists)
+            try tap(app.buttons["OK"].firstMatch, in: app)
             let continuation = element("watch.discovery.continuation", in: app)
             XCTAssertTrue(continuation.waitForExistence(timeout: 10))
             XCTAssertEqual(continuation.label, "https://bainluck.com/futures/301")
@@ -52,7 +58,7 @@ final class WatchDiscoverJourneyTests: XCTestCase {
         XCTAssertTrue(result.label.contains("Yes"), result.label)
         XCTAssertFalse(element("watch.discovery.probability.302", in: app).exists)
         capture(app, "Discoveries settled result")
-        try tap(app.buttons["watch.discovery.close"], in: app)
+        try tap(app.buttons["watch.discovery.close"].firstMatch, in: app)
         XCTAssertTrue(element("watch.home-probability", in: app).waitForExistence(timeout: 15))
         XCTAssertTrue(element("watch.home-probability", in: app).label.contains("Giants"))
 
@@ -70,7 +76,7 @@ final class WatchDiscoverJourneyTests: XCTestCase {
         try reveal(savedAge, in: app)
         XCTAssertEqual(savedAge.value as? String, originalClock, "Offline restoration must preserve producer time")
         capture(app, "Discoveries saved clock retained")
-        try tap(app.buttons["watch.discovery.close"], in: app)
+        try tap(app.buttons["watch.discovery.close"].firstMatch, in: app)
         XCTAssertTrue(element("watch.home-probability", in: app).waitForExistence(timeout: 15))
         XCTAssertTrue(element("watch.home-probability", in: app).label.contains("64%"))
         app.terminate()
@@ -90,7 +96,7 @@ final class WatchDiscoverJourneyTests: XCTestCase {
         try reveal(age, in: app)
         XCTAssertTrue(age.label.localizedCaseInsensitiveContains("unavailable"), age.label)
         capture(app, "Third discovery has unknown observation age")
-        try tap(app.buttons["watch.discovery.close"], in: app)
+        try tap(app.buttons["watch.discovery.close"].firstMatch, in: app)
         XCTAssertTrue(app.buttons["watch.pick.101"].waitForExistence(timeout: 15))
         XCTAssertFalse(element("watch.home-probability", in: app).exists)
         print("WATCH_UI_DISCOVERIES_UNSELECTED=PASS")
@@ -117,16 +123,60 @@ final class WatchDiscoverJourneyTests: XCTestCase {
     }
 
     @MainActor private func reveal(_ item: XCUIElement, in app: XCUIApplication) throws {
+        let deadline = ContinuousClock.now.advanced(by: .seconds(20))
+        var previousFrame: CGRect?
+        var unchangedFrames = 0
+        var lastFrame = CGRect.zero
+        var lastAppFrame = CGRect.zero
+        var reason = "Reveal exhausted its maximum of 30 scroll attempts"
+        guard item.waitForExistence(timeout: 5) else {
+            try failReveal(item, in: app, reason: "Target does not exist", frame: lastFrame, appFrame: lastAppFrame)
+            return
+        }
         for _ in 0..<30 {
-            if item.isHittable && app.frame.contains(item.frame) { return }
-            let earlier = item.frame.minY < app.frame.minY
+            guard ContinuousClock.now < deadline else { reason = "Reveal exceeded its 20-second deadline"; break }
+            guard item.exists else { reason = "Target disappeared while revealing"; break }
+            let frame = item.frame
+            let appFrame = app.frame
+            lastFrame = frame
+            lastAppFrame = appFrame
+            guard usableFrame(frame), usableFrame(appFrame) else {
+                reason = "Target or application has an empty or nonfinite frame"
+                break
+            }
+            if item.isHittable && appFrame.contains(frame) { return }
+            unchangedFrames = previousFrame == frame ? unchangedFrames + 1 : 0
+            guard unchangedFrames < 3 else {
+                reason = "Target frame did not move after three scroll attempts"
+                break
+            }
+            previousFrame = frame
+            guard ContinuousClock.now < deadline else { reason = "Reveal exceeded its 20-second deadline"; break }
+            let earlier = frame.minY < appFrame.minY
             let start = app.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.60))
             let end = app.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: earlier ? 0.78 : 0.40))
             start.press(forDuration: 0.1, thenDragTo: end, withVelocity: .slow, thenHoldForDuration: 0.3)
         }
+        try failReveal(item, in: app, reason: reason, frame: lastFrame, appFrame: lastAppFrame)
+    }
+
+    private func usableFrame(_ frame: CGRect) -> Bool {
+        !frame.isEmpty && !frame.isNull && !frame.isInfinite
+            && [frame.origin.x, frame.origin.y, frame.width, frame.height].allSatisfy(\.isFinite)
+    }
+
+    @MainActor private func failReveal(_ item: XCUIElement, in app: XCUIApplication,
+                                      reason: String, frame: CGRect, appFrame: CGRect) throws {
+        let message = "Cannot reveal \(item.identifier): \(reason); target frame=\(frame); application frame=\(appFrame)"
+        print(message)
         capture(app, "Unreachable discovery control")
-        XCTFail("Cannot reveal \(item.identifier)")
-        throw NSError(domain: "WatchDiscoveryJourney", code: 1)
+        let hierarchy = XCTAttachment(string: app.debugDescription)
+        hierarchy.name = "Unreachable discovery control hierarchy"
+        hierarchy.lifetime = .keepAlways
+        add(hierarchy)
+        XCTFail(message)
+        throw NSError(domain: "WatchDiscoveryJourney", code: 1,
+                      userInfo: [NSLocalizedDescriptionKey: message])
     }
 
     @MainActor private func capture(_ app: XCUIApplication, _ name: String) {
