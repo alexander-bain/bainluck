@@ -3,7 +3,15 @@ import Foundation
 // MARK: - Event History Response
 
 /// Historical probability, score, and source data for an event.
-nonisolated struct EventHistoryResponse: Decodable, Sendable {
+///
+/// #10090 — `Equatable` is SYNTHESIZED over every stored field, here and on
+/// every nested type, so the chart can tell a re-delivered identical payload
+/// from a real correction (`OddsChartViewModel.history`). Never hand-write a
+/// partial `==` on any of these: a same-edge backfill, a score or marker fix,
+/// a withdrawn source or a moved pin must read as a change. Arrays compare in
+/// order, optionals keep nil apart from empty, and a NaN compares unequal —
+/// every doubt resolves to "changed", which only costs a rebuild.
+nonisolated struct EventHistoryResponse: Decodable, Sendable, Equatable {
     let eventId: Int
     let homeTeam: String
     let awayTeam: String
@@ -65,10 +73,10 @@ nonisolated struct EventHistoryResponse: Decodable, Sendable {
 /// never read it, so tomorrow's Red Sox–Yankees page held a served forecast it
 /// could not use. The ladders themselves are the chart's business and are not
 /// decoded here.
-nonisolated struct PMSpreadData: Decodable, Sendable {
+nonisolated struct PMSpreadData: Decodable, Sendable, Equatable {
     let projectedFinal: ProjectedFinal?
 
-    nonisolated struct ProjectedFinal: Decodable, Sendable {
+    nonisolated struct ProjectedFinal: Decodable, Sendable, Equatable {
         let homeScore: Double
         let awayScore: Double
         let spreadSource: String?
@@ -92,7 +100,7 @@ nonisolated struct PMSpreadData: Decodable, Sendable {
 // MARK: - History Points
 
 /// Aggregated odds history point for an event.
-nonisolated struct HistoryPoint: Decodable, Sendable {
+nonisolated struct HistoryPoint: Decodable, Sendable, Equatable {
     let timestamp: String
     let homeProbability: Double?
     let awayProbability: Double?
@@ -102,7 +110,7 @@ nonisolated struct HistoryPoint: Decodable, Sendable {
 }
 
 /// Bookmaker-specific odds history point for an event.
-nonisolated struct BookmakerHistoryPoint: Decodable, Sendable {
+nonisolated struct BookmakerHistoryPoint: Decodable, Sendable, Equatable {
     let timestamp: String
     let homeProbability: Double?
     let awayProbability: Double?
@@ -144,14 +152,14 @@ nonisolated struct BookmakerHistoryPoint: Decodable, Sendable {
 }
 
 /// Score snapshot captured during an event.
-nonisolated struct ScoreHistoryPoint: Decodable, Sendable {
+nonisolated struct ScoreHistoryPoint: Decodable, Sendable, Equatable {
     let timestamp: String
     let homeScore: Int
     let awayScore: Int
 }
 
 /// ESPN win-probability and game-state snapshot.
-nonisolated struct ESPNHistoryPoint: Decodable, Sendable {
+nonisolated struct ESPNHistoryPoint: Decodable, Sendable, Equatable {
     let timestamp: String
     let homeProbability: Double?
     let gameClock: String?
@@ -161,7 +169,7 @@ nonisolated struct ESPNHistoryPoint: Decodable, Sendable {
 }
 
 /// Source-specific win-probability snapshot with optional game state.
-nonisolated struct WinProbHistoryPoint: Decodable, Sendable {
+nonisolated struct WinProbHistoryPoint: Decodable, Sendable, Equatable {
     let timestamp: String
     let homeProbability: Double?
     let gameState: WinProbGameState?
@@ -183,7 +191,7 @@ nonisolated struct WinProbHistoryPoint: Decodable, Sendable {
 /// `resolution_s` is the display evidence resolution G — an interval between
 /// readings wider than G is UNKNOWN. It is NOT a freshness SLA and not proof of
 /// continuous observation (Codex card-B decision, 2026-09-24).
-nonisolated struct EvidenceContract: Decodable, Sendable {
+nonisolated struct EvidenceContract: Decodable, Sendable, Equatable {
     /// The only contract version this client knows how to read.
     static let knownVersion = "7878.v1"
 
@@ -225,7 +233,7 @@ nonisolated struct EvidenceContract: Decodable, Sendable {
 /// initialiser never throws: an unreadable object still says "this point is
 /// not a plain reading", which is exactly how the chart treats it (fails
 /// closed — drawn, proves nothing).
-nonisolated struct WinProbEvidence: Decodable, Sendable {
+nonisolated struct WinProbEvidence: Decodable, Sendable, Equatable {
     let kind: String?
     let coveredThrough: String?
 
@@ -244,7 +252,7 @@ nonisolated struct WinProbEvidence: Decodable, Sendable {
 }
 
 /// Game-state fields paired with a win-probability snapshot.
-nonisolated struct WinProbGameState: Decodable, Sendable {
+nonisolated struct WinProbGameState: Decodable, Sendable, Equatable {
     let period: String?
     let clock: String?
     let inning: Int?
@@ -255,7 +263,7 @@ nonisolated struct WinProbGameState: Decodable, Sendable {
 // MARK: - Win Prob Source Info
 
 /// Display and attribution metadata for a win-probability source.
-nonisolated struct WinProbSourceInfo: Decodable, Sendable {
+nonisolated struct WinProbSourceInfo: Decodable, Sendable, Equatable {
     let displayName: String?
     let type: String?
     let color: String?
@@ -267,7 +275,7 @@ nonisolated struct WinProbSourceInfo: Decodable, Sendable {
 // MARK: - Scoring Play
 
 /// Scoring event shown on the event history timeline.
-nonisolated struct ScoringPlay: Decodable, Sendable {
+nonisolated struct ScoringPlay: Decodable, Sendable, Equatable {
     let timestamp: String?
     let team: String?
     let description: String?
@@ -296,7 +304,7 @@ nonisolated struct ScoringPlay: Decodable, Sendable {
 /// and a single throwing element takes the whole history payload down with it
 /// (gotcha #42). A marker the client cannot read is dropped in exactly one
 /// place, `OddsChartView.servedPeriodMarkers(from:)`, which is pure and tested.
-nonisolated struct PeriodMarkerPayload: Decodable, Sendable {
+nonisolated struct PeriodMarkerPayload: Decodable, Sendable, Equatable {
     let timestamp: String?
     let period: String?
     let source: String?
@@ -376,7 +384,7 @@ nonisolated struct PeriodMarkerPayload: Decodable, Sendable {
 /// live in `routes/events.py`. The client deliberately does NOT re-gate: an empty
 /// array is the kill switch working, and a second client-side threshold would make
 /// the server's switch a half-measure that needs an App Store release to complete.
-nonisolated struct GameMomentPoint: Decodable, Sendable {
+nonisolated struct GameMomentPoint: Decodable, Sendable, Equatable {
     let ts: String?
     let label: String?
     let confidence: Double?
@@ -390,7 +398,7 @@ nonisolated struct GameMomentPoint: Decodable, Sendable {
 // MARK: - Aggregate Line
 
 /// Aggregated home and away probability point for charting.
-nonisolated struct AggregateLinePoint: Decodable, Sendable {
+nonisolated struct AggregateLinePoint: Decodable, Sendable, Equatable {
     let timestamp: String
     let homeProbability: Double
     let awayProbability: Double?
