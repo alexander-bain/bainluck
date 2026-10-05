@@ -387,6 +387,38 @@ enum LaunchRig {
         return seconds
     }
 
+    /// Launch-argument key carrying the container-relative path of a RESTORED
+    /// Discover seed (#10399): an aged, principal-bound deck served through the
+    /// view model's existing last-good injection, while the first fixed-feed
+    /// response is held on a bounded latch.
+    ///
+    /// `-launch_fixed_feed <fresh> -launch_fixed_feed_restored_seed <seed>`.
+    ///
+    /// Only honoured together with ``fixedFeedKey`` (the client that reads it is
+    /// `FixedDiscoverFeed`), and like it the code that honours it is `#if DEBUG`.
+    /// It never reads or writes the real `DiscoverFeedCache`.
+    static let fixedFeedRestoredSeedKey = "launch_fixed_feed_restored_seed"
+
+    /// Launch-argument key selecting the NEGATIVE comparison arm of the #10399
+    /// restored-deck runtime: `old_direct_load` makes the appearance task await
+    /// `load()` directly, as it did before #10399. Any other value is refused by
+    /// name; absent means the current appearance path. Ignored without
+    /// ``fixedFeedRestoredSeedKey``.
+    static let fixedFeedAppearanceControlKey = "launch_fixed_feed_appearance_control"
+
+    /// The restored seed file the rig asked for, or `nil` when it asked for none.
+    static func fixedFeedRestoredSeedURL(defaults: UserDefaults = .standard, home: URL) -> URL? {
+        containerURL(defaults.string(forKey: fixedFeedRestoredSeedKey), home: home)
+    }
+
+    /// The raw comparison-arm word, or `nil` when none was passed.
+    static func fixedFeedAppearanceControl(defaults: UserDefaults = .standard) -> String? {
+        guard let raw = defaults.string(forKey: fixedFeedAppearanceControlKey)?
+            .trimmingCharacters(in: .whitespacesAndNewlines), !raw.isEmpty
+        else { return nil }
+        return raw
+    }
+
     /// A path that stays inside `home`: relative, non-empty, no `..` component.
     /// Anything else is refused rather than resolved, so the affordance can only
     /// ever read a file the harness put in this app's own container.
