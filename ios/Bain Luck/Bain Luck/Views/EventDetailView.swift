@@ -67,13 +67,8 @@ struct EventDetailView: View {
     /// the revision in a single write (`PublicationCaller4974`).
     @State private var publicationCaller = PublicationCaller4974()
     private var sharedChartDomain: ClosedRange<Date>? {
-        guard let event = vm.event else { return nil }
-        return SharedChartWindow.domain(
-            status: event.status,
-            commenceTime: event.commenceTime,
-            history: vm.history,
-            range: chartRange,
-            sportKey: event.sport)
+        Self.pageSharedChartDomain(event: vm.event, history: vm.history, range: chartRange,
+                                   journey: vm.publicationJourney, key: publicationTaskKey)
     }
     @Environment(\.horizontalSizeClass) private var sizeClass
 
@@ -3269,6 +3264,47 @@ extension EventDetailView {
               vm.error == nil, vm.eventId == pageEventId, vm.event?.id == pageEventId
         else { return }
         caller.wrappedValue.open(ifCurrent: generation)
+    }
+
+    /// The one window both page charts are handed as `forcedDomain`: the
+    /// legacy `SharedChartWindow` window for the page's selected range, then
+    /// `publicationSharedChartDomain`. Static so a test computes exactly what
+    /// the page computes.
+    static func pageSharedChartDomain(
+        event: EventDetail?, history: EventHistoryResponse?, range: OddsTimeRange,
+        journey: PublicationJourney4974.Journey?, key: PublicationTaskKey4974,
+        now: Date = Date()
+    ) -> ClosedRange<Date>? {
+        guard let event else { return nil }
+        let legacyDomain = SharedChartWindow.domain(
+            status: event.status,
+            commenceTime: event.commenceTime,
+            history: history,
+            range: range,
+            sportKey: event.sport,
+            now: now)
+        return publicationSharedChartDomain(legacyDomain, journey: journey, key: key)
+    }
+
+    /// Both page charts keep one selected time window. Stored checkpoint
+    /// insertion times can be later than the last legacy game observation, so
+    /// the end reaches the latest checkpoint the chart is handed. The selected
+    /// lower bound (All / Since Start) remains unchanged. The window is also
+    /// each chart's ink bound: its own legacy finish clip still limits legacy
+    /// rows, and the score chart carries its final margin to the edge (#9175).
+    static func publicationSharedChartDomain(
+        _ legacyDomain: ClosedRange<Date>?,
+        journey: PublicationJourney4974.Journey?, key: PublicationTaskKey4974
+    ) -> ClosedRange<Date>? {
+        guard let legacyDomain,
+              let current = chartPublicationJourney(journey, key: key),
+              let latest = current.checkpoints.map(\.date)
+                .filter({ $0 >= legacyDomain.lowerBound }).max()
+        else { return legacyDomain }
+        // Preserve the page window's existing 30-second breathing room. This
+        // is axis padding, not another observation or a held probability.
+        let upper = max(legacyDomain.upperBound, latest.addingTimeInterval(30))
+        return legacyDomain.lowerBound...upper
     }
 
     /// The journey the chart is handed: the held one only when page, view
