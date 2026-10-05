@@ -179,12 +179,21 @@ def rig(monkeypatch):
 
 
 async def _get(
-    monkeypatch, db: _Session, redis: _Redis, *, path=SPORTS, n: int = 1, stagger=None
+    monkeypatch,
+    db: _Session,
+    redis: _Redis,
+    *,
+    path=SPORTS,
+    n: int = 1,
+    stagger=None,
+    score=None,
+    enrich=None,
 ):
     """Drive ``n`` concurrent real /api/feed requests.
 
     The candidate stages are stubbed (events -> ``db.cards``; futures, golf and
     concepts empty); everything from the review stage on is the real route.
+    ``score`` / ``enrich`` replace the events-half stubs (#10534 drives them).
     """
     from app.main import app
 
@@ -209,13 +218,15 @@ async def _get(
             new=AsyncMock(return_value=[]),
         ), patch(
             "app.routes.feed._score_events",
-            new=AsyncMock(side_effect=lambda *a, **k: [dict(c) for c in db.cards]),
+            new=AsyncMock(
+                side_effect=score or (lambda *a, **k: [dict(c) for c in db.cards])
+            ),
         ), patch(
             "app.routes.feed._score_golf_tournaments", new=AsyncMock(return_value=[])
         ), patch(
             "app.routes.feed._score_event_concepts", new=AsyncMock(return_value=[])
         ), patch(
-            "app.routes.feed.enrich_event_team_data", new=AsyncMock()
+            "app.routes.feed.enrich_event_team_data", new=AsyncMock(side_effect=enrich)
         ):
             async with AsyncClient(
                 transport=ASGITransport(app=app), base_url="http://test"
@@ -230,6 +241,18 @@ async def _get(
         app.dependency_overrides.clear()
     await asyncio.sleep(0)
     return responses if n > 1 else responses[0]
+
+
+def _spend_budget_in_enrichment(monkeypatch):
+    """#10534: event scoring and team enrichment refuse at zero budget too, so a
+    budget that is zero from admission now stops the build at scoring. The tests
+    below pin the REVIEW stage's zero admission, so the budget runs out at the
+    end of the events half instead — the same zero the review stage met before."""
+
+    async def _enrich(db, items):
+        monkeypatch.setattr(rc, "FEED_TOTAL_BUDGET_MS", 0)
+
+    return _enrich
 
 
 def _ids(body):
@@ -281,11 +304,16 @@ async def test_kill_switch_off_still_short_circuits_before_any_review_sql(
 async def test_zero_budget_admits_no_review_and_serves_truthful_unavailable(
     monkeypatch, rig, path
 ):
-    monkeypatch.setattr(rc, "FEED_TOTAL_BUDGET_MS", 0)
     db = _Session([_card(1)], rows=[_decision(1, "needs_data_fix")])
     redis = _Redis()
 
-    resp = await _get(monkeypatch, db, redis, path=path)
+    resp = await _get(
+        monkeypatch,
+        db,
+        redis,
+        path=path,
+        enrich=_spend_budget_in_enrichment(monkeypatch),
+    )
     body = resp.json()
 
     assert resp.status_code == 200
@@ -316,10 +344,11 @@ async def test_zero_budget_serves_prior_complete_payload_with_its_stored_origin(
     rig.published.clear()
     rig.finished.clear()
 
-    monkeypatch.setattr(rc, "FEED_TOTAL_BUDGET_MS", 0)
     db2 = _Session([_card(1), _card(2), _card(3)])
     redis = _Redis()
-    resp = await _get(monkeypatch, db2, redis)
+    resp = await _get(
+        monkeypatch, db2, redis, enrich=_spend_budget_in_enrichment(monkeypatch)
+    )
     body = resp.json()
 
     assert "review_sql" not in db2.log
@@ -341,8 +370,12 @@ async def test_zero_budget_refuses_a_live_prior_past_the_live_ceiling(monkeypatc
     origin, payload = rc._last_good[key]
     rc._last_good[key] = (origin - FEED_LAST_GOOD_MAX_AGE_LIVE_SECONDS - 1, payload)
 
-    monkeypatch.setattr(rc, "FEED_TOTAL_BUDGET_MS", 0)
-    resp = await _get(monkeypatch, _Session([_card(1)]), _Redis())
+    resp = await _get(
+        monkeypatch,
+        _Session([_card(1)]),
+        _Redis(),
+        enrich=_spend_budget_in_enrichment(monkeypatch),
+    )
     body = resp.json()
 
     assert body["cache"]["status"] == "unavailable"

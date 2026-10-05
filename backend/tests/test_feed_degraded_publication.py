@@ -219,8 +219,19 @@ async def test_futures_error_is_degraded_and_not_published(monkeypatch):
 async def test_skipped_for_budget_is_degraded(monkeypatch):
     redis = _NoRedis()
     # Zero the total budget so the futures stage is skipped for budget before it
-    # ever runs (the futures_skipped_budget state).
-    monkeypatch.setattr(rc, "FEED_TOTAL_BUDGET_MS", 0)
+    # ever runs (the futures_skipped_budget state). #10534: event scoring and its
+    # team enrichment refuse a zero budget too, so the budget runs out at the end
+    # of the events half (the caption pass right after it) instead of at
+    # admission — the futures stage meets the same zero it always did.
+    import app.routes.feed as feed
+
+    real_caption = feed.apply_pregame_record_caption
+
+    def caption_then_spend(items):
+        real_caption(items)
+        monkeypatch.setattr(rc, "FEED_TOTAL_BUDGET_MS", 0)
+
+    monkeypatch.setattr(feed, "apply_pregame_record_caption", caption_then_spend)
 
     async def unused(*a, **k):
         raise AssertionError("futures should be skipped, not called")
