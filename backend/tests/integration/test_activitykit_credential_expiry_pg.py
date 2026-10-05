@@ -2,7 +2,6 @@
 
 import asyncio
 from datetime import timedelta
-import time
 from types import SimpleNamespace
 from uuid import uuid4
 import pytest
@@ -142,27 +141,40 @@ async def test_expiry_fences_reserved_send_and_stale_replay(pg):
     assert (await registration(pg))["version"] == 2
 
 
-async def test_transport_deadline_uses_remaining_authorization(pg):
+async def test_transport_deadline_uses_remaining_authorization(pg, monkeypatch):
+    from app.services import activitykit_worker as worker_module
+
     w = await seed(pg)
     reserved = await w.reserve("a", now=NOW)
-    await mutate(pg, expires_at=NOW + timedelta(milliseconds=80))
-    start = time.monotonic()
-    w.clock = lambda: NOW + timedelta(seconds=time.monotonic() - start)
+    await mutate(pg, expires_at=NOW + timedelta(seconds=10))
+    now = [NOW + timedelta(seconds=7)]
+    w.clock = lambda: now[0]
     entered = asyncio.Event()
+    original_timeout = asyncio.timeout
+    deadlines = []
+
+    def timeout(delay):
+        deadlines.append(delay)
+        # Controlled cancellation independently verifies the timeout path without
+        # making database/runner scheduling fit a wall-clock80ms budget.
+        return original_timeout(0.01)
+
+    monkeypatch.setattr(worker_module.asyncio, "timeout", timeout)
 
     class Waiting(MockTransport):
         async def send(self, *args, **kwargs):
             entered.set()
-            await asyncio.sleep(5)
+            now[0] = NOW + timedelta(seconds=10)
+            await asyncio.Event().wait()
             raise AssertionError("Transport exceeded credential horizon")
 
     assert (
         await asyncio.wait_for(
-            w.send(reserved, Waiting(), provider_token="mock", now=NOW), timeout=2
+            w.send(reserved, Waiting(), provider_token="mock", now=NOW), timeout=5
         )
         == "retry"
     )
-    assert entered.is_set()
+    assert deadlines == [3.0] and entered.is_set()
     await assert_erased(pg)
 
 
@@ -189,7 +201,9 @@ async def test_accepted_terminal_or_stop_erases_credentials_without_resetting_en
     assert after.snapshot == reading
 
 
-async def test_exact_unregistered_result_erases_and_blocks_true_token_generation_recovery():
+async def test_exact_unregistered_result_erases_and_blocks_true_token_generation_recovery(
+    pg,
+):
     w = await seed(pg)
     reserved = await w.reserve("a", now=NOW)
     transport = MockTransport(APNsResult("unavailable", "token_unregistered"))
