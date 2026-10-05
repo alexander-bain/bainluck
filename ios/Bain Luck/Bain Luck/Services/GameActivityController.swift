@@ -126,7 +126,7 @@ struct GameActivityRecord {
         do {
             try service.request(snapshot, staleDate: staleDate(for: snapshot))
             beginViewing(eventID: snapshot.eventID)
-            status = "Live Activity started. Updates arrive while this app is open."
+            status = "Live Activity started. Updates arrive while this game is open."
         } catch {
             status = "Couldn't start the Live Activity. Try again."
         }
