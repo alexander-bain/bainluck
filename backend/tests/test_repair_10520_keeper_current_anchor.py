@@ -1101,3 +1101,134 @@ async def test_drive_apply_with_a_wrong_acknowledgment_commits_nothing(drive_db,
     _, _, out = await _drive(maker, url, tmp_path)
     assert out["ack_sent"] is True and out["state"] == r.REFUSED and out["reason"] == "host_ack_mismatch", out
     assert _current_rows(await _anchors_table(maker)) == []
+
+
+# ─── the real process, STDIN left open (Root review of 012ebc0bc3) ───────────────
+#
+# A thread blocked in ``readline`` kept ``asyncio.run`` from returning after a frame
+# timeout, so the CLI printed REFUSED and then never exited while the host held
+# STDIN open. These arms run the shipped ``cli()`` — real STDIN, real event loop,
+# real ``os._exit`` — and only shorten the frame bounds so the gate is quick. The
+# launcher also counts every ``AsyncSession.commit`` call on STDERR.
+
+_LAUNCHER = r"""
+import importlib.util, sys
+tool, bounds = sys.argv[1], [b.split("=") for b in sys.argv[2].split(",")]
+spec = importlib.util.spec_from_file_location("repair_10520_cli", tool)
+mod = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(mod)
+for name, value in bounds:
+    mod.run_apply.__kwdefaults__[name] = float(value)
+from sqlalchemy.ext.asyncio import AsyncSession
+real = AsyncSession.commit
+async def counted(self):
+    sys.stderr.write("COMMIT_ATTEMPT\n")
+    sys.stderr.flush()
+    return await real(self)
+AsyncSession.commit = counted
+sys.argv = [tool, *sys.argv[3:]]
+mod.cli()
+"""
+
+BOUND_S = 2.0
+EXIT_WITHIN_S = 45.0  # interpreter start + imports + the bound; the defect never exits at all
+
+
+def _cli_argv(plan_hash, backup_hash, bound):
+    return [sys.executable, "-c", _LAUNCHER, str(_TOOL), f"{bound}={BOUND_S}",
+            "--only", str(r.KEEPER_ID), "--mode", "apply", "--plan-hash", plan_hash, "--backup-hash", backup_hash]
+
+
+def test_the_real_cli_exits_inside_the_frame_bound_with_stdin_still_open(tmp_path):
+    import subprocess
+    import time
+
+    env = _child_env("postgresql://nobody:x@127.0.0.1:1/never_reached")  # frame 1 precedes any connect
+    started = time.monotonic()
+    proc = subprocess.Popen(_cli_argv("a" * 64, "b" * 64, "frame_timeout_s"), stdin=subprocess.PIPE,
+                            stdout=subprocess.PIPE, stderr=subprocess.PIPE, env=env)
+    try:
+        code = proc.wait(timeout=EXIT_WITHIN_S)  # STDIN is still open here
+    except subprocess.TimeoutExpired:
+        proc.kill()
+        proc.wait()
+        pytest.fail(f"CLI still running {EXIT_WITHIN_S}s after a {BOUND_S}s frame bound with STDIN open")
+    finally:
+        proc.stdin.close()
+    elapsed = time.monotonic() - started
+    lines = [json.loads(x) for x in proc.stdout.read().splitlines()]
+    assert code == r.EXIT_REFUSED and elapsed >= BOUND_S, (code, elapsed)
+    assert [(x["record"], x["state"], x["reason"]) for x in lines] == [("result", r.REFUSED, "apply_bundle_timeout")]
+    assert b"COMMIT_ATTEMPT" not in proc.stderr.read()
+
+
+
+def test_stdin_frames_split_bound_and_time_out_on_a_real_pipe(monkeypatch):
+    monkeypatch.setattr(r, "MAX_FRAME_BYTES", 8)
+
+    async def run():
+        rd, wr = os.pipe()
+        frames = r.StdinFrames(rd)
+        try:
+            os.write(wr, b"one\ntwo\n")
+            assert [await frames.line(1), await frames.line(1)] == [b"one\n", b"two\n"]
+            with pytest.raises((asyncio.TimeoutError, TimeoutError)):
+                await frames.line(0.2)  # writer still open, nothing sent
+            os.write(wr, b"0123456789\nlast")
+            assert await frames.line(1) == b"012345678"  # MAX + 1: the caller refuses it as oversize
+            os.close(wr)
+            wr = None
+            assert [await frames.line(1), await frames.line(1), await frames.line(1)] == [b"9\n", b"last", None]
+        finally:
+            os.close(rd)
+            if wr is not None:
+                os.close(wr)
+
+    asyncio.run(run())
+
+@needs_postgres
+@pytest.mark.parametrize("host", ["silent", "acknowledges"])
+async def test_the_real_cli_with_stdin_held_open_exits_and_commits_only_on_the_ack(drive_db, tmp_path, host):
+    """``silent`` is the defect's case: the receipt is printed, no acknowledgment
+    comes, STDIN stays open. ``acknowledges`` is the control that shows the commit
+    counter and the row read can see a commit when one happens."""
+    import time
+
+    maker, url = drive_db
+    sa = await Flow(maker, tmp_path).stage()
+    proc = await asyncio.create_subprocess_exec(
+        *_cli_argv(sa["apply_argv"]["--plan-hash"], sa["apply_argv"]["--backup-hash"], "ack_timeout_s"),
+        stdin=asyncio.subprocess.PIPE, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE,
+        env=_child_env(url), limit=r.MAX_FRAME_BYTES * 2)
+    started = time.monotonic()
+    lines = []
+    try:
+        proc.stdin.write(Path(sa["apply_input"]["path"]).read_bytes())
+        await proc.stdin.drain()
+
+        async def read_all():
+            while line := await proc.stdout.readline():
+                lines.append(json.loads(line))
+                if host == "acknowledges" and lines[-1]["record"] == "created_row":
+                    proc.stdin.write(r.artifact_bytes(r.ack_for(lines[-1]["receipt"])))
+                    await proc.stdin.drain()  # and STDIN stays open
+            return await proc.wait()
+
+        code = await asyncio.wait_for(read_all(), EXIT_WITHIN_S)
+    except (asyncio.TimeoutError, TimeoutError):
+        proc.kill()
+        await proc.wait()
+        pytest.fail(f"CLI still running {EXIT_WITHIN_S}s after a {BOUND_S}s ack bound with STDIN open")
+    finally:
+        proc.stdin.close()
+    elapsed = time.monotonic() - started
+    commits = (await proc.stderr.read()).count(b"COMMIT_ATTEMPT")
+    assert [x["record"] for x in lines] == ["created_row", "result"], lines
+    rows = _current_rows(await _anchors_table(maker))
+    if host == "silent":
+        assert code == r.EXIT_REFUSED and elapsed >= BOUND_S, (code, elapsed)
+        assert (lines[-1]["state"], lines[-1]["reason"]) == (r.REFUSED, "host_ack_timeout")
+        assert commits == 0 and rows == []
+    else:
+        assert code == r.EXIT_OK and lines[-1]["state"] == r.APPLIED, lines[-1]
+        assert commits == 1 and len(rows) == 1

@@ -82,7 +82,8 @@ sha256 and the invocation id. ``drive-apply`` — the host side, a finite proces
 that spawns the ``heroku run`` itself — sends it only after it has written the
 receipt to a host file, fsynced it and verified the bytes back. A missing, late,
 malformed or mismatched acknowledgment, or EOF, ROLLS BACK: no COMMIT is
-attempted. So a committed anchor implies a host-retained receipt.
+attempted, and the process exits inside that bound even if STDIN is still open.
+So a committed anchor implies a host-retained receipt.
 
 PHASES (each boundary is a person; nothing chains across one)
 ------------------------------------------------------------
@@ -627,15 +628,59 @@ class Frames(Protocol):
 
 
 class StdinFrames:
-    """STDIN as frames. A read is bounded by ``timeout_s``; the reader thread that
-    outlives a timeout is abandoned with the process, which has already rolled back."""
+    """STDIN as frames, read on the event loop so a timeout really ends the read.
+
+    No reader thread: ``asyncio.run`` joins the default executor before it returns,
+    so a thread blocked in ``readline`` on a still-open STDIN held the process open
+    past every timeout (Root review of 012ebc0bc3). The loop waits for readability
+    and ``os.read`` takes only what is there; cancelling the wait leaves nothing
+    behind. The descriptor's flags are never changed — under ``heroku run`` STDIN
+    can share one open file with STDOUT, and O_NONBLOCK there would reach the
+    record writes. A descriptor the selector refuses (a regular file, /dev/null)
+    cannot block on a peer and is read directly."""
+
+    def __init__(self, fd: Optional[int] = None):
+        self._fd = fd
+        self._buf = b""
+        self._eof = False
+
+    def _stdin_fd(self) -> Optional[int]:
+        if self._fd is None:
+            try:
+                self._fd = sys.stdin.fileno()
+            except (AttributeError, ValueError, OSError):
+                return None
+        return self._fd
+
+    async def _readable(self, fd: int) -> bool:
+        loop = asyncio.get_running_loop()
+        ready = loop.create_future()
+        try:
+            loop.add_reader(fd, lambda: ready.done() or ready.set_result(None))
+        except (OSError, ValueError):
+            return False  # not pollable: reading it cannot wait on a peer
+        try:
+            await ready
+        finally:
+            loop.remove_reader(fd)
+        return True
 
     async def line(self, timeout_s: float) -> Optional[bytes]:
-        stream = getattr(sys.stdin, "buffer", None)
-        if stream is None:
+        fd = self._stdin_fd()
+        if fd is None:
             return None
-        raw = await asyncio.wait_for(asyncio.to_thread(stream.readline, MAX_FRAME_BYTES + 1), timeout_s)
-        return raw or None
+        while True:
+            end = self._buf.find(b"\n")
+            if end >= 0 or len(self._buf) > MAX_FRAME_BYTES or (self._eof and self._buf):
+                cut = end + 1 if 0 <= end <= MAX_FRAME_BYTES else MAX_FRAME_BYTES + 1
+                raw, self._buf = self._buf[:cut], self._buf[cut:]
+                return raw
+            if self._eof:
+                return None
+            await asyncio.wait_for(self._readable(fd), timeout_s)
+            chunk = os.read(fd, 65536)
+            self._buf += chunk
+            self._eof = not chunk
 
 
 async def _frame(frames: Frames, timeout_s: float, what: str) -> dict:
@@ -1329,8 +1374,12 @@ async def main(argv: list[str] | None = None, env: dict | None = None,
     return exit_code(out)
 
 
-if __name__ == "__main__":
-    # A reader thread abandoned by a frame timeout must not hold the process open.
+def cli() -> None:
+    """The process entry point; the subprocess gate runs exactly this."""
     code = asyncio.run(main())
     sys.stdout.flush()
     os._exit(code)
+
+
+if __name__ == "__main__":
+    cli()
