@@ -344,20 +344,13 @@ extension WidgetTapJourneyTests {
         try freshFaceRequire(slot.exists && slot.isHittable && host.frame.contains(slot.frame),
                              "Fresh face editor did not expose Bottom Left complication", host: host)
         slot.tap()
-        let choice = host.cells["AppGroupCell -- Bain Luck"].firstMatch
-        for _ in 0..<16 {
-            // Avoid the observed gallery navigation chrome without hardcoding a
-            // particular Watch's pixel size. Failure never substitutes a tap.
-            let belowChrome = choice.exists && choice.frame.minY > host.frame.minY + host.frame.height * 0.26
-            if belowChrome && choice.isHittable && host.frame.contains(choice.frame) { break }
-            let earlier = choice.exists && !belowChrome
-            let start = host.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.65))
-            let end = host.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: earlier ? 0.85 : 0.40))
-            start.press(forDuration: 0.1, thenDragTo: end, withVelocity: .slow, thenHoldForDuration: 0.4)
+        let choice = try WatchComplicationGalleryNavigation.bainLuckAppRow(in: host) { name in
+            freshFaceCapture(host, name: name)
         }
-        try freshFaceRequire(choice.exists && choice.isHittable && host.frame.contains(choice.frame),
-                             "Installed BainLuckWatch gallery group unreachable", host: host)
         choice.tap()
+        try WatchComplicationGalleryNavigation.requireBainLuckDetail(in: host) { name in
+            freshFaceCapture(host, name: name)
+        }
         let installed = host.cells["ComplicationListCell -- Your game"].firstMatch
         try freshFaceRequire(installed.waitForExistence(timeout: 15) && installed.isHittable,
                              "Installed Your game complication absent or unreachable", host: host)
@@ -402,6 +395,78 @@ extension WidgetTapJourneyTests {
         tree.name = name + " hierarchy"
         tree.lifetime = .keepAlways
         add(tree)
+    }
+}
+
+/// Carousel retains a selected complication's detail page and app-list position.
+/// Normalize its observed page roles before searching the exact Bain Luck row.
+@MainActor
+enum WatchComplicationGalleryNavigation {
+    static func bainLuckAppRow(in host: XCUIApplication, capture: (String) -> Void) throws -> XCUIElement {
+        let appRows = host.cells.matching(NSPredicate(format: "identifier BEGINSWITH %@ OR identifier BEGINSWITH %@",
+                                                     "AppGroupCell -- ", "FeaturedWidgetCell -- "))
+        let details = host.cells.matching(NSPredicate(format: "identifier BEGINSWITH %@", "ComplicationListCell -- "))
+        let back = host.buttons["BackButton"].firstMatch
+        let detailPage = host.otherElements["ComplicationPickerDetailView"].firstMatch
+        let parentPage = host.navigationBars["NTKStarbearPickerView"].firstMatch
+        for _ in 0..<3 {
+            guard detailPage.exists && details.firstMatch.exists && back.exists else { break }
+            capture("Actual Widget gallery retained detail before Back")
+            try require(back.isHittable && host.frame.contains(back.frame),
+                        "Retained complication detail has no reachable Back control", capture: capture)
+            back.tap()
+            try require(parentPage.waitForExistence(timeout: 15),
+                        "Back did not return to NTKStarbearPickerView app gallery", capture: capture)
+        }
+        try require(parentPage.exists && appRows.firstMatch.exists && !detailPage.exists && !back.exists,
+                    "Expected NTKStarbearPickerView parent before app search", capture: capture)
+        capture("Actual Widget app gallery before bounded app search")
+        let choice = host.cells["AppGroupCell -- Bain Luck"].firstMatch
+        let chromeBottom = host.frame.minY + host.frame.height * 0.26
+        // Hosted rectangle ended at Now Playing/Shortcuts/Translate/Off. Begin
+        // by returning toward earlier rows when the actual Off row is visible.
+        let off = host.cells.matching(NSPredicate(format: "label == %@", "Off")).firstMatch
+        let startsBelow = off.exists && off.isHittable && host.frame.contains(off.frame)
+        for searchEarlier in [startsBelow, !startsBelow] {
+            for _ in 0..<24 {
+                let exists = choice.exists
+                let belowChrome = exists && choice.frame.minY > chromeBottom
+                if belowChrome && choice.isHittable && host.frame.contains(choice.frame) { return choice }
+                let earlier = exists ? choice.frame.minY <= chromeBottom : searchEarlier
+                let startY: CGFloat = exists ? 0.65 : (earlier ? 0.35 : 0.75)
+                let endY: CGFloat = exists ? (earlier ? 0.85 : 0.40) : (earlier ? 0.75 : 0.35)
+                host.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: startY))
+                    .press(forDuration: 0.1,
+                           thenDragTo: host.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: endY)),
+                           withVelocity: .slow, thenHoldForDuration: 0.4)
+                // A gesture must never turn app-list search into detail-page
+                // scrolling. Capture and fail instead of selecting a substitute.
+                try require(parentPage.exists && !detailPage.exists && !back.exists,
+                            "App-gallery search unexpectedly left NTKStarbearPickerView", capture: capture)
+            }
+        }
+        try require(choice.exists && choice.isHittable && host.frame.contains(choice.frame)
+                    && choice.frame.minY > chromeBottom,
+                    "Exact Bain Luck app row unreachable after bounded gallery search", capture: capture)
+        return choice
+    }
+
+    static func requireBainLuckDetail(in host: XCUIApplication, capture: (String) -> Void) throws {
+        let detailPage = host.otherElements["ComplicationPickerDetailView"].firstMatch
+        let title = host.navigationBars["Bain Luck"].firstMatch
+        let game = host.cells["ComplicationListCell -- Your game"].firstMatch
+        try require(detailPage.waitForExistence(timeout: 15) && title.exists && game.exists,
+                    "Exact Bain Luck detail and Your game required after selecting app row", capture: capture)
+        capture("Actual Bain Luck complication detail after exact app selection")
+    }
+
+    private static func require(_ condition: Bool, _ message: String, capture: (String) -> Void) throws {
+        guard condition else {
+            capture("UNPAID Widget gallery navigation - " + message)
+            XCTFail(message)
+            throw NSError(domain: "WatchComplicationGalleryNavigation", code: 1,
+                          userInfo: [NSLocalizedDescriptionKey: message])
+        }
     }
 }
 #endif

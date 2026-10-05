@@ -30,7 +30,7 @@ final class RectangularWidgetHostJourneyTests: XCTestCase {
         XCTAssertTrue(host.wait(for: .runningForeground, timeout: 15))
         let face = host.otherElements["Watch Face"].firstMatch
         XCTAssertTrue(face.waitForExistence(timeout: 15))
-        capture(host, "Actual SE40 Watch face before editing")
+        capture(host, "Actual Watch face before rectangular editing")
         host.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.22)).press(forDuration: 2)
         let addFace = host.scrollViews["Add new face"].firstMatch
         for _ in 0..<16 {
@@ -39,7 +39,7 @@ final class RectangularWidgetHostJourneyTests: XCTestCase {
         }
         XCTAssertTrue(addFace.exists && addFace.isHittable)
         addFace.tap()
-        capture(host, "Actual SE40 all faces gallery")
+        capture(host, "Actual Watch all faces gallery")
         let dataRich = host.buttons["Data Rich"].firstMatch
         for _ in 0..<12 {
             if dataRich.exists && dataRich.isHittable && host.frame.contains(dataRich.frame) { break }
@@ -61,22 +61,14 @@ final class RectangularWidgetHostJourneyTests: XCTestCase {
         XCTAssertTrue(slot.exists && slot.isHittable && host.frame.contains(slot.frame))
         capture(host, "Actual Modular rectangular Middle slot")
         slot.tap()
-        let choice = host.cells["AppGroupCell -- Bain Luck"].firstMatch
-        let chromeBottom = host.frame.minY + host.frame.height * 0.26
-        for _ in 0..<16 {
-            // Gallery rows can be hittable beneath navigation chrome. Reverse
-            // the scroll if the named row has moved above the relative boundary.
-            let belowChrome = choice.exists && choice.frame.minY > chromeBottom
-            if belowChrome && choice.isHittable && host.frame.contains(choice.frame) { break }
-            let earlier = choice.exists && !belowChrome
-            let start = host.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.65))
-            let end = host.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: earlier ? 0.85 : 0.40))
-            start.press(forDuration: 0.1, thenDragTo: end, withVelocity: .slow, thenHoldForDuration: 0.4)
+        let choice = try WatchComplicationGalleryNavigation.bainLuckAppRow(in: host) { name in
+            capture(host, name)
         }
         capture(host, "Actual rectangular app gallery Bain Luck")
-        XCTAssertTrue(choice.exists && choice.isHittable && host.frame.contains(choice.frame)
-                      && choice.frame.minY > chromeBottom)
         choice.tap()
+        try WatchComplicationGalleryNavigation.requireBainLuckDetail(in: host) { name in
+            capture(host, name)
+        }
         let installed = host.cells["ComplicationListCell -- Your game"].firstMatch
         XCTAssertTrue(installed.waitForExistence(timeout: 15))
         try reveal(installed, in: host)
