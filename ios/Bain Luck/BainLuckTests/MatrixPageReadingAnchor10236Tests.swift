@@ -18,7 +18,7 @@ import XCTest
 /// moved.
 @MainActor
 final class MatrixPageReadingAnchor10236Tests: XCTestCase {
-    private static let shift: CGFloat = -22.333
+    fileprivate static let shift: CGFloat = -22.333
     private let eventID = 4242
 
     @MainActor private final class Page: ObservableObject {
@@ -252,6 +252,207 @@ final class MatrixPageReadingAnchor10236Tests: XCTestCase {
             XCTFail("a token captured on the old marker must never act for the new one")
         }
         XCTAssertEqual(scroll.contentOffset, offset)
+        XCTAssertNil(anchor.token)
+    }
+
+    // MARK: - A reader's own drag (UIKit rig)
+    //
+    // The held link samples `isDragging` at 10 Hz, so a short drag can begin and
+    // end between two ticks. These pages are plain UIKit so the rig can stand in
+    // for the page's pan recognizer and deliver `.began` / `.ended` exactly as
+    // UIKit does — set the state, send the actions to every target — between two
+    // reconciles, with `isDragging` false throughout.
+
+    /// The page's pan recognizer, delivering to whatever targets were added to it.
+    private final class RecordingPan: UIPanGestureRecognizer {
+        private(set) var targets: [(target: AnyObject, action: Selector)] = []
+        private var delivered: UIGestureRecognizer.State = .possible
+        override var state: UIGestureRecognizer.State {
+            get { delivered }
+            set { delivered = newValue }
+        }
+
+        override func addTarget(_ target: Any, action: Selector) {
+            super.addTarget(target, action: action)
+            targets.append((target as AnyObject, action))
+        }
+
+        override func removeTarget(_ target: Any?, action: Selector?) {
+            super.removeTarget(target, action: action)
+            targets.removeAll { entry in
+                (target == nil || entry.target === (target as AnyObject)) && (action == nil || entry.action == action)
+            }
+        }
+
+        func deliver(_ state: UIGestureRecognizer.State) {
+            delivered = state
+            for entry in targets { _ = (entry.target as? NSObject)?.perform(entry.action, with: self) }
+        }
+    }
+
+    private final class OtherTarget: NSObject {
+        @objc func panned(_ recognizer: UIGestureRecognizer) {}
+    }
+
+    private final class RigScroll: UIScrollView {
+        let pan = RecordingPan()
+        var coasting = false
+        override var panGestureRecognizer: UIPanGestureRecognizer { pan }
+        override var isDecelerating: Bool { coasting }
+    }
+
+    @MainActor private final class UIKitPage {
+        let window: UIWindow
+        let previousKeyWindow: UIWindow?
+        let scroll = RigScroll(frame: CGRect(x: 0, y: 0, width: 390, height: 800))
+        let header = UIView(frame: CGRect(x: 0, y: 0, width: 390, height: 600))
+        let marker = MatrixPageReadingAnchorMarkerView10236(frame: CGRect(x: 0, y: 600, width: 390, height: 200))
+
+        init() async throws {
+            let deadline = CACurrentMediaTime() + 10
+            func activeScene() -> UIWindowScene? {
+                UIApplication.shared.connectedScenes
+                    .compactMap { $0 as? UIWindowScene }
+                    .first { $0.activationState == .foregroundActive }
+            }
+            while activeScene() == nil && CACurrentMediaTime() < deadline {
+                try await Task.sleep(nanoseconds: 50_000_000)
+            }
+            let scene = try XCTUnwrap(activeScene(), "The anchor tests need a foreground-active window scene")
+            previousKeyWindow = scene.windows.first { $0.isKeyWindow }
+            let host = UIViewController()
+            host.view.addSubview(scroll)
+            scroll.addSubview(header)
+            scroll.addSubview(marker)
+            scroll.contentSize = CGSize(width: 390, height: 2800)
+            window = UIWindow(windowScene: scene)
+            window.frame = CGRect(x: 0, y: 0, width: 390, height: 800)
+            window.rootViewController = host
+            window.makeKeyAndVisible()
+            scroll.contentInsetAdjustmentBehavior = .never
+            scroll.contentInset = .zero
+            scroll.setContentOffset(CGPoint(x: 0, y: 300), animated: false)
+        }
+
+        /// A section above the matrix changes height by the specimen's shift.
+        func shrinkHeader() {
+            header.frame.size.height += MatrixPageReadingAnchor10236Tests.shift
+            marker.frame.origin.y += MatrixPageReadingAnchor10236Tests.shift
+            scroll.contentSize.height += MatrixPageReadingAnchor10236Tests.shift
+        }
+
+        func close() {
+            window.isHidden = true
+            previousKeyWindow?.makeKey()
+        }
+    }
+
+    private func uikitPage(_ anchor: MatrixPageReadingAnchor10236) async throws -> UIKitPage {
+        let page = try await UIKitPage()
+        anchor.attachForTesting(page.marker)
+        XCTAssertTrue(page.marker.enclosingPageScroll() === page.scroll)
+        return page
+    }
+
+    /// The reader's drag lands the page here, between two ticks.
+    private let draggedTo: CGFloat = 520
+
+    func testWithoutThePanSignalADragLandedBetweenTicksReadsAsLayoutDrift() async throws {
+        // The strawman for the guard below: `isDragging` is false at every tick,
+        // so polling alone cannot tell the reader's drag from a reflow and puts
+        // the page back where the reader left it.
+        let anchor = MatrixPageReadingAnchor10236(host: .during)
+        let page = try await uikitPage(anchor)
+        defer { page.close(); anchor.cancel() }
+        anchor.capture(eventID: eventID)
+        XCTAssertNotNil(anchor.token)
+        XCTAssertFalse(page.scroll.isDragging)
+        page.scroll.setContentOffset(CGPoint(x: 0, y: draggedTo), animated: false)
+        page.shrinkHeader()
+        anchor.reconcile()
+        XCTAssertNotEqual(page.scroll.contentOffset.y, draggedTo, accuracy: 1,
+                          "without the pan signal the drag is undone — the gap this guards")
+    }
+
+    func testAShortDragBetweenTicksEndsTheAnchorAtBeganAndIsNeverUndone() async throws {
+        let anchor = MatrixPageReadingAnchor10236(host: .during)
+        let page = try await uikitPage(anchor)
+        defer { page.close(); anchor.cancel() }
+        anchor.capture(eventID: eventID)
+        XCTAssertNotNil(anchor.token)
+
+        page.scroll.pan.deliver(.began)
+        XCTAssertNil(anchor.token, "the drag ends the anchor synchronously at .began, not at the next tick")
+        page.scroll.setContentOffset(CGPoint(x: 0, y: draggedTo), animated: false)
+        page.scroll.pan.deliver(.ended)
+        XCTAssertFalse(page.scroll.isDragging)
+
+        page.shrinkHeader()
+        XCTAssertEqual(anchor.reconcile(), .invalidate(.noToken))
+        anchor.finish(eventID: eventID)
+        try await Task.sleep(nanoseconds: UInt64((MatrixPageReadingAnchor10236.settleSeconds + 0.1) * 1e9))
+        XCTAssertEqual(page.scroll.contentOffset.y, draggedTo, "the reader's drag is never scrolled back")
+        XCTAssertNil(anchor.token)
+    }
+
+    func testAShortDragDuringThePostCloseSettleIsNeverUndone() async throws {
+        let anchor = MatrixPageReadingAnchor10236(host: .after)
+        let page = try await uikitPage(anchor)
+        defer { page.close(); anchor.cancel() }
+        anchor.capture(eventID: eventID)
+        anchor.finish(eventID: eventID)
+        XCTAssertNotNil(anchor.token, "the settle is running")
+
+        page.scroll.pan.deliver(.began)
+        XCTAssertNil(anchor.token)
+        page.scroll.setContentOffset(CGPoint(x: 0, y: draggedTo), animated: false)
+        page.scroll.pan.deliver(.ended)
+        page.shrinkHeader()
+        try await Task.sleep(nanoseconds: UInt64((MatrixPageReadingAnchor10236.settleSeconds + 0.1) * 1e9))
+        XCTAssertEqual(page.scroll.contentOffset.y, draggedTo)
+    }
+
+    func testTheAnchorAddsAndRemovesOnlyItsOwnPanTarget() async throws {
+        let anchor = MatrixPageReadingAnchor10236(host: .during)
+        let page = try await uikitPage(anchor)
+        defer { page.close(); anchor.cancel() }
+        let other = OtherTarget()
+        page.scroll.pan.addTarget(other, action: #selector(OtherTarget.panned(_:)))
+        XCTAssertEqual(page.scroll.pan.targets.count, 1)
+
+        anchor.capture(eventID: eventID)
+        XCTAssertEqual(page.scroll.pan.targets.count, 2, "capture listens on the page's own pan recognizer")
+        anchor.cancel()
+        XCTAssertEqual(page.scroll.pan.targets.count, 1)
+        XCTAssertTrue(page.scroll.pan.targets.first?.target === other, "someone else's target is never removed")
+
+        anchor.capture(eventID: eventID)
+        anchor.finish(eventID: eventID)
+        try await Task.sleep(nanoseconds: UInt64((MatrixPageReadingAnchor10236.settleSeconds + 0.2) * 1e9))
+        XCTAssertNil(anchor.token)
+        XCTAssertEqual(page.scroll.pan.targets.count, 1, "the settle's end stops listening too")
+    }
+
+    func testAnInertialPageIsNeverCaptured() async throws {
+        let anchor = MatrixPageReadingAnchor10236(host: .during)
+        let page = try await uikitPage(anchor)
+        defer { page.close(); anchor.cancel() }
+        page.scroll.coasting = true
+        anchor.capture(eventID: eventID)
+        XCTAssertNil(anchor.token, "a page still coasting from a flick is the reader moving, not a place to hold")
+        XCTAssertTrue(page.scroll.pan.targets.isEmpty)
+    }
+
+    func testDecelerationWhileHeldEndsTheAnchorWithoutScrolling() async throws {
+        let anchor = MatrixPageReadingAnchor10236(host: .during)
+        let page = try await uikitPage(anchor)
+        defer { page.close(); anchor.cancel() }
+        anchor.capture(eventID: eventID)
+        page.scroll.coasting = true
+        page.scroll.setContentOffset(CGPoint(x: 0, y: draggedTo), animated: false)
+        page.shrinkHeader()
+        XCTAssertEqual(anchor.reconcile(), .invalidate(.verticalDrag))
+        XCTAssertEqual(page.scroll.contentOffset.y, draggedTo)
         XCTAssertNil(anchor.token)
     }
 

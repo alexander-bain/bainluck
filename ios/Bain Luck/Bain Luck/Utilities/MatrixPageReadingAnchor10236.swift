@@ -28,6 +28,14 @@ import UIKit
 /// the page is never pinned after Close. A vertical drag, a detached or replaced
 /// marker, or a different page scroll ends the token without scrolling.
 ///
+/// The drag is heard, not sampled. The held link ticks at 10 Hz, so a short drag
+/// can begin and end between two ticks with `isDragging` false at both; the next
+/// reconcile would then read the reader's new place as layout drift and scroll
+/// them back. So the anchor adds its own target to the page's pan recognizer and
+/// cancels synchronously at `.began`, and an inertial page (`isDecelerating`) is
+/// neither captured nor held. Only the anchor's own target is ever added or
+/// removed; the scroll's delegate and recognizers are untouched.
+///
 /// The marker (`MatrixPageReadingAnchorMarker10236`) sits on the matrix root,
 /// outside its horizontal scrolls, and resolves only the first `UIScrollView` in
 /// its own superview chain — no window scan, no "largest scroll" pick.
@@ -50,6 +58,7 @@ final class MatrixPageReadingAnchor10236 {
     private weak var pageScroll: UIScrollView?
     private var displayLink: CADisplayLink?
     private var settleDeadline: CFTimeInterval?
+    private var panListener: PanListener?
 
     fileprivate func attach(_ view: MatrixPageReadingAnchorMarkerView10236) {
         marker = view
@@ -59,12 +68,14 @@ final class MatrixPageReadingAnchor10236 {
     func capture(eventID: Int) {
         cancel()
         generation += 1
-        guard let marker, marker.window != nil, let scroll = marker.enclosingPageScroll() else { return }
+        guard let marker, marker.window != nil, let scroll = marker.enclosingPageScroll(),
+              !scroll.isDragging, !scroll.isDecelerating else { return }
         token = MatrixPageReadingAnchorPlan10236.capture(
             eventID: eventID, host: host, markerInstanceID: marker.instanceID,
             presentationGeneration: generation, marker: Self.markerGeometry(marker, in: scroll))
         guard token != nil else { return }
         pageScroll = scroll
+        listenForPan(on: scroll)
         startLink(heldRate: true)
     }
 
@@ -82,6 +93,7 @@ final class MatrixPageReadingAnchor10236 {
     }
 
     func cancel() {
+        stopListeningForPan()
         token = nil
         pageScroll = nil
         settleDeadline = nil
@@ -116,7 +128,7 @@ final class MatrixPageReadingAnchor10236 {
             return detached(token)
         }
         let condition: MatrixPageReadingAnchorPageCondition10236
-        if scroll.isDragging {
+        if scroll.isDragging || scroll.isDecelerating {
             condition = .verticalDrag
         } else if let scene = marker.window?.windowScene, scene.activationState != .foregroundActive {
             condition = .inactive
@@ -172,7 +184,35 @@ final class MatrixPageReadingAnchor10236 {
         }
     }
 
+    /// The reader's own drag, heard at `.began` on the page's pan recognizer.
+    private func listenForPan(on scroll: UIScrollView) {
+        let listener = PanListener(self)
+        scroll.panGestureRecognizer.addTarget(listener, action: #selector(PanListener.panned(_:)))
+        panListener = listener
+    }
+
+    private func stopListeningForPan() {
+        if let listener = panListener {
+            pageScroll?.panGestureRecognizer.removeTarget(listener, action: #selector(PanListener.panned(_:)))
+        }
+        panListener = nil
+    }
+
+    /// Recognizers do not retain targets; the anchor retains this, and this
+    /// must not retain the anchor.
+    private final class PanListener: NSObject {
+        weak var owner: MatrixPageReadingAnchor10236?
+        init(_ owner: MatrixPageReadingAnchor10236) { self.owner = owner }
+        @objc func panned(_ recognizer: UIGestureRecognizer) {
+            switch recognizer.state {
+            case .began, .changed: owner?.cancel()
+            default: break
+            }
+        }
+    }
+
     deinit {
+        stopListeningForPan()
         displayLink?.invalidate()
     }
     #else
