@@ -17537,6 +17537,14 @@ async def _build_search_suggestions(db: AsyncSession) -> dict:
                             continue
                         # #5047's tense, same as the capsule: once the market
                         # has no doubt left it is not "brewing".
+                        # 🔴 #10570: the chip also carries the score's OWN
+                        # writer and observation stamp, verbatim, because the
+                        # lead it names goes stale on that clock and not on the
+                        # cache's. Nothing is judged here — `ssc.render` asks
+                        # #10561's five-minute rule at every serve (this cold
+                        # build included, via `_publish_search_suggestions`) and
+                        # strips the evidence on the way out; a row with no
+                        # stamp stores `None` and is refused there.
                         _add(
                             underdog,
                             "Upset underway"
@@ -17546,6 +17554,12 @@ async def _build_search_suggestions(db: AsyncSession) -> dict:
                             "event",
                             section=1,
                             event_id=ev.id,
+                            **{
+                                ssc.SCORE_CLAIM_FIELD: ssc.score_claim(
+                                    getattr(ev, "score_source", None),
+                                    getattr(ev, "score_observed_at", None),
+                                )
+                            },
                         )
     except Exception:
         # 🔴 #2286's CLASS, AND THE REASON IT HID FOR AS LONG AS THE CODE EXISTED.

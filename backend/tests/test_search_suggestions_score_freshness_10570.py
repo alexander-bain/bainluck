@@ -8,8 +8,9 @@ primary and serves the mirror up to 300 s past that, and before this change
 `render` passed every non-countdown chip through untouched — so a score already
 4m59s old at build time could still be described as happening now at 9m59s.
 
-WHAT PHASE 1 PINS (cache half only; the builder starts carrying the evidence in
-Phase 2, after #10563):
+WHAT THIS PINS (sections 1-5 are the cache half, Phase 1; section 6 is the
+builder half, Phase 2, after #10563 — the builder now stores each upset chip's
+own `score_source` / `score_observed_at` and the cold path judges it too):
 
   1. each live-upset chip's stored `_score_claim` is judged at the SERVING clock
      by #10561's own `score_observation_is_current` — five minutes inclusive,
@@ -500,3 +501,201 @@ class TestTheRouteServesWarmWithoutBuilding:
         assert {"Pumas", "Barcelona", "Rays"} <= set(_queries(resp))
         assert resp[ecc.ENVELOPE_FIELD]["availability"] == ecc.AVAILABILITY_STALE_OK
         assert scheduled == ["search_suggestions"]
+
+
+# ---------------------------------------------------------------------------
+# 6. Phase 2: the builder carries the row's own evidence, and the COLD path —
+#    build, publish, render in one request — judges it like the warm ones
+# ---------------------------------------------------------------------------
+#
+# The game is #5051's: home opened 62%, the blend has it at 30% (outside the
+# 35-65% tight band, so only the upset arm speaks), and the underdog leads 10-3.
+# A second, unrelated game sits in the tight band so every cold-path refusal is
+# also a proof that section 1's price-only sibling survives it.
+
+_UPSET_ID = 1057001
+_TIGHT_ID = 1057002
+
+
+class _Rows:
+    def __init__(self, rows):
+        self._rows = list(rows)
+
+    def scalars(self):
+        return self
+
+    def all(self):
+        return list(self._rows)
+
+
+class _OneLiveQueryDB:
+    """Section 1's statement gets the live rows; every later section, none."""
+
+    def __init__(self, live_rows):
+        self._results = [_Rows(live_rows)]
+
+    async def execute(self, *a, **kw):
+        return self._results.pop(0) if self._results else _Rows([])
+
+
+def _live_game(
+    now,
+    *,
+    score_source=SCORE_SOURCE_ESPN,
+    observed_ago=timedelta(seconds=30),
+    now_home=0.30,
+    home_score=3,
+    away_score=10,
+):
+    from decimal import Decimal
+    from types import SimpleNamespace
+
+    return SimpleNamespace(
+        id=_UPSET_ID,
+        status="live",
+        commence_time=now - timedelta(minutes=50),
+        home_team_name="Philadelphia Eagles",
+        away_team_name="Dallas Cowboys",
+        home_score=home_score,
+        away_score=away_score,
+        opening_home_probability=Decimal("0.6200"),
+        opening_away_probability=Decimal("0.3800"),
+        win_probability_sources={"betting": now_home},
+        espn_win_prob_home=None,
+        score_source=score_source,
+        score_observed_at=None if observed_ago is None else now - observed_ago,
+    )
+
+
+def _tight_game(now):
+    """Section 1's sibling: a price-only claim, no score on the row at all."""
+    from decimal import Decimal
+    from types import SimpleNamespace
+
+    return SimpleNamespace(
+        id=_TIGHT_ID,
+        status="live",
+        commence_time=now - timedelta(minutes=20),
+        home_team_name="Pumas",
+        away_team_name="León",
+        home_score=None,
+        away_score=None,
+        opening_home_probability=Decimal("0.5000"),
+        opening_away_probability=Decimal("0.5000"),
+        win_probability_sources={"betting": 0.50},
+        espn_win_prob_home=None,
+        score_source=None,
+        score_observed_at=None,
+    )
+
+
+@pytest.fixture
+def cold_route(monkeypatch):
+    """An empty Redis: the route must build, publish and render in-request."""
+    import app.tasks.redis_state as redis_state
+
+    rc = _FakeRedis()
+    monkeypatch.setattr(redis_state, "get_redis_client", lambda: rc)
+    return rc
+
+
+def _chip(body, event_id):
+    return [s for s in body["suggestions"] if s.get("event_id") == event_id]
+
+
+class TestTheBuilderCarriesTheRowsOwnEvidence:
+    async def test_the_upset_chip_stores_the_rows_writer_and_stamp_verbatim(self):
+        now = datetime.now(timezone.utc)
+        game = _live_game(now, score_source=SCORE_SOURCE_STATPAL)
+
+        built = await events_routes._build_search_suggestions(
+            _OneLiveQueryDB([game])
+        )
+
+        (chip,) = _chip(built, _UPSET_ID)
+        assert chip["label"] == "Upset brewing"
+        assert chip[ssc.SCORE_CLAIM_FIELD] == {
+            ssc.SCORE_CLAIM_SOURCE: SCORE_SOURCE_STATPAL,
+            ssc.SCORE_CLAIM_OBSERVED_AT: game.score_observed_at,
+        }
+
+    async def test_a_row_with_no_stamp_still_stores_the_empty_evidence(self):
+        """The builder never judges: the refusal is `render`'s, at serve time."""
+        now = datetime.now(timezone.utc)
+        built = await events_routes._build_search_suggestions(
+            _OneLiveQueryDB([_live_game(now, score_source=None, observed_ago=None)])
+        )
+
+        (chip,) = _chip(built, _UPSET_ID)
+        assert chip[ssc.SCORE_CLAIM_FIELD] == {
+            ssc.SCORE_CLAIM_SOURCE: None,
+            ssc.SCORE_CLAIM_OBSERVED_AT: None,
+        }
+
+    async def test_the_price_only_sibling_carries_no_evidence(self):
+        now = datetime.now(timezone.utc)
+        built = await events_routes._build_search_suggestions(
+            _OneLiveQueryDB([_tight_game(now)])
+        )
+
+        (chip,) = _chip(built, _TIGHT_ID)
+        assert chip["label"] == "Live — tight game vs Pumas"
+        assert ssc.SCORE_CLAIM_FIELD not in chip
+
+
+class TestTheColdPathJudgesAtTheServingClock:
+    @pytest.mark.parametrize(
+        "now_home,home_score,away_score,label",
+        [
+            (0.30, 3, 10, "Upset brewing"),
+            (0.05, 7, 24, "Upset underway"),
+        ],
+    )
+    async def test_a_current_score_is_served_and_its_evidence_is_stored_not_sent(
+        self, cold_route, now_home, home_score, away_score, label
+    ):
+        now = datetime.now(timezone.utc)
+        game = _live_game(
+            now, now_home=now_home, home_score=home_score, away_score=away_score
+        )
+
+        resp = await events_routes.search_suggestions(
+            db=_OneLiveQueryDB([game, _tight_game(now)])
+        )
+
+        assert [c["label"] for c in _chip(resp, _UPSET_ID)] == [label]
+        assert _chip(resp, _TIGHT_ID), "the price-only sibling must survive"
+        assert ssc.SCORE_CLAIM_FIELD not in json.dumps(resp, default=str)
+        # What a later reader re-judges is in the slot, in the codec's spelling.
+        stored = json.loads(cold_route.slots[PRIMARY])
+        (kept,) = [s for s in stored["suggestions"] if s.get("event_id") == _UPSET_ID]
+        assert kept[ssc.SCORE_CLAIM_FIELD] == {
+            ssc.SCORE_CLAIM_SOURCE: SCORE_SOURCE_ESPN,
+            ssc.SCORE_CLAIM_OBSERVED_AT: game.score_observed_at.isoformat(),
+        }
+
+    @pytest.mark.parametrize(
+        "score_source,observed_ago",
+        [
+            pytest.param(SCORE_SOURCE_ESPN, timedelta(minutes=10), id="stale"),
+            pytest.param(None, None, id="no-stamp"),
+            pytest.param(None, timedelta(seconds=30), id="half-no-source"),
+            pytest.param(SCORE_SOURCE_ESPN, None, id="half-no-clock"),
+            pytest.param("scraper", timedelta(seconds=30), id="unknown-writer"),
+            pytest.param(SCORE_SOURCE_ODDS, timedelta(minutes=-10), id="future"),
+        ],
+    )
+    async def test_evidence_that_is_not_current_refuses_only_the_upset(
+        self, cold_route, score_source, observed_ago
+    ):
+        now = datetime.now(timezone.utc)
+        game = _live_game(now, score_source=score_source, observed_ago=observed_ago)
+
+        resp = await events_routes.search_suggestions(
+            db=_OneLiveQueryDB([game, _tight_game(now)])
+        )
+
+        assert _chip(resp, _UPSET_ID) == []
+        assert [c["label"] for c in _chip(resp, _TIGHT_ID)] == [
+            "Live — tight game vs Pumas"
+        ]
