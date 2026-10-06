@@ -358,6 +358,23 @@ PHASE='rendered diagnostics consent verification'
 if [[ "$TEST_EXIT" -eq 0 && "$SHARD" == full ]]; then
   python3 "$ROOT/tools/watch_diagnostics_receipt.py" --log "$OUT/tests.log"
 fi
+PHASE='configured corner and fallback verification'
+if [[ "$TEST_EXIT" -eq 0 ]]; then
+  python3 - "$OUT/tests.log" <<'PYCORNER'
+import sys
+from pathlib import Path
+import re
+log = Path(sys.argv[1]).read_text()
+for marker in ('WATCH_UI_ACTUAL_CORNER_SAVED=PASS', 'WATCH_UI_CORNER_FALLBACK=PASS'):
+    if marker not in log.splitlines():
+        raise SystemExit(f'Watch corner journey did not confirm {marker}; gate unpaid')
+for suite, case in [('WidgetTapJourneyTests', 'testActualCornerSavedReadingAndTap'),
+                    ('ComplicationContentJourneyTests', 'testCornerUnsupportedReadingsStayLaunchers')]:
+    pattern = rf"^Test Case '-\[BainLuckWatchUITests\.{suite} {case}\]' passed \([0-9.]+ seconds\)\.$"
+    if not re.search(pattern, log, re.MULTILINE):
+        raise SystemExit(f'Watch corner case {case} did not pass; gate unpaid')
+PYCORNER
+fi
 PHASE='full-suite receipt verification'
 if [[ "$SHARD" != full ]]; then
   python3 "$ROOT/tools/watch_ui_shards.py" receipt --shard "$SHARD" --directory "$OUT" --sha "$SHA" --exit-code "$TEST_EXIT"

@@ -1,5 +1,6 @@
 #if DEBUG
 import SwiftUI
+import WidgetKit
 
 /// Shared content layout evidence only: this is not a WidgetKit gallery or shared-container test.
 struct WatchComplicationLayoutFixture: View {
@@ -11,7 +12,11 @@ struct WatchComplicationLayoutFixture: View {
         VStack(spacing: 8) {
             if ready {
                 Group {
-                    if scenario.hasPrefix("circular-") {
+                    if scenario.hasPrefix("corner-") {
+                        WatchSavedCornerComplicationContent(snapshot: snapshot)
+                            .environment(\.showsWidgetLabel, scenario != "corner-no-label")
+                            .frame(width: 40, height: 40)
+                    } else if scenario.hasPrefix("circular-") {
                         WatchSavedCircularComplicationContent(snapshot: snapshot)
                             .frame(width: 40, height: 40)
                             .background(Circle().fill(.gray.opacity(0.2)))
@@ -40,6 +45,7 @@ struct WatchComplicationLayoutFixture: View {
             let timestamp = ISO8601DateFormatter().string(from: now.addingTimeInterval(-120))
             let state = scenario.replacingOccurrences(of: "circular-", with: "")
                 .replacingOccurrences(of: "rectangular-", with: "")
+                .replacingOccurrences(of: "corner-", with: "")
             if state != "empty" {
                 let final = ["final", "away-final", "tie"].contains(state)
                 var fields: [String: Any] = [

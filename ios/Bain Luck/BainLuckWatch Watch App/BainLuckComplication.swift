@@ -34,6 +34,8 @@ struct BainLuckComplicationView: View {
                 WatchSavedComplicationContent(snapshot: entry.snapshot)
                     .accessibilityElement(children: .ignore)
                     .accessibilityLabel(accessibilityDescription)
+            } else if family == .accessoryCorner {
+                WatchSavedCornerComplicationContent(snapshot: entry.snapshot)
             } else {
                 ZStack {
                     AccessoryWidgetBackground()
@@ -62,6 +64,6 @@ struct BainLuckWidget: Widget {
         }
         .configurationDisplayName("Your game")
         .description("Your last saved game reading, when available. Tap to open Bain Luck.")
-        .supportedFamilies([.accessoryCircular, .accessoryRectangular])
+        .supportedFamilies([.accessoryCircular, .accessoryRectangular, .accessoryCorner])
     }
 }

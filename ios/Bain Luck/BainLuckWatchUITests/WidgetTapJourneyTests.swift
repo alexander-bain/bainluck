@@ -126,6 +126,45 @@ final class WidgetTapJourneyTests: XCTestCase {
     }
 
     @MainActor
+    func testActualCornerSavedReadingAndTap() throws {
+        continueAfterFailure = false
+        let app = XCUIApplication()
+        let originalObservation = Date().addingTimeInterval(-120)
+        app.launchEnvironment = [
+            "BAINLUCK_WATCH_UI_TEST": "1", "BAINLUCK_WATCH_UI_SUITE": UUID().uuidString,
+            "BAINLUCK_WATCH_UI_RESET": "1", "BAINLUCK_WATCH_UI_LAUNCH_RECEIPT": "1",
+            "BAINLUCK_WATCH_UI_SHARED_PUBLICATION": "1", "BAINLUCK_WATCH_UI_CIRCULAR_IDENTITY": "1",
+            "BAINLUCK_WATCH_UI_FIXED_OBSERVATION": ISO8601DateFormatter().string(from: originalObservation)
+        ]
+        defer { app.terminate() }
+        app.launch()
+        XCTAssertTrue(app.buttons["watch.pick.101"].waitForExistence(timeout: 20))
+        app.buttons["watch.pick.101"].tap()
+        let baseline = try recordWidgetWarmBaseline(in: app)
+        let change = app.buttons["watch.choose-another"]
+        try widgetWarmReveal(change, in: app)
+        change.tap()
+        let picker = try assertWidgetWarmPickerIsPresented(in: app)
+        XCUIDevice.shared.press(.home)
+        let host = XCUIApplication(bundleIdentifier: "com.apple.Carousel")
+        let reading = try mountSavedCornerOnFreshInfographFace(in: host)
+        XCTAssertEqual(reading.value as? String, "Saved · SF win · 64%")
+        XCTAssertTrue(reading.label.contains("San Francisco Giants") && reading.label.contains("Los Angeles Dodgers") && reading.label.contains("64%"))
+        XCTAssertTrue(reading.label.contains("Observed \(originalObservation.formatted(date: .abbreviated, time: .shortened))"))
+        // This must be the separate rendered label, not the reading's synthesized
+        // accessible value. Missing/ignored/truncated label is an unpaid feature.
+        let curvedLabel = host.descendants(matching: .any).matching(NSPredicate(format: "label == %@", "Saved · SF win")).firstMatch
+        try freshFaceRequire(curvedLabel.waitForExistence(timeout: 15)
+                             && curvedLabel.frame.width > 0 && curvedLabel.frame.height > 0
+                             && host.frame.contains(curvedLabel.frame),
+                             "Actual corner lacks complete rendered Saved + named win label", host: host)
+        freshFaceCapture(host, name: "Actual configured Infograph corner 64 percent and full Saved SF win curve")
+        try tapActualWidgetHostAndAssertWarmReturn(host: host, widget: reading, app: app,
+            baseline: baseline, tapOrdinal: 1, dismissedOverlays: picker, phase: "saved Infograph corner forecast")
+        print("WATCH_UI_ACTUAL_CORNER_SAVED=PASS")
+    }
+
+    @MainActor
     func testActualCircularSavedReadingAndTap() throws {
         continueAfterFailure = false
         let app = XCUIApplication()
@@ -434,6 +473,81 @@ extension WidgetTapJourneyTests {
         // Caller now uses the separate actual-tap warm assertions. Mounting alone
         // is never a route/retention/warm-delivery PASS.
         return widget
+    }
+
+    @MainActor
+    private func mountSavedCornerOnFreshInfographFace(in host: XCUIApplication) throws -> XCUIElement {
+        try freshFaceRequire(host.wait(for: .runningForeground, timeout: 15), "Corner host not foreground", host: host)
+        let face = host.otherElements["Watch Face"].firstMatch
+        try freshFaceRequire(face.waitForExistence(timeout: 15), "No actual corner Watch Face", host: host)
+        host.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.22)).press(forDuration: 2)
+        let addFace = host.scrollViews["Add new face"].firstMatch
+        for _ in 0..<16 {
+            if addFace.exists && addFace.isHittable { break }
+            freshFaceSwipeLeft(in: host)
+        }
+        try freshFaceRequire(addFace.exists && addFace.isHittable, "Corner gallery has no Add new face", host: host)
+        addFace.tap()
+        let newFaces = host.buttons["New Watch Faces"].firstMatch
+        try freshFaceRequire(newFaces.waitForExistence(timeout: 15) && newFaces.isHittable,
+                             "Corner gallery lacks New Watch Faces", host: host)
+        newFaces.tap()
+        let infograph = host.cells["Infograph"].firstMatch
+        for _ in 0..<10 {
+            if infograph.exists && infograph.isHittable { break }
+            host.swipeUp()
+        }
+        freshFaceCapture(host, name: "Corner dependency observed fresh gallery Infograph availability")
+        try freshFaceRequire(infograph.exists && infograph.isHittable,
+                             "CORNER_FACE_DEPENDENCY: Infograph absent from bounded hosted gallery", host: host)
+        let add = infograph.buttons["Add"].firstMatch
+        try freshFaceRequire(add.exists && add.isHittable && infograph.buttons.matching(identifier: "Add").count == 1
+                             && infograph.frame.intersects(add.frame),
+                             "Cannot attribute Add to observed Infograph card", host: host)
+        add.tap()
+        // Select by the editor's observed labels; no guessed slot identifier or
+        // coordinate taps. The installed corner identifier then proves family.
+        var choices: [XCUIElement] = []
+        for _ in 0..<8 {
+            choices = host.buttons.matching(NSPredicate(format: "label CONTAINS[c] %@", "complication")).allElementsBoundByIndex.filter {
+                let name = $0.label.lowercased()
+                return (name.contains("top left") || name.contains("upper left")) && $0.isHittable && host.frame.contains($0.frame)
+            }
+            if choices.count == 1 { break }
+            freshFaceSwipeLeft(in: host)
+        }
+        freshFaceCapture(host, name: "Corner dependency observed Infograph editor slot labels")
+        try freshFaceRequire(choices.count == 1,
+                             "CORNER_FACE_DEPENDENCY: no unambiguous visible Infograph upper-left complication", host: host)
+        choices[0].tap()
+        let appRow = try WatchComplicationGalleryNavigation.bainLuckAppRow(in: host) { freshFaceCapture(host, name: $0) }
+        appRow.tap()
+        try WatchComplicationGalleryNavigation.requireBainLuckDetail(in: host) { freshFaceCapture(host, name: $0) }
+        let installed = host.cells["ComplicationListCell -- Your game"].firstMatch
+        try freshFaceRequire(installed.waitForExistence(timeout: 15) && installed.isHittable,
+                             "CORNER_FACE_DEPENDENCY: Your game unavailable for observed corner slot", host: host)
+        freshFaceCapture(host, name: "Actual Infograph corner gallery Bain Luck Your game")
+        installed.tap()
+        XCUIDevice.shared.press(.home)
+        let library = host.otherElements["Face Library View"].firstMatch
+        let arrived = XCTNSPredicateExpectation(predicate: NSPredicate { _, _ in library.exists || face.exists }, object: host)
+        try freshFaceRequire(XCTWaiter.wait(for: [arrived], timeout: 15) == .completed,
+                             "Configured Infograph did not leave editor", host: host)
+        if library.exists {
+            let title = host.staticTexts["Switcher Face Title"].firstMatch
+            let previews = host.scrollViews.allElementsBoundByIndex.filter { $0.label.lowercased().hasPrefix("infograph,") && $0.isHittable }
+            try freshFaceRequire(title.exists && title.label == "Infograph" && previews.count == 1,
+                                 "No unambiguous observed Infograph activation preview", host: host)
+            freshFaceCapture(host, name: "Actual configured Infograph preview before activation")
+            previews[0].tap()
+        }
+        let activated = XCTNSPredicateExpectation(predicate: NSPredicate { _, _ in face.exists && !library.exists }, object: host)
+        try freshFaceRequire(XCTWaiter.wait(for: [activated], timeout: 15) == .completed,
+                             "Configured Infograph did not become active", host: host)
+        let reading = host.descendants(matching: .any)["watch.complication.corner.reading"].firstMatch
+        try freshFaceRequire(reading.waitForExistence(timeout: 15) && reading.isHittable && host.frame.contains(reading.frame),
+                             "Actual configured Infograph has no fitting saved corner forecast", host: host)
+        return reading
     }
 
     @MainActor

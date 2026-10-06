@@ -205,6 +205,31 @@ final class ComplicationContentJourneyTests: XCTestCase {
     }
 
     @MainActor
+    func testCornerUnsupportedReadingsStayLaunchers() throws {
+        continueAfterFailure = false
+        let app = XCUIApplication()
+        defer { app.terminate() }
+        for cornerScenario in ["no-label", "old", "invalid", "long", "final", "score", "empty"] {
+            app.launchEnvironment = ["BAINLUCK_WATCH_UI_TEST": "1",
+                "BAINLUCK_WATCH_UI_SUITE": UUID().uuidString, "BAINLUCK_WATCH_UI_RESET": "1",
+                "BAINLUCK_WATCH_UI_COMPLICATION": "corner-\(cornerScenario)"]
+            app.launch()
+            XCTAssertTrue(app.staticTexts["watch.complication.ready"].waitForExistence(timeout: 15))
+            let panel = app.descendants(matching: .any)["watch.complication.panel"].firstMatch
+            let fallback = app.descendants(matching: .any)["watch.complication.corner.fallback"].firstMatch
+            XCTAssertTrue(fallback.exists && app.frame.contains(fallback.frame) && panel.frame.contains(fallback.frame))
+            XCTAssertEqual(fallback.label, "Open your selected game in Bain Luck, or choose a game")
+            XCTAssertFalse(app.descendants(matching: .any)["watch.complication.corner.reading"].firstMatch.exists)
+            let capture = XCTAttachment(screenshot: app.screenshot())
+            capture.name = "Shared corner fallback - \(cornerScenario)"
+            capture.lifetime = .keepAlways
+            add(capture)
+            app.terminate()
+        }
+        print("WATCH_UI_CORNER_FALLBACK=PASS")
+    }
+
+    @MainActor
     private func launchCircular(_ scenario: String, in app: XCUIApplication) throws {
         app.launchEnvironment = ["BAINLUCK_WATCH_UI_TEST": "1",
             "BAINLUCK_WATCH_UI_SUITE": UUID().uuidString, "BAINLUCK_WATCH_UI_RESET": "1",
