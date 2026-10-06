@@ -1,0 +1,22 @@
+{
+ "feed-trial-signals-and-grades.csv": {
+  "bytes": 2549,
+  "sha256": "3063ff7baf95cbf06bd3373f8f8fa138e507fec08eb2150059e0c3628fcd1158"
+ },
+ "grades-export.json": {
+  "bytes": 2943,
+  "sha256": "2a7da269c455eef384c93788a3dcce574d51ecd4d75cc0f95b344af6b4873062"
+ },
+ "meta-export.json": {
+  "bytes": 199,
+  "sha256": "b18f66f20636c770f74b5543b759a73814f56df9e13cc60463705dfc36f004f1"
+ },
+ "recompute_stats.py": {
+  "bytes": 2507,
+  "sha256": "32df93fe619093bbeb291255929a97a5abee3cf5930475cb8292c3779aaa5300"
+ },
+ "signals-export.json": {
+  "bytes": 7040,
+  "sha256": "2e8ed8c95acddec9398ff50232790d7a2aa6ac57f4339bcf606e72d4a0f210e7"
+ }
+}
