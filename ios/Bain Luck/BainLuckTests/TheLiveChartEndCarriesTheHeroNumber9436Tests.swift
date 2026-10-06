@@ -560,13 +560,26 @@ final class TheLiveChartEndCarriesTheHeroNumber9436Tests: XCTestCase {
         return (columns, stamps, starts)
     }
 
-    /// Every frame whose capture began after the glide window plus a frame of
-    /// slack shows the settled end. When no capture began that late, the
-    /// independent final shot (taken after sampling, and already asserted equal
-    /// to the last sample) is the only reading past the window.
+    /// Every frame whose capture began after the glide window plus slack shows
+    /// the settled end. When no capture began that late, the independent final
+    /// shot (taken after sampling, and already asserted equal to the last
+    /// sample) is the only reading past the window.
+    ///
+    /// The window opens when the glide BEGAN, not when the model changed: the
+    /// animation's clock starts at the commit, and a loaded runner can hold the
+    /// main thread before it (hosted run 37394025988: the first capture took
+    /// 0.28 s and still read the old position; the dot then glided 291→358 in
+    /// 0.35 s and was red at 0.61 s against a window counted from the change).
+    /// The latest the glide can have begun is the stamp of the first frame
+    /// that left the first sampled position, so a dot still short of the end
+    /// a glide plus slack after that is always a genuinely long glide.
     private func assertSettledByTheGlideWindow(_ columns: [Int], starts: [Double], stamps: [Double],
                                                settled: Int, file: StaticString = #filePath, line: UInt = #line) {
-        let window = LiveChartEdgeMarkerPlan.glideDuration + 0.25
+        guard let departed = columns.firstIndex(where: { $0 != columns.first }) else {
+            print("#9436 the dot never left its first sampled position; the glide arms judge it: \(columns)")
+            return
+        }
+        let window = stamps[departed] + LiveChartEdgeMarkerPlan.glideDuration + 0.15
         let late = zip(columns, starts).filter { $0.1 >= window }
         let moving = late.filter { $0.0 != settled }
         XCTAssertTrue(moving.isEmpty, "still short of the settled end \(settled) after \(window) s: \(moving) starts=\(starts) stamps=\(stamps)",
