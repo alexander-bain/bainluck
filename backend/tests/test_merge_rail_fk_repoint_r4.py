@@ -87,6 +87,7 @@ class TestTheListIsDerivedAndComplete:
         """
         assert set(event_fk_tables()) == {
             "activitykit_registrations",
+            "activitykit_observations",
             "espn_snapshots",
             "event_participants",
             "event_provider_anchors",
@@ -252,7 +253,7 @@ class TestEventScopedUniqueConstraintsArePreDeduped:
         for table in event_fk_tables():
             if (
                 table in EVENT_SCOPED_UNIQUE_KEYS
-                or table == "activitykit_registrations"
+                or table in {"activitykit_registrations", "activitykit_observations"}
             ):
                 continue
             update = next(
@@ -269,7 +270,10 @@ class TestEventScopedUniqueConstraintsArePreDeduped:
         await repoint_event_children(session, keep_id=1, orphan_id=2)
         sql = session.sql()
         for table in derive_event_child_tables():
-            if table == "activitykit_registrations":
+            if table == "activitykit_observations":
+                assert "SELECT event_id FROM activitykit_observations" in sql
+                assert "UPDATE activitykit_observations" not in sql
+            elif table == "activitykit_registrations":
                 assert "SELECT activity_id FROM activitykit_registrations" in sql
                 assert "UPDATE activitykit_registrations" not in sql
             else:
@@ -312,7 +316,7 @@ class TestTheMovesAreReported:
         class _NoRowcountSession(_RecordingSession):
             async def execute(self, stmt, params=None):
                 self.statements.append((str(stmt), params or {}))
-                if str(stmt).startswith("SELECT activity_id"):
+                if str(stmt).startswith(("SELECT activity_id", "SELECT event_id FROM activitykit_observations")):
                     return _Result(rows=())
                 return object()
 
