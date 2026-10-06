@@ -47,6 +47,8 @@ async def pg():
                 user_id=1,
                 event_id=42,
                 version=1,
+                created_at=NOW,
+                expires_at=NOW + timedelta(hours=8),
                 is_active=True,
                 push_token="ab" * 32,
                 token_hash="a" * 64,
@@ -220,7 +222,7 @@ async def test_retry_after_and_finite_budget_survive_worker_restart(pg):
     assert retry.attempt_id.endswith("attempt:2")
 
 
-async def test_old_unavailable_token_recovers_on_true_replacement(pg):
+async def test_unregistered_token_tombstone_cannot_recover_on_replacement(pg):
     w = await seed(pg)
     old = await w.reserve("a", now=NOW)
     unavailable = MockTransport(APNsResult("unavailable", "token_unregistered"))
@@ -228,19 +230,21 @@ async def test_old_unavailable_token_recovers_on_true_replacement(pg):
         await w.send(old, unavailable, provider_token="mock", now=NOW) == "unavailable"
     )
     before = decode_state((await record(pg))["state"])
+    assert before.stopped
+    # Even a direct credential-only mutation cannot turn a tombstone active.
     await mutate(pg, version=2, push_token="cd" * 32, token_hash="c" * 64)
-    resumed = await worker(pg).reserve("a", now=NOW + timedelta(seconds=1))
-    assert resumed is not None and resumed.attempt_id.endswith("attempt:1")
-    transport = MockTransport()
+    assert await worker(pg).reserve("a", now=NOW + timedelta(seconds=1)) is None
+    async with pg() as db:
+        reg = (await db.execute(select(REG))).mappings().one()
     assert (
-        await w.send(
-            resumed, transport, provider_token="mock", now=NOW + timedelta(seconds=1)
-        )
-        == "accepted"
+        not reg["is_active"] and reg["push_token"] is None and reg["token_hash"] is None
     )
     after = decode_state((await record(pg))["state"])
-    assert after.snapshot == before.snapshot and after.score_fence == before.score_fence
-    assert transport.calls[0][1]["activity_token"] == "cd" * 32
+    assert (
+        after.stopped
+        and after.snapshot == before.snapshot
+        and after.score_fence == before.score_fence
+    )
 
 
 async def test_accepted_same_snapshot_replays_for_new_token(pg):

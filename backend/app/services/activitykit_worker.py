@@ -7,8 +7,7 @@ never a device-receipt or exactly-once guarantee.
 """
 
 import asyncio
-import base64
-from dataclasses import asdict, dataclass, replace
+from dataclasses import dataclass, replace
 from datetime import datetime, timedelta, timezone
 from uuid import uuid4
 from sqlalchemy import insert, select, update
@@ -18,16 +17,18 @@ from typing import Callable
 from app.models.activitykit import ActivityKitRegistration
 from app.models.activitykit_delivery import ActivityKitDelivery
 from app.services.activitykit_apns import APNsResult
+from app.services.activitykit_state_codec import encode_state, decode_state
+from app.services.activitykit_registration_lifecycle import (
+    horizon_open,
+    erase_authorization,
+)
 from app.utils.activitykit_delivery_state import (
     Attempt,
-    DeliveryCommand,
     DeliveryState,
     RetryPolicy,
 )
 from app.utils.activitykit_payload import (
-    ActivityKitPush,
     GameActivitySnapshot,
-    MAX_PAYLOAD_BYTES,
 )
 
 _REG = ActivityKitRegistration.__table__
@@ -38,57 +39,6 @@ def _clock(value: datetime) -> datetime:
     if not isinstance(value, datetime) or value.utcoffset() is None:
         raise ValueError("An explicit aware clock is required")
     return value.astimezone(timezone.utc)
-
-
-def encode_state(state: DeliveryState) -> dict:
-    def encode(value):
-        if isinstance(value, datetime):
-            return _clock(value).isoformat()
-        if isinstance(value, timedelta):
-            return value.total_seconds()
-        if isinstance(value, bytes):
-            return base64.b64encode(value).decode("ascii")
-        if isinstance(value, dict):
-            return {k: encode(v) for k, v in value.items()}
-        if isinstance(value, (list, tuple)):
-            return [encode(v) for v in value]
-        return value
-
-    return {"schema": 1, "state": encode(asdict(state))}
-
-
-def decode_state(value: dict) -> DeliveryState:
-    try:
-        if value["schema"] != 1:
-            raise ValueError()
-        data = dict(value["state"])
-
-        def date(value):
-            return _clock(datetime.fromisoformat(value)) if value is not None else None
-
-        data["retry_policy"] = RetryPolicy(
-            tuple(timedelta(seconds=v) for v in data["retry_policy"]["delays"])
-        )
-        for name in ("score_fence", "probability_fence"):
-            data[name] = date(data[name])
-        if data["snapshot"] is not None:
-            snapshot = dict(data["snapshot"])
-            for name in ("score_observed_at", "probability_observed_at"):
-                snapshot[name] = date(snapshot[name])
-            data["snapshot"] = GameActivitySnapshot(**snapshot)
-        if data["attempt"] is not None:
-            attempt = dict(data["attempt"])
-            command = dict(attempt["command"])
-            body = base64.b64decode(command["push"]["body"], validate=True)
-            if not 0 < len(body) <= MAX_PAYLOAD_BYTES:
-                raise ValueError()
-            command["push"] = ActivityKitPush(body)
-            attempt["command"] = DeliveryCommand(**command)
-            attempt["retry_at"] = date(attempt["retry_at"])
-            data["attempt"] = Attempt(**attempt)
-        return DeliveryState(**data)
-    except (KeyError, TypeError, ValueError, OverflowError):
-        raise ValueError("Invalid persisted ActivityKit state") from None
 
 
 @dataclass(frozen=True)
@@ -186,14 +136,12 @@ class DurableActivityKitWorker:
         )
         return reg, row
 
-    @staticmethod
-    def _active(reg: RowMapping | None) -> bool:
-        return (
-            reg is not None
-            and reg["is_active"]
-            and reg["push_token"]
-            and reg["token_hash"]
-        )
+    async def _authorized(self, db, reg, *, now):
+        if horizon_open(reg, now):
+            return True
+        if reg is not None:
+            await erase_authorization(db, reg, now=now)
+        return False
 
     @staticmethod
     def _state(reg: RowMapping, row: RowMapping) -> DeliveryState:
@@ -212,7 +160,8 @@ class DurableActivityKitWorker:
     ):
         async with self.sessions() as db, db.begin():
             reg, row = await self._locked(db, activity_id)
-            if not self._active(reg):
+            now = _clock(self.clock())
+            if not await self._authorized(db, reg, now=now):
                 return False
             state = (
                 self._state(reg, row)
@@ -245,7 +194,7 @@ class DurableActivityKitWorker:
         async with self.sessions() as db, db.begin():
             reg, row = await self._locked(db, activity_id)
             now = max(now, _clock(self.clock()))
-            if not self._active(reg) or row is None:
+            if not await self._authorized(db, reg, now=now) or row is None:
                 return None
             state = self._state(reg, row)
             changed = (row["registration_version"], row["token_hash"]) != (
@@ -264,7 +213,10 @@ class DurableActivityKitWorker:
             )
             lease = str(uuid4()) if attempt else (None if changed else row["lease_id"])
             expires = (
-                now + timedelta(seconds=self.lease_seconds)
+                min(
+                    now + timedelta(seconds=self.lease_seconds),
+                    _clock(reg["expires_at"]),
+                )
                 if attempt
                 else (None if changed else row["lease_expires_at"])
             )
@@ -297,7 +249,7 @@ class DurableActivityKitWorker:
         async with self.sessions() as db, db.begin():
             reg, row = await self._locked(db, reservation.activity_id)
             now = max(now, _clock(self.clock()))
-            if not self._active(reg) or row is None:
+            if not await self._authorized(db, reg, now=now) or row is None:
                 return "fenced"
             if (reg["version"], reg["token_hash"], row["lease_id"]) != (
                 reservation.registration_version,
@@ -325,8 +277,13 @@ class DurableActivityKitWorker:
                     )
                 )
                 return "fenced"
+            dispatch_at = max(now, _clock(self.clock()))
+            if not horizon_open(reg, dispatch_at):
+                await erase_authorization(db, reg, now=dispatch_at)
+                return "fenced"
             try:
-                async with asyncio.timeout(25):
+                remaining = (_clock(reg["expires_at"]) - dispatch_at).total_seconds()
+                async with asyncio.timeout(min(25, remaining)):
                     result = await transport.send(
                         state.attempt.command,
                         activity_token=reg["push_token"],
@@ -371,4 +328,12 @@ class DurableActivityKitWorker:
                     state=encode_state(completed), lease_id=None, lease_expires_at=None
                 )
             )
+            if (
+                completed_at >= _clock(reg["expires_at"])
+                or result.reason == "token_unregistered"
+                and result.outcome == "unavailable"
+                or result.outcome == "accepted"
+                and completed.ended
+            ):
+                await erase_authorization(db, reg, now=completed_at)
             return result.outcome

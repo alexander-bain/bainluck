@@ -18,6 +18,7 @@ from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 from starlette.requests import Request
 
 from app.models.activitykit import ActivityKitRegistration
+from app.models.activitykit_delivery import ActivityKitDelivery
 from app.routes import activitykit
 
 DB_URL = os.environ.get("SEARCH_TEST_DATABASE_URL")
@@ -48,6 +49,7 @@ async def pg():
         await conn.execute(text("INSERT INTO users VALUES (1), (2)"))
         await conn.execute(text("INSERT INTO events VALUES (42), (43)"))
         await conn.run_sync(TABLE.create)
+        await conn.run_sync(ActivityKitDelivery.__table__.create)
     yield async_sessionmaker(engine, expire_on_commit=False)
     await engine.dispose()
     async with admin.begin() as conn:
@@ -107,9 +109,10 @@ def synchronize_owned_reads(monkeypatch):
     barrier = asyncio.Barrier(2)
 
     async def owned(*args):
-        value = await original(*args)
+        # Synchronize attempts BEFORE the new authoritative registration lock.
+        # Waiting after it would deadlock the contender behind the first reader.
         await barrier.wait()
-        return value
+        return await original(*args)
 
     monkeypatch.setattr(activitykit, "_owned", owned)
     return original
