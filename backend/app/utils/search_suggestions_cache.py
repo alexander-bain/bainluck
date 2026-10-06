@@ -96,6 +96,12 @@ served content is only ever:
     minutes. It cannot move meaningfully inside the ceiling below.
   * section 4 — "Pulled the upset vs X" on a game that has already finished. A
     historical fact; it does not age.
+  * section 1 (running again since #2286's repair) — "Upset brewing" / "Upset
+    underway" name the SCOREBOARD of a game in play, and a score goes stale on
+    its own clock, not the envelope's (#10570). Each such chip stores its score
+    evidence (`SCORE_CLAIM_FIELD`) and `render` re-asks #10561's five-minute
+    rule at the serving clock; the evidence is stripped on the way out. Its
+    tight-price sibling ("Live — tight game") rests on no score and passes.
 
 🔴 THE CEILING IS INHERITED, NOT CHOSEN. 5x the fresh TTL — the same multiplier
 as `routes/events.py:_STALE_SERVE_CEILING` and `game_markets_cache
@@ -244,6 +250,21 @@ _COUNTDOWN_VERBS: dict[str, str] = {
 #: them. Sport-neutral by construction.
 _NEUTRAL_VERB = "Starts"
 
+#: The per-suggestion field carrying the SCORE EVIDENCE a present-tense live
+#: upset chip rests on (#10570): `{"source": <writer>, "observed_at": <ISO>}`,
+#: copied from `Event.score_source` / `Event.score_observed_at` at build time —
+#: never a build, fetch or price clock. Private like the countdown fields:
+#: `render` strips it from every item on the way out.
+SCORE_CLAIM_FIELD = "_score_claim"
+SCORE_CLAIM_SOURCE = "source"
+SCORE_CLAIM_OBSERVED_AT = "observed_at"
+
+#: Section 1's two present-tense upset labels, exactly. "Upset brewing" names the
+#: scoreboard (#5051), so it is only true while the score behind it is current.
+#: Matched exactly rather than by substring so section 4's historical "Pulled the
+#: upset vs X" — a finished game, which does not age — is never touched.
+LIVE_UPSET_LABELS = frozenset({"Upset brewing", "Upset underway"})
+
 
 def countdown_verb(sport_key: str | None) -> str:
     """The verb for `sport_key`'s countdown, or the neutral one.
@@ -316,6 +337,44 @@ def countdown_label(
     return f"{_NEUTRAL_VERB} in {minutes // 60}h"
 
 
+def score_claim(source: Any, observed_at: Any) -> dict[str, Any]:
+    """The stored evidence for one live-upset chip, in the one format `render`
+    reads. The builder passes the row's own `score_source` / `score_observed_at`
+    verbatim; judging them is `render`'s job, at the serving clock."""
+    return {SCORE_CLAIM_SOURCE: source, SCORE_CLAIM_OBSERVED_AT: observed_at}
+
+
+def is_live_upset_claim(item: dict[str, Any]) -> bool:
+    """Is this suggestion a present-tense claim about a live scoreboard?"""
+    return item.get("type") == "event" and item.get("label") in LIVE_UPSET_LABELS
+
+
+def score_claim_is_current(claim: Any, now: datetime) -> bool:
+    """May the stored evidence still support a live-upset chip at `now`? (#10570)
+
+    🔴 ONE RULE, NOT A SECOND TTL. The verdict is #10561's
+    `score_observation_is_current` — closed writer registry, no future stamps,
+    at most five minutes old inclusive — asked again with the SERVING clock. A
+    chip built from a score 4m59s old is served at most one second longer, then
+    refused, whichever slot answers; the envelope's age is never consulted,
+    because how long ago the payload was built says nothing about how old the
+    score inside it was. Missing, half or malformed evidence answers False: a
+    legacy cached upset that carries none fails closed.
+    """
+    if not isinstance(claim, dict):
+        return False
+    observed_at = _parse(claim.get(SCORE_CLAIM_OBSERVED_AT))
+    if observed_at is None:
+        return False
+    # Lazy: keeps this module's import graph as it was (highlights pulls the
+    # whole caption stack), and the predicate itself imports lazily too.
+    from app.utils.highlights import score_observation_is_current
+
+    return score_observation_is_current(
+        claim.get(SCORE_CLAIM_SOURCE), observed_at, now
+    )
+
+
 def render(payload: dict[str, Any], now: datetime | None = None) -> dict[str, Any]:
     """Re-render every time-relative label from `now`, and strip the deadlines.
 
@@ -325,13 +384,20 @@ def render(payload: dict[str, Any], now: datetime | None = None) -> dict[str, An
 
     A suggestion carrying no `countdown_from` is passed through untouched — that
     is sections 3 and 4, whose text is not clock-relative (module docstring).
-    A suggestion whose deadline has passed is dropped.
+    A suggestion whose deadline has passed is dropped. A live-upset chip whose
+    score evidence is not current at `now` is dropped too (#10570), and the
+    evidence is stripped from every item whether or not it was judged.
     """
     now = now or datetime.now(timezone.utc)
     out = dict(payload)
     rendered: list[dict[str, Any]] = []
     for item in payload.get("suggestions") or []:
         if not isinstance(item, dict):
+            continue
+        claim = item.get(SCORE_CLAIM_FIELD)
+        if SCORE_CLAIM_FIELD in item:
+            item = {k: v for k, v in item.items() if k != SCORE_CLAIM_FIELD}
+        if is_live_upset_claim(item) and not score_claim_is_current(claim, now):
             continue
         raw_deadline = item.get(COUNTDOWN_FIELD)
         if raw_deadline is None:
