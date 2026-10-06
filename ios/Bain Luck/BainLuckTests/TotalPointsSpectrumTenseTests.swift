@@ -44,7 +44,8 @@ final class TotalPointsSpectrumTenseTests: XCTestCase {
         )
         XCTAssertEqual(
             MarketMapRail.spectrumLadderTitle(finalTotal: mlbFinal, unit: "runs", isSettled: true),
-            "Final combined runs"
+            "Final combined runs · 9",
+            "#9483 — the final is stated once, here, in place of the card's old 28 pt tile"
         )
     }
 
@@ -95,11 +96,11 @@ final class TotalPointsSpectrumTenseTests: XCTestCase {
         )
         XCTAssertEqual(
             MarketMapRail.spectrumLadderTitle(finalTotal: 4, unit: "scoring", isSettled: true),
-            "Final combined scoring"
+            "Final combined scoring · 4"
         )
         XCTAssertEqual(
             MarketMapRail.spectrumLadderTitle(finalTotal: 22, unit: "games", isSettled: true),
-            "Final combined games"
+            "Final combined games · 22"
         )
     }
 
@@ -210,7 +211,7 @@ final class TotalPointsSpectrumTenseTests: XCTestCase {
                     )
                 case .graded:
                     XCTAssertEqual(section, "Final scoring", where_)
-                    XCTAssertEqual(ladder, "Final combined runs", where_)
+                    XCTAssertEqual(ladder, "Final combined runs · \(finalTotal ?? -1)", where_)
                     XCTAssertNil(
                         caption, where_ + " — a graded rung's verdict badge owns the row"
                     )

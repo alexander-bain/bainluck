@@ -150,7 +150,7 @@ struct TotalPointsSpectrumView: View {
     ///
     /// #4907. Deliberately a separate property from ``actualTotal`` rather than a
     /// relaxation of its `isDone`: the two answer different questions and only one
-    /// of them may reach `finalStrip`, the heading vocabulary or
+    /// of them may reach the heading vocabulary (and its stated final, #9483) or
     /// ``ladderIndices(sortedThresholds:finalTotal:limit:)``. Widening
     /// `actualTotal` would have printed "Final combined goals" over a match in its
     /// 81st minute and re-windowed the ladder onto the step of a total that is
@@ -232,10 +232,13 @@ struct TotalPointsSpectrumView: View {
     ///
     /// The ladder and the minimal line are the whole of this card's overlap with
     /// the map; the projection strip is the part the map cannot say (the pace
-    /// narrative, the final in the card's own words). So a restating card keeps
-    /// its strip and drops its rows — unless it has no strip, in which case
-    /// dropping the rows would leave a heading over nothing, and #4018 already
-    /// ruled on that shape: a card that is only its own heading does not draw.
+    /// narrative). So a restating card keeps its strip and drops its rows —
+    /// unless it has no strip, in which case dropping the rows would leave a
+    /// heading over nothing, and #4018 already ruled on that shape: a card that
+    /// is only its own heading does not draw.
+    ///
+    /// #9483 — a finished card has no strip any more (see ``projectionTense``),
+    /// so a finished card whose every rung the map already drew goes whole.
     private var saysNothingNew: Bool {
         MarketMapRail.spectrumDrawsNothingNew(
             printing: printedTotals,
@@ -378,7 +381,7 @@ struct TotalPointsSpectrumView: View {
 
     // MARK: - Projection Strip
 
-    /// Which of the strip's three tenses this page is in, or `nil` for none.
+    /// Which of the strip's tenses this page is in, or `nil` for none.
     ///
     /// #4018 — an abandoned game matches NONE of them, and that is the intended
     /// outcome: it has no pre-game expectation worth stating in the present
@@ -390,7 +393,32 @@ struct TotalPointsSpectrumView: View {
     /// ``saysNothingNew`` has to know whether a strip will draw BEFORE the body
     /// routes. Asking the question twice is how the two answers drift, and the
     /// cost of drift here is a card rendered as a bare heading.
-    private enum ProjectionTense { case pregame, live, final }
+    ///
+    /// #9483 — there is no `final` tense. A finished card used to draw a
+    /// "Final total runs / 7" tile in 28 pt over the SD 3 – MIL 4 page, a third
+    /// statement of a score the hero and the runs map above it already state.
+    /// The final is now said once, in the ladder's heading
+    /// (``MarketMapRail/spectrumLadderTitle(finalTotal:unit:isSettled:canStillBeGraded:)``),
+    /// and only when the ladder has a rung of its own to show.
+    enum ProjectionTense { case pregame, live }
+
+    /// The strip this card draws, as a rule the tests can ask.
+    ///
+    /// The view's own `isPre`/`isLive` are read off the same status here: not
+    /// live and not finished is pre-game. A finished status returns `nil` for
+    /// every other input, which is #9483.
+    static func projectionTense(
+        eventStatus: String?,
+        canStillBeGraded: Bool,
+        scoreboardCountsTheUnit: Bool,
+        hasLiveProjection: Bool
+    ) -> ProjectionTense? {
+        let isLive = eventStatus == "live"
+        let isPre = !isLive && !EventState.isFinished(eventStatus)
+        if isPre, canStillBeGraded { return .pregame }
+        if isLive, scoreboardCountsTheUnit, hasLiveProjection { return .live }
+        return nil
+    }
 
     /// #9708 — the served pace, only when it has standing against the header's
     /// score (``LivePaceStanding``): never a scoreless 0, never an older score.
@@ -402,10 +430,12 @@ struct TotalPointsSpectrumView: View {
     }
 
     private var strip: ProjectionTense? {
-        if isPre, canStillBeGraded { return .pregame }
-        if isLive, countsTheUnit, liveProjection != nil { return .live }
-        if isDone, actualTotal != nil { return .final }
-        return nil
+        Self.projectionTense(
+            eventStatus: eventStatus,
+            canStillBeGraded: canStillBeGraded,
+            scoreboardCountsTheUnit: countsTheUnit,
+            hasLiveProjection: liveProjection != nil
+        )
     }
 
     @ViewBuilder
@@ -423,8 +453,6 @@ struct TotalPointsSpectrumView: View {
             if let live = liveProjection {
                 liveStrip(pregameTotal: pregame, paceTotal: live.projected, scored: live.scored)
             }
-        case .final:
-            if let actual = actualTotal { finalStrip(actual: actual) }
         case nil:
             EmptyView()
         }
@@ -500,61 +528,6 @@ struct TotalPointsSpectrumView: View {
             }
         }
         .padding(12)
-        .background(Color.secondary.opacity(0.05))
-        .clipShape(RoundedRectangle(cornerRadius: 10))
-    }
-
-    /// What the strip says once the game is over.
-    ///
-    /// #3850 — **THIS IS THE FRAME IN THE ISSUE'S PHOTOGRAPH**, and it was the
-    /// louder half of the bug, because it put the word and the number side by
-    /// side. On event 15305475 (`completed`) it rendered
-    ///
-    /// ```
-    /// Final total runs
-    ///   PRE-GAME  ████████▏   2.5
-    /// ```
-    ///
-    /// — `Final` and `PRE-GAME` inside one card, contradicting each other, over a
-    /// number belonging to neither.
-    ///
-    /// 🔴 **`2.5` WAS NOT THE PRE-GAME LINE; IT WAS A TIE BROKEN ARBITRARILY.**
-    /// The bar drew ``centerLine``, "the threshold closest to 50% over
-    /// probability" — a sound definition on a live book and a meaningless one on a
-    /// settled ladder, where every line has resolved to `0.99` or `0.01`. Both are
-    /// `0.49` away from `0.5`, so `min(by:)` returns whichever it sees first:
-    /// the LOWEST line, every time, on every settled game. The real pre-game line
-    /// on that card was **8.5** (recovered opening `0.465`, the only one anywhere
-    /// near a coin flip). The card printed the smallest number in the ladder and
-    /// called it the market's expectation.
-    ///
-    /// 🟠 **THERE IS NO HONEST PRE-GAME LINE TO SUBSTITUTE.** Measured on
-    /// production 2026-09-07 for this specimen: `opening_odds.over_under` is
-    /// **null**, `prematch_odds` is **null** outright, and `current_odds.over_under`
-    /// (10.6) is by construction the current one. Recovering it from the rungs'
-    /// `movement` runs into the same wall as ``ladderRow``: the payload carries no
-    /// capture timestamp, and 28 settled rows' "openings" were captured 52–172
-    /// minutes after first pitch. So the comparison this strip exists to draw
-    /// cannot be drawn honestly, and the sentence that framed it — "Actual came in
-    /// +8.5 vs pre-game expectation." — was measuring against that same tie-broken
-    /// `2.5` and goes with it.
-    ///
-    /// What is left is the one thing this card can vouch for, stated plainly.
-    /// `preGameStrip` and `liveStrip` are untouched: before and during the game
-    /// their "Pre-game" bar is a live book's own current line, which is a
-    /// different question from this one. (That LIVE label is arguably its own
-    /// small tense bug — filed separately rather than smuggled in here.)
-    private func finalStrip(actual: Int) -> some View {
-        VStack(alignment: .leading, spacing: 4) {
-            Text("Final total \(unit)")
-                .font(.caption)
-                .fontWeight(.semibold)
-            Text("\(actual)")
-                .font(.system(size: 28, weight: .bold, design: .monospaced))
-                .foregroundStyle(Color(hex: "#8B5CF6"))
-        }
-        .padding(12)
-        .frame(maxWidth: .infinity, alignment: .leading)
         .background(Color.secondary.opacity(0.05))
         .clipShape(RoundedRectangle(cornerRadius: 10))
     }
