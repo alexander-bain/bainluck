@@ -3,6 +3,8 @@ from pathlib import Path
 import subprocess
 import sys
 
+import pytest
+
 ROOT = Path(__file__).resolve().parents[2]
 MARKERS = (
     "WATCH_UI_STRESS_TYPE=accessibility5", "WATCH_UI_STANDARD_TYPE=large",
@@ -14,6 +16,7 @@ MARKERS = (
     "WATCH_UI_CLEAR_SELECTION=PASS", "WATCH_UI_PICKER_RETURN=PASS",
     "WATCH_UI_DISCOVERIES_SAVED=PASS", "WATCH_UI_DISCOVERIES_LARGE=PASS",
     "WATCH_UI_DISCOVERIES_UNSELECTED=PASS", "WATCH_UI_DISCOVERIES_CONTINUATION=PASS",
+    "WATCH_UI_DISCOVERIES_RETURN_STANDARD=PASS", "WATCH_UI_DISCOVERIES_RETURN_LARGE=PASS",
 )
 CASE = ("Test Case '-[BainLuckWatchUITests.WidgetTapJourneyTests "
         "testFreshConfiguredFaceIsActiveBeforeActualLauncherTap]' passed (90.123 seconds).")
@@ -48,10 +51,15 @@ def test_seventeen_test_summary_and_real_activation_case_are_accepted(tmp_path):
     assert '"tests": 17' in (tmp_path / "receipt.json").read_text()
 
 
-def test_new_marker_cannot_silently_disappear(tmp_path):
-    result = gate(accepted_log().replace("WATCH_UI_FRESH_FACE_ACTIVATION=PASS", ""), tmp_path)
+@pytest.mark.parametrize("marker", [
+    "WATCH_UI_FRESH_FACE_ACTIVATION=PASS",
+    "WATCH_UI_DISCOVERIES_RETURN_STANDARD=PASS",
+    "WATCH_UI_DISCOVERIES_RETURN_LARGE=PASS",
+])
+def test_new_marker_cannot_silently_disappear(tmp_path, marker):
+    result = gate(accepted_log().replace(marker, ""), tmp_path)
     assert result.returncode == 1
-    assert "WATCH_UI_FRESH_FACE_ACTIVATION=PASS" in result.stderr
+    assert marker in result.stderr
 
 
 def test_marker_and_green_summary_cannot_replace_executed_case(tmp_path):
