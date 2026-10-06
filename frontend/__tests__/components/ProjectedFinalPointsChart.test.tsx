@@ -248,6 +248,83 @@ describe("a live game whose newest reading was unusable", () => {
 });
 
 /**
+ * #10573 — one game, one projected final. On 14780553 (Falcons at Saints, live) the hero printed
+ * `Projected final: 24 – 29` from `pm_spread_data.projected_final` while this card printed one
+ * sportsbook's 24.0 / 29.5, and later 22 – 27 over 20.5 / 27.0. Before the final the card's
+ * headline is the hero's own pair, printed as the hero prints it; the lines stay the book's.
+ */
+describe("#10573 the card's headline is the hero's projected final, never a second one", () => {
+  // Live at 02:35Z: the book's newest reading is 02:30Z, 27.0 / 9.5.
+  const live = nflInput({ finalAt: null, asOf: "2026-09-29T02:35:00Z" });
+  const renderWith = (input: ProjectedFinalPointsInput, projectedFinal: { home: number; away: number } | null) =>
+    renderToStaticMarkup(<ProjectedFinalPointsChart input={input} {...teams} projectedFinal={projectedFinal} />);
+  const readout = (html: string) =>
+    html.slice(html.indexOf('data-testid="projected-reading"'), html.indexOf('data-testid="projected-stamp"'));
+  const stamp = (html: string) => {
+    const m = html.match(/data-testid="projected-stamp">([\s\S]*?)<\/p>/);
+    return m ? m[1] : "";
+  };
+
+  it("control: without the hero's pair the card still prints the book's reading and its time", () => {
+    const html = renderWith(live, null);
+    expect(readout(html)).toContain(">27.0<");
+    expect(readout(html)).toContain(">9.5<");
+    expect(stamp(html)).toBe("Latest projection · recorded " + formatProjectionTime(Date.parse("2026-09-29T02:30:00Z")));
+    expect(html).not.toContain('data-testid="projected-page-pair"');
+  });
+
+  it("the specimen: a hero pair that differs from the book's reading is the only pair printed", () => {
+    const html = renderWith(live, { home: 25, away: 11 });
+    expect(readout(html)).toContain(">25<");
+    expect(readout(html)).toContain(">11<");
+    expect(readout(html)).not.toContain("27.0");
+    expect(readout(html)).not.toContain("9.5");
+    // The recorded time belongs to the book's line, not to the page's pair.
+    expect(stamp(html)).toBe("Latest projection");
+  });
+
+  it("prints the hero's whole numbers, so 29.46 is never 29 above and 29.5 below", () => {
+    const book = nflInput({
+      finalAt: null,
+      asOf: "2026-09-29T00:35:00Z",
+      pairs: [{ timestamp: "2026-09-29T00:30:00Z", home: 24.1, away: 29.46, homeProbability: 0.4 }],
+    });
+    const html = renderWith(book, { home: 24, away: 29 });
+    expect(readout(html)).toContain(">24<");
+    expect(readout(html)).toContain(">29<");
+    expect(readout(html)).not.toMatch(/29\.5|24\.1/);
+  });
+
+  it("drops the book's gap note under the page's pair, and keeps it without one", () => {
+    const gap = nflInput({ finalAt: null, asOf: "2026-09-29T01:50:00Z" });
+    expect(renderWith(gap, null)).toContain("No usable projection since then");
+    expect(renderWith(gap, { home: 28, away: 13 })).not.toContain("No usable projection since then");
+  });
+
+  it("says in How to read this that the numbers are the page's and the lines are one sportsbook's", () => {
+    const html = renderWith(live, { home: 25, away: 11 });
+    expect(html).toMatch(/data-testid="projected-page-pair"[^>]*>The numbers above are this page&#x27;s projected final/);
+    expect(html).toContain('data-testid="projected-source"');
+    expect(html).not.toMatch(/blend|average of the sportsbooks/i);
+  });
+
+  it("before kickoff the headline is the hero's pair too", () => {
+    const pre = nflInput({ kickoffAt: null, finalAt: null, asOf: "2026-09-29T00:00:00Z" });
+    const html = renderWith(pre, { home: 23, away: 21 });
+    expect(readout(html)).toContain(">23<");
+    expect(readout(html)).not.toContain("24.5");
+  });
+
+  it("after the final there is no projection to share: the last book reading stays, labelled as such", () => {
+    const html = renderWith(nflInput(), { home: 30, away: 3 });
+    expect(readout(html)).toContain(">27.0<");
+    expect(readout(html)).not.toContain(">30<");
+    expect(stamp(html)).toMatch(/^Last projection before the final · recorded /);
+    expect(html).not.toContain('data-testid="projected-page-pair"');
+  });
+});
+
+/**
  * #10539 — the game's own period boundaries on the projected plot. Fixture
  * boundaries are in the shape `derivePeriodBoundaries` hands every chart on
  * the page, with the provenance the server serves.

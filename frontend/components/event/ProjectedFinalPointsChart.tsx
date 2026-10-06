@@ -54,6 +54,14 @@ export interface ProjectedFinalPointsChartProps {
    */
   finalScore?: { home: number; away: number } | null;
   /**
+   * #10573 — the pair the page's hero prints as `Projected final`, or null when it prints none.
+   * Before the final it is the headline here too: one game gets one projected final, the pair the
+   * hero and the margin and points maps already share (#8922, #9034). The lines stay this one
+   * sportsbook's, so the headline can sit a point or two off the end of a line, never beside a
+   * second printed scoreline. After the final there is no projection to share (#5078).
+   */
+  projectedFinal?: { home: number; away: number } | null;
+  /**
    * The page's evidenced period boundaries (`derivePeriodBoundaries`). Only
    * observed ones inside the drawn span are marked; see `drawnPeriodMarkers`.
    */
@@ -214,6 +222,7 @@ export default function ProjectedFinalPointsChart({
   homeColor,
   awayColor,
   finalScore = null,
+  projectedFinal = null,
   periodBoundaries,
 }: ProjectedFinalPointsChartProps) {
   const full = useMemo(() => buildProjectedFinalPointsSeries(input), [input]);
@@ -229,6 +238,8 @@ export default function ProjectedFinalPointsChart({
   const actual = full.latestActual;
   const after = full.phase === "after";
   const showActual = full.phase !== "before";
+  // #10573: the page's one projected final, printed exactly as the hero prints it (whole numbers).
+  const pagePair = after ? null : projectedFinal;
   // Before the score floor there is no actual line, so the legend does not name one.
   const actualDrawn = showActual && full.actualSteps.length > 0;
   // The last recorded score is the final only when it equals the page's own final. A completion
@@ -266,7 +277,7 @@ export default function ProjectedFinalPointsChart({
               <span className="min-w-0 truncate">{name}</span>
             </div>
             <div className="text-2xl font-semibold tabular-nums text-text-primary">
-              {points(reading[key])}
+              {pagePair ? pagePair[key] : points(reading[key])}
             </div>
             <div className="text-xs text-text-secondary">projected final</div>
             {/* Only a recorded score is printed. Without one there is no "— final" placeholder:
@@ -286,8 +297,9 @@ export default function ProjectedFinalPointsChart({
       </div>
 
       <p className="mt-2 text-xs text-text-secondary" data-testid="projected-stamp">
-        {`${readingLabel(full)} · recorded ${formatProjectionTime(reading.at)}`}
-        {full.latestIntervalUnavailable && (
+        {/* The recorded time and the gap note describe this sportsbook's line, not the page's pair. */}
+        {pagePair ? readingLabel(full) : `${readingLabel(full)} · recorded ${formatProjectionTime(reading.at)}`}
+        {!pagePair && full.latestIntervalUnavailable && (
           <>
             <br />
             No usable projection since then
@@ -445,6 +457,12 @@ export default function ProjectedFinalPointsChart({
 
       <details className="mt-3 text-xs text-text-secondary">
         <summary className="cursor-pointer">How to read this</summary>
+        {pagePair && (
+          <p className="mt-1" data-testid="projected-page-pair">
+            The numbers above are this page&apos;s projected final, the same as at the top of the page. The lines show how one
+            sportsbook&apos;s projection moved.
+          </p>
+        )}
         <p className="mt-1" data-testid="projected-source">
           Projection source: {full.sourceName}. Estimated from that one sportsbook&apos;s expected winning margin and total
           points for the full game, recorded together, which imply a final score for each team. It is not the Bain Luck probability above and not an

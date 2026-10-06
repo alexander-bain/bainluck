@@ -2061,6 +2061,8 @@ export default function EventPage({ params }: EventPageProps) {
       decision={projectedFinalPoints}
       // The pair the hero prints, under the hero's own gates; the module calls nothing final without it.
       finalScore={isFinished && !venueVoided && !heroScoreIsStoppageFiller ? { home: bestHomeScore, away: bestAwayScore } : null}
+      // #10573: the hero's own projected pair, so the card's headline is that pair and never a second one.
+      projectedFinal={heroProjectedFinal}
       periodBoundaries={periodBoundaries}
       homeTeam={event.home_team}
       awayTeam={event.away_team}

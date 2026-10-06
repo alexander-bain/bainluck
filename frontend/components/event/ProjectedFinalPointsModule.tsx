@@ -42,6 +42,8 @@ export interface ProjectedFinalPointsModuleProps {
   decision: ProjectedFinalPointsMount;
   /** The final pair the page's hero prints for a finished game, or null when it shows none. */
   finalScore?: { home: number | null | undefined; away: number | null | undefined } | null;
+  /** #10573 — the pair the hero prints as `Projected final` (`heroProjectedFinal`), or null when it prints none. */
+  projectedFinal?: { home: number; away: number } | null;
   /** The page's evidenced period boundaries (`derivePeriodBoundaries`), the same list its other charts mark. */
   periodBoundaries?: PeriodBoundary[];
   homeTeam: string;
@@ -53,6 +55,7 @@ export interface ProjectedFinalPointsModuleProps {
 export default function ProjectedFinalPointsModule({
   decision,
   finalScore,
+  projectedFinal = null,
   periodBoundaries,
   homeTeam,
   awayTeam,
@@ -71,6 +74,7 @@ export default function ProjectedFinalPointsModule({
       homeColor={homeColor}
       awayColor={awayColor}
       finalScore={final}
+      projectedFinal={projectedFinal}
       periodBoundaries={periodBoundaries}
     />
   );
