@@ -115,3 +115,10 @@ aeeb6fe11415997b649e57a6beee611d26d1f459:artifacts/web-event-quotes-9484/INDEPEN
 # credential: the generic API-key rule matches the identifier ending in "Key".
 # Exact fingerprint only; verified from gitleaks run 36959885230.
 4d9f365ba12b361534a91026fd2997788cc0d5a2:ios/Bain Luck/Bain Luck/Utilities/LaunchRig.swift:generic-api-key:439
+
+# #10623: LS_KEY names the offline grading page's localStorage namespace.
+# Both values are readable slate names, used only by localStorage.getItem /
+# setItem for grades and notes. Independently inspected; no authentication.
+# Exact historical fingerprints preserve the supplied HTML byte-for-byte.
+759cd9dcf6174abcf60d542d1e826dff327d0b94:artifacts/discovery-containers-release-plan/fable-ranking-github-20261004/comparison-slate-v3-page-source.html:generic-api-key:183
+759cd9dcf6174abcf60d542d1e826dff327d0b94:artifacts/discovery-containers-release-plan/fable-ranking-github-20261004/comparison-slate-v4-page-source.html:generic-api-key:183
