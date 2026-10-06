@@ -3989,18 +3989,37 @@ def _team_total_outcome_is_winner(
 # ("Points/Rebounds O/U"), tennis "Match/Set Games O/U" (games/sets, not our
 # home+away score). The colon-immediately-before-O/U anchor is the discriminator
 # (gotcha #21: never guess an ambiguous line/scope).
-_POLY_TOTAL_MARKET_RE = re.compile(r":\s*o/u\s*(\d+\.?\d*)\s*$", re.IGNORECASE)
+#
+# #10590 — THE ANCHOR WAS HALF A DISCRIMINATOR. It refuses a qualifier AFTER the
+# colon and says nothing about what stands BEFORE it, and Polymarket puts scope
+# there too: "San Diego Padres Team Total: O/U 3.5", "Alabama Total Rushing
+# Yards: O/U 125.5", "Bears Total Touchdowns: O/U 1.5", "Games Total: O/U 2.5",
+# "T20 1st Innings 6 Overs Line: O/U 0.5". Every one of those matched the old
+# `:\s*o/u\s*N$` and was graded against home + away — a 3–4 game recorded the
+# Padres as over 4.5 runs, the venue's own Under at 0.9995 notwithstanding
+# (3,624 team-total markets / 230 games on production, 2026-10-06). So the
+# pattern now names the FULL-GAME shape positively: "{A} vs. {B}" before the
+# colon, no second colon, and no "total" in the prefix (a team- or stat-total
+# phrased with both sides is still not the game total). Anything else is
+# refused, not guessed — the venue's own settlement grades it.
+_POLY_TOTAL_MARKET_RE = re.compile(
+    r"^(?P<prefix>[^:]+?\s+vs\.?\s+[^:]+?)\s*:\s*o/u\s*(?P<line>\d+\.?\d*)\s*$",
+    re.IGNORECASE,
+)
+_POLY_TOTAL_SCOPED_PREFIX_RE = re.compile(r"\btotal\b", re.IGNORECASE)
 
 
 def _poly_total_line(market_name):
     """#140: parse the O/U line from a Polymarket full-game total market name.
 
     Returns the line as a float for the strict "{A} vs. {B}: O/U N" full-game
-    pattern, or None to skip (unparseable, or a scoped/prop/period total whose
-    line or scope we must not guess).
+    pattern, or None to skip (unparseable, or a scoped/prop/period/team total
+    whose line or scope we must not guess — #10590).
     """
-    m = _POLY_TOTAL_MARKET_RE.search(market_name or "")
-    return float(m.group(1)) if m else None
+    m = _POLY_TOTAL_MARKET_RE.match((market_name or "").strip())
+    if not m or _POLY_TOTAL_SCOPED_PREFIX_RE.search(m.group("prefix")):
+        return None
+    return float(m.group("line"))
 
 
 async def _resolve_polymarket_total_from_scores(limit: int = 20000):
@@ -4035,6 +4054,15 @@ async def _resolve_polymarket_total_from_scores(limit: int = 20000):
     skipped. The Python check stays as the authority; ``no_parse`` should now
     read ~0. It is served by the existing ``ix_futures_name_trgm`` GIN index —
     no DDL.
+
+    #10590 tightened both halves together: the Python rule now requires the
+    "{A} vs. {B}" full-game prefix, so the SQL predicate requires a
+    whitespace-led ``vs`` before the colon
+    (``'[[:space:]]vs[^:]*:[[:space:]]*o/u'``) — still LOOSER than the Python
+    rule (it admits colons before the ``vs`` and a ``total`` in the prefix,
+    which Python refuses), so the invariant above holds and the ~7,600
+    esports "Games Total: O/U" and the team/stat totals stop cycling through
+    the limit as ``no_parse``.
     """
     stats = {"graded": 0, "push_skip": 0, "no_parse": 0, "errors": []}
     try:
@@ -4048,7 +4076,7 @@ async def _resolve_polymarket_total_from_scores(limit: int = 20000):
                     JOIN futures_outcomes u ON u.market_id = m.id
                     WHERE m.source = 'polymarket'
                       AND m.status = 'resolved'
-                      AND m.name ~* ':[[:space:]]*o/u'
+                      AND m.name ~* '[[:space:]]vs[^:]*:[[:space:]]*o/u'
                       AND e.status IN ('completed', 'closed')
                       AND e.home_score IS NOT NULL
                       AND e.away_score IS NOT NULL

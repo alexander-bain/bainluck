@@ -41,7 +41,8 @@ transactional session and RETURNS its own before/after census in the response bo
              | kalshi-series-tag-category
              | polymarket-club-noun-category | kalshi-club-noun-category
              | kalshi-venue-topic-badges
-             | kalshi-venue-sport-correction }
+             | kalshi-venue-sport-correction
+             | poly-total-scope | poly-total-scope-restore }
     (the registry below is authoritative; this list had already drifted two
      censuses behind it, so a reader who trusted it would have concluded a
      deployed rail did not exist — the same class of error as trusting a
@@ -1223,6 +1224,18 @@ _REPAIRS = {
         "app.tasks.repair_pm_ungraded_loss",
         "restore",
     ),
+    # #10590: Polymarket team totals, team stat totals, esports "Games Total"
+    # and cricket over-lines that `poly_total_score` graded against the GAME
+    # total (home + away) because the old `: O/U N$` anchor refused nothing
+    # before the colon. Population = poly_total_score markets the corrected
+    # `_poly_total_line` refuses. Re-grades each from the CLOB's own winner
+    # token (`map_clob_to_outcome` rule 3 + name concordance), writes
+    # `clob_authoritative`; fails closed on anything else. Keyset `after_id`,
+    # `limit` markets examined, 20s wall clock. D51: backup in
+    # `bak_10590_poly_total_scope`, undo is the `-restore` name.
+    # ATTENDED ONLY: never wire this to a beat.
+    "poly-total-scope": ("app.tasks.repair_poly_total_scope", "repair"),
+    "poly-total-scope-restore": ("app.tasks.repair_poly_total_scope", "restore"),
 }
 
 
