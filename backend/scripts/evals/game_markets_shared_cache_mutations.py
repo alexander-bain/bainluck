@@ -160,7 +160,7 @@ MUTANTS: list[tuple[str, str, pathlib.Path, str, str]] = [
         "M12",
         "give the primary the mirror's TTL — the mirror path can never be reached",
         CACHE,
-        "        primary_ttl=fresh_ttl(source_status_of(enveloped)),",
+        "        primary_ttl=payload_fresh_ttl(source_status_of(enveloped), enveloped),",
         "        primary_ttl=STALE_TTL,",
     ),
     (
