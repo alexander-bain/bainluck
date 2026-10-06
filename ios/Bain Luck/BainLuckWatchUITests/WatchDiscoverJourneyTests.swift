@@ -3,6 +3,9 @@ import XCTest
 final class WatchDiscoverJourneyTests: XCTestCase {
     @MainActor
     func testSelectedGameStaysFirstAndDiscoveriesSurviveOfflineRelaunch() throws {
+        // Two launches plus continuation and retained-clock checks form one journey.
+        // Every other case retains the harness default of 180 seconds.
+        executionTimeAllowance = 300
         try savedJourney(largeText: false)
         print("WATCH_UI_DISCOVERIES_SAVED=PASS")
     }

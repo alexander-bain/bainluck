@@ -174,7 +174,8 @@ xcrun simctl get_app_container "$TEST_UDID" com.bainluck.Bain-Luck.watchkitapp a
 PHASE='BainLuckWatchUITests full suite from the same built products'
 if xcodebuild test-without-building "${XCODE_ARGS[@]}" \
   -resultBundlePath "$RESULT" -collect-test-diagnostics never \
-  -test-timeouts-enabled YES -maximum-test-execution-time-allowance 180 \
+  -test-timeouts-enabled YES -default-test-execution-time-allowance 180 \
+  -maximum-test-execution-time-allowance 300 \
   > "$OUT/tests.log" 2>&1; then
   TEST_EXIT=0
 else
