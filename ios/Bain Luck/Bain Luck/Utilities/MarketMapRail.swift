@@ -484,8 +484,8 @@ enum MarketMapRail {
     /// on a settled game whose scoreboard does not count the widget's unit —
     /// tennis reports SETS, so `SportVocab.scoreboardCountsTheUnit` is false and
     /// the card has no combined-games total to state. `TotalPointsSpectrumView`
-    /// already branches on exactly that: with no final, `finalStrip` does not
-    /// render and every rung falls to the `PRE-GAME … 42%` arm of `ladderRow`.
+    /// already branches on exactly that: with no final, no total is stated
+    /// and every rung falls to the `PRE-GAME … 42%` arm of `ladderRow`.
     ///
     /// **Measured on production 2026-09-08, so this is a live card and not a
     /// hypothetical:** event **15305795** (`Zverev def. Darderi`, `completed`)
@@ -579,10 +579,20 @@ enum MarketMapRail {
     ///
     /// #10272 gave it #4018's gate with its sibling, through the same
     /// ``spectrumHeadingTense``.
+    ///
+    /// #9483 — a graded heading states the final once, compactly:
+    /// `Final combined runs · 7`. It replaces the card's 28 pt "Final total
+    /// runs / 7" tile, which restated the hero's score in the largest type on
+    /// the card. The number is `finalTotal` itself — the value every rung below
+    /// is graded with — so it appears exactly when the heading says "Final",
+    /// a final of `0` is stated as `0`, and a card with no final in its unit
+    /// (tennis, a missing score) states none.
     static func spectrumLadderTitle(
         finalTotal: Int?, unit: String, isSettled: Bool, canStillBeGraded: Bool = true
     ) -> String {
-        "\(spectrumHeadingTense(finalTotal: finalTotal, isSettled: isSettled, canStillBeGraded: canStillBeGraded)) combined \(unit)"
+        let title = "\(spectrumHeadingTense(finalTotal: finalTotal, isSettled: isSettled, canStillBeGraded: canStillBeGraded)) combined \(unit)"
+        guard let finalTotal else { return title }
+        return "\(title) · \(finalTotal)"
     }
 
     // MARK: - Reading a totals ladder once the game is over
@@ -1247,6 +1257,10 @@ enum MarketMapRail {
     /// pace narrative ("+8 projected", "Pace projects +3.2 vs pre-game
     /// expectation") is the one thing the map cannot say. Measured 2026-09-12,
     /// that is 71 of the 90 restating pages; the other 19 go.
+    ///
+    /// #9483 — a finished card no longer has a strip (its "Final total" tile
+    /// restated the hero's score), so a finished card that restates the map
+    /// goes too. One with a rung of its own keeps its ladder.
     static func spectrumDrawsNothingNew(
         printing: [Double],
         alreadyShown: [Double],
