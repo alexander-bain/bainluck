@@ -362,7 +362,9 @@ class TestPolymarketTotalPrefilter:
     #: against `inspect.getsource` is vacuous — the docstring quotes it, so the
     #: guard stayed green with the clause deleted from the SQL (mutation
     #: M-POLY-PREFILTER-DROPPED survived the first battery run exactly there).
-    _PREFILTER = "m.name ~* ':[[:space:]]*o/u'"
+    #: #10590 tightened it to require a whitespace-led ``vs`` before the colon,
+    #: matching the grader's new full-game-only rule — still a superset of it.
+    _PREFILTER = "m.name ~* '[[:space:]]vs[^:]*:[[:space:]]*o/u'"
 
     async def _statement(self, monkeypatch):
         s = _RecordingSession(lambda sql, params: _Result([]))
@@ -409,8 +411,9 @@ class TestPolymarketTotalPrefilter:
         "Yankees vs. Red Sox:   O/U   7.5   ",
     ])
     def test_prefilter_accepts_everything_the_python_regex_accepts(self, name):
-        # the SQL predicate `name ~* ':[[:space:]]*o/u'` in Python terms
-        prefilter = re.search(r":\s*o/u", name, re.IGNORECASE)
+        # the SQL predicate `name ~* '[[:space:]]vs[^:]*:[[:space:]]*o/u'`
+        # in Python terms
+        prefilter = re.search(r"\svs[^:]*:\s*o/u", name, re.IGNORECASE)
         assert _POLY_TOTAL_MARKET_RE.search(name) is not None
         assert prefilter is not None, (
             "the SQL prefilter would drop a name the grader can parse"
@@ -424,15 +427,20 @@ class TestPolymarketTotalPrefilter:
     ])
     def test_prefilter_rejects_the_shapes_that_saturated_the_limit(self, name):
         assert _POLY_TOTAL_MARKET_RE.search(name) is None
-        assert re.search(r":\s*o/u", name, re.IGNORECASE) is None
+        assert re.search(r"\svs[^:]*:\s*o/u", name, re.IGNORECASE) is None
 
     def test_prefilter_is_strictly_looser_than_the_grader(self):
-        """Every string the grader parses contains the colon-o/u anchor, so the
-        prefilter cannot under-include. Measured on production the same way:
+        """Every string the grader parses carries a whitespace-led ``vs``, no
+        colon after it until the colon-o/u anchor, so the prefilter cannot
+        under-include. Measured on production for the pre-#10590 pair:
         49,497 polymarket resolved markets match the grader's regex and
         **0** of them are dropped by the prefilter."""
         anchored = _POLY_TOTAL_MARKET_RE.pattern
-        assert anchored.startswith(":") and "o/u" in anchored.lower()
+        assert anchored.startswith("^") and "o/u" in anchored.lower()
+        assert r"[^:]+?\s+vs\.?\s+[^:]+?" in anchored, (
+            "the grader no longer requires the colon-free '{A} vs. {B}' prefix "
+            "the SQL prefilter's `[[:space:]]vs[^:]*:` is a superset of"
+        )
 
 
 # ==========================================================================
