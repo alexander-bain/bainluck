@@ -376,13 +376,6 @@ struct EventDetailView: View {
                         GameActivityControl(snapshot: reading)
                     }
                     #endif
-                    if let gameMarkets = vm.gameMarkets,
-                       let quote = gameMarkets.openWinnerQuote {
-                        FinalGameWinnerQuoteView(
-                            quote: quote, eventId: event.id, eventStatus: event.status,
-                            closedMarketIds: Set(gameMarkets.closedWinnerMarketIds ?? [])
-                        )
-                    }
                     VStack(spacing: 0) {
                         OddsChartView(eventId: event.id, teamColors: teamColors(event),
                                      commenceTime: event.commenceTime, status: event.status,
@@ -469,6 +462,15 @@ struct EventDetailView: View {
                     }
                     .background(Color.cardBackground)
                     .clipShape(RoundedRectangle(cornerRadius: 12))
+                    // #9483 C3 — the venue's winner price is read under the
+                    // chart, never between the hero's result and the chart.
+                    if let gameMarkets = vm.gameMarkets,
+                       let quote = gameMarkets.openWinnerQuote {
+                        FinalGameWinnerQuoteView(
+                            quote: quote, eventId: event.id, eventStatus: event.status,
+                            closedMarketIds: Set(gameMarkets.closedWinnerMarketIds ?? [])
+                        )
+                    }
                     // #8320 — the score by inning sat between the hero and the
                     // chart, pushing the chart off the first screen. It is detail
                     // for the score the hero already states, so it follows the
@@ -543,67 +545,10 @@ struct EventDetailView: View {
                         .background(Color.cardBackground)
                         .clipShape(RoundedRectangle(cornerRadius: 12))
                     }
-                    // Market Maps (margin + total density curves)
-                    if let gameMarkets = vm.gameMarkets {
-                        // #4982 — the page is the only thing that can see both
-                        // cards, so the page is what decides which one states
-                        // that we do not hold the played count. Everything but
-                        // the payload's presence is decided inside the chart's
-                        // own predicate, so this cannot drift from what the
-                        // chart above actually rendered.
-                        // #10549 — a differential the projection replaced
-                        // stated nothing.
-                        let absenceStatedAbove = !projectionReplacesDifferential && vm.history.map {
-                            ScoreDifferentialChartView.statesPlayedCountAbsence(
-                                history: $0,
-                                sportKey: event.sport,
-                                eventStatus: event.status,
-                                commenceTime: event.commenceTime
-                            )
-                        } ?? false
-                        MarketMapView(
-                            gameMarkets: gameMarkets,
-                            eventStatus: event.status,
-                            commenceTime: event.commenceTime?.asDate,
-                            homeTeam: event.homeTeam,
-                            awayTeam: event.awayTeam,
-                            homeAbbr: event.homeTeamData?.abbreviation,
-                            awayAbbr: event.awayTeamData?.abbreviation,
-                            homeColor: teamColors(event).home,
-                            awayColor: teamColors(event).away,
-                            sportKey: event.sport,
-                            homeWinProb: event.currentOdds?.homeProbability,
-                            awayWinProb: event.currentOdds?.awayProbability,
-                            homeSpread: event.currentOdds?.homeSpread,
-                            overUnder: event.currentOdds?.overUnder,
-                            // #6290 — the pre-game total, from `opening_odds` and
-                            // never from `current_odds`. The two are the same
-                            // number before the off and diverge with every score.
-                            openingOverUnder: event.openingOdds?.overUnder,
-                            homeScore: event.homeScore,
-                            awayScore: event.awayScore,
-                            absenceStatedAbove: absenceStatedAbove,
-                            halfScores: halfScores(event)
-                        )
-                    }
-                    // Total Points Spectrum (projected scoring + threshold ladder)
-                    if let gameMarkets = vm.gameMarkets {
-                        TotalPointsSpectrumView(
-                            gameMarkets: gameMarkets,
-                            eventStatus: event.status,
-                            commenceTime: event.commenceTime?.asDate,
-                            homeTeam: event.homeTeam,
-                            awayTeam: event.awayTeam,
-                            homeColor: teamColors(event).home,
-                            awayColor: teamColors(event).away,
-                            sportKey: event.sport,
-                            overUnder: event.currentOdds?.overUnder,
-                            // #6290 — as on the maps above.
-                            openingOverUnder: event.openingOdds?.overUnder,
-                            homeScore: event.homeScore,
-                            awayScore: event.awayScore
-                        )
-                    }
+                    // #9483 C2 — the player questions follow the score context
+                    // (differential / projected points), ahead of the maps and
+                    // the spectrum. The whole block moved as one, so it is still
+                    // ONE mount with both #10236 anchors.
                     // #10236 / #10237 — ONE player-props mount, phased by the
                     // server's envelope: `after_player_props` (finished game)
                     // draws the After grid, else `during_player_props` (live)
@@ -682,6 +627,67 @@ struct EventDetailView: View {
                             homeLogoURL: event.homeTeamData?.logoLarge ?? event.homeTeamData?.logoSmall,
                             awayLogoURL: event.awayTeamData?.logoLarge ?? event.awayTeamData?.logoSmall,
                             sportKey: event.sport
+                        )
+                    }
+                    // Market Maps (margin + total density curves)
+                    if let gameMarkets = vm.gameMarkets {
+                        // #4982 — the page is the only thing that can see both
+                        // cards, so the page is what decides which one states
+                        // that we do not hold the played count. Everything but
+                        // the payload's presence is decided inside the chart's
+                        // own predicate, so this cannot drift from what the
+                        // chart above actually rendered.
+                        // #10549 — a differential the projection replaced
+                        // stated nothing.
+                        let absenceStatedAbove = !projectionReplacesDifferential && vm.history.map {
+                            ScoreDifferentialChartView.statesPlayedCountAbsence(
+                                history: $0,
+                                sportKey: event.sport,
+                                eventStatus: event.status,
+                                commenceTime: event.commenceTime
+                            )
+                        } ?? false
+                        MarketMapView(
+                            gameMarkets: gameMarkets,
+                            eventStatus: event.status,
+                            commenceTime: event.commenceTime?.asDate,
+                            homeTeam: event.homeTeam,
+                            awayTeam: event.awayTeam,
+                            homeAbbr: event.homeTeamData?.abbreviation,
+                            awayAbbr: event.awayTeamData?.abbreviation,
+                            homeColor: teamColors(event).home,
+                            awayColor: teamColors(event).away,
+                            sportKey: event.sport,
+                            homeWinProb: event.currentOdds?.homeProbability,
+                            awayWinProb: event.currentOdds?.awayProbability,
+                            homeSpread: event.currentOdds?.homeSpread,
+                            overUnder: event.currentOdds?.overUnder,
+                            // #6290 — the pre-game total, from `opening_odds` and
+                            // never from `current_odds`. The two are the same
+                            // number before the off and diverge with every score.
+                            openingOverUnder: event.openingOdds?.overUnder,
+                            homeScore: event.homeScore,
+                            awayScore: event.awayScore,
+                            absenceStatedAbove: absenceStatedAbove,
+                            halfScores: halfScores(event)
+                        )
+                    }
+                    // Total Points Spectrum (projected scoring + threshold ladder)
+                    if let gameMarkets = vm.gameMarkets {
+                        TotalPointsSpectrumView(
+                            gameMarkets: gameMarkets,
+                            eventStatus: event.status,
+                            commenceTime: event.commenceTime?.asDate,
+                            homeTeam: event.homeTeam,
+                            awayTeam: event.awayTeam,
+                            homeColor: teamColors(event).home,
+                            awayColor: teamColors(event).away,
+                            sportKey: event.sport,
+                            overUnder: event.currentOdds?.overUnder,
+                            // #6290 — as on the maps above.
+                            openingOverUnder: event.openingOdds?.overUnder,
+                            homeScore: event.homeScore,
+                            awayScore: event.awayScore
                         )
                     }
                     // Special Event Markets (game props, novelty, MVP)
