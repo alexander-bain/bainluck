@@ -193,7 +193,10 @@ struct WatchSavedCornerComplicationContent: View {
         if let snapshot, let reading = snapshot.validatedCornerForecast(showsWidgetLabel: showsWidgetLabel) {
             ViewThatFits(in: [.horizontal, .vertical]) {
                 Text(reading.value)
-                    .font(.system(size: 20, weight: .bold))
+                    // Retained Exactograph host provides a 34-point inner slot.
+                    // Keep the complete percentage at a legible fixed size;
+                    // ViewThatFits still falls back when it cannot fit.
+                    .font(.system(size: 16, weight: .bold))
                     .fixedSize()
                     .widgetLabel {
                         Text("Saved · \(reading.subject)")
