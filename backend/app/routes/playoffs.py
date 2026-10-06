@@ -1241,6 +1241,39 @@ def _merge_probabilities(
     return statistics.median(corrected)
 
 
+def _blended_trend_24h(
+    legs: list[tuple[float, float | None]],
+    volumes: list[int | None] | None = None,
+) -> float | None:
+    """The 24h move of a blended cell: the SAME blend, then vs now.
+
+    ``legs`` is one ``(probability_now, probability_then)`` pair per source the
+    cell merges, in the order the cell merges them; ``then`` is ``None`` for a
+    source with no reading ~24h back.
+
+    #10621. Every grid used to subtract ONE source's consensus 24h ago (whichever
+    leg came first — ``odds_api`` on the NBA championship column) from today's
+    blend of ALL sources. When sportsbooks sat still, ``then`` was simply today's
+    sportsbook number and the "move" was the gap between sportsbooks and the
+    venues: the 76ers read "▲2.7 pts 24h" on a headline the page's own trend
+    chart held at 11.05% all day. That is #1844's rule — both sides of the
+    subtraction must be the same quantity — broken on the WHICH-SOURCE axis.
+
+    Both ends are blended over the same source set (sources with a reading at
+    both ends) through the same ``_merge_probabilities`` the cell uses, with the
+    same volume weights, so a change here is a change in the market. Sources
+    that disagree and do not move produce ``0.0``. No source with a reading
+    then ⇒ ``None``, as before.
+    """
+    idx = [i for i, (_now, then) in enumerate(legs) if then is not None]
+    if not idx:
+        return None
+    vols = [volumes[i] for i in idx] if volumes is not None else None
+    now = min(_merge_probabilities([legs[i][0] for i in idx], vols), 1.0)
+    then = min(_merge_probabilities([legs[i][1] for i in idx], vols), 1.0)
+    return round(now - then, 4)
+
+
 # Batch size for the deferred outcome fetch. Bounds the IN-list handed to the
 # planner; the surviving (column-matched) market set is small in practice, so
 # this is a safety rail rather than a hot path.
@@ -3096,12 +3129,11 @@ def _build_golf_grid_team_rows(
                     src["volume_24h"] = e["volume_24h"]
                 sources.append(src)
 
-            trend_24h = None
-            db_entries = [e for e in entries if e["outcome_id"]]
-            if db_entries:
-                old_p = old_probs.get(db_entries[0]["outcome_id"])
-                if old_p is not None:
-                    trend_24h = round(merged - old_p, 4)
+            trend_24h = _blended_trend_24h(
+                [(e["probability"], old_probs.get(e["outcome_id"]) if e["outcome_id"] else None)
+                 for e in entries],
+                vols,
+            )
 
             cell_data = {
                 "merged_probability": round(merged, 4),
@@ -3515,14 +3547,12 @@ async def _build_upcoming_golf_event_grid(
                     src["volume_24h"] = e["volume_24h"]
                 sources.append(src)
 
-            # 24h trend
-            trend_24h = None
-            db_entries = [e for e in entries if e.get("outcome_id")]
-            if db_entries:
-                oid = db_entries[0]["outcome_id"]
-                old_p = old_probs.get(oid)
-                if old_p is not None:
-                    trend_24h = round(merged - old_p, 4)
+            # 24h trend — the same blend then vs now (#10621)
+            trend_24h = _blended_trend_24h(
+                [(e["probability"], old_probs.get(e["outcome_id"]) if e.get("outcome_id") else None)
+                 for e in entries],
+                vols,
+            )
 
             cell_data = {
                 "merged_probability": round(merged, 4),
@@ -6679,10 +6709,17 @@ async def get_playoff_grid(
             # the same source (e.g., two Kalshi markets) map to the same
             # column for the same team, average them into one entry.
             deduped_entries: list[dict] = []
+            # Each deduped leg's reading ~24h back, averaged the same way as
+            # its probability — None unless every member has one (#10621).
+            deduped_then: list[float | None] = []
             source_groups: dict[str, list[dict]] = defaultdict(list)
             for e in entries:
                 source_groups[e["source"]].append(e)
             for source, group in source_groups.items():
+                olds = [old_probs.get(g["outcome_id"]) for g in group]
+                deduped_then.append(
+                    None if any(o is None for o in olds) else sum(olds) / len(olds)
+                )
                 if len(group) == 1:
                     deduped_entries.append(group[0])
                 else:
@@ -6709,14 +6746,11 @@ async def get_playoff_grid(
                     src["market_name"] = e["market_name"]
                 sources.append(src)
 
-            # Compute 24h trend from the championship outcome
-            trend_24h = None
-            if entries:
-                # Use the first outcome's old probability
-                oid = entries[0]["outcome_id"]
-                old_p = old_probs.get(oid)
-                if old_p is not None:
-                    trend_24h = round(merged - old_p, 4)
+            # 24h trend — the same blend then vs now, never one source's
+            # reading then against every source's blend now (#10621).
+            trend_24h = _blended_trend_24h(
+                [(e["probability"], then) for e, then in zip(deduped_entries, deduped_then)],
+            )
 
             cell_data = {
                 "merged_probability": round(merged, 4),
@@ -7627,11 +7661,10 @@ async def _get_team_progression_for_event_uncached(
                     src["volume_24h"] = e["volume_24h"]
                 sources.append(src)
 
-            trend_24h = None
-            oid = entries[0]["outcome_id"]
-            old_p = old_probs.get(oid)
-            if old_p is not None:
-                trend_24h = round(merged - old_p, 4)
+            trend_24h = _blended_trend_24h(
+                [(e["probability"], old_probs.get(e["outcome_id"])) for e in entries],
+                vols,
+            )
 
             stages.append({
                 "key": col.key,
