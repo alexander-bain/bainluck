@@ -2,8 +2,10 @@
 ESPN live sync, metadata enrichment, and team logo backfill tasks.
 """
 
+import asyncio
 import logging
 import re
+import time
 from contextlib import asynccontextmanager
 from datetime import datetime, timedelta, timezone
 from typing import Optional
@@ -693,6 +695,74 @@ async def _release_rows(session):
     await publish_committed_nonvenue_frames(session)
 
 
+#: How many featured scoreboards may be awaited at once (#10617). Was 1 — every
+#: board waited for the one before it — so the pass's reads took the SUM of
+#: their waits. Two overlaps them without opening a burst against ESPN.
+FEATURED_BOARD_READS_IN_FLIGHT = 2
+
+# The admission clock. Module names so a test can drive spacing without the
+# wall clock; production reads the same monotonic clock asyncio does.
+_board_admission_clock = time.monotonic
+_board_admission_sleep = asyncio.sleep
+
+
+async def _fetch_featured_boards(espn, fetch_keys) -> list:
+    """``[(key, events, read_at, error), ...]`` — one featured read per key (#10617).
+
+    Plain data, in ``fetch_keys`` order, for the caller to merge exactly as the
+    old serial loop did: ``events`` is ``get_scoreboard``'s own answer (``None``
+    dark, ``[]`` empty), ``read_at`` the moment THAT board returned (#4571 — never
+    the join, or an early board would be dated by the slowest one), ``error`` the
+    exception a read raised, which costs only its own key.
+
+    At most :data:`FEATURED_BOARD_READS_IN_FLIGHT` reads are outstanding, and a
+    new one starts no sooner than ``espn.rate_limit_delay`` after the previous
+    one started — the spacing the serial loop got from the service's own
+    post-response sleep, kept so two slots never become a two-request burst.
+    The slot is taken BEFORE the admission lock, and the lock is never held
+    across a request.
+
+    Nothing here touches the session; every write stays serial, after the join.
+    One slow board still holds the join — this removes the sum, not the max.
+
+    Cancelled (or failing on anything that is not an ``Exception``), every read
+    is cancelled and AWAITED before this returns, so the caller's ``finally``
+    never closes the service under a request still in flight, and a read still
+    waiting for its slot is never started.
+    """
+    slots = asyncio.Semaphore(FEATURED_BOARD_READS_IN_FLIGHT)
+    admission = asyncio.Lock()
+    # The service's own setting; 0.5 is its constructor default, for a stand-in
+    # service that does not carry one.
+    spacing = getattr(espn, "rate_limit_delay", 0.5)
+    last_start: list = []
+
+    async def _read(key):
+        async with slots:
+            async with admission:
+                if last_start:
+                    while (
+                        wait := last_start[0] + spacing - _board_admission_clock()
+                    ) > 0:
+                        await _board_admission_sleep(wait)
+                last_start[:] = [_board_admission_clock()]
+            try:
+                events = await espn.get_scoreboard(key)
+            except Exception as e:  # CancelledError is not one; it propagates
+                return key, None, None, e
+            read_at = datetime.now(timezone.utc) if events is not None else None
+            return key, events, read_at, None
+
+    tasks = [asyncio.create_task(_read(key)) for key in fetch_keys]
+    try:
+        return list(await asyncio.gather(*tasks))
+    except BaseException:
+        for task in tasks:
+            task.cancel()
+        await asyncio.gather(*tasks, return_exceptions=True)
+        raise
+
+
 async def _sync_espn_live_events():
     """Async implementation of sync_espn_live_events.
 
@@ -848,25 +918,27 @@ async def _sync_espn_live_events():
             # than the payload they came off.
             espn_read_at: dict = {}
             try:
-                for key in all_fetch_keys:
-                    try:
-                        events = await espn.get_scoreboard(key)
-                        if events is None:
-                            # AUTHORITY DARK — ESPN did not answer. The key is
-                            # left ABSENT rather than set to [], so no pass can
-                            # read this sport's silence as an empty slate.
-                            stats["authority_dark_sports"] += 1
-                            logger.warning(
-                                "ESPN scoreboard authority dark for %s — sport "
-                                "skipped, last known state kept", key,
-                            )
-                            continue
-                        espn_data[key] = events
-                        espn_read_at[key] = datetime.now(timezone.utc)
-                    except Exception as e:
-                        stats["errors"].append(f"espn_fetch_{key}: {str(e)}")
+                # #10617: two reads in flight, so boards' waits overlap instead
+                # of adding up. The clocks are taken inside, per board.
+                reads = await _fetch_featured_boards(espn, all_fetch_keys)
             finally:
                 await espn.close()
+            for key, events, read_at, error in reads:
+                if error is not None:
+                    stats["errors"].append(f"espn_fetch_{key}: {str(error)}")
+                    continue
+                if events is None:
+                    # AUTHORITY DARK — ESPN did not answer. The key is
+                    # left ABSENT rather than set to [], so no pass can
+                    # read this sport's silence as an empty slate.
+                    stats["authority_dark_sports"] += 1
+                    logger.warning(
+                        "ESPN scoreboard authority dark for %s — sport "
+                        "skipped, last known state kept", key,
+                    )
+                    continue
+                espn_data[key] = events
+                espn_read_at[key] = read_at
 
             # ── Who serves a sport ESPN did not answer for? (#3473) ─
             #
