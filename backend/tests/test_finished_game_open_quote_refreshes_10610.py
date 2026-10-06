@@ -143,7 +143,8 @@ class TestThePrimaryWrite:
     @pytest.mark.parametrize("status", ["completed", "closed"])
     def test_a_final_body_with_an_open_quote_is_stored_for_the_live_ttl(self, status):
         rc = _FakeRedis()
-        assert gmc.write(7, _stamped(status, age_s=0), rc=rc) is True
+        stored = gmc.write(7, _stamped(status, age_s=0), rc=rc)
+        assert stored is True
         keys = gmc.keys_for(7)
         assert rc.ttls[keys.primary] == gmc.FRESH_TTL_LIVE == 30
         # The mirror keeps its 24h storage lifetime; only its SERVE age moves.
