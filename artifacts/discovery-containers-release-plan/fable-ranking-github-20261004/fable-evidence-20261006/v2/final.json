@@ -1,0 +1,1058 @@
+{
+ "cards": [
+  {
+   "jid": "j169",
+   "type": "board",
+   "title": "Before Trump's term ends: the world",
+   "origin": "fun-weighted",
+   "score": null,
+   "rank": null,
+   "ids": [
+    "q0075",
+    "q0098",
+    "q0072",
+    "q0073"
+   ],
+   "verdict": "fix",
+   "notes": [
+    "q0075: venue title says 'speak' but the rules say Zelenskyy and Putin 'meet'; plain follows the title, rules govern (verify against full rules)",
+    "q0072 and q0073 say 'January 2029' but the deadline is before January 21, 2029",
+    "Members share the Jan 20-21, 2029 deadline"
+   ],
+   "forward": 2.8,
+   "surprise": 2.2,
+   "clear": 1,
+   "role": "pick",
+   "n_raters2": 5,
+   "forward2": 2.4,
+   "surprise2": 2,
+   "clear2": 1,
+   "why2": [
+    "Part of Canada at 11% is wild, but it's geopolitics.",
+    "Canada takeover at 11% is odd, but it's geopolitics.",
+    "Putin-Zelenskyy 42% and Canada 11% are striking world-affairs numbers.",
+    "Geopolitics; Canada takeover at 11% seems absurdly high.",
+    "Taking part of Canada at 11%? That line stopped me."
+   ],
+   "tier": "middle",
+   "n": 1
+  },
+  {
+   "jid": "j159",
+   "type": "yardstick",
+   "title": "",
+   "origin": "v1-top",
+   "score": 0.4082,
+   "rank": 143,
+   "ids": [
+    "q0015",
+    "q0135"
+   ],
+   "verdict": "fix",
+   "notes": [
+    "q0135 omits the deadline (first game of the 2028 season) and that an official relocation announcement also counts"
+   ],
+   "forward": 2.8,
+   "surprise": 1.4,
+   "clear": 1,
+   "role": "pick",
+   "n_raters2": 5,
+   "forward2": 2,
+   "surprise2": 0.8,
+   "clear2": 1,
+   "why2": [
+    "Bears-to-Indiana next to a Mars landing is a fun line.",
+    "Mars landing and a football team moving; not for me.",
+    "Mars and a football stadium move; neither is my news.",
+    "SpaceX Mars landing at 25% feels high; Bears part irrelevant.",
+    "Bears to Indiana is fun, but numbers feel expected."
+   ],
+   "tier": "low",
+   "n": 2
+  },
+  {
+   "jid": "j103",
+   "type": "clock",
+   "title": "Oklahoma enacts data center moratorium by...?",
+   "origin": "loosened",
+   "score": null,
+   "rank": null,
+   "ids": [
+    "q2035",
+    "q2036",
+    "q2037",
+    "q2038"
+   ],
+   "verdict": "pass",
+   "notes": [],
+   "forward": 1.4,
+   "surprise": 0,
+   "clear": 1,
+   "role": "control",
+   "n_raters2": 5,
+   "forward2": 1.4,
+   "surprise2": 0.4,
+   "clear2": 1,
+   "why2": [
+    "Don't care about Oklahoma data centers.",
+    "State data center policy; zero interest.",
+    "Data center backlash matters, but one state's timetable is niche.",
+    "Data center backlash matters, but Oklahoma is niche for me.",
+    "Oklahoma data center rules; I'd scroll right past."
+   ],
+   "tier": "low",
+   "n": 3
+  },
+  {
+   "jid": "j059",
+   "type": "board",
+   "title": "By the end of 2026: the economy",
+   "origin": "v1",
+   "score": 0.5967,
+   "rank": 10,
+   "ids": [
+    "q0101",
+    "q1935",
+    "q1159",
+    "q1387"
+   ],
+   "verdict": "pass",
+   "notes": [
+    "note: q1387 'AI bubble bursts' resolves on a rules checklist (at least three listed downturn conditions; excerpt cut off)"
+   ],
+   "forward": 2.8,
+   "surprise": 2.6,
+   "clear": 1,
+   "role": "pick",
+   "n_raters2": 5,
+   "forward2": 2.4,
+   "surprise2": 2.4,
+   "clear2": 1,
+   "why2": [
+    "A likely rate hike affects me; the rest is finance talk.",
+    "All economy stuff; I'd scroll right past.",
+    "Economy is my beat; 75% rate hike changes my outlook.",
+    "Rate hike at 75% matters; 'AI bubble bursts' is too vague.",
+    "Rate hike number shocked me, but it's economy homework."
+   ],
+   "tier": "middle",
+   "n": 4
+  },
+  {
+   "jid": "j061",
+   "type": "yardstick",
+   "title": "",
+   "origin": "v1-top",
+   "score": 0.3418,
+   "rank": 221,
+   "ids": [
+    "q1604",
+    "q0868"
+   ],
+   "verdict": "pass",
+   "notes": [],
+   "forward": 1.6,
+   "surprise": 0.8,
+   "clear": 0.6,
+   "role": "control",
+   "n_raters2": 5,
+   "forward2": 1.6,
+   "surprise2": 0.8,
+   "clear2": 1,
+   "why2": [
+    "Cuba deal and GTA Online don't matter to me.",
+    "GTA Online unlikely this year; useful but unexciting.",
+    "Cuba deal odds as expected; game comparison means nothing.",
+    "GTA Online at 11% is useful; Cuba pairing is random.",
+    "Cuba deal and GTA Online timing; neither grabs me."
+   ],
+   "tier": "low",
+   "n": 5
+  },
+  {
+   "jid": "j060",
+   "type": "clock",
+   "title": "When will the next Millennium Prize be awarded?",
+   "origin": "loosened",
+   "score": null,
+   "rank": null,
+   "ids": [
+    "q1205",
+    "q1206",
+    "q1207",
+    "q1208"
+   ],
+   "verdict": "pass",
+   "notes": [],
+   "forward": 1.8,
+   "surprise": 1.6,
+   "clear": 1,
+   "role": "pick",
+   "n_raters2": 5,
+   "forward2": 2,
+   "surprise2": 1.8,
+   "clear2": 1,
+   "why2": [
+    "Math prizes; I'd scroll right past.",
+    "Math prize deadlines; not something I follow.",
+    "Not my field, but 59% by 2030 made me curious.",
+    "59% by 2030 implies a famous math problem gets solved.",
+    "Math prize at 59% by 2030 is curious; not my world."
+   ],
+   "tier": "low",
+   "n": 6
+  },
+  {
+   "jid": "j176",
+   "type": "board",
+   "title": "By the end of October",
+   "origin": "random-top24",
+   "score": null,
+   "rank": null,
+   "ids": [
+    "q1430",
+    "q1947",
+    "q0819",
+    "q0761"
+   ],
+   "verdict": "fix",
+   "notes": [
+    "STRUCTURE: q1938 is 'Anthropic IPO happens in November 2026', a November month bucket, not an end-of-October claim; drop it (4 members remain)",
+    "q0761 says 'sign' but rules count a deal agreed to, signed, or accepted",
+    "TONE note: q1947 is war-related (Russia-Ukraine diplomatic meeting), though about diplomacy, not strikes or casualties"
+   ],
+   "forward": 2.4,
+   "surprise": 2,
+   "clear": 0.2,
+   "role": "control",
+   "n_raters2": 5,
+   "forward2": 2.4,
+   "surprise2": 2,
+   "clear2": 1,
+   "why2": [
+    "Tech release and diplomacy; nothing here for me.",
+    "Gemini 4.0 coming soon is mildly interesting; rest is politics.",
+    "Russia-Ukraine meeting at 58% this month caught my eye.",
+    "Gemini 4.0 at 88% this month is concrete AI news.",
+    "Gemini and diplomacy; high numbers but not my thing."
+   ],
+   "tier": "middle",
+   "n": 7
+  },
+  {
+   "jid": "j265",
+   "type": "yardstick",
+   "title": "",
+   "origin": "v1-top",
+   "score": 0.4848,
+   "rank": 83,
+   "ids": [
+    "q0057",
+    "q0988"
+   ],
+   "verdict": "pass",
+   "notes": [],
+   "forward": 2.8,
+   "surprise": 2.4,
+   "clear": 1,
+   "role": "pick",
+   "n_raters2": 5,
+   "forward2": 2.6,
+   "surprise2": 2,
+   "clear2": 1,
+   "why2": [
+    "Surprised Swift is that low; wouldn't pass it along.",
+    "Taylor at only 11% for top US artist? Telling Swiftie friends.",
+    "AOC at 10% mildly interesting; Swift pairing is just cute.",
+    "Election longshot and Spotify charts; random pairing, not for me.",
+    "Taylor Swift only 11%, same as AOC for president? Really?"
+   ],
+   "tier": "middle",
+   "n": 8
+  },
+  {
+   "jid": "j237",
+   "type": "clock",
+   "title": "Will Trump publicly criticize Kevin Warsh?",
+   "origin": "loosened",
+   "score": null,
+   "rank": null,
+   "ids": [
+    "q0914",
+    "q0915",
+    "q0916"
+   ],
+   "verdict": "pass",
+   "notes": [],
+   "forward": 1.4,
+   "surprise": 0.2,
+   "clear": 0.4,
+   "role": "control",
+   "n_raters2": 5,
+   "forward2": 1.2,
+   "surprise2": 0,
+   "clear2": 0.4,
+   "why2": [
+    "Don't know who Kevin Warsh is.",
+    "No idea who Kevin Warsh is.",
+    "About what I'd expect; Trump always turns on Fed chairs.",
+    "Trump criticizing a Fed chair is predictable; low stakes.",
+    "Not sure who Kevin Warsh is; skip."
+   ],
+   "tier": "low",
+   "n": 9
+  },
+  {
+   "jid": "j181",
+   "type": "board",
+   "title": "By the end of 2027",
+   "origin": "random-top24",
+   "score": null,
+   "rank": null,
+   "ids": [
+    "q1235",
+    "q0787",
+    "q0948",
+    "q1996",
+    "q0154"
+   ],
+   "verdict": "fix",
+   "notes": [
+    "MEANING: q1235 resolves on OpenAI announcing it has attained AGI, not on AGI itself",
+    "q0787: title says 'announces departure (excluding death)' but rules say 'leaves office'; plain covers only the announcement and drops the death exclusion (verify against full rules)",
+    "TONE note: q0787 venue text references a named person's death as an exclusion",
+    "MEANING: q0154 means all four majors in a single year, not a career Grand Slam",
+    "MEANING note: q0948 resolves if any one of the President, a Cabinet member, a Joint Chief or a federal agency states extraterrestrial life or technology exists",
+    "Members share the Dec 31, 2027 / Jan 1, 2028 deadline"
+   ],
+   "forward": 3.2,
+   "surprise": 2.8,
+   "clear": 0.8,
+   "role": "pick",
+   "n_raters2": 5,
+   "forward2": 3,
+   "surprise2": 2.4,
+   "clear2": 0.8,
+   "why2": [
+    "Scheffler slam at 6% and aliens are fun; AGI unclear.",
+    "AGI at 45% and aliens catch my eye, barely.",
+    "AGI at 45% and Trump leaving early 19% raise eyebrows.",
+    "OpenAI AGI claim 45% and Anthropic bankruptcy 10% are wild.",
+    "OpenAI AGI at 45% and Trump leaving early caught my eye."
+   ],
+   "tier": "high",
+   "n": 10
+  },
+  {
+   "jid": "j185",
+   "type": "yardstick",
+   "title": "",
+   "origin": "v1-top",
+   "score": 0.4353,
+   "rank": 115,
+   "ids": [
+    "q0440",
+    "q1370"
+   ],
+   "verdict": "pass",
+   "notes": [
+    "MEANING note: q1370 counts domestic (US) opening-weekend gross only"
+   ],
+   "forward": 2.8,
+   "surprise": 2.2,
+   "clear": 1,
+   "role": "pick",
+   "n_raters2": 5,
+   "forward2": 2.8,
+   "surprise2": 2.8,
+   "clear2": 1,
+   "why2": [
+    "Spider-Man over Avengers surprised me; so did a Democratic sweep.",
+    "Spider-Man favored for biggest opening is interesting; midterms pairing is dull.",
+    "Democrats 65% to sweep Congress stunned me; Spider-Man is filler.",
+    "Arbitrary pairing of midterms and a movie; neither my thing.",
+    "Dems favored for both chambers? Spider-Man over Avengers? Interesting."
+   ],
+   "tier": "middle",
+   "n": 11
+  },
+  {
+   "jid": "j238",
+   "type": "clock",
+   "title": "Will the US issue a Level 4 travel advisory for Taiwan?",
+   "origin": "v1",
+   "score": 0.1243,
+   "rank": 21,
+   "ids": [
+    "q0011",
+    "q0012",
+    "q0013",
+    "q0014"
+   ],
+   "verdict": "pass",
+   "notes": [
+    "note: q0012 adds 'Do Not Travel' gloss; accurate, harmless"
+   ],
+   "forward": 2.4,
+   "surprise": 2.2,
+   "clear": 1,
+   "role": "pick",
+   "n_raters2": 5,
+   "forward2": 2.2,
+   "surprise2": 2.2,
+   "clear2": 1,
+   "why2": [
+    "Taiwan trouble likelier than I thought; a bit unsettling.",
+    "Taiwan travel warning; ominous but not my thing.",
+    "Taiwan crisis proxy at 41% by 2030 is alarming.",
+    "Taiwan risk at 41% by 2030 matters for chips; alarming.",
+    "41% by 2030 sounds ominous, but travel advisories are dull."
+   ],
+   "tier": "low",
+   "n": 12
+  },
+  {
+   "jid": "j070",
+   "type": "board",
+   "title": "By mid-2027",
+   "origin": "random-top24",
+   "score": null,
+   "rank": null,
+   "ids": [
+    "q0102",
+    "q1534",
+    "q1941",
+    "q1388",
+    "q0291"
+   ],
+   "verdict": "fix",
+   "notes": [
+    "q1941: resolves only on FDA approval of one product, Moderna's intismeran autogene, for any indication; not any skin cancer vaccine",
+    "note: q1388 'AI bubble bursts' resolves on a rules checklist (excerpt cut off)"
+   ],
+   "forward": 3.4,
+   "surprise": 2.8,
+   "clear": 1,
+   "role": "pick",
+   "n_raters2": 5,
+   "forward2": 2.6,
+   "surprise2": 2.4,
+   "clear2": 1,
+   "why2": [
+    "Near-certain rate hike and a cancer vaccine got a look.",
+    "Fed, mergers, IPOs; finance feed, not mine.",
+    "Rate hike at 95% and merger 43% are real surprises.",
+    "Rate hike 95%, merger 43%, AI bubble 20%: lots to discuss.",
+    "Rate hike near-certain and Musk merger 43%? Did not know."
+   ],
+   "tier": "middle",
+   "n": 13
+  },
+  {
+   "jid": "j054",
+   "type": "yardstick",
+   "title": "",
+   "origin": "v1-top",
+   "score": 0.3848,
+   "rank": 167,
+   "ids": [
+    "q0036",
+    "q0391"
+   ],
+   "verdict": "pass",
+   "notes": [],
+   "forward": 3.6,
+   "surprise": 2.6,
+   "clear": 1,
+   "role": "pick",
+   "n_raters2": 5,
+   "forward2": 3.4,
+   "surprise2": 2.6,
+   "clear2": 1,
+   "why2": [
+    "Miley for the Super Bowl halftime? I'd tell my wife.",
+    "Miley at the Super Bowl halftime? Sending to group chat now.",
+    "Democratic trifecta near a coin flip in 2028 interests me.",
+    "Far-off election paired with halftime show; not my interests.",
+    "Miley for Super Bowl halftime at 48%? Telling friends."
+   ],
+   "tier": "high",
+   "n": 14
+  },
+  {
+   "jid": "j056",
+   "type": "clock",
+   "title": "NASA lands on the moon?",
+   "origin": "loosened",
+   "score": null,
+   "rank": null,
+   "ids": [
+    "q0963",
+    "q0964",
+    "q0965"
+   ],
+   "verdict": "fix",
+   "notes": [
+    "rules require a manned NASA mission to land; plain 'NASA lands on the moon' also reads as an uncrewed lander"
+   ],
+   "forward": 2.4,
+   "surprise": 0.8,
+   "clear": 1,
+   "role": "pick",
+   "n_raters2": 5,
+   "forward2": 2.2,
+   "surprise2": 0.8,
+   "clear2": 1,
+   "why2": [
+    "Moon landing later than I assumed; my kids might care.",
+    "Moon landing keeps slipping; worth a glance, not sharing.",
+    "Matches what I assumed; Moon landing keeps slipping.",
+    "I follow Artemis; clean timeline, matches my expectations.",
+    "NASA running late again; unsurprising, mildly interesting."
+   ],
+   "tier": "low",
+   "n": 15
+  },
+  {
+   "jid": "j106",
+   "type": "board",
+   "title": "By the end of 2026",
+   "origin": "light-only",
+   "score": null,
+   "rank": null,
+   "ids": [
+    "q1427",
+    "q0815",
+    "q0869",
+    "q0868",
+    "q0855"
+   ],
+   "verdict": "fix",
+   "notes": [
+    "q0868: 'GTA VI Online' is the online mode, not the base game (due Nov 19, 2026); 11% reads as the game itself slipping - clarify"
+   ],
+   "forward": 2.4,
+   "surprise": 1.4,
+   "clear": 1,
+   "role": "control",
+   "n_raters2": 5,
+   "forward2": 2.8,
+   "surprise2": 2.2,
+   "clear2": 1,
+   "why2": [
+    "Apple launching something new is mildly interesting; rest is tech.",
+    "Kim K's bar odds and GTA Online timing are my lane.",
+    "Tech and celebrity grab bag; only Apple line registers.",
+    "Apple, Starship, ChatGPT pricing, GTA Online: all my topics, surprising numbers.",
+    "Apple doing something brand new at 63% is intriguing."
+   ],
+   "tier": "middle",
+   "n": 16
+  },
+  {
+   "jid": "j138",
+   "type": "yardstick",
+   "title": "",
+   "origin": "v1-top",
+   "score": 0.3218,
+   "rank": 260,
+   "ids": [
+    "q1534",
+    "q0389"
+   ],
+   "verdict": "pass",
+   "notes": [
+    "sentences faithful",
+    "q0389 note: resolves on being announced as headliner of the February 2027 show"
+   ],
+   "forward": 3.8,
+   "surprise": 3,
+   "clear": 1,
+   "role": "pick",
+   "n_raters2": 5,
+   "forward2": 3.4,
+   "surprise2": 2.8,
+   "clear2": 0.8,
+   "why2": [
+    "Jay-Z headlining halftime at 44%? I'd tell my buddies.",
+    "Jay-Z headlining halftime at 44%? Did not see that coming.",
+    "Merger odds notable; halftime show pairing doesn't help me.",
+    "Merger number interests me; Jay-Z claim has no year, confusing.",
+    "Jay-Z halftime and Tesla-SpaceX merger near coin flips? Sending this."
+   ],
+   "tier": "high",
+   "n": 17
+  },
+  {
+   "jid": "j250",
+   "type": "clock",
+   "title": "US-Iran Hormuz Agreement by...?",
+   "origin": "v1",
+   "score": 0.1649,
+   "rank": 20,
+   "ids": [
+    "q1898",
+    "q1896",
+    "q1895",
+    "q1897",
+    "q1899"
+   ],
+   "verdict": "pass",
+   "notes": [
+    "note: war-adjacent (US-Iran standoff) but the claim is a diplomatic agreement; not counted as a TONE hit"
+   ],
+   "forward": 2,
+   "surprise": 0.4,
+   "clear": 1,
+   "role": "pick",
+   "n_raters2": 5,
+   "forward2": 1.6,
+   "surprise2": 0.2,
+   "clear2": 1,
+   "why2": [
+    "Five dates for one Iran deal; I'd scroll past.",
+    "Iran shipping deal timeline; I'd keep scrolling.",
+    "Hormuz drives oil prices; useful timeline, though no surprises.",
+    "Useful timeline, but distant geopolitics; numbers roughly as expected.",
+    "Hormuz deal dates; small numbers, nothing new to me."
+   ],
+   "tier": "low",
+   "n": 18
+  },
+  {
+   "jid": "j063",
+   "type": "board",
+   "title": "Before Trump's term ends",
+   "origin": "random-top24",
+   "score": null,
+   "rank": null,
+   "ids": [
+    "q1196",
+    "q0949",
+    "q0072",
+    "q0073",
+    "q0089"
+   ],
+   "verdict": "fix",
+   "notes": [
+    "q0949: resolves if any Cabinet member, Joint Chief or federal agency definitively states extraterrestrial life or technology exists; broader than 'the US government confirms aliens exist'",
+    "q0949, q0072, q0073: 'January 2029' misstates the Jan 20/21, 2029 deadlines"
+   ],
+   "forward": 4.4,
+   "surprise": 3,
+   "clear": 1,
+   "role": "pick",
+   "n_raters2": 5,
+   "forward2": 3,
+   "surprise2": 2.4,
+   "clear2": 1,
+   "why2": [
+    "Aliens 23% and part of Canada 11% are wild numbers.",
+    "Aliens 23% and Canada 11% are odd; rest is politics.",
+    "Stock-trading ban at 39% and Canada 11% worth a read.",
+    "Congress stock ban at 39% and aliens at 23% intrigue me.",
+    "Aliens 23%, Canada 11%? That's a 'wait, what' list."
+   ],
+   "tier": "high",
+   "n": 19
+  },
+  {
+   "jid": "j118",
+   "type": "yardstick",
+   "title": "",
+   "origin": "v1-top",
+   "score": 0.4444,
+   "rank": 105,
+   "ids": [
+    "q0060",
+    "q1566"
+   ],
+   "verdict": "fix",
+   "notes": [
+    "q1566: '2027 AFC championship' is the January 2027 game deciding the 2026 season (deadline 2027-04-01); label reads like the 2027 season",
+    "q0060 note: resolves on inauguration for the term beginning 2029, not election night"
+   ],
+   "forward": 1.6,
+   "surprise": 0.2,
+   "clear": 1,
+   "role": "control",
+   "n_raters2": 5,
+   "forward2": 1.8,
+   "surprise2": 0.2,
+   "clear2": 1,
+   "why2": [
+    "Chiefs' AFC odds matching Vance's is a fun sports comparison.",
+    "Presidential politics plus football; nothing for me.",
+    "Vance number as expected; Chiefs comparison adds little for me.",
+    "Football and a far-off election; pairing tells me nothing.",
+    "Vance and Chiefs odds are about what I figured."
+   ],
+   "tier": "low",
+   "n": 20
+  },
+  {
+   "jid": "j160",
+   "type": "clock",
+   "title": "Will the US acquire any new territory?",
+   "origin": "loosened",
+   "score": null,
+   "rank": null,
+   "ids": [
+    "q0043",
+    "q0044",
+    "q0045"
+   ],
+   "verdict": "pass",
+   "notes": [
+    "MEANING note: rules count the US gaining control of any territory outside its sovereignty, which is broader than a formal acquisition"
+   ],
+   "forward": 2.2,
+   "surprise": 1.8,
+   "clear": 1,
+   "role": "pick",
+   "n_raters2": 5,
+   "forward2": 1.8,
+   "surprise2": 1.6,
+   "clear2": 1,
+   "why2": [
+    "Vague 'new territory' question; nothing here for me.",
+    "Vague territory politics; I'd scroll past.",
+    "One-in-five odds of new US territory is startling.",
+    "Higher than expected, but 'new territory' is frustratingly vague.",
+    "One in five for new US territory is odd, but vague."
+   ],
+   "tier": "low",
+   "n": 21
+  },
+  {
+   "jid": "j137",
+   "type": "board",
+   "title": "By the end of 2027",
+   "origin": "random-top24",
+   "score": null,
+   "rank": null,
+   "ids": [
+    "q1227",
+    "q1532",
+    "q0913",
+    "q0012",
+    "q1233"
+   ],
+   "verdict": "pass",
+   "notes": [
+    "deadlines shared (Dec 31, 2027 / Jan 1, 2028); sentences faithful",
+    "meaning notes: q0913 resolves when the law is enacted; q1233 resolves on an announced price increase"
+   ],
+   "forward": 3.6,
+   "surprise": 3,
+   "clear": 1,
+   "role": "pick",
+   "n_raters2": 5,
+   "forward2": 3.2,
+   "surprise2": 2.8,
+   "clear2": 1,
+   "why2": [
+    "Permanent daylight saving and Costco hot dog are dad talk.",
+    "Costco hot dog and daylight saving are fun; rest is politics.",
+    "Impeachment 66%, merger 60%, even the Costco hot dog: fun mix.",
+    "Tesla-SpaceX merger at 60% by 2027 is the real hook.",
+    "Impeachment, Musk merger at 60%, Costco hot dog: fun list."
+   ],
+   "tier": "high",
+   "n": 22
+  },
+  {
+   "jid": "j172",
+   "type": "yardstick",
+   "title": "",
+   "origin": "v1-top",
+   "score": 0.5441,
+   "rank": 40,
+   "ids": [
+    "q1262",
+    "q1371"
+   ],
+   "verdict": "pass",
+   "notes": [
+    "MEANING note: q1371 counts domestic (US) opening-weekend gross only"
+   ],
+   "forward": 3.2,
+   "surprise": 2.2,
+   "clear": 1,
+   "role": "pick",
+   "n_raters2": 5,
+   "forward2": 3,
+   "surprise2": 2.8,
+   "clear2": 1,
+   "why2": [
+    "Thought both were favorites; Avengers at 35% shocked me.",
+    "Only 35% for Doomsday's opening? Telling my Marvel friends.",
+    "Republicans only 35% to hold the Senate genuinely surprised me.",
+    "Senate number surprised me, but pairing with Avengers is random.",
+    "Republicans underdogs for Senate, Avengers not the favorite? Didn't expect."
+   ],
+   "tier": "high",
+   "n": 23
+  },
+  {
+   "jid": "j048",
+   "type": "clock",
+   "title": "Donald Trump announces departure as President? (Excluding death)",
+   "origin": "loosened",
+   "score": null,
+   "rank": null,
+   "ids": [
+    "q0786",
+    "q0787",
+    "q0788"
+   ],
+   "verdict": "fix",
+   "notes": [
+    "plain sentences say Trump 'announces' leaving, but the rules resolve only if he actually leaves office (venue title says 'announces departure'; rules govern)",
+    "q0788: 'before January 2029' misstates the Jan 20, 2029 deadline",
+    "rungs worded three different ways; fixes make them one question and carry the death exclusion without naming it",
+    "note: tone-borderline, card title carries '(Excluding death)' about a named person; retitle"
+   ],
+   "forward": 3.6,
+   "surprise": 2.6,
+   "clear": 1,
+   "role": "pick",
+   "n_raters2": 5,
+   "forward2": 2.6,
+   "surprise2": 1.8,
+   "clear2": 1,
+   "why2": [
+    "One-in-four he doesn't finish the term is worth a glance.",
+    "Trump leaving early at 25% raises an eyebrow; still politics.",
+    "One in four Trump doesn't finish his term; I'd mention it.",
+    "Higher than I guessed, but each deadline uses different wording.",
+    "One in four Trump leaves early; higher than I thought."
+   ],
+   "tier": "middle",
+   "n": 24
+  },
+  {
+   "jid": "j261",
+   "type": "board",
+   "title": "By mid-2027",
+   "origin": "random-top24",
+   "score": null,
+   "rank": null,
+   "ids": [
+    "q0102",
+    "q0005",
+    "q1192",
+    "q1251",
+    "q0291"
+   ],
+   "verdict": "fix",
+   "notes": [
+    "q0005: rules need only a company's official ANNOUNCEMENT of AGI, not actual achievement",
+    "note: q0102 95% for a Fed hike by June 30, 2027 is striking; sentence matches rules, verify source price"
+   ],
+   "forward": 2.8,
+   "surprise": 2.8,
+   "clear": 1,
+   "role": "pick",
+   "n_raters2": 5,
+   "forward2": 2.8,
+   "surprise2": 2.6,
+   "clear2": 0.8,
+   "why2": [
+    "Rate hike near-certain is news to me; AGI line confuses.",
+    "AGI at 42% is eye-catching; rest is finance and politics.",
+    "Rate hike at 95% plus Alito and Putin odds: my beat.",
+    "Fed hike near-certain and AGI claim 42%; rest is filler.",
+    "Rate hike at 95% and AGI at 42% both surprised me."
+   ],
+   "tier": "middle",
+   "n": 25
+  },
+  {
+   "jid": "j153",
+   "type": "yardstick",
+   "title": "",
+   "origin": "v1-top",
+   "score": 0.545,
+   "rank": 38,
+   "ids": [
+    "q1227",
+    "q0193"
+   ],
+   "verdict": "pass",
+   "notes": [
+    "sentences faithful; unrelated claims at 66% and 67%"
+   ],
+   "forward": 3.2,
+   "surprise": 2.4,
+   "clear": 1,
+   "role": "pick",
+   "n_raters2": 5,
+   "forward2": 2.6,
+   "surprise2": 2.6,
+   "clear2": 1,
+   "why2": [
+    "Impeachment that likely surprised me; the Oscars don't move me.",
+    "Nolan Oscar odds matching Trump impeachment is a fun pairing.",
+    "Impeachment by 2027 at 66% is double what I guessed.",
+    "Impeachment at 66% is striking; the Nolan pairing is random.",
+    "Impeachment before 2028 at 66%, as likely as Nolan's Oscar."
+   ],
+   "tier": "middle",
+   "n": 26
+  },
+  {
+   "jid": "j049",
+   "type": "clock",
+   "title": "Anthropic announces bankruptcy by...?",
+   "origin": "loosened",
+   "score": null,
+   "rank": null,
+   "ids": [
+    "q1996",
+    "q1997",
+    "q1998"
+   ],
+   "verdict": "pass",
+   "notes": [],
+   "forward": 1.8,
+   "surprise": 1.8,
+   "clear": 1,
+   "role": "pick",
+   "n_raters2": 5,
+   "forward2": 1.8,
+   "surprise2": 1.8,
+   "clear2": 1,
+   "why2": [
+    "Barely know Anthropic; its bankruptcy odds mean little to me.",
+    "AI company bankruptcy odds; don't really care.",
+    "Bankruptcy odds seem oddly high, but one company is niche.",
+    "Anthropic bankruptcy at 22% seems implausible; I'd want the source.",
+    "One in five an AI giant goes bust is odd."
+   ],
+   "tier": "low",
+   "n": 27
+  },
+  {
+   "jid": "j047",
+   "type": "yardstick",
+   "title": "",
+   "origin": "v1-top",
+   "score": 0.3351,
+   "rank": 237,
+   "ids": [
+    "q1426",
+    "q0989"
+   ],
+   "verdict": "fix",
+   "notes": [
+    "q1426: 'blue wave' is defined as Democrats at 218+ House seats and only 49+ Senate seats (no Senate majority needed); plain overstates"
+   ],
+   "forward": 3.2,
+   "surprise": 2.6,
+   "clear": 0.8,
+   "role": "pick",
+   "n_raters2": 5,
+   "forward2": 2.4,
+   "surprise2": 2.4,
+   "clear2": 0.8,
+   "why2": [
+    "Drake that dominant? Mildly interesting, but not my world.",
+    "Drake at 84% for top US artist? Music friends will argue.",
+    "Midterm odds interest me; Drake comparison tells me nothing.",
+    "Drake and midterms; random pairing, outside my interests.",
+    "Drake top in US at 84% surprised me; Senate line confusing."
+   ],
+   "tier": "middle",
+   "n": 28
+  },
+  {
+   "jid": "j080",
+   "type": "clock",
+   "title": "Texas enacts data center moratorium by...?",
+   "origin": "loosened",
+   "score": null,
+   "rank": null,
+   "ids": [
+    "q2027",
+    "q2028",
+    "q2029",
+    "q2030"
+   ],
+   "verdict": "pass",
+   "notes": [],
+   "forward": 1.8,
+   "surprise": 1.8,
+   "clear": 1,
+   "role": "pick",
+   "n_raters2": 5,
+   "forward2": 1.8,
+   "surprise2": 1.2,
+   "clear2": 1,
+   "why2": [
+    "Texas data center rules aren't on my radar.",
+    "Texas data center policy; not my world.",
+    "Texas freezing data centers at 27% is higher than expected.",
+    "Texas pausing data centers would hit AI buildout; surprisingly high.",
+    "Texas data center bans aren't something I follow."
+   ],
+   "tier": "low",
+   "n": 29
+  },
+  {
+   "jid": "j192",
+   "type": "clock",
+   "title": "Russia x Ukraine ceasefire agreement by...?",
+   "origin": "v1",
+   "score": 0.3592,
+   "rank": 14,
+   "ids": [
+    "q1719",
+    "q1728",
+    "q1720",
+    "q1722",
+    "q1724",
+    "q1725"
+   ],
+   "verdict": "fix",
+   "notes": [
+    "q1720 gives 'December 31' with no year; deadline is December 31, 2026",
+    "TONE: card subject is the Russia-Ukraine war (ceasefire agreement), though the claim is about a truce, not strikes or casualties",
+    "Rungs are the same question; probabilities rise with the deadline"
+   ],
+   "forward": 2.8,
+   "surprise": 2,
+   "clear": 1,
+   "role": "pick",
+   "n_raters2": 5,
+   "forward2": 2.6,
+   "surprise2": 2.2,
+   "clear2": 1,
+   "why2": [
+    "War ending next year looks likelier than I assumed.",
+    "War possibly ending by 2027 is notable; still not my feed.",
+    "Ceasefire a coin flip by mid-2027; I'd tell people that.",
+    "Ceasefire reaching 50% by mid-2027 is more hopeful than I assumed.",
+    "Ceasefire likely by late 2027, but it's a long list."
+   ],
+   "tier": "middle",
+   "n": 30
+  }
+ ],
+ "log": [
+  "contradiction ['q1227', 'q0085']: dropped claim q0085 (lower volume) \u2014 Same event, later deadline shown as less likely: Trump impeached before 2028 = 66%, but impeached during his whole term (to Jan 20, 2029) = 63%",
+  "contradiction ['q0200', 'q1878']: dropped claim q1878 (lower volume) \u2014 Same claim from two venues 5 points apart: Matt Damon wins Best Actor at the 2027 Oscars = 26% (K) vs 21% (P)",
+  "contradiction ['q1220', 'q1360']: dropped claim q1220 (lower volume) \u2014 GTA VI released before Dec 1, 2026 = 93% (K) but launch postponed again = 4% (P): no further delay (96%) means it ships Nov 19, so release before Dec 1 cannot be below 96%; 3 points unaccounted for",
+  "contradiction ['q1221', 'q1360']: dropped claim q1360 (lower volume) \u2014 GTA VI released before 2027 = 94% (K) but launch postponed again = 4% (P): the broader claim (released in 2026) is shown 2 points below the narrower one it contains (no further delay = 96%)"
+ ],
+ "blocked": [
+  "q0085",
+  "q1220",
+  "q1360",
+  "q1878"
+ ],
+ "blocked_cards": [
+  "j090",
+  "j191"
+ ]
+}

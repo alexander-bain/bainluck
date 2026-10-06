@@ -1,0 +1,2959 @@
+[
+ {
+  "cid": "c00",
+  "type": "board",
+  "rank": 1,
+  "slot": 1,
+  "score": 1.7372,
+  "title": "By the end of 2027",
+  "subj": "By the end of 2027|mixed",
+  "meta": {
+   "bucket": "By the end of 2027",
+   "theme": "mixed",
+   "inversions": 50
+  },
+  "verdict": "fix",
+  "reasons": [
+   "FAITHFULNESS q0147: rules resolve on Trump ANNOUNCING a 2028 presidential run before Jan 1, 2028; 'runs for a third term before 2028' misstates what is measured (the election itself is in 2028).",
+   "MEANING/FAITHFULNESS q0964: rules require a MANNED NASA mission landing on the Moon; 'NASA lands on the Moon' reads as any NASA lander.",
+   "MEANING q0948: rules resolve if the President, a Cabinet member, a Joint Chief or any federal agency definitively states that extraterrestrial life OR technology exists - one official's statement suffices and microbial life would count; 'the US government confirms aliens exist' overstates it."
+  ],
+  "members": [
+   {
+    "id": "q1223",
+    "plain": "Grand Theft Auto VI is released before January 2028",
+    "fixed": false,
+    "p": 0.985,
+    "pp": 99,
+    "lt1": false,
+    "venues": [
+     "K"
+    ],
+    "pK": 0.985,
+    "pP": null,
+    "deadline": "2028-01-01",
+    "kind": "date",
+    "raw": "Grand Theft Auto VI: Release date \u2014 Before January 2028",
+    "rules": "If GTA 6 (Grand Theft Auto VI) has been released on a major platform (PS5, Xbox Series X/S, Windows) by Jan 1, 2028, then the market resolves to Yes.",
+    "subject": "GTA VI",
+    "name": "Before January 2028",
+    "title": "Grand Theft Auto VI: Release date",
+    "vol": 101612.6,
+    "evvol": 3823973.92,
+    "src": "K"
+   },
+   {
+    "id": "q1532",
+    "plain": "Tesla and SpaceX officially announce a merger by December 31, 2027",
+    "fixed": false,
+    "p": 0.595,
+    "pp": 60,
+    "lt1": false,
+    "venues": [
+     "P"
+    ],
+    "pK": null,
+    "pP": 0.595,
+    "deadline": "2027-12-31",
+    "kind": "date",
+    "raw": "Tesla and SpaceX merger officially announced by...? \u2014 December 31, 2027",
+    "rules": "This market will resolve to \"Yes\" if it is officially announced that Tesla, Inc. will be, has been, or is being acquired by or merged with SpaceX, or vice versa, by the listed date, 11:59 PM ET. Otherwise, this market will resolve to \"No\".  An announcement by Tesla or SpaceX within this market's tim",
+    "subject": "Tesla and SpaceX",
+    "name": "December 31, 2027",
+    "title": "Tesla and SpaceX merger officially announced by...?",
+    "vol": 33648.35812700001,
+    "evvol": 1303675.202941,
+    "src": "P"
+   },
+   {
+    "id": "q0948",
+    "plain": "A top US official or federal agency states that extraterrestrial life or technology exists before 2028",
+    "fixed": true,
+    "p": 0.14500000000000002,
+    "pp": 15,
+    "lt1": false,
+    "venues": [
+     "K"
+    ],
+    "pK": 0.14500000000000002,
+    "pP": null,
+    "deadline": "2028-01-01",
+    "kind": "date",
+    "raw": "Will the U.S. confirm that aliens exist? \u2014 Before Jan 1, 2028",
+    "rules": "If the President, any member of the Cabinet, any member of the Joint Chiefs of Staff, or any US federal agency definitively states that extraterrestrial life or technology exists before Jan 1, 2028, then the market resolves to Yes.",
+    "subject": "Aliens",
+    "name": "Before Jan 1, 2028",
+    "title": "Will the U.S. confirm that aliens exist?",
+    "vol": 896863.03,
+    "evvol": 36220866.08,
+    "src": "K"
+   },
+   {
+    "id": "q0147",
+    "plain": "Trump announces by the end of 2027 that he is running for a third term",
+    "fixed": true,
+    "p": 0.0955,
+    "pp": 10,
+    "lt1": false,
+    "venues": [
+     "K"
+    ],
+    "pK": 0.0955,
+    "pP": null,
+    "deadline": "2028-01-01",
+    "kind": "date",
+    "raw": "Will Trump run for a third term? \u2014 Before 2028",
+    "rules": "If Donald Trump has announced that he will run for President of the United States in 2028 before Jan 1, 2028, including running for the nomination of any political party to contest that office, then the market resolves to Yes.",
+    "subject": "Donald Trump",
+    "name": "Before 2028",
+    "title": "Will Trump run for a third term?",
+    "vol": 43406.39,
+    "evvol": 153055.53,
+    "src": "K"
+   },
+   {
+    "id": "q0964",
+    "plain": "NASA lands astronauts on the Moon before 2028",
+    "fixed": true,
+    "p": 0.0325,
+    "pp": 3,
+    "lt1": false,
+    "venues": [
+     "K"
+    ],
+    "pK": 0.0325,
+    "pP": null,
+    "deadline": "2028-01-01",
+    "kind": "date",
+    "raw": "NASA lands on the moon? \u2014 Before 2028",
+    "rules": "If an announcement indicates that a manned NASA mission landed on the Moon after Issuance and by December 31, 2027, then the market resolves to Yes.",
+    "subject": "NASA",
+    "name": "Before 2028",
+    "title": "NASA lands on the moon?",
+    "vol": 221311.15,
+    "evvol": 551652.13,
+    "src": "K"
+   }
+  ]
+ },
+ {
+  "cid": "c01",
+  "type": "board",
+  "rank": 2,
+  "slot": 2,
+  "score": 1.3365,
+  "title": "By the end of 2026",
+  "subj": "By the end of 2026|mixed",
+  "meta": {
+   "bucket": "By the end of 2026",
+   "theme": "mixed",
+   "inversions": 20
+  },
+  "verdict": "fix",
+  "reasons": [
+   "MEANING/FAITHFULNESS q1426: 'blue wave' is defined by the rules as Democrats holding 218+ House seats AND only 49+ Senate seats - a Senate majority is NOT required. A casual reader expects a sweep of both chambers; sentence must state the actual bar.",
+   "NOTE q1426: an election-result claim (vote Nov 3, 2026; venue deadline 2027-01-05) rather than a pure by-deadline claim; acceptable on an end-of-2026 board once reworded.",
+   "TONE FLAG (borderline) q1785: concerns the Russia-Ukraine war (peace talks). Diplomacy, not strikes; caller's call. If excluded, drop q1785 (4 members remain).",
+   "NOTE q1785: low bar - any diplomatic meeting between representatives (not leaders) aimed at ceasefire/de-escalation counts."
+  ],
+  "members": [
+   {
+    "id": "q1426",
+    "plain": "Democrats win the House and hold at least 49 Senate seats after the 2026 midterms",
+    "fixed": true,
+    "p": 0.845,
+    "pp": 85,
+    "lt1": false,
+    "venues": [
+     "P"
+    ],
+    "pK": null,
+    "pP": 0.845,
+    "deadline": "2027-01-05",
+    "kind": "binary",
+    "raw": "Blue wave in 2026?",
+    "rules": "This market will resolve to \u201cYes\u201d if both of the following conditions are met as a result of the 2026 midterm elections:  - Democrats have a seat count of 218 or more in the House - Democrats have a seat count of 49 or more in the Senate  Otherwise, this market will resolve to \u201cNo\u201d.  The Senate seat",
+    "subject": "US midterms 2026",
+    "name": "Blue wave in 2026?",
+    "title": "Blue wave in 2026?",
+    "vol": 79598.59800600001,
+    "evvol": 79598.59800600001,
+    "src": "P"
+   },
+   {
+    "id": "q1785",
+    "plain": "Russia and Ukraine hold peace talks by December 31, 2026",
+    "fixed": false,
+    "p": 0.585,
+    "pp": 59,
+    "lt1": false,
+    "venues": [
+     "P"
+    ],
+    "pK": null,
+    "pP": 0.585,
+    "deadline": "2026-12-31",
+    "kind": "date",
+    "raw": "Russia x Ukraine peace talks by...? \u2014 December 31",
+    "rules": "This market will resolve to \"Yes\" if there is a diplomatic meeting between representatives of Russia and Ukraine aimed at discussing a ceasefire, peace agreement, or other substantive de-escalation of the ongoing conflict by the listed date, 11:59 PM ET. Otherwise, this market will resolve to \u201cNo\u201d.",
+    "subject": "Russia-Ukraine peace talks",
+    "name": "December 31",
+    "title": "Russia x Ukraine peace talks by...?",
+    "vol": 327186.60897800006,
+    "evvol": 1120332.330692,
+    "src": "P"
+   },
+   {
+    "id": "q1531",
+    "plain": "Tesla and SpaceX officially announce a merger by December 31, 2026",
+    "fixed": false,
+    "p": 0.14500000000000002,
+    "pp": 15,
+    "lt1": false,
+    "venues": [
+     "P"
+    ],
+    "pK": null,
+    "pP": 0.14500000000000002,
+    "deadline": "2026-12-31",
+    "kind": "date",
+    "raw": "Tesla and SpaceX merger officially announced by...? \u2014 December 31, 2026",
+    "rules": "This market will resolve to \"Yes\" if it is officially announced that Tesla, Inc. will be, has been, or is being acquired by or merged with SpaceX, or vice versa, by December 31, 2026, 11:59 PM ET. Otherwise, this market will resolve to \"No\".  An announcement by Tesla or SpaceX within this market's t",
+    "subject": "Tesla and SpaceX",
+    "name": "December 31, 2026",
+    "title": "Tesla and SpaceX merger officially announced by...?",
+    "vol": 200882.026773,
+    "evvol": 1303675.202941,
+    "src": "P"
+   },
+   {
+    "id": "q0146",
+    "plain": "Donald Trump launches a run for a third term before 2027",
+    "fixed": false,
+    "p": 0.07500000000000001,
+    "pp": 8,
+    "lt1": false,
+    "venues": [
+     "K"
+    ],
+    "pK": 0.07500000000000001,
+    "pP": null,
+    "deadline": "2027-01-01",
+    "kind": "date",
+    "raw": "Will Trump run for a third term? \u2014 Before 2027",
+    "rules": "If Donald Trump has announced that he will run for President of the United States in 2028 before Jan 1, 2027, including running for the nomination of any political party to contest that office, then the market resolves to Yes.",
+    "subject": "Donald Trump",
+    "name": "Before 2027",
+    "title": "Will Trump run for a third term?",
+    "vol": 45906.73,
+    "evvol": 153055.53,
+    "src": "K"
+   },
+   {
+    "id": "q0071",
+    "plain": "The US takes control of any part of Greenland before 2027",
+    "fixed": false,
+    "p": 0.0385,
+    "pp": 4,
+    "lt1": false,
+    "venues": [
+     "K"
+    ],
+    "pK": 0.0385,
+    "pP": null,
+    "deadline": "2027-01-01",
+    "kind": "date",
+    "raw": "Will the US take control of any part of Greenland? \u2014 Before 2027",
+    "rules": "If the United States acquires any part of Greenland before Jan 1, 2027, then the market resolves to Yes.",
+    "subject": "Greenland",
+    "name": "Before 2027",
+    "title": "Will the US take control of any part of Greenland?",
+    "vol": 550674.45,
+    "evvol": 3471750.62,
+    "src": "K"
+   }
+  ]
+ },
+ {
+  "cid": "c02",
+  "type": "board",
+  "rank": 3,
+  "slot": 3,
+  "score": 1.2142,
+  "title": "By mid-2027",
+  "subj": "By mid-2027|mixed",
+  "meta": {
+   "bucket": "By mid-2027",
+   "theme": "mixed",
+   "inversions": 30
+  },
+  "verdict": "pass",
+  "reasons": [
+   "NOTE (meaning) q1388: 'AI bubble bursts' resolves on a checklist definition of an AI industry downturn (at least three of several listed conditions; excerpt truncated), not a general impression.",
+   "TONE FLAG (borderline) q1251: 'Putin out' resolves on any cessation of the presidency, including death or ill health, though it does not name them."
+  ],
+  "members": [
+   {
+    "id": "q1222",
+    "plain": "Grand Theft Auto VI is released before July 2027",
+    "fixed": false,
+    "p": 0.975,
+    "pp": 98,
+    "lt1": false,
+    "venues": [
+     "K"
+    ],
+    "pK": 0.975,
+    "pP": null,
+    "deadline": "2027-07-01",
+    "kind": "date",
+    "raw": "Grand Theft Auto VI: Release date \u2014 Before July 2027",
+    "rules": "If GTA 6 (Grand Theft Auto VI) has been released on a major platform (PS5, Xbox Series X/S, Windows) by Jul 1, 2027, then the market resolves to Yes.",
+    "subject": "GTA VI",
+    "name": "Before July 2027",
+    "title": "Grand Theft Auto VI: Release date",
+    "vol": 139192.47,
+    "evvol": 3823973.92,
+    "src": "K"
+   },
+   {
+    "id": "q1534",
+    "plain": "Tesla and SpaceX announce a merger by June 30, 2027",
+    "fixed": false,
+    "p": 0.425,
+    "pp": 43,
+    "lt1": false,
+    "venues": [
+     "P"
+    ],
+    "pK": null,
+    "pP": 0.425,
+    "deadline": "2027-06-30",
+    "kind": "date",
+    "raw": "Tesla and SpaceX merger officially announced by...? \u2014 June 30, 2027",
+    "rules": "This market will resolve to \"Yes\" if it is officially announced that Tesla, Inc. will be, has been, or is being acquired by or merged with SpaceX, or vice versa, by the listed date, 11:59 PM ET. Otherwise, this market will resolve to \"No\".  An announcement by Tesla or SpaceX within this market's tim",
+    "subject": "Tesla and SpaceX",
+    "name": "June 30, 2027",
+    "title": "Tesla and SpaceX merger officially announced by...?",
+    "vol": 28354.483468999995,
+    "evvol": 1303675.202941,
+    "src": "P"
+   },
+   {
+    "id": "q1192",
+    "plain": "Justice Alito retires from the Supreme Court before July 1, 2027",
+    "fixed": false,
+    "p": 0.28500000000000003,
+    "pp": 29,
+    "lt1": false,
+    "venues": [
+     "K"
+    ],
+    "pK": 0.28500000000000003,
+    "pP": null,
+    "deadline": "2027-07-01",
+    "kind": "date",
+    "raw": "When will Justice Alito retire from the Supreme Court? \u2014 Before Jul 1, 2027",
+    "rules": "If Samuel Alito retires as Supreme Court Justice before Jul 1, 2027, then the market resolves to Yes.",
+    "subject": "Samuel Alito",
+    "name": "Before Jul 1, 2027",
+    "title": "When will Justice Alito retire from the Supreme Court?",
+    "vol": 40043.9,
+    "evvol": 891707.48,
+    "src": "K"
+   },
+   {
+    "id": "q1388",
+    "plain": "The AI bubble bursts by June 30, 2027",
+    "fixed": false,
+    "p": 0.195,
+    "pp": 20,
+    "lt1": false,
+    "venues": [
+     "P"
+    ],
+    "pK": null,
+    "pP": 0.195,
+    "deadline": "2027-06-30",
+    "kind": "date",
+    "raw": "AI bubble burst by...? \u2014 June 30, 2027",
+    "rules": "This market will resolve to \"Yes\" if the AI industry experiences an industry downturn by the specified date, 11:59 PM ET. Otherwise, this market will resolve to \"No\".  For the purposes of this market, the AI industry will be considered to have experienced an industry downturn once at least three of",
+    "subject": "AI bubble",
+    "name": "June 30, 2027",
+    "title": "AI bubble burst by...?",
+    "vol": 11152.963329999997,
+    "evvol": 3025586.3396930043,
+    "src": "P"
+   },
+   {
+    "id": "q1251",
+    "plain": "Vladimir Putin is out as Russia's president by June 30, 2027",
+    "fixed": false,
+    "p": 0.10500000000000001,
+    "pp": 11,
+    "lt1": false,
+    "venues": [
+     "P"
+    ],
+    "pK": null,
+    "pP": 0.10500000000000001,
+    "deadline": "2027-06-30",
+    "kind": "date",
+    "raw": "Putin out as President of Russia by...? \u2014 June 30, 2027",
+    "rules": "This market will resolve to \u201cYes\u201d if Vladimir Putin ceases to be President of Russia for any period of time between market creation and the specified date (ET). Otherwise, this market will resolve to \u201cNo\u201d.  An announcement of Vladimir Putin's resignation/removal before this market's end date will im",
+    "subject": "Vladimir Putin",
+    "name": "June 30, 2027",
+    "title": "Putin out as President of Russia by...?",
+    "vol": 582661.121796,
+    "evvol": 27544174.636953983,
+    "src": "P"
+   }
+  ]
+ },
+ {
+  "cid": "c03",
+  "type": "board",
+  "rank": 4,
+  "slot": 4,
+  "score": 1.035,
+  "title": "By the end of 2026: Washington",
+  "subj": "By the end of 2026|Washington",
+  "meta": {
+   "bucket": "By the end of 2026",
+   "theme": "Washington",
+   "inversions": 30
+  },
+  "verdict": "fix",
+  "reasons": [
+   "MEANING/FAITHFULNESS q1426: 'blue wave' is defined by the rules as Democrats holding 218+ House seats AND only 49+ Senate seats - a Senate majority is NOT required. A casual reader expects a sweep of both chambers; sentence must state the actual bar.",
+   "NOTE q1426: election-result claim (deadline 2027-01-05), acceptable on an end-of-2026 board once reworded."
+  ],
+  "members": [
+   {
+    "id": "q1426",
+    "plain": "Democrats win the House and hold at least 49 Senate seats after the 2026 midterms",
+    "fixed": true,
+    "p": 0.845,
+    "pp": 85,
+    "lt1": false,
+    "venues": [
+     "P"
+    ],
+    "pK": null,
+    "pP": 0.845,
+    "deadline": "2027-01-05",
+    "kind": "binary",
+    "raw": "Blue wave in 2026?",
+    "rules": "This market will resolve to \u201cYes\u201d if both of the following conditions are met as a result of the 2026 midterm elections:  - Democrats have a seat count of 218 or more in the House - Democrats have a seat count of 49 or more in the Senate  Otherwise, this market will resolve to \u201cNo\u201d.  The Senate seat",
+    "subject": "US midterms 2026",
+    "name": "Blue wave in 2026?",
+    "title": "Blue wave in 2026?",
+    "vol": 79598.59800600001,
+    "evvol": 79598.59800600001,
+    "src": "P"
+   },
+   {
+    "id": "q0081",
+    "plain": "Trump invokes the Insurrection Act before 2027",
+    "fixed": false,
+    "p": 0.16999999999999998,
+    "pp": 17,
+    "lt1": false,
+    "venues": [
+     "K"
+    ],
+    "pK": 0.16999999999999998,
+    "pP": null,
+    "deadline": "2027-01-01",
+    "kind": "date",
+    "raw": "Will Trump invoke the Insurrection Act? \u2014 Before 2027",
+    "rules": "If the President of the United States has invoked the Insurrection Act to deploy the United States military and/or the federalized National Guard within the United States before Jan 1, 2027, then the market resolves to Yes.",
+    "subject": "Insurrection Act",
+    "name": "Before 2027",
+    "title": "Will Trump invoke the Insurrection Act?",
+    "vol": 363841.16,
+    "evvol": 588667.36,
+    "src": "K"
+   },
+   {
+    "id": "q1191",
+    "plain": "Justice Alito retires from the Supreme Court before 2027",
+    "fixed": false,
+    "p": 0.12,
+    "pp": 12,
+    "lt1": false,
+    "venues": [
+     "K"
+    ],
+    "pK": 0.12,
+    "pP": null,
+    "deadline": "2027-01-01",
+    "kind": "date",
+    "raw": "When will Justice Alito retire from the Supreme Court? \u2014 Before Jan 1, 2027",
+    "rules": "If Samuel Alito retires as Supreme Court Justice before Jan 1, 2027, then the market resolves to Yes.",
+    "subject": "Samuel Alito",
+    "name": "Before Jan 1, 2027",
+    "title": "When will Justice Alito retire from the Supreme Court?",
+    "vol": 355893.86,
+    "evvol": 891707.48,
+    "src": "K"
+   },
+   {
+    "id": "q0146",
+    "plain": "Donald Trump launches a run for a third term before 2027",
+    "fixed": false,
+    "p": 0.07500000000000001,
+    "pp": 8,
+    "lt1": false,
+    "venues": [
+     "K"
+    ],
+    "pK": 0.07500000000000001,
+    "pP": null,
+    "deadline": "2027-01-01",
+    "kind": "date",
+    "raw": "Will Trump run for a third term? \u2014 Before 2027",
+    "rules": "If Donald Trump has announced that he will run for President of the United States in 2028 before Jan 1, 2027, including running for the nomination of any political party to contest that office, then the market resolves to Yes.",
+    "subject": "Donald Trump",
+    "name": "Before 2027",
+    "title": "Will Trump run for a third term?",
+    "vol": 45906.73,
+    "evvol": 153055.53,
+    "src": "K"
+   },
+   {
+    "id": "q1437",
+    "plain": "Trump endorses JD Vance for president before 2027",
+    "fixed": false,
+    "p": 0.032,
+    "pp": 3,
+    "lt1": false,
+    "venues": [
+     "P"
+    ],
+    "pK": null,
+    "pP": 0.032,
+    "deadline": "2027-01-01",
+    "kind": "binary",
+    "raw": "Will Trump endorse JD Vance for president before 2027?",
+    "rules": "This market will resolve to \"Yes\" if Donald Trump publicly endorses, or announces that he will vote for, JD Vance for the 2028 United States presidential election or the Republican primary for that election, by December 31, 2026, 11:59 PM ET. Otherwise this market will resolve to \"No\".  If Donald Tr",
+    "subject": "JD Vance",
+    "name": "Will Trump endorse JD Vance for president before 2027?",
+    "title": "Will Trump endorse JD Vance for president before 2027?",
+    "vol": 82906.317954,
+    "evvol": 82906.317954,
+    "src": "P"
+   }
+  ]
+ },
+ {
+  "cid": "c04",
+  "type": "board",
+  "rank": 5,
+  "slot": 5,
+  "score": 0.9678,
+  "title": "By 2030",
+  "subj": "By 2030|mixed",
+  "meta": {
+   "bucket": "By 2030",
+   "theme": "mixed",
+   "inversions": 60
+  },
+  "verdict": "fix",
+  "reasons": [
+   "FAITHFULNESS/MEANING q1236: rules resolve on OpenAI ANNOUNCING it has attained AGI, not on AGI being achieved; sentence states it as fact.",
+   "MEANING q1231: 'major meteor strike' is defined as 10 kilotons TNT or more - a fireball-scale event that occurs every few years and usually goes unnoticed, not the catastrophe a reader pictures. Sentence must carry the threshold.",
+   "MEANING q0014: 'Level 4' is jargon; it is the State Department's 'Do Not Travel' level. Rules also count an update or reaffirmation of a Level 4 advisory.",
+   "NOTE q0030: rules say only 'China has overtaken US GDP by 2030' - GDP measure (nominal vs PPP) and whether 'by 2030' means start or end of 2030 are not specified in the excerpt."
+  ],
+  "members": [
+   {
+    "id": "q1236",
+    "plain": "OpenAI announces it has achieved AGI before 2030",
+    "fixed": true,
+    "p": 0.6545000000000001,
+    "pp": 66,
+    "lt1": false,
+    "venues": [
+     "K"
+    ],
+    "pK": 0.6545000000000001,
+    "pP": null,
+    "deadline": "2030-01-01",
+    "kind": "date",
+    "raw": "When will OpenAI achieve AGI? \u2014 Before 2030",
+    "rules": "If OpenAI announces that they have attained AGI by Dec 31, 2029, then the market resolves to Yes.",
+    "subject": "OpenAI",
+    "name": "Before 2030",
+    "title": "When will OpenAI achieve AGI?",
+    "vol": 197586.03,
+    "evvol": 847976.11,
+    "src": "K"
+   },
+   {
+    "id": "q1231",
+    "plain": "A meteor releasing at least 10 kilotons of energy hits Earth before 2030",
+    "fixed": true,
+    "p": 0.47150000000000003,
+    "pp": 47,
+    "lt1": false,
+    "venues": [
+     "K"
+    ],
+    "pK": 0.47150000000000003,
+    "pP": null,
+    "deadline": "2030-01-01",
+    "kind": "binary",
+    "raw": "Will a major meteor strike hit Earth before 2030?",
+    "rules": "If a major meteor (10 kilotons TNT equivalent or greater) hits Earth before Jan 1, 2030, then the market resolves to Yes.",
+    "subject": "Meteor strike",
+    "name": "Before 2030",
+    "title": "Will a major meteor strike hit Earth before 2030?",
+    "vol": 144464.1,
+    "evvol": 144464.1,
+    "src": "K"
+   },
+   {
+    "id": "q0014",
+    "plain": "The US issues a Level 4 'do not travel' advisory for Taiwan before 2030",
+    "fixed": true,
+    "p": 0.405,
+    "pp": 41,
+    "lt1": false,
+    "venues": [
+     "K"
+    ],
+    "pK": 0.405,
+    "pP": null,
+    "deadline": "2030-01-01",
+    "kind": "date",
+    "raw": "Will the US issue a Level 4 travel advisory for Taiwan? \u2014 Before Jan 1, 2030",
+    "rules": "If the U.S. State Department issues, updates, or reaffirms a Level 4 travel advisory for Taiwan after Issuance and before Jan 1, 2030, then the market resolves to Yes.",
+    "subject": "Taiwan",
+    "name": "Before Jan 1, 2030",
+    "title": "Will the US issue a Level 4 travel advisory for Taiwan?",
+    "vol": 22226.34,
+    "evvol": 293670.45999999996,
+    "src": "K"
+   },
+   {
+    "id": "q0015",
+    "plain": "SpaceX successfully lands something on Mars before 2030",
+    "fixed": false,
+    "p": 0.245,
+    "pp": 25,
+    "lt1": false,
+    "venues": [
+     "K"
+    ],
+    "pK": 0.245,
+    "pP": null,
+    "deadline": "2030-01-01",
+    "kind": "binary",
+    "raw": "Will SpaceX land anything successfully on Mars before 2030?",
+    "rules": "If SpaceX lands anything on Mars before Jan 1, 2030, then the market resolves to Yes.",
+    "subject": "SpaceX",
+    "name": "Before 2030",
+    "title": "Will SpaceX land anything successfully on Mars before 2030?",
+    "vol": 94413.29,
+    "evvol": 94413.29,
+    "src": "K"
+   },
+   {
+    "id": "q0030",
+    "plain": "China's economy overtakes the US economy by 2030",
+    "fixed": false,
+    "p": 0.16,
+    "pp": 16,
+    "lt1": false,
+    "venues": [
+     "K"
+    ],
+    "pK": 0.16,
+    "pP": null,
+    "deadline": "2030-01-01",
+    "kind": "binary",
+    "raw": "China overtakes USA\u2019s economy by 2030?",
+    "rules": "If China has overtaken US GDP by 2030, then the market resolves to Yes.",
+    "subject": "China",
+    "name": "By 2030",
+    "title": "China overtakes USA\u2019s economy by 2030?",
+    "vol": 130179.43,
+    "evvol": 130179.43,
+    "src": "K"
+   }
+  ]
+ },
+ {
+  "cid": "c05",
+  "type": "board",
+  "rank": 6,
+  "slot": 6,
+  "score": 0.9275,
+  "title": "Before Trump's term ends: Washington",
+  "subj": "Before Trump's term ends|Washington",
+  "meta": {
+   "bucket": "Before Trump's term ends",
+   "theme": "Washington",
+   "inversions": 0
+  },
+  "verdict": "fix",
+  "reasons": [
+   "FAITHFULNESS q0088: rules are about the UNITED STATES purchasing part of Greenland from Denmark before January 20, 2029; 'before January 2029' reads as before Jan 1 and 'Trump buys' personalises it.",
+   "FAITHFULNESS (minor) q1196: rules resolve when a congressional stock-trading ban BECOMES LAW (it could take effect later).",
+   "NOTE q0076: sentence has no date; the board title supplies it (rules: impeached and convicted by the Senate before Jan 20, 2029). Tone borderline: Senate 'conviction' of a named person, a political not criminal process.",
+   "NOTE: q0088 (US buys part of Greenland) logically implies q0045 (US acquires new territory) - nested, not duplicate."
+  ],
+  "members": [
+   {
+    "id": "q1230",
+    "plain": "The US federally reschedules marijuana before January 20, 2029",
+    "fixed": false,
+    "p": 0.795,
+    "pp": 80,
+    "lt1": false,
+    "venues": [
+     "K"
+    ],
+    "pK": 0.795,
+    "pP": null,
+    "deadline": "2029-01-20",
+    "kind": "date",
+    "raw": "Will marijuana be rescheduled? \u2014 Before Jan 20, 2029",
+    "rules": "If marijuana is rescheduled from Schedule I to a lower drug schedule under the Controlled Substances Act before Jan 20, 2029, then the market resolves to Yes.",
+    "subject": "Marijuana",
+    "name": "Before Jan 20, 2029",
+    "title": "Will marijuana be rescheduled?",
+    "vol": 62555.43,
+    "evvol": 969303.85,
+    "src": "K"
+   },
+   {
+    "id": "q1196",
+    "plain": "A ban on members of Congress trading stocks becomes law before January 21, 2029",
+    "fixed": true,
+    "p": 0.39,
+    "pp": 39,
+    "lt1": false,
+    "venues": [
+     "K"
+    ],
+    "pK": 0.39,
+    "pP": null,
+    "deadline": "2029-01-21",
+    "kind": "date",
+    "raw": "Will members of Congress be banned from trading stocks? \u2014 Before Jan 21, 2029",
+    "rules": "If a Congressional stock trading ban becomes law between Issuance and January 20, 2029, then the market resolves to Yes.",
+    "subject": "US Congress",
+    "name": "Before Jan 21, 2029",
+    "title": "Will members of Congress be banned from trading stocks?",
+    "vol": 26249.09,
+    "evvol": 145583.13,
+    "src": "K"
+   },
+   {
+    "id": "q0045",
+    "plain": "The United States acquires new territory before January 21, 2029",
+    "fixed": false,
+    "p": 0.20500000000000002,
+    "pp": 21,
+    "lt1": false,
+    "venues": [
+     "K"
+    ],
+    "pK": 0.20500000000000002,
+    "pP": null,
+    "deadline": "2029-01-21",
+    "kind": "date",
+    "raw": "Will the US acquire any new territory? \u2014 Before Jan 21, 2029",
+    "rules": "If the United States gains control of any territory outside its sovereignty as of Issuance before Jan 21, 2029, then the market resolves to Yes.",
+    "subject": "United States",
+    "name": "Before Jan 21, 2029",
+    "title": "Will the US acquire any new territory?",
+    "vol": 92085.1,
+    "evvol": 346893.74,
+    "src": "K"
+   },
+   {
+    "id": "q0076",
+    "plain": "Trump is impeached and removed from office",
+    "fixed": false,
+    "p": 0.16499999999999998,
+    "pp": 17,
+    "lt1": false,
+    "venues": [
+     "K"
+    ],
+    "pK": 0.16499999999999998,
+    "pP": null,
+    "deadline": "2029-01-20",
+    "kind": "binary",
+    "raw": "Will Trump be impeached and removed from office?",
+    "rules": "If the President of the United States has been impeached and convicted by the U.S. Senate before Jan 20, 2029, then the market resolves to Yes.",
+    "subject": "Donald Trump",
+    "name": "Before his term ends",
+    "title": "Will Trump be impeached and removed from office?",
+    "vol": 727958.5,
+    "evvol": 727958.5,
+    "src": "K"
+   },
+   {
+    "id": "q0088",
+    "plain": "The US buys at least part of Greenland from Denmark before January 20, 2029",
+    "fixed": true,
+    "p": 0.11499999999999999,
+    "pp": 12,
+    "lt1": false,
+    "venues": [
+     "K"
+    ],
+    "pK": 0.11499999999999999,
+    "pP": null,
+    "deadline": "2029-01-20",
+    "kind": "date",
+    "raw": "Will Trump buy at least part of Greenland? \u2014 Before January 20, 2029",
+    "rules": "If the United States purchases at least part of Greenland from Denmark before January 20, 2029, then the market resolves to Yes.",
+    "subject": "Greenland",
+    "name": "Before January 20, 2029",
+    "title": "Will Trump buy at least part of Greenland?",
+    "vol": 3512738.56,
+    "evvol": 5126545.91,
+    "src": "K"
+   }
+  ]
+ },
+ {
+  "cid": "c08",
+  "type": "clock",
+  "rank": 1,
+  "slot": 1,
+  "score": 0.836,
+  "title": "When will Apple release the iPhone 18?",
+  "subj": "iphone 18",
+  "meta": {
+   "range": 82,
+   "steepest": 75,
+   "mid_rungs": 2,
+   "step_from": "Mar 1, 2027",
+   "grave": false
+  },
+  "verdict": "pass",
+  "reasons": [
+   "NOTE (meaning, verify): prices (4% before 2027, 86% before April 2027) imply this market is about the STANDARD iPhone 18 expected in spring 2027, not the iPhone 18 Pro/fold models slated for autumn 2026. The rules excerpt does not say so. If any iPhone 18-branded model is already on sale, 'Apple releases the iPhone 18' will look wrong to a casual reader - confirm the full rules and consider 'the standard iPhone 18'."
+  ],
+  "members": [
+   {
+    "id": "q0857",
+    "plain": "Apple releases the iPhone 18 before 2027",
+    "fixed": false,
+    "p": 0.035,
+    "pp": 4,
+    "lt1": false,
+    "venues": [
+     "K"
+    ],
+    "pK": 0.035,
+    "pP": null,
+    "deadline": "2027-01-01",
+    "kind": "date",
+    "raw": "When will Apple release the iPhone 18? \u2014 Before 2027",
+    "rules": "If Apple Inc. releases iPhone 18 to the public before Jan 1, 2027, then the market resolves to Yes.",
+    "subject": "iPhone 18",
+    "name": "Before 2027",
+    "title": "When will Apple release the iPhone 18?",
+    "vol": 1427654.68,
+    "evvol": 5095004.29,
+    "src": "K"
+   },
+   {
+    "id": "q0858",
+    "plain": "Apple releases the iPhone 18 before February 2027",
+    "fixed": false,
+    "p": 0.045,
+    "pp": 5,
+    "lt1": false,
+    "venues": [
+     "K"
+    ],
+    "pK": 0.045,
+    "pP": null,
+    "deadline": "2027-02-01",
+    "kind": "date",
+    "raw": "When will Apple release the iPhone 18? \u2014 Before February 2027",
+    "rules": "If Apple Inc. releases iPhone 18 to the public before Feb 1, 2027, then the market resolves to Yes.",
+    "subject": "iPhone 18",
+    "name": "Before February 2027",
+    "title": "When will Apple release the iPhone 18?",
+    "vol": 63708.15,
+    "evvol": 5095004.29,
+    "src": "K"
+   },
+   {
+    "id": "q0859",
+    "plain": "Apple releases the iPhone 18 before March 2027",
+    "fixed": false,
+    "p": 0.10500000000000001,
+    "pp": 11,
+    "lt1": false,
+    "venues": [
+     "K"
+    ],
+    "pK": 0.10500000000000001,
+    "pP": null,
+    "deadline": "2027-03-01",
+    "kind": "date",
+    "raw": "When will Apple release the iPhone 18? \u2014 Before March 2027",
+    "rules": "If Apple Inc. releases iPhone 18 to the public before Mar 1, 2027, then the market resolves to Yes.",
+    "subject": "iPhone 18",
+    "name": "Before March 2027",
+    "title": "When will Apple release the iPhone 18?",
+    "vol": 51881.73,
+    "evvol": 5095004.29,
+    "src": "K"
+   },
+   {
+    "id": "q0860",
+    "plain": "Apple releases the iPhone 18 before April 2027",
+    "fixed": false,
+    "p": 0.855,
+    "pp": 86,
+    "lt1": false,
+    "venues": [
+     "K"
+    ],
+    "pK": 0.855,
+    "pP": null,
+    "deadline": "2027-04-01",
+    "kind": "date",
+    "raw": "When will Apple release the iPhone 18? \u2014 Before April 2027",
+    "rules": "If Apple Inc. releases iPhone 18 to the public before Apr 1, 2027, then the market resolves to Yes.",
+    "subject": "iPhone 18",
+    "name": "Before April 2027",
+    "title": "When will Apple release the iPhone 18?",
+    "vol": 17355.46,
+    "evvol": 5095004.29,
+    "src": "K"
+   }
+  ]
+ },
+ {
+  "cid": "c09",
+  "type": "clock",
+  "rank": 2,
+  "slot": 2,
+  "score": 0.7848,
+  "title": "Will marijuana be rescheduled?",
+  "subj": "marijuana",
+  "meta": {
+   "range": 72,
+   "steepest": 60,
+   "mid_rungs": 2,
+   "step_from": "Jan 1, 2027",
+   "grave": false
+  },
+  "verdict": "pass",
+  "reasons": [],
+  "members": [
+   {
+    "id": "q1228",
+    "plain": "The US reschedules marijuana before 2027",
+    "fixed": false,
+    "p": 0.07949999999999999,
+    "pp": 8,
+    "lt1": false,
+    "venues": [
+     "K"
+    ],
+    "pK": 0.07949999999999999,
+    "pP": null,
+    "deadline": "2027-01-01",
+    "kind": "date",
+    "raw": "Will marijuana be rescheduled? \u2014 Before 2027",
+    "rules": "If marijuana is rescheduled from Schedule I to a lower drug schedule under the Controlled Substances Act before January 1, 2027, then the market resolves to Yes.",
+    "subject": "Marijuana",
+    "name": "Before 2027",
+    "title": "Will marijuana be rescheduled?",
+    "vol": 792196.45,
+    "evvol": 969303.85,
+    "src": "K"
+   },
+   {
+    "id": "q1229",
+    "plain": "The US reschedules marijuana before 2028",
+    "fixed": false,
+    "p": 0.6799999999999999,
+    "pp": 68,
+    "lt1": false,
+    "venues": [
+     "K"
+    ],
+    "pK": 0.6799999999999999,
+    "pP": null,
+    "deadline": "2028-01-01",
+    "kind": "date",
+    "raw": "Will marijuana be rescheduled? \u2014 Before 2028",
+    "rules": "If marijuana is rescheduled from Schedule I to a lower drug schedule under the Controlled Substances Act before Jan 1, 2028, then the market resolves to Yes.",
+    "subject": "Marijuana",
+    "name": "Before 2028",
+    "title": "Will marijuana be rescheduled?",
+    "vol": 114551.97,
+    "evvol": 969303.85,
+    "src": "K"
+   },
+   {
+    "id": "q1230",
+    "plain": "The US federally reschedules marijuana before January 20, 2029",
+    "fixed": false,
+    "p": 0.795,
+    "pp": 80,
+    "lt1": false,
+    "venues": [
+     "K"
+    ],
+    "pK": 0.795,
+    "pP": null,
+    "deadline": "2029-01-20",
+    "kind": "date",
+    "raw": "Will marijuana be rescheduled? \u2014 Before Jan 20, 2029",
+    "rules": "If marijuana is rescheduled from Schedule I to a lower drug schedule under the Controlled Substances Act before Jan 20, 2029, then the market resolves to Yes.",
+    "subject": "Marijuana",
+    "name": "Before Jan 20, 2029",
+    "title": "Will marijuana be rescheduled?",
+    "vol": 62555.43,
+    "evvol": 969303.85,
+    "src": "K"
+   }
+  ]
+ },
+ {
+  "cid": "c10",
+  "type": "clock",
+  "rank": 3,
+  "slot": 3,
+  "score": 0.7488,
+  "title": "Will Trump be impeached?",
+  "subj": "donald trump",
+  "meta": {
+   "range": 63,
+   "steepest": 33,
+   "mid_rungs": 2,
+   "step_from": "Mar 1, 2027",
+   "grave": false
+  },
+  "verdict": "pass",
+  "reasons": [
+   "NOTE (meaning): 'impeached' means a House impeachment vote only, not removal; rules are worded 'the President of the United States'. Sentences are accurate."
+  ],
+  "members": [
+   {
+    "id": "q1225",
+    "plain": "Trump is impeached before 2027",
+    "fixed": false,
+    "p": 0.027250000000000003,
+    "pp": 3,
+    "lt1": false,
+    "venues": [
+     "K",
+     "P"
+    ],
+    "pK": 0.036000000000000004,
+    "pP": 0.018500000000000003,
+    "deadline": "2027-01-01",
+    "kind": "date",
+    "raw": "Will Trump be impeached? \u2014 Before Jan 1, 2027",
+    "rules": "If the President of the United States has been impeached before Jan 1, 2027, then the market resolves to Yes.",
+    "subject": "Donald Trump",
+    "name": "Before Jan 1, 2027",
+    "title": "Will Trump be impeached?",
+    "vol": 1560997.32,
+    "evvol": 3195509.74,
+    "src": "K"
+   },
+   {
+    "id": "q1226",
+    "plain": "Trump is impeached before March 2027",
+    "fixed": false,
+    "p": 0.325,
+    "pp": 33,
+    "lt1": false,
+    "venues": [
+     "K"
+    ],
+    "pK": 0.325,
+    "pP": null,
+    "deadline": "2027-03-01",
+    "kind": "date",
+    "raw": "Will Trump be impeached? \u2014 Before Mar 1, 2027",
+    "rules": "If the President of the United States has been impeached before Mar 1, 2027, then the market resolves to Yes.",
+    "subject": "Donald Trump",
+    "name": "Before Mar 1, 2027",
+    "title": "Will Trump be impeached?",
+    "vol": 368534.85,
+    "evvol": 3195509.74,
+    "src": "K"
+   },
+   {
+    "id": "q1227",
+    "plain": "Trump is impeached before 2028",
+    "fixed": false,
+    "p": 0.655,
+    "pp": 66,
+    "lt1": false,
+    "venues": [
+     "K"
+    ],
+    "pK": 0.655,
+    "pP": null,
+    "deadline": "2028-01-01",
+    "kind": "date",
+    "raw": "Will Trump be impeached? \u2014 Before Jan 1, 2028",
+    "rules": "If the President of the United States has been impeached before Jan 1, 2028, then the market resolves to Yes.",
+    "subject": "Donald Trump",
+    "name": "Before Jan 1, 2028",
+    "title": "Will Trump be impeached?",
+    "vol": 1156998.77,
+    "evvol": 3195509.74,
+    "src": "K"
+   }
+  ]
+ },
+ {
+  "cid": "c11",
+  "type": "clock",
+  "rank": 4,
+  "slot": 4,
+  "score": 0.6812,
+  "title": "Anthropic IPO by __?",
+  "subj": "anthropic",
+  "meta": {
+   "range": 81,
+   "steepest": 56,
+   "mid_rungs": 4,
+   "step_from": "Nov 15, 2026",
+   "grave": false
+  },
+  "verdict": "pass",
+  "reasons": [
+   "NOTE: rules require shares actually listed and open for trading by the date (a filing or announcement does not count); sentences are consistent with that. Wording varies across rungs ('holds an IPO' / 'goes public') but all are faithful."
+  ],
+  "members": [
+   {
+    "id": "q1768",
+    "plain": "Anthropic holds an IPO by October 15, 2026",
+    "fixed": false,
+    "p": 0.0005,
+    "pp": 0,
+    "lt1": true,
+    "venues": [
+     "P"
+    ],
+    "pK": null,
+    "pP": 0.0005,
+    "deadline": "2026-10-15",
+    "kind": "date",
+    "raw": "Anthropic IPO by __? \u2014 October 15, 2026",
+    "rules": "This market will resolve to \"Yes\" if Anthropic shares are listed on a public securities exchange and open for trading by 11:59 PM ET on the listed date. Otherwise, this market will resolve to \"No.\"  If Anthropic is acquired by another company that is already public, this market will immediately reso",
+    "subject": "Anthropic",
+    "name": "October 15, 2026",
+    "title": "Anthropic IPO by __?",
+    "vol": 230340.329012,
+    "evvol": 4420971.9548120005,
+    "src": "P"
+   },
+   {
+    "id": "q1767",
+    "plain": "Anthropic goes public by October 31, 2026",
+    "fixed": false,
+    "p": 0.0135,
+    "pp": 1,
+    "lt1": false,
+    "venues": [
+     "P"
+    ],
+    "pK": null,
+    "pP": 0.0135,
+    "deadline": "2026-10-31",
+    "kind": "date",
+    "raw": "Anthropic IPO by __? \u2014 October 31, 2026",
+    "rules": "This market will resolve to \"Yes\" if Anthropic shares are listed on a public securities exchange and open for trading by 11:59 PM ET on the listed date. Otherwise, this market will resolve to \"No.\"  If Anthropic is acquired by another company that is already public, this market will immediately reso",
+    "subject": "Anthropic",
+    "name": "October 31, 2026",
+    "title": "Anthropic IPO by __?",
+    "vol": 1152681.0979959997,
+    "evvol": 4420971.9548120005,
+    "src": "P"
+   },
+   {
+    "id": "q1770",
+    "plain": "Anthropic goes public with an IPO by November 15, 2026",
+    "fixed": false,
+    "p": 0.11499999999999999,
+    "pp": 12,
+    "lt1": false,
+    "venues": [
+     "P"
+    ],
+    "pK": null,
+    "pP": 0.11499999999999999,
+    "deadline": "2026-11-15",
+    "kind": "date",
+    "raw": "Anthropic IPO by __? \u2014 November 15, 2026",
+    "rules": "This market will resolve to \"Yes\" if Anthropic shares are listed on a public securities exchange and open for trading by 11:59 PM ET on the listed date. Otherwise, this market will resolve to \"No.\"  If Anthropic is acquired by another company that is already public, this market will immediately reso",
+    "subject": "Anthropic",
+    "name": "November 15, 2026",
+    "title": "Anthropic IPO by __?",
+    "vol": 115197.26225,
+    "evvol": 4420971.9548120005,
+    "src": "P"
+   },
+   {
+    "id": "q1769",
+    "plain": "Anthropic goes public in an IPO by November 30, 2026",
+    "fixed": false,
+    "p": 0.675,
+    "pp": 68,
+    "lt1": false,
+    "venues": [
+     "P"
+    ],
+    "pK": null,
+    "pP": 0.675,
+    "deadline": "2026-11-30",
+    "kind": "date",
+    "raw": "Anthropic IPO by __? \u2014 November 30, 2026",
+    "rules": "This market will resolve to \"Yes\" if Anthropic shares are listed on a public securities exchange and open for trading by 11:59 PM ET on the listed date. Otherwise, this market will resolve to \"No.\"  If Anthropic is acquired by another company that is already public, this market will immediately reso",
+    "subject": "Anthropic",
+    "name": "November 30, 2026",
+    "title": "Anthropic IPO by __?",
+    "vol": 232668.84167500006,
+    "evvol": 4420971.9548120005,
+    "src": "P"
+   },
+   {
+    "id": "q1771",
+    "plain": "Anthropic goes public with an IPO by December 15, 2026",
+    "fixed": false,
+    "p": 0.785,
+    "pp": 79,
+    "lt1": false,
+    "venues": [
+     "P"
+    ],
+    "pK": null,
+    "pP": 0.785,
+    "deadline": "2026-12-15",
+    "kind": "date",
+    "raw": "Anthropic IPO by __? \u2014 December 15, 2026",
+    "rules": "This market will resolve to \"Yes\" if Anthropic shares are listed on a public securities exchange and open for trading by 11:59 PM ET on the listed date. Otherwise, this market will resolve to \"No.\"  If Anthropic is acquired by another company that is already public, this market will immediately reso",
+    "subject": "Anthropic",
+    "name": "December 15, 2026",
+    "title": "Anthropic IPO by __?",
+    "vol": 137394.36583900003,
+    "evvol": 4420971.9548120005,
+    "src": "P"
+   },
+   {
+    "id": "q1766",
+    "plain": "Anthropic goes public in an IPO by December 31, 2026",
+    "fixed": false,
+    "p": 0.815,
+    "pp": 82,
+    "lt1": false,
+    "venues": [
+     "P"
+    ],
+    "pK": null,
+    "pP": 0.815,
+    "deadline": "2026-12-31",
+    "kind": "date",
+    "raw": "Anthropic IPO by __? \u2014 December 31, 2026",
+    "rules": "This market will resolve to \"Yes\" if Anthropic shares are listed on a public securities exchange and open for trading by 11:59 PM ET on the listed date. Otherwise, this market will resolve to \"No.\"  If Anthropic is acquired by another company that is already public, this market will immediately reso",
+    "subject": "Anthropic",
+    "name": "December 31, 2026",
+    "title": "Anthropic IPO by __?",
+    "vol": 1015914.9518990003,
+    "evvol": 4420971.9548120005,
+    "src": "P"
+   }
+  ]
+ },
+ {
+  "cid": "c12",
+  "type": "clock",
+  "rank": 5,
+  "slot": 5,
+  "score": 0.6725,
+  "title": "Grand Theft Auto VI: Release date",
+  "subj": "gta vi",
+  "meta": {
+   "range": 98,
+   "steepest": 92,
+   "mid_rungs": 0,
+   "step_from": "Nov 1, 2026",
+   "grave": false
+  },
+  "verdict": "pass",
+  "reasons": [],
+  "members": [
+   {
+    "id": "q1219",
+    "plain": "GTA VI is released before November 2026",
+    "fixed": false,
+    "p": 0.005,
+    "pp": 1,
+    "lt1": false,
+    "venues": [
+     "K"
+    ],
+    "pK": 0.005,
+    "pP": null,
+    "deadline": "2026-11-01",
+    "kind": "date",
+    "raw": "Grand Theft Auto VI: Release date \u2014 Before November 2026",
+    "rules": "If GTA 6 (Grand Theft Auto VI) has been released on a major platform (PS5, Xbox Series X/S, Windows) by Oct 31, 2026, then the market resolves to Yes.",
+    "subject": "GTA VI",
+    "name": "Before November 2026",
+    "title": "Grand Theft Auto VI: Release date",
+    "vol": 889489.81,
+    "evvol": 3823973.92,
+    "src": "K"
+   },
+   {
+    "id": "q1220",
+    "plain": "Grand Theft Auto VI is released before December 1, 2026",
+    "fixed": false,
+    "p": 0.925,
+    "pp": 93,
+    "lt1": false,
+    "venues": [
+     "K"
+    ],
+    "pK": 0.925,
+    "pP": null,
+    "deadline": "2026-12-01",
+    "kind": "date",
+    "raw": "Grand Theft Auto VI: Release date \u2014 Before December 2026",
+    "rules": "If GTA 6 (Grand Theft Auto VI) has been released on a major platform (PS5, Xbox Series X/S, Windows) by Nov 30, 2026, then the market resolves to Yes.",
+    "subject": "GTA VI",
+    "name": "Before December 2026",
+    "title": "Grand Theft Auto VI: Release date",
+    "vol": 806946.94,
+    "evvol": 3823973.92,
+    "src": "K"
+   },
+   {
+    "id": "q1221",
+    "plain": "Grand Theft Auto VI is released before 2027",
+    "fixed": false,
+    "p": 0.935,
+    "pp": 94,
+    "lt1": false,
+    "venues": [
+     "K"
+    ],
+    "pK": 0.935,
+    "pP": null,
+    "deadline": "2027-01-01",
+    "kind": "date",
+    "raw": "Grand Theft Auto VI: Release date \u2014 Before 2027",
+    "rules": "If GTA 6 (Grand Theft Auto VI) has been released on a major platform (PS5, Xbox Series X/S, Windows) by Dec 31, 2026, then the market resolves to Yes.",
+    "subject": "GTA VI",
+    "name": "Before 2027",
+    "title": "Grand Theft Auto VI: Release date",
+    "vol": 874965.52,
+    "evvol": 3823973.92,
+    "src": "K"
+   },
+   {
+    "id": "q1222",
+    "plain": "Grand Theft Auto VI is released before July 2027",
+    "fixed": false,
+    "p": 0.975,
+    "pp": 98,
+    "lt1": false,
+    "venues": [
+     "K"
+    ],
+    "pK": 0.975,
+    "pP": null,
+    "deadline": "2027-07-01",
+    "kind": "date",
+    "raw": "Grand Theft Auto VI: Release date \u2014 Before July 2027",
+    "rules": "If GTA 6 (Grand Theft Auto VI) has been released on a major platform (PS5, Xbox Series X/S, Windows) by Jul 1, 2027, then the market resolves to Yes.",
+    "subject": "GTA VI",
+    "name": "Before July 2027",
+    "title": "Grand Theft Auto VI: Release date",
+    "vol": 139192.47,
+    "evvol": 3823973.92,
+    "src": "K"
+   },
+   {
+    "id": "q1223",
+    "plain": "Grand Theft Auto VI is released before January 2028",
+    "fixed": false,
+    "p": 0.985,
+    "pp": 99,
+    "lt1": false,
+    "venues": [
+     "K"
+    ],
+    "pK": 0.985,
+    "pP": null,
+    "deadline": "2028-01-01",
+    "kind": "date",
+    "raw": "Grand Theft Auto VI: Release date \u2014 Before January 2028",
+    "rules": "If GTA 6 (Grand Theft Auto VI) has been released on a major platform (PS5, Xbox Series X/S, Windows) by Jan 1, 2028, then the market resolves to Yes.",
+    "subject": "GTA VI",
+    "name": "Before January 2028",
+    "title": "Grand Theft Auto VI: Release date",
+    "vol": 101612.6,
+    "evvol": 3823973.92,
+    "src": "K"
+   }
+  ]
+ },
+ {
+  "cid": "c13",
+  "type": "clock",
+  "rank": 6,
+  "slot": 6,
+  "score": 0.5796,
+  "title": "When will OpenAI achieve AGI?",
+  "subj": "openai",
+  "meta": {
+   "range": 54,
+   "steepest": 34,
+   "mid_rungs": 3,
+   "step_from": "Jan 1, 2027",
+   "grave": false
+  },
+  "verdict": "fix",
+  "reasons": [
+   "FAITHFULNESS/MEANING all rungs: rules resolve on OpenAI ANNOUNCING it has attained AGI by the date, not on AGI being achieved. Sentences state achievement as fact."
+  ],
+  "members": [
+   {
+    "id": "q1234",
+    "plain": "OpenAI announces it has achieved AGI before 2027",
+    "fixed": true,
+    "p": 0.1145,
+    "pp": 11,
+    "lt1": false,
+    "venues": [
+     "K"
+    ],
+    "pK": 0.1145,
+    "pP": null,
+    "deadline": "2027-01-01",
+    "kind": "date",
+    "raw": "When will OpenAI achieve AGI? \u2014 Before 2027",
+    "rules": "If OpenAI announces that they have attained AGI by Dec 31, 2026, then the market resolves to Yes.",
+    "subject": "OpenAI",
+    "name": "Before 2027",
+    "title": "When will OpenAI achieve AGI?",
+    "vol": 358415.56,
+    "evvol": 847976.11,
+    "src": "K"
+   },
+   {
+    "id": "q1235",
+    "plain": "OpenAI announces it has achieved AGI before 2028",
+    "fixed": true,
+    "p": 0.4505,
+    "pp": 45,
+    "lt1": false,
+    "venues": [
+     "K"
+    ],
+    "pK": 0.4505,
+    "pP": null,
+    "deadline": "2028-01-01",
+    "kind": "date",
+    "raw": "When will OpenAI achieve AGI? \u2014 Before 2028",
+    "rules": "If OpenAI announces that they have attained AGI by Dec 31, 2027, then the market resolves to Yes.",
+    "subject": "OpenAI",
+    "name": "Before 2028",
+    "title": "When will OpenAI achieve AGI?",
+    "vol": 291974.52,
+    "evvol": 847976.11,
+    "src": "K"
+   },
+   {
+    "id": "q1236",
+    "plain": "OpenAI announces it has achieved AGI before 2030",
+    "fixed": true,
+    "p": 0.6545000000000001,
+    "pp": 66,
+    "lt1": false,
+    "venues": [
+     "K"
+    ],
+    "pK": 0.6545000000000001,
+    "pP": null,
+    "deadline": "2030-01-01",
+    "kind": "date",
+    "raw": "When will OpenAI achieve AGI? \u2014 Before 2030",
+    "rules": "If OpenAI announces that they have attained AGI by Dec 31, 2029, then the market resolves to Yes.",
+    "subject": "OpenAI",
+    "name": "Before 2030",
+    "title": "When will OpenAI achieve AGI?",
+    "vol": 197586.03,
+    "evvol": 847976.11,
+    "src": "K"
+   }
+  ]
+ },
+ {
+  "cid": "c17",
+  "type": "yardstick",
+  "rank": 1,
+  "slot": 1,
+  "score": 0.7254,
+  "title": "",
+  "subj": "house 2026",
+  "meta": {
+   "gap": 0.2,
+   "same_deadline": true
+  },
+  "verdict": "pass",
+  "reasons": [
+   "NOTE (optional) q0449: sentence names no election; the default reading (2026 midterms) is correct. Could add 'in the 2026 midterms'."
+  ],
+  "members": [
+   {
+    "id": "q0449",
+    "plain": "Republicans win control of the US House of Representatives",
+    "fixed": false,
+    "p": 0.0875,
+    "pp": 9,
+    "lt1": false,
+    "venues": [
+     "K"
+    ],
+    "pK": 0.0875,
+    "pP": null,
+    "deadline": "2027-02-01",
+    "kind": "named",
+    "raw": "Which party will win the U.S. House? \u2014 Republican Party",
+    "rules": "If the Republican Party has won control of the House in 2026, then the market resolves to Yes.",
+    "subject": "US House 2026",
+    "name": "Republican Party",
+    "title": "Which party will win the U.S. House?",
+    "vol": 29449785.88,
+    "evvol": 44913428.55,
+    "src": "K"
+   },
+   {
+    "id": "q0994",
+    "plain": "Bad Bunny is named People's Sexiest Man Alive for 2026",
+    "fixed": false,
+    "p": 0.085,
+    "pp": 9,
+    "lt1": false,
+    "venues": [
+     "K"
+    ],
+    "pK": 0.085,
+    "pP": null,
+    "deadline": "2027-01-01",
+    "kind": "named",
+    "raw": "People's Sexiest Man Alive for 2026 \u2014 Bad Bunny",
+    "rules": "If Bad Bunny is People's Sexiest Man Alive in 2026, then the market resolves to Yes.",
+    "subject": "Bad Bunny",
+    "name": "Bad Bunny",
+    "title": "People's Sexiest Man Alive for 2026",
+    "vol": 29327.66,
+    "evvol": 139307.9,
+    "src": "K"
+   }
+  ]
+ },
+ {
+  "cid": "c18",
+  "type": "yardstick",
+  "rank": 4,
+  "slot": 2,
+  "score": 0.6923,
+  "title": "",
+  "subj": "senate 2026",
+  "meta": {
+   "gap": 0.5,
+   "same_deadline": true
+  },
+  "verdict": "pass",
+  "reasons": [],
+  "members": [
+   {
+    "id": "q0447",
+    "plain": "Republicans win control of the US Senate in 2026",
+    "fixed": false,
+    "p": 0.355,
+    "pp": 36,
+    "lt1": false,
+    "venues": [
+     "K"
+    ],
+    "pK": 0.355,
+    "pP": null,
+    "deadline": "2027-02-01",
+    "kind": "named",
+    "raw": "Which party will win the U.S. Senate? \u2014 Republican Party",
+    "rules": "If the Republican Party has won control of the U.S. Senate in 2026, then the market resolves to Yes.",
+    "subject": "US Senate 2026",
+    "name": "Republican Party",
+    "title": "Which party will win the U.S. Senate?",
+    "vol": 6672099.23,
+    "evvol": 12460691.97,
+    "src": "K"
+   },
+   {
+    "id": "q1439",
+    "plain": "Kendrick Lamar releases a new album in 2026",
+    "fixed": false,
+    "p": 0.36,
+    "pp": 36,
+    "lt1": false,
+    "venues": [
+     "P"
+    ],
+    "pK": null,
+    "pP": 0.36,
+    "deadline": "2027-01-02",
+    "kind": "named",
+    "raw": "Which artists will release new albums in 2026? \u2014 Kendrick Lamar",
+    "rules": "This market will resolve to \u201cYes\u201d if the listed artist officially releases a new album between market creation and December 31, 2026, 11:59 PM PT (Los Angeles time). Otherwise, this market will resolve to \u201cNo\u201d.  Officially released means that a newly released album is officially available for downlo",
+    "subject": "Kendrick Lamar",
+    "name": "Kendrick Lamar",
+    "title": "Which artists will release new albums in 2026?",
+    "vol": 33199.273004,
+    "evvol": 250934.78444900003,
+    "src": "P"
+   }
+  ]
+ },
+ {
+  "cid": "c19",
+  "type": "yardstick",
+  "rank": 5,
+  "slot": 3,
+  "score": 0.6845,
+  "title": "",
+  "subj": "alexandria ocasio-cortez",
+  "meta": {
+   "gap": 0.3,
+   "same_deadline": false
+  },
+  "verdict": "pass",
+  "reasons": [
+   "NOTE (optional) q0198: sentence names no year; rules are the 99th Academy Awards (March 2027), which is the default reading. The two claims resolve 20 months apart."
+  ],
+  "members": [
+   {
+    "id": "q1254",
+    "plain": "Alexandria Ocasio-Cortez wins the 2028 presidential election",
+    "fixed": false,
+    "p": 0.1525,
+    "pp": 15,
+    "lt1": false,
+    "venues": [
+     "P"
+    ],
+    "pK": null,
+    "pP": 0.1525,
+    "deadline": "2028-11-08",
+    "kind": "named",
+    "raw": "Presidential Election Winner 2028 \u2014 Alexandria Ocasio-Cortez",
+    "rules": "The 2028 US Presidential Election is scheduled to take place on November 7, 2028.  This market will resolve to the person who wins the 2028 US Presidential Election.  The resolution source for this market is the Associated Press, Fox News, and NBC. This market will resolve once all three sources cal",
+    "subject": "Alexandria Ocasio-Cortez",
+    "name": "Alexandria Ocasio-Cortez",
+    "title": "Presidential Election Winner 2028",
+    "vol": 13824673.182964988,
+    "evvol": 713326421.528449,
+    "src": "P"
+   },
+   {
+    "id": "q0198",
+    "plain": "Tom Cruise wins the Oscar for Best Actor",
+    "fixed": false,
+    "p": 0.155,
+    "pp": 16,
+    "lt1": false,
+    "venues": [
+     "K"
+    ],
+    "pK": 0.155,
+    "pP": null,
+    "deadline": "2027-12-31",
+    "kind": "named",
+    "raw": "Oscar Winner: Best Actor \u2014 Tom Cruise",
+    "rules": "If Tom Cruise has won Best Actor at the 99th Academy Awards, then the market resolves to Yes.",
+    "subject": "Tom Cruise",
+    "name": "Tom Cruise",
+    "title": "Oscar Winner: Best Actor",
+    "vol": 203233.99,
+    "evvol": 1166399.42,
+    "src": "K"
+   }
+  ]
+ },
+ {
+  "cid": "c20",
+  "type": "yardstick",
+  "rank": 6,
+  "slot": 4,
+  "score": 0.6784,
+  "title": "",
+  "subj": "jd vance",
+  "meta": {
+   "gap": 0.0,
+   "same_deadline": false
+  },
+  "verdict": "pass",
+  "reasons": [
+   "NOTE (meaning) q0105: accurate, but a casual reader may be puzzled - the sitting VP being the 2028 VICE-presidential nominee is priced low because he is expected to seek the top of the ticket."
+  ],
+  "members": [
+   {
+    "id": "q0105",
+    "plain": "JD Vance is the 2028 Republican vice presidential nominee",
+    "fixed": false,
+    "p": 0.0555,
+    "pp": 6,
+    "lt1": false,
+    "venues": [
+     "K"
+    ],
+    "pK": 0.0555,
+    "pP": null,
+    "deadline": "2028-11-07",
+    "kind": "named",
+    "raw": "2028 Republican VP nominee \u2014 J.D. Vance",
+    "rules": "If J.D. Vance accepts the nomination for the Vice Presidency for the Republican party in 2028, then the market resolves to Yes.",
+    "subject": "JD Vance",
+    "name": "J.D. Vance",
+    "title": "2028 Republican VP nominee",
+    "vol": 216030.5,
+    "evvol": 1580129.26,
+    "src": "K"
+   },
+   {
+    "id": "q0183",
+    "plain": "BTS headlines Coachella 2027",
+    "fixed": false,
+    "p": 0.05500000000000001,
+    "pp": 6,
+    "lt1": false,
+    "venues": [
+     "K"
+    ],
+    "pK": 0.05500000000000001,
+    "pP": null,
+    "deadline": "2027-12-31",
+    "kind": "named",
+    "raw": "Who will headline Coachella 2027? \u2014 BTS",
+    "rules": "If BTS is the Headliner at Coachella 2027, then the market resolves to Yes.",
+    "subject": "BTS",
+    "name": "BTS",
+    "title": "Who will headline Coachella 2027?",
+    "vol": 37904.57,
+    "evvol": 403376.64,
+    "src": "K"
+   }
+  ]
+ },
+ {
+  "cid": "c21",
+  "type": "yardstick",
+  "rank": 7,
+  "slot": 5,
+  "score": 0.6712,
+  "title": "",
+  "subj": "vladimir putin",
+  "meta": {
+   "gap": 0.2,
+   "same_deadline": false
+  },
+  "verdict": "pass",
+  "reasons": [
+   "TONE FLAG (borderline) q1251: 'Putin out' resolves on any cessation of the presidency, including death or ill health, though it does not name them; here it is paired with a pop-music claim."
+  ],
+  "members": [
+   {
+    "id": "q1251",
+    "plain": "Vladimir Putin is out as Russia's president by June 30, 2027",
+    "fixed": false,
+    "p": 0.10500000000000001,
+    "pp": 11,
+    "lt1": false,
+    "venues": [
+     "P"
+    ],
+    "pK": null,
+    "pP": 0.10500000000000001,
+    "deadline": "2027-06-30",
+    "kind": "date",
+    "raw": "Putin out as President of Russia by...? \u2014 June 30, 2027",
+    "rules": "This market will resolve to \u201cYes\u201d if Vladimir Putin ceases to be President of Russia for any period of time between market creation and the specified date (ET). Otherwise, this market will resolve to \u201cNo\u201d.  An announcement of Vladimir Putin's resignation/removal before this market's end date will im",
+    "subject": "Vladimir Putin",
+    "name": "June 30, 2027",
+    "title": "Putin out as President of Russia by...?",
+    "vol": 582661.121796,
+    "evvol": 27544174.636953983,
+    "src": "P"
+   },
+   {
+    "id": "q0990",
+    "plain": "Taylor Swift is Spotify's top artist of 2026",
+    "fixed": false,
+    "p": 0.10725,
+    "pp": 11,
+    "lt1": false,
+    "venues": [
+     "K",
+     "P"
+    ],
+    "pK": 0.11,
+    "pP": 0.1045,
+    "deadline": "2027-01-01",
+    "kind": "named",
+    "raw": "Top artist on Spotify in 2026? \u2014 Taylor Swift",
+    "rules": "If Taylor Swift is the most streamed Spotify artist in 2026, then the market resolves to Yes.",
+    "subject": "Taylor Swift",
+    "name": "Taylor Swift",
+    "title": "Top artist on Spotify in 2026?",
+    "vol": 142140.16,
+    "evvol": 785857.07,
+    "src": "K"
+   }
+  ]
+ },
+ {
+  "cid": "c22",
+  "type": "yardstick",
+  "rank": 11,
+  "slot": 6,
+  "score": 0.6416,
+  "title": "",
+  "subj": "greenland",
+  "meta": {
+   "gap": 0.5,
+   "same_deadline": false
+  },
+  "verdict": "fix",
+  "reasons": [
+   "FAITHFULNESS q1736: rules turn on an actor being OFFICIALLY ANNOUNCED as the next Bond by Dec 31, 2026; 'chosen' is looser (a casting decision could be made but unannounced). Polarity (No-Bond outcome) is correct.",
+   "FAITHFULNESS (minor) q0072: deadline is before January 21, 2029; 'before January 2029' reads as before Jan 1."
+  ],
+  "members": [
+   {
+    "id": "q0072",
+    "plain": "The US takes control of any part of Greenland before January 21, 2029",
+    "fixed": true,
+    "p": 0.185,
+    "pp": 19,
+    "lt1": false,
+    "venues": [
+     "K"
+    ],
+    "pK": 0.185,
+    "pP": null,
+    "deadline": "2029-01-21",
+    "kind": "date",
+    "raw": "Will the US take control of any part of Greenland? \u2014 Before January 21, 2029",
+    "rules": "If the United States acquires any part of Greenland before Jan 21, 2029, then the market resolves to Yes.",
+    "subject": "Greenland",
+    "name": "Before January 21, 2029",
+    "title": "Will the US take control of any part of Greenland?",
+    "vol": 2921076.17,
+    "evvol": 3471750.62,
+    "src": "K"
+   },
+   {
+    "id": "q1736",
+    "plain": "No actor is officially announced as the next James Bond before 2027",
+    "fixed": true,
+    "p": 0.1895,
+    "pp": 19,
+    "lt1": false,
+    "venues": [
+     "P"
+    ],
+    "pK": null,
+    "pP": 0.1895,
+    "deadline": "2027-01-01",
+    "kind": "named",
+    "raw": "Next James Bond actor? \u2014 No Bond chosen",
+    "rules": "This market will resolve to \u201cYes\u201d if the listed actor is officially announced as the next James Bond actor by December 31, 2026, 11:59 PM ET. Otherwise, this market will resolve to \u201cNo\u201d.  This market will resolve based on the first official announcement of who will be the next James Bond, regardless",
+    "subject": "James Bond",
+    "name": "No Bond chosen",
+    "title": "Next James Bond actor?",
+    "vol": 532543.5923240002,
+    "evvol": 1358843.6863150003,
+    "src": "P"
+   }
+  ]
+ },
+ {
+  "cid": "c26",
+  "type": "reversal",
+  "rank": 4,
+  "slot": 1,
+  "score": 0.4312,
+  "title": "",
+  "subj": "tesla and spacex",
+  "meta": {
+   "market_gap": 40,
+   "naive_gap": 25,
+   "same_deadline": true,
+   "a_later": false
+  },
+  "verdict": "fix",
+  "reasons": [
+   "MEANING/FAITHFULNESS q0141: rules define recession as two consecutive quarters of negative GDP growth (BEA) within Q4 2026-Q4 2027 - a technical definition, with a window starting in late 2026, and the sentence does not say it is the US.",
+   "STRUCTURE ok: first claim's deadline (2027-12-31) is not later than the second's (2028-01-31); no implication."
+  ],
+  "members": [
+   {
+    "id": "q1532",
+    "plain": "Tesla and SpaceX officially announce a merger by December 31, 2027",
+    "fixed": false,
+    "p": 0.595,
+    "pp": 60,
+    "lt1": false,
+    "venues": [
+     "P"
+    ],
+    "pK": null,
+    "pP": 0.595,
+    "deadline": "2027-12-31",
+    "kind": "date",
+    "raw": "Tesla and SpaceX merger officially announced by...? \u2014 December 31, 2027",
+    "rules": "This market will resolve to \"Yes\" if it is officially announced that Tesla, Inc. will be, has been, or is being acquired by or merged with SpaceX, or vice versa, by the listed date, 11:59 PM ET. Otherwise, this market will resolve to \"No\".  An announcement by Tesla or SpaceX within this market's tim",
+    "subject": "Tesla and SpaceX",
+    "name": "December 31, 2027",
+    "title": "Tesla and SpaceX merger officially announced by...?",
+    "vol": 33648.35812700001,
+    "evvol": 1303675.202941,
+    "src": "P"
+   },
+   {
+    "id": "q0141",
+    "plain": "US GDP shrinks for two straight quarters between late 2026 and the end of 2027",
+    "fixed": true,
+    "p": 0.20500000000000002,
+    "pp": 21,
+    "lt1": false,
+    "venues": [
+     "K"
+    ],
+    "pK": 0.20500000000000002,
+    "pP": null,
+    "deadline": "2028-01-31",
+    "kind": "binary",
+    "raw": "Recession in 2027?",
+    "rules": "If there are two consecutive quarters of negative GDP growth in Q4 2026 through Q4 2027, according to the Bureau of Economic Analysis, then the market resolves to Yes.",
+    "subject": "Recession",
+    "name": "Yes",
+    "title": "Recession in 2027?",
+    "vol": 602976.17,
+    "evvol": 602976.17,
+    "src": "K"
+   }
+  ]
+ },
+ {
+  "cid": "c27",
+  "type": "reversal",
+  "rank": 6,
+  "slot": 2,
+  "score": 0.3529,
+  "title": "",
+  "subj": "meteor strike",
+  "meta": {
+   "market_gap": 31,
+   "naive_gap": 30,
+   "same_deadline": true,
+   "a_later": false
+  },
+  "verdict": "fix",
+  "reasons": [
+   "MEANING q1231: 'major meteor strike' is defined as 10 kilotons TNT or more - a fireball-scale event that occurs every few years and usually goes unnoticed, not the catastrophe a reader pictures. Sentence must carry the threshold. Without the fix the reversal overstates the surprise.",
+   "NOTE q0030: GDP measure and whether 'by 2030' means start or end of 2030 are unspecified in the excerpt."
+  ],
+  "members": [
+   {
+    "id": "q1231",
+    "plain": "A meteor releasing at least 10 kilotons of energy hits Earth before 2030",
+    "fixed": true,
+    "p": 0.47150000000000003,
+    "pp": 47,
+    "lt1": false,
+    "venues": [
+     "K"
+    ],
+    "pK": 0.47150000000000003,
+    "pP": null,
+    "deadline": "2030-01-01",
+    "kind": "binary",
+    "raw": "Will a major meteor strike hit Earth before 2030?",
+    "rules": "If a major meteor (10 kilotons TNT equivalent or greater) hits Earth before Jan 1, 2030, then the market resolves to Yes.",
+    "subject": "Meteor strike",
+    "name": "Before 2030",
+    "title": "Will a major meteor strike hit Earth before 2030?",
+    "vol": 144464.1,
+    "evvol": 144464.1,
+    "src": "K"
+   },
+   {
+    "id": "q0030",
+    "plain": "China's economy overtakes the US economy by 2030",
+    "fixed": false,
+    "p": 0.16,
+    "pp": 16,
+    "lt1": false,
+    "venues": [
+     "K"
+    ],
+    "pK": 0.16,
+    "pP": null,
+    "deadline": "2030-01-01",
+    "kind": "binary",
+    "raw": "China overtakes USA\u2019s economy by 2030?",
+    "rules": "If China has overtaken US GDP by 2030, then the market resolves to Yes.",
+    "subject": "China",
+    "name": "By 2030",
+    "title": "China overtakes USA\u2019s economy by 2030?",
+    "vol": 130179.43,
+    "evvol": 130179.43,
+    "src": "K"
+   }
+  ]
+ },
+ {
+  "cid": "c28",
+  "type": "reversal",
+  "rank": 8,
+  "slot": 3,
+  "score": 0.3067,
+  "title": "",
+  "subj": "democratic party",
+  "meta": {
+   "market_gap": 82,
+   "naive_gap": 30,
+   "same_deadline": true,
+   "a_later": false
+  },
+  "verdict": "fix",
+  "reasons": [
+   "MEANING/FAITHFULNESS q0438: 'blue wave' is defined by the rules as Democrats holding 218+ House seats AND only 49+ Senate seats - a Senate majority is NOT required. A casual reader expects a sweep of both chambers; sentence must state the actual bar.",
+   "NOTE (meaning, verify) q0857: market appears to concern the STANDARD iPhone 18 (expected spring 2027), not Pro/fold models due autumn 2026; rules excerpt does not say. If an iPhone 18-branded model is already on sale, this reversal will read as false - confirm the full rules.",
+   "STRUCTURE note: first claim's venue deadline (2027-02-01) is a month after the second's (2027-01-01), but the underlying event is the Nov 3, 2026 election, so not flagged as a later deadline."
+  ],
+  "members": [
+   {
+    "id": "q0438",
+    "plain": "Democrats win the House and hold at least 49 Senate seats after the 2026 midterms",
+    "fixed": true,
+    "p": 0.855,
+    "pp": 86,
+    "lt1": false,
+    "venues": [
+     "K"
+    ],
+    "pK": 0.855,
+    "pP": null,
+    "deadline": "2027-02-01",
+    "kind": "binary",
+    "raw": "Blue wave in 2026?",
+    "rules": "If ALL of the following occur: Democrats hold 218 or more seats in the House after the 2026 midterms AND Democrats hold 49 or more seats in the Senate after the 2026 midterms, then the market resolves to Yes.",
+    "subject": "Democratic Party",
+    "name": "Will Democrats hold 218 or more seats in the House AND hold 49 or more seats in the Senate?",
+    "title": "Blue wave in 2026?",
+    "vol": 951996.24,
+    "evvol": 951996.24,
+    "src": "K"
+   },
+   {
+    "id": "q0857",
+    "plain": "Apple releases the iPhone 18 before 2027",
+    "fixed": false,
+    "p": 0.035,
+    "pp": 4,
+    "lt1": false,
+    "venues": [
+     "K"
+    ],
+    "pK": 0.035,
+    "pP": null,
+    "deadline": "2027-01-01",
+    "kind": "date",
+    "raw": "When will Apple release the iPhone 18? \u2014 Before 2027",
+    "rules": "If Apple Inc. releases iPhone 18 to the public before Jan 1, 2027, then the market resolves to Yes.",
+    "subject": "iPhone 18",
+    "name": "Before 2027",
+    "title": "When will Apple release the iPhone 18?",
+    "vol": 1427654.68,
+    "evvol": 5095004.29,
+    "src": "K"
+   }
+  ]
+ },
+ {
+  "cid": "c29",
+  "type": "reversal",
+  "rank": 18,
+  "slot": 4,
+  "score": 0.1912,
+  "title": "",
+  "subj": "federal reserve",
+  "meta": {
+   "market_gap": 57,
+   "naive_gap": 45,
+   "same_deadline": true,
+   "a_later": false
+  },
+  "verdict": "pass",
+  "reasons": [
+   "NOTE (sanity, verify price) q0101: sentence is faithful, but 74% for a Fed rate INCREASE by Dec 31, 2026 (two meetings left) is a striking number from a single venue; worth a glance at the live quote/spread before the card carries a 'likelier than' claim.",
+   "NOTE q1465: the listed date is not in the raw text; 'before 2027' comes from the deadline field (rules: ceases to hold a Board seat for any period by the listed date)."
+  ],
+  "members": [
+   {
+    "id": "q0101",
+    "plain": "The Federal Reserve raises interest rates before 2027",
+    "fixed": false,
+    "p": 0.745,
+    "pp": 75,
+    "lt1": false,
+    "venues": [
+     "K"
+    ],
+    "pK": 0.745,
+    "pP": null,
+    "deadline": "2027-01-01",
+    "kind": "date",
+    "raw": "Next Fed rate hike? \u2014 Before 2027",
+    "rules": "If the Federal Reserve announces an increase in the target range or target level for the federal funds rate after market Issuance and on or before Dec 31, 2026, then the market resolves to Yes.",
+    "subject": "Federal Reserve",
+    "name": "Before 2027",
+    "title": "Next Fed rate hike?",
+    "vol": 63880.69,
+    "evvol": 90195.27,
+    "src": "K"
+   },
+   {
+    "id": "q1465",
+    "plain": "Jerome Powell leaves the Federal Reserve Board before 2027",
+    "fixed": false,
+    "p": 0.16999999999999998,
+    "pp": 17,
+    "lt1": false,
+    "venues": [
+     "P"
+    ],
+    "pK": null,
+    "pP": 0.16999999999999998,
+    "deadline": "2027-01-01",
+    "kind": "binary",
+    "raw": "Jerome Powell out of Fed Board by\u2026?",
+    "rules": "This market will resolve to \u201cYes\u201d if Jerome Powell ceases to hold a position on the Federal Reserve Board of Governors for any period of time between this market's creation and the listed date, 11:59 PM ET. Otherwise, this market will resolve to \u201cNo\u201d.  This market is not limited to Jerome Powell\u2019s c",
+    "subject": "Jerome Powell",
+    "name": "December 31",
+    "title": "Jerome Powell out of Fed Board by\u2026?",
+    "vol": 174163.49124599996,
+    "evvol": 460754.9338250001,
+    "src": "P"
+   }
+  ]
+ },
+ {
+  "cid": "c30",
+  "type": "reversal",
+  "rank": 23,
+  "slot": 5,
+  "score": 0.1717,
+  "title": "",
+  "subj": "apple",
+  "meta": {
+   "market_gap": 51,
+   "naive_gap": 20,
+   "same_deadline": true,
+   "a_later": false
+  },
+  "verdict": "fix",
+  "reasons": [
+   "MEANING q1427: rules define 'new product line' as a category of products Apple has NEVER previously sold, both announced and launched by Dec 31, 2026 - not a new iteration of an existing line, which is how 'new product line' reads."
+  ],
+  "members": [
+   {
+    "id": "q1427",
+    "plain": "Apple launches an entirely new product category before 2027",
+    "fixed": true,
+    "p": 0.625,
+    "pp": 63,
+    "lt1": false,
+    "venues": [
+     "P"
+    ],
+    "pK": null,
+    "pP": 0.625,
+    "deadline": "2027-01-01",
+    "kind": "binary",
+    "raw": "Will Apple release a new product line before 2027?",
+    "rules": "This market will resolve to \"Yes\" if Apple publicly announces and launches a new product line by December 31, 2026, 11:59 PM ET. Otherwise this market will resolve to \"No\".  A \"new product line\" is defined as a category of products Apple has not previously sold, rather than an iteration or update of",
+    "subject": "Apple",
+    "name": "Will Apple release a new product line before 2027?",
+    "title": "Will Apple release a new product line before 2027?",
+    "vol": 327584.170075,
+    "evvol": 327584.170075,
+    "src": "P"
+   },
+   {
+    "id": "q0868",
+    "plain": "GTA VI Online is released before 2027",
+    "fixed": false,
+    "p": 0.11,
+    "pp": 11,
+    "lt1": false,
+    "venues": [
+     "K"
+    ],
+    "pK": 0.11,
+    "pP": null,
+    "deadline": "2027-01-01",
+    "kind": "date",
+    "raw": "GTA VI Online: Release date \u2014 Before 2027",
+    "rules": "If Rockstar Games releases GTA VI Online to the public before Jan 1, 2027, then the market resolves to Yes.",
+    "subject": "GTA VI",
+    "name": "Before 2027",
+    "title": "GTA VI Online: Release date",
+    "vol": 96151.63,
+    "evvol": 99585.74,
+    "src": "K"
+   }
+  ]
+ },
+ {
+  "cid": "c31",
+  "type": "reversal",
+  "rank": 60,
+  "slot": 6,
+  "score": 0.0748,
+  "title": "",
+  "subj": "benjamin netanyahu",
+  "meta": {
+   "market_gap": 32,
+   "naive_gap": 22,
+   "same_deadline": true,
+   "a_later": false
+  },
+  "verdict": "fix",
+  "reasons": [
+   "MEANING q1443: rules require a formal, publicly announced, mutually agreed deal creating a BINDING obligation; looser existing security pacts would not count. Sentence should say 'binding'.",
+   "TONE FLAG (borderline) q1443: concerns the Russia-Ukraine war (defence commitment, not strikes).",
+   "NOTE q1272: listed date is not in the raw text; 'before 2027' comes from the deadline field. Resolves on any cessation of the premiership."
+  ],
+  "members": [
+   {
+    "id": "q1272",
+    "plain": "Benjamin Netanyahu leaves office as Israel's prime minister before 2027",
+    "fixed": false,
+    "p": 0.39,
+    "pp": 39,
+    "lt1": false,
+    "venues": [
+     "P"
+    ],
+    "pK": null,
+    "pP": 0.39,
+    "deadline": "2027-01-01",
+    "kind": "binary",
+    "raw": "Netanyahu out by...?",
+    "rules": "This market will resolve to \u201cYes\u201d if Benjamin Netanyahu ceases to be Prime Minister of Israel for any period of time between market creation and the specified date (ET). Otherwise, this market will resolve to \u201cNo\u201d.  An announcement of Benjamin Netanyahu's resignation/removal before this market's end",
+    "subject": "Benjamin Netanyahu",
+    "name": "December 31",
+    "title": "Netanyahu out by...?",
+    "vol": 2647458.8323329994,
+    "evvol": 124501028.0023726,
+    "src": "P"
+   },
+   {
+    "id": "q1443",
+    "plain": "A European country formally agrees to a binding security guarantee for Ukraine before 2027",
+    "fixed": true,
+    "p": 0.07,
+    "pp": 7,
+    "lt1": false,
+    "venues": [
+     "P"
+    ],
+    "pK": null,
+    "pP": 0.07,
+    "deadline": "2027-01-01",
+    "kind": "binary",
+    "raw": "European country agrees to give Ukraine security guarantee by...? ",
+    "rules": "This market will resolve to \u201cYes\u201d if any European country formally commits to giving Ukraine a security guarantee, defined as a publicly announced and mutually agreed deal between the relevant European country and the Government of Ukraine which creates a binding obligation for the relevant European",
+    "subject": "Ukraine",
+    "name": "December 31",
+    "title": "European country agrees to give Ukraine security guarantee by...? ",
+    "vol": 90483.133807,
+    "evvol": 267966.38571200013,
+    "src": "P"
+   }
+  ]
+ },
+ {
+  "cid": "c35",
+  "type": "dossier",
+  "rank": 2,
+  "slot": 1,
+  "score": 0.9996,
+  "title": "Drake",
+  "subj": "drake",
+  "meta": {
+   "spread": 80,
+   "n_available": 4
+  },
+  "verdict": "fix",
+  "reasons": [
+   "FAITHFULNESS q1963: sentence has no year ('by December 31'); deadline is December 31, 2026.",
+   "MEANING q1963: rules count only an album released AFTER the market opened; with a 2026 Drake album already out (to my knowledge), '14% releases a new album' misleads - say 'another'.",
+   "FAITHFULNESS/DISTINCTNESS q0992 vs q0989: q0989 is the US chart (84%), q0992 is most-streamed artist on all of Spotify (4%). q0992's sentence does not say worldwide, so the two read as the same claim with contradictory numbers. Not duplicates once reworded."
+  ],
+  "members": [
+   {
+    "id": "q0989",
+    "plain": "Drake is Spotify's top artist in the US in 2026",
+    "fixed": false,
+    "p": 0.835,
+    "pp": 84,
+    "lt1": false,
+    "venues": [
+     "K",
+     "P"
+    ],
+    "pK": 0.835,
+    "pP": 0.835,
+    "deadline": "2026-12-31",
+    "kind": "named",
+    "raw": "Top Artist on Spotify U.S. 2026 \u2014 Drake",
+    "rules": "If Drake is the #1  most streamed Artist on Spotify's 2026 Spotify Wrapped Top 10 Artist U.S chart on the date that the chart is released for 2026, then the market resolves to Yes.",
+    "subject": "Drake",
+    "name": "Drake",
+    "title": "Top Artist on Spotify U.S. 2026",
+    "vol": 242839.24,
+    "evvol": 1147319.85,
+    "src": "K"
+   },
+   {
+    "id": "q0182",
+    "plain": "Drake headlines Coachella 2027",
+    "fixed": false,
+    "p": 0.5549999999999999,
+    "pp": 56,
+    "lt1": false,
+    "venues": [
+     "K"
+    ],
+    "pK": 0.5549999999999999,
+    "pP": null,
+    "deadline": "2027-12-31",
+    "kind": "named",
+    "raw": "Who will headline Coachella 2027? \u2014 Drake",
+    "rules": "If Drake is the Headliner at Coachella 2027, then the market resolves to Yes.",
+    "subject": "Drake",
+    "name": "Drake",
+    "title": "Who will headline Coachella 2027?",
+    "vol": 25215.39,
+    "evvol": 403376.64,
+    "src": "K"
+   },
+   {
+    "id": "q1963",
+    "plain": "Drake releases another new album by December 31, 2026",
+    "fixed": true,
+    "p": 0.135,
+    "pp": 14,
+    "lt1": false,
+    "venues": [
+     "P"
+    ],
+    "pK": null,
+    "pP": 0.135,
+    "deadline": "2026-12-31",
+    "kind": "date",
+    "raw": "Will Drake release a new album by...? \u2014 December 31",
+    "rules": "This market will resolve to \"Yes\" if Drake officially releases a new album between market creation and the specified date, 11:59 PM PT (Los Angeles time). Otherwise, this market will resolve to \"No\".  Officially released means that a newly released album is officially available for download or strea",
+    "subject": "Drake",
+    "name": "December 31",
+    "title": "Will Drake release a new album by...?",
+    "vol": 36163.532418,
+    "evvol": 81926.26042600001,
+    "src": "P"
+   },
+   {
+    "id": "q0992",
+    "plain": "Drake is Spotify's most-streamed artist worldwide in 2026",
+    "fixed": true,
+    "p": 0.035500000000000004,
+    "pp": 4,
+    "lt1": false,
+    "venues": [
+     "K",
+     "P"
+    ],
+    "pK": 0.035,
+    "pP": 0.036000000000000004,
+    "deadline": "2027-01-01",
+    "kind": "named",
+    "raw": "Top artist on Spotify in 2026? \u2014 Drake",
+    "rules": "If Drake is the most streamed Spotify artist in 2026, then the market resolves to Yes.",
+    "subject": "Drake",
+    "name": "Drake",
+    "title": "Top artist on Spotify in 2026?",
+    "vol": 229019.34,
+    "evvol": 785857.07,
+    "src": "K"
+   }
+  ]
+ },
+ {
+  "cid": "c36",
+  "type": "dossier",
+  "rank": 4,
+  "slot": 2,
+  "score": 0.9412,
+  "title": "Avengers: Doomsday",
+  "subj": "avengers: doomsday",
+  "meta": {
+   "spread": 86,
+   "n_available": 7
+  },
+  "verdict": "fix",
+  "reasons": [
+   "MEANING q1651, q1371: rules use DOMESTIC (US and Canada) box office only, not worldwide.",
+   "FAITHFULNESS (minor) q1046: rules are 'delayed past December 18, 2026'; sentence gives no date.",
+   "NOTE q0741: rules count Maguire performing OR being announced as Spider-Man in the film.",
+   "NOTE: q1651 (opening week) and q1371 (opening weekend) are near-identical but distinct claims."
+  ],
+  "members": [
+   {
+    "id": "q0741",
+    "plain": "Tobey Maguire appears as Spider-Man in Avengers: Doomsday",
+    "fixed": false,
+    "p": 0.915,
+    "pp": 92,
+    "lt1": false,
+    "venues": [
+     "K"
+    ],
+    "pK": 0.915,
+    "pP": null,
+    "deadline": "2028-01-01",
+    "kind": "named",
+    "raw": "Avengers: Doomsday: Cast \u2014 Tobey Maguire as Spider-Man?",
+    "rules": "If Tobey Maguire performs / is announced as Spider-Man in Avengers: Doomsday, then the market resolves to Yes.",
+    "subject": "Avengers: Doomsday",
+    "name": "Tobey Maguire as Spider-Man?",
+    "title": "Avengers: Doomsday: Cast",
+    "vol": 92407.81,
+    "evvol": 906072.4199999999,
+    "src": "K"
+   },
+   {
+    "id": "q1651",
+    "plain": "Avengers: Doomsday has the biggest US opening week of any 2026 movie",
+    "fixed": true,
+    "p": 0.515,
+    "pp": 52,
+    "lt1": false,
+    "venues": [
+     "P"
+    ],
+    "pK": null,
+    "pP": 0.515,
+    "deadline": "2027-02-01",
+    "kind": "named",
+    "raw": "Which movie has biggest opening week in 2026? \u2014 Avengers: Doomsday",
+    "rules": "This market will resolve according to the title of the movie which grosses more domestically on its opening week than any other movie in 2026. The \u201cWeekly Box Office Performance\u201d table on the page for the relevant movie on https://www.the-numbers.com/box-office will be used to resolve this market on",
+    "subject": "Avengers: Doomsday",
+    "name": "Avengers: Doomsday",
+    "title": "Which movie has biggest opening week in 2026?",
+    "vol": 94739.09905699998,
+    "evvol": 211182.086792,
+    "src": "P"
+   },
+   {
+    "id": "q1371",
+    "plain": "Avengers: Doomsday has the biggest US opening weekend of 2026",
+    "fixed": true,
+    "p": 0.35,
+    "pp": 35,
+    "lt1": false,
+    "venues": [
+     "P"
+    ],
+    "pK": null,
+    "pP": 0.35,
+    "deadline": "2027-02-01",
+    "kind": "named",
+    "raw": "Which movie has biggest opening weekend in 2026? \u2014 Avengers: Doomsday",
+    "rules": "This market will resolve according to the title of the movie which grosses more domestically on its opening weekend than any other movie in 2026. The \u201cWeekend Box Office Performance\u201d table on the page for the relevant movie on https://www.the-numbers.com/movies/year/2026 will be used to resolve this",
+    "subject": "Avengers: Doomsday",
+    "name": "Avengers: Doomsday",
+    "title": "Which movie has biggest opening weekend in 2026?",
+    "vol": 421098.016079,
+    "evvol": 2322064.2776009995,
+    "src": "P"
+   },
+   {
+    "id": "q1046",
+    "plain": "Avengers: Doomsday is delayed past its December 18, 2026 release date",
+    "fixed": true,
+    "p": 0.060000000000000005,
+    "pp": 6,
+    "lt1": false,
+    "venues": [
+     "K"
+    ],
+    "pK": 0.060000000000000005,
+    "pP": null,
+    "deadline": "2026-12-18",
+    "kind": "binary",
+    "raw": "Will Avengers: Doomsday be delayed?",
+    "rules": "If Avengers: Doomsday's release is delayed past December 18, 2026, then the market resolves to Yes.",
+    "subject": "Avengers: Doomsday",
+    "name": "Before Dec 18, 2026",
+    "title": "Will Avengers: Doomsday be delayed?",
+    "vol": 143668.18,
+    "evvol": 143668.18,
+    "src": "K"
+   }
+  ]
+ },
+ {
+  "cid": "c38",
+  "type": "dossier",
+  "rank": 6,
+  "slot": 3,
+  "score": 0.7575,
+  "title": "Spider-Man: Brand New Day",
+  "subj": "spider-man: brand new day",
+  "meta": {
+   "spread": 61,
+   "n_available": 5
+  },
+  "verdict": "fix",
+  "reasons": [
+   "MEANING q1368: rules use DOMESTIC CALENDAR gross (Box Office Mojo calendar grosses: US/Canada money earned inside calendar 2026), not worldwide or lifetime gross. 'Highest-grossing movie of 2026' reads as worldwide total.",
+   "MEANING q1370, q1650, q1862: domestic (US and Canada) box office only.",
+   "NOTE: q1370 (biggest opening weekend, 64%) and q1862 (second-biggest, 34%) are mutually exclusive outcomes of one ranking - distinct claims, not duplicates."
+  ],
+  "members": [
+   {
+    "id": "q1368",
+    "plain": "Spider-Man: Brand New Day earns the most at the US box office during 2026",
+    "fixed": true,
+    "p": 0.955,
+    "pp": 96,
+    "lt1": false,
+    "venues": [
+     "P"
+    ],
+    "pK": null,
+    "pP": 0.955,
+    "deadline": "2027-01-08",
+    "kind": "named",
+    "raw": "Highest grossing movie in 2026? \u2014 Spider-Man: Brand New Day",
+    "rules": "This market will resolve according to the title of the film with the highest 2026 gross according to the \"Gross\" column on https://www.boxofficemojo.com/year/2026/?grossesOption=calendarGrosses once data for December 31 is made available.   Note: This market is about the movie's domestic calendar gr",
+    "subject": "Spider-Man: Brand New Day",
+    "name": "Spider-Man: Brand New Day",
+    "title": "Highest grossing movie in 2026?",
+    "vol": 683796.221928,
+    "evvol": 17574380.656268,
+    "src": "P"
+   },
+   {
+    "id": "q1370",
+    "plain": "Spider-Man: Brand New Day has the biggest US opening weekend of 2026",
+    "fixed": true,
+    "p": 0.635,
+    "pp": 64,
+    "lt1": false,
+    "venues": [
+     "P"
+    ],
+    "pK": null,
+    "pP": 0.635,
+    "deadline": "2027-02-01",
+    "kind": "named",
+    "raw": "Which movie has biggest opening weekend in 2026? \u2014 Spider-Man: Brand New Day",
+    "rules": "This market will resolve according to the title of the movie which grosses more domestically on its opening weekend than any other movie in 2026. The \u201cWeekend Box Office Performance\u201d table on the page for the relevant movie on https://www.the-numbers.com/movies/year/2026 will be used to resolve this",
+    "subject": "Spider-Man: Brand New Day",
+    "name": "Spider-Man: Brand New Day",
+    "title": "Which movie has biggest opening weekend in 2026?",
+    "vol": 256372.78974700003,
+    "evvol": 2322064.2776009995,
+    "src": "P"
+   },
+   {
+    "id": "q1650",
+    "plain": "Spider-Man: Brand New Day has the biggest US opening week of 2026",
+    "fixed": true,
+    "p": 0.485,
+    "pp": 49,
+    "lt1": false,
+    "venues": [
+     "P"
+    ],
+    "pK": null,
+    "pP": 0.485,
+    "deadline": "2027-02-01",
+    "kind": "named",
+    "raw": "Which movie has biggest opening week in 2026? \u2014 Spider-Man: Brand New Day",
+    "rules": "This market will resolve according to the title of the movie which grosses more domestically on its opening week than any other movie in 2026. The \u201cWeekly Box Office Performance\u201d table on the page for the relevant movie on https://www.the-numbers.com/box-office will be used to resolve this market on",
+    "subject": "Spider-Man: Brand New Day",
+    "name": "Spider-Man: Brand New Day",
+    "title": "Which movie has biggest opening week in 2026?",
+    "vol": 83507.107298,
+    "evvol": 211182.086792,
+    "src": "P"
+   },
+   {
+    "id": "q1862",
+    "plain": "Spider-Man: Brand New Day has the second-biggest US opening weekend of 2026",
+    "fixed": true,
+    "p": 0.345,
+    "pp": 35,
+    "lt1": false,
+    "venues": [
+     "P"
+    ],
+    "pK": null,
+    "pP": 0.345,
+    "deadline": "2027-01-01",
+    "kind": "named",
+    "raw": "Which movie has 2nd biggest opening weekend in 2026? \u2014 Spider-Man: Brand New Day",
+    "rules": "This market will resolve according to the title of the movie which grosses the second-most domestically on its opening weekend among all movies in 2026. The \"Weekend Box Office Performance\" table on the page for the relevant movie on https://www.the-numbers.com/movies/year/2026 will be used to resol",
+    "subject": "Spider-Man: Brand New Day",
+    "name": "Spider-Man: Brand New Day",
+    "title": "Which movie has 2nd biggest opening weekend in 2026?",
+    "vol": 72040.71318400001,
+    "evvol": 143172.950572,
+    "src": "P"
+   }
+  ]
+ },
+ {
+  "cid": "c39",
+  "type": "dossier",
+  "rank": 7,
+  "slot": 4,
+  "score": 0.6525,
+  "title": "Robert Pattinson",
+  "subj": "robert pattinson",
+  "meta": {
+   "spread": 47,
+   "n_available": 3
+  },
+  "verdict": "pass",
+  "reasons": [
+   "NOTE (optional): no year in sentences; rules are the 99th Academy Awards (2027), the default reading. Three distinct claims (two nomination categories, one win)."
+  ],
+  "members": [
+   {
+    "id": "q0488",
+    "plain": "Robert Pattinson earns an Oscar nomination for Best Actor",
+    "fixed": false,
+    "p": 0.575,
+    "pp": 58,
+    "lt1": false,
+    "venues": [
+     "K"
+    ],
+    "pK": 0.575,
+    "pP": null,
+    "deadline": "2027-12-31",
+    "kind": "named",
+    "raw": "Oscar nominees: Best Actor \u2014 Robert Pattinson",
+    "rules": "If Robert Pattinson has been nominated for Best Actor at the 99th Academy Awards, then the market resolves to Yes.",
+    "subject": "Robert Pattinson",
+    "name": "Robert Pattinson",
+    "title": "Oscar nominees: Best Actor",
+    "vol": 38210.11,
+    "evvol": 417126.71,
+    "src": "K"
+   },
+   {
+    "id": "q1189",
+    "plain": "Robert Pattinson earns an Oscar nomination for Best Supporting Actor",
+    "fixed": false,
+    "p": 0.295,
+    "pp": 30,
+    "lt1": false,
+    "venues": [
+     "K"
+    ],
+    "pK": 0.295,
+    "pP": null,
+    "deadline": "2027-12-31",
+    "kind": "named",
+    "raw": "Oscar nominees: Best Supporting Actor \u2014 Robert Pattinson",
+    "rules": "If Robert Pattinson has been nominated for Best Supporting Actor at the 99th Academy Awards, then the market resolves to Yes.",
+    "subject": "Robert Pattinson",
+    "name": "Robert Pattinson",
+    "title": "Oscar nominees: Best Supporting Actor",
+    "vol": 27245.4,
+    "evvol": 116418.32,
+    "src": "K"
+   },
+   {
+    "id": "q0188",
+    "plain": "Robert Pattinson wins the Oscar for Best Supporting Actor",
+    "fixed": false,
+    "p": 0.10500000000000001,
+    "pp": 11,
+    "lt1": false,
+    "venues": [
+     "K"
+    ],
+    "pK": 0.10500000000000001,
+    "pP": null,
+    "deadline": "2027-12-31",
+    "kind": "named",
+    "raw": "Oscar winner: Best Supporting Actor \u2014 Robert Pattinson",
+    "rules": "If Robert Pattinson has won Best Supporting Actor at the 99th Academy Awards, then the market resolves to Yes.",
+    "subject": "Robert Pattinson",
+    "name": "Robert Pattinson",
+    "title": "Oscar winner: Best Supporting Actor",
+    "vol": 21078.17,
+    "evvol": 142842.65,
+    "src": "K"
+   }
+  ]
+ },
+ {
+  "cid": "c42",
+  "type": "dossier",
+  "rank": 12,
+  "slot": 5,
+  "score": 0.4725,
+  "title": "Chicago Bears",
+  "subj": "chicago bears",
+  "meta": {
+   "spread": 55,
+   "n_available": 5
+  },
+  "verdict": "fix",
+  "reasons": [
+   "FAITHFULNESS q0135: rules count an official relocation ANNOUNCEMENT as well as an actual move, with a deadline (first game of the 2028 season); the sentence states neither."
+  ],
+  "members": [
+   {
+    "id": "q0514",
+    "plain": "The Chicago Bears make the NFL playoffs",
+    "fixed": false,
+    "p": 0.63,
+    "pp": 63,
+    "lt1": false,
+    "venues": [
+     "K"
+    ],
+    "pK": 0.63,
+    "pP": null,
+    "deadline": "2027-01-25",
+    "kind": "named",
+    "raw": "Pro Football Playoff Qualifiers \u2014 Chicago",
+    "rules": "If Chicago is one of the Pro Football playoff qualifiers, then the market resolves to Yes.",
+    "subject": "Chicago Bears",
+    "name": "Chicago",
+    "title": "Pro Football Playoff Qualifiers",
+    "vol": 97575.97,
+    "evvol": 2480878.73,
+    "src": "K"
+   },
+   {
+    "id": "q0535",
+    "plain": "The Chicago Bears win the NFC North division",
+    "fixed": false,
+    "p": 0.28500000000000003,
+    "pp": 29,
+    "lt1": false,
+    "venues": [
+     "K"
+    ],
+    "pK": 0.28500000000000003,
+    "pP": null,
+    "deadline": "2027-01-25",
+    "kind": "named",
+    "raw": "NFC North Division Winner \u2014 Chicago",
+    "rules": "If Chicago wins the Pro Football NFC North Division, then the market resolves to Yes.",
+    "subject": "Chicago Bears",
+    "name": "Chicago",
+    "title": "NFC North Division Winner",
+    "vol": 1091782.61,
+    "evvol": 1940605.4400000002,
+    "src": "K"
+   },
+   {
+    "id": "q0135",
+    "plain": "The Chicago Bears move, or announce a move, to Indiana before the 2028 season",
+    "fixed": true,
+    "p": 0.245,
+    "pp": 25,
+    "lt1": false,
+    "venues": [
+     "K"
+    ],
+    "pK": 0.245,
+    "pP": null,
+    "deadline": "2028-09-07",
+    "kind": "named",
+    "raw": "Chicago Pro Football Team: Relocation \u2014 Indiana",
+    "rules": "If the Chicago Pro Football Team relocate or officially announce a relocation to Indiana by the first game of the 2028 Pro Football regular season, then the market resolves to Yes.",
+    "subject": "Chicago Bears",
+    "name": "Indiana",
+    "title": "Chicago Pro Football Team: Relocation",
+    "vol": 456768.85,
+    "evvol": 935197.0099999999,
+    "src": "K"
+   },
+   {
+    "id": "q0423",
+    "plain": "The Chicago Bears win the NFC Championship",
+    "fixed": false,
+    "p": 0.08499999999999999,
+    "pp": 9,
+    "lt1": false,
+    "venues": [
+     "K"
+    ],
+    "pK": 0.08499999999999999,
+    "pP": null,
+    "deadline": "2027-02-22",
+    "kind": "named",
+    "raw": "NFC Championship Winner \u2014 Chicago",
+    "rules": "If Chicago wins the Pro Football NFC Championship, then the market resolves to Yes.",
+    "subject": "Chicago Bears",
+    "name": "Chicago",
+    "title": "NFC Championship Winner",
+    "vol": 820399.61,
+    "evvol": 10177456.05,
+    "src": "K"
+   }
+  ]
+ },
+ {
+  "cid": "c43",
+  "type": "dossier",
+  "rank": 13,
+  "slot": 6,
+  "score": 0.4676,
+  "title": "Kansas City Chiefs",
+  "subj": "kansas city chiefs",
+  "meta": {
+   "spread": 54,
+   "n_available": 6
+  },
+  "verdict": "fix",
+  "reasons": [
+   "FAITHFULNESS/MEANING q0400: '2027 Pro Football Champion' is the Super Bowl played in February 2027 (2026 season) - consistent with the 16% AFC title price. 'The 2027 pro football championship' reads as the 2027 season. Deadline field 2029-02-13 looks wrong for this member.",
+   "NOTE q0542: 'last undefeated team' is the last team to lose its unbeaten record in the 2026-27 regular season, not an unbeaten season."
+  ],
+  "members": [
+   {
+    "id": "q0545",
+    "plain": "The Kansas City Chiefs win the AFC West division",
+    "fixed": false,
+    "p": 0.625,
+    "pp": 63,
+    "lt1": false,
+    "venues": [
+     "K"
+    ],
+    "pK": 0.625,
+    "pP": null,
+    "deadline": "2027-01-25",
+    "kind": "named",
+    "raw": "AFC West Division Winner \u2014 Kansas City",
+    "rules": "If Kansas City wins the Pro Football AFC West Division, then the market resolves to Yes.",
+    "subject": "Kansas City Chiefs",
+    "name": "Kansas City",
+    "title": "AFC West Division Winner",
+    "vol": 163204.5,
+    "evvol": 941388.83,
+    "src": "K"
+   },
+   {
+    "id": "q0542",
+    "plain": "Kansas City is the NFL's last undefeated team of the season",
+    "fixed": false,
+    "p": 0.485,
+    "pp": 49,
+    "lt1": false,
+    "venues": [
+     "K"
+    ],
+    "pK": 0.485,
+    "pP": null,
+    "deadline": "2027-01-18",
+    "kind": "named",
+    "raw": "Pro Football Last Undefeated Team \u2014 Kansas City",
+    "rules": "If Kansas City is the last remaining undefeated team in the 2026-27 Pro Football regular season, then the market resolves to Yes.",
+    "subject": "Kansas City Chiefs",
+    "name": "Kansas City",
+    "title": "Pro Football Last Undefeated Team",
+    "vol": 189228.91,
+    "evvol": 1401619.26,
+    "src": "K"
+   },
+   {
+    "id": "q0436",
+    "plain": "Kansas City wins the AFC Championship",
+    "fixed": false,
+    "p": 0.165,
+    "pp": 17,
+    "lt1": false,
+    "venues": [
+     "K"
+    ],
+    "pK": 0.165,
+    "pP": null,
+    "deadline": "2027-02-22",
+    "kind": "named",
+    "raw": "AFC Championship Winner \u2014 Kansas City",
+    "rules": "If Kansas City wins the Pro Football AFC Championship, then the market resolves to Yes.",
+    "subject": "Kansas City Chiefs",
+    "name": "Kansas City",
+    "title": "AFC Championship Winner",
+    "vol": 759197.18,
+    "evvol": 10809847.93,
+    "src": "K"
+   },
+   {
+    "id": "q0400",
+    "plain": "The Kansas City Chiefs win the Super Bowl in February 2027",
+    "fixed": true,
+    "p": 0.08975,
+    "pp": 9,
+    "lt1": false,
+    "venues": [
+     "K",
+     "P"
+    ],
+    "pK": 0.08499999999999999,
+    "pP": 0.0945,
+    "deadline": "2029-02-13",
+    "kind": "named",
+    "raw": "2027 Pro Football Champion \u2014 Kansas City",
+    "rules": "If Kansas City wins the 2027 Pro Football Championship, then the market resolves to Yes.",
+    "subject": "Kansas City Chiefs",
+    "name": "Kansas City",
+    "title": "2027 Pro Football Champion",
+    "vol": 6236688.19,
+    "evvol": 160042469.66,
+    "src": "K"
+   }
+  ]
+ }
+]

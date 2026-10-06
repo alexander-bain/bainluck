@@ -1,0 +1,2296 @@
+[
+ {
+  "cid": "c00",
+  "type": "board",
+  "kicker": "Same deadline",
+  "rank": 1,
+  "slot": 1,
+  "verdict": "fix",
+  "notes": [
+   "FAITHFULNESS q0147: rules resolve on Trump ANNOUNCING a 2028 presidential run before Jan 1, 2028; 'runs for a third term before 2028' misstates what is measured (the election itself is in 2028).",
+   "MEANING/FAITHFULNESS q0964: rules require a MANNED NASA mission landing on the Moon; 'NASA lands on the Moon' reads as any NASA lander.",
+   "MEANING q0948: rules resolve if the President, a Cabinet member, a Joint Chief or any federal agency definitively states that extraterrestrial life OR technology exists - one official's statement suffices and microbial life would count; 'the US government confirms aliens exist' overstates it."
+  ],
+  "headline": "By the end of 2027",
+  "tag": null,
+  "rows": [
+   {
+    "text": "Grand Theft Auto VI is released",
+    "when": "before January 2028",
+    "id": "q1223",
+    "pp": 99,
+    "num": "99",
+    "p": 0.985,
+    "deadline": "2028-01-01",
+    "venues": [
+     "Kalshi"
+    ],
+    "pK": 98.5,
+    "pP": null,
+    "raw": "Grand Theft Auto VI: Release date \u2014 Before January 2028",
+    "plain": "Grand Theft Auto VI is released before January 2028",
+    "fixed": false
+   },
+   {
+    "text": "Tesla and SpaceX officially announce a merger",
+    "when": "by December 31, 2027",
+    "id": "q1532",
+    "pp": 60,
+    "num": "60",
+    "p": 0.595,
+    "deadline": "2027-12-31",
+    "venues": [
+     "Polymarket"
+    ],
+    "pK": null,
+    "pP": 59.5,
+    "raw": "Tesla and SpaceX merger officially announced by...? \u2014 December 31, 2027",
+    "plain": "Tesla and SpaceX officially announce a merger by December 31, 2027",
+    "fixed": false
+   },
+   {
+    "text": "A top US official or federal agency states that extraterrestrial life or technology exists",
+    "when": "before 2028",
+    "id": "q0948",
+    "pp": 15,
+    "num": "15",
+    "p": 0.145,
+    "deadline": "2028-01-01",
+    "venues": [
+     "Kalshi"
+    ],
+    "pK": 14.5,
+    "pP": null,
+    "raw": "Will the U.S. confirm that aliens exist? \u2014 Before Jan 1, 2028",
+    "plain": "A top US official or federal agency states that extraterrestrial life or technology exists before 2028",
+    "fixed": true
+   },
+   {
+    "text": "Trump announces by the end of 2027 that he is running for a third term",
+    "when": null,
+    "id": "q0147",
+    "pp": 10,
+    "num": "10",
+    "p": 0.0955,
+    "deadline": "2028-01-01",
+    "venues": [
+     "Kalshi"
+    ],
+    "pK": 9.6,
+    "pP": null,
+    "raw": "Will Trump run for a third term? \u2014 Before 2028",
+    "plain": "Trump announces by the end of 2027 that he is running for a third term",
+    "fixed": true
+   },
+   {
+    "text": "NASA lands astronauts on the Moon",
+    "when": "before 2028",
+    "id": "q0964",
+    "pp": 3,
+    "num": "3",
+    "p": 0.0325,
+    "deadline": "2028-01-01",
+    "venues": [
+     "Kalshi"
+    ],
+    "pK": 3.2,
+    "pP": null,
+    "raw": "NASA lands on the moon? \u2014 Before 2028",
+    "plain": "NASA lands astronauts on the Moon before 2028",
+    "fixed": true
+   }
+  ],
+  "venues": [
+   "Kalshi",
+   "Polymarket"
+  ],
+  "n": 1
+ },
+ {
+  "cid": "c17",
+  "type": "yardstick",
+  "kicker": "As likely as",
+  "rank": 1,
+  "slot": 1,
+  "verdict": "pass",
+  "notes": [
+   "NOTE (optional) q0449: sentence names no election; the default reading (2026 midterms) is correct. Could add 'in the 2026 midterms'."
+  ],
+  "headline": null,
+  "connector": "is rated about as likely as",
+  "rows": [
+   {
+    "text": "Republicans win control of the US House of Representatives",
+    "id": "q0449",
+    "pp": 9,
+    "num": "9",
+    "p": 0.0875,
+    "deadline": "2027-02-01",
+    "venues": [
+     "Kalshi"
+    ],
+    "pK": 8.8,
+    "pP": null,
+    "raw": "Which party will win the U.S. House? \u2014 Republican Party",
+    "plain": "Republicans win control of the US House of Representatives",
+    "fixed": false
+   },
+   {
+    "text": "Bad Bunny is named People's Sexiest Man Alive for 2026",
+    "id": "q0994",
+    "pp": 9,
+    "num": "9",
+    "p": 0.085,
+    "deadline": "2027-01-01",
+    "venues": [
+     "Kalshi"
+    ],
+    "pK": 8.5,
+    "pP": null,
+    "raw": "People's Sexiest Man Alive for 2026 \u2014 Bad Bunny",
+    "plain": "Bad Bunny is named People's Sexiest Man Alive for 2026",
+    "fixed": false
+   }
+  ],
+  "venues": [
+   "Kalshi"
+  ],
+  "n": 2
+ },
+ {
+  "cid": "c08",
+  "type": "clock",
+  "kicker": "The clock",
+  "rank": 1,
+  "slot": 1,
+  "verdict": "pass",
+  "notes": [
+   "NOTE (meaning, verify): prices (4% before 2027, 86% before April 2027) imply this market is about the STANDARD iPhone 18 expected in spring 2027, not the iPhone 18 Pro/fold models slated for autumn 2026. The rules excerpt does not say so. If any iPhone 18-branded model is already on sale, 'Apple releases the iPhone 18' will look wrong to a casual reader - confirm the full rules and consider 'the standard iPhone 18'."
+  ],
+  "headline": "Apple releases the iPhone 18",
+  "rows": [
+   {
+    "text": "before 2027",
+    "when": "before 2027",
+    "id": "q0857",
+    "pp": 4,
+    "num": "4",
+    "p": 0.035,
+    "deadline": "2027-01-01",
+    "venues": [
+     "Kalshi"
+    ],
+    "pK": 3.5,
+    "pP": null,
+    "raw": "When will Apple release the iPhone 18? \u2014 Before 2027",
+    "plain": "Apple releases the iPhone 18 before 2027",
+    "fixed": false
+   },
+   {
+    "text": "before February 2027",
+    "when": "before February 2027",
+    "id": "q0858",
+    "pp": 5,
+    "num": "5",
+    "p": 0.045,
+    "deadline": "2027-02-01",
+    "venues": [
+     "Kalshi"
+    ],
+    "pK": 4.5,
+    "pP": null,
+    "raw": "When will Apple release the iPhone 18? \u2014 Before February 2027",
+    "plain": "Apple releases the iPhone 18 before February 2027",
+    "fixed": false
+   },
+   {
+    "text": "before March 2027",
+    "when": "before March 2027",
+    "id": "q0859",
+    "pp": 11,
+    "num": "11",
+    "p": 0.105,
+    "deadline": "2027-03-01",
+    "venues": [
+     "Kalshi"
+    ],
+    "pK": 10.5,
+    "pP": null,
+    "raw": "When will Apple release the iPhone 18? \u2014 Before March 2027",
+    "plain": "Apple releases the iPhone 18 before March 2027",
+    "fixed": false
+   },
+   {
+    "text": "before April 2027",
+    "when": "before April 2027",
+    "id": "q0860",
+    "pp": 86,
+    "num": "86",
+    "p": 0.855,
+    "deadline": "2027-04-01",
+    "venues": [
+     "Kalshi"
+    ],
+    "pK": 85.5,
+    "pP": null,
+    "raw": "When will Apple release the iPhone 18? \u2014 Before April 2027",
+    "plain": "Apple releases the iPhone 18 before April 2027",
+    "fixed": false
+   }
+  ],
+  "venues": [
+   "Kalshi"
+  ],
+  "n": 3
+ },
+ {
+  "cid": "c26",
+  "type": "reversal",
+  "kicker": "Likelier than",
+  "rank": 4,
+  "slot": 1,
+  "verdict": "fix",
+  "notes": [
+   "MEANING/FAITHFULNESS q0141: rules define recession as two consecutive quarters of negative GDP growth (BEA) within Q4 2026-Q4 2027 - a technical definition, with a window starting in late 2026, and the sentence does not say it is the US.",
+   "STRUCTURE ok: first claim's deadline (2027-12-31) is not later than the second's (2028-01-31); no implication."
+  ],
+  "headline": null,
+  "connector": "is rated likelier than",
+  "rows": [
+   {
+    "text": "Tesla and SpaceX officially announce a merger by December 31, 2027",
+    "id": "q1532",
+    "pp": 60,
+    "num": "60",
+    "p": 0.595,
+    "deadline": "2027-12-31",
+    "venues": [
+     "Polymarket"
+    ],
+    "pK": null,
+    "pP": 59.5,
+    "raw": "Tesla and SpaceX merger officially announced by...? \u2014 December 31, 2027",
+    "plain": "Tesla and SpaceX officially announce a merger by December 31, 2027",
+    "fixed": false
+   },
+   {
+    "text": "US GDP shrinks for two straight quarters between late 2026 and the end of 2027",
+    "id": "q0141",
+    "pp": 21,
+    "num": "21",
+    "p": 0.205,
+    "deadline": "2028-01-31",
+    "venues": [
+     "Kalshi"
+    ],
+    "pK": 20.5,
+    "pP": null,
+    "raw": "Recession in 2027?",
+    "plain": "US GDP shrinks for two straight quarters between late 2026 and the end of 2027",
+    "fixed": true
+   }
+  ],
+  "venues": [
+   "Kalshi",
+   "Polymarket"
+  ],
+  "n": 4
+ },
+ {
+  "cid": "c35",
+  "type": "dossier",
+  "kicker": "One subject",
+  "rank": 2,
+  "slot": 1,
+  "verdict": "fix",
+  "notes": [
+   "FAITHFULNESS q1963: sentence has no year ('by December 31'); deadline is December 31, 2026.",
+   "MEANING q1963: rules count only an album released AFTER the market opened; with a 2026 Drake album already out (to my knowledge), '14% releases a new album' misleads - say 'another'.",
+   "FAITHFULNESS/DISTINCTNESS q0992 vs q0989: q0989 is the US chart (84%), q0992 is most-streamed artist on all of Spotify (4%). q0992's sentence does not say worldwide, so the two read as the same claim with contradictory numbers. Not duplicates once reworded."
+  ],
+  "headline": "Drake",
+  "rows": [
+   {
+    "text": "is Spotify's top artist in the US in 2026",
+    "cont": true,
+    "id": "q0989",
+    "pp": 84,
+    "num": "84",
+    "p": 0.835,
+    "deadline": "2026-12-31",
+    "venues": [
+     "Kalshi",
+     "Polymarket"
+    ],
+    "pK": 83.5,
+    "pP": 83.5,
+    "raw": "Top Artist on Spotify U.S. 2026 \u2014 Drake",
+    "plain": "Drake is Spotify's top artist in the US in 2026",
+    "fixed": false
+   },
+   {
+    "text": "headlines Coachella 2027",
+    "cont": true,
+    "id": "q0182",
+    "pp": 56,
+    "num": "56",
+    "p": 0.555,
+    "deadline": "2027-12-31",
+    "venues": [
+     "Kalshi"
+    ],
+    "pK": 55.5,
+    "pP": null,
+    "raw": "Who will headline Coachella 2027? \u2014 Drake",
+    "plain": "Drake headlines Coachella 2027",
+    "fixed": false
+   },
+   {
+    "text": "releases another new album by December 31, 2026",
+    "cont": true,
+    "id": "q1963",
+    "pp": 14,
+    "num": "14",
+    "p": 0.135,
+    "deadline": "2026-12-31",
+    "venues": [
+     "Polymarket"
+    ],
+    "pK": null,
+    "pP": 13.5,
+    "raw": "Will Drake release a new album by...? \u2014 December 31",
+    "plain": "Drake releases another new album by December 31, 2026",
+    "fixed": true
+   },
+   {
+    "text": "is Spotify's most-streamed artist worldwide in 2026",
+    "cont": true,
+    "id": "q0992",
+    "pp": 4,
+    "num": "4",
+    "p": 0.0355,
+    "deadline": "2027-01-01",
+    "venues": [
+     "Kalshi",
+     "Polymarket"
+    ],
+    "pK": 3.5,
+    "pP": 3.6,
+    "raw": "Top artist on Spotify in 2026? \u2014 Drake",
+    "plain": "Drake is Spotify's most-streamed artist worldwide in 2026",
+    "fixed": true
+   }
+  ],
+  "venues": [
+   "Kalshi",
+   "Polymarket"
+  ],
+  "n": 5
+ },
+ {
+  "cid": "c01",
+  "type": "board",
+  "kicker": "Same deadline",
+  "rank": 2,
+  "slot": 2,
+  "verdict": "fix",
+  "notes": [
+   "MEANING/FAITHFULNESS q1426: 'blue wave' is defined by the rules as Democrats holding 218+ House seats AND only 49+ Senate seats - a Senate majority is NOT required. A casual reader expects a sweep of both chambers; sentence must state the actual bar.",
+   "NOTE q1426: an election-result claim (vote Nov 3, 2026; venue deadline 2027-01-05) rather than a pure by-deadline claim; acceptable on an end-of-2026 board once reworded.",
+   "TONE FLAG (borderline) q1785: concerns the Russia-Ukraine war (peace talks). Diplomacy, not strikes; caller's call. If excluded, drop q1785 (4 members remain).",
+   "NOTE q1785: low bar - any diplomatic meeting between representatives (not leaders) aimed at ceasefire/de-escalation counts."
+  ],
+  "headline": "By the end of 2026",
+  "tag": null,
+  "rows": [
+   {
+    "text": "Democrats win the House and hold at least 49 Senate seats after the 2026 midterms",
+    "when": null,
+    "id": "q1426",
+    "pp": 85,
+    "num": "85",
+    "p": 0.845,
+    "deadline": "2027-01-05",
+    "venues": [
+     "Polymarket"
+    ],
+    "pK": null,
+    "pP": 84.5,
+    "raw": "Blue wave in 2026?",
+    "plain": "Democrats win the House and hold at least 49 Senate seats after the 2026 midterms",
+    "fixed": true
+   },
+   {
+    "text": "Russia and Ukraine hold peace talks",
+    "when": "by December 31, 2026",
+    "id": "q1785",
+    "pp": 59,
+    "num": "59",
+    "p": 0.585,
+    "deadline": "2026-12-31",
+    "venues": [
+     "Polymarket"
+    ],
+    "pK": null,
+    "pP": 58.5,
+    "raw": "Russia x Ukraine peace talks by...? \u2014 December 31",
+    "plain": "Russia and Ukraine hold peace talks by December 31, 2026",
+    "fixed": false
+   },
+   {
+    "text": "Tesla and SpaceX officially announce a merger",
+    "when": "by December 31, 2026",
+    "id": "q1531",
+    "pp": 15,
+    "num": "15",
+    "p": 0.145,
+    "deadline": "2026-12-31",
+    "venues": [
+     "Polymarket"
+    ],
+    "pK": null,
+    "pP": 14.5,
+    "raw": "Tesla and SpaceX merger officially announced by...? \u2014 December 31, 2026",
+    "plain": "Tesla and SpaceX officially announce a merger by December 31, 2026",
+    "fixed": false
+   },
+   {
+    "text": "Donald Trump launches a run for a third term",
+    "when": "before 2027",
+    "id": "q0146",
+    "pp": 8,
+    "num": "8",
+    "p": 0.075,
+    "deadline": "2027-01-01",
+    "venues": [
+     "Kalshi"
+    ],
+    "pK": 7.5,
+    "pP": null,
+    "raw": "Will Trump run for a third term? \u2014 Before 2027",
+    "plain": "Donald Trump launches a run for a third term before 2027",
+    "fixed": false
+   },
+   {
+    "text": "The US takes control of any part of Greenland",
+    "when": "before 2027",
+    "id": "q0071",
+    "pp": 4,
+    "num": "4",
+    "p": 0.0385,
+    "deadline": "2027-01-01",
+    "venues": [
+     "Kalshi"
+    ],
+    "pK": 3.9,
+    "pP": null,
+    "raw": "Will the US take control of any part of Greenland? \u2014 Before 2027",
+    "plain": "The US takes control of any part of Greenland before 2027",
+    "fixed": false
+   }
+  ],
+  "venues": [
+   "Kalshi",
+   "Polymarket"
+  ],
+  "n": 6
+ },
+ {
+  "cid": "c18",
+  "type": "yardstick",
+  "kicker": "As likely as",
+  "rank": 4,
+  "slot": 2,
+  "verdict": "pass",
+  "notes": [],
+  "headline": null,
+  "connector": "is rated about as likely as",
+  "rows": [
+   {
+    "text": "Republicans win control of the US Senate in 2026",
+    "id": "q0447",
+    "pp": 36,
+    "num": "36",
+    "p": 0.355,
+    "deadline": "2027-02-01",
+    "venues": [
+     "Kalshi"
+    ],
+    "pK": 35.5,
+    "pP": null,
+    "raw": "Which party will win the U.S. Senate? \u2014 Republican Party",
+    "plain": "Republicans win control of the US Senate in 2026",
+    "fixed": false
+   },
+   {
+    "text": "Kendrick Lamar releases a new album in 2026",
+    "id": "q1439",
+    "pp": 36,
+    "num": "36",
+    "p": 0.36,
+    "deadline": "2027-01-02",
+    "venues": [
+     "Polymarket"
+    ],
+    "pK": null,
+    "pP": 36.0,
+    "raw": "Which artists will release new albums in 2026? \u2014 Kendrick Lamar",
+    "plain": "Kendrick Lamar releases a new album in 2026",
+    "fixed": false
+   }
+  ],
+  "venues": [
+   "Kalshi",
+   "Polymarket"
+  ],
+  "n": 7
+ },
+ {
+  "cid": "c09",
+  "type": "clock",
+  "kicker": "The clock",
+  "rank": 2,
+  "slot": 2,
+  "verdict": "pass",
+  "notes": [],
+  "headline": "The US reschedules marijuana",
+  "rows": [
+   {
+    "text": "before 2027",
+    "when": "before 2027",
+    "id": "q1228",
+    "pp": 8,
+    "num": "8",
+    "p": 0.0795,
+    "deadline": "2027-01-01",
+    "venues": [
+     "Kalshi"
+    ],
+    "pK": 7.9,
+    "pP": null,
+    "raw": "Will marijuana be rescheduled? \u2014 Before 2027",
+    "plain": "The US reschedules marijuana before 2027",
+    "fixed": false
+   },
+   {
+    "text": "before 2028",
+    "when": "before 2028",
+    "id": "q1229",
+    "pp": 68,
+    "num": "68",
+    "p": 0.68,
+    "deadline": "2028-01-01",
+    "venues": [
+     "Kalshi"
+    ],
+    "pK": 68.0,
+    "pP": null,
+    "raw": "Will marijuana be rescheduled? \u2014 Before 2028",
+    "plain": "The US reschedules marijuana before 2028",
+    "fixed": false
+   },
+   {
+    "text": "before January 20, 2029",
+    "when": "before January 20, 2029",
+    "id": "q1230",
+    "pp": 80,
+    "num": "80",
+    "p": 0.795,
+    "deadline": "2029-01-20",
+    "venues": [
+     "Kalshi"
+    ],
+    "pK": 79.5,
+    "pP": null,
+    "raw": "Will marijuana be rescheduled? \u2014 Before Jan 20, 2029",
+    "plain": "The US federally reschedules marijuana before January 20, 2029",
+    "fixed": false
+   }
+  ],
+  "venues": [
+   "Kalshi"
+  ],
+  "n": 8
+ },
+ {
+  "cid": "c27",
+  "type": "reversal",
+  "kicker": "Likelier than",
+  "rank": 6,
+  "slot": 2,
+  "verdict": "fix",
+  "notes": [
+   "MEANING q1231: 'major meteor strike' is defined as 10 kilotons TNT or more - a fireball-scale event that occurs every few years and usually goes unnoticed, not the catastrophe a reader pictures. Sentence must carry the threshold. Without the fix the reversal overstates the surprise.",
+   "NOTE q0030: GDP measure and whether 'by 2030' means start or end of 2030 are unspecified in the excerpt."
+  ],
+  "headline": null,
+  "connector": "is rated likelier than",
+  "rows": [
+   {
+    "text": "A meteor releasing at least 10 kilotons of energy hits Earth before 2030",
+    "id": "q1231",
+    "pp": 47,
+    "num": "47",
+    "p": 0.4715,
+    "deadline": "2030-01-01",
+    "venues": [
+     "Kalshi"
+    ],
+    "pK": 47.2,
+    "pP": null,
+    "raw": "Will a major meteor strike hit Earth before 2030?",
+    "plain": "A meteor releasing at least 10 kilotons of energy hits Earth before 2030",
+    "fixed": true
+   },
+   {
+    "text": "China's economy overtakes the US economy by 2030",
+    "id": "q0030",
+    "pp": 16,
+    "num": "16",
+    "p": 0.16,
+    "deadline": "2030-01-01",
+    "venues": [
+     "Kalshi"
+    ],
+    "pK": 16.0,
+    "pP": null,
+    "raw": "China overtakes USA\u2019s economy by 2030?",
+    "plain": "China's economy overtakes the US economy by 2030",
+    "fixed": false
+   }
+  ],
+  "venues": [
+   "Kalshi"
+  ],
+  "n": 9
+ },
+ {
+  "cid": "c36",
+  "type": "dossier",
+  "kicker": "One subject",
+  "rank": 4,
+  "slot": 2,
+  "verdict": "fix",
+  "notes": [
+   "MEANING q1651, q1371: rules use DOMESTIC (US and Canada) box office only, not worldwide.",
+   "FAITHFULNESS (minor) q1046: rules are 'delayed past December 18, 2026'; sentence gives no date.",
+   "NOTE q0741: rules count Maguire performing OR being announced as Spider-Man in the film.",
+   "NOTE: q1651 (opening week) and q1371 (opening weekend) are near-identical but distinct claims."
+  ],
+  "headline": "Avengers: Doomsday",
+  "rows": [
+   {
+    "text": "Tobey Maguire appears as Spider-Man in Avengers: Doomsday",
+    "cont": false,
+    "id": "q0741",
+    "pp": 92,
+    "num": "92",
+    "p": 0.915,
+    "deadline": "2028-01-01",
+    "venues": [
+     "Kalshi"
+    ],
+    "pK": 91.5,
+    "pP": null,
+    "raw": "Avengers: Doomsday: Cast \u2014 Tobey Maguire as Spider-Man?",
+    "plain": "Tobey Maguire appears as Spider-Man in Avengers: Doomsday",
+    "fixed": false
+   },
+   {
+    "text": "has the biggest US opening week of any 2026 movie",
+    "cont": true,
+    "id": "q1651",
+    "pp": 52,
+    "num": "52",
+    "p": 0.515,
+    "deadline": "2027-02-01",
+    "venues": [
+     "Polymarket"
+    ],
+    "pK": null,
+    "pP": 51.5,
+    "raw": "Which movie has biggest opening week in 2026? \u2014 Avengers: Doomsday",
+    "plain": "Avengers: Doomsday has the biggest US opening week of any 2026 movie",
+    "fixed": true
+   },
+   {
+    "text": "has the biggest US opening weekend of 2026",
+    "cont": true,
+    "id": "q1371",
+    "pp": 35,
+    "num": "35",
+    "p": 0.35,
+    "deadline": "2027-02-01",
+    "venues": [
+     "Polymarket"
+    ],
+    "pK": null,
+    "pP": 35.0,
+    "raw": "Which movie has biggest opening weekend in 2026? \u2014 Avengers: Doomsday",
+    "plain": "Avengers: Doomsday has the biggest US opening weekend of 2026",
+    "fixed": true
+   },
+   {
+    "text": "is delayed past its December 18, 2026 release date",
+    "cont": true,
+    "id": "q1046",
+    "pp": 6,
+    "num": "6",
+    "p": 0.06,
+    "deadline": "2026-12-18",
+    "venues": [
+     "Kalshi"
+    ],
+    "pK": 6.0,
+    "pP": null,
+    "raw": "Will Avengers: Doomsday be delayed?",
+    "plain": "Avengers: Doomsday is delayed past its December 18, 2026 release date",
+    "fixed": true
+   }
+  ],
+  "venues": [
+   "Kalshi",
+   "Polymarket"
+  ],
+  "n": 10
+ },
+ {
+  "cid": "c02",
+  "type": "board",
+  "kicker": "Same deadline",
+  "rank": 3,
+  "slot": 3,
+  "verdict": "pass",
+  "notes": [
+   "NOTE (meaning) q1388: 'AI bubble bursts' resolves on a checklist definition of an AI industry downturn (at least three of several listed conditions; excerpt truncated), not a general impression.",
+   "TONE FLAG (borderline) q1251: 'Putin out' resolves on any cessation of the presidency, including death or ill health, though it does not name them."
+  ],
+  "headline": "By mid-2027",
+  "tag": null,
+  "rows": [
+   {
+    "text": "Grand Theft Auto VI is released",
+    "when": "before July 2027",
+    "id": "q1222",
+    "pp": 98,
+    "num": "98",
+    "p": 0.975,
+    "deadline": "2027-07-01",
+    "venues": [
+     "Kalshi"
+    ],
+    "pK": 97.5,
+    "pP": null,
+    "raw": "Grand Theft Auto VI: Release date \u2014 Before July 2027",
+    "plain": "Grand Theft Auto VI is released before July 2027",
+    "fixed": false
+   },
+   {
+    "text": "Tesla and SpaceX announce a merger",
+    "when": "by June 30, 2027",
+    "id": "q1534",
+    "pp": 43,
+    "num": "43",
+    "p": 0.425,
+    "deadline": "2027-06-30",
+    "venues": [
+     "Polymarket"
+    ],
+    "pK": null,
+    "pP": 42.5,
+    "raw": "Tesla and SpaceX merger officially announced by...? \u2014 June 30, 2027",
+    "plain": "Tesla and SpaceX announce a merger by June 30, 2027",
+    "fixed": false
+   },
+   {
+    "text": "Justice Alito retires from the Supreme Court",
+    "when": "before July 1, 2027",
+    "id": "q1192",
+    "pp": 29,
+    "num": "29",
+    "p": 0.285,
+    "deadline": "2027-07-01",
+    "venues": [
+     "Kalshi"
+    ],
+    "pK": 28.5,
+    "pP": null,
+    "raw": "When will Justice Alito retire from the Supreme Court? \u2014 Before Jul 1, 2027",
+    "plain": "Justice Alito retires from the Supreme Court before July 1, 2027",
+    "fixed": false
+   },
+   {
+    "text": "The AI bubble bursts",
+    "when": "by June 30, 2027",
+    "id": "q1388",
+    "pp": 20,
+    "num": "20",
+    "p": 0.195,
+    "deadline": "2027-06-30",
+    "venues": [
+     "Polymarket"
+    ],
+    "pK": null,
+    "pP": 19.5,
+    "raw": "AI bubble burst by...? \u2014 June 30, 2027",
+    "plain": "The AI bubble bursts by June 30, 2027",
+    "fixed": false
+   },
+   {
+    "text": "Vladimir Putin is out as Russia's president",
+    "when": "by June 30, 2027",
+    "id": "q1251",
+    "pp": 11,
+    "num": "11",
+    "p": 0.105,
+    "deadline": "2027-06-30",
+    "venues": [
+     "Polymarket"
+    ],
+    "pK": null,
+    "pP": 10.5,
+    "raw": "Putin out as President of Russia by...? \u2014 June 30, 2027",
+    "plain": "Vladimir Putin is out as Russia's president by June 30, 2027",
+    "fixed": false
+   }
+  ],
+  "venues": [
+   "Kalshi",
+   "Polymarket"
+  ],
+  "n": 11
+ },
+ {
+  "cid": "c19",
+  "type": "yardstick",
+  "kicker": "As likely as",
+  "rank": 5,
+  "slot": 3,
+  "verdict": "pass",
+  "notes": [
+   "NOTE (optional) q0198: sentence names no year; rules are the 99th Academy Awards (March 2027), which is the default reading. The two claims resolve 20 months apart."
+  ],
+  "headline": null,
+  "connector": "is rated about as likely as",
+  "rows": [
+   {
+    "text": "Alexandria Ocasio-Cortez wins the 2028 presidential election",
+    "id": "q1254",
+    "pp": 15,
+    "num": "15",
+    "p": 0.1525,
+    "deadline": "2028-11-08",
+    "venues": [
+     "Polymarket"
+    ],
+    "pK": null,
+    "pP": 15.2,
+    "raw": "Presidential Election Winner 2028 \u2014 Alexandria Ocasio-Cortez",
+    "plain": "Alexandria Ocasio-Cortez wins the 2028 presidential election",
+    "fixed": false
+   },
+   {
+    "text": "Tom Cruise wins the Oscar for Best Actor",
+    "id": "q0198",
+    "pp": 16,
+    "num": "16",
+    "p": 0.155,
+    "deadline": "2027-12-31",
+    "venues": [
+     "Kalshi"
+    ],
+    "pK": 15.5,
+    "pP": null,
+    "raw": "Oscar Winner: Best Actor \u2014 Tom Cruise",
+    "plain": "Tom Cruise wins the Oscar for Best Actor",
+    "fixed": false
+   }
+  ],
+  "venues": [
+   "Kalshi",
+   "Polymarket"
+  ],
+  "n": 12
+ },
+ {
+  "cid": "c10",
+  "type": "clock",
+  "kicker": "The clock",
+  "rank": 3,
+  "slot": 3,
+  "verdict": "pass",
+  "notes": [
+   "NOTE (meaning): 'impeached' means a House impeachment vote only, not removal; rules are worded 'the President of the United States'. Sentences are accurate."
+  ],
+  "headline": "Trump is impeached",
+  "rows": [
+   {
+    "text": "before 2027",
+    "when": "before 2027",
+    "id": "q1225",
+    "pp": 3,
+    "num": "3",
+    "p": 0.0273,
+    "deadline": "2027-01-01",
+    "venues": [
+     "Kalshi",
+     "Polymarket"
+    ],
+    "pK": 3.6,
+    "pP": 1.9,
+    "raw": "Will Trump be impeached? \u2014 Before Jan 1, 2027",
+    "plain": "Trump is impeached before 2027",
+    "fixed": false
+   },
+   {
+    "text": "before March 2027",
+    "when": "before March 2027",
+    "id": "q1226",
+    "pp": 33,
+    "num": "33",
+    "p": 0.325,
+    "deadline": "2027-03-01",
+    "venues": [
+     "Kalshi"
+    ],
+    "pK": 32.5,
+    "pP": null,
+    "raw": "Will Trump be impeached? \u2014 Before Mar 1, 2027",
+    "plain": "Trump is impeached before March 2027",
+    "fixed": false
+   },
+   {
+    "text": "before 2028",
+    "when": "before 2028",
+    "id": "q1227",
+    "pp": 66,
+    "num": "66",
+    "p": 0.655,
+    "deadline": "2028-01-01",
+    "venues": [
+     "Kalshi"
+    ],
+    "pK": 65.5,
+    "pP": null,
+    "raw": "Will Trump be impeached? \u2014 Before Jan 1, 2028",
+    "plain": "Trump is impeached before 2028",
+    "fixed": false
+   }
+  ],
+  "venues": [
+   "Kalshi",
+   "Polymarket"
+  ],
+  "n": 13
+ },
+ {
+  "cid": "c28",
+  "type": "reversal",
+  "kicker": "Likelier than",
+  "rank": 8,
+  "slot": 3,
+  "verdict": "fix",
+  "notes": [
+   "MEANING/FAITHFULNESS q0438: 'blue wave' is defined by the rules as Democrats holding 218+ House seats AND only 49+ Senate seats - a Senate majority is NOT required. A casual reader expects a sweep of both chambers; sentence must state the actual bar.",
+   "NOTE (meaning, verify) q0857: market appears to concern the STANDARD iPhone 18 (expected spring 2027), not Pro/fold models due autumn 2026; rules excerpt does not say. If an iPhone 18-branded model is already on sale, this reversal will read as false - confirm the full rules.",
+   "STRUCTURE note: first claim's venue deadline (2027-02-01) is a month after the second's (2027-01-01), but the underlying event is the Nov 3, 2026 election, so not flagged as a later deadline."
+  ],
+  "headline": null,
+  "connector": "is rated likelier than",
+  "rows": [
+   {
+    "text": "Democrats win the House and hold at least 49 Senate seats after the 2026 midterms",
+    "id": "q0438",
+    "pp": 86,
+    "num": "86",
+    "p": 0.855,
+    "deadline": "2027-02-01",
+    "venues": [
+     "Kalshi"
+    ],
+    "pK": 85.5,
+    "pP": null,
+    "raw": "Blue wave in 2026?",
+    "plain": "Democrats win the House and hold at least 49 Senate seats after the 2026 midterms",
+    "fixed": true
+   },
+   {
+    "text": "Apple releases the iPhone 18 before 2027",
+    "id": "q0857",
+    "pp": 4,
+    "num": "4",
+    "p": 0.035,
+    "deadline": "2027-01-01",
+    "venues": [
+     "Kalshi"
+    ],
+    "pK": 3.5,
+    "pP": null,
+    "raw": "When will Apple release the iPhone 18? \u2014 Before 2027",
+    "plain": "Apple releases the iPhone 18 before 2027",
+    "fixed": false
+   }
+  ],
+  "venues": [
+   "Kalshi"
+  ],
+  "n": 14
+ },
+ {
+  "cid": "c38",
+  "type": "dossier",
+  "kicker": "One subject",
+  "rank": 6,
+  "slot": 3,
+  "verdict": "fix",
+  "notes": [
+   "MEANING q1368: rules use DOMESTIC CALENDAR gross (Box Office Mojo calendar grosses: US/Canada money earned inside calendar 2026), not worldwide or lifetime gross. 'Highest-grossing movie of 2026' reads as worldwide total.",
+   "MEANING q1370, q1650, q1862: domestic (US and Canada) box office only.",
+   "NOTE: q1370 (biggest opening weekend, 64%) and q1862 (second-biggest, 34%) are mutually exclusive outcomes of one ranking - distinct claims, not duplicates."
+  ],
+  "headline": "Spider-Man: Brand New Day",
+  "rows": [
+   {
+    "text": "earns the most at the US box office during 2026",
+    "cont": true,
+    "id": "q1368",
+    "pp": 96,
+    "num": "96",
+    "p": 0.955,
+    "deadline": "2027-01-08",
+    "venues": [
+     "Polymarket"
+    ],
+    "pK": null,
+    "pP": 95.5,
+    "raw": "Highest grossing movie in 2026? \u2014 Spider-Man: Brand New Day",
+    "plain": "Spider-Man: Brand New Day earns the most at the US box office during 2026",
+    "fixed": true
+   },
+   {
+    "text": "has the biggest US opening weekend of 2026",
+    "cont": true,
+    "id": "q1370",
+    "pp": 64,
+    "num": "64",
+    "p": 0.635,
+    "deadline": "2027-02-01",
+    "venues": [
+     "Polymarket"
+    ],
+    "pK": null,
+    "pP": 63.5,
+    "raw": "Which movie has biggest opening weekend in 2026? \u2014 Spider-Man: Brand New Day",
+    "plain": "Spider-Man: Brand New Day has the biggest US opening weekend of 2026",
+    "fixed": true
+   },
+   {
+    "text": "has the biggest US opening week of 2026",
+    "cont": true,
+    "id": "q1650",
+    "pp": 49,
+    "num": "49",
+    "p": 0.485,
+    "deadline": "2027-02-01",
+    "venues": [
+     "Polymarket"
+    ],
+    "pK": null,
+    "pP": 48.5,
+    "raw": "Which movie has biggest opening week in 2026? \u2014 Spider-Man: Brand New Day",
+    "plain": "Spider-Man: Brand New Day has the biggest US opening week of 2026",
+    "fixed": true
+   },
+   {
+    "text": "has the second-biggest US opening weekend of 2026",
+    "cont": true,
+    "id": "q1862",
+    "pp": 35,
+    "num": "35",
+    "p": 0.345,
+    "deadline": "2027-01-01",
+    "venues": [
+     "Polymarket"
+    ],
+    "pK": null,
+    "pP": 34.5,
+    "raw": "Which movie has 2nd biggest opening weekend in 2026? \u2014 Spider-Man: Brand New Day",
+    "plain": "Spider-Man: Brand New Day has the second-biggest US opening weekend of 2026",
+    "fixed": true
+   }
+  ],
+  "venues": [
+   "Polymarket"
+  ],
+  "n": 15
+ },
+ {
+  "cid": "c03",
+  "type": "board",
+  "kicker": "Same deadline",
+  "rank": 4,
+  "slot": 4,
+  "verdict": "fix",
+  "notes": [
+   "MEANING/FAITHFULNESS q1426: 'blue wave' is defined by the rules as Democrats holding 218+ House seats AND only 49+ Senate seats - a Senate majority is NOT required. A casual reader expects a sweep of both chambers; sentence must state the actual bar.",
+   "NOTE q1426: election-result claim (deadline 2027-01-05), acceptable on an end-of-2026 board once reworded."
+  ],
+  "headline": "By the end of 2026",
+  "tag": "Washington",
+  "rows": [
+   {
+    "text": "Democrats win the House and hold at least 49 Senate seats after the 2026 midterms",
+    "when": null,
+    "id": "q1426",
+    "pp": 85,
+    "num": "85",
+    "p": 0.845,
+    "deadline": "2027-01-05",
+    "venues": [
+     "Polymarket"
+    ],
+    "pK": null,
+    "pP": 84.5,
+    "raw": "Blue wave in 2026?",
+    "plain": "Democrats win the House and hold at least 49 Senate seats after the 2026 midterms",
+    "fixed": true
+   },
+   {
+    "text": "Trump invokes the Insurrection Act",
+    "when": "before 2027",
+    "id": "q0081",
+    "pp": 17,
+    "num": "17",
+    "p": 0.17,
+    "deadline": "2027-01-01",
+    "venues": [
+     "Kalshi"
+    ],
+    "pK": 17.0,
+    "pP": null,
+    "raw": "Will Trump invoke the Insurrection Act? \u2014 Before 2027",
+    "plain": "Trump invokes the Insurrection Act before 2027",
+    "fixed": false
+   },
+   {
+    "text": "Justice Alito retires from the Supreme Court",
+    "when": "before 2027",
+    "id": "q1191",
+    "pp": 12,
+    "num": "12",
+    "p": 0.12,
+    "deadline": "2027-01-01",
+    "venues": [
+     "Kalshi"
+    ],
+    "pK": 12.0,
+    "pP": null,
+    "raw": "When will Justice Alito retire from the Supreme Court? \u2014 Before Jan 1, 2027",
+    "plain": "Justice Alito retires from the Supreme Court before 2027",
+    "fixed": false
+   },
+   {
+    "text": "Donald Trump launches a run for a third term",
+    "when": "before 2027",
+    "id": "q0146",
+    "pp": 8,
+    "num": "8",
+    "p": 0.075,
+    "deadline": "2027-01-01",
+    "venues": [
+     "Kalshi"
+    ],
+    "pK": 7.5,
+    "pP": null,
+    "raw": "Will Trump run for a third term? \u2014 Before 2027",
+    "plain": "Donald Trump launches a run for a third term before 2027",
+    "fixed": false
+   },
+   {
+    "text": "Trump endorses JD Vance for president",
+    "when": "before 2027",
+    "id": "q1437",
+    "pp": 3,
+    "num": "3",
+    "p": 0.032,
+    "deadline": "2027-01-01",
+    "venues": [
+     "Polymarket"
+    ],
+    "pK": null,
+    "pP": 3.2,
+    "raw": "Will Trump endorse JD Vance for president before 2027?",
+    "plain": "Trump endorses JD Vance for president before 2027",
+    "fixed": false
+   }
+  ],
+  "venues": [
+   "Kalshi",
+   "Polymarket"
+  ],
+  "n": 16
+ },
+ {
+  "cid": "c20",
+  "type": "yardstick",
+  "kicker": "As likely as",
+  "rank": 6,
+  "slot": 4,
+  "verdict": "pass",
+  "notes": [
+   "NOTE (meaning) q0105: accurate, but a casual reader may be puzzled - the sitting VP being the 2028 VICE-presidential nominee is priced low because he is expected to seek the top of the ticket."
+  ],
+  "headline": null,
+  "connector": "is rated about as likely as",
+  "rows": [
+   {
+    "text": "JD Vance is the 2028 Republican vice presidential nominee",
+    "id": "q0105",
+    "pp": 6,
+    "num": "6",
+    "p": 0.0555,
+    "deadline": "2028-11-07",
+    "venues": [
+     "Kalshi"
+    ],
+    "pK": 5.5,
+    "pP": null,
+    "raw": "2028 Republican VP nominee \u2014 J.D. Vance",
+    "plain": "JD Vance is the 2028 Republican vice presidential nominee",
+    "fixed": false
+   },
+   {
+    "text": "BTS headlines Coachella 2027",
+    "id": "q0183",
+    "pp": 6,
+    "num": "6",
+    "p": 0.055,
+    "deadline": "2027-12-31",
+    "venues": [
+     "Kalshi"
+    ],
+    "pK": 5.5,
+    "pP": null,
+    "raw": "Who will headline Coachella 2027? \u2014 BTS",
+    "plain": "BTS headlines Coachella 2027",
+    "fixed": false
+   }
+  ],
+  "venues": [
+   "Kalshi"
+  ],
+  "n": 17
+ },
+ {
+  "cid": "c11",
+  "type": "clock",
+  "kicker": "The clock",
+  "rank": 4,
+  "slot": 4,
+  "verdict": "pass",
+  "notes": [
+   "NOTE: rules require shares actually listed and open for trading by the date (a filing or announcement does not count); sentences are consistent with that. Wording varies across rungs ('holds an IPO' / 'goes public') but all are faithful."
+  ],
+  "headline": "Anthropic holds an IPO",
+  "rows": [
+   {
+    "text": "by October 15, 2026",
+    "when": "by October 15, 2026",
+    "id": "q1768",
+    "pp": 0,
+    "num": "<1",
+    "p": 0.0005,
+    "deadline": "2026-10-15",
+    "venues": [
+     "Polymarket"
+    ],
+    "pK": null,
+    "pP": 0.1,
+    "raw": "Anthropic IPO by __? \u2014 October 15, 2026",
+    "plain": "Anthropic holds an IPO by October 15, 2026",
+    "fixed": false
+   },
+   {
+    "text": "by October 31, 2026",
+    "when": "by October 31, 2026",
+    "id": "q1767",
+    "pp": 1,
+    "num": "1",
+    "p": 0.0135,
+    "deadline": "2026-10-31",
+    "venues": [
+     "Polymarket"
+    ],
+    "pK": null,
+    "pP": 1.4,
+    "raw": "Anthropic IPO by __? \u2014 October 31, 2026",
+    "plain": "Anthropic goes public by October 31, 2026",
+    "fixed": false
+   },
+   {
+    "text": "by November 15, 2026",
+    "when": "by November 15, 2026",
+    "id": "q1770",
+    "pp": 12,
+    "num": "12",
+    "p": 0.115,
+    "deadline": "2026-11-15",
+    "venues": [
+     "Polymarket"
+    ],
+    "pK": null,
+    "pP": 11.5,
+    "raw": "Anthropic IPO by __? \u2014 November 15, 2026",
+    "plain": "Anthropic goes public with an IPO by November 15, 2026",
+    "fixed": false
+   },
+   {
+    "text": "by November 30, 2026",
+    "when": "by November 30, 2026",
+    "id": "q1769",
+    "pp": 68,
+    "num": "68",
+    "p": 0.675,
+    "deadline": "2026-11-30",
+    "venues": [
+     "Polymarket"
+    ],
+    "pK": null,
+    "pP": 67.5,
+    "raw": "Anthropic IPO by __? \u2014 November 30, 2026",
+    "plain": "Anthropic goes public in an IPO by November 30, 2026",
+    "fixed": false
+   },
+   {
+    "text": "by December 15, 2026",
+    "when": "by December 15, 2026",
+    "id": "q1771",
+    "pp": 79,
+    "num": "79",
+    "p": 0.785,
+    "deadline": "2026-12-15",
+    "venues": [
+     "Polymarket"
+    ],
+    "pK": null,
+    "pP": 78.5,
+    "raw": "Anthropic IPO by __? \u2014 December 15, 2026",
+    "plain": "Anthropic goes public with an IPO by December 15, 2026",
+    "fixed": false
+   },
+   {
+    "text": "by December 31, 2026",
+    "when": "by December 31, 2026",
+    "id": "q1766",
+    "pp": 82,
+    "num": "82",
+    "p": 0.815,
+    "deadline": "2026-12-31",
+    "venues": [
+     "Polymarket"
+    ],
+    "pK": null,
+    "pP": 81.5,
+    "raw": "Anthropic IPO by __? \u2014 December 31, 2026",
+    "plain": "Anthropic goes public in an IPO by December 31, 2026",
+    "fixed": false
+   }
+  ],
+  "venues": [
+   "Polymarket"
+  ],
+  "n": 18
+ },
+ {
+  "cid": "c29",
+  "type": "reversal",
+  "kicker": "Likelier than",
+  "rank": 18,
+  "slot": 4,
+  "verdict": "pass",
+  "notes": [
+   "NOTE (sanity, verify price) q0101: sentence is faithful, but 74% for a Fed rate INCREASE by Dec 31, 2026 (two meetings left) is a striking number from a single venue; worth a glance at the live quote/spread before the card carries a 'likelier than' claim.",
+   "NOTE q1465: the listed date is not in the raw text; 'before 2027' comes from the deadline field (rules: ceases to hold a Board seat for any period by the listed date)."
+  ],
+  "headline": null,
+  "connector": "is rated likelier than",
+  "rows": [
+   {
+    "text": "The Federal Reserve raises interest rates before 2027",
+    "id": "q0101",
+    "pp": 75,
+    "num": "75",
+    "p": 0.745,
+    "deadline": "2027-01-01",
+    "venues": [
+     "Kalshi"
+    ],
+    "pK": 74.5,
+    "pP": null,
+    "raw": "Next Fed rate hike? \u2014 Before 2027",
+    "plain": "The Federal Reserve raises interest rates before 2027",
+    "fixed": false
+   },
+   {
+    "text": "Jerome Powell leaves the Federal Reserve Board before 2027",
+    "id": "q1465",
+    "pp": 17,
+    "num": "17",
+    "p": 0.17,
+    "deadline": "2027-01-01",
+    "venues": [
+     "Polymarket"
+    ],
+    "pK": null,
+    "pP": 17.0,
+    "raw": "Jerome Powell out of Fed Board by\u2026?",
+    "plain": "Jerome Powell leaves the Federal Reserve Board before 2027",
+    "fixed": false
+   }
+  ],
+  "venues": [
+   "Kalshi",
+   "Polymarket"
+  ],
+  "n": 19
+ },
+ {
+  "cid": "c39",
+  "type": "dossier",
+  "kicker": "One subject",
+  "rank": 7,
+  "slot": 4,
+  "verdict": "pass",
+  "notes": [
+   "NOTE (optional): no year in sentences; rules are the 99th Academy Awards (2027), the default reading. Three distinct claims (two nomination categories, one win)."
+  ],
+  "headline": "Robert Pattinson",
+  "rows": [
+   {
+    "text": "earns an Oscar nomination for Best Actor",
+    "cont": true,
+    "id": "q0488",
+    "pp": 58,
+    "num": "58",
+    "p": 0.575,
+    "deadline": "2027-12-31",
+    "venues": [
+     "Kalshi"
+    ],
+    "pK": 57.5,
+    "pP": null,
+    "raw": "Oscar nominees: Best Actor \u2014 Robert Pattinson",
+    "plain": "Robert Pattinson earns an Oscar nomination for Best Actor",
+    "fixed": false
+   },
+   {
+    "text": "earns an Oscar nomination for Best Supporting Actor",
+    "cont": true,
+    "id": "q1189",
+    "pp": 30,
+    "num": "30",
+    "p": 0.295,
+    "deadline": "2027-12-31",
+    "venues": [
+     "Kalshi"
+    ],
+    "pK": 29.5,
+    "pP": null,
+    "raw": "Oscar nominees: Best Supporting Actor \u2014 Robert Pattinson",
+    "plain": "Robert Pattinson earns an Oscar nomination for Best Supporting Actor",
+    "fixed": false
+   },
+   {
+    "text": "wins the Oscar for Best Supporting Actor",
+    "cont": true,
+    "id": "q0188",
+    "pp": 11,
+    "num": "11",
+    "p": 0.105,
+    "deadline": "2027-12-31",
+    "venues": [
+     "Kalshi"
+    ],
+    "pK": 10.5,
+    "pP": null,
+    "raw": "Oscar winner: Best Supporting Actor \u2014 Robert Pattinson",
+    "plain": "Robert Pattinson wins the Oscar for Best Supporting Actor",
+    "fixed": false
+   }
+  ],
+  "venues": [
+   "Kalshi"
+  ],
+  "n": 20
+ },
+ {
+  "cid": "c04",
+  "type": "board",
+  "kicker": "Same deadline",
+  "rank": 5,
+  "slot": 5,
+  "verdict": "fix",
+  "notes": [
+   "FAITHFULNESS/MEANING q1236: rules resolve on OpenAI ANNOUNCING it has attained AGI, not on AGI being achieved; sentence states it as fact.",
+   "MEANING q1231: 'major meteor strike' is defined as 10 kilotons TNT or more - a fireball-scale event that occurs every few years and usually goes unnoticed, not the catastrophe a reader pictures. Sentence must carry the threshold.",
+   "MEANING q0014: 'Level 4' is jargon; it is the State Department's 'Do Not Travel' level. Rules also count an update or reaffirmation of a Level 4 advisory.",
+   "NOTE q0030: rules say only 'China has overtaken US GDP by 2030' - GDP measure (nominal vs PPP) and whether 'by 2030' means start or end of 2030 are not specified in the excerpt."
+  ],
+  "headline": "By 2030",
+  "tag": null,
+  "rows": [
+   {
+    "text": "OpenAI announces it has achieved AGI",
+    "when": "before 2030",
+    "id": "q1236",
+    "pp": 66,
+    "num": "66",
+    "p": 0.6545,
+    "deadline": "2030-01-01",
+    "venues": [
+     "Kalshi"
+    ],
+    "pK": 65.5,
+    "pP": null,
+    "raw": "When will OpenAI achieve AGI? \u2014 Before 2030",
+    "plain": "OpenAI announces it has achieved AGI before 2030",
+    "fixed": true
+   },
+   {
+    "text": "A meteor releasing at least 10 kilotons of energy hits Earth",
+    "when": "before 2030",
+    "id": "q1231",
+    "pp": 47,
+    "num": "47",
+    "p": 0.4715,
+    "deadline": "2030-01-01",
+    "venues": [
+     "Kalshi"
+    ],
+    "pK": 47.2,
+    "pP": null,
+    "raw": "Will a major meteor strike hit Earth before 2030?",
+    "plain": "A meteor releasing at least 10 kilotons of energy hits Earth before 2030",
+    "fixed": true
+   },
+   {
+    "text": "The US issues a Level 4 'do not travel' advisory for Taiwan",
+    "when": "before 2030",
+    "id": "q0014",
+    "pp": 41,
+    "num": "41",
+    "p": 0.405,
+    "deadline": "2030-01-01",
+    "venues": [
+     "Kalshi"
+    ],
+    "pK": 40.5,
+    "pP": null,
+    "raw": "Will the US issue a Level 4 travel advisory for Taiwan? \u2014 Before Jan 1, 2030",
+    "plain": "The US issues a Level 4 'do not travel' advisory for Taiwan before 2030",
+    "fixed": true
+   },
+   {
+    "text": "SpaceX successfully lands something on Mars",
+    "when": "before 2030",
+    "id": "q0015",
+    "pp": 25,
+    "num": "25",
+    "p": 0.245,
+    "deadline": "2030-01-01",
+    "venues": [
+     "Kalshi"
+    ],
+    "pK": 24.5,
+    "pP": null,
+    "raw": "Will SpaceX land anything successfully on Mars before 2030?",
+    "plain": "SpaceX successfully lands something on Mars before 2030",
+    "fixed": false
+   },
+   {
+    "text": "China's economy overtakes the US economy",
+    "when": "by 2030",
+    "id": "q0030",
+    "pp": 16,
+    "num": "16",
+    "p": 0.16,
+    "deadline": "2030-01-01",
+    "venues": [
+     "Kalshi"
+    ],
+    "pK": 16.0,
+    "pP": null,
+    "raw": "China overtakes USA\u2019s economy by 2030?",
+    "plain": "China's economy overtakes the US economy by 2030",
+    "fixed": false
+   }
+  ],
+  "venues": [
+   "Kalshi"
+  ],
+  "n": 21
+ },
+ {
+  "cid": "c21",
+  "type": "yardstick",
+  "kicker": "As likely as",
+  "rank": 7,
+  "slot": 5,
+  "verdict": "pass",
+  "notes": [
+   "TONE FLAG (borderline) q1251: 'Putin out' resolves on any cessation of the presidency, including death or ill health, though it does not name them; here it is paired with a pop-music claim."
+  ],
+  "headline": null,
+  "connector": "is rated about as likely as",
+  "rows": [
+   {
+    "text": "Vladimir Putin is out as Russia's president by June 30, 2027",
+    "id": "q1251",
+    "pp": 11,
+    "num": "11",
+    "p": 0.105,
+    "deadline": "2027-06-30",
+    "venues": [
+     "Polymarket"
+    ],
+    "pK": null,
+    "pP": 10.5,
+    "raw": "Putin out as President of Russia by...? \u2014 June 30, 2027",
+    "plain": "Vladimir Putin is out as Russia's president by June 30, 2027",
+    "fixed": false
+   },
+   {
+    "text": "Taylor Swift is Spotify's top artist of 2026",
+    "id": "q0990",
+    "pp": 11,
+    "num": "11",
+    "p": 0.1072,
+    "deadline": "2027-01-01",
+    "venues": [
+     "Kalshi",
+     "Polymarket"
+    ],
+    "pK": 11.0,
+    "pP": 10.4,
+    "raw": "Top artist on Spotify in 2026? \u2014 Taylor Swift",
+    "plain": "Taylor Swift is Spotify's top artist of 2026",
+    "fixed": false
+   }
+  ],
+  "venues": [
+   "Kalshi",
+   "Polymarket"
+  ],
+  "n": 22
+ },
+ {
+  "cid": "c12",
+  "type": "clock",
+  "kicker": "The clock",
+  "rank": 5,
+  "slot": 5,
+  "verdict": "pass",
+  "notes": [],
+  "headline": "GTA VI is released",
+  "rows": [
+   {
+    "text": "before November 2026",
+    "when": "before November 2026",
+    "id": "q1219",
+    "pp": 1,
+    "num": "1",
+    "p": 0.005,
+    "deadline": "2026-11-01",
+    "venues": [
+     "Kalshi"
+    ],
+    "pK": 0.5,
+    "pP": null,
+    "raw": "Grand Theft Auto VI: Release date \u2014 Before November 2026",
+    "plain": "GTA VI is released before November 2026",
+    "fixed": false
+   },
+   {
+    "text": "before December 1, 2026",
+    "when": "before December 1, 2026",
+    "id": "q1220",
+    "pp": 93,
+    "num": "93",
+    "p": 0.925,
+    "deadline": "2026-12-01",
+    "venues": [
+     "Kalshi"
+    ],
+    "pK": 92.5,
+    "pP": null,
+    "raw": "Grand Theft Auto VI: Release date \u2014 Before December 2026",
+    "plain": "Grand Theft Auto VI is released before December 1, 2026",
+    "fixed": false
+   },
+   {
+    "text": "before 2027",
+    "when": "before 2027",
+    "id": "q1221",
+    "pp": 94,
+    "num": "94",
+    "p": 0.935,
+    "deadline": "2027-01-01",
+    "venues": [
+     "Kalshi"
+    ],
+    "pK": 93.5,
+    "pP": null,
+    "raw": "Grand Theft Auto VI: Release date \u2014 Before 2027",
+    "plain": "Grand Theft Auto VI is released before 2027",
+    "fixed": false
+   },
+   {
+    "text": "before July 2027",
+    "when": "before July 2027",
+    "id": "q1222",
+    "pp": 98,
+    "num": "98",
+    "p": 0.975,
+    "deadline": "2027-07-01",
+    "venues": [
+     "Kalshi"
+    ],
+    "pK": 97.5,
+    "pP": null,
+    "raw": "Grand Theft Auto VI: Release date \u2014 Before July 2027",
+    "plain": "Grand Theft Auto VI is released before July 2027",
+    "fixed": false
+   },
+   {
+    "text": "before January 2028",
+    "when": "before January 2028",
+    "id": "q1223",
+    "pp": 99,
+    "num": "99",
+    "p": 0.985,
+    "deadline": "2028-01-01",
+    "venues": [
+     "Kalshi"
+    ],
+    "pK": 98.5,
+    "pP": null,
+    "raw": "Grand Theft Auto VI: Release date \u2014 Before January 2028",
+    "plain": "Grand Theft Auto VI is released before January 2028",
+    "fixed": false
+   }
+  ],
+  "venues": [
+   "Kalshi"
+  ],
+  "n": 23
+ },
+ {
+  "cid": "c30",
+  "type": "reversal",
+  "kicker": "Likelier than",
+  "rank": 23,
+  "slot": 5,
+  "verdict": "fix",
+  "notes": [
+   "MEANING q1427: rules define 'new product line' as a category of products Apple has NEVER previously sold, both announced and launched by Dec 31, 2026 - not a new iteration of an existing line, which is how 'new product line' reads."
+  ],
+  "headline": null,
+  "connector": "is rated likelier than",
+  "rows": [
+   {
+    "text": "Apple launches an entirely new product category before 2027",
+    "id": "q1427",
+    "pp": 63,
+    "num": "63",
+    "p": 0.625,
+    "deadline": "2027-01-01",
+    "venues": [
+     "Polymarket"
+    ],
+    "pK": null,
+    "pP": 62.5,
+    "raw": "Will Apple release a new product line before 2027?",
+    "plain": "Apple launches an entirely new product category before 2027",
+    "fixed": true
+   },
+   {
+    "text": "GTA VI Online is released before 2027",
+    "id": "q0868",
+    "pp": 11,
+    "num": "11",
+    "p": 0.11,
+    "deadline": "2027-01-01",
+    "venues": [
+     "Kalshi"
+    ],
+    "pK": 11.0,
+    "pP": null,
+    "raw": "GTA VI Online: Release date \u2014 Before 2027",
+    "plain": "GTA VI Online is released before 2027",
+    "fixed": false
+   }
+  ],
+  "venues": [
+   "Kalshi",
+   "Polymarket"
+  ],
+  "n": 24
+ },
+ {
+  "cid": "c42",
+  "type": "dossier",
+  "kicker": "One subject",
+  "rank": 12,
+  "slot": 5,
+  "verdict": "fix",
+  "notes": [
+   "FAITHFULNESS q0135: rules count an official relocation ANNOUNCEMENT as well as an actual move, with a deadline (first game of the 2028 season); the sentence states neither."
+  ],
+  "headline": "Chicago Bears",
+  "rows": [
+   {
+    "text": "make the NFL playoffs",
+    "cont": true,
+    "id": "q0514",
+    "pp": 63,
+    "num": "63",
+    "p": 0.63,
+    "deadline": "2027-01-25",
+    "venues": [
+     "Kalshi"
+    ],
+    "pK": 63.0,
+    "pP": null,
+    "raw": "Pro Football Playoff Qualifiers \u2014 Chicago",
+    "plain": "The Chicago Bears make the NFL playoffs",
+    "fixed": false
+   },
+   {
+    "text": "win the NFC North division",
+    "cont": true,
+    "id": "q0535",
+    "pp": 29,
+    "num": "29",
+    "p": 0.285,
+    "deadline": "2027-01-25",
+    "venues": [
+     "Kalshi"
+    ],
+    "pK": 28.5,
+    "pP": null,
+    "raw": "NFC North Division Winner \u2014 Chicago",
+    "plain": "The Chicago Bears win the NFC North division",
+    "fixed": false
+   },
+   {
+    "text": "move, or announce a move, to Indiana before the 2028 season",
+    "cont": true,
+    "id": "q0135",
+    "pp": 25,
+    "num": "25",
+    "p": 0.245,
+    "deadline": "2028-09-07",
+    "venues": [
+     "Kalshi"
+    ],
+    "pK": 24.5,
+    "pP": null,
+    "raw": "Chicago Pro Football Team: Relocation \u2014 Indiana",
+    "plain": "The Chicago Bears move, or announce a move, to Indiana before the 2028 season",
+    "fixed": true
+   },
+   {
+    "text": "win the NFC Championship",
+    "cont": true,
+    "id": "q0423",
+    "pp": 9,
+    "num": "9",
+    "p": 0.085,
+    "deadline": "2027-02-22",
+    "venues": [
+     "Kalshi"
+    ],
+    "pK": 8.5,
+    "pP": null,
+    "raw": "NFC Championship Winner \u2014 Chicago",
+    "plain": "The Chicago Bears win the NFC Championship",
+    "fixed": false
+   }
+  ],
+  "venues": [
+   "Kalshi"
+  ],
+  "n": 25
+ },
+ {
+  "cid": "c05",
+  "type": "board",
+  "kicker": "Same deadline",
+  "rank": 6,
+  "slot": 6,
+  "verdict": "fix",
+  "notes": [
+   "FAITHFULNESS q0088: rules are about the UNITED STATES purchasing part of Greenland from Denmark before January 20, 2029; 'before January 2029' reads as before Jan 1 and 'Trump buys' personalises it.",
+   "FAITHFULNESS (minor) q1196: rules resolve when a congressional stock-trading ban BECOMES LAW (it could take effect later).",
+   "NOTE q0076: sentence has no date; the board title supplies it (rules: impeached and convicted by the Senate before Jan 20, 2029). Tone borderline: Senate 'conviction' of a named person, a political not criminal process.",
+   "NOTE: q0088 (US buys part of Greenland) logically implies q0045 (US acquires new territory) - nested, not duplicate."
+  ],
+  "headline": "Before Trump's term ends",
+  "tag": "Washington",
+  "rows": [
+   {
+    "text": "The US federally reschedules marijuana",
+    "when": "before January 20, 2029",
+    "id": "q1230",
+    "pp": 80,
+    "num": "80",
+    "p": 0.795,
+    "deadline": "2029-01-20",
+    "venues": [
+     "Kalshi"
+    ],
+    "pK": 79.5,
+    "pP": null,
+    "raw": "Will marijuana be rescheduled? \u2014 Before Jan 20, 2029",
+    "plain": "The US federally reschedules marijuana before January 20, 2029",
+    "fixed": false
+   },
+   {
+    "text": "A ban on members of Congress trading stocks becomes law",
+    "when": "before January 21, 2029",
+    "id": "q1196",
+    "pp": 39,
+    "num": "39",
+    "p": 0.39,
+    "deadline": "2029-01-21",
+    "venues": [
+     "Kalshi"
+    ],
+    "pK": 39.0,
+    "pP": null,
+    "raw": "Will members of Congress be banned from trading stocks? \u2014 Before Jan 21, 2029",
+    "plain": "A ban on members of Congress trading stocks becomes law before January 21, 2029",
+    "fixed": true
+   },
+   {
+    "text": "The United States acquires new territory",
+    "when": "before January 21, 2029",
+    "id": "q0045",
+    "pp": 21,
+    "num": "21",
+    "p": 0.205,
+    "deadline": "2029-01-21",
+    "venues": [
+     "Kalshi"
+    ],
+    "pK": 20.5,
+    "pP": null,
+    "raw": "Will the US acquire any new territory? \u2014 Before Jan 21, 2029",
+    "plain": "The United States acquires new territory before January 21, 2029",
+    "fixed": false
+   },
+   {
+    "text": "Trump is impeached and removed from office",
+    "when": null,
+    "id": "q0076",
+    "pp": 17,
+    "num": "17",
+    "p": 0.165,
+    "deadline": "2029-01-20",
+    "venues": [
+     "Kalshi"
+    ],
+    "pK": 16.5,
+    "pP": null,
+    "raw": "Will Trump be impeached and removed from office?",
+    "plain": "Trump is impeached and removed from office",
+    "fixed": false
+   },
+   {
+    "text": "The US buys at least part of Greenland from Denmark",
+    "when": "before January 20, 2029",
+    "id": "q0088",
+    "pp": 12,
+    "num": "12",
+    "p": 0.115,
+    "deadline": "2029-01-20",
+    "venues": [
+     "Kalshi"
+    ],
+    "pK": 11.5,
+    "pP": null,
+    "raw": "Will Trump buy at least part of Greenland? \u2014 Before January 20, 2029",
+    "plain": "The US buys at least part of Greenland from Denmark before January 20, 2029",
+    "fixed": true
+   }
+  ],
+  "venues": [
+   "Kalshi"
+  ],
+  "n": 26
+ },
+ {
+  "cid": "c22",
+  "type": "yardstick",
+  "kicker": "As likely as",
+  "rank": 11,
+  "slot": 6,
+  "verdict": "fix",
+  "notes": [
+   "FAITHFULNESS q1736: rules turn on an actor being OFFICIALLY ANNOUNCED as the next Bond by Dec 31, 2026; 'chosen' is looser (a casting decision could be made but unannounced). Polarity (No-Bond outcome) is correct.",
+   "FAITHFULNESS (minor) q0072: deadline is before January 21, 2029; 'before January 2029' reads as before Jan 1."
+  ],
+  "headline": null,
+  "connector": "is rated about as likely as",
+  "rows": [
+   {
+    "text": "The US takes control of any part of Greenland before January 21, 2029",
+    "id": "q0072",
+    "pp": 19,
+    "num": "19",
+    "p": 0.185,
+    "deadline": "2029-01-21",
+    "venues": [
+     "Kalshi"
+    ],
+    "pK": 18.5,
+    "pP": null,
+    "raw": "Will the US take control of any part of Greenland? \u2014 Before January 21, 2029",
+    "plain": "The US takes control of any part of Greenland before January 21, 2029",
+    "fixed": true
+   },
+   {
+    "text": "No actor is officially announced as the next James Bond before 2027",
+    "id": "q1736",
+    "pp": 19,
+    "num": "19",
+    "p": 0.1895,
+    "deadline": "2027-01-01",
+    "venues": [
+     "Polymarket"
+    ],
+    "pK": null,
+    "pP": 18.9,
+    "raw": "Next James Bond actor? \u2014 No Bond chosen",
+    "plain": "No actor is officially announced as the next James Bond before 2027",
+    "fixed": true
+   }
+  ],
+  "venues": [
+   "Kalshi",
+   "Polymarket"
+  ],
+  "n": 27
+ },
+ {
+  "cid": "c13",
+  "type": "clock",
+  "kicker": "The clock",
+  "rank": 6,
+  "slot": 6,
+  "verdict": "fix",
+  "notes": [
+   "FAITHFULNESS/MEANING all rungs: rules resolve on OpenAI ANNOUNCING it has attained AGI by the date, not on AGI being achieved. Sentences state achievement as fact."
+  ],
+  "headline": "OpenAI announces it has achieved AGI",
+  "rows": [
+   {
+    "text": "before 2027",
+    "when": "before 2027",
+    "id": "q1234",
+    "pp": 11,
+    "num": "11",
+    "p": 0.1145,
+    "deadline": "2027-01-01",
+    "venues": [
+     "Kalshi"
+    ],
+    "pK": 11.5,
+    "pP": null,
+    "raw": "When will OpenAI achieve AGI? \u2014 Before 2027",
+    "plain": "OpenAI announces it has achieved AGI before 2027",
+    "fixed": true
+   },
+   {
+    "text": "before 2028",
+    "when": "before 2028",
+    "id": "q1235",
+    "pp": 45,
+    "num": "45",
+    "p": 0.4505,
+    "deadline": "2028-01-01",
+    "venues": [
+     "Kalshi"
+    ],
+    "pK": 45.1,
+    "pP": null,
+    "raw": "When will OpenAI achieve AGI? \u2014 Before 2028",
+    "plain": "OpenAI announces it has achieved AGI before 2028",
+    "fixed": true
+   },
+   {
+    "text": "before 2030",
+    "when": "before 2030",
+    "id": "q1236",
+    "pp": 66,
+    "num": "66",
+    "p": 0.6545,
+    "deadline": "2030-01-01",
+    "venues": [
+     "Kalshi"
+    ],
+    "pK": 65.5,
+    "pP": null,
+    "raw": "When will OpenAI achieve AGI? \u2014 Before 2030",
+    "plain": "OpenAI announces it has achieved AGI before 2030",
+    "fixed": true
+   }
+  ],
+  "venues": [
+   "Kalshi"
+  ],
+  "n": 28
+ },
+ {
+  "cid": "c31",
+  "type": "reversal",
+  "kicker": "Likelier than",
+  "rank": 60,
+  "slot": 6,
+  "verdict": "fix",
+  "notes": [
+   "MEANING q1443: rules require a formal, publicly announced, mutually agreed deal creating a BINDING obligation; looser existing security pacts would not count. Sentence should say 'binding'.",
+   "TONE FLAG (borderline) q1443: concerns the Russia-Ukraine war (defence commitment, not strikes).",
+   "NOTE q1272: listed date is not in the raw text; 'before 2027' comes from the deadline field. Resolves on any cessation of the premiership."
+  ],
+  "headline": null,
+  "connector": "is rated likelier than",
+  "rows": [
+   {
+    "text": "Benjamin Netanyahu leaves office as Israel's prime minister before 2027",
+    "id": "q1272",
+    "pp": 39,
+    "num": "39",
+    "p": 0.39,
+    "deadline": "2027-01-01",
+    "venues": [
+     "Polymarket"
+    ],
+    "pK": null,
+    "pP": 39.0,
+    "raw": "Netanyahu out by...?",
+    "plain": "Benjamin Netanyahu leaves office as Israel's prime minister before 2027",
+    "fixed": false
+   },
+   {
+    "text": "A European country formally agrees to a binding security guarantee for Ukraine before 2027",
+    "id": "q1443",
+    "pp": 7,
+    "num": "7",
+    "p": 0.07,
+    "deadline": "2027-01-01",
+    "venues": [
+     "Polymarket"
+    ],
+    "pK": null,
+    "pP": 7.0,
+    "raw": "European country agrees to give Ukraine security guarantee by...? ",
+    "plain": "A European country formally agrees to a binding security guarantee for Ukraine before 2027",
+    "fixed": true
+   }
+  ],
+  "venues": [
+   "Polymarket"
+  ],
+  "n": 29
+ },
+ {
+  "cid": "c43",
+  "type": "dossier",
+  "kicker": "One subject",
+  "rank": 13,
+  "slot": 6,
+  "verdict": "fix",
+  "notes": [
+   "FAITHFULNESS/MEANING q0400: '2027 Pro Football Champion' is the Super Bowl played in February 2027 (2026 season) - consistent with the 16% AFC title price. 'The 2027 pro football championship' reads as the 2027 season. Deadline field 2029-02-13 looks wrong for this member.",
+   "NOTE q0542: 'last undefeated team' is the last team to lose its unbeaten record in the 2026-27 regular season, not an unbeaten season."
+  ],
+  "headline": "Kansas City Chiefs",
+  "rows": [
+   {
+    "text": "win the AFC West division",
+    "cont": true,
+    "id": "q0545",
+    "pp": 63,
+    "num": "63",
+    "p": 0.625,
+    "deadline": "2027-01-25",
+    "venues": [
+     "Kalshi"
+    ],
+    "pK": 62.5,
+    "pP": null,
+    "raw": "AFC West Division Winner \u2014 Kansas City",
+    "plain": "The Kansas City Chiefs win the AFC West division",
+    "fixed": false
+   },
+   {
+    "text": "Kansas City is the NFL's last undefeated team of the season",
+    "cont": false,
+    "id": "q0542",
+    "pp": 49,
+    "num": "49",
+    "p": 0.485,
+    "deadline": "2027-01-18",
+    "venues": [
+     "Kalshi"
+    ],
+    "pK": 48.5,
+    "pP": null,
+    "raw": "Pro Football Last Undefeated Team \u2014 Kansas City",
+    "plain": "Kansas City is the NFL's last undefeated team of the season",
+    "fixed": false
+   },
+   {
+    "text": "Kansas City wins the AFC Championship",
+    "cont": false,
+    "id": "q0436",
+    "pp": 17,
+    "num": "17",
+    "p": 0.165,
+    "deadline": "2027-02-22",
+    "venues": [
+     "Kalshi"
+    ],
+    "pK": 16.5,
+    "pP": null,
+    "raw": "AFC Championship Winner \u2014 Kansas City",
+    "plain": "Kansas City wins the AFC Championship",
+    "fixed": false
+   },
+   {
+    "text": "win the Super Bowl in February 2027",
+    "cont": true,
+    "id": "q0400",
+    "pp": 9,
+    "num": "9",
+    "p": 0.0897,
+    "deadline": "2029-02-13",
+    "venues": [
+     "Kalshi",
+     "Polymarket"
+    ],
+    "pK": 8.5,
+    "pP": 9.4,
+    "raw": "2027 Pro Football Champion \u2014 Kansas City",
+    "plain": "The Kansas City Chiefs win the Super Bowl in February 2027",
+    "fixed": true
+   }
+  ],
+  "venues": [
+   "Kalshi",
+   "Polymarket"
+  ],
+  "n": 30
+ }
+]
