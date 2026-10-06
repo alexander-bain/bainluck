@@ -793,8 +793,17 @@ def _run_live_pass_with_costed_builds(
     it costs burns its whole deadline and publishes NOTHING, which is the exact
     production behaviour (`{"outcome": "timeout"}`, "the request path will rebuild
     cold").
+
+    #10632: garbage collection is OFF while the pass runs. The budget is wall
+    clock at this scale (0.20 s), and late in a CI shard a full collection
+    can take half a second. CI hit exactly that: on both attempts the wave-2 guard
+    stalled ~0.55 s in wave 1 (call 0.56 s / 0.60 s, while its sibling ran 0.12 s just before)
+    and reported `skipped_no_time` with `remaining_s -0.4`. That made the guard
+    measure the test process's heap instead of the pass. Collecting first and
+    disabling until the pass returns leaves only the pass and its costed builds on the clock.
     """
     import asyncio
+    import gc
 
     started_order = []
 
@@ -821,7 +830,14 @@ def _run_live_pass_with_costed_builds(
         "FEED_LIVE_REPUBLISH_CONCURRENCY",
         concurrency,
     ):
-        result = asyncio.run(pcp._prewarm_live_feed_shapes())
+        gc_was_enabled = gc.isenabled()
+        gc.collect()
+        gc.disable()
+        try:
+            result = asyncio.run(pcp._prewarm_live_feed_shapes())
+        finally:
+            if gc_was_enabled:
+                gc.enable()
     return result, started_order
 
 
@@ -973,6 +989,74 @@ def test_a_target_in_a_later_wave_publishes_like_one_in_the_first():
             f"the Sports tab shape {label} did not publish: {shapes.get(label)}. "
             "This is the shape a reader of /sports waits on"
         )
+
+
+
+def test_a_collection_pause_inside_the_pass_does_not_spend_the_budget():
+    """#10632: the costed-build guards measure the pass, not the test heap.
+
+    Master CI went red on `test_a_target_in_a_later_wave_publishes_like_one_in_the_first`
+    at a fixed point in shard 4. The call took 0.56 s on one attempt and 0.60 s
+    on the other, against 0.12 s for its sibling just before it, and the wave-2 shapes
+    reported `skipped_no_time` with `remaining_s -0.4`. The budget at this scale is
+    0.20 s, so one automatic collection over a large late-shard heap is enough to
+    spend it.
+
+    This test puts that pause inside the pass on purpose. Every collection
+    triggers, and the first one that fires inside one of the pass's wave tasks
+    sleeps 0.5 s. With collection disabled inside
+    `_run_live_pass_with_costed_builds`, no collection fires in the pass and
+    every shape publishes. Remove the disable and this fails with the CI message.
+    """
+    import asyncio
+    import gc
+    import time
+
+    n = len(pcp.FEED_PREWARM_SHAPES)
+    budget_s = 0.20
+    build_cost_s = 0.06
+    assert build_cost_s > budget_s / n, "the fixture does not reproduce the defect"
+
+    fired_in_pass = []
+
+    def _stall_once_in_the_pass(phase, _info):
+        if phase != "start" or fired_in_pass:
+            return
+        # Only inside a wave task, so after the pass's clock has started. A
+        # stall during the kill-switch reads lands before `pass_started` and
+        # would test nothing.
+        if asyncio._get_running_loop() is None:
+            return
+        task = asyncio.current_task()
+        if task is None or task.get_coro().__name__ != "_republish":
+            return
+        fired_in_pass.append(True)
+        time.sleep(0.5)
+
+    rc = _fake_rc({s["label"]: "1" for s in pcp.FEED_PREWARM_SHAPES})
+    old_threshold = gc.get_threshold()
+    gc.callbacks.append(_stall_once_in_the_pass)
+    gc.set_threshold(1)
+    try:
+        _run_live_pass_with_costed_builds(
+            rc,
+            build_cost_s=build_cost_s,
+            budget_s=budget_s,
+            min_viable_s=build_cost_s,
+            concurrency=FEED_LIVE_REPUBLISH_CONCURRENCY,
+        )
+    finally:
+        gc.set_threshold(*old_threshold)
+        gc.callbacks.remove(_stall_once_in_the_pass)
+
+    assert gc.isenabled(), "the helper must re-enable collection when the pass returns"
+    shapes = _live_prewarm_report(rc)["shapes"]
+    assert len(shapes) == n, shapes
+    not_ok = {k: v for k, v in shapes.items() if v.get("outcome") != "ok"}
+    assert not not_ok, (
+        f"a collection pause inside the pass spent the budget: {not_ok} "
+        f"(a collection fired in the pass: {bool(fired_in_pass)})"
+    )
 
 
 def _fake_rc_two_hashes(live_labels, absent_labels):
