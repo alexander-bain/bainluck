@@ -15,7 +15,7 @@ struct WatchComplicationLayoutFixture: View {
                     if scenario.hasPrefix("corner-") {
                         WatchSavedCornerComplicationContent(snapshot: snapshot)
                             .environment(\.showsWidgetLabel, scenario != "corner-no-label")
-                            .frame(width: 40, height: 40)
+                            .frame(width: scenario == "corner-fit" ? 34 : 40, height: scenario == "corner-fit" ? 34 : 40)
                     } else if scenario.hasPrefix("circular-") {
                         WatchSavedCircularComplicationContent(snapshot: snapshot)
                             .frame(width: 40, height: 40)
@@ -31,7 +31,7 @@ struct WatchComplicationLayoutFixture: View {
                     .border(.gray)
                     .accessibilityElement(children: .contain)
                     .accessibilityIdentifier("watch.complication.panel")
-                Text("Rectangular content · \(scenario)")
+                Text("\(scenario.hasPrefix("corner-") ? "Shared corner content" : scenario.hasPrefix("circular-") ? "Shared circular content" : "Rectangular content") · \(scenario)")
                     .font(.caption2)
                     .accessibilityIdentifier("watch.complication.ready")
             } else {
@@ -55,7 +55,7 @@ struct WatchComplicationLayoutFixture: View {
                     "away_score": state == "away-final" ? 4 : 2,
                     "home_team_data": ["team_id": 1, "abbreviation": state == "long" ? "ABCD" : "SF"],
                     "away_team_data": ["team_id": 2, "abbreviation": "LA"],
-                    "hero_probability": 0.455, "hero_probability_away": 0.545,
+                    "hero_probability": state == "fit" ? 0.64 : 0.455, "hero_probability_away": state == "fit" ? 0.36 : 0.545,
                     "hero_probability_observed_at": timestamp, "score_observed_at": timestamp
                 ]
                 if scenario == "rectangular-long" {

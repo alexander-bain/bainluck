@@ -230,6 +230,30 @@ final class ComplicationContentJourneyTests: XCTestCase {
     }
 
     @MainActor
+    func testCornerForecastFitsMeasured34PointContentSlot() throws {
+        continueAfterFailure = false
+        let app = XCUIApplication()
+        defer { app.terminate() }
+        app.launchEnvironment = ["BAINLUCK_WATCH_UI_TEST": "1",
+            "BAINLUCK_WATCH_UI_SUITE": UUID().uuidString, "BAINLUCK_WATCH_UI_RESET": "1",
+            "BAINLUCK_WATCH_UI_COMPLICATION": "corner-fit"]
+        app.launch()
+        XCTAssertTrue(app.staticTexts["watch.complication.ready"].waitForExistence(timeout: 15))
+        let panel = app.descendants(matching: .any)["watch.complication.panel"].firstMatch
+        let reading = app.descendants(matching: .any)["watch.complication.corner.reading"].firstMatch
+        XCTAssertEqual(panel.frame.width, 34, accuracy: 0.5)
+        XCTAssertEqual(panel.frame.height, 34, accuracy: 0.5)
+        XCTAssertTrue(reading.exists && panel.frame.contains(reading.frame) && app.frame.contains(reading.frame))
+        XCTAssertEqual(reading.value as? String, "Saved · SF win · 64%")
+        XCTAssertFalse(app.descendants(matching: .any)["watch.complication.corner.fallback"].firstMatch.exists)
+        let capture = XCTAttachment(screenshot: app.screenshot())
+        capture.name = "Shared corner 34x34 complete forecast fit only - not curved host label"
+        capture.lifetime = .keepAlways
+        add(capture)
+        print("WATCH_UI_CORNER_MAIN_FIT=PASS")
+    }
+
+    @MainActor
     private func launchCircular(_ scenario: String, in app: XCUIApplication) throws {
         app.launchEnvironment = ["BAINLUCK_WATCH_UI_TEST": "1",
             "BAINLUCK_WATCH_UI_SUITE": UUID().uuidString, "BAINLUCK_WATCH_UI_RESET": "1",

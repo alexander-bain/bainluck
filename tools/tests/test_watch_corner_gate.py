@@ -7,8 +7,9 @@ import unittest
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[2]
-MARKERS = ("WATCH_UI_ACTUAL_CORNER_SAVED=PASS", "WATCH_UI_CORNER_FALLBACK=PASS")
+MARKERS = ("WATCH_UI_ACTUAL_CORNER_SAVED=PASS", "WATCH_UI_CORNER_FALLBACK=PASS", "WATCH_UI_CORNER_MAIN_FIT=PASS")
 CASES = (
+    "Test Case '-[BainLuckWatchUITests.ComplicationContentJourneyTests testCornerForecastFitsMeasured34PointContentSlot]' passed (10.0 seconds).",
     "Test Case '-[BainLuckWatchUITests.WidgetTapJourneyTests testActualCornerSavedReadingAndTap]' passed (130.0 seconds).",
     "Test Case '-[BainLuckWatchUITests.ComplicationContentJourneyTests testCornerUnsupportedReadingsStayLaunchers]' passed (60.0 seconds).",
 )
@@ -34,7 +35,7 @@ class WatchCornerGateTests(unittest.TestCase):
     def test_failed_or_skipped_case_cannot_be_replaced_by_markers(self):
         for outcome in ("failed", "skipped"):
             with self.subTest(outcome=outcome):
-                log = "\n".join((*MARKERS, CASES[0].replace("passed", outcome), CASES[1]))
+                log = "\n".join((*MARKERS, *(case.replace("passed", outcome) if "ActualCorner" in case else case for case in CASES)))
                 self.assertEqual(self.gate(log).returncode, 1)
 
     def test_all_corner_fallback_scenarios_have_debug_routes(self):
