@@ -402,7 +402,7 @@ class TestTheReceiptIsNeverPartOfThePricePath:
 
     @pytest.mark.asyncio
     async def test_no_receipts_attached_is_the_old_refresher(self, clock, caplog):
-        """The Kalshi arm attaches none; it must log and behave as before."""
+        """A refresher with no receipts attached logs and behaves as before."""
         r, calls = _refresher()
         r.receipts = None
         clock.t = 1000.0

@@ -10,6 +10,7 @@ Channels:
 """
 
 import asyncio
+import contextlib
 import logging
 import os
 import time
@@ -96,7 +97,7 @@ async def _run_kalshi_ws_consumer(*, sessions):
     from app.services.kalshi_ws import KalshiWebSocket
     from app.tasks.kalshi import _kalshi_yes_probability  # #8753
     from app.tasks.live_blend_refresh import (
-        LiveBlendRefresher, adopt_handed_off, event_ids_for_outcomes,
+        LiveBlendRefresher, TailReceipts, adopt_handed_off, event_ids_for_outcomes,
         hand_off_pending, run_flush_cadence,
     )
     from app.tasks.ws_admission import (  # #9418
@@ -326,6 +327,13 @@ async def _run_kalshi_ws_consumer(*, sessions):
     blend_refresher = LiveBlendRefresher(
         "kalshi", session_factory=get_task_session,  # #2471
     )
+    # #10090 — the receipt Polymarket has carried since #837: every accepted
+    # input is marked (seq, receive instant) as it is buffered, so the
+    # per-minute delivery receipt can say what this game received and which
+    # published revision carried it. Keyed like `price_buffer`.
+    tail_receipts = TailReceipts("kalshi")
+    blend_refresher.receipts = tail_receipts
+    input_marks: dict = {}
     # #9462 review: stamps the previous run still owed when it recycled. Its
     # prices are already stored; the first flush below stamps them.
     stats["blend_pending_adopted"] = adopt_handed_off(blend_refresher)
@@ -339,6 +347,9 @@ async def _run_kalshi_ws_consumer(*, sessions):
         """
         async with buffer_lock:
             batch = dict(price_buffer)
+            batch_marks = {
+                oid: input_marks[oid] for oid in batch if oid in input_marks
+            }
         if not batch:
             # #837 tail — a flush with no new prices still owes the stamps a row
             # lock deferred: those prices are already stored, so waiting for the
@@ -544,7 +555,13 @@ async def _run_kalshi_ws_consumer(*, sessions):
         # renders `Event.win_probability_sources`. Push the freshly-flushed
         # prices through to that blend so the number on screen moves with the
         # action instead of waiting for the next 120s poll. Failures are counted
-        # inside the refresher and never interrupt streaming.
+        # inside the refresher and never interrupt streaming. #10090: the
+        # revisions this write committed ride into this refresh, and only this
+        # one (a settled row the #5411 guard declined committed nothing).
+        with contextlib.suppress(Exception):
+            tail_receipts.stage(
+                [batch_marks[oid] for oid in written_outcome_ids if oid in batch_marks]
+            )
         await blend_refresher.refresh(
             event_ids_for_outcomes(event_id_by_outcome, batch.keys()),
             flush_started=flush_started,
@@ -614,6 +631,9 @@ async def _run_kalshi_ws_consumer(*, sessions):
             return
 
         _, outcome_id = ids
+        # #10090 — a message for this game's contract, before the price policy.
+        with contextlib.suppress(Exception):
+            tail_receipts.note_raw(event_id_by_outcome.get(outcome_id))
 
         last_price = _parse_dollar(msg.get("price_dollars"))
         yes_bid = _parse_dollar(msg.get("yes_bid_dollars"))
@@ -637,6 +657,16 @@ async def _run_kalshi_ws_consumer(*, sessions):
 
         async with buffer_lock:
             price_buffer[outcome_id] = (prob, yes_bid, yes_ask)
+            # Under the lock, so seq order is buffer order. Never raises into
+            # the socket: a receipt is evidence about the price, not the price.
+            try:
+                mark = tail_receipts.note_input(
+                    event_id_by_outcome.get(outcome_id), outcome_id, prob, "ticker",
+                )
+            except Exception:
+                mark = None
+            if mark is not None:
+                input_marks[outcome_id] = mark
 
     async def handle_open_contract_lifecycle(ticker: str, msg: dict):
         """#10022: one open-contract leg, graded by its own frame — never the
@@ -990,6 +1020,13 @@ async def _run_kalshi_ws_consumer(*, sessions):
             stats["open_contract_messages"] = sum(
                 sock.stats.get("messages", 0) for sock in open_contract_sockets
             )
+            # #10090: after the drain and hand-off, so the run's last stamps
+            # are in the final minute's line.
+            with contextlib.suppress(Exception):
+                tail_receipts.close_all(
+                    "recycle_reset" if stats.get("status") == "resubscribe"
+                    else "exit"
+                )
             await asyncio.gather(
                 admission_task, *open_contract_tasks, return_exceptions=True,
             )

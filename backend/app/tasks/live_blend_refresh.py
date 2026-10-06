@@ -59,6 +59,7 @@ must not wipe the pass).
 from __future__ import annotations
 
 import contextlib
+from collections import deque
 import logging
 import math
 import time
@@ -133,6 +134,33 @@ DEFAULT_STAMP_LOCK_TIMEOUT_MS = 500
 #: price that rounded to the stored value). Those are summarised with a count.
 #: A quiet stamp and every abnormal chain are never held back by it.
 TAIL_RECEIPT_COALESCE_S = 60.0
+
+#: #10090 delivery receipt — one line per source × LIVE event × UTC minute:
+#: what the consumer received for that game (raw / accepted / changed /
+#: repeats, per outcome) and which published revisions carried it. Alex,
+#: 2026-10-06: incoming rate, browser arrival rate and lag are three separate
+#: numbers; the page capture sees only the second, and nothing on the consumer
+#: side said how many inputs one game had or which `rev` a given input reached
+#: the page as. Bounded to events whose latest stamp was `live`, so a slate of
+#: upcoming games and futures writes no lines.
+DELIVERY_RECEIPT_WINDOW_S = 60.0
+#: Per line. A live game stamps at most once per 2 s flush (~30 a minute), so
+#: the cap only bites if the throttle is changed; the overflow is counted.
+DELIVERY_RECEIPT_MAX_STAMPS = 40
+#: Inputs awaiting their stamp, per event. A stamp normally takes all of them
+#: within one flush; the bound only stops a never-stamped event from growing.
+DELIVERY_RECEIPT_MAX_PENDING = 512
+#: Lines per source per minute. worker-ws logs drain to Better Stack; a full
+#: evening slate must not turn the receipt into the dyno's loudest line. The
+#: most active games are written; the rest are counted in one overflow line.
+DELIVERY_RECEIPT_MAX_EVENTS = 30
+
+
+#: #10090 — the live games a consumer run's receipt knew, left for the next run
+#: of the same source. Process-local, like `_pending_handoff`: without it every
+#: recycle would count nothing for a live game until its first stamp of the new
+#: run, and that stamp would read covered=0.
+_live_handoff: dict[str, frozenset] = {}
 
 
 def _mono() -> float:
@@ -246,9 +274,37 @@ class TailReceipts:
         self._coalesced: dict[int, int] = {}
         self.stats: dict[str, int] = {
             "inputs": 0, "opened": 0, "logged": 0, "coalesced": 0,
+            "delivery_lines": 0,
         }
+        # #10090 delivery receipt state (see `DELIVERY_RECEIPT_WINDOW_S`).
+        self._window_start: Optional[float] = None
+        self._window: dict[int, dict] = {}
+        #: Per LIVE event only: worker-ws carries ~100k open-contract outcomes
+        #: and runs near its memory quota, so nothing here is kept for an event
+        #: until a stamp has said it is live, and it is dropped when it is not.
+        self._last_p: dict[int, dict[int, float]] = {}
+        self._uncovered: dict[int, deque] = {}
+        self._committed: dict[int, InputMark] = {}
+        self._live_events: set[int] = set(_live_handoff.pop(source, frozenset()))
+        #: Coverage starts no earlier than this run did, nor before a game was
+        #: first stamped live in it: a minute line must never claim seconds the
+        #: consumer was not watching (Root's 57 s repro: 3 inputs in 3 s read
+        #: as 3 in 60 s, a 20x understatement).
+        self._run_start = _wall()
+        self._live_since: dict[int, float] = {}
 
     # ── the socket's side ────────────────────────────────────────────────────
+
+    def note_raw(self, event_id: Optional[int]) -> None:
+        """#10090 — one venue message for a contract of this event, counted
+        BEFORE the price policy decides whether it is a price. `raw` minus
+        `accepted` is what the policy refused (one-sided books, terminal
+        prices); a message that maps to no event is not this game's."""
+        if event_id is None:
+            return
+        self._roll(_wall())
+        if event_id in self._live_events:
+            self._bucket(event_id)["raw"] += 1
 
     def note_input(
         self,
@@ -271,10 +327,145 @@ class TailReceipts:
             venue_ms = int(venue_ts) if venue_ts is not None else None
         except (TypeError, ValueError):
             venue_ms = None
-        return InputMark(
+        mark = InputMark(
             seq=self._seq, event_id=event_id, outcome_id=outcome_id,
             probability=probability, kind=kind, recv_wall=_wall(),
             recv_mono=_mono(), venue_ts_ms=venue_ms, event_ordinal=ordinal,
+        )
+        try:
+            self._count_input(mark)
+        except Exception:
+            # The delivery count is evidence about evidence; it must never cost
+            # the caller the mark (#837's chain needs it).
+            logger.warning("tail receipt: delivery count failed", exc_info=True)
+        return mark
+
+    # ── #10090 delivery receipt ──────────────────────────────────────────────
+
+    def _bucket(self, event_id: int) -> dict:
+        bucket = self._window.get(event_id)
+        if bucket is None:
+            observed_from = max(
+                self._window_start if self._window_start is not None else self._run_start,
+                self._run_start,
+                self._live_since.get(event_id, self._run_start),
+            )
+            bucket = self._window[event_id] = {
+                "raw": 0, "outcomes": {}, "stamps": [], "stamps_dropped": 0,
+                "from": observed_from,
+            }
+        return bucket
+
+    def _count_input(self, mark: InputMark) -> None:
+        """Accepted, and whether it CHANGED this outcome's price: a repeat is a
+        venue message at the price we already held — transport, not news. The
+        first input of a run for an outcome has no prior and says so."""
+        self._roll(mark.recv_wall)
+        if mark.event_id not in self._live_events:
+            return
+        per = self._bucket(mark.event_id)["outcomes"].setdefault(
+            mark.outcome_id, [0, 0, 0, 0],  # accepted, changed, repeats, first
+        )
+        per[0] += 1
+        last = self._last_p.setdefault(mark.event_id, {})
+        prior = last.get(mark.outcome_id)
+        per[1 if prior is not None and prior != mark.probability
+            else 2 if prior is not None else 3] += 1
+        last[mark.outcome_id] = mark.probability
+        self._uncovered.setdefault(
+            mark.event_id, deque(maxlen=DELIVERY_RECEIPT_MAX_PENDING)
+        ).append((mark.seq, mark.recv_wall))
+
+    def _note_stamp(self, event_id: int, disposition: tuple) -> None:
+        """A committed stamp: the published `rev`, its `stamped_at` (the SSE
+        frame's `updated_at`, byte for byte), and the inputs it carried — every
+        input of this event up to the newest committed one, so a stamp that
+        coalesced many inputs says how many (`covered`) and how old the oldest
+        was. Inputs that arrived after the committed one wait for the next."""
+        rev = disposition[4] if len(disposition) > 4 else None
+        status = disposition[5] if len(disposition) > 5 else None
+        was_live = event_id in self._live_events
+        mark = self._committed.pop(event_id, None)
+        if status == "live":
+            if not was_live:
+                self._live_since[event_id] = _wall()
+            self._live_events.add(event_id)
+        elif not was_live:
+            return
+        covered, oldest = 0, None
+        pending = self._uncovered.get(event_id)
+        if mark is not None and pending:
+            while pending and pending[0][0] <= mark.seq:
+                _seq, wall = pending.popleft()
+                covered += 1
+                if oldest is None:
+                    oldest = wall
+        if status is not None and status != "live":
+            # This stamp is still the game's (its minute was live); after it,
+            # nothing more is kept for the event.
+            self._live_events.discard(event_id)
+            self._uncovered.pop(event_id, None)
+            self._last_p.pop(event_id, None)
+            self._live_since.pop(event_id, None)
+        self._roll(_wall())
+        bucket = self._bucket(event_id)
+        if len(bucket["stamps"]) >= DELIVERY_RECEIPT_MAX_STAMPS:
+            bucket["stamps_dropped"] += 1
+            return
+        bucket["stamps"].append("@".join((
+            "-" if rev is None else str(rev),
+            str(disposition[2]),
+            _iso(mark.recv_wall) if mark is not None else "-",
+            _iso(oldest) or "-",
+            str(covered),
+        )))
+
+    def _roll(self, wall: float, *, final: bool = False) -> None:
+        """Close the UTC minute once the clock has left it (or at exit), one
+        line per live event that had a message, an input or a stamp in it."""
+        size = DELIVERY_RECEIPT_WINDOW_S
+        if self._window_start is None:
+            self._window_start = math.floor(wall / size) * size
+            return
+        if not final and wall < self._window_start + size:
+            return
+        window_end = wall if final else self._window_start + size
+        # Only live games ever get a bucket (`note_raw`, `_count_input`,
+        # `_note_stamp` all check); the most active are written.
+        ranked = sorted(
+            self._window,
+            key=lambda eid: (-sum(v[0] for v in self._window[eid]["outcomes"].values()),
+                             -len(self._window[eid]["stamps"]), eid),
+        )
+        kept = ranked[:DELIVERY_RECEIPT_MAX_EVENTS]
+        for event_id in sorted(kept):
+            self._emit(event_id, self._window[event_id], window_end)
+        if len(ranked) > len(kept):
+            logger.info(
+                "live_blend_refresh[%s]: delivery-receipt-overflow run=%s "
+                "window_start=%s events_dropped=%d dropped=%s",
+                self.source, self.run, _iso(self._window_start),
+                len(ranked) - len(kept), ",".join(map(str, sorted(ranked[len(kept):])[:50])),
+            )
+        self._window = {}
+        self._window_start = math.floor(wall / size) * size
+
+    def _emit(self, event_id: int, bucket: dict, window_end: float) -> None:
+        """`window_start`/`window_s` are the seconds this run actually watched
+        the game inside the minute — never the minute's floor before it."""
+        per = bucket["outcomes"]
+        totals = [sum(v[i] for v in per.values()) for i in range(4)]
+        self.stats["delivery_lines"] += 1
+        logger.info(
+            "live_blend_refresh[%s]: delivery-receipt run=%s event=%s "
+            "window_start=%s window_s=%.3f raw=%d accepted=%d changed=%d "
+            "repeats=%d first=%d outcomes=%s stamps=%s stamps_dropped=%d",
+            self.source, self.run, event_id, _iso(bucket["from"]),
+            max(0.0, window_end - bucket["from"]),
+            bucket["raw"], *totals,
+            ",".join(f"{oid}:{v[0]}:{v[1]}:{v[2]}:{v[3]}" for oid, v in sorted(per.items()))
+            or "-",
+            ";".join(bucket["stamps"]) or "-", bucket["stamps_dropped"],
         )
 
     def stage(self, marks: Iterable[InputMark]) -> None:
@@ -289,7 +480,14 @@ class TailReceipts:
         self._staged = staged
         self._staged_wall = _wall()
 
+    def roll(self) -> None:
+        """Close the delivery minute if the clock has left it. Every flush
+        reaches here (via `take_staged` or `refresh_pending`), so a minute
+        closes within a flush of its end even when no input arrives."""
+        self._roll(_wall())
+
     def take_staged(self) -> tuple[dict[int, InputMark], Optional[float]]:
+        self._roll(_wall())
         staged, wall = self._staged, self._staged_wall
         self._staged, self._staged_wall = {}, None
         return staged, wall
@@ -311,6 +509,9 @@ class TailReceipts:
         chain is a later write inside the hold; one for an event the throttle
         is holding opens a chain."""
         for event_id, mark in staged.items():
+            held = self._committed.get(event_id)
+            if event_id in self._live_events and (held is None or mark.seq > held.seq):
+                self._committed[event_id] = mark
             chain = self._open.get(event_id)
             if chain is not None:
                 chain.later_committed += 1
@@ -324,6 +525,12 @@ class TailReceipts:
         is the path, and it is counted."""
         for event_id in due:
             disposition = dispositions.get(event_id, ("no_market",))
+            if disposition[0] == "stamped":
+                try:
+                    self._note_stamp(event_id, disposition)
+                except Exception:
+                    # Never at the expense of closing this or any other chain.
+                    logger.warning("tail receipt: delivery stamp failed", exc_info=True)
             chain = self._open.get(event_id)
             if disposition[0] == "lock":
                 if chain is None:
@@ -371,12 +578,17 @@ class TailReceipts:
         open_at_close = len(self._open)
         for event_id in sorted(self._open):
             self._close(event_id, reason, now)
+        # #10090 — the partial minute the run ended in, with its real length,
+        # and the live games for the next run of this source.
+        self._roll(_wall(), final=True)
+        _live_handoff[self.source] = frozenset(self._live_events)
         logger.info(
             "live_blend_refresh[%s]: tail-receipt summary run=%s reason=%s "
-            "inputs=%d opened=%d logged=%d coalesced=%d open_at_close=%d",
+            "inputs=%d opened=%d logged=%d coalesced=%d open_at_close=%d "
+            "delivery_lines=%d",
             self.source, self.run, reason, self.stats["inputs"],
             self.stats["opened"], self.stats["logged"], self.stats["coalesced"],
-            open_at_close,
+            open_at_close, self.stats["delivery_lines"],
         )
 
     def _close(self, event_id, result, now, *, disposition=(), error=None) -> None:
@@ -385,7 +597,7 @@ class TailReceipts:
         quiet = later_inputs == 0 and chain.later_committed == 0
         value = previous = stamped_at = None
         if result == "stamped":
-            _, value, stamped_at, previous = disposition
+            _, value, stamped_at, previous = disposition[:4]
         elif result in ("unchanged", "unobserved", "stale"):
             value = disposition[1]
         moved = result == "stamped" and (previous is None or previous != value)
@@ -961,6 +1173,9 @@ class LiveBlendRefresher:
         due yet.
         """
         if not self._lock_retry and not self._throttle_deferred:
+            if self.receipts is not None:
+                # #10090: a quiet flush still closes a finished minute.
+                self._receipt_call(self.receipts.roll)
             return self.stats
         return await self.refresh((), flush_started=flush_started)
 
@@ -1250,6 +1465,9 @@ class LiveBlendRefresher:
                     self._dispositions[event_id] = (
                         "stamped", value, stamped_at,
                         self._last_written_value.get(event_id),
+                        # #10090 delivery receipt: the revision the frame
+                        # publishes, and whether the game is live.
+                        new_rev, event.status,
                     )
 
                     # The AGGREGATE, computed off the sources JSONB the server
