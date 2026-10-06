@@ -5531,7 +5531,7 @@ async def _retire_unpriced_legs(session, futures_market_id: int, external_ids) -
 
 
 def _refused_leg_books(event) -> dict[str, tuple]:
-    """``{condition_id: (bid, ask)}`` for negRisk legs the resolver REFUSED this pass (#9399).
+    """``{condition_id: (bid, ask)}`` for multi-market legs the parent REFUSED this pass (#9399, #10298).
 
     The third thing a pass learns about a leg it does not write. A leg with a price
     is written; a leg with no price and no book is retired (#4000); a leg the venue
@@ -5543,21 +5543,40 @@ def _refused_leg_books(event) -> dict[str, tuple]:
     so no serve-time gate could see the refutation.
 
     This returns the fresh book for those legs so the writer can ask the one
-    question the skip never asked: does what we already store survive it? Same
-    scope as :func:`_unpriced_leg_external_ids` (negRisk multi-market only), and the
-    same skip condition as :func:`_parent_outcome_data`, so a leg is here exactly
-    when that function dropped it. A leg with no book at all is not here — it has
-    nothing to refute with, and it is ``_unpriced_leg_external_ids``' subject.
+    question the skip never asked: does what we already store survive it? For
+    negRisk this is :func:`_unpriced_leg_external_ids`' scope and the resolver's
+    skip condition, which is :func:`_parent_outcome_data`'s for that shape, so a
+    leg is here exactly when that function dropped it. A leg with no book at all is
+    not here — it has nothing to refute with, and it is
+    ``_unpriced_leg_external_ids``' subject.
+
+    #10298 adds the non-negRisk multi-market (game) arm. Lions–Packers kept
+    "Packers 53%" against a 0.15/0.52 book. The game branch prices raw
+    ``outcome_prices[0]`` without the resolver's placeholder filter and #151 gate,
+    so asking the resolver here would name legs the branch wrote and miss legs it
+    dropped. This arm asks :func:`_parent_outcome_data` itself which legs it
+    emitted: a game leg is refused exactly when that function did not write it.
+    The no-book game leg stays out (#4000's retirement is negRisk-only), and so
+    does a leg missing from a truncated payload: only a condition in THIS pass's
+    ``event.markets`` is named.
     """
-    if not (event.neg_risk and len(event.markets) > 1):
+    if len(event.markets) <= 1:
         return {}
+    emitted = (
+        set()
+        if event.neg_risk
+        else {od["external_id"] for od in _parent_outcome_data(event)}
+    )
     books: dict[str, tuple] = {}
     for market in event.markets:
         if not market.condition_id:
             continue
-        priced = _resolve_market_probability(market) or 0
-        if priced > 0:
-            continue  # priced this pass; the upsert already rewrote the row
+        if event.neg_risk:
+            priced = _resolve_market_probability(market) or 0
+            if priced > 0:
+                continue  # priced this pass; the upsert already rewrote the row
+        elif market.condition_id in emitted:
+            continue  # #10298: the game branch wrote it this pass
         if market.best_bid is None and market.best_ask is None:
             continue
         books[market.condition_id] = (market.best_bid, market.best_ask)
@@ -5710,8 +5729,10 @@ def _parent_outcome_data(event) -> list[dict]:
       the parent keeps a leg per sub-market for the moneyline matching task, and
       it takes Gamma's precomputed ``outcome_prices[0]`` RAW, bypassing those two
       gates. #1578 recorded that as the least-guarded of the five write paths and
-      deliberately added only the phantom-midpoint test to it; that judgement is
-      preserved here rather than quietly tightened.
+      deliberately added only the phantom-midpoint test to it. #10298 tightened it
+      once, on purpose: a raw value that its own same-payload book prices out
+      (``book_refutes_price``, epsilon 0.005) is now dropped, never substituted, and
+      :func:`_refused_leg_books` reads this branch's output to name it.
     * **single-market** — priced through the gated resolver and named "Yes"
       unless the venue named a side (#6739). TWO legs when the venue named
       BOTH sides — a sole-moneyline game, which never reaches the
@@ -5761,6 +5782,16 @@ def _parent_outcome_data(event) -> list[dict]:
             ) or is_empty_book_midpoint(prob, market.best_bid, market.best_ask):
                 # #7548: ...and only a trade the leg's own book has not priced out.
                 prob = _last_trade_survives_own_book(market)
+            elif prob is not None and prob > 0 and book_refutes_price(
+                market.best_bid, market.best_ask, float(prob)
+            ):
+                # #10298 C2: anyone can buy at this ask or sell into this bid right
+                # now, so a raw number the book prices out is not a current price,
+                # whatever produced it (Lions–Packers: 0.53 over a 0.52 ask). SKIP, never substitute: no
+                # last trade, no ask, no midpoint. This can remove a number and can
+                # never add one. An ask of None or 1.0 cannot be exceeded and a
+                # 0-bid refutes nothing, so gotcha #19's blowout still prices.
+                continue
             if prob is None or prob <= 0:
                 continue
             # Q492: this is the parent anchor of a game-level event, and its

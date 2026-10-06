@@ -1645,6 +1645,19 @@ async def _write_prices(
             )
             continue
 
+        # #10298. The game parent refused this condition (the fetch tagged it:
+        # non-negRisk multi-market only, its own book prices the raw value out),
+        # and the bare row IS that parent leg. No update, no snapshot: the
+        # resolver's 0.53 written here and withdrawn after would still leave a
+        # 0.53 snapshot and fresh stamps behind, and would erase a supported
+        # 0.40. `_withdraw_book_refuted_legs` judges what the row already holds.
+        # A decomposed `_yes`/`_no` row has no bare key and prices on unchanged.
+        if item.get("parent_book_refused") and item["external_id"] in existing:
+            stats["legs_declined_parent_refused"] = (
+                stats.get("legs_declined_parent_refused", 0) + 1
+            )
+            continue
+
         legs = _legs(item)
         if not legs:
             stats["unknown_outcomes"] += 1
@@ -2457,7 +2470,11 @@ async def _condition_twins(
 
 
 async def _write_condition_twins(
-    session, priced: list[dict], exclude_ids: list[int], stats: dict
+    session,
+    priced: list[dict],
+    exclude_ids: list[int],
+    stats: dict,
+    refuted_books: dict | None = None,
 ) -> None:
     """Give each condition twin the price its sibling row was just given (#4983).
 
@@ -2466,23 +2483,49 @@ async def _write_condition_twins(
     failing rolls back only itself (gotcha #42). The #4000 withdrawal is NOT
     repeated here — it is keyed to the addressed market's payload and this
     change adds reach for a price, not for a retirement.
+
+    #10298: the #9399 book withdrawal IS applied, but only to the conditions the
+    fetch tagged as refused by the game parent (``parent_book_refused``), with
+    this pass's book from ``refuted_books``. `_write_prices` skips that bare
+    parent row, so without this a parent reached only as a twin kept a stored
+    0.53 its own book prices out. Same guarded helper: CAS, crowned and graded
+    exempt, a stored price the book supports stays. A decomposed twin holds no
+    bare key, so the helper matches nothing there.
     """
+    from app.tasks.polymarket import _withdraw_book_refuted_legs
+
     try:
         twins = await _condition_twins(session, priced, exclude_ids)
     except Exception as exc:  # noqa: BLE001 — counted, never swallowed
         await session.rollback()
         stats["errors"].append(f"polymarket twin lookup: {exc}")
         return
+    refuted_books = refuted_books or {}
     for twin_id, items in twins.items():
+        books = {
+            i["external_id"]: refuted_books[i["external_id"]]
+            for i in items
+            if i.get("parent_book_refused") and i["external_id"] in refuted_books
+        }
         try:
             written = await _write_prices(session, twin_id, "polymarket", items, stats)
-            if written:
+            withdrawn = await _withdraw_book_refuted_legs(session, twin_id, books)
+            if written or withdrawn:
                 await session.execute(rerank_market_field_stmt(twin_id))
             await session.commit()
         except Exception as exc:  # noqa: BLE001
             await session.rollback()
             stats["errors"].append(f"polymarket twin {twin_id}: {exc}")
             continue
+        if withdrawn:
+            stats["legs_withdrawn_book_refuted"] = (
+                stats.get("legs_withdrawn_book_refuted", 0) + withdrawn
+            )
+            logger.info(
+                "futures_price_refresh: twin market %s — withdrew %d stored "
+                "price(s) the venue's current book prices out (#10298)",
+                twin_id, withdrawn,
+            )
         if written:
             stats["twin_markets_priced"] = stats.get("twin_markets_priced", 0) + 1
             stats["twin_snapshots_written"] = (
@@ -3299,8 +3342,18 @@ async def _fetch_polymarket_prices(
         # retires nothing, which is stricter than the discovery poll's placement
         # and deliberately so.
         unpriced_out[str(event.id)] = _unpriced_leg_external_ids(event)
+        refused_books = _refused_leg_books(event)
+        if not event.neg_risk and len(event.markets) > 1:
+            # #10298: the resolver above priced legs the game parent branch
+            # dropped. Tag them so the writer skips their BARE (parent) row —
+            # see `_write_prices` — while decomposed `_yes`/`_no` rows and the
+            # withdrawal below still get this pass's price and book. Provenance,
+            # not shape: negRisk and single-market also use bare ids.
+            for item in priced:
+                if item["external_id"] in refused_books:
+                    item["parent_book_refused"] = True
         if refuted_out is not None:
-            refuted_out[str(event.id)] = _refused_leg_books(event)
+            refuted_out[str(event.id)] = refused_books
     return out, unpriced_out
 
 
@@ -3419,6 +3472,9 @@ async def _refresh_stale_futures_prices(
         # silent. Zero here is the healthy steady state; a jump is the venue
         # quoting empty books at us, not a regression in this task.
         "legs_declined_empty_book": 0,
+        # #10298: bare game-parent legs skipped because the parent refused them
+        # against their own book. Reported unconditionally, like the two above.
+        "legs_declined_parent_refused": 0,
         # #7582. The legs this pass took a price OFF, because the venue listed
         # them and would not quote them and their stored number was already a
         # week behind the board it sits on. Counted apart from every decline
@@ -4002,6 +4058,7 @@ async def _refresh_stale_futures_prices(
                                 priced,
                                 [m["id"] for m in by_event[event_id]],
                                 stats,
+                                refuted_books=refuted_by_event.get(event_id) or {},
                             )
                     await asyncio.sleep(0.3)
             finally:
