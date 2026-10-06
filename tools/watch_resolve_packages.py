@@ -13,18 +13,20 @@ import time
 ATTEMPT_TIMEOUT_SECONDS = 900
 RETRY_DELAY_SECONDS = 5
 _RESOLUTION_ERROR = "xcodebuild: error: Could not resolve package dependencies:"
+# Only the two transport messages actually observed on hosted Firebase binary
+# downloads (d118 timeout, 37508835672 lost connection); no generic network class.
 _DOWNLOAD_TIMEOUT = re.compile(
     r"failed downloading '[^'\n]+' which is required by binary target '[^'\n]+': "
-    r'downloadError\("The request timed out\."\)'
+    r'downloadError\("(?:The request timed out|The network connection was lost)\."\)'
 )
 
 
 def retryable_download_timeout(exit_code: int, log: str) -> bool:
-    """Recognize only the observed exit-74 binary-download timeout diagnostic."""
+    """Recognize only the observed exit-74 transient binary-download diagnostics."""
     if exit_code != 74 or log.count(_RESOLUTION_ERROR) != 1:
         return False
-    # The final diagnostic must contain only timed-out binary downloads and the
-    # observed SwiftPM fatalError terminator. Any other diagnostic fails closed.
+    # The final diagnostic must contain only transient binary-download failures
+    # and the observed SwiftPM fatalError terminator. Anything else fails closed.
     tail = log.split(_RESOLUTION_ERROR, 1)[1]
     lines = [line.strip() for line in tail.splitlines() if line.strip()]
     downloads = [line for line in lines if _DOWNLOAD_TIMEOUT.fullmatch(line)]
