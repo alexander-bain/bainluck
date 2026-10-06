@@ -14825,13 +14825,9 @@ async def typeahead_search(
             and _ta_is_lead_team_fixture(ev)
             for ev in _ta_rows
         ):
-            _ta_finals = (
-                await db.execute(
-                    _lead_team_todays_final_query(
-                        _ta_lead_team["team_id"], _ta_lead_team["text"], now
-                    )
-                )
-            ).scalars().all()
+            _ta_finals = await _lead_team_finals_with_latest_fallback(
+                db, _ta_lead_team["team_id"], _ta_lead_team["text"], now
+            )
             _ta_mark("lead_team_todays_final_query")
             if _ta_finals:
                 _ta_lead_team_row_ids |= {ev.id for ev in _ta_finals}
@@ -37741,7 +37737,9 @@ def _recent_final_window_start(now: datetime) -> datetime:
     return min(_eastern_day_start(now), now - _RECENT_FINAL_LOOKBACK)
 
 
-def _lead_team_todays_final_query(team_id: int, team_name: str, now: datetime):
+def _lead_team_todays_final_query(
+    team_id: int, team_name: str, now: datetime, *, latest_finished: bool = False
+):
     """#9211: the RESOLVED team's games that finished TODAY, found by identity.
 
     `/typeahead?q=chiefs` on production 2026-09-27 21:31Z, four and a half hours
@@ -37765,6 +37763,13 @@ def _lead_team_todays_final_query(team_id: int, team_name: str, now: datetime):
     `completed`/`closed` only: a `suspended` row has no result to show. Newest
     first, so a doubleheader lists the game just played first.
     """
+    # #10581: only the empty recent-final arm falls back to one latest final.
+    # Keep the existing 30-day last-match floor; never displace the next game.
+    floor = (
+        now - timedelta(days=_LAST_MATCH_LOOKBACK_DAYS)
+        if latest_finished
+        else _recent_final_window_start(now)
+    )
     return (
         select(Event)
         .join(Sport, Event.sport_id == Sport.id)
@@ -37781,12 +37786,36 @@ def _lead_team_todays_final_query(team_id: int, team_name: str, now: datetime):
                 Event.away_team_name == team_name,
             ),
             Event.status.in_(["completed", "closed"]),
-            Event.commence_time >= _recent_final_window_start(now),
+            Event.commence_time >= floor,
             Event.commence_time <= now,
             not_a_proven_duplicate(),
         )
         .order_by(Event.commence_time.desc())
-        .limit(_LEAD_TEAM_TODAYS_FINAL_LIMIT)
+        .limit(1 if latest_finished else _LEAD_TEAM_TODAYS_FINAL_LIMIT)
+    )
+
+
+async def _lead_team_finals_with_latest_fallback(
+    db, team_id: int, team_name: str, now: datetime
+) -> list:
+    """#10581: today/recent doubleheader first, else one bounded latest result."""
+    recent = (
+        (await db.execute(_lead_team_todays_final_query(team_id, team_name, now)))
+        .scalars()
+        .all()
+    )
+    if recent:
+        return recent
+    return (
+        (
+            await db.execute(
+                _lead_team_todays_final_query(
+                    team_id, team_name, now, latest_finished=True
+                )
+            )
+        )
+        .scalars()
+        .all()
     )
 
 
