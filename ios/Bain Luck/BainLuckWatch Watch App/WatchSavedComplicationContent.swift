@@ -1,4 +1,5 @@
 import SwiftUI
+import WidgetKit
 
 /// Shared rectangular content; WidgetKit owns the surrounding widget context.
 struct WatchSavedComplicationContent: View {
@@ -179,5 +180,39 @@ struct WatchSavedCircularComplicationContent: View {
             .font(.system(size: 18))
             .accessibilityLabel("Open your selected game in Bain Luck, or choose a game")
             .accessibilityIdentifier("watch.complication.circular.fallback")
+    }
+}
+
+/// WidgetKit owns the curved label's font and placement. Its complete rendered
+/// label is an actual-face acceptance gate, not a runtime presence signal.
+struct WatchSavedCornerComplicationContent: View {
+    let snapshot: WatchComplicationSnapshot?
+    @Environment(\.showsWidgetLabel) private var showsWidgetLabel
+
+    var body: some View {
+        if let snapshot, let reading = snapshot.validatedCornerForecast(showsWidgetLabel: showsWidgetLabel) {
+            ViewThatFits(in: [.horizontal, .vertical]) {
+                Text(reading.value)
+                    .font(.system(size: 20, weight: .bold))
+                    .fixedSize()
+                    .widgetLabel {
+                        Text("Saved · \(reading.subject)")
+                            .accessibilityIdentifier("watch.complication.corner.label")
+                    }
+                    .accessibilityLabel("Saved reading. \(reading.awayName) at \(reading.homeName). \(snapshot.title). \(snapshot.detail). Observed \(snapshot.observedAt.formatted(date: .abbreviated, time: .shortened)). Open your game in Bain Luck.")
+                    .accessibilityValue("Saved · \(reading.subject) · \(reading.value)")
+                    .accessibilityIdentifier("watch.complication.corner.reading")
+                launcher
+            }
+        } else {
+            launcher
+        }
+    }
+
+    private var launcher: some View {
+        Image(systemName: "chart.bar.fill")
+            .font(.system(size: 18))
+            .accessibilityLabel("Open your selected game in Bain Luck, or choose a game")
+            .accessibilityIdentifier("watch.complication.corner.fallback")
     }
 }
