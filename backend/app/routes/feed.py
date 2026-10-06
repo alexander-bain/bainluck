@@ -60,6 +60,7 @@ from app.utils.discover_provenance import PROVENANCE_HEADER, normalize_provenanc
 from app.utils.event_completion import EVENT_SUSPENDED, finished_event_end_time
 from app.utils.event_rails import started_live
 from app.utils.lifecycle import served_event_status
+from app.utils.score_observation import score_observation_fields
 from app.utils.external_curator_freshness import (
     recall_cutoff as _curator_recall_cutoff,
 )
@@ -11513,6 +11514,10 @@ async def _score_events(
                 # which the fold does not touch).
                 hero=resolve_hero(event),
             )
+            # #10582: score provenance belongs to the scoreboard, not the blend.
+            # The same projection serves cached feed and fresh price-card reads.
+            if isinstance(getattr(event, "score_observed_at", None), datetime):
+                event_data.update(score_observation_fields(event))
             event_data["temporal_badge"] = _compute_temporal_badge(
                 # #5324 — this one takes NO `commence_time` at all, so `live`
                 # in, "Live" badge out, unconditionally. It is the second of the

@@ -510,8 +510,11 @@ nonisolated struct FeedEventData: Decodable, Identifiable, Sendable {
     /// it as `startIsTbd == true`, never as a third state.
     let startIsTbd: Bool?
     let status: String?
-    let homeScore: Int?
-    let awayScore: Int?
+    var homeScore: Int?
+    var awayScore: Int?
+    /// Score observations order independently of probability folds (#10582).
+    var scoreSource: String? = nil
+    var scoreObservedAt: String? = nil
     let blendFoldRevision: ServedFoldRevision?
     let heroProbabilitySource: String?
     let heroProbabilityObservedAt: String?
