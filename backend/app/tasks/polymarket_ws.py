@@ -873,7 +873,7 @@ async def _run_polymarket_ws_consumer():
     from app.tasks.base import get_task_session
     from app.tasks.live_blend_refresh import (
         LiveBlendRefresher, TailReceipts, adopt_handed_off,
-        event_ids_for_outcomes, hand_off_pending,
+        event_ids_for_outcomes, hand_off_pending, run_flush_cadence,
     )
     from app.tasks.polymarket_token_topup import (
         topup_clob_tokens, topup_outcome_clob_tokens,
@@ -1478,7 +1478,10 @@ async def _run_polymarket_ws_consumer():
         stats["held_prices_withdrawn"] += len(rows)
         return [row.id for row in rows]
 
-    async def flush_prices(final=False):
+    async def flush_prices(flush_started=None, final=False):
+        """One flush. Returns False when any chunk's write failed (it stays
+        buffered and the cadence waits a full interval); #10090
+        ``flush_started`` is this flush's start, for the refresher's floor."""
         async with buffer_lock:
             batch = dict(price_buffer)
             batch_marks = {
@@ -1492,6 +1495,7 @@ async def _run_polymarket_ws_consumer():
             )
         # Committed this flush, refresh not yet called.
         owed: list[int] = []
+        wrote_all = True
         if batch:
             # #9484: every linked row, then a bounded number of open-contract
             # chunks, oldest-dirty first (the buffer's insertion order). Open
@@ -1527,6 +1531,8 @@ async def _run_polymarket_ws_consumer():
             for index, chunk_ids in enumerate(chunks):
                 if await write_chunk({oid: batch[oid] for oid in chunk_ids}):
                     owed.extend(chunk_ids)
+                else:
+                    wrote_all = False
                 ready: list[int] = []
                 held: list[int] = []
                 for oid in owed:
@@ -1546,7 +1552,8 @@ async def _run_polymarket_ws_consumer():
                         [batch_marks[oid] for oid in ready if oid in batch_marks]
                     )
                     await blend_refresher.refresh(
-                        event_ids_for_outcomes(event_id_by_outcome, ready)
+                        event_ids_for_outcomes(event_id_by_outcome, ready),
+                        flush_started=flush_started,
                     )
         # #9934: after the prices, so a held number is judged as it now stands.
         withdrawn = await flush_withdrawals()
@@ -1555,10 +1562,10 @@ async def _run_polymarket_ws_consumer():
             # lock deferred: those prices are already stored, so waiting for the
             # next venue tick would strand them on a quiet market. Free when
             # nothing is queued (no session is opened).
-            await blend_refresher.refresh_pending()
-            return
+            await blend_refresher.refresh_pending(flush_started=flush_started)
+            return True
         if not owed and not withdrawn:
-            return
+            return wrote_all
         # The prices held for a withdrawal, and the withdrawal itself: one
         # refresh, never a second for an event the chunks already refreshed.
         if owed:
@@ -1566,8 +1573,10 @@ async def _run_polymarket_ws_consumer():
                 [batch_marks[oid] for oid in owed if oid in batch_marks]
             )
         await blend_refresher.refresh(
-            event_ids_for_outcomes(event_id_by_outcome, owed + withdrawn)
+            event_ids_for_outcomes(event_id_by_outcome, owed + withdrawn),
+            flush_started=flush_started,
         )
+        return wrote_all
 
     async def drain_prices():
         """The LAST flush of this consumer's life — retry, never requeue.
@@ -1917,10 +1926,9 @@ async def _run_polymarket_ws_consumer():
     ws.on_trade = handle_trade
     ws.on_resolved = handle_resolved
 
+    # #10090: start to start, like the Kalshi socket's; see `run_flush_cadence`.
     async def flush_loop():
-        while True:
-            await asyncio.sleep(PRICE_FLUSH_SECONDS)
-            await flush_prices()
+        await run_flush_cadence(flush_prices, PRICE_FLUSH_SECONDS)
 
     async def stats_loop():
         while True:

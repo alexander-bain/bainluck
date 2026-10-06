@@ -270,10 +270,10 @@ async def _drive_kalshi(monkeypatch, engine, messages, event_id=EVENT_ID,
     class _Refresher(blend_mod.LiveBlendRefresher):
         """The real market publisher; the event blend is Q460's and elsewhere."""
 
-        async def refresh(self, _event_ids):
+        async def refresh(self, _event_ids, **_kw):
             return None
 
-        async def refresh_pending(self):
+        async def refresh_pending(self, **_kw):
             return None
 
     class _SessionCtx:

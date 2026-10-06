@@ -31,11 +31,12 @@ SUBSCRIPTION_REFRESH_SECONDS = int(
     os.getenv("WS_SUBSCRIPTION_REFRESH_SECONDS", "600")
 )
 
-#: Q491 — how long buffered prices wait before being written. Both sockets share
+#: Q491 — the interval between flush STARTS (#10090: start to start, so a
+#: flush's own work is not added to it; `run_flush_cadence`). Both sockets share
 #: it, as they share the recycle timer above, so the two cannot drift to
 #: different write cadences on the same dyno. Named rather than inlined because
 #: it is also the RETRY interval: a flush that fails re-queues its batch, and
-#: this is how long the price waits for the next attempt.
+#: this is how long after the failure the price waits for the next attempt.
 PRICE_FLUSH_SECONDS = float(os.getenv("WS_PRICE_FLUSH_SECONDS", "2"))
 
 # Q491 repair (CERT-654 BLOCK). The periodic flush can afford to requeue a failed
@@ -95,7 +96,7 @@ async def _run_kalshi_ws_consumer():
     from app.tasks.kalshi import _kalshi_yes_probability  # #8753
     from app.tasks.live_blend_refresh import (
         LiveBlendRefresher, adopt_handed_off, event_ids_for_outcomes,
-        hand_off_pending,
+        hand_off_pending, run_flush_cadence,
     )
     from app.tasks.ws_admission import (  # #9418
         run_until_admission, unadmitted_live_events,
@@ -321,8 +322,13 @@ async def _run_kalshi_ws_consumer():
     # prices are already stored; the first flush below stamps them.
     stats["blend_pending_adopted"] = adopt_handed_off(blend_refresher)
 
-    async def flush_prices():
-        """Write buffered price updates to DB in one batch."""
+    async def flush_prices(flush_started=None):
+        """Write buffered price updates to DB in one batch.
+
+        Returns False when the write failed (the batch stays buffered and the
+        cadence waits a full interval before retrying); #10090
+        ``flush_started`` is this flush's start, for the refresher's floor.
+        """
         async with buffer_lock:
             batch = dict(price_buffer)
         if not batch:
@@ -330,8 +336,8 @@ async def _run_kalshi_ws_consumer():
             # lock deferred: those prices are already stored, so waiting for the
             # next venue tick would strand them on a quiet market. Free when
             # nothing is queued (no session is opened).
-            await blend_refresher.refresh_pending()
-            return
+            await blend_refresher.refresh_pending(flush_started=flush_started)
+            return True
         # Q491 repair 2 (CERT-659 BLOCK) — THE BUFFER IS DELIBERATELY *NOT*
         # CLEARED HERE. Draining first and putting the batch back on failure
         # only covers the failures you thought to catch, and two rounds of certs
@@ -507,7 +513,7 @@ async def _run_kalshi_ws_consumer():
             logger.exception(
                 "Kalshi WS: flush error (%d updates retained for retry)", len(batch)
             )
-            return
+            return False
 
         # #9484 — the commit landed, so the rows it carried may now say so on
         # `live:market:{id}`. Before the buffer bookkeeping and the blend
@@ -532,8 +538,10 @@ async def _run_kalshi_ws_consumer():
         # action instead of waiting for the next 120s poll. Failures are counted
         # inside the refresher and never interrupt streaming.
         await blend_refresher.refresh(
-            event_ids_for_outcomes(event_id_by_outcome, batch.keys())
+            event_ids_for_outcomes(event_id_by_outcome, batch.keys()),
+            flush_started=flush_started,
         )
+        return True
 
     async def drain_prices():
         """The LAST flush of this consumer's life — retry, never requeue.
@@ -785,10 +793,10 @@ async def _run_kalshi_ws_consumer():
     ws.on_lifecycle = handle_lifecycle
 
     # -- Periodic flush task --
+    # #10090: start to start, so the flush's own work is not added to the
+    # interval; see `run_flush_cadence` for what it preserves.
     async def flush_loop():
-        while True:
-            await asyncio.sleep(PRICE_FLUSH_SECONDS)
-            await flush_prices()
+        await run_flush_cadence(flush_prices, PRICE_FLUSH_SECONDS)
 
     # -- Periodic stats logging --
     async def stats_loop():

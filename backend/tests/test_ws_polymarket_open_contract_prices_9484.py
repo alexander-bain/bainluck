@@ -829,13 +829,13 @@ async def _drive(
     session = session or _Session
 
     class _Refresher(blend_mod.LiveBlendRefresher):
-        async def refresh(self, event_ids):
+        async def refresh(self, event_ids, **_kw):
             rig.refreshed.append(set(event_ids))
             if on_refresh is not None:
                 on_refresh(set(event_ids))
             return None
 
-        async def refresh_pending(self):
+        async def refresh_pending(self, **_kw):
             return None
 
     class _Ctx:

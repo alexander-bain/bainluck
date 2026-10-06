@@ -268,10 +268,10 @@ class _NoopRefresher:
     def __init__(self, *_a, **_kw):
         pass
 
-    async def refresh(self, _event_ids):
+    async def refresh(self, _event_ids, **_kw):
         return None
 
-    async def refresh_pending(self):
+    async def refresh_pending(self, **_kw):
         # #837 tail: the quiet-flush path; a fake never defers a stamp.
         return None
 

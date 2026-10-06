@@ -387,11 +387,11 @@ class _RecordingRefresher:
     def __init__(self, *_a, **_kw):
         pass
 
-    async def refresh(self, event_ids):
+    async def refresh(self, event_ids, **_kw):
         _RecordingRefresher.refreshed.append(set(event_ids))
         return None
 
-    async def refresh_pending(self):
+    async def refresh_pending(self, **_kw):
         # #837 tail: the quiet-flush path; a fake never defers a stamp.
         return None
 
