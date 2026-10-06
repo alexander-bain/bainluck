@@ -261,17 +261,44 @@ class TestNoUniqueRivalIsChosen:
         assert verdict == ESPN_ID_UNRESOLVABLE, reason
         assert target is None
 
-    def test_an_abbreviation_collision_never_reads_as_drift(self):
+    def test_an_abbreviation_collision_never_authorizes_a_write(self):
+        # Review BLOCK on e072: holding the RIVAL's id with the clock nearest
+        # it read LINK_PROVEN, so the Lincoln Institute score could be written
+        # onto our LIU row. Every held id x clock arrangement must refuse.
         later = LIU_WHEN + timedelta(hours=5)
-        for held, when in (
-            ("401867910", LIU_WHEN),
-            ("401867910", later),
-            ("401867911", LIU_WHEN),
-        ):
-            verdict, _, reason = _liu(
-                held, self._collision_board(second_when=later), when=when
-            )
-            assert verdict != ESPN_ID_DRIFTED, (held, when, reason)
+        for second_when in (LIU_WHEN, later):
+            board = self._collision_board(second_when=second_when)
+            for held in ("401867910", "401867911"):
+                for when in (LIU_WHEN, later):
+                    verdict, target, reason = _liu(held, board, when=when)
+                    assert verdict == ESPN_ID_UNRESOLVABLE, (
+                        second_when, held, when, verdict, reason
+                    )
+                    assert target is None, (second_when, held, when)
+                    assert "DIFFERENT ESPN teams" in reason
+
+    def test_a_same_team_initialism_doubleheader_keeps_the_legacy_arm(self):
+        # One provider team per side across both games: still a doubleheader.
+        later = LIU_WHEN + timedelta(hours=5)
+        board = [_liu_game("401867910"), _liu_game("401867920", when=later)]
+        verdict, target, _ = _liu("401867910", board, when=LIU_WHEN)
+        assert verdict == LINK_PROVEN
+        assert target.espn_id == "401867910"
+        verdict, target, reason = _liu("401867910", board, when=later)
+        assert verdict == ESPN_ID_UNRESOLVABLE
+        assert target.espn_id == "401867920"
+        assert "doubleheader" in reason
+
+    def test_a_team_without_an_id_cannot_prove_it_is_the_same_team(self):
+        # Two initialism candidates whose home teams carry NO provider id:
+        # sameness is unproven, so it is not a doubleheader either.
+        later = LIU_WHEN + timedelta(hours=5)
+        board = [_liu_game("401867910"), _liu_game("401867920", when=later)]
+        for g in board:
+            g.home_team.espn_id = None
+        verdict, target, reason = _liu("401867910", board, when=LIU_WHEN)
+        assert verdict == ESPN_ID_UNRESOLVABLE, reason
+        assert target is None
 
     def test_two_ids_for_the_same_pair_elect_no_target(self):
         board = [

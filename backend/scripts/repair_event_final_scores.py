@@ -991,6 +991,44 @@ def same_fixture_games(
     return out
 
 
+def _initialism_names_two_teams(home_team_name, away_team_name, games, sport_key) -> bool:
+    """Do these candidate games fit our names via the initialism AND name
+    different provider teams on one side?
+
+    Only the initialism form can make this new: a game whose sides all match on
+    the strict display read is the legacy candidate set, untouched (a same-team
+    doubleheader carries one team id per side and stays a doubleheader). Once
+    any candidate needs the form, every candidate must carry the SAME ESPN team
+    id per side; a missing id cannot prove sameness, so it refuses too.
+    """
+    by_id = {}
+    for g in games:
+        if g is not None:
+            by_id.setdefault(str(getattr(g, "espn_id", "")), g)
+    if len(by_id) < 2:
+        return False
+
+    def needs_form(ours, team) -> bool:
+        return not _side_matches(
+            ours, _espn_team_name(team), _names_match_strict, sport_key
+        ) and _side_matches_team(ours, team, _names_match_strict, sport_key)
+
+    if not any(
+        needs_form(home_team_name, getattr(g, "home_team", None))
+        or needs_form(away_team_name, getattr(g, "away_team", None))
+        for g in by_id.values()
+    ):
+        return False
+    for side in ("home_team", "away_team"):
+        ids = {
+            str(getattr(getattr(g, side, None), "espn_id", None) or "")
+            for g in by_id.values()
+        }
+        if len(ids) > 1 or "" in ids:
+            return True
+    return False
+
+
 def classify_espn_link(
     *,
     espn_id,
@@ -1069,6 +1107,20 @@ def classify_espn_link(
             ESPN_ID_DRIFTED,
             sibs[0] if len(sibs) == 1 else None,
             "espn_id resolves to a DIFFERENT fixture on this row's own slate",
+        )
+
+    # AN INITIALISM NAMING TWO TEAMS (#10599 review). ``LIU Sharks`` can be the
+    # abbreviation form of two DIFFERENT provider teams on one slate; the
+    # doubleheader and impostor arms below assume every candidate is the same
+    # pair playing twice, so held id or start proximity would pick the TEAM.
+    if _initialism_names_two_teams(
+        home_team_name, away_team_name, [held, *sibs], sport_key
+    ):
+        return (
+            ESPN_ID_UNRESOLVABLE,
+            None,
+            "this row's names fit games of DIFFERENT ESPN teams on its own slate "
+            "only through ESPN's abbreviation form — no single team is proven",
         )
 
     # THE SAME-CITY IMPOSTOR. ``_identity_matches`` just passed, but it accepts a
