@@ -7,7 +7,7 @@ const quote = (a=.505, b=.495): OpenWinnerQuote => ({ event_id: 7, market_id: 11
 test('a final result stays separate from the complete open contract and honest rounded pair', () => {
   const html = renderToStaticMarkup(<><p>Final 7–3</p><FinalGameWinnerQuote quote={quote()} eventId={7} finished /></>);
   expect(html).toContain('Final 7–3');
-  expect(html).toContain('aria-label="Still trading"');
+  expect(html).toContain('aria-label="Kalshi winner market"');
   expect([...html.matchAll(/<strong[^>]*>([^<]+)<\/strong>/g)].map(match => match[1])).toEqual(['51%', '49%']);
   expect(html).not.toMatch(/just now|updated/i);
 });
