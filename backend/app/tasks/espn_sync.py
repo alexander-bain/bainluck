@@ -847,7 +847,6 @@ async def _sync_espn_live_events():
             # processing time would date the last sport's scores as fresher
             # than the payload they came off.
             espn_read_at: dict = {}
-            full_slate_boards: dict = {}
             try:
                 for key in all_fetch_keys:
                     try:
@@ -866,13 +865,6 @@ async def _sync_espn_live_events():
                         espn_read_at[key] = datetime.now(timezone.utc)
                     except Exception as e:
                         stats["errors"].append(f"espn_fetch_{key}: {str(e)}")
-                # #8682. The pre-game pass's own board, fetched through the same
-                # connection. Only for sports whose undated board is a featured
-                # slice (`ESPN_FULL_SLATE_GROUPS`); the live pass keeps
-                # `espn_data`, so what it matches and creates from is unchanged.
-                full_slate_boards = await _fetch_full_slate_boards(
-                    espn, scheduled_sport_keys, stats
-                )
             finally:
                 await espn.close()
 
@@ -957,13 +949,25 @@ async def _sync_espn_live_events():
 
             scheduled_dated_boards: dict = {}
             try:
-                async with _step_savepoint(session):  # #8796
-                    scheduled_dated_boards = await _prefetch_scheduled_dated_boards(
-                        session, scheduled_sport_keys, espn_data, full_slate_boards,
-                        _fetch_scheduled_dated, datetime.now(timezone.utc), stats,
-                    )
-            except Exception as e:
-                stats["errors"].append(f"scheduled_dated_boards: {str(e)}")
+                # #8682. The pre-game pass's own board. Only for sports whose
+                # undated board is a featured slice (`ESPN_FULL_SLATE_GROUPS`);
+                # the live pass keeps `espn_data`, so what it matches and
+                # creates from is unchanged. Asked HERE, after the live pass has
+                # committed and published (#10614): nothing above reads it, and
+                # asked with the featured boards a slow FBS board held every
+                # live sport's already-read scores and probabilities.
+                full_slate_boards = await _fetch_full_slate_boards(
+                    dated_espn, scheduled_sport_keys, stats
+                )
+                try:
+                    async with _step_savepoint(session):  # #8796
+                        scheduled_dated_boards = await _prefetch_scheduled_dated_boards(
+                            session, scheduled_sport_keys, espn_data,
+                            full_slate_boards, _fetch_scheduled_dated,
+                            datetime.now(timezone.utc), stats,
+                        )
+                except Exception as e:
+                    stats["errors"].append(f"scheduled_dated_boards: {str(e)}")
             finally:
                 await dated_espn.close()
 
