@@ -36,6 +36,8 @@ on:
       - 'tools/tests/test_watch_picker_selected_gate.py'
       - 'tools/tests/test_watch_game_updating_gate.py'
       - 'backend/tests/test_watch_fresh_face_receipt_10577.py'
+      - 'tools/watch_discovery_polish_receipt.py'
+      - 'tools/tests/test_watch_discovery_polish_receipt.py'
       - 'tools/watch_resolve_packages.py'
       - 'tools/tests/test_watch_resolve_packages.py'
       - 'tools/watch-build.sh'
@@ -92,6 +94,8 @@ on:
       - 'tools/tests/test_watch_picker_selected_gate.py'
       - 'tools/tests/test_watch_game_updating_gate.py'
       - 'backend/tests/test_watch_fresh_face_receipt_10577.py'
+      - 'tools/watch_discovery_polish_receipt.py'
+      - 'tools/tests/test_watch_discovery_polish_receipt.py'
       - 'tools/watch_resolve_packages.py'
       - 'tools/tests/test_watch_resolve_packages.py'
       - 'tools/watch-build.sh'
@@ -220,6 +224,8 @@ jobs:
         run: python3 -m unittest discover -s tools/tests -p test_watch_picker_network_gate.py
       - name: Reject incomplete selected-picker evidence
         run: python3 -m unittest discover -s tools/tests -p test_watch_picker_selected_gate.py
+      - name: Verify Discoveries polish receipts fail closed
+        run: python3 -m unittest discover -s tools/tests -p test_watch_discovery_polish_receipt.py
       - name: Select, reopen offline, and change a game through Watch controls
         run: bash tools/watch-ui-journey.sh
       - name: Preserve UI journey evidence
