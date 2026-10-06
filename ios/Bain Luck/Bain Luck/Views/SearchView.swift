@@ -569,8 +569,18 @@ struct SearchView: View {
                                     StatusBadge(status: status, commenceTime: suggestion.commenceTime,
                                                 // #9208 — the authority's stoppage word ("Canceled").
                                                 period: suggestion.stoppage)
+                                    // #10598 — who won, away - home, as the results row,
+                                    // beside the badge as web's "Final · 3 – 4".
+                                    if let score = suggestion.finalScoreText {
+                                        Text(score)
+                                            .font(.caption)
+                                            .fontWeight(.medium)
+                                            .monospacedDigit()
+                                    }
                                     if let commenceTime = suggestion.commenceTime {
-                                        RelativeTimeText(dateString: commenceTime)
+                                        // #10598 — a finished row prints the day (#6444).
+                                        RelativeTimeText(dateString: commenceTime,
+                                                         style: suggestion.timeStyle)
                                     }
                                 }
                             }
