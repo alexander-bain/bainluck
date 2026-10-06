@@ -18934,6 +18934,11 @@ _DETAIL_FRESH_BUILDS: dict[int, tuple[float, object]] = {}
 _detail_fresh_leader: contextvars.ContextVar[bool] = contextvars.ContextVar(
     "_detail_fresh_leader", default=False
 )
+#: Caller-owned snapshot builds cannot publish with the route entry clock: their
+#: snapshot can predate that clock, violating the fresh coalescer's barrier.
+_detail_skip_cache_publish: contextvars.ContextVar[bool] = contextvars.ContextVar(
+    "_detail_skip_cache_publish", default=False
+)
 
 
 class _FreshBuildAbandoned(Exception):
@@ -18992,6 +18997,22 @@ async def _coalesced_fresh_detail(event_id: int, asked_at: float, build) -> dict
             del _DETAIL_FRESH_BUILDS[event_id]
     shared.set_result(result)
     return result
+
+
+async def build_event_detail_uncoalesced(db: AsyncSession, event_id: int) -> dict:
+    """Build canonical detail on the caller's session without shared cache state.
+
+    The caller owns transaction isolation and serialization. This reader neither
+    joins another session's build nor publishes its snapshot to the route cache.
+    All formatting and serve-time corrections remain those of ``get_event``.
+    """
+    leader_token = _detail_fresh_leader.set(True)
+    cache_token = _detail_skip_cache_publish.set(True)
+    try:
+        return await get_event(event_id, db=db, fresh=True)
+    finally:
+        _detail_skip_cache_publish.reset(cache_token)
+        _detail_fresh_leader.reset(leader_token)
 
 
 #: The only `hero_probability_source` whose number IS the point-in-time blend.
@@ -20260,11 +20281,12 @@ async def get_event(
     # served. `event_id` is rebound above when a duplicate resolves, so caching
     # only under it would make every request for a ghost url re-run the verdict
     # query — the one population that always needs it.
-    for _cache_key in {requested_event_id, event_id}:
-        if len(_event_detail_cache) >= _EVENT_DETAIL_MAX_SIZE:
-            oldest = min(_event_detail_cache, key=lambda k: _event_detail_cache[k][0])
-            del _event_detail_cache[oldest]
-        _event_detail_cache[_cache_key] = (_now, event.status, response)
+    if not _detail_skip_cache_publish.get():
+        for _cache_key in {requested_event_id, event_id}:
+            if len(_event_detail_cache) >= _EVENT_DETAIL_MAX_SIZE:
+                oldest = min(_event_detail_cache, key=lambda k: _event_detail_cache[k][0])
+                del _event_detail_cache[oldest]
+            _event_detail_cache[_cache_key] = (_now, event.status, response)
 
     return response
 
