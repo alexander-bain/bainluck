@@ -2470,7 +2470,11 @@ async def _condition_twins(
 
 
 async def _write_condition_twins(
-    session, priced: list[dict], exclude_ids: list[int], stats: dict
+    session,
+    priced: list[dict],
+    exclude_ids: list[int],
+    stats: dict,
+    refuted_books: dict | None = None,
 ) -> None:
     """Give each condition twin the price its sibling row was just given (#4983).
 
@@ -2479,23 +2483,49 @@ async def _write_condition_twins(
     failing rolls back only itself (gotcha #42). The #4000 withdrawal is NOT
     repeated here — it is keyed to the addressed market's payload and this
     change adds reach for a price, not for a retirement.
+
+    #10298: the #9399 book withdrawal IS applied, but only to the conditions the
+    fetch tagged as refused by the game parent (``parent_book_refused``), with
+    this pass's book from ``refuted_books``. `_write_prices` skips that bare
+    parent row, so without this a parent reached only as a twin kept a stored
+    0.53 its own book prices out. Same guarded helper: CAS, crowned and graded
+    exempt, a stored price the book supports stays. A decomposed twin holds no
+    bare key, so the helper matches nothing there.
     """
+    from app.tasks.polymarket import _withdraw_book_refuted_legs
+
     try:
         twins = await _condition_twins(session, priced, exclude_ids)
     except Exception as exc:  # noqa: BLE001 — counted, never swallowed
         await session.rollback()
         stats["errors"].append(f"polymarket twin lookup: {exc}")
         return
+    refuted_books = refuted_books or {}
     for twin_id, items in twins.items():
+        books = {
+            i["external_id"]: refuted_books[i["external_id"]]
+            for i in items
+            if i.get("parent_book_refused") and i["external_id"] in refuted_books
+        }
         try:
             written = await _write_prices(session, twin_id, "polymarket", items, stats)
-            if written:
+            withdrawn = await _withdraw_book_refuted_legs(session, twin_id, books)
+            if written or withdrawn:
                 await session.execute(rerank_market_field_stmt(twin_id))
             await session.commit()
         except Exception as exc:  # noqa: BLE001
             await session.rollback()
             stats["errors"].append(f"polymarket twin {twin_id}: {exc}")
             continue
+        if withdrawn:
+            stats["legs_withdrawn_book_refuted"] = (
+                stats.get("legs_withdrawn_book_refuted", 0) + withdrawn
+            )
+            logger.info(
+                "futures_price_refresh: twin market %s — withdrew %d stored "
+                "price(s) the venue's current book prices out (#10298)",
+                twin_id, withdrawn,
+            )
         if written:
             stats["twin_markets_priced"] = stats.get("twin_markets_priced", 0) + 1
             stats["twin_snapshots_written"] = (
@@ -4028,6 +4058,7 @@ async def _refresh_stale_futures_prices(
                                 priced,
                                 [m["id"] for m in by_event[event_id]],
                                 stats,
+                                refuted_books=refuted_by_event.get(event_id) or {},
                             )
                     await asyncio.sleep(0.3)
             finally:

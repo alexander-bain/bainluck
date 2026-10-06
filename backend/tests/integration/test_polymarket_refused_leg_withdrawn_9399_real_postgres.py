@@ -521,11 +521,16 @@ async def test_10298_refresh_withdraws_a_stored_053_without_a_new_snapshot(engin
     assert stats["legs_withdrawn_book_refuted"] == 1
 
 
-@pytest.mark.parametrize("stored", [(0.40, 0.39, 0.41), (0.53, 0.52, 0.54)])
-async def test_10298_a_twin_only_parent_is_not_written(engine, monkeypatch, stored):
-    """Only the decomposed child is selected; the parent is reached by the twin
-    pass alone. Its bare row takes no write and no snapshot. (The twin pass never
-    withdraws — #4983's design — so a stored 0.53 there waits for its own pass.)"""
+@pytest.mark.parametrize("stored, withdrawn", [
+    ((0.40, 0.39, 0.41), 0),   # supported by 0.15/0.52: survives untouched
+    ((0.53, 0.52, 0.54), 1),   # priced out by the 0.52 ask: NULL, no new point
+])
+async def test_10298_a_twin_only_parent_is_withheld_like_a_selected_one(
+    engine, monkeypatch, stored, withdrawn
+):
+    """Only the decomposed child is selected, so the twin pass alone reaches the
+    parent. The bare row takes no write and no snapshot, and the same guarded
+    withdrawal judges what it already stores."""
     await _poll(_game(_ml(stored[0], stored[1], stored[2], last=stored[0])))
     before = await _legs(engine)
     stats = await _refresh(
@@ -534,12 +539,97 @@ async def test_10298_a_twin_only_parent_is_not_written(engine, monkeypatch, stor
     )
     after = await _legs(engine)
 
-    assert after[_PARENT_ML]["p"] == pytest.approx(stored[0])
-    assert after[_PARENT_ML]["fresh_snapshots"] == 0
-    assert after[_PARENT_ML]["touched"] == before[_PARENT_ML]["touched"]
-    assert stats.get("legs_declined_parent_refused", 0) >= 1
+    p_before, p_after = before[_PARENT_ML], after[_PARENT_ML]
+    if withdrawn:
+        assert p_after["p"] is None
+        assert p_after["changed"] != p_before["changed"]
+    else:
+        assert p_after["p"] == pytest.approx(stored[0])
+        assert p_after["changed"] == p_before["changed"]
+    assert p_after["fresh_snapshots"] == 0
+    for col in ("bid", "ask", "touched", "opening"):
+        assert p_after[col] == p_before[col], col
     assert after[_CHILD_ML_YES]["fresh_snapshots"] == 1, "the selected child still prices"
-    assert after[_PARENT_SPREAD]["fresh_snapshots"] == 1, "the twin pass still reaches the spread"
+    assert after[_PARENT_SPREAD]["p"] == pytest.approx(0.30)
+    assert after[_PARENT_SPREAD]["fresh_snapshots"] == 1, "the healthy parent sibling refreshes"
+    assert stats["legs_withdrawn_book_refuted"] == withdrawn
+    assert stats.get("legs_declined_parent_refused", 0) >= 1
+
+
+@pytest.mark.parametrize("column, value", [
+    # An inferred grade passes the twin lookup's fence, so ONLY the guarded
+    # withdrawal's `resolution_source IS NULL` exemption can save it — the arm
+    # that proves the new twin wiring kept the helper's exemptions.
+    ("resolution_source", "'pass2_guess'"),
+    # These two the twin lookup itself fences (CONDITION_TWIN_MARKETS_SQL).
+    ("resolution_source", "'api_settlement'"),
+    ("is_winner", "TRUE"),
+])
+async def test_10298_twin_path_keeps_the_graded_and_crowned_exemptions(
+    engine, monkeypatch, column, value
+):
+    """Graded and crowned twin parents keep their number."""
+    from sqlalchemy import text
+
+    await _poll(_game(_ml(0.53, 0.52, 0.54, last=0.53)))
+    async with engine.begin() as conn:
+        await conn.execute(text(
+            f"UPDATE futures_outcomes SET {column} = {value} WHERE external_id = :cid"
+        ), {"cid": ML})
+    before = await _legs(engine)
+    stats = await _refresh(
+        engine, monkeypatch, _game(_ml(0.53, 0.15, 0.52, last=0.53), **_SPREAD_BOOK),
+        registered=[_mid(before, ML)],
+    )
+    after = await _legs(engine)
+    assert after[_PARENT_ML]["p"] == pytest.approx(0.53)
+    assert after[_PARENT_ML]["fresh_snapshots"] == 0
+    assert stats["legs_withdrawn_book_refuted"] == 0
+
+
+async def test_10298_twin_path_respects_the_compare_and_set(engine, monkeypatch):
+    """A writer that changes the twin parent's price between the withdrawal's
+    read and its write wins: the stale read withdraws nothing."""
+    from sqlalchemy import text
+
+    from app.tasks import polymarket as pm
+
+    await _poll(_game(_ml(0.53, 0.52, 0.54, last=0.53)))
+    before = await _legs(engine)
+    parent_id = _mid(before, GAME_ID)
+    real = pm._withdraw_book_refuted_legs
+
+    async def _underfoot(session, market_id, books):
+        if market_id == parent_id and books:
+            real_execute = session.execute
+            fired = []
+
+            async def _execute(statement, *a, **kw):
+                result = await real_execute(statement, *a, **kw)
+                if not fired:
+                    fired.append(1)
+                    async with engine.begin() as other:
+                        await other.execute(text(
+                            "UPDATE futures_outcomes SET current_probability = 0.20 "
+                            " WHERE market_id = :m AND external_id = :c"
+                        ), {"m": market_id, "c": ML})
+                return result
+
+            session.execute = _execute
+            try:
+                return await real(session, market_id, books)
+            finally:
+                del session.execute
+        return await real(session, market_id, books)
+
+    monkeypatch.setattr(pm, "_withdraw_book_refuted_legs", _underfoot)
+    stats = await _refresh(
+        engine, monkeypatch, _game(_ml(0.53, 0.15, 0.52, last=0.53), **_SPREAD_BOOK),
+        registered=[_mid(before, ML)],
+    )
+    after = await _legs(engine)
+    assert stats["legs_withdrawn_book_refuted"] == 0
+    assert after[_PARENT_ML]["p"] == pytest.approx(0.20)
 
 
 async def test_10298_strawman_without_the_tag_reproduces_the_finding(engine, monkeypatch):
