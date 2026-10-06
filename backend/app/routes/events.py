@@ -7986,9 +7986,10 @@ def _serve_stale_and_refresh(name: str, rebuild) -> bool:
     return True
 
 # In-memory cache for game-markets responses (roster queries are expensive).
-# Live/scheduled: 30s TTL. Completed: `game_markets_cache.FRESH_TTL_FINAL`,
-# which is the L2 tier's own number — NOT "indefinitely", see #6355 and the note
-# on `_read_game_markets_memo`.
+# Live/scheduled: 30s TTL. Completed: `game_markets_cache.payload_fresh_ttl` —
+# the hour, or 30s while the body still carries an open winner quote (#10610) —
+# the L2 tier's own decision, NOT "indefinitely", see #6355 and the note on
+# `_read_game_markets_memo`.
 _game_markets_cache: dict[int, tuple[float, str, str, dict]] = {}
 # event_id → (timestamp, source_status, build_id, response)
 _GAME_MARKETS_LIVE_TTL = 30
@@ -25214,6 +25215,13 @@ def _read_game_markets_memo(event_id: int):
     moving except for winner backfill, which runs every 6h). L1 now uses that
     same number, so the two tiers agree instead of one of them pinning.
 
+    #10610: and a finished body whose `open_winner_quote` is still non-null has
+    NOT stopped moving — a venue contract is trading after the final. L1 asks
+    `gmc.payload_fresh_ttl` with the cached body itself, the one decision L2's
+    write, read and mirror use, so that body gets 30 s here too rather than the
+    hour a status-only rule would hand back. The age is still measured from the
+    original build (`_memo_stamp`, #6394), never from the L2→L1 promotion.
+
     The build check is here too. A per-process dict is usually emptied by the
     release anyway — this covers the case where a worker outlives the deploy
     that invalidated its contents, and costs one string compare.
@@ -25230,7 +25238,7 @@ def _read_game_markets_memo(event_id: int):
         return None
     age = _time.time() - cached_ts
     ttl = (
-        gmc.FRESH_TTL_FINAL
+        gmc.payload_fresh_ttl(cached_status, cached_response)
         if cached_status in ("completed", "closed")
         else _GAME_MARKETS_LIVE_TTL
     )

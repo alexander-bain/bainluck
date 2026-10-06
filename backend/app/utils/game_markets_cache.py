@@ -58,7 +58,8 @@ player props through `prop_window_closed` and it publishes
 windows that closed hours ago — a formatting lie of exactly the kind the
 FORMATTING pillar exists to stop, arriving through a latency fix. So the mirror
 is only served while it is younger than `STALE_SERVE_CEILING` x the tier's own
-fresh TTL for that status (150 s live, 5 h final); past that the reader blocks
+fresh TTL for that payload (150 s live, 5 h final, 150 s for a final body still
+carrying an open winner quote — #10610); past that the reader blocks
 and rebuilds, which is the pre-existing behaviour. A permanently-failing refresh
 degrades to slow, never to wrong. The ceiling multiple is LAT-P116's, from the
 same file, deliberately: two serve-stale ceilings in one route that disagree
@@ -176,6 +177,10 @@ SOURCE_STATUS_FIELD = "source_status"
 #: way `source_status` and `quality_reasons` already do.
 BUILD_FIELD = "build_id"
 
+#: Body key the finished-game winner quote rides on (`final_game_winner_quote`).
+#: Non-null means a venue contract behind a FINAL game is still open (#10610).
+OPEN_WINNER_QUOTE_FIELD = "open_winner_quote"
+
 
 def is_final(status: Any) -> bool:
     """True when `status` is a finished game, by the tier's own definition."""
@@ -187,9 +192,63 @@ def fresh_ttl(status: Any) -> int:
     return FRESH_TTL_FINAL if is_final(status) else FRESH_TTL_LIVE
 
 
-def stale_serve_ceiling_seconds(status: Any) -> int:
-    """How old a mirror of a payload with `status` may be and still be served."""
-    return STALE_SERVE_CEILING * fresh_ttl(status)
+def holds_open_winner_quote(payload: Any) -> bool:
+    """True when a payload still carries an outstanding winner quote (#10610)."""
+    return isinstance(payload, dict) and payload.get(OPEN_WINNER_QUOTE_FIELD) is not None
+
+
+def payload_fresh_ttl(status: Any, payload: Any) -> int:
+    """The fresh TTL this payload earns: its status, unless the body is still moving.
+
+    🔴 #10610 — A FINISHED GAME WITH AN OPEN WINNER QUOTE IS NOT A SETTLED BODY.
+    `FRESH_TTL_FINAL` is an hour because "a finished game's markets stop moving",
+    but `open_winner_quote` is non-null precisely while one of them has NOT
+    stopped: the venue contract is still trading after the final whistle. On
+    production 2026-10-06 ev15324542 served Polymarket 64252764 as open at 99%
+    at 10:59Z although it resolved at 10:37Z — one payload, held for the hour.
+
+    So a final body with a non-null quote takes the live TTL until a rebuild
+    withholds or closes the quote; a null or absent quote keeps the hour. The
+    marker is read as-is: this never decides a winner or a settlement, it only
+    decides how soon to ask the builder again.
+
+    ONE decision for every consumer — the Redis primary write, the primary
+    read, the mirror ceiling and the L1 memo — because a single layer still
+    choosing by status alone would hand the hour back to the reader.
+    """
+    if is_final(status) and holds_open_winner_quote(payload):
+        return FRESH_TTL_LIVE
+    return fresh_ttl(status)
+
+
+def stale_serve_ceiling_seconds(status: Any, payload: Any = None) -> int:
+    """How old a mirror of a payload with `status` may be and still be served.
+
+    `payload` is optional so a caller with only a status (`related_futures_cache`)
+    keeps the status-only ceiling; a game-markets body passes itself (#10610).
+    """
+    return STALE_SERVE_CEILING * payload_fresh_ttl(status, payload)
+
+
+def primary_outlived_fresh_ttl(payload: Any, now: datetime | None = None) -> bool:
+    """Has a primary slot outlived the TTL its body earns? (#10610)
+
+    Redis expires the primary at whatever TTL it was WRITTEN with, so for every
+    payload whose TTL is still its status TTL the key's own expiry is the bound
+    and this returns False — live and scheduled reads are unchanged.
+
+    It only bites where `payload_fresh_ttl` is SHORTER than the status TTL: a
+    final body with an open quote that a pre-#10610 writer stored for 3600 s.
+    Those bytes would otherwise read as `live` for the rest of the hour. An age
+    we cannot compute counts as outlived — the mirror path then refuses it as
+    `no_created_at` and the reader rebuilds, never trusts it for an hour.
+    """
+    status = source_status_of(payload)
+    ttl = payload_fresh_ttl(status, payload)
+    if ttl >= fresh_ttl(status):
+        return False
+    age = payload_age_seconds(payload, now)
+    return age is None or age >= ttl
 
 
 def keys_for(event_id: int) -> ConceptCacheKeys:
@@ -297,7 +356,7 @@ def mirror_is_servable(
         # though it could — and here it would additionally be served under an
         # age bound that we are unable to evaluate.
         return False, "no_created_at"
-    ceiling = stale_serve_ceiling_seconds(source_status_of(payload))
+    ceiling = stale_serve_ceiling_seconds(source_status_of(payload), payload)
     if age > ceiling:
         return False, "too_old"
     return True, "fresh_enough"
@@ -325,6 +384,16 @@ def read(event_id: int, rc=None) -> tuple[dict[str, Any] | None, str]:
     keys = keys_for(event_id)
 
     primary = read_slot(client, keys.primary)
+    if (
+        primary is not None
+        and payload_is_current_build(primary)
+        and primary_outlived_fresh_ttl(primary)
+    ):
+        # #10610: a final body with an open quote, older than the TTL it earns
+        # (a pre-#10610 writer stored it for the hour). Not `live` — it goes to
+        # the mirror path, whose ceiling is 150 s from its ORIGINAL build:
+        # `stale_ok` with one rebuild behind it, or a blocking rebuild past that.
+        primary = None
     if primary is not None:
         if payload_is_current_build(primary):
             return with_availability(primary, AVAILABILITY_LIVE), "live"
@@ -398,7 +467,7 @@ def write(event_id: int, enveloped: dict[str, Any], rc=None) -> bool:
         client,
         keys_for(event_id),
         enveloped,
-        primary_ttl=fresh_ttl(source_status_of(enveloped)),
+        primary_ttl=payload_fresh_ttl(source_status_of(enveloped), enveloped),
     )
     return True
 
