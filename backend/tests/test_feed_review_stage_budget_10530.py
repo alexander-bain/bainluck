@@ -188,12 +188,15 @@ async def _get(
     stagger=None,
     score=None,
     enrich=None,
+    golf=None,
+    concepts=None,
 ):
     """Drive ``n`` concurrent real /api/feed requests.
 
     The candidate stages are stubbed (events -> ``db.cards``; futures, golf and
     concepts empty); everything from the review stage on is the real route.
-    ``score`` / ``enrich`` replace the events-half stubs (#10534 drives them).
+    ``score`` / ``enrich`` replace the events-half stubs (#10534 drives them);
+    ``golf`` / ``concepts`` replace the tier scorers (#10574 drives them).
     """
     from app.main import app
 
@@ -222,9 +225,11 @@ async def _get(
                 side_effect=score or (lambda *a, **k: [dict(c) for c in db.cards])
             ),
         ), patch(
-            "app.routes.feed._score_golf_tournaments", new=AsyncMock(return_value=[])
+            "app.routes.feed._score_golf_tournaments",
+            new=AsyncMock(side_effect=golf or (lambda *a, **k: [])),
         ), patch(
-            "app.routes.feed._score_event_concepts", new=AsyncMock(return_value=[])
+            "app.routes.feed._score_event_concepts",
+            new=AsyncMock(side_effect=concepts or (lambda *a, **k: [])),
         ), patch(
             "app.routes.feed.enrich_event_team_data", new=AsyncMock(side_effect=enrich)
         ):
@@ -243,16 +248,22 @@ async def _get(
     return responses if n > 1 else responses[0]
 
 
-def _spend_budget_in_enrichment(monkeypatch):
-    """#10534: event scoring and team enrichment refuse at zero budget too, so a
-    budget that is zero from admission now stops the build at scoring. The tests
-    below pin the REVIEW stage's zero admission, so the budget runs out at the
-    end of the events half instead — the same zero the review stage met before."""
+def _spend_budget_after_candidate_tiers(monkeypatch):
+    """#10534: event scoring and team enrichment refuse at zero budget too, and
+    #10574 added golf and event concepts, so a budget that is zero from
+    admission now stops the build at scoring. The tests below pin the REVIEW
+    stage's zero admission, so the budget runs out as the last candidate tier
+    (concepts) finishes instead — the same zero the review stage met before."""
+    import app.routes.feed as feed
 
-    async def _enrich(db, items):
-        monkeypatch.setattr(rc, "FEED_TOTAL_BUDGET_MS", 0)
+    orig = feed._record_feed_timing
 
-    return _enrich
+    def spend_after_concepts(timings, started_at, previous_at, stage, *a, **k):
+        if stage == "concepts":
+            monkeypatch.setattr(rc, "FEED_TOTAL_BUDGET_MS", 0)
+        return orig(timings, started_at, previous_at, stage, *a, **k)
+
+    monkeypatch.setattr(feed, "_record_feed_timing", spend_after_concepts)
 
 
 def _ids(body):
@@ -307,13 +318,8 @@ async def test_zero_budget_admits_no_review_and_serves_truthful_unavailable(
     db = _Session([_card(1)], rows=[_decision(1, "needs_data_fix")])
     redis = _Redis()
 
-    resp = await _get(
-        monkeypatch,
-        db,
-        redis,
-        path=path,
-        enrich=_spend_budget_in_enrichment(monkeypatch),
-    )
+    _spend_budget_after_candidate_tiers(monkeypatch)
+    resp = await _get(monkeypatch, db, redis, path=path)
     body = resp.json()
 
     assert resp.status_code == 200
@@ -346,9 +352,8 @@ async def test_zero_budget_serves_prior_complete_payload_with_its_stored_origin(
 
     db2 = _Session([_card(1), _card(2), _card(3)])
     redis = _Redis()
-    resp = await _get(
-        monkeypatch, db2, redis, enrich=_spend_budget_in_enrichment(monkeypatch)
-    )
+    _spend_budget_after_candidate_tiers(monkeypatch)
+    resp = await _get(monkeypatch, db2, redis)
     body = resp.json()
 
     assert "review_sql" not in db2.log
@@ -370,12 +375,8 @@ async def test_zero_budget_refuses_a_live_prior_past_the_live_ceiling(monkeypatc
     origin, payload = rc._last_good[key]
     rc._last_good[key] = (origin - FEED_LAST_GOOD_MAX_AGE_LIVE_SECONDS - 1, payload)
 
-    resp = await _get(
-        monkeypatch,
-        _Session([_card(1)]),
-        _Redis(),
-        enrich=_spend_budget_in_enrichment(monkeypatch),
-    )
+    _spend_budget_after_candidate_tiers(monkeypatch)
+    resp = await _get(monkeypatch, _Session([_card(1)]), _Redis())
     body = resp.json()
 
     assert body["cache"]["status"] == "unavailable"
