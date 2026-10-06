@@ -1654,6 +1654,7 @@ async def _run_polymarket_ws_consumer(*, sessions):
         )
         if not market_id and asset_id not in open_asset_mirrors:
             return
+        _note_raw(asset_id)
 
         best_bid = msg.get("best_bid")
         best_ask = msg.get("best_ask")
@@ -1731,6 +1732,17 @@ async def _run_polymarket_ws_consumer(*, sessions):
         )
         return targets
 
+    def _note_raw(asset_id):
+        # #10090 — one venue message for each game this token prices, counted
+        # before the price policy decides; never raises into the socket.
+        try:
+            for event_id in {
+                event_id_by_outcome.get(oid) for oid in _tick_targets(asset_id)
+            }:
+                tail_receipts.note_raw(event_id)
+        except Exception:
+            return
+
     def _mark_input(outcome_id, prob, kind, msg):
         # Under `buffer_lock`, so seq order is buffer order. Never raises into
         # the socket: a receipt is evidence about the price, not the price.
@@ -1754,6 +1766,7 @@ async def _run_polymarket_ws_consumer(*, sessions):
         )
         if not market_id and asset_id not in open_asset_mirrors:
             return
+        _note_raw(asset_id)
 
         price = msg.get("price")
         if price is None:
