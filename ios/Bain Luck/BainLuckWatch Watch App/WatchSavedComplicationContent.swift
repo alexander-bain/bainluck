@@ -40,3 +40,48 @@ struct WatchSavedComplicationContent: View {
         }
     }
 }
+
+/// Complete named saved reading or launcher; no clipped shorthand or currentness claim.
+struct WatchSavedCircularComplicationContent: View {
+    let snapshot: WatchComplicationSnapshot?
+
+    var body: some View {
+        if let snapshot, let reading = snapshot.validatedCircularReading {
+            GeometryReader { geometry in
+                // A rectangular fit alone cannot prove a fit inside the circle.
+                // Reserve 40 points for the three readable lines, and derive the
+                // largest centered rectangle whose corners stay inside this slot.
+                let diameter = min(geometry.size.width, geometry.size.height)
+                let contentHeight: CGFloat = 40
+                let safeWidth = sqrt(max(0, diameter * diameter - contentHeight * contentHeight))
+                ViewThatFits(in: [.horizontal, .vertical]) {
+                    VStack(spacing: 0) {
+                        Text("Saved").font(.system(size: 9, weight: .medium))
+                            .accessibilityIdentifier("watch.complication.circular.saved")
+                        Text(reading.subject).font(.system(size: 10, weight: .semibold))
+                            .accessibilityIdentifier("watch.complication.circular.subject")
+                        Text(reading.value).font(.system(size: reading.kind == .forecast ? 14 : 10, weight: .bold))
+                            .accessibilityIdentifier("watch.complication.circular.value")
+                    }
+                    .fixedSize()
+                    .accessibilityElement(children: .ignore)
+                    .accessibilityLabel("Saved reading. \(snapshot.title). \(snapshot.detail). Observed \(snapshot.observedAt.formatted(date: .abbreviated, time: .shortened)). Open your game in Bain Luck.")
+                    .accessibilityValue("Saved · \(reading.subject) · \(reading.value)")
+                    .accessibilityIdentifier("watch.complication.circular.reading")
+                    launcher
+                }
+                .frame(width: safeWidth, height: min(contentHeight, diameter))
+                .frame(width: geometry.size.width, height: geometry.size.height)
+            }
+        } else {
+            launcher
+        }
+    }
+
+    private var launcher: some View {
+        Image(systemName: "chart.bar.fill")
+            .font(.system(size: 18))
+            .accessibilityLabel("Open your selected game in Bain Luck, or choose a game")
+            .accessibilityIdentifier("watch.complication.circular.fallback")
+    }
+}

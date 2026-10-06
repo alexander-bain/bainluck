@@ -18,6 +18,7 @@ MARKERS = (
     "WATCH_UI_DISCOVERIES_UNSELECTED=PASS", "WATCH_UI_DISCOVERIES_CONTINUATION=PASS",
     "WATCH_UI_DISCOVERIES_RETURN_STANDARD=PASS", "WATCH_UI_DISCOVERIES_RETURN_LARGE=PASS",
     "WATCH_UI_DISCOVERIES_HEADING_STANDARD=PASS", "WATCH_UI_DISCOVERIES_HEADING_LARGE=PASS",
+    "WATCH_UI_CIRCULAR_CONTENT=PASS", "WATCH_UI_CIRCULAR_FALLBACK=PASS", "WATCH_UI_ACTUAL_CIRCULAR_SAVED=PASS",
 )
 CASE = ("Test Case '-[BainLuckWatchUITests.WidgetTapJourneyTests "
         "testFreshConfiguredFaceIsActiveBeforeActualLauncherTap]' passed (90.123 seconds).")
@@ -58,6 +59,8 @@ def test_seventeen_test_summary_and_real_activation_case_are_accepted(tmp_path):
     "WATCH_UI_DISCOVERIES_RETURN_LARGE=PASS",
     "WATCH_UI_DISCOVERIES_HEADING_STANDARD=PASS",
     "WATCH_UI_DISCOVERIES_HEADING_LARGE=PASS",
+    "WATCH_UI_CIRCULAR_CONTENT=PASS",
+    "WATCH_UI_CIRCULAR_FALLBACK=PASS", "WATCH_UI_ACTUAL_CIRCULAR_SAVED=PASS",
 ])
 def test_new_marker_cannot_silently_disappear(tmp_path, marker):
     result = gate(accepted_log().replace(marker, ""), tmp_path)
@@ -75,3 +78,16 @@ def test_failed_activation_case_cannot_be_overruled_by_marker(tmp_path):
     result = gate(accepted_log().replace("passed (90.123 seconds)", "failed (90.123 seconds)"), tmp_path)
     assert result.returncode == 1
     assert "activation regression did not pass" in result.stderr
+
+
+def test_circular_shared_content_scenarios_reach_debug_fixture():
+    # A content test cannot pay its gate if its launch flag silently opens the app.
+    import re
+    tests = (ROOT / "ios/Bain Luck/BainLuckWatchUITests/ComplicationContentJourneyTests.swift").read_text()
+    routes = (ROOT / "ios/Bain Luck/BainLuckWatch Watch App/WatchTabView.swift").read_text()
+    named_cases = re.findall(r'\("([a-z-]+)", "Saved ·', tests)
+    fallback_cases = ' '.join(re.findall(r'for scenario in \[(.*?)\]', tests, re.S))
+    scenarios = set(named_cases + re.findall(r'"([a-z-]+)"', fallback_cases))
+    assert scenarios
+    for scenario in scenarios:
+        assert f'"circular-{scenario}"' in routes, f"Missing DEBUG route for circular-{scenario}"

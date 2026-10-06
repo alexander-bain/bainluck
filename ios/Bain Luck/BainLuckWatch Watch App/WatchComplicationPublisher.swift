@@ -9,7 +9,9 @@ nonisolated enum WatchComplicationProjection {
         let title: String
         let detail: String
         let observed: Date?
+        let kind: WatchCircularReading.Kind
         if game.isFinal {
+            kind = .final
             guard let home = game.homeScore, let away = game.awayScore, home >= 0, away >= 0 else { return nil }
             if home > away { title = "\(game.homeTeam) won"; detail = "Final · \(home)–\(away)" }
             else if away > home { title = "\(game.awayTeam) won"; detail = "Final · \(away)–\(home)" }
@@ -20,6 +22,7 @@ nonisolated enum WatchComplicationProjection {
                   game.showsForecast else { return nil }
             if let probability = game.homeProbabilityText,
                let clock = game.probabilityObservedAt, validObservation(clock, savedAt: savedAt) {
+                kind = .forecast
                 title = "\(game.homeTeam) win"
                 detail = "\(probability) · \(game.stateLabel)"
                 observed = clock
@@ -28,6 +31,7 @@ nonisolated enum WatchComplicationProjection {
                       let clock = game.scoreObservedAt, validObservation(clock, savedAt: savedAt) {
                 // A score is independently useful when no honest probability reading exists.
                 // Keep away-home order aligned with the named matchup, and use only its clock.
+                kind = .score
                 title = "\(game.awayTeam) at \(game.homeTeam)"
                 detail = "Score \(away)–\(home) · Live"
                 observed = clock
@@ -36,8 +40,18 @@ nonisolated enum WatchComplicationProjection {
             }
         }
         guard let observed, validObservation(observed, savedAt: savedAt) else { return nil }
+        let compact = WatchCircularReading(version: 1, eventID: game.id, kind: kind,
+            homeName: game.homeTeam, awayName: game.awayTeam,
+            home: game.homeCompactIdentity, away: game.awayCompactIdentity,
+            percent: kind == .forecast ? game.homeRenderedPercent : nil,
+            homeScore: kind == .forecast ? nil : game.homeScore,
+            awayScore: kind == .forecast ? nil : game.awayScore,
+            stateLabel: kind == .final ? "Final" : game.stateLabel, observedAt: observed)
+        let parent = WatchComplicationSnapshot(version: 1, eventID: game.id, title: title,
+            detail: detail, observedAt: observed, savedAt: savedAt)
         return WatchComplicationSnapshot(version: 1, eventID: game.id, title: title,
-                                         detail: detail, observedAt: observed, savedAt: savedAt)
+            detail: detail, observedAt: observed, savedAt: savedAt,
+            circularReading: compact.matches(parent) ? compact : nil)
     }
 
     private static func validObservation(_ observed: Date, savedAt: Date) -> Bool {
@@ -69,7 +83,8 @@ nonisolated enum WatchComplicationPublisher {
             if let valid, let existing = WatchComplicationSnapshot.read(from: directory, now: now),
                existing.version == valid.version, existing.eventID == valid.eventID,
                existing.title == valid.title, existing.detail == valid.detail,
-               existing.observedAt == valid.observedAt {
+               existing.observedAt == valid.observedAt,
+               existing.circularReading == valid.circularReading {
                 return false // A newer fetch alone is not a newer reading.
             }
             // A tombstone replaces the previous reading atomically on selection change.

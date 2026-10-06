@@ -126,6 +126,41 @@ final class WidgetTapJourneyTests: XCTestCase {
     }
 
     @MainActor
+    func testActualCircularSavedReadingAndTap() throws {
+        continueAfterFailure = false
+        let app = XCUIApplication()
+        app.launchEnvironment = [
+            "BAINLUCK_WATCH_UI_TEST": "1",
+            "BAINLUCK_WATCH_UI_SUITE": UUID().uuidString,
+            "BAINLUCK_WATCH_UI_RESET": "1",
+            "BAINLUCK_WATCH_UI_LAUNCH_RECEIPT": "1",
+            "BAINLUCK_WATCH_UI_SHARED_PUBLICATION": "1",
+            "BAINLUCK_WATCH_UI_CIRCULAR_IDENTITY": "1"
+        ]
+        defer { app.terminate() }
+        app.launch()
+        XCTAssertTrue(app.buttons["watch.pick.101"].waitForExistence(timeout: 20))
+        app.buttons["watch.pick.101"].tap()
+        let baseline = try recordWidgetWarmBaseline(in: app)
+        let change = app.buttons["watch.choose-another"]
+        try widgetWarmReveal(change, in: app)
+        change.tap()
+        let picker = try assertWidgetWarmPickerIsPresented(in: app)
+        XCUIDevice.shared.press(.home)
+        let host = XCUIApplication(bundleIdentifier: "com.apple.Carousel")
+        let widget = try mountLauncherOnFreshSiriModularFace(in: host, savedCircular: true)
+        let reading = widget.descendants(matching: .any).matching(NSPredicate(format: "label BEGINSWITH %@", "Saved reading.")).firstMatch
+        try freshFaceRequire(reading.exists && reading.label.contains("San Francisco Giants")
+                             && reading.label.contains("64%") && reading.label.contains("Observed"),
+                             "Configured circular slot lacks full saved named forecast and original observation", host: host)
+        XCTAssertEqual(reading.value as? String, "Saved · SF win · 64%")
+        freshFaceCapture(host, name: "Actual configured circular Saved SF win 64 percent")
+        try tapActualWidgetHostAndAssertWarmReturn(host: host, widget: widget, app: app,
+            baseline: baseline, tapOrdinal: 1, dismissedOverlays: picker, phase: "saved circular forecast")
+        print("WATCH_UI_ACTUAL_CIRCULAR_SAVED=PASS")
+    }
+
+    @MainActor
     func testActualComplicationHost() throws {
         continueAfterFailure = false
         let app = XCUIApplication()
@@ -338,7 +373,7 @@ import XCTest
 // current gallery journey. No URL opening, app activation or seeded-face state.
 extension WidgetTapJourneyTests {
     @MainActor
-    func mountLauncherOnFreshSiriModularFace(in host: XCUIApplication) throws -> XCUIElement {
+    func mountLauncherOnFreshSiriModularFace(in host: XCUIApplication, savedCircular: Bool = false) throws -> XCUIElement {
         try freshFaceRequire(host.wait(for: .runningForeground, timeout: 15), "Watch host is not foreground", host: host)
         let face = host.otherElements["Watch Face"].firstMatch
         try freshFaceRequire(face.waitForExistence(timeout: 15), "No actual Watch Face", host: host)
@@ -390,7 +425,9 @@ extension WidgetTapJourneyTests {
         try activateConfiguredSiriModularFace(in: host)
         let widget = host.otherElements["bottom-left"].firstMatch
         try freshFaceRequire(host.wait(for: .runningForeground, timeout: 15)
-                             && widget.waitForExistence(timeout: 15) && widget.descendants(matching: .any).matching(NSPredicate(format: "label == %@", "Open your selected game in Bain Luck, or choose a game")).firstMatch.exists
+                             && widget.waitForExistence(timeout: 15) && widget.descendants(matching: .any).matching(savedCircular
+                                ? NSPredicate(format: "label BEGINSWITH %@", "Saved reading.")
+                                : NSPredicate(format: "label == %@", "Open your selected game in Bain Luck, or choose a game")).firstMatch.exists
                              && widget.isHittable && host.frame.contains(widget.frame),
                              "Fresh installed face has no reachable BainLuckWatch launcher", host: host)
         freshFaceCapture(host, name: "Fresh face actual mounted BainLuckWatch launcher")

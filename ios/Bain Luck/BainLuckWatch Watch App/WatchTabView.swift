@@ -10,7 +10,9 @@ struct WatchTabView: View {
                 Text("URL fixture ready").accessibilityIdentifier("watch.url-fixture-ready")
             } else if WatchUIFixture.current != nil,
                       let scenario = ProcessInfo.processInfo.environment["BAINLUCK_WATCH_UI_COMPLICATION"],
-                      ["live", "score", "final", "empty"].contains(scenario) {
+                      ["live", "score", "final", "empty", "circular-live", "circular-draw", "circular-final",
+                       "circular-away-final", "circular-tie", "circular-score", "circular-old",
+                       "circular-invalid", "circular-long", "circular-empty"].contains(scenario) {
                 WatchComplicationLayoutFixture(scenario: scenario)
             } else if WatchUIFixture.current != nil,
                ProcessInfo.processInfo.environment["BAINLUCK_WATCH_UI_LARGE_TEXT"] == "1" {
