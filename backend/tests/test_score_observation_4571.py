@@ -15,6 +15,7 @@ green.
 """
 
 import ast
+import asyncio
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from types import SimpleNamespace
@@ -637,16 +638,76 @@ def test_espn_live_pass_hands_down_its_own_observation_clock():
     assert passed, "update_fields_fn call site not found — did it get renamed?"
 
 
-def test_the_live_pass_stamps_with_each_boards_own_read_clock():
+T_EARLY = datetime(2026, 10, 6, 14, 0, 1, tzinfo=timezone.utc)
+T_LATE = datetime(2026, 10, 6, 14, 0, 9, tzinfo=timezone.utc)
+T_JOIN = datetime(2026, 10, 6, 14, 0, 30, tzinfo=timezone.utc)
+
+
+@pytest.mark.asyncio
+async def test_the_live_pass_stamps_with_each_boards_own_read_clock(monkeypatch):
     """Every board is fetched BEFORE any sport is processed, so a clock taken
     inside `_process_live_sport` would date a later sport's scores by when its
     turn came, not by when ESPN was read. The clock is recorded per sport as its
-    board returns, and handed down."""
-    src = (BACKEND / "app/tasks/espn_sync.py").read_text()
-    fetch = src.index("events = await espn.get_scoreboard(key)")
-    bound = src.index("espn_read_at[key] = datetime.now(timezone.utc)")
-    assert fetch < bound < fetch + 1200
+    board returns, and handed down.
 
+    Driven on the real task (#10617 reads two boards at a time, so the clock
+    lives inside `_fetch_featured_boards`; a source needle went stale the moment
+    the line moved). The task's wall clock is injected: it reads T_EARLY while
+    one board returns, T_LATE while the held one returns, and T_JOIN from the
+    failover decision on — after the join, before any sport is processed. Each
+    sport must reach `_process_live_sport` carrying exactly its own instant:
+    a clock taken at the join or at processing dates the early board T_LATE or
+    T_JOIN, and a dropped clock hands down None."""
+    import app.tasks.espn_sync as espn_sync
+    from tests.test_featured_boards_are_read_two_at_a_time_10617 import (
+        MLB,
+        NFL,
+        _Rig,
+    )
+
+    wall = [NOW]
+
+    class _Wall(datetime):
+        @classmethod
+        def now(cls, tz=None):
+            return wall[0] if tz is not None else wall[0].replace(tzinfo=None)
+
+    rig = _Rig(live=(MLB, NFL))
+    rig.wire(monkeypatch)
+    rigs_decide = espn_sync._decide_failovers
+
+    async def _decide_after_the_join(espn_data, fetch_keys, stats):
+        wall[0] = T_JOIN
+        return await rigs_decide(espn_data, fetch_keys, stats)
+
+    monkeypatch.setattr(espn_sync, "_decide_failovers", _decide_after_the_join)
+    monkeypatch.setattr(espn_sync, "datetime", _Wall)
+
+    task = rig.start()
+    try:
+        await rig.until(lambda: len(rig.entered) == 2, "both boards in flight")
+        late, early = rig.entered
+        wall[0] = T_EARLY
+        rig.release(early)
+        await rig.until(lambda: early in rig.returned_at, "the early board returned")
+        await rig.turns()
+        assert late not in rig.returned_at, "the held board returned early"
+        wall[0] = T_LATE
+        rig.release(late)
+        stats = await asyncio.wait_for(task, timeout=2)
+    finally:
+        rig.release(MLB)
+        rig.release(NFL)
+
+    assert stats["errors"] == [], stats["errors"]
+    assert rig.decided, "the failover decision (the T_JOIN marker) never ran"
+    assert rig.observed_at == {early: T_EARLY, late: T_LATE}, (
+        f"each board must carry the instant IT returned — got {rig.observed_at}; "
+        f"T_LATE on the early board = stamped at the join, T_JOIN = stamped at "
+        f"processing, None = the clock was dropped (#4571)"
+    )
+
+    src = (BACKEND / "app/tasks/espn_sync.py").read_text()
     tree = ast.parse(src)
     calls = [
         n for n in ast.walk(tree)
