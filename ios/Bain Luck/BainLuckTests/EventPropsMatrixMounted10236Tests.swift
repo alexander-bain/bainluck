@@ -73,17 +73,25 @@ final class EventPropsMatrixMounted10236Tests: XCTestCase {
         return try String(contentsOf: url, encoding: .utf8)
     }
 
-    func testThePageMountsTheMatrixOnceAboveTheFilteredOldCard() throws {
+    func testThePageMountsTheMatrixOnceAboveTheFilteredOldCardAheadOfTheMaps() throws {
         let src = try page()
         XCTAssertEqual(src.components(separatedBy: "EventPropsMatrixView(").count - 1, 1)
         XCTAssertEqual(src.components(separatedBy: "PlayerPropsCardView(").count - 1, 1)
         let matrix = try XCTUnwrap(src.range(of: "EventPropsMatrixView("))
         let filter = try XCTUnwrap(src.range(of: "EventPropsMatrixLayout.untypedPlayerProps("))
         let card = try XCTUnwrap(src.range(of: "PlayerPropsCardView("))
+        // #9483 C2 — the questions follow the score context and lead the maps
+        // and the spectrum.
+        let after = try XCTUnwrap(src.range(of: "AfterPropsMatrixView("))
+        let projection = try XCTUnwrap(src.range(of: "ProjectedFinalPointsChartView("))
+        let maps = try XCTUnwrap(src.range(of: "MarketMapView("))
         let spectrum = try XCTUnwrap(src.range(of: "TotalPointsSpectrumView("))
-        XCTAssertLessThan(spectrum.lowerBound, matrix.lowerBound, "the matrix sits in the Player Props slot")
+        XCTAssertLessThan(projection.lowerBound, after.lowerBound, "the questions follow the score context")
+        XCTAssertLessThan(after.lowerBound, matrix.lowerBound, "the After grid and During matrix are one phased mount")
         XCTAssertLessThan(matrix.lowerBound, filter.lowerBound)
         XCTAssertLessThan(filter.lowerBound, card.lowerBound, "the old card is fed only the untyped props")
+        XCTAssertLessThan(card.lowerBound, maps.lowerBound, "the questions sit ahead of the maps")
+        XCTAssertLessThan(maps.lowerBound, spectrum.lowerBound)
         XCTAssertFalse(src.contains("let playerProps = gameMarkets.playerProps,"),
                        "the old card must not read the unfiltered list")
     }
