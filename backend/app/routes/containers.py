@@ -264,75 +264,25 @@ async def _attach_settled_prematch(db: AsyncSession, events: list, cards: dict, 
     (the fold's, #5853), through the event route's truthiness test.
 
     A failed read costs the hub this key and nothing else: it runs in a
-    SAVEPOINT, and every card then answers from its books rung alone.
+    SAVEPOINT, and every card then answers from its books rung alone. The read
+    itself is ``utils.settled_prematch_batch``, shared with the team page
+    (#10589), so the surfaces cannot drift apart.
     """
-    from app.utils.graded_card import rendered_duel_percents
-    from app.utils.kalshi_occurrence_start import loaded_sport_key
-    from app.utils.prematch_reading import (
-        PREMATCH_PRIOR_SQL,
-        prematch_prior_binds,
-        prematch_row_to_reading,
-        resolve_prematch_reading,
-    )
+    from app.utils.settled_prematch_batch import settled_prematch_odds_by_event
 
-    binds = prematch_prior_binds(events)
-    if binds is None:
-        return
-    by_event: dict = {}
-    try:
-        nested = await db.begin_nested()
-        try:
-            for row in (await db.execute(text(PREMATCH_PRIOR_SQL), binds)).all():
-                by_event.setdefault(row.event_id, {}).setdefault(
-                    row.source, prematch_row_to_reading(row)
-                )
-        except Exception:
-            try:
-                await nested.rollback()
-            except Exception:  # noqa: BLE001 — the read's error is the one to report
-                pass
-            raise
-        await nested.commit()
-    except Exception as exc:  # noqa: BLE001 — one optional key, never the hub
-        by_event = {}
-        logger.warning(
-            "container hub: pre-match venue read failed (%s) — books rung only",
-            type(exc).__name__,
-        )
-
-    settled_ids = set(binds["ids"])
-    for e in events:
-        card = cards.get(int(e.id))
-        if card is None or e.id not in settled_ids:
-            continue
+    def _opening(e):
         folded = folded_map.get(e.id)
-        open_home, open_away = (
-            folded.opening
-            if folded is not None
-            else (e.opening_home_probability, e.opening_away_probability)
-        )
-        try:
-            reading = resolve_prematch_reading(
-                by_source=by_event.get(e.id, {}),
-                books_home=float(open_home) if open_home else None,
-                books_away=float(open_away) if open_away else None,
-                sport=loaded_sport_key(e) or "",
-            )
-            if reading is None:
-                continue
-            away_pct, home_pct = rendered_duel_percents(
-                reading["away_probability"], reading["home_probability"]
-            )
-        except Exception:  # noqa: BLE001 — gotcha #42: one card, never the hub
-            logger.exception("container hub: event %s pre-match reading failed", e.id)
-            continue
-        card["prematch_odds"] = {
-            "home_probability": reading["home_probability"],
-            "away_probability": reading["away_probability"],
-            "home_rendered_percent": home_pct,
-            "away_rendered_percent": away_pct,
-            "source": reading["source"],
-        }
+        if folded is not None:
+            return folded.opening
+        return (e.opening_home_probability, e.opening_away_probability)
+
+    served = await settled_prematch_odds_by_event(
+        db, events, opening=_opening, surface="container hub"
+    )
+    for event_id, prematch_odds in served.items():
+        card = cards.get(event_id)
+        if card is not None:
+            card["prematch_odds"] = prematch_odds
 
 
 async def _hydrate_market_cards(

@@ -22,6 +22,7 @@ from app.utils.market_team_sport import (
     sport_key_llm_category,
 )
 from app.utils.start_placeholder import start_is_tbd
+from app.utils.settled_prematch_batch import settled_prematch_odds_by_event
 from app.utils.season_variant_team import (
     choose_parent_league_row,
     wants_parent_league_row,
@@ -824,6 +825,12 @@ async def _folded_briefs(
     except Exception:
         logger.exception("team page: twin fold failed for team %s", team.id)
 
+    # #10589: a finished row's "we had them at N%" is the number its own page
+    # prints as "Pre-match N%" — one read for both rails, the event route's
+    # ladder (see `utils.settled_prematch_batch`). Never raises; a failed venue
+    # read leaves the books rung.
+    prematch = await settled_prematch_odds_by_event(db, rows, surface="team page")
+
     return [
         [
             # The row's OWN sources are the default, never ``None``: the batch
@@ -836,6 +843,7 @@ async def _folded_briefs(
                 team,
                 club_ids,
                 club_names,
+                prematch=prematch.get(int(event.id)),
             )
             for event in rail
         ]
@@ -844,7 +852,7 @@ async def _folded_briefs(
 
 
 def _format_event_brief(
-    event: Event, team: Team, club_ids=None, club_names=None
+    event: Event, team: Team, club_ids=None, club_names=None, prematch=None
 ) -> dict:
     """Compact event format for team page game lists."""
     sport = event.sport
@@ -900,6 +908,25 @@ def _format_event_brief(
     # gates silently on the missing field. The team-relative OPENING probability is
     # exactly "what we had them at" before the game; completed_at dates the result.
     pre = event.opening_home_probability if is_home else event.opening_away_probability
+
+    # #10589 — but on a SETTLED row the page beside it prints a different
+    # number. Since #8315 the game page's "Pre-match 44% – 56%" is the ladder
+    # (Kalshi → Polymarket → sportsbooks), so whenever a venue answered, the
+    # opening median above disagreed with it: Brewers 15323985 read "we had them
+    # at 55%" here and "Pre-match 56%" one tap later (kalshi 0.555, opening
+    # 0.549), measured 2026-10-06.
+    #
+    # Served as the page's own WHOLE PERCENT over 100, not the raw reading. The
+    # page rounds the pair once — leader rounded, the other side derived as
+    # 100 − leader (`rendered_duel_percents`) — and both clients print this field
+    # as round(p × 100). Handing them the raw underdog side would re-round it
+    # alone: 0.445 prints 45 here against the page's 44. k/100 × 100 lands
+    # within 1e-14 of k, so every client's rounding returns exactly the page's
+    # percent, and no client change is needed for the two to agree.
+    if prematch is not None:
+        pct = prematch["home_rendered_percent" if is_home else "away_rendered_percent"]
+        if pct is not None:
+            pre = pct / 100
 
     status = served_event_status(event.status, event.commence_time, datetime.now(timezone.utc))
 
