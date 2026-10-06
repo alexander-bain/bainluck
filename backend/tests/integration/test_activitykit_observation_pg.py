@@ -4,7 +4,7 @@ import asyncio
 from datetime import timedelta
 import os
 import pytest
-from sqlalchemy import event, insert, select, text
+from sqlalchemy import Integer, column, event, insert, select, table, text, update
 from app.services.activitykit_observation import (
     ActivityKitObservationAdapter,
     LOCK_NAMESPACE,
@@ -12,7 +12,7 @@ from app.services.activitykit_observation import (
     REG,
 )
 from app.services.activitykit_state_codec import decode_state
-from tests.integration.test_activitykit_worker_pg import record, worker, mutate
+from tests.integration.test_activitykit_worker_pg import DEL, record, worker, mutate
 from tests.test_activitykit_delivery_state import NOW
 
 pytestmark = pytest.mark.skipif(
@@ -162,7 +162,7 @@ async def test_timeout_releases_connection_without_partial_row(pg):
         await blocker.execute(
             text("SELECT pg_advisory_lock(:n,42)"), {"n": LOCK_NAMESPACE}
         )
-        with pytest.raises(Exception, match="lock timeout"):
+        with pytest.raises(TimeoutError):
             await adapter(pg, lock_timeout_ms=50).capture(42)
         await blocker.execute(
             text("SELECT pg_advisory_unlock(:n,42)"), {"n": LOCK_NAMESPACE}
@@ -191,7 +191,7 @@ async def test_bounded_fanout_and_authorization_filters(pg):
     await adapter(pg).capture(42)
     async with pg() as db, db.begin():
         reg = dict((await db.execute(select(REG))).mappings().one())
-        await db.execute(text("INSERT INTO events(id) VALUES(43)"))
+        await db.execute(insert(table("events", column("id", Integer))).values(id=43))
         for id in ["b", "c", "d", "e"]:
             await db.execute(
                 insert(REG).values(
@@ -221,6 +221,52 @@ async def test_worker_rechecks_expiry_after_fanout_selection(pg):
     assert (await adapter(pg).fanout(42, 1, Expired(), now=NOW)).accepted == 0
 
 
+@pytest.mark.parametrize("limit", [1, 2])
+async def test_corrupt_registration_does_not_starve_healthy_sibling(pg, limit):
+    observation = await adapter(pg).capture(42)
+    real_worker = worker(pg)
+    await real_worker.observe("a", observation.snapshot, revision=observation.sequence)
+    async with pg() as db, db.begin():
+        reg = dict((await db.execute(select(REG))).mappings().one())
+        await db.execute(
+            insert(REG).values(**{**reg, "activity_id": "b", "token_hash": "b" * 64})
+        )
+        await db.execute(
+            update(DEL).where(DEL.c.activity_id == "a").values(state={"corrupt": True})
+        )
+
+    page = await adapter(pg).fanout(42, 1, real_worker, now=NOW, limit=limit)
+    assert page.failed == 1
+    assert page.attempted == limit
+    if limit == 1:
+        assert page.accepted == 0 and page.next_cursor == "a"
+        page = await adapter(pg).fanout(
+            42, 1, real_worker, now=NOW, after=page.next_cursor, limit=1
+        )
+        assert page.failed == 0 and page.attempted == 1
+    assert page.accepted == 1 and page.next_cursor is None
+    async with pg() as db:
+        healthy = (
+            await db.execute(select(DEL.c.state).where(DEL.c.activity_id == "b"))
+        ).scalar_one()
+    state = decode_state(healthy)
+    assert state.snapshot == observation.snapshot and state.seen_revision == 1
+
+
+async def test_fanout_cancellation_is_not_counted_or_swallowed(pg):
+    await adapter(pg).capture(42)
+    visited = []
+
+    class Cancelled:
+        async def observe(self, activity_id, *args, **kwargs):
+            visited.append(activity_id)
+            raise asyncio.CancelledError()
+
+    with pytest.raises(asyncio.CancelledError):
+        await adapter(pg).fanout(42, 1, Cancelled(), now=NOW)
+    assert visited == ["a"]
+
+
 async def test_serializer_released_before_worker_fanout(pg):
     await adapter(pg).capture(42)
 
@@ -237,7 +283,7 @@ async def test_observation_merge_refusal_preserves_parent(pg, monkeypatch):
 
     await adapter(pg).capture(42)
     async with pg() as db, db.begin():
-        await db.execute(text("INSERT INTO events(id) VALUES(43)"))
+        await db.execute(insert(table("events", column("id", Integer))).values(id=43))
     monkeypatch.setattr(rail, "event_fk_tables", lambda: ("activitykit_observations",))
     async with pg() as db, db.begin():
         with pytest.raises(rail.ImmutableActivityBindingRefused):

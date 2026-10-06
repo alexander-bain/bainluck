@@ -59,6 +59,7 @@ class FanoutPage:
     attempted: int
     accepted: int
     next_cursor: str | None
+    failed: int = 0
 
 
 async def _canonical_reader(db: AsyncSession, event_id: int) -> dict:
@@ -81,13 +82,11 @@ class ActivityKitObservationAdapter:
         async with self.engine.connect() as conn:
             try:
                 await conn.execution_options(isolation_level="AUTOCOMMIT")
-                await conn.execute(
-                    text(f"SET lock_timeout = '{self.lock_timeout_ms}ms'")
-                )
-                await conn.execute(
-                    text("SELECT pg_advisory_lock(:namespace, :event)"),
-                    {"namespace": LOCK_NAMESPACE, "event": event_id},
-                )
+                async with asyncio.timeout(self.lock_timeout_ms / 1000):
+                    await conn.execute(
+                        text("SELECT pg_advisory_lock(:namespace, :event)"),
+                        {"namespace": LOCK_NAMESPACE, "event": event_id},
+                    )
                 # Clear SQLAlchemy's logical autobegin, not the session lock.
                 await conn.rollback()
                 await conn.execution_options(isolation_level="REPEATABLE READ")
@@ -121,7 +120,7 @@ class ActivityKitObservationAdapter:
             finally:
                 # Never return a physical connection carrying a session lock to a
                 # pool, including timeout, failed read and cancellation paths.
-                # Destruction also resets lock_timeout. No external I/O runs here.
+                # No external I/O runs here.
                 cleanup = asyncio.create_task(conn.invalidate())
                 try:
                     await asyncio.shield(cleanup)
@@ -188,12 +187,24 @@ class ActivityKitObservationAdapter:
         # The serializer and read connection are gone. The worker rechecks its
         # current horizon, binding, stop/final and token generation fences.
         accepted = 0
+        failed = 0
         for activity_id in ids[:limit]:
-            accepted += bool(
-                await worker.observe(
-                    activity_id, observation.snapshot, revision=observation.sequence
+            try:
+                accepted += bool(
+                    await worker.observe(
+                        activity_id, observation.snapshot, revision=observation.sequence
+                    )
                 )
-            )
+            except asyncio.CancelledError:
+                raise
+            except Exception:
+                # A corrupt registration must not starve healthy siblings. The
+                # caller receives an explicit bounded failure count, never a
+                # false acceptance or credential-bearing exception payload.
+                failed += 1
         return FanoutPage(
-            min(len(ids), limit), accepted, ids[limit - 1] if len(ids) > limit else None
+            min(len(ids), limit),
+            accepted,
+            ids[limit - 1] if len(ids) > limit else None,
+            failed,
         )
