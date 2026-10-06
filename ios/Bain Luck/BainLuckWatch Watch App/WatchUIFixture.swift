@@ -10,6 +10,7 @@ nonisolated struct WatchUIFixture: WatchSelectedGameTransport, WatchGamePickerTr
     var rounding = false
     var launchReceipt = false
     var sharedPublication = false
+    var circularIdentity = false
 
     static let current: WatchUIFixture? = {
         var environment = ProcessInfo.processInfo.environment
@@ -27,7 +28,7 @@ nonisolated struct WatchUIFixture: WatchSelectedGameTransport, WatchGamePickerTr
             let keys = ["BAINLUCK_WATCH_UI_TEST", "BAINLUCK_WATCH_UI_SUITE",
                         "BAINLUCK_WATCH_UI_RESET", "BAINLUCK_WATCH_UI_OFFLINE",
                         "BAINLUCK_WATCH_UI_ROUNDING", "BAINLUCK_WATCH_UI_LAUNCH_RECEIPT",
-                        "BAINLUCK_WATCH_UI_SHARED_PUBLICATION"]
+                        "BAINLUCK_WATCH_UI_SHARED_PUBLICATION", "BAINLUCK_WATCH_UI_CIRCULAR_IDENTITY"]
             UserDefaults.standard.set(environment.filter { keys.contains($0.key) }, forKey: seedKey)
         }
         guard environment["BAINLUCK_WATCH_UI_TEST"] == "1",
@@ -41,7 +42,8 @@ nonisolated struct WatchUIFixture: WatchSelectedGameTransport, WatchGamePickerTr
         return Self(offline: environment["BAINLUCK_WATCH_UI_OFFLINE"] == "1", suite: suite,
                     rounding: environment["BAINLUCK_WATCH_UI_ROUNDING"] == "1",
                     launchReceipt: environment["BAINLUCK_WATCH_UI_LAUNCH_RECEIPT"] == "1",
-                    sharedPublication: environment["BAINLUCK_WATCH_UI_SHARED_PUBLICATION"] == "1")
+                    sharedPublication: environment["BAINLUCK_WATCH_UI_SHARED_PUBLICATION"] == "1",
+                    circularIdentity: environment["BAINLUCK_WATCH_UI_CIRCULAR_IDENTITY"] == "1")
     }()
 
     @MainActor func makeStore() -> WatchSelectedGameStore {
@@ -83,6 +85,10 @@ nonisolated struct WatchUIFixture: WatchSelectedGameTransport, WatchGamePickerTr
             "hero_probability": first ? 0.64 : 0.55,
             "score_observed_at": time, "hero_probability_observed_at": time
         ]
+        if circularIdentity && first {
+            payload["home_team_data"] = ["team_id": 1, "abbreviation": "SF"]
+            payload["away_team_data"] = ["team_id": 2, "abbreviation": "LA"]
+        }
         if rounding {
             payload["home_team"] = first ? "Tampa Bay Rays" : "Chelsea"
             payload["away_team"] = first ? "Yankees" : "Arsenal"

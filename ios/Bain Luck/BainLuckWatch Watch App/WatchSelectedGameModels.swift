@@ -6,6 +6,8 @@ nonisolated struct WatchSelectedGame: Codable, Sendable, Identifiable {
     let id: Int
     let homeTeam: String
     let awayTeam: String
+    let homeCompactIdentity: WatchCompactTeamIdentity?
+    let awayCompactIdentity: WatchCompactTeamIdentity?
     let homeScore: Int?
     let awayScore: Int?
     let status: String?
@@ -76,6 +78,7 @@ nonisolated struct WatchSelectedGame: Codable, Sendable, Identifiable {
     private enum CodingKeys: String, CodingKey {
         case id, status
         case homeTeam = "home_team", awayTeam = "away_team"
+        case homeTeamData = "home_team_data", awayTeamData = "away_team_data"
         case homeScore = "home_score", awayScore = "away_score"
         case commenceTime = "commence_time", scoreObservedAt = "score_observed_at"
         case currentOdds = "current_odds", espn, sportKey = "sport_key", sport
@@ -114,6 +117,9 @@ nonisolated struct WatchSelectedGame: Codable, Sendable, Identifiable {
               !awayTeam.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
             throw DecodingError.dataCorruptedError(forKey: .homeTeam, in: c, debugDescription: "Missing team name")
         }
+        // The server attaches canonical identities to their event side; never derive a shorthand.
+        homeCompactIdentity = try? c.decode(WatchCompactTeamIdentity.self, forKey: .homeTeamData)
+        awayCompactIdentity = try? c.decode(WatchCompactTeamIdentity.self, forKey: .awayTeamData)
         homeScore = try? c.decode(Int.self, forKey: .homeScore)
         awayScore = try? c.decode(Int.self, forKey: .awayScore)
         status = try? c.decode(String.self, forKey: .status)
@@ -142,6 +148,8 @@ nonisolated struct WatchSelectedGame: Codable, Sendable, Identifiable {
         try c.encode(id, forKey: .id)
         try c.encode(homeTeam, forKey: .homeTeam)
         try c.encode(awayTeam, forKey: .awayTeam)
+        try c.encodeIfPresent(homeCompactIdentity, forKey: .homeTeamData)
+        try c.encodeIfPresent(awayCompactIdentity, forKey: .awayTeamData)
         try c.encodeIfPresent(homeScore, forKey: .homeScore)
         try c.encodeIfPresent(awayScore, forKey: .awayScore)
         try c.encodeIfPresent(status, forKey: .status)

@@ -263,3 +263,84 @@ private actor ComplicationRaceTransport: WatchSelectedGameTransport {
     print("PASS: restored-to-fresh shared final, same-clock corrected winner replacement, clear-race tombstone, wrong-ID/version app-cache rejection and shared invalidation")
     print("PASS: complication shared projection, producer age, final winner, fail-closed reads, tombstone, store publication and stale-response suppression")
 }
+
+
+/// Compact identities and optional storage cannot manufacture or erase a public reading.
+@MainActor func runCircularComplicationChecks() throws {
+    let now = ISO8601DateFormatter().date(from: "2026-10-04T18:00:00Z")!
+    let home = "\"home_team_data\":{\"team_id\":1,\"abbreviation\":\"SF\"}"
+    let away = "\"away_team_data\":{\"team_id\":2,\"abbreviation\":\"LA\"}"
+    let clock = "\"hero_probability_observed_at\":\"2026-10-04T17:58:00Z\",\"score_observed_at\":\"2026-10-04T17:59:00Z\""
+    func project(_ fields: String) throws -> WatchComplicationSnapshot? {
+        let data = Data("{\"id\":101,\"home_team\":\"San Francisco Giants\",\"away_team\":\"Los Angeles Dodgers\",\(fields)}".utf8)
+        let game = try JSONDecoder().decode(WatchSelectedGame.self, from: data)
+        let restored = try JSONDecoder().decode(WatchSelectedGame.self, from: JSONEncoder().encode(game))
+        precondition(restored.homeCompactIdentity == game.homeCompactIdentity && restored.awayCompactIdentity == game.awayCompactIdentity)
+        return WatchComplicationProjection.snapshot(game: restored, savedAt: now)
+    }
+    let fields = "\"status\":\"live\",\"sport\":\"baseball_mlb\",\"hero_probability\":0.455,\"hero_probability_away\":0.545,\(clock)"
+    let live = try project("\(fields),\(home),\(away)")!
+    let compact = live.validatedCircularReading(now: now)!
+    precondition(compact.subject == "SF win" && compact.value == "45%")
+    precondition(compact.observedAt == live.observedAt && live.observedAt < live.savedAt)
+    let projectionCheck1 = try project("\(fields),\(home)")
+    precondition(projectionCheck1?.validatedCircularReading(now: now)?.value == "45%", "Home forecast does not require fabricated away identity")
+    let draw = try project("\(fields.replacingOccurrences(of: "baseball_mlb", with: "soccer_epl")),\(home),\(away)")!
+    precondition(draw.validatedCircularReading(now: now)?.value == "46%", "Draw-priced rounding remains scalar")
+    for identity in [home.replacingOccurrences(of: "1", with: "0"), home.replacingOccurrences(of: "SF", with: "FCNAME"), home.replacingOccurrences(of: "SF", with: ""), home.replacingOccurrences(of: "SF", with: "sf")] {
+        let reading = try project("\(fields),\(identity),\(away)")!
+        precondition(reading.validatedCircularReading(now: now) == nil && reading.detail.contains("45%"))
+    }
+    let projectionCheck2 = try project(fields)
+    precondition(projectionCheck2?.validatedCircularReading(now: now) == nil)
+    let projectionCheck3 = try project("\(fields),\(home),\(away.replacingOccurrences(of: "2", with: "1"))")
+    precondition(projectionCheck3?.validatedCircularReading(now: now) == nil)
+    for (scores, subject) in [("\"home_score\":4,\"away_score\":2", "SF won"), ("\"home_score\":2,\"away_score\":4", "LA won"), ("\"home_score\":2,\"away_score\":2", "LA·SF")] {
+        let final = try project("\"status\":\"final\",\"hero_probability\":0.99,\(scores),\(clock),\(home),\(away)")!
+        precondition(final.validatedCircularReading(now: now)?.subject == subject)
+        precondition(final.validatedCircularReading(now: now)?.value.hasPrefix("Final") == true && final.circularReading?.percent == nil)
+        precondition(final.observedAt == now.addingTimeInterval(-60), "Final uses score clock independently of hero")
+    }
+    let score = try project("\"status\":\"live\",\"home_score\":4,\"away_score\":2,\(clock),\(home),\(away)")!
+    precondition(score.validatedCircularReading(now: now)?.subject == "LA·SF" && score.validatedCircularReading(now: now)?.value == "Score 2–4")
+    precondition(score.observedAt == now.addingTimeInterval(-60))
+    let projectionCheck4 = try project("\"status\":\"live\",\"home_score\":4,\"away_score\":2,\(clock),\(home)")
+    precondition(projectionCheck4?.validatedCircularReading(now: now) == nil)
+    let projectionCheck5 = try project("\"status\":\"final\",\"hero_probability\":0.99,\(clock),\(home),\(away)")
+    precondition(projectionCheck5 == nil)
+    for status in ["unknown", "closed", "delayed"] {
+        let projectionCheck6 = try project("\(fields.replacingOccurrences(of: "live", with: status)),\(home),\(away)")
+        precondition(projectionCheck6 == nil)
+    }
+    let encoded = try JSONEncoder().encode(live)
+    var object = try JSONSerialization.jsonObject(with: encoded) as! [String: Any]
+    let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+    try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+    defer { try? FileManager.default.removeItem(at: directory) }
+    let file = directory.appendingPathComponent(WatchComplicationSnapshot.filename)
+    // Old snapshots and malformed/unknown optional payloads preserve the rectangular reading.
+    for payload in [NSNull(), "invalid", ["kind": "future-schema"]] as [Any] {
+        object["circularReading"] = payload
+        try JSONSerialization.data(withJSONObject: object).write(to: file)
+        let restored = WatchComplicationSnapshot.read(from: directory, now: now)!
+        precondition(restored.title == live.title && restored.detail == live.detail && restored.circularReading == nil)
+    }
+    object.removeValue(forKey: "circularReading")
+    try JSONSerialization.data(withJSONObject: object).write(to: file)
+    precondition(WatchComplicationSnapshot.read(from: directory, now: now)?.circularReading == nil)
+    precondition(WatchComplicationPublisher.write(live, to: directory, now: now), "One-time canonical enrichment must publish without resetting original clock")
+    let offline = WatchComplicationSnapshot.read(from: directory, now: now.addingTimeInterval(86400))!
+    precondition(offline.circularReading == compact && offline.observedAt == live.observedAt && offline.savedAt == now)
+    precondition(!WatchComplicationPublisher.write(live, to: directory, now: now.addingTimeInterval(86400)), "Unchanged compact reading remains unchanged offline")
+    let original = try JSONSerialization.jsonObject(with: encoded) as! [String: Any]
+    for (key, wrong) in [("version", 2.0), ("eventID", 202.0), ("observedAt", now.timeIntervalSinceReferenceDate)] {
+        var wrongObject = original
+        var wrongCompact = wrongObject["circularReading"] as! [String: Any]
+        wrongCompact[key] = wrong
+        wrongObject["circularReading"] = wrongCompact
+        try JSONSerialization.data(withJSONObject: wrongObject).write(to: file)
+        let restored = WatchComplicationSnapshot.read(from: directory, now: now)!
+        precondition(restored.validatedCircularReading(now: now) == nil && restored.title == live.title, "Wrong compact identity/version/clock must not erase the parent")
+    }
+    print("PASS: circular canonical identity, original clocks, rounding/draw, final/score, old/malformed/wrong compact payload, offline and one-time enrichment")
+}

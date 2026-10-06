@@ -32,17 +32,17 @@ struct BainLuckComplicationView: View {
         Group {
             if family == .accessoryRectangular {
                 WatchSavedComplicationContent(snapshot: entry.snapshot)
+                    .accessibilityElement(children: .ignore)
+                    .accessibilityLabel(accessibilityDescription)
             } else {
                 ZStack {
                     AccessoryWidgetBackground()
-                    Image(systemName: "chart.bar.fill").font(.title2)
+                    WatchSavedCircularComplicationContent(snapshot: entry.snapshot)
                 }
             }
         }
         .containerBackground(.fill.tertiary, for: .widget)
         .widgetURL(WatchLaunchRoute.url)
-        .accessibilityElement(children: .ignore)
-        .accessibilityLabel(accessibilityDescription)
     }
     private var accessibilityDescription: String {
         guard family == .accessoryRectangular, let snapshot = entry.snapshot else {
