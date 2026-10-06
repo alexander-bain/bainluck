@@ -1103,8 +1103,8 @@ jobs:
         #
         # The arm is a WHERE clause over the Eastern day plus a placement before
         # the pool cut, so only a real database can observe it. The strawman
-        # case zeroes the arm and asserts production's list comes back. #10186
-        # adds last night's final the morning after (5th test). Three
+        # case disables the selector and asserts production's list comes back.
+        # #10581 adds a linked-team latest-final HTTP case (6th test). Three
         # refusals: a skip, a zero count, and a short count.
         if: matrix.group == 'shared'
         run: |
@@ -1119,8 +1119,8 @@ jobs:
             echo "::error::#9211 typeahead today's-final gate collected NOTHING"
             exit 1
           fi
-          if ! grep -qE "^=+ 5 passed" /tmp/ta9211.txt; then
-            echo "::error::#9211 typeahead today's-final gate did not report exactly 5 passed"
+          if ! grep -qE "^=+ 6 passed" /tmp/ta9211.txt; then
+            echo "::error::#9211 typeahead today's-final gate did not report exactly 6 passed"
             exit 1
           fi
 
