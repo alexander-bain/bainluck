@@ -530,61 +530,211 @@ final class TheLiveChartEndCarriesTheHeroNumber9436Tests: XCTestCase {
         }
     }
 
-    /// Sample the tip column for `seconds` after a change.
-    private func sampleTip(_ hosted: Hosted, seconds: Double, measuresMarker: Bool = true) async throws -> (columns: [Int], stamps: [Double], starts: [Double]) {
-        var captures: [(image: UIImage, acquiredAt: Double, duration: Double)] = []
-        let start = CACurrentMediaTime()
-        while CACurrentMediaTime() - start < seconds {
+    private typealias MotionCapture = (image: UIImage, acquiredAt: Double, duration: Double)
+
+    /// Capture displayed frames for `seconds`, stamped relative to `origin`
+    /// (the moment of the change), at least one frame per call.
+    private func captureFrames(_ hosted: Hosted, for seconds: Double, since origin: Double) async throws -> [MotionCapture] {
+        var captures: [MotionCapture] = []
+        let begin = CACurrentMediaTime()
+        repeat {
             try await Task.sleep(for: .milliseconds(30))
             let captureStart = CACurrentMediaTime()
             // Read the displayed frame; waiting for the next update can consume
             // most of this short animation before the observer gets another turn.
             let image = hosted.shot(afterScreenUpdates: false, scale: 1)
             let acquiredAt = CACurrentMediaTime()
-            captures.append((image, acquiredAt - start, acquiredAt - captureStart))
-        }
-        // Scanning pixels must not delay the next animation observation. Timestamp
-        // after acquisition, never before it: capture cost is still paid honestly.
-        var columns: [Int] = [], stamps: [Double] = [], starts: [Double] = []
-        for (index, capture) in captures.enumerated() {
-            // Retain the real frame so an apparent reversal can be distinguished
-            // from label pixels or changing chart axes, without relaxing the gate.
-            recordMotionFrame(capture.image, name: "motion-frame-\(index)-at-\(capture.acquiredAt)")
-            let measured = measuresMarker ? markerColumn(capture.image) : tipColumn(capture.image)
-            let x = try XCTUnwrap(measured, "Sample must contain one unambiguous rendered endpoint")
-            columns.append(x)
-            stamps.append(capture.acquiredAt)
-            starts.append(capture.acquiredAt - capture.duration)
-        }
-        print("#9436 sampling acquisitions: \(captures.map(\.acquiredAt)); capture durations: \(captures.map(\.duration))")
-        return (columns, stamps, starts)
+            captures.append((image, acquiredAt - origin, acquiredAt - captureStart))
+        } while CACurrentMediaTime() - begin < seconds
+        return captures
     }
 
-    /// Every frame whose capture began after the glide window plus slack shows
-    /// the settled end. When no capture began that late, the independent final
-    /// shot (taken after sampling, and already asserted equal to the last
-    /// sample) is the only reading past the window.
-    ///
-    /// The window opens when the glide BEGAN, not when the model changed: the
-    /// animation's clock starts at the commit, and a loaded runner can hold the
-    /// main thread before it (hosted run 37394025988: the first capture took
-    /// 0.28 s and still read the old position; the dot then glided 291→358 in
-    /// 0.35 s and was red at 0.61 s against a window counted from the change).
+    /// Scanning pixels must not delay the next animation observation, so it
+    /// runs only after a batch of captures. Timestamp after acquisition, never
+    /// before it: capture cost is still paid honestly.
+    private func measureFrames(_ captures: [MotionCapture],
+                               measuresMarker: Bool) throws -> (columns: [Int], stamps: [Double], starts: [Double]) {
+        recordMotionFrames(captures)
+        let columns = try captures.map { capture in
+            try XCTUnwrap(measuresMarker ? markerColumn(capture.image) : tipColumn(capture.image),
+                          "Sample must contain one unambiguous rendered endpoint")
+        }
+        return (columns, captures.map(\.acquiredAt), captures.map { $0.acquiredAt - $0.duration })
+    }
+
+    /// Retain the real frames so an apparent reversal can be distinguished
+    /// from label pixels or changing chart axes, without relaxing the gate.
+    private func recordMotionFrames(_ captures: [MotionCapture]) {
+        for (index, capture) in captures.enumerated() {
+            recordMotionFrame(capture.image, name: "motion-frame-\(index)-at-\(capture.acquiredAt)")
+        }
+        print("#9436 sampling acquisitions: \(captures.map(\.acquiredAt)); capture durations: \(captures.map(\.duration))")
+    }
+
+    /// Sample the tip column for `seconds` after a change.
+    private func sampleTip(_ hosted: Hosted, seconds: Double, measuresMarker: Bool = true) async throws -> (columns: [Int], stamps: [Double], starts: [Double]) {
+        let start = CACurrentMediaTime()
+        let captures = try await captureFrames(hosted, for: seconds, since: start)
+        return try measureFrames(captures, measuresMarker: measuresMarker)
+    }
+
+    /// Sample a glide for 0.8 s exactly as `sampleTip` does, then keep
+    /// observing — without a pause — until enough frames were read after its
+    /// settle deadline. The deadline follows the first observed departure, so
+    /// a fixed horizon can end before it and leave nothing to judge a late,
+    /// slow glide (review of ae6af61584: a 1.0 s glide that left at 0.40 s was
+    /// still in flight at 0.80 s, every sample began before the 0.90 s
+    /// deadline, and the settle arm passed on an empty set). Scanning the
+    /// backlog in one batch is a pause of its own (≈1 s here: a 1.0 s glide
+    /// delayed 0.4 s had finished before the next frame), so after 0.8 s the
+    /// backlog is scanned between follow-up frames instead.
+    private func sampleGlide(_ hosted: Hosted) async throws -> (columns: [Int], stamps: [Double], starts: [Double]) {
+        let start = CACurrentMediaTime()
+        var captures = try await captureFrames(hosted, for: 0.8, since: start)
+        var columns: [Int] = []
+        var nextCapture = CACurrentMediaTime()
+        while true {
+            let now = CACurrentMediaTime()
+            let observing = now - start < Self.glideObservationCap
+            if observing && now >= nextCapture {
+                let image = hosted.shot(afterScreenUpdates: false, scale: 1)
+                let acquiredAt = CACurrentMediaTime()
+                captures.append((image, acquiredAt - start, acquiredAt - now))
+                nextCapture = now + Self.glideFollowUpInterval
+            } else if columns.count < captures.count {
+                columns.append(try XCTUnwrap(markerColumn(captures[columns.count].image),
+                                             "Sample must contain one unambiguous rendered endpoint"))
+            } else if !observing || !Self.needsMoreGlideObservation(
+                columns, starts: captures.map { $0.acquiredAt - $0.duration }, stamps: captures.map(\.acquiredAt)) {
+                break
+            }
+            // Let the run loop draw the next animation frame.
+            try await Task.sleep(for: .milliseconds(2))
+        }
+        recordMotionFrames(captures)
+        return (columns, captures.map(\.acquiredAt), captures.map { $0.acquiredAt - $0.duration })
+    }
+
+    /// Frames that must begin after the settle deadline before the settle can
+    /// be judged. Two, so one frame equal to the final shot cannot stand in for
+    /// a dot that is still moving.
+    private static let framesPastTheGlideWindow = 2
+    /// Observation stops here even if the deadline is later; the settle oracle
+    /// then fails for want of frames instead of passing on none.
+    private static let glideObservationCap = 5.0
+    /// Follow-up frames after the first 0.8 s, leaving room to scan between.
+    private static let glideFollowUpInterval = 0.06
+    /// The first frame after the deadline must begin this soon after it. A
+    /// frame read long after proves only that the dot had settled by then.
+    private static let glideObservationGap = 0.15
+
     /// The latest the glide can have begun is the stamp of the first frame
-    /// that left the first sampled position, so a dot still short of the end
-    /// a glide plus slack after that is always a genuinely long glide.
+    /// that left the first sampled position. The window opens then, not when
+    /// the model changed: the animation's clock starts at the commit, and a
+    /// loaded runner can hold the main thread before it (hosted run
+    /// 37394025988: the first capture took 0.28 s and still read the old
+    /// position; the dot then glided 291→358 in 0.35 s and was red at 0.61 s
+    /// against a window counted from the change). `nil` when the dot never
+    /// moved — the glide arms (two in-between positions, first short of the
+    /// end) are red on that trace.
+    private static func glideSettleDeadline(_ columns: [Int], stamps: [Double]) -> Double? {
+        guard let departed = columns.firstIndex(where: { $0 != columns.first }) else { return nil }
+        return stamps[departed] + LiveChartEdgeMarkerPlan.glideDuration + 0.15
+    }
+
+    private static func needsMoreGlideObservation(_ columns: [Int], starts: [Double], stamps: [Double]) -> Bool {
+        guard let deadline = glideSettleDeadline(columns, stamps: stamps) else { return false }
+        return starts.filter { $0 >= deadline }.count < framesPastTheGlideWindow
+            && (stamps.last ?? 0) < glideObservationCap
+    }
+
+    /// `nil` when every frame whose capture began after the deadline shows the
+    /// settled end and there are enough of them; otherwise why not. A frame's
+    /// time is when its capture BEGAN — the displayed frame is read then.
+    private static func glideSettleFailure(_ columns: [Int], starts: [Double], stamps: [Double],
+                                           settled: Int) -> String? {
+        guard let deadline = glideSettleDeadline(columns, stamps: stamps) else { return nil }
+        let late = zip(columns, starts).filter { $0.1 >= deadline }
+        if late.count < framesPastTheGlideWindow {
+            return "only \(late.count) frame(s) began after the settle deadline \(deadline) s; the settle is unjudged: starts=\(starts)"
+        }
+        if let first = late.first?.1, first > deadline + glideObservationGap {
+            return "observation paused across the settle deadline \(deadline) s: the first frame after it began at \(first) s; the settle is unjudged"
+        }
+        let moving = late.filter { $0.0 != settled }
+        if !moving.isEmpty {
+            return "still short of the settled end \(settled) after \(deadline) s: \(moving) starts=\(starts) stamps=\(stamps)"
+        }
+        return nil
+    }
+
+    /// Every frame read after the glide window plus slack shows the settled
+    /// end, at least two such frames exist, and the first began right after
+    /// the deadline — `sampleGlide` observes until they do, so an empty set or
+    /// a pause across the deadline is a failure, never a pass.
     private func assertSettledByTheGlideWindow(_ columns: [Int], starts: [Double], stamps: [Double],
                                                settled: Int, file: StaticString = #filePath, line: UInt = #line) {
-        guard let departed = columns.firstIndex(where: { $0 != columns.first }) else {
-            print("#9436 the dot never left its first sampled position; the glide arms judge it: \(columns)")
-            return
+        if let failure = Self.glideSettleFailure(columns, starts: starts, stamps: stamps, settled: settled) {
+            XCTFail(failure, file: file, line: line)
         }
-        let window = stamps[departed] + LiveChartEdgeMarkerPlan.glideDuration + 0.15
-        let late = zip(columns, starts).filter { $0.1 >= window }
-        let moving = late.filter { $0.0 != settled }
-        XCTAssertTrue(moving.isEmpty, "still short of the settled end \(settled) after \(window) s: \(moving) starts=\(starts) stamps=\(stamps)",
-                      file: file, line: line)
-        if late.isEmpty { print("#9436 no capture began after \(window) s; the final shot bounds the settle: starts=\(starts)") }
+        if Self.glideSettleDeadline(columns, stamps: stamps) == nil {
+            print("#9436 the dot never left its first sampled position; the glide arms judge it: \(columns)")
+        }
+    }
+
+    /// The settle oracle on fixed traces, so the delayed-departure case is
+    /// caught without depending on scheduler luck.
+    func testTheSettleOracleIsNeverVacuousOnADelayedDeparture() {
+        func starts(_ stamps: [Double]) -> [Double] { stamps.map { $0 - 0.005 } }
+
+        // The review's counterexample, verbatim: a 1.0 s glide that left at
+        // 0.40 s, still in flight at 0.80 s; deadline 0.90 s, no frame after it.
+        let fixed = [0.30, 0.35, 0.40, 0.50, 0.60, 0.70, 0.80]
+        let slow = [291, 291, 300, 310, 320, 330, 340]
+        XCTAssertTrue(Self.needsMoreGlideObservation(slow, starts: starts(fixed), stamps: fixed),
+                      "a fixed 0.8 s horizon must not end observation before a late deadline")
+        XCTAssertNotNil(Self.glideSettleFailure(slow, starts: starts(fixed), stamps: fixed, settled: 340),
+                        "no frame after the deadline must fail, not pass")
+
+        // The same slow glide observed past its deadline: still moving, red.
+        let extended = fixed + [0.93, 0.97]
+        let slowExtended = slow + [354, 358]
+        XCTAssertFalse(Self.needsMoreGlideObservation(slowExtended, starts: starts(extended), stamps: extended))
+        XCTAssertNotNil(Self.glideSettleFailure(slowExtended, starts: starts(extended), stamps: extended, settled: 358),
+                        "a slow glide still moving after its deadline must be red")
+
+        // The same glide read again only after a pause, once it had finished
+        // (the batch-scan pause, measured: frames resumed at 1.80 s): red.
+        let paused = fixed + [1.80, 1.84]
+        let slowPaused = slow + [356, 356]
+        XCTAssertFalse(Self.needsMoreGlideObservation(slowPaused, starts: starts(paused), stamps: paused))
+        XCTAssertNotNil(Self.glideSettleFailure(slowPaused, starts: starts(paused), stamps: paused, settled: 356),
+                        "frames read only long after the deadline must not judge the settle")
+
+        // A 0.35 s glide that left equally late settles inside the window: green.
+        let normal = [291, 291, 320, 345, 355, 358, 358, 358, 358]
+        let normalStamps = [0.30, 0.35, 0.40, 0.47, 0.55, 0.62, 0.70, 0.93, 0.97]
+        XCTAssertTrue(Self.needsMoreGlideObservation(Array(normal.prefix(7)), starts: starts(Array(normalStamps.prefix(7))),
+                                                     stamps: Array(normalStamps.prefix(7))))
+        XCTAssertFalse(Self.needsMoreGlideObservation(normal, starts: starts(normalStamps), stamps: normalStamps))
+        XCTAssertNil(Self.glideSettleFailure(normal, starts: starts(normalStamps), stamps: normalStamps, settled: 358))
+
+        // An early departure already has frames past its deadline in 0.8 s.
+        let early = [0.05, 0.10, 0.17, 0.25, 0.33, 0.45, 0.58, 0.66, 0.74, 0.80]
+        let earlyColumns = [300, 320, 340, 352, 357, 358, 358, 358, 358, 358]
+        XCTAssertFalse(Self.needsMoreGlideObservation(earlyColumns, starts: starts(early), stamps: early))
+        XCTAssertNil(Self.glideSettleFailure(earlyColumns, starts: starts(early), stamps: early, settled: 358))
+
+        // A departure so late that the cap ends observation first: red.
+        let capped = [0.30, 4.80, 4.90, 5.00]
+        let cappedColumns = [291, 300, 310, 320]
+        XCTAssertFalse(Self.needsMoreGlideObservation(cappedColumns, starts: starts(capped), stamps: capped))
+        XCTAssertNotNil(Self.glideSettleFailure(cappedColumns, starts: starts(capped), stamps: capped, settled: 320))
+
+        // A dot that never moved is left to the glide arms, and not re-sampled.
+        let still = [358, 358, 358]
+        XCTAssertFalse(Self.needsMoreGlideObservation(still, starts: starts([0.3, 0.5, 0.8]), stamps: [0.3, 0.5, 0.8]))
+        XCTAssertNil(Self.glideSettleFailure(still, starts: starts([0.3, 0.5, 0.8]), stamps: [0.3, 0.5, 0.8], settled: 358))
     }
 
     /// A history ending on the same last observation (12:10, 46%) with a
@@ -775,7 +925,7 @@ final class TheLiveChartEndCarriesTheHeroNumber9436Tests: XCTestCase {
         let next = try XCTUnwrap("2026-09-21T12:14:00Z".asDate)
         feed.frames.append(LiveBlendPoint(date: next, homeProbability: 0.60))
         feed.edge = LiveEdgeReading(homeProbability: 0.60, homeLabel: "60%")
-        let (columns, stamps, starts) = try await sampleTip(hosted, seconds: 0.8)
+        let (columns, stamps, starts) = try await sampleGlide(hosted)
         let sampledLast = try XCTUnwrap(columns.last)
         let settled = try XCTUnwrap(markerColumn(hosted.shot(scale: 1)))
         XCTAssertEqual(sampledLast, settled, "Sampling must reach the independently captured final endpoint")
@@ -814,7 +964,7 @@ final class TheLiveChartEndCarriesTheHeroNumber9436Tests: XCTestCase {
 
         feed.history = try pinnedHistory(pinAt: 16, 0.58)
         feed.edge = LiveEdgeReading(homeProbability: 0.58, homeLabel: "58%")
-        let (columns, stamps, starts) = try await sampleTip(hosted, seconds: 0.8)
+        let (columns, stamps, starts) = try await sampleGlide(hosted)
         let sampledLast = try XCTUnwrap(columns.last)
         let finalImage = hosted.shot(scale: 1)
         recordMotionFrame(finalImage, name: "pin-final")
