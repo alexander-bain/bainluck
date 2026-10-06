@@ -138,6 +138,7 @@
     "#5355 a DataGolf opening first read after the start is not scored (real Postgres)",
     "#4444 the census caps do not move the numbers (real Postgres)",
     "#4482 a task's query budget survives the pool (real Postgres)",
+    "#2471 socket consumer keeps one engine per run (real Postgres)",
     "#4586 restore compare-and-swap (real Postgres)",
     "#678 account deletion actually deletes (real Postgres)",
     "#6221 folded market cross-sport net (real Postgres)",

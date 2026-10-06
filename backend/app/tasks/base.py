@@ -57,6 +57,7 @@ async def get_task_session(
     *,
     statement_timeout_ms: int | None = None,
     lock_timeout_ms: int | None = None,
+    engine=None,
 ):
     """Create a fresh async session for Celery task execution.
 
@@ -80,11 +81,27 @@ async def get_task_session(
     ``SET LOCAL`` remains correct — and is untouched by this — where the bound
     is meant to end with its transaction, which is most of ``backfill_winners``
     and all of ``calibration_main_build``.
+
+    #2471 — ``engine=`` LENDS A CALLER-OWNED ENGINE. A long-running socket
+    consumer (``app.tasks.ws_consumer_sessions``) keeps one engine for its whole
+    run instead of paying a connect per flush. The session and transaction are
+    still fresh and identical to the default path; only the engine is borrowed,
+    so it is NOT disposed here — its owner disposes it. Budgets are per-engine
+    (#4482), so they cannot be combined with a lent engine. Omitted ⇒ today's
+    behaviour exactly: a fresh engine, disposed on every exit path.
     """
-    engine = _get_task_engine(
-        statement_timeout_ms=statement_timeout_ms,
-        lock_timeout_ms=lock_timeout_ms,
-    )
+    owns_engine = engine is None
+    if not owns_engine and (
+        statement_timeout_ms is not None or lock_timeout_ms is not None
+    ):
+        raise ValueError(
+            "statement/lock budgets are per-engine; they cannot apply to a lent engine"
+        )
+    if owns_engine:
+        engine = _get_task_engine(
+            statement_timeout_ms=statement_timeout_ms,
+            lock_timeout_ms=lock_timeout_ms,
+        )
     session_maker = async_sessionmaker(
         engine,
         class_=AsyncSession,
@@ -111,7 +128,8 @@ async def get_task_session(
             finally:
                 await session.close()
     finally:
-        await engine.dispose()
+        if owns_engine:
+            await engine.dispose()
 
 
 async def tag_task_session(

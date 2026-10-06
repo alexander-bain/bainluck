@@ -729,8 +729,13 @@ class LiveBlendRefresher:
         snapshot_interval_s: float = DEFAULT_SNAPSHOT_INTERVAL_S,
         snapshot_max_gap_s: float = DEFAULT_SNAPSHOT_MAX_GAP_S,
         stamp_lock_timeout_ms: Optional[int] = DEFAULT_STAMP_LOCK_TIMEOUT_MS,
+        session_factory=None,
     ) -> None:
         self.source = source
+        #: #2471 — the owning consumer's session factory, so the stamp borrows
+        #: the consumer's one engine instead of building a pool per batch.
+        #: None ⇒ ``app.tasks.base.get_task_session``, looked up per batch.
+        self._session_factory = session_factory
         self.min_refresh_interval_s = min_refresh_interval_s
         self.failed_retry_interval_s = failed_retry_interval_s
         self.inversion_ttl_s = inversion_ttl_s
@@ -1008,12 +1013,15 @@ class LiveBlendRefresher:
         # Stamp the throttle for EVERY event we are about to attempt, before any
         # of them can fail to resolve. Stamping per-resolved-event instead would
         # leave an event with no linked markets of this source permanently
-        # "due", and `get_task_session()` builds a fresh engine and connection
-        # pool per call — so that event would open a Postgres connection every
-        # 2-second flush, forever, to discover the same nothing.
+        # "due", and every batch opens a session (and, outside a consumer
+        # that lends its engine (#2471), a fresh engine and connection pool) —
+        # so that event would query Postgres every 2-second flush, forever, to
+        # discover the same nothing.
         for event_id in event_ids:
             self._last_refresh_at[event_id] = now
 
+        if self._session_factory is not None:
+            get_task_session = self._session_factory  # #2471: the consumer's
         async with (
             self._snapshot_slots_follow_the_commit(event_ids),
             get_task_session() as session,

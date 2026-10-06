@@ -24,6 +24,7 @@ from app.tasks.kalshi_ws import (
     SUBSCRIPTION_REFRESH_SECONDS,
 )
 from app.tasks.polymarket import _poly_book_is_untradeable
+from app.tasks.ws_consumer_sessions import owns_consumer_sessions  # #2471
 from app.utils.market_quote_push import queue_market_change
 from app.utils.market_settlement import settled_values
 
@@ -860,7 +861,8 @@ def _log_unserved_sample(ws) -> None:
     )
 
 
-async def _run_polymarket_ws_consumer():
+@owns_consumer_sessions("polymarket")
+async def _run_polymarket_ws_consumer(*, sessions):
     """Main Polymarket WebSocket consumer loop."""
     # `text`/`or_`/`and_` left with `_slate_event_window`, which now owns the
     # only expression in this consumer that needed them.
@@ -870,7 +872,6 @@ async def _run_polymarket_ws_consumer():
         Event, FuturesMarket, FuturesOutcome,
     )
     from app.services.polymarket_ws import PolymarketWebSocket
-    from app.tasks.base import get_task_session
     from app.tasks.live_blend_refresh import (
         LiveBlendRefresher, TailReceipts, adopt_handed_off,
         event_ids_for_outcomes, hand_off_pending, run_flush_cadence,
@@ -897,6 +898,10 @@ async def _run_polymarket_ws_consumer():
     from app.utils.futures_rank import rerank_market_fields_stmt  # #6598
     from app.utils.price_change_stamp import price_changed_at_value
     from app.utils.price_change_stamp import quote_moved_column  # #9484
+    # #2471: one engine for this run, a fresh session per operation; the
+    # decorator disposes it after the final drain. Same call shape as the
+    # task factory, so every site below is unchanged.
+    get_task_session = sessions.session
 
     # #9484 — every other unsettled Polymarket contract, for PRICES only, on a
     # second client (`app.tasks.polymarket_open_contracts`). Never added to the
@@ -1282,7 +1287,9 @@ async def _run_polymarket_ws_consumer():
         for outcome_id, market_id in market_by_outcome.items()
         if market_id in event_id_by_market
     }
-    blend_refresher = LiveBlendRefresher("polymarket")
+    blend_refresher = LiveBlendRefresher(
+        "polymarket", session_factory=get_task_session,  # #2471
+    )
     # #837 receipt — every accepted input is stamped (seq, receive instant) as
     # it is buffered, so a held price can be followed from the socket to the
     # stamp that carried it. `input_marks` is keyed like `price_buffer` (one

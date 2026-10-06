@@ -4035,6 +4035,25 @@ jobs:
             exit 1
           fi
 
+      - name: "#2471 socket consumer keeps one engine per run (real Postgres)"
+        # The Kalshi/Polymarket consumers lend one engine to every session of a
+        # run (`app/tasks/ws_consumer_sessions.py`). Only a running server can
+        # count what that saves — DBAPI connects — so both arms read the pool's
+        # `connect` event: the control (the task factory, as the consumers used
+        # it before) must connect once per operation, the treatment once per
+        # run, while every operation still commits, or rolls back, on its own.
+        #
+        # Same skip-detection as every gate in this job.
+        if: matrix.group == 'shared'
+        run: |
+          set -o pipefail
+          python -m pytest tests/integration/test_ws_consumer_session_lifetime_2471_pg.py \
+            -v -s -rs 2>&1 | tee /tmp/consumer2471.txt
+          if grep -qiE "[0-9]+ skipped" /tmp/consumer2471.txt; then
+            echo "::error::#2471 consumer-engine gate SKIPPED — the gate did not run"
+            exit 1
+          fi
+
       - name: "#4586 restore compare-and-swap (real Postgres)"
         # CERT-2439's required repair, `4586-RESTORE-CAS-PRESERVES-LATER-RELINKS`.
         # The forward repair compare-and-swaps on the link it planned; its D51
