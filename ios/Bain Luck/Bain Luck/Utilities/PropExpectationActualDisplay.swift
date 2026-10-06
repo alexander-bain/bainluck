@@ -20,7 +20,7 @@ nonisolated enum PropExpectationActualDisplay {
 
     static func expectation(_ expectation: AfterPropExpectation) -> Expectation {
         guard let probability = expectation.savedProbability else {
-            return Expectation(valueText: nil, label: "Saved pregame chance", basisText: nil)
+            return Expectation(valueText: nil, label: unavailableLabel, basisText: nil)
         }
         let sourceNames = expectation.contributors.compactMap { SourceLabels.label(for: $0.source) }
         var names: [String] = []
@@ -41,6 +41,23 @@ nonisolated enum PropExpectationActualDisplay {
             basis = nil
         }
         return Expectation(valueText: formatProbability(probability), label: "Saved pregame chance", basisText: basis)
+    }
+
+    /// What a question with no saved chance says in its detail — words, not a
+    /// dash, and never a chance inferred from the count or the mark.
+    static let unavailableLabel = "No pregame chance was saved for this question."
+
+    /// The detail's exact saved value, or nil when it states the same number
+    /// as the headline: 6.0% beside 6% says nothing new, while 0.4% beside
+    /// <1%, 0.0% beside <1% and 5.5% beside 6% each say more. Compared as
+    /// numbers, never as strings.
+    static func exactDetailText(_ expectation: AfterPropExpectation) -> String? {
+        guard let probability = expectation.savedProbability else { return nil }
+        let percent = probability * 100
+        let tenths = (probability * 1000).rounded() / 10
+        // formatProbability prints a bound outside [1, 99], a whole number inside.
+        if percent >= 1, percent <= 99, tenths == percent.rounded() { return nil }
+        return String(format: "%.1f%%", percent)
     }
 
     static func actual(_ actual: AfterPropActual?, stat: AfterPropStat?) -> Actual {

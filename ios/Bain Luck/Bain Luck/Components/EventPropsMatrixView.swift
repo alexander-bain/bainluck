@@ -410,11 +410,20 @@ enum AfterPropsMatrixLayout {
 
     struct Grid: Equatable {
         let stat: AfterPropStat
+        /// The main rows' thresholds only, so a threshold no quoted player
+        /// has never draws an empty column.
         let columns: [Int]
-        /// Server question order (first appearance), never re-ranked.
+        /// Players with at least one saved pregame chance for THIS stat and
+        /// period, in server question order (first appearance), never re-ranked.
         let players: [PlayerRow]
+        /// Every other player of this stat, same order, behind one counted
+        /// disclosure — reachable, never dropped, never given a chance.
+        let withoutChance: [PlayerRow]
         let questionCount: Int
     }
+
+    /// Where an opened question sits in the grid now.
+    enum Placement: Equatable { case main, withoutChance, absent }
 
     /// The payload the page may draw, or nil: an unknown contract or an empty
     /// question list keeps whatever the page drew before.
@@ -444,15 +453,47 @@ enum AfterPropsMatrixLayout {
                 cells[subject, default: [:]][q.predicate.count] = q
             }
         }
-        let players = order.map {
+        let rows = order.map {
             PlayerRow(subjectKey: $0, label: labels[$0] ?? $0, actual: actuals[$0], cells: cells[$0] ?? [:])
         }
+        let quoted = rows.filter { hasSavedChance($0, stat: stat) }
         return Grid(
             stat: stat,
-            columns: Set(players.flatMap { $0.cells.keys }).sorted(),
-            players: players,
-            questionCount: players.reduce(0) { $0 + $1.cells.count }
+            columns: Set(quoted.flatMap { $0.cells.keys }).sorted(),
+            players: quoted,
+            withoutChance: rows.filter { !hasSavedChance($0, stat: stat) },
+            questionCount: rows.reduce(0) { $0 + $1.cells.count }
         )
+    }
+
+    /// A row earns the main grid with one usable saved chance (a finite 0
+    /// counts) on a question of the selected stat AND its period. A final
+    /// count or a Reached / Below mark never earns it.
+    static func hasSavedChance(_ row: PlayerRow, stat: AfterPropStat) -> Bool {
+        row.cells.values.contains {
+            $0.statKey == stat.statKey && $0.periodKey == stat.periodKey && $0.expectation.savedProbability != nil
+        }
+    }
+
+    /// The statistic drawn before the reader picks one: the server's first
+    /// with a saved chance, else the server's first. A choice always wins.
+    static func defaultStat(_ props: AfterPlayerProps) -> String? {
+        props.stats.first { grid(props, statKey: $0.statKey).map { !$0.players.isEmpty } ?? false }?.statKey
+            ?? props.stats.first?.statKey
+    }
+
+    static func placement(of open: EventPropsMatrixSelection.OpenQuestion, in grid: Grid) -> Placement {
+        func holds(_ rows: [PlayerRow]) -> Bool {
+            rows.contains { $0.cells.values.contains { EventPropsMatrixSelection.OpenQuestion($0) == open } }
+        }
+        guard grid.stat.statKey == open.statKey else { return .absent }
+        if holds(grid.players) { return .main }
+        if holds(grid.withoutChance) { return .withoutChance }
+        return .absent
+    }
+
+    static func disclosureLabel(count: Int, expanded: Bool) -> String {
+        "\(expanded ? "Hide" : "Show") \(count) \(count == 1 ? "player" : "players") without a pregame chance"
     }
 
     /// The legacy `player_props` the After grid does not already draw — the
@@ -491,6 +532,9 @@ struct AfterPropsMatrixView: View {
     var onMatrixUnavailableDismissed: () -> Void = {}
 
     @State private var statKey: String?
+    /// Stats whose players-without-a-chance disclosure the reader opened. It
+    /// stays open under the detail sheet so Close lands on the same option.
+    @State private var expandedStats: Set<String> = []
     @State private var openQuestion: EventPropsMatrixSelection.OpenQuestion?
     @State private var returnQuestion: EventPropsMatrixSelection.OpenQuestion?
     @AccessibilityFocusState(for: .voiceOver) private var accessibilityFocus: FocusTarget?
@@ -531,9 +575,10 @@ struct AfterPropsMatrixView: View {
         return min(nameWidth, max(capped, matrixWidth - 6 - thresholdWidth))
     }
 
-    /// The reader's chosen statistic, else the server's first. A chosen one
-    /// that leaves stays chosen (and shows nothing) rather than switching.
-    private var resolvedStat: String? { statKey ?? props.stats.first?.statKey }
+    /// The reader's chosen statistic, else the server's first one with a
+    /// saved chance. A chosen one that leaves stays chosen (and shows nothing)
+    /// rather than switching.
+    private var resolvedStat: String? { statKey ?? AfterPropsMatrixLayout.defaultStat(props) }
 
     var body: some View {
         let statKey = resolvedStat
@@ -549,7 +594,8 @@ struct AfterPropsMatrixView: View {
             }
 
             if let statKey, let grid = AfterPropsMatrixLayout.grid(props, statKey: statKey) {
-                matrix(grid)
+                if !grid.players.isEmpty { matrix(grid) }
+                if !grid.withoutChance.isEmpty { withoutChanceSection(grid) }
                 footer(grid)
             } else {
                 Text("No questions for this stat")
@@ -590,11 +636,22 @@ struct AfterPropsMatrixView: View {
             onMatrixUnavailableDismissed()
             return
         }
-        let drawn = resolvedStat == open.statKey
-            && (AfterPropsMatrixLayout.grid(props, statKey: open.statKey)?.players
-                .flatMap { Array($0.cells.values) }
-                .contains { EventPropsMatrixSelection.OpenQuestion($0) == open } ?? false)
-        accessibilityFocus = drawn ? .question(open) : .header
+        let grid = resolvedStat == open.statKey ? AfterPropsMatrixLayout.grid(props, statKey: open.statKey) : nil
+        switch grid.map({ AfterPropsMatrixLayout.placement(of: open, in: $0) }) ?? .absent {
+        case .main:
+            accessibilityFocus = .question(open)
+        case .withoutChance:
+            // The exact option, with its disclosure open — opened again if a
+            // refresh moved the question there while the detail was up.
+            if expandedStats.contains(open.statKey) {
+                accessibilityFocus = .question(open)
+            } else {
+                expandedStats.insert(open.statKey)
+                DispatchQueue.main.async { accessibilityFocus = .question(open) }
+            }
+        case .absent:
+            accessibilityFocus = .header
+        }
     }
 
     /// At accessibility sizes the pills stack when one row cannot hold them,
@@ -739,8 +796,102 @@ struct AfterPropsMatrixView: View {
         }
     }
 
+    // MARK: - Players without a pregame chance
+
+    /// One counted, collapsed disclosure for every player of this stat with no
+    /// saved chance: each keeps its final count once and every question stays
+    /// one tap from its exact detail.
+    private func withoutChanceSection(_ grid: AfterPropsMatrixLayout.Grid) -> some View {
+        let expanded = expandedStats.contains(grid.stat.statKey)
+        return VStack(alignment: .leading, spacing: 8) {
+            Button {
+                if expanded { expandedStats.remove(grid.stat.statKey) } else { expandedStats.insert(grid.stat.statKey) }
+            } label: {
+                HStack(alignment: .firstTextBaseline, spacing: 6) {
+                    Text(AfterPropsMatrixLayout.disclosureLabel(count: grid.withoutChance.count, expanded: expanded))
+                        .font(.caption)
+                        .fontWeight(.semibold)
+                        .multilineTextAlignment(.leading)
+                        .fixedSize(horizontal: false, vertical: true)
+                    Spacer(minLength: 0)
+                    Image(systemName: expanded ? "chevron.up" : "chevron.down")
+                        .font(.caption2)
+                        .accessibilityHidden(true)
+                }
+                .foregroundStyle(Color.blue)
+                .frame(minHeight: 32)
+                .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+            .accessibilityIdentifier("after-props-without-chance-disclosure")
+            if expanded {
+                ForEach(grid.withoutChance) { player in
+                    withoutChancePlayer(player, stat: grid.stat)
+                }
+            }
+        }
+    }
+
+    private func withoutChancePlayer(_ player: AfterPropsMatrixLayout.PlayerRow, stat: AfterPropStat) -> some View {
+        let actual = PropExpectationActualDisplay.actual(player.actual, stat: stat)
+        let nameLayout = typeSize.isAccessibilitySize
+            ? AnyLayout(VStackLayout(alignment: .leading, spacing: 2))
+            : AnyLayout(HStackLayout(alignment: .firstTextBaseline))
+        return VStack(alignment: .leading, spacing: 4) {
+            nameLayout {
+                Text(player.label)
+                    .font(.subheadline)
+                    .fixedSize(horizontal: false, vertical: true)
+                if !typeSize.isAccessibilitySize { Spacer() }
+                Text(actual.countText ?? absentProbabilityMarker)
+                    .font(.caption.monospacedDigit())
+                    .foregroundStyle(.secondary)
+            }
+            .accessibilityElement(children: .ignore)
+            .accessibilityLabel(actual.countText.map { "\(player.label), final \($0)" } ?? "\(player.label), final count \(actual.stateText.lowercased())")
+            ViewThatFits(in: .horizontal) {
+                HStack(spacing: 4) { withoutChanceOptions(player, stat: stat) }
+                VStack(alignment: .leading, spacing: 4) { withoutChanceOptions(player, stat: stat) }
+            }
+        }
+    }
+
+    private func withoutChanceOptions(_ player: AfterPropsMatrixLayout.PlayerRow, stat: AfterPropStat) -> some View {
+        ForEach(player.cells.keys.sorted(), id: \.self) { count in
+            if let question = player.cells[count] {
+                let actual = props.actual(for: question)
+                let mark = PropExpectationActualDisplay.mark(question, actual: actual)
+                let chance = PropExpectationActualDisplay.expectation(question.expectation).valueText
+                Button {
+                    open(question)
+                } label: {
+                    HStack(spacing: 4) {
+                        Text(PropExpectationActualDisplay.question(question, stat: stat))
+                        if let chance { Text(chance).monospacedDigit().fontWeight(.semibold) }
+                        if mark != .unknown {
+                            Text(PropExpectationActualDisplay.markText(mark))
+                                .fontWeight(mark == .reached ? .semibold : .regular)
+                                .foregroundStyle(mark == .reached ? Color.green : Color.secondary)
+                        }
+                    }
+                    .font(.caption)
+                    .fixedSize(horizontal: false, vertical: true)
+                    .padding(.horizontal, 8)
+                    .padding(.vertical, 6)
+                    .background(RoundedRectangle(cornerRadius: 8)
+                        .fill(mark == .reached ? Color.green.opacity(0.12) : Color.secondary.opacity(0.08)))
+                    .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+                .accessibilityLabel(PropExpectationActualDisplay.accessibilityLabel(question, actual: actual, stat: stat))
+                .accessibilityHint("Shows this question and its sources")
+                .accessibilityFocused($accessibilityFocus, equals: .question(.init(question)))
+            }
+        }
+    }
+
     private func footer(_ grid: AfterPropsMatrixLayout.Grid) -> some View {
-        Text("Saved pregame chance · final counts from ESPN")
+        Text("Pregame chance · final counts from ESPN")
             .font(.caption2)
             .foregroundStyle(.secondary)
     }
@@ -788,18 +939,28 @@ struct AfterPropsDetailView: View {
             VStack(alignment: .leading, spacing: 6) {
                 Text(PropExpectationActualDisplay.question(question, stat: stat))
                     .font(.headline)
-                HStack(alignment: .firstTextBaseline, spacing: 8) {
-                    Text(expectation.valueText ?? absentProbabilityMarker)
-                        .font(.largeTitle.monospacedDigit())
-                        .fontWeight(.bold)
-                    if let p = question.expectation.savedProbability {
-                        Text(EventPropsMatrixLayout.exactPercent(p))
-                            .font(.subheadline.monospacedDigit())
-                            .foregroundStyle(.secondary)
+                if let value = expectation.valueText {
+                    HStack(alignment: .firstTextBaseline, spacing: 8) {
+                        Text(value)
+                            .font(.largeTitle.monospacedDigit())
+                            .fontWeight(.bold)
+                        // The exact value only when it says more than the
+                        // headline (0.4% beside <1%), never 6.0% beside 6%.
+                        if let exact = PropExpectationActualDisplay.exactDetailText(question.expectation) {
+                            Text(exact)
+                                .font(.subheadline.monospacedDigit())
+                                .foregroundStyle(.secondary)
+                        }
                     }
+                    Text(expectation.label)
+                        .font(.subheadline)
+                } else {
+                    // No saved chance: say so in words, never a bare dash.
+                    Text(expectation.label)
+                        .font(.subheadline)
+                        .foregroundStyle(.secondary)
+                        .fixedSize(horizontal: false, vertical: true)
                 }
-                Text(expectation.label)
-                    .font(.subheadline)
                 if let basis = expectation.basisText {
                     Text(basis).font(.subheadline).foregroundStyle(.secondary)
                 }

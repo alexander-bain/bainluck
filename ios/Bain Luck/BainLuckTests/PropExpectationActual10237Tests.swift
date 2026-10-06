@@ -131,15 +131,18 @@ final class PropExpectationActual10237Tests: XCTestCase {
         let after = try props(try specimen())
         let grid = try XCTUnwrap(AfterPropsMatrixLayout.grid(after, statKey: "home_runs"))
         XCTAssertEqual(grid.columns, [1, 2])
-        XCTAssertEqual(grid.players.map(\.label), ["Aaron Judge", "Ben Rice"], "server order, never re-ranked")
+        // Build 37 repair: Judge has no saved chance, so he is disclosed, not a
+        // main row (AfterPropsQuoteEligibility10237Tests owns that rule).
+        XCTAssertEqual(grid.players.map(\.label), ["Ben Rice"])
+        XCTAssertEqual(grid.withoutChance.map(\.label), ["Aaron Judge"])
         XCTAssertEqual(grid.questionCount, 3)
         let rice = try XCTUnwrap(grid.players.last)
         XCTAssertEqual(rice.actual?.actualKey, riceHR)
         XCTAssertEqual(Set(rice.cells.keys), [1, 2])
-        let judge = try XCTUnwrap(grid.players.first)
+        let judge = try XCTUnwrap(grid.withoutChance.first)
         XCTAssertNil(judge.cells[2], "not offered: an empty slot, never a borrowed question")
         // One actual per player row, never one per threshold.
-        let keys = grid.players.compactMap { $0.actual?.actualKey }
+        let keys = (grid.withoutChance + grid.players).compactMap { $0.actual?.actualKey }
         XCTAssertEqual(keys, [judgeHR, riceHR])
         XCTAssertEqual(Set(keys).count, keys.count)
         XCTAssertNil(AfterPropsMatrixLayout.grid(after, statKey: "hits"), "a stat with no questions draws nothing")
