@@ -72,6 +72,16 @@ fetch. A call that stops on the clock returns the last market it finished as
 ``next_after_id``. A CLOB error stops the call BEFORE that market, so it is
 retried, never skipped (gotcha #36). Re-invoke until ``exhausted``.
 ATTENDED ONLY: never wire this to a beat.
+
+## ledger evidence
+
+Every ledger entry carries ``evidence`` (:func:`mapping_evidence`): the market
+and selected condition ids, both legs with their grade BEFORE any write, what
+the CLOB returned for that condition (its own condition id, question and
+tokens, absent keys left absent), and the mapper's result including
+``ordinal_agree``. It is built from values the page already fetched, so it
+costs no request and changes no decision. A provider id that is missing or
+malformed is reported unknown, never copied from the id we asked for.
 """
 
 from __future__ import annotations
@@ -212,35 +222,150 @@ def condition_id_of(market_ext: Optional[str], legs: list[dict]) -> Optional[str
     return cand if cand.startswith("0x") else None
 
 
-def decide(market_name: str, legs: list[dict], clob: Optional[dict]) -> dict:
-    """Pure decision for one in-scope market: re-grade from the venue, or skip.
-
-    ``legs``: ``{"id","name","external_id","is_winner","resolution_source"}``.
-    """
+def _decide_and_map(
+    market_name: str, legs: list[dict], clob: Optional[dict]
+) -> tuple[dict, Optional[dict]]:
+    """:func:`decide` plus the mapper result it acted on (``None`` when a gate
+    refused before the mapper ran). One mapping call, shared by the decision
+    and the ledger evidence, so the evidence is the answer that was used."""
     foreign = sorted({
         leg["resolution_source"] for leg in legs
         if leg["resolution_source"] in AUTHORITATIVE_SOURCES
     })
     if foreign:
-        return {"action": "skip", "reason": "foreign_authority", "detail": foreign}
+        return {"action": "skip", "reason": "foreign_authority", "detail": foreign}, None
     if len(legs) != 2 or any(leg["resolution_source"] != READ_SOURCE for leg in legs):
-        return {"action": "skip", "reason": "mixed_sources"}
+        return {"action": "skip", "reason": "mixed_sources"}, None
     if clob is None:
-        return {"action": "skip", "reason": "clob_missing"}
+        return {"action": "skip", "reason": "clob_missing"}, None
     if not _name_concordance_ok(market_name, clob.get("question") or ""):
         return {"action": "skip", "reason": "name_discordant",
-                "detail": clob.get("question")}
+                "detail": clob.get("question")}, None
     res = map_clob_to_outcome(clob, legs, event_linked=True)
     if res.get("tier") != "resolved_direct":
         return {"action": "skip", "reason": res.get("skip") or res.get("tier"),
-                "detail": res.get("why")}
+                "detail": res.get("why")}, res
     by_id = {leg["id"]: leg for leg in legs}
     return {
         "action": "regrade",
         "winner_id": res["winner_id"],
         "winner": by_id[res["winner_id"]]["name"],
         "verdict_changes": not bool(by_id[res["winner_id"]]["is_winner"]),
+    }, res
+
+
+def decide(market_name: str, legs: list[dict], clob: Optional[dict]) -> dict:
+    """Pure decision for one in-scope market: re-grade from the venue, or skip.
+
+    ``legs``: ``{"id","name","external_id","is_winner","resolution_source"}``.
+    """
+    return _decide_and_map(market_name, legs, clob)[0]
+
+
+# ---------------------------------------------------------------------------
+# ledger evidence: what the decision stood on, from values already fetched
+# ---------------------------------------------------------------------------
+
+#: Legs and provider tokens kept per entry; a longer list is cut and says so.
+_EVIDENCE_LIST_CAP = 4
+#: Characters kept of any provider string (question, labels, token ids).
+_EVIDENCE_STR_CAP = 300
+_TOKEN_KEYS = ("token_id", "outcome", "winner")
+_MAPPING_KEYS = ("tier", "skip", "why", "winner_id", "loser_id", "clob_winner",
+                 "clob_tokens", "ordinal_agree")
+
+
+def _scalar(v: Any) -> Any:
+    """A JSON-safe copy of one provider value: scalars pass, strings are capped,
+    anything else is named by type rather than dumped."""
+    if v is None or isinstance(v, (bool, int, float)):
+        return v
+    if isinstance(v, str):
+        return v[:_EVIDENCE_STR_CAP]
+    return {"unrecognized_type": type(v).__name__}
+
+
+def _token_evidence(tok: Any) -> Any:
+    if not isinstance(tok, dict):
+        return {"unrecognized_type": type(tok).__name__}
+    # Only keys the provider sent: an absent ``winner`` stays absent, a null
+    # one stays null. They are different answers.
+    return {k: _scalar(tok[k]) for k in _TOKEN_KEYS if k in tok}
+
+
+def _provider_evidence(requested: Optional[str], clob: Any) -> dict:
+    if requested is None:
+        return {"retrieval": "not_requested"}
+    if clob is None:
+        return {"retrieval": "absent"}
+    if not isinstance(clob, dict):
+        return {"retrieval": "returned",
+                "shape": {"unrecognized_type": type(clob).__name__}}
+    raw_cond = clob.get("condition_id")
+    observed = raw_cond if isinstance(raw_cond, str) and raw_cond.startswith("0x") else None
+    question = clob.get("question")
+    tokens = clob.get("tokens")
+    out: dict[str, Any] = {
+        "retrieval": "returned",
+        # Never back-filled from the id we asked for: an absent or malformed
+        # provider id is unknown, and agreement is unknown with it.
+        "condition_id": observed,
+        "condition_id_agrees": (observed == requested) if observed else None,
+        "question": _scalar(question),
+        "question_truncated": isinstance(question, str)
+        and len(question) > _EVIDENCE_STR_CAP,
     }
+    if isinstance(tokens, list):
+        out["token_count"] = len(tokens)
+        out["tokens"] = [_token_evidence(t) for t in tokens[:_EVIDENCE_LIST_CAP]]
+        out["tokens_truncated"] = len(tokens) > _EVIDENCE_LIST_CAP
+    else:
+        out["token_count"] = None
+        out["tokens"] = None if "tokens" in clob else "absent"
+        out["tokens_truncated"] = False
+    return out
+
+
+def mapping_evidence(
+    market_ext: Optional[str],
+    condition_id: Optional[str],
+    legs: list[dict],
+    clob: Any,
+    mapping: Optional[dict],
+) -> dict:
+    """Bounded, JSON-safe record of one market's identity and venue answer.
+
+    Every value comes from the rows and the one CLOB payload the page already
+    read; nothing here fetches. ``legs`` carries each leg's grade BEFORE any
+    write. ``mapping`` is the mapper's own result, or ``None`` when a gate
+    refused first.
+    """
+    return {
+        "market_external_id": _scalar(market_ext),
+        "condition_id_requested": condition_id,
+        "legs": [
+            {
+                "id": leg.get("id"),
+                "name": _scalar(leg.get("name")),
+                "external_id": _scalar(leg.get("external_id")),
+                "prior_is_winner": leg.get("is_winner"),
+                "prior_resolution_source": _scalar(leg.get("resolution_source")),
+            }
+            for leg in legs[:_EVIDENCE_LIST_CAP]
+        ],
+        "legs_total": len(legs),
+        "legs_truncated": len(legs) > _EVIDENCE_LIST_CAP,
+        "provider": _provider_evidence(condition_id, clob),
+        "mapping": None if mapping is None else _mapping_evidence(mapping),
+    }
+
+
+def _mapping_evidence(mapping: dict) -> dict:
+    out = {k: _scalar(mapping[k]) for k in _MAPPING_KEYS if k in mapping}
+    if isinstance(mapping.get("clob_tokens"), list):
+        # The two provider labels the mapper read, in token order.
+        out["clob_tokens"] = [_scalar(t) for t in mapping["clob_tokens"]]
+    return out
 
 
 async def repair(
@@ -284,6 +409,7 @@ async def repair(
         ]
         cond = condition_id_of(row.market_ext, legs)
         clob = None
+        mapping = None
         if cond is None:
             decision = {"action": "skip", "reason": "not_clob_addressable"}
         else:
@@ -293,9 +419,12 @@ async def repair(
                 stopped_on = f"clob_error: {str(e)[:80]}"
                 in_scope -= 1
                 break
-            decision = decide(row.market_name, legs, clob)
+            decision, mapping = _decide_and_map(row.market_name, legs, clob)
 
-        entry = {"market_id": row.market_id, "name": row.market_name, **decision}
+        entry = {
+            "market_id": row.market_id, "name": row.market_name, **decision,
+            "evidence": mapping_evidence(row.market_ext, cond, legs, clob, mapping),
+        }
         if decision["action"] == "skip":
             skip_reasons[decision["reason"]] = skip_reasons.get(decision["reason"], 0) + 1
             ledger.append(entry)
