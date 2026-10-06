@@ -79,6 +79,42 @@ def _kalshi_slate_event_window():
     )
 
 
+def linked_first_phases(batch, market_id_by_outcome, event_id_by_outcome):
+    """#10640 — split one flush's batch into the game phase and the rest.
+
+    WHY. The #9484 open-contract shards feed the same buffer as the game
+    socket, and the flush wrote every buffered row in ONE transaction, then
+    committed, published, and only then re-stamped event blends. So a live
+    game's Kalshi move waited behind every futures/prop row buffered in the
+    same 2 s (≥60% of written rows, from the 17:53Z stats line) before its
+    commit, its market frame and its blend stamp. Root's hold/release control
+    reproduced it on the #2471 head.
+
+    A MARKET goes first if any of its buffered rows has a linked event (a slate
+    leg, or the #9484 bridge), and goes WHOLE: its siblings stay in the same
+    transaction, so the price rows and the field re-rank describe one cut of
+    the batch. Returns ``[batch]`` — the old single transaction — when either
+    phase would be empty, or when any row's market is unknown (guessing that
+    an unknown row has no siblings could split a market). Never two phases
+    that share a market. Pure: no I/O, the batch is not mutated.
+    """
+    if any(oid not in market_id_by_outcome for oid in batch):
+        return [batch]
+    linked_markets = {
+        market_id_by_outcome[oid]
+        for oid in batch
+        if event_id_by_outcome.get(oid) is not None
+    }
+    first = {
+        oid: entry for oid, entry in batch.items()
+        if market_id_by_outcome[oid] in linked_markets
+    }
+    if not first or len(first) == len(batch):
+        return [batch]
+    rest = {oid: entry for oid, entry in batch.items() if oid not in first}
+    return [first, rest]
+
+
 @owns_consumer_sessions("kalshi")
 async def _run_kalshi_ws_consumer(*, sessions):
     """Main WebSocket consumer loop.
@@ -339,11 +375,18 @@ async def _run_kalshi_ws_consumer(*, sessions):
     stats["blend_pending_adopted"] = adopt_handed_off(blend_refresher)
 
     async def flush_prices(flush_started=None):
-        """Write buffered price updates to DB in one batch.
+        """Write buffered price updates to DB — #10640: game markets first.
 
-        Returns False when the write failed (the batch stays buffered and the
+        Returns False when a write failed (its rows stay buffered and the
         cadence waits a full interval before retrying); #10090
         ``flush_started`` is this flush's start, for the refresher's floor.
+
+        #10640 — the batch is split by `linked_first_phases`. The game phase is
+        written, committed, published, acknowledged and its blends refreshed
+        BEFORE the unrelated phase opens its transaction, so a held or failed
+        futures/prop write can neither delay nor undo a committed game price.
+        Each phase keeps every rule below on its own rows. A failed game phase
+        stops the flush with the whole batch retained, as before.
         """
         async with buffer_lock:
             batch = dict(price_buffer)
@@ -367,205 +410,223 @@ async def _run_kalshi_ws_consumer(*, sessions):
         # failure mode — exception, cancellation, or a hard kill between the two
         # — can lose a price the buffer was holding. Nothing needs to be
         # "put back", because it was never taken away.
-        declined = 0
-        written_outcome_ids: list[int] = []
-        try:
-            async with get_task_session() as session:
-                for outcome_id, (prob, yes_bid, yes_ask) in batch.items():
-                    # #8753: the book columns move only when the tick carried
-                    # BOTH sides; otherwise each is set to itself (a no-op). Half
-                    # a book beside the other half from an older REST poll is a
-                    # quote nobody ever offered. Spelled as keywords, not a
-                    # splat, so the #4958 writer scan can read the mapping.
-                    tick_has_book = yes_bid is not None and yes_ask is not None
-                    result = await session.execute(
-                        # #9484: the TABLE, not the entity. An ORM-enabled
-                        # UPDATE ... RETURNING comes back as an ORM result with
-                        # no `rowcount`, and the #5411 guard below reads it;
-                        # the Core form keeps the CursorResult (asyncpg sets
-                        # its rowcount from the command status) and returns
-                        # the rows that actually took the price.
-                        update(FuturesOutcome.__table__)
-                        .where(
-                            FuturesOutcome.id == outcome_id,
-                            # #5411 — A SETTLED CONTRACT HAS NO LIVE PRICE. It is
-                            # worth exactly 1 or 0, and #5246 made every reachable
-                            # settlement writer say so. This socket had never heard
-                            # of settlement: it wrote `current_probability`
-                            # unconditionally, so 189 of the 6,895 rows that
-                            # repair cleared were re-priced within 55 minutes (one
-                            # burst, 22:48-22:52Z on 9/11) and eliminated players
-                            # went back to showing a live number. The invariant was
-                            # enforced on ENTRY and not on UPDATE.
-                            #
-                            # The refusal is the TIER-3 set, not `IS NOT NULL`, and
-                            # the distinction is the whole correctness of it: the
-                            # two live US Open finalists carry `ungradeable_result`
-                            # (tier 1 — a RETRACTION meaning the venue never called
-                            # it, explicitly reversible by evidence), so refusing
-                            # every graded-looking row would have FROZEN the two
-                            # rows that most need to move. Guess-family and NULL
-                            # rows stay writable for the same reason.
-                            #
-                            # `or_` with an explicit NULL arm because the column is
-                            # nullable and `NOT IN (...)` is NULL — not TRUE — for
-                            # a NULL source, which would silently refuse every
-                            # ungraded row in the book.
-                            #
-                            # Mirrors `polymarket_ws`'s `is_authoritative` skip
-                            # (its line 84); that socket has always had this guard
-                            # and this one has not, which is why the two behaved
-                            # differently on the same class of row.
-                            or_(
-                                FuturesOutcome.resolution_source.is_(None),
-                                FuturesOutcome.resolution_source.notin_(
-                                    sorted(AUTHORITATIVE_SOURCES)
-                                ),
-                            ),
-                        )
-                        .values(
-                            current_probability=prob,
-                            # This socket IS a live writer of this row, so it
-                            # owes both stamps the polls owe (#2024). Without
-                            # `last_updated` the playoff grid's liveness gate
-                            # read actively-streaming rows as days stale —
-                            # measured 2026-08-30 at up to 23 days on rows whose
-                            # price had moved seconds earlier.
-                            last_updated=func.now(),
-                            price_changed_at=price_changed_at_value(
-                                FuturesOutcome.current_probability,
-                                FuturesOutcome.price_changed_at,
-                                prob,
-                            ),
-                            current_yes_bid=(
-                                yes_bid
-                                if tick_has_book
-                                else FuturesOutcome.current_yes_bid
-                            ),
-                            current_yes_ask=(
-                                yes_ask
-                                if tick_has_book
-                                else FuturesOutcome.current_yes_ask
-                            ),
-                        )
-                        .returning(
-                            FuturesOutcome.id,
-                            FuturesOutcome.market_id,
-                            FuturesOutcome.last_updated,
-                            quote_moved_column(
-                                FuturesOutcome.__table__,
-                                (yes_bid, yes_ask) if tick_has_book else None,
-                            ),
-                        )
-                    )
-                    # #5411 — a settled row matches the id and fails the guard, so
-                    # the statement affects 0 rows. (A row deleted between
-                    # subscription and flush lands here too; both are honestly "a
-                    # buffered price that did not become a stored price", which is
-                    # what this counter is named for.)
-                    if result.rowcount == 0:
-                        declined += 1
-                    else:
-                        written_outcome_ids.append(outcome_id)
-                    # #9484: one market invalidation per row the UPDATE
-                    # RETURNED, stamped with the stored `last_updated` — never
-                    # the buffered id, never a local clock. A #5411 refusal or
-                    # a deleted row returns nothing, so it signals nothing.
-                    # Staged against this transaction; published below only
-                    # once the outer commit has landed.
-                    #
-                    # And only when the write changed what a reader is served
-                    # (price or book, `quote_moved_column`). A tick that only
-                    # re-stamped `last_updated` (volume, open interest, the
-                    # same quote again) still writes — liveness reads that
-                    # stamp — but a frame for it sends every held page to
-                    # re-read an unchanged row (ux, #9526).
-                    for row in result.all():
-                        if not row.quote_moved:
-                            stats["quotes_unchanged"] += 1
-                            continue
-                        queue_market_change(
-                            session,
-                            market_id=row.market_id,
-                            source="kalshi",
-                            outcome_observed_at={row.id: row.last_updated},
-                        )
-
-                # #6598 / CERT-3182. `rank` is derived from the price this loop
-                # just moved, and nothing in this module has ever written it —
-                # so a favourite changing hands mid-game left the board numbered
-                # by whichever REST poll last saw it, on the exact rows this
-                # socket exists to keep current.
-                #
-                # KEYED ON THE ROWS THAT ACTUALLY WROTE, not on the batch: a
-                # settled row declined by the #5411 guard changed nothing, and
-                # re-deriving its market's field would be this socket reaching a
-                # board it was just refused. Same session, so it lands in the
-                # transaction that carries the prices.
-                reranked_markets = {
-                    market_id_by_outcome[oid]
-                    for oid in written_outcome_ids
-                    if oid in market_id_by_outcome
-                }
-                if reranked_markets:
-                    stats["ranks_rederived"] += (
-                        await session.execute(
-                            rerank_market_fields_stmt(sorted(reranked_markets))
-                        )
-                    ).rowcount
-            stats["flushes"] += 1
-            stats["price_updates"] += len(batch) - declined
-            stats["settled_declined"] += declined
-            stats["open_contract_prices_written"] += sum(
-                1 for oid in written_outcome_ids
-                if oid in open_contract_outcome_ids
-            )
-        except Exception:
-            # Q491 — the batch is still in `price_buffer`, so the next flush
-            # retries it. Before Q491 the buffer was drained up front and a
-            # failed write discarded those prices outright: the socket only
-            # refills an outcome when that market ticks again, and 86.7% of open
-            # Polymarket markets never tick, so one transient error left the
-            # card on its old number with a stale `last_updated` (#2024).
-            stats["errors"] += 1
-            stats["requeued"] += len(batch)
-            logger.exception(
-                "Kalshi WS: flush error (%d updates retained for retry)", len(batch)
-            )
-            return False
-
-        # #9484 — the commit landed, so the rows it carried may now say so on
-        # `live:market:{id}`. Before the buffer bookkeeping and the blend
-        # refresh, so neither can suppress it: a standalone future or prop has
-        # no event blend, and its moved quote is just as real.
-        await blend_refresher.publish_market_changes(session)
-
-        # Q491 repair 2 — the write landed, so and only so do these entries
-        # leave the buffer. The `== prob` test is what used to be `setdefault`:
-        # `handle_ticker` may have buffered a FRESHER price for the same outcome
-        # while this write was in flight, and that newer value is the truth, so
-        # it must survive to the next flush rather than be dropped as "already
-        # written". Same contract, enforced at removal instead of at re-queue.
-        async with buffer_lock:
-            for outcome_id, entry in batch.items():
-                if price_buffer.get(outcome_id) == entry:
-                    del price_buffer[outcome_id]
-
-        # Q460 — THE SHIP. Prices in `futures_outcomes` are invisible; the card
-        # renders `Event.win_probability_sources`. Push the freshly-flushed
-        # prices through to that blend so the number on screen moves with the
-        # action instead of waiting for the next 120s poll. Failures are counted
-        # inside the refresher and never interrupt streaming. #10090: the
-        # revisions this write committed ride into this refresh, and only this
-        # one (a settled row the #5411 guard declined committed nothing).
-        with contextlib.suppress(Exception):
-            tail_receipts.stage(
-                [batch_marks[oid] for oid in written_outcome_ids if oid in batch_marks]
-            )
-        await blend_refresher.refresh(
-            event_ids_for_outcomes(event_id_by_outcome, batch.keys()),
-            flush_started=flush_started,
+        phases = linked_first_phases(
+            batch, market_id_by_outcome, event_id_by_outcome,
         )
+        for index, phase in enumerate(phases):
+            declined = 0
+            written_outcome_ids: list[int] = []
+            try:
+                async with get_task_session() as session:
+                    for outcome_id, (prob, yes_bid, yes_ask) in phase.items():
+                        # #8753: the book columns move only when the tick carried
+                        # BOTH sides; otherwise each is set to itself (a no-op). Half
+                        # a book beside the other half from an older REST poll is a
+                        # quote nobody ever offered. Spelled as keywords, not a
+                        # splat, so the #4958 writer scan can read the mapping.
+                        tick_has_book = yes_bid is not None and yes_ask is not None
+                        result = await session.execute(
+                            # #9484: the TABLE, not the entity. An ORM-enabled
+                            # UPDATE ... RETURNING comes back as an ORM result with
+                            # no `rowcount`, and the #5411 guard below reads it;
+                            # the Core form keeps the CursorResult (asyncpg sets
+                            # its rowcount from the command status) and returns
+                            # the rows that actually took the price.
+                            update(FuturesOutcome.__table__)
+                            .where(
+                                FuturesOutcome.id == outcome_id,
+                                # #5411 — A SETTLED CONTRACT HAS NO LIVE PRICE. It is
+                                # worth exactly 1 or 0, and #5246 made every reachable
+                                # settlement writer say so. This socket had never heard
+                                # of settlement: it wrote `current_probability`
+                                # unconditionally, so 189 of the 6,895 rows that
+                                # repair cleared were re-priced within 55 minutes (one
+                                # burst, 22:48-22:52Z on 9/11) and eliminated players
+                                # went back to showing a live number. The invariant was
+                                # enforced on ENTRY and not on UPDATE.
+                                #
+                                # The refusal is the TIER-3 set, not `IS NOT NULL`, and
+                                # the distinction is the whole correctness of it: the
+                                # two live US Open finalists carry `ungradeable_result`
+                                # (tier 1 — a RETRACTION meaning the venue never called
+                                # it, explicitly reversible by evidence), so refusing
+                                # every graded-looking row would have FROZEN the two
+                                # rows that most need to move. Guess-family and NULL
+                                # rows stay writable for the same reason.
+                                #
+                                # `or_` with an explicit NULL arm because the column is
+                                # nullable and `NOT IN (...)` is NULL — not TRUE — for
+                                # a NULL source, which would silently refuse every
+                                # ungraded row in the book.
+                                #
+                                # Mirrors `polymarket_ws`'s `is_authoritative` skip
+                                # (its line 84); that socket has always had this guard
+                                # and this one has not, which is why the two behaved
+                                # differently on the same class of row.
+                                or_(
+                                    FuturesOutcome.resolution_source.is_(None),
+                                    FuturesOutcome.resolution_source.notin_(
+                                        sorted(AUTHORITATIVE_SOURCES)
+                                    ),
+                                ),
+                            )
+                            .values(
+                                current_probability=prob,
+                                # This socket IS a live writer of this row, so it
+                                # owes both stamps the polls owe (#2024). Without
+                                # `last_updated` the playoff grid's liveness gate
+                                # read actively-streaming rows as days stale —
+                                # measured 2026-08-30 at up to 23 days on rows whose
+                                # price had moved seconds earlier.
+                                last_updated=func.now(),
+                                price_changed_at=price_changed_at_value(
+                                    FuturesOutcome.current_probability,
+                                    FuturesOutcome.price_changed_at,
+                                    prob,
+                                ),
+                                current_yes_bid=(
+                                    yes_bid
+                                    if tick_has_book
+                                    else FuturesOutcome.current_yes_bid
+                                ),
+                                current_yes_ask=(
+                                    yes_ask
+                                    if tick_has_book
+                                    else FuturesOutcome.current_yes_ask
+                                ),
+                            )
+                            .returning(
+                                FuturesOutcome.id,
+                                FuturesOutcome.market_id,
+                                FuturesOutcome.last_updated,
+                                quote_moved_column(
+                                    FuturesOutcome.__table__,
+                                    (yes_bid, yes_ask) if tick_has_book else None,
+                                ),
+                            )
+                        )
+                        # #5411 — a settled row matches the id and fails the guard, so
+                        # the statement affects 0 rows. (A row deleted between
+                        # subscription and flush lands here too; both are honestly "a
+                        # buffered price that did not become a stored price", which is
+                        # what this counter is named for.)
+                        if result.rowcount == 0:
+                            declined += 1
+                        else:
+                            written_outcome_ids.append(outcome_id)
+                        # #9484: one market invalidation per row the UPDATE
+                        # RETURNED, stamped with the stored `last_updated` — never
+                        # the buffered id, never a local clock. A #5411 refusal or
+                        # a deleted row returns nothing, so it signals nothing.
+                        # Staged against this transaction; published below only
+                        # once the outer commit has landed.
+                        #
+                        # And only when the write changed what a reader is served
+                        # (price or book, `quote_moved_column`). A tick that only
+                        # re-stamped `last_updated` (volume, open interest, the
+                        # same quote again) still writes — liveness reads that
+                        # stamp — but a frame for it sends every held page to
+                        # re-read an unchanged row (ux, #9526).
+                        for row in result.all():
+                            if not row.quote_moved:
+                                stats["quotes_unchanged"] += 1
+                                continue
+                            queue_market_change(
+                                session,
+                                market_id=row.market_id,
+                                source="kalshi",
+                                outcome_observed_at={row.id: row.last_updated},
+                            )
+
+                    # #6598 / CERT-3182. `rank` is derived from the price this loop
+                    # just moved, and nothing in this module has ever written it —
+                    # so a favourite changing hands mid-game left the board numbered
+                    # by whichever REST poll last saw it, on the exact rows this
+                    # socket exists to keep current.
+                    #
+                    # KEYED ON THE ROWS THAT ACTUALLY WROTE, not on the batch: a
+                    # settled row declined by the #5411 guard changed nothing, and
+                    # re-deriving its market's field would be this socket reaching a
+                    # board it was just refused. Same session, so it lands in the
+                    # transaction that carries the prices.
+                    reranked_markets = {
+                        market_id_by_outcome[oid]
+                        for oid in written_outcome_ids
+                        if oid in market_id_by_outcome
+                    }
+                    if reranked_markets:
+                        stats["ranks_rederived"] += (
+                            await session.execute(
+                                rerank_market_fields_stmt(sorted(reranked_markets))
+                            )
+                        ).rowcount
+                if index == 0:
+                    stats["flushes"] += 1
+                stats["price_updates"] += len(phase) - declined
+                stats["settled_declined"] += declined
+                stats["open_contract_prices_written"] += sum(
+                    1 for oid in written_outcome_ids
+                    if oid in open_contract_outcome_ids
+                )
+            except Exception:
+                # Q491 — the batch is still in `price_buffer`, so the next flush
+                # retries it. Before Q491 the buffer was drained up front and a
+                # failed write discarded those prices outright: the socket only
+                # refills an outcome when that market ticks again, and 86.7% of open
+                # Polymarket markets never tick, so one transient error left the
+                # card on its old number with a stale `last_updated` (#2024).
+                #
+                # #10640: what is unpaid is this phase and every later one — a
+                # committed game phase is already acknowledged and stays done.
+                unpaid = sum(len(p) for p in phases[index:])
+                stats["errors"] += 1
+                stats["requeued"] += unpaid
+                logger.exception(
+                    "Kalshi WS: flush error (%d updates retained for retry)", unpaid
+                )
+                return False
+
+            # #9484 — the commit landed, so the rows it carried may now say so on
+            # `live:market:{id}`. Before the buffer bookkeeping and the blend
+            # refresh, so neither can suppress it: a standalone future or prop has
+            # no event blend, and its moved quote is just as real.
+            await blend_refresher.publish_market_changes(session)
+
+            # Q491 repair 2 — the write landed, so and only so do these entries
+            # leave the buffer. The `== prob` test is what used to be `setdefault`:
+            # `handle_ticker` may have buffered a FRESHER price for the same outcome
+            # while this write was in flight, and that newer value is the truth, so
+            # it must survive to the next flush rather than be dropped as "already
+            # written". Same contract, enforced at removal instead of at re-queue.
+            async with buffer_lock:
+                for outcome_id, entry in phase.items():
+                    if price_buffer.get(outcome_id) == entry:
+                        del price_buffer[outcome_id]
+
+            # Q460 — THE SHIP. Prices in `futures_outcomes` are invisible; the card
+            # renders `Event.win_probability_sources`. Push the freshly-flushed
+            # prices through to that blend so the number on screen moves with the
+            # action instead of waiting for the next 120s poll. Failures are counted
+            # inside the refresher and never interrupt streaming. #10090: the
+            # revisions this write committed ride into this refresh, and only this
+            # one (a settled row the #5411 guard declined committed nothing).
+            #
+            # #10640: the game phase refreshes (with every owed retry, exactly as
+            # the single transaction did) BEFORE the unrelated phase is written.
+            # That phase has no linked event by construction, so it refreshes
+            # only if the #9484 bridge named one of its rows since the split.
+            linked_events = event_ids_for_outcomes(event_id_by_outcome, phase.keys())
+            if index == 0 or linked_events:
+                with contextlib.suppress(Exception):
+                    tail_receipts.stage(
+                        [
+                            batch_marks[oid]
+                            for oid in written_outcome_ids if oid in batch_marks
+                        ]
+                    )
+                await blend_refresher.refresh(
+                    linked_events, flush_started=flush_started,
+                )
         return True
 
     async def drain_prices():

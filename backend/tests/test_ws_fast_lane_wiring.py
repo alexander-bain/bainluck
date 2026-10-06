@@ -90,6 +90,19 @@ def _keyword_names(node) -> set[str]:
     }
 
 
+def _flush_statements(flush):
+    """The flush's own statements, plus those of a top-level phase loop.
+
+    #10640: the Kalshi flush writes one transaction per phase (game markets,
+    then the rest), so its try/except sits one level down, inside the ``for``
+    over phases. The rules below still apply to each phase's write.
+    """
+    for stmt in flush.body:
+        yield stmt
+        if isinstance(stmt, ast.For):
+            yield from stmt.body
+
+
 CONSUMERS = [
     (kalshi_ws, "_run_kalshi_ws_consumer"),
     (polymarket_ws, "_run_polymarket_ws_consumer"),
@@ -141,7 +154,7 @@ class TestFlushReachesTheBlend:
         for module, consumer in CONSUMERS:
             flush = _flush_function(module, consumer)
             helpers = _write_helpers(module, consumer, flush)
-            try_nodes = [n for n in flush.body if isinstance(n, ast.Try)]
+            try_nodes = [n for n in _flush_statements(flush) if isinstance(n, ast.Try)]
             # #9484: a chunked write is the awaited helper call, not a try here.
             write_calls = [c for h in helpers for c in _calls_named(flush, h.name)]
             assert try_nodes or write_calls, (
@@ -172,8 +185,9 @@ class TestFlushReachesTheBlend:
             helpers = _write_helpers(module, consumer, flush)
             handlers = [
                 h
-                for f in [flush, *helpers]
-                for n in f.body
+                for n in [
+                    *_flush_statements(flush), *(n for f in helpers for n in f.body)
+                ]
                 if isinstance(n, ast.Try)
                 for h in n.handlers
             ]
