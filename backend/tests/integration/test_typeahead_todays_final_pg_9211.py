@@ -124,47 +124,6 @@ async def _seed(session):
             **kw,
         )
 
-    session.add_all([nfl, mlb, rugby])
-    await session.flush()
-
-    # The nickname as an alternate name, as production carries it (teams 560 /
-    # 540: `['Chiefs']`, `['Steelers']`): it is what makes `chiefs` resolve the
-    # club rather than merely land on it (`query_resolves_team`).
-    teams = {
-        name: Team(
-            sport_id=sport.id,
-            name=name,
-            abbreviation=abbr,
-            alternate_names=[name.rsplit(" ", 1)[-1]] if name != "Boston Red Sox" else ["Red Sox"],
-        )
-        for name, sport, abbr in [
-            ("Kansas City Chiefs", nfl, "KC"),
-            ("Las Vegas Raiders", nfl, "LV"),
-            ("Miami Dolphins", nfl, "MIA"),
-            ("Denver Broncos", nfl, "DEN"),
-            ("Pittsburgh Steelers", nfl, "PIT"),
-            ("Cleveland Browns", nfl, "CLE"),
-            ("Cincinnati Bengals", nfl, "CIN"),
-            ("Boston Red Sox", mlb, "BOS"),
-            ("New York Yankees", mlb, "NYY"),
-            ("Tampa Bay Rays", mlb, "TB"),
-        ]
-    }
-    session.add_all(teams.values())
-    await session.flush()
-
-    def _game(sport, away, home, when, status, **kw):
-        return Event(
-            sport_id=sport.id,
-            away_team_name=away,
-            home_team_name=home,
-            away_team_id=teams[away].id if away in teams else None,
-            home_team_id=teams[home].id if home in teams else None,
-            commence_time=when,
-            status=status,
-            **kw,
-        )
-
     session.add_all([
         _game(nfl, "Kansas City Chiefs", "Las Vegas Raiders", now + timedelta(days=5), "scheduled"),
         _game(nfl, "Kansas City Chiefs", "Miami Dolphins", earlier_today, "completed",
@@ -210,7 +169,16 @@ async def _seed(session):
             ),
         ]
     )
+    await session.flush()
+    final = await session.get(Event, 15323985)
+    assert final.home_team_id == teams["Milwaukee Brewers"].id
+    assert final.away_team_id == teams["San Diego Padres"].id
+    assert final.home_team_id is not None and final.away_team_id is not None
     await session.commit()
+    return {
+        "brewers": teams["Milwaukee Brewers"].id,
+        "padres": teams["San Diego Padres"].id,
+    }
 
 
 @pytest.fixture
@@ -233,7 +201,7 @@ async def typeahead():
         await conn.run_sync(Base.metadata.create_all)
     maker = async_sessionmaker(engine, expire_on_commit=False)
     async with maker() as session:
-        await _seed(session)
+        seeded_ids = await _seed(session)
 
     async def _override():
         async with maker() as session:
@@ -257,6 +225,7 @@ async def typeahead():
                     assert resp.status_code == 200, f"{q!r} -> HTTP {resp.status_code}"
                     return resp.json()
 
+                _do.seeded_ids = seeded_ids
                 yield _do
     finally:
         app.dependency_overrides.clear()
@@ -343,10 +312,26 @@ async def test_latest_final_beyond_the_recent_window_is_offered(typeahead, monke
     assert STEELERS_NEXT in before
 
 
-async def test_named_brewers_final_survives_final_http_composition(typeahead):
+async def test_named_brewers_final_survives_final_http_composition(typeahead, monkeypatch):
     """Real HTTP+PG, exact screenshot query; no installed-phone cause claim."""
+    from app.routes import events as events_module
+
+    reached = []
+    selector = events_module._lead_team_finals_with_latest_fallback
+
+    async def record_resolved_team(db, team_id, team_name, now):
+        reached.append((team_id, team_name))
+        return await selector(db, team_id, team_name, now)
+
+    monkeypatch.setattr(
+        events_module, "_lead_team_finals_with_latest_fallback", record_resolved_team
+    )
     body = await typeahead("brewers")
+    assert reached == [(typeahead.seeded_ids["brewers"], "Milwaukee Brewers")]
     rows = body["suggestions"]
+    team_rows = [row for row in rows if row["type"] == "team" and row["text"] == "Milwaukee Brewers"]
+    assert len(team_rows) == 1
+    assert team_rows[0]["team_id"] == typeahead.seeded_ids["brewers"]
     next_title = "Milwaukee Brewers at San Diego Padres"
     final_title = "San Diego Padres at Milwaukee Brewers"
     events = _events(body)
