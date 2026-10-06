@@ -11,10 +11,10 @@
 #
 # WHAT IS AND IS NOT AUTOMATED
 #   archive  — no credential needed.
-#   export   — no credential needed either. The two App Store distribution
-#              profiles ("iOS Team Store Provisioning Profile" for the app and
-#              for the widget) are installed on this machine and automatic
-#              signing picks them up, so a real signed .ipa is produced offline.
+#   export   — no credential needed either, given an App Store distribution
+#              profile ("iOS Team Store Provisioning Profile") for every bundle
+#              the app carries: the app, the widget, and since #4932 the Watch
+#              app and its SavedGlance extension. Preflight checks each one.
 #   upload   — needs an App Store Connect API key, which is Alex's to mint. The
 #              script takes it from the environment and never writes it anywhere
 #              tracked (standing credential rule). Absent the key the script
@@ -246,7 +246,7 @@ else
   note "An App Store export cannot be signed with a Development identity."
 fi
 
-# The two App Store distribution profiles. A Store profile is the one with no
+# The App Store distribution profiles. A Store profile is the one with no
 # ProvisionedDevices array — that absence IS the distinction from a Team
 # (development) profile of the same bundle id, and both are installed here, so
 # matching on the bundle id alone would find the wrong one and say PASS.
@@ -267,7 +267,20 @@ store_profile_for() {
   return 1
 }
 
-for bid in "$APP_BUNDLE_ID" "$WIDGET_BUNDLE_ID"; do
+# Every bundle the export signs needs its own Store profile, and the app and
+# widget are no longer the whole list: since #4932 (b077fbe57b) the iPhone target
+# embeds the Watch app, com.bainluck.Bain-Luck.watchkitapp, and its SavedGlance
+# extension. The export passes no -allowProvisioningUpdates, so a missing Watch
+# Store profile fails the export minutes in while this loop, checking two ids,
+# said PASS (#10544). The extra ids are read from the project, not listed here:
+# a bundle id under the app's own id is a bundle the app carries. Build 37's
+# tree named its Watch app com.bainluck.BainLuckWatch.watchkitapp, outside the
+# app's id, and it was not embedded; that tree still asks for two profiles.
+EMBEDDED_BUNDLE_IDS=$(/usr/bin/grep -o "PRODUCT_BUNDLE_IDENTIFIER = \"\{0,1\}$APP_BUNDLE_ID\.[A-Za-z0-9.-]*" "$PBXPROJ" 2>/dev/null \
+  | /usr/bin/sed 's/.*= "\{0,1\}//' | sort -u)
+PROFILE_BUNDLE_IDS=$(printf '%s\n' "$APP_BUNDLE_ID" "$WIDGET_BUNDLE_ID" $EMBEDDED_BUNDLE_IDS | awk 'NF && !seen[$0]++')
+
+for bid in $PROFILE_BUNDLE_IDS; do
   if found=$(store_profile_for "$bid"); then
     pname=${found%%|*}
     pexp=${found##*|}
