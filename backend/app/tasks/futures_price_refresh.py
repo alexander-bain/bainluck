@@ -1645,6 +1645,19 @@ async def _write_prices(
             )
             continue
 
+        # #10298. The game parent refused this condition (the fetch tagged it:
+        # non-negRisk multi-market only, its own book prices the raw value out),
+        # and the bare row IS that parent leg. No update, no snapshot: the
+        # resolver's 0.53 written here and withdrawn after would still leave a
+        # 0.53 snapshot and fresh stamps behind, and would erase a supported
+        # 0.40. `_withdraw_book_refuted_legs` judges what the row already holds.
+        # A decomposed `_yes`/`_no` row has no bare key and prices on unchanged.
+        if item.get("parent_book_refused") and item["external_id"] in existing:
+            stats["legs_declined_parent_refused"] = (
+                stats.get("legs_declined_parent_refused", 0) + 1
+            )
+            continue
+
         legs = _legs(item)
         if not legs:
             stats["unknown_outcomes"] += 1
@@ -3299,8 +3312,18 @@ async def _fetch_polymarket_prices(
         # retires nothing, which is stricter than the discovery poll's placement
         # and deliberately so.
         unpriced_out[str(event.id)] = _unpriced_leg_external_ids(event)
+        refused_books = _refused_leg_books(event)
+        if not event.neg_risk and len(event.markets) > 1:
+            # #10298: the resolver above priced legs the game parent branch
+            # dropped. Tag them so the writer skips their BARE (parent) row —
+            # see `_write_prices` — while decomposed `_yes`/`_no` rows and the
+            # withdrawal below still get this pass's price and book. Provenance,
+            # not shape: negRisk and single-market also use bare ids.
+            for item in priced:
+                if item["external_id"] in refused_books:
+                    item["parent_book_refused"] = True
         if refuted_out is not None:
-            refuted_out[str(event.id)] = _refused_leg_books(event)
+            refuted_out[str(event.id)] = refused_books
     return out, unpriced_out
 
 
@@ -3419,6 +3442,9 @@ async def _refresh_stale_futures_prices(
         # silent. Zero here is the healthy steady state; a jump is the venue
         # quoting empty books at us, not a regression in this task.
         "legs_declined_empty_book": 0,
+        # #10298: bare game-parent legs skipped because the parent refused them
+        # against their own book. Reported unconditionally, like the two above.
+        "legs_declined_parent_refused": 0,
         # #7582. The legs this pass took a price OFF, because the venue listed
         # them and would not quote them and their stored number was already a
         # week behind the board it sits on. Counted apart from every decline

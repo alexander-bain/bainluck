@@ -308,25 +308,57 @@ class TestOtherShapesUntouched:
         assert _refused_leg_books(event) == {}
 
 
-class TestTheRefreshPathReach:
-    """Declared, not widened: ``futures_price_refresh`` is unchanged but consumes
-    ``_refused_leg_books``. It writes the resolver's 0.53 and then hands the leg to
-    the withdrawal, which nulls it because its own book refutes it."""
+async def _fetch(event):
+    from app.tasks import futures_price_refresh as fpr
 
-    async def test_the_refresh_fetch_names_the_specimen_refused(self):
-        from app.tasks import futures_price_refresh as fpr
+    class _Service:
+        async def get_events_by_ids(self, ids):
+            return [{"id": event.id}]
 
-        class _Service:
-            async def get_events_by_ids(self, ids):
-                return [{"id": "61040985"}]
+        def _parse_event(self, raw):
+            return event
 
-            def _parse_event(self, raw):
-                return _game()
+    refuted: dict = {}
+    priced, _unpriced = await fpr._fetch_polymarket_prices(
+        _Service(), [event.id], {}, refuted_out=refuted
+    )
+    items = priced.get(event.id)
+    return ({p["external_id"]: p for p in items} if isinstance(items, list) else {}), refuted
 
-        refuted: dict = {}
-        priced, _unpriced = await fpr._fetch_polymarket_prices(
-            _Service(), ["61040985"], {}, refuted_out=refuted
-        )
-        by_id = {p["external_id"]: p["probability"] for p in priced["61040985"]}
-        assert by_id[ML] == pytest.approx(0.53)
+
+class TestTheRefreshFetchTagsTheParentRefusal:
+    """The review's correction (2026-10-06): ``futures_price_refresh`` resolves the
+    specimen to 0.53 through the unchanged resolver. The fetch keeps that item —
+    decomposed ``_yes``/``_no`` rows price on it — and TAGS it, so the writer skips
+    only the parent's bare row. The composed write/withdraw is proved against real
+    Postgres in ``integration/test_polymarket_refused_leg_withdrawn_9399_real_postgres.py``."""
+
+    async def test_the_specimen_is_kept_tagged_and_its_book_still_reaches_the_withdrawal(self):
+        items, refuted = await _fetch(_game())
+        assert items[ML]["probability"] == pytest.approx(0.53), "resolver unchanged"
+        assert items[ML].get("parent_book_refused") is True
         assert refuted == {"61040985": {ML: (0.15, 0.52)}}
+
+    async def test_the_emitted_legs_are_not_tagged(self):
+        items, _ = await _fetch(_game())
+        for cid in (SPREAD, SPREAD_1H, TOTAL_2H):
+            assert "parent_book_refused" not in items[cid], cid
+
+    async def test_a_moneyline_inside_its_book_is_not_tagged(self):
+        items, refuted = await _fetch(_game(_moneyline((0.40, 0.60), 0.38, 0.42, 0.40)))
+        assert "parent_book_refused" not in items[ML]
+        assert refuted == {"61040985": {}}
+
+    async def test_negrisk_is_never_tagged(self):
+        items, _ = await _fetch(_game(neg_risk=True))
+        assert not any("parent_book_refused" in i for i in items.values())
+
+    async def test_a_single_market_game_is_never_tagged(self):
+        from app.services.polymarket_api import PolymarketEvent
+
+        event = PolymarketEvent(
+            id="61040985", title="Lions vs. Packers", neg_risk=False,
+            markets=[_moneyline()],
+        )
+        items, _ = await _fetch(event)
+        assert not any("parent_book_refused" in i for i in items.values())

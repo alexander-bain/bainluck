@@ -359,3 +359,280 @@ async def test_10298_a_price_changed_underfoot_is_not_withdrawn(engine):
         await session.commit()
     assert n == 0
     assert (await _wrapper_rows(engine))[ML]["p"] == pytest.approx(0.20)
+
+
+# ---------------------------------------------------------------------------
+# #10298 — the HOURLY REFRESH composition (fetch → write → withdraw → twins)
+# ---------------------------------------------------------------------------
+#
+# The independent review's finding: the poll above skips the refuted 0.53, but
+# `futures_price_refresh` prices the same leg through the unchanged resolver
+# (0.53 over 0.15/0.52 — the wide-spread last trade), wrote it onto the parent's
+# bare row and snapshotted it, and only THEN withdrew it. A supported 0.40 came
+# out NULL and a 0.53 chart point survived. These run the real task: only the
+# venue is faked, so the selector, the write/withdraw order, the twin pass and the
+# transaction all belong to `_refresh_stale_futures_prices`.
+
+_SPREAD_BOOK = dict(spread_price=0.30)
+
+
+async def _refresh(engine, monkeypatch, event, *, registered):
+    """One real refresh pass over `event`, selecting exactly `registered`."""
+    import contextlib
+
+    from sqlalchemy import text
+    from sqlalchemy.ext.asyncio import AsyncSession
+
+    from app.tasks import futures_price_refresh as fpr
+    from app.utils.category_served_markets import CategoryServed
+    from app.utils.feed_served_markets import SERVED_UNAVAILABLE, ServedSignal
+
+    async with engine.begin() as conn:  # age every snapshot out of the window
+        await conn.execute(text(
+            "UPDATE futures_odds_snapshots SET captured_at = captured_at - interval '2 days'"
+        ))
+
+    @contextlib.asynccontextmanager
+    async def _session(**_kw):
+        async with AsyncSession(engine, expire_on_commit=False) as s:
+            yield s
+
+    class _Gamma:
+        async def get_events_by_ids(self, ids):
+            return [event] if str(event.id) in ids else []
+
+        def _parse_event(self, raw):
+            return raw
+
+        async def close(self):
+            return None
+
+    async def _none(*_a, **_k):
+        return []
+
+    monkeypatch.delenv("KALSHI_API_KEY", raising=False)
+    monkeypatch.setattr("app.tasks.base.get_task_session", _session)
+    monkeypatch.setattr(
+        "app.utils.tournament_register.registered_market_ids", lambda: set(registered)
+    )
+    monkeypatch.setattr(
+        "app.utils.feed_served_markets.served_signal",
+        lambda: ServedSignal(state=SERVED_UNAVAILABLE, ids=[]),
+    )
+    monkeypatch.setattr(
+        "app.utils.feed_served_markets.note_served_signal_healthy", lambda *a, **k: None
+    )
+    monkeypatch.setattr(
+        "app.utils.category_served_markets.category_served_market_ids",
+        lambda *a, **k: CategoryServed(ids=[]),
+    )
+    for scan in ("_scan_candidates", "_scan_in_play_candidates",
+                 "_scan_series_card_candidates", "_scan_threshold_label_candidates"):
+        monkeypatch.setattr(fpr, scan, _none)
+    monkeypatch.setattr(fpr, "_load_attempt_skips", lambda ids: set())
+    monkeypatch.setattr(fpr, "_mark_attempted", lambda ids, ttl_seconds: None)
+    monkeypatch.setattr(fpr, "_load_label_attempt_skips", lambda ids: set())
+    monkeypatch.setattr(fpr, "_mark_label_attempted", lambda ids: None)
+    monkeypatch.setattr("app.services.polymarket_api.PolymarketAPIService", _Gamma)
+    stats = await fpr._refresh_stale_futures_prices()
+    assert not stats["errors"], stats["errors"]
+    assert stats["registered_attempted"] == len(registered), stats
+    return stats
+
+
+async def _legs(engine) -> dict:
+    """``(market external_id, outcome external_id)`` → the columns a write moves."""
+    from sqlalchemy import text
+
+    async with engine.connect() as conn:
+        rows = (
+            await conn.execute(text(
+                "SELECT m.id, m.external_id, o.external_id, "
+                "       o.current_probability::float, o.current_yes_bid::float, "
+                "       o.current_yes_ask::float, o.last_updated, o.price_changed_at, "
+                "       o.opening_probability::float, "
+                "       (SELECT COUNT(*) FROM futures_odds_snapshots s "
+                "         WHERE s.outcome_id = o.id "
+                "           AND s.captured_at > NOW() - interval '1 hour') "
+                "  FROM futures_outcomes o JOIN futures_markets m ON m.id = o.market_id"
+            ))
+        ).fetchall()
+    return {
+        (r[1], r[2]): {
+            "market_id": r[0], "p": r[3], "bid": r[4], "ask": r[5], "touched": r[6],
+            "changed": r[7], "opening": r[8], "fresh_snapshots": r[9],
+        }
+        for r in rows
+    }
+
+
+def _mid(legs, market_ext):
+    return next(v["market_id"] for (m, _o), v in legs.items() if m == market_ext)
+
+
+_PARENT_ML = (GAME_ID, ML)
+_CHILD_ML_YES = (ML, f"{ML}_yes")
+_PARENT_SPREAD = (GAME_ID, SPREAD)
+
+
+async def test_10298_refresh_keeps_a_supported_040_and_writes_no_053(engine, monkeypatch):
+    """Selected parent. Stored 0.40 is inside 0.15/0.52: it stays, untouched."""
+    await _poll(_game(_ml(0.40, 0.39, 0.41, last=0.40)))
+    before = await _legs(engine)
+    stats = await _refresh(
+        engine, monkeypatch, _game(_ml(0.53, 0.15, 0.52, last=0.53), **_SPREAD_BOOK),
+        registered=[_mid(before, GAME_ID)],
+    )
+    after = await _legs(engine)
+
+    p_before, p_after = before[_PARENT_ML], after[_PARENT_ML]
+    assert p_after["p"] == pytest.approx(0.40)
+    assert p_after["fresh_snapshots"] == 0, "no 0.53 chart point on the parent"
+    for col in ("bid", "ask", "touched", "changed", "opening"):
+        assert p_after[col] == p_before[col], col
+    assert stats.get("legs_declined_parent_refused", 0) == 1
+    assert stats["legs_withdrawn_book_refuted"] == 0
+    # the healthy sibling on the same parent still refreshes
+    assert after[_PARENT_SPREAD]["p"] == pytest.approx(0.30)
+    assert after[_PARENT_SPREAD]["fresh_snapshots"] == 1
+    # the decomposed child keeps its unchanged resolver contract (via the twin pass)
+    from app.tasks.polymarket import _resolve_market_probability
+
+    resolved = _resolve_market_probability(_ml(0.53, 0.15, 0.52, last=0.53))
+    assert after[_CHILD_ML_YES]["p"] == pytest.approx(resolved)
+    assert after[_CHILD_ML_YES]["fresh_snapshots"] == 1
+
+
+async def test_10298_refresh_withdraws_a_stored_053_without_a_new_snapshot(engine, monkeypatch):
+    """Selected parent. Stored 0.53 is priced out by 0.52: NULL, and no 0.53 point."""
+    await _poll(_game(_ml(0.53, 0.52, 0.54, last=0.53)))
+    before = await _legs(engine)
+    stats = await _refresh(
+        engine, monkeypatch, _game(_ml(0.53, 0.15, 0.52, last=0.53), **_SPREAD_BOOK),
+        registered=[_mid(before, GAME_ID)],
+    )
+    after = await _legs(engine)
+
+    assert after[_PARENT_ML]["p"] is None
+    assert after[_PARENT_ML]["fresh_snapshots"] == 0
+    assert after[_PARENT_ML]["touched"] == before[_PARENT_ML]["touched"]
+    assert after[_PARENT_ML]["opening"] == before[_PARENT_ML]["opening"]
+    assert stats.get("legs_declined_parent_refused", 0) == 1
+    assert stats["legs_withdrawn_book_refuted"] == 1
+
+
+@pytest.mark.parametrize("stored", [(0.40, 0.39, 0.41), (0.53, 0.52, 0.54)])
+async def test_10298_a_twin_only_parent_is_not_written(engine, monkeypatch, stored):
+    """Only the decomposed child is selected; the parent is reached by the twin
+    pass alone. Its bare row takes no write and no snapshot. (The twin pass never
+    withdraws — #4983's design — so a stored 0.53 there waits for its own pass.)"""
+    await _poll(_game(_ml(stored[0], stored[1], stored[2], last=stored[0])))
+    before = await _legs(engine)
+    stats = await _refresh(
+        engine, monkeypatch, _game(_ml(0.53, 0.15, 0.52, last=0.53), **_SPREAD_BOOK),
+        registered=[_mid(before, ML)],
+    )
+    after = await _legs(engine)
+
+    assert after[_PARENT_ML]["p"] == pytest.approx(stored[0])
+    assert after[_PARENT_ML]["fresh_snapshots"] == 0
+    assert after[_PARENT_ML]["touched"] == before[_PARENT_ML]["touched"]
+    assert stats.get("legs_declined_parent_refused", 0) >= 1
+    assert after[_CHILD_ML_YES]["fresh_snapshots"] == 1, "the selected child still prices"
+    assert after[_PARENT_SPREAD]["fresh_snapshots"] == 1, "the twin pass still reaches the spread"
+
+
+async def test_10298_strawman_without_the_tag_reproduces_the_finding(engine, monkeypatch):
+    """The reviewer's recording, as a control: strip the fetch's tag and the
+    supported 0.40 comes out NULL with a 0.53 snapshot left behind. Without this
+    the two tests above would also pass on a rig that never reached the write."""
+    from app.tasks import futures_price_refresh as fpr
+
+    real = fpr._fetch_polymarket_prices
+
+    async def _untagged(*a, **k):
+        out, unpriced = await real(*a, **k)
+        for items in out.values():
+            if isinstance(items, list):
+                for item in items:
+                    item.pop("parent_book_refused", None)
+        return out, unpriced
+
+    await _poll(_game(_ml(0.40, 0.39, 0.41, last=0.40)))
+    before = await _legs(engine)
+    monkeypatch.setattr(fpr, "_fetch_polymarket_prices", _untagged)
+    await _refresh(
+        engine, monkeypatch, _game(_ml(0.53, 0.15, 0.52, last=0.53), **_SPREAD_BOOK),
+        registered=[_mid(before, GAME_ID)],
+    )
+    after = await _legs(engine)
+    assert after[_PARENT_ML]["p"] is None
+    assert after[_PARENT_ML]["fresh_snapshots"] == 1
+
+
+@pytest.mark.parametrize("raw, bid, ask, declined", [
+    (0.525, 0.15, 0.52, 0),    # half a cent over the ask: inside epsilon, kept
+    (0.5251, 0.15, 0.52, 1),   # past it: refused
+    (0.145, 0.15, 0.52, 0),    # bid mirror, kept
+    (0.1449, 0.15, 0.52, 1),   # bid mirror, refused
+    (0.53, None, None, 0),     # no book: outside this change
+])
+async def test_10298_refresh_boundaries_and_no_book(engine, monkeypatch, raw, bid, ask, declined):
+    await _poll(_game(_ml(0.40, 0.39, 0.41, last=0.40)))
+    before = await _legs(engine)
+    stats = await _refresh(
+        engine, monkeypatch, _game(_ml(raw, bid, ask, last=raw), **_SPREAD_BOOK),
+        registered=[_mid(before, GAME_ID)],
+    )
+    after = await _legs(engine)
+    # a kept leg is written by the unchanged resolver; a refused one is not
+    assert after[_PARENT_ML]["fresh_snapshots"] == 1 - declined
+    if declined:
+        assert after[_PARENT_ML]["touched"] == before[_PARENT_ML]["touched"]
+    assert stats.get("legs_declined_parent_refused", 0) == declined
+
+
+async def test_10298_refresh_a_truncated_payload_tags_nothing(engine, monkeypatch):
+    await _poll(_game(_ml(0.53, 0.52, 0.54, last=0.53)))
+    before = await _legs(engine)
+    stats = await _refresh(
+        engine, monkeypatch, _game(None, **_SPREAD_BOOK),
+        registered=[_mid(before, GAME_ID)],
+    )
+    after = await _legs(engine)
+    assert stats.get("legs_declined_parent_refused", 0) == 0
+    assert stats["legs_withdrawn_book_refuted"] == 0
+    assert after[_PARENT_ML]["p"] == pytest.approx(0.53)
+    assert after[_PARENT_SPREAD]["fresh_snapshots"] == 1
+
+
+async def test_10298_refresh_negrisk_field_is_untouched_by_the_tag(engine, monkeypatch):
+    """negRisk control: the Nolo field refreshes exactly as before — nothing tagged."""
+    await _poll(_nolo(_leg(CAT5, 5, prices=[0.20, 0.80], bid=0.19, ask=0.21, last=0.20)))
+    before = await _legs(engine)
+    stats = await _refresh(
+        engine, monkeypatch,
+        _nolo(_leg(CAT5, 5, prices=[0.22, 0.78], bid=0.21, ask=0.23, last=0.22)),
+        registered=[_mid(before, EVENT_ID)],
+    )
+    after = await _legs(engine)
+    assert stats.get("legs_declined_parent_refused", 0) == 0
+    assert after[(EVENT_ID, CAT5)]["fresh_snapshots"] == 1
+    assert after[(EVENT_ID, CAT4)]["fresh_snapshots"] == 1
+
+
+async def test_10298_refresh_singleton_game_is_untouched_by_the_tag(engine, monkeypatch):
+    """Single-market control: one market, raw 0.53 over 0.15/0.52, nothing tagged."""
+    from app.services.polymarket_api import PolymarketEvent
+
+    def _solo(m):
+        return PolymarketEvent(id=GAME_ID, title="Lions vs. Packers", neg_risk=False, markets=[m])
+
+    await _poll(_solo(_ml(0.40, 0.39, 0.41, last=0.40)))
+    before = await _legs(engine)
+    stats = await _refresh(
+        engine, monkeypatch, _solo(_ml(0.53, 0.15, 0.52, last=0.53)),
+        registered=[_mid(before, GAME_ID)],
+    )
+    assert (await _legs(engine))[_PARENT_ML]["fresh_snapshots"] == 1, "written as before"
+    assert stats.get("legs_declined_parent_refused", 0) == 0
