@@ -719,6 +719,71 @@ def _espn_team_name(team) -> str:
     return team.display_name or team.name or team.short_name or ""
 
 
+def _espn_team_initialism_form(team) -> str:
+    """ESPN's ``abbreviation`` + ``name`` for ONE team object, or ``""``.
+
+    #10599: our row stores ``LIU Sharks`` — ESPN's abbreviation + name — while
+    the rail compared only ``display_name`` (``Long Island University
+    Sharks``), so a correct linkage read as ``espn_id_drifted`` and was
+    prescribed an attended repair that could only corrupt it. The form is a
+    string the authority published about THIS team object (the shape
+    ``authority_name_forms`` already cites for LIU), never a fuzzy rule.
+
+    Initialism only, deliberately. ``nickname`` is absent from scoreboard team
+    objects (the retained Harvard @ Brown board entry carries none) and no
+    specimen needs a ``location`` composition, so neither is admitted. A
+    stutter (abbreviation already inside the name, or vice versa) is not an
+    alias. ``getattr`` throughout: unit boards build teams with a subset of
+    fields, and a missing field is "no form", never an AttributeError.
+    """
+    if team is None:
+        return ""
+    name = (getattr(team, "name", None) or "").strip()
+    abbr = (getattr(team, "abbreviation", None) or "").strip()
+    if not name or not abbr:
+        return ""
+    lo_a, lo_n = abbr.lower(), name.lower()
+    if lo_a in lo_n or lo_n in lo_a:
+        return ""
+    return f"{abbr} {name}"
+
+
+def _side_matches_team(ours, team, predicate, sport_key) -> bool:
+    """One side of the fixture against an ESPN team OBJECT.
+
+    The display string through ``predicate`` first — exactly the legacy read,
+    so a row the old guard proved stays proved and one it refused for any
+    other reason stays refused. Then #10599's initialism form, and that form
+    ONLY through :func:`_names_match_strict` whatever ``predicate`` is: under
+    ``names_match``'s token-overlap stage a two-token ``ABBR Mascot`` form
+    scores 0.5 against ANY team sharing the mascot (``Brown Bears`` vs
+    ``UNCO Bears``), which would widen the guard in front of a score write.
+    """
+    if _side_matches(ours, _espn_team_name(team), predicate, sport_key):
+        return True
+    form = _espn_team_initialism_form(team)
+    return bool(form) and _names_match_strict(ours, form)
+
+
+def _identity_matches_team(
+    our_home, our_away, home_team, away_team, *, sport_key=None
+) -> bool:
+    """Form-aware :func:`_identity_matches`: oriented, per side.
+
+    Same contract as the string variant — a side with no name matches
+    nothing — over team OBJECTS, so the comparison can read the abbreviation
+    the display string swallowed. The string variant is kept intact: every
+    guard it pins (#1980, #8190) survives verbatim.
+    """
+    if not (_espn_team_name(home_team) and _espn_team_name(away_team)):
+        return False
+    from app.utils.name_normalization import names_match
+
+    return _side_matches_team(
+        our_home, home_team, names_match, sport_key
+    ) and _side_matches_team(our_away, away_team, names_match, sport_key)
+
+
 def espn_date_matches(our_game_date, espn_dt) -> bool:
     """Does this ESPN game fall on the SAME calendar day as our event?
 
@@ -911,14 +976,14 @@ def same_fixture_games(
             game_date, getattr(g, "date", None)
         ):
             continue
-        if _side_matches(
+        if _side_matches_team(
             home_team_name,
-            _espn_team_name(getattr(g, "home_team", None)),
+            getattr(g, "home_team", None),
             _names_match_strict,
             sport_key,
-        ) and _side_matches(
+        ) and _side_matches_team(
             away_team_name,
-            _espn_team_name(getattr(g, "away_team", None)),
+            getattr(g, "away_team", None),
             _names_match_strict,
             sport_key,
         ):
@@ -993,11 +1058,11 @@ def classify_espn_link(
             "espn_id resolves to a game on a DIFFERENT date than this row's own",
         )
 
-    if not _identity_matches(
+    if not _identity_matches_team(
         home_team_name,
         away_team_name,
-        _espn_team_name(getattr(held, "home_team", None)),
-        _espn_team_name(getattr(held, "away_team", None)),
+        getattr(held, "home_team", None),
+        getattr(held, "away_team", None),
         sport_key=sport_key,
     ):
         return (
@@ -1234,9 +1299,9 @@ async def repair(
                 elif not espn_date_matches(r.game_date, held.date):
                     stats["date_blocked"] += 1
                     action = "skip_espn_id_wrong_date"
-                elif not _identity_matches(
+                elif not _identity_matches_team(
                     r.home_team_name, r.away_team_name,
-                    _espn_team_name(held.home_team), _espn_team_name(held.away_team),
+                    held.home_team, held.away_team,
                     sport_key=sport_key,
                 ):
                     stats["identity_blocked"] += 1
