@@ -255,6 +255,58 @@ def test_a_missing_widget_profile_fails_even_when_the_app_has_one(rig):
     assert not rig.built()
 
 
+WATCH_ID = "com.bainluck.Bain-Luck.watchkitapp"
+GLANCE_ID = "com.bainluck.Bain-Luck.watchkitapp.SavedGlance"
+
+# The bundle-id lines as master's project file writes them (#4932 onward): the
+# widget's and SavedGlance's quoted, the Watch app's bare, plus a test bundle
+# and the build-37 container that sit OUTSIDE the app's id.
+EMBEDDING_PBXPROJ = (
+    "CURRENT_PROJECT_VERSION = 37;\n"
+    '\t\t\t\tPRODUCT_BUNDLE_IDENTIFIER = "com.bainluck.Bain-Luck";\n'
+    '\t\t\t\tPRODUCT_BUNDLE_IDENTIFIER = "com.bainluck.Bain-Luck.BainLuckWidget";\n'
+    f"\t\t\t\tPRODUCT_BUNDLE_IDENTIFIER = {WATCH_ID};\n"
+    f'\t\t\t\tPRODUCT_BUNDLE_IDENTIFIER = "{GLANCE_ID}";\n'
+    '\t\t\t\tPRODUCT_BUNDLE_IDENTIFIER = "com.bainluck.BainLuckTests";\n'
+    "\t\t\t\tPRODUCT_BUNDLE_IDENTIFIER = com.bainluck.BainLuckWatch;\n"
+)
+
+
+def test_an_embedded_watch_app_needs_its_own_store_profiles(rig):
+    """#10544. Since #4932 the iPhone target embeds the Watch app and its
+    SavedGlance extension; the export passes no -allowProvisioningUpdates, so
+    each needs an installed Store profile. The old loop checked the app and the
+    widget only and said PASS on the build machine, which held development
+    profiles alone for both Watch ids. Both ids are asserted by name."""
+    (rig.project / "project.pbxproj").write_text(EMBEDDING_PBXPROJ)
+    rig.set_profile(WATCH_ID, store=False)
+    rig.set_profile(GLANCE_ID, store=False)
+
+    rc, out = rig.run("--dry-run")
+    assert rc == 2, out
+    assert f"no App Store distribution profile installed for {WATCH_ID}\n" in out
+    assert f"no App Store distribution profile installed for {GLANCE_ID}\n" in out
+    assert not rig.built()
+
+
+def test_an_embedded_watch_app_with_store_profiles_passes(rig):
+    """The control for the test above: the same project with all four Store
+    profiles passes, so the refusal is about the missing profiles and not about
+    the project file. Bundles outside the app's id (tests, the old container)
+    ask for nothing."""
+    (rig.project / "project.pbxproj").write_text(EMBEDDING_PBXPROJ)
+    rig.set_profile(WATCH_ID, store=True)
+    rig.set_profile(GLANCE_ID, store=True)
+
+    rc, out = rig.run("--dry-run")
+    assert rc == 0, out
+    for bid in (APP_ID, WIDGET_ID, WATCH_ID, GLANCE_ID):
+        assert f"profile : {bid} →" in out, out
+    assert "BainLuckTests" not in out
+    assert "com.bainluck.BainLuckWatch " not in out
+    assert not rig.built()
+
+
 def test_an_expired_store_profile_is_not_a_valid_one(rig):
     """An expired profile is present, correctly named, and useless. Xcode's own
     message for it talks about signing, which reads like a certificate problem."""
