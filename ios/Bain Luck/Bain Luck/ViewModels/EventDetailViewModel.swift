@@ -132,6 +132,21 @@ final class EventDetailViewModel: ObservableObject {
     /// it does not also cover this one, exactly one trailing pair is owed.
     private var trailingProvenanceFrame: LiveStreamFrame?
 
+    /// #10643 — `frame`, carrying the row-wise highest revision it and `held`
+    /// named, so a delayed or other-row arrival never erases a newer
+    /// requirement. Any arrival without a revision leaves none: an unprovable
+    /// requirement is never counted as covered.
+    private static func trailingRequirement(adding frame: LiveStreamFrame, to held: LiveStreamFrame?) -> LiveStreamFrame {
+        guard let held else { return frame }
+        let merged = held.rev?.revision.flatMap { heldRevision in
+            frame.rev?.revision.flatMap { FoldRevision(heldRevision.rows.merging($0.rows, uniquingKeysWith: max)) }
+        }
+        return LiveStreamFrame(
+            eventId: frame.eventId, p: frame.p, source: frame.source, sourceValue: frame.sourceValue,
+            updatedAt: frame.updatedAt, status: frame.status, rev: merged.map { ServedFoldRevision($0) }
+        )
+    }
+
     /// A failed authoritative pair is a delivery failure even if SSE stays open.
     /// Separate from the full-load error: a successful game-state read cannot
     /// certify that both price payloads recovered.
@@ -951,7 +966,7 @@ final class EventDetailViewModel: ObservableObject {
                 streamRefetchGeneration = deliveryGeneration
                 requestRevisionRefetch()
             } else {
-                trailingProvenanceFrame = frame
+                trailingProvenanceFrame = Self.trailingRequirement(adding: frame, to: trailingProvenanceFrame)
             }
         } else if let foldOrder {
             priceIsNotNewer = foldOrder != .newer
