@@ -127,7 +127,8 @@ afterEach(() => {
 
 describe("#10646 the page's scheduler opts the quote pair into one bounded retry", () => {
   it("the factory passes the page clock and an unresolved-quote predicate", () => {
-    expect(EXPR.factory).toMatch(/\}, FOLDED_FRAME_REFETCH_MS, Date\.now,\s*(\/\/[^\n]*\s*)*\(\) => quoteTriggerRef\.current !== null && canSubscribeEventQuotes\(heldEventRef\.current\),\s*\)$/);
+    const code = EXPR.factory.replace(/\/\/[^\n]*/g, "");
+    expect(code).toMatch(/\}, FOLDED_FRAME_REFETCH_MS, Date\.now,\s*\(\) => quoteTriggerRef\.current !== null && canSubscribeEventQuotes\(heldEventRef\.current\),\s*\)$/);
     expect(FOLDED_FRAME_REFETCH_MS).toBe(1000);
   });
 });
