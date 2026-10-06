@@ -29,3 +29,30 @@ def test_empty_route_does_not_invent_contract_settlement():
     body = fixture._payload(markets=[], outcomes=[])
     assert body["open_winner_quote"] is None
     assert body["closed_winner_market_ids"] == []
+
+
+def _final_pinned_payload(monkeypatch, home, away):
+    event = fixture._event()
+    event.status = "completed"
+    monkeypatch.setattr(fixture, "_event", lambda: event)
+    market = fixture._market(id=301, name="Boston Celtics vs New York Knicks")
+    market.settled_at = None
+    market.mutually_exclusive = True
+    outcomes = [fixture._outcome(id=31, market_id=301, name="Boston Celtics", prob=home),
+                fixture._outcome(id=32, market_id=301, name="New York Knicks", prob=away)]
+    return fixture._payload(markets=[market], outcomes=outcomes)
+
+
+def test_route_withholds_a_quote_that_repeats_the_recorded_winner(monkeypatch):
+    # The fixture's score is Celtics (home) 88 - Knicks 82 (#9544).
+    body = _final_pinned_payload(monkeypatch, .999, .001)
+    assert (body["status"], body["home_score"], body["away_score"]) == ("completed", 88, 82)
+    assert body["open_winner_quote"] is None
+    assert body["closed_winner_market_ids"] == []
+    assert body["stream_market_ids"] == [301]
+
+
+def test_route_keeps_a_pinned_quote_that_disagrees_with_the_score(monkeypatch):
+    body = _final_pinned_payload(monkeypatch, .001, .999)
+    assert body["open_winner_quote"]["outcomes"][1]["probability"] == .999
+    assert (body["home_score"], body["away_score"]) == (88, 82)

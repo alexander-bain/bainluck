@@ -44,6 +44,7 @@ def build(markets=None, outcomes=None, **changes):
     return final_game_winner_quotes(**{
         "event_id": 42, "event_is_finished": True, "mapped_event_ids": [42],
         "home_name": "Bears", "away_name": "Eagles",
+        "home_score": 24, "away_score": 17,
         "markets": [market()] if markets is None else markets,
         "outcomes": legs() if outcomes is None else outcomes,
         "observed_at": {1: NOW - timedelta(minutes=9), 2: NOW - timedelta(minutes=2)},
@@ -158,7 +159,9 @@ def test_a_missing_or_invalid_leg_withdraws_whole_quote_without_terminal_fence(p
 def test_real_zero_and_one_remain_quotes_without_becoming_settlement():
     rows = legs()
     rows[0].current_probability, rows[1].current_probability = 1, 0
-    assert [r["probability"] for r in build(outcomes=rows)["open_winner_quote"]["outcomes"]] == [1, 0]
+    # The scored winner is the away side, so the pinned home leg disagrees (#9544).
+    body = build(outcomes=rows, home_score=17, away_score=24)
+    assert [r["probability"] for r in body["open_winner_quote"]["outcomes"]] == [1, 0]
 
 
 @pytest.mark.parametrize("price,bid,ask", [(0.5, 0, 1), (0.99, 0.39, 0.41)])
@@ -268,3 +271,87 @@ def test_explicit_closed_contract_is_fenced_even_when_its_outcomes_disappear(par
         "open_winner_quote": None, "closed_winner_market_ids": [11],
     }
     assert build(markets=[market()], outcomes=partial)["closed_winner_market_ids"] == []
+
+
+# --- #9544: a quote that only repeats the recorded result is withheld ---------
+
+def pinned(home, away):
+    rows = legs()
+    rows[0].current_probability, rows[1].current_probability = home, away
+    return rows
+
+
+@pytest.mark.parametrize("home,away", [
+    (0.999, 0.001), (Decimal("0.999"), Decimal("0.001")), (0.9995, 0.0005), (1, 0),
+])
+def test_scored_winner_quoted_at_or_above_certain_is_withheld_not_closed(home, away):
+    rows = pinned(home, away)
+    before = deepcopy(rows)
+    assert build(outcomes=rows) == {"open_winner_quote": None, "closed_winner_market_ids": []}
+    assert rows == before  # no quote or result rewrite; the price stays what it was
+
+
+def test_just_below_certain_still_travels():
+    quote = build(outcomes=pinned(0.9989, 0.0011))["open_winner_quote"]
+    assert [r["probability"] for r in quote["outcomes"]] == [0.9989, 0.0011]
+
+
+def test_away_mapping_is_withheld_and_a_pinned_opposing_leg_still_travels():
+    away_won = {"home_score": 17, "away_score": 24}
+    assert build(outcomes=pinned(0.001, 0.999), **away_won)["open_winner_quote"] is None
+    quote = build(outcomes=pinned(0.999, 0.001), **away_won)["open_winner_quote"]
+    assert [(r["side"], r["probability"]) for r in quote["outcomes"]] == [
+        ("home", 0.999), ("away", 0.001),
+    ]
+    assert build(outcomes=pinned(0.999, 0.001), home_score=24, away_score=17)[
+        "open_winner_quote"] is None
+
+
+@pytest.mark.parametrize("home_score,away_score", [
+    (None, None), (24, None), (None, 17), (True, False), (24.0, 17.0),
+    (-1, -2), ("24", "17"), (Decimal(24), Decimal(17)), (20, 20), (0, 0),
+])
+def test_unknown_or_drawn_score_cannot_earn_suppression(home_score, away_score):
+    for home, away in [(0.999, 0.001), (0.001, 0.999)]:
+        quote = build(outcomes=pinned(home, away), home_score=home_score,
+                      away_score=away_score)["open_winner_quote"]
+        assert [r["probability"] for r in quote["outcomes"]] == [home, away]
+
+
+def test_a_pinned_draw_leg_on_a_level_score_still_travels():
+    draw = outcome(3, 11, "Draw (Bears vs Eagles)", 0.999)
+    rows = pinned(0.0005, 0.0005) + [draw]
+    quote = build(outcomes=rows, home_score=1, away_score=1)["open_winner_quote"]
+    assert [r["side"] for r in quote["outcomes"]] == ["home", "away", "draw"]
+    assert build(outcomes=pinned(0.999, 0.0005) + [outcome(3, 11, "Draw (Bears vs Eagles)",
+                 0.0005)], home_score=2, away_score=1)["open_winner_quote"] is None
+
+
+def test_suppression_never_swallows_the_closure_or_price_fences():
+    assert build(markets=[market(status="closed")], outcomes=pinned(0.999, 0.001)) == {
+        "open_winner_quote": None, "closed_winner_market_ids": [11],
+    }
+    graded = pinned(0.999, 0.001)
+    graded[0].is_winner = True
+    assert build(outcomes=graded)["closed_winner_market_ids"] == [11]
+    refuted = pinned(0.999, 0.001)
+    refuted[1].current_probability = None
+    assert build(outcomes=refuted, home_score=17, away_score=24) == {
+        "open_winner_quote": None, "closed_winner_market_ids": [],
+    }
+    contradicted = pinned(0.999, 0.001)
+    contradicted[0].current_yes_bid, contradicted[0].current_yes_ask = 0.39, 0.41
+    assert build(outcomes=contradicted, home_score=17, away_score=24)[
+        "open_winner_quote"] is None
+
+
+def test_unfinished_or_unmapped_game_is_untouched_by_the_score():
+    assert build(outcomes=pinned(0.999, 0.001), event_is_finished=False)["open_winner_quote"] is None
+    assert build(outcomes=pinned(0.999, 0.001), mapped_event_ids=[43])["open_winner_quote"] is None
+
+
+def test_threshold_is_the_existing_certain_leg_constant():
+    from app.utils import field_opening_coherence, final_game_winner_quote
+    assert final_game_winner_quote.CERTAIN_LEG_PROBABILITY is (
+        field_opening_coherence.CERTAIN_LEG_PROBABILITY)
+    assert field_opening_coherence.CERTAIN_LEG_PROBABILITY == 0.999
