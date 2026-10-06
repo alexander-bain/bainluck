@@ -27,6 +27,7 @@ final class WatchDiscoverJourneyTests: XCTestCase {
         try tap(pick, in: app)
         XCTAssertTrue(element("watch.home-probability", in: app).waitForExistence(timeout: 15))
         try openDiscoveries(in: app)
+        try assertDiscoveriesHeading(in: app, largeText: largeText)
         let selected = element("watch.discovery.selected", in: app)
         XCTAssertTrue(selected.waitForExistence(timeout: 15))
         XCTAssertTrue(element("watch.discovery.selected-matchup", in: app).label.contains("Giants"))
@@ -95,6 +96,7 @@ final class WatchDiscoverJourneyTests: XCTestCase {
         app.launch()
         XCTAssertTrue(app.buttons["watch.pick.101"].waitForExistence(timeout: 20))
         try openDiscoveries(in: app)
+        try assertDiscoveriesHeading(in: app, largeText: false)
         XCTAssertFalse(element("watch.discovery.selected", in: app).exists)
         try assertUnselectedReturnControl(in: app, screenshot: "Readable Games return control at standard size")
         let age = element("watch.discovery.age.303", in: app)
@@ -121,6 +123,7 @@ final class WatchDiscoverJourneyTests: XCTestCase {
         XCTAssertTrue(heading.waitForExistence(timeout: 20))
         XCTAssertEqual(heading.value as? String, "accessibility5")
         try openDiscoveries(in: app)
+        try assertDiscoveriesHeading(in: app, largeText: true)
         XCTAssertFalse(element("watch.discovery.selected", in: app).exists)
         try assertUnselectedReturnControl(in: app, screenshot: "Readable Games return control at accessibility5")
         app.buttons["watch.discovery.close"].firstMatch.tap()
@@ -139,6 +142,25 @@ final class WatchDiscoverJourneyTests: XCTestCase {
         XCTAssertTrue(close.isHittable)
         XCTAssertTrue(app.frame.contains(close.frame), "The complete return control must fit on screen")
         capture(app, screenshot)
+    }
+
+    @MainActor
+    private func assertDiscoveriesHeading(in app: XCUIApplication, largeText: Bool) throws {
+        let contentHeading = app.staticTexts["watch.discovery.heading"]
+        if largeText {
+            XCTAssertTrue(contentHeading.waitForExistence(timeout: 15))
+            XCTAssertEqual(contentHeading.label, "Discoveries")
+            XCTAssertTrue(app.frame.contains(contentHeading.frame), "The full heading must fit on screen")
+            let close = app.buttons["watch.discovery.close"].firstMatch
+            XCTAssertTrue(close.isHittable)
+            XCTAssertGreaterThanOrEqual(contentHeading.frame.minY, close.frame.maxY,
+                                        "The heading must not overlap the return toolbar")
+        } else {
+            XCTAssertFalse(contentHeading.exists, "Standard size retains the navigation heading")
+            XCTAssertTrue(app.staticTexts["Discoveries"].firstMatch.exists)
+        }
+        capture(app, largeText ? "Complete Discoveries heading at accessibility5" : "Unchanged Discoveries heading at standard size")
+        print(largeText ? "WATCH_UI_DISCOVERIES_HEADING_LARGE=PASS" : "WATCH_UI_DISCOVERIES_HEADING_STANDARD=PASS")
     }
 
     private func environment(largeText: Bool) -> [String: String] {

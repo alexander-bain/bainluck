@@ -3,6 +3,7 @@ import SwiftUI
 /// Server-ordered discoveries alongside the retained game; no new selection owner.
 struct WatchDiscoverStoriesView: View {
     @Environment(\.scenePhase) private var scenePhase
+    @Environment(\.dynamicTypeSize) private var dynamicTypeSize
     @ObservedObject var selected: WatchSelectedGameStore
     @StateObject private var discoveries: WatchDiscoveryStore
     let close: () -> Void
@@ -30,6 +31,13 @@ struct WatchDiscoverStoriesView: View {
     var body: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 12) {
+                if dynamicTypeSize.isAccessibilitySize {
+                    Text("Discoveries")
+                        .font(.headline)
+                        .fixedSize(horizontal: false, vertical: true)
+                        .accessibilityAddTraits(.isHeader)
+                        .accessibilityIdentifier("watch.discovery.heading")
+                }
                 if selected.selectedEventID != nil {
                     selectedSummary
                 }
@@ -76,7 +84,7 @@ struct WatchDiscoverStoriesView: View {
             .padding(.horizontal, 6)
         }
         .accessibilityIdentifier("watch.discovery.list")
-        .navigationTitle("Discoveries")
+        .navigationTitle(dynamicTypeSize.isAccessibilitySize ? "" : "Discoveries")
         .toolbar {
             ToolbarItem(placement: .cancellationAction) {
                 Button(selected.selectedEventID == nil ? "Games" : "Your game", action: close)
