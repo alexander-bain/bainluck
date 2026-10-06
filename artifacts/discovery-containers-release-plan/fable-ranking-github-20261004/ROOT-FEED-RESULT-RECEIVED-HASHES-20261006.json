@@ -1,0 +1,26 @@
+{
+  "FABLE-FEED-TRIAL-RESULT-20261006.md": {
+    "bytes": 5926,
+    "sha256": "f00d73fc3d0970d527d3d528861ce486fc15d02b14e90e2f37b51c2be31061f2"
+  },
+  "fable-evidence-20261006-feed-result/MANIFEST.json": {
+    "bytes": 512,
+    "sha256": "aa8f54873feaed401027f7a51c42dbbacb6ec9181f7abec664d83a755873ba33"
+  },
+  "fable-evidence-20261006-feed-result/feed-trial-signals-and-grades.csv": {
+    "bytes": 2549,
+    "sha256": "3063ff7baf95cbf06bd3373f8f8fa138e507fec08eb2150059e0c3628fcd1158"
+  },
+  "fable-evidence-20261006-feed-result/grades-export.json": {
+    "bytes": 2943,
+    "sha256": "2a7da269c455eef384c93788a3dcce574d51ecd4d75cc0f95b344af6b4873062"
+  },
+  "fable-evidence-20261006-feed-result/meta-export.json": {
+    "bytes": 199,
+    "sha256": "b18f66f20636c770f74b5543b759a73814f56df9e13cc60463705dfc36f004f1"
+  },
+  "fable-evidence-20261006-feed-result/signals-export.json": {
+    "bytes": 7040,
+    "sha256": "2e8ed8c95acddec9398ff50232790d7a2aa6ac57f4339bcf606e72d4a0f210e7"
+  }
+}
