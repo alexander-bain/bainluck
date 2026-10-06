@@ -16,6 +16,7 @@ import time
 from datetime import datetime, timezone
 
 from app.utils.kalshi_market_status import is_terminal
+from app.tasks.ws_consumer_sessions import owns_consumer_sessions  # #2471
 from app.utils.market_quote_push import queue_market_change
 from app.utils.market_settlement import settled_values
 
@@ -77,7 +78,8 @@ def _kalshi_slate_event_window():
     )
 
 
-async def _run_kalshi_ws_consumer():
+@owns_consumer_sessions("kalshi")
+async def _run_kalshi_ws_consumer(*, sessions):
     """Main WebSocket consumer loop.
 
     1. Load linked Kalshi market tickers from DB
@@ -92,7 +94,6 @@ async def _run_kalshi_ws_consumer():
         Event, FuturesMarket, FuturesOutcome,
     )
     from app.services.kalshi_ws import KalshiWebSocket
-    from app.tasks.base import get_task_session
     from app.tasks.kalshi import _kalshi_yes_probability  # #8753
     from app.tasks.live_blend_refresh import (
         LiveBlendRefresher, adopt_handed_off, event_ids_for_outcomes,
@@ -115,6 +116,11 @@ async def _run_kalshi_ws_consumer():
     from app.utils.price_change_stamp import price_changed_at_value
     from app.utils.price_change_stamp import quote_moved_column  # #9484
     from app.utils.resolution_authority import AUTHORITATIVE_SOURCES
+
+    # #2471: one engine for this run, a fresh session per operation; the
+    # decorator disposes it after the final drain. Same call shape as the
+    # task factory, so every site below is unchanged.
+    get_task_session = sessions.session
 
     api_key_id = os.getenv("KALSHI_API_KEY_ID")
     has_key = os.getenv("KALSHI_RSA_PRIVATE_KEY") or os.getenv("KALSHI_PRIVATE_KEY_PATH")
@@ -317,7 +323,9 @@ async def _run_kalshi_ws_consumer():
     # the flush read through these same objects.
     open_contract_ids: dict[str, tuple[int, int]] = {}
     open_contract_outcome_ids: set[int] = set()
-    blend_refresher = LiveBlendRefresher("kalshi")
+    blend_refresher = LiveBlendRefresher(
+        "kalshi", session_factory=get_task_session,  # #2471
+    )
     # #9462 review: stamps the previous run still owed when it recycled. Its
     # prices are already stored; the first flush below stamps them.
     stats["blend_pending_adopted"] = adopt_handed_off(blend_refresher)
