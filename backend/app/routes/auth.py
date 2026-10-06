@@ -16,6 +16,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
 from app.dependencies.auth import get_current_user
+from app.models.activitykit import ActivityKitRegistration
 from app.models.models import (
     BugReport,
     DeviceToken,
@@ -51,6 +52,8 @@ router = APIRouter()
 #: keys that have no ON DELETE CASCADE (user_favorites, device_tokens,
 #: oscars_pool_members) are gone before the user row is removed.
 _ACCOUNT_OWNED_ROWS = [
+    # Account-owned push credentials; delivery state cascades from this identity.
+    (ActivityKitRegistration, ActivityKitRegistration.user_id),
     (UserPreference, UserPreference.user_id),
     (UserPin, UserPin.user_id),
     (UserFavorite, UserFavorite.user_id),

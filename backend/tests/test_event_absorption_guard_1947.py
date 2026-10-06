@@ -199,6 +199,10 @@ class _Session:
         if "DELETE FROM events" in sql:
             self.deletes.append(params)
             return _Result([])
+        if sql.startswith("SELECT activity_id FROM activitykit_registrations"):
+            return _Result([])
+        if sql.startswith("SELECT id FROM events WHERE id IN"):
+            return _Result([self._live[i] for i in (params["keep"], params["orphan"]) if i in self._live])
         if "FOR UPDATE" in sql:
             wanted = {params["keep_id"], params["orphan_id"]}
             return _Result([self._live[i] for i in wanted if i in self._live])

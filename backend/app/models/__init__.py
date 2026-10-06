@@ -1,4 +1,5 @@
 """Database models."""
+
 from app.models.models import (
     Sport,
     Team,
@@ -34,7 +35,13 @@ from app.models.models import (
     MarketMatchReceipt,
 )
 
+from app.models.activitykit import ActivityKitRegistration
+
+from .activitykit_delivery import ActivityKitDelivery
+
 __all__ = [
+    "ActivityKitDelivery",
+    "ActivityKitRegistration",
     "Sport",
     "SettlementCapture",
     "EventProviderAnchor",

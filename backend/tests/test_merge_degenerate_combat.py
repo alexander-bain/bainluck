@@ -293,3 +293,34 @@ async def test_a_refusal_does_not_stop_the_scan(monkeypatch):
     assert out["merged"] == 1, "the healthy row behind the refusal was dropped"
     assert out["refused_sample"][0]["id"] == 9001
     assert out["refused_sample"][0]["anchors"] == ["external_id"]
+
+
+@pytest.mark.asyncio
+async def test_activity_binding_refusal_rolls_back_pair_and_keeps_next_merge(monkeypatch):
+    from app.utils.event_child_repoint import ImmutableActivityBindingRefused
+
+    rows = [_degen(1, 42, "A"), _degen(2, 42, "B")]
+    candidates = [
+        [SimpleNamespace(id=10, home_team_name="A", away_team_name="C")],
+        [SimpleNamespace(id=20, home_team_name="B", away_team_name="D")],
+    ]
+    session = _mock_session(rows, candidates)
+    session.execute.side_effect = [
+        _result(rows), _result(candidates[0]), _result(candidates[1]), _result([])
+    ]
+    _patch_session(monkeypatch, session)
+    repoint = AsyncMock(side_effect=[
+        ImmutableActivityBindingRefused("immutable ActivityKit"),
+        {"repointed": {}, "dropped_as_duplicate": {}, "markets": []},
+    ])
+    monkeypatch.setattr("app.tasks.sports.repoint_event_children", repoint)
+    monkeypatch.setattr("app.tasks.sports.record_twin_merge_receipts", AsyncMock(return_value=0))
+
+    out = await _merge_degenerate_combat_events_impl(dry_run=False)
+    assert out["merged"] == 1
+    assert out["refused_activity_binding"] == 1
+    assert out["sample"] == [{"orphan": 2, "keep": 20, "fighter": "B"}]
+    session.rollback.assert_awaited_once()
+    session.commit.assert_awaited_once()
+    deletes = [call for call in session.execute.call_args_list if str(call.args[0]).startswith("DELETE")]
+    assert len(deletes) == 1 and deletes[0].args[1]["orphan"] == 2

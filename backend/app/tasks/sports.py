@@ -13,7 +13,7 @@ from app.models import Sport, Event, OddsSnapshot, Team
 from app.services.event_registry import ODDS_LISTING_IS_NOT_A_DEREFERENCE
 from app.services.odds_api import OddsAPIService
 from app.tasks.base import get_task_session, run_async
-from app.utils.event_child_repoint import repoint_event_children
+from app.utils.event_child_repoint import ImmutableActivityBindingRefused, repoint_event_children
 from app.utils.match_receipts import record_twin_merge_receipts
 from app.utils.name_normalization import names_match as _canonical_names_match
 from app.utils.espn_candidate_selection import select_espn_candidate
@@ -1147,6 +1147,7 @@ async def _merge_degenerate_combat_events_impl(dry_run: bool = True, limit: int 
         skipped_no_match = 0
         skipped_ambiguous = 0
         refused_anchored = 0
+        refused_activity_binding = 0
         refused_pairs = []
         merged_pairs = []
         child_moves: dict[str, dict[str, int]] = {
@@ -1254,9 +1255,16 @@ async def _merge_degenerate_combat_events_impl(dry_run: bool = True, limit: int 
             merged_pairs.append({"orphan": orphan_id, "keep": keep_id, "fighter": fighter})
 
             if not dry_run:
-                moved = await repoint_event_children(
-                    session, keep_id=keep_id, orphan_id=orphan_id
-                )
+                try:
+                    moved = await repoint_event_children(
+                        session, keep_id=keep_id, orphan_id=orphan_id
+                    )
+                except ImmutableActivityBindingRefused:
+                    await session.rollback()
+                    refused_activity_binding += 1
+                    merged_pairs.pop()
+                    logger.warning("Combat merge refused immutable ActivityKit event %s", orphan_id)
+                    continue
                 # Popped before folding: `markets` is a list of rows, not a
                 # per-table count, and _merge_child_moves takes counts.
                 moved_markets = moved.pop("markets", [])
@@ -1292,6 +1300,7 @@ async def _merge_degenerate_combat_events_impl(dry_run: bool = True, limit: int 
             # with equal display labels — which is a bug worth seeing, and was
             # invisible while the rail simply deleted them (#1801 R6→R7).
             "refused_anchored": refused_anchored,
+            "refused_activity_binding": refused_activity_binding,
             "refused_sample": refused_pairs[:15],
             "sample": merged_pairs[:15],
             # R4: see the same two keys on _merge_duplicate_events_impl.

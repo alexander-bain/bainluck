@@ -132,6 +132,10 @@ def event_fk_tables() -> tuple[str, ...]:
     return derive_event_child_tables()
 
 
+class ImmutableActivityBindingRefused(RuntimeError):
+    """The event still owns an ActivityKit identity that cannot be retargeted."""
+
+
 async def repoint_event_children(
     session, *, keep_id: int, orphan_id: int
 ) -> dict[str, dict[str, int]]:
@@ -158,11 +162,34 @@ async def repoint_event_children(
     AFTER its commit. Nothing is written here: a merge must not be able to fail on
     its own bookkeeping.
     """
+    # Activity attributes carry the original event id, and registration CAS
+    # rejects event changes. A merge cannot repoint that binding or cascade its
+    # credential/state away. Refuse BEFORE any child write. Lock the parents here
+    # as well: the combat merge caller does not use the absorption guard. The
+    # orphan lock excludes concurrent FK registration inserts until commit.
+    if "activitykit_registrations" in event_fk_tables():
+        await session.execute(
+            sa_text("SELECT id FROM events WHERE id IN (:keep, :orphan) ORDER BY id FOR UPDATE"),
+            {"keep": keep_id, "orphan": orphan_id},
+        )
+        bound = await session.execute(
+            sa_text(
+                "SELECT activity_id FROM activitykit_registrations WHERE event_id = :orphan LIMIT 1 FOR UPDATE"
+            ),
+            {"orphan": orphan_id},
+        )
+        if bound.all():
+            raise ImmutableActivityBindingRefused(
+                "Event has an immutable ActivityKit binding"
+            )
+
     repointed: dict[str, int] = {}
     dropped: dict[str, int] = {}
     markets: list[dict[str, Any]] = []
 
     for table in event_fk_tables():
+        if table == "activitykit_registrations":
+            continue
         if table == "futures_markets":
             markets = _rows(
                 await session.execute(

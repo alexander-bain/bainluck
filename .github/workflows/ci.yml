@@ -6852,6 +6852,42 @@ jobs:
             exit 1
           }
 
+      - name: "#10542 ActivityKit registration ownership (real Postgres)"
+        # Random disposable schema; independent transactions exercise ownership CAS.
+        if: matrix.group == 'isolated'
+        run: |
+          python -m pytest tests/integration/test_activitykit_registration_pg.py \
+            -v -rs > /tmp/activitykit-registration10542.txt 2>&1 || {
+            cat /tmp/activitykit-registration10542.txt
+            exit 1
+          }
+          cat /tmp/activitykit-registration10542.txt
+          if grep -qiE "[0-9]+ skipped" /tmp/activitykit-registration10542.txt; then
+            echo "::error::#10542 registration ownership gate skipped"
+            exit 1
+          fi
+          grep -qE "[^0-9]5 passed([,[:space:]]|$)" /tmp/activitykit-registration10542.txt || {
+            echo "::error::#10542 registration ownership gate did not run all five cases"
+            exit 1
+          }
+
+      - name: "#10556 durable ActivityKit reservations (real Postgres)"
+        if: matrix.group == 'isolated'
+        run: |
+          python -m pytest tests/integration/test_activitykit_worker_pg.py -v -rs > /tmp/activitykit-worker10556.txt 2>&1 || {
+            cat /tmp/activitykit-worker10556.txt
+            exit 1
+          }
+          cat /tmp/activitykit-worker10556.txt
+          if grep -qiE "[0-9]+ skipped" /tmp/activitykit-worker10556.txt; then
+            echo "::error::#10556 durable worker gate skipped"
+            exit 1
+          fi
+          grep -qE "[^0-9]17 passed([,[:space:]]|$)" /tmp/activitykit-worker10556.txt || {
+            echo "::error::#10556 durable worker gate did not run all seventeen cases"
+            exit 1
+          }
+
   # The existing required context stays non-matrix. A failed, cancelled or
   # unexpectedly skipped worker must never satisfy branch protection as green.
   # Frontend-only candidates retain the original intentional job-level skip.
