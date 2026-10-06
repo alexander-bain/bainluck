@@ -41,7 +41,7 @@ final class PickerReturnJourneyTests: XCTestCase {
         try openPicker(in: app)
         let error = app.staticTexts["watch.picker-error"]
         XCTAssertTrue(error.waitForExistence(timeout: 15))
-        XCTAssertEqual(error.label, "Couldn't refresh available games. Try again.")
+        XCTAssertEqual(error.label, "Offline. Connect to the internet, then refresh games.")
         try reveal(error, in: app)
         capture(app, "Offline picker failure retains explicit return")
         try returnToGame(in: app)
@@ -55,6 +55,57 @@ final class PickerReturnJourneyTests: XCTestCase {
         try reveal(probability, in: app)
         capture(app, "Offline return preserves named Giants reading")
         print("WATCH_UI_PICKER_RETURN=PASS")
+    }
+
+    @MainActor
+    func testNetworkFailureGuidanceRetainsChoicesAndRecoversSelection() throws {
+        continueAfterFailure = false
+        let app = XCUIApplication()
+        defer { app.terminate() }
+        for (scenario, message) in [
+            ("offline", "Offline. Connect to the internet, then refresh games."),
+            ("interrupted", "Connection interrupted. Refresh games to try again."),
+            ("timeout", "Connection timed out. Refresh games to try again.")
+        ] {
+            app.launchEnvironment = ["BAINLUCK_WATCH_UI_TEST": "1",
+                "BAINLUCK_WATCH_UI_SUITE": UUID().uuidString, "BAINLUCK_WATCH_UI_RESET": "1",
+                "BAINLUCK_WATCH_UI_PICKER_NETWORK": scenario]
+            app.launch()
+            let first = app.buttons["watch.pick.101"]
+            XCTAssertTrue(first.waitForExistence(timeout: 20))
+            try reveal(first, in: app)
+            first.tap()
+            let probability = app.descendants(matching: .any)["watch.home-probability"].firstMatch
+            XCTAssertTrue(probability.waitForExistence(timeout: 15) && probability.label.contains("San Francisco Giants"))
+            try openPicker(in: app)
+            let error = app.staticTexts["watch.picker-error"]
+            XCTAssertTrue(error.waitForExistence(timeout: 15))
+            XCTAssertEqual(error.label, message)
+            try reveal(error, in: app)
+            capture(app, "Picker \(scenario) complete recovery guidance")
+            let retained = app.buttons["watch.pick.202"]
+            XCTAssertTrue(retained.exists && retained.label.contains("Kansas City Chiefs") && retained.label.contains("Buffalo Bills"))
+            XCTAssertTrue(app.staticTexts["Showing the previously received list."].exists)
+            try reveal(retained, in: app)
+            capture(app, "Picker \(scenario) retains named previously received option")
+            let refresh = app.buttons["Refresh games"]
+            try reveal(refresh, in: app)
+            XCTAssertTrue(refresh.isEnabled)
+            refresh.tap()
+            expectation(for: NSPredicate(format: "exists == false"), evaluatedWith: error)
+            waitForExpectations(timeout: 15)
+            XCTAssertFalse(app.staticTexts["Showing the previously received list."].exists)
+            XCTAssertTrue(retained.waitForExistence(timeout: 15))
+            try reveal(retained, in: app)
+            retained.tap()
+            XCTAssertTrue(probability.waitForExistence(timeout: 15))
+            expectation(for: NSPredicate(format: "label CONTAINS %@ AND label CONTAINS %@", "Buffalo Bills", "55%"), evaluatedWith: probability)
+            waitForExpectations(timeout: 15)
+            try reveal(probability, in: app)
+            capture(app, "Picker \(scenario) successful refresh selects named Bills reading")
+            print("WATCH_UI_PICKER_NETWORK_\(scenario.uppercased())=PASS")
+            app.terminate()
+        }
     }
 
     @MainActor
