@@ -38,7 +38,8 @@ attached, and one it already held — is marked ``llm_importance = 'playoff'``,
 the rule the ESPN game-day pass applies from ``season.type = 3``, and like that
 rule it never downgrades ``'championship'``. Without this a Game 2 that StatPal
 created a day early carries the LLM classifier's ``'regular_season'`` fallback
-until it reaches today's board, so its card reads as a regular-season game
+(or ``'unknown'``, #10625's 15324864 — the mark rewrites any value but the two
+above) until it reaches today's board, so its card reads as a regular-season game
 ("PHI 88-74 · ATL 94-68") instead of "Playoff game". It is one Core ``UPDATE``
 per league, scoped by league and ESPN id, and idempotent: a row the metadata
 enrichment re-labels before its first enrichment (it writes importance on any

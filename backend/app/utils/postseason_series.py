@@ -17,16 +17,23 @@ stands. Measured on ``baseball/mlb/scoreboard?dates=20260930`` and ``20261001``,
                                         "competitors": [{"wins": 0}, {"wins": 0}]}
 
 **The rule is arithmetic, never the label.** Game ``k`` of a best-of-``N`` is
-certain when ``k`` is at most the wins needed (``N // 2 + 1``) — nobody can have
-clinched before it — or when it is the NEXT game of a series nobody has won yet.
+certain when nobody can have clinched before it: the leader, winning every game
+still to be played before it, stays short of the wins needed (``N // 2 + 1``)::
+
+    max(wins) + (k - 1 - games played) < N // 2 + 1
+
+Three cases of that one inequality, each its own reason: ``k`` at most the wins
+needed (true at any standings), ``k`` the NEXT game of a series nobody has won
+yet, and a later game the leader still cannot reach in time (#10625: Game 4 of
+an LDS at 1–1 — Game 3 makes it 2–1, and Game 4 is played whoever wins).
 ESPN's "If Necessary" is the schedule's label, and it can outlive the moment the
 game became certain (a Wild Card at 1–1), so it is not read at all.
 
 **Stale standings fail safe.** ESPN's win counts only ever lag the games. A
 lagging count can make a game that already became certain look uncertain (we
-create it an hour later), but never the reverse: the "next game" arm fires only
-at ``k == games played + 1``, and a game that number already exists or is
-certain.
+create it an hour later), but never the reverse: every game played but not yet
+counted adds at most one to the leader and exactly one to games played, so the
+left side read off a lagging count is never below the true one.
 
 Pure: imports nothing from the app, so both the ESPN parser and the pass that
 creates rows can read it.
@@ -128,10 +135,16 @@ def certain_to_be_played(series: Optional[PlayoffSeries]) -> tuple[bool, str]:
         return False, "no_completed_flag"
 
     needed = n // 2 + 1
-    if series.completed or max(series.wins) >= needed:
+    leader, played = max(series.wins), sum(series.wins)
+    if series.completed or leader >= needed:
         return False, "series_over"
     if k <= needed:
         return True, "within_wins_needed"
-    if k == sum(series.wins) + 1:
+    if k == played + 1:
         return True, "next_game_of_open_series"
+    # A later game: the leader would have to win every game before it to
+    # clinch first (#10625). A number at or below the games counted is a game
+    # the standings say is already played — not this arm's to vouch for.
+    if k > played and leader + (k - 1 - played) < needed:
+        return True, "leader_cannot_clinch_before_it"
     return False, "if_necessary"
