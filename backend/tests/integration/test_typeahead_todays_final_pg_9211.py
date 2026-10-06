@@ -7,12 +7,13 @@ futures. The result was not in the list — every arm selects `live`/`scheduled`
 and the or-LAST arm is short-circuited whenever a next fixture exists.
 
 THE TARGET: the next game, then today's final directly behind it (D107: "next
-before last"). A final from before the window stays out; #10186 opened the
+before last"). #10581 falls back to one latest result outside the recent window.
+#10186 opened the
 window at the earlier of Eastern midnight and now - 18 h, so last night's game
 is offered the morning after.
-THE STRAWMAN sets the new arm's limit to 0: the dropdown then reproduces the
+THE STRAWMAN disables the complete final selector: the dropdown reproduces the
 production list exactly (no final), so the target case testifies.
-THE CONTROL is a club with no game today: its suggestions are identical with and
+THE CONTROL has no final in the supported lookback: suggestions are identical with and
 without the arm.
 THE LIVE CASE is a doubleheader: the game being played leads, the game finished
 earlier today follows it.
@@ -104,6 +105,8 @@ async def _seed(session):
             ("Boston Red Sox", mlb, "BOS"),
             ("New York Yankees", mlb, "NYY"),
             ("Tampa Bay Rays", mlb, "TB"),
+            ("Milwaukee Brewers", mlb, "MIL"),
+            ("San Diego Padres", mlb, "SD"),
         ]
     }
     session.add_all(teams.values())
@@ -143,7 +146,39 @@ async def _seed(session):
         _game(mlb, "New York Yankees", "Boston Red Sox", now - timedelta(minutes=30), "live",
               home_score=1, away_score=0),
     ])
+    # #10581 controlled route fixture: identity/result are retained; kickoff is
+    # deliberately synthetic, outside any recent window, not the actual game time.
+    session.add_all(
+        [
+            _game(
+                mlb,
+                "Milwaukee Brewers",
+                "San Diego Padres",
+                now + timedelta(hours=22),
+                "scheduled",
+            ),
+            _game(
+                mlb,
+                "San Diego Padres",
+                "Milwaukee Brewers",
+                now - timedelta(days=2),
+                "completed",
+                id=15323985,
+                home_score=4,
+                away_score=3,
+            ),
+        ]
+    )
+    await session.flush()
+    final = await session.get(Event, 15323985)
+    assert final.home_team_id == teams["Milwaukee Brewers"].id
+    assert final.away_team_id == teams["San Diego Padres"].id
+    assert final.home_team_id is not None and final.away_team_id is not None
     await session.commit()
+    return {
+        "brewers": teams["Milwaukee Brewers"].id,
+        "padres": teams["San Diego Padres"].id,
+    }
 
 
 @pytest.fixture
@@ -166,7 +201,7 @@ async def typeahead():
         await conn.run_sync(Base.metadata.create_all)
     maker = async_sessionmaker(engine, expire_on_commit=False)
     async with maker() as session:
-        await _seed(session)
+        seeded_ids = await _seed(session)
 
     async def _override():
         async with maker() as session:
@@ -190,6 +225,7 @@ async def typeahead():
                     assert resp.status_code == 200, f"{q!r} -> HTTP {resp.status_code}"
                     return resp.json()
 
+                _do.seeded_ids = seeded_ids
                 yield _do
     finally:
         app.dependency_overrides.clear()
@@ -216,52 +252,95 @@ async def test_the_strawman_reproduces_production(typeahead, monkeypatch):
     """With the arm fetching nothing, the dropdown is production's list."""
     from app.routes import events as events_module
 
-    monkeypatch.setattr(events_module, "_LEAD_TEAM_TODAYS_FINAL_LIMIT", 0)
+    async def no_finals(*args):
+        return []
+
+    monkeypatch.setattr(
+        events_module, "_lead_team_finals_with_latest_fallback", no_finals
+    )
     events = _events(await typeahead("chiefs"))
     assert TODAYS_FINAL not in events, events
     assert NEXT in events, events
 
 
-async def test_a_club_with_no_game_today_is_unchanged(typeahead, monkeypatch):
-    """The control: `steelers` played yesterday. Same list with and without the arm."""
+async def test_a_club_without_a_supported_final_is_unchanged(typeahead, monkeypatch):
+    """Raiders have a next fixture but no final; the complete selector is inert."""
     from app.routes import events as events_module
 
-    armed = await typeahead("steelers", debug_timing=1)
-    assert "lead_team_todays_final_query" in armed["debug_timing"], (
-        "the control must exercise the arm, or it testifies to nothing"
+    armed = await typeahead("raiders", debug_timing=1)
+    assert "lead_team_todays_final_query" in armed["debug_timing"]
+
+    async def no_finals(*args):
+        return []
+
+    monkeypatch.setattr(
+        events_module, "_lead_team_finals_with_latest_fallback", no_finals
     )
-    monkeypatch.setattr(events_module, "_LEAD_TEAM_TODAYS_FINAL_LIMIT", 0)
-    unarmed = await typeahead("steelers")
+    unarmed = await typeahead("raiders")
     assert [r["text"] for r in armed["suggestions"]] == [
         r["text"] for r in unarmed["suggestions"]
     ]
-    assert STEELERS_NEXT in _events(armed), _events(armed)
+    assert NEXT in _events(armed)
 
 
 STEELERS_LAST_NIGHT = "Cincinnati Bengals at Pittsburgh Steelers"
 
 
-async def test_last_nights_final_is_offered_the_morning_after(typeahead, monkeypatch):
-    """#10186: production 2026-10-02 09:55Z, `steelers` the morning after TNF
-    offered the next game and no result. The Steelers' seeded final kicked off
-    2 h before the window opens, which is always before Eastern midnight, so
-    the day-only rule never offers it. Widen the lookback, RELATIVE to that
-    kickoff (no branch on the hour, gotcha #44), and the dropdown offers it
-    directly behind the next game, through the shared window."""
+async def test_latest_final_beyond_the_recent_window_is_offered(typeahead, monkeypatch):
+    """#10581 extends the old #10186 recent-only rule without widening it."""
     from app.routes import events as events_module
 
-    now = datetime.now(timezone.utc)
-    kickoff = events_module._recent_final_window_start(now) - timedelta(hours=2)
-    before = _events(await typeahead("steelers"))
-    assert STEELERS_LAST_NIGHT not in before, before
-    monkeypatch.setattr(
-        events_module,
-        "_RECENT_FINAL_LOOKBACK",
-        now - kickoff + timedelta(minutes=30),
-    )
+    async def recent_only(db, team_id, name, now):
+        return (
+            (
+                await db.execute(
+                    events_module._lead_team_todays_final_query(team_id, name, now)
+                )
+            )
+            .scalars()
+            .all()
+        )
+
     events = _events(await typeahead("steelers"))
-    assert STEELERS_LAST_NIGHT in events, events
-    assert events.index(STEELERS_LAST_NIGHT) == events.index(STEELERS_NEXT) + 1, events
+    assert STEELERS_LAST_NIGHT in events
+    assert events.index(STEELERS_LAST_NIGHT) == events.index(STEELERS_NEXT) + 1
+    monkeypatch.setattr(
+        events_module, "_lead_team_finals_with_latest_fallback", recent_only
+    )
+    before = _events(await typeahead("steelers"))
+    assert STEELERS_LAST_NIGHT not in before
+    assert STEELERS_NEXT in before
+
+
+async def test_named_brewers_final_survives_final_http_composition(typeahead, monkeypatch):
+    """Real HTTP+PG, exact screenshot query; no installed-phone cause claim."""
+    from app.routes import events as events_module
+
+    reached = []
+    selector = events_module._lead_team_finals_with_latest_fallback
+
+    async def record_resolved_team(db, team_id, team_name, now):
+        reached.append((team_id, team_name))
+        return await selector(db, team_id, team_name, now)
+
+    monkeypatch.setattr(
+        events_module, "_lead_team_finals_with_latest_fallback", record_resolved_team
+    )
+    body = await typeahead("brewers")
+    assert reached == [(typeahead.seeded_ids["brewers"], "Milwaukee Brewers")]
+    rows = body["suggestions"]
+    team_rows = [row for row in rows if row["type"] == "team" and row["text"] == "Milwaukee Brewers"]
+    assert len(team_rows) == 1
+    assert team_rows[0]["team_id"] == typeahead.seeded_ids["brewers"]
+    next_title = "Milwaukee Brewers at San Diego Padres"
+    final_title = "San Diego Padres at Milwaukee Brewers"
+    events = _events(body)
+    assert next_title in events and final_title in events, events
+    assert events.index(final_title) == events.index(next_title) + 1
+    final = next(row for row in rows if row["text"] == final_title)
+    assert final["status"] == "completed"
+    assert final["event_id"] == 15323985
+    assert (final["away_score"], final["home_score"]) == (3, 4)
 
 
 async def test_a_live_game_leads_and_the_game_finished_today_follows(typeahead):
