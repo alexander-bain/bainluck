@@ -659,6 +659,57 @@ def heartbeat_deadline(max_gap_s: float, sample_interval_s: float) -> float:
     return max(1.0, float(max_gap_s) - float(sample_interval_s))
 
 
+#: #10090 — float tolerance on the per-event floor when it is read on the
+#: flush-start clock. Consecutive starts are `period` apart by construction
+#: (`run_flush_cadence`), but `(t + p) - t` can come back short of `p` at
+#: dyno-uptime magnitudes when `p` is not a power of two (`WS_PRICE_FLUSH_SECONDS`
+#: is an env knob: t = 1,000,000.1, p = 0.1 gives 0.09999999997671694), which
+#: would throttle the very flush the floor is meant to admit. A microsecond is
+#: far below any real cadence.
+FLUSH_CLOCK_SLACK_S = 1e-6
+
+
+async def run_flush_cadence(flush, period: float) -> None:
+    """#10090 — start a flush every ``period`` seconds, START to START.
+
+    WHY. Both sockets used to `sleep(PRICE_FLUSH_SECONDS)` AFTER each flush
+    finished, so the real cycle was the period PLUS the flush's own work, and a
+    tick arriving just after a batch was taken waited for both. Production
+    2026-10-06 16:01:37→16:02:37Z, the Kalshi stats line: 29→37 flushes in 60 s
+    with ~4,600 updates buffered in that minute — one flush per ~7.5 s on a 2 s
+    setting, i.e. ~5.5 s of work plus the 2 s sleep on every cycle. The work is
+    not removed here; the sleep stops being added on top of it.
+
+    WHAT IS PRESERVED.
+
+    * One flush at a time. The next starts only after the current one returns,
+      so a slow flush makes the next start late — never two in flight — and the
+      buffer keeps coalescing per outcome meanwhile (backpressure unchanged).
+    * The ceiling. Never more than one flush per ``period``: the configured
+      cadence is the bound, as it always was. A flush that takes longer than
+      ``period`` is followed by the next at once (rate ``1/work``, not more).
+    * The retry interval. A flush that reports failure (returns ``False``) waits
+      a full ``period`` from when it FAILED, exactly as before — a database in
+      trouble is not asked again any sooner.
+    * The first flush is one ``period`` after the loop starts, as before.
+
+    ``flush`` is called with the flush's start on the refresher's clock
+    (`_mono`), which the refresher uses for its per-event floor: starts are at
+    least ``period`` apart, so a floor equal to the period admits every flush,
+    whatever each flush's write happened to cost before its refresh ran.
+    """
+    import asyncio
+
+    due = _mono() + period
+    while True:
+        wait = due - _mono()
+        if wait > 0:
+            await asyncio.sleep(wait)
+        started = max(due, _mono())
+        ok = await flush(started)
+        due = started + period if ok is not False else _mono() + period
+
+
 class LiveBlendRefresher:
     """Stateful per-source refresher, owned by one WS consumer run.
 
@@ -762,7 +813,9 @@ class LiveBlendRefresher:
                 return False
             del self._failed_hold_until[event_id]
         last = self._last_refresh_at.get(event_id)
-        return last is None or (now - last) >= self.min_refresh_interval_s
+        return last is None or (
+            (now - last) >= self.min_refresh_interval_s - FLUSH_CLOCK_SLACK_S
+        )
 
     # ── inversion orientation, cached ────────────────────────────────────────
 
@@ -801,9 +854,23 @@ class LiveBlendRefresher:
 
     # ── the refresh itself ───────────────────────────────────────────────────
 
-    async def refresh(self, event_ids: Iterable[int]) -> dict[str, int]:
-        """Recompute and stamp the blend for these events. Never raises."""
+    async def refresh(
+        self, event_ids: Iterable[int], *, flush_started: Optional[float] = None,
+    ) -> dict[str, int]:
+        """Recompute and stamp the blend for these events. Never raises.
+
+        #10090 — ``flush_started`` is the socket flush's start on `_mono`
+        (`run_flush_cadence`). When given, the per-event floor, the failed-retry
+        hold and the batch's own interval bookkeeping read THAT clock rather
+        than the moment this call happens to run. Flush starts are a period
+        apart; refresh calls are not — they trail their flush's write by
+        whatever it cost, so a slow write followed by a fast one put two
+        refreshes under the floor and the second flush's committed price waited
+        a whole extra flush for its stamp. Receipts keep the real clock: they
+        time the hold, not the schedule. Omitted, behaviour is unchanged.
+        """
         now = _mono()
+        clock = now if flush_started is None else flush_started
         receipts = self.receipts
         staged, stored_wall = (
             self._receipt_call(receipts.take_staged) if receipts is not None else None
@@ -812,7 +879,7 @@ class LiveBlendRefresher:
         deferred = set(self._throttle_deferred)
         fresh = set(event_ids)
         wanted = fresh | retry | deferred
-        due = [eid for eid in wanted if self._due(eid, now)]
+        due = [eid for eid in wanted if self._due(eid, clock)]
         # A queued retry leaves the set only when a batch actually takes it.
         self._lock_retry = retry.difference(due)
         # A throttled event is owed the price it just had written, so it waits
@@ -830,7 +897,7 @@ class LiveBlendRefresher:
 
         self._dispositions = {}
         try:
-            await self._refresh_batch(due, now)
+            await self._refresh_batch(due, clock)
         except Exception as exc:
             self.stats["errors"] += 1
             logger.exception(
@@ -845,7 +912,7 @@ class LiveBlendRefresher:
             self._throttle_deferred.update(set(due).difference(self._lock_retry))
             for event_id in failed:
                 self._failed_hold_until[event_id] = (
-                    now + self.failed_retry_interval_s
+                    clock + self.failed_retry_interval_s
                 )
             for event_id in retry.intersection(due):
                 self._lock_retry.add(event_id)
@@ -876,7 +943,9 @@ class LiveBlendRefresher:
             )
             return None
 
-    async def refresh_pending(self) -> dict[str, int]:
+    async def refresh_pending(
+        self, *, flush_started: Optional[float] = None,
+    ) -> dict[str, int]:
         """#837 tail — stamp only the deferred events. Never raises.
 
         For the socket's flush when it has no new prices to write: `refresh`
@@ -888,7 +957,7 @@ class LiveBlendRefresher:
         """
         if not self._lock_retry and not self._throttle_deferred:
             return self.stats
-        return await self.refresh(())
+        return await self.refresh((), flush_started=flush_started)
 
     def pending_event_ids(self) -> frozenset:
         """Every event this refresher still owes a stamp (#9462 review)."""

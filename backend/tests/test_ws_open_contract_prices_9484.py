@@ -222,10 +222,10 @@ class _NoopRefresher:
     def __init__(self, *_a, **_kw):
         pass
 
-    async def refresh(self, event_ids):
+    async def refresh(self, event_ids, **_kw):
         return None
 
-    async def refresh_pending(self):
+    async def refresh_pending(self, **_kw):
         return None
 
     async def publish_market_changes(self, _session):
@@ -475,7 +475,7 @@ def _recording_refresher():
     asked: list[set[int]] = []
 
     class _Recording(_NoopRefresher):
-        async def refresh(self, event_ids):
+        async def refresh(self, event_ids, **_kw):
             asked.append(set(event_ids))
 
     return _Recording, asked
