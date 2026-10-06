@@ -20,6 +20,12 @@ enum AnalyticsService {
     /// one place an EVENT is emitted, `identify` is the one place an IDENTITY
     /// is set, and both consult `TelemetryConsent` first.
     nonisolated static func log(_ name: String, _ parameters: [String: Any]? = nil) {
+        #if DEBUG
+        // Explicit DEBUG-only local timing capture for the agent-owned Sports
+        // acceptance run. Its separate typed allowlist cannot emit user data;
+        // analytics transmission still requires the unchanged consent boundary.
+        SportsLoadLocalTrace.capture(name, parameters)
+        #endif
         guard TelemetryConsent.shared.isGranted else { return }
         guard let sanitized = AnalyticsPrivacy.sanitize(event: name, parameters: parameters) else {
             return
