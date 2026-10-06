@@ -644,8 +644,11 @@ def test_the_live_pass_stamps_with_each_boards_own_read_clock():
     board returns, and handed down."""
     src = (BACKEND / "app/tasks/espn_sync.py").read_text()
     fetch = src.index("events = await espn.get_scoreboard(key)")
-    bound = src.index("espn_read_at[key] = datetime.now(timezone.utc)")
+    # #10617: boards are read two at a time, so the clock is taken inside the
+    # read (`_fetch_featured_boards`) as that board returns, and handed back.
+    bound = src.index("read_at = datetime.now(timezone.utc) if events is not None")
     assert fetch < bound < fetch + 1200
+    assert src.count("espn_read_at[key] = read_at") == 1
 
     tree = ast.parse(src)
     calls = [
