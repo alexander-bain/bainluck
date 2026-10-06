@@ -425,3 +425,53 @@ class TestTheLiveSetSurvivesARecycle:
         clock.t = 125.0
         nxt.roll()
         assert [x["accepted"] for x in _lines(caplog)] == ["0", "1"]
+
+
+class TestCoverageNeverClaimsUnwatchedSeconds:
+    """Root's independent repro (clob-delivery-metrics-root-review/
+    test_first_partial_window.py, 2026-10-06): a consumer created 57 s into a
+    minute logged window_s=60 for 3 s of watching — 3/min instead of 60/min."""
+
+    def test_a_run_that_starts_mid_minute_reports_only_what_it_watched(
+        self, monkeypatch, caplog,
+    ):
+        now = [57.0]
+        monkeypatch.setattr(blend_mod, "_wall", lambda: now[0])
+        monkeypatch.setattr(blend_mod, "_mono", lambda: now[0])
+        blend_mod._live_handoff["kalshi"] = frozenset({42})
+        receipt = TailReceipts("kalshi")
+        for instant in (57.0, 58.0, 59.0):
+            now[0] = instant
+            receipt.note_raw(42)
+            receipt.note_input(42, 7, 0.5, "ticker")
+        now[0] = 60.0
+        receipt.roll()
+        (line,) = _lines(caplog)
+        assert line["raw"] == line["accepted"] == "3" and line["repeats"] == "2"
+        assert line["window_s"] == "3.000"
+        assert line["window_start"] == "1970-01-01T00:00:57.000+00:00"
+
+    @pytest.mark.asyncio
+    async def test_a_game_that_goes_live_mid_minute_starts_at_its_first_live_stamp(
+        self, clock, caplog,
+    ):
+        r, _ = _refresher(previously_live=())
+        await _flush(r, clock, 20.0, [(11, 0.60)])  # first live stamp at :20
+        await _flush(r, clock, 30.0, [(11, 0.61)])
+        clock.t = 61.0
+        await r.refresh_pending()
+        (line,) = _lines(caplog)
+        assert line["window_start"] == "2026-10-06T21:20:20.000+00:00"
+        assert line["window_s"] == "40.000"
+
+    def test_the_exit_partial_minute_starts_where_watching_did(self, monkeypatch, caplog):
+        now = [130.0]
+        monkeypatch.setattr(blend_mod, "_wall", lambda: now[0])
+        monkeypatch.setattr(blend_mod, "_mono", lambda: now[0])
+        blend_mod._live_handoff["kalshi"] = frozenset({42})
+        receipt = TailReceipts("kalshi")
+        receipt.note_input(42, 7, 0.5, "ticker")
+        now[0] = 140.0
+        receipt.close_all("exit")
+        (line,) = _lines(caplog)
+        assert (line["window_start"], line["window_s"]) == ("1970-01-01T00:02:10.000+00:00", "10.000")

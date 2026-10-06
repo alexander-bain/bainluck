@@ -286,6 +286,12 @@ class TailReceipts:
         self._uncovered: dict[int, deque] = {}
         self._committed: dict[int, InputMark] = {}
         self._live_events: set[int] = set(_live_handoff.pop(source, frozenset()))
+        #: Coverage starts no earlier than this run did, nor before a game was
+        #: first stamped live in it: a minute line must never claim seconds the
+        #: consumer was not watching (Root's 57 s repro: 3 inputs in 3 s read
+        #: as 3 in 60 s, a 20x understatement).
+        self._run_start = _wall()
+        self._live_since: dict[int, float] = {}
 
     # ── the socket's side ────────────────────────────────────────────────────
 
@@ -339,8 +345,14 @@ class TailReceipts:
     def _bucket(self, event_id: int) -> dict:
         bucket = self._window.get(event_id)
         if bucket is None:
+            observed_from = max(
+                self._window_start if self._window_start is not None else self._run_start,
+                self._run_start,
+                self._live_since.get(event_id, self._run_start),
+            )
             bucket = self._window[event_id] = {
                 "raw": 0, "outcomes": {}, "stamps": [], "stamps_dropped": 0,
+                "from": observed_from,
             }
         return bucket
 
@@ -375,6 +387,8 @@ class TailReceipts:
         was_live = event_id in self._live_events
         mark = self._committed.pop(event_id, None)
         if status == "live":
+            if not was_live:
+                self._live_since[event_id] = _wall()
             self._live_events.add(event_id)
         elif not was_live:
             return
@@ -392,6 +406,7 @@ class TailReceipts:
             self._live_events.discard(event_id)
             self._uncovered.pop(event_id, None)
             self._last_p.pop(event_id, None)
+            self._live_since.pop(event_id, None)
         self._roll(_wall())
         bucket = self._bucket(event_id)
         if len(bucket["stamps"]) >= DELIVERY_RECEIPT_MAX_STAMPS:
@@ -414,7 +429,7 @@ class TailReceipts:
             return
         if not final and wall < self._window_start + size:
             return
-        window_s = (wall - self._window_start) if final else size
+        window_end = wall if final else self._window_start + size
         # Only live games ever get a bucket (`note_raw`, `_count_input`,
         # `_note_stamp` all check); the most active are written.
         ranked = sorted(
@@ -424,7 +439,7 @@ class TailReceipts:
         )
         kept = ranked[:DELIVERY_RECEIPT_MAX_EVENTS]
         for event_id in sorted(kept):
-            self._emit(event_id, self._window[event_id], window_s)
+            self._emit(event_id, self._window[event_id], window_end)
         if len(ranked) > len(kept):
             logger.info(
                 "live_blend_refresh[%s]: delivery-receipt-overflow run=%s "
@@ -435,7 +450,9 @@ class TailReceipts:
         self._window = {}
         self._window_start = math.floor(wall / size) * size
 
-    def _emit(self, event_id: int, bucket: dict, window_s: float) -> None:
+    def _emit(self, event_id: int, bucket: dict, window_end: float) -> None:
+        """`window_start`/`window_s` are the seconds this run actually watched
+        the game inside the minute — never the minute's floor before it."""
         per = bucket["outcomes"]
         totals = [sum(v[i] for v in per.values()) for i in range(4)]
         self.stats["delivery_lines"] += 1
@@ -443,7 +460,8 @@ class TailReceipts:
             "live_blend_refresh[%s]: delivery-receipt run=%s event=%s "
             "window_start=%s window_s=%.3f raw=%d accepted=%d changed=%d "
             "repeats=%d first=%d outcomes=%s stamps=%s stamps_dropped=%d",
-            self.source, self.run, event_id, _iso(self._window_start), window_s,
+            self.source, self.run, event_id, _iso(bucket["from"]),
+            max(0.0, window_end - bucket["from"]),
             bucket["raw"], *totals,
             ",".join(f"{oid}:{v[0]}:{v[1]}:{v[2]}:{v[3]}" for oid, v in sorted(per.items()))
             or "-",
