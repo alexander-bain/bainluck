@@ -322,6 +322,7 @@ for case in ('testUpdatingIsVisibleUntilRequestFinishes', 'testUpdatingIsVisible
     if re.findall(pattern, log, re.MULTILINE) != ['passed']:
         raise SystemExit(f'Updating case {case} did not pass exactly once; gate unpaid')
 PYVERIFY
+  python3 "$ROOT/tools/watch_discovery_polish_receipt.py" "$OUT/tests.log"
 fi
 PHASE='rendered diagnostics consent verification'
 if [[ "$TEST_EXIT" -eq 0 ]]; then
