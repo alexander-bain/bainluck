@@ -117,7 +117,15 @@ final class AProjectedPointsChartReadsAndReturns10549Tests: XCTestCase {
         let headingY = heading.frame.minY
         let expand = app.buttons["Expand projected final points"]
         XCTAssertTrue(expand.waitForExistence(timeout: 5), "No expand control.")
-        expand.tap()
+        // The control is a 44×44 pt target, not the bare glyph, and still sits
+        // level with the heading; the tap lands near its left edge, outside
+        // where the glyph is drawn, so a target that only looks big fails here.
+        let target = expand.frame
+        print("N10549_EXPAND frame=\(target) heading=\(heading.frame)")
+        XCTAssertGreaterThanOrEqual(target.width, 44, "The Expand target is narrower than 44 pt: \(target).")
+        XCTAssertGreaterThanOrEqual(target.height, 44, "The Expand target is shorter than 44 pt: \(target).")
+        XCTAssertEqual(target.midY, heading.frame.midY, accuracy: 8, "The Expand control left the heading's line.")
+        expand.coordinate(withNormalizedOffset: CGVector(dx: 0.08, dy: 0.5)).tap()
         let done = app.buttons["Done"]
         XCTAssertTrue(done.waitForExistence(timeout: 5), "Expand opened nothing with Done.")
         sleep(2)

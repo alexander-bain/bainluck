@@ -35,6 +35,9 @@ struct ProjectedFinalPointsChartView: View {
     /// sits on a line near the top of the scale.
     static let markerStripHeight: CGFloat = 16
     static let axisTypeCeiling: DynamicTypeSize = .xxLarge
+    static let expandSymbol = "arrow.up.left.and.arrow.down.right"
+    /// Apple's minimum comfortable tap target.
+    static let minimumTapTarget: CGFloat = 44
 
     private var full: ProjectedFinalPointsSeries? { ProjectedFinalPointsSeries.build(input) }
 
@@ -67,8 +70,19 @@ struct ProjectedFinalPointsChartView: View {
                 Text("Projected final points").font(.headline).fixedSize(horizontal: false, vertical: true)
                 Spacer()
                 if !expanded {
-                    Button { expanded = true } label: { Image(systemName: "arrow.up.left.and.arrow.down.right") }
-                        .accessibilityLabel("Expand projected final points")
+                    // #10549 — the glyph keeps its place in the header while the
+                    // button around it is at least 44×44 pt, so the tap target is
+                    // not the 20×19 pt icon and the header does not grow.
+                    Image(systemName: Self.expandSymbol)
+                        .hidden()
+                        .overlay {
+                            Button { expanded = true } label: {
+                                Image(systemName: Self.expandSymbol)
+                                    .frame(minWidth: Self.minimumTapTarget, minHeight: Self.minimumTapTarget)
+                                    .contentShape(Rectangle())
+                            }
+                            .accessibilityLabel("Expand projected final points")
+                        }
                 }
             }
             readout(full)
