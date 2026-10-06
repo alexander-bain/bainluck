@@ -148,10 +148,42 @@ nonisolated enum DiscoverPriceRefresh {
         return false
     }
 
-    static func replacing(_ held: FeedItem, with fresh: FeedItem) -> FeedItem {
+    /// A score read does not order prices, lifecycle, period, or other metadata.
+    /// Unstamped clearing is deliberately unorderable; never borrow the quote clock.
+    private static func scoreClock(_ event: FeedEventData, now: Date) -> Date? {
+        guard let home = event.homeScore, let away = event.awayScore,
+              home >= 0, away >= 0,
+              ["espn", "statpal", "odds_api"].contains(event.scoreSource ?? ""),
+              let clock = observation(event.scoreObservedAt), clock <= now else { return nil }
+        return clock
+    }
+
+    private static func reconcilingScore(in body: FeedItem, incoming: FeedItem,
+                                        held: FeedItem, now: Date) -> FeedItem {
+        guard incoming.id == held.id, incoming.type == held.type,
+              let old = held.event, let next = incoming.event, var event = body.event,
+              old.id == next.id else { return body }
+        // Preserve the existing final-result authority and final-score fence.
+        if EventState.isFinished(event.status) { return body }
+        let score: FeedEventData
+        if !EventState.isFinished(old.status),
+           let nextClock = scoreClock(next, now: now),
+           nextClock > (scoreClock(old, now: now) ?? .distantPast) {
+            score = next
+        } else {
+            score = old
+        }
+        event.homeScore = score.homeScore
+        event.awayScore = score.awayScore
+        event.scoreSource = score.scoreSource
+        event.scoreObservedAt = score.scoreObservedAt
+        return replacing(body, with: body, event: event)
+    }
+
+    static func replacing(_ held: FeedItem, with fresh: FeedItem, event: FeedEventData? = nil) -> FeedItem {
         FeedItem(type: held.type, score: held.score, reason: held.reason,
                  headline: held.headline, contextSummary: held.contextSummary,
-                 event: fresh.event, futures: fresh.futures,
+                 event: event ?? fresh.event, futures: fresh.futures,
                  tournament: held.tournament, concept: held.concept, bundle: held.bundle,
                  personalized: held.personalized, baseScore: held.baseScore,
                  multiplier: held.multiplier, personalizationReasons: held.personalizationReasons)
@@ -183,48 +215,60 @@ nonisolated enum DiscoverPriceRefresh {
 
     /// Ordinary cached feed loads may change membership/editorials, but cannot
     /// roll an already accepted price body back to the older cached quotation.
-    static func retainingPrices(_ incoming: [FeedItem], accepted: inout [String: FeedItem]) -> [FeedItem] {
+    static func retainingPrices(_ incoming: [FeedItem], accepted: inout [String: FeedItem],
+                                now: Date = Date()) -> [FeedItem] {
         var fences: [String: MarketFence] = [:]
-        return retainingPrices(incoming, accepted: &accepted, fences: &fences)
+        return retainingPrices(incoming, accepted: &accepted, fences: &fences, now: now)
     }
 
     static func retainingPrices(_ incoming: [FeedItem], accepted: inout [String: FeedItem],
-                                fences: inout [String: MarketFence]) -> [FeedItem] {
+                                fences: inout [String: MarketFence], now: Date = Date()) -> [FeedItem] {
         incoming.map { item in
             if let bundle = item.bundle {
-                return item.withBundle(bundle.withItems(retainingPrices(bundle.items, accepted: &accepted, fences: &fences)))
+                return item.withBundle(bundle.withItems(retainingPrices(bundle.items, accepted: &accepted, fences: &fences, now: now)))
             }
             guard let held = accepted[item.id] else { return item }
-            if isStrictlyNewer(item, than: held, fence: fences[item.id]) {
+            let adoptsPrice = isStrictlyNewer(item, than: held, fence: fences[item.id])
+            if adoptsPrice {
                 fences[item.id] = retainingFence(item, over: held, previous: fences[item.id])
-                accepted[item.id] = item
-                return item
             }
-            return replacing(item, with: held)
+            let body = adoptsPrice ? item : replacing(item, with: held)
+            let merged = reconcilingScore(in: body, incoming: item, held: held, now: now)
+            accepted[item.id] = merged
+            return merged
         }
     }
 
     static func apply(_ response: DiscoverPriceCards, to painted: [FeedItem],
-                      epochs: inout [String: Double]) -> [FeedItem] {
+                      epochs: inout [String: Double], now: Date = Date()) -> [FeedItem] {
         var fences: [String: MarketFence] = [:]
-        return apply(response, to: painted, epochs: &epochs, fences: &fences)
+        return apply(response, to: painted, epochs: &epochs, fences: &fences, now: now)
     }
 
     static func apply(_ response: DiscoverPriceCards, to painted: [FeedItem],
-                      epochs: inout [String: Double], fences: inout [String: MarketFence]) -> [FeedItem] {
+                      epochs: inout [String: Double], fences: inout [String: MarketFence],
+                      now: Date = Date()) -> [FeedItem] {
         guard response.builtAt.isFinite else { return painted }
         let replacements = Dictionary(response.items.map { ($0.id, $0) }, uniquingKeysWith: { first, _ in first })
         func replace(_ item: FeedItem) -> FeedItem {
             if let bundle = item.bundle { return item.withBundle(bundle.withItems(bundle.items.map(replace))) }
             guard let fresh = replacements[item.id],
-                  ["updated", "withheld"].contains(response.dispositions[item.id]),
-                  response.builtAt >= (epochs[item.id] ?? -.infinity),
-                  (canAdopt(fresh, over: item, authoritative: true, fence: fences[item.id]) ||
-                   (response.dispositions[item.id] == "withheld" && acceptsWithheldEvent(fresh, over: item)))
+                  ["updated", "withheld"].contains(response.dispositions[item.id])
             else { return item }
-            fences[item.id] = retainingFence(fresh, over: item, previous: fences[item.id])
-            epochs[item.id] = response.builtAt
-            return replacing(item, with: fresh)
+            let adoptsPrice = response.builtAt >= (epochs[item.id] ?? -.infinity) &&
+                (canAdopt(fresh, over: item, authoritative: true, fence: fences[item.id]) ||
+                 (response.dispositions[item.id] == "withheld" && acceptsWithheldEvent(fresh, over: item)))
+            if adoptsPrice {
+                fences[item.id] = retainingFence(fresh, over: item, previous: fences[item.id])
+            }
+            let body = adoptsPrice ? replacing(item, with: fresh) : item
+            let merged = reconcilingScore(in: body, incoming: fresh, held: item, now: now)
+            if adoptsPrice || merged.event?.scoreObservedAt != item.event?.scoreObservedAt {
+                // The caller retains accepted leaves using this marker, including
+                // a score-only read. Never lower the price response fence.
+                epochs[item.id] = max(epochs[item.id] ?? -.infinity, response.builtAt)
+            }
+            return merged
         }
         return painted.map(replace)
     }
