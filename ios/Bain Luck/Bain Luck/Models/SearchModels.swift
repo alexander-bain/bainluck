@@ -446,8 +446,33 @@ nonisolated struct TypeaheadSuggestion: Decodable, Identifiable, Sendable {
     /// #10298 — the same key as ``SearchFuturesMarket/relatedGameListing``, on
     /// a futures row whose game is among the dropdown's event rows.
     var relatedGameListing: RelatedGameListing? = nil
+    /// #10598 — `home_score` / `away_score`, served by `_typeahead_final_score`
+    /// (#9226) on a FINISHED event row with both sides reported, and absent
+    /// everywhere else. Without them the phone decoded the row and dropped the
+    /// result: "Padres at Brewers · FINAL · Oct 4, 1:00 PM", while the web
+    /// dropdown and the submitted results both said 3 - 4.
+    var homeScore: Int? = nil
+    var awayScore: Int? = nil
 
     var id: String { "\(type)-\(text)-\(marketId ?? teamId ?? eventId ?? 0)" }
+
+    /// #10598 — the result a finished event suggestion prints beside its badge,
+    /// or nil. The submitted-results row's arm (`SearchView`, #4306): AWAY
+    /// first, because the row's text is away-first. Finished only — the server
+    /// never sends a live score here, and a stray one would go stale between
+    /// keystrokes. A half score is not a result, so it prints nothing. `0` is a
+    /// score.
+    var finalScoreText: String? {
+        guard type == "event", EventState.isFinished(status),
+              let away = awayScore, let home = homeScore else { return nil }
+        return "\(away) - \(home)"
+    }
+
+    /// #10598 / #6444 — a played game prints the DAY, not the clock, as the
+    /// submitted-results row does; every other row keeps the full form.
+    var timeStyle: RelativeTimeText.Style {
+        EventState.isFinished(status) ? .dayOnly : .full
+    }
 }
 
 /// #10298 / #10089 — `related_game_listing`: a multi-question venue listing
