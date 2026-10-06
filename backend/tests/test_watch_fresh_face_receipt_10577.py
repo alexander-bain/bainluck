@@ -17,6 +17,7 @@ MARKERS = (
     "WATCH_UI_DISCOVERIES_SAVED=PASS", "WATCH_UI_DISCOVERIES_LARGE=PASS",
     "WATCH_UI_DISCOVERIES_UNSELECTED=PASS", "WATCH_UI_DISCOVERIES_CONTINUATION=PASS",
     "WATCH_UI_DISCOVERIES_RETURN_STANDARD=PASS", "WATCH_UI_DISCOVERIES_RETURN_LARGE=PASS",
+    "WATCH_UI_DISCOVERIES_HEADING_STANDARD=PASS", "WATCH_UI_DISCOVERIES_HEADING_LARGE=PASS",
 )
 CASE = ("Test Case '-[BainLuckWatchUITests.WidgetTapJourneyTests "
         "testFreshConfiguredFaceIsActiveBeforeActualLauncherTap]' passed (90.123 seconds).")
@@ -55,6 +56,8 @@ def test_seventeen_test_summary_and_real_activation_case_are_accepted(tmp_path):
     "WATCH_UI_FRESH_FACE_ACTIVATION=PASS",
     "WATCH_UI_DISCOVERIES_RETURN_STANDARD=PASS",
     "WATCH_UI_DISCOVERIES_RETURN_LARGE=PASS",
+    "WATCH_UI_DISCOVERIES_HEADING_STANDARD=PASS",
+    "WATCH_UI_DISCOVERIES_HEADING_LARGE=PASS",
 ])
 def test_new_marker_cannot_silently_disappear(tmp_path, marker):
     result = gate(accepted_log().replace(marker, ""), tmp_path)
