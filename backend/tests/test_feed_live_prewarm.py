@@ -783,7 +783,7 @@ def test_the_pass_never_holds_more_sessions_than_the_concurrency_it_declares():
 
 
 def _run_live_pass_with_costed_builds(
-    rc, *, build_cost_s, budget_s, min_viable_s, concurrency
+    rc, *, build_cost_s, budget_s, min_viable_s, concurrency, host_stall_s=0.0
 ):
     """Drive the pass with builds that actually CONSUME time and can time out.
 
@@ -793,20 +793,62 @@ def _run_live_pass_with_costed_builds(
     it costs burns its whole deadline and publishes NOTHING, which is the exact
     production behaviour (`{"outcome": "timeout"}`, "the request path will rebuild
     cold").
+
+    🔴 **The wall the pass reads is a VIRTUAL clock, not the host's (#10632).** These
+    guards first ran on real `asyncio.sleep` against a 0.20s wall, which made them
+    grade the CI host as well as the code. On master `fcd9a673d1` the backend-tests
+    shard 4 stalled ~0.6s between `pass_started` and the first semaphore acquire,
+    so all five targets, wave 1 included, logged `SKIPPED … -0.4s of wall left` and
+    no build ran. It happened identically on both attempts and never locally: it
+    depended on the shard's position in the run, not on the pass. A guard that a
+    GC pause can redden is measuring the pause.
+
+    So the pass's own `import time` gets a module whose `monotonic()` reads
+    `clock["now"]`, and a build advances that clock by what it COSTS (or by its
+    deadline, if it is killed). Builds in one wave all start at the same virtual
+    instant and finish at `start + cost`, so the arithmetic is the real thing's
+    with every host stall removed. The seam is narrow on purpose: only code that
+    runs `import time` inside the patch sees the fake (asyncio bound the real
+    module at import, so the loop keeps real time), and the helper refuses to
+    return unless the pass actually read it.
+
+    `host_stall_s` blocks the thread for real inside the first build, which is the
+    CI failure reproduced on demand: the guard below proves the stall no longer
+    reaches the pass's arithmetic.
     """
     import asyncio
+    import sys
+    import time as real_time
+    import types
 
     started_order = []
+    clock = {"now": 0.0, "reads": 0}
+
+    class _VirtualTime(types.ModuleType):
+        def monotonic(self):
+            clock["reads"] += 1
+            return clock["now"]
+
+        def __getattr__(self, name):
+            return getattr(real_time, name)
 
     async def costed_warm(shape, _rc, *, deadline_s):
         started_order.append(shape["label"])
+        started_at = clock["now"]
+        if host_stall_s and len(started_order) == 1:
+            real_time.sleep(host_stall_s)
+        # Yield once so every target of the wave starts at the same virtual
+        # instant before any of them finishes, as concurrent builds do.
+        await asyncio.sleep(0)
         if deadline_s < build_cost_s:
-            await asyncio.sleep(deadline_s)
+            clock["now"] = max(clock["now"], started_at + deadline_s)
             return {"outcome": "timeout"}
-        await asyncio.sleep(build_cost_s)
+        clock["now"] = max(clock["now"], started_at + build_cost_s)
         return {"outcome": "ok", "items": 3, "live": True}
 
-    with patch.object(pcp, "_prewarm_feed_shape", costed_warm), patch(
+    with patch.dict(sys.modules, {"time": _VirtualTime("time")}), patch.object(
+        pcp, "_prewarm_feed_shape", costed_warm
+    ), patch(
         "app.tasks.redis_state.get_redis_client", lambda: rc
     ), patch.object(
         import_module("app.utils.feed_cache"),
@@ -822,6 +864,14 @@ def _run_live_pass_with_costed_builds(
         concurrency,
     ):
         result = asyncio.run(pcp._prewarm_live_feed_shapes())
+    # The pass reads its wall at `pass_started`, once per target and once for the
+    # report. Zero reads means it moved to a clock this seam does not reach, and
+    # every guard below would be back on the host's wall without saying so.
+    assert clock["reads"] > 0, (
+        "the pass never read the virtual clock — it no longer takes its wall from "
+        "a function-local `import time`, so these guards are grading host timing "
+        "again (#10632). Re-point the seam at whatever the pass reads now"
+    )
     return result, started_order
 
 
@@ -973,6 +1023,37 @@ def test_a_target_in_a_later_wave_publishes_like_one_in_the_first():
             f"the Sports tab shape {label} did not publish: {shapes.get(label)}. "
             "This is the shape a reader of /sports waits on"
         )
+
+
+def test_a_host_stall_does_not_reach_the_wave_guards():
+    """The wave guards grade the pass, not the machine running it (#10632).
+
+    Master `fcd9a673d1` went red on the test above. The CI host stalled ~0.6s
+    inside a 0.20s wall and every target logged `SKIPPED … -0.4s`. No code had
+    changed: a new test file had moved this one to a different shard position.
+    This replays that stall for real (a blocking sleep of more than twice the
+    budget inside the first build) and requires the same five publications. On
+    the old real-clock rig, the same stall skips the whole second wave.
+    """
+    budget_s = 0.20
+    build_cost_s = 0.06
+    rc = _fake_rc({s["label"]: "1" for s in pcp.FEED_PREWARM_SHAPES})
+    _run_live_pass_with_costed_builds(
+        rc,
+        build_cost_s=build_cost_s,
+        budget_s=budget_s,
+        min_viable_s=build_cost_s,
+        concurrency=FEED_LIVE_REPUBLISH_CONCURRENCY,
+        host_stall_s=2.5 * budget_s,
+    )
+    shapes = _live_prewarm_report(rc)["shapes"]
+    assert len(shapes) == len(pcp.FEED_PREWARM_SHAPES), shapes
+    not_ok = {label: s for label, s in shapes.items() if s.get("outcome") != "ok"}
+    assert not not_ok, (
+        f"a real host stall changed the pass's outcome: {not_ok}. The costed-build "
+        "rig is reading the host's wall again, and every wave guard in this file "
+        "is grading CI scheduling rather than the pass"
+    )
 
 
 def _fake_rc_two_hashes(live_labels, absent_labels):
