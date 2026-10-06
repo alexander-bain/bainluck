@@ -105,8 +105,12 @@ final class ALivePaceAgreesWithTheHeader9708Tests: XCTestCase {
         let src = try code("TotalPointsSpectrumView")
         XCTAssertTrue(src.contains(
             "LivePaceStanding.projection(gameMarkets.pace,openingTotal:pregameTotal,scoreboardHome:homeScore,scoreboardAway:awayScore)"))
-        XCTAssertTrue(src.contains("ifisLive,countsTheUnit,liveProjection!=nil{return.live}"),
+        // #9483 moved the tense into `projectionTense(...)`: the rule asks for a
+        // standing projection, and the view hands it exactly that.
+        XCTAssertTrue(src.contains("ifisLive,scoreboardCountsTheUnit,hasLiveProjection{return.live}"),
                       "the live tense is back on a presence-only pace guard")
+        XCTAssertTrue(src.contains("scoreboardCountsTheUnit:countsTheUnit,hasLiveProjection:liveProjection!=nil"),
+                      "the live tense is no longer asked against the standing pace")
         XCTAssertTrue(src.contains("ifletlive=liveProjection{liveStrip(pregameTotal:pregame,paceTotal:live.projected,scored:live.scored)"))
         XCTAssertFalse(src.contains("pace.projectedTotal"),
                        "the spectrum reads the served pace around the #9708 rule again")
