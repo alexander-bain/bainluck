@@ -27832,6 +27832,7 @@ async def _build_game_markets(
         event_id=event_id, event_is_finished=event_is_finished,
         mapped_event_ids=market_event_ids,
         home_name=event.home_team_name, away_name=event.away_team_name,
+        home_score=event.home_score, away_score=event.away_score,
         markets=markets, outcomes=outcomes,
         observed_at=_observed_at_by_outcome,
         is_match_winner=_market_is_event_match_winner,

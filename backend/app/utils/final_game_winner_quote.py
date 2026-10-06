@@ -4,6 +4,10 @@ Read only, from the game-market builder's loaded rows. The route supplies its
 existing whole-match recognition and whole-market selection policy; this helper
 does not introduce a second matcher, infer settlement from prices, or mutate the
 event. Closed contracts travel separately so held clients can fence resurrection.
+
+A quote that only repeats the recorded result (the scored winner's leg at or
+above ``CERTAIN_LEG_PROBABILITY``) is withheld: the score already says it (Alex,
+#9544). Lower-priced and disagreeing quotes still travel; nothing is rewritten.
 """
 
 from collections import defaultdict
@@ -13,6 +17,7 @@ from math import isfinite
 from typing import Callable, Iterable, Mapping
 
 from app.utils.feed_market_quality import is_empty_book_midpoint
+from app.utils.field_opening_coherence import CERTAIN_LEG_PROBABILITY
 from app.utils.futures_unsupported_price import (
     price_refuted_by_live_book,
     row_carries_a_verdict,
@@ -39,6 +44,14 @@ def _stamp(value: object) -> str | None:
     return (value if value.tzinfo else value.replace(tzinfo=timezone.utc)).isoformat()
 
 
+def _recorded_winner_side(home_score: object, away_score: object) -> str | None:
+    """The scored winner, or None when the score cannot name one (missing, draw)."""
+    scores = (home_score, away_score)
+    if not all(type(score) is int and score >= 0 for score in scores) or home_score == away_score:
+        return None
+    return "home" if home_score > away_score else "away"
+
+
 def final_game_winner_quotes(
     *,
     event_id: int,
@@ -46,6 +59,8 @@ def final_game_winner_quotes(
     mapped_event_ids: Iterable[int],
     home_name: str | None,
     away_name: str | None,
+    home_score: object,
+    away_score: object,
     markets: Iterable[object],
     outcomes: Iterable[object],
     observed_at: Mapping[int, datetime],
@@ -183,4 +198,10 @@ def final_game_winner_quotes(
                     "observed_at": row["observed_at"],
                 } for row in sorted(selected, key=lambda row: order[row["side"]])],
             }
+            # Judged on the served (post-#23) number, the one a reader would see.
+            recorded = _recorded_winner_side(home_score, away_score)
+            if recorded and any(row["side"] == recorded
+                                and row["probability"] >= CERTAIN_LEG_PROBABILITY
+                                for row in quote["outcomes"]):
+                quote = None
     return {"open_winner_quote": quote, "closed_winner_market_ids": sorted(closed)}
