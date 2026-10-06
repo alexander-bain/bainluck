@@ -38,8 +38,10 @@ from app.models.models import (
 from app.models.activitykit import ActivityKitRegistration
 
 from .activitykit_delivery import ActivityKitDelivery
+from .activitykit_observation import ActivityKitObservation
 
 __all__ = [
+    "ActivityKitObservation",
     "ActivityKitDelivery",
     "ActivityKitRegistration",
     "Sport",

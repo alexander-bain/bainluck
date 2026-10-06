@@ -169,7 +169,9 @@ async def repoint_event_children(
     # orphan lock excludes concurrent FK registration inserts until commit.
     if "activitykit_registrations" in event_fk_tables():
         await session.execute(
-            sa_text("SELECT id FROM events WHERE id IN (:keep, :orphan) ORDER BY id FOR UPDATE"),
+            sa_text(
+                "SELECT id FROM events WHERE id IN (:keep, :orphan) ORDER BY id FOR UPDATE"
+            ),
             {"keep": keep_id, "orphan": orphan_id},
         )
         bound = await session.execute(
@@ -183,12 +185,24 @@ async def repoint_event_children(
                 "Event has an immutable ActivityKit binding"
             )
 
+    if "activitykit_observations" in event_fk_tables():
+        observed = await session.execute(
+            sa_text(
+                "SELECT event_id FROM activitykit_observations WHERE event_id = :orphan LIMIT 1 FOR UPDATE"
+            ),
+            {"orphan": orphan_id},
+        )
+        if observed.all():
+            raise ImmutableActivityBindingRefused(
+                "Event has an immutable ActivityKit observation"
+            )
+
     repointed: dict[str, int] = {}
     dropped: dict[str, int] = {}
     markets: list[dict[str, Any]] = []
 
     for table in event_fk_tables():
-        if table == "activitykit_registrations":
+        if table in {"activitykit_registrations", "activitykit_observations"}:
             continue
         if table == "futures_markets":
             markets = _rows(
@@ -248,7 +262,9 @@ async def repoint_event_children(
         if removed:
             dropped[table] = removed
 
-    repointed.update(await _repoint_duplicate_tags(session, keep_id=keep_id, orphan_id=orphan_id))
+    repointed.update(
+        await _repoint_duplicate_tags(session, keep_id=keep_id, orphan_id=orphan_id)
+    )
 
     return {
         "repointed": repointed,
@@ -264,7 +280,9 @@ TAG_RETARGETED = "events.duplicate_of_tag:retargeted"
 TAG_CLEARED_ON_KEEP = "events.duplicate_of_tag:cleared_on_survivor"
 
 
-async def _repoint_duplicate_tags(session, *, keep_id: int, orphan_id: int) -> dict[str, int]:
+async def _repoint_duplicate_tags(
+    session, *, keep_id: int, orphan_id: int
+) -> dict[str, int]:
     """Move ``provenance:duplicate-of:<orphan>`` off the row about to be deleted. #8308.
 
     THE POINTER THAT IS NOT A FOREIGN KEY. ``not_a_proven_duplicate`` hides every row
@@ -342,8 +360,10 @@ def _rows(result, orphan_id: int) -> list[dict[str, Any]]:
     try:
         return [
             {
-                "id": r.id, "source": r.source,
-                "external_id": r.external_id, "name": r.name,
+                "id": r.id,
+                "source": r.source,
+                "external_id": r.external_id,
+                "name": r.name,
             }
             for r in result.all()
         ]
@@ -351,7 +371,8 @@ def _rows(result, orphan_id: int) -> list[dict[str, Any]]:
         logger.warning(
             "Could not read the markets on event %s before repointing them "
             "(%s) — their move will be missing from the link-loss census",
-            orphan_id, type(exc).__name__,
+            orphan_id,
+            type(exc).__name__,
         )
         return []
 

@@ -650,12 +650,13 @@ class TestTheHostileSpecimens:
         # number moved here together with that disposition, never instead of it.
         assert set(derived) == {
             "activitykit_registrations",
+            "activitykit_observations",
             "espn_snapshots", "event_participants", "event_provider_anchors",
             "futures_markets", "game_moments", "line_movement_analyses",
             "odds_aggregated", "odds_snapshots", "ranking_judgments",
             "score_snapshots", "scoring_plays", "win_prob_snapshots",
         }
-        assert len(derived) == 13
+        assert len(derived) == 14
         assert unclassified_event_children() == ()
         assert set(EVENT_CHILD_DISPOSITIONS) == set(derived)
 
@@ -725,7 +726,7 @@ class TestTheHostileSpecimens:
         # exists in that table and nowhere else, so a deletion that removed it
         # silently is exactly the unreviewed effect this assertion is for.
         assert "event_participants" in out["cascading_tables"]
-        assert len(out["substance_tables"]) == 13
+        assert len(out["substance_tables"]) == 14
 
     # ── R5: the never-absorbs guard, read semantically ─────────────────────
 

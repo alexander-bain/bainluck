@@ -93,6 +93,8 @@ EVENT_CHILD_DISPOSITIONS: dict[str, Disposition] = {
     # #10556: an account/activity is bound to this exact canonical event. Pruning
     # it would cascade both credential ownership and durable delivery state.
     "activitykit_registrations": "SUBSTANCE",
+    # Retained canonical reading and its immutable event identity.
+    "activitykit_observations": "SUBSTANCE",
     "espn_snapshots": "SUBSTANCE",
     "futures_markets": "SUBSTANCE",
     "game_moments": "SUBSTANCE",
