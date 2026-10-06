@@ -72,6 +72,9 @@ def _live(
         home_score=home_score,
         away_score=away_score,
         now=NOW,
+        # #10561 — a score observed at NOW, so a present-tense lead may speak.
+        score_source="espn",
+        score_observed_at=NOW,
     )
 
 
@@ -217,6 +220,10 @@ class TestTheFooterBadge:
             opening_home_prob=opening_home_prob,
             home_score=home_score,
             away_score=away_score,
+            # #10561 — a score observed at NOW, so a present-tense lead may speak.
+            score_source="espn",
+            score_observed_at=NOW,
+            now=NOW,
         )
 
     def test_nobody_is_leading_at_0_0(self):

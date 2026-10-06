@@ -1479,7 +1479,14 @@ def _is_discover_event_demotion_exception(item: dict) -> bool:
     # item without a `highlight` block working unchanged; a live card always has
     # a label (the ladder floors at "Live"), so the fallback cannot fire where
     # the two now differ.
-    _label = ((item.get("data") or {}).get("highlight") or {}).get("label")
+    #
+    # #10561 — and read the RANKING bucket where the item carries one. The pill
+    # is now withheld from "Upset brewing" when the score behind it is expired
+    # or unattributed; `_highlight_rank_label` is the same label without that
+    # wording gate, so this predicate's input is byte-identical to before.
+    _label = item.get("_highlight_rank_label") or (
+        (item.get("data") or {}).get("highlight") or {}
+    ).get("label")
     headline = (_label or item.get("headline") or "").lower()
     if (
         has_major_league_context
@@ -11084,6 +11091,12 @@ async def _score_events(
                 # check it. This is the page-one path the opener was served on.
                 home_score=event.home_score,
                 away_score=event.away_score,
+                # #10561 — and its own observation stamp, so the pill may say
+                # "Upset brewing" only about a score read in the last five
+                # minutes. `getattr` because the price-card path hands a
+                # `FoldedBlendView`, which forwards these to the row.
+                score_source=getattr(event, "score_source", None),
+                score_observed_at=getattr(event, "score_observed_at", None),
             )
 
             sport_key = event.sport.key if event.sport else None
@@ -11291,6 +11304,11 @@ async def _score_events(
                 # exactly this number; the sentence was still saying it).
                 sport=event.sport.key if event.sport else "",
                 opening_away_prob=opening_away_prob,
+                # #10561 — "leading" is present tense: the event's own score
+                # observation, judged against this request's one clock.
+                score_source=getattr(event, "score_source", None),
+                score_observed_at=getattr(event, "score_observed_at", None),
+                now=now,
             )
 
             # #6181 — THE PRE-MATCH ROW AND THE SENTENCE UNDER IT ARE ONE ANSWER.
@@ -11340,6 +11358,11 @@ async def _score_events(
                 # composes the same sentence for the `reason` field.
                 sport=event.sport.key if event.sport else "",
                 opening_away_prob=opening_away_prob,
+                # #10561 — same provenance and clock as the claim above, or
+                # `reason` and `headline` could disagree about one card.
+                score_source=getattr(event, "score_source", None),
+                score_observed_at=getattr(event, "score_observed_at", None),
+                now=now,
             )
 
             # Compute event_tags on-the-fly (fresh, not stale persisted)
@@ -11512,6 +11535,15 @@ async def _score_events(
                 ),
                 "data": event_data,
                 "_sort_time": sort_time,
+                # #10561 — the ranking bucket, kept from before the score-age
+                # gate. The pill (`data.highlight.label`) now says "Odds moved"
+                # instead of "Upset brewing" when the score is expired or
+                # unattributed; the demotion predicate keys on "upset" in the
+                # label, so reading the pill would have demoted those cards for
+                # a wording fix. Underscore-private: scrubbed before publishing.
+                "_highlight_rank_label": get_highlight_label(
+                    highlight_result, for_ranking=True
+                ),
             }
 
             # #4541: a marquee GAME leads the tab on its OCCASION, not on its drama.

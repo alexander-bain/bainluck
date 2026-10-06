@@ -24,18 +24,19 @@ control is how a truth fix becomes a silence fix: deleting all the copy passes
 100% of a forbidden-claim set. Ruling 146 — suppress the sentence, never the
 card — is only checkable if something asserts what SURVIVES.
 
-TWO CASES FROM THE DIRECTIVE'S LIST ARE **NOT** COVERED HERE, AND THE ABSENCE IS
-DELIBERATE AND NAMED (see `TestWhatThisSetCannotCheck` at the bottom):
+A STALE SCOREBOARD IS NOW COVERED (#10561, `TestTheScoreHasToBeCurrent`). The
+older text here said no dated score observation existed on this path; that was
+true when written and stopped being true when #4571 shipped
+`Event.score_source` + `Event.score_observed_at`, which date the whole score
+tuple on every observation. Root reproduced the cost on 882dc119bc: fresh,
+day-old and absent stamps all produced "Boston leading after starting at 38%".
+A present-tense claim about the field now needs a current observation.
 
-* a STALE scoreboard, and
-* the GENUINE SCORE CHANGE claim ("Boston took the lead in the eighth").
-
-Both need the same thing, which does not exist on this path: a score observation
-with a TIMESTAMP. `Event.home_score`/`away_score` are bare integers with no
-`score_updated_at` column beside them, and `score_snapshots` — which has both
-`captured_at` and the ordered history — is loaded by no caption path. Stubbing
-either would have produced a field with a reader and no writer, which is exactly
-the defect #5453 had just finished repairing.
+ONE CASE IS STILL **NOT** COVERED, AND THE ABSENCE IS DELIBERATE AND NAMED (see
+`TestWhatThisSetCannotCheck` at the bottom): the GENUINE SCORE CHANGE claim
+("Boston took the lead in the eighth"). A tuple observation proves the score is
+FRESH, never that it CHANGED, or when; that needs the ordered history in
+`score_snapshots`, which no caption path loads.
 """
 
 from datetime import datetime, timedelta, timezone
@@ -59,6 +60,12 @@ from app.utils.highlights import (
 
 NOW = datetime(2026, 9, 12, 2, 0, tzinfo=timezone.utc)
 
+#: A score observation inside the five-minute boundary (#10561). Every positive
+#: control below that expects a "leading" claim carries one: without it the
+#: claim is correctly refused, which would turn those controls into silence.
+FRESH_SOURCE = "espn"
+FRESH_AT = NOW - timedelta(seconds=10)
+
 #: Claims a caption may not make from price evidence. Matched case-insensitively
 #: as substrings, because the ban is on the CLAIM, not on one spelling of it:
 #: "Momentum surge" and "Momentum shift" are the same false assertion.
@@ -76,6 +83,8 @@ def _live(
     opening_home_prob=0.62,
     current_home_prob=0.44,
     status="live",
+    score_source=FRESH_SOURCE,
+    score_observed_at=FRESH_AT,
 ):
     """A real `compute_highlight` run, so a classification move breaks this too."""
     return compute_highlight(
@@ -91,6 +100,8 @@ def _live(
         away_score=away_score,
         completed_at=(NOW - timedelta(hours=1)) if status != "live" else None,
         now=NOW,
+        score_source=score_source,
+        score_observed_at=score_observed_at,
     )
 
 
@@ -102,6 +113,8 @@ def _reason(
     home_probability=0.44,
     status="live",
     highlight_reasons=("favorite_switched", "major_prob_swing"),
+    score_source=FRESH_SOURCE,
+    score_observed_at=FRESH_AT,
 ):
     return generate_event_reason(
         home_team="Milwaukee Brewers",
@@ -113,6 +126,9 @@ def _reason(
         opening_home_prob=opening_home_prob,
         home_score=home_score,
         away_score=away_score,
+        score_source=score_source,
+        score_observed_at=score_observed_at,
+        now=NOW,
     )
 
 
@@ -357,6 +373,9 @@ class TestTense:
                 current_home_prob=0.20,
                 home_score=1,
                 away_score=3,
+                score_source=FRESH_SOURCE,
+                score_observed_at=FRESH_AT,
+                now=NOW,
             )
             == "underdog_lead"
         )
@@ -591,6 +610,12 @@ class TestTheCaptionSlotIsWired:
                 # defect on whichever call site forgot it.
                 "sport",
                 "opening_away_prob",
+                # #10561 — all three default to None and the composer then
+                # refuses every "leading" claim: left off, a call site silently
+                # turns every fresh underdog lead into silence.
+                "score_source",
+                "score_observed_at",
+                "now",
             } <= passed, f"compose_live_claim is under-fed at line {call.lineno}"
 
     def test_the_caption_slot_no_longer_serves_the_bare_bucket_label(self):
@@ -645,8 +670,11 @@ class TestTheCaptionSlotIsWired:
             opening_home_prob=0.62,
             home_score=1,
             away_score=3,
+            score_source=FRESH_SOURCE,
+            score_observed_at=FRESH_AT,
+            now=NOW,
         )
-        assert claim is not None
+        assert claim is not None and claim.claim_type == "underdog_lead"
         assert claim.sentence != get_highlight_label(result)
 
 
@@ -713,30 +741,397 @@ class TestTheDemotionExceptionDidNotMoveWithTheCaption:
 class TestWhatThisSetCannotCheck:
     """Named so the gap is a decision on the record, not an oversight."""
 
-    def test_no_score_observation_carries_a_timestamp_on_this_path(self):
-        """The directive asks for a STALE-scoreboard case and for a GENUINE
-        SCORE CHANGE claim. Both need a dated score observation.
+    def test_a_fresh_observation_buys_no_score_change_claim(self):
+        """The GENUINE SCORE CHANGE claim stays unbuilt (#10561 kept it out).
 
-        `generate_event_reason` and `compute_highlight` are handed bare
-        integers: there is no `score_updated_at` on `Event` and no observation
-        instant in either signature, so "is this scoreboard fresh?" and "when
-        did they take the lead?" are not merely unanswered here — they are
-        unanswerable, and a freshness gate written at this layer would be a
-        guess wearing a check's clothes.
-
-        The rail that answers both is `score_snapshots` (`captured_at` plus the
-        ordered history), which no caption path loads. This asserts the shape of
-        the gap so that the day a timestamp does arrive in one of these
-        signatures, this test fails and points at the two claims waiting for it.
+        `score_observed_at` dates the tuple on OBSERVATION, not on change
+        (#4571), so a fresh stamp says "this is the score now" and nothing about
+        when it became the score. The selector's closed claim set must still
+        have no arm for an ordered change — if one appears, it needs the
+        ordered `score_snapshots` history, not this stamp.
         """
+        import typing
+
+        from app.utils.highlights import LiveClaimType
+
+        assert set(typing.get_args(LiveClaimType)) == {"underdog_lead", "movement"}
+        # And the freshest possible stamp on a lead does not produce change copy.
+        text = _reason(home_score=1, away_score=3, score_observed_at=NOW)
+        assert "took the lead" not in text.lower()
+        assert "lead change" not in text.lower()
+
+
+# ── F. #10561 — "LEADING" IS PRESENT TENSE, SO THE SCORE HAS TO BE CURRENT ────
+
+from dataclasses import asdict  # noqa: E402
+from unittest.mock import AsyncMock, MagicMock, patch  # noqa: E402
+
+from app.routes import feed_prices as feed_prices_module  # noqa: E402
+from app.utils.highlights import (  # noqa: E402
+    SCORE_CLAIM_MAX_AGE,
+    score_observation_is_current,
+)
+from app.utils.personalization import PersonalizationContext  # noqa: E402
+
+#: The card: Brewers opened 62% at home, Reds (the underdog) lead 3-1, live
+#: price Brewers 44%. With a current score it is an underdog lead; without one
+#: the only supported claim is the price move, stated with both endpoints.
+LEAD_SENTENCE = "Cincinnati Reds leading after starting at 38%"
+PRICE_SENTENCE = "Cincinnati Reds chance rose from 38% to 56%"
+
+_PDT = timezone(timedelta(hours=-7))
+
+#: (id, score_source, score_observed_at, admitted). Every refusal is paired
+#: with an admission on the same card, and the boundary is pinned on both sides.
+STAMPS = [
+    ("fresh_espn", "espn", NOW - timedelta(seconds=10), True),
+    ("fresh_statpal", "statpal", NOW - timedelta(seconds=10), True),
+    ("fresh_odds_api", "odds_api", NOW - timedelta(seconds=10), True),
+    ("observed_this_instant", "espn", NOW, True),
+    ("exactly_five_minutes", "espn", NOW - SCORE_CLAIM_MAX_AGE, True),
+    (
+        "one_microsecond_past",
+        "espn",
+        NOW - SCORE_CLAIM_MAX_AGE - timedelta(microseconds=1),
+        False,
+    ),
+    ("day_old", "espn", NOW - timedelta(days=1), False),
+    ("absent", None, None, False),
+    ("half_source_only", "espn", None, False),
+    ("half_clock_only", None, NOW - timedelta(seconds=10), False),
+    ("unknown_source", "scraper", NOW - timedelta(seconds=10), False),
+    ("source_not_a_string", 7, NOW - timedelta(seconds=10), False),
+    ("clock_is_a_string", "espn", (NOW - timedelta(seconds=10)).isoformat(), False),
+    ("future_by_a_second", "espn", NOW + timedelta(seconds=1), False),
+    # Repository convention: naive is UTC. Same instant in another zone is
+    # the same instant.
+    ("naive_utc_fresh", "espn", (NOW - timedelta(seconds=10)).replace(tzinfo=None), True),
+    ("pdt_fresh", "espn", (NOW - timedelta(seconds=10)).astimezone(_PDT), True),
+]
+_STAMP_IDS = [case[0] for case in STAMPS]
+
+
+class TestTheScoreHasToBeCurrent:
+    """Root's reproduction on 882dc119bc, made a regression set."""
+
+    def test_the_boundary_is_the_event_pages_five_minutes(self):
+        """`FreshnessChip.STALE_MS` — the score age the page already shows."""
+        assert SCORE_CLAIM_MAX_AGE == timedelta(minutes=5)
+
+    @pytest.mark.parametrize("case,source,observed_at,admitted", STAMPS, ids=_STAMP_IDS)
+    def test_the_predicate(self, case, source, observed_at, admitted):
+        assert score_observation_is_current(source, observed_at, NOW) is admitted
+
+    def test_the_predicate_needs_the_callers_clock(self):
+        """No `now` is not "use the wall clock": it is an unplumbed caller."""
+        assert score_observation_is_current("espn", NOW, None) is False
+
+    @pytest.mark.parametrize("case,source,observed_at,admitted", STAMPS, ids=_STAMP_IDS)
+    def test_the_caption_follows_the_stamp(self, case, source, observed_at, admitted):
+        """Refused → the price sentence, never silence (ruling 146)."""
+        text = _reason(
+            home_score=1, away_score=3,
+            score_source=source, score_observed_at=observed_at,
+        )
+        assert text == (LEAD_SENTENCE if admitted else PRICE_SENTENCE)
+
+    @pytest.mark.parametrize("case,source,observed_at,admitted", STAMPS, ids=_STAMP_IDS)
+    def test_the_pill_follows_the_stamp(self, case, source, observed_at, admitted):
+        """"Upset brewing" is the same present-tense claim; stale = unknown."""
+        result = _live(
+            home_score=1, away_score=3, current_home_prob=0.44,
+            score_source=source, score_observed_at=observed_at,
+        )
+        assert get_highlight_label(result) == (
+            "Upset brewing" if admitted else "Odds moved"
+        )
+
+    @pytest.mark.parametrize("case,source,observed_at,admitted", STAMPS, ids=_STAMP_IDS)
+    def test_the_selector_and_the_composer_agree(self, case, source, observed_at, admitted):
+        kwargs = dict(
+            status="live", opening_home_prob=0.62, current_home_prob=0.44,
+            home_score=1, away_score=3, opening_away_prob=0.38,
+            score_source=source, score_observed_at=observed_at, now=NOW,
+        )
+        claim = select_live_claim(**kwargs)
+        assert claim == ("underdog_lead" if admitted else "movement")
+
+    def test_a_fresh_confirmation_of_an_unchanged_score_is_current(self):
+        """Stamped on OBSERVATION (#4571): a 1-3 the writer re-read 10 s ago is
+        current even if it has been 1-3 for forty minutes. The age is the
+        reading's, not the score change's."""
+        assert _reason(
+            home_score=1, away_score=3, score_observed_at=NOW - timedelta(seconds=10)
+        ) == LEAD_SENTENCE
+
+    @pytest.mark.parametrize("score", [(0, 0), (None, None)], ids=["level", "absent"])
+    @pytest.mark.parametrize(
+        "stamp",
+        [("espn", FRESH_AT), ("espn", NOW - timedelta(days=1)), (None, None)],
+        ids=["fresh", "expired", "unstamped"],
+    )
+    def test_a_level_or_absent_score_still_says_the_price(self, score, stamp):
+        """Root's two controls, now across every stamp: nothing to narrate on
+        the field, so the price move stands either way."""
+        assert _reason(
+            home_score=score[0], away_score=score[1],
+            score_source=stamp[0], score_observed_at=stamp[1],
+        ) == PRICE_SENTENCE
+
+    def test_a_fresh_favourite_lead_is_still_not_an_underdog_lead(self):
+        assert "leading" not in _reason(home_score=3, away_score=1)
+
+    def test_the_stamp_moves_no_score_reason_or_flag_but_its_own(self):
+        """No ranking change: everything `compute_highlight` scores on is
+        identical between a fresh and an absent stamp."""
+        fresh = _live(home_score=1, away_score=3)
+        unstamped = _live(home_score=1, away_score=3, score_source=None, score_observed_at=None)
+        assert fresh.score == unstamped.score
+        assert fresh.reasons == unstamped.reasons
+        assert fresh.primary_reason == unstamped.primary_reason
+        assert fresh.flags.score_is_current is True
+        assert unstamped.flags.score_is_current is False
+        fresh_flags, unstamped_flags = asdict(fresh.flags), asdict(unstamped.flags)
+        del fresh_flags["score_is_current"], unstamped_flags["score_is_current"]
+        assert fresh_flags == unstamped_flags
+
+    @pytest.mark.parametrize("case,source,observed_at,admitted", STAMPS, ids=_STAMP_IDS)
+    def test_the_ranking_bucket_does_not_follow_the_stamp(self, case, source, observed_at, admitted):
+        result = _live(
+            home_score=1, away_score=3,
+            score_source=source, score_observed_at=observed_at,
+        )
+        assert get_highlight_label(result, for_ranking=True) == "Upset brewing"
+
+    @pytest.mark.parametrize("stamp", [(None, None), ("espn", NOW - timedelta(days=1))])
+    def test_a_finished_upset_does_not_expire(self, stamp):
+        """A final score is not a present-tense claim: chip and sentence hold."""
+        finished = _live(
+            home_score=1, away_score=3, status="completed",
+            score_source=stamp[0], score_observed_at=stamp[1],
+        )
+        assert get_highlight_label(finished) == "Recent upset"
+        assert _reason(
+            home_score=1, away_score=3, status="completed",
+            highlight_reasons=finished.reasons,
+            score_source=stamp[0], score_observed_at=stamp[1],
+        ) == "Cincinnati Reds won as a 38% underdog"
+
+    @pytest.mark.parametrize("status", ["scheduled", "completed"])
+    def test_pregame_and_final_reasons_are_stamp_independent(self, status):
+        kwargs = dict(home_score=1, away_score=3, status=status,
+                      highlight_reasons=("upset", "major_prob_swing", "starting_soon"))
+        assert _reason(**kwargs) == _reason(
+            **kwargs, score_source=None, score_observed_at=None
+        )
+
+
+# ── G. #10561 — THE REAL CALL PATHS CARRY THE EVENT'S OWN STAMP ───────────────
+
+
+def _row(*, score_source, score_observed_at):
+    """One live MLB row as the feed loads it. MagicMock like the resilience
+    harness, so an attribute this test forgot is a MagicMock — which the
+    predicate refuses (not a str, not a datetime) rather than trusting."""
+    sport = MagicMock()
+    sport.key, sport.name = "baseball_mlb", "MLB"
+    e = MagicMock()
+    e.id = 9001
+    e.status = "live"
+    e.commence_time = NOW - timedelta(minutes=40)
+    e.completed_at = None
+    e.home_team_id, e.away_team_id = 11, 21
+    e.home_team_name, e.away_team_name = "Milwaukee Brewers", "Cincinnati Reds"
+    e.opening_home_probability = 0.62
+    e.opening_away_probability = 0.38
+    e.opening_favorite = "home"
+    # 0.30, not the 0.44 the unit cases use: outside the close band, so the
+    # `reason` field has no "Tight game" arm to fall to and headline and
+    # reason can be compared for equality on every stamp.
+    e.win_probability_sources = {
+        "kalshi": {"value": 0.30, "updated_at": NOW.isoformat()}
+    }
+    e.espn_win_prob_home = None
+    e.opening_home_spread = None
+    e.opening_over_under = None
+    e.llm_importance = "regular"
+    e.llm_gender = e.llm_level = e.llm_league = None
+    e.sport = sport
+    e.statpal_end_time = None
+    e.period = "Top 6th"
+    e.raw_ei = 70.0
+    e.ei_metadata = None
+    e.home_score, e.away_score = 1, 3
+    e.external_id = "ext-9001"
+    e.game_clock = None
+    e.broadcast_info = None
+    e.event_tags = []
+    if score_source is not _UNSET:
+        e.score_source = score_source
+    if score_observed_at is not _UNSET:
+        e.score_observed_at = score_observed_at
+    return e
+
+
+_UNSET = object()
+
+
+def _mock_feed_db(rows):
+    db = AsyncMock()
+
+    def _result(found):
+        r = MagicMock()
+        r.scalars.return_value.all.return_value = found
+        r.scalars.return_value.unique.return_value.all.return_value = found
+        r.all.return_value = []
+        return r
+
+    async def execute(stmt, *a, **k):
+        s = str(stmt).lower()
+        if "win_prob_snapshots" in s:
+            return _result([])
+        if "events" in s:
+            return _result(rows)
+        return _result([])
+
+    db.execute = AsyncMock(side_effect=execute)
+    return db
+
+
+async def _initial_feed_item(row):
+    with patch(
+        "app.routes.feed._get_championship_probabilities",
+        new=AsyncMock(return_value={}),
+    ):
+        items = await feed_module._score_events(
+            _mock_feed_db([row]), NOW, None, PersonalizationContext()
+        )
+    [item] = [i for i in items if i["type"] == "event"]
+    return item
+
+
+async def _price_card_item(row, monkeypatch):
+    db = AsyncMock()
+    found = MagicMock()
+    found.scalars.return_value.all.return_value = [row]
+    db.execute.return_value = found
+    monkeypatch.setattr(
+        feed_prices_module,
+        "folded_probability_sources_with_revision",
+        AsyncMock(return_value=(row.win_probability_sources, {"1": 3})),
+    )
+    monkeypatch.setattr(feed_module, "enrich_event_team_data", AsyncMock())
+    items, states = await feed_prices_module._event_cards(db, [row.id], NOW)
+    assert states == {f"event-{row.id}": "updated"}
+    [item] = items
+    return item
+
+
+_PATH_STAMPS = [
+    ("fresh", "espn", NOW - timedelta(seconds=20), True),
+    ("expired", "espn", NOW - timedelta(minutes=5, seconds=1), False),
+    ("absent", None, None, False),
+    ("never_set_on_the_row", _UNSET, _UNSET, False),
+]
+_PATH_IDS = [c[0] for c in _PATH_STAMPS]
+
+
+PATH_PRICE_SENTENCE = "Cincinnati Reds chance rose from 38% to 70%"
+
+
+def _assert_card(item, admitted):
+    """Headline, reason and pill describe ONE determination."""
+    data = item["data"]
+    assert item["headline"] == (LEAD_SENTENCE if admitted else PATH_PRICE_SENTENCE)
+    assert item["reason"] == item["headline"]
+    assert data["highlight"]["label"] == ("Upset brewing" if admitted else "Odds moved")
+    # Raw scoreboard served untouched either way.
+    assert (data["home_score"], data["away_score"]) == (1, 3)
+
+
+class TestTheRealCallPathsCarryTheStamp:
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("case,source,observed_at,admitted", _PATH_STAMPS, ids=_PATH_IDS)
+    async def test_initial_feed(self, case, source, observed_at, admitted):
+        item = await _initial_feed_item(
+            _row(score_source=source, score_observed_at=observed_at)
+        )
+        _assert_card(item, admitted)
+        # The ranking bucket is the pre-gate label on every stamp.
+        assert item["_highlight_rank_label"] == "Upset brewing"
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("case,source,observed_at,admitted", _PATH_STAMPS, ids=_PATH_IDS)
+    async def test_price_card_refresh(self, case, source, observed_at, admitted, monkeypatch):
+        """`/api/feed/price-cards` → `FoldedBlendView` → `_score_events`: the
+        wrapper forwards the stamp, so the refreshed leaf says what the first
+        paint said. The public leaf drops the private rank key."""
+        item = await _price_card_item(
+            _row(score_source=source, score_observed_at=observed_at), monkeypatch
+        )
+        _assert_card(item, admitted)
+        assert "_highlight_rank_label" not in feed_prices_module._public(item)
+
+    @pytest.mark.asyncio
+    async def test_both_paths_score_the_card_identically_whatever_the_stamp(self, monkeypatch):
+        """No ranking movement: fresh and expired rows score the same on the
+        feed, and the feed and price-card leaves agree with each other."""
+        fresh = await _initial_feed_item(_row(score_source="espn", score_observed_at=NOW))
+        stale = await _initial_feed_item(
+            _row(score_source="espn", score_observed_at=NOW - timedelta(hours=3))
+        )
+        assert fresh["score"] == stale["score"]
+        assert fresh.get("_rank_score") == stale.get("_rank_score")
+        for row_stamp in ((NOW, True), (NOW - timedelta(hours=3), False)):
+            feed_item = await _initial_feed_item(
+                _row(score_source="espn", score_observed_at=row_stamp[0])
+            )
+            leaf = await _price_card_item(
+                _row(score_source="espn", score_observed_at=row_stamp[0]), monkeypatch
+            )
+            assert leaf["headline"] == feed_item["headline"]
+            assert leaf["data"]["highlight"] == feed_item["data"]["highlight"]
+
+    def test_the_demotion_predicate_reads_the_rank_bucket(self):
+        """An expired-score underdog card keeps its exception: the pill says
+        "Odds moved", the bucket still says "upset", the rank does not move."""
+        data = {
+            "id": 1, "sport": "baseball_mlb", "status": "live",
+            "event_tags": ["tier:1"], "highlight": {"label": "Odds moved"},
+        }
+        stale = {"type": "event", "score": 65, "headline": PATH_PRICE_SENTENCE,
+                 "data": data, "_highlight_rank_label": "Upset brewing"}
+        assert feed_module._is_discover_event_demotion_exception(stale) is True
+        # CONTROL: the same card without the bucket is demotable — the key is
+        # what keeps it, not some other arm.
+        stale.pop("_highlight_rank_label")
+        assert feed_module._is_discover_event_demotion_exception(stale) is False
+
+    def test_every_score_reading_call_site_passes_the_stamp(self):
+        """AST guard: an optional argument left off fails closed silently, so
+        every `compute_highlight`/`generate_event_reason` call that hands a
+        scoreboard must hand its stamp too, in both route modules."""
+        import ast
         import inspect
 
-        for func in (generate_event_reason, compute_highlight):
-            params = set(inspect.signature(func).parameters)
-            assert not {
-                p for p in params if "score" in p and ("at" in p or "time" in p)
-            }, (
-                f"{func.__name__} now takes a dated score observation — the "
-                f"stale-scoreboard gate and the GENUINE SCORE CHANGE claim are "
-                f"buildable; see #5439."
-            )
+        import app.routes.events as events_module
+
+        for module in (feed_module, events_module):
+            tree = ast.parse(inspect.getsource(module))
+            calls = [
+                n for n in ast.walk(tree)
+                if isinstance(n, ast.Call) and isinstance(n.func, ast.Name)
+                and n.func.id in ("compute_highlight", "generate_event_reason")
+            ]
+            assert calls, module.__name__
+            for call in calls:
+                passed = {kw.arg for kw in call.keywords}
+                if "home_score" not in passed:
+                    continue
+                need = {"score_source", "score_observed_at"}
+                if call.func.id == "generate_event_reason" or module is feed_module:
+                    need |= {"now"}
+                assert need <= passed, (
+                    f"{module.__name__}:{call.lineno} {call.func.id} reads a "
+                    f"scoreboard without its observation stamp (#10561)"
+                )

@@ -468,6 +468,12 @@ class EventFlags:
     # #4580 — the scoreboard, for sentences that name it. Tri-state: None means
     # the row carries no score, which is never the same as "no".
     underdog_is_leading: Optional[bool] = None
+    # #10561 — may the scoreboard above speak in the PRESENT tense? True only
+    # when the row's own score observation is attributed and at most
+    # `SCORE_CLAIM_MAX_AGE` old at `now`. Deliberately a separate flag rather
+    # than a rewrite of `underdog_is_leading`: the finished-upset chip reads that
+    # one, and a final score does not expire.
+    score_is_current: bool = False
     # T10-1 (#5439): this flag's only reader was the withdrawn "Momentum shift"
     # arm — "a move plus a score" was never evidence of momentum, at any
     # threshold. It is still written (`compute_highlight`), still correct, and
@@ -682,6 +688,67 @@ def upset_is_no_longer_in_doubt(
     return underdog_prob_now >= BLOWOUT_THRESHOLD
 
 
+#: How old a score observation may be and still say who is ahead NOW (#10561).
+#:
+#: Not a new number. The event page already ages the same `score_observed_at`
+#: against `FreshnessChip.STALE_MS` (five minutes, reused by `LiveAgeStamp` for
+#: the score fact), and it calls a reading stale only when its age is GREATER
+#: than that — so exactly five minutes is still current here too. The price age
+#: is a different clock about a different fact and is deliberately not this.
+SCORE_CLAIM_MAX_AGE = timedelta(minutes=5)
+
+
+def _as_utc(stamp: datetime) -> datetime:
+    # The repository's convention: a naive datetime is UTC (`compute_highlight`
+    # treats `commence_time` the same way).
+    return stamp if stamp.tzinfo is not None else stamp.replace(tzinfo=timezone.utc)
+
+
+def score_observation_is_current(
+    score_source: object,
+    score_observed_at: object,
+    now: Optional[datetime],
+) -> bool:
+    """May this row's scoreboard support a claim about who is ahead NOW? (#10561)
+
+    The scoreboard columns carry no age; `Event.score_source` +
+    `Event.score_observed_at` date the whole tuple (#4571, stamped on
+    observation, never on change). A present-tense sentence about the field —
+    "Boston leading after starting at 38%", "Upset brewing" — needs all three:
+
+    * a source from the closed writer registry (`SCORE_OBSERVATION_SOURCES`) —
+      a half stamp or an unknown writer is no attribution at all;
+    * an observation clock that is a real datetime and not after ``now`` — a
+      stamp from the future is a broken clock, and trusting it would re-date
+      an old score;
+    * an age of at most `SCORE_CLAIM_MAX_AGE` against the CALLER's fixed
+      ``now``. Never a price stamp, fetch time or score-change time.
+
+    Anything else — including ``now`` itself missing — answers False, so a
+    caller that has not plumbed provenance fails CLOSED: the scoreboard is
+    still displayed, it just cannot be narrated. Never raises; malformed input
+    must not take a healthy sibling card down with it.
+
+    A current observation proves the tuple is fresh, never that it CHANGED — it
+    is no evidence for an ordered lead-change claim, and none is made from it.
+    """
+    if now is None or not isinstance(score_observed_at, datetime):
+        return False
+    # Imported here, not at module top: `app.utils.__init__` imports this module,
+    # and bare-runner scripts (`python -S`, and the frontend job's specimen
+    # producer) import `app.utils` with no site-packages. `score_observation`
+    # pulls in sqlalchemy for its UPDATE helpers; a module-level import made
+    # every one of those scripts fail to start. One registry, read lazily.
+    from app.utils.score_observation import SCORE_OBSERVATION_SOURCES
+
+    if not isinstance(score_source, str) or score_source not in SCORE_OBSERVATION_SOURCES:
+        return False
+    age = _as_utc(now) - _as_utc(score_observed_at)
+    if age < timedelta(0):
+        return False
+    return age <= SCORE_CLAIM_MAX_AGE
+
+
 #: The claims a LIVE card is allowed to make about itself (T10-1, #5439).
 #:
 #: A claim type is not a label and not a sentence — it is the answer to "what,
@@ -699,6 +766,9 @@ def select_live_claim(
     away_score: Optional[int],
     opening_away_prob: Optional[float] = None,
     sport: Optional[str] = None,
+    score_source: Optional[str] = None,
+    score_observed_at: Optional[datetime] = None,
+    now: Optional[datetime] = None,
 ) -> Optional[LiveClaimType]:
     """Which claim does a live card's evidence actually support? (T10-1, #5439)
 
@@ -715,6 +785,13 @@ def select_live_claim(
       scoreboard, in a live game, on the correct side. ``underdog_leads``
       already refuses every other case, including 0-0 (a known "no", #4580) and
       an absent score (``None``, unanswerable on 41 of 64 live rows).
+
+      #10561 — and the scoreboard has to be CURRENT. "Leading" is present
+      tense; a score last observed a day ago, or never attributed at all, is
+      not evidence about now. ``score_observation_is_current`` judges the row's
+      own ``score_source``/``score_observed_at`` against the caller's fixed
+      ``now``; all three default to None, so a caller that has not plumbed them
+      gets no field claim (fail closed) and falls to the price arm below.
 
       Deliberately NOT gated on ``favorite_switched``. Whether the MARKET has
       come round to the underdog is a different question from whether the
@@ -744,9 +821,13 @@ def select_live_claim(
     # `flags.underdog_is_leading` answer the same question differently on a
     # draw-priced board, which is the exact drift #4580 created this function
     # to prevent.
-    if underdog_leads(
-        opening_home_prob, home_score, away_score, opening_away_prob
-    ) is True:
+    if (
+        score_observation_is_current(score_source, score_observed_at, now)
+        and underdog_leads(
+            opening_home_prob, home_score, away_score, opening_away_prob
+        )
+        is True
+    ):
         return "underdog_lead"
     if opening_home_prob is not None and current_home_prob is not None:
         if abs(current_home_prob - opening_home_prob) >= MAJOR_PROB_SWING:
@@ -1048,6 +1129,11 @@ def compute_highlight(
     # absent means "we cannot see the field", never "nothing has happened on it".
     home_score: Optional[int] = None,
     away_score: Optional[int] = None,
+    # #10561 — the score tuple's own observation stamp (`Event.score_source`,
+    # `Event.score_observed_at`). Absent means the scoreboard cannot be narrated
+    # in the present tense; it changes no score, flag or ranking input below.
+    score_source: Optional[str] = None,
+    score_observed_at: Optional[datetime] = None,
 ) -> HighlightResult:
     """
     Compute highlight score and flags for an event.
@@ -1078,6 +1164,10 @@ def compute_highlight(
         opening_home_prob, home_score, away_score, opening_away_prob
     )
     flags.someone_is_leading = score_is_decided(home_score, away_score)
+    # #10561 — read against the same `now` every other flag here uses.
+    flags.score_is_current = score_observation_is_current(
+        score_source, score_observed_at, now
+    )
     # #5047 — and read the price ONCE too, for the same no-drift reason.
     flags.upset_is_no_longer_in_doubt = upset_is_no_longer_in_doubt(
         opening_home_prob, current_home_prob
@@ -1481,11 +1571,20 @@ def compute_highlight(
     return result
 
 
-def get_highlight_label(result: HighlightResult) -> Optional[str]:
+def get_highlight_label(
+    result: HighlightResult, *, for_ranking: bool = False
+) -> Optional[str]:
     """
     Get a short label for display in the Highlights section.
 
     Returns None if event shouldn't be highlighted.
+
+    ``for_ranking`` (#10561) returns the ranking BUCKET rather than the pill:
+    the label exactly as it was before the score-age gate, because the Discover
+    demotion predicate keys on the word "upset" in it and a truth fix to what
+    the card SAYS must not move where the card RANKS (notice 37's shape, and
+    #10561's "no ranking change"). It is never served; `routes/feed.py` carries
+    it on an underscore-private key that is scrubbed before publishing.
     """
     flags = result.flags
 
@@ -1507,7 +1606,11 @@ def get_highlight_label(result: HighlightResult) -> Optional[str]:
     # unknown-score rows too (41 of 64 live rows have no score): it asserts only
     # the thing we can actually see.
     if flags.is_live and flags.favorite_switched:
-        if flags.underdog_is_leading is not True:
+        # #10561 — "Upset brewing" is a present-tense claim about the field, so
+        # an expired or unattributed score is the unknown-score case above, not
+        # a stale "yes": it says the price fact that IS observed.
+        score_may_speak = flags.score_is_current or for_ranking
+        if flags.underdog_is_leading is not True or not score_may_speak:
             return "Odds moved"
         # #5047 — and once the market has no doubt left, "brewing" is the wrong
         # tense. SF @ LAR on 2026-09-11 was rank 2 on Discover reading "Upset

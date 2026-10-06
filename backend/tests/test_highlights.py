@@ -548,7 +548,9 @@ class TestGetHighlightLabel:
         # `test_live_reason_is_earned_4580.py`. This test is about priority.
         result = HighlightResult(
             flags=EventFlags(
-                is_live=True, favorite_switched=True, underdog_is_leading=True
+                is_live=True, favorite_switched=True, underdog_is_leading=True,
+                # #10561 — and that scoreboard was observed within five minutes.
+                score_is_current=True,
             )
         )
         assert get_highlight_label(result) == "Upset brewing"
@@ -919,6 +921,7 @@ class TestGetHighlightLabelPriority:
             favorite_switched=True,
             is_close_matchup=True,
             underdog_is_leading=True,  # #4580 — the capsule names the scoreboard
+            score_is_current=True,  # #10561 — observed within five minutes
         ))
         assert get_highlight_label(result) == "Upset brewing"
 

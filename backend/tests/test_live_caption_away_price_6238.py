@@ -44,6 +44,7 @@ suppressed shapes are asserted to leave a card that still has a caption path.
 
 import ast
 import inspect
+from datetime import datetime, timezone
 
 import pytest
 
@@ -56,6 +57,12 @@ from app.utils.feed_reasons import compose_live_claim, generate_event_reason
 
 DRAW_SPORT = "soccer_spain_la_liga"
 TWO_WAY_SPORT = "americanfootball_nfl"
+
+# #10561 — a live "leading" sentence needs a current score observation. Every
+# live call below carries one, so each refusal here is about the away PRICE and
+# never about an unstamped score.
+NOW = datetime(2026, 9, 16, 20, 0, tzinfo=timezone.utc)
+FRESH_SCORE = {"score_source": "espn", "score_observed_at": NOW, "now": NOW}
 
 # The production specimen, to the stored digit.
 ELCHE_OPEN_HOME = 0.5352  # Espanyol, the favourite
@@ -77,6 +84,7 @@ def live_claim(**overrides):
         "away_score": 2,
         "sport": DRAW_SPORT,
         "opening_away_prob": ELCHE_OPEN_AWAY,
+        **FRESH_SCORE,
     }
     kwargs.update(overrides)
     return compose_live_claim(**kwargs)
@@ -124,6 +132,7 @@ class TestTheUnderdogBaseline:
             away_score=2,
             sport=DRAW_SPORT,
             opening_away_prob=None,
+            **FRESH_SCORE,
         )
         assert reason == "Tight game"
 
@@ -296,6 +305,7 @@ class TestTheSentenceTravelsThroughTheReasonField:
                 away_score=2,
                 sport=sport,
                 opening_away_prob=ELCHE_OPEN_AWAY,
+                **FRESH_SCORE,
             )
             == expected
         )

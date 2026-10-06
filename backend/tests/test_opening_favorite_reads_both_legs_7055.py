@@ -81,6 +81,7 @@ from app.utils.highlights import (
 from app.utils.odds_math import FAVORITE_MARGIN, favorite_from_pair
 
 NOW = datetime(2026, 9, 19, 0, 7, tzinfo=timezone.utc)
+_FRESH_SCORE = {"score_source": "espn", "score_observed_at": NOW, "now": NOW}
 
 
 def _old_band(home_prob):
@@ -365,6 +366,9 @@ class TestTheRefusal:
 class TestTheLiveCapsuleAgrees:
     """#4580: one determination, so the capsule and the flag cannot drift."""
 
+    # #10561 — every call carries a current score observation, so a refusal
+    # here is about the pair and never about an unstamped score.
+
     def test_select_live_claim_reads_the_same_pair(self):
         """A live three-way board where the FAVOURITE leads claims no upset.
 
@@ -374,7 +378,7 @@ class TestTheLiveCapsuleAgrees:
         issue's business. Pinning `None` here would pin the movement threshold
         into an upset test and break on any unrelated tuning of it.
         """
-        assert select_live_claim("live", 0.3725, 0.80, 3, 0, 0.3648) != "underdog_lead"
+        assert select_live_claim("live", 0.3725, 0.80, 3, 0, 0.3648, **_FRESH_SCORE) != "underdog_lead"
 
     def test_that_board_did_claim_an_underdog_lead_before_the_fix(self):
         """The BEFORE control for this class, so the assertion above is not vacuous.
@@ -382,13 +386,13 @@ class TestTheLiveCapsuleAgrees:
         The old call shape — no away leg — reads 0.3725 as an underdog and
         claims the favourite's 3-0 lead as an upset in progress.
         """
-        assert select_live_claim("live", 0.3725, 0.80, 3, 0) == "underdog_lead"
+        assert select_live_claim("live", 0.3725, 0.80, 3, 0, **_FRESH_SCORE) == "underdog_lead"
 
     def test_the_capsule_still_fires_for_a_real_underdog_lead(self):
-        assert select_live_claim("live", 0.25, 0.60, 2, 0, 0.50) == "underdog_lead"
+        assert select_live_claim("live", 0.25, 0.60, 2, 0, 0.50, **_FRESH_SCORE) == "underdog_lead"
 
     def test_the_flag_and_the_capsule_answer_alike(self):
         """The drift #4580 exists to prevent, asserted on the defect's own row."""
         flag = underdog_leads(0.3725, 3, 0, 0.3648)
-        capsule = select_live_claim("live", 0.3725, 0.80, 3, 0, 0.3648)
+        capsule = select_live_claim("live", 0.3725, 0.80, 3, 0, 0.3648, **_FRESH_SCORE)
         assert flag is False and capsule != "underdog_lead"

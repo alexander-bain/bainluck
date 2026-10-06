@@ -17,12 +17,19 @@ Both now ask `pregame_favorite_side`, so the determination and the name cannot
 disagree. Every rejection here is paired with a control.
 """
 
+from datetime import datetime, timezone
+
 import pytest
 
 from app.utils.feed_reasons import compose_live_claim
 from app.utils.highlights import pregame_favorite_side, underdog_leads
 
 NATIONS_LEAGUE = "soccer_uefa_nations_league"
+
+# #10561 — a live "leading" sentence needs a current score observation; every
+# call here carries one, so each assertion is about the NAME and the number.
+NOW = datetime(2026, 9, 14, 19, 0, tzinfo=timezone.utc)
+FRESH_SCORE = {"score_source": "espn", "score_observed_at": NOW, "now": NOW}
 
 
 def _belgium_italy(**overrides):
@@ -37,6 +44,7 @@ def _belgium_italy(**overrides):
         "away_score": 1,
         "sport": NATIONS_LEAGUE,
         "opening_away_prob": 0.2885,
+        **FRESH_SCORE,
     }
     kwargs.update(overrides)
     return compose_live_claim(**kwargs)
@@ -90,6 +98,7 @@ class TestControls:
             away_score=score[1],
             sport="baseball_mlb",
             opening_away_prob=round(1 - opening_home, 4),
+            **FRESH_SCORE,
         )
         assert claim is not None
         assert claim.sentence == expected

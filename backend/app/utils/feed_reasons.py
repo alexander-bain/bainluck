@@ -1382,6 +1382,9 @@ def compose_live_claim(
     away_score: Optional[int],
     sport: Optional[str] = None,
     opening_away_prob: Optional[float] = None,
+    score_source: Optional[str] = None,
+    score_observed_at: Optional[datetime] = None,
+    now: Optional[datetime] = None,
 ) -> Optional[LiveClaim]:
     """The one supported claim this live card may make, or None. (T10-1, #5439)
 
@@ -1395,6 +1398,11 @@ def compose_live_claim(
     Callers: `generate_event_reason` (the `reason` field) and `routes/feed.py`
     (the `headline` field, which is what the web caption chain actually renders
     on a live card — see #4596).
+
+    #10561 — ``score_source``/``score_observed_at`` are the event's OWN score
+    observation stamp and ``now`` is the caller's fixed clock. Without all three
+    a current-leading claim is refused (see `score_observation_is_current`);
+    the price sentence is unaffected.
     """
     claim = select_live_claim(
         status=status,
@@ -1404,6 +1412,9 @@ def compose_live_claim(
         away_score=away_score,
         opening_away_prob=opening_away_prob,
         sport=sport,
+        score_source=score_source,
+        score_observed_at=score_observed_at,
+        now=now,
     )
     if claim is None:
         return None
@@ -1510,6 +1521,9 @@ def generate_event_reason(
     prematch_percents: Optional[Mapping[str, Optional[int]]] = None,
     sport: Optional[str] = None,
     opening_away_prob: Optional[float] = None,
+    score_source: Optional[str] = None,
+    score_observed_at: Optional[datetime] = None,
+    now: Optional[datetime] = None,
 ) -> str:
     """
     Generate a one-line explanation for why an event is interesting.
@@ -1526,6 +1540,10 @@ def generate_event_reason(
     here may re-derive them. Keyed rather than a pair because the caller is in
     another module and a transposed side reads as a true sentence about the
     wrong team.
+
+    ``score_source``/``score_observed_at``/``now`` (#10561) reach only the live
+    composer: a live "leading" sentence needs a current score observation. The
+    settled sentences read a final score, which does not expire.
     """
     reasons = set(highlight_reasons)
 
@@ -1777,6 +1795,10 @@ def generate_event_reason(
             # kickoff price without the stored away opening.
             sport=sport,
             opening_away_prob=opening_away_prob,
+            # #10561 — the score's own observation stamp and the caller's clock.
+            score_source=score_source,
+            score_observed_at=score_observed_at,
+            now=now,
         )
 
         if claim is not None and claim.claim_type == "underdog_lead":
