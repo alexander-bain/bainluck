@@ -5107,33 +5107,80 @@ async def get_feed(
         # eligibility is a route-wide contract, not a futures-pool one.
         if category is not None and category not in GOLF_TIER_SPORTS:
             _skip_golf = True
+        # #10574 (#1459): inside the one request budget, ended the way the
+        # events half is (#10534) — nothing left -> not started; time runs out
+        # -> cancelled, waiters released, incomplete-build terminal, nothing
+        # after it. The golf base never runs SQL on this request's session (a
+        # cold fill owns an isolated session and closes it as it unwinds), so
+        # an expiry here needs no rollback of `db`.
+        _golf_stage_incomplete: str | None = None
         if not _skip_golf:
-            try:
-                _golf_prov_sink: dict = {}
-                tournament_items = await _score_golf_tournaments(
-                    # `sport or category` — the same precedence the events half
-                    # already uses, and it makes the scorer's own refusal agree
-                    # with the gate above by construction rather than by the
-                    # gate being right. Two layers reading ONE vocabulary
-                    # (`GOLF_TIER_SPORTS`); neither is load-bearing alone.
-                    db, now, sport or category, ctx, stages=_timings,
-                    provenance_sink=_golf_prov_sink,
-                )
-                _golf_provenance = _golf_prov_sink.get("golf")
-                tournament_items = _drop_dismissed_keyed_items(
-                    tournament_items, ctx=ctx, my_teams_only=my_teams_only
-                )
-                # #1927 — the reader's golf affinities RANK the tournaments
-                # here (per principal, after the build) where they used to be
-                # a per-tour delete inside the builder.
-                tournament_items = _rank_keyed_items_by_sport_affinity(
-                    tournament_items, ctx=ctx, my_teams_only=my_teams_only
-                )
-                if tournament_items:
-                    feed_items.extend(tournament_items)
-            except Exception as e:
-                logger.error("Feed: golf scoring failed, returning partial feed: %s", e)
+            _golf_budget_s = _feed_budget_remaining_s()
+            if _golf_budget_s <= 0:
+                _golf_stage_incomplete = "golf_budget"
+            else:
+                _golf_deadline = asyncio.timeout(_golf_budget_s)
+                try:
+                    _golf_prov_sink: dict = {}
+                    async with _golf_deadline:
+                        tournament_items = await _score_golf_tournaments(
+                            # `sport or category` — the same precedence the
+                            # events half already uses, and it makes the
+                            # scorer's own refusal agree with the gate above by
+                            # construction rather than by the gate being right.
+                            # Two layers reading ONE vocabulary
+                            # (`GOLF_TIER_SPORTS`); neither is load-bearing alone.
+                            db, now, sport or category, ctx, stages=_timings,
+                            provenance_sink=_golf_prov_sink,
+                        )
+                    _golf_provenance = _golf_prov_sink.get("golf")
+                    tournament_items = _drop_dismissed_keyed_items(
+                        tournament_items, ctx=ctx, my_teams_only=my_teams_only
+                    )
+                    # #1927 — the reader's golf affinities RANK the tournaments
+                    # here (per principal, after the build) where they used to be
+                    # a per-tour delete inside the builder.
+                    tournament_items = _rank_keyed_items_by_sport_affinity(
+                        tournament_items, ctx=ctx, my_teams_only=my_teams_only
+                    )
+                    if tournament_items:
+                        feed_items.extend(tournament_items)
+                except asyncio.CancelledError:
+                    # A cold fill is shared across feed keys: when ANOTHER
+                    # request's deadline cancels the fill leader, a waiter here
+                    # is handed that cancellation through the shared future.
+                    # Nobody cancelled THIS request, so it is the leader's
+                    # failure, not ours — golf is unavailable this time, as
+                    # for any leader that produced nothing. A real cancellation
+                    # of this request propagates.
+                    _current = asyncio.current_task()
+                    if _current is None or _current.cancelling():
+                        raise
+                    logger.warning(
+                        "Feed: the shared golf fill this request waited on was "
+                        "cancelled — continuing without golf (#10574)"
+                    )
+                    _golf_provenance = "unavailable"
+                except Exception as e:
+                    if not _golf_deadline.expired():
+                        logger.error(
+                            "Feed: golf scoring failed, returning partial feed: %s", e
+                        )
+                # Read off the deadline, not the exception (see #10534 above).
+                if _golf_deadline.expired():
+                    _golf_stage_incomplete = "golf_timeout"
+        if _golf_stage_incomplete is not None:
+            logger.warning(
+                "Feed: golf did not finish inside the request budget (%s) — "
+                "serving last-good or unavailable, never a partial build (#10574)",
+                _golf_stage_incomplete,
+            )
+            await _release_incomplete_build(
+                _golf_stage_incomplete, session_cancelled=False
+            )
         _previous_at = _record_feed_timing(_timings, _started_at, _previous_at, "golf")
+        if _golf_stage_incomplete is not None:
+            return _serve_incomplete_build(_golf_stage_incomplete)
 
         # === SCORE EVENT CONCEPTS (UFC cards, …) ===  #999 B3 / L2-84
         # Additive candidate plumbing — UFC cards surface on the sports tab/feed as
@@ -5218,7 +5265,20 @@ async def get_feed(
                     _concept_sport_filter, _follow_filter
                 )
                 _skip_concepts = _skip_concepts or _narrow_skip
-        if not _skip_concepts:
+        # #10574 (#1459): inside the same budget. Unlike golf, the concept
+        # build runs inline on THIS request's session (under the shared
+        # cache's lock), so an expiry — while waiting on another request's
+        # build, reading Redis, building, or publishing — ends with the same
+        # finite rollback-or-invalidate as the events half, and the session is
+        # never used again. Another request's build is never cancelled by
+        # ours; an artifact it (or we) finished before the expiry may stay in
+        # the shared cache — that is plain shared data, not this page.
+        _concept_stage_incomplete: str | None = None
+        _concepts_budget_s = _feed_budget_remaining_s() if not _skip_concepts else 0.0
+        if not _skip_concepts and _concepts_budget_s <= 0:
+            _concept_stage_incomplete = "concepts_budget"
+        elif not _skip_concepts:
+            _concepts_deadline = asyncio.timeout(_concepts_budget_s)
             try:
                 # #2143: the concept build is principal-INDEPENDENT — it takes
                 # `ctx` and never reads it (zero occurrences in its body), and it
@@ -5284,12 +5344,13 @@ async def get_feed(
                         db, now, _concept_build_filter, ctx
                     )
 
-                concept_items = await _shared_get_or_build(
-                    "concepts",
-                    _concept_key,
-                    _build_concepts,
-                    reuse_sink=_shared_reuse,
-                )
+                async with _concepts_deadline:
+                    concept_items = await _shared_get_or_build(
+                        "concepts",
+                        _concept_key,
+                        _build_concepts,
+                        reuse_sink=_shared_reuse,
+                    )
                 concept_items = _drop_dismissed_keyed_items(
                     concept_items or [], ctx=ctx, my_teams_only=my_teams_only
                 )
@@ -5301,8 +5362,26 @@ async def get_feed(
                 if concept_items:
                     feed_items.extend(concept_items)
             except Exception as e:
-                logger.error("Feed: event-concept scoring failed, partial feed: %s", e)
+                if not _concepts_deadline.expired():
+                    logger.error(
+                        "Feed: event-concept scoring failed, partial feed: %s", e
+                    )
+            if _concepts_deadline.expired():
+                _concept_stage_incomplete = "concepts_timeout"
+        if _concept_stage_incomplete is not None:
+            logger.warning(
+                "Feed: event concepts did not finish inside the request budget "
+                "(%s) — serving last-good or unavailable, never a partial build "
+                "(#10574)",
+                _concept_stage_incomplete,
+            )
+            await _release_incomplete_build(
+                _concept_stage_incomplete,
+                session_cancelled=_concept_stage_incomplete == "concepts_timeout",
+            )
         _previous_at = _record_feed_timing(_timings, _started_at, _previous_at, "concepts")
+        if _concept_stage_incomplete is not None:
+            return _serve_incomplete_build(_concept_stage_incomplete)
 
         # === SCORE FUTURES ===
         # Queue 271 (#1459): futures scoring is the slow, DB-bound stage that hangs a
