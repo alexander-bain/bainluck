@@ -61,6 +61,7 @@ final class WatchDiscoverJourneyTests: XCTestCase {
         XCTAssertTrue(result.label.contains("Yes"), result.label)
         XCTAssertFalse(element("watch.discovery.probability.302", in: app).exists)
         capture(app, "Discoveries settled result")
+        XCTAssertEqual(app.buttons["watch.discovery.close"].firstMatch.label, "Your game")
         try tap(app.buttons["watch.discovery.close"].firstMatch, in: app)
         XCTAssertTrue(element("watch.home-probability", in: app).waitForExistence(timeout: 15))
         XCTAssertTrue(element("watch.home-probability", in: app).label.contains("Giants"))
@@ -79,6 +80,7 @@ final class WatchDiscoverJourneyTests: XCTestCase {
         try reveal(savedAge, in: app)
         XCTAssertEqual(savedAge.value as? String, originalClock, "Offline restoration must preserve producer time")
         capture(app, "Discoveries saved clock retained")
+        XCTAssertEqual(app.buttons["watch.discovery.close"].firstMatch.label, "Your game")
         try tap(app.buttons["watch.discovery.close"].firstMatch, in: app)
         XCTAssertTrue(element("watch.home-probability", in: app).waitForExistence(timeout: 15))
         XCTAssertTrue(element("watch.home-probability", in: app).label.contains("64%"))
@@ -94,6 +96,7 @@ final class WatchDiscoverJourneyTests: XCTestCase {
         XCTAssertTrue(app.buttons["watch.pick.101"].waitForExistence(timeout: 20))
         try openDiscoveries(in: app)
         XCTAssertFalse(element("watch.discovery.selected", in: app).exists)
+        try assertUnselectedReturnControl(in: app, screenshot: "Readable Games return control at standard size")
         let age = element("watch.discovery.age.303", in: app)
         XCTAssertTrue(age.waitForExistence(timeout: 15))
         try reveal(age, in: app)
@@ -103,7 +106,39 @@ final class WatchDiscoverJourneyTests: XCTestCase {
         XCTAssertTrue(app.buttons["watch.pick.101"].waitForExistence(timeout: 15))
         XCTAssertFalse(element("watch.home-probability", in: app).exists)
         print("WATCH_UI_DISCOVERIES_UNSELECTED=PASS")
+        print("WATCH_UI_DISCOVERIES_RETURN_STANDARD=PASS")
         app.terminate()
+    }
+
+    @MainActor
+    func testUnselectedReturnControlIsReadableAtAccessibilitySize() throws {
+        continueAfterFailure = false
+        let app = XCUIApplication()
+        defer { app.terminate() }
+        app.launchEnvironment = environment(largeText: true)
+        app.launch()
+        let heading = app.staticTexts["watch.picker-heading"]
+        XCTAssertTrue(heading.waitForExistence(timeout: 20))
+        XCTAssertEqual(heading.value as? String, "accessibility5")
+        try openDiscoveries(in: app)
+        XCTAssertFalse(element("watch.discovery.selected", in: app).exists)
+        try assertUnselectedReturnControl(in: app, screenshot: "Readable Games return control at accessibility5")
+        app.buttons["watch.discovery.close"].firstMatch.tap()
+        XCTAssertTrue(heading.waitForExistence(timeout: 15))
+        XCTAssertEqual(heading.value as? String, "accessibility5")
+        XCTAssertTrue(app.buttons["watch.pick.101"].exists)
+        XCTAssertFalse(element("watch.home-probability", in: app).exists)
+        print("WATCH_UI_DISCOVERIES_RETURN_LARGE=PASS")
+    }
+
+    @MainActor
+    private func assertUnselectedReturnControl(in app: XCUIApplication, screenshot: String) throws {
+        let close = app.buttons["watch.discovery.close"].firstMatch
+        XCTAssertTrue(close.waitForExistence(timeout: 15))
+        XCTAssertEqual(close.label, "Back to choosing a game")
+        XCTAssertTrue(close.isHittable)
+        XCTAssertTrue(app.frame.contains(close.frame), "The complete return control must fit on screen")
+        capture(app, screenshot)
     }
 
     private func environment(largeText: Bool) -> [String: String] {
