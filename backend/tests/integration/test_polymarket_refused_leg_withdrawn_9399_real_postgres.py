@@ -162,3 +162,200 @@ async def test_a_graded_leg_is_never_withdrawn(engine):
 
     assert stats["legs_withdrawn_book_refuted"] == 0
     assert (await _stored(engine))[CAT5][0] == pytest.approx(0.92)
+
+
+# ---------------------------------------------------------------------------
+# #10298 — the same writer, reached through the non-negRisk GAME branch (C1 + C2)
+# ---------------------------------------------------------------------------
+#
+# Lions–Packers (Polymarket game market 61040985) printed "Packers 53%" over a
+# 0.15/0.52 book. Two passes of the real poll over a game event: pass 1 stores a
+# moneyline, pass 2 serves the specimen book. Production writer of 0.53: UNKNOWN —
+# this is the admitted failure shape, not a claim about which writer stored it.
+
+GAME_ID = "61040985"
+ML, SPREAD = "0xlp_ml", "0xlp_spread"
+
+
+def _game_leg(cid, question, *, prices, bid, ask, last, title=None):
+    from app.services.polymarket_api import PolymarketMarket
+
+    return PolymarketMarket(
+        condition_id=cid,
+        question=question,
+        group_item_title=title,
+        outcomes=["Packers", "Lions"] if title is None else ["Yes", "No"],
+        outcome_prices=prices,
+        best_bid=bid,
+        best_ask=ask,
+        last_trade_price=last,
+        volume_24h=5_000.0,
+    )
+
+
+def _game(moneyline=None, *, spread_price=0.29):
+    from app.services.polymarket_api import PolymarketEvent
+
+    spread = _game_leg(
+        SPREAD, "Spread: Packers (-5.5)", title="Spread -5.5",
+        prices=[spread_price, 1 - spread_price],
+        bid=spread_price - 0.01, ask=spread_price + 0.01, last=spread_price,
+    )
+    markets = [spread] if moneyline is None else [moneyline, spread]
+    return PolymarketEvent(
+        id=GAME_ID, title="Lions vs. Packers", neg_risk=False, markets=markets,
+    )
+
+
+def _ml(raw, bid, ask, last=None):
+    return _game_leg(ML, "Lions vs. Packers", prices=[raw, round(1 - raw, 4)],
+                     bid=bid, ask=ask, last=last)
+
+
+async def _wrapper_rows(engine) -> dict:
+    """Every leg of the WRAPPER market (external_id = the Gamma event id)."""
+    from sqlalchemy import text
+
+    async with engine.connect() as conn:
+        rows = (
+            await conn.execute(text(
+                "SELECT o.external_id, o.current_probability::float, "
+                "       o.current_american_odds, o.opening_probability::float, "
+                "       o.price_changed_at, o.last_updated "
+                "  FROM futures_outcomes o JOIN futures_markets m ON m.id = o.market_id "
+                " WHERE m.source = 'polymarket' AND m.external_id = :eid"
+            ), {"eid": GAME_ID})
+        ).fetchall()
+    return {
+        r[0]: {"p": r[1], "odds": r[2], "opening": r[3], "changed": r[4], "touched": r[5]}
+        for r in rows
+    }
+
+
+async def _other_rows(engine) -> dict:
+    """Every outcome NOT under the wrapper — the decomposed per-sub-market rows."""
+    from sqlalchemy import text
+
+    async with engine.connect() as conn:
+        rows = (
+            await conn.execute(text(
+                "SELECT m.external_id, o.external_id, o.current_probability::float "
+                "  FROM futures_outcomes o JOIN futures_markets m ON m.id = o.market_id "
+                " WHERE m.external_id <> :eid"
+            ), {"eid": GAME_ID})
+        ).fetchall()
+    return {(r[0], r[1]): r[2] for r in rows}
+
+
+async def test_10298_a_moneyline_its_own_book_refutes_is_withdrawn(engine):
+    """(d)/(f1): stored 0.53, fresh 0.15/0.52 book, raw 0.53 → NULL on the wrapper."""
+    await _poll(_game(_ml(0.53, 0.52, 0.54, last=0.53)))
+    before = await _wrapper_rows(engine)
+    assert before[ML]["p"] == pytest.approx(0.53), "pass 1 must store the 0.53"
+    others_before = await _other_rows(engine)
+
+    stats = await _poll(_game(_ml(0.53, 0.15, 0.52, last=0.53), spread_price=0.30))
+    after = await _wrapper_rows(engine)
+
+    assert stats["legs_withdrawn_book_refuted"] == 1
+    assert (after[ML]["p"], after[ML]["odds"]) == (None, None)
+    assert after[ML]["changed"] is not None
+    assert after[ML]["changed"] != before[ML]["changed"]
+    assert after[ML]["opening"] == before[ML]["opening"]
+    assert after[ML]["touched"] == before[ML]["touched"]
+    assert after[SPREAD]["p"] == pytest.approx(0.30), "the side leg keeps this pass's write"
+    # identity: only the wrapper's own leg — no decomposed row was withdrawn
+    others_after = await _other_rows(engine)
+    assert {k for k, v in others_after.items() if v is None} <= {
+        k for k, v in others_before.items() if v is None
+    }
+
+
+async def test_10298_a_refuted_raw_with_a_surviving_trade_is_still_withdrawn(engine):
+    """(f2): last 0.40 sits inside 0.15/0.52 — it is NOT substituted."""
+    await _poll(_game(_ml(0.53, 0.52, 0.54, last=0.53)))
+    stats = await _poll(_game(_ml(0.53, 0.15, 0.52, last=0.40)))
+    after = await _wrapper_rows(engine)
+    assert stats["legs_withdrawn_book_refuted"] == 1
+    assert after[ML]["p"] is None
+
+
+async def test_10298_a_raw_price_inside_its_book_is_written_unchanged(engine):
+    """(f3) control: 0.40 on 0.38/0.42 → written, nothing withdrawn."""
+    await _poll(_game(_ml(0.41, 0.40, 0.42, last=0.41)))
+    stats = await _poll(_game(_ml(0.40, 0.38, 0.42, last=0.40)))
+    assert stats["legs_withdrawn_book_refuted"] == 0
+    assert (await _wrapper_rows(engine))[ML]["p"] == pytest.approx(0.40)
+
+
+async def test_10298_a_refused_moneyline_whose_stored_price_the_book_supports_keeps_it(engine):
+    """Stored 0.40 sits inside 0.15/0.52: the raw 0.53 is refused, the 0.40 retained."""
+    await _poll(_game(_ml(0.40, 0.39, 0.41, last=0.40)))
+    stats = await _poll(_game(_ml(0.53, 0.15, 0.52, last=0.53)))
+    assert stats["legs_withdrawn_book_refuted"] == 0
+    assert (await _wrapper_rows(engine))[ML]["p"] == pytest.approx(0.40)
+
+
+@pytest.mark.parametrize("column, value", [
+    ("resolution_source", "'api_settlement'"),
+    ("is_winner", "TRUE"),
+])
+async def test_10298_graded_and_crowned_moneylines_are_never_withdrawn(engine, column, value):
+    from sqlalchemy import text
+
+    await _poll(_game(_ml(0.53, 0.52, 0.54, last=0.53)))
+    async with engine.begin() as conn:
+        await conn.execute(text(
+            f"UPDATE futures_outcomes SET {column} = {value} WHERE external_id = :cid"
+        ), {"cid": ML})
+    stats = await _poll(_game(_ml(0.53, 0.15, 0.52, last=0.53)))
+    assert stats["legs_withdrawn_book_refuted"] == 0
+    assert (await _wrapper_rows(engine))[ML]["p"] == pytest.approx(0.53)
+
+
+async def test_10298_a_truncated_payload_withdraws_nothing(engine):
+    """Pass 2 omits the moneyline entirely: nothing is inferred from its absence."""
+    await _poll(_game(_ml(0.53, 0.52, 0.54, last=0.53)))
+    stats = await _poll(_game(None))
+    assert stats["legs_withdrawn_book_refuted"] == 0
+    assert (await _wrapper_rows(engine))[ML]["p"] == pytest.approx(0.53)
+
+
+async def test_10298_a_price_changed_underfoot_is_not_withdrawn(engine):
+    """CAS: another writer stores 0.20 between the withdrawal's read and its write."""
+    from sqlalchemy import text
+    from sqlalchemy.ext.asyncio import AsyncSession
+
+    from app.tasks.polymarket import _refused_leg_books, _withdraw_book_refuted_legs
+
+    await _poll(_game(_ml(0.53, 0.52, 0.54, last=0.53)))
+    async with engine.connect() as conn:
+        market_id = (await conn.execute(text(
+            "SELECT id FROM futures_markets WHERE source='polymarket' AND external_id=:e"
+        ), {"e": GAME_ID})).scalar_one()
+
+    books = _refused_leg_books(_game(_ml(0.53, 0.15, 0.52, last=0.53)))
+    assert books == {ML: (0.15, 0.52)}
+
+    class _Underfoot:
+        """Commits a competing write right after the withdrawal's SELECT."""
+
+        def __init__(self, session):
+            self.session, self.fired = session, False
+
+        async def execute(self, statement, *a, **kw):
+            result = await self.session.execute(statement, *a, **kw)
+            if not self.fired:
+                self.fired = True
+                async with engine.begin() as other:
+                    await other.execute(text(
+                        "UPDATE futures_outcomes SET current_probability = 0.20 "
+                        " WHERE market_id = :m AND external_id = :c"
+                    ), {"m": market_id, "c": ML})
+            return result
+
+    async with AsyncSession(engine) as session:
+        n = await _withdraw_book_refuted_legs(_Underfoot(session), market_id, books)
+        await session.commit()
+    assert n == 0
+    assert (await _wrapper_rows(engine))[ML]["p"] == pytest.approx(0.20)

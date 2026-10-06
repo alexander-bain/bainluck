@@ -125,9 +125,17 @@ class TestTheSpecimenIsNamed:
                        best_ask=None, last_trade_price=None)
         assert _refused_leg_books(_nolo([_cat4(), bare])) == {}
 
-    def test_non_negrisk_and_single_market_events_are_out_of_scope(self):
-        assert _refused_leg_books(_nolo(neg_risk=False)) == {}
+    def test_single_market_events_are_out_of_scope(self):
         assert _refused_leg_books(_nolo([_cat5()])) == {}
+
+    def test_non_negrisk_is_in_scope_through_the_game_branchs_own_drop_10298(self):
+        """#10298 C1: the game arm names what `_parent_outcome_data` dropped.
+        Cat 5 is dropped both ways there too (fabricated midpoint, refuted trade).
+        See `test_polymarket_refused_parent_moneyline_10298.py`."""
+        event = _nolo(neg_risk=False)
+        written = {od["external_id"] for od in polymarket._parent_outcome_data(event)}
+        assert CAT5 not in written
+        assert _refused_leg_books(event) == {CAT5: (0.09, 0.32)}
 
 
 class _Result:
