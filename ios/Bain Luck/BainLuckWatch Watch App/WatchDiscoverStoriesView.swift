@@ -79,7 +79,8 @@ struct WatchDiscoverStoriesView: View {
         .navigationTitle("Discoveries")
         .toolbar {
             ToolbarItem(placement: .cancellationAction) {
-                Button(selected.selectedEventID == nil ? "Choose a game" : "Your game", action: close)
+                Button(selected.selectedEventID == nil ? "Games" : "Your game", action: close)
+                    .accessibilityLabel(selected.selectedEventID == nil ? "Back to choosing a game" : "Your game")
                     .accessibilityIdentifier("watch.discovery.close")
             }
         }
