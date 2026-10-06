@@ -478,7 +478,10 @@ class TestTheCanadiensPage:
         assert len(ottawa) == 1, (
             f"one fixture, one card — got {len(ottawa)}: {[c['id'] for c in ottawa]}"
         )
-        assert ottawa[0]["pregame_win_probability"] == 0.5830, (
+        # #10589: a settled row serves the page's WHOLE percent over 100 (the
+        # pair rounded once, as the game page prints it), so 0.583 arrives as
+        # 0.58 — still the fold's number, still "we had them at 58%".
+        assert ottawa[0]["pregame_win_probability"] == 0.58, (
             "the pre-match number the Senators' page prints is still missing "
             f"from the Canadiens' page: {ottawa[0]['pregame_win_probability']}"
         )
