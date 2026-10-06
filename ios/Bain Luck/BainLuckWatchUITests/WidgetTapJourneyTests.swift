@@ -96,6 +96,36 @@ final class WidgetTapJourneyTests: XCTestCase {
     }
 
     @MainActor
+    func testFreshConfiguredFaceIsActiveBeforeActualLauncherTap() throws {
+        continueAfterFailure = false
+        let app = XCUIApplication()
+        defer { app.terminate() }
+        app.launchEnvironment = [
+            "BAINLUCK_WATCH_UI_TEST": "1",
+            "BAINLUCK_WATCH_UI_SUITE": UUID().uuidString,
+            "BAINLUCK_WATCH_UI_RESET": "1",
+            "BAINLUCK_WATCH_UI_LAUNCH_RECEIPT": "1",
+            "BAINLUCK_WATCH_UI_SHARED_PUBLICATION": "1"
+        ]
+        app.launch()
+        XCTAssertTrue(app.buttons["watch.pick.101"].waitForExistence(timeout: 20))
+        app.buttons["watch.pick.101"].tap()
+        let baseline = try recordWidgetWarmBaseline(in: app)
+        let change = app.buttons["watch.choose-another"]
+        try widgetWarmReveal(change, in: app)
+        change.tap()
+        let picker = try assertWidgetWarmPickerIsPresented(in: app)
+        XCUIDevice.shared.press(.home)
+        let host = XCUIApplication(bundleIdentifier: "com.apple.Carousel")
+        let widget = try mountLauncherOnFreshSiriModularFace(in: host)
+        XCTAssertFalse(host.otherElements["Face Library View"].firstMatch.exists)
+        XCTAssertTrue(host.otherElements["Watch Face"].firstMatch.isHittable)
+        try tapActualWidgetHostAndAssertWarmReturn(host: host, widget: widget, app: app,
+            baseline: baseline, tapOrdinal: 1, dismissedOverlays: picker, phase: "fresh face activation")
+        print("WATCH_UI_FRESH_FACE_ACTIVATION=PASS")
+    }
+
+    @MainActor
     func testActualComplicationHost() throws {
         continueAfterFailure = false
         let app = XCUIApplication()
@@ -357,7 +387,7 @@ extension WidgetTapJourneyTests {
         freshFaceCapture(host, name: "Actual gallery selected BainLuckWatch Your game")
         installed.tap()
         XCUIDevice.shared.press(.home)
-        XCUIDevice.shared.press(.home)
+        try activateConfiguredSiriModularFace(in: host)
         let widget = host.otherElements["bottom-left"].firstMatch
         try freshFaceRequire(host.wait(for: .runningForeground, timeout: 15)
                              && widget.waitForExistence(timeout: 15) && widget.descendants(matching: .any).matching(NSPredicate(format: "label == %@", "Open your selected game in Bain Luck, or choose a game")).firstMatch.exists
@@ -367,6 +397,38 @@ extension WidgetTapJourneyTests {
         // Caller now uses the separate actual-tap warm assertions. Mounting alone
         // is never a route/retention/warm-delivery PASS.
         return widget
+    }
+
+    @MainActor
+    private func activateConfiguredSiriModularFace(in host: XCUIApplication) throws {
+        let library = host.otherElements["Face Library View"].firstMatch
+        let face = host.otherElements["Watch Face"].firstMatch
+        let arrived = XCTNSPredicateExpectation(predicate: NSPredicate { _, _ in
+            library.exists || face.exists
+        }, object: host)
+        try freshFaceRequire(XCTWaiter.wait(for: [arrived], timeout: 15) == .completed,
+                             "Configured face did not leave its editor", host: host)
+        if library.exists {
+            let title = host.staticTexts["Switcher Face Title"].firstMatch
+            let previews = host.scrollViews.matching(NSPredicate(
+                format: "label ==[c] %@", "siri modular, Customizable"))
+            let preview = previews.firstMatch
+            try freshFaceRequire(title.waitForExistence(timeout: 15) && title.label == "Siri Modular"
+                                 && preview.waitForExistence(timeout: 15) && previews.count == 1 && preview.isHittable
+                                 && host.frame.contains(CGPoint(x: preview.frame.midX, y: preview.frame.midY)),
+                                 "Face Library has no unambiguous visible Siri Modular preview", host: host)
+            freshFaceCapture(host, name: "Configured Siri Modular preview before activation")
+            // Select the actual named face preview once; crown presses alone
+            // can leave Carousel in its library rather than on the active face.
+            preview.tap()
+        }
+        let activated = XCTNSPredicateExpectation(predicate: NSPredicate { _, _ in
+            face.exists && !library.exists
+        }, object: host)
+        try freshFaceRequire(XCTWaiter.wait(for: [activated], timeout: 15) == .completed
+                             && face.isHittable && host.wait(for: .runningForeground, timeout: 15),
+                             "Configured Siri Modular face did not become active", host: host)
+        freshFaceCapture(host, name: "Configured Siri Modular active Watch Face")
     }
 
     @MainActor
