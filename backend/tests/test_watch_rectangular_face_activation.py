@@ -37,5 +37,8 @@ def test_rectangular_host_activates_named_face_before_accepting_widget_content()
         'XCTAssertTrue(reading.label.contains("Observed "))',
         "contentBounds.contains(reading.frame)",
         "center.isHittable",
+        'let observedParts = reading.label.components(separatedBy: "Observed ")',
+        "XCTAssertEqual(observedParts.count, 2)",
+        "XCTAssertFalse(observedTimestamp.isEmpty",
     ]:
         assert assertion in source

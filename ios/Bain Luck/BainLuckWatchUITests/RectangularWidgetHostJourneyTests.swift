@@ -89,6 +89,12 @@ final class RectangularWidgetHostJourneyTests: XCTestCase {
         XCTAssertTrue(reading.label.contains("Saved"))
         XCTAssertTrue(reading.label.contains("64% · Live"))
         XCTAssertTrue(reading.label.contains("Observed "))
+        let observedParts = reading.label.components(separatedBy: "Observed ")
+        XCTAssertEqual(observedParts.count, 2)
+        let observedTimestamp = try XCTUnwrap(observedParts.last)
+            .components(separatedBy: ". Open your game")[0]
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        XCTAssertFalse(observedTimestamp.isEmpty, "Saved reading must retain its observation timestamp")
         XCTAssertEqual(reading.label.components(separatedBy: "64% · Live").count, 2)
         let contentBounds = CGRect(origin: .zero, size: center.frame.size)
         XCTAssertTrue(reading.frame.width > 0 && reading.frame.height > 0 && contentBounds.contains(reading.frame),
