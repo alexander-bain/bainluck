@@ -1649,40 +1649,99 @@ class LiveBlendRefresher:
     async def _publish(self, frames: list[dict]) -> None:
         """Fan the committed frames out to any SSE subscribers. Never raises.
 
-        Wrapped whole as well as per-frame: `publish_frame` already swallows a
-        failed PUBLISH, but building the client can fail too (no `REDIS_URL`, a
-        refused TLS handshake), and this runs on the dyno whose actual job is
-        streaming prices. Nothing here may interrupt that (gotcha #42).
+        Bounded packed sends avoid one Redis round trip per event (#10659).
+        Frame bytes and order stay unchanged; only committed inputs reach this
+        method. A PUBLISH with no listeners is successful publication.
+
+        Each command error is consumed and counted without costing siblings.
+        An unanswered send may already have run: never automatically retry it.
+        Timeout, cancellation or transport failure disconnects the borrowed
+        socket before it returns to the consumer's shared pool.
         """
         if not frames:
             return
+        sent = 0
+        accounted = 0
         try:
-            from app.utils.live_push import publish_frame
+            import asyncio
+            import json
 
-            client = self._client()
-            sent = 0
-            for frame in frames:
-                if await publish_frame(client, frame):
-                    sent += 1
-                    self.stats["published"] += 1
-                else:
-                    self.stats["publish_errors"] += 1
-            if sent == 0:
-                # `publish_frame` swallows its own failure and returns False, so
-                # the `except` below never sees a dead connection — without this
-                # the poisoned client would be reused for the life of the
-                # consumer, publishing nothing and only ticking a counter.
-                # A batch where NOTHING went out is enough to suspect the
-                # client; rebuild it next time rather than retry it forever.
-                self._redis = None
+            from redis.exceptions import ResponseError
+
+            from app.utils.live_push import event_channel
+            from app.utils.market_quote_push import _checkout
+
+            async with asyncio.timeout(5):
+                client = self._client()
+                pool = client.connection_pool
+                connection = await _checkout(pool)
+                try:
+                    for start in range(0, len(frames), 32):
+                        commands: list[tuple[str, str, str]] = []
+                        event_ids: list[int] = []
+                        for frame in frames[start : start + 32]:
+                            try:
+                                commands.append(
+                                    (
+                                        "PUBLISH",
+                                        event_channel(frame["event_id"]),
+                                        json.dumps(frame),
+                                    )
+                                )
+                                event_ids.append(frame["event_id"])
+                            except Exception:
+                                accounted += 1
+                                self.stats["publish_errors"] += 1
+                                logger.warning(
+                                    "live_blend_refresh[%s]: frame failed for event %s",
+                                    self.source,
+                                    frame.get("event_id"),
+                                    exc_info=True,
+                                )
+                        if not commands:
+                            continue
+                        # Same direct pool protocol as committed MARKET signals.
+                        # Pipeline.execute can retry an ambiguous transport write.
+                        await connection.send_packed_command(
+                            connection.pack_commands(commands)
+                        )
+                        for event_id in event_ids:
+                            try:
+                                reply = await connection.read_response()
+                            except ResponseError:
+                                accounted += 1
+                                self.stats["publish_errors"] += 1
+                                logger.warning(
+                                    "live_blend_refresh[%s]: publish failed for event %s",
+                                    self.source,
+                                    event_id,
+                                    exc_info=True,
+                                )
+                                continue
+                            if type(reply) is not int or reply < 0:
+                                raise ValueError("invalid Redis PUBLISH acknowledgment")
+                            accounted += 1
+                            sent += 1
+                            self.stats["published"] += 1
+                except BaseException:
+                    # Unknown acknowledgment state: unread replies must not be
+                    # handed to another consumer, nor commands replayed here.
+                    self._redis = None
+                    await connection.disconnect()
+                    raise
+                finally:
+                    await pool.release(connection)
+                if sent == 0:
+                    self._redis = None
         except Exception:
-            self.stats["publish_errors"] += len(frames)
-            # Drop the client so the next batch rebuilds it rather than
-            # reusing a connection that has already proven bad.
+            self.stats["publish_errors"] += len(frames) - accounted
             self._redis = None
             logger.warning(
-                "live_blend_refresh[%s]: publish batch failed for %d frames",
-                self.source, len(frames), exc_info=True,
+                "live_blend_refresh[%s]: publication incomplete: acknowledged=%s queued=%s",
+                self.source,
+                sent,
+                len(frames),
+                exc_info=True,
             )
 
     async def _maybe_snapshot(
