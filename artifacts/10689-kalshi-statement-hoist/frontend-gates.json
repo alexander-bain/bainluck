@@ -1,0 +1,10 @@
+[
+  {
+    "name": "frontend-build",
+    "exit": 0
+  },
+  {
+    "name": "frontend-typecheck",
+    "exit": 0
+  }
+]

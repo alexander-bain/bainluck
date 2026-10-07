@@ -1,0 +1,41 @@
+============================= test session starts ==============================
+platform darwin -- Python 3.12.15+meta, pytest-9.0.3, pluggy-1.6.0
+rootdir: /Users/bain/.codex-personal/worktrees/10689-kalshi-statement-hoist/bainluck/backend
+configfile: pytest.ini
+plugins: asyncio-1.4.0, anyio-4.13.0
+asyncio: mode=Mode.AUTO, debug=False, asyncio_default_fixture_loop_scope=None, asyncio_default_test_loop_scope=function
+collected 182 items
+
+tests/test_kalshi_price_statement_10689.py .................             [  9%]
+tests/test_price_change_stamp.py .......                                 [ 13%]
+tests/test_price_stamp_writer_scan_4958.py .....................         [ 24%]
+tests/test_futures_rank_field_wide_6598.py ......................        [ 36%]
+tests/test_ws_kalshi_linked_first_10640.py ...........                   [ 42%]
+tests/test_ws_market_change_hooks_9484.py .........                      [ 47%]
+tests/test_ws_open_contract_prices_9484.py ............................. [ 63%]
+.....                                                                    [ 66%]
+tests/integration/test_ws_quote_moved_9484_pg.py ......                  [ 69%]
+tests/integration/test_kalshi_price_statement_10689_pg.py ..F........... [ 77%]
+..                                                                       [ 78%]
+tests/test_ci_postgres_groups.py ...................................     [ 97%]
+tests/test_startup.py ....                                               [100%]
+
+=================================== FAILURES ===================================
+_ test_actual_flush_source_counters_snapshots_hooks_and_transaction_parity[held_first_row_writer] _
+tests/integration/test_kalshi_price_statement_10689_pg.py:508: in test_actual_flush_source_counters_snapshots_hooks_and_transaction_parity
+    baseline = await _run(control, False)
+               ^^^^^^^^^^^^^^^^^^^^^^^^^^
+tests/integration/test_kalshi_price_statement_10689_pg.py:439: in _run
+    assert stats["quotes_unchanged"] == n and not frames
+E   assert (1 == 2)
+=============================== warnings summary ===============================
+tests/test_kalshi_price_statement_10689.py::test_exact_actual_writer_sql_positional_types_and_processed_values[0.3-0.2-0.4]
+  /Users/bain/.codex-personal/worktrees/10689-kalshi-statement-hoist/bainluck/backend/app/routes/auth.py:121: PydanticDeprecatedSince20: Support for class-based `config` is deprecated, use ConfigDict instead. Deprecated in Pydantic V2.0 to be removed in V3.0. See Pydantic V2 Migration Guide at https://errors.pydantic.dev/2.13/migration/
+    class UserProfileResponse(BaseModel):
+
+tests/test_price_change_stamp.py::test_a_none_price_still_produces_a_real_comparison
+  /Users/bain/.codex-personal/worktrees/10689-kalshi-statement-hoist/bainluck/backend/tests/test_price_change_stamp.py:35: SAWarning: Bound parameter '%(4508259040 param)s' rendering literal NULL in a SQL expression; comparisons to NULL should not use operators outside of 'is' or 'is not' (this warning may be suppressed after 10 occurrences)
+    expr.compile(
+
+-- Docs: https://docs.pytest.org/en/stable/how-to/capture-warnings.html
+============= 1 failed, 181 passed, 2 warnings in 67.05s (0:01:07) =============
