@@ -58,9 +58,12 @@ actor Stub: WatchSelectedGameTransport {
                          "Missing, future, or nonfinite observations cannot claim an age")
         }
         let store = WatchSelectedGameStore(transport: transport, defaults: defaults, now: { clock })
+        var telemetry: [(String, Int, Int)] = []
+        store.telemetry = { outcome, ms, count in telemetry.append((outcome, ms, count)) }
         precondition(store.selectedEventID == nil && store.errorMessage == nil)
         await store.refresh()
         precondition(store.game == nil && !store.isRefreshing)
+        precondition(telemetry.isEmpty, "No request means no refresh measurement")
         store.select(eventID: 1)
         precondition(WatchSelectedGameStore(defaults: defaults).selectedEventID == 1)
         let first = Task { await store.refresh() }
@@ -68,6 +71,8 @@ actor Stub: WatchSelectedGameTransport {
         await transport.finish(1, result: .success(try event()))
         await first.value
         precondition(store.game?.id == 1 && store.fetchedAt == clock)
+        precondition(telemetry.count == 1 && telemetry[0].0 == "success" && telemetry[0].2 == 1)
+        precondition(telemetry[0].1 >= 0, "Duration uses monotonic time")
         precondition(store.game?.observationAge(at: clock) == nil)
         let restored = WatchSelectedGameStore(transport: transport, defaults: defaults, now: { clock })
         precondition(restored.game?.id == 1 && restored.fetchedAt == clock && restored.isRestoredReading)
@@ -81,6 +86,7 @@ actor Stub: WatchSelectedGameTransport {
         await transport.finish(1, result: .failure(URLError(.notConnectedToInternet)))
         await failed.value
         precondition(store.game?.id == 1 && store.fetchedAt == clock && store.errorMessage != nil)
+        precondition(telemetry.last?.0 == "offline" && telemetry.last?.2 == 0)
         let retainedError = store.errorMessage
         let interruptedRetry = Task { await store.refresh() }
         await transport.waitFor(1)
@@ -88,6 +94,7 @@ actor Stub: WatchSelectedGameTransport {
         interruptedRetry.cancel()
         await transport.finish(1, result: .failure(URLError(.cancelled)))
         await interruptedRetry.value
+        precondition(telemetry.last?.0 == "cancelled", "Cancellation never becomes a success or network failure")
         precondition(store.errorMessage == retainedError && !store.isRefreshing)
         let old = Task { await store.refresh() }
         await transport.waitFor(1)
@@ -98,6 +105,8 @@ actor Stub: WatchSelectedGameTransport {
         await fresh.value
         await transport.finish(1, result: .success(try event()))
         await old.value
+        precondition(telemetry.suffix(2).map { $0.0 } == ["success", "cancelled"],
+                     "A superseded result cannot claim a fresh reading")
         precondition(store.game?.id == 3 && store.selectedEventID == 3 && !store.isRefreshing)
         precondition(WatchSelectedGameStore(defaults: defaults).selectedEventID == 3)
         store.select(eventID: 4)

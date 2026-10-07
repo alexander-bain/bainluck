@@ -32,10 +32,20 @@ final class WatchGamePickerStore: ObservableObject {
 
     init(transport: any WatchGamePickerTransport) { self.transport = transport }
 
+    /// Optional UI-owned diagnostics; tests and background data owners default to no sink.
+    var telemetry: (@MainActor (String, Int, Int) -> Void)?
+
     @MainActor func refresh() async {
         guard !Task.isCancelled else { return }
         revision += 1
         let requestRevision = revision
+        let telemetryStart = ProcessInfo.processInfo.systemUptime
+        var telemetryOutcome = "cancelled"
+        var telemetryCount = 0
+        defer {
+            let elapsed = Int(min(3_600_000, max(0, (ProcessInfo.processInfo.systemUptime - telemetryStart) * 1000)))
+            telemetry?(telemetryOutcome, elapsed, telemetryCount)
+        }
         isLoading = true
         defer {
             if requestRevision == revision { isLoading = false }
@@ -55,11 +65,18 @@ final class WatchGamePickerStore: ObservableObject {
                 }
                 return seen.insert(game.id).inserted
             }
+            telemetryCount = games.count
+            telemetryOutcome = games.isEmpty ? "empty" : "success"
             omittedGameCount = omitted
             errorMessage = nil
         } catch {
             guard requestRevision == revision else { return }
             if Task.isCancelled || error is CancellationError || (error as? URLError)?.code == .cancelled { return }
+            switch (error as? URLError)?.code {
+            case .notConnectedToInternet, .networkConnectionLost: telemetryOutcome = "offline"
+            case .timedOut: telemetryOutcome = "timeout"
+            default: telemetryOutcome = "failure"
+            }
             switch (error as? URLError)?.code {
             case .notConnectedToInternet:
                 errorMessage = "Offline. Connect to the internet, then refresh games."

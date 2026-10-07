@@ -19,7 +19,8 @@ enum AnalyticsService {
     /// now go through `identify` below. The honest statement is: this is the
     /// one place an EVENT is emitted, `identify` is the one place an IDENTITY
     /// is set, and both consult `TelemetryConsent` first.
-    nonisolated static func log(_ name: String, _ parameters: [String: Any]? = nil) {
+    nonisolated static func log(_ name: String, _ parameters: [String: Any]? = nil,
+                                authorizationEpoch: UUID? = nil) {
         #if DEBUG
         // Explicit DEBUG-only local timing capture for the agent-owned Sports
         // acceptance run. Its separate typed allowlist cannot emit user data;
@@ -30,7 +31,13 @@ enum AnalyticsService {
         guard let sanitized = AnalyticsPrivacy.sanitize(event: name, parameters: parameters) else {
             return
         }
-        Analytics.logEvent(name, parameters: sanitized.isEmpty ? nil : sanitized)
+        if let authorizationEpoch {
+            TelemetryConsent.shared.withAnalyticsAuthorization(epoch: authorizationEpoch) {
+                Analytics.logEvent(name, parameters: sanitized.isEmpty ? nil : sanitized)
+            }
+        } else {
+            Analytics.logEvent(name, parameters: sanitized.isEmpty ? nil : sanitized)
+        }
     }
 
     /// The ONE place this app hands an IDENTITY to Firebase — the second door

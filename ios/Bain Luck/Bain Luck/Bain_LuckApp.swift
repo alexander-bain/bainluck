@@ -66,6 +66,9 @@ struct Bain_LuckApp: App {
         // previous grant. Everything after this line is gated; nothing before
         // it may touch Firebase.
         TelemetryConsent.shared.initialize()
+        #if os(iOS)
+        WatchTelemetryReceiver.shared.start()
+        #endif
         // Subscribe to FCM registration tokens. After `configure()`, by
         // requirement — the delegate is ignored before it (#1159).
         NotificationManager.shared.startMessaging()

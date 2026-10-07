@@ -71,6 +71,8 @@ enum AnalyticsPrivacy {
     /// (fail-closed): a new event must be registered here deliberately, which is
     /// the moment its parameters get privacy review.
     static let allowedEventNames: Set<String> = [
+        // Watch diagnostics use the same consent/privacy emission boundary.
+        "watch_app_open", "watch_app_background", "watch_action", "watch_refresh", "watch_reading",
         // Screens / navigation
         "screen_view", "navigation_click", "return_visit",
         // Events + futures
@@ -136,7 +138,8 @@ enum AnalyticsPrivacy {
         // Screen timing (latency/121). Every one of these is a duration, a
         // count, or a bounded enum. `surface` is already allowed above and is a
         // screen slug, never an id. `entry` is cold|warm and `device_class` is
-        // one of five coarse buckets — neither narrows to a person.
+        // one of six coarse buckets — neither narrows to a person.
+        "duration_ms", "transport_delay_ms",
         "entry", "shell_ms", "first_card_ms", "fold_ms", "interactive_ms",
         "card_count", "device_class", "network_class",
         // Push funnel join key (Queue 311 A4 / #1159). `payload_id` is a

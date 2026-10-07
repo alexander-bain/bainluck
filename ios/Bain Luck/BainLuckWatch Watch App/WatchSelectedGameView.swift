@@ -36,6 +36,10 @@ struct WatchSelectedGameView: View {
 
     private var refreshKey: String { "\(scenePhase)-\(choosingGame)-\(showingDiscoveries)-\(refreshGeneration)-\(store.selectedEventID ?? 0)" }
 
+    private var telemetrySurface: WatchTelemetrySurface {
+        showingDiscoveries ? .discoveries : (choosingGame || store.selectedEventID == nil ? .picker : .game)
+    }
+
     private var continuationEventID: Int? {
         guard scenePhase == .active, !choosingGame, !showingDiscoveries else { return nil }
         return store.game?.id
@@ -48,6 +52,10 @@ struct WatchSelectedGameView: View {
                 Color.clear.frame(height: 0).id("watch.game.top").accessibilityHidden(true)
                 if let game = store.game {
                     selectedGame(game)
+                        .onAppear {
+                            WatchTelemetry.shared.content(.game)
+                            WatchTelemetry.shared.reading(.game, saved: store.isRestoredReading, count: 1)
+                        }
                 } else if store.selectedEventID != nil {
                     if store.isRefreshing {
                         ProgressView("Loading selected game")
@@ -62,25 +70,38 @@ struct WatchSelectedGameView: View {
 
                 if store.selectedEventID != nil {
                     Button(store.isRefreshing ? "Refreshing…" : "Refresh") {
+                        WatchTelemetry.shared.action(.refresh, surface: .game)
                         store.allowManualRetry()
                         refreshGeneration += 1
                     }
                     .disabled(store.isRefreshing || scenePhase != .active)
                     if store.game != nil {
-                        Button("Continue on iPhone") { showingHandoffHelp = true }
+                        Button("Continue on iPhone") {
+                            WatchTelemetry.shared.action(.phoneContinuation, surface: .game)
+                            showingHandoffHelp = true
+                        }
                             .accessibilityIdentifier("watch.continue-on-phone")
                     }
-                    Button("Choose another game") { choosingGame = true }
+                    Button("Choose another game") {
+                        WatchTelemetry.shared.action(.chooseGame, surface: .game)
+                        choosingGame = true
+                    }
                         .accessibilityIdentifier("watch.choose-another")
                     Button("Clear selected game") {
+                        WatchTelemetry.shared.action(.clearGame, surface: .game)
                         choosingGame = false
                         showingHandoffHelp = false
                         store.clearSelection()
                     }
                     .accessibilityIdentifier("watch.clear-selection")
                 }
-                Button("Discoveries") { showingDiscoveries = true }
+                Button("Discoveries") {
+                    WatchTelemetry.shared.action(.discoveries, surface: telemetrySurface)
+                    showingDiscoveries = true
+                }
                     .accessibilityIdentifier("watch.discoveries-entry")
+                NavigationLink("Diagnostics") { WatchDiagnosticsView() }
+                    .accessibilityIdentifier("watch.diagnostics")
                 #if DEBUG
                 if WatchUIFixture.current?.launchReceipt == true {
                     Text("Launcher opens: \(launcherOpenCount)")
@@ -95,6 +116,7 @@ struct WatchSelectedGameView: View {
         }
         .onOpenURL { url in
             guard WatchLaunchRoute.accepts(url) else { return }
+            WatchTelemetry.shared.action(.complicationOpen, surface: telemetrySurface)
             #if DEBUG
             launcherOpenCount += 1
             #endif
@@ -105,12 +127,25 @@ struct WatchSelectedGameView: View {
             showingDiscoveries = false
             scroll.scrollTo("watch.game.top", anchor: .top)
         }
+        .onAppear {
+            store.telemetry = { outcome, ms, count in
+                WatchTelemetry.shared.refreshResult(.game, outcome: outcome, durationMS: ms, count: count)
+            }
+            picker.telemetry = { outcome, ms, count in
+                WatchTelemetry.shared.refreshResult(.picker, outcome: outcome, durationMS: ms, count: count)
+            }
+            WatchTelemetry.shared.screen(telemetrySurface)
+        }
+        .onChange(of: telemetrySurface) { _, surface in WatchTelemetry.shared.screen(surface) }
+        .onChange(of: store.fetchedAt) { _, _ in
+            if store.game != nil { WatchTelemetry.shared.reading(.game, saved: store.isRestoredReading, count: 1) }
+        }
         .navigationTitle("Your game")
         .userActivity(GameContinuation.activityType, element: continuationEventID) { id, activity in
             GameContinuation.configure(activity, eventID: id)
         }
         .alert("Continue on iPhone", isPresented: $showingHandoffHelp) {
-            Button("OK", role: .cancel) { }
+            Button("OK", role: .cancel) { WatchTelemetry.shared.action(.dismissHelp, surface: .game) }
         } message: {
             Text("Look for Bain Luck’s Handoff option in your iPhone’s App Switcher. Your iPhone needs a Bain Luck version with Watch Handoff support. Both devices need Handoff enabled and the same Apple Account. If it isn’t available, your game stays selected here.")
         }
@@ -143,7 +178,10 @@ struct WatchSelectedGameView: View {
                     .toolbar {
                         if store.selectedEventID != nil {
                             ToolbarItem(placement: .cancellationAction) {
-                                Button("Your game") { choosingGame = false }
+                                Button("Your game") {
+                                    WatchTelemetry.shared.action(.close, surface: .picker)
+                                    choosingGame = false
+                                }
                                     .accessibilityLabel("Back to your game")
                                     .accessibilityIdentifier("watch.picker-cancel")
                             }
@@ -326,6 +364,7 @@ struct WatchSelectedGameView: View {
             ForEach(picker.games) { game in
                 let isSelected = game.id == store.selectedEventID
                 Button {
+                    WatchTelemetry.shared.action(store.selectedEventID == game.id ? .reselectGame : .selectGame, surface: .picker)
                     store.select(eventID: game.id)
                     choosingGame = false
                 } label: {
@@ -345,8 +384,10 @@ struct WatchSelectedGameView: View {
                 .accessibilityLabel("\(game.awayTeam ?? "Away team") at \(game.homeTeam ?? "Home team"). \(WatchSelectedGame.stateLabel(for: game.status))" + (isSelected ? ". Your game" : ""))
                 .accessibilityAddTraits(isSelected ? .isSelected : [])
                 .accessibilityIdentifier("watch.pick.\(game.id)")
+                .onAppear { WatchTelemetry.shared.content(.picker) }
             }
             Button("Refresh games") {
+                WatchTelemetry.shared.action(.refresh, surface: .picker)
                 if choosingGame { gamesRefreshGeneration += 1 }
                 else { refreshGeneration += 1 }
             }

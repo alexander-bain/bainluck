@@ -76,8 +76,12 @@ public final class TelemetryConsent: @unchecked Sendable {
     /// Same semantic key as the web's `GA_CONFIG.CONSENT_STORAGE_KEY`. The stores
     /// are separate (UserDefaults vs localStorage) — a choice does not travel
     /// between surfaces — but the vocabulary is identical, so a value read on
-    /// either side means the same thing.
+    /// either side means the same thing. Only an opaque grant epoch travels to
+    /// the paired Watch; it is required but insufficient without the Watch’s
+    /// separate off-by-default choice.
+    static let didChange = Notification.Name("BainLuckTelemetryConsentChanged")
     static let storageKey = "bainluck_telemetry_consent"
+    private static let epochStorageKey = "bainluck_telemetry_epoch_v1"
 
     private let defaults: UserDefaults
     private var sink: TelemetrySink
@@ -85,6 +89,7 @@ public final class TelemetryConsent: @unchecked Sendable {
 
     private var current: ConsentLevel?
     private var initialized = false
+    private var analyticsEpoch: UUID?
     private var persistenceState: ConsentPersistence = .unknown
 
     init(defaults: UserDefaults = .standard, sink: TelemetrySink? = nil) {
@@ -130,6 +135,13 @@ public final class TelemetryConsent: @unchecked Sendable {
         current = stored.flatMap(ConsentLevel.init(rawValue:))
         // A value read back OUT of storage is durable by definition.
         persistenceState = current == nil ? .unknown : .saved
+        if Self.isAnalyticsGranted(current) {
+            analyticsEpoch = defaults.string(forKey: Self.epochStorageKey).flatMap(UUID.init(uuidString:)) ?? UUID()
+            defaults.set(analyticsEpoch?.uuidString, forKey: Self.epochStorageKey)
+        } else {
+            analyticsEpoch = nil
+            defaults.removeObject(forKey: Self.epochStorageKey)
+        }
         let level = current
         lock.unlock()
 
@@ -152,6 +164,24 @@ public final class TelemetryConsent: @unchecked Sendable {
     /// emission site asks.
     public var isGranted: Bool {
         decision.firebaseAnalytics
+    }
+
+    /// Durable authority for deferred companion diagnostics. Every explicit
+    /// choice rotates it, so revoke/regrant cannot replay an
+    /// old Watch buffer. This does not grant consent on the Watch itself.
+    public var analyticsAuthorizationEpoch: UUID? {
+        lock.lock(); defer { lock.unlock() }
+        return Self.isAnalyticsGranted(current) ? analyticsEpoch : nil
+    }
+
+    /// Atomically bind delayed companion emission to the still-current consent
+    /// generation. The body must not reenter this authority.
+    @discardableResult
+    public func withAnalyticsAuthorization(epoch: UUID, _ body: () -> Void) -> Bool {
+        lock.lock(); defer { lock.unlock() }
+        guard Self.isAnalyticsGranted(current), analyticsEpoch == epoch else { return false }
+        body()
+        return true
     }
 
     /// Durability of the current choice.
@@ -212,6 +242,9 @@ public final class TelemetryConsent: @unchecked Sendable {
         lock.lock()
         initialized = true
         current = level
+        analyticsEpoch = Self.isAnalyticsGranted(level) ? UUID() : nil
+        if let analyticsEpoch { defaults.set(analyticsEpoch.uuidString, forKey: Self.epochStorageKey) }
+        else { defaults.removeObject(forKey: Self.epochStorageKey) }
         defaults.set(level.rawValue, forKey: Self.storageKey)
         // Verified write: `.saved` only after an exact readback, matching the
         // web's `storeConsent`.
@@ -230,6 +263,7 @@ public final class TelemetryConsent: @unchecked Sendable {
         let decision = Self.decide(level)
         sink.setAnalyticsCollectionEnabled(decision.firebaseAnalytics)
         sink.setCrashlyticsCollectionEnabled(decision.crashlytics)
+        NotificationCenter.default.post(name: Self.didChange, object: nil)
         if !decision.firebaseAnalytics {
             // Revocation reaches backwards too: drop the identifiers and events
             // already accumulated on device, rather than merely stopping new
@@ -244,10 +278,12 @@ public final class TelemetryConsent: @unchecked Sendable {
     func resetForTests(sink: TelemetrySink? = nil) {
         lock.lock()
         current = nil
+        analyticsEpoch = nil
         initialized = false
         persistenceState = .unknown
         if let sink { self.sink = sink }
         defaults.removeObject(forKey: Self.storageKey)
+        defaults.removeObject(forKey: Self.epochStorageKey)
         lock.unlock()
     }
 }

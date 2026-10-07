@@ -190,11 +190,21 @@ final class WatchSelectedGameStore: ObservableObject {
         }
     }
 
+    /// Optional UI-owned diagnostics; tests and background data owners default to no sink.
+    var telemetry: (@MainActor (String, Int, Int) -> Void)?
+
     @MainActor func refresh() async {
         guard !Task.isCancelled else { return }
         guard let id = selectedEventID else { return }
         revision += 1
         let requestRevision = revision
+        let telemetryStart = ProcessInfo.processInfo.systemUptime
+        var telemetryOutcome = "cancelled"
+        var telemetryCount = 0
+        defer {
+            let elapsed = Int(min(3_600_000, max(0, (ProcessInfo.processInfo.systemUptime - telemetryStart) * 1000)))
+            telemetry?(telemetryOutcome, elapsed, telemetryCount)
+        }
         isRefreshing = true
         // A retry is not recovery. Keep the previous failure visible until success.
         do {
@@ -208,6 +218,8 @@ final class WatchSelectedGameStore: ObservableObject {
             retryNotBefore = nil
             errorMessage = nil
             game = result
+            telemetryCount = 1
+            telemetryOutcome = "success"
             let receivedAt = now()
             fetchedAt = receivedAt
             isRestoredReading = false
@@ -223,6 +235,11 @@ final class WatchSelectedGameStore: ObservableObject {
             guard requestRevision == revision, selectedEventID == id else { return }
             isRefreshing = false
             if Task.isCancelled || error is CancellationError || (error as? URLError)?.code == .cancelled { return }
+            switch (error as? URLError)?.code {
+            case .notConnectedToInternet, .networkConnectionLost: telemetryOutcome = "offline"
+            case .timedOut: telemetryOutcome = "timeout"
+            default: telemetryOutcome = "failure"
+            }
             consecutiveFailures = min(consecutiveFailures + 1, 5)
             switch error {
             case WatchSelectedGameRequestError.unavailable:

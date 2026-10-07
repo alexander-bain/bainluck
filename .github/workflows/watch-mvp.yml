@@ -43,6 +43,15 @@ on:
       - 'tools/watch-iphone-compatibility.sh'
       - 'tools/watch_iphone_receipt.py'
       - 'tools/tests/test_watch_iphone_receipt.py'
+      - 'tools/tests/watch-telemetry/**'
+      - 'ios/Bain Luck/BainLuckTests/WatchTelemetryConsentTests.swift'
+      - 'tools/watch_ga4_schema.py'
+      - 'tools/tests/test_watch_ga4_schema.py'
+      - 'ios/Bain Luck/Bain Luck/Utilities/WatchTelemetryProtocol.swift'
+      - 'ios/Bain Luck/Bain Luck/Services/WatchTelemetryReceiver.swift'
+      - 'ios/Bain Luck/Bain Luck/Services/TelemetryConsent.swift'
+      - 'ios/Bain Luck/Bain Luck/Services/AnalyticsPrivacy.swift'
+      - 'ios/Bain Luck/Bain Luck/Services/AnalyticsService.swift'
       - 'tools/tests/watch-selected-game/**'
       - '.github/workflows/watch-mvp.yml'
   push:
@@ -86,6 +95,15 @@ on:
       - 'tools/watch-iphone-compatibility.sh'
       - 'tools/watch_iphone_receipt.py'
       - 'tools/tests/test_watch_iphone_receipt.py'
+      - 'tools/tests/watch-telemetry/**'
+      - 'ios/Bain Luck/BainLuckTests/WatchTelemetryConsentTests.swift'
+      - 'tools/watch_ga4_schema.py'
+      - 'tools/tests/test_watch_ga4_schema.py'
+      - 'ios/Bain Luck/Bain Luck/Utilities/WatchTelemetryProtocol.swift'
+      - 'ios/Bain Luck/Bain Luck/Services/WatchTelemetryReceiver.swift'
+      - 'ios/Bain Luck/Bain Luck/Services/TelemetryConsent.swift'
+      - 'ios/Bain Luck/Bain Luck/Services/AnalyticsPrivacy.swift'
+      - 'ios/Bain Luck/Bain Luck/Services/AnalyticsService.swift'
       - 'tools/tests/watch-selected-game/**'
       - '.github/workflows/watch-mvp.yml'
 
@@ -118,6 +136,10 @@ jobs:
           xcrun swiftc --version
       - name: Exercise selected-game behavior without network or simulator
         run: bash tools/tests/watch-selected-game/run.sh
+      - name: Verify idempotent GA4 schema planning without credentials
+        run: python3 -m unittest discover -s tools/tests -p test_watch_ga4_schema.py
+      - name: Exercise consent-gated Watch telemetry without network or simulator
+        run: sh tools/tests/watch-telemetry/run.sh
       - name: Build unsigned Watch simulator and device executables
         run: bash tools/watch-build.sh
       - name: Preserve build diagnostics

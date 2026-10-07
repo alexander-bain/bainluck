@@ -40,6 +40,8 @@ private actor PickerTransportStub: WatchGamePickerTransport {
     try await checkPickerNetworkGuidance()
     let transport = PickerTransportStub()
     let store = WatchGamePickerStore(transport: transport)
+    var receipts: [(String, Int, Int)] = []
+    store.telemetry = { receipts.append(($0, $1, $2)) }
     precondition(store.games.isEmpty && !store.isLoading && store.errorMessage == nil && store.omittedGameCount == 0)
 
     let first = Task { await store.refresh() }
@@ -54,6 +56,7 @@ private actor PickerTransportStub: WatchGamePickerTransport {
     ]
     await transport.finish(1, .success(input))
     await first.value
+    precondition(receipts.count == 1 && receipts[0].0 == "success" && receipts[0].2 == 3)
     precondition(store.games.map(\.id) == [3, 8, 7], "Filter malformed games, deduplicate first valid IDs, and preserve server order")
     precondition(store.games.first?.homeTeam == "First valid", "An invalid row cannot reserve an ID")
     precondition(store.omittedGameCount == 6, "Only malformed rows count as omissions; duplicate valid IDs do not")
@@ -63,6 +66,7 @@ private actor PickerTransportStub: WatchGamePickerTransport {
     await transport.waitFor(2)
     await transport.finish(2, .failure(URLError(.notConnectedToInternet)))
     await failure.value
+    precondition(receipts.last?.0 == "offline" && receipts.last?.2 == 0)
     precondition(store.games.map(\.id) == [3, 8, 7] && store.omittedGameCount == 6)
     precondition(!store.isLoading && store.errorMessage != nil, "Failed refresh retains the usable list and explains failure")
     let retainedError = store.errorMessage
@@ -73,6 +77,7 @@ private actor PickerTransportStub: WatchGamePickerTransport {
     cancelledRetry.cancel()
     await transport.finish(3, .success(try [pickerEvent(99)]))
     await cancelledRetry.value
+    precondition(receipts.last?.0 == "cancelled")
     precondition(store.games.map(\.id) == [3, 8, 7] && store.omittedGameCount == 6)
     precondition(!store.isLoading && store.errorMessage == retainedError, "A cancelled response cannot replace the list or clear the prior error")
 
@@ -104,6 +109,8 @@ private actor PickerTransportStub: WatchGamePickerTransport {
                  "A successful empty response clears old games and remains distinct from failure")
     await transport.finish(7, .failure(URLError(.timedOut)))
     await staleFailure.value
+    precondition(receipts.suffix(2).map { $0.0 } == ["empty", "cancelled"],
+                 "Superseded timeout cannot overwrite the empty-success receipt")
     precondition(store.games.isEmpty && !store.isLoading && store.errorMessage == nil, "A late older failure cannot overwrite a newer success")
 
     let staleSuccess = Task { await store.refresh() }

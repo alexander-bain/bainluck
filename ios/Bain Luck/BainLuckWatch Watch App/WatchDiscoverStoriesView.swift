@@ -67,6 +67,7 @@ struct WatchDiscoverStoriesView: View {
                     storyCard(reading)
                 }
                 Button(discoveries.isRefreshing ? "Refreshing…" : "Refresh discoveries") {
+                    WatchTelemetry.shared.action(.refresh, surface: .discoveries)
                     manualRefresh?.cancel()
                     manualRefresh = Task { await discoveries.refresh() }
                 }
@@ -83,11 +84,23 @@ struct WatchDiscoverStoriesView: View {
             }
             .padding(.horizontal, 6)
         }
+        .onAppear {
+            discoveries.telemetry = { outcome, ms, count in
+                WatchTelemetry.shared.refreshResult(.discoveries, outcome: outcome, durationMS: ms, count: count)
+            }
+            WatchTelemetry.shared.screen(.discoveries)
+        }
+        .onChange(of: discoveries.fetchedAt) { _, _ in
+            WatchTelemetry.shared.reading(.discoveries, saved: discoveries.isSavedReading, count: visibleReadings.count)
+        }
         .accessibilityIdentifier("watch.discovery.list")
         .navigationTitle(dynamicTypeSize.isAccessibilitySize ? "" : "Discoveries")
         .toolbar {
             ToolbarItem(placement: .cancellationAction) {
-                Button(selected.selectedEventID == nil ? "Games" : "Your game", action: close)
+                Button(selected.selectedEventID == nil ? "Games" : "Your game") {
+                    WatchTelemetry.shared.action(.close, surface: .discoveries)
+                    close()
+                }
                     .accessibilityLabel(selected.selectedEventID == nil ? "Back to choosing a game" : "Your game")
                     .accessibilityIdentifier("watch.discovery.close")
             }
@@ -120,7 +133,7 @@ struct WatchDiscoverStoriesView: View {
             StoryContinuation.configure(activity, destination: destination)
         }
         .alert("Continue on iPhone", isPresented: $showingContinuationHelp) {
-            Button("OK", role: .cancel) { }
+            Button("OK", role: .cancel) { WatchTelemetry.shared.action(.dismissHelp, surface: .discoveries) }
         } message: {
             Text("\(continuationQuestion ?? "This story")\nLook for Bain Luck’s Handoff option in your iPhone’s App Switcher. Your iPhone needs a version with story Handoff support, and both devices need Handoff enabled and the same Apple Account. If it isn’t available, the story stays here.")
         }
@@ -177,7 +190,10 @@ struct WatchDiscoverStoriesView: View {
                 Text("Your selection is retained.")
                     .font(.footnote).foregroundStyle(.secondary)
             }
-            Button("Back to your game", action: close)
+            Button("Back to your game") {
+                WatchTelemetry.shared.action(.close, surface: .discoveries)
+                close()
+            }
         }
         .frame(maxWidth: .infinity, alignment: .leading)
         .accessibilityElement(children: .contain)
@@ -208,6 +224,7 @@ struct WatchDiscoverStoriesView: View {
                     .accessibilityIdentifier("watch.discovery.age.\(reading.id)")
             }
             Button("Continue on iPhone") {
+                WatchTelemetry.shared.action(.phoneContinuation, surface: .discoveries)
                 continuation = .futures(reading.id)
                 continuationQuestion = reading.question
                 showingContinuationHelp = true
@@ -220,5 +237,6 @@ struct WatchDiscoverStoriesView: View {
         .frame(maxWidth: .infinity, alignment: .leading)
         .accessibilityElement(children: .contain)
         .accessibilityIdentifier("watch.discovery.card.\(reading.id)")
+        .onAppear { WatchTelemetry.shared.content(.discoveries) }
     }
 }
