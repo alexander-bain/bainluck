@@ -1,0 +1,9 @@
+# Heroku main-app build output, build created 2026-10-07T11:47:38Z, source 0edfa0c16def4e68e5d09f2ff8c2db43d9f5fe75 (read 20261007T12:15Z via Platform API /apps/bainluck/builds output_stream_url)
+-----> Installing dependencies using 'pip install -r requirements.txt'
+       Requirement already satisfied: sqlalchemy<2.1,>=2.0.50 (from sqlalchemy[asyncio]<2.1,>=2.0.50->-r requirements.txt (line 18)) (2.0.54)
+       Requirement already satisfied: asyncpg>=0.31.0 (from -r requirements.txt (line 19)) (0.32.0)
+       Requirement already satisfied: greenlet>=1 (from sqlalchemy<2.1,>=2.0.50->sqlalchemy[asyncio]<2.1,>=2.0.50->-r requirements.txt (line 18)) (3.5.6)
+
+# CI run 37614071974 database-integration (shared) job 112768183067, default env
+asyncpg-0.32.0
+sqlalchemy-2.0.54

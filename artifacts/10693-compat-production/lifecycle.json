@@ -1,0 +1,24 @@
+{
+  "started_at": 1791377126.1218271,
+  "cluster": "/var/folders/rk/bp7zksws1s9b48c6_l_qn91m0000gn/T/kalshi10693-prod-pg-9npq33cy",
+  "sdk_env": "/var/folders/rk/bp7zksws1s9b48c6_l_qn91m0000gn/T/kalshi10693-sdk-ba3fhvtr",
+  "listen_addresses": "",
+  "gates": [
+    {
+      "log": "ci-production.txt",
+      "exit_code": 0
+    },
+    {
+      "log": "ci-floor.txt",
+      "exit_code": 0
+    },
+    {
+      "log": "production-source-affected.txt",
+      "exit_code": 0
+    }
+  ],
+  "pg_stop_exit": 0,
+  "cluster_removed": true,
+  "sdk_env_removed": true,
+  "ended_at": 1791377162.204996
+}

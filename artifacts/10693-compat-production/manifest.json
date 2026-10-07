@@ -1,0 +1,47 @@
+{
+  "prior_head": "f40d0d73b753dd88411918f1abf28a317ed89e52",
+  "source_delta_commit": "6005fd8f02cacd0d39ee78ea777d60d4b0106f3d",
+  "supported_pairs": [
+    [
+      "2.0.50",
+      "0.31.0"
+    ],
+    [
+      "2.0.54",
+      "0.32.0"
+    ]
+  ],
+  "utility_sha256": "8cd84f4fb1ed7bb1e5fb8c6ff643d37bd31b1f9bd062eda08270a89d12ed2c1c",
+  "mechanism_unchanged_except_pair_whitelist": true,
+  "unchanged_files_sha256": {
+    "backend/app/tasks/kalshi_ws.py": "22e8b5e168863ed644d94914f49f7934951f0186350376bf97428993cc78fb2f",
+    "backend/app/utils/kalshi_price_statement.py": "ac3f633e58e6c50c509dad48f49e63ef1d69cc94eae47bc64ae1453340b87288",
+    "backend/app/utils/price_change_stamp.py": "77c17375a2975038b1c653e40a02260a32bc3e86fc13785ed8d09f31b1a3eee8",
+    "backend/requirements.txt": "4b4d1c0d31063c074923f0a8f9f03e9aa01d95032c249bc2a4a7ddd5032d64a0"
+  },
+  "inspected_private_sources_sha256": {
+    "cursor": "b8199da58fe86f410c220e7fcd29976e9cf9c9124ed9b2a8524f3bc7f1608927",
+    "adapter": "f0f4745171d94f621b88ffd6110f7e23a88db6e4432cfb32469b15a04846b6c2",
+    "driver_fetchmany": "ad7771b8d7b5cd49213810dc4c5ff43834e682e2bc90ad957d536e38df5d0ba5",
+    "driver_executemany": "730b6a3ae9e4d8c89f7cf7189536436e35c95f5bfa0d6f6c5be91a29ffa42dc4"
+  },
+  "actual_ci_pair_replays": {
+    "2.0.50/0.31.0": {
+      "passed": 62,
+      "exit_code": 0,
+      "skipped": 0
+    },
+    "2.0.54/0.32.0": {
+      "passed": 62,
+      "exit_code": 0,
+      "skipped": 0
+    }
+  },
+  "production_pair_source_affected": {
+    "passed": 80,
+    "exit_code": 0,
+    "skipped": 0
+  },
+  "reservation": 88662,
+  "activation": "UNVERIFIED"
+}

@@ -25,7 +25,7 @@ from app.utils.kalshi_price_statement import (
     kalshi_price_parameters,
 )
 
-_SUPPORTED = ("2.0.50", "0.31.0")
+_SUPPORTED = frozenset({("2.0.50", "0.31.0"), ("2.0.54", "0.32.0")})
 _TAG = "_kalshi_price_pipeline_10693"
 _OWNER = "_kalshi_price_pipeline_10693_owner"
 PriceInput = tuple[float, float | None, float | None]
@@ -68,7 +68,7 @@ def _load_compatibility():
         versions = tuple(
             importlib.metadata.version(name) for name in ("sqlalchemy", "asyncpg")
         )
-        if versions != _SUPPORTED:
+        if versions not in _SUPPORTED:
             return None
         dialect = importlib.import_module("sqlalchemy.dialects.postgresql.asyncpg")
         driver = importlib.import_module("asyncpg")
