@@ -72,11 +72,19 @@ def shard_receipt(directory, shard, sha, exit_code, groups):
         )
     if (directory / "source.txt").read_text().strip() != sha:
         raise ValueError("Shard source differs from expected source")
+    products = json.loads((directory / "products-verification.json").read_text())
+    if (
+        products.get("sha") != sha
+        or products.get("verdict") != "PASS"
+        or not re.fullmatch(r"[0-9a-f]{64}", products.get("manifest_sha256", ""))
+    ):
+        raise ValueError("Immutable product verification is unpaid or wrong source")
     cases = completed_cases(
         (directory / "tests.log").read_text(), exit_code, groups[shard]
     )
     return {
         "sha": sha,
+        "product_manifest_sha256": products["manifest_sha256"],
         "shard": shard,
         "verdict": "PASS",
         "tests": len(cases),
@@ -105,6 +113,8 @@ def aggregate(directory, sha, groups, verify_markers=True):
             raise ValueError("Shard receipt does not match its retained evidence")
         receipts.append(checked)
         logs.append((part / "tests.log").read_text())
+    if len({r["product_manifest_sha256"] for r in receipts}) != 1:
+        raise ValueError("Shards used different immutable product packages")
     if len(
         {udid for r in receipts for udid in (r["watch_udid"], r["phone_udid"])}
     ) != 2 * len(groups) or any(

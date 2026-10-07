@@ -32,6 +32,11 @@ on:
       - 'ios/Bain Luck/BainLuckTests/DiscoverViewModelPaginationTests.swift'
       - 'ios/Bain Luck/BainLuckWatchUITests/**'
       - 'tools/watch-ui-journey.sh'
+      - 'tools/watch-ui-products.sh'
+      - 'tools/watch_ui_products.py'
+      - 'tools/watch_ui_stage.py'
+      - 'tools/tests/test_watch_ui_products.py'
+      - 'tools/tests/test_watch_ui_stage.py'
       - 'tools/watch_ui_shards.py'
       - 'tools/watch_simulator_architecture.py'
       - 'tools/tests/test_watch_simulator_architecture.py'
@@ -99,6 +104,11 @@ on:
       - 'ios/Bain Luck/BainLuckTests/DiscoverViewModelPaginationTests.swift'
       - 'ios/Bain Luck/BainLuckWatchUITests/**'
       - 'tools/watch-ui-journey.sh'
+      - 'tools/watch-ui-products.sh'
+      - 'tools/watch_ui_products.py'
+      - 'tools/watch_ui_stage.py'
+      - 'tools/tests/test_watch_ui_products.py'
+      - 'tools/tests/test_watch_ui_stage.py'
       - 'tools/watch_ui_shards.py'
       - 'tools/watch_simulator_architecture.py'
       - 'tools/tests/test_watch_simulator_architecture.py'
@@ -219,6 +229,48 @@ jobs:
           if-no-files-found: ignore
           retention-days: 7
 
+  watch-ui-products:
+    name: Build exact simulator products once for five fresh pairs
+    needs: watch-mvp
+    runs-on: xcode-27
+    timeout-minutes: 60
+    env:
+      DEVELOPER_DIR: /Applications/Xcode_27.0.app/Contents/Developer
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          persist-credentials: false
+      - name: Verify immutable product and stage contracts
+        run: |
+          python3 -m unittest discover -s tools/tests -p test_watch_ui_products.py
+          python3 -m unittest discover -s tools/tests -p test_watch_ui_stage.py
+      - name: Build and package exact signed simulator products
+        run: python3 tools/watch_ui_stage.py products --output-dir build/watch-ui-products -- bash tools/watch-ui-products.sh
+      - uses: actions/upload-artifact@v4
+        timeout-minutes: 5
+        with:
+          name: watch-ui-products
+          path: |
+            build/watch-ui-products/products.tar.gz
+            build/watch-ui-products/manifest.json
+          if-no-files-found: error
+          retention-days: 7
+      - name: Preserve producer evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        timeout-minutes: 2
+        with:
+          name: watch-ui-products-evidence
+          path: |
+            build/watch-ui-products/*.txt
+            build/watch-ui-products/*.json
+            build/watch-ui-products/*.jsonl
+            build/watch-ui-products/*.log
+            build/watch-ui-products/stage-*/**
+            build/watch-ui-products/package-resolution/**
+          retention-days: 7
+
   watch-ui-journey:
     name: Watch picker interaction journey (${{ matrix.shard }})
     strategy:
@@ -228,9 +280,9 @@ jobs:
     concurrency:
       group: watch-ui-${{ matrix.shard }}-${{ github.event_name == 'pull_request' && github.event.pull_request.number || github.run_id }}
       cancel-in-progress: true
-    needs: watch-mvp
+    needs: watch-ui-products
     runs-on: xcode-27
-    # Retain all36 cases across five isolated pairs with destination-specific builds.
+    # Retain all36 cases across five isolated pairs using one immutable product package.
     # The aggregate requires exact coverage; all command/job/test limits stay fixed.
     timeout-minutes: 60
     env:
@@ -241,6 +293,11 @@ jobs:
         with:
           ref: ${{ github.event.pull_request.head.sha || github.sha }}
           persist-credentials: false
+      - uses: actions/download-artifact@v4
+        timeout-minutes: 5
+        with:
+          name: watch-ui-products
+          path: build/watch-ui-products
       - name: Verify exact shard coverage
         run: python3 -m unittest discover -s tools/tests -p test_watch_ui_shards.py
       - name: Verify bounded package-download recovery
@@ -259,16 +316,34 @@ jobs:
         run: python3 -m unittest discover -s tools/tests -p test_watch_rectangular_readability_gate.py
       - name: Verify failed gates retain evidence before job cancellation
         run: python3 -m unittest discover -s tools/tests -p test_watch_ui_deadline.py
-      - name: Select, reopen offline, and change a game through Watch controls
-        run: python3 tools/watch_ui_deadline.py --output-dir build/watch-ui-journey -- bash tools/watch-ui-journey.sh
+      - name: Verify products and prepare one fresh pair within the global budget
+        run: python3 tools/watch_ui_stage.py prepare --output-dir build/watch-ui-journey -- bash tools/watch-ui-journey.sh prepare
+      - name: Preserve preparation evidence before starting XCTest
+        if: always()
+        uses: actions/upload-artifact@v4
+        timeout-minutes: 2
+        with:
+          name: watch-ui-preparation-${{ matrix.shard }}
+          path: |
+            build/watch-ui-journey/*.txt
+            build/watch-ui-journey/*.json
+            build/watch-ui-journey/*.jsonl
+            build/watch-ui-journey/*.log
+            build/watch-ui-journey/stage-*/**
+          retention-days: 7
+      - name: Execute unchanged cases within the remaining global budget
+        run: python3 tools/watch_ui_stage.py execute --output-dir build/watch-ui-journey -- bash tools/watch-ui-journey.sh execute
       - name: Preserve UI journey evidence
         if: always()
         uses: actions/upload-artifact@v4
+        timeout-minutes: 2
         with:
           name: watch-ui-journey-${{ matrix.shard }}
           path: |
             build/watch-ui-journey/*.txt
             build/watch-ui-journey/*.json
+            build/watch-ui-journey/*.jsonl
+            build/watch-ui-journey/stage-*/**
             build/watch-ui-journey/*.log
             build/watch-ui-journey/package-resolution/**
             build/watch-ui-journey/run.*/BainLuckWatchUITests.xcresult
