@@ -1,10 +1,11 @@
-UPDATING_CASES = [f"Test Case '-[BainLuckWatchUITests.SelectedGameUpdatingJourneyTests {case}]' passed (12.0 seconds)." for case in ("testUpdatingIsVisibleUntilRequestFinishes", "testUpdatingIsVisibleAtAccessibilitySize")]
 """A green summary cannot omit the real fresh-face activation regression."""
 from pathlib import Path
 import subprocess
 import sys
 
 import pytest
+
+UPDATING_CASES = [f"Test Case '-[BainLuckWatchUITests.SelectedGameUpdatingJourneyTests {case}]' passed (12.0 seconds)." for case in ("testUpdatingIsVisibleUntilRequestFinishes", "testUpdatingIsVisibleAtAccessibilitySize")]
 
 ROOT = Path(__file__).resolve().parents[2]
 MARKERS = (

@@ -1,4 +1,3 @@
-UPDATING_CASES = [f"Test Case '-[BainLuckWatchUITests.SelectedGameUpdatingJourneyTests {case}]' passed (12.0 seconds)." for case in ("testUpdatingIsVisibleUntilRequestFinishes", "testUpdatingIsVisibleAtAccessibilitySize")]
 """Selected picker acceptance requires both complete hosted test cases and markers."""
 import ast
 from pathlib import Path
@@ -6,6 +5,8 @@ import subprocess
 import sys
 import tempfile
 import unittest
+
+UPDATING_CASES = [f"Test Case '-[BainLuckWatchUITests.SelectedGameUpdatingJourneyTests {case}]' passed (12.0 seconds)." for case in ("testUpdatingIsVisibleUntilRequestFinishes", "testUpdatingIsVisibleAtAccessibilitySize")]
 
 ROOT = Path(__file__).resolve().parents[2]
 MARKERS = ("WATCH_UI_PICKER_SELECTED_STANDARD=PASS", "WATCH_UI_PICKER_SELECTED_LARGE=PASS")

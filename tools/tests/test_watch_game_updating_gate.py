@@ -43,6 +43,9 @@ def accepted_log():
             "Test Case '-[BainLuckWatchUITests.WidgetTapJourneyTests testFreshConfiguredFaceIsActiveBeforeActualLauncherTap]' passed (90.0 seconds).",
             "Test Case '-[BainLuckWatchUITests.PickerReturnJourneyTests testNetworkFailureGuidanceRetainsChoicesAndRecoversSelection]' passed (100.0 seconds).",
             *CASES,
+            "Test Case '-[BainLuckWatchUITests.ComplicationContentJourneyTests testRectangularTypedNamedValuesFitWithMonochromeRendering]' passed (12.0 seconds).",
+            "Test Case '-[BainLuckWatchUITests.ComplicationContentJourneyTests testRectangularLegacyMismatchUnknownAndEmptyStayHonest]' passed (12.0 seconds).",
+            "Test Case '-[BainLuckWatchUITests.RectangularWidgetHostJourneyTests testActualRectangularWidgetShowsPublishedSavedReading]' passed (12.0 seconds).",
             "Test Case '-[BainLuckWatchUITests.PickerSelectedStateJourneyTests testSelectedGameIsMarkedInPickerAndCanChange]' passed (12.0 seconds).",
             "Test Case '-[BainLuckWatchUITests.PickerSelectedStateJourneyTests testSelectedGameIsMarkedAtAccessibilitySize]' passed (12.0 seconds).",
         )
