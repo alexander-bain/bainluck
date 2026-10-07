@@ -36,11 +36,14 @@ final class WatchDiagnosticsJourneyTests: XCTestCase {
         XCTAssertTrue(disclosure.label.contains("Your iPhone must also allow analytics"))
         try captureContent(disclosure, app: app, name: "Watch diagnostics consent disclosure - \(size)")
         let revocation = app.staticTexts["watch.diagnostics.revocation"].firstMatch
+        try reveal(revocation, app: app)
         XCTAssertTrue(revocation.label.contains("clears unsent Watch diagnostics"))
         XCTAssertTrue(revocation.label.contains("Data already sent cannot be recalled here"))
         try captureContent(revocation, app: app, name: "Watch diagnostics revocation disclosure - \(size)")
-        try reveal(choice, app: app)
-        choice.tap()
+        try reveal(choice, app: app, earlierWhenMissing: true)
+        // watchOS exposes the whole row as a Switch; its center is the label.
+        // Tap the visible trailing switch, then assert the actual persisted value.
+        choice.coordinate(withNormalizedOffset: CGVector(dx: 0.85, dy: 0.5)).tap()
         XCTAssertEqual(choice.value as? String, "1")
         capture(app, "Watch diagnostics explicit on - \(size)")
         app.terminate()
@@ -48,8 +51,10 @@ final class WatchDiagnosticsJourneyTests: XCTestCase {
         app.launch()
         try openSettings(app)
         XCTAssertEqual(choice.value as? String, "1", "Explicit choice must survive relaunch")
-        try reveal(choice, app: app)
-        choice.tap()
+        try reveal(choice, app: app, earlierWhenMissing: true)
+        // watchOS exposes the whole row as a Switch; its center is the label.
+        // Tap the visible trailing switch, then assert the actual persisted value.
+        choice.coordinate(withNormalizedOffset: CGVector(dx: 0.85, dy: 0.5)).tap()
         XCTAssertEqual(choice.value as? String, "0")
         capture(app, "Watch diagnostics revoked - \(size)")
         app.terminate()
@@ -69,7 +74,12 @@ final class WatchDiagnosticsJourneyTests: XCTestCase {
 
     @MainActor private func bounds(_ app: XCUIApplication) -> CGRect {
         let scroll = app.scrollViews.firstMatch
-        return scroll.exists ? scroll.frame.intersection(app.frame) : app.frame
+        let collection = app.collectionViews.firstMatch
+        let content = scroll.exists ? scroll.frame : (collection.exists ? collection.frame : app.frame)
+        let bar = app.navigationBars.firstMatch
+        let top = bar.exists ? max(content.minY, bar.frame.maxY) : content.minY
+        return CGRect(x: content.minX, y: top, width: content.width,
+                      height: max(1, content.maxY - top)).intersection(app.frame)
     }
 
     @MainActor private func scroll(_ app: XCUIApplication, earlier: Bool) {
@@ -80,10 +90,13 @@ final class WatchDiagnosticsJourneyTests: XCTestCase {
         start.press(forDuration: 0.1, thenDragTo: end, withVelocity: .slow, thenHoldForDuration: 0.3)
     }
 
-    @MainActor private func reveal(_ element: XCUIElement, app: XCUIApplication) throws {
+    @MainActor private func reveal(_ element: XCUIElement, app: XCUIApplication, earlierWhenMissing: Bool = false) throws {
         for _ in 0..<24 {
             let box = bounds(app)
-            if element.isHittable && box.intersects(element.frame) { return }
+            // Form lazily mounts offscreen rows; never read a missing row's frame or label.
+            if !element.exists { scroll(app, earlier: earlierWhenMissing); continue }
+            if element.isHittable && (box.contains(element.frame) ||
+                (element.frame.height > box.height && box.intersects(element.frame))) { return }
             scroll(app, earlier: element.frame.midY < box.midY)
         }
         capture(app, "Unreachable diagnostics element - \(element.identifier)")

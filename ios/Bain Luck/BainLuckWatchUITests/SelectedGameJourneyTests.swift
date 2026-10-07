@@ -105,10 +105,24 @@ final class SelectedGameJourneyTests: XCTestCase {
 
     @MainActor
     private func tap(_ element: XCUIElement, in app: XCUIApplication) throws {
-        for _ in 0..<8 {
-            if element.isHittable { element.tap(); return }
-            app.swipeUp()
+        // Fast one-way swipes can overshoot a control once more footer rows exist.
+        // Move in small steps and reverse when the target is above the viewport.
+        for _ in 0..<24 {
+            let bar = app.navigationBars.firstMatch
+            let top = bar.exists ? max(app.frame.minY, bar.frame.maxY) : app.frame.minY
+            let visible = CGRect(x: app.frame.minX, y: top,
+                                 width: app.frame.width, height: app.frame.maxY - top)
+            if element.isHittable && visible.contains(element.frame) {
+                capture(app, name: "Reachable control - \(element.identifier)")
+                element.tap()
+                return
+            }
+            let earlier = element.frame.midY < visible.midY
+            let start = app.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.65))
+            let end = start.withOffset(CGVector(dx: 0, dy: visible.height * (earlier ? 0.20 : -0.20)))
+            start.press(forDuration: 0.1, thenDragTo: end, withVelocity: .slow, thenHoldForDuration: 0.3)
         }
+        capture(app, name: "Unreachable control - \(element.identifier)")
         XCTFail("Expected control was not hittable: \(element.identifier)")
         throw NSError(domain: "WatchJourney", code: 1)
     }
