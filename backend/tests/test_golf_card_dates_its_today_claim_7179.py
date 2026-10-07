@@ -266,10 +266,11 @@ class TestTheFixNarrowsTheSentenceAndNothingElse:
             "allowed to change what the card SAYS"
         )
 
-    def test_an_undated_mover_is_still_live(self, monkeypatch):
-        """`_tournament_is_live` reads `movement_24h` and must keep reading it."""
+    def test_a_future_mover_keeps_its_schedule_headline(self, monkeypatch):
+        """#5105: provenance does not make tomorrow's tournament live."""
         undated = _card(monkeypatch, _golfer(_UNDATED_MOVE, dated=False))
-        assert undated["headline"] == "Live"
+        dated = _card(monkeypatch, _golfer(_UNDATED_MOVE, dated=True))
+        assert undated["headline"] == dated["headline"] == "Tomorrow"
 
     def test_the_card_is_still_served(self, monkeypatch):
         """The refusal removes a clause, never the card (`_card` asserts len == 1)."""

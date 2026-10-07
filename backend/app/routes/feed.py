@@ -15464,10 +15464,25 @@ def _tournament_is_live(t: dict, now: datetime) -> bool:
         return False
     if t.get("schedule_status") == "in-progress":
         return True
-    if t.get("start_date") and t.get("end_date"):
+    start = None
+    if t.get("start_date"):
         try:
-            start = datetime.fromisoformat(t["start_date"]).replace(tzinfo=timezone.utc)
-            end = datetime.fromisoformat(t["end_date"]).replace(tzinfo=timezone.utc)
+            start = datetime.fromisoformat(t["start_date"])
+            if start.tzinfo is None:
+                start = start.replace(tzinfo=timezone.utc)
+            # #5105: price discovery before play is not live golf. A known
+            # future start must also block the movement fallback below, even
+            # when the listing has no end date. Explicit in-progress above
+            # still takes precedence over a stale schedule.
+            if start > now:
+                return False
+        except (ValueError, TypeError):
+            pass
+    if start is not None and t.get("end_date"):
+        try:
+            end = datetime.fromisoformat(t["end_date"])
+            if end.tzinfo is None:
+                end = end.replace(tzinfo=timezone.utc)
             if start <= now <= end + timedelta(hours=12):
                 return True
         except (ValueError, TypeError):
