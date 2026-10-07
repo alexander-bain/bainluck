@@ -2530,7 +2530,10 @@ async def compute_and_write_stat_model(session, event, ee, sport_key, stats):
                     session, event, "stat_model", round(stat_wp, 4),
                 )
 
-                from app.tasks.snapshots import _create_or_update_win_prob_snapshot
+                from app.tasks.snapshots import (
+                    STAT_MODEL_LIVE_HEARTBEAT_S,
+                    _create_or_update_win_prob_snapshot,
+                )
                 # #922: if OUR event is already completed/closed (ESPN can lag and
                 # keep reporting MLB as "in" for 20-40 min post-final), capture the
                 # terminal stat_model point once and stop appending drift points —
@@ -2551,6 +2554,11 @@ async def compute_and_write_stat_model(session, event, ee, sport_key, stats):
                         "time_source": "espn",
                     },
                     is_completed=is_completed,
+                    # #10673: this branch is reached only while ESPN reports the
+                    # game live, and the helper ignores the floor once
+                    # `is_completed` is set (#922), so this heartbeat stops at
+                    # the final.
+                    max_gap_seconds=STAT_MODEL_LIVE_HEARTBEAT_S,
                 )
                 if is_new:
                     session.add(stat_snap)

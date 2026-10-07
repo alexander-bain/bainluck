@@ -11,6 +11,7 @@ nonisolated struct WatchUIFixture: WatchSelectedGameTransport, WatchGamePickerTr
     var launchReceipt = false
     var sharedPublication = false
     var circularIdentity = false
+    var pickerNetworkFailure: WatchPickerNetworkFixture?
 
     static let current: WatchUIFixture? = {
         var environment = ProcessInfo.processInfo.environment
@@ -43,7 +44,8 @@ nonisolated struct WatchUIFixture: WatchSelectedGameTransport, WatchGamePickerTr
                     rounding: environment["BAINLUCK_WATCH_UI_ROUNDING"] == "1",
                     launchReceipt: environment["BAINLUCK_WATCH_UI_LAUNCH_RECEIPT"] == "1",
                     sharedPublication: environment["BAINLUCK_WATCH_UI_SHARED_PUBLICATION"] == "1",
-                    circularIdentity: environment["BAINLUCK_WATCH_UI_CIRCULAR_IDENTITY"] == "1")
+                    circularIdentity: environment["BAINLUCK_WATCH_UI_CIRCULAR_IDENTITY"] == "1",
+                    pickerNetworkFailure: environment["BAINLUCK_WATCH_UI_PICKER_NETWORK"].map { WatchPickerNetworkFixture(scenario: $0) })
     }()
 
     @MainActor func makeStore() -> WatchSelectedGameStore {
@@ -58,6 +60,7 @@ nonisolated struct WatchUIFixture: WatchSelectedGameTransport, WatchGamePickerTr
     }
 
     func fetchGames() async throws -> WatchGamePickerBatch {
+        try await pickerNetworkFailure?.beforeFetch()
         if offline { throw URLError(.notConnectedToInternet) }
         let decoder = JSONDecoder()
         decoder.keyDecodingStrategy = .convertFromSnakeCase
@@ -97,6 +100,22 @@ nonisolated struct WatchUIFixture: WatchSelectedGameTransport, WatchGamePickerTr
             payload["hero_probability_away"] = 0.545
         }
         return try JSONDecoder().decode(WatchSelectedGame.self, from: JSONSerialization.data(withJSONObject: payload))
+    }
+}
+/// Only the second picker request fails: initial options and later recovery
+/// both use the normal deterministic fixture, with no timers or public network.
+actor WatchPickerNetworkFixture {
+    private var requests = 0
+    private let failure: URLError.Code?
+
+    init(scenario: String) {
+        failure = ["offline": URLError.Code.notConnectedToInternet,
+                   "interrupted": .networkConnectionLost, "timeout": .timedOut][scenario]
+    }
+
+    func beforeFetch() throws {
+        requests += 1
+        if requests == 2, let failure { throw URLError(failure) }
     }
 }
 #endif

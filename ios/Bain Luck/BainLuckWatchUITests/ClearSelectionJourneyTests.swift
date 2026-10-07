@@ -59,7 +59,7 @@ final class ClearSelectionJourneyTests: XCTestCase {
         XCTAssertEqual(heading.label, "Choose your game")
         let error = app.staticTexts["watch.picker-error"]
         XCTAssertTrue(error.waitForExistence(timeout: 15), "Offline picker must explain its retry recovery")
-        XCTAssertEqual(error.label, "Couldn't refresh available games. Try again.")
+        XCTAssertEqual(error.label, "Offline. Connect to the internet, then refresh games.")
         try reveal(heading, in: app)
         try reveal(error, in: app)
         expectation(for: NSPredicate(format: "enabled == true"), evaluatedWith: refresh)

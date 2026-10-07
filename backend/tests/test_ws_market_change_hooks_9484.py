@@ -177,6 +177,32 @@ class _HybridSession:
         return _Replayed(self._batches.pop(0) if self._batches else [])
 
 
+class _PipelinedPublish:
+    """Pool + connection shim for the #10659 batched market publisher."""
+
+    def __init__(self, redis):
+        self._redis, self._sent = redis, []
+
+    async def get_connection(self, *_args):
+        return self
+
+    async def release(self, _connection):
+        return None
+
+    async def disconnect(self):
+        return None
+
+    def pack_commands(self, commands):
+        return list(commands)
+
+    async def send_packed_command(self, commands, **_kwargs):
+        self._sent.extend(commands)
+
+    async def read_response(self, **_kwargs):
+        _verb, channel, payload = self._sent.pop(0)
+        return await self._redis.publish(channel, payload)
+
+
 class _FakeRedis:
     """Records each PUBLISH with what a second connection saw at that moment."""
 
@@ -192,6 +218,12 @@ class _FakeRedis:
             ).scalar_one()
         self.published.append((channel, json.loads(payload), float(stored)))
         return 0
+
+    @property
+    def connection_pool(self):
+        """#10659: the market publisher pipelines PUBLISH on a pooled connection;
+        each reply it reads goes through ``publish`` so the record is unchanged."""
+        return _PipelinedPublish(self)
 
 
 def _frames(messages):

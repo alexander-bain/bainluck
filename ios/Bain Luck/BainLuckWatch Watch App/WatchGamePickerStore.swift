@@ -60,7 +60,16 @@ final class WatchGamePickerStore: ObservableObject {
         } catch {
             guard requestRevision == revision else { return }
             if Task.isCancelled || error is CancellationError || (error as? URLError)?.code == .cancelled { return }
-            errorMessage = "Couldn't refresh available games. Try again."
+            switch (error as? URLError)?.code {
+            case .notConnectedToInternet:
+                errorMessage = "Offline. Connect to the internet, then refresh games."
+            case .networkConnectionLost:
+                errorMessage = "Connection interrupted. Refresh games to try again."
+            case .timedOut:
+                errorMessage = "Connection timed out. Refresh games to try again."
+            default:
+                errorMessage = "Couldn't refresh available games. Try again."
+            }
         }
     }
 }

@@ -23,20 +23,38 @@ export function createFoldedRefetchScheduler(
   refetch: () => void | Promise<unknown>,
   windowMs: number,
   now: () => number = Date.now,
+  // Opt-in for authoritative quote pairs: one retry after a failed or
+  // insufficient read, even when no later invalidation arrives.
+  retryUnresolved?: () => boolean,
 ): FoldedRefetchScheduler {
   let lastAt = Number.NEGATIVE_INFINITY;
   let trailing: ReturnType<typeof setTimeout> | null = null;
   let inFlight = false;
   let pending = false;
   let generation = 0;
+  let automaticRetries = 0;
+  let automaticRetryPending = false;
 
   const finish = (startedGeneration: number) => {
     if (generation !== startedGeneration) return;
     inFlight = false;
+    if (!pending && automaticRetries === 0 && retryUnresolved?.()) {
+      automaticRetries += 1;
+      automaticRetryPending = true;
+      pending = true;
+    }
     if (pending) schedule();
   };
   const fire = () => {
     trailing = null;
+    // Navigation, terminal state or a covering response may retire the quote
+    // while this retry waits. Do not turn it into an unrelated detail read.
+    if (automaticRetryPending && !retryUnresolved?.()) {
+      automaticRetryPending = false;
+      pending = false;
+      return;
+    }
+    automaticRetryPending = false;
     pending = false;
     lastAt = now();
     const startedGeneration = generation;
@@ -61,6 +79,8 @@ export function createFoldedRefetchScheduler(
 
   return {
     request() {
+      automaticRetryPending = false;
+      automaticRetries = 0;
       pending = true;
       schedule();
     },
@@ -70,6 +90,8 @@ export function createFoldedRefetchScheduler(
       pending = false;
       inFlight = false;
       generation += 1;
+      automaticRetries = 0;
+      automaticRetryPending = false;
     },
   };
 }

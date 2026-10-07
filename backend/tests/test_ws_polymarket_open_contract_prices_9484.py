@@ -753,6 +753,32 @@ class _Session:
         return _Replayed(self._rig.slate.pop(0) if self._rig.slate else [])
 
 
+class _PipelinedPublish:
+    """Pool + connection shim for the #10659 batched market publisher."""
+
+    def __init__(self, redis):
+        self._redis, self._sent = redis, []
+
+    async def get_connection(self, *_args):
+        return self
+
+    async def release(self, _connection):
+        return None
+
+    async def disconnect(self):
+        return None
+
+    def pack_commands(self, commands):
+        return list(commands)
+
+    async def send_packed_command(self, commands, **_kwargs):
+        self._sent.extend(commands)
+
+    async def read_response(self, **_kwargs):
+        _verb, channel, payload = self._sent.pop(0)
+        return await self._redis.publish(channel, payload)
+
+
 class _FakeRedis:
     def __init__(self):
         self.published = []
@@ -760,6 +786,12 @@ class _FakeRedis:
     async def publish(self, channel, payload):
         self.published.append((channel, parse_market_frame(payload)))
         return 0
+
+    @property
+    def connection_pool(self):
+        """#10659: the market publisher pipelines PUBLISH on a pooled connection;
+        each reply it reads goes through ``publish`` so the record is unchanged."""
+        return _PipelinedPublish(self)
 
 
 class _Rig:

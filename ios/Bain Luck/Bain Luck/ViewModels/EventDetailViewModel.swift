@@ -127,6 +127,25 @@ final class EventDetailViewModel: ObservableObject {
     private var deliveryGeneration = 0
     private var streamRefetchGeneration: Int?
     private var provenanceRefetchFrame: LiveStreamFrame?
+    /// #10643 — the latest opening/consensus frame that arrived while a pair
+    /// was already in flight. That pair answers the frame that started it; if
+    /// it does not also cover this one, exactly one trailing pair is owed.
+    private var trailingProvenanceFrame: LiveStreamFrame?
+
+    /// #10643 — `frame`, carrying the row-wise highest revision it and `held`
+    /// named, so a delayed or other-row arrival never erases a newer
+    /// requirement. Any arrival without a revision leaves none: an unprovable
+    /// requirement is never counted as covered.
+    private static func trailingRequirement(adding frame: LiveStreamFrame, to held: LiveStreamFrame?) -> LiveStreamFrame {
+        guard let held else { return frame }
+        let merged = held.rev?.revision.flatMap { heldRevision in
+            frame.rev?.revision.flatMap { FoldRevision(heldRevision.rows.merging($0.rows, uniquingKeysWith: max)) }
+        }
+        return LiveStreamFrame(
+            eventId: frame.eventId, p: frame.p, source: frame.source, sourceValue: frame.sourceValue,
+            updatedAt: frame.updatedAt, status: frame.status, rev: merged.map { ServedFoldRevision($0) }
+        )
+    }
 
     /// A failed authoritative pair is a delivery failure even if SSE stays open.
     /// Separate from the full-load error: a successful game-state read cannot
@@ -626,6 +645,24 @@ final class EventDetailViewModel: ObservableObject {
                 deliveredPrice = true
                 streamRefetchGeneration = nil
             }
+            // #10643 — a frame that landed during this read and is not covered
+            // by the pair just adopted would otherwise be lost until another
+            // frame or the poll. It becomes the provenance of one trailing pair.
+            if let trailing = trailingProvenanceFrame {
+                trailingProvenanceFrame = nil
+                let covered = trailing.rev?.revision.flatMap { requested in
+                    event.flatMap { LiveEventPriceReconciliation.pairedFoldRevision(in: $0) }.map { adopted in
+                        requested.rows.allSatisfy { key, revision in
+                            adopted.rows[key].map { $0 >= revision } ?? false
+                        }
+                    }
+                } ?? false
+                if !covered {
+                    provenanceRefetchFrame = trailing
+                    streamRefetchGeneration = deliveryGeneration
+                    revisionRefetchPending = true
+                }
+            }
             // #10468 — the pair the CURRENT connection asked for put a covered
             // or newer price on the page: that is a delivery, and the only way
             // a folded hero (which refuses every raw frame) can renew it. A
@@ -825,6 +862,7 @@ final class EventDetailViewModel: ObservableObject {
                     self.deliveryGeneration += 1
                     self.streamRefetchGeneration = nil
                     self.provenanceRefetchFrame = nil
+                    self.trailingProvenanceFrame = nil
                     // The dot and fast polling reflect the outage immediately.
                     // A recoverable outage does not invalidate a price already
                     // observed; load() checks terminal refusal before using it.
@@ -870,6 +908,7 @@ final class EventDetailViewModel: ObservableObject {
         deliveryGeneration += 1
         streamRefetchGeneration = nil
         provenanceRefetchFrame = nil
+        trailingProvenanceFrame = nil
         streamHasPushedPrice = false
         streamTickTask?.cancel()
         streamTickTask = nil
@@ -926,6 +965,8 @@ final class EventDetailViewModel: ObservableObject {
                 provenanceRefetchFrame = frame
                 streamRefetchGeneration = deliveryGeneration
                 requestRevisionRefetch()
+            } else {
+                trailingProvenanceFrame = Self.trailingRequirement(adding: frame, to: trailingProvenanceFrame)
             }
         } else if let foldOrder {
             priceIsNotNewer = foldOrder != .newer
