@@ -6,6 +6,19 @@ from datetime import datetime, timezone
 
 from sqlalchemy import select
 
+#: #10673 — the live/035 cadence floor for the two ``stat_model`` chart writers
+#: (the ESPN pass and the odds poll's no-ESPN-link arm). Venue writers have
+#: carried a one-minute floor since live/035; the model writers passed none, so
+#: a model holding still stored nothing. On /events/15324650 (MIL @ SD, 04:11Z →
+#: 04:17Z Oct 7) the stream re-published 0.9262 every minute, but the stored
+#: series ended at 04:11:24. A fresh page load then read the 5m57s gap as a hole
+#: wider than the #7878 contract's G = 300 s, withdrew the line and captioned
+#: "none in the 5m since". The ESPN pass runs on a 60 s beat (p95 81 s, #3251),
+#: so with this floor its stored readings sit at most about 2.5 minutes apart,
+#: inside G. The floor can't make a writer denser than its own sampling, and
+#: the odds-poll arm keeps its sport tier's cadence.
+STAT_MODEL_LIVE_HEARTBEAT_S = 60.0
+
 
 def _second_slot_same(existing, away_win_probability, draw_probability) -> bool:
     """Do the incoming away/draw members match the ones already on the row?
