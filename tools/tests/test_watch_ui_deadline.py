@@ -32,22 +32,26 @@ class WatchUIDeadlineTests(unittest.TestCase):
             return result, record, files
 
     def test_success_only_preserves_actual_gate_receipt_and_command_runs_once(self):
-        result, record, files = self.run_child("""
+        result, record, files = self.run_child(
+            """
 import pathlib,sys
 p=pathlib.Path(sys.argv[1]); (p/'receipt.json').write_text('{"verdict":"PASS"}')
 print('one invocation')
-""")
+"""
+        )
         self.assertEqual(result, 0)
         self.assertEqual(record["status"], "COMPLETED")
         self.assertEqual(json.loads(files["receipt.json"])["verdict"], "PASS")
         self.assertEqual(files["gate-supervisor.log"].count("one invocation"), 1)
 
     def test_nonzero_exit_is_preserved_and_cannot_leave_pass(self):
-        result, record, files = self.run_child("""
+        result, record, files = self.run_child(
+            """
 import pathlib,sys
 (pathlib.Path(sys.argv[1])/'receipt.json').write_text('{"sha":"source","verdict":"PASS"}')
 sys.exit(7)
-""")
+"""
+        )
         self.assertEqual(result, 7)
         self.assertEqual(record["status"], "FAILED")
         self.assertEqual(json.loads(files["receipt.json"])["verdict"], "UNPAID")
@@ -200,7 +204,7 @@ print('only once',flush=True); time.sleep(20)
         )[0]
         self.assertIn("timeout-minutes: 60", job)
         self.assertIn(
-            "python3 tools/watch_ui_deadline.py --output-dir build/watch-ui-journey -- bash tools/watch-ui-journey.sh",
+            "python3 tools/watch_ui_stage.py execute --output-dir build/watch-ui-journey -- bash tools/watch-ui-journey.sh execute",
             job,
         )
         self.assertIn("if: always()", job)

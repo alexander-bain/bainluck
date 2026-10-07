@@ -46,6 +46,15 @@ class WatchUIShardTests(unittest.TestCase):
             (part / "simulator-widget-signing.json").write_text(
                 json.dumps({"sha": self.sha, "verdict": "PASS"})
             )
+            (part / "products-verification.json").write_text(
+                json.dumps(
+                    {
+                        "sha": self.sha,
+                        "verdict": "PASS",
+                        "manifest_sha256": "c" * 64,
+                    }
+                )
+            )
             self.save_receipt(shard)
 
     def save_receipt(self, shard):
@@ -68,11 +77,16 @@ class WatchUIShardTests(unittest.TestCase):
         self.assertEqual(len(self.groups["widgets"]), 6)
 
     def test_preparation_builds_selected_architecture_in_fresh_runs(self):
-        harness = (ROOT / "tools/watch-ui-journey.sh").read_text()
+        harness = (ROOT / "tools/watch-ui-products.sh").read_text()
         setup = "RUN=" + harness.split("RUN=", 1)[1].split("RESULT=", 1)[0]
         builds = (
             "XCODE_ARGS=("
-            + harness.split("XCODE_ARGS=(", 1)[1].split("# Give the system host", 1)[0]
+            + harness.split("XCODE_ARGS=(", 1)[1].split("PHASE='package immutable", 1)[
+                0
+            ]
+        )
+        builds = "\n".join(
+            line for line in builds.splitlines() if "watch_ui_stage.py" not in line
         )
         record = self.root / "build-commands.jsonl"
         capture = (
@@ -114,6 +128,15 @@ class WatchUIShardTests(unittest.TestCase):
         self.assertNotEqual(
             roots[0], roots[1], "New runs must never reuse old products"
         )
+
+    def test_mixed_immutable_product_packages_cannot_form_full_gate(self):
+        path = self.root / "readings/products-verification.json"
+        data = json.loads(path.read_text())
+        data["manifest_sha256"] = "d" * 64
+        path.write_text(json.dumps(data))
+        self.save_receipt("readings")
+        with self.assertRaisesRegex(ValueError, "different immutable"):
+            self.verify()
 
     def test_missing_failed_or_wrong_source_shard_is_unpaid(self):
         path = self.root / "readings/receipt.json"
