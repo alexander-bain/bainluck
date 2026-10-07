@@ -33,6 +33,8 @@ on:
       - 'ios/Bain Luck/BainLuckWatchUITests/**'
       - 'tools/watch-ui-journey.sh'
       - 'tools/watch_ui_shards.py'
+      - 'tools/watch_simulator_architecture.py'
+      - 'tools/tests/test_watch_simulator_architecture.py'
       - 'tools/watch_ui_cases.json'
       - 'tools/tests/test_watch_ui_shards.py'
       - 'tools/watch_ui_deadline.py'
@@ -96,6 +98,8 @@ on:
       - 'ios/Bain Luck/BainLuckWatchUITests/**'
       - 'tools/watch-ui-journey.sh'
       - 'tools/watch_ui_shards.py'
+      - 'tools/watch_simulator_architecture.py'
+      - 'tools/tests/test_watch_simulator_architecture.py'
       - 'tools/watch_ui_cases.json'
       - 'tools/tests/test_watch_ui_shards.py'
       - 'tools/watch_ui_deadline.py'
@@ -216,13 +220,13 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        shard: [readings, navigation, widgets]
+        shard: [readings, navigation, controls, widgets]
     concurrency:
       group: watch-ui-${{ matrix.shard }}-${{ github.event_name == 'pull_request' && github.event.pull_request.number || github.run_id }}
       cancel-in-progress: true
     needs: watch-mvp
     runs-on: xcode-27
-    # Retain every case across three isolated pairs after ~28m setup.
+    # Retain all31 cases across four isolated pairs with destination-specific builds.
     # The aggregate requires exact coverage; all command/job/test limits stay fixed.
     timeout-minutes: 60
     env:
@@ -243,6 +247,8 @@ jobs:
         run: python3 -m unittest discover -s tools/tests -p test_watch_picker_selected_gate.py
       - name: Verify Discoveries polish receipts fail closed
         run: python3 -m unittest discover -s tools/tests -p test_watch_discovery_polish_receipt.py
+      - name: Verify simulator architecture selection fails closed
+        run: python3 -m unittest discover -s tools/tests -p test_watch_simulator_architecture.py
       - name: Verify failed gates retain evidence before job cancellation
         run: python3 -m unittest discover -s tools/tests -p test_watch_ui_deadline.py
       - name: Select, reopen offline, and change a game through Watch controls
@@ -280,6 +286,10 @@ jobs:
         with:
           name: watch-ui-journey-navigation
           path: build/watch-ui-aggregate/navigation
+      - uses: actions/download-artifact@v4
+        with:
+          name: watch-ui-journey-controls
+          path: build/watch-ui-aggregate/controls
       - uses: actions/download-artifact@v4
         with:
           name: watch-ui-journey-widgets

@@ -4,6 +4,9 @@ import ast
 import subprocess
 import importlib.util
 import json
+import os
+import shlex
+import sys
 from pathlib import Path
 import tempfile
 import unittest
@@ -56,8 +59,57 @@ class WatchUIShardTests(unittest.TestCase):
     def test_complete_distinct_pairs_cover_all_31_debug_cases(self):
         self.assertEqual(self.verify()["tests"], 31)
         self.assertEqual(len(self.groups["readings"]), 11)
-        self.assertEqual(len(self.groups["navigation"]), 14)
+        self.assertEqual(len(self.groups["navigation"]), 6)
+        self.assertEqual(len(self.groups["controls"]), 8)
         self.assertEqual(len(self.groups["widgets"]), 6)
+
+    def test_preparation_builds_selected_architecture_in_fresh_runs(self):
+        harness = (ROOT / "tools/watch-ui-journey.sh").read_text()
+        setup = "RUN=" + harness.split("RUN=", 1)[1].split("RESULT=", 1)[0]
+        builds = (
+            "XCODE_ARGS=("
+            + harness.split("XCODE_ARGS=(", 1)[1].split("# Give the system host", 1)[0]
+        )
+        record = self.root / "build-commands.jsonl"
+        capture = (
+            "import json,os,sys; "
+            "open(os.environ['RECORD'], 'a').write(json.dumps(sys.argv[1:])+'\\n')"
+        )
+        shell = (
+            "set -eu\n"
+            "xcodebuild() { "
+            + shlex.quote(sys.executable)
+            + " -c "
+            + shlex.quote(capture)
+            + ' "$@"; }\n'
+            + setup
+            + builds
+        )
+        environment = dict(
+            os.environ,
+            ROOT=str(self.root),
+            OUT=str(self.root),
+            RECORD=str(record),
+            TEST_UDID="owned-watch",
+            PHONE_UDID="owned-phone",
+            SIM_ARCH="arm64",
+        )
+        roots = []
+        for _ in range(2):
+            record.write_text("")
+            subprocess.run(["bash", "-c", shell], env=environment, check=True)
+            calls = [json.loads(line) for line in record.read_text().splitlines()]
+            self.assertEqual(
+                [call[0] for call in calls], ["build-for-testing", "build"]
+            )
+            derived = [call[call.index("-derivedDataPath") + 1] for call in calls]
+            for call in calls:
+                self.assertEqual(call.count("ARCHS=arm64"), 1)
+            roots.append(derived)
+            self.assertTrue(Path(derived[0]).parent.is_dir())
+        self.assertNotEqual(
+            roots[0], roots[1], "New runs must never reuse old products"
+        )
 
     def test_missing_failed_or_wrong_source_shard_is_unpaid(self):
         path = self.root / "readings/receipt.json"
@@ -178,7 +230,14 @@ class WatchUIShardTests(unittest.TestCase):
         source.mkdir(parents=True)
         readings = self.groups["readings"][0]
         (tools / "watch_ui_cases.json").write_text(
-            json.dumps({"readings": [readings], "navigation": [], "widgets": []})
+            json.dumps(
+                {
+                    "readings": [readings],
+                    "navigation": [],
+                    "controls": [],
+                    "widgets": [],
+                }
+            )
         )
         (source / "WidgetTapJourneyTests.swift").write_text(
             "#if DEBUG\nfunc testActualCornerSavedReadingAndTap() {}\nfunc testNewCoverage() {}\n#endif"
@@ -187,7 +246,12 @@ class WatchUIShardTests(unittest.TestCase):
             gate.manifest(self.root)
         (tools / "watch_ui_cases.json").write_text(
             json.dumps(
-                {"readings": [readings], "navigation": [readings], "widgets": []}
+                {
+                    "readings": [readings],
+                    "navigation": [readings],
+                    "controls": [],
+                    "widgets": [],
+                }
             )
         )
         with self.assertRaises(ValueError):

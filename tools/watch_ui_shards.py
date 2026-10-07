@@ -1,4 +1,4 @@
-"""Exact-coverage receipts for three independently prepared hosted Watch pairs."""
+"""Exact-coverage receipts for four independently prepared hosted Watch pairs."""
 
 import argparse
 from collections import Counter
@@ -13,8 +13,10 @@ ROOT = Path(__file__).resolve().parents[1]
 
 def manifest(root=ROOT):
     groups = json.loads((root / "tools/watch_ui_cases.json").read_text())
-    if set(groups) != {"readings", "navigation", "widgets"}:
-        raise ValueError("Expected exactly readings, navigation and widgets shards")
+    if set(groups) != {"readings", "navigation", "controls", "widgets"}:
+        raise ValueError(
+            "Expected exactly readings, navigation, controls and widgets shards"
+        )
     declared = [case for cases in groups.values() for case in cases]
     source = [
         f"{path.stem}/{case}"
@@ -136,14 +138,16 @@ def aggregate(directory, sha, groups, verify_markers=True):
         "verdict": "PASS",
         "tests": sum(r["tests"] for r in receipts),
         "shards": receipts,
-        "scope": "All manifest Debug Watch UI cases on three independently prepared hosted pairs",
+        "scope": "All manifest Debug Watch UI cases on four independently prepared hosted pairs",
     }
 
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("mode", choices=["select", "receipt", "aggregate"])
-    parser.add_argument("--shard", choices=["readings", "navigation", "widgets"])
+    parser.add_argument(
+        "--shard", choices=["readings", "navigation", "controls", "widgets"]
+    )
     parser.add_argument("--directory", type=Path)
     parser.add_argument("--sha")
     parser.add_argument("--exit-code", type=int)
