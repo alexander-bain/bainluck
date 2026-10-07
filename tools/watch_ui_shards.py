@@ -115,8 +115,7 @@ def aggregate(directory, sha, groups, verify_markers=True):
         combined = directory / "combined-tests.log"
         combined.write_text("\n".join(logs))
         harness = (ROOT / "tools/watch-ui-journey.sh").read_text()
-        for gate in ("PYVERIFY",):
-            for gate in ("PYVERIFY", "PYCORNER"):
+        for gate in ("PYVERIFY", "PYCORNER"):
             code = harness.split(f"<<'{gate}'\n", 1)[1].split(f"\n{gate}", 1)[0]
             subprocess.run([sys.executable, "-c", code, str(combined)], check=True)
         subprocess.run(

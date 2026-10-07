@@ -230,7 +230,7 @@ jobs:
       cancel-in-progress: true
     needs: watch-mvp
     runs-on: xcode-27
-    # Retain all33 cases across four isolated pairs with destination-specific builds.
+    # Retain all36 cases across five isolated pairs with destination-specific builds.
     # The aggregate requires exact coverage; all command/job/test limits stay fixed.
     timeout-minutes: 60
     env:

@@ -158,9 +158,9 @@ final class WidgetTapJourneyTests: XCTestCase {
                              && curvedLabel.frame.width > 0 && curvedLabel.frame.height > 0
                              && host.frame.contains(curvedLabel.frame),
                              "Actual corner lacks complete rendered Saved + named win label", host: host)
-        freshFaceCapture(host, name: "Actual configured Infograph corner 64 percent and full Saved SF win curve")
+        freshFaceCapture(host, name: "Actual configured Exactograph corner 64 percent and full Saved SF win curve")
         try tapActualWidgetHostAndAssertWarmReturn(host: host, widget: reading, app: app,
-            baseline: baseline, tapOrdinal: 1, dismissedOverlays: picker, phase: "saved Infograph corner forecast")
+            baseline: baseline, tapOrdinal: 1, dismissedOverlays: picker, phase: "saved Exactograph corner forecast")
         print("WATCH_UI_ACTUAL_CORNER_SAVED=PASS")
     }
 

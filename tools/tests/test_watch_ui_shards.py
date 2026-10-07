@@ -58,7 +58,10 @@ class WatchUIShardTests(unittest.TestCase):
 
     def test_complete_distinct_pairs_cover_all_36_debug_cases(self):
         self.assertEqual(self.verify()["tests"], 36)
-        self.assertEqual(self.groups["corner"], ["WidgetTapJourneyTests/testActualCornerSavedReadingAndTap"])
+        self.assertEqual(
+            self.groups["corner"],
+            ["WidgetTapJourneyTests/testActualCornerSavedReadingAndTap"],
+        )
         self.assertEqual(len(self.groups["readings"]), 15)
         self.assertEqual(len(self.groups["navigation"]), 6)
         self.assertEqual(len(self.groups["controls"]), 8)
