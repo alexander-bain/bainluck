@@ -51,10 +51,21 @@ final class RectangularWidgetHostJourneyTests: XCTestCase {
         let modular = host.cells["Modular"].firstMatch
         XCTAssertTrue(modular.waitForExistence(timeout: 15))
         let add = modular.buttons["Add"].firstMatch
-        try reveal(add, in: host)
+        try reveal(add, in: host, belowNavigationChrome: true)
         XCTAssertEqual(modular.buttons.matching(identifier: "Add").count, 1)
+        capture(host, "Named Modular Add fully below navigation chrome")
         add.tap()
         let slot = host.buttons["Middle complication"].firstMatch
+        // A gallery card or its Add-to-Watch preview is not the face editor.
+        let editors = host.otherElements.matching(NSPredicate(format: "identifier BEGINSWITH %@", "ActiveEditMode-"))
+        let namedEditors = host.scrollViews.matching(NSPredicate(format: "label ==[c] %@", "modular"))
+        let library = host.otherElements["Face Library View"].firstMatch
+        let editorArrived = XCTNSPredicateExpectation(predicate: NSPredicate { _, _ in
+            editors.count == 1 && namedEditors.count == 1 && !library.exists
+        }, object: host)
+        XCTAssertEqual(XCTWaiter.wait(for: [editorArrived], timeout: 15), .completed,
+                       "Named Modular Add did not reach its face editor")
+        capture(host, "Named Modular editor before bounded page search")
         for _ in 0..<8 {
             if slot.exists && slot.isHittable && host.frame.contains(slot.frame) { break }
             swipeLeft(host)
@@ -149,10 +160,17 @@ final class RectangularWidgetHostJourneyTests: XCTestCase {
     }
 
     @MainActor
-    private func reveal(_ element: XCUIElement, in app: XCUIApplication) throws {
+    private func reveal(_ element: XCUIElement, in app: XCUIApplication, belowNavigationChrome: Bool = false) throws {
         for _ in 0..<32 {
-            if element.isHittable && app.frame.contains(element.frame) { return }
-            let earlier = element.frame.minY < app.frame.minY
+            let chromeBottom = belowNavigationChrome ? app.navigationBars.allElementsBoundByIndex
+                .filter { bar in bar.exists && bar.frame.intersects(app.frame) }
+                .map { $0.frame.maxY }.max() ?? app.frame.minY : app.frame.minY
+            let belowChrome = !belowNavigationChrome || element.frame.minY > chromeBottom
+            if element.isHittable && app.frame.contains(element.frame) && belowChrome { return }
+            if belowNavigationChrome {
+                print("WATCH_MODULAR_ADD_REVEAL top=\(element.frame.minY) chromeBottom=\(chromeBottom) oldVisible=\(element.isHittable && app.frame.contains(element.frame))")
+            }
+            let earlier = belowNavigationChrome ? element.frame.minY <= chromeBottom : element.frame.minY < app.frame.minY
             let start = app.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.60))
             let end = app.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: earlier ? 0.75 : 0.45))
             start.press(forDuration: 0.1, thenDragTo: end, withVelocity: .slow, thenHoldForDuration: 0.4)

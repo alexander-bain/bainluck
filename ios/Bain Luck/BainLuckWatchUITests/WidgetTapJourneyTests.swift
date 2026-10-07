@@ -441,7 +441,9 @@ extension WidgetTapJourneyTests {
                              "Cannot attribute the visible Add control to Siri Modular", host: host)
         add.tap()
         let slot = host.buttons["Bottom Left complication"].firstMatch
+        var didReenterEditor = false
         for _ in 0..<8 {
+            try requireSiriModularEditor(in: host, didReenter: &didReenterEditor)
             if slot.exists && slot.isHittable && host.frame.contains(slot.frame) { break }
             freshFaceSwipeLeft(in: host)
         }
@@ -555,6 +557,40 @@ extension WidgetTapJourneyTests {
     }
 
     @MainActor
+    private func requireSiriModularEditor(in host: XCUIApplication, didReenter: inout Bool) throws {
+        let editors = host.otherElements.matching(NSPredicate(format: "identifier BEGINSWITH %@", "ActiveEditMode-"))
+        let namedEditors = host.scrollViews.matching(NSPredicate(format: "label ==[c] %@", "siri modular"))
+        let library = host.otherElements["Face Library View"].firstMatch
+        let arrived = XCTNSPredicateExpectation(predicate: NSPredicate { _, _ in
+            editors.count == 1 || library.exists
+        }, object: host)
+        try freshFaceRequire(XCTWaiter.wait(for: [arrived], timeout: 15) == .completed,
+                             "Siri Modular editor or named library did not arrive", host: host)
+        if library.exists {
+            try freshFaceRequire(!didReenter, "Siri Modular editor returned to library more than once", host: host)
+            let title = host.staticTexts["Switcher Face Title"].firstMatch
+            let previews = host.scrollViews.matching(NSPredicate(format: "label ==[c] %@", "siri modular, Customizable"))
+            let preview = previews.firstMatch
+            let edits = host.buttons.matching(identifier: "Edit")
+            let edit = edits.firstMatch
+            try freshFaceRequire(title.exists && title.label == "Siri Modular"
+                                 && previews.count == 1 && preview.isHittable
+                                 && host.frame.contains(CGPoint(x: preview.frame.midX, y: preview.frame.midY))
+                                 && edits.count == 1 && edit.isHittable && host.frame.contains(edit.frame),
+                                 "Editor return has no exact Siri Modular preview and unique visible Edit", host: host)
+            freshFaceCapture(host, name: "Siri Modular editor returned to named library before one Edit")
+            didReenter = true
+            edit.tap()
+            print("WATCH_EDITOR_LIBRARY_REENTRY=1")
+        }
+        let editing = XCTNSPredicateExpectation(predicate: NSPredicate { _, _ in
+            editors.count == 1 && namedEditors.count == 1 && !library.exists
+        }, object: host)
+        try freshFaceRequire(XCTWaiter.wait(for: [editing], timeout: 15) == .completed,
+                             "Siri Modular is not in its actual editor before page search", host: host)
+    }
+
+    @MainActor
     private func activateConfiguredSiriModularFace(in host: XCUIApplication) throws {
         let library = host.otherElements["Face Library View"].firstMatch
         let face = host.otherElements["Watch Face"].firstMatch
@@ -626,6 +662,21 @@ enum WatchComplicationGalleryNavigation {
         let back = host.buttons["BackButton"].firstMatch
         let detailPage = host.otherElements["ComplicationPickerDetailView"].firstMatch
         let parentPage = host.navigationBars["NTKStarbearPickerView"].firstMatch
+        // The slot tap can return before Carousel publishes either destination.
+        // Normalize only a complete observed page, never the transition between them.
+        var arrivalChecks = 0
+        var initiallyReady = false
+        let arrived = XCTNSPredicateExpectation(predicate: NSPredicate { _, _ in
+            let retainedDetail = detailPage.exists && details.firstMatch.exists && back.exists
+            let appGallery = parentPage.exists && appRows.firstMatch.exists && !detailPage.exists && !back.exists
+            arrivalChecks += 1
+            if arrivalChecks == 1 { initiallyReady = retainedDetail || appGallery }
+            return retainedDetail || appGallery
+        }, object: host)
+        try require(XCTWaiter.wait(for: [arrived], timeout: 15) == .completed,
+                    "Complication slot did not reach a complete app gallery or retained detail", capture: capture)
+        print("WATCH_GALLERY_ARRIVAL checks=\(arrivalChecks) initiallyReady=\(initiallyReady)")
+        capture("Actual complete complication picker before normalization")
         for _ in 0..<3 {
             guard detailPage.exists && details.firstMatch.exists && back.exists else { break }
             capture("Actual Widget gallery retained detail before Back")
