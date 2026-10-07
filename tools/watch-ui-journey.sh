@@ -136,12 +136,27 @@ printf '%s\n' 'Default layout plus forced accessibility5 layout stress; system p
 # Simulator-only ad-hoc signing uses generated simulated App Group xcent. No Apple
 # identity, provisioning profile, account access or upload is requested; Debug
 # also leaves the existing Release Crashlytics upload path unexecuted.
+# Select the architecture from these actual newly owned destinations. Watch
+# build-for-testing forces ONLY_ACTIVE_ARCH=NO, so setting that flag alone still
+# compiles both simulator architectures. Device/archive gates remain separate.
+PHASE='resolve the architecture shared by the selected simulator destinations'
+for scheme in BainLuckWatchUITests 'Bain Luck'; do
+  if [[ "$scheme" == BainLuckWatchUITests ]]; then destination_log=watch; else destination_log=phone; fi
+  xcodebuild -showdestinations -project "$ROOT/ios/Bain Luck/Bain Luck.xcodeproj" \
+    -scheme "$scheme" -clonedSourcePackagesDirPath "$PACKAGES" \
+    -disableAutomaticPackageResolution > "$OUT/$destination_log-destinations.log" 2>&1
+done
+SIM_ARCH="$(python3 "$ROOT/tools/watch_simulator_architecture.py" \
+  --watch-destinations "$OUT/watch-destinations.log" --watch-id "$TEST_UDID" \
+  --phone-destinations "$OUT/phone-destinations.log" --phone-id "$PHONE_UDID" \
+  --output "$OUT/simulator-architecture.json")"
 XCODE_ARGS=(
   -project "$ROOT/ios/Bain Luck/Bain Luck.xcodeproj"
   -scheme BainLuckWatchUITests -configuration Debug
   -destination "platform=watchOS Simulator,id=$TEST_UDID"
   -derivedDataPath "$DERIVED" -parallel-testing-enabled NO -jobs 2
   -clonedSourcePackagesDirPath "$PACKAGES" -disableAutomaticPackageResolution
+  "ARCHS=$SIM_ARCH"
   CODE_SIGNING_ALLOWED=YES CODE_SIGNING_REQUIRED=YES
   CODE_SIGN_IDENTITY=- CODE_SIGN_STYLE=Manual PROVISIONING_PROFILE_SPECIFIER=
   'OTHER_SWIFT_FLAGS=$(inherited) -Xfrontend -disable-sandbox'
@@ -154,6 +169,7 @@ xcodebuild build -project "$ROOT/ios/Bain Luck/Bain Luck.xcodeproj" \
   -destination "platform=iOS Simulator,id=$PHONE_UDID" \
   -derivedDataPath "$PHONE_DERIVED" -jobs 2 \
   -clonedSourcePackagesDirPath "$PACKAGES" -disableAutomaticPackageResolution \
+  "ARCHS=$SIM_ARCH" \
   CODE_SIGNING_ALLOWED=YES CODE_SIGNING_REQUIRED=YES \
   CODE_SIGN_IDENTITY=- CODE_SIGN_STYLE=Manual PROVISIONING_PROFILE_SPECIFIER= \
   'OTHER_SWIFT_FLAGS=$(inherited) -Xfrontend -disable-sandbox' \
