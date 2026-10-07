@@ -852,6 +852,26 @@ const UNSHIPPABLE_BADGES: ReadonlySet<string> = new Set([
 ]);
 
 /**
+ * Three-glyph badges that read as a RESULT (#10690).
+ *
+ * Production, 390px, a live Shanghai match (`/events/15326071`): Chak Lam
+ * Coleman Wong has no photo, so the hero lettered him `WON`, in a tile the
+ * weight of a result chip, beside a 17% chance mid-match. A first-time reader
+ * takes it as "Wong won". Of 60 days of production `events` names, the badge
+ * spells `WON` for three Wong rows, `WIN` (Winter, Wint, Dallas Wings, Winslow
+ * United, ...), `TIE` (Learner Tien, Tien) and `OUT` (Denver Outlaws, Sidney
+ * Outlaw).
+ *
+ * Kept APART from `UNSHIPPABLE_BADGES` deliberately. That set also drives
+ * `teamCrestBadge`, whose output the iPhone mirrors test-for-test; these words
+ * are only wrong on a tile a reader can mistake for a status chip, so only the
+ * reader-facing wrappers (`shippableCrestBadge`, `discoverCrestBadge`) refuse
+ * them. Words a casual fan does not read as an outcome stay off the list:
+ * `DEF` (Defensor Sporting, Leo Deflandre), `RET` (Retford FC), `END`.
+ */
+const RESULT_WORD_BADGES: ReadonlySet<string> = new Set(["WON", "WIN", "TIE", "OUT"]);
+
+/**
  * The crest badge for a surface that must not be able to paint a slur — the one
  * `/events/[id]`'s hero uses (#7270).
  *
@@ -924,6 +944,12 @@ const UNSHIPPABLE_BADGES: ReadonlySet<string> = new Set([
  * word would be a rule no other surface applies. On today's population this arm
  * is unreachable — 0 names of 30,340 reach it — and it is kept because it is the
  * only thing standing between a future name and the exact defect this fixes.
+ *
+ * #10690 adds `RESULT_WORD_BADGES` to the refusal and ONE new candidate, tried
+ * before the shipped initials: letter-only initials (first and last for a
+ * person, `CW`). It is the one place this function returns a badge that is neither
+ * `teamCrestBadge`'s nor the old inline value, and it is reached only when the
+ * preferred badge spells a result word.
  */
 export function shippableCrestBadge(
   name: string | null | undefined,
@@ -932,9 +958,28 @@ export function shippableCrestBadge(
   const full = (name ?? "").trim();
   if (!full) return "";
   const shippable = (badge: string) =>
-    badge !== "" && !UNSHIPPABLE_BADGES.has(badge) && !/\s/.test(badge);
+    badge !== "" &&
+    !UNSHIPPABLE_BADGES.has(badge) &&
+    !RESULT_WORD_BADGES.has(badge) &&
+    !/\s/.test(badge);
   const preferred = teamCrestBadge(full, sportKey);
   if (shippable(preferred)) return preferred;
+  // #10690 — a badge that spells a result word is re-lettered from the name's
+  // letter-only tokens. A PERSON takes first and last initial ("Chak Lam
+  // Coleman Wong" `CW`), which is how a reader abbreviates a person; the
+  // space-split initials below would print `CLC`, with no letter of the
+  // surname in it. A club takes its initials ("Winslow United FC" `WUF`), with
+  // the punctuation the space split keeps ("Wingate & Finchley FC" `W&F`)
+  // dropped. A one-word person falls through to the initials below (`W`).
+  if (RESULT_WORD_BADGES.has(preferred)) {
+    const words = full.split(TOKEN_SEPARATORS).map(alphanumeric).filter(Boolean);
+    const relettered = !namesAPerson(sportKey)
+      ? words.map(word => word.charAt(0)).join("").slice(0, 3).toUpperCase()
+      : words.length >= 2
+        ? `${words[0].charAt(0)}${words[words.length - 1].charAt(0)}`.toUpperCase()
+        : "";
+    if (shippable(relettered)) return relettered;
+  }
   // The expression the hero shipped inline before #7270: a first initial per
   // space-separated word, capped at three. Kept as the fallback rather than
   // deleted, because for the names `teamCrestBadge` spoils it is the value
@@ -950,7 +995,8 @@ export function shippableCrestBadge(
 
 /**
  * The crest badge for the Discover card tiles (#4537): `teamCrestBadge`, except
- * that a value in `UNSHIPPABLE_BADGES` is replaced by `shippableCrestBadge`'s.
+ * that a value in `UNSHIPPABLE_BADGES` or `RESULT_WORD_BADGES` (#10690) is
+ * replaced by `shippableCrestBadge`'s.
  *
  * `teamCrestBadge` still emits the badges its last-word rule has always
  * produced — "Cockfosters FC" `COC`, "Avispa Fukuoka" `FUK`, "Nigeria" `NIG` —
@@ -968,7 +1014,9 @@ export function discoverCrestBadge(
   sportKey?: string | null,
 ): string {
   const badge = teamCrestBadge(name, sportKey);
-  return UNSHIPPABLE_BADGES.has(badge) ? shippableCrestBadge(name, sportKey) : badge;
+  return UNSHIPPABLE_BADGES.has(badge) || RESULT_WORD_BADGES.has(badge)
+    ? shippableCrestBadge(name, sportKey)
+    : badge;
 }
 
 /**
