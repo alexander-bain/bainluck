@@ -112,6 +112,38 @@ def test_lazy_compatibility_refusal(failure, monkeypatch):
     assert m._load_compatibility() is None
 
 
+@pytest.mark.parametrize(
+    "versions,supported",
+    [
+        (("2.0.50", "0.31.0"), True),
+        (("2.0.54", "0.32.0"), True),
+        (("2.0.50", "0.32.0"), False),
+        (("2.0.54", "0.31.0"), False),
+        (("2.0.54", "0.33.0"), False),
+        (("2.0.55", "0.32.0"), False),
+        (("2.1.0", "0.32.0"), False),
+    ],
+)
+def test_only_explicitly_proven_version_pairs_load_private_surfaces(
+    monkeypatch, versions, supported
+):
+    loaded = []
+    original = m.importlib.import_module
+
+    def load(name):
+        loaded.append(name)
+        return original(name)
+
+    monkeypatch.setattr(
+        m.importlib.metadata,
+        "version",
+        lambda name: dict(zip(("sqlalchemy", "asyncpg"), versions))[name],
+    )
+    monkeypatch.setattr(m.importlib, "import_module", load)
+    assert (m._load_compatibility() is not None) is supported
+    assert bool(loaded) is supported
+
+
 @pytest.mark.asyncio
 @pytest.mark.parametrize(
     "refusal", ["versions", "template", "cursor-factory", "cursor"]
