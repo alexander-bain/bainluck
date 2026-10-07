@@ -275,6 +275,9 @@ async def _run(control, candidate):
         trace.append("publish")
 
     class Refresher:
+        def pending_event_ids(self):  # #10655/#10661: no refresh debt owed here
+            return frozenset()
+
         async def refresh_pending(self, **_kw):
             pass
 
@@ -302,6 +305,11 @@ async def _run(control, candidate):
         queue_market_change=market_quote_push.queue_market_change,
         rerank_market_fields_stmt=rerank_market_fields_stmt,
         linked_first_phases=kalshi_ws.linked_first_phases,
+        # #10661: the per-phase lock budget the composed writer arms first.
+        SET_LOCK_TIMEOUT_SQL=kalshi_ws.SET_LOCK_TIMEOUT_SQL,
+        lock_timeout_value=kalshi_ws.lock_timeout_value,
+        is_lock_timeout=kalshi_ws.is_lock_timeout,
+        PRICE_PHASE_LOCK_TIMEOUT_MS=kalshi_ws.PRICE_PHASE_LOCK_TIMEOUT_MS,
         event_ids_for_outcomes=event_ids_for_outcomes,
         get_task_session=factory,
         buffer_lock=asyncio.Lock(),

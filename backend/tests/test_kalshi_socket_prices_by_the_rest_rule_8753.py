@@ -67,13 +67,14 @@ def _tick(**fields) -> str:
     })
 
 
-async def _price_updates(monkeypatch, frame) -> list[Update]:
-    """Run the REAL consumer over one tick; return the price UPDATEs it emitted."""
+async def _price_updates(monkeypatch, frame) -> list[tuple[Update, dict | None]]:
+    """Run the REAL consumer over one tick; return the price UPDATEs it emitted
+    (#10689: each the reused template with that row's values)."""
     import websockets
 
     import app.tasks.base as task_base
 
-    captured: list[Update] = []
+    captured: list[tuple[Update, dict | None]] = []
     batches = [list(b) for b in SLATE]
 
     def _connect(*_a, **_kw):
@@ -107,7 +108,7 @@ async def _price_updates(monkeypatch, frame) -> list[Update]:
     return captured
 
 
-def _stored_after(stmt) -> tuple[float, float, float]:
+def _stored_after(write) -> tuple[float, float, float]:
     """Execute the captured UPDATE on one seeded SQLite row; read the row back."""
     engine = create_engine("sqlite://")
     table = FuturesOutcome.__table__
@@ -124,7 +125,8 @@ def _stored_after(stmt) -> tuple[float, float, float]:
         ))
         # #9484: the UPDATE RETURNS the row it wrote; consume it (SQLite
         # holds the statement open until the rows are read).
-        assert len(conn.execute(stmt).all()) == 1
+        stmt, params = write  # #10689: template + row values
+        assert len(conn.execute(stmt, params or {}).all()) == 1
         row = conn.execute(
             select(
                 table.c.current_probability,

@@ -435,7 +435,7 @@ def weak_reading_files() -> list[pathlib.Path]:
 #: its clean zero means nothing.
 ANCHOR_WRITERS = {
     "tasks/kalshi.py",
-    "tasks/kalshi_ws.py",
+    "utils/kalshi_price_statement.py",  # #10689: the Kalshi socket's write, built once
     "tasks/polymarket.py",
     "tasks/polymarket_ws.py",
     "tasks/futures.py",

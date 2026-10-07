@@ -143,7 +143,8 @@ class _CapturingSession:
             return _Result([])
         if isinstance(stmt, Update):
             if stmt.table.name == "futures_outcomes" and _sets_the_price(stmt):
-                self._captured.append(stmt)
+                # #10689: the reused template and THIS row's values.
+                self._captured.append((stmt, params))
             return _Result([], rowcount=self._rowcount)
         return _Result(self._batches.pop(0) if self._batches else [])
 
@@ -194,7 +195,7 @@ async def _drive_the_socket(monkeypatch, rowcount=1):
 
     import app.tasks.base as task_base
 
-    captured: list[Update] = []
+    captured: list[tuple[Update, dict | None]] = []
     batches = [list(b) for b in SLATE]
 
     def _connect(*_a, **_kw):
@@ -228,7 +229,7 @@ async def _drive_the_socket(monkeypatch, rowcount=1):
     return captured, stats
 
 
-def _run_against_a_real_row(stmt, resolution_source, is_winner=False,
+def _run_against_a_real_row(write, resolution_source, is_winner=False,
                             starting_price=SETTLED_PRICE):
     """Execute the captured statement on SQLite over ONE seeded row.
 
@@ -252,7 +253,8 @@ def _run_against_a_real_row(stmt, resolution_source, is_winner=False,
         # what the socket signals on. Counting them is the same verdict the
         # guard's `rowcount` gives on Postgres — and it is the number that
         # decides whether a settled leg would publish a market change.
-        written = conn.execute(stmt).all()
+        stmt, params = write  # #10689: template + row values
+        written = conn.execute(stmt, params or {}).all()
         stored = conn.execute(
             select(table.c.current_probability).where(table.c.id == OUTCOME_ID)
         ).scalar_one()

@@ -19,6 +19,7 @@ import inspect
 
 import app.tasks.kalshi_ws as kalshi_ws
 import app.tasks.polymarket_ws as polymarket_ws
+import app.utils.kalshi_price_statement as kalshi_price_statement
 from app.tasks.polymarket import sub_market_metadata
 
 
@@ -70,8 +71,35 @@ def _write_path(module, consumer_name: str) -> list[ast.AsyncFunctionDef]:
     tree = ast.parse(inspect.getsource(module))
     called = {n.func.id for fn in path for n in ast.walk(fn)
               if isinstance(n, ast.Call) and isinstance(n.func, ast.Name)}
-    return [*path, *(fn for fn in tree.body
-                    if isinstance(fn, ast.FunctionDef) and fn.name in called)]
+    builders = [fn for fn in tree.body
+                if isinstance(fn, ast.FunctionDef) and fn.name in called]
+    return [*path, *builders, *_factory_builders(module, path)]
+
+
+#: #10689: a statement FACTORY a consumer executes but does not spell. The
+#: Kalshi row UPDATE is built once in `utils/kalshi_price_statement.py`; the
+#: flush binds a row's values to it. Followed only when the write path names
+#: one of the factory's public statements, so a consumer that stopped using it
+#: loses the factory's stamps from its path.
+STATEMENT_FACTORIES = {kalshi_ws: kalshi_price_statement}
+
+
+def _factory_builders(module, path) -> list[ast.FunctionDef]:
+    factory = STATEMENT_FACTORIES.get(module)
+    if factory is None:
+        return []
+    tree = ast.parse(inspect.getsource(factory))
+    public = {
+        t.id
+        for n in tree.body
+        if isinstance(n, (ast.Assign, ast.AnnAssign))
+        for t in (n.targets if isinstance(n, ast.Assign) else [n.target])
+        if isinstance(t, ast.Name) and not t.id.startswith("_")
+    }
+    named = {n.id for fn in path for n in ast.walk(fn) if isinstance(n, ast.Name)}
+    if not public & named:
+        return []
+    return [fn for fn in tree.body if isinstance(fn, ast.FunctionDef)]
 
 
 def _calls_named(node, name: str) -> list[ast.Call]:
@@ -141,6 +169,8 @@ class TestFlushStampsBothPriceColumns:
         it."""
         for module, _consumer in CONSUMERS:
             src = inspect.getsource(module)
+            if module in STATEMENT_FACTORIES:  # #10689: the write is spelled there
+                src = inspect.getsource(STATEMENT_FACTORIES[module])
             assert "from app.utils.price_change_stamp import price_changed_at_value" in src
 
 

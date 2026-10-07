@@ -595,7 +595,10 @@ def test_the_detector_finds_the_writers_this_ship_was_bounced_for():
         "the detector cannot see the hourly writer CERT-3182 named — every "
         "assertion below is vacuous"
     )
-    assert {"tasks/kalshi_ws.py", "tasks/polymarket_ws.py"} <= writers
+    # #10689: the Kalshi socket's price SET is spelled once in its statement
+    # factory and executed per row by `tasks/kalshi_ws.py`, the wired caller
+    # that owes the re-rank (`test_the_kalshi_price_factory_exemption_executes_nothing`).
+    assert {"utils/kalshi_price_statement.py", "tasks/polymarket_ws.py"} <= writers
     # A reader, not a writer: `precompute_interestingness` selects the column
     # and never assigns it. If this ever enters the population the detector has
     # started matching reads, and the exemption list will grow to hide it.
