@@ -24,7 +24,9 @@ class PickerNetworkReceiptTests(unittest.TestCase):
         self.rows = ["WATCH_UI_STRESS_TYPE=accessibility5", "WATCH_UI_STANDARD_TYPE=xLarge", FRESH, CASE,
                      *dict.fromkeys((*markers, *NETWORK)),
                      *(f"Test Case '-[BainLuckWatchUITests.PickerSelectedStateJourneyTests {case}]' passed (12.0 seconds)."
-                       for case in ("testSelectedGameIsMarkedInPickerAndCanChange", "testSelectedGameIsMarkedAtAccessibilitySize"))]
+                       for case in ("testSelectedGameIsMarkedInPickerAndCanChange", "testSelectedGameIsMarkedAtAccessibilitySize")),
+                     *(f"Test Case '-[BainLuckWatchUITests.SelectedGameUpdatingJourneyTests {case}]' passed (12.0 seconds)."
+                       for case in ("testUpdatingIsVisibleUntilRequestFinishes", "testUpdatingIsVisibleAtAccessibilitySize"))]
 
     def run_gate(self, rows):
         with tempfile.TemporaryDirectory() as directory:

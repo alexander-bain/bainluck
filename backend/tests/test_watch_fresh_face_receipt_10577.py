@@ -20,6 +20,7 @@ MARKERS = (
     "WATCH_UI_DISCOVERIES_UNSELECTED=PASS", "WATCH_UI_DISCOVERIES_CONTINUATION=PASS",
     "WATCH_UI_DISCOVERIES_RETURN_STANDARD=PASS", "WATCH_UI_DISCOVERIES_RETURN_LARGE=PASS",
     "WATCH_UI_DISCOVERIES_HEADING_STANDARD=PASS", "WATCH_UI_DISCOVERIES_HEADING_LARGE=PASS",
+    "WATCH_UI_GAME_UPDATING_STANDARD=PASS", "WATCH_UI_GAME_UPDATING_LARGE=PASS",
     "WATCH_UI_CIRCULAR_CONTENT=PASS", "WATCH_UI_CIRCULAR_FALLBACK=PASS", "WATCH_UI_ACTUAL_CIRCULAR_SAVED=PASS",
     "WATCH_UI_PICKER_SELECTED_STANDARD=PASS", "WATCH_UI_PICKER_SELECTED_LARGE=PASS",
 )
@@ -44,7 +45,9 @@ def gate(log, tmp_path):
 def accepted_log():
     selected = [f"Test Case '-[BainLuckWatchUITests.PickerSelectedStateJourneyTests {case}]' passed (12.0 seconds)."
                 for case in ("testSelectedGameIsMarkedInPickerAndCanChange", "testSelectedGameIsMarkedAtAccessibilitySize")]
-    return "\n".join((*MARKERS, CASE, NETWORK_CASE, *selected, SUMMARY))
+    return "\n".join((*MARKERS, CASE, NETWORK_CASE, *selected,
+        "Test Case '-[BainLuckWatchUITests.SelectedGameUpdatingJourneyTests testUpdatingIsVisibleUntilRequestFinishes]' passed (75.0 seconds).",
+        "Test Case '-[BainLuckWatchUITests.SelectedGameUpdatingJourneyTests testUpdatingIsVisibleAtAccessibilitySize]' passed (80.0 seconds).", SUMMARY))
 
 
 def test_seventeen_test_summary_and_real_activation_case_are_accepted(tmp_path):
