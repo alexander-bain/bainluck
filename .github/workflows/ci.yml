@@ -4569,8 +4569,11 @@ jobs:
         # continues only past 55P03. Only real row locks can show it, and only
         # they can show the other half: the final drain at recycle keeps NO
         # timeout, so a hold longer than three back-to-back 500 ms attempts still
-        # commits instead of being dropped (strawman included). Reuses the #837
-        # database provisioned above; same skip detection plus a count.
+        # commits instead of being dropped (strawman included). #10693 adds two
+        # cases holding a row INSIDE a pipelined price run (55P03 continuation
+        # and the timeout-free drain), each asserting the path the installed
+        # SQLAlchemy/asyncpg pair selects. Reuses the #837 database provisioned
+        # above; same skip detection plus a count.
         if: matrix.group == 'isolated'
         run: |
           set -o pipefail
@@ -4580,8 +4583,8 @@ jobs:
             echo "::error::#10661 price lock budget gate SKIPPED — the gate did not run"
             exit 1
           fi
-          grep -qE "[^0-9]5 passed," /tmp/pricelock10661.txt || {
-            echo "::error::#10661 price lock budget gate did not run all five cases"
+          grep -qE "[^0-9]7 passed," /tmp/pricelock10661.txt || {
+            echo "::error::#10661 price lock budget gate did not run all seven cases"
             exit 1
           }
 
