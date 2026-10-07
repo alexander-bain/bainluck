@@ -32,6 +32,7 @@ on:
       - 'ios/Bain Luck/BainLuckTests/DiscoverViewModelPaginationTests.swift'
       - 'ios/Bain Luck/BainLuckWatchUITests/**'
       - 'tools/watch-ui-journey.sh'
+      - 'tools/tests/test_watch_picker_network_gate.py'
       - 'tools/watch_resolve_packages.py'
       - 'tools/tests/test_watch_resolve_packages.py'
       - 'tools/watch-build.sh'
@@ -73,6 +74,7 @@ on:
       - 'ios/Bain Luck/BainLuckTests/DiscoverViewModelPaginationTests.swift'
       - 'ios/Bain Luck/BainLuckWatchUITests/**'
       - 'tools/watch-ui-journey.sh'
+      - 'tools/tests/test_watch_picker_network_gate.py'
       - 'tools/watch_resolve_packages.py'
       - 'tools/tests/test_watch_resolve_packages.py'
       - 'tools/watch-build.sh'
@@ -178,6 +180,8 @@ jobs:
           persist-credentials: false
       - name: Verify bounded package-download recovery
         run: python3 -m unittest discover -s tools/tests -p test_watch_resolve_packages.py
+      - name: Reject incomplete picker network recovery evidence
+        run: python3 -m unittest discover -s tools/tests -p test_watch_picker_network_gate.py
       - name: Select, reopen offline, and change a game through Watch controls
         run: bash tools/watch-ui-journey.sh
       - name: Preserve UI journey evidence
