@@ -87,3 +87,17 @@ async def test_one_callback_failure_still_allows_later_books(caplog):
     ]
     assert socket._book_snapshot_quotes == 65
     assert "Polymarket book snapshot price handler error" in caplog.text
+
+
+async def test_unextractable_book_still_raises_after_earlier_batches_dispatch():
+    # A side that is not iterable raises inside extraction, which never
+    # swallowed it: the shard's receive loop reconnects, as before. Batching
+    # only means the books ahead of the bad batch were already priced.
+    socket = PolymarketWebSocket(price_book_snapshots=True)
+    seen = []
+    socket.on_price = seen.append
+    data = [*books(40), {"asset_id": "bad", "bids": 5, "asks": []}]
+    with pytest.raises(TypeError):
+        await socket._price_snapshot(data)
+    assert [frame["asset_id"] for frame in seen] == [f"asset-{i}" for i in range(32)]
+    assert socket._book_snapshot_quotes == 32
