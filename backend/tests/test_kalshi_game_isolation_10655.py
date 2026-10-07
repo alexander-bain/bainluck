@@ -19,6 +19,7 @@ from sqlalchemy.exc import OperationalError
 from app.models.models import FuturesOutcome
 from app.tasks.kalshi_ws import (  # noqa: F401 — the exec'd flush reads these
     PRICE_PHASE_LOCK_TIMEOUT_MS,
+    _KalshiPriceOwner,
     linked_first_phases,
 )
 from app.tasks.live_blend_refresh import event_ids_for_outcomes
@@ -34,7 +35,6 @@ from app.utils.repair_lock_budget import (  # noqa: F401 — read by the exec'd 
     lock_timeout_value,
 )
 from app.utils.resolution_authority import AUTHORITATIVE_SOURCES
-import app.tasks.kalshi_ws as kalshi_task
 from tests._kalshi_price_session import bind_session, consumer_engine
 from tests.pm_bulk_test_support import price_writes, statement_params
 
@@ -129,7 +129,7 @@ def rig(*, failed=None, declined=None, pending=(), locked=(), unchanged=()):
               input_marks={oid: oid for oid in batch}, tail_receipts=Receipts(),
               open_contract_outcome_ids={9}, blend_refresher=Refresher(),
               get_task_session=session, stats=stats,
-              prices=kalshi_task._KalshiPriceOwner(),
+              prices=_KalshiPriceOwner(),
               logger=logging.getLogger(__name__),
               queue_market_change=lambda *args, **kwargs: None)
     path = Path(__file__).resolve().parents[1] / 'app/tasks/kalshi_ws.py'
