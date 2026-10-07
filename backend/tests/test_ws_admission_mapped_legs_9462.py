@@ -106,6 +106,16 @@ def _install_session(monkeypatch, slate_batches, reread):
     return state
 
 
+#: The two runs that go to their timer and then count rereads. The count only
+#: has to prove the watcher compared at least once after its baseline (the
+#: #9418 file's `_AT_LEAST_ONE_COMPARISON`); a wall-clock ">= 5" in 0.3 s was a
+#: bet on the runner and lost it on a loaded CI shard (CI 37634905380: 1 call,
+#: the baseline only). A 2 s window leaves room for a stall without making the
+#: count mean anything more.
+_HELD_RUN_REFRESH_SECONDS = 2.0
+_AT_LEAST_ONE_COMPARISON = 2
+
+
 def _timing(monkeypatch, module, *, refresh, check=0.01, floor=0):
     monkeypatch.setattr(module, "SUBSCRIPTION_REFRESH_SECONDS", refresh)
     monkeypatch.setattr(admission, "ADMISSION_CHECK_SECONDS", check)
@@ -199,7 +209,7 @@ class TestAnEventWhoseLookupFailedIsNotSubscribed:
         """The thrash bound. 900 was live when this run looked its tokens up
         and failed; a recycle would repeat that lookup, so it waits for the
         timer rather than reconnecting the whole socket every minute."""
-        _timing(monkeypatch, poly_task, refresh=0.3)
+        _timing(monkeypatch, poly_task, refresh=_HELD_RUN_REFRESH_SECONDS)
         _install_quiet_socket(monkeypatch)
         _gamma_down(monkeypatch)
         state = _install_session(
@@ -213,7 +223,7 @@ class TestAnEventWhoseLookupFailedIsNotSubscribed:
 
         assert stats["status"] == "resubscribe"
         assert "recycle_reason" not in stats
-        assert state["reread_calls"] >= 5, state["reread_calls"]
+        assert state["reread_calls"] >= _AT_LEAST_ONE_COMPARISON, state["reread_calls"]
 
     async def test_a_held_event_does_not_mask_a_new_one(self, monkeypatch):
         _timing(monkeypatch, poly_task, refresh=30)
@@ -255,7 +265,7 @@ class TestAStreamingPropDoesNotHideAMissingMoneyline:
     ):
         """Same slate, same streaming prop; the reading names market 7, which
         IS mapped. Nothing is missing, so the run goes to its timer."""
-        _timing(monkeypatch, poly_task, refresh=0.3)
+        _timing(monkeypatch, poly_task, refresh=_HELD_RUN_REFRESH_SECONDS)
         _install_quiet_socket(monkeypatch)
         _gamma_down(monkeypatch)
         reading = _verified(7)
@@ -269,7 +279,7 @@ class TestAStreamingPropDoesNotHideAMissingMoneyline:
         )
 
         assert "recycle_reason" not in stats
-        assert state["reread_calls"] >= 5
+        assert state["reread_calls"] >= _AT_LEAST_ONE_COMPARISON, state["reread_calls"]
 
 
 class TestAKalshiWinnerMarketAddedAfterTheSlate:
