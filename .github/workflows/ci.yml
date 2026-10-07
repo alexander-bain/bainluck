@@ -4442,6 +4442,27 @@ jobs:
             exit 1
           fi
 
+      - name: "#8129 earlier completed blend groups release rows and publish (real Postgres)"
+        if: matrix.group == 'shared'
+        run: |
+          if python -m pytest tests/integration/test_live_blend_grouped_commit_8129_pg.py \
+            -v -rs > /tmp/blend8129.txt 2>&1; then
+            gate_status=0
+          else
+            gate_status=$?
+          fi
+          cat /tmp/blend8129.txt
+          echo "EXIT CODE: $gate_status"
+          test "$gate_status" -eq 0
+          if grep -qiE "[0-9]+ skipped" /tmp/blend8129.txt; then
+            echo "::error::#8129 grouped blend gate SKIPPED"
+            exit 1
+          fi
+          grep -qE "[^0-9]16 passed[,[:space:]]" /tmp/blend8129.txt || {
+            echo "::error::#8129 grouped blend gate did not run all sixteen cases"
+            exit 1
+          }
+
       - name: "#837 blend stamp deadlock — provision the disposable database"
         # Its own database for the reason the #7617 step above gives: the file
         # drops and creates the tables it touches.

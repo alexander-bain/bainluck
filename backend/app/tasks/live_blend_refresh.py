@@ -34,9 +34,12 @@ therefore ~4.8x the 120s poll on a continuously-moving market and 0x on a flat
 one — not 60x. What it buys is Alex's stated bar: a live match page gains a
 chart point within a minute instead of within two.
 
-It shares the transaction with the blend stamp deliberately. The chart point and
-the hero number are the same assertion about the same instant; committing them
-together means they cannot disagree even if the dyno dies between two writes.
+Each chart point shares its event's blend transaction. Batches with up to four
+admitted events keep one transaction; larger batches prepare inputs once, then
+commit contiguous ascending groups of four. Earlier completed groups publish
+and release their row locks while later groups still do stamp work. A failing
+or waiting event can still hold its own group's healthy siblings; a waiting
+first group still delays later groups.
 
 THREE THINGS IT DELIBERATELY DOES NOT DO.
 
@@ -58,13 +61,15 @@ must not wipe the pass).
 
 from __future__ import annotations
 
+from asyncio import CancelledError
 import contextlib
+import copy
 from collections import deque
 import logging
 import math
 import time
 from dataclasses import dataclass
-from typing import Iterable, Optional
+from typing import Callable, Iterable, Optional
 
 logger = logging.getLogger(__name__)
 
@@ -1158,41 +1163,152 @@ class LiveBlendRefresher:
             return self.stats
 
         self._dispositions = {}
+        # Only admitted work counts: retries/deferred prices can make a tiny
+        # incoming flush larger than four. One group buys no earlier release,
+        # so keep the original transaction/read path for <=4 due events.
+        if len(due) <= 4:
+            try:
+                await self._refresh_batch(due, clock)
+            except Exception as exc:
+                self.stats["errors"] += 1
+                logger.exception("live_blend_refresh[%s]: batch failed", self.source)
+                self._refresh_failed(
+                    due,
+                    retry,
+                    clock,
+                    receipts,
+                    staged,
+                    stored_wall,
+                    exc,
+                )
+            else:
+                if receipts is not None:
+                    self._receipt_call(
+                        receipts.resolve,
+                        due,
+                        self._dispositions,
+                        staged,
+                        stored_wall,
+                        _mono(),
+                    )
+            return self.stats
+
+        completed: set[int] = set()
+        failed_groups: set[int] = set()
+
+        def committed(group_ids):
+            # Called synchronously AFTER COMMIT and cache installation, BEFORE
+            # the first publication await. Interrupted delivery does not undo
+            # a stored stamp or promise replay; _publish keeps its own contract.
+            completed.update(group_ids)
+            if receipts is not None:
+                self._receipt_call(
+                    receipts.resolve,
+                    group_ids,
+                    self._dispositions,
+                    staged,
+                    stored_wall,
+                    _mono(),
+                )
+
         try:
-            await self._refresh_batch(due, clock)
-        except Exception as exc:
-            self.stats["errors"] += 1
-            logger.exception(
-                "live_blend_refresh[%s]: batch failed for %d events",
-                self.source, len(due),
+            prepared = await self._prepare_groups(due)
+            ordered = sorted(due)
+            for start in range(0, len(ordered), 4):
+                group_ids = ordered[start : start + 4]
+                try:
+                    await self._refresh_batch(
+                        group_ids,
+                        clock,
+                        prepared=prepared,
+                        on_committed=committed,
+                    )
+                except Exception as exc:
+                    self.stats["errors"] += 1
+                    logger.exception(
+                        "live_blend_refresh[%s]: group failed for %s",
+                        self.source,
+                        group_ids,
+                    )
+                    if not completed.issuperset(group_ids):
+                        self._refresh_failed(
+                            group_ids,
+                            retry,
+                            clock,
+                            receipts,
+                            staged,
+                            stored_wall,
+                            exc,
+                        )
+                        failed_groups.update(group_ids)
+                else:
+                    # Empty/no-market groups also finished successfully.
+                    if not completed.issuperset(group_ids):
+                        committed(group_ids)
+        except CancelledError as exc:
+            remaining = set(due).difference(completed, failed_groups)
+            self._refresh_failed(
+                remaining,
+                retry,
+                clock,
+                receipts,
+                staged,
+                stored_wall,
+                exc,
+                hold=False,
             )
-            # The outcome prices already committed before this refresh. Keep
-            # every owed stamp if its transaction fails, even when no further
-            # venue input arrives. Ordinary retries wait out the failed-retry
-            # hold; only existing row-lock retries remain due at once.
-            failed = set(due).difference(self._lock_retry, retry)
-            self._throttle_deferred.update(set(due).difference(self._lock_retry))
-            for event_id in failed:
-                self._failed_hold_until[event_id] = (
-                    clock + self.failed_retry_interval_s
-                )
-            for event_id in retry.intersection(due):
-                self._lock_retry.add(event_id)
-                self._last_refresh_at.pop(event_id, None)
-                self._throttle_deferred.discard(event_id)
-            if receipts is not None:
-                self._receipt_call(
-                    receipts.resolve_failed, due, self._dispositions, staged,
-                    stored_wall, self._lock_retry | self._throttle_deferred,
-                    exc, _mono(),
-                )
-        else:
-            if receipts is not None:
-                self._receipt_call(
-                    receipts.resolve, due, self._dispositions, staged,
-                    stored_wall, _mono(),
-                )
+            raise
+        except Exception as exc:
+            # Preparation failed before any group could commit. The already
+            # committed prices remain owed, including immediately due locks.
+            self.stats["errors"] += 1
+            logger.exception("live_blend_refresh[%s]: preparation failed", self.source)
+            self._refresh_failed(
+                set(due).difference(completed),
+                retry,
+                clock,
+                receipts,
+                staged,
+                stored_wall,
+                exc,
+            )
         return self.stats
+
+    def _refresh_failed(
+        self,
+        due,
+        retry,
+        clock,
+        receipts,
+        staged,
+        stored_wall,
+        exc,
+        *,
+        hold=True,
+    ) -> None:
+        # The outcome prices already committed before this refresh. Keep
+        # every owed stamp if its transaction fails, even when no further
+        # venue input arrives. Ordinary retries wait out the failed-retry
+        # hold; only existing row-lock retries remain due at once.
+        failed = set(due).difference(self._lock_retry, retry)
+        self._throttle_deferred.update(set(due).difference(self._lock_retry))
+        for event_id in failed if hold else ():
+            self._failed_hold_until[event_id] = clock + self.failed_retry_interval_s
+        for event_id in retry.intersection(due):
+            self._lock_retry.add(event_id)
+            self._last_refresh_at.pop(event_id, None)
+            self._throttle_deferred.discard(event_id)
+        if receipts is not None:
+            self._receipt_call(
+                receipts.resolve_failed,
+                due,
+                self._dispositions,
+                staged,
+                stored_wall,
+                self._lock_retry | self._throttle_deferred,
+                exc,
+                _mono(),
+            )
 
     def _receipt_call(self, fn, *args):
         """Receipts are evidence about the price path, never part of it."""
@@ -1200,13 +1316,16 @@ class LiveBlendRefresher:
             return fn(*args)
         except Exception:
             logger.warning(
-                "live_blend_refresh[%s]: tail receipt failed", self.source,
+                "live_blend_refresh[%s]: tail receipt failed",
+                self.source,
                 exc_info=True,
             )
             return None
 
     async def refresh_pending(
-        self, *, flush_started: Optional[float] = None,
+        self,
+        *,
+        flush_started: Optional[float] = None,
     ) -> dict[str, int]:
         """#837 tail — stamp only the deferred events. Never raises.
 
@@ -1236,21 +1355,122 @@ class LiveBlendRefresher:
         """
         self._throttle_deferred.update(event_ids)
 
-    async def _refresh_batch(self, event_ids: list[int], now: float) -> None:
+    async def _read_groups(self, session, event_ids: list[int]) -> dict[int, tuple]:
+        from sqlalchemy import select
+        from app.models.models import Event, FuturesMarket, FuturesOutcome
+        from app.utils.live_blend import MarketOutcomes
+
+        market_rows = (
+            await session.execute(
+                select(FuturesMarket, Event)
+                .join(Event, FuturesMarket.event_id == Event.id)
+                .where(
+                    FuturesMarket.source == self.source,
+                    FuturesMarket.event_id.in_(event_ids),
+                )
+            )
+        ).all()
+        if not market_rows:
+            return {}
+
+        market_ids = [m.id for m, _ in market_rows]
+        outcomes_by_market: dict[int, list] = {}
+        for outcome in (
+            await session.execute(
+                select(FuturesOutcome).where(FuturesOutcome.market_id.in_(market_ids))
+            )
+        ).scalars():
+            outcomes_by_market.setdefault(outcome.market_id, []).append(outcome)
+
+        grouped: dict[int, tuple] = {}
+        for market, event in market_rows:
+            entry = grouped.setdefault(event.id, (event, []))
+            entry[1].append(
+                MarketOutcomes(
+                    market=market,
+                    outcomes=outcomes_by_market.get(market.id, []),
+                    # #5820. The 15-minute matcher retires a leg whose only
+                    # speaker is a settled market on a game with no result;
+                    # this lane recomputes the same number every two
+                    # seconds from the same rows, so without the same input
+                    # it would re-publish what the matcher just cleared and
+                    # the two writers would disagree — the one thing this
+                    # module exists to prevent. The Event row is already
+                    # joined here, so it costs no query.
+                    event_has_result=event.completed_at is not None,
+                    # #9037: use the same kickoff admission as the
+                    # matcher and poll for live unresolved games. A stale
+                    # pre-kickoff book must not alternate with their fresh
+                    # speaker between writes. The Event is already loaded.
+                    event_commence_time=(
+                        getattr(event, "commence_time", None)
+                        if getattr(event, "status", None) == "live"
+                        and event.completed_at is None
+                        else None
+                    ),
+                )
+            )
+        return grouped
+
+    async def _prepare_groups(self, event_ids: list[int]) -> dict[int, tuple]:
+        """Read once; no ORM identity or mutable JSON escapes this transaction.
+
+        Groups belong to this call, passed explicitly rather than stored on the
+        refresher. The unproven/cold orientation fallback deliberately reads a
+        later Event/peer view in the group's write session; named proof uses the
+        prepared board, while the cache remains a boolean, never a price.
+        """
+        from types import SimpleNamespace
+        from app.tasks.base import get_task_session
+        from app.utils.live_blend import MarketOutcomes
+
+        def scalar(row):
+            return SimpleNamespace(
+                **{
+                    column.key: copy.deepcopy(getattr(row, column.key))
+                    for column in row.__table__.columns
+                }
+            )
+
+        factory = self._session_factory or get_task_session
+        async with factory() as session:
+            grouped = await self._read_groups(session, event_ids)
+            return {
+                event_id: (
+                    scalar(event),
+                    [
+                        MarketOutcomes(
+                            market=scalar(entry.market),
+                            outcomes=[scalar(outcome) for outcome in entry.outcomes],
+                            event_has_result=entry.event_has_result,
+                            event_commence_time=entry.event_commence_time,
+                        )
+                        for entry in group
+                    ],
+                )
+                for event_id, (event, group) in grouped.items()
+            }
+
+    async def _refresh_batch(
+        self,
+        event_ids: list[int],
+        now: float,
+        *,
+        prepared: Optional[dict[int, tuple]] = None,
+        on_committed: Optional[Callable[[list[int]], None]] = None,
+    ) -> None:
         from types import SimpleNamespace
 
-        from sqlalchemy import select, update
+        from sqlalchemy import update
 
-        from app.models.models import Event, FuturesMarket, FuturesOutcome
+        from app.models.models import Event
         from app.tasks.base import get_task_session
         from app.utils.aggregation import (
             compute_aggregate_probability,
             observation_basis,
             oldest_observation_time,
         )
-        from app.utils.live_blend import (
-            MarketOutcomes, compute_source_home_probability,
-        )
+        from app.utils.live_blend import compute_source_home_probability
         from app.utils.live_push import build_frame
         from app.utils.repair_lock_budget import (
             SET_LOCK_TIMEOUT_SQL, is_lock_timeout, lock_timeout_value,
@@ -1286,58 +1506,14 @@ class LiveBlendRefresher:
             self._snapshot_slots_follow_the_commit(event_ids),
             get_task_session() as session,
         ):
-            market_rows = (
-                await session.execute(
-                    select(FuturesMarket, Event)
-                    .join(Event, FuturesMarket.event_id == Event.id)
-                    .where(
-                        FuturesMarket.source == self.source,
-                        FuturesMarket.event_id.in_(event_ids),
-                    )
-                )
-            ).all()
-            if not market_rows:
+            if prepared is None:
+                grouped = await self._read_groups(session, event_ids)
+            else:
+                grouped = {
+                    eid: prepared[eid] for eid in event_ids if eid in prepared
+                }
+            if not grouped:
                 return
-
-            market_ids = [m.id for m, _ in market_rows]
-            outcomes_by_market: dict[int, list] = {}
-            for outcome in (
-                await session.execute(
-                    select(FuturesOutcome).where(
-                        FuturesOutcome.market_id.in_(market_ids)
-                    )
-                )
-            ).scalars():
-                outcomes_by_market.setdefault(outcome.market_id, []).append(outcome)
-
-            grouped: dict[int, tuple] = {}
-            for market, event in market_rows:
-                entry = grouped.setdefault(event.id, (event, []))
-                entry[1].append(
-                    MarketOutcomes(
-                        market=market,
-                        outcomes=outcomes_by_market.get(market.id, []),
-                        # #5820. The 15-minute matcher retires a leg whose only
-                        # speaker is a settled market on a game with no result;
-                        # this lane recomputes the same number every two
-                        # seconds from the same rows, so without the same input
-                        # it would re-publish what the matcher just cleared and
-                        # the two writers would disagree — the one thing this
-                        # module exists to prevent. The Event row is already
-                        # joined here, so it costs no query.
-                        event_has_result=event.completed_at is not None,
-                        # #9037: use the same kickoff admission as the
-                        # matcher and poll for live unresolved games. A stale
-                        # pre-kickoff book must not alternate with their fresh
-                        # speaker between writes. The Event is already loaded.
-                        event_commence_time=(
-                            getattr(event, "commence_time", None)
-                            if getattr(event, "status", None) == "live"
-                            and event.completed_at is None
-                            else None
-                        ),
-                    )
-                )
 
             # #837 — ONE LOCK ORDER, ONE SAVEPOINT PER EVENT. This batch stamps
             # every event in a single transaction, and the sibling arm (the other
@@ -1505,8 +1681,8 @@ class LiveBlendRefresher:
                     # rolled back must not read as written), and applied only
                     # once the transaction commits — see `written` above.
                     written[event_id] = value
-                    # #837 receipt — trusted only once the batch returns, i.e.
-                    # after the commit; `previous` says whether it MOVED.
+                    # #837 receipt — trusted only after the commit;
+                    # `previous` says whether it MOVED.
                     self._dispositions[event_id] = (
                         "stamped", value, stamped_at,
                         self._last_written_value.get(event_id),
@@ -1567,7 +1743,9 @@ class LiveBlendRefresher:
                         logger.info(
                             "live_blend_refresh[%s]: event %s row locked >%sms, "
                             "re-queued for the next flush",
-                            self.source, event_id, self.stamp_lock_timeout_ms,
+                            self.source,
+                            event_id,
+                            self.stamp_lock_timeout_ms,
                         )
                         continue
                     self.stats["errors"] += 1
@@ -1584,6 +1762,8 @@ class LiveBlendRefresher:
             self._last_write_at[event_id] = now
             self._last_written_value[event_id] = value
         self.stats["stamped"] += len(written)
+        if on_committed is not None:
+            on_committed(event_ids)
         await self._publish(pending)
 
     @contextlib.asynccontextmanager

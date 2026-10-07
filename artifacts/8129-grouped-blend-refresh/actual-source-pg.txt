@@ -1,0 +1,33 @@
+============================= test session starts ==============================
+platform darwin -- Python 3.12.15+meta, pytest-9.0.3, pluggy-1.6.0 -- /usr/local/fbcode/platform010/Python3.12.framework/Versions/3.12/bin/python3.12
+cachedir: .pytest_cache
+rootdir: /Users/bain/bainluck-dev/latency/.worktrees/8129-grouped-blend-refresh/backend
+configfile: pytest.ini
+plugins: asyncio-1.4.0, anyio-4.13.0
+asyncio: mode=Mode.AUTO, debug=False, asyncio_default_fixture_loop_scope=None, asyncio_default_test_loop_scope=function
+collecting ... collected 16 items
+
+tests/integration/test_live_blend_grouped_commit_8129_pg.py::test_actual_due_count_selects_path[1] PASSED [  6%]
+tests/integration/test_live_blend_grouped_commit_8129_pg.py::test_actual_due_count_selects_path[3] PASSED [ 12%]
+tests/integration/test_live_blend_grouped_commit_8129_pg.py::test_actual_due_count_selects_path[4] PASSED [ 18%]
+tests/integration/test_live_blend_grouped_commit_8129_pg.py::test_actual_due_count_selects_path[5] PASSED [ 25%]
+tests/integration/test_live_blend_grouped_commit_8129_pg.py::test_actual_due_count_selects_path[12] PASSED [ 31%]
+tests/integration/test_live_blend_grouped_commit_8129_pg.py::test_preparation_session_failure_preserves_staged_debt[False] PASSED [ 37%]
+tests/integration/test_live_blend_grouped_commit_8129_pg.py::test_preparation_session_failure_preserves_staged_debt[True] PASSED [ 43%]
+tests/integration/test_live_blend_grouped_commit_8129_pg.py::test_group_outer_failure_rolls_back_only_current_group PASSED [ 50%]
+tests/integration/test_live_blend_grouped_commit_8129_pg.py::test_partial_delivery_cancel_keeps_committed_group_authoritative PASSED [ 56%]
+tests/integration/test_live_blend_grouped_commit_8129_pg.py::test_cancel_midgroup_restores_provisional_slots PASSED [ 62%]
+tests/integration/test_live_blend_grouped_commit_8129_pg.py::test_earlier_group_releases_rows_before_later_lock_timeout PASSED [ 68%]
+tests/integration/test_live_blend_grouped_commit_8129_pg.py::test_stale_refusal_preserves_revision_and_snapshot_accounting PASSED [ 75%]
+tests/integration/test_live_blend_grouped_commit_8129_pg.py::test_snapshot_helper_failure_does_not_undo_stamp PASSED [ 81%]
+tests/integration/test_live_blend_grouped_commit_8129_pg.py::test_real_cold_orientation_later_event_view_warm_price_and_named_override PASSED [ 87%]
+tests/integration/test_live_blend_grouped_commit_8129_pg.py::test_later_delivery_cancel_does_not_double_count_prior_failed_group PASSED [ 93%]
+tests/integration/test_live_blend_grouped_commit_8129_pg.py::test_delivery_exception_cannot_requeue_committed_group PASSED [100%]
+
+=============================== warnings summary ===============================
+tests/integration/test_live_blend_grouped_commit_8129_pg.py::test_actual_due_count_selects_path[1]
+  /Users/bain/bainluck-dev/latency/.worktrees/8129-grouped-blend-refresh/backend/app/routes/auth.py:121: PydanticDeprecatedSince20: Support for class-based `config` is deprecated, use ConfigDict instead. Deprecated in Pydantic V2.0 to be removed in V3.0. See Pydantic V2 Migration Guide at https://errors.pydantic.dev/2.13/migration/
+    class UserProfileResponse(BaseModel):
+
+-- Docs: https://docs.pytest.org/en/stable/how-to/capture-warnings.html
+======================== 16 passed, 1 warning in 3.76s =========================

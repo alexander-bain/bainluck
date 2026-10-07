@@ -398,9 +398,13 @@ class _RecordingRefresher(lbr.LiveBlendRefresher):
             self._throttle_deferred.add(900)
         _RecordingRefresher.instances.append(self)
 
-    async def _refresh_batch(self, event_ids, now):
+    async def _refresh_batch(
+        self, event_ids, now, *, prepared=None, on_committed=None
+    ):
         self.batches.append(sorted(event_ids))
         self._last_refresh_at.update({e: now for e in event_ids})
+        if on_committed is not None:
+            on_committed(event_ids)
 
 
 ARMS = pytest.mark.parametrize("arm", ["kalshi", "polymarket"])

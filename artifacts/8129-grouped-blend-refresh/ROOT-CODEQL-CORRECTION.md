@@ -1,0 +1,9 @@
+# Grouped blend CodeQL correction
+
+PILLARS: TRUTH / FORMATTING. SHIP: earlier completed groups publish live-game probabilities without waiting for later groups.
+
+Final source remains pending independent delta acceptance and new hosted CI. CodeQL check112713746483 on e5a18111e7 found one call-interface error and two redundant-import notes. Five existing recording overrides across four test files still accepted only the old two-argument _refresh_batch interface; they now explicitly accept prepared/on_committed and invoke the completion callback after their simulated bookkeeping. A grouped eight-event guard exercises the real refresh orchestration and recorder, requiring both batches, original flush-start clock, no errors and no failed holds. The production _refresh_batch interface and grouping behavior did not change.
+
+The only application delta replaces the new global asyncio module import with a direct CancelledError import and catches that identical class. Existing local asyncio imports inside the scheduler and cancellation helper remain unchanged. All LiveBlendRefresher method ASTs equal the previously accepted source after normalizing that exception reference; source-boundary proof is retained. No suppressions or ignored check rules.
+
+Final focused run:80passed/0skipped, including startup, consumer admission, timing and receipt controls. The first edit invocation used the wrong relative path and failed before editing; its incidental old-source79test run is not correction acceptance. The final frozen80case log is retained. The earlier real-PG application/independent composition evidence remains bound to its original source; the delta reviewer must explicitly assess reuse. Frontend tree399a86c1eac7fa73f4cf7c621f2948f392f1e62d is unchanged from paid build/typecheck66, so those frontend gates are retained by exact tree identity rather than repeated. No production speed claim or release offer.
