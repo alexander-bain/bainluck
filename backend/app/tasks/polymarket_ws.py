@@ -874,7 +874,8 @@ async def _run_polymarket_ws_consumer(*, sessions):
     from app.services.polymarket_ws import PolymarketWebSocket
     from app.tasks.live_blend_refresh import (
         LiveBlendRefresher, TailReceipts, adopt_handed_off,
-        event_ids_for_outcomes, hand_off_pending, run_flush_cadence,
+        event_ids_for_outcomes, hand_off_pending, reap_stopped_loops,
+        run_flush_cadence,
     )
     from app.tasks.polymarket_token_topup import (
         topup_clob_tokens, topup_outcome_clob_tokens,
@@ -1991,8 +1992,12 @@ async def _run_polymarket_ws_consumer(*, sessions):
     ws.on_resolved = handle_resolved
 
     # #10090: start to start, like the Kalshi socket's; see `run_flush_cadence`.
+    # #10657: set before the loop is cancelled, so a cancellation lost inside
+    # a flush still ends the loop at its next turn (`run_flush_cadence`).
+    loops_stop = asyncio.Event()
+
     async def flush_loop():
-        await run_flush_cadence(flush_prices, PRICE_FLUSH_SECONDS)
+        await run_flush_cadence(flush_prices, PRICE_FLUSH_SECONDS, stop=loops_stop)
 
     async def stats_loop():
         while True:
@@ -2025,8 +2030,8 @@ async def _run_polymarket_ws_consumer(*, sessions):
                 no_reading=blend["no_reading"],
             )
 
-    flush_task = asyncio.create_task(flush_loop())
-    stats_task = asyncio.create_task(stats_loop())
+    flush_task = asyncio.create_task(flush_loop(), name="polymarket-flush-loop")
+    stats_task = asyncio.create_task(stats_loop(), name="polymarket-stats-loop")
 
     _report_liveness("polymarket", "subscribing", legs=len(asset_ids))
 
@@ -2185,6 +2190,7 @@ async def _run_polymarket_ws_consumer(*, sessions):
         exit_reason = "shutdown"
         raise
     finally:
+        loops_stop.set()
         flush_task.cancel()
         stats_task.cancel()
         # #9418: an unfinished settle rolls back; the market stays for the
@@ -2204,6 +2210,11 @@ async def _run_polymarket_ws_consumer(*, sessions):
             # throttle is still owed its blend stamp. The next run adopts it.
             stats["blend_pending_carried"] = hand_off_pending(blend_refresher)
             await asyncio.gather(admission_task, return_exceptions=True)
+            # #10657: a loop that lost its cancellation ends here, after the
+            # drain, rather than outliving the run on its closed sessions.
+            stats["loops_unreaped"] = await reap_stopped_loops(
+                "polymarket", (flush_task, stats_task),
+            )
             # #9418: closed after the drain, never before it, so a cancellation
             # landing on this await cannot skip a flush.
             if _resolution_service:

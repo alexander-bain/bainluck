@@ -881,7 +881,7 @@ def heartbeat_deadline(max_gap_s: float, sample_interval_s: float) -> float:
 FLUSH_CLOCK_SLACK_S = 1e-6
 
 
-async def run_flush_cadence(flush, period: float) -> None:
+async def run_flush_cadence(flush, period: float, stop=None) -> None:
     """#10090 — start a flush every ``period`` seconds, START to START.
 
     WHY. Both sockets used to `sleep(PRICE_FLUSH_SECONDS)` AFTER each flush
@@ -909,17 +909,62 @@ async def run_flush_cadence(flush, period: float) -> None:
     (`_mono`), which the refresher uses for its per-event floor: starts are at
     least ``period`` apart, so a floor equal to the period admits every flush,
     whatever each flush's write happened to cost before its refresh ran.
+
+    #10657 — ``stop`` (an ``asyncio.Event``) ends the loop at its next turn.
+    The consumer sets it before it cancels the loop, because a cancellation
+    alone is not a stop: one lost inside a flush's dependencies left an
+    earlier run's loop calling ``refresh_pending`` on that run's CLOSED
+    sessions every 6 s on production (2026-10-07 02:53Z, 33 and 9 events,
+    across a recycle). Checked after every sleep and every flush; a stopped
+    loop never starts another flush — the consumer's own drain is the last.
     """
     import asyncio
 
+    def stopped() -> bool:
+        return stop is not None and stop.is_set()
+
     due = _mono() + period
-    while True:
+    while not stopped():
         wait = due - _mono()
         if wait > 0:
             await asyncio.sleep(wait)
+            if stopped():
+                return
         started = max(due, _mono())
         ok = await flush(started)
         due = started + period if ok is not False else _mono() + period
+
+
+#: #10657 — how long a consumer waits, after its final drain, for its stopped
+#: flush and stats loops to return. A loop mid-flush finishes that flush (its
+#: sessions are still open until the consumer returns); one still running
+#: after this is reported by name, never waited on forever.
+LOOP_REAP_TIMEOUT_S = 15.0
+
+
+async def reap_stopped_loops(source: str, tasks, *, timeout_s: float = LOOP_REAP_TIMEOUT_S) -> int:
+    """Wait (bounded) for a consumer run's stopped loops; return how many are
+    STILL running. Never raises and never cancels again: the caller already
+    set the stop event and cancelled them. A non-zero return is logged as an
+    error because that loop outlives its run (#10657)."""
+    import asyncio
+
+    pending = [t for t in tasks if t is not None and not t.done()]
+    if pending:
+        try:
+            _done, still = await asyncio.wait(pending, timeout=timeout_s)
+        except Exception:
+            still = {t for t in pending if not t.done()}
+    else:
+        still = set()
+    if still:
+        logger.error(
+            "live_blend_refresh[%s]: %d consumer loop(s) still running %.0fs "
+            "after the run stopped them: %s",
+            source, len(still), timeout_s,
+            sorted(getattr(t, "get_name", lambda: "?")() for t in still),
+        )
+    return len(still)
 
 
 class LiveBlendRefresher:

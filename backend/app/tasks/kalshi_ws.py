@@ -98,7 +98,7 @@ async def _run_kalshi_ws_consumer(*, sessions):
     from app.tasks.kalshi import _kalshi_yes_probability  # #8753
     from app.tasks.live_blend_refresh import (
         LiveBlendRefresher, TailReceipts, adopt_handed_off, event_ids_for_outcomes,
-        hand_off_pending, run_flush_cadence,
+        hand_off_pending, reap_stopped_loops, run_flush_cadence,
     )
     from app.tasks.ws_admission import (  # #9418
         run_until_admission, unadmitted_live_events,
@@ -833,8 +833,12 @@ async def _run_kalshi_ws_consumer(*, sessions):
     # -- Periodic flush task --
     # #10090: start to start, so the flush's own work is not added to the
     # interval; see `run_flush_cadence` for what it preserves.
+    # #10657: set before the loop is cancelled, so a cancellation lost inside
+    # a flush still ends the loop at its next turn (`run_flush_cadence`).
+    loops_stop = asyncio.Event()
+
     async def flush_loop():
-        await run_flush_cadence(flush_prices, PRICE_FLUSH_SECONDS)
+        await run_flush_cadence(flush_prices, PRICE_FLUSH_SECONDS, stop=loops_stop)
 
     # -- Periodic stats logging --
     async def stats_loop():
@@ -869,8 +873,8 @@ async def _run_kalshi_ws_consumer(*, sessions):
                 no_reading=blend["no_reading"],
             )
 
-    flush_task = asyncio.create_task(flush_loop())
-    stats_task = asyncio.create_task(stats_loop())
+    flush_task = asyncio.create_task(flush_loop(), name="kalshi-flush-loop")
+    stats_task = asyncio.create_task(stats_loop(), name="kalshi-stats-loop")
 
     # #9484: the open-contract connections, admitted beside the game socket and
     # torn down in the `finally` on every exit path. #10022: they also carry
@@ -1001,6 +1005,7 @@ async def _run_kalshi_ws_consumer(*, sessions):
         # `finally` below still drains the buffer first.
         raise
     finally:
+        loops_stop.set()
         flush_task.cancel()
         stats_task.cancel()
         # #9484: cancelled here, awaited only after the drain below, so a
@@ -1029,6 +1034,12 @@ async def _run_kalshi_ws_consumer(*, sessions):
                 )
             await asyncio.gather(
                 admission_task, *open_contract_tasks, return_exceptions=True,
+            )
+            # #10657: reaped after the drain like the tasks above — a loop
+            # that lost its cancellation must end here, not outlive the run
+            # and keep calling into its closed sessions.
+            stats["loops_unreaped"] = await reap_stopped_loops(
+                "kalshi", (flush_task, stats_task),
             )
 
     logger.info("Kalshi WS consumer exiting: %s", stats)
