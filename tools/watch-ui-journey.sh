@@ -359,7 +359,7 @@ if [[ "$TEST_EXIT" -eq 0 && "$SHARD" == full ]]; then
   python3 "$ROOT/tools/watch_diagnostics_receipt.py" --log "$OUT/tests.log"
 fi
 PHASE='configured corner and fallback verification'
-if [[ "$TEST_EXIT" -eq 0 ]]; then
+if [[ "$TEST_EXIT" -eq 0 && "$SHARD" == full ]]; then
   python3 - "$OUT/tests.log" <<'PYCORNER'
 import sys
 from pathlib import Path

@@ -1,4 +1,4 @@
-"""Exact-coverage receipts for four independently prepared hosted Watch pairs."""
+"""Exact-coverage receipts for five independently prepared hosted Watch pairs."""
 
 import argparse
 from collections import Counter
@@ -13,9 +13,9 @@ ROOT = Path(__file__).resolve().parents[1]
 
 def manifest(root=ROOT):
     groups = json.loads((root / "tools/watch_ui_cases.json").read_text())
-    if set(groups) != {"readings", "navigation", "controls", "widgets"}:
+    if set(groups) != {"corner", "readings", "navigation", "controls", "widgets"}:
         raise ValueError(
-            "Expected exactly readings, navigation, controls and widgets shards"
+            "Expected exactly corner, readings, navigation, controls and widgets shards"
         )
     declared = [case for cases in groups.values() for case in cases]
     source = [
@@ -30,6 +30,8 @@ def manifest(root=ROOT):
         raise ValueError("Manifest must cover every source test exactly once")
     if any(not cases for cases in groups.values()):
         raise ValueError("Empty shards are not full coverage")
+    if groups["corner"] != ["WidgetTapJourneyTests/testActualCornerSavedReadingAndTap"]:
+        raise ValueError("Actual corner host requires its own fresh pair")
     return groups
 
 
@@ -114,6 +116,7 @@ def aggregate(directory, sha, groups, verify_markers=True):
         combined.write_text("\n".join(logs))
         harness = (ROOT / "tools/watch-ui-journey.sh").read_text()
         for gate in ("PYVERIFY",):
+            for gate in ("PYVERIFY", "PYCORNER"):
             code = harness.split(f"<<'{gate}'\n", 1)[1].split(f"\n{gate}", 1)[0]
             subprocess.run([sys.executable, "-c", code, str(combined)], check=True)
         subprocess.run(
@@ -138,7 +141,7 @@ def aggregate(directory, sha, groups, verify_markers=True):
         "verdict": "PASS",
         "tests": sum(r["tests"] for r in receipts),
         "shards": receipts,
-        "scope": "All manifest Debug Watch UI cases on four independently prepared hosted pairs",
+        "scope": "All manifest Debug Watch UI cases on five independently prepared hosted pairs",
     }
 
 
@@ -146,7 +149,7 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("mode", choices=["select", "receipt", "aggregate"])
     parser.add_argument(
-        "--shard", choices=["readings", "navigation", "controls", "widgets"]
+        "--shard", choices=["corner", "readings", "navigation", "controls", "widgets"]
     )
     parser.add_argument("--directory", type=Path)
     parser.add_argument("--sha")

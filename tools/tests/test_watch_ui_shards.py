@@ -56,9 +56,10 @@ class WatchUIShardTests(unittest.TestCase):
     def verify(self):
         return gate.aggregate(self.root, self.sha, self.groups, verify_markers=False)
 
-    def test_complete_distinct_pairs_cover_all_33_debug_cases(self):
-        self.assertEqual(self.verify()["tests"], 33)
-        self.assertEqual(len(self.groups["readings"]), 13)
+    def test_complete_distinct_pairs_cover_all_36_debug_cases(self):
+        self.assertEqual(self.verify()["tests"], 36)
+        self.assertEqual(self.groups["corner"], ["WidgetTapJourneyTests/testActualCornerSavedReadingAndTap"])
+        self.assertEqual(len(self.groups["readings"]), 15)
         self.assertEqual(len(self.groups["navigation"]), 6)
         self.assertEqual(len(self.groups["controls"]), 8)
         self.assertEqual(len(self.groups["widgets"]), 6)
@@ -156,7 +157,9 @@ class WatchUIShardTests(unittest.TestCase):
             self.verify()
 
     def test_reused_pair_cannot_claim_isolation(self):
-        (self.root / "readings/destination.txt").write_text("watch-1")
+        (self.root / "readings/destination.txt").write_text(
+            (self.root / "navigation/destination.txt").read_text()
+        )
         self.save_receipt("readings")
         with self.assertRaises(ValueError):
             self.verify()
@@ -177,6 +180,9 @@ class WatchUIShardTests(unittest.TestCase):
         original = path.read_text()
         rows = [
             *markers,
+            "WATCH_UI_ACTUAL_CORNER_SAVED=PASS",
+            "WATCH_UI_CORNER_FALLBACK=PASS",
+            "WATCH_UI_CORNER_MAIN_FIT=PASS",
             "WATCH_UI_STRESS_TYPE=accessibility5",
             "WATCH_UI_STANDARD_TYPE=xLarge",
             "WATCH_UI_DISCOVERIES_POLISH_STANDARD=PASS",
@@ -187,8 +193,11 @@ class WatchUIShardTests(unittest.TestCase):
         ]
         complete = original + "\n" + "\n".join(rows)
         path.write_text(complete)
-        self.assertEqual(gate.aggregate(self.root, self.sha, self.groups)["tests"], 33)
+        self.assertEqual(gate.aggregate(self.root, self.sha, self.groups)["tests"], 36)
         for marker in (
+            "WATCH_UI_ACTUAL_CORNER_SAVED=PASS",
+            "WATCH_UI_CORNER_FALLBACK=PASS",
+            "WATCH_UI_CORNER_MAIN_FIT=PASS",
             "WATCH_UI_DISCOVERIES_POLISH_STANDARD=PASS",
             "WATCH_UI_RECTANGULAR_ACTUAL_TYPED=PASS",
             "WATCH_UI_RECTANGULAR_MONOCHROME=PASS",
@@ -225,6 +234,24 @@ class WatchUIShardTests(unittest.TestCase):
             downloads, {f"watch-ui-journey-{shard}" for shard in self.groups}
         )
 
+    def test_actual_corner_cannot_share_a_pair_with_other_cases(self):
+        tools = self.root / "tools"
+        source = self.root / "ios/Bain Luck/BainLuckWatchUITests"
+        tools.mkdir()
+        source.mkdir(parents=True)
+        groups = {name: list(cases) for name, cases in self.groups.items()}
+        groups["corner"].append(groups["readings"].pop())
+        (tools / "watch_ui_cases.json").write_text(json.dumps(groups))
+        suites = {}
+        for cases in groups.values():
+            for case in cases:
+                suite, method = case.split("/")
+                suites.setdefault(suite, []).append(f"func {method}() {{}}")
+        for suite, methods in suites.items():
+            (source / f"{suite}.swift").write_text("\n".join(methods))
+        with self.assertRaisesRegex(ValueError, "own fresh pair"):
+            gate.manifest(self.root)
+
     def test_manifest_cannot_omit_or_duplicate_a_future_source_case(self):
         tools = self.root / "tools"
         source = self.root / "ios/Bain Luck/BainLuckWatchUITests"
@@ -234,6 +261,7 @@ class WatchUIShardTests(unittest.TestCase):
         (tools / "watch_ui_cases.json").write_text(
             json.dumps(
                 {
+                    "corner": self.groups["corner"],
                     "readings": [readings],
                     "navigation": [],
                     "controls": [],
@@ -249,6 +277,7 @@ class WatchUIShardTests(unittest.TestCase):
         (tools / "watch_ui_cases.json").write_text(
             json.dumps(
                 {
+                    "corner": self.groups["corner"],
                     "readings": [readings],
                     "navigation": [readings],
                     "controls": [],
