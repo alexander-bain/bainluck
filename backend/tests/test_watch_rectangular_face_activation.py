@@ -31,9 +31,11 @@ def test_rectangular_host_activates_named_face_before_accepting_widget_content()
         assert requirement in helper
     assert source.count("XCUIDevice.shared.press(.home)") == 2
     for assertion in [
-        'XCTAssertEqual(title.label, "San Francisco Giants win")',
-        'XCTAssertEqual(detail.label, "Saved · 64% · Live")',
-        "contentBounds.contains(text.frame)",
+        'XCTAssertTrue(reading.label.contains("San Francisco Giants win"))',
+        'XCTAssertTrue(reading.label.contains("Saved"))',
+        'XCTAssertTrue(reading.label.contains("64% · Live"))',
+        'XCTAssertTrue(reading.label.contains("Observed "))',
+        "contentBounds.contains(reading.frame)",
         "center.isHittable",
     ]:
         assert assertion in source
