@@ -292,7 +292,9 @@ class TestTheRealKalshiConsumer:
                 seen["refresher"] = self
                 self._rev = 500
 
-            async def _refresh_batch(self, event_ids, now):
+            async def _refresh_batch(
+                self, event_ids, now, *, prepared=None, on_committed=None
+            ):
                 for eid in event_ids:
                     self._last_refresh_at[eid] = now
                     self._rev += 1
@@ -302,6 +304,8 @@ class TestTheRealKalshiConsumer:
                     )
                     self._last_written_value[eid] = 0.5
                     self._last_write_at[eid] = now
+                if on_committed is not None:
+                    on_committed(event_ids)
 
         monkeypatch.setenv("KALSHI_API_KEY_ID", "test-key")
         monkeypatch.setenv("KALSHI_RSA_PRIVATE_KEY", "test-secret")
@@ -364,10 +368,13 @@ class TestTheRealPolymarketConsumer:
 
         class _Recording(LiveBlendRefresher):
             def __init__(self, source, **kw):
-                super().__init__(source, min_refresh_interval_s=0.01, **kw)
+                kw["min_refresh_interval_s"] = 0.01
+                super().__init__(source, **kw)
                 self._rev = 700
 
-            async def _refresh_batch(self, event_ids, now):
+            async def _refresh_batch(
+                self, event_ids, now, *, prepared=None, on_committed=None
+            ):
                 for eid in event_ids:
                     self._last_refresh_at[eid] = now
                     self._rev += 1
@@ -377,6 +384,8 @@ class TestTheRealPolymarketConsumer:
                     )
                     self._last_written_value[eid] = 0.7
                     self._last_write_at[eid] = now
+                if on_committed is not None:
+                    on_committed(event_ids)
 
         monkeypatch.setattr(poly_task, "SUBSCRIPTION_REFRESH_SECONDS", 0.8)
         monkeypatch.setattr(poly_task, "PRICE_FLUSH_SECONDS", 0.02)

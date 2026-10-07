@@ -1,0 +1,50 @@
+{
+  "failed_head": "34a2aeafbfa47bc44580a5c5121748f529840d3f",
+  "predecessor_head": "eeaabe1083aa556f5163d330c7955c2acb9eb40f",
+  "application_delta_is_only_exception_local_rename": true,
+  "affected_controls": {
+    "exit": 0,
+    "passed": 124
+  },
+  "startup_included": 4,
+  "frontend_build": {
+    "exit": 0,
+    "api_url": "http://127.0.0.1:9"
+  },
+  "typecheck": {
+    "exit": 0,
+    "errors": 66,
+    "baseline": 66
+  },
+  "red_first": {
+    "exit": 1,
+    "failures": 6
+  },
+  "source_hashes": {
+    "backend/app/tasks/polymarket_ws.py": "b5986373e9f9f3904a8e51ba5f93e9806ede440ac18b12581e222b8f7ee85819",
+    "backend/app/tasks/live_blend_refresh.py": "266946b9556f10c5e2ffe81b80d9b5ff496b4966e7b4e5e304dc44ddbbe6e8c0",
+    "backend/tests/test_delivery_receipt_10090.py": "dd6c3491eedb104c167090324bbeec67aab0aba0511673afeed770e2e837a5a7",
+    "backend/tests/test_live_blend_tail_receipt_837.py": "b40a599dfd845d858c289ca43d3e3e7f1c6a8d083698e34a1b736abaf0827385"
+  },
+  "artifact_sha256": {
+    "REPORT.md": "467a649acd4688dbc68094a0b163268f4b1dcbd5656da9fffb99d26da1adbe2b",
+    "final-mutation-scan.txt": "803a9157ed78c722cbdc36062b9ab3decfe64075bb398a4f761fd9fea10a0ac6",
+    "build.txt": "ddb2db38f79051661b8b83d228ed4b25be16d572fb2c92e14469d00d26ebdfa9",
+    "controls.txt": "22305245ef29550447fef37f0fa3a592d3f78e8c191f0f635f36be7117c36b3e",
+    "typecheck.txt": "a663013fe49409079531b7c17fbae1c7f1f5e27a697f628203d02015d23f2161",
+    "red-first.txt": "1a360c87d90d00dc698dd01c9638e8bcb7e239a2d4c0ae7989442704417aefdc"
+  },
+  "raw_output_sha256": {
+    "red-first.txt": "55cfac1bfbd2d1d6616ba9976bac804433f7006fb44147c462782b6c8b36cafb",
+    "controls.txt": "22305245ef29550447fef37f0fa3a592d3f78e8c191f0f635f36be7117c36b3e",
+    "build.txt": "7c346b61c1d9fd0b6e6fdfbc264a51655340b491723479be4de98f6137a0ff3b",
+    "typecheck.txt": "a663013fe49409079531b7c17fbae1c7f1f5e27a697f628203d02015d23f2161",
+    "final-mutation-scan.txt": "803a9157ed78c722cbdc36062b9ab3decfe64075bb398a4f761fd9fea10a0ac6"
+  },
+  "final_mutation_scan": {
+    "exit": 0,
+    "target_needles": 599,
+    "broad_checks": 11184,
+    "residual_mutants": 0
+  }
+}

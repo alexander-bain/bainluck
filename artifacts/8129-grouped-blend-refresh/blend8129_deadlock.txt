@@ -1,0 +1,21 @@
+============================= test session starts ==============================
+platform darwin -- Python 3.12.15+meta, pytest-9.0.3, pluggy-1.6.0 -- /usr/local/fbcode/platform010/Python3.12.framework/Versions/3.12/bin/python3.12
+cachedir: .pytest_cache
+rootdir: /Users/bain/bainluck-dev/latency/.worktrees/8129-grouped-blend-refresh/backend
+configfile: pytest.ini
+plugins: asyncio-1.4.0, anyio-4.13.0
+asyncio: mode=Mode.AUTO, debug=False, asyncio_default_fixture_loop_scope=None, asyncio_default_test_loop_scope=function
+collecting ... collected 4 items
+
+tests/integration/test_live_blend_stamp_deadlock_pg_837.py::test_both_arms_stamp_both_events PASSED [ 25%]
+tests/integration/test_live_blend_stamp_deadlock_pg_837.py::test_a_deadlock_costs_one_event_not_the_batch PASSED [ 50%]
+tests/integration/test_live_blend_stamp_deadlock_pg_837.py::test_a_foreign_row_lock_no_longer_freezes_the_other_games PASSED [ 75%]
+tests/integration/test_live_blend_stamp_deadlock_pg_837.py::test_control_unbounded_waits_do_freeze_the_batch PASSED [100%]
+
+=============================== warnings summary ===============================
+tests/integration/test_live_blend_stamp_deadlock_pg_837.py::test_both_arms_stamp_both_events
+  /Users/bain/bainluck-dev/latency/.worktrees/8129-grouped-blend-refresh/backend/app/routes/auth.py:121: PydanticDeprecatedSince20: Support for class-based `config` is deprecated, use ConfigDict instead. Deprecated in Pydantic V2.0 to be removed in V3.0. See Pydantic V2 Migration Guide at https://errors.pydantic.dev/2.13/migration/
+    class UserProfileResponse(BaseModel):
+
+-- Docs: https://docs.pytest.org/en/stable/how-to/capture-warnings.html
+======================== 4 passed, 1 warning in 10.42s =========================
