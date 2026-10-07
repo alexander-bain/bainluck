@@ -92,7 +92,7 @@ from dataclasses import dataclass, field, replace
 from datetime import date, datetime
 from decimal import Decimal
 from types import SimpleNamespace
-from typing import Any, Iterable, Optional, Sequence
+from typing import Any, Iterable, NamedTuple, Optional, Sequence
 
 from app.utils.calibration_phase_ledger import (
     FRESH,
@@ -709,6 +709,52 @@ def _order_key(value: Any) -> tuple[int, int, float, str]:
 # =============================================================================
 # Stage A — the generation
 # =============================================================================
+
+
+class RosterRow(NamedTuple):
+    """One Stage A roster row, held as a plain tuple and nothing more.
+
+    The roster is ~1.2M rows and is read twice per beat (the publish-first pass
+    and the deferred rebuild). Held as SQLAlchemy ``Row`` objects it costs ~633 MB
+    of heap at 1.2M rows (measured locally, tracemalloc, 2026-10-07); as these
+    tuples, read in batches, ~513 MB. On 2026-10-07 the beat's worker dyno
+    crossed Heroku's R15 memory kill line by 50-80 MB at 10:20Z and 11:18Z, and
+    both kills landed before that beat's publish, so the public curve went 2h40m
+    without a refresh.
+
+    Values are carried VERBATIM — no ``int()``, no ``bool()``. Every consumer
+    (:func:`generation_fingerprint`, :func:`plan_units`, the frozen assignment)
+    reads these four names through :func:`_get` exactly as it read the ``Row``,
+    so the digest, the plan and the banked units are unchanged byte for byte.
+    """
+
+    market_id: Any
+    source: Any
+    vm_id: Any
+    is_grouped: Any
+
+
+def slim_roster(rows: Iterable[Any], *, into: Optional[list] = None) -> list[RosterRow]:
+    """Copy roster rows into :class:`RosterRow` tuples, sharing repeated ``source`` strings.
+
+    ``into`` lets a batched reader append partition by partition, so the original
+    rows of a batch can be freed before the next one arrives.
+    """
+    out: list[RosterRow] = [] if into is None else into
+    shared: dict[str, str] = {}
+    for row in rows:
+        source = _get(row, "source")
+        if isinstance(source, str):
+            source = shared.setdefault(source, source)
+        out.append(
+            RosterRow(
+                _get(row, "market_id"),
+                source,
+                _get(row, UNIT_KEY_VM_ID),
+                _get(row, "is_grouped"),
+            )
+        )
+    return out
 
 
 def generation_fingerprint(rows: Iterable[Any]) -> str:

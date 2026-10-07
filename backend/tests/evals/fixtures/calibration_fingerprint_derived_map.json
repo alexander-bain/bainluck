@@ -30,7 +30,7 @@
     "compute_calibration_payload",
     "identity_quarantine_ctes"
   ],
-  "input_count": 80,
+  "input_count": 81,
   "inputs": [
     {
       "covered_by_value": false,
@@ -729,6 +729,17 @@
       "covered_by_value": false,
       "definition_sha16": null,
       "impact": "behavior_or_evidence",
+      "name": "ROSTER_STREAM_BATCH",
+      "origin": "app.tasks.precompute_calibration:ROSTER_STREAM_BATCH",
+      "sql_interpolated": false,
+      "used_in": [
+        "_read_futures_roster"
+      ]
+    },
+    {
+      "covered_by_value": false,
+      "definition_sha16": null,
+      "impact": "behavior_or_evidence",
       "name": "SOCCER_2WAY_RULE_TEXT",
       "origin": "app.tasks.precompute_calibration:SOCCER_2WAY_RULE_TEXT",
       "sql_interpolated": false,
@@ -952,8 +963,8 @@
   ],
   "schema": "calibration-fingerprint-derived/v1",
   "source": "backend/app/tasks/precompute_calibration.py",
-  "source_sha256": "f1bf7de4ecc51ce83a421fe642ede7e59417e3447eb4df1bb42835b354f6f595",
-  "uncovered_behavior_or_evidence": 40,
-  "uncovered_count": 67,
+  "source_sha256": "47c36d9a6dec6ce172866dbae7f42cf4d22525b48735fb0b6ea0a4002bba6719",
+  "uncovered_behavior_or_evidence": 41,
+  "uncovered_count": 68,
   "uncovered_sql_shaping": 27
 }

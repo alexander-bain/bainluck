@@ -1192,3 +1192,35 @@ async def test_the_roster_scope_is_live_so_the_equality_arm_is_not_vacuous():
         )
 
     await _with_seeded_db(body)
+
+
+async def test_the_streamed_roster_equals_the_buffered_roster(monkeypatch):
+    """2026-10-07 R15 repair: the Stage A roster is streamed, not buffered.
+
+    The beat now reads the roster through a server-side cursor in batches and
+    keeps slim tuples. Against real asyncpg, with the batch forced to ONE row so
+    the read crosses many partitions, it must return exactly the rows, in exactly
+    the order, that the old buffered ``execute(...).all()`` returned — and the
+    same generation digest, because a moved digest discards the staged bank.
+    """
+    from sqlalchemy import text
+
+    from app.tasks import precompute_calibration as pc
+    from app.utils.calibration_staged_futures import generation_fingerprint
+
+    monkeypatch.setattr(pc, "ROSTER_STREAM_BATCH", 1)
+
+    async def body(session):
+        buffered = (await session.execute(text(pc._futures_generation_sql()))).all()
+        seeded = [r for r in buffered if int(r.market_id) in set(ALL_IDS)]
+        assert seeded, (
+            "the seeded markets never reached the roster, so the comparison "
+            "below would not cover them — fix the fixture, keep the assertion"
+        )
+        streamed = await pc._read_futures_roster(session)
+        assert [tuple(r) for r in streamed] == [tuple(r) for r in buffered]
+        assert generation_fingerprint(streamed) == generation_fingerprint(buffered)
+        # the session is still usable afterwards: the cursor was closed
+        await session.execute(text("SELECT 1"))
+
+    await _with_seeded_db(body)
