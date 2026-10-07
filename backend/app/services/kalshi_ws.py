@@ -11,7 +11,6 @@ import asyncio
 import json
 import logging
 import os
-import tempfile
 import time
 from base64 import b64encode
 from itertools import count
@@ -21,6 +20,122 @@ logger = logging.getLogger(__name__)
 
 WS_URL = "wss://api.elections.kalshi.com/trade-api/ws/v2"
 WS_SIGN_PATH = "/trade-api/ws/v2"
+
+
+# Includes lifecycle callbacks and quotes queued behind their own event's
+# settlement. The reader backpressures at this bound; it never drops a frame.
+MAX_PENDING_CALLBACKS = 64
+
+
+class _KalshiCallbackDispatch:
+    """Keep one event's settlement ordering without blocking other events.
+
+    The linked-market writer groups siblings by the ticker prefix before the
+    last dash, so serializing only the full outcome ticker would be unsafe.
+    Unknown identities remain global barriers. Ordinary quotes stay inline
+    unless their event already has a pending lifecycle callback.
+    """
+
+    def __init__(self):
+        self._pending: set[asyncio.Task] = set()
+        self._tails: dict[str, asyncio.Task] = {}
+        self._owner = None
+        self._closing = False
+
+    async def __aenter__(self):
+        self._owner = asyncio.current_task()
+        return self
+
+    async def __aexit__(self, exc_type, exc, tb):
+        if exc_type is not None and not issubclass(exc_type, Exception):
+            await self._cancel()
+        else:
+            # A transport disconnect doesn't erase accepted lifecycle input.
+            # Finish it before reconnecting. Cancellation during this drain
+            # still joins every child before the task-level final price flush.
+            await self.drain()
+
+    async def _cancel(self):
+        self._closing = True
+        tasks = list(self._pending)
+        for task in tasks:
+            task.cancel()
+        await asyncio.gather(*tasks, return_exceptions=True)
+
+    async def drain(self):
+        try:
+            if self._pending:
+                await asyncio.gather(*list(self._pending))
+        except BaseException:
+            await self._cancel()
+            raise
+
+    @staticmethod
+    async def _call(callback, payload, label, prepare=None):
+        try:
+            if prepare is not None:
+                callback = await prepare(payload)
+            result = callback(payload)
+            if asyncio.iscoroutine(result):
+                await result
+        except Exception:
+            logger.exception("%s handler error", label)
+
+    async def submit(self, callback, payload, label, *, lifecycle=False, prepare=None):
+        # Callbacks without the explicit preparation contract retain their
+        # original synchronous ordering. Defer only opted-in, prepared work.
+        if lifecycle and prepare is None:
+            await self.drain()
+            await self._call(callback, payload, label)
+            return
+        ticker = (
+            payload.get("market_ticker") or payload.get("ticker")
+            if isinstance(payload, dict)
+            else None
+        )
+        parts = ticker.upper().rsplit("-", 1) if isinstance(ticker, str) else []
+        if len(parts) != 2 or not all(parts):
+            await self.drain()
+            await self._call(callback, payload, label, prepare)
+            return
+        key = parts[0]
+        previous = self._tails.get(key)
+        if not lifecycle and previous is None:
+            await self._call(callback, payload, label)
+            return
+        if lifecycle and previous is None:
+            # Capture buffer-derived settlement inputs before yielding to a
+            # flush or reading another frame. Queued siblings prepare in order.
+            try:
+                callback = await prepare(payload)
+                prepare = None
+            except Exception:
+                logger.exception("%s preparation handler error", label)
+                return
+
+        while len(self._pending) >= MAX_PENDING_CALLBACKS:
+            await asyncio.wait(self._pending, return_when=asyncio.FIRST_COMPLETED)
+
+        async def ordered():
+            if previous is not None:
+                await previous
+            await self._call(callback, payload, label, prepare)
+
+        task = asyncio.create_task(ordered())
+        self._pending.add(task)
+        self._tails[key] = task
+
+        def finished(done):
+            # Cancellation raised by a callback used to cancel the reader.
+            # Preserve that behavior instead of silently losing its tail.
+            if done.cancelled() and not self._closing:
+                self._closing = True
+                self._owner.cancel()
+            self._pending.discard(done)
+            if self._tails.get(key) is done:
+                del self._tails[key]
+
+        task.add_done_callback(finished)
 
 
 def _load_rsa_key():
@@ -87,6 +202,7 @@ class KalshiWebSocket:
 
         self.on_ticker: Optional[Callable] = None
         self.on_lifecycle: Optional[Callable] = None
+        self.on_lifecycle_prepare: Optional[Callable] = None
         self.on_trade: Optional[Callable] = None
 
     def _ensure_key(self):
@@ -153,44 +269,45 @@ class KalshiWebSocket:
                         logger.info(
                             "Subscribed to %s (%s)",
                             channel,
-                            f"{len(market_tickers)} tickers"
-                            if market_tickers
-                            else "all markets",
+                            (
+                                f"{len(market_tickers)} tickers"
+                                if market_tickers
+                                else "all markets"
+                            ),
                         )
 
-                    async for raw in ws:
-                        self._message_count += 1
+                    async with _KalshiCallbackDispatch() as dispatch:
                         try:
-                            data = json.loads(raw)
-                        except (json.JSONDecodeError, TypeError):
-                            continue
+                            async for raw in ws:
+                                self._message_count += 1
+                                try:
+                                    data = json.loads(raw)
+                                except (json.JSONDecodeError, TypeError):
+                                    continue
 
-                        msg_type = data.get("type")
-                        payload = data.get("msg", data)
-
-                        if msg_type == "ticker" and self.on_ticker:
-                            try:
-                                result = self.on_ticker(payload)
-                                if asyncio.iscoroutine(result):
-                                    await result
-                            except Exception:
-                                logger.exception("Ticker handler error")
-
-                        elif msg_type == "market_lifecycle_v2" and self.on_lifecycle:
-                            try:
-                                result = self.on_lifecycle(payload)
-                                if asyncio.iscoroutine(result):
-                                    await result
-                            except Exception:
-                                logger.exception("Lifecycle handler error")
-
-                        elif msg_type == "trade" and self.on_trade:
-                            try:
-                                result = self.on_trade(payload)
-                                if asyncio.iscoroutine(result):
-                                    await result
-                            except Exception:
-                                logger.exception("Trade handler error")
+                                msg_type = data.get("type")
+                                payload = data.get("msg", data)
+                                if msg_type == "ticker" and self.on_ticker:
+                                    await dispatch.submit(
+                                        self.on_ticker, payload, "Ticker"
+                                    )
+                                elif (
+                                    msg_type == "market_lifecycle_v2"
+                                    and self.on_lifecycle
+                                ):
+                                    await dispatch.submit(
+                                        self.on_lifecycle,
+                                        payload,
+                                        "Lifecycle",
+                                        lifecycle=True,
+                                        prepare=self.on_lifecycle_prepare,
+                                    )
+                                elif msg_type == "trade" and self.on_trade:
+                                    await dispatch.submit(
+                                        self.on_trade, payload, "Trade"
+                                    )
+                        finally:
+                            self._connected = False
 
             except asyncio.CancelledError:
                 # Q460 (CERT-491): RE-RAISE, never `return`. The caller bounds
