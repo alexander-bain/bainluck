@@ -1487,6 +1487,10 @@ class LiveBlendRefresher:
         # same batch could roll back, and an un-take-back-able push of a value
         # the database never kept is worse than a push that never happened.
         pending: list[dict] = []
+        # #10702: bind exact committed input marks to this reading's actual
+        # contributor observations. Nothing is emitted before outer COMMIT.
+        exact_trace = getattr(self.receipts, "exact_trace", None)
+        trace_bases: dict = {}
         # #837 tail (Codex review of #8490) — and for the same reason the
         # write bookkeeping is COLLECTED and applied only after the commit. A
         # released savepoint is not a committed stamp: recorded there, a failed
@@ -1686,6 +1690,10 @@ class LiveBlendRefresher:
                     # rolled back must not read as written), and applied only
                     # once the transaction commits — see `written` above.
                     written[event_id] = value
+                    if exact_trace is not None:
+                        with contextlib.suppress(Exception):
+                            if exact_trace.tracks_event(event_id):
+                                trace_bases[event_id] = (basis, new_rev, stamped_at)
                     # #837 receipt — trusted only after the commit;
                     # `previous` says whether it MOVED.
                     self._dispositions[event_id] = (
@@ -1767,6 +1775,10 @@ class LiveBlendRefresher:
             self._last_write_at[event_id] = now
             self._last_written_value[event_id] = value
         self.stats["stamped"] += len(written)
+        if exact_trace is not None:
+            for event_id, (basis, revision, stamped_at) in trace_bases.items():
+                with contextlib.suppress(Exception):
+                    exact_trace.stamp(event_id, basis, revision, stamped_at)
         if on_committed is not None:
             on_committed(event_ids)
         await self._publish(pending)
@@ -1847,6 +1859,7 @@ class LiveBlendRefresher:
             return
         sent = 0
         accounted = 0
+        exact_trace = getattr(self.receipts, "exact_trace", None)
         try:
             import asyncio
             import json
@@ -1864,6 +1877,7 @@ class LiveBlendRefresher:
                     for start in range(0, len(frames), 32):
                         commands: list[tuple[str, str, str]] = []
                         event_ids: list[int] = []
+                        event_revisions: list = []
                         for frame in frames[start : start + 32]:
                             try:
                                 commands.append(
@@ -1874,6 +1888,7 @@ class LiveBlendRefresher:
                                     )
                                 )
                                 event_ids.append(frame["event_id"])
+                                event_revisions.append(frame.get("rev"))
                             except Exception:
                                 accounted += 1
                                 self.stats["publish_errors"] += 1
@@ -1890,10 +1905,13 @@ class LiveBlendRefresher:
                         await connection.send_packed_command(
                             connection.pack_commands(commands)
                         )
-                        for event_id in event_ids:
+                        for event_id, revision in zip(event_ids, event_revisions):
                             try:
                                 reply = await connection.read_response()
                             except ResponseError:
+                                if exact_trace is not None:
+                                    with contextlib.suppress(Exception):
+                                        exact_trace.publication(event_id, revision, "REDIS_ERROR")
                                 accounted += 1
                                 self.stats["publish_errors"] += 1
                                 logger.warning(
@@ -1908,6 +1926,9 @@ class LiveBlendRefresher:
                             accounted += 1
                             sent += 1
                             self.stats["published"] += 1
+                            if exact_trace is not None:
+                                with contextlib.suppress(Exception):
+                                    exact_trace.publication(event_id, revision, "REDIS_ACK")
                 except BaseException:
                     # Unknown acknowledgment state: unread replies must not be
                     # handed to another consumer, nor commands replayed here.

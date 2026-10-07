@@ -204,6 +204,8 @@ class KalshiWebSocket:
         self.on_lifecycle: Optional[Callable] = None
         self.on_lifecycle_prepare: Optional[Callable] = None
         self.on_trade: Optional[Callable] = None
+        # #10702: supplied by the consumer, shared across its existing sockets.
+        self.exact_trace = None
 
     def _ensure_key(self):
         if self._private_key is None:
@@ -242,6 +244,13 @@ class KalshiWebSocket:
                     ping_timeout=10,
                     close_timeout=5,
                 ) as ws:
+                    connection = None
+                    if self.exact_trace is not None:
+                        try:
+                            import uuid
+                            connection = uuid.uuid4().hex[:12]
+                        except Exception:
+                            pass
                     self._connected = True
                     if self._reconnect_count > 0:
                         logger.info(
@@ -266,8 +275,16 @@ class KalshiWebSocket:
                             "params": params,
                         }
                         await ws.send(json.dumps(cmd))
+                        if self.exact_trace is not None and connection is not None:
+                            try:
+                                self.exact_trace.sent(
+                                    connection, cmd["id"], channel,
+                                    params.get("market_tickers"), subscribe_all,
+                                )
+                            except Exception:
+                                pass
                         logger.info(
-                            "Subscribed to %s (%s)",
+                            "Subscription SENT to %s (%s)",
                             channel,
                             (
                                 f"{len(market_tickers)} tickers"
@@ -287,6 +304,13 @@ class KalshiWebSocket:
 
                                 msg_type = data.get("type")
                                 payload = data.get("msg", data)
+                                if self.exact_trace is not None and connection is not None:
+                                    try:
+                                        self.exact_trace.response(connection, data)
+                                        if msg_type == "ticker":
+                                            self.exact_trace.received(connection, payload)
+                                    except Exception:
+                                        pass
                                 if msg_type == "ticker" and self.on_ticker:
                                     await dispatch.submit(
                                         self.on_ticker, payload, "Ticker"

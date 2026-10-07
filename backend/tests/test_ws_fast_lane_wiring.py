@@ -436,8 +436,8 @@ def _exec_flush(module, consumer_name: str, namespace: dict):
     """The consumer's REAL `flush_prices` body, compiled against `namespace`.
 
     The closure cannot be reached without a venue socket and a database, but its
-    quiet-flush branch touches only three names, so it can run for real. A name
-    the branch should not reach is simply absent: touching it is a NameError.
+    run-scoped receipt and quiet-flush dependencies are supplied so it can run
+    for real. Transaction-only names are absent: touching them is a NameError.
     """
     fn = _flush_function(module, consumer_name)
     code = compile(
@@ -463,10 +463,11 @@ class TestAQuietFlushServicesLockDeferredStamps:
     def test_a_pending_retry_is_stamped_on_an_empty_flush(self):
         import asyncio
 
-        from app.tasks.live_blend_refresh import LiveBlendRefresher
+        from app.tasks.live_blend_refresh import LiveBlendRefresher, TailReceipts
 
         for module, consumer in CONSUMERS:
             refresher = LiveBlendRefresher("kalshi")
+            refresher.receipts = TailReceipts("kalshi")
             refresher._lock_retry = {15318131}
             seen = []
 
@@ -478,6 +479,7 @@ class TestAQuietFlushServicesLockDeferredStamps:
                 "buffer_lock": asyncio.Lock(),
                 "price_buffer": {},
                 "blend_refresher": refresher,
+                "tail_receipts": refresher.receipts,
                 # #9934: the Polymarket flush also asks its wide books; none here.
                 "flush_withdrawals": _no_withdrawals,
             })
@@ -488,10 +490,11 @@ class TestAQuietFlushServicesLockDeferredStamps:
     def test_an_empty_flush_with_nothing_queued_does_no_work(self):
         import asyncio
 
-        from app.tasks.live_blend_refresh import LiveBlendRefresher
+        from app.tasks.live_blend_refresh import LiveBlendRefresher, TailReceipts
 
         for module, consumer in CONSUMERS:
             refresher = LiveBlendRefresher("kalshi")
+            refresher.receipts = TailReceipts("kalshi")
 
             async def _must_not_run(event_ids, now):
                 raise AssertionError(f"{consumer}: opened a batch for nothing")
@@ -501,6 +504,7 @@ class TestAQuietFlushServicesLockDeferredStamps:
                 "buffer_lock": asyncio.Lock(),
                 "price_buffer": {},
                 "blend_refresher": refresher,
+                "tail_receipts": refresher.receipts,
                 # #9934: the Polymarket flush also asks its wide books; none here.
                 "flush_withdrawals": _no_withdrawals,
             })
