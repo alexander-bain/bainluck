@@ -1,3 +1,4 @@
+UPDATING_CASES = [f"Test Case '-[BainLuckWatchUITests.SelectedGameUpdatingJourneyTests {case}]' passed (12.0 seconds)." for case in ("testUpdatingIsVisibleUntilRequestFinishes", "testUpdatingIsVisibleAtAccessibilitySize")]
 """A green summary cannot omit the real fresh-face activation regression."""
 from pathlib import Path
 import subprocess
@@ -7,6 +8,7 @@ import pytest
 
 ROOT = Path(__file__).resolve().parents[2]
 MARKERS = (
+    "WATCH_UI_GAME_UPDATING_STANDARD=PASS", "WATCH_UI_GAME_UPDATING_LARGE=PASS",
     "WATCH_UI_STRESS_TYPE=accessibility5", "WATCH_UI_STANDARD_TYPE=large",
     "WATCH_UI_ROUNDING_PAIR=45", "WATCH_UI_ROUNDING_DRAW=46",
     "WATCH_UI_LAUNCHER_COLD=PASS", "WATCH_UI_COMPLICATION_CONTENT=PASS",
@@ -20,14 +22,23 @@ MARKERS = (
     "WATCH_UI_DISCOVERIES_UNSELECTED=PASS", "WATCH_UI_DISCOVERIES_CONTINUATION=PASS",
     "WATCH_UI_DISCOVERIES_RETURN_STANDARD=PASS", "WATCH_UI_DISCOVERIES_RETURN_LARGE=PASS",
     "WATCH_UI_DISCOVERIES_HEADING_STANDARD=PASS", "WATCH_UI_DISCOVERIES_HEADING_LARGE=PASS",
-    "WATCH_UI_GAME_UPDATING_STANDARD=PASS", "WATCH_UI_GAME_UPDATING_LARGE=PASS",
-    "WATCH_UI_CIRCULAR_CONTENT=PASS", "WATCH_UI_CIRCULAR_FALLBACK=PASS", "WATCH_UI_ACTUAL_CIRCULAR_SAVED=PASS",
     "WATCH_UI_PICKER_SELECTED_STANDARD=PASS", "WATCH_UI_PICKER_SELECTED_LARGE=PASS",
+    "WATCH_UI_RECTANGULAR_TYPED=PASS", "WATCH_UI_RECTANGULAR_MONOCHROME=PASS",
+    "WATCH_UI_RECTANGULAR_LEGACY=PASS", "WATCH_UI_RECTANGULAR_ACTUAL_TYPED=PASS",
+    "WATCH_UI_CIRCULAR_CONTENT=PASS", "WATCH_UI_CIRCULAR_FALLBACK=PASS", "WATCH_UI_ACTUAL_CIRCULAR_SAVED=PASS",
 )
 CASE = ("Test Case '-[BainLuckWatchUITests.WidgetTapJourneyTests "
         "testFreshConfiguredFaceIsActiveBeforeActualLauncherTap]' passed (90.123 seconds).")
 NETWORK_CASE = ("Test Case '-[BainLuckWatchUITests.PickerReturnJourneyTests "
                 "testNetworkFailureGuidanceRetainsChoicesAndRecoversSelection]' passed (80.123 seconds).")
+RECTANGULAR_CASES = tuple(
+    f"Test Case '-[BainLuckWatchUITests.{suite} {case}]' passed (80.123 seconds)."
+    for suite, case in (
+        ("ComplicationContentJourneyTests", "testRectangularTypedNamedValuesFitWithMonochromeRendering"),
+        ("ComplicationContentJourneyTests", "testRectangularLegacyMismatchUnknownAndEmptyStayHonest"),
+        ("RectangularWidgetHostJourneyTests", "testActualRectangularWidgetShowsPublishedSavedReading"),
+    )
+)
 SUMMARY = ("Test Suite 'All tests' passed at 2026-10-06 00:00:00.000.\n"
            "\t Executed 17 tests, with 0 failures (0 unexpected) in 1200 seconds\n"
            "** TEST EXECUTE SUCCEEDED **\n")
@@ -45,9 +56,7 @@ def gate(log, tmp_path):
 def accepted_log():
     selected = [f"Test Case '-[BainLuckWatchUITests.PickerSelectedStateJourneyTests {case}]' passed (12.0 seconds)."
                 for case in ("testSelectedGameIsMarkedInPickerAndCanChange", "testSelectedGameIsMarkedAtAccessibilitySize")]
-    return "\n".join((*MARKERS, CASE, NETWORK_CASE, *selected,
-        "Test Case '-[BainLuckWatchUITests.SelectedGameUpdatingJourneyTests testUpdatingIsVisibleUntilRequestFinishes]' passed (75.0 seconds).",
-        "Test Case '-[BainLuckWatchUITests.SelectedGameUpdatingJourneyTests testUpdatingIsVisibleAtAccessibilitySize]' passed (80.0 seconds).", SUMMARY))
+    return "\n".join((*MARKERS, CASE, NETWORK_CASE, *RECTANGULAR_CASES, *selected, *UPDATING_CASES, SUMMARY))
 
 
 def test_seventeen_test_summary_and_real_activation_case_are_accepted(tmp_path):
@@ -69,6 +78,9 @@ def test_seventeen_test_summary_and_real_activation_case_are_accepted(tmp_path):
     "WATCH_UI_DISCOVERIES_RETURN_LARGE=PASS",
     "WATCH_UI_DISCOVERIES_HEADING_STANDARD=PASS",
     "WATCH_UI_DISCOVERIES_HEADING_LARGE=PASS",
+    "WATCH_UI_PICKER_SELECTED_STANDARD=PASS", "WATCH_UI_PICKER_SELECTED_LARGE=PASS",
+    "WATCH_UI_RECTANGULAR_TYPED=PASS", "WATCH_UI_RECTANGULAR_MONOCHROME=PASS",
+    "WATCH_UI_RECTANGULAR_LEGACY=PASS", "WATCH_UI_RECTANGULAR_ACTUAL_TYPED=PASS",
     "WATCH_UI_CIRCULAR_CONTENT=PASS",
     "WATCH_UI_CIRCULAR_FALLBACK=PASS", "WATCH_UI_ACTUAL_CIRCULAR_SAVED=PASS",
 ])
@@ -95,6 +107,9 @@ def test_circular_shared_content_scenarios_reach_debug_fixture():
     import re
     tests = (ROOT / "ios/Bain Luck/BainLuckWatchUITests/ComplicationContentJourneyTests.swift").read_text()
     routes = (ROOT / "ios/Bain Luck/BainLuckWatch Watch App/WatchTabView.swift").read_text()
+    # Other rectangular scenario loops share this file; they are not circular routes.
+    tests = tests.split("func testSavedCircularNamedProbabilityFinalAndScoreLayout()", 1)[1].split(
+        "private func launchCircular", 1)[0]
     named_cases = re.findall(r'\("([a-z-]+)", "Saved ·', tests)
     fallback_cases = ' '.join(re.findall(r'for scenario in \[(.*?)\]', tests, re.S))
     scenarios = set(named_cases + re.findall(r'"([a-z-]+)"', fallback_cases))
