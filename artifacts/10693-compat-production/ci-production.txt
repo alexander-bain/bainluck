@@ -1,0 +1,100 @@
+Collecting SQLAlchemy==2.0.54 (from SQLAlchemy[asyncio]==2.0.54)
+  Using cached sqlalchemy-2.0.54-cp312-cp312-macosx_11_0_arm64.whl.metadata (9.7 kB)
+Collecting asyncpg==0.32.0
+  Using cached asyncpg-0.32.0-cp312-cp312-macosx_11_0_arm64.whl.metadata (4.4 kB)
+Requirement already satisfied: typing-extensions>=4.6.0 in /Users/bain/Library/Python/3.12/lib/python/site-packages (from SQLAlchemy==2.0.54->SQLAlchemy[asyncio]==2.0.54) (4.15.0)
+Requirement already satisfied: greenlet>=1 in /Users/bain/Library/Python/3.12/lib/python/site-packages (from SQLAlchemy[asyncio]==2.0.54) (3.5.1)
+Using cached sqlalchemy-2.0.54-cp312-cp312-macosx_11_0_arm64.whl (2.2 MB)
+Using cached asyncpg-0.32.0-cp312-cp312-macosx_11_0_arm64.whl (681 kB)
+Installing collected packages: SQLAlchemy, asyncpg
+  Attempting uninstall: SQLAlchemy
+    Found existing installation: SQLAlchemy 2.0.50
+    Not uninstalling sqlalchemy at /Users/bain/Library/Python/3.12/lib/python/site-packages, outside environment /var/folders/rk/bp7zksws1s9b48c6_l_qn91m0000gn/T/tmp.gTIHm3E1UL
+    Can't uninstall 'SQLAlchemy'. No files were found to uninstall.
+  Attempting uninstall: asyncpg
+    Found existing installation: asyncpg 0.31.0
+    Not uninstalling asyncpg at /Users/bain/Library/Python/3.12/lib/python/site-packages, outside environment /var/folders/rk/bp7zksws1s9b48c6_l_qn91m0000gn/T/tmp.gTIHm3E1UL
+    Can't uninstall 'asyncpg'. No files were found to uninstall.
+Successfully installed SQLAlchemy-2.0.54 asyncpg-0.32.0
+
+[notice] A new release of pip is available: 25.0.1 -> 26.2.1
+[notice] To update, run: python -m pip install --upgrade pip
+============================= test session starts ==============================
+platform darwin -- Python 3.12.15+meta, pytest-9.0.3, pluggy-1.6.0 -- /var/folders/rk/bp7zksws1s9b48c6_l_qn91m0000gn/T/tmp.gTIHm3E1UL/bin/python
+cachedir: .pytest_cache
+rootdir: /Users/bain/.codex-personal/worktrees/kalshi-price-adapter/bainluck/backend
+configfile: pytest.ini
+plugins: asyncio-1.4.0, anyio-4.13.0
+asyncio: mode=Mode.AUTO, debug=False, asyncio_default_fixture_loop_scope=None, asyncio_default_test_loop_scope=function
+collecting ... collected 62 items
+
+tests/test_kalshi_price_pipeline_10693.py::test_singleton_only_route_has_no_compatibility_template_or_checkout[phase0] PASSED [  1%]
+tests/test_kalshi_price_pipeline_10693.py::test_singleton_only_route_has_no_compatibility_template_or_checkout[phase1] PASSED [  3%]
+tests/test_kalshi_price_pipeline_10693.py::test_singleton_only_route_has_no_compatibility_template_or_checkout[phase2] PASSED [  4%]
+tests/test_kalshi_price_pipeline_10693.py::test_lazy_compatibility_refusal[version] PASSED [  6%]
+tests/test_kalshi_price_pipeline_10693.py::test_lazy_compatibility_refusal[missing-package] PASSED [  8%]
+tests/test_kalshi_price_pipeline_10693.py::test_lazy_compatibility_refusal[private-import] PASSED [  9%]
+tests/test_kalshi_price_pipeline_10693.py::test_lazy_compatibility_refusal[private-attribute] PASSED [ 11%]
+tests/test_kalshi_price_pipeline_10693.py::test_only_explicitly_proven_version_pairs_load_private_surfaces[versions0-True] PASSED [ 12%]
+tests/test_kalshi_price_pipeline_10693.py::test_only_explicitly_proven_version_pairs_load_private_surfaces[versions1-True] PASSED [ 14%]
+tests/test_kalshi_price_pipeline_10693.py::test_only_explicitly_proven_version_pairs_load_private_surfaces[versions2-False] PASSED [ 16%]
+tests/test_kalshi_price_pipeline_10693.py::test_only_explicitly_proven_version_pairs_load_private_surfaces[versions3-False] PASSED [ 17%]
+tests/test_kalshi_price_pipeline_10693.py::test_only_explicitly_proven_version_pairs_load_private_surfaces[versions4-False] PASSED [ 19%]
+tests/test_kalshi_price_pipeline_10693.py::test_only_explicitly_proven_version_pairs_load_private_surfaces[versions5-False] PASSED [ 20%]
+tests/test_kalshi_price_pipeline_10693.py::test_only_explicitly_proven_version_pairs_load_private_surfaces[versions6-False] PASSED [ 22%]
+tests/test_kalshi_price_pipeline_10693.py::test_entire_phase_refuses_before_leading_singleton_price[versions] PASSED [ 24%]
+tests/test_kalshi_price_pipeline_10693.py::test_entire_phase_refuses_before_leading_singleton_price[template] PASSED [ 25%]
+tests/test_kalshi_price_pipeline_10693.py::test_entire_phase_refuses_before_leading_singleton_price[cursor-factory] PASSED [ 27%]
+tests/test_kalshi_price_pipeline_10693.py::test_entire_phase_refuses_before_leading_singleton_price[cursor] PASSED [ 29%]
+tests/test_kalshi_price_pipeline_10693.py::test_template_acquisition_refuses_declared_shape_failures[error0] PASSED [ 30%]
+tests/test_kalshi_price_pipeline_10693.py::test_template_acquisition_refuses_declared_shape_failures[error1] PASSED [ 32%]
+tests/test_kalshi_price_pipeline_10693.py::test_template_acquisition_refuses_declared_shape_failures[error2] PASSED [ 33%]
+tests/test_kalshi_price_pipeline_10693.py::test_expanded_factory_sql_positions_and_processed_arguments[values0] PASSED [ 35%]
+tests/test_kalshi_price_pipeline_10693.py::test_expanded_factory_sql_positions_and_processed_arguments[values1] PASSED [ 37%]
+tests/test_kalshi_price_pipeline_10693.py::test_expanded_factory_sql_positions_and_processed_arguments[values2] PASSED [ 38%]
+tests/test_kalshi_price_pipeline_10693.py::test_expanded_factory_sql_positions_and_processed_arguments[values3] PASSED [ 40%]
+tests/test_kalshi_price_pipeline_10693.py::test_expanded_factory_sql_positions_and_processed_arguments[values4] PASSED [ 41%]
+tests/test_kalshi_price_pipeline_10693.py::test_expanded_factory_sql_positions_and_processed_arguments[values5] PASSED [ 43%]
+tests/test_kalshi_price_pipeline_10693.py::test_expanded_factory_sql_positions_and_processed_arguments[values6] PASSED [ 45%]
+tests/test_kalshi_price_pipeline_10693.py::test_expanded_factory_sql_positions_and_processed_arguments[values7] PASSED [ 46%]
+tests/test_kalshi_price_pipeline_10693.py::test_checkout_and_cancellation_are_not_compatibility_fallback[error0] PASSED [ 48%]
+tests/test_kalshi_price_pipeline_10693.py::test_checkout_and_cancellation_are_not_compatibility_fallback[error1] PASSED [ 50%]
+tests/test_kalshi_price_pipeline_10693.py::test_submitted_fault_never_replays_even_after_leading_scalar PASSED [ 51%]
+tests/test_kalshi_price_pipeline_10693.py::test_owned_install_once_untagged_and_cleanup PASSED [ 53%]
+tests/test_kalshi_price_pipeline_10693.py::test_cleanup_cannot_remove_listener_during_a_live_phase PASSED [ 54%]
+tests/test_kalshi_price_pipeline_10693.py::test_unexpected_private_tag_sql_and_cursor_stay_refused_under_optimization PASSED [ 56%]
+tests/test_kalshi_price_pipeline_10693.py::test_scoped_iteration_closes_on_caller_error_or_early_exit[caller-error] PASSED [ 58%]
+tests/test_kalshi_price_pipeline_10693.py::test_scoped_iteration_closes_on_caller_error_or_early_exit[early-break] PASSED [ 59%]
+tests/test_kalshi_price_pipeline_10693.py::test_utility_import_adds_no_private_requirements_to_initialized_factory PASSED [ 61%]
+tests/integration/test_kalshi_price_pipeline_10693_pg.py::test_actual_pipeline_source_flow_and_allowed_failed_prefix_boundary[same] PASSED [ 62%]
+tests/integration/test_kalshi_price_pipeline_10693_pg.py::test_actual_pipeline_source_flow_and_allowed_failed_prefix_boundary[later_row_writer] PASSED [ 64%]
+tests/integration/test_kalshi_price_pipeline_10693_pg.py::test_actual_pipeline_source_flow_and_allowed_failed_prefix_boundary[held_first_row_writer] PASSED [ 66%]
+tests/integration/test_kalshi_price_pipeline_10693_pg.py::test_actual_pipeline_source_flow_and_allowed_failed_prefix_boundary[real_book_move] PASSED [ 67%]
+tests/integration/test_kalshi_price_pipeline_10693_pg.py::test_actual_pipeline_source_flow_and_allowed_failed_prefix_boundary[mixed_books] PASSED [ 69%]
+tests/integration/test_kalshi_price_pipeline_10693_pg.py::test_actual_pipeline_source_flow_and_allowed_failed_prefix_boundary[precision_rounding] PASSED [ 70%]
+tests/integration/test_kalshi_price_pipeline_10693_pg.py::test_actual_pipeline_source_flow_and_allowed_failed_prefix_boundary[resolution_guards] PASSED [ 72%]
+tests/integration/test_kalshi_price_pipeline_10693_pg.py::test_actual_pipeline_source_flow_and_allowed_failed_prefix_boundary[rank] PASSED [ 74%]
+tests/integration/test_kalshi_price_pipeline_10693_pg.py::test_actual_pipeline_source_flow_and_allowed_failed_prefix_boundary[settlement] PASSED [ 75%]
+tests/integration/test_kalshi_price_pipeline_10693_pg.py::test_actual_pipeline_source_flow_and_allowed_failed_prefix_boundary[vanished] PASSED [ 77%]
+tests/integration/test_kalshi_price_pipeline_10693_pg.py::test_actual_pipeline_source_flow_and_allowed_failed_prefix_boundary[driver_error] PASSED [ 79%]
+tests/integration/test_kalshi_price_pipeline_10693_pg.py::test_actual_pipeline_source_flow_and_allowed_failed_prefix_boundary[retry] PASSED [ 80%]
+tests/integration/test_kalshi_price_pipeline_10693_pg.py::test_actual_pipeline_source_flow_and_allowed_failed_prefix_boundary[rollback] PASSED [ 82%]
+tests/integration/test_kalshi_price_pipeline_10693_pg.py::test_actual_pipeline_source_flow_and_allowed_failed_prefix_boundary[commit_error] PASSED [ 83%]
+tests/integration/test_kalshi_price_pipeline_10693_pg.py::test_actual_pipeline_source_flow_and_allowed_failed_prefix_boundary[cancellation] PASSED [ 85%]
+tests/integration/test_kalshi_price_pipeline_10693_pg.py::test_actual_pipeline_source_flow_and_allowed_failed_prefix_boundary[newer_tick] PASSED [ 87%]
+tests/integration/test_kalshi_price_pipeline_10693_pg.py::test_prior_completed_run_diagnostics_survive_later_run_fault_without_replay PASSED [ 88%]
+tests/integration/test_kalshi_price_pipeline_10693_pg.py::test_caller_exit_closes_iterator_and_rollback_discards_completed_run[caller-error] PASSED [ 90%]
+tests/integration/test_kalshi_price_pipeline_10693_pg.py::test_caller_exit_closes_iterator_and_rollback_discards_completed_run[early-break] PASSED [ 91%]
+tests/integration/test_kalshi_price_pipeline_10693_pg.py::test_cancelled_query_invalidates_pool_and_fresh_session_recovers PASSED [ 93%]
+tests/integration/test_kalshi_price_pipeline_10693_pg.py::test_caller_lock_budget_and_timeout_free_wait_keep_same_session_policy PASSED [ 95%]
+tests/integration/test_kalshi_price_pipeline_10693_pg.py::test_stale_plan_rolls_back_then_next_session_recovers_on_same_backend[False] PASSED [ 96%]
+tests/integration/test_kalshi_price_pipeline_10693_pg.py::test_stale_plan_rolls_back_then_next_session_recovers_on_same_backend[True] PASSED [ 98%]
+tests/integration/test_kalshi_price_pipeline_10693_pg.py::test_untagged_executemany_and_unknown_version_use_ordinary_paths PASSED [100%]
+
+=============================== warnings summary ===============================
+tests/test_kalshi_price_pipeline_10693.py::test_singleton_only_route_has_no_compatibility_template_or_checkout[phase0]
+  /Users/bain/.codex-personal/worktrees/kalshi-price-adapter/bainluck/backend/app/routes/auth.py:121: PydanticDeprecatedSince20: Support for class-based `config` is deprecated, use ConfigDict instead. Deprecated in Pydantic V2.0 to be removed in V3.0. See Pydantic V2 Migration Guide at https://errors.pydantic.dev/2.13/migration/
+    class UserProfileResponse(BaseModel):
+
+-- Docs: https://docs.pytest.org/en/stable/how-to/capture-warnings.html
+======================== 62 passed, 1 warning in 7.84s =========================

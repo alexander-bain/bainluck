@@ -2,6 +2,8 @@
 
 PILLARS: TRUTH / FORMATTING. SHIP: coherent Kalshi game prices reach readers sooner while unchanged quotes remain quiet.
 
+The compatibility-only follow-up at6005fd8f02cacd0d39ee78ea777d60d4b0106f3d adds the independently gated production pair2.0.54/0.32.0 while retaining2.0.50/0.31.0. See ../10693-compat-production/REPORT.md for the current exact supported pairs and delta gates. The original delivery and its historical receipts follow.
+
 Disjoint source implemented at 56058de84da1178db7d8f321e5f48974ac04cc8b, based on typed factory3a900848b1e53fd9450da6c4f26f45914bb34421. Independent review, exact hosted CI and exact Live composition remain unpaid. No consumer activation, source token, offer, merge or deployment is claimed. Reservation82074 is unchanged; Root controls review and capacity.
 
 The engine-owned utility installs once and cleans up its exact listener. The factory remains the sole SQL/bind definition; templates derive from construct_expanded_state and fresh factory parameters, with no sentinel role inference. Input order and consecutive same-book runs remain intact. Singleton-only phases bypass compatibility/import/template/connection preflight. Any multi-row run performs whole-phase preflight before the first price write. Exact SQLAlchemy2.0.50/asyncpg0.31.0 compatibility is lazy. Unsupported import/version/template/cursor shapes select ordinary execution before submission. Checkout/query/cancellation failures propagate; a submitted run never replays scalar.

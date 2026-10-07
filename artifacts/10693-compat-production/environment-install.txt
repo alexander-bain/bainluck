@@ -1,0 +1,22 @@
+Collecting SQLAlchemy==2.0.54 (from SQLAlchemy[asyncio]==2.0.54)
+  Using cached sqlalchemy-2.0.54-cp312-cp312-macosx_11_0_arm64.whl.metadata (9.7 kB)
+Collecting asyncpg==0.32.0
+  Downloading asyncpg-0.32.0-cp312-cp312-macosx_11_0_arm64.whl.metadata (4.4 kB)
+Requirement already satisfied: typing-extensions>=4.6.0 in /Users/bain/Library/Python/3.12/lib/python/site-packages (from SQLAlchemy==2.0.54->SQLAlchemy[asyncio]==2.0.54) (4.15.0)
+Requirement already satisfied: greenlet>=1 in /Users/bain/Library/Python/3.12/lib/python/site-packages (from SQLAlchemy[asyncio]==2.0.54) (3.5.1)
+Using cached sqlalchemy-2.0.54-cp312-cp312-macosx_11_0_arm64.whl (2.2 MB)
+Downloading asyncpg-0.32.0-cp312-cp312-macosx_11_0_arm64.whl (681 kB)
+   ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 681.6/681.6 kB 21.3 MB/s eta 0:00:00
+Installing collected packages: SQLAlchemy, asyncpg
+  Attempting uninstall: SQLAlchemy
+    Found existing installation: SQLAlchemy 2.0.50
+    Not uninstalling sqlalchemy at /Users/bain/Library/Python/3.12/lib/python/site-packages, outside environment /var/folders/rk/bp7zksws1s9b48c6_l_qn91m0000gn/T/kalshi10693-sdk-ba3fhvtr
+    Can't uninstall 'SQLAlchemy'. No files were found to uninstall.
+  Attempting uninstall: asyncpg
+    Found existing installation: asyncpg 0.31.0
+    Not uninstalling asyncpg at /Users/bain/Library/Python/3.12/lib/python/site-packages, outside environment /var/folders/rk/bp7zksws1s9b48c6_l_qn91m0000gn/T/kalshi10693-sdk-ba3fhvtr
+    Can't uninstall 'asyncpg'. No files were found to uninstall.
+Successfully installed SQLAlchemy-2.0.54 asyncpg-0.32.0
+
+[notice] A new release of pip is available: 25.0.1 -> 26.2.1
+[notice] To update, run: /var/folders/rk/bp7zksws1s9b48c6_l_qn91m0000gn/T/kalshi10693-sdk-ba3fhvtr/bin/python -m pip install --upgrade pip

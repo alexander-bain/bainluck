@@ -1,0 +1,23 @@
+# #10693 compatibility correction for the installed production pair
+
+PILLARS: TRUTH / FORMATTING. SHIP: coherent Kalshi game prices can use the guarded executor on the installed SDK pair while unchanged quotes stay quiet.
+
+The prior guard accepted only SQLAlchemy2.0.50/asyncpg0.31.0, so the owner-recorded Heroku build0edfa and default CI37614071974 at2.0.54/0.32.0 necessarily selected ordinary fallback. Source delta6005fd8f02cacd0d39ee78ea777d60d4b0106f3d now accepts exactly both proven pairs. Cross-pairs and other versions still refuse compatibility before private imports. No production dependency change, downgrade, read or write was performed; OWNER-INSTALLED-VERSIONS.txt is copied from Live's supplied evidence.
+
+The source change is only the exact-pair whitelist and its membership check. Restoring those two expressions yields the original56058de84d utility byte for byte. No listener, session, preflight, SQL, parameter, snapshot, exception, cancellation, iteration or replay behavior changed. kalshi_ws.py, typed factory, canonical quote helper and requirements are byte-identical to the prior head, pinned in manifest.json. Live's consuming source and fixture adaptation remain separate work.
+
+## Private-surface and real-source proof
+
+A disposable local environment installed exactly SQLAlchemy2.0.54/asyncpg0.32.0. Reflection captured actual loaded versions, module paths and source bodies; sdk-old.json and sdk-production.json retain AsyncAdapt_asyncpg_cursor, AsyncAdapt_asyncpg_connection, Connection.fetchmany and Connection._executemany. All four bodies are byte-identical across the two pairs. sdk-diff.txt records this; no compatibility mechanism adaptation was necessary. The installed production pair is supported on this evidence, not by widening a version range.
+
+Actual extracted CI commands ran against one owned private PostgreSQL17 UNIX-only cluster. Production pair:62 passed, exit0, no skips. Retained old pair:62 passed, exit0, no skips. Each isolated CI environment asserts actual imported versions and executes38 unit checks plus24 real-PG checks; multi-row controls assert many=true so scalar fallback cannot pay the pipeline gate. The seven added version controls accept the two exact pairs and reject crossed and future pairs before private imports. Existing supported/private-shape/singleton/leading-singleton whole-phase/optimized refusal/caller-exit controls remain.
+
+Both pairs run the existing16 paired actual-flush controls and eight additional PG mechanism controls. These preserve per-statement snapshots, ordered consecutive book runs, failed-run diagnostic boundary, prior-run diagnostics, rollback, fresh-session retry, rank/publication/buffer behavior, cancellation invalidation, caller500ms55P03 timeout and timeout-free waiting, same-backend stale-plan recovery, untagged ordinary execution and unsupported fallback. The real Session retains all transaction and rollback ownership. No submitted query replays scalar.
+
+The production-pair environment additionally ran80 factory/compiler/helper, factory actual-source PG, CI manifest and startup checks, exit0, no skips. CI keeps the existing floor execution unit and adds a separate exact production-pair unit to the shared-group manifest. The actual workflow commands, including version assertions and skip refusal, were replayed rather than approximated.
+
+Frontend build0; typecheck0 with unchanged baseline66. Ruff and diff checks pass. Committed-source mutation scan0:599 needles,4660 changed-file checks; receipt mutation-residue.txt. Only previously established source correctness controls were run; no speed/timing corpus was repeated. Lifecycle records confirm the owned PostgreSQL cluster stopped and was removed, both CI environments cleaned up, and the separately installed target SDK environment removed. Shared SDKs and servers were untouched.
+
+## Delivery boundary
+
+This source delta remains pending sole independent delta review and exact hosted CI. It supplies compatibility for the owner-recorded installed pair but does not prove deployed activation. Normal Live delivery/readback must still record loaded versions and selected path. Live preserves500ms periodic phase lock_timeout,55P03-only independent continuation, pending-debt grouping and timeout-free final drain. The actual consuming final-drain gate requires DRAIN_HOLD_S=3.0 seconds or longer; three500ms attempts measured0.58–0.76s each. The utility's0.6s timeout-free mechanism check is separate from that consuming source gate. Scope remains the utility, dedicated unit controls, exact CI wiring and own artifacts. No Live edit, token, offer, merge, deploy, production speed claim or production acceptance. Reservation88662 remains Root-held for release.
