@@ -295,7 +295,14 @@ class TestTheHandMapIsGoneAndTheArtifactIsAuthority:
         # all — and the headline COALESCE stayed in that body for the same
         # reason (a module-constant default would have been an uncovered
         # SQL-shaping input; the first draft did that and this pin caught it).
-        assert artifact["input_count"] == 80
+        # #10697: 80 -> 81. `ROSTER_STREAM_BATCH`, the batch size the Stage A
+        # roster is streamed in (the R15 repair). Same-module,
+        # `behavior_or_evidence`, `sql_interpolated: false`; `uncovered_sql_
+        # shaping` holds at 27. It decides how many rows arrive per fetch, never
+        # which rows — the roster's rows, order and digest are pinned identical
+        # in `test_calibration_roster_is_read_lean_r15.py`. No hashed root moved,
+        # and `_main_input_fingerprint` is identical across the change.
+        assert artifact["input_count"] == 81
         # CAL-P162: 4 -> 5. `MEX_NORMALIZE_THRESHOLD` joined the by-value set on
         # the deploy that made it decide PUBLICATION rather than only pricing.
         # CAL-P164 added no by-value input, so this stands still.
@@ -334,7 +341,9 @@ class TestTheHandMapIsGoneAndTheArtifactIsAuthority:
         # not which-rows: none reaches SQL and none widens the surface this
         # census measures.
         # #5355: 66 -> 67, the prose rule text above. Not a predicate.
-        assert artifact["uncovered_count"] == 67
+        # #10697: 67 -> 68, `ROSTER_STREAM_BATCH` above. A fetch size, not a
+        # predicate; no row changes.
+        assert artifact["uncovered_count"] == 68
         assert artifact["uncovered_count"] == artifact["input_count"] - len(
             artifact["covered_by_value"]
         )
@@ -660,7 +669,9 @@ class TestTheHandMapIsGoneAndTheArtifactIsAuthority:
         # 54 -> 55 at #5355: `DATAGOLF_OPENING_TIMING_RULE_TEXT` is same-module
         # prose, so it lands in the non-cross tier and the cross list is
         # unchanged.
-        assert len(cross) + 55 == artifact["uncovered_count"]
+        # 55 -> 56 at #10697: `ROSTER_STREAM_BATCH` is a same-module fetch size,
+        # so it lands in the non-cross tier and the cross list is unchanged.
+        assert len(cross) + 56 == artifact["uncovered_count"]
 
 
 class TestInterpolationDetectionCoversNonFStringSql:
