@@ -1516,3 +1516,251 @@ async def test_an_unknown_stage_policy_refuses_before_any_stage(harness, monkeyp
         ddr.replay_capture(artifact, stage_policy="interleave_sports")
     assert refused.value.code == ddr.UNSUPPORTED
     assert called == []
+
+
+# --------------------------------------------------------------------------- #
+# #5105 root review — arm-vs-arm comparison covers the WHOLE card, by identity
+# --------------------------------------------------------------------------- #
+
+
+def _published_deck() -> list[dict]:
+    """Published-shaped cards carrying the nested fields the old projection
+    never read: tournament prices, bundle member prices, sources, timestamps
+    and venue contract ids."""
+    member = {
+        "type": "futures",
+        "score": 80,
+        "data": {
+            "id": 501,
+            "name": "AI member",
+            "sources": ["kalshi", "polymarket"],
+            "price_observed_at": "2026-10-04T10:00:00+00:00",
+            "top_outcomes": [{"id": 9001, "name": "Yes", "probability": 0.41}],
+        },
+    }
+    return [
+        {
+            "type": "tournament",
+            "score": 98,
+            "data": {
+                "key": "bank_of_utah_championship",
+                "name": "Bank of Utah Championship",
+                "market_ids": [77, 78],
+                "golfers": [{"name": "A. Golfer", "probability": 0.12}],
+            },
+        },
+        {
+            "type": "bundle",
+            "score": 90,
+            "data": {"id": "theme:ai", "title": "AI", "items": [member]},
+        },
+        {
+            "type": "futures",
+            "score": 95,
+            "data": {
+                "id": 601,
+                "name": "World Series Winner",
+                "source_count": 2,
+                "sources": ["kalshi", "polymarket"],
+                "price_observed_at": "2026-10-04T10:05:00+00:00",
+                "top_outcomes": [
+                    {"id": 9101, "name": "Dodgers", "probability": 0.3, "rendered_percent": 30}
+                ],
+            },
+        },
+        {
+            "type": "event",
+            "score": 70,
+            "data": {
+                "id": 14639205,
+                "away_team": "Colts",
+                "home_team": "Commanders",
+                "win_probability_sources": {
+                    "kalshi": {
+                        "value": 0.55,
+                        "updated_at": "2026-10-04T10:01:00+00:00",
+                        "eligibility": {"source_market_id": "KXNFLGAME-26OCT04"},
+                    }
+                },
+            },
+        },
+    ]
+
+
+def _compare(before, after, **kw):
+    return ddr.compare_decks_by_identity(before, after, **kw)
+
+
+def test_full_card_compare_passes_a_pure_reordering():
+    before = _published_deck()
+    after = copy.deepcopy(list(reversed(before)))
+    result = _compare(before, after)
+    assert result["verdict"] == ddr.PASS
+    assert result["shared"] == 4
+    assert result["content_changes"] == []
+    assert result["added"] == result["removed"] == []
+
+
+@pytest.mark.parametrize(
+    "where, path, mutate",
+    [
+        (
+            0,
+            "$.data.golfers[0].probability",
+            lambda c: c["data"]["golfers"][0].update(probability=0.13),
+        ),
+        (
+            1,
+            "$.data.items[0].data.top_outcomes[0].probability",
+            lambda c: c["data"]["items"][0]["data"]["top_outcomes"][0].update(
+                probability=0.42
+            ),
+        ),
+        (
+            2,
+            "$.data.sources[1]",
+            lambda c: c["data"]["sources"].pop(),
+        ),
+        (
+            2,
+            "$.data.price_observed_at",
+            lambda c: c["data"].update(price_observed_at="2026-10-04T10:06:00+00:00"),
+        ),
+        (
+            2,
+            "$.data.top_outcomes[0].id",
+            lambda c: c["data"]["top_outcomes"][0].update(id=9102),
+        ),
+        (
+            3,
+            "$.data.win_probability_sources.kalshi.eligibility.source_market_id",
+            lambda c: c["data"]["win_probability_sources"]["kalshi"][
+                "eligibility"
+            ].update(source_market_id="KXNFLGAME-26OCT05"),
+        ),
+        (
+            0,
+            "$.data.market_ids[1]",
+            lambda c: c["data"]["market_ids"].pop(),
+        ),
+    ],
+    ids=[
+        "tournament-price",
+        "bundle-member-price",
+        "source-composition",
+        "price-timestamp",
+        "outcome-contract-id",
+        "event-venue-contract",
+        "tournament-market-ids",
+    ],
+)
+def test_full_card_compare_fails_on_a_nested_change(where, path, mutate):
+    before = _published_deck()
+    after = list(reversed(copy.deepcopy(before)))
+    mutate(after[len(after) - 1 - where])
+    result = _compare(before, after)
+    assert result["verdict"] == ddr.MISMATCH
+    assert [c["path"] for c in result["content_changes"]] == [path]
+    assert result["cards_with_content_changes"] == [ddr.deck_identities([before[where]])[0]]
+
+
+def test_full_card_compare_is_type_exact_not_stringified():
+    before = _published_deck()
+    after = copy.deepcopy(before)
+    # 30 vs 30.0 is a different card in the published JSON.
+    after[2]["data"]["top_outcomes"][0]["rendered_percent"] = 30.0
+    stamp = datetime(2026, 10, 4, 10, 5, tzinfo=timezone.utc)
+    before[2]["data"]["price_observed_at"] = stamp
+    after[2]["data"]["price_observed_at"] = stamp.isoformat()
+    result = _compare(before, after)
+    assert result["verdict"] == ddr.MISMATCH
+    assert {c["path"] for c in result["content_changes"]} == {
+        "$.data.top_outcomes[0].rendered_percent",
+        "$.data.price_observed_at",
+    }
+
+
+def test_full_card_compare_refuses_what_the_codec_cannot_freeze():
+    before = _published_deck()
+    after = copy.deepcopy(before)
+    after[2]["data"]["opaque"] = object()
+    with pytest.raises(ddr.DisplayReplayError) as refused:
+        _compare(before, after)
+    assert refused.value.code == ddr.UNSUPPORTED
+
+
+def test_full_card_compare_reports_added_and_removed_keys():
+    before = _published_deck()
+    after = copy.deepcopy(before)
+    after[2]["data"]["hook_description"] = "new"
+    del after[3]["data"]["home_team"]
+    result = _compare(before, after)
+    paths = {c["path"]: c for c in result["content_changes"]}
+    assert paths["$.data.hook_description"]["before"] == {"absent": True}
+    assert paths["$.data.home_team"]["after"] == {"absent": True}
+
+
+@pytest.mark.parametrize("side", ["before", "after"])
+def test_full_card_compare_refuses_a_duplicate_identity(side):
+    deck = _published_deck()
+    twin = copy.deepcopy(deck[2])
+    twin["data"]["top_outcomes"][0]["probability"] = 0.9
+    doubled = deck + [twin]
+    args = (doubled, _published_deck()) if side == "before" else (_published_deck(), doubled)
+    with pytest.raises(ddr.DisplayReplayError) as refused:
+        _compare(*args)
+    assert refused.value.code == ddr.INVALID
+    assert "duplicate identity futures:601" in refused.value.detail
+
+
+def test_full_card_compare_refuses_a_card_without_identity():
+    deck = _published_deck()
+    del deck[2]["data"]["id"]
+    with pytest.raises(ddr.DisplayReplayError) as refused:
+        _compare(_published_deck(), deck)
+    assert refused.value.code == ddr.INVALID
+
+
+def test_full_card_compare_fails_an_added_or_removed_card_under_same_inventory():
+    before = _published_deck()
+    removed = _compare(before, copy.deepcopy(before[:-1]))
+    assert removed["verdict"] == ddr.MISMATCH
+    assert removed["removed"] == ["event:14639205"]
+    extra = copy.deepcopy(before[2])
+    extra["data"]["id"] = 602
+    added = _compare(before, copy.deepcopy(before) + [extra])
+    assert added["verdict"] == ddr.MISMATCH
+    assert added["added"] == ["futures:602"]
+    # Without the inventory claim the same diff is reported, not failed.
+    loose = _compare(before, copy.deepcopy(before) + [extra], require_same_inventory=False)
+    assert loose["verdict"] == ddr.PASS
+    assert loose["added"] == ["futures:602"]
+
+
+def test_full_card_compare_reports_named_positional_fields_separately():
+    before = _published_deck()
+    after = copy.deepcopy(before)
+    before[2]["data"]["rank"] = 3
+    after[2]["data"]["rank"] = 9
+    unnamed = _compare(before, after)
+    assert unnamed["verdict"] == ddr.MISMATCH
+    named = _compare(before, after, permitted_positional_paths=["$.data.rank"])
+    assert named["verdict"] == ddr.PASS
+    assert [c["path"] for c in named["positional_changes"]] == ["$.data.rank"]
+    # A permitted name never hides a content change elsewhere on the card.
+    after[2]["data"]["top_outcomes"][0]["probability"] = 0.31
+    both = _compare(before, after, permitted_positional_paths=["$.data.rank"])
+    assert both["verdict"] == ddr.MISMATCH
+    assert [c["path"] for c in both["content_changes"]] == [
+        "$.data.top_outcomes[0].probability"
+    ]
+    # A name is matched exactly: "$.data.r" does not cover "$.data.rank".
+    prefix = _compare(before, after, permitted_positional_paths=["$.data.r"])
+    assert "$.data.rank" in [c["path"] for c in prefix["content_changes"]]
+
+
+def test_full_card_compare_does_not_mutate_either_deck():
+    before, after = _published_deck(), list(reversed(_published_deck()))
+    snapshot = (ddr.canonical(before), ddr.canonical(after))
+    _compare(before, after)
+    assert (ddr.canonical(before), ddr.canonical(after)) == snapshot

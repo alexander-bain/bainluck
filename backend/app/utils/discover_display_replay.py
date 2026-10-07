@@ -1557,6 +1557,131 @@ def _first_content_divergence(capture: dict, replay: dict) -> Optional[str]:
     return None
 
 
+# --------------------------------------------------------------------------- #
+# Arm-vs-arm card comparison (#5105 root review of e4ed56d308)
+# --------------------------------------------------------------------------- #
+#
+# A policy arm may move cards; it must not change one. The first comparison of
+# two arms compared a hand-written PROJECTION of each card, which omitted
+# tournament prices, bundle member prices, sources and timestamps, so "every
+# shared card is identical" was never shown. This compares the WHOLE published
+# card through the same codec as every parity check (type-exact, and anything
+# it cannot freeze refuses rather than turning into a string), keyed by the
+# edition identity, independent of deck order.
+
+
+def _diff_encoded(before: Any, after: Any, path: str, out: list) -> None:
+    def leaf(value: Any) -> str:
+        return json.dumps(value, separators=(",", ":"), allow_nan=False)
+
+    if isinstance(before, dict) and isinstance(after, dict):
+        if _TAG in before or _TAG in after:
+            if leaf(before) != leaf(after):
+                out.append(
+                    {
+                        "path": path,
+                        "before": {"value": before},
+                        "after": {"value": after},
+                    }
+                )
+            return
+        for key in list(before) + [k for k in after if k not in before]:
+            _diff_encoded(
+                before.get(key, _ABSENT), after.get(key, _ABSENT), f"{path}.{key}", out
+            )
+        if [k for k in before if k in after] != [k for k in after if k in before]:
+            out.append(
+                {
+                    "path": f"{path}<key order>",
+                    "before": {"value": list(before)},
+                    "after": {"value": list(after)},
+                }
+            )
+        return
+    if isinstance(before, list) and isinstance(after, list):
+        for index in range(max(len(before), len(after))):
+            _diff_encoded(
+                before[index] if index < len(before) else _ABSENT,
+                after[index] if index < len(after) else _ABSENT,
+                f"{path}[{index}]",
+                out,
+            )
+        return
+    if before is _ABSENT or after is _ABSENT or leaf(before) != leaf(after):
+        out.append(
+            {"path": path, "before": _absent_enc(before), "after": _absent_enc(after)}
+        )
+
+
+def _is_permitted(path: str, permitted: frozenset) -> bool:
+    return any(
+        path == p or path.startswith(p + ".") or path.startswith(p + "[")
+        for p in permitted
+    )
+
+
+def compare_decks_by_identity(
+    before: list,
+    after: list,
+    *,
+    require_same_inventory: bool = True,
+    permitted_positional_paths: Iterable[str] = (),
+) -> dict:
+    """Compare two published decks card by card, by identity, ignoring order.
+
+    Refuses (``INVALID``/``UNSUPPORTED``, the same rule as the capture's own
+    decks) a deck holding a duplicate identity, a card with no identity or an
+    unsupported kind — a duplicate is never allowed to collapse into one map
+    entry. ``verdict`` is ``PASS`` only when no shared card differs anywhere in
+    its encoded payload and, under ``require_same_inventory``, no card was added
+    or removed.
+
+    ``permitted_positional_paths`` names exact card paths (``"$.data.rank"``)
+    that legitimately depend on position; their differences are reported under
+    ``positional_changes`` and never hidden. Empty by default: nothing is
+    permitted unless a caller names it.
+    """
+    permitted = frozenset(permitted_positional_paths)
+    before_ids = _check_identities(before, kinds=SUPPORTED_DECK_KINDS, where="before")
+    after_ids = _check_identities(after, kinds=SUPPORTED_DECK_KINDS, where="after")
+    before_by = dict(zip(before_ids, before))
+    after_by = dict(zip(after_ids, after))
+    after_set = set(after_ids)
+    added = [i for i in after_ids if i not in before_by]
+    removed = [i for i in before_ids if i not in after_set]
+
+    content: list[dict] = []
+    positional: list[dict] = []
+    shared = [i for i in before_ids if i in after_set]
+    for ident in shared:
+        a, b = before_by[ident], after_by[ident]
+        changes: list[dict] = []
+        _diff_encoded(encode_value(a, ident), encode_value(b, ident), "$", changes)
+        if not changes and canonical(a) != canonical(b):  # pragma: no cover
+            raise DisplayReplayError(
+                INVALID,
+                f"{ident}: canonical forms differ but no field difference found",
+            )
+        for change in changes:
+            target = positional if _is_permitted(change["path"], permitted) else content
+            target.append({"identity": ident, **change})
+
+    inventory_ok = not (added or removed) or not require_same_inventory
+    return {
+        "verdict": PASS if inventory_ok and not content else MISMATCH,
+        "compared": "full published card, encode_value codec, keyed by edition identity",
+        "totals": {"before": len(before_ids), "after": len(after_ids)},
+        "shared": len(shared),
+        "require_same_inventory": require_same_inventory,
+        "added": added,
+        "removed": removed,
+        "cards_with_content_changes": sorted({c["identity"] for c in content}),
+        "content_changes": content,
+        "permitted_positional_paths": sorted(permitted),
+        "positional_changes": positional,
+    }
+
+
 def write_capture(capture: dict, path: str) -> None:
     with open(path, "w", encoding="utf-8") as fh:
         json.dump(capture, fh, separators=(",", ":"), allow_nan=False)
