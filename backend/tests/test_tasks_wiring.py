@@ -176,6 +176,7 @@ class TestBeatScheduleCompleteness:
     """Catch missing or extra beat schedule entries."""
 
     EXPECTED_ENTRIES = {
+        "activitykit-runtime",
         "poll-odds-adaptive",
         "poll-mlb-pregame",
         "sync-sports-hourly",

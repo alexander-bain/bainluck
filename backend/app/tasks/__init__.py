@@ -6812,7 +6812,25 @@ def _tag_counts_warm_minutes() -> int:
     return warm_period_minutes()
 
 
+@celery_app.task(name="app.tasks.deliver_activitykit_updates", soft_time_limit=150,
+                 time_limit=180, max_retries=0)
+def deliver_activitykit_updates():
+    """One default-off, serialized page of suspended-phone updates (#10542)."""
+    from app.tasks.activitykit_runtime import run_activitykit_runtime
+
+    result = run_async(run_activitykit_runtime())
+    if result["terminal"] in {"failed", "partial"}:
+        logger.warning("ActivityKit runtime incomplete: %s", result)
+        raise RuntimeError("ActivityKit runtime incomplete")
+    return result
+
+
 celery_app.conf.beat_schedule = {
+    "activitykit-runtime": {
+        "task": "app.tasks.deliver_activitykit_updates",
+        "schedule": 30.0,
+        "options": {"queue": "realtime", "expires": 25},
+    },
     "poll-odds-adaptive": {
         "task": "app.tasks.poll_all_odds",
         "schedule": 30.0,

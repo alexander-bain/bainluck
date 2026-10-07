@@ -6936,8 +6936,25 @@ jobs:
             echo "::error::#10568 observation ordering gate skipped"
             exit 1
           fi
-          grep -qE "[^0-9]17 passed([,[:space:]]|$)" /tmp/activitykit-observation10568.txt || {
-            echo "::error::#10568 observation gate did not execute all seventeen cases"
+          grep -qE "[^0-9]20 passed([,[:space:]]|$)" /tmp/activitykit-observation10568.txt || {
+            echo "::error::#10568 observation gate did not execute all twenty cases"
+            exit 1
+          }
+
+      - name: "#10542 serialized ActivityKit runtime cursor (real Postgres)"
+        if: matrix.group == 'isolated'
+        run: |
+          python -m pytest tests/integration/test_activitykit_runtime_pg.py -v -rs > /tmp/activitykit-runtime10542.txt 2>&1 || {
+            cat /tmp/activitykit-runtime10542.txt
+            exit 1
+          }
+          cat /tmp/activitykit-runtime10542.txt
+          if grep -qiE "[0-9]+ skipped" /tmp/activitykit-runtime10542.txt; then
+            echo "::error::#10542 runtime cursor gate skipped"
+            exit 1
+          fi
+          grep -qE "[^0-9]5 passed([,[:space:]]|$)" /tmp/activitykit-runtime10542.txt || {
+            echo "::error::#10542 runtime cursor gate did not execute all five cases"
             exit 1
           }
 

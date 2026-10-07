@@ -237,6 +237,7 @@
     "#10542 ActivityKit registration ownership (real Postgres)",
     "#10556 durable ActivityKit reservations (real Postgres)",
     "#10564 abandoned ActivityKit credentials expire (real Postgres)",
-    "#10568 canonical ActivityKit observation ordering (real Postgres)"
+    "#10568 canonical ActivityKit observation ordering (real Postgres)",
+    "#10542 serialized ActivityKit runtime cursor (real Postgres)"
   ]
 }
