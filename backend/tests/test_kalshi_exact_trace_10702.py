@@ -187,6 +187,58 @@ async def test_actual_socket_correlates_control_frames_without_changing_callback
     assert "do not log me" not in json.dumps(records)
 
 
+async def test_trace_connection_identity_failure_preserves_subscription_and_callbacks(
+    connect, monkeypatch
+):
+    import uuid
+    import app.services.kalshi_ws as service
+
+    class RecordingFeed(Feed):
+        def __init__(self):
+            super().__init__(
+                [
+                    json.dumps({"type": kind, "msg": {"market_ticker": TICKER}})
+                    for kind in ("ticker", "market_lifecycle_v2", "trade")
+                ]
+            )
+            self.sent = []
+
+        async def send(self, value):
+            self.sent.append(json.loads(value))
+
+    async def run(trace):
+        feed = RecordingFeed()
+        connections = connect(feed)
+        prior_connections = len(connections)
+        ws = service.KalshiWebSocket()
+        ws.exact_trace = trace
+        seen = []
+        ws.on_ticker = lambda msg: seen.append(("ticker", msg))
+        ws.on_lifecycle = lambda msg: seen.append(("lifecycle", msg))
+        ws.on_trade = lambda msg: seen.append(("trade", msg))
+        running = asyncio.create_task(ws.run([TICKER]))
+        try:
+            await asyncio.wait_for(feed.exhausted.wait(), 1)
+            assert ws.is_connected and len(connections) == prior_connections + 1
+        finally:
+            await stop(running)
+        return feed.sent, seen
+
+    baseline = await run(None)
+    trace, records, _ = trace_for()
+    attempts = []
+
+    def failed():
+        attempts.append(True)
+        raise RuntimeError("diagnostic connection identity failed")
+
+    monkeypatch.setattr(uuid, "uuid4", failed)
+    assert await run(trace) == baseline
+    assert len(attempts) == 1 and len(baseline[0]) == 2
+    assert [kind for kind, _ in baseline[1]] == ["ticker", "lifecycle", "trade"]
+    assert [r["stage"] for r in records] == ["START"]
+
+
 def handler(trace, mapped=True):
     tree = ast.parse(Path(task.__file__).read_text())
     nodes = [
@@ -409,6 +461,30 @@ async def test_failed_actual_writer_never_reports_commit_or_stamp(monkeypatch, c
         r["stage"] in ("PRICE_COMMITTED", "EVENT_COMMITTED", "EVENT_PUBLICATION")
         for r in lines
     )
+
+
+async def test_trace_factory_failure_never_costs_actual_consumer_price_write(
+    monkeypatch,
+):
+    from tests.test_kalshi_socket_prices_by_the_rest_rule_8753 import (
+        _price_updates,
+        _stored_after,
+        _tick,
+    )
+
+    frame = _tick(price_dollars=".96", yes_bid_dollars=".59", yes_ask_dollars=".95")
+    baseline = await _price_updates(monkeypatch, frame)
+    calls = []
+
+    def failed(*_a, **_kw):
+        calls.append(True)
+        raise RuntimeError("diagnostic initialization failed")
+
+    monkeypatch.setattr(ExactKalshiTrace, "from_env", failed)
+    writes = await _price_updates(monkeypatch, frame)
+    assert len(calls) == len(writes) == len(baseline) == 1
+    assert _stored_after(writes[0]) == _stored_after(baseline[0])
+    assert _stored_after(writes[0]) == pytest.approx((0.77, 0.59, 0.95))
 
 
 async def test_trace_predicate_failure_never_costs_actual_price_write(monkeypatch):

@@ -246,8 +246,11 @@ class KalshiWebSocket:
                 ) as ws:
                     connection = None
                     if self.exact_trace is not None:
-                        import uuid
-                        connection = uuid.uuid4().hex[:12]
+                        try:
+                            import uuid
+                            connection = uuid.uuid4().hex[:12]
+                        except Exception:
+                            pass
                     self._connected = True
                     if self._reconnect_count > 0:
                         logger.info(
@@ -272,7 +275,7 @@ class KalshiWebSocket:
                             "params": params,
                         }
                         await ws.send(json.dumps(cmd))
-                        if self.exact_trace is not None:
+                        if self.exact_trace is not None and connection is not None:
                             try:
                                 self.exact_trace.sent(
                                     connection, cmd["id"], channel,
@@ -301,7 +304,7 @@ class KalshiWebSocket:
 
                                 msg_type = data.get("type")
                                 payload = data.get("msg", data)
-                                if self.exact_trace is not None:
+                                if self.exact_trace is not None and connection is not None:
                                     try:
                                         self.exact_trace.response(connection, data)
                                         if msg_type == "ticker":

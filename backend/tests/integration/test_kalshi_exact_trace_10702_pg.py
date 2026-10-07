@@ -188,7 +188,5 @@ async def test_existing_full_path_and_outer_rollback_marks(
         for _verb, channel, payload in client.commands
         if channel == f"live:event:{EVENT}"
     ]
-    assert len(event_frames) == 1 and event_frames[0]["probability"] == pytest.approx(
-        0.68
-    )
+    assert len(event_frames) == 1 and event_frames[0]["p"] == pytest.approx(0.68)
     assert event_frames[0]["rev"] == {str(EVENT): revision}

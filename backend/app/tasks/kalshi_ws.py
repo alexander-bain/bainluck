@@ -242,7 +242,9 @@ async def _run_kalshi_ws_consumer(*, sessions, prices):
     from app.utils.kalshi_exact_trace import ExactKalshiTrace
 
     # A START exists even when slate loading never finishes or selects nothing.
-    exact_trace = ExactKalshiTrace.from_env(os.environ, run=None)
+    exact_trace = None
+    with contextlib.suppress(Exception):
+        exact_trace = ExactKalshiTrace.from_env(os.environ, run=None)
 
     # #2471: one engine for this run, a fresh session per operation; the
     # decorator disposes it after the final drain. Same call shape as the
