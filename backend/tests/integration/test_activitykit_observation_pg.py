@@ -272,6 +272,8 @@ async def test_serializer_released_before_worker_fanout(pg):
 
     class Check:
         async def observe(self, *args, **kwargs):
+            async with pg() as db, db.begin():
+                await db.execute(text("UPDATE events SET home_score=1 WHERE id=42"))
             assert (await asyncio.wait_for(adapter(pg).capture(42), 5)).sequence == 2
             return True
 
@@ -425,3 +427,41 @@ async def test_actual_canonical_route_matches_persisted_projection(
         assert observed.snapshot.home_rendered_percent is None
         assert observed.snapshot.probability_observed_at is None
     assert await ActivityKitObservationAdapter(engine).replay(42, 1) == observed
+
+
+async def test_identical_capture_reuses_sequence_without_new_history_or_clock(pg):
+    first = await adapter(pg).capture(42)
+    second = await adapter(pg).capture(42)
+    assert second == first
+    async with pg() as db:
+        assert len((await db.execute(select(OBS))).all()) == 1
+    assert second.snapshot.score_observed_at == NOW
+    assert second.snapshot.probability_observed_at == NOW - timedelta(seconds=15)
+
+
+async def test_concurrent_identical_readers_share_one_immutable_sequence(pg):
+    first, second = await asyncio.wait_for(
+        asyncio.gather(adapter(pg).capture(42), adapter(pg).capture(42)), 5
+    )
+    assert first == second and first.sequence == 1
+    async with pg() as db:
+        assert len((await db.execute(select(OBS))).all()) == 1
+
+
+async def test_new_producer_clock_with_same_values_is_a_new_observation(pg):
+    first = await adapter(pg).capture(42)
+
+    async def fresh(db, event_id):
+        detail = await reader(db, event_id)
+        detail["score_observed_at"] = NOW + timedelta(seconds=10)
+        return detail
+
+    second = await adapter(pg, fresh).capture(42)
+    assert second.sequence == 2
+    assert second.snapshot.home_score == first.snapshot.home_score
+    assert second.snapshot.score_observed_at == NOW + timedelta(seconds=10)
+    assert (
+        second.snapshot.probability_observed_at
+        == first.snapshot.probability_observed_at
+    )
+    assert await adapter(pg).replay(42, 1) == first

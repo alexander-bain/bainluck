@@ -37,7 +37,7 @@ the approved named candidate:
 
 No credentials are looked up at import time, discovered from files/keychain or
 borrowed from Firebase. Enabled runs validate settings before opening the DB or
-transport, sign ES256 provider JWTs, and close their owned resources. Disabling
+transport, reuse ES256 provider JWTs for 40 minutes per team/key identity in each worker process, and close their owned resources. Disabling
 stops new runs; an in-flight page can finish within its existing deadline. User
 revocation uses the existing atomic registration/token fencing path.
 
@@ -45,3 +45,20 @@ This source does not configure any deployed environment or send a real push.
 Local unit and disposable PostgreSQL gates are separate from hosted integration,
 configured APNs acceptance and named-candidate device receipt (#10543). An APNs
 HTTP 200 alone never proves that the Watch or phone displayed the update.
+
+
+Unchanged canonical projections reuse their existing immutable observation and
+sequence; a beat alone no longer appends history. Changes to either original
+producer clock still create a new observation. This removes duplicate history;
+it is not a retention policy for genuinely changed readings.
+
+Before enablement, the named acceptance build must match the explicit APNs
+environment: TestFlight/App Store uses production, Xcode debug uses sandbox.
+The registry currently has one deployment-wide environment; mixed environments
+are not supported. A misconfigured topic/key/environment can permanently halt
+an attempted activity. Validate a single-registration canary before wider use.
+The enabling owner must verify idle_in_transaction_session_timeout exceeds the
+135-second caller budget (or is disabled), so the serializer survives the page.
+With20 registrations/page, revisit latency is approximately ceil(N/20) times
+max(30 seconds, page duration):100 active registrations can mean at least2.5min.
+No configuration, database setting read or APNs canary was performed by this PR.

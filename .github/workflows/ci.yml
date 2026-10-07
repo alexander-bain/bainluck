@@ -6936,8 +6936,8 @@ jobs:
             echo "::error::#10568 observation ordering gate skipped"
             exit 1
           fi
-          grep -qE "[^0-9]17 passed([,[:space:]]|$)" /tmp/activitykit-observation10568.txt || {
-            echo "::error::#10568 observation gate did not execute all seventeen cases"
+          grep -qE "[^0-9]20 passed([,[:space:]]|$)" /tmp/activitykit-observation10568.txt || {
+            echo "::error::#10568 observation gate did not execute all twenty cases"
             exit 1
           }
 

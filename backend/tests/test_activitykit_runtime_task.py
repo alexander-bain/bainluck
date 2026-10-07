@@ -1,6 +1,7 @@
 """Default-safe scheduling and explicit provider configuration; no APNs I/O."""
 
 import importlib
+from datetime import datetime, timedelta, timezone
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, Mock
 
@@ -10,6 +11,11 @@ from cryptography.hazmat.primitives import serialization
 from cryptography.hazmat.primitives.asymmetric import ec
 
 module = importlib.import_module("app.tasks.activitykit_runtime")
+
+
+@pytest.fixture(autouse=True)
+def isolated_provider_cache(monkeypatch):
+    monkeypatch.setattr(module, "_PROVIDER_TOKENS", {})
 
 
 @pytest.fixture
@@ -116,3 +122,41 @@ def test_schedule_is_registered_bounded_and_partial_result_fails_task(monkeypatc
     )
     with pytest.raises(RuntimeError, match="ActivityKit runtime incomplete"):
         task.run()
+
+
+@pytest.mark.asyncio
+async def test_provider_token_reused_across_pages_and_instances_for_forty_minutes(
+    provider,
+):
+    now = datetime(2026, 10, 7, tzinfo=timezone.utc)
+    first = module.ProviderConfiguration.from_environment(provider)
+    token = await first.provider_token(now=now)
+    rebuilt = module.ProviderConfiguration.from_environment(provider)
+    assert await rebuilt.provider_token(now=now + timedelta(seconds=30)) == token
+    assert (
+        await rebuilt.provider_token(now=now + timedelta(minutes=39, seconds=59))
+        == token
+    )
+    renewed = await rebuilt.provider_token(now=now + timedelta(minutes=41))
+    assert renewed != token
+    claims = jwt.decode(
+        renewed,
+        rebuilt.private_key.public_key(),
+        algorithms=["ES256"],
+        options={"verify_iat": False},
+    )
+    assert claims["iat"] == int((now + timedelta(minutes=41)).timestamp())
+
+
+@pytest.mark.asyncio
+async def test_provider_cache_is_identity_scoped_and_refuses_clock_rollback(provider):
+    now = datetime(2026, 10, 7, tzinfo=timezone.utc)
+    first = module.ProviderConfiguration.from_environment(provider)
+    token = await first.provider_token(now=now)
+    other = module.ProviderConfiguration.from_environment(
+        {**provider, "ACTIVITYKIT_APNS_KEY_ID": "9876543210"}
+    )
+    assert await other.provider_token(now=now) != token
+    with pytest.raises(ValueError, match="moved backwards"):
+        await first.provider_token(now=now - timedelta(seconds=1))
+    assert await first.provider_token(now=now + timedelta(seconds=1)) == token

@@ -101,14 +101,27 @@ class ActivityKitObservationAdapter:
                                 "Canonical event identity changed; binding refused"
                             )
                         previous = (
-                            await db.execute(
-                                select(OBS.c.sequence)
-                                .where(OBS.c.event_id == event_id)
-                                .order_by(OBS.c.sequence.desc())
-                                .limit(1)
+                            (
+                                await db.execute(
+                                    select(OBS.c.sequence, OBS.c.snapshot)
+                                    .where(OBS.c.event_id == event_id)
+                                    .order_by(OBS.c.sequence.desc())
+                                    .limit(1)
+                                )
                             )
-                        ).scalar_one_or_none()
-                        sequence = (previous or 0) + 1
+                            .mappings()
+                            .one_or_none()
+                        )
+                        if (
+                            previous is not None
+                            and decode_snapshot(previous["snapshot"]) == snapshot
+                        ):
+                            # Reuse the immutable reading and its revision. A beat
+                            # is not a new producer observation or a history row.
+                            return Observation(previous["sequence"], snapshot)
+                        sequence = (
+                            previous["sequence"] if previous is not None else 0
+                        ) + 1
                         await db.execute(
                             insert(OBS).values(
                                 event_id=event_id,

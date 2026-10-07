@@ -19,6 +19,12 @@ from app.services.activitykit_worker import DurableActivityKitWorker
 from app.tasks.base import _get_task_engine
 from app.utils.activitykit_delivery_state import RetryPolicy
 
+# Process-local, across asyncio.run calls in the same Celery worker.
+# A worker uses one configured identity; bound retained identities on rotation.
+_PROVIDER_TOKENS = {}
+_PROVIDER_REFRESH_SECONDS = 40 * 60
+_PROVIDER_CACHE_LIMIT = 16
+
 
 @dataclass(frozen=True)
 class ProviderConfiguration:
@@ -55,14 +61,33 @@ class ProviderConfiguration:
             raise ValueError("Invalid ActivityKit provider configuration") from None
         return cls(bundle, environment, team, key_id, signer)
 
-    async def provider_token(self):
-        # A fresh ES256 token per finite page; never store/log the JWT or key.
-        return jwt.encode(
-            {"iss": self.team_id, "iat": int(datetime.now(timezone.utc).timestamp())},
+    async def provider_token(self, *, now=None):
+        stamp = now if now is not None else datetime.now(timezone.utc)
+        if not isinstance(stamp, datetime) or stamp.utcoffset() is None:
+            raise ValueError("Aware provider-token clock required")
+        issued_at = int(stamp.timestamp())
+        identity = (self.team_id, self.key_id)
+        previous = _PROVIDER_TOKENS.get(identity)
+        if previous is not None:
+            age = issued_at - previous[0]
+            if age < 0:
+                raise ValueError("Provider-token clock moved backwards")
+            if age < _PROVIDER_REFRESH_SECONDS:
+                return previous[1]
+        token = jwt.encode(
+            {"iss": self.team_id, "iat": issued_at},
             self.private_key,
             algorithm="ES256",
             headers={"kid": self.key_id},
         )
+        if (
+            identity not in _PROVIDER_TOKENS
+            and len(_PROVIDER_TOKENS) >= _PROVIDER_CACHE_LIMIT
+        ):
+            oldest = min(_PROVIDER_TOKENS, key=lambda item: _PROVIDER_TOKENS[item][0])
+            del _PROVIDER_TOKENS[oldest]
+        _PROVIDER_TOKENS[identity] = (issued_at, token)
+        return token
 
 
 async def run_activitykit_runtime():
