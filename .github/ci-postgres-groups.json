@@ -201,6 +201,7 @@
     "#8126 a settled Kalshi leg's captured verdict reaches its grade, and the undo round-trips (real Postgres)"
   ],
   "isolated": [
+    "#10702 exact Kalshi trace commit and rollback controls (real Postgres)",
     "#837 blend stamp deadlock \u2014 provision the disposable database",
     "#837 two venues' live stamps do not deadlock each other (real Postgres)",
     "#10661 a held Kalshi game no longer holds the games after it (real Postgres)",

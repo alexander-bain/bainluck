@@ -7,8 +7,8 @@ pair (`app/utils/kalshi_price_pipeline.py`, whose own tests own that path).
 WHAT THIS FILE PROVES — the consumer's half, against the FROZEN pre-#10693
 flush (`fixtures/kalshi_flush_before_10693.py.txt`, never edited to match):
 
-1. The current `flush_prices` differs from the frozen one in exactly ONE
-   statement, the price loop. The 500 ms phase budget, 55P03-only continuation,
+1. After removing the four exact, independently reviewed #10702 observer
+   statements, `flush_prices` differs in exactly ONE statement, the price loop. The 500 ms phase budget, 55P03-only continuation,
    pending-debt grouping, newest-tick retention, commit-before-publication,
    receipts and the timeout-free final drain are the same code, not a rewrite.
 2. Executed: the current and the frozen flush, each on its own copy of the
@@ -90,20 +90,47 @@ def _frozen_loop():
     )
 
 
+# #10702 adds optional observers around the transaction. Exclude only these
+# exact accepted ASTs, never arbitrary `if exact_trace` blocks: a changed body,
+# exception guard, or price/commit operation must still fail this comparison.
+TRACE_OBSERVERS = (
+    'exact_trace = getattr(tail_receipts, "exact_trace", None)',
+    'written_observations: dict = {}',
+    'if exact_trace is not None:\n    with contextlib.suppress(Exception):\n        exact_trace.write_failed(\n            [batch_marks[oid] for oid in phase if oid in batch_marks],\n            "LOCK_TIMEOUT" if lock_timed_out else "ROLLED_BACK",\n        )',
+    'if exact_trace is not None:\n    with contextlib.suppress(Exception):\n        for oid, observed_at in written_observations.items():\n            exact_trace.committed(batch_marks.get(oid), observed_at)\n        exact_trace.write_failed(\n            [batch_marks[oid] for oid in phase\n             if oid not in written_outcome_ids and oid in batch_marks],\n            "DECLINED_SETTLED_OR_MISSING",\n        )',
+)
+
+
+def _without_reviewed_observers(fn):
+    accepted = {ast.dump(ast.parse(source).body[0]) for source in TRACE_OBSERVERS}
+    removed = []
+
+    class RemoveExactObservers(ast.NodeTransformer):
+        def visit(self, node):
+            if isinstance(node, ast.stmt) and ast.dump(node) in accepted:
+                removed.append(ast.dump(node))
+                return None
+            return super().visit(node)
+
+    result = RemoveExactObservers().visit(fn)
+    assert len(removed) == len(accepted) and set(removed) == accepted
+    return result
+
+
 async def test_the_flush_changed_in_exactly_the_price_loop():
-    current = _without_docstring(flush_ast())
+    current = _without_reviewed_observers(_without_docstring(flush_ast()))
     handoff = pipeline_handoff(current)
     _replace_statement(current, lambda s: s is handoff, _frozen_loop())
     frozen = _without_docstring(frozen_flush_ast())
     assert ast.dump(current) == ast.dump(frozen), (
-        "kalshi_ws.flush_prices changed outside the price loop; #10693 moves "
+        "kalshi_ws.flush_prices changed outside the price loop and reviewed observers; #10693 moves "
         "only the per-row write into the pipeline"
     )
 
 
 async def test_strawman_any_other_edit_is_seen():
     """The comparison is not vacuous: one changed constant elsewhere fails it."""
-    current = _without_docstring(flush_ast())
+    current = _without_reviewed_observers(_without_docstring(flush_ast()))
     handoff = pipeline_handoff(current)
     _replace_statement(current, lambda s: s is handoff, _frozen_loop())
     budget = next(
@@ -112,6 +139,22 @@ async def test_strawman_any_other_edit_is_seen():
     )
     budget.id = "SOME_OTHER_BUDGET"
     assert ast.dump(current) != ast.dump(_without_docstring(frozen_flush_ast()))
+
+
+async def test_changed_observer_cannot_hide_a_price_write():
+    current = _without_docstring(flush_ast())
+    observer = next(
+        node for node in ast.walk(current)
+        if isinstance(node, ast.If) and any(
+            isinstance(child, ast.Call)
+            and isinstance(child.func, ast.Attribute)
+            and child.func.attr == "committed"
+            for child in ast.walk(node)
+        )
+    )
+    observer.body.append(ast.parse("price_buffer.clear()").body[0])
+    with pytest.raises(AssertionError):
+        _without_reviewed_observers(current)
 
 
 async def test_the_frozen_fixture_is_the_pre_10693_flush():

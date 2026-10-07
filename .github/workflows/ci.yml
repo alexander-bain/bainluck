@@ -4511,6 +4511,23 @@ jobs:
             exit 1
           }
 
+      - name: "#10702 exact Kalshi trace commit and rollback controls (real Postgres)"
+        # Each case owns and drops a random schema in the job's disposable DB.
+        if: matrix.group == 'isolated'
+        run: |
+          result=0
+          python -m pytest tests/integration/test_kalshi_exact_trace_10702_pg.py -v -rs > /tmp/trace10702.txt 2>&1 || result=$?
+          cat /tmp/trace10702.txt
+          if [ "$result" -ne 0 ]; then exit "$result"; fi
+          if grep -qiE "[0-9]+ skipped" /tmp/trace10702.txt; then
+            echo "::error::#10702 exact trace real PostgreSQL gate skipped"
+            exit 1
+          fi
+          grep -qE "(^|[^0-9])3 passed([,[:space:]]|$)" /tmp/trace10702.txt || {
+            echo "::error::#10702 exact trace gate did not run all three cases"
+            exit 1
+          }
+
       - name: "#837 blend stamp deadlock — provision the disposable database"
         # Its own database for the reason the #7617 step above gives: the file
         # drops and creates the tables it touches.
