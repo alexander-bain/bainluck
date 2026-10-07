@@ -54,7 +54,7 @@ struct WatchSelectedGameView: View {
                     selectedGame(game)
                         .onAppear {
                             WatchTelemetry.shared.content(.game)
-                            WatchTelemetry.shared.reading(.game, saved: store.isRestoredReading, count: 1)
+                            WatchTelemetry.shared.reading(.game, fetchedAt: store.fetchedAt, saved: store.isRestoredReading, count: 1)
                         }
                 } else if store.selectedEventID != nil {
                     if store.isRefreshing {
@@ -138,7 +138,12 @@ struct WatchSelectedGameView: View {
         }
         .onChange(of: telemetrySurface) { _, surface in WatchTelemetry.shared.screen(surface) }
         .onChange(of: store.fetchedAt) { _, _ in
-            if store.game != nil { WatchTelemetry.shared.reading(.game, saved: store.isRestoredReading, count: 1) }
+            if store.game != nil { WatchTelemetry.shared.reading(.game, fetchedAt: store.fetchedAt, saved: store.isRestoredReading, count: 1) }
+        }
+        .onChange(of: store.isRestoredReading) { _, _ in
+            if store.game != nil {
+                WatchTelemetry.shared.reading(.game, fetchedAt: store.fetchedAt, saved: store.isRestoredReading, count: 1)
+            }
         }
         .navigationTitle("Your game")
         .userActivity(GameContinuation.activityType, element: continuationEventID) { id, activity in

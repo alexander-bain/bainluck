@@ -89,9 +89,15 @@ struct WatchDiscoverStoriesView: View {
                 WatchTelemetry.shared.refreshResult(.discoveries, outcome: outcome, durationMS: ms, count: count)
             }
             WatchTelemetry.shared.screen(.discoveries)
+            WatchTelemetry.shared.reading(.discoveries, fetchedAt: discoveries.fetchedAt,
+                                          saved: discoveries.isSavedReading, count: visibleReadings.count)
         }
         .onChange(of: discoveries.fetchedAt) { _, _ in
-            WatchTelemetry.shared.reading(.discoveries, saved: discoveries.isSavedReading, count: visibleReadings.count)
+            WatchTelemetry.shared.reading(.discoveries, fetchedAt: discoveries.fetchedAt, saved: discoveries.isSavedReading, count: visibleReadings.count)
+        }
+        .onChange(of: discoveries.isSavedReading) { _, _ in
+            WatchTelemetry.shared.reading(.discoveries, fetchedAt: discoveries.fetchedAt,
+                                          saved: discoveries.isSavedReading, count: visibleReadings.count)
         }
         .accessibilityIdentifier("watch.discovery.list")
         .navigationTitle(dynamicTypeSize.isAccessibilitySize ? "" : "Discoveries")

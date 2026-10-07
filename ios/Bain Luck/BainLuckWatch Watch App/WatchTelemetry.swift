@@ -13,6 +13,7 @@ final class WatchTelemetry: NSObject, ObservableObject, WCSessionDelegate, @unch
     @MainActor private var foregroundActive = false
     @MainActor private var sending = false
     @MainActor private var handshaking = false
+    @MainActor private var readings = WatchTelemetryReadingTracker()
     @MainActor private var shownScreen: WatchTelemetrySurface?
     @MainActor private var currentScreen: WatchTelemetrySurface?
     @MainActor private var pendingContent: [WatchTelemetrySurface: TimeInterval] = [:]
@@ -51,6 +52,7 @@ final class WatchTelemetry: NSObject, ObservableObject, WCSessionDelegate, @unch
             start(); synchronize()
         } else {
             currentScreen = nil; firstCardMS = nil; pendingContent.removeAll()
+            readings.reset()
         }
     }
 
@@ -114,13 +116,15 @@ final class WatchTelemetry: NSObject, ObservableObject, WCSessionDelegate, @unch
                count: min(100, max(0, count)))
     }
 
-    @MainActor func reading(_ surface: WatchTelemetrySurface, saved: Bool, count: Int) {
+    @MainActor func reading(_ surface: WatchTelemetrySurface, fetchedAt: Date?, saved: Bool, count: Int) {
+        guard enabled, buffer.phoneGrant?.permits(at: Date()) == true, count > 0,
+              readings.accept(surface, fetchedAt: fetchedAt, saved: saved) else { return }
         record(.reading, surface: surface, outcome: saved ? .saved : .fresh, count: min(100, max(0, count)))
     }
 
     @MainActor private func finishScreen() {
         guard let surface = currentScreen else { return }
-        record(.timing, surface: surface, outcome: firstCardMS == nil ? .empty : .success,
+        record(.timing, surface: surface, outcome: firstCardMS == nil ? .unknown : .success,
                durationMS: Self.milliseconds(since: screenStart), firstCard: firstCardMS ?? -1,
                cold: screenCold)
     }
@@ -191,6 +195,7 @@ final class WatchTelemetry: NSObject, ObservableObject, WCSessionDelegate, @unch
         let previous = buffer.phoneGrant?.epoch
         buffer.setPhoneGrant(grant, now: Date())
         if previous != buffer.phoneGrant?.epoch {
+            readings.reset()
             currentScreen = nil; firstCardMS = nil; pendingContent.removeAll()
             firstScreen = false
             if let shownScreen { screen(shownScreen) }

@@ -48,12 +48,12 @@ import Foundation
         queue.append(record(), now: now)
         precondition(queue.records.isEmpty, "Regrant requires fresh phone authority")
         queue.setPhoneGrant(grant, now: now)
-        queue.append(record(now.addingTimeInterval(1)), now: now)
+        queue.append(record(now.addingTimeInterval(301)), now: now)
         queue.append(record(now.addingTimeInterval(-86400)), now: now)
         precondition(queue.records.isEmpty, "Future and expired records rejected")
         queue.append(record(), now: now)
         precondition(queue.batch(now: now.addingTimeInterval(3600)) == nil, "Expired grant drops buffer")
-        queue.setPhoneGrant(WatchTelemetryGrant(epoch: epoch, validUntil: now.addingTimeInterval(86401)), now: now)
+        queue.setPhoneGrant(WatchTelemetryGrant(epoch: epoch, validUntil: now.addingTimeInterval(86701)), now: now)
         precondition(queue.phoneGrant == nil, "Unbounded grant rejected")
         precondition(!WatchTelemetryRecord(recordedAt: now, kind: .refresh, surface: .game,
                                           outcome: .success, durationMS: -1).isWellFormed)
@@ -61,7 +61,7 @@ import Foundation
         precondition(!WatchTelemetryRecord(recordedAt: now, kind: .screen, surface: .game,
                                           action: .refresh).isWellFormed)
         let unknown = WatchTelemetryRecord(recordedAt: now, kind: .timing, surface: .picker,
-                                           outcome: .empty, firstCardMS: -1, cold: true)
+                                           outcome: .unknown, firstCardMS: -1, cold: true)
         precondition(unknown.isWellFormed, "Unknown first card remains -1, not a fabricated zero")
         queue.setPhoneGrant(grant, now: now)
         let submitted = record()
@@ -79,6 +79,29 @@ import Foundation
         precondition(parameters["device_class"] as? String == "watch")
         precondition(parameters["surface"] as? String == "watch_game")
         precondition(parameters["id"] == nil && parameters["recordedAt"] == nil && parameters["phoneEpoch"] == nil)
+        let phoneAheadGrant = WatchTelemetryGrant(epoch: epoch,
+            validUntil: now.addingTimeInterval(WatchTelemetryBuffer.maxAge + 0.5))
+        precondition(phoneAheadGrant.permits(at: now.addingTimeInterval(0.1)),
+                     "Ordinary clock skew must not reject the phone grant")
+        let watchAhead = record(now.addingTimeInterval(0.5))
+        let skewBatch = WatchTelemetryBatch(schema: 1, phoneEpoch: epoch, watchEpoch: UUID(), records: [watchAhead])
+        let skewWire = try JSONEncoder().encode(skewBatch)
+        precondition(WatchTelemetryIngress.accept(skewWire, phoneEpoch: epoch,
+            now: now.addingTimeInterval(0.1), seen: []).records == [watchAhead],
+            "Ordinary clock skew must not dispose a fresh Watch event")
+        queue.setPhoneGrant(phoneAheadGrant, now: now)
+        queue.append(watchAhead, now: now)
+        precondition(queue.records.contains(watchAhead), "Local queue uses the same bounded clock tolerance")
+        var tracker = WatchTelemetryReadingTracker()
+        precondition(!tracker.accept(.game, fetchedAt: nil, saved: false))
+        precondition(tracker.accept(.game, fetchedAt: now, saved: false))
+        precondition(!tracker.accept(.game, fetchedAt: now, saved: false), "First appearance plus fetchedAt change is one reading")
+        precondition(tracker.accept(.discoveries, fetchedAt: now, saved: true), "Saved Discoveries appearance is recorded")
+        precondition(!tracker.accept(.discoveries, fetchedAt: now, saved: true))
+        precondition(tracker.accept(.discoveries, fetchedAt: now, saved: false), "Saved to fresh transition is distinct")
+        precondition(tracker.accept(.game, fetchedAt: now.addingTimeInterval(1), saved: false))
+        tracker.reset()
+        precondition(tracker.accept(.game, fetchedAt: now, saved: false), "New consent epoch resets dedupe")
         print("WATCH_TELEMETRY_BUFFER=PASS deny/local+phone consent/revocation/regrant/ack/bounds/restore/expiry/schema")
     }
 }

@@ -102,6 +102,42 @@ final class WatchTelemetryConsentTests: XCTestCase {
     }
 
 
+    func testBoundedClockSkewDoesNotDiscardFreshCompanionEvents() throws {
+        let now = Date(timeIntervalSince1970: 1_800_000_000)
+        let epoch = UUID()
+        let grant = WatchTelemetryGrant(epoch: epoch,
+            validUntil: now.addingTimeInterval(WatchTelemetryBuffer.maxAge + 0.5))
+        XCTAssertTrue(grant.permits(at: now.addingTimeInterval(0.1)))
+        XCTAssertFalse(WatchTelemetryGrant(epoch: epoch,
+            validUntil: now.addingTimeInterval(WatchTelemetryBuffer.maxAge + 301)).permits(at: now))
+        let event = WatchTelemetryRecord(recordedAt: now.addingTimeInterval(0.5), kind: .screen, surface: .game)
+        let batch = WatchTelemetryBatch(schema: 1, phoneEpoch: epoch, watchEpoch: UUID(), records: [event])
+        let accepted = WatchTelemetryIngress.accept(try JSONEncoder().encode(batch), phoneEpoch: epoch,
+                                                   now: now.addingTimeInterval(0.1), seen: [])
+        XCTAssertEqual(accepted.records, [event])
+        var queue = WatchTelemetryBuffer()
+        queue.setWatchConsent(true)
+        queue.setPhoneGrant(grant, now: now)
+        queue.append(event, now: now)
+        XCTAssertEqual(queue.records, [event])
+        queue.append(WatchTelemetryRecord(recordedAt: now.addingTimeInterval(301), kind: .screen, surface: .game), now: now)
+        XCTAssertEqual(queue.records, [event], "Tolerance must stay bounded")
+    }
+
+    func testReadingCallbacksDeduplicateAndPreserveSavedTransitions() {
+        let date = Date(timeIntervalSince1970: 1_800_000_000)
+        var tracker = WatchTelemetryReadingTracker()
+        XCTAssertFalse(tracker.accept(.game, fetchedAt: nil, saved: false))
+        XCTAssertTrue(tracker.accept(.game, fetchedAt: date, saved: false))
+        XCTAssertFalse(tracker.accept(.game, fetchedAt: date, saved: false))
+        XCTAssertTrue(tracker.accept(.discoveries, fetchedAt: date, saved: true))
+        XCTAssertFalse(tracker.accept(.discoveries, fetchedAt: date, saved: true))
+        XCTAssertTrue(tracker.accept(.discoveries, fetchedAt: date, saved: false))
+        XCTAssertTrue(tracker.accept(.game, fetchedAt: date.addingTimeInterval(1), saved: false))
+        tracker.reset()
+        XCTAssertTrue(tracker.accept(.game, fetchedAt: date, saved: false))
+    }
+
     @MainActor func testDiscoveryReceiptsDistinguishOfflineEmptyCancelledAndSuperseded() async throws {
         let suite = "watch-telemetry-discovery-\(UUID())"
         let defaults = try XCTUnwrap(UserDefaults(suiteName: suite))

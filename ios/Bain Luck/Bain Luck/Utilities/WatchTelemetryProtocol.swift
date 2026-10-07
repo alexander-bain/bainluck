@@ -73,7 +73,7 @@ nonisolated struct WatchTelemetryGrant: Codable, Equatable, Sendable {
     let validUntil: Date
     func permits(at now: Date) -> Bool {
         now.timeIntervalSince1970.isFinite && validUntil.timeIntervalSince1970.isFinite
-            && validUntil > now && validUntil.timeIntervalSince(now) <= WatchTelemetryBuffer.maxAge
+            && validUntil > now && validUntil.timeIntervalSince(now) <= WatchTelemetryBuffer.maxAge + WatchTelemetryBuffer.clockSkewTolerance
     }
 }
 
@@ -91,6 +91,7 @@ nonisolated struct WatchTelemetryBuffer: Codable, Sendable {
     static let maxBytes = 48 * 1024
     static let maxBatchBytes = 12 * 1024
     static let maxAge: TimeInterval = 24 * 60 * 60
+    static let clockSkewTolerance: TimeInterval = 300
     private(set) var watchEpoch: UUID?
     private(set) var phoneGrant: WatchTelemetryGrant?
     private(set) var records: [WatchTelemetryRecord] = []
@@ -163,7 +164,7 @@ nonisolated struct WatchTelemetryBuffer: Codable, Sendable {
 
     private static func isCurrent(_ record: WatchTelemetryRecord, now: Date) -> Bool {
         let age = now.timeIntervalSince(record.recordedAt)
-        return age.isFinite && age >= 0 && age < Self.maxAge
+        return age.isFinite && age >= -Self.clockSkewTolerance && age < Self.maxAge
     }
 
     private mutating func enforceBounds() {
@@ -198,7 +199,7 @@ nonisolated enum WatchTelemetryIngress {
         for record in batch.records {
             guard ids.insert(record.id).inserted else { continue }
             let age = now.timeIntervalSince(record.recordedAt)
-            guard record.isWellFormed, age.isFinite, age >= 0,
+            guard record.isWellFormed, age.isFinite, age >= -WatchTelemetryBuffer.clockSkewTolerance,
                   age < WatchTelemetryBuffer.maxAge, !seen.contains(record.id) else { continue }
             records.append(record)
         }
@@ -226,4 +227,25 @@ extension WatchTelemetryRecord {
         if let cold { result["entry"] = cold ? "cold" : "warm" }
         return result
     }
+}
+
+
+/// Multiple SwiftUI callbacks may observe the same reading in one update.
+/// Stored only in memory; never includes a game or account identifier.
+nonisolated struct WatchTelemetryReadingTracker {
+    private struct Reading: Equatable {
+        let fetchedAt: Date
+        let saved: Bool
+    }
+    private var last: [WatchTelemetrySurface: Reading] = [:]
+
+    mutating func accept(_ surface: WatchTelemetrySurface, fetchedAt: Date?, saved: Bool) -> Bool {
+        guard let fetchedAt, fetchedAt.timeIntervalSince1970.isFinite else { return false }
+        let reading = Reading(fetchedAt: fetchedAt, saved: saved)
+        guard last[surface] != reading else { return false }
+        last[surface] = reading
+        return true
+    }
+
+    mutating func reset() { last.removeAll() }
 }
