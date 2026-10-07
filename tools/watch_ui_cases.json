@@ -1,0 +1,39 @@
+{
+  "readings": [
+    "ComplicationContentJourneyTests/testSavedLiveScoreFinalAndEmptyRectangularContent",
+    "ComplicationContentJourneyTests/testSavedCircularNamedProbabilityFinalAndScoreLayout",
+    "ComplicationContentJourneyTests/testCircularOldUnknownAndNonfittingReadingsStayLaunchers",
+    "ProbabilityRoundingJourneyTests/testPairedRoundingPersistsOfflineAndDrawSportKeepsScalarRounding",
+    "WatchDiscoverJourneyTests/testSelectedGameStaysFirstAndDiscoveriesSurviveOfflineRelaunch",
+    "WatchDiscoverJourneyTests/testDiscoveriesAtAccessibilitySizeKeepReadingAndReturnReachable",
+    "WatchDiscoverJourneyTests/testWithoutSelectionShowsThirdQuestionWithUnknownObservationAge",
+    "WatchDiscoverJourneyTests/testUnselectedReturnControlIsReadableAtAccessibilitySize",
+    "WatchDiscoverPolishTests/testTopRefreshRecoversAndSeparatesStoriesAtStandardSize",
+    "WatchDiscoverPolishTests/testTopRefreshRecoversAndSeparatesStoriesAtAccessibilitySize",
+    "WatchDiscoverPolishTests/testSelectedGameKeepsSummaryBeforeSeparatedStories"
+  ],
+  "navigation": [
+    "ClearSelectionJourneyTests/testClearSavedOfflineSelectionSurvivesRelaunch",
+    "LargeTextRecoveryJourneyTests/testOfflinePickerReturnRetainsNamedReadingAtLargestTextSize",
+    "LargeTextRecoveryJourneyTests/testOfflineClearSurvivesRelaunchAtLargestTextSize",
+    "LauncherURLJourneyTests/testColdLauncherURLDeliversAndRetainsOfflineSelection",
+    "PickerReturnJourneyTests/testReturnFromPickerPreservesSelectedGameAndSavedOfflineReading",
+    "PickerReturnJourneyTests/testNetworkFailureGuidanceRetainsChoicesAndRecoversSelection",
+    "PickerSelectedStateJourneyTests/testSelectedGameIsMarkedInPickerAndCanChange",
+    "PickerSelectedStateJourneyTests/testSelectedGameIsMarkedAtAccessibilitySize",
+    "SelectedGameJourneyTests/testPickerSelectionSurvivesOfflineRelaunchAndCanChange",
+    "SelectedGameJourneyTests/testAccessibilityLayoutStressKeepsReadingsAndControlsReachable",
+    "SelectedGameUpdatingJourneyTests/testUpdatingIsVisibleUntilRequestFinishes",
+    "SelectedGameUpdatingJourneyTests/testUpdatingIsVisibleAtAccessibilitySize",
+    "WatchDiagnosticsJourneyTests/testConsentSettingPersistsAndRevokesAtStandardSize",
+    "WatchDiagnosticsJourneyTests/testConsentSettingPersistsAndRevokesAtAccessibilitySize"
+  ],
+  "widgets": [
+    "RectangularWidgetHostJourneyTests/testActualRectangularWidgetShowsPublishedSavedReading",
+    "WidgetTapJourneyTests/testColdActualWidgetTapRetainsOfflineReading",
+    "WidgetTapJourneyTests/testColdActualWidgetTapOffersPickerWithoutSelection",
+    "WidgetTapJourneyTests/testFreshConfiguredFaceIsActiveBeforeActualLauncherTap",
+    "WidgetTapJourneyTests/testActualCircularSavedReadingAndTap",
+    "WidgetTapJourneyTests/testActualComplicationHost"
+  ]
+}
