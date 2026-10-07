@@ -1,0 +1,15 @@
+{
+  "started_at": 1791372464.626622,
+  "cluster": "/var/folders/rk/bp7zksws1s9b48c6_l_qn91m0000gn/T/kalshi10693-pg-u53gpo6y",
+  "port": "55534",
+  "listen_addresses": "",
+  "gates": [
+    {
+      "log": "ci-floor-command.txt",
+      "exit_code": 0
+    }
+  ],
+  "stop_exit": 0,
+  "removed": true,
+  "ended_at": 1791372477.9942222
+}
