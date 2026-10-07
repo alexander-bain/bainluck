@@ -33,8 +33,7 @@ import json
 import threading
 
 import pytest
-from tests.pm_bulk_test_support import price_writes
-from sqlalchemy.dialects import postgresql
+from tests.pm_bulk_test_support import price_writes, statement_params
 from sqlalchemy.sql.dml import Update
 
 import app.services.kalshi_ws as kalshi_svc
@@ -108,12 +107,12 @@ class _Rig:
                 if stmt is SET_LOCK_TIMEOUT_SQL:  # #10661: the flush's lock budget
                     return _Result([])
                 if isinstance(stmt, Update):
-                    params = stmt.compile(dialect=postgresql.dialect()).params
+                    params = statement_params(stmt, params)  # #10689
                     if (
                         stmt.table.name == "futures_outcomes"
-                        and price_writes(stmt)
+                        and price_writes(stmt, params)
                     ):
-                        rig.writes.extend(price_writes(stmt))
+                        rig.writes.extend(price_writes(stmt, params))
                     return _Result([])
                 return _Result(rig.batches.pop(0) if rig.batches else [])
 

@@ -158,7 +158,7 @@ async def _run_kalshi_ws_consumer(*, sessions):
     3. Buffer price updates, flush every 2s
     4. Process settlements immediately
     """
-    from sqlalchemy import select, update, text, or_, and_, func
+    from sqlalchemy import select, update, text, and_
     from sqlalchemy.ext.asyncio import AsyncSession
 
     from app.models.models import (
@@ -184,9 +184,9 @@ async def _run_kalshi_ws_consumer(*, sessions):
         shard_tickers,
     )
     from app.utils.futures_rank import rerank_market_fields_stmt  # #6598
-    from app.utils.price_change_stamp import price_changed_at_value
-    from app.utils.price_change_stamp import quote_moved_column  # #9484
-    from app.utils.resolution_authority import AUTHORITATIVE_SOURCES
+    from app.utils.kalshi_price_statement import (  # #10689
+        KALSHI_PRICE_STATEMENTS, kalshi_price_parameters,
+    )
 
     # #2471: one engine for this run, a fresh session per operation; the
     # decorator disposes it after the final drain. Same call shape as the
@@ -470,7 +470,8 @@ async def _run_kalshi_ws_consumer(*, sessions):
                         # BOTH sides; otherwise each is set to itself (a no-op). Half
                         # a book beside the other half from an older REST poll is a
                         # quote nobody ever offered. Spelled as keywords, not a
-                        # splat, so the #4958 writer scan can read the mapping.
+                        # splat, so the #4958 writer scan can read the mapping (since
+                        # #10689 it is spelled in `utils/kalshi_price_statement.py`).
                         tick_has_book = yes_bid is not None and yes_ask is not None
                         result = await session.execute(
                             # #9484: the TABLE, not the entity. An ORM-enabled
@@ -479,78 +480,50 @@ async def _run_kalshi_ws_consumer(*, sessions):
                             # the Core form keeps the CursorResult (asyncpg sets
                             # its rowcount from the command status) and returns
                             # the rows that actually took the price.
-                            update(FuturesOutcome.__table__)
-                            .where(
-                                FuturesOutcome.id == outcome_id,
-                                # #5411 — A SETTLED CONTRACT HAS NO LIVE PRICE. It is
-                                # worth exactly 1 or 0, and #5246 made every reachable
-                                # settlement writer say so. This socket had never heard
-                                # of settlement: it wrote `current_probability`
-                                # unconditionally, so 189 of the 6,895 rows that
-                                # repair cleared were re-priced within 55 minutes (one
-                                # burst, 22:48-22:52Z on 9/11) and eliminated players
-                                # went back to showing a live number. The invariant was
-                                # enforced on ENTRY and not on UPDATE.
-                                #
-                                # The refusal is the TIER-3 set, not `IS NOT NULL`, and
-                                # the distinction is the whole correctness of it: the
-                                # two live US Open finalists carry `ungradeable_result`
-                                # (tier 1 — a RETRACTION meaning the venue never called
-                                # it, explicitly reversible by evidence), so refusing
-                                # every graded-looking row would have FROZEN the two
-                                # rows that most need to move. Guess-family and NULL
-                                # rows stay writable for the same reason.
-                                #
-                                # `or_` with an explicit NULL arm because the column is
-                                # nullable and `NOT IN (...)` is NULL — not TRUE — for
-                                # a NULL source, which would silently refuse every
-                                # ungraded row in the book.
-                                #
-                                # Mirrors `polymarket_ws`'s `is_authoritative` skip
-                                # (its line 84); that socket has always had this guard
-                                # and this one has not, which is why the two behaved
-                                # differently on the same class of row.
-                                or_(
-                                    FuturesOutcome.resolution_source.is_(None),
-                                    FuturesOutcome.resolution_source.notin_(
-                                        sorted(AUTHORITATIVE_SOURCES)
-                                    ),
-                                ),
-                            )
-                            .values(
-                                current_probability=prob,
-                                # This socket IS a live writer of this row, so it
-                                # owes both stamps the polls owe (#2024). Without
-                                # `last_updated` the playoff grid's liveness gate
-                                # read actively-streaming rows as days stale —
-                                # measured 2026-08-30 at up to 23 days on rows whose
-                                # price had moved seconds earlier.
-                                last_updated=func.now(),
-                                price_changed_at=price_changed_at_value(
-                                    FuturesOutcome.current_probability,
-                                    FuturesOutcome.price_changed_at,
-                                    prob,
-                                ),
-                                current_yes_bid=(
-                                    yes_bid
-                                    if tick_has_book
-                                    else FuturesOutcome.current_yes_bid
-                                ),
-                                current_yes_ask=(
-                                    yes_ask
-                                    if tick_has_book
-                                    else FuturesOutcome.current_yes_ask
-                                ),
-                            )
-                            .returning(
-                                FuturesOutcome.id,
-                                FuturesOutcome.market_id,
-                                FuturesOutcome.last_updated,
-                                quote_moved_column(
-                                    FuturesOutcome.__table__,
-                                    (yes_bid, yes_ask) if tick_has_book else None,
-                                ),
-                            )
+                            #
+                            # #10689: the statement is built ONCE per process (two shapes,
+                            # full book / no book, `utils/kalshi_price_statement.py`); only
+                            # this row's values are bound here. Still one execute per row, in
+                            # order. Its WHERE carries the #5411 guard and its SET the #2024
+                            # stamps and the #8753 book rule, for the reasons below.
+                            #
+                            # #5411 — A SETTLED CONTRACT HAS NO LIVE PRICE. It is
+                            # worth exactly 1 or 0, and #5246 made every reachable
+                            # settlement writer say so. This socket had never heard
+                            # of settlement: it wrote `current_probability`
+                            # unconditionally, so 189 of the 6,895 rows that
+                            # repair cleared were re-priced within 55 minutes (one
+                            # burst, 22:48-22:52Z on 9/11) and eliminated players
+                            # went back to showing a live number. The invariant was
+                            # enforced on ENTRY and not on UPDATE.
+                            #
+                            # The refusal is the TIER-3 set, not `IS NOT NULL`, and
+                            # the distinction is the whole correctness of it: the
+                            # two live US Open finalists carry `ungradeable_result`
+                            # (tier 1 — a RETRACTION meaning the venue never called
+                            # it, explicitly reversible by evidence), so refusing
+                            # every graded-looking row would have FROZEN the two
+                            # rows that most need to move. Guess-family and NULL
+                            # rows stay writable for the same reason.
+                            #
+                            # `or_` with an explicit NULL arm because the column is
+                            # nullable and `NOT IN (...)` is NULL — not TRUE — for
+                            # a NULL source, which would silently refuse every
+                            # ungraded row in the book.
+                            #
+                            # Mirrors `polymarket_ws`'s `is_authoritative` skip
+                            # (its line 84); that socket has always had this guard
+                            # and this one has not, which is why the two behaved
+                            # differently on the same class of row.
+                            #
+                            # This socket IS a live writer of this row, so it
+                            # owes both stamps the polls owe (#2024). Without
+                            # `last_updated` the playoff grid's liveness gate
+                            # read actively-streaming rows as days stale —
+                            # measured 2026-08-30 at up to 23 days on rows whose
+                            # price had moved seconds earlier.
+                            KALSHI_PRICE_STATEMENTS[tick_has_book],
+                            kalshi_price_parameters(outcome_id, prob, yes_bid, yes_ask),
                         )
                         # #5411 — a settled row matches the id and fails the guard, so
                         # the statement affects 0 rows. (A row deleted between

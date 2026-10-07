@@ -1,0 +1,31 @@
+{
+  "temp": "/tmp/kalshi-source10689-f_4g5ax4",
+  "port": 55531,
+  "stopped": true,
+  "pid": 81594,
+  "gates": [
+    {
+      "name": "source-and-affected",
+      "exit": 1,
+      "skipped": false,
+      "command": [
+        "/usr/local/fbcode/platform010/Python3.12.framework/Versions/3.12/bin/python3.12",
+        "-m",
+        "pytest",
+        "tests/test_kalshi_price_statement_10689.py",
+        "tests/test_price_change_stamp.py",
+        "tests/test_price_stamp_writer_scan_4958.py",
+        "tests/test_futures_rank_field_wide_6598.py",
+        "tests/test_ws_kalshi_linked_first_10640.py",
+        "tests/test_ws_market_change_hooks_9484.py",
+        "tests/test_ws_open_contract_prices_9484.py",
+        "tests/integration/test_ws_quote_moved_9484_pg.py",
+        "tests/integration/test_kalshi_price_statement_10689_pg.py",
+        "tests/test_ci_postgres_groups.py",
+        "tests/test_startup.py",
+        "-q",
+        "-rs"
+      ]
+    }
+  ]
+}

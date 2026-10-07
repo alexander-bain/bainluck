@@ -14,7 +14,6 @@ from types import SimpleNamespace
 
 import pytest
 from sqlalchemy import func, or_, update
-from sqlalchemy.dialects import postgresql
 from sqlalchemy.exc import OperationalError
 
 from app.models.models import FuturesOutcome
@@ -24,6 +23,10 @@ from app.tasks.kalshi_ws import (  # noqa: F401 — the exec'd flush reads these
 )
 from app.tasks.live_blend_refresh import event_ids_for_outcomes
 from app.utils.futures_rank import rerank_market_fields_stmt
+from app.utils.kalshi_price_statement import (  # noqa: F401 — read by the exec'd flush
+    KALSHI_PRICE_STATEMENTS,
+    kalshi_price_parameters,
+)
 from app.utils.price_change_stamp import price_changed_at_value, quote_moved_column
 from app.utils.repair_lock_budget import (  # noqa: F401 — read by the exec'd flush
     SET_LOCK_TIMEOUT_SQL,
@@ -31,6 +34,7 @@ from app.utils.repair_lock_budget import (  # noqa: F401 — read by the exec'd 
     lock_timeout_value,
 )
 from app.utils.resolution_authority import AUTHORITATIVE_SOURCES
+from tests.pm_bulk_test_support import price_writes, statement_params
 
 
 class LockNotAvailable(Exception):
@@ -60,11 +64,12 @@ def rig(*, failed=None, declined=None, pending=(), locked=()):
                 self.lock_timeout = bind["ms"]
                 trace.append(("lock_timeout", bind["ms"]))
                 return SimpleNamespace(rowcount=1)
-            params = stmt.compile(dialect=postgresql.dialect()).params
-            if "current_probability" not in params:
+            params = statement_params(stmt, bind)  # #10689
+            written = price_writes(stmt, params)  # #10689: either shape
+            if not written:
                 trace.append(("rank", tuple(self.rows)))
                 return SimpleNamespace(rowcount=0)
-            oid = params["id_1"]
+            (oid, _prob), = written
             trace.append(("write", oid))
             if oid == 3:
                 entered.set()

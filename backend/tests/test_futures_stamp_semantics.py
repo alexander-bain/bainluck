@@ -68,6 +68,18 @@ def _src_files(*dirs: str) -> list[str]:
 # WRITE side
 # ---------------------------------------------------------------------------
 
+#: #10689: price-statement FACTORIES a task executes but does not spell. The
+#: Kalshi socket's row UPDATE is built once in `kalshi_price_statement.py` and
+#: only its values are bound in `tasks/kalshi_ws.py`, so a census that reads
+#: `app/tasks` alone would lose the writer the moment it moved. Each entry is
+#: scanned exactly as a task file is; `test_ws_fast_lane_wiring` pins that the
+#: socket executes the factory's statements.
+_STATEMENT_FACTORIES = ("app/utils/kalshi_price_statement.py",)
+
+
+def _writer_files() -> list[str]:
+    return _src_files("app/tasks") + list(_STATEMENT_FACTORIES)
+
 #: Task files that stamp a futures touch-column with an unconditional ``now()``
 #: inside a routine POLL path. Measured, not guessed — see ``test_write_side``.
 #:
@@ -220,7 +232,10 @@ POLL_STAMP_COUNTS = {
     # carried `last_updated` between 1.6 hours and 1.8 days old.
     # `routes/playoffs.py` gates the grid on exactly that column, so the rows
     # the socket kept freshest read to it as the deadest on the board.
-    "app/tasks/kalshi_ws.py": 1,
+    #
+    # #10689: the Kalshi socket's stamp moved, unchanged, into the statement
+    # it now builds once and binds per row; the write is the same one.
+    "app/utils/kalshi_price_statement.py": 1,
     "app/tasks/polymarket_ws.py": 1,
     # #10022. `grade_open_contract_leg` stamps `last_updated` on the ONE leg a
     # venue lifecycle frame graded, with the settled price and the conditional
@@ -281,7 +296,7 @@ def test_write_side_is_exactly_the_known_poll_stampers() -> None:
     re-checked, not deleted.
     """
     found = {}
-    for f in _src_files("app/tasks"):
+    for f in _writer_files():
         src = _read(f)
         # Scope to the futures tables; `events`/`teams` stamps are a different
         # column family with different consumers.
@@ -673,7 +688,8 @@ PRICE_CHANGE_STAMPERS = {
     # column — sub-second, versus the polls' 120s — so they are also the ones
     # whose absence made `price_changed_at` least able to answer its own
     # question for Kalshi and Polymarket game markets.
-    "app/tasks/kalshi_ws.py": 1,
+    # #10689: Kalshi's stamp lives in the statement the socket builds once.
+    "app/utils/kalshi_price_statement.py": 1,
     # #9934: + the withdrawal of a held price a wide book priced out (a price
     # going away is a move).
     "app/tasks/polymarket_ws.py": 2,
@@ -726,7 +742,7 @@ def test_every_price_writer_maintains_price_changed_at() -> None:
     together are the statement that the columns now mean different things.
     """
     found = {}
-    for f in _src_files("app/tasks"):
+    for f in _writer_files():
         n = _read(f).count("price_changed_at_value(")
         if n:
             found[f] = n
@@ -753,7 +769,7 @@ def test_there_is_exactly_one_change_stamp_predicate() -> None:
 
     inline = [
         f
-        for f in _src_files("app/tasks")
+        for f in _writer_files()
         if re.search(r"price_changed_at[\"']?\s*[:=]\s*case\(", _read(f))
     ]
     assert inline == [], f"inline change-stamp predicate in {inline}; use price_change_stamp"

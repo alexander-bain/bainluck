@@ -30,6 +30,7 @@ import app.tasks.live_blend_refresh as blend_mod
 import app.tasks.ws_admission as admission
 from app.tasks import ws_open_contracts as oc
 from app.utils.repair_lock_budget import SET_LOCK_TIMEOUT_SQL
+from tests.pm_bulk_test_support import price_writes, statement_params
 
 
 LINKED_EVENT_TICKER = "KXATPMATCH-26SEP28ANGJOH"
@@ -179,11 +180,9 @@ def _install_session(monkeypatch, *, linked, open_rows, reread=lambda: [],
             if stmt is SET_LOCK_TIMEOUT_SQL:  # #10661: the flush's per-phase lock budget
                 return _Result([])
             if isinstance(stmt, Update):
-                params = stmt.compile(dialect=postgresql.dialect()).params
-                if stmt.table.name == "futures_outcomes" and "current_probability" in params:
-                    state["price_writes"].append(
-                        (params["id_1"], params["current_probability"])
-                    )
+                params = statement_params(stmt, params)  # #10689
+                if stmt.table.name == "futures_outcomes" and price_writes(stmt, params):
+                    state["price_writes"].extend(price_writes(stmt, params))  # #10689
                 elif stmt.table.name == "futures_markets":
                     state["market_writes"].append(params)
                 return _Result([])

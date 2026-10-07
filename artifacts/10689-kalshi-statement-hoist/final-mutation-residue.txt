@@ -1,0 +1,10 @@
+PASS A — target integrity: 599 needles across 51 target file(s)
+  + 4 harness(es) declared disk-free and verified (MUTATES_WORKING_TREE = False): browse_single_scan_mutations, search_suggestions_mirror_mutations, tag_counts_group_by_mutations, typeahead_fuzzy_index_mutations
+    They write no target file, so they cannot leave residue.
+  ✅ every needle present EXACTLY ONCE in its own target — no mutant is sitting in a target file
+
+PASS B — broad sweep: 466 literals x 13 files (changed .json .py .swift .ts .tsx vs origin/master)
+  = 6058 pairwise checks
+  133 replacement(s) under 24 chars excluded here as coincidence-prone — all of them are cleared by Pass A.
+
+✅ CLEAN — 0 residual mutants: 599 needles verified in place, 6058 broad checks

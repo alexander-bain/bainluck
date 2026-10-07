@@ -12,7 +12,19 @@ from sqlalchemy.sql.dml import Update
 _ENGINES = []
 
 
-def price_writes(stmt):
+def statement_params(stmt, params=None):
+    """#10689: a statement's own bound values plus those supplied at execute.
+
+    The Kalshi price write reuses one prepared template and passes its row's
+    values to `session.execute` beside it, so a fake that reads only the
+    compiled statement sees every price bind as None.
+    """
+    merged = dict(stmt.compile(dialect=postgresql.dialect()).params)
+    merged.update(params or {})
+    return merged
+
+
+def price_writes(stmt, params=None):
     """Return supplied price pairs only; other statements return no pairs.
 
     Recording fakes deliberately return no database rows. Transaction and
@@ -20,7 +32,9 @@ def price_writes(stmt):
     """
     if not isinstance(stmt, Update) or stmt.table.name != "futures_outcomes":
         return []
-    params = stmt.compile(dialect=postgresql.dialect()).params
+    params = statement_params(stmt, params)
+    if "kalshi_outcome_id" in params:  # #10689 typed Kalshi template
+        return [(params["kalshi_outcome_id"], params["kalshi_stored_probability"])]
     if "chunk_ids" in params:
         ids, prices = params["chunk_ids"], params["chunk_prices"]
         assert len(ids) == len(prices)

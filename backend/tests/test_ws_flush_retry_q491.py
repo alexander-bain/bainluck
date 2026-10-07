@@ -44,9 +44,8 @@ import asyncio
 import json
 
 import pytest
-from tests.pm_bulk_test_support import price_writes
+from tests.pm_bulk_test_support import price_writes, statement_params
 import websockets
-from sqlalchemy.dialects import postgresql
 from sqlalchemy.sql.dml import Update
 
 import app.services.kalshi_ws as kalshi_svc
@@ -185,10 +184,10 @@ class _FlakySession:
         if stmt is SET_LOCK_TIMEOUT_SQL:  # #10661: the flush's per-phase lock budget
             return _Result([])
         if isinstance(stmt, Update):
-            params = stmt.compile(dialect=postgresql.dialect()).params
+            params = statement_params(stmt, params)  # #10689
             if (
                 stmt.table.name == "futures_outcomes"
-                and price_writes(stmt)
+                and price_writes(stmt, params)
             ):
                 # Q491 repair 2 (CERT-659): a recycle cancelling `flush_loop`
                 # lands as a CancelledError INSIDE the write, which is a
@@ -214,7 +213,7 @@ class _FlakySession:
                                 "handshake this guard depends on did not run"
                             )
                     raise RuntimeError("simulated statement_timeout")
-                self._writes.extend(price_writes(stmt))
+                self._writes.extend(price_writes(stmt, params))
             return _Result([])
         return _Result(self._batches.pop(0) if self._batches else [])
 

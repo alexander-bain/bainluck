@@ -161,6 +161,9 @@ def _rig(engine, ids, batch):
     from app.tasks.base import get_task_session
     from app.tasks.live_blend_refresh import LiveBlendRefresher, event_ids_for_outcomes
     from app.utils.futures_rank import rerank_market_fields_stmt
+    from app.utils.kalshi_price_statement import (  # #10689
+        KALSHI_PRICE_STATEMENTS, kalshi_price_parameters,
+    )
     from app.utils.price_change_stamp import price_changed_at_value, quote_moved_column
     from app.utils.resolution_authority import AUTHORITATIVE_SOURCES
     from sqlalchemy import func, or_, update
@@ -193,6 +196,8 @@ def _rig(engine, ids, batch):
         AUTHORITATIVE_SOURCES=AUTHORITATIVE_SOURCES,
         price_changed_at_value=price_changed_at_value,
         quote_moved_column=quote_moved_column,
+        KALSHI_PRICE_STATEMENTS=KALSHI_PRICE_STATEMENTS,
+        kalshi_price_parameters=kalshi_price_parameters,
         rerank_market_fields_stmt=rerank_market_fields_stmt,
         event_ids_for_outcomes=event_ids_for_outcomes,
         price_buffer=batch, buffer_lock=asyncio.Lock(),

@@ -404,6 +404,7 @@ WIRED_WRITERS = {
 #: The condition — that the module executes nothing — is asserted by
 #: `test_the_settled_price_exemption_still_rests_on_a_module_that_executes_nothing`.
 EXEMPT_WRITERS = {
+    "utils/kalshi_price_statement.py": "Core statement factory only — executes nothing; Kalshi caller owns rank/commit (#10689)",
     "tasks/backfill_winners.py": "settlement — writes the grade, not a quote (#6325)",
     "tasks/repair_winner_field.py": "settlement repair — same board, same refusal",
     "routes/playoffs.py": "display-only coercion in a read-only GET — never persisted",
@@ -594,7 +595,10 @@ def test_the_detector_finds_the_writers_this_ship_was_bounced_for():
         "the detector cannot see the hourly writer CERT-3182 named — every "
         "assertion below is vacuous"
     )
-    assert {"tasks/kalshi_ws.py", "tasks/polymarket_ws.py"} <= writers
+    # #10689: the Kalshi socket's price SET is spelled once in its statement
+    # factory and executed per row by `tasks/kalshi_ws.py`, the wired caller
+    # that owes the re-rank (`test_the_kalshi_price_factory_exemption_executes_nothing`).
+    assert {"utils/kalshi_price_statement.py", "tasks/polymarket_ws.py"} <= writers
     # A reader, not a writer: `precompute_interestingness` selects the column
     # and never assigns it. If this ever enters the population the detector has
     # started matching reads, and the exemption list will grow to hide it.
@@ -714,6 +718,20 @@ def test_the_playoffs_exemption_still_rests_on_a_read_only_session():
         "('never persisted') no longer holds — wire the rerank or re-derive "
         "the reason."
     )
+
+
+def test_the_kalshi_price_factory_exemption_executes_nothing():
+    """A reusable expression owns no commit boundary; its caller still owes rank."""
+    import ast
+    import pathlib
+
+    path = pathlib.Path(__file__).resolve().parents[1] / "app/utils/kalshi_price_statement.py"
+    tree = ast.parse(path.read_text())
+    assert "utils/kalshi_price_statement.py" in EXEMPT_WRITERS
+    calls = {n.func.attr for n in ast.walk(tree)
+             if isinstance(n, ast.Call) and isinstance(n.func, ast.Attribute)}
+    assert not ({"execute", "commit", "flush", "scalar"} & calls)
+    assert "tasks/kalshi_ws.py" in WIRED_WRITERS
 
 
 def test_the_settled_price_exemption_still_rests_on_a_module_that_executes_nothing():
