@@ -15,6 +15,7 @@ import json
 from pathlib import Path
 
 import pytest
+import yaml
 
 BACKEND = Path(__file__).resolve().parent.parent
 SCRIPT = BACKEND / "scripts" / "ci_shard.py"
@@ -33,7 +34,7 @@ ci_shard = _load()
 FILES = [f"tests/test_{c}.py" for c in "abcdefghijklmnopqrstuvwxyz"]
 
 
-@pytest.mark.parametrize("shards", [1, 2, 3, 4, 5, 7, 26, 40])
+@pytest.mark.parametrize("shards", [1, 2, 3, 4, 5, 7, 8, 26, 40])
 def test_partition_is_total_and_disjoint(shards):
     """Every file lands in exactly one shard, for any shard count.
 
@@ -109,8 +110,10 @@ def test_every_shard_is_nonempty_at_the_configured_count():
     """
     real = ci_shard.discover_test_files()
     assert len(real) > 100, "test discovery found almost nothing"
-    for i, b in enumerate(ci_shard.partition(real, 4), start=1):
-        assert b, f"shard {i} of 4 is empty"
+    jobs = yaml.safe_load((BACKEND.parent / ".github/workflows/ci.yml").read_text())["jobs"]
+    count = len(jobs["backend-tests"]["strategy"]["matrix"]["shard"])
+    for i, b in enumerate(ci_shard.partition(real, count), start=1):
+        assert b, f"shard {i} of {count} is empty"
 
 
 def test_verify_says_how_much_of_its_skew_estimate_is_actually_measured(monkeypatch, capsys):
