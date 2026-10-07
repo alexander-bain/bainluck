@@ -117,6 +117,19 @@ const webUnshippable = tokensInLiteral(
   webSource,
   /const UNSHIPPABLE_BADGES\s*:\s*ReadonlySet<string>\s*=/,
 );
+/**
+ * #10714 — the result-word refusal (#10690's `RESULT_WORD_BADGES`) has a copy on
+ * each client, and a word refused on one but not the other is a tile that reads
+ * "WON" on that client alone.
+ */
+const swiftResultWords = tokensInLiteral(
+  swiftSource,
+  /private static let resultWordBadges\s*:\s*Set<String>\s*=/,
+);
+const webResultWords = tokensInLiteral(
+  webSource,
+  /const RESULT_WORD_BADGES\s*:\s*ReadonlySet<string>\s*=/,
+);
 
 /**
  * #7798 — the THIRD definition, and the one neither client could have saved us
@@ -402,6 +415,16 @@ describe("#4539 — one badge rule, two clients", () => {
     // A badge banned on one client and not the other is a badge that ships.
     const swift = new Set(swiftUnshippable);
     const web = new Set(webUnshippable);
+    expect([...web].filter((t) => !swift.has(t))).toEqual([]);
+    expect([...swift].filter((t) => !web.has(t))).toEqual([]);
+  });
+
+  it("#10714 — both result-word sets were found and are identical", () => {
+    expect(swiftResultWords).toContain("won");
+    expect(webResultWords).toContain("won");
+    expect(swiftResultWords.length).toBeGreaterThanOrEqual(4);
+    const swift = new Set(swiftResultWords);
+    const web = new Set(webResultWords);
     expect([...web].filter((t) => !swift.has(t))).toEqual([]);
     expect([...swift].filter((t) => !web.has(t))).toEqual([]);
   });

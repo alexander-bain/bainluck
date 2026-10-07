@@ -59,11 +59,11 @@ final class CrestTileNeverSpellsAResult10714Tests: XCTestCase {
     // MARK: - The Discover card tiles
 
     func testTheDiscoverCardReLettersBothSidesAndLeavesTheRestAlone() {
-        let card = DiscoverEventCard.cardBadges(away: "Learner Tien", home: "Carlos Alcaraz", sportKey: tennis)
+        let card = NativeEventDiscoverCard.cardBadges(away: "Learner Tien", home: "Carlos Alcaraz", sportKey: tennis)
         XCTAssertEqual(card.away, "LT")
         XCTAssertEqual(card.home, TeamShortName.abbreviationPair(away: "Learner Tien", home: "Carlos Alcaraz").home)
 
-        let wnba = DiscoverEventCard.cardBadges(away: "Las Vegas Aces", home: "Dallas Wings", sportKey: "basketball_wnba")
+        let wnba = NativeEventDiscoverCard.cardBadges(away: "Las Vegas Aces", home: "Dallas Wings", sportKey: "basketball_wnba")
         XCTAssertEqual(wnba.home, "DW")
         XCTAssertEqual(wnba.away, TeamShortName.abbreviationPair(away: "Las Vegas Aces", home: "Dallas Wings").away)
     }
