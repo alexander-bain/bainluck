@@ -168,7 +168,10 @@ def _sets_the_price(stmt) -> bool:
 
 class _NoopRefresher:
     def __init__(self, *_a, **_kw):
-        pass
+        self.source = _a[0] if _a else "kalshi"
+
+    def pending_event_ids(self):
+        return frozenset()
 
     async def refresh(self, event_ids, **_kw):
         return None
