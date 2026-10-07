@@ -46,7 +46,7 @@ final class WatchDiscoverPolishTests: XCTestCase {
         capture(app, "Selected game before the story boundary")
         try reveal(question, in: app)
         capture(app, "Selected summary to first discovery separator")
-        try tap(app.buttons["watch.discovery.close"], in: app)
+        try tap(app.buttons["watch.discovery.close"].firstMatch, in: app)
         XCTAssertTrue(element("watch.home-probability", in: app).waitForExistence(timeout: 15))
         print("WATCH_UI_DISCOVERIES_POLISH_SELECTED=PASS")
     }
@@ -116,11 +116,13 @@ final class WatchDiscoverPolishTests: XCTestCase {
             }
             let age = element("watch.discovery.age.\(id)", in: app)
             try reveal(age, in: app)
-            if id == 303 {
-                XCTAssertTrue(age.label.localizedCaseInsensitiveContains("unavailable"))
+            if id == 301 {
+                XCTAssertTrue((age.value as? String ?? "").contains("2026-10-05T12:00:00"))
             } else {
-                XCTAssertTrue((age.value as? String ?? "").contains(
-                    id == 301 ? "2026-10-05T12:00:00" : "2026-10-05T11:50:00"))
+                // A settled result cannot inherit its obsolete price clock;
+                // the third story also lacks any producer observation clock.
+                XCTAssertTrue(age.label.localizedCaseInsensitiveContains("unavailable"))
+                XCTAssertEqual(age.value as? String, "unavailable")
             }
             try tap(app.buttons["watch.discovery.continue.\(id)"], in: app)
             let help = app.otherElements["Continue on iPhone"].firstMatch
@@ -132,7 +134,7 @@ final class WatchDiscoverPolishTests: XCTestCase {
             XCTAssertEqual(element("watch.discovery.continuation", in: app).label,
                            "https://bainluck.com/futures/\(id)")
         }
-        try tap(app.buttons["watch.discovery.close"], in: app)
+        try tap(app.buttons["watch.discovery.close"].firstMatch, in: app)
         XCTAssertTrue(app.buttons["watch.pick.101"].waitForExistence(timeout: 15))
     }
 
