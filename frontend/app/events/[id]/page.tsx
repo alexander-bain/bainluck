@@ -339,7 +339,10 @@ export default function EventPage({ params }: EventPageProps) {
       if (quoteTriggerRef.current && pairedQuoteReadRef.current) return pairedQuoteReadRef.current();
       freshNextEventReadRef.current = true;
       return refreshEventRef.current();
-    }, FOLDED_FRAME_REFETCH_MS,
+    }, FOLDED_FRAME_REFETCH_MS, Date.now,
+    // A failed/behind pair still owes this quote even if the stream goes quiet.
+    // One bounded retry uses the existing scheduler; normal polling remains.
+    () => quoteTriggerRef.current !== null && canSubscribeEventQuotes(heldEventRef.current),
   ));
   useEffect(() => () => foldedRefetch.cancel(), [foldedRefetch]);
 
