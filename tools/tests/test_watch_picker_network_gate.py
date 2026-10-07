@@ -1,3 +1,4 @@
+UPDATING_CASES = [f"Test Case '-[BainLuckWatchUITests.SelectedGameUpdatingJourneyTests {case}]' passed (12.0 seconds)." for case in ("testUpdatingIsVisibleUntilRequestFinishes", "testUpdatingIsVisibleAtAccessibilitySize")]
 """Typed network guidance requires the complete visible recovery journey."""
 import ast
 from pathlib import Path
@@ -23,10 +24,16 @@ class PickerNetworkReceiptTests(unittest.TestCase):
         markers = ast.literal_eval(marker_loop.iter)
         self.rows = ["WATCH_UI_STRESS_TYPE=accessibility5", "WATCH_UI_STANDARD_TYPE=xLarge", FRESH, CASE,
                      *dict.fromkeys((*markers, *NETWORK)),
-                     *(f"Test Case '-[BainLuckWatchUITests.PickerSelectedStateJourneyTests {case}]' passed (12.0 seconds)."
-                       for case in ("testSelectedGameIsMarkedInPickerAndCanChange", "testSelectedGameIsMarkedAtAccessibilitySize")),
-                     *(f"Test Case '-[BainLuckWatchUITests.SelectedGameUpdatingJourneyTests {case}]' passed (12.0 seconds)."
-                       for case in ("testUpdatingIsVisibleUntilRequestFinishes", "testUpdatingIsVisibleAtAccessibilitySize"))]
+                     *(f"Test Case '-[BainLuckWatchUITests.{suite} {case}]' passed (12.0 seconds)."
+                       for suite, case in (
+                           ("ComplicationContentJourneyTests", "testRectangularTypedNamedValuesFitWithMonochromeRendering"),
+                           ("ComplicationContentJourneyTests", "testRectangularLegacyMismatchUnknownAndEmptyStayHonest"),
+                           ("RectangularWidgetHostJourneyTests", "testActualRectangularWidgetShowsPublishedSavedReading")))]
+
+        self.rows.extend(f"Test Case '-[BainLuckWatchUITests.PickerSelectedStateJourneyTests {case}]' passed (12.0 seconds)."
+                         for case in ("testSelectedGameIsMarkedInPickerAndCanChange", "testSelectedGameIsMarkedAtAccessibilitySize"))
+
+        self.rows.extend(UPDATING_CASES)
 
     def run_gate(self, rows):
         with tempfile.TemporaryDirectory() as directory:

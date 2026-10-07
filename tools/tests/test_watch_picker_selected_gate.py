@@ -1,3 +1,4 @@
+UPDATING_CASES = [f"Test Case '-[BainLuckWatchUITests.SelectedGameUpdatingJourneyTests {case}]' passed (12.0 seconds)." for case in ("testUpdatingIsVisibleUntilRequestFinishes", "testUpdatingIsVisibleAtAccessibilitySize")]
 """Selected picker acceptance requires both complete hosted test cases and markers."""
 import ast
 from pathlib import Path
@@ -24,7 +25,10 @@ def accepted_log():
     required = next(ast.literal_eval(node.iter) for node in ast.walk(code)
                     if isinstance(node, ast.For) and isinstance(node.target, ast.Name) and node.target.id == "marker")
     return "\n".join(("WATCH_UI_STRESS_TYPE=accessibility5", "WATCH_UI_STANDARD_TYPE=large", *required,
-        "Test Case '-[BainLuckWatchUITests.WidgetTapJourneyTests testFreshConfiguredFaceIsActiveBeforeActualLauncherTap]' passed (90.0 seconds).", "Test Case '-[BainLuckWatchUITests.PickerReturnJourneyTests testNetworkFailureGuidanceRetainsChoicesAndRecoversSelection]' passed (100.0 seconds).", *CASES, "Test Case '-[BainLuckWatchUITests.SelectedGameUpdatingJourneyTests testUpdatingIsVisibleUntilRequestFinishes]' passed (12.0 seconds).", "Test Case '-[BainLuckWatchUITests.SelectedGameUpdatingJourneyTests testUpdatingIsVisibleAtAccessibilitySize]' passed (12.0 seconds)."))
+        "Test Case '-[BainLuckWatchUITests.WidgetTapJourneyTests testFreshConfiguredFaceIsActiveBeforeActualLauncherTap]' passed (90.0 seconds).", "Test Case '-[BainLuckWatchUITests.PickerReturnJourneyTests testNetworkFailureGuidanceRetainsChoicesAndRecoversSelection]' passed (100.0 seconds).", *CASES, *UPDATING_CASES,
+        "Test Case '-[BainLuckWatchUITests.ComplicationContentJourneyTests testRectangularTypedNamedValuesFitWithMonochromeRendering]' passed (12.0 seconds).",
+        "Test Case '-[BainLuckWatchUITests.ComplicationContentJourneyTests testRectangularLegacyMismatchUnknownAndEmptyStayHonest]' passed (12.0 seconds).",
+        "Test Case '-[BainLuckWatchUITests.RectangularWidgetHostJourneyTests testActualRectangularWidgetShowsPublishedSavedReading]' passed (12.0 seconds)."))
 
 
 class WatchPickerSelectedGateTests(unittest.TestCase):
