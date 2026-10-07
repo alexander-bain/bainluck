@@ -1,0 +1,31 @@
+============================= test session starts ==============================
+platform darwin -- Python 3.12.15+meta, pytest-9.0.3, pluggy-1.6.0
+rootdir: /private/tmp/lp10678-check/backend
+configfile: pytest.ini
+plugins: asyncio-1.4.0, anyio-4.13.0
+asyncio: mode=Mode.AUTO, debug=False, asyncio_default_fixture_loop_scope=None, asyncio_default_test_loop_scope=function
+collected 245 items
+
+tests/test_a_settled_leg_takes_no_live_price_5411.py ................... [  7%]
+....                                                                     [  9%]
+tests/test_kalshi_game_isolation_10655.py ...........                    [ 13%]
+tests/test_ws_admission_9418.py ......................                   [ 22%]
+tests/test_ws_admission_mapped_legs_9462.py .......................      [ 32%]
+tests/test_ws_flush_cadence_10090.py .............                       [ 37%]
+tests/test_ws_flush_retry_q491.py ................                       [ 44%]
+tests/test_ws_kalshi_linked_first_10640.py ...........                   [ 48%]
+tests/test_ws_open_contract_prices_9484.py ............................. [ 60%]
+.....                                                                    [ 62%]
+tests/test_ws_open_contract_settlement_10022.py ........................ [ 72%]
+                                                                         [ 72%]
+tests/test_ws_polymarket_open_contract_prices_9484.py .................. [ 79%]
+..............................................                           [ 98%]
+tests/test_startup.py ....                                               [100%]
+
+=============================== warnings summary ===============================
+tests/test_a_settled_leg_takes_no_live_price_5411.py::TestASettledLegTakesNoLivePrice::test_every_authoritative_source_declines_the_write[api_settlement]
+  /private/tmp/lp10678-check/backend/app/routes/auth.py:121: PydanticDeprecatedSince20: Support for class-based `config` is deprecated, use ConfigDict instead. Deprecated in Pydantic V2.0 to be removed in V3.0. See Pydantic V2 Migration Guide at https://errors.pydantic.dev/2.13/migration/
+    class UserProfileResponse(BaseModel):
+
+-- Docs: https://docs.pytest.org/en/stable/how-to/capture-warnings.html
+======================= 245 passed, 1 warning in 54.58s ========================

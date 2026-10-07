@@ -1,0 +1,423 @@
+{
+ "synthetic": true,
+ "note": "Generated buffers; uniform first-seen order; no observed timing. Units are phases and rows, reported separately.",
+ "planner": "app.tasks.kalshi_ws.linked_first_phases @ eaa8027a59",
+ "results": [
+  {
+   "mix": {
+    "live_games": 3,
+    "scheduled_games": 0,
+    "open_rows": 40,
+    "tick_share": 0.5
+   },
+   "flushes": 2000,
+   "flushes_with_live": 1998,
+   "flushes_where_last_live_moved_earlier": 0,
+   "last_live_phase_index": {
+    "baseline": {
+     "mean": 1.68,
+     "p50": 2,
+     "p90": 2,
+     "max": 2
+    },
+    "candidate": {
+     "mean": 1.68,
+     "p50": 2,
+     "p90": 2,
+     "max": 2
+    }
+   },
+   "rows_through_last_live": {
+    "baseline": {
+     "mean": 5.96,
+     "p50": 6,
+     "p90": 9,
+     "max": 15
+    },
+    "candidate": {
+     "mean": 5.96,
+     "p50": 6,
+     "p90": 9,
+     "max": 15
+    }
+   },
+   "phases_saved_for_last_live": {
+    "mean": 0,
+    "p50": 0,
+    "p90": 0,
+    "max": 0
+   },
+   "rows_saved_for_last_live": {
+    "mean": 0,
+    "p50": 0,
+    "p90": 0,
+    "max": 0
+   },
+   "last_scheduled_phase_delay": null
+  },
+  {
+   "mix": {
+    "live_games": 0,
+    "scheduled_games": 6,
+    "open_rows": 40,
+    "tick_share": 0.5
+   },
+   "flushes": 2000,
+   "flushes_with_live": 0,
+   "flushes_where_last_live_moved_earlier": 0,
+   "last_live_phase_index": {
+    "baseline": null,
+    "candidate": null
+   },
+   "rows_through_last_live": {
+    "baseline": null,
+    "candidate": null
+   },
+   "phases_saved_for_last_live": null,
+   "rows_saved_for_last_live": null,
+   "last_scheduled_phase_delay": null
+  },
+  {
+   "mix": {
+    "live_games": 1,
+    "scheduled_games": 1,
+    "open_rows": 40,
+    "tick_share": 0.5
+   },
+   "flushes": 2000,
+   "flushes_with_live": 1797,
+   "flushes_where_last_live_moved_earlier": 787,
+   "last_live_phase_index": {
+    "baseline": {
+     "mean": 0.44,
+     "p50": 0,
+     "p90": 1,
+     "max": 1
+    },
+    "candidate": {
+     "mean": 0,
+     "p50": 0,
+     "p90": 0,
+     "max": 0
+    }
+   },
+   "rows_through_last_live": {
+    "baseline": {
+     "mean": 3.35,
+     "p50": 3,
+     "p90": 6,
+     "max": 11
+    },
+    "candidate": {
+     "mean": 2.25,
+     "p50": 2,
+     "p90": 4,
+     "max": 6
+    }
+   },
+   "phases_saved_for_last_live": {
+    "mean": 0.44,
+    "p50": 0,
+    "p90": 1,
+    "max": 1
+   },
+   "rows_saved_for_last_live": {
+    "mean": 1.11,
+    "p50": 0,
+    "p90": 3,
+    "max": 6
+   },
+   "last_scheduled_phase_delay": {
+    "mean": 0.49,
+    "p50": 0,
+    "p90": 1,
+    "max": 1
+   }
+  },
+  {
+   "mix": {
+    "live_games": 2,
+    "scheduled_games": 6,
+    "open_rows": 40,
+    "tick_share": 0.5
+   },
+   "flushes": 2000,
+   "flushes_with_live": 1969,
+   "flushes_where_last_live_moved_earlier": 1842,
+   "last_live_phase_index": {
+    "baseline": {
+     "mean": 4.2,
+     "p50": 4,
+     "p90": 7,
+     "max": 7
+    },
+    "candidate": {
+     "mean": 0.81,
+     "p50": 1,
+     "p90": 1,
+     "max": 1
+    }
+   },
+   "rows_through_last_live": {
+    "baseline": {
+     "mean": 12.43,
+     "p50": 13,
+     "p90": 19,
+     "max": 27
+    },
+    "candidate": {
+     "mean": 4.03,
+     "p50": 4,
+     "p90": 6,
+     "max": 10
+    }
+   },
+   "phases_saved_for_last_live": {
+    "mean": 3.39,
+    "p50": 4,
+    "p90": 6,
+    "max": 6
+   },
+   "rows_saved_for_last_live": {
+    "mean": 8.39,
+    "p50": 8,
+    "p90": 14,
+    "max": 22
+   },
+   "last_scheduled_phase_delay": {
+    "mean": 0.28,
+    "p50": 0,
+    "p90": 1,
+    "max": 2
+   }
+  },
+  {
+   "mix": {
+    "live_games": 4,
+    "scheduled_games": 12,
+    "open_rows": 40,
+    "tick_share": 0.5
+   },
+   "flushes": 2000,
+   "flushes_with_live": 2000,
+   "flushes_where_last_live_moved_earlier": 1995,
+   "last_live_phase_index": {
+    "baseline": {
+     "mean": 10.82,
+     "p50": 11,
+     "p90": 14,
+     "max": 15
+    },
+    "candidate": {
+     "mean": 2.55,
+     "p50": 3,
+     "p90": 3,
+     "max": 3
+    }
+   },
+   "rows_through_last_live": {
+    "baseline": {
+     "mean": 27.95,
+     "p50": 28,
+     "p90": 36,
+     "max": 50
+    },
+    "candidate": {
+     "mean": 8.0,
+     "p50": 8,
+     "p90": 11,
+     "max": 17
+    }
+   },
+   "phases_saved_for_last_live": {
+    "mean": 8.27,
+    "p50": 9,
+    "p90": 11,
+    "max": 12
+   },
+   "rows_saved_for_last_live": {
+    "mean": 19.95,
+    "p50": 20,
+    "p90": 28,
+    "max": 43
+   },
+   "last_scheduled_phase_delay": {
+    "mean": 0.29,
+    "p50": 0,
+    "p90": 1,
+    "max": 4
+   }
+  },
+  {
+   "mix": {
+    "live_games": 6,
+    "scheduled_games": 4,
+    "open_rows": 40,
+    "tick_share": 0.5
+   },
+   "flushes": 2000,
+   "flushes_with_live": 2000,
+   "flushes_where_last_live_moved_earlier": 1978,
+   "last_live_phase_index": {
+    "baseline": {
+     "mean": 7.32,
+     "p50": 8,
+     "p90": 9,
+     "max": 9
+    },
+    "candidate": {
+     "mean": 4.33,
+     "p50": 4,
+     "p90": 5,
+     "max": 5
+    }
+   },
+   "rows_through_last_live": {
+    "baseline": {
+     "mean": 19.12,
+     "p50": 19,
+     "p90": 25,
+     "max": 34
+    },
+    "candidate": {
+     "mean": 12.01,
+     "p50": 12,
+     "p90": 16,
+     "max": 25
+    }
+   },
+   "phases_saved_for_last_live": {
+    "mean": 2.98,
+    "p50": 3,
+    "p90": 4,
+    "max": 4
+   },
+   "rows_saved_for_last_live": {
+    "mean": 7.12,
+    "p50": 7,
+    "p90": 11,
+    "max": 17
+   },
+   "last_scheduled_phase_delay": {
+    "mean": 1.18,
+    "p50": 1,
+    "p90": 3,
+    "max": 6
+   }
+  },
+  {
+   "mix": {
+    "live_games": 2,
+    "scheduled_games": 6,
+    "open_rows": 40,
+    "tick_share": 0.15
+   },
+   "flushes": 2000,
+   "flushes_with_live": 1415,
+   "flushes_where_last_live_moved_earlier": 1035,
+   "last_live_phase_index": {
+    "baseline": {
+     "mean": 1.82,
+     "p50": 2,
+     "p90": 4,
+     "max": 7
+    },
+    "candidate": {
+     "mean": 0.31,
+     "p50": 0,
+     "p90": 1,
+     "max": 1
+    }
+   },
+   "rows_through_last_live": {
+    "baseline": {
+     "mean": 3.81,
+     "p50": 3,
+     "p90": 7,
+     "max": 12
+    },
+    "candidate": {
+     "mean": 1.72,
+     "p50": 1,
+     "p90": 3,
+     "max": 6
+    }
+   },
+   "phases_saved_for_last_live": {
+    "mean": 1.51,
+    "p50": 1,
+    "p90": 3,
+    "max": 6
+   },
+   "rows_saved_for_last_live": {
+    "mean": 2.09,
+    "p50": 2,
+    "p90": 5,
+    "max": 10
+   },
+   "last_scheduled_phase_delay": {
+    "mean": 0.37,
+    "p50": 0,
+    "p90": 1,
+    "max": 2
+   }
+  },
+  {
+   "mix": {
+    "live_games": 8,
+    "scheduled_games": 30,
+    "open_rows": 200,
+    "tick_share": 0.3
+   },
+   "flushes": 2000,
+   "flushes_with_live": 2000,
+   "flushes_where_last_live_moved_earlier": 2000,
+   "last_live_phase_index": {
+    "baseline": {
+     "mean": 23.01,
+     "p50": 24,
+     "p90": 28,
+     "max": 33
+    },
+    "candidate": {
+     "mean": 4.71,
+     "p50": 5,
+     "p90": 6,
+     "max": 7
+    }
+   },
+   "rows_through_last_live": {
+    "baseline": {
+     "mean": 41.61,
+     "p50": 42,
+     "p90": 51,
+     "max": 69
+    },
+    "candidate": {
+     "mean": 9.52,
+     "p50": 9,
+     "p90": 13,
+     "max": 20
+    }
+   },
+   "phases_saved_for_last_live": {
+    "mean": 18.3,
+    "p50": 19,
+    "p90": 23,
+    "max": 28
+   },
+   "rows_saved_for_last_live": {
+    "mean": 32.09,
+    "p50": 33,
+    "p90": 41,
+    "max": 58
+   },
+   "last_scheduled_phase_delay": {
+    "mean": 0.26,
+    "p50": 0,
+    "p90": 1,
+    "max": 3
+   }
+  }
+ ]
+}

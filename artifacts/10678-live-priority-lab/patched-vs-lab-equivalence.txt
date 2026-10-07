@@ -1,0 +1,1 @@
+compared=8000 differing=0

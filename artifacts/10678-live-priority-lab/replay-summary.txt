@@ -1,0 +1,8 @@
+live= 3 sched= 0 open= 40 tick=0.50 | moved 0/1998 | phases saved {'mean': 0, 'p50': 0, 'p90': 0, 'max': 0} | rows saved {'mean': 0, 'p50': 0, 'p90': 0, 'max': 0} | sched delay None
+live= 0 sched= 6 open= 40 tick=0.50 | moved 0/0 | phases saved None | rows saved None | sched delay None
+live= 1 sched= 1 open= 40 tick=0.50 | moved 787/1797 | phases saved {'mean': 0.44, 'p50': 0, 'p90': 1, 'max': 1} | rows saved {'mean': 1.11, 'p50': 0, 'p90': 3, 'max': 6} | sched delay {'mean': 0.49, 'p50': 0, 'p90': 1, 'max': 1}
+live= 2 sched= 6 open= 40 tick=0.50 | moved 1842/1969 | phases saved {'mean': 3.39, 'p50': 4, 'p90': 6, 'max': 6} | rows saved {'mean': 8.39, 'p50': 8, 'p90': 14, 'max': 22} | sched delay {'mean': 0.28, 'p50': 0, 'p90': 1, 'max': 2}
+live= 4 sched=12 open= 40 tick=0.50 | moved 1995/2000 | phases saved {'mean': 8.27, 'p50': 9, 'p90': 11, 'max': 12} | rows saved {'mean': 19.95, 'p50': 20, 'p90': 28, 'max': 43} | sched delay {'mean': 0.29, 'p50': 0, 'p90': 1, 'max': 4}
+live= 6 sched= 4 open= 40 tick=0.50 | moved 1978/2000 | phases saved {'mean': 2.98, 'p50': 3, 'p90': 4, 'max': 4} | rows saved {'mean': 7.12, 'p50': 7, 'p90': 11, 'max': 17} | sched delay {'mean': 1.18, 'p50': 1, 'p90': 3, 'max': 6}
+live= 2 sched= 6 open= 40 tick=0.15 | moved 1035/1415 | phases saved {'mean': 1.51, 'p50': 1, 'p90': 3, 'max': 6} | rows saved {'mean': 2.09, 'p50': 2, 'p90': 5, 'max': 10} | sched delay {'mean': 0.37, 'p50': 0, 'p90': 1, 'max': 2}
+live= 8 sched=30 open=200 tick=0.30 | moved 2000/2000 | phases saved {'mean': 18.3, 'p50': 19, 'p90': 23, 'max': 28} | rows saved {'mean': 32.09, 'p50': 33, 'p90': 41, 'max': 58} | sched delay {'mean': 0.26, 'p50': 0, 'p90': 1, 'max': 3}

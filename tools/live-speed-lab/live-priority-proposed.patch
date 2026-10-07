@@ -1,0 +1,117 @@
+--- a/backend/app/tasks/kalshi_ws.py	2026-10-06 23:45:47
++++ b/backend/app/tasks/kalshi_ws.py	2026-10-06 23:46:02
+@@ -132,8 +132,60 @@
+     if rest:
+         phases.append(rest)
+     return phases
++
++
++def _component_events(phase, market_id_by_outcome, event_id_by_outcome):
++    """Every event connected to ``phase``'s markets, over the whole known map."""
++    events_by_market, markets_by_event = {}, {}
++    for oid, event in event_id_by_outcome.items():
++        market = market_id_by_outcome.get(oid)
++        if event is None or market is None:
++            continue
++        events_by_market.setdefault(market, set()).add(event)
++        markets_by_event.setdefault(event, set()).add(market)
++    seen_markets, seen_events = set(), set()
++    stack = [market_id_by_outcome.get(oid) for oid in phase]
++    while stack:
++        market = stack.pop()
++        if market is None or market in seen_markets:
++            continue
++        seen_markets.add(market)
++        for event in events_by_market.get(market, ()):
++            if event not in seen_events:
++                seen_events.add(event)
++                stack.extend(markets_by_event[event])
++    return seen_events
++
++
++def live_first_phases(
++    batch, market_id_by_outcome, event_id_by_outcome, pending_events=(),
++    live_event_ids=frozenset(),
++):
++    """#10678 — the #10655 phases, live games first. Re-orders, never re-cuts.
++
++    A game component touching any event in ``live_event_ids`` (the flush's
++    snapshot of the #9418 admission re-read, `Event.status == 'live'`) goes
++    ahead of other game components; the unrelated phase stays last; order is
++    stable within each tier. Every #10655 rule — whole markets, connected
++    events, the unknown-membership and pending-refresh fallbacks — holds by
++    construction. An empty snapshot is the #10655 plan exactly.
++    """
++    phases = linked_first_phases(
++        batch, market_id_by_outcome, event_id_by_outcome,
++        pending_events=pending_events,
++    )
++    live = frozenset(live_event_ids)
++    if len(phases) < 2 or not live:
++        return phases
+ 
++    def tier(phase):
++        events = _component_events(
++            phase, market_id_by_outcome, event_id_by_outcome)
++        return 2 if not events else 0 if events & live else 1
+ 
++    return sorted(phases, key=tier)
++
++
+ @owns_consumer_sessions("kalshi")
+ async def _run_kalshi_ws_consumer(*, sessions):
+     """Main WebSocket consumer loop.
+@@ -375,6 +427,11 @@
+     market_id_by_outcome: dict[int, int] = {
+         outcome_id: market_id for market_id, outcome_id in ticker_to_ids.values()
+     }
++    # #10678: the live events of the latest successful #9418 admission
++    # re-read (`Event.status == 'live'`, every ADMISSION_CHECK_SECONDS). Empty
++    # until the first read lands, which plans exactly as #10655. A failed
++    # re-read keeps the previous set. Never a TailReceipt.
++    live_event_snapshot: dict = {"ids": frozenset()}
+     # #9484: filled IN PLACE by `admit_open_contracts`, which the handlers and
+     # the flush read through these same objects.
+     open_contract_ids: dict[str, tuple[int, int]] = {}
+@@ -430,9 +487,10 @@
+         # failure mode — exception, cancellation, or a hard kill between the two
+         # — can lose a price the buffer was holding. Nothing needs to be
+         # "put back", because it was never taken away.
+-        phases = linked_first_phases(
++        phases = live_first_phases(
+             batch, market_id_by_outcome, event_id_by_outcome,
+             pending_events=blend_refresher.pending_event_ids(),
++            live_event_ids=live_event_snapshot["ids"],
+         )
+         for index, phase in enumerate(phases):
+             declined = 0
+@@ -1030,7 +1088,9 @@
+                 )
+                 .distinct()
+             )
+-            return unadmitted_live_events(result.all(), legged_market_ids)
++            rows = result.all()
++            live_event_snapshot["ids"] = frozenset(row[0] for row in rows)
++            return unadmitted_live_events(rows, legged_market_ids)
+ 
+     try:
+         # Q460: RECYCLE, don't run forever. The subscription list above is built
+--- a/backend/tests/test_kalshi_game_isolation_10655.py	2026-10-06 23:47:39
++++ b/backend/tests/test_kalshi_game_isolation_10655.py	2026-10-06 23:47:39
+@@ -17,7 +17,7 @@
+ from sqlalchemy.dialects import postgresql
+ 
+ from app.models.models import FuturesOutcome
+-from app.tasks.kalshi_ws import linked_first_phases
++from app.tasks.kalshi_ws import linked_first_phases, live_first_phases  # noqa: F401
+ from app.tasks.live_blend_refresh import event_ids_for_outcomes
+ from app.utils.futures_rank import rerank_market_fields_stmt
+ from app.utils.price_change_stamp import price_changed_at_value, quote_moved_column
+@@ -86,6 +86,7 @@
+             trace.append(("receipt", tuple(marks)))
+ 
+     ns = dict(globals(), price_buffer=batch, buffer_lock=asyncio.Lock(),
++              live_event_snapshot={'ids': frozenset()},
+               market_id_by_outcome=markets, event_id_by_outcome=events,
+               input_marks={oid: oid for oid in batch}, tail_receipts=Receipts(),
+               open_contract_outcome_ids={9}, blend_refresher=Refresher(),
