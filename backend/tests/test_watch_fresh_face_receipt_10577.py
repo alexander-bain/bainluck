@@ -21,6 +21,7 @@ MARKERS = (
     "WATCH_UI_DISCOVERIES_RETURN_STANDARD=PASS", "WATCH_UI_DISCOVERIES_RETURN_LARGE=PASS",
     "WATCH_UI_DISCOVERIES_HEADING_STANDARD=PASS", "WATCH_UI_DISCOVERIES_HEADING_LARGE=PASS",
     "WATCH_UI_CIRCULAR_CONTENT=PASS", "WATCH_UI_CIRCULAR_FALLBACK=PASS", "WATCH_UI_ACTUAL_CIRCULAR_SAVED=PASS",
+    "WATCH_UI_PICKER_SELECTED_STANDARD=PASS", "WATCH_UI_PICKER_SELECTED_LARGE=PASS",
 )
 CASE = ("Test Case '-[BainLuckWatchUITests.WidgetTapJourneyTests "
         "testFreshConfiguredFaceIsActiveBeforeActualLauncherTap]' passed (90.123 seconds).")
@@ -41,7 +42,9 @@ def gate(log, tmp_path):
 
 
 def accepted_log():
-    return "\n".join((*MARKERS, CASE, NETWORK_CASE, SUMMARY))
+    selected = [f"Test Case '-[BainLuckWatchUITests.PickerSelectedStateJourneyTests {case}]' passed (12.0 seconds)."
+                for case in ("testSelectedGameIsMarkedInPickerAndCanChange", "testSelectedGameIsMarkedAtAccessibilitySize")]
+    return "\n".join((*MARKERS, CASE, NETWORK_CASE, *selected, SUMMARY))
 
 
 def test_seventeen_test_summary_and_real_activation_case_are_accepted(tmp_path):
