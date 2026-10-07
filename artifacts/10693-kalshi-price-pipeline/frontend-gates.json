@@ -1,0 +1,10 @@
+{
+  "build": {
+    "exit_code": 0,
+    "seconds": 30.4876070022583
+  },
+  "typecheck": {
+    "exit_code": 0,
+    "seconds": 15.997522115707397
+  }
+}

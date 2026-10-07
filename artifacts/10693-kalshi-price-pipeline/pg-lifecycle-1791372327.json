@@ -1,0 +1,23 @@
+{
+  "started_at": 1791372327.366215,
+  "cluster": "/var/folders/rk/bp7zksws1s9b48c6_l_qn91m0000gn/T/kalshi10693-pg-mznlv5iu",
+  "port": "55534",
+  "listen_addresses": "",
+  "gates": [
+    {
+      "log": "unit-pg-startup.txt",
+      "exit_code": 0
+    },
+    {
+      "log": "source-affected.txt",
+      "exit_code": 0
+    },
+    {
+      "log": "ci-floor-command.txt",
+      "exit_code": 127
+    }
+  ],
+  "stop_exit": 0,
+  "removed": true,
+  "ended_at": 1791372412.330094
+}

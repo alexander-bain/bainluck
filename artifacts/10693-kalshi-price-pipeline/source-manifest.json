@@ -1,0 +1,26 @@
+{
+  "base_commit": "3a900848b1e53fd9450da6c4f26f45914bb34421",
+  "unchanged_files_sha256": {
+    "backend/app/tasks/kalshi_ws.py": "22e8b5e168863ed644d94914f49f7934951f0186350376bf97428993cc78fb2f",
+    "backend/app/utils/kalshi_price_statement.py": "ac3f633e58e6c50c509dad48f49e63ef1d69cc94eae47bc64ae1453340b87288",
+    "backend/app/utils/price_change_stamp.py": "77c17375a2975038b1c653e40a02260a32bc3e86fc13785ed8d09f31b1a3eee8"
+  },
+  "source_files_sha256": {
+    "backend/app/utils/kalshi_price_pipeline.py": "2c6288c151b56303de39a53a2f8506aed4ca3b3bd52a0a65439fe39e476345a7",
+    "backend/tests/test_kalshi_price_pipeline_10693.py": "da86587bd5773e5c85b029f1d0768f9935edadf25b229a60a6b769023662c070",
+    "backend/tests/integration/test_kalshi_price_pipeline_10693_pg.py": "1b8286d1ae12557023376b39a92b6f8323fa460c1093dd5977d7ab81eaa27de6"
+  },
+  "loaded_local_versions": {
+    "sqlalchemy": "2.0.50",
+    "asyncpg": "0.31.0"
+  },
+  "local_pipeline_selected": true,
+  "production_eligibility": "UNVERIFIED",
+  "reservation": 82074,
+  "source_commit": "56058de84da1178db7d8f321e5f48974ac04cc8b",
+  "ci_floor_replay": {
+    "exit_code": 0,
+    "passed": 55,
+    "skipped": 0
+  }
+}

@@ -4078,6 +4078,24 @@ jobs:
             exit 1
           fi
 
+      - name: "#10693 guarded Kalshi pipeline supported floor (real Postgres)"
+        if: matrix.group == 'shared'
+        run: |
+          # Isolate the exact private compatibility envelope from requirements ranges.
+          floor_env=$(mktemp -d)
+          trap 'rm -rf "$floor_env"' EXIT
+          python -m venv --system-site-packages "$floor_env"
+          "$floor_env/bin/python" -m pip install 'SQLAlchemy[asyncio]==2.0.50' 'asyncpg==0.31.0'
+          "$floor_env/bin/python" -c 'import sqlalchemy, asyncpg; assert (sqlalchemy.__version__, asyncpg.__version__) == ("2.0.50", "0.31.0")'
+          result=0
+          "$floor_env/bin/python" -m pytest tests/test_kalshi_price_pipeline_10693.py tests/integration/test_kalshi_price_pipeline_10693_pg.py -v -rs > /tmp/kalshi10693.txt 2>&1 || result=$?
+          cat /tmp/kalshi10693.txt
+          if [ "$result" -ne 0 ]; then exit "$result"; fi
+          if grep -qiE "[0-9]+ skipped" /tmp/kalshi10693.txt; then
+            echo "::error::#10693 supported-floor real PostgreSQL gate skipped"
+            exit 1
+          fi
+
       - name: "#4586 restore compare-and-swap (real Postgres)"
         # CERT-2439's required repair, `4586-RESTORE-CAS-PRESERVES-LATER-RELINKS`.
         # The forward repair compare-and-swaps on the link it planned; its D51

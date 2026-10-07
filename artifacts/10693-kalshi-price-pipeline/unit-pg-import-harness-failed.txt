@@ -1,0 +1,98 @@
+============================= test session starts ==============================
+platform darwin -- Python 3.12.15+meta, pytest-9.0.3, pluggy-1.6.0 -- /usr/local/fbcode/platform010/Python3.12.framework/Versions/3.12/bin/python3.12
+cachedir: .pytest_cache
+rootdir: /Users/bain/.codex-personal/worktrees/kalshi-price-adapter/bainluck/backend
+configfile: pytest.ini
+plugins: asyncio-1.4.0, anyio-4.13.0
+asyncio: mode=Mode.AUTO, debug=False, asyncio_default_fixture_loop_scope=None, asyncio_default_test_loop_scope=function
+collecting ... collected 59 items
+
+tests/test_kalshi_price_pipeline_10693.py::test_singleton_only_route_has_no_compatibility_template_or_checkout[phase0] PASSED [  1%]
+tests/test_kalshi_price_pipeline_10693.py::test_singleton_only_route_has_no_compatibility_template_or_checkout[phase1] PASSED [  3%]
+tests/test_kalshi_price_pipeline_10693.py::test_singleton_only_route_has_no_compatibility_template_or_checkout[phase2] PASSED [  5%]
+tests/test_kalshi_price_pipeline_10693.py::test_lazy_compatibility_refusal[version] PASSED [  6%]
+tests/test_kalshi_price_pipeline_10693.py::test_lazy_compatibility_refusal[missing-package] PASSED [  8%]
+tests/test_kalshi_price_pipeline_10693.py::test_lazy_compatibility_refusal[private-import] PASSED [ 10%]
+tests/test_kalshi_price_pipeline_10693.py::test_lazy_compatibility_refusal[private-attribute] PASSED [ 11%]
+tests/test_kalshi_price_pipeline_10693.py::test_entire_phase_refuses_before_leading_singleton_price[versions] PASSED [ 13%]
+tests/test_kalshi_price_pipeline_10693.py::test_entire_phase_refuses_before_leading_singleton_price[template] PASSED [ 15%]
+tests/test_kalshi_price_pipeline_10693.py::test_entire_phase_refuses_before_leading_singleton_price[cursor-factory] PASSED [ 16%]
+tests/test_kalshi_price_pipeline_10693.py::test_entire_phase_refuses_before_leading_singleton_price[cursor] PASSED [ 18%]
+tests/test_kalshi_price_pipeline_10693.py::test_template_acquisition_refuses_declared_shape_failures[error0] PASSED [ 20%]
+tests/test_kalshi_price_pipeline_10693.py::test_template_acquisition_refuses_declared_shape_failures[error1] PASSED [ 22%]
+tests/test_kalshi_price_pipeline_10693.py::test_template_acquisition_refuses_declared_shape_failures[error2] PASSED [ 23%]
+tests/test_kalshi_price_pipeline_10693.py::test_expanded_factory_sql_positions_and_processed_arguments[values0] PASSED [ 25%]
+tests/test_kalshi_price_pipeline_10693.py::test_expanded_factory_sql_positions_and_processed_arguments[values1] PASSED [ 27%]
+tests/test_kalshi_price_pipeline_10693.py::test_expanded_factory_sql_positions_and_processed_arguments[values2] PASSED [ 28%]
+tests/test_kalshi_price_pipeline_10693.py::test_expanded_factory_sql_positions_and_processed_arguments[values3] PASSED [ 30%]
+tests/test_kalshi_price_pipeline_10693.py::test_expanded_factory_sql_positions_and_processed_arguments[values4] PASSED [ 32%]
+tests/test_kalshi_price_pipeline_10693.py::test_expanded_factory_sql_positions_and_processed_arguments[values5] PASSED [ 33%]
+tests/test_kalshi_price_pipeline_10693.py::test_expanded_factory_sql_positions_and_processed_arguments[values6] PASSED [ 35%]
+tests/test_kalshi_price_pipeline_10693.py::test_expanded_factory_sql_positions_and_processed_arguments[values7] PASSED [ 37%]
+tests/test_kalshi_price_pipeline_10693.py::test_checkout_and_cancellation_are_not_compatibility_fallback[error0] PASSED [ 38%]
+tests/test_kalshi_price_pipeline_10693.py::test_checkout_and_cancellation_are_not_compatibility_fallback[error1] PASSED [ 40%]
+tests/test_kalshi_price_pipeline_10693.py::test_submitted_fault_never_replays_even_after_leading_scalar PASSED [ 42%]
+tests/test_kalshi_price_pipeline_10693.py::test_owned_install_once_untagged_and_cleanup PASSED [ 44%]
+tests/test_kalshi_price_pipeline_10693.py::test_cleanup_cannot_remove_listener_during_a_live_phase PASSED [ 45%]
+tests/test_kalshi_price_pipeline_10693.py::test_unexpected_private_tag_sql_and_cursor_stay_refused_under_optimization PASSED [ 47%]
+tests/test_kalshi_price_pipeline_10693.py::test_scoped_iteration_closes_on_caller_error_or_early_exit[caller-error] PASSED [ 49%]
+tests/test_kalshi_price_pipeline_10693.py::test_scoped_iteration_closes_on_caller_error_or_early_exit[early-break] PASSED [ 50%]
+tests/test_kalshi_price_pipeline_10693.py::test_module_import_does_not_load_private_asyncpg_adapter FAILED [ 52%]
+tests/integration/test_kalshi_price_pipeline_10693_pg.py::test_actual_pipeline_source_flow_and_allowed_failed_prefix_boundary[same] PASSED [ 54%]
+tests/integration/test_kalshi_price_pipeline_10693_pg.py::test_actual_pipeline_source_flow_and_allowed_failed_prefix_boundary[later_row_writer] PASSED [ 55%]
+tests/integration/test_kalshi_price_pipeline_10693_pg.py::test_actual_pipeline_source_flow_and_allowed_failed_prefix_boundary[held_first_row_writer] PASSED [ 57%]
+tests/integration/test_kalshi_price_pipeline_10693_pg.py::test_actual_pipeline_source_flow_and_allowed_failed_prefix_boundary[real_book_move] PASSED [ 59%]
+tests/integration/test_kalshi_price_pipeline_10693_pg.py::test_actual_pipeline_source_flow_and_allowed_failed_prefix_boundary[mixed_books] PASSED [ 61%]
+tests/integration/test_kalshi_price_pipeline_10693_pg.py::test_actual_pipeline_source_flow_and_allowed_failed_prefix_boundary[precision_rounding] PASSED [ 62%]
+tests/integration/test_kalshi_price_pipeline_10693_pg.py::test_actual_pipeline_source_flow_and_allowed_failed_prefix_boundary[resolution_guards] PASSED [ 64%]
+tests/integration/test_kalshi_price_pipeline_10693_pg.py::test_actual_pipeline_source_flow_and_allowed_failed_prefix_boundary[rank] PASSED [ 66%]
+tests/integration/test_kalshi_price_pipeline_10693_pg.py::test_actual_pipeline_source_flow_and_allowed_failed_prefix_boundary[settlement] PASSED [ 67%]
+tests/integration/test_kalshi_price_pipeline_10693_pg.py::test_actual_pipeline_source_flow_and_allowed_failed_prefix_boundary[vanished] PASSED [ 69%]
+tests/integration/test_kalshi_price_pipeline_10693_pg.py::test_actual_pipeline_source_flow_and_allowed_failed_prefix_boundary[driver_error] PASSED [ 71%]
+tests/integration/test_kalshi_price_pipeline_10693_pg.py::test_actual_pipeline_source_flow_and_allowed_failed_prefix_boundary[retry] PASSED [ 72%]
+tests/integration/test_kalshi_price_pipeline_10693_pg.py::test_actual_pipeline_source_flow_and_allowed_failed_prefix_boundary[rollback] PASSED [ 74%]
+tests/integration/test_kalshi_price_pipeline_10693_pg.py::test_actual_pipeline_source_flow_and_allowed_failed_prefix_boundary[commit_error] PASSED [ 76%]
+tests/integration/test_kalshi_price_pipeline_10693_pg.py::test_actual_pipeline_source_flow_and_allowed_failed_prefix_boundary[cancellation] PASSED [ 77%]
+tests/integration/test_kalshi_price_pipeline_10693_pg.py::test_actual_pipeline_source_flow_and_allowed_failed_prefix_boundary[newer_tick] PASSED [ 79%]
+tests/integration/test_kalshi_price_pipeline_10693_pg.py::test_prior_completed_run_diagnostics_survive_later_run_fault_without_replay PASSED [ 81%]
+tests/integration/test_kalshi_price_pipeline_10693_pg.py::test_caller_exit_closes_iterator_and_rollback_discards_completed_run[caller-error] PASSED [ 83%]
+tests/integration/test_kalshi_price_pipeline_10693_pg.py::test_caller_exit_closes_iterator_and_rollback_discards_completed_run[early-break] PASSED [ 84%]
+tests/integration/test_kalshi_price_pipeline_10693_pg.py::test_cancelled_query_invalidates_pool_and_fresh_session_recovers PASSED [ 86%]
+tests/integration/test_kalshi_price_pipeline_10693_pg.py::test_caller_lock_budget_and_timeout_free_wait_keep_same_session_policy PASSED [ 88%]
+tests/integration/test_kalshi_price_pipeline_10693_pg.py::test_stale_plan_rolls_back_then_next_session_recovers_on_same_backend[False] PASSED [ 89%]
+tests/integration/test_kalshi_price_pipeline_10693_pg.py::test_stale_plan_rolls_back_then_next_session_recovers_on_same_backend[True] PASSED [ 91%]
+tests/integration/test_kalshi_price_pipeline_10693_pg.py::test_untagged_executemany_and_unknown_version_use_ordinary_paths PASSED [ 93%]
+tests/test_startup.py::test_app_imports PASSED                           [ 94%]
+tests/test_startup.py::test_all_route_modules_import PASSED              [ 96%]
+tests/test_startup.py::test_key_task_modules_import PASSED               [ 98%]
+tests/test_startup.py::test_key_util_modules_import PASSED               [100%]
+
+=================================== FAILURES ===================================
+___________ test_module_import_does_not_load_private_asyncpg_adapter ___________
+tests/test_kalshi_price_pipeline_10693.py:348: in test_module_import_does_not_load_private_asyncpg_adapter
+    assert result.returncode == 0, result.stderr
+E   AssertionError: Traceback (most recent call last):
+E       File "<string>", line 9, in <module>
+E       File "/Users/bain/.codex-personal/worktrees/kalshi-price-adapter/bainluck/backend/app/utils/kalshi_price_pipeline.py", line 23, in <module>
+E         from app.utils.kalshi_price_statement import (
+E       File "/Users/bain/.codex-personal/worktrees/kalshi-price-adapter/bainluck/backend/app/utils/kalshi_price_statement.py", line 16, in <module>
+E         from app.models.models import FuturesOutcome
+E       File "/Users/bain/.codex-personal/worktrees/kalshi-price-adapter/bainluck/backend/app/models/__init__.py", line 3, in <module>
+E         from app.models.models import (
+E       File "/Users/bain/.codex-personal/worktrees/kalshi-price-adapter/bainluck/backend/app/models/models.py", line 28, in <module>
+E         from sqlalchemy.dialects.postgresql import ARRAY, JSONB
+E       File "/Users/bain/Library/Python/3.12/lib/python/site-packages/sqlalchemy/dialects/postgresql/__init__.py", line 12, in <module>
+E         from . import asyncpg  # noqa
+E         ^^^^^^^^^^^^^^^^^^^^^
+E       File "<string>", line 7, in find_spec
+E     ImportError: private adapter deliberately unavailable
+E
+E   assert 1 == 0
+E    +  where 1 = CompletedProcess(args=['/usr/local/fbcode/platform010/Python3.12.framework/Versions/3.12/bin/python3.12', '-c', '\nimport sys\nfrom importlib.abc import MetaPathFinder\nclass Block(MetaPathFinder):\n    def find_spec(self, fullname, path, target=None):\n        if fullname == "asyncpg" or fullname == "sqlalchemy.dialects.postgresql.asyncpg":\n            raise ImportError("private adapter deliberately unavailable")\nsys.meta_path.insert(0, Block())\nfrom app.utils import kalshi_price_pipeline\nprint("lazy module import")\n'], returncode=1, stdout='', stderr='Traceback (most recent call last):\n  File "<string>", line 9, in <module>\n  File "/Users/bain/.codex-personal/worktrees/kalshi-price-adapter/bainluck/backend/app/utils/kalshi_price_pipeline.py", line 23, in <module>\n    from app.utils.kalshi_price_statement import (\n  File "/Users/bain/.codex-personal/worktrees/kalshi-price-adapter/bainluck/backend/app/utils/kalshi_price_statement.py", line 16, in <module>\n    from app.models.models import FuturesOutcome\n  File "/Users/bain/.codex-personal/worktrees/kalshi-price-adapter/bainluck/backend/app/models/__init__.py", line 3, in <module>\n    from app.models.models import (\n  File "/Users/bain/.codex-personal/worktrees/kalshi-price-adapter/bainluck/backend/app/models/models.py", line 28, in <module>\n    from sqlalchemy.dialects.postgresql import ARRAY, JSONB\n  File "/Users/bain/Library/Python/3.12/lib/python/site-packages/sqlalchemy/dialects/postgresql/__init__.py", line 12, in <module>\n    from . import asyncpg  # noqa\n    ^^^^^^^^^^^^^^^^^^^^^\n  File "<string>", line 7, in find_spec\nImportError: private adapter deliberately unavailable\n').returncode
+=============================== warnings summary ===============================
+tests/test_kalshi_price_pipeline_10693.py::test_singleton_only_route_has_no_compatibility_template_or_checkout[phase0]
+  /Users/bain/.codex-personal/worktrees/kalshi-price-adapter/bainluck/backend/app/routes/auth.py:121: PydanticDeprecatedSince20: Support for class-based `config` is deprecated, use ConfigDict instead. Deprecated in Pydantic V2.0 to be removed in V3.0. See Pydantic V2 Migration Guide at https://errors.pydantic.dev/2.13/migration/
+    class UserProfileResponse(BaseModel):
+
+-- Docs: https://docs.pytest.org/en/stable/how-to/capture-warnings.html
+=================== 1 failed, 58 passed, 1 warning in 7.91s ====================
