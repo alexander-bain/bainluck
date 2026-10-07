@@ -25,7 +25,8 @@ struct WatchSelectedGameView: View {
     init() {
         #if DEBUG
         if let fixture = WatchUIFixture.current {
-            _store = StateObject(wrappedValue: fixture.makeStore())
+            _store = StateObject(wrappedValue: WatchUpdatingUIFixture.enabled
+                ? WatchUpdatingUIFixture.makeStore(fixture: fixture) : fixture.makeStore())
             _picker = StateObject(wrappedValue: WatchGamePickerStore(transport: fixture))
             return
         }
@@ -190,6 +191,11 @@ struct WatchSelectedGameView: View {
                     .font(.footnote).foregroundStyle(.orange)
                     .accessibilityHidden(true) // Included before state in the grouped label below.
             }
+            if store.isRefreshing {
+                Text("Updating…")
+                    .font(.footnote).foregroundStyle(.secondary)
+                    .accessibilityIdentifier("watch.game-updating")
+            }
             flexibleRow {
                 Text(game.stateLabel)
                     .font(.subheadline.bold())
@@ -201,7 +207,9 @@ struct WatchSelectedGameView: View {
             .accessibilityLabel(stateAccessibilityLabel(game))
             .accessibilityIdentifier("watch.game-state")
             #if DEBUG
-            .accessibilityValue(WatchUIFixture.current == nil ? "" : String(describing: dynamicTypeSize))
+            .accessibilityValue(WatchUpdatingUIFixture.enabled
+                ? "\(dynamicTypeSize)|\(game.id)|\(game.scoreObservedAt?.timeIntervalSince1970.description ?? "nil")|\(game.probabilityObservedAt?.timeIntervalSince1970.description ?? "nil")"
+                : (WatchUIFixture.current == nil ? "" : String(describing: dynamicTypeSize)))
             #endif
             if game.isClosed {
                 Text("Last reported score · final result unverified")

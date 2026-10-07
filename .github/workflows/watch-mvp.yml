@@ -34,6 +34,8 @@ on:
       - 'tools/watch-ui-journey.sh'
       - 'tools/tests/test_watch_picker_network_gate.py'
       - 'tools/tests/test_watch_picker_selected_gate.py'
+      - 'tools/tests/test_watch_game_updating_gate.py'
+      - 'backend/tests/test_watch_fresh_face_receipt_10577.py'
       - 'tools/watch_resolve_packages.py'
       - 'tools/tests/test_watch_resolve_packages.py'
       - 'tools/watch-build.sh'
@@ -77,6 +79,8 @@ on:
       - 'tools/watch-ui-journey.sh'
       - 'tools/tests/test_watch_picker_network_gate.py'
       - 'tools/tests/test_watch_picker_selected_gate.py'
+      - 'tools/tests/test_watch_game_updating_gate.py'
+      - 'backend/tests/test_watch_fresh_face_receipt_10577.py'
       - 'tools/watch_resolve_packages.py'
       - 'tools/tests/test_watch_resolve_packages.py'
       - 'tools/watch-build.sh'
@@ -146,6 +150,8 @@ jobs:
         with:
           ref: ${{ github.event.pull_request.head.sha || github.sha }}
           persist-credentials: false
+      - name: Verify updating journeys require actual executed cases
+        run: python3 -m unittest discover -s tools/tests -p test_watch_game_updating_gate.py
       - name: Verify receipt rejects incomplete and misleading results
         run: python3 -m unittest discover -s tools/tests -p test_watch_iphone_receipt.py
       - name: Run full BainLuckTests on a disposable hosted iPhone
