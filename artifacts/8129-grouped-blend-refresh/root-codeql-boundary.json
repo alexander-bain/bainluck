@@ -1,0 +1,7 @@
+{
+  "base": "e5a18111e7cede047ba8181f012ca941d371d25a",
+  "application_change": "asyncio.CancelledError module attribute to direct import of same class",
+  "all_refresher_methods_ast_equal_after_alias_normalization": true,
+  "frontend_tree_before": "399a86c1eac7fa73f4cf7c621f2948f392f1e62d",
+  "frontend_tree_now": "399a86c1eac7fa73f4cf7c621f2948f392f1e62d"
+}

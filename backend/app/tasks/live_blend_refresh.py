@@ -61,7 +61,7 @@ must not wipe the pass).
 
 from __future__ import annotations
 
-import asyncio
+from asyncio import CancelledError
 import contextlib
 import copy
 from collections import deque
@@ -1245,7 +1245,7 @@ class LiveBlendRefresher:
                     # Empty/no-market groups also finished successfully.
                     if not completed.issuperset(group_ids):
                         committed(group_ids)
-        except asyncio.CancelledError as exc:
+        except CancelledError as exc:
             remaining = set(due).difference(completed, failed_groups)
             self._refresh_failed(
                 remaining,

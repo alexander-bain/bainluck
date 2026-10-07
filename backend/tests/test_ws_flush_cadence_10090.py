@@ -139,10 +139,14 @@ class _Recording(lbr.LiveBlendRefresher):
         super().__init__("kalshi", **kw)
         self.batches: list[tuple[list[int], float]] = []
 
-    async def _refresh_batch(self, event_ids, now):
+    async def _refresh_batch(
+        self, event_ids, now, *, prepared=None, on_committed=None
+    ):
         self.batches.append((sorted(event_ids), now))
         for event_id in event_ids:
             self._last_refresh_at[event_id] = now
+        if on_committed is not None:
+            on_committed(event_ids)
 
 
 class TestTheFloorReadsTheFlushStart:
@@ -151,6 +155,21 @@ class TestTheFloorReadsTheFlushStart:
         c = {"t": 1000.0}
         monkeypatch.setattr(lbr, "_mono", lambda: c["t"])
         return c
+
+    async def test_grouped_recording_accepts_preparation_and_commit_callback(self, clock):
+        r = _Recording()
+
+        async def prepared(event_ids):
+            assert set(event_ids) == set(range(1, 9))
+            return {}
+
+        r._prepare_groups = prepared
+        clock["t"] = 1001.5
+        await r.refresh(range(1, 9), flush_started=1000.0)
+        assert r.batches == [([1, 2, 3, 4], 1000.0), ([5, 6, 7, 8], 1000.0)]
+        assert r.stats["errors"] == 0
+        assert r._failed_hold_until == {}
+        assert r._last_refresh_at == {event_id: 1000.0 for event_id in range(1, 9)}
 
     async def test_a_slow_write_then_a_fast_one_stamps_both_flushes(
         self, clock,

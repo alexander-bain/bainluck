@@ -463,7 +463,9 @@ async def _run_consumer(monkeypatch, frames, throttle=0.5, recycle=1.5):
             super().__init__(source, min_refresh_interval_s=throttle, **kw)
             seen["refresher"] = self
 
-        async def _refresh_batch(self, event_ids, now):
+        async def _refresh_batch(
+            self, event_ids, now, *, prepared=None, on_committed=None
+        ):
             for eid in event_ids:
                 self._last_refresh_at[eid] = now
                 self._dispositions[eid] = (
@@ -472,6 +474,8 @@ async def _run_consumer(monkeypatch, frames, throttle=0.5, recycle=1.5):
                 )
                 self._last_written_value[eid] = 0.7
                 self._last_write_at[eid] = now
+            if on_committed is not None:
+                on_committed(event_ids)
 
     monkeypatch.setattr(poly_task, "SUBSCRIPTION_REFRESH_SECONDS", recycle)
     monkeypatch.setattr(poly_task, "PRICE_FLUSH_SECONDS", 0.02)
