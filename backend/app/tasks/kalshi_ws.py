@@ -11,6 +11,7 @@ Channels:
 
 import asyncio
 import contextlib
+import functools
 import logging
 import os
 import time
@@ -69,6 +70,59 @@ FINAL_FLUSH_ATTEMPTS = int(os.getenv("WS_FINAL_FLUSH_ATTEMPTS", "3"))
 #: The final drain does NOT use it: `FINAL_FLUSH_ATTEMPTS` back-to-back attempts
 #: would otherwise give up on a lock held ~1.5 s and drop the last prices.
 PRICE_PHASE_LOCK_TIMEOUT_MS = 500
+
+
+class _KalshiPriceOwner:
+    """#10693 — one consumer run's Kalshi price pipeline, installed lazily.
+
+    The first price phase installs the pipeline on the engine its session is
+    bound to (the run's one `ConsumerSessions` engine, #2471) and every later
+    phase of the run reuses it; the utility refuses a session from any other
+    engine. A run that never writes a price never installs a listener.
+    """
+
+    def __init__(self):
+        self.pipeline = None
+
+    async def phase(self, session, phase):
+        """Yield `PriceRunResult`s for one phase. Consume in `aclosing`.
+
+        A successful phase is exhausted by its caller. A caller error closes
+        this iterator (and the utility's) before the session rolls back.
+        """
+        from app.utils.kalshi_price_pipeline import install_kalshi_price_pipeline
+
+        if self.pipeline is None:
+            self.pipeline = install_kalshi_price_pipeline(session.bind)
+        async with contextlib.aclosing(
+            self.pipeline.iter_phase(session, phase)
+        ) as results:
+            async for result in results:
+                yield result
+
+    def close(self):
+        if self.pipeline is not None:
+            self.pipeline.close()
+
+
+def _owns_kalshi_price_lifetime(consumer):
+    """#10693 — close the run's price listener after the consumer has returned.
+
+    Sits INSIDE `owns_consumer_sessions`: the consumer's whole body — its final
+    drain, hand-off and loop reaping — finishes first, then the listener is
+    removed, then the outer owner disposes the engine. Reversed, the engine
+    would be disposed with the listener still installed on it.
+    """
+
+    @functools.wraps(consumer)
+    async def run(*args, **kwargs):
+        prices = _KalshiPriceOwner()
+        try:
+            return await consumer(*args, prices=prices, **kwargs)
+        finally:
+            prices.close()
+
+    return run
 
 
 def _kalshi_slate_event_window():
@@ -150,7 +204,8 @@ def linked_first_phases(
 
 
 @owns_consumer_sessions("kalshi")
-async def _run_kalshi_ws_consumer(*, sessions):
+@_owns_kalshi_price_lifetime  # #10693: inside, so the engine is disposed last
+async def _run_kalshi_ws_consumer(*, sessions, prices):
     """Main WebSocket consumer loop.
 
     1. Load linked Kalshi market tickers from DB
@@ -184,9 +239,6 @@ async def _run_kalshi_ws_consumer(*, sessions):
         shard_tickers,
     )
     from app.utils.futures_rank import rerank_market_fields_stmt  # #6598
-    from app.utils.kalshi_price_statement import (  # #10689
-        KALSHI_PRICE_STATEMENTS, kalshi_price_parameters,
-    )
 
     # #2471: one engine for this run, a fresh session per operation; the
     # decorator disposes it after the final drain. Same call shape as the
@@ -465,98 +517,89 @@ async def _run_kalshi_ws_consumer(*, sessions):
                             SET_LOCK_TIMEOUT_SQL,
                             {"ms": lock_timeout_value(PRICE_PHASE_LOCK_TIMEOUT_MS)},
                         )
-                    for outcome_id, (prob, yes_bid, yes_ask) in phase.items():
-                        # #8753: the book columns move only when the tick carried
-                        # BOTH sides; otherwise each is set to itself (a no-op). Half
-                        # a book beside the other half from an older REST poll is a
-                        # quote nobody ever offered. Spelled as keywords, not a
-                        # splat, so the #4958 writer scan can read the mapping (since
-                        # #10689 it is spelled in `utils/kalshi_price_statement.py`).
-                        tick_has_book = yes_bid is not None and yes_ask is not None
-                        result = await session.execute(
-                            # #9484: the TABLE, not the entity. An ORM-enabled
-                            # UPDATE ... RETURNING comes back as an ORM result with
-                            # no `rowcount`, and the #5411 guard below reads it;
-                            # the Core form keeps the CursorResult (asyncpg sets
-                            # its rowcount from the command status) and returns
-                            # the rows that actually took the price.
+                    # #10693: the phase's rows go through the run's price pipeline,
+                    # in batch order. A run of two or more consecutive rows of one
+                    # shape (full book / no book, `utils/kalshi_price_statement.py`)
+                    # is ONE driver round trip on the supported SQLAlchemy/asyncpg
+                    # pair; a single row, or any other installed pair, is the
+                    # ordinary one execute per row. Either way each row runs the
+                    # same statement with the same binds, the phase stays one
+                    # transaction, and a lock timeout or any error raises here with
+                    # the whole phase rolled back. Nothing submitted is replayed.
+                    #
+                    # The statement (built once per process, #10689) carries:
+                    #
+                    # #8753: the book columns move only when the tick carried BOTH
+                    # sides; otherwise each is set to itself (a no-op). Half a book
+                    # beside the other half from an older REST poll is a quote
+                    # nobody ever offered.
+                    #
+                    # #9484: the TABLE, not the entity. An ORM-enabled UPDATE ...
+                    # RETURNING comes back as an ORM result with no `rowcount`;
+                    # the Core form returns the rows that actually took the price.
+                    #
+                    # #5411 — A SETTLED CONTRACT HAS NO LIVE PRICE. It is worth
+                    # exactly 1 or 0, and #5246 made every reachable settlement
+                    # writer say so. This socket had never heard of settlement: it
+                    # wrote `current_probability` unconditionally, so 189 of the
+                    # 6,895 rows that repair cleared were re-priced within 55
+                    # minutes (one burst, 22:48-22:52Z on 9/11) and eliminated
+                    # players went back to showing a live number. The invariant
+                    # was enforced on ENTRY and not on UPDATE.
+                    #
+                    # The refusal is the TIER-3 set, not `IS NOT NULL`, and the
+                    # distinction is the whole correctness of it: the two live US
+                    # Open finalists carry `ungradeable_result` (tier 1 — a
+                    # RETRACTION meaning the venue never called it, explicitly
+                    # reversible by evidence), so refusing every graded-looking
+                    # row would have FROZEN the two rows that most need to move.
+                    # Guess-family and NULL rows stay writable for the same
+                    # reason. `or_` with an explicit NULL arm because the column
+                    # is nullable and `NOT IN (...)` is NULL — not TRUE — for a
+                    # NULL source. Mirrors `polymarket_ws`'s `is_authoritative`
+                    # skip; that socket has always had this guard.
+                    #
+                    # This socket IS a live writer of this row, so it owes both
+                    # stamps the polls owe (#2024). Without `last_updated` the
+                    # playoff grid's liveness gate read actively-streaming rows as
+                    # days stale — measured 2026-08-30 at up to 23 days on rows
+                    # whose price had moved seconds earlier.
+                    async with contextlib.aclosing(
+                        prices.phase(session, phase)
+                    ) as price_results:
+                        async for result in price_results:
+                            # #5411 — a settled row matches the id and fails the
+                            # guard, so it returns no row. (A row deleted between
+                            # subscription and flush lands here too; both are
+                            # honestly "a buffered price that did not become a
+                            # stored price", which is what this counter is named
+                            # for.)
+                            declined += result.attempted - result.rowcount
+                            # #9484: one market invalidation per row the UPDATE
+                            # RETURNED, stamped with the stored `last_updated` —
+                            # never the buffered id, never a local clock. A #5411
+                            # refusal or a deleted row returns nothing, so it
+                            # signals nothing. Staged against this transaction;
+                            # published below only once the outer commit landed.
                             #
-                            # #10689: the statement is built ONCE per process (two shapes,
-                            # full book / no book, `utils/kalshi_price_statement.py`); only
-                            # this row's values are bound here. Still one execute per row, in
-                            # order. Its WHERE carries the #5411 guard and its SET the #2024
-                            # stamps and the #8753 book rule, for the reasons below.
-                            #
-                            # #5411 — A SETTLED CONTRACT HAS NO LIVE PRICE. It is
-                            # worth exactly 1 or 0, and #5246 made every reachable
-                            # settlement writer say so. This socket had never heard
-                            # of settlement: it wrote `current_probability`
-                            # unconditionally, so 189 of the 6,895 rows that
-                            # repair cleared were re-priced within 55 minutes (one
-                            # burst, 22:48-22:52Z on 9/11) and eliminated players
-                            # went back to showing a live number. The invariant was
-                            # enforced on ENTRY and not on UPDATE.
-                            #
-                            # The refusal is the TIER-3 set, not `IS NOT NULL`, and
-                            # the distinction is the whole correctness of it: the
-                            # two live US Open finalists carry `ungradeable_result`
-                            # (tier 1 — a RETRACTION meaning the venue never called
-                            # it, explicitly reversible by evidence), so refusing
-                            # every graded-looking row would have FROZEN the two
-                            # rows that most need to move. Guess-family and NULL
-                            # rows stay writable for the same reason.
-                            #
-                            # `or_` with an explicit NULL arm because the column is
-                            # nullable and `NOT IN (...)` is NULL — not TRUE — for
-                            # a NULL source, which would silently refuse every
-                            # ungraded row in the book.
-                            #
-                            # Mirrors `polymarket_ws`'s `is_authoritative` skip
-                            # (its line 84); that socket has always had this guard
-                            # and this one has not, which is why the two behaved
-                            # differently on the same class of row.
-                            #
-                            # This socket IS a live writer of this row, so it
-                            # owes both stamps the polls owe (#2024). Without
-                            # `last_updated` the playoff grid's liveness gate
-                            # read actively-streaming rows as days stale —
-                            # measured 2026-08-30 at up to 23 days on rows whose
-                            # price had moved seconds earlier.
-                            KALSHI_PRICE_STATEMENTS[tick_has_book],
-                            kalshi_price_parameters(outcome_id, prob, yes_bid, yes_ask),
-                        )
-                        # #5411 — a settled row matches the id and fails the guard, so
-                        # the statement affects 0 rows. (A row deleted between
-                        # subscription and flush lands here too; both are honestly "a
-                        # buffered price that did not become a stored price", which is
-                        # what this counter is named for.)
-                        if result.rowcount == 0:
-                            declined += 1
-                        else:
-                            written_outcome_ids.append(outcome_id)
-                        # #9484: one market invalidation per row the UPDATE
-                        # RETURNED, stamped with the stored `last_updated` — never
-                        # the buffered id, never a local clock. A #5411 refusal or
-                        # a deleted row returns nothing, so it signals nothing.
-                        # Staged against this transaction; published below only
-                        # once the outer commit has landed.
-                        #
-                        # And only when the write changed what a reader is served
-                        # (price or book, `quote_moved_column`). A tick that only
-                        # re-stamped `last_updated` (volume, open interest, the
-                        # same quote again) still writes — liveness reads that
-                        # stamp — but a frame for it sends every held page to
-                        # re-read an unchanged row (ux, #9526).
-                        for row in result.all():
-                            if not row.quote_moved:
-                                stats["quotes_unchanged"] += 1
-                                continue
-                            queue_market_change(
-                                session,
-                                market_id=row.market_id,
-                                source="kalshi",
-                                outcome_observed_at={row.id: row.last_updated},
-                            )
+                            # And only when the write changed what a reader is
+                            # served (price or book, `quote_moved_column`). A tick
+                            # that only re-stamped `last_updated` (volume, open
+                            # interest, the same quote again) still writes —
+                            # liveness reads that stamp — but a frame for it sends
+                            # every held page to re-read an unchanged row (ux,
+                            # #9526).
+                            for row in result.all():
+                                written_outcome_ids.append(row.id)
+                                if not row.quote_moved:
+                                    stats["quotes_unchanged"] += 1
+                                    continue
+                                queue_market_change(
+                                    session,
+                                    market_id=row.market_id,
+                                    source="kalshi",
+                                    outcome_observed_at={row.id: row.last_updated},
+                                )
 
                     # #6598 / CERT-3182. `rank` is derived from the price this loop
                     # just moved, and nothing in this module has ever written it —
