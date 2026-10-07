@@ -239,6 +239,10 @@ async def _run_kalshi_ws_consumer(*, sessions, prices):
         shard_tickers,
     )
     from app.utils.futures_rank import rerank_market_fields_stmt  # #6598
+    from app.utils.kalshi_exact_trace import ExactKalshiTrace
+
+    # A START exists even when slate loading never finishes or selects nothing.
+    exact_trace = ExactKalshiTrace.from_env(os.environ, run=None)
 
     # #2471: one engine for this run, a fresh session per operation; the
     # decorator disposes it after the final drain. Same call shape as the
@@ -261,6 +265,7 @@ async def _run_kalshi_ws_consumer(*, sessions, prices):
     # #9418: the admission floor is measured from here, the previous recycle.
     run_started_at = time.monotonic()
     ws = KalshiWebSocket()
+    ws.exact_trace = exact_trace
 
     # -- Load market tickers to subscribe to --
     async with get_task_session() as session:
@@ -309,6 +314,14 @@ async def _run_kalshi_ws_consumer(*, sessions, prices):
         ticker_to_ids[ext_id.upper()] = (market_id, outcome_id)
 
     market_tickers = list(ticker_to_ids.keys())
+    if exact_trace is not None:
+        with contextlib.suppress(Exception):
+            exact_trace.admission(
+                ticker_to_ids, {},
+                {oid: event_id_by_market[mid] for mid, oid in ticker_to_ids.values()
+                 if mid in event_id_by_market},
+                phase="LINKED_SLATE", open_status="UNAVAILABLE_PENDING_ADMISSION",
+            )
 
     # #9484 — every other unsettled Kalshi contract, for PRICES only, on its own
     # connections (`app.tasks.ws_open_contracts`). Never added to
@@ -363,6 +376,13 @@ async def _run_kalshi_ws_consumer(*, sessions, prices):
     preread = None
     if not market_tickers:
         preread = await read_open_contracts()
+        if exact_trace is not None:
+            with contextlib.suppress(Exception):
+                exact_trace.admission(
+                    ticker_to_ids, preread[0], preread[1], phase="OPEN_PREREAD",
+                    open_status=("UNAVAILABLE_READ_FAILED" if preread[2]
+                                 else "SELECTED" if open_contract_prices_enabled() else "DISABLED"),
+                )
         if not preread[0]:
             logger.info("Kalshi WS: no live/upcoming linked markets")
             _report_liveness("kalshi", "no_markets", legs=0)
@@ -455,6 +475,11 @@ async def _run_kalshi_ws_consumer(*, sessions, prices):
     # published revision carried it. Keyed like `price_buffer`.
     tail_receipts = TailReceipts("kalshi")
     blend_refresher.receipts = tail_receipts
+    # #10702: disabled without exact targets AND a short absolute expiry.
+    # One budget for this run, including its existing open-contract sockets.
+    if exact_trace is not None:
+        tail_receipts.run = exact_trace.run
+    tail_receipts.exact_trace = exact_trace
     input_marks: dict = {}
     # #9462 review: stamps the previous run still owed when it recycled. Its
     # prices are already stored; the first flush below stamps them.
@@ -477,6 +502,7 @@ async def _run_kalshi_ws_consumer(*, sessions, prices):
         tail. Earlier committed games stay done. ``final_drain`` waits for locks
         as long as Postgres does: the drain has no next flush to retry in.
         """
+        exact_trace = getattr(tail_receipts, "exact_trace", None)
         async with buffer_lock:
             batch = dict(price_buffer)
             batch_marks = {
@@ -508,6 +534,7 @@ async def _run_kalshi_ws_consumer(*, sessions, prices):
         for index, phase in enumerate(phases):
             declined = 0
             written_outcome_ids: list[int] = []
+            written_observations: dict = {}
             try:
                 async with get_task_session() as session:
                     # #10661: bound each lock acquisition in this transaction.
@@ -591,6 +618,10 @@ async def _run_kalshi_ws_consumer(*, sessions, prices):
                             # #9526).
                             for row in result.all():
                                 written_outcome_ids.append(row.id)
+                                if exact_trace is not None:
+                                    with contextlib.suppress(Exception):
+                                        if exact_trace.tracks(batch_marks.get(row.id)):
+                                            written_observations[row.id] = row.last_updated
                                 if not row.quote_moved:
                                     stats["quotes_unchanged"] += 1
                                     continue
@@ -649,6 +680,12 @@ async def _run_kalshi_ws_consumer(*, sessions, prices):
                 )
                 stats["errors"] += 1
                 stats["requeued"] += unpaid
+                if exact_trace is not None:
+                    with contextlib.suppress(Exception):
+                        exact_trace.write_failed(
+                            [batch_marks[oid] for oid in phase if oid in batch_marks],
+                            "LOCK_TIMEOUT" if lock_timed_out else "ROLLED_BACK",
+                        )
                 logger.exception(
                     "Kalshi WS: flush error (%d updates retained for retry)", unpaid
                 )
@@ -658,6 +695,16 @@ async def _run_kalshi_ws_consumer(*, sessions, prices):
                     had_lock_failure = True
                     continue
                 return False
+
+            if exact_trace is not None:
+                with contextlib.suppress(Exception):
+                    for oid, observed_at in written_observations.items():
+                        exact_trace.committed(batch_marks.get(oid), observed_at)
+                    exact_trace.write_failed(
+                        [batch_marks[oid] for oid in phase
+                         if oid not in written_outcome_ids and oid in batch_marks],
+                        "DECLINED_SETTLED_OR_MISSING",
+                    )
 
             # #9484 — the commit landed, so the rows it carried may now say so on
             # `live:market:{id}`. Before the buffer bookkeeping and the blend
@@ -763,12 +810,16 @@ async def _run_kalshi_ws_consumer(*, sessions, prices):
             return None
 
     async def handle_ticker(msg: dict):
+        exact_trace = getattr(tail_receipts, "exact_trace", None)
         ticker = (msg.get("market_ticker") or msg.get("ticker", "")).upper()
         ids = ticker_to_ids.get(ticker) or open_contract_ids.get(ticker)
         if not ids:
+            if exact_trace is not None:
+                with contextlib.suppress(Exception):
+                    exact_trace.decided(msg, reason="UNMAPPED")
             return
 
-        _, outcome_id = ids
+        market_id, outcome_id = ids
         # #10090 — a message for this game's contract, before the price policy.
         with contextlib.suppress(Exception):
             tail_receipts.note_raw(event_id_by_outcome.get(outcome_id))
@@ -791,6 +842,15 @@ async def _run_kalshi_ws_consumer(*, sessions, prices):
         # The socket's historical open bounds, kept: a terminal 0 or 1 is
         # settlement's to write (`handle_lifecycle`), never a streamed tick's.
         if prob is None or not 0 < prob < 1:
+            if exact_trace is not None:
+                with contextlib.suppress(Exception):
+                    exact_trace.decided(
+                        msg, reason=("MISSING_OR_INVALID_DOLLAR_FIELDS"
+                                     if last_price is None and yes_bid is None and yes_ask is None
+                                     else "PRICE_POLICY_REFUSED" if prob is None else "TERMINAL_OR_INVALID"),
+                        market=market_id, outcome=outcome_id,
+                        event=event_id_by_outcome.get(outcome_id), probability=prob,
+                    )
             return
 
         async with buffer_lock:
@@ -805,6 +865,12 @@ async def _run_kalshi_ws_consumer(*, sessions, prices):
                 mark = None
             if mark is not None:
                 input_marks[outcome_id] = mark
+            if exact_trace is not None:
+                with contextlib.suppress(Exception):
+                    exact_trace.decided(
+                        msg, reason="ACCEPTED", market=market_id, outcome=outcome_id,
+                        event=event_id_by_outcome.get(outcome_id), probability=prob, mark=mark,
+                    )
 
     async def handle_open_contract_lifecycle(ticker: str, msg: dict):
         """#10022: one open-contract leg, graded by its own frame — never the
@@ -1064,11 +1130,19 @@ async def _run_kalshi_ws_consumer(*, sessions, prices):
         )
         open_contract_outcome_ids.update(oid for _, oid in ids.values())
         open_contract_ids.update(ids)
+        if exact_trace is not None:
+            with contextlib.suppress(Exception):
+                exact_trace.admission(
+                    ticker_to_ids, open_contract_ids, event_id_by_outcome, phase="OPEN_ADMISSION",
+                    open_status=("UNAVAILABLE_READ_FAILED" if failed
+                                 else "SELECTED" if open_contract_prices_enabled() else "DISABLED"),
+                )
         shards = shard_tickers(ids)
         stats["open_contract_tickers"] = len(ids)
         stats["open_contract_connections"] = len(shards)
         for shard in shards:
             sock = KalshiWebSocket()
+            sock.exact_trace = exact_trace
             sock.on_ticker = handle_ticker
             sock.on_lifecycle = handle_shard_lifecycle
             open_contract_sockets.append(sock)
