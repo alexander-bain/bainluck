@@ -21,6 +21,7 @@ established.
 import asyncio
 
 import pytest
+from tests.pm_bulk_test_support import price_writes
 import websockets
 from sqlalchemy.dialects import postgresql
 from sqlalchemy.sql.dml import Update
@@ -124,10 +125,8 @@ class _RecordingSession:
         if isinstance(stmt, Update):
             params = stmt.compile(dialect=postgresql.dialect()).params
             table = stmt.table.name
-            if table == "futures_outcomes" and "current_probability" in params:
-                self._writes.append(
-                    (params["id_1"], params["current_probability"])
-                )
+            if table == "futures_outcomes" and price_writes(stmt):
+                self._writes.extend(price_writes(stmt))
             return _Result([])
         return _Result(self._batches.pop(0) if self._batches else [])
 

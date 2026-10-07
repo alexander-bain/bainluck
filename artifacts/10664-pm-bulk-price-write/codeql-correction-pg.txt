@@ -1,0 +1,64 @@
+============================= test session starts ==============================
+platform darwin -- Python 3.12.15+meta, pytest-9.0.3, pluggy-1.6.0 -- /usr/local/fbcode/platform010/Python3.12.framework/Versions/3.12/bin/python3.12
+cachedir: .pytest_cache
+rootdir: /Users/bain/bainluck-dev/latency/.worktrees/10664-pm-bulk-price-write/backend
+configfile: pytest.ini
+plugins: asyncio-1.4.0, anyio-4.13.0
+asyncio: mode=Mode.AUTO, debug=False, asyncio_default_fixture_loop_scope=None, asyncio_default_test_loop_scope=function
+collecting ... collected 47 items
+
+tests/integration/test_pm_bulk_price_write_10664_pg.py::test_order_precision_null_vanished_and_post_commit_publication PASSED [  2%]
+tests/integration/test_pm_bulk_price_write_10664_pg.py::test_settled_price_coverage_is_unchanged PASSED [  4%]
+tests/integration/test_pm_bulk_price_write_10664_pg.py::test_atomic_overflow_returns_no_unchanged_observations PASSED [  6%]
+tests/integration/test_pm_bulk_price_write_10664_pg.py::test_later_failure_rolls_back_retains_latest_and_counts_returned_observations[rerank] PASSED [  8%]
+tests/integration/test_pm_bulk_price_write_10664_pg.py::test_later_failure_rolls_back_retains_latest_and_counts_returned_observations[outer_commit] PASSED [ 10%]
+tests/integration/test_pm_bulk_price_write_10664_pg.py::test_newer_tick_survives_a_successful_old_write PASSED [ 12%]
+tests/integration/test_pm_bulk_price_write_10664_pg.py::test_concurrent_deletion_of_held_row_signals_only_surviving_row PASSED [ 14%]
+tests/integration/test_pm_bulk_price_write_10664_pg.py::test_cancelled_real_lock_wait_keeps_latest_input_and_publishes_nothing PASSED [ 17%]
+tests/test_startup.py::test_app_imports PASSED                           [ 19%]
+tests/test_startup.py::test_all_route_modules_import PASSED              [ 21%]
+tests/test_startup.py::test_key_task_modules_import PASSED               [ 23%]
+tests/test_startup.py::test_key_util_modules_import PASSED               [ 25%]
+tests/test_ci_postgres_groups.py::test_each_execution_unit_runs_once_in_manifest_order PASSED [ 27%]
+tests/test_ci_postgres_groups.py::test_incomplete_or_duplicate_dispatch_is_rejected[missing] PASSED [ 29%]
+tests/test_ci_postgres_groups.py::test_incomplete_or_duplicate_dispatch_is_rejected[duplicate] PASSED [ 31%]
+tests/test_ci_postgres_groups.py::test_incomplete_or_duplicate_dispatch_is_rejected[unassigned] PASSED [ 34%]
+tests/test_ci_postgres_groups.py::test_incomplete_or_duplicate_dispatch_is_rejected[unknown_group] PASSED [ 36%]
+tests/test_ci_postgres_groups.py::test_common_setup_services_and_intentional_scope_skip PASSED [ 38%]
+tests/test_ci_postgres_groups.py::test_disposable_consumers_keep_their_provisioner_on_the_same_runner PASSED [ 40%]
+tests/test_ci_postgres_groups.py::test_every_env_consumer_runs_after_its_provisioner_in_the_same_group PASSED [ 42%]
+tests/test_ci_postgres_groups.py::test_env_split_guard_catches_the_8755_split PASSED [ 44%]
+tests/test_ci_postgres_groups.py::test_required_aggregate_runs_after_failure_and_deploy_still_depends_on_it PASSED [ 46%]
+tests/test_ci_postgres_groups.py::test_actual_aggregate_command_only_accepts_completed_success[success-success] PASSED [ 48%]
+tests/test_ci_postgres_groups.py::test_actual_aggregate_command_only_accepts_completed_success[success-failure] PASSED [ 51%]
+tests/test_ci_postgres_groups.py::test_actual_aggregate_command_only_accepts_completed_success[success-cancelled] PASSED [ 53%]
+tests/test_ci_postgres_groups.py::test_actual_aggregate_command_only_accepts_completed_success[success-skipped] PASSED [ 55%]
+tests/test_ci_postgres_groups.py::test_actual_aggregate_command_only_accepts_completed_success[success-] PASSED [ 57%]
+tests/test_ci_postgres_groups.py::test_actual_aggregate_command_only_accepts_completed_success[failure-success] PASSED [ 59%]
+tests/test_ci_postgres_groups.py::test_actual_aggregate_command_only_accepts_completed_success[failure-failure] PASSED [ 61%]
+tests/test_ci_postgres_groups.py::test_actual_aggregate_command_only_accepts_completed_success[failure-cancelled] PASSED [ 63%]
+tests/test_ci_postgres_groups.py::test_actual_aggregate_command_only_accepts_completed_success[failure-skipped] PASSED [ 65%]
+tests/test_ci_postgres_groups.py::test_actual_aggregate_command_only_accepts_completed_success[failure-] PASSED [ 68%]
+tests/test_ci_postgres_groups.py::test_actual_aggregate_command_only_accepts_completed_success[cancelled-success] PASSED [ 70%]
+tests/test_ci_postgres_groups.py::test_actual_aggregate_command_only_accepts_completed_success[cancelled-failure] PASSED [ 72%]
+tests/test_ci_postgres_groups.py::test_actual_aggregate_command_only_accepts_completed_success[cancelled-cancelled] PASSED [ 74%]
+tests/test_ci_postgres_groups.py::test_actual_aggregate_command_only_accepts_completed_success[cancelled-skipped] PASSED [ 76%]
+tests/test_ci_postgres_groups.py::test_actual_aggregate_command_only_accepts_completed_success[cancelled-] PASSED [ 78%]
+tests/test_ci_postgres_groups.py::test_actual_aggregate_command_only_accepts_completed_success[skipped-success] PASSED [ 80%]
+tests/test_ci_postgres_groups.py::test_actual_aggregate_command_only_accepts_completed_success[skipped-failure] PASSED [ 82%]
+tests/test_ci_postgres_groups.py::test_actual_aggregate_command_only_accepts_completed_success[skipped-cancelled] PASSED [ 85%]
+tests/test_ci_postgres_groups.py::test_actual_aggregate_command_only_accepts_completed_success[skipped-skipped] PASSED [ 87%]
+tests/test_ci_postgres_groups.py::test_actual_aggregate_command_only_accepts_completed_success[skipped-] PASSED [ 89%]
+tests/test_ci_postgres_groups.py::test_actual_aggregate_command_only_accepts_completed_success[-success] PASSED [ 91%]
+tests/test_ci_postgres_groups.py::test_actual_aggregate_command_only_accepts_completed_success[-failure] PASSED [ 93%]
+tests/test_ci_postgres_groups.py::test_actual_aggregate_command_only_accepts_completed_success[-cancelled] PASSED [ 95%]
+tests/test_ci_postgres_groups.py::test_actual_aggregate_command_only_accepts_completed_success[-skipped] PASSED [ 97%]
+tests/test_ci_postgres_groups.py::test_actual_aggregate_command_only_accepts_completed_success[-] PASSED [100%]
+
+=============================== warnings summary ===============================
+tests/integration/test_pm_bulk_price_write_10664_pg.py::test_order_precision_null_vanished_and_post_commit_publication
+  /Users/bain/bainluck-dev/latency/.worktrees/10664-pm-bulk-price-write/backend/app/routes/auth.py:121: PydanticDeprecatedSince20: Support for class-based `config` is deprecated, use ConfigDict instead. Deprecated in Pydantic V2.0 to be removed in V3.0. See Pydantic V2 Migration Guide at https://errors.pydantic.dev/2.13/migration/
+    class UserProfileResponse(BaseModel):
+
+-- Docs: https://docs.pytest.org/en/stable/how-to/capture-warnings.html
+======================== 47 passed, 1 warning in 9.88s =========================

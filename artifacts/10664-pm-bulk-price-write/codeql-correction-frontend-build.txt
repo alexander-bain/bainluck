@@ -1,0 +1,276 @@
+
+> bainluck-frontend@0.1.0 build
+> next build
+
+  ▲ Next.js 14.2.35
+  - Environments: .env.production
+  - Experiments (use with caution):
+    · instrumentationHook
+
+   Creating an optimized production build ...
+[@sentry/nextjs] DEPRECATION WARNING: It is recommended renaming your `sentry.client.config.ts` file, or moving its content to `instrumentation-client.ts`. When using Turbopack `sentry.client.config.ts` will no longer work. Read more about the `instrumentation-client.ts` file: https://nextjs.org/docs/app/api-reference/file-conventions/instrumentation-client
+ ✓ Compiled successfully
+   Skipping validation of types
+   Linting ...
+
+./app/admin/bug-reports/page.tsx
+423:21  Warning: Using `<img>` could result in slower LCP and higher bandwidth. Consider using `<Image />` from `next/image` to automatically optimize images. This may incur additional usage or cost from your provider. See: https://nextjs.org/docs/messages/no-img-element  @next/next/no-img-element
+
+./app/admin/feed-review/page.tsx
+101:5  Warning: React Hook useCallback has a missing dependency: 'notes'. Either include it or remove the dependency array.  react-hooks/exhaustive-deps
+
+./app/admin/page.tsx
+1056:9  Warning: The 'sportData' logical expression could make the dependencies of useMemo Hook (at line 1071) change on every render. Move it inside the useMemo callback. Alternatively, wrap the initialization of 'sportData' in its own useMemo() Hook.  react-hooks/exhaustive-deps
+
+./app/entertainment/page.tsx
+132:9  Warning: Using `<img>` could result in slower LCP and higher bandwidth. Consider using `<Image />` from `next/image` to automatically optimize images. This may incur additional usage or cost from your provider. See: https://nextjs.org/docs/messages/no-img-element  @next/next/no-img-element
+
+./app/events/[id]/page.tsx
+2469:19  Warning: Using `<img>` could result in slower LCP and higher bandwidth. Consider using `<Image />` from `next/image` to automatically optimize images. This may incur additional usage or cost from your provider. See: https://nextjs.org/docs/messages/no-img-element  @next/next/no-img-element
+2820:19  Warning: Using `<img>` could result in slower LCP and higher bandwidth. Consider using `<Image />` from `next/image` to automatically optimize images. This may incur additional usage or cost from your provider. See: https://nextjs.org/docs/messages/no-img-element  @next/next/no-img-element
+
+./app/futures/[id]/page.tsx
+515:9  Warning: The 'historyOutcomes' conditional could make the dependencies of useEffect Hook (at line 560) change on every render. To fix this, wrap the initialization of 'historyOutcomes' in its own useMemo() Hook.  react-hooks/exhaustive-deps
+515:9  Warning: The 'historyOutcomes' conditional could make the dependencies of useMemo Hook (at line 590) change on every render. To fix this, wrap the initialization of 'historyOutcomes' in its own useMemo() Hook.  react-hooks/exhaustive-deps
+515:9  Warning: The 'historyOutcomes' conditional could make the dependencies of useMemo Hook (at line 648) change on every render. To fix this, wrap the initialization of 'historyOutcomes' in its own useMemo() Hook.  react-hooks/exhaustive-deps
+
+./app/my-stuff/page.tsx
+1303:11  Warning: Using `<img>` could result in slower LCP and higher bandwidth. Consider using `<Image />` from `next/image` to automatically optimize images. This may incur additional usage or cost from your provider. See: https://nextjs.org/docs/messages/no-img-element  @next/next/no-img-element
+
+./app/onboarding/page.tsx
+751:19  Warning: Using `<img>` could result in slower LCP and higher bandwidth. Consider using `<Image />` from `next/image` to automatically optimize images. This may incur additional usage or cost from your provider. See: https://nextjs.org/docs/messages/no-img-element  @next/next/no-img-element
+834:19  Warning: Using `<img>` could result in slower LCP and higher bandwidth. Consider using `<Image />` from `next/image` to automatically optimize images. This may incur additional usage or cost from your provider. See: https://nextjs.org/docs/messages/no-img-element  @next/next/no-img-element
+859:17  Warning: Using `<img>` could result in slower LCP and higher bandwidth. Consider using `<Image />` from `next/image` to automatically optimize images. This may incur additional usage or cost from your provider. See: https://nextjs.org/docs/messages/no-img-element  @next/next/no-img-element
+935:19  Warning: Using `<img>` could result in slower LCP and higher bandwidth. Consider using `<Image />` from `next/image` to automatically optimize images. This may incur additional usage or cost from your provider. See: https://nextjs.org/docs/messages/no-img-element  @next/next/no-img-element
+960:17  Warning: Using `<img>` could result in slower LCP and higher bandwidth. Consider using `<Image />` from `next/image` to automatically optimize images. This may incur additional usage or cost from your provider. See: https://nextjs.org/docs/messages/no-img-element  @next/next/no-img-element
+1188:19  Warning: Using `<img>` could result in slower LCP and higher bandwidth. Consider using `<Image />` from `next/image` to automatically optimize images. This may incur additional usage or cost from your provider. See: https://nextjs.org/docs/messages/no-img-element  @next/next/no-img-element
+1213:17  Warning: Using `<img>` could result in slower LCP and higher bandwidth. Consider using `<Image />` from `next/image` to automatically optimize images. This may incur additional usage or cost from your provider. See: https://nextjs.org/docs/messages/no-img-element  @next/next/no-img-element
+
+./app/play/HigherLower.tsx
+117:6  Warning: React Hook useMemo has an unnecessary dependency: 'playerName'. Either exclude it or remove the dependency array.  react-hooks/exhaustive-deps
+
+./app/playoffs/[sport]/page.tsx
+133:17  Warning: Using `<img>` could result in slower LCP and higher bandwidth. Consider using `<Image />` from `next/image` to automatically optimize images. This may incur additional usage or cost from your provider. See: https://nextjs.org/docs/messages/no-img-element  @next/next/no-img-element
+
+./app/preferences/page.tsx
+273:15  Warning: Using `<img>` could result in slower LCP and higher bandwidth. Consider using `<Image />` from `next/image` to automatically optimize images. This may incur additional usage or cost from your provider. See: https://nextjs.org/docs/messages/no-img-element  @next/next/no-img-element
+432:9  Warning: Using `<img>` could result in slower LCP and higher bandwidth. Consider using `<Image />` from `next/image` to automatically optimize images. This may incur additional usage or cost from your provider. See: https://nextjs.org/docs/messages/no-img-element  @next/next/no-img-element
+
+./app/search/page.tsx
+273:6  Warning: React Hook useEffect has a missing dependency: 'track'. Either include it or remove the dependency array.  react-hooks/exhaustive-deps
+
+./app/share/my-odds/page.tsx
+112:17  Warning: Using `<img>` could result in slower LCP and higher bandwidth. Consider using `<Image />` from `next/image` to automatically optimize images. This may incur additional usage or cost from your provider. See: https://nextjs.org/docs/messages/no-img-element  @next/next/no-img-element
+187:11  Warning: Using `<img>` could result in slower LCP and higher bandwidth. Consider using `<Image />` from `next/image` to automatically optimize images. This may incur additional usage or cost from your provider. See: https://nextjs.org/docs/messages/no-img-element  @next/next/no-img-element
+
+./app/sport/[sport]/[league]/team/[team]/page.tsx
+265:11  Warning: Using `<img>` could result in slower LCP and higher bandwidth. Consider using `<Image />` from `next/image` to automatically optimize images. This may incur additional usage or cost from your provider. See: https://nextjs.org/docs/messages/no-img-element  @next/next/no-img-element
+
+./components/CalibrationChart.tsx
+510:19  Warning: React Hook useMemo has missing dependencies: 'px' and 'py'. Either include them or remove the dependency array.  react-hooks/exhaustive-deps
+515:19  Warning: React Hook useMemo has missing dependencies: 'px' and 'py'. Either include them or remove the dependency array.  react-hooks/exhaustive-deps
+
+./components/ChampionshipGrid.tsx
+199:13  Warning: Using `<img>` could result in slower LCP and higher bandwidth. Consider using `<Image />` from `next/image` to automatically optimize images. This may incur additional usage or cost from your provider. See: https://nextjs.org/docs/messages/no-img-element  @next/next/no-img-element
+
+./components/EntityImage.tsx
+86:7  Warning: Using `<img>` could result in slower LCP and higher bandwidth. Consider using `<Image />` from `next/image` to automatically optimize images. This may incur additional usage or cost from your provider. See: https://nextjs.org/docs/messages/no-img-element  @next/next/no-img-element
+
+./components/EventCard.tsx
+157:7  Warning: Using `<img>` could result in slower LCP and higher bandwidth. Consider using `<Image />` from `next/image` to automatically optimize images. This may incur additional usage or cost from your provider. See: https://nextjs.org/docs/messages/no-img-element  @next/next/no-img-element
+171:7  Warning: Using `<img>` could result in slower LCP and higher bandwidth. Consider using `<Image />` from `next/image` to automatically optimize images. This may incur additional usage or cost from your provider. See: https://nextjs.org/docs/messages/no-img-element  @next/next/no-img-element
+184:7  Warning: Using `<img>` could result in slower LCP and higher bandwidth. Consider using `<Image />` from `next/image` to automatically optimize images. This may incur additional usage or cost from your provider. See: https://nextjs.org/docs/messages/no-img-element  @next/next/no-img-element
+
+./components/GamePlayCard.tsx
+341:17  Warning: Using `<img>` could result in slower LCP and higher bandwidth. Consider using `<Image />` from `next/image` to automatically optimize images. This may incur additional usage or cost from your provider. See: https://nextjs.org/docs/messages/no-img-element  @next/next/no-img-element
+353:17  Warning: Using `<img>` could result in slower LCP and higher bandwidth. Consider using `<Image />` from `next/image` to automatically optimize images. This may incur additional usage or cost from your provider. See: https://nextjs.org/docs/messages/no-img-element  @next/next/no-img-element
+
+./components/MarketMap.tsx
+132:6  Warning: React Hook useCallback has unnecessary dependencies: 'rangeMax' and 'rangeMin'. Either exclude them or remove the dependency array.  react-hooks/exhaustive-deps
+351:19  Warning: Using `<img>` could result in slower LCP and higher bandwidth. Consider using `<Image />` from `next/image` to automatically optimize images. This may incur additional usage or cost from your provider. See: https://nextjs.org/docs/messages/no-img-element  @next/next/no-img-element
+
+./components/MarketMapSection.tsx
+1003:6  Warning: React Hook useMemo has missing dependencies: 'noForecast' and 'unitMismatchNote'. Either include them or remove the dependency array.  react-hooks/exhaustive-deps
+1312:6  Warning: React Hook useMemo has missing dependencies: 'noForecast' and 'unitMismatchNote'. Either include them or remove the dependency array.  react-hooks/exhaustive-deps
+1568:6  Warning: React Hook useMemo has a missing dependency: 'noForecast'. Either include it or remove the dependency array.  react-hooks/exhaustive-deps
+
+./components/MobileSearchOverlay.tsx
+262:47  Warning: Using `<img>` could result in slower LCP and higher bandwidth. Consider using `<Image />` from `next/image` to automatically optimize images. This may incur additional usage or cost from your provider. See: https://nextjs.org/docs/messages/no-img-element  @next/next/no-img-element
+
+./components/MoversRibbon.tsx
+59:17  Warning: Using `<img>` could result in slower LCP and higher bandwidth. Consider using `<Image />` from `next/image` to automatically optimize images. This may incur additional usage or cost from your provider. See: https://nextjs.org/docs/messages/no-img-element  @next/next/no-img-element
+
+./components/OddsChart.tsx
+834:3  Warning: React Hook useLayoutEffect contains a call to 'setShift'. Without a list of dependencies, this can lead to an infinite chain of updates. To fix this, pass [shift] as a second argument to the useLayoutEffect Hook.  react-hooks/exhaustive-deps
+1613:6  Warning: React Hook useMemo has an unnecessary dependency: 'filteredScoreHistory'. Either exclude it or remove the dependency array.  react-hooks/exhaustive-deps
+1915:6  Warning: React Hook useMemo has missing dependencies: 'chartEndTime', 'chartStartTime', 'filteredScoreHistory', and 'labelFormat'. Either include them or remove the dependency array.  react-hooks/exhaustive-deps
+2125:6  Warning: React Hook useMemo has an unnecessary dependency: 'plottedProbKeys'. Either exclude it or remove the dependency array.  react-hooks/exhaustive-deps
+2337:6  Warning: React Hook useMemo has a missing dependency: 'primaryValueAt'. Either include it or remove the dependency array.  react-hooks/exhaustive-deps
+2421:6  Warning: React Hook useMemo has a missing dependency: 'primaryValueAt'. Either include it or remove the dependency array.  react-hooks/exhaustive-deps
+3134:15  Warning: Using `<img>` could result in slower LCP and higher bandwidth. Consider using `<Image />` from `next/image` to automatically optimize images. This may incur additional usage or cost from your provider. See: https://nextjs.org/docs/messages/no-img-element  @next/next/no-img-element
+3163:17  Warning: Using `<img>` could result in slower LCP and higher bandwidth. Consider using `<Image />` from `next/image` to automatically optimize images. This may incur additional usage or cost from your provider. See: https://nextjs.org/docs/messages/no-img-element  @next/next/no-img-element
+
+./components/PlayerPropsDashboard.tsx
+367:11  Warning: Using `<img>` could result in slower LCP and higher bandwidth. Consider using `<Image />` from `next/image` to automatically optimize images. This may incur additional usage or cost from your provider. See: https://nextjs.org/docs/messages/no-img-element  @next/next/no-img-element
+
+./components/PlayerPropsGrid.tsx
+148:19  Warning: Using `<img>` could result in slower LCP and higher bandwidth. Consider using `<Image />` from `next/image` to automatically optimize images. This may incur additional usage or cost from your provider. See: https://nextjs.org/docs/messages/no-img-element  @next/next/no-img-element
+
+./components/PlayerStatCard.tsx
+82:7  Warning: Using `<img>` could result in slower LCP and higher bandwidth. Consider using `<Image />` from `next/image` to automatically optimize images. This may incur additional usage or cost from your provider. See: https://nextjs.org/docs/messages/no-img-element  @next/next/no-img-element
+
+./components/ProgressionLadder.tsx
+52:7  Warning: Using `<img>` could result in slower LCP and higher bandwidth. Consider using `<Image />` from `next/image` to automatically optimize images. This may incur additional usage or cost from your provider. See: https://nextjs.org/docs/messages/no-img-element  @next/next/no-img-element
+
+./components/RelatedFutures.tsx
+323:7  Warning: Using `<img>` could result in slower LCP and higher bandwidth. Consider using `<Image />` from `next/image` to automatically optimize images. This may incur additional usage or cost from your provider. See: https://nextjs.org/docs/messages/no-img-element  @next/next/no-img-element
+1588:13  Warning: Using `<img>` could result in slower LCP and higher bandwidth. Consider using `<Image />` from `next/image` to automatically optimize images. This may incur additional usage or cost from your provider. See: https://nextjs.org/docs/messages/no-img-element  @next/next/no-img-element
+1773:11  Warning: Using `<img>` could result in slower LCP and higher bandwidth. Consider using `<Image />` from `next/image` to automatically optimize images. This may incur additional usage or cost from your provider. See: https://nextjs.org/docs/messages/no-img-element  @next/next/no-img-element
+1877:11  Warning: Using `<img>` could result in slower LCP and higher bandwidth. Consider using `<Image />` from `next/image` to automatically optimize images. This may incur additional usage or cost from your provider. See: https://nextjs.org/docs/messages/no-img-element  @next/next/no-img-element
+1975:13  Warning: Using `<img>` could result in slower LCP and higher bandwidth. Consider using `<Image />` from `next/image` to automatically optimize images. This may incur additional usage or cost from your provider. See: https://nextjs.org/docs/messages/no-img-element  @next/next/no-img-element
+2110:19  Warning: Using `<img>` could result in slower LCP and higher bandwidth. Consider using `<Image />` from `next/image` to automatically optimize images. This may incur additional usage or cost from your provider. See: https://nextjs.org/docs/messages/no-img-element  @next/next/no-img-element
+2147:23  Warning: Using `<img>` could result in slower LCP and higher bandwidth. Consider using `<Image />` from `next/image` to automatically optimize images. This may incur additional usage or cost from your provider. See: https://nextjs.org/docs/messages/no-img-element  @next/next/no-img-element
+3040:21  Warning: Using `<img>` could result in slower LCP and higher bandwidth. Consider using `<Image />` from `next/image` to automatically optimize images. This may incur additional usage or cost from your provider. See: https://nextjs.org/docs/messages/no-img-element  @next/next/no-img-element
+3088:21  Warning: Using `<img>` could result in slower LCP and higher bandwidth. Consider using `<Image />` from `next/image` to automatically optimize images. This may incur additional usage or cost from your provider. See: https://nextjs.org/docs/messages/no-img-element  @next/next/no-img-element
+
+./components/ScoreDifferentialChart.tsx
+230:6  Warning: React Hook useEffect has a missing dependency: 'externalTimeRange'. Either include it or remove the dependency array.  react-hooks/exhaustive-deps
+713:6  Warning: React Hook useMemo has missing dependencies: 'commenceTime' and 'timeRange'. Either include them or remove the dependency array.  react-hooks/exhaustive-deps
+1084:15  Warning: Using `<img>` could result in slower LCP and higher bandwidth. Consider using `<Image />` from `next/image` to automatically optimize images. This may incur additional usage or cost from your provider. See: https://nextjs.org/docs/messages/no-img-element  @next/next/no-img-element
+1103:15  Warning: Using `<img>` could result in slower LCP and higher bandwidth. Consider using `<Image />` from `next/image` to automatically optimize images. This may incur additional usage or cost from your provider. See: https://nextjs.org/docs/messages/no-img-element  @next/next/no-img-element
+
+./components/SearchBar.tsx
+340:11  Warning: Elements with the ARIA role "combobox" must have the following attributes defined: aria-controls,aria-expanded  jsx-a11y/role-has-required-aria-props
+456:21  Warning: Using `<img>` could result in slower LCP and higher bandwidth. Consider using `<Image />` from `next/image` to automatically optimize images. This may incur additional usage or cost from your provider. See: https://nextjs.org/docs/messages/no-img-element  @next/next/no-img-element
+
+./components/SearchTeamCard.tsx
+41:9  Warning: Using `<img>` could result in slower LCP and higher bandwidth. Consider using `<Image />` from `next/image` to automatically optimize images. This may incur additional usage or cost from your provider. See: https://nextjs.org/docs/messages/no-img-element  @next/next/no-img-element
+
+./components/TournamentProgressionTable.tsx
+911:25  Warning: Using `<img>` could result in slower LCP and higher bandwidth. Consider using `<Image />` from `next/image` to automatically optimize images. This may incur additional usage or cost from your provider. See: https://nextjs.org/docs/messages/no-img-element  @next/next/no-img-element
+
+./components/UserMenu.tsx
+155:11  Warning: Using `<img>` could result in slower LCP and higher bandwidth. Consider using `<Image />` from `next/image` to automatically optimize images. This may incur additional usage or cost from your provider. See: https://nextjs.org/docs/messages/no-img-element  @next/next/no-img-element
+
+./components/collections/CollectionHub.tsx
+62:6  Warning: React Hook useEffect has a missing dependency: 'slug'. Either include it or remove the dependency array. If 'setHub' needs the current value of 'slug', you can also switch to useReducer instead of useState and read 'slug' in the reducer.  react-hooks/exhaustive-deps
+
+./components/discover/EventCard.tsx
+279:174  Warning: Using `<img>` could result in slower LCP and higher bandwidth. Consider using `<Image />` from `next/image` to automatically optimize images. This may incur additional usage or cost from your provider. See: https://nextjs.org/docs/messages/no-img-element  @next/next/no-img-element
+279:290  Warning: Using `<img>` could result in slower LCP and higher bandwidth. Consider using `<Image />` from `next/image` to automatically optimize images. This may incur additional usage or cost from your provider. See: https://nextjs.org/docs/messages/no-img-element  @next/next/no-img-element
+284:174  Warning: Using `<img>` could result in slower LCP and higher bandwidth. Consider using `<Image />` from `next/image` to automatically optimize images. This may incur additional usage or cost from your provider. See: https://nextjs.org/docs/messages/no-img-element  @next/next/no-img-element
+284:290  Warning: Using `<img>` could result in slower LCP and higher bandwidth. Consider using `<Image />` from `next/image` to automatically optimize images. This may incur additional usage or cost from your provider. See: https://nextjs.org/docs/messages/no-img-element  @next/next/no-img-element
+
+./components/discover/FuturesCard.tsx
+845:11  Warning: Using `<img>` could result in slower LCP and higher bandwidth. Consider using `<Image />` from `next/image` to automatically optimize images. This may incur additional usage or cost from your provider. See: https://nextjs.org/docs/messages/no-img-element  @next/next/no-img-element
+
+./components/discover/kernels/DuelKernel.tsx
+83:9  Warning: Using `<img>` could result in slower LCP and higher bandwidth. Consider using `<Image />` from `next/image` to automatically optimize images. This may incur additional usage or cost from your provider. See: https://nextjs.org/docs/messages/no-img-element  @next/next/no-img-element
+
+./components/event/TournamentExtensions.tsx
+152:11  Warning: Using `<img>` could result in slower LCP and higher bandwidth. Consider using `<Image />` from `next/image` to automatically optimize images. This may incur additional usage or cost from your provider. See: https://nextjs.org/docs/messages/no-img-element  @next/next/no-img-element
+
+./components/futures/OutcomeRow.tsx
+572:11  Warning: Using `<img>` could result in slower LCP and higher bandwidth. Consider using `<Image />` from `next/image` to automatically optimize images. This may incur additional usage or cost from your provider. See: https://nextjs.org/docs/messages/no-img-element  @next/next/no-img-element
+
+./components/golf/GolfWinnerEvolutionChart.tsx
+105:6  Warning: React Hook useEffect has a missing dependency: 'onEmpty'. Either include it or remove the dependency array. If 'onEmpty' changes too often, find the parent component that defines it and wrap that definition in useCallback.  react-hooks/exhaustive-deps
+
+info  - Need to disable some ESLint rules? Learn more here: https://nextjs.org/docs/basic-features/eslint#disabling-rules
+   Collecting page data ...
+ ⚠ Using edge runtime on a page currently disables static generation for that page
+   Generating static pages (0/46) ...
+   Generating static pages (11/46) 
+   Generating static pages (22/46) 
+   Generating static pages (34/46) 
+ ✓ Generating static pages (46/46)
+   Finalizing page optimization ...
+   Collecting build traces ...
+
+Route (app)                                              Size     First Load JS
+┌ ○ /                                                    413 B           230 kB
+├ ○ /_not-found                                          1.04 kB         116 kB
+├ ƒ /about                                               3.49 kB         154 kB
+├ ƒ /about/opengraph-image                               0 B                0 B
+├ ○ /admin                                               27.2 kB         279 kB
+├ ○ /admin/analytics                                     10.2 kB         253 kB
+├ ○ /admin/bug-reports                                   57.6 kB         183 kB
+├ ○ /admin/cohort-views                                  5.72 kB         144 kB
+├ ○ /admin/discover-quality                              33 kB           179 kB
+├ ○ /admin/eval                                          9.46 kB         150 kB
+├ ○ /admin/feed-review                                   3.73 kB         137 kB
+├ ○ /admin/label-pass                                    4.37 kB         145 kB
+├ ○ /admin/labeling                                      5.46 kB         139 kB
+├ ○ /admin/labeling-coverage                             5.82 kB         144 kB
+├ ○ /admin/matching                                      5.31 kB         148 kB
+├ ○ /admin/source-intelligence                           7.79 kB         160 kB
+├ ○ /admin/story                                         4.89 kB         152 kB
+├ ○ /admin/taxonomy                                      5.92 kB         144 kB
+├ ○ /admin/team-clusters                                 3.25 kB         144 kB
+├ ƒ /api/admin-proxy                                     0 B                0 B
+├ ƒ /api/frontend-build                                  0 B                0 B
+├ ƒ /api/og/stats                                        0 B                0 B
+├ ○ /calibration                                         28.6 kB         184 kB
+├ ○ /categories                                          2 kB            150 kB
+├ ƒ /categories/[slug]                                   2.79 kB         198 kB
+├ ƒ /categories/[slug]/opengraph-image                   0 B                0 B
+├ ○ /categories/golf                                     9.34 kB         189 kB
+├ ƒ /categories/golf/tournaments/[slug]                  7.61 kB         169 kB
+├ ƒ /challenge/[id]                                      6.38 kB         158 kB
+├ ƒ /collections/[slug]                                  8.87 kB         194 kB
+├ ƒ /collections/[slug]/opengraph-image                  0 B                0 B
+├ ○ /daily                                               9.29 kB         161 kB
+├ ○ /discover                                            417 B           230 kB
+├ ƒ /discover/scorecard                                  493 B           143 kB
+├ ○ /discover/stats                                      3.11 kB         146 kB
+├ ○ /economics                                           7.06 kB         155 kB
+├ ○ /entertainment                                       11.4 kB         171 kB
+├ ƒ /event/[domain]                                      392 B           115 kB
+├ ƒ /event/[domain]/[slug]                               22.6 kB         209 kB
+├ ƒ /event/[domain]/[slug]/opengraph-image               0 B                0 B
+├ ƒ /events/[id]                                         56.9 kB         262 kB
+├ ƒ /events/[id]/models                                  4.26 kB         153 kB
+├ ƒ /events/[id]/opengraph-image                         0 B                0 B
+├ ƒ /futures/[id]                                        18.4 kB         236 kB
+├ ƒ /futures/[id]/opengraph-image                        0 B                0 B
+├ ○ /golf                                                392 B           115 kB
+├ ƒ /hub/[competition]                                   3.81 kB         154 kB
+├ ƒ /hub/[competition]/opengraph-image                   0 B                0 B
+├ ○ /kernels-preview                                     7.18 kB         143 kB
+├ ○ /my-stuff                                            14.5 kB         251 kB
+├ ○ /onboarding                                          5.78 kB         139 kB
+├ ƒ /opengraph-image                                     0 B                0 B
+├ ○ /play                                                13.6 kB         176 kB
+├ ○ /playoffs                                            1.41 kB         144 kB
+├ ƒ /playoffs/[sport]                                    7.1 kB          169 kB
+├ ƒ /playoffs/[sport]/opengraph-image                    0 B                0 B
+├ ○ /politics                                            13.4 kB         164 kB
+├ ○ /preferences                                         6.86 kB         217 kB
+├ ○ /privacy                                             5.02 kB         138 kB
+├ ○ /robots.txt                                          0 B                0 B
+├ ○ /search                                              12.2 kB         222 kB
+├ ○ /share/my-odds                                       2.3 kB          150 kB
+├ ○ /sitemap.xml                                         0 B                0 B
+├ ○ /sport                                               2.15 kB         145 kB
+├ ƒ /sport/[sport]                                       4.78 kB         151 kB
+├ ƒ /sport/[sport]/[league]                              10.6 kB         233 kB
+├ ƒ /sport/[sport]/[league]/[slug]                       4.16 kB         166 kB
+├ ƒ /sport/[sport]/[league]/opengraph-image              0 B                0 B
+├ ƒ /sport/[sport]/[league]/team/[team]                  11.9 kB         188 kB
+├ ƒ /sport/[sport]/[league]/team/[team]/opengraph-image  0 B                0 B
+├ ƒ /sport/[sport]/opengraph-image                       0 B                0 B
+├ ○ /sports                                              14.6 kB         244 kB
+├ ƒ /sports/[key]                                        3.81 kB         209 kB
+├ ƒ /tournaments/[slug]                                  19.8 kB         200 kB
+├ ƒ /tournaments/[slug]/opengraph-image                  0 B                0 B
+└ ○ /weather                                             14.9 kB         163 kB
++ First Load JS shared by all                            115 kB
+  ├ chunks/2003-0eba95976f83438d.js                      32.8 kB
+  ├ chunks/2a84a195-f837cbd6b76191a9.js                  53.8 kB
+  ├ chunks/main-app-eddc95bde3efa252.js                  25.6 kB
+  └ other shared chunks (total)                          2.88 kB
+
+
+○  (Static)   prerendered as static content
+ƒ  (Dynamic)  server-rendered on demand
+

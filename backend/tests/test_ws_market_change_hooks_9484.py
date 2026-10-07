@@ -12,7 +12,7 @@ write publishes", "a rolled-back write never does", "a refused row signals
 nothing" — so a fake session would be asserting its own answers. The slate
 SELECTs are replayed (they are the socket's subscription, not what this file
 is about), but every UPDATE the consumer emits runs on a REAL SQLAlchemy
-Session over a file-backed SQLite database: its RETURNING, the #5411 settled
+Session over a file-backed PostgreSQL database: its RETURNING, the #5411 settled
 guard, and the after-commit / after-rollback events that `market_quote_push`
 listens to are the engine's own. A second connection reads the row at publish
 time, so "published after commit" is observed, not assumed.
@@ -48,6 +48,10 @@ import json
 from datetime import datetime, timezone
 
 import pytest
+from tests.pm_bulk_test_support import (
+    cleanup_pg_engines,
+    pg_engine,
+)
 from sqlalchemy import (
     Column, DateTime, Integer, MetaData, String, Table, create_engine, insert, select, text,
 )
@@ -90,12 +94,9 @@ SETTLE = json.dumps({
 
 def _database(tmp_path, resolution_source=None, current_probability=0.30,
               book=(None, None), price_changed_at=None):
-    """A file-backed SQLite DB holding the one market and its one outcome."""
-    url = f"sqlite:///{tmp_path / 'ws.db'}"
-    engine = create_engine(url)
-    # `futures_markets` carries JSONB columns SQLite cannot create; the socket's
-    # settlement UPDATE only names these, so a same-named table holding them is
-    # the table that statement runs against.
+    """A PostgreSQL schema holding the one market and its one outcome."""
+    engine = pg_engine()
+    # Only the socket settlement columns are needed in this focused rig.
     markets = Table(
         "futures_markets", MetaData(),
         Column("id", Integer, primary_key=True),
@@ -373,9 +374,10 @@ async def _drive_kalshi(monkeypatch, engine, messages, event_id=EVENT_ID,
 
 def _stored(engine, table, column, row_id):
     with engine.connect() as conn:
-        return conn.execute(
+        value = conn.execute(
             text(f"SELECT {column} FROM {table} WHERE id = :id"), {"id": row_id}
         ).scalar_one()
+        return float(value) if column == "current_probability" and value is not None else value
 
 
 def _as_utc(value):
@@ -392,9 +394,7 @@ class TestTheKalshiSocketSaysWhichMarketMoved:
         engine = _database(tmp_path)
         published, stats = await _drive_kalshi(monkeypatch, engine, [TICK])
 
-        # (No `price_updates` assertion: SQLite reports rowcount 0 under
-        # RETURNING, so that counter is a Postgres fact. The frame and the
-        # second connection's read below are the evidence.)
+        # The frame and the independent connection read below are evidence.
         assert stats["errors"] == 0
         assert len(published) == 1, published
         channel, frame, stored_at_publish = published[0]
@@ -440,7 +440,7 @@ class TestTheKalshiSocketSaysWhichMarketMoved:
         no frame goes, so no held page re-reads an unchanged row.
         """
         moved_at = datetime(2026, 9, 1, tzinfo=timezone.utc)
-        # The midpoint exactly as the socket computes it: SQLite ignores
+        # The midpoint exactly as the socket computes it: PostgreSQL ignores
         # NUMERIC(7, 6), so it compares the raw float, not the stored rounding
         # (the Postgres file covers that).
         engine = _database(
@@ -507,8 +507,7 @@ class TestThePolymarketSocketSaysWhichMarketMoved:
     async def test_the_tick_that_changed_nothing(self, monkeypatch, tmp_path):
         """Twin of the Kalshi case: the same price again is written, never
         signalled. The row holds the tick's midpoint exactly as the socket
-        computes it (SQLite compares the raw float; the Postgres file covers
-        the stored rounding)."""
+        computes it (PostgreSQL compares the stored six-place price)."""
         moved_at = datetime(2026, 9, 1, tzinfo=timezone.utc)
         engine = _database(
             tmp_path, current_probability=(0.40 + 0.44) / 2,

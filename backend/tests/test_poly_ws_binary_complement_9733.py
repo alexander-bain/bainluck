@@ -20,6 +20,9 @@ and neither graded. Every other leg is priced exactly as before.
 import json
 
 import pytest
+from tests.pm_bulk_test_support import (
+    cleanup_pg_engines,
+)
 from sqlalchemy import insert, text
 
 import app.tasks.polymarket_open_contracts as open_mod

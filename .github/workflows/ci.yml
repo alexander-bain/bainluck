@@ -4054,6 +4054,18 @@ jobs:
             exit 1
           fi
 
+      - name: "#10664 Polymarket bulk price transaction contracts (real Postgres)"
+        if: matrix.group == 'shared'
+        run: |
+          result=0
+          python -m pytest tests/test_ws_market_change_hooks_9484.py tests/test_ws_polymarket_open_contract_prices_9484.py tests/test_poly_ws_binary_complement_9733.py tests/test_poly_ws_book_snapshot_prices_9733.py tests/integration/test_pm_bulk_price_write_10664_pg.py -v -rs > /tmp/pm10664.txt 2>&1 || result=$?
+          cat /tmp/pm10664.txt
+          if [ "$result" -ne 0 ]; then exit "$result"; fi
+          if grep -qiE "[0-9]+ skipped" /tmp/pm10664.txt; then
+            echo "::error::#10664 real PostgreSQL gate skipped"
+            exit 1
+          fi
+
       - name: "#4586 restore compare-and-swap (real Postgres)"
         # CERT-2439's required repair, `4586-RESTORE-CAS-PRESERVES-LATER-RELINKS`.
         # The forward repair compare-and-swaps on the link it planned; its D51

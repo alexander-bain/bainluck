@@ -111,3 +111,13 @@ def test_the_column_it_writes_accepts_what_it_writes() -> None:
     # "DATETIME", which says nothing about what PostgreSQL will hold. The
     # timezone matters — every consumer compares it to `now()`.
     assert str(col.type.compile(postgresql.dialect())) == "TIMESTAMP WITH TIME ZONE"
+
+
+def test_a_bulk_input_column_uses_the_same_stored_precision_rule():
+    from sqlalchemy import Float, column
+
+    sql = _sql(column("compared", Float))
+    assert "CAST(compared AS NUMERIC(7, 6))" in sql
+    assert "CAST(futures_outcomes.current_probability AS NUMERIC(7, 6))" in sql
+    assert "IS DISTINCT FROM" in sql
+    assert "ELSE futures_outcomes.price_changed_at" in sql

@@ -24,6 +24,9 @@ import asyncio
 import json
 
 import pytest
+from tests.pm_bulk_test_support import (
+    cleanup_pg_engines,
+)
 from sqlalchemy import text
 
 import app.services.polymarket_ws as poly_svc

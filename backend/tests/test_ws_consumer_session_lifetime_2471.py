@@ -33,6 +33,7 @@ import json
 import threading
 
 import pytest
+from tests.pm_bulk_test_support import price_writes
 from sqlalchemy.dialects import postgresql
 from sqlalchemy.sql.dml import Update
 
@@ -110,11 +111,9 @@ class _Rig:
                     params = stmt.compile(dialect=postgresql.dialect()).params
                     if (
                         stmt.table.name == "futures_outcomes"
-                        and "current_probability" in params
+                        and price_writes(stmt)
                     ):
-                        rig.writes.append(
-                            (params["id_1"], params["current_probability"])
-                        )
+                        rig.writes.extend(price_writes(stmt))
                     return _Result([])
                 return _Result(rig.batches.pop(0) if rig.batches else [])
 
