@@ -135,7 +135,10 @@ final class SelectedGameUpdatingJourneyTests: XCTestCase {
             let bounds = app.scrollViews.firstMatch.exists
                 ? app.scrollViews.firstMatch.frame.intersection(app.frame) : app.frame
             if element.isHittable && bounds.intersects(element.frame) { return }
-            let upward = element.frame.minY < bounds.minY
+            // A label under the navigation overlay can still lie inside the
+            // scroll frame. Move it toward the viewport center; comparing only
+            // minY to the screen edge oscillates around the obscured top edge.
+            let upward = element.frame.midY < bounds.midY
             let start = app.coordinate(withNormalizedOffset: .zero).withOffset(
                 CGVector(dx: bounds.midX - app.frame.minX, dy: bounds.minY + bounds.height * 0.60 - app.frame.minY))
             let end = start.withOffset(CGVector(dx: 0, dy: bounds.height * (upward ? 0.20 : -0.20)))
