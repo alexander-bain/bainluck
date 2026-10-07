@@ -13,6 +13,7 @@ import logging
 from datetime import datetime, timezone
 from typing import Any, Mapping
 
+from redis.exceptions import ResponseError
 from sqlalchemy import event as sa_event
 
 logger = logging.getLogger(__name__)
@@ -20,6 +21,7 @@ SOURCES = frozenset({"kalshi", "polymarket"})
 _PENDING = "market_quote_pending"
 _READY = "market_quote_committed"
 _HOOKS = "market_quote_hooks"
+_PUBLISH_BATCH_SIZE = 32
 
 
 def market_channel(market_id: int) -> str:
@@ -151,25 +153,58 @@ async def publish_committed_market_changes(session, redis_client) -> int:
     publication, not delivery proof. Failures are logged and never undo or retry
     a committed database write; clients recover through REST on reconnect.
     """
-    changes = session.info.pop(_READY, [])
+    changes = _coalesce(session.info.pop(_READY, []))
+    if not changes:
+        return 0
     sent = 0
     try:
         async with asyncio.timeout(5):
-            for change in _coalesce(changes):
-                frame = dict(
-                    change, published_at=datetime.now(timezone.utc).isoformat()
-                )
-                try:
-                    await redis_client.publish(
-                        market_channel(frame["market_id"]), json.dumps(frame)
+            pool = redis_client.connection_pool
+            # redis-py 5.0.1 (our supported floor) requires command_name.
+            connection = await pool.get_connection("PUBLISH")
+            try:
+                for start in range(0, len(changes), _PUBLISH_BATCH_SIZE):
+                    batch = changes[start : start + _PUBLISH_BATCH_SIZE]
+                    commands = []
+                    for change in batch:
+                        frame = dict(
+                            change, published_at=datetime.now(timezone.utc).isoformat()
+                        )
+                        commands.append(
+                            (
+                                "PUBLISH",
+                                market_channel(frame["market_id"]),
+                                json.dumps(frame),
+                            )
+                        )
+                    # Send the whole bounded batch before awaiting any replies.
+                    # Use the caller's pool without Pipeline.execute's automatic
+                    # transport retry: an unanswered publish may already have run.
+                    await connection.send_packed_command(
+                        connection.pack_commands(commands)
                     )
-                    sent += 1
-                except Exception:
-                    logger.warning(
-                        "market quote publish failed: market=%s",
-                        frame["market_id"],
-                        exc_info=True,
-                    )
+                    for change in batch:
+                        try:
+                            reply = await connection.read_response()
+                        except ResponseError:
+                            # A command error still consumes its reply. Drain
+                            # the remaining replies so healthy siblings survive.
+                            logger.warning(
+                                "market quote publish failed: market=%s",
+                                change["market_id"],
+                                exc_info=True,
+                            )
+                            continue
+                        if type(reply) is not int or reply < 0:
+                            raise ValueError("invalid Redis PUBLISH acknowledgment")
+                        sent += 1  # Zero listeners is a successful publication.
+            except BaseException:
+                # Timeout/cancellation/transport failure can leave unread replies.
+                # Never return that socket to the shared pool in a reusable state.
+                await connection.disconnect()
+                raise
+            finally:
+                await pool.release(connection)
     except Exception:
         logger.warning(
             "market quote publication incomplete: sent=%s queued=%s",
