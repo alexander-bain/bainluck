@@ -123,7 +123,10 @@
     "#3518+#3569 A low-value future game ends up showing a price (real Postgres)",
     "#3613 The dark-Polymarket selector, executed (real Postgres)",
     "#4896 A game about to be played leads the refresh queue (real Postgres)",
-    "#2927 containers migration round trip (real Postgres)",
+    "#2927 containers migration round trip (real Postgres)"
+  ],
+  "shared-tail": [
+    "#10703 shared tail \u2014 provision pg_trgm on the fresh database",
     "#2927 container assembly writes and re-writes (real Postgres)",
     "#9653 collection discovery offers only eligible published hubs (real Postgres)",
     "#9935 a theme collection pages one revision and rebuilds after a correction (real Postgres)",
