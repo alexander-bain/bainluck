@@ -44,6 +44,7 @@ from __future__ import annotations
 from typing import Any
 
 from sqlalchemy import Numeric, case, cast, func, literal, or_, select
+from sqlalchemy.sql.elements import ColumnElement
 
 #: The stored type of `FuturesOutcome.current_probability`. Comparisons happen
 #: at the precision the database actually keeps, never at the provider's.
@@ -66,12 +67,17 @@ def price_changed_at_value(current_col: Any, stamp_col: Any, new_probability: An
         when nothing moved.
     :param new_probability: the price about to be written. May be ``None``: a
         price going away IS a change, and ``IS DISTINCT FROM`` says so without
-        the NULL-swallowing that ``!=`` would introduce.
+        the NULL-swallowing that ``!=`` would introduce. #10664: may also be a
+        SQL expression (a set-based writer's per-row input column); it is cast
+        exactly as a bound value is, so one rule serves both shapes.
     """
+
+    if not isinstance(new_probability, ColumnElement):
+        new_probability = literal(new_probability)
     return case(
         (
             cast(current_col, PRICE_NUMERIC).is_distinct_from(
-                cast(literal(new_probability), PRICE_NUMERIC)
+                cast(new_probability, PRICE_NUMERIC)
             ),
             func.now(),
         ),

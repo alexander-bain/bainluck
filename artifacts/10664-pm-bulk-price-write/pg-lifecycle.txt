@@ -1,0 +1,6 @@
+pg_ctl: server is running (PID: 16761)
+/opt/homebrew/Cellar/postgresql@17/17.11/bin/postgres "-D" "/tmp/pm10664-pg-guard/data" "-k" "/tmp/pm10664-pg-guard/s" "-h" "" "-p" "55473" "-c" "max_connections=20"
+0
+waiting for server to shut down......... done
+server stopped
+Own cluster data directory removed after confirmed stop; root/other PostgreSQL services untouched.

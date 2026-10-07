@@ -221,6 +221,85 @@ async def withdraw_book_refuted_prices(session, books: dict) -> list:
     return withdrawn
 
 
+def chunk_price_update_stmt(chunk: dict):
+    """#10664: a flush chunk's price writes as ONE UPDATE ... RETURNING.
+
+    ``write_chunk`` awaited one UPDATE per outcome — 500 round trips for a full
+    chunk before its commit and publication. This is the same write, row for
+    row, in one statement:
+
+    * the SAME set clause: the price bound as ``NUMERIC(7, 6)`` and compared as
+      ``FLOAT`` through :func:`price_changed_at_value`, exactly as the per-row
+      statement binds them, so rounding and the change-stamp cannot drift;
+    * the SAME row-lock order: ``locked`` takes the row locks one at a time in
+      chunk order (``ORDER BY ord ... FOR UPDATE``; LockRows runs above the
+      Sort), as the per-row loop did, so the binary-pair and lock-cycle work
+      that reasons about that order still holds;
+    * the SAME coverage: a buffered id whose row is gone joins nothing and
+      returns nothing, as before; ``ord`` comes back so the caller walks the
+      returned rows in chunk order and stages identical invalidations.
+
+    One parameter per column (arrays), so the prepared statement is shared by
+    every chunk size.
+    """
+    from sqlalchemy import (
+        ARRAY,
+        Float,
+        Integer,
+        Numeric,
+        bindparam,
+        column,
+        func,
+        select,
+        update,
+    )
+    from app.models.models import FuturesOutcome
+    from app.utils.price_change_stamp import price_changed_at_value, quote_moved_column
+
+    table = FuturesOutcome.__table__
+    prices = list(chunk.values())
+    given = (
+        func.unnest(
+            bindparam("chunk_ids", list(chunk), type_=ARRAY(Integer)),
+            bindparam("chunk_prices", prices, type_=ARRAY(Numeric(7, 6))),
+            bindparam("chunk_compare", prices, type_=ARRAY(Float)),
+        )
+        .table_valued(
+            column("id", Integer),
+            column("price", Numeric(7, 6)),
+            column("compared", Float),
+            with_ordinality="ord",
+        )
+        .render_derived(name="given")
+    )
+    locked = (
+        select(table.c.id, given.c.ord, given.c.price, given.c.compared)
+        .join_from(given, table, table.c.id == given.c.id)
+        .order_by(given.c.ord)
+        .with_for_update(of=table)
+        .cte("locked")
+        .prefix_with("MATERIALIZED")
+    )
+    return (
+        update(table)
+        .where(table.c.id == locked.c.id)
+        .values(
+            current_probability=locked.c.price,
+            last_updated=func.now(),
+            price_changed_at=price_changed_at_value(
+                table.c.current_probability, table.c.price_changed_at, locked.c.compared
+            ),
+        )
+        .returning(
+            locked.c.ord,
+            table.c.id,
+            table.c.market_id,
+            table.c.last_updated,
+            quote_moved_column(table),
+        )
+    )
+
+
 def legs_in_token_order(pairs: list) -> list:
     """Order one market's ``(outcome_id, external_id)`` legs as its CLOB tokens are.
 
@@ -1267,7 +1346,9 @@ async def _run_polymarket_ws_consumer(*, sessions):
         "open_contract_bridge_error": False,
         # #9484, twin of the Kalshi socket's: rows a flush wrote whose price
         # was already what it stored — written (liveness), but no market
-        # invalidation sent.
+        # invalidation sent. #10664: counts observations returned by completed
+        # price statements. A failed atomic statement adds none; a later
+        # rerank/commit failure may still leave these observations counted.
         "quotes_unchanged": 0,
     }
 
@@ -1341,49 +1422,27 @@ async def _run_polymarket_ws_consumer(*, sessions):
         # "put back", because it was never taken away.
         try:
             async with get_task_session() as session:
-                for outcome_id, prob in chunk.items():
-                    result = await session.execute(
-                        # #9484, twin of the Kalshi socket's: the TABLE, so the
-                        # UPDATE ... RETURNING stays a Core CursorResult.
-                        update(FuturesOutcome.__table__)
-                        .where(FuturesOutcome.id == outcome_id)
-                        .values(
-                            current_probability=prob,
-                            # Same contract as every other price writer (#2024):
-                            # a live socket owes the touch-stamp AND the
-                            # change-stamp, or downstream liveness gates read a
-                            # streaming row as long dead.
-                            last_updated=func.now(),
-                            price_changed_at=price_changed_at_value(
-                                FuturesOutcome.current_probability,
-                                FuturesOutcome.price_changed_at,
-                                prob,
-                            ),
-                        )
-                        .returning(
-                            FuturesOutcome.id,
-                            FuturesOutcome.market_id,
-                            FuturesOutcome.last_updated,
-                            # Price arm only: this socket writes no book.
-                            quote_moved_column(FuturesOutcome.__table__),
-                        )
+                # #10664: the chunk's price writes in ONE statement — the same
+                # set clause, row-lock order and returned-row coverage as the
+                # per-row UPDATEs it replaces (`chunk_price_update_stmt`).
+                result = await session.execute(chunk_price_update_stmt(chunk))
+                # #9484: only a row the UPDATE returned is evidence — a
+                # buffered id whose row is gone signals nothing. And only
+                # a row whose stored price moved: the same price again
+                # still re-stamps `last_updated` (liveness), but a frame
+                # for it sends every held page to re-read an unchanged row
+                # (twin of the Kalshi socket's, ux #9526). Walked in chunk
+                # order, so invalidations stage exactly as they did per row.
+                for row in sorted(result.all(), key=lambda r: r.ord):
+                    if not row.quote_moved:
+                        stats["quotes_unchanged"] += 1
+                        continue
+                    queue_market_change(
+                        session,
+                        market_id=row.market_id,
+                        source="polymarket",
+                        outcome_observed_at={row.id: row.last_updated},
                     )
-                    # #9484: only a row the UPDATE returned is evidence — a
-                    # buffered id whose row is gone signals nothing. And only
-                    # a row whose stored price moved: the same price again
-                    # still re-stamps `last_updated` (liveness), but a frame
-                    # for it sends every held page to re-read an unchanged row
-                    # (twin of the Kalshi socket's, ux #9526).
-                    for row in result.all():
-                        if not row.quote_moved:
-                            stats["quotes_unchanged"] += 1
-                            continue
-                        queue_market_change(
-                            session,
-                            market_id=row.market_id,
-                            source="polymarket",
-                            outcome_observed_at={row.id: row.last_updated},
-                        )
 
                 # #6598 / CERT-3182, twin of the Kalshi socket's. Every price
                 # above moved the value `rank` is derived from and this module

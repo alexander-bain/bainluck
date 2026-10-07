@@ -23,6 +23,7 @@ import asyncio
 import json
 
 import pytest
+from tests.pm_bulk_test_support import price_writes
 import websockets
 from sqlalchemy.dialects import postgresql
 from sqlalchemy.sql.dml import Update
@@ -255,9 +256,9 @@ class _Session:
             params = stmt.compile(dialect=postgresql.dialect()).params
             if (
                 stmt.table.name == "futures_outcomes"
-                and "current_probability" in params
+                and price_writes(stmt)
             ):
-                self._writes.append((params["id_1"], params["current_probability"]))
+                self._writes.extend(price_writes(stmt))
             elif stmt.table.name == "futures_markets":
                 self._meta_writes.append(params["id_1"])
             return _Result([])

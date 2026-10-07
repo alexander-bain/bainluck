@@ -23,7 +23,7 @@ THE CASES:
     TestFlushPlan .............. linked rows first; open rows bounded per flush,
                                  oldest first, none dropped.
     TestTheConsumer ............ the real `_run_polymarket_ws_consumer` over a
-                                 real SQLite session: an open contract's tick is
+                                 real PostgreSQL session: an open contract's tick is
                                  stored and announced on its market channel; its
                                  socket is prices-only; the game subscription is
                                  unchanged; a failed chunk costs only its rows;
@@ -42,6 +42,12 @@ import asyncio
 import json
 
 import pytest
+from tests.pm_bulk_test_support import (
+    cleanup_pg_engines,
+    pg_engine,
+    fail_price_trigger,
+    price_writes,
+)
 import websockets
 from sqlalchemy import (
     Column, DateTime, Integer, MetaData, String, Table, create_engine, insert, text,
@@ -656,7 +662,7 @@ OPEN = [(7, 71, "711"), (8, 81, "811"), (9, 91, "911")]
 
 
 def _database(tmp_path, fail_outcome=None, extra=()):
-    engine = create_engine(f"sqlite:///{tmp_path / 'ws.db'}")
+    engine = pg_engine()
     markets = Table(
         "futures_markets", MetaData(),
         Column("id", Integer, primary_key=True),
@@ -680,11 +686,7 @@ def _database(tmp_path, fail_outcome=None, extra=()):
                 name="Yes", current_probability=0.30,
             ))
         if fail_outcome is not None:
-            conn.execute(text(
-                "CREATE TRIGGER boom BEFORE UPDATE ON futures_outcomes "
-                f"WHEN NEW.id = {fail_outcome} "
-                "BEGIN SELECT RAISE(ABORT, 'boom'); END"
-            ))
+            fail_price_trigger(conn, "boom", fail_outcome, "boom")
     return engine
 
 
@@ -1382,10 +1384,7 @@ def _binary_database(tmp_path, fail_second_leg=False):
             current_probability=.565,
         ))
         if fail_second_leg:
-            conn.execute(text(
-                "CREATE TRIGGER second_leg BEFORE UPDATE ON futures_outcomes "
-                "WHEN NEW.id = 72 BEGIN SELECT RAISE(ABORT, 'second leg'); END"
-            ))
+            fail_price_trigger(conn, "second_leg", 72, "second leg")
     return engine
 
 
@@ -1406,7 +1405,7 @@ class _HeldUpdate:
                 if (
                     isinstance(stmt, Update)
                     and stmt.table.name == "futures_outcomes"
-                    and stmt.compile().params.get("id_1") == held.outcome_id
+                    and held.outcome_id in dict(price_writes(stmt))
                     and not held.blocked.is_set()
                 ):
                     held.blocked.set()
@@ -1570,9 +1569,10 @@ class TestACommittedChunkRefreshesItsEvent:
 
         def held(oid):
             with engine.connect() as conn:
-                return conn.execute(text(
+                value = conn.execute(text(
                     "SELECT current_probability FROM futures_outcomes WHERE id = :i"
                 ), {"i": oid}).scalar_one()
+                return None if value is None else float(value)
 
         class _Withdrawing(_Session):
             async def execute(self, stmt, *a, **kw):
