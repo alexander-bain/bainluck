@@ -97,22 +97,25 @@ final class WatchDiscoverPolishTests: XCTestCase {
                                   question.frame.minY, "Server question order must be retained")
             }
             try reveal(question, in: app)
-            capture(app, "Complete discovery \(id) and preceding boundary")
+            capture(app, "Discovery \(id) question and preceding boundary")
             if id == 301 {
                 let probability = element("watch.discovery.probability.301", in: app)
                 try reveal(probability, in: app)
                 XCTAssertTrue(probability.label.contains("Yes"))
                 XCTAssertTrue(probability.label.contains("46%"))
+                capture(app, "Discovery \(id) probability Yes46%")
             } else if id == 302 {
                 let result = element("watch.discovery.result.302", in: app)
                 try reveal(result, in: app)
                 XCTAssertTrue(result.label.contains("Yes"))
                 XCTAssertFalse(element("watch.discovery.probability.302", in: app).exists)
+                capture(app, "Discovery \(id) settled result Yes")
             } else {
                 let probability = element("watch.discovery.probability.303", in: app)
                 try reveal(probability, in: app)
                 XCTAssertTrue(probability.label.contains("Hold"))
                 XCTAssertTrue(probability.label.contains("64%"))
+                capture(app, "Discovery \(id) probability Hold64%")
             }
             let age = element("watch.discovery.age.\(id)", in: app)
             try reveal(age, in: app)
@@ -124,7 +127,11 @@ final class WatchDiscoverPolishTests: XCTestCase {
                 XCTAssertTrue(age.label.localizedCaseInsensitiveContains("unavailable"))
                 XCTAssertEqual(age.value as? String, "unavailable")
             }
-            try tap(app.buttons["watch.discovery.continue.\(id)"], in: app)
+            capture(app, "Discovery \(id) original observation reading")
+            let continuation = app.buttons["watch.discovery.continue.\(id)"]
+            try reveal(continuation, in: app)
+            capture(app, "Discovery \(id) continuation control")
+            continuation.tap()
             let help = app.otherElements["Continue on iPhone"].firstMatch
             XCTAssertTrue(help.waitForExistence(timeout: 10))
             XCTAssertTrue(help.staticTexts.containing(NSPredicate(
