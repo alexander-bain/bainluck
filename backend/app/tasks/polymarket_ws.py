@@ -1442,15 +1442,26 @@ async def _run_polymarket_ws_consumer(*, sessions):
                     del price_buffer[outcome_id]
         return True
 
-    async def flush_withdrawals() -> list[int]:
+    async def flush_withdrawals(
+        *,
+        only_events: Optional[set[int]] = None,
+        exclude_events: frozenset[int] | set[int] = frozenset(),
+    ) -> Optional[list[int]]:
         """#9934: withdraw the held prices the latest wide books priced out.
 
         Same bookkeeping as ``write_chunk``: an entry leaves the buffer only
         after its transaction lands, and only if no newer book replaced it
-        meanwhile. Returns the withdrawn legs' ids.
+        meanwhile. Returns withdrawn ids, or None on transaction failure.
+        #10651: a finished game's work can run before unrelated price chunks.
+        The tail excludes attempted events, so even a failure is tried once.
         """
         async with buffer_lock:
-            books = dict(withdraw_buffer)
+            books = {
+                oid: book
+                for oid, book in withdraw_buffer.items()
+                if (only_events is None or event_id_by_outcome.get(oid) in only_events)
+                and event_id_by_outcome.get(oid) not in exclude_events
+            }
         if not books:
             return []
         try:
@@ -1476,7 +1487,7 @@ async def _run_polymarket_ws_consumer(*, sessions):
             logger.exception(
                 "Polymarket WS: withdrawal error (%d retained for retry)", len(books)
             )
-            return []
+            return None
         await blend_refresher.publish_market_changes(session)
         async with buffer_lock:
             for oid, book in books.items():
@@ -1491,18 +1502,19 @@ async def _run_polymarket_ws_consumer(*, sessions):
         ``flush_started`` is this flush's start, for the refresher's floor."""
         async with buffer_lock:
             batch = dict(price_buffer)
-            batch_marks = {
-                oid: input_marks[oid] for oid in batch if oid in input_marks
-            }
+            batch_marks = {oid: input_marks[oid] for oid in batch if oid in input_marks}
             # #10090 / #837: events a held-price withdrawal may still touch
             # this flush. Their refresh waits for that transaction too.
             withdraw_events = (
                 event_ids_for_outcomes(event_id_by_outcome, withdraw_buffer)
-                if batch else set()
+                if batch
+                else set()
             )
         # Committed this flush, refresh not yet called.
         owed: list[int] = []
         wrote_all = True
+        attempted_withdraw_events: set[int] = set()
+        failed_price_events: set[int] = set()
         if batch:
             # #9484: every linked row, then a bounded number of open-contract
             # chunks, oldest-dirty first (the buffer's insertion order). Open
@@ -1512,7 +1524,9 @@ async def _run_polymarket_ws_consumer(*, sessions):
             # transaction or wait together — never one side read beside the
             # other's old price.
             chunks = plan_flush_chunks(
-                batch, open_outcome_ids, FLUSH_CHUNK_ROWS,
+                batch,
+                open_outcome_ids,
+                FLUSH_CHUNK_ROWS,
                 None if final else OPEN_FLUSH_CHUNKS_PER_FLUSH,
                 open_complement_of,
             )
@@ -1540,6 +1554,26 @@ async def _run_polymarket_ws_consumer(*, sessions):
                     owed.extend(chunk_ids)
                 else:
                     wrote_all = False
+                    failed_price_events.update(
+                        event_ids_for_outcomes(event_id_by_outcome, chunk_ids)
+                    )
+                # #10651: finish this event's withdrawals once all of its
+                # planned price writes have completed successfully. An unrelated
+                # later chunk must not delay its coherent blend publication.
+                mature = {
+                    eid
+                    for eid in withdraw_events - attempted_withdraw_events
+                    if last_chunk_of_event.get(eid, len(chunks)) <= index
+                    and eid not in failed_price_events
+                }
+                if mature:
+                    attempted_withdraw_events.update(mature)
+                    early_withdrawn = await flush_withdrawals(only_events=mature)
+                    if early_withdrawn is None:
+                        wrote_all = False  # retain the ordinary tail fallback
+                    else:
+                        owed.extend(oid for oid in early_withdrawn if oid not in owed)
+                        withdraw_events.difference_update(mature)
                 ready: list[int] = []
                 held: list[int] = []
                 for oid in owed:
@@ -1563,14 +1597,24 @@ async def _run_polymarket_ws_consumer(*, sessions):
                         flush_started=flush_started,
                     )
         # #9934: after the prices, so a held number is judged as it now stands.
-        withdrawn = await flush_withdrawals()
+        # Events already attempted above wait for the next flush if their
+        # withdrawal failed or a newer book arrived during the transaction.
+        # All other withdrawals retain their ordinary after-price ordering.
+        withdrawn = (
+            await flush_withdrawals(exclude_events=attempted_withdraw_events)
+            if attempted_withdraw_events
+            else await flush_withdrawals()
+        )
+        if withdrawn is None:
+            wrote_all = False
+            withdrawn = []
         if not batch and not withdrawn:
             # #837 tail — a flush with no new prices still owes the stamps a row
             # lock deferred: those prices are already stored, so waiting for the
             # next venue tick would strand them on a quiet market. Free when
             # nothing is queued (no session is opened).
             await blend_refresher.refresh_pending(flush_started=flush_started)
-            return True
+            return wrote_all
         if not owed and not withdrawn:
             return wrote_all
         # The prices held for a withdrawal, and the withdrawal itself: one
