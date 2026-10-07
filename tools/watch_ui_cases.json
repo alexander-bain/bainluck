@@ -18,15 +18,17 @@
     "LargeTextRecoveryJourneyTests/testOfflineClearSurvivesRelaunchAtLargestTextSize",
     "LauncherURLJourneyTests/testColdLauncherURLDeliversAndRetainsOfflineSelection",
     "PickerReturnJourneyTests/testReturnFromPickerPreservesSelectedGameAndSavedOfflineReading",
-    "PickerReturnJourneyTests/testNetworkFailureGuidanceRetainsChoicesAndRecoversSelection",
-    "PickerSelectedStateJourneyTests/testSelectedGameIsMarkedInPickerAndCanChange",
-    "PickerSelectedStateJourneyTests/testSelectedGameIsMarkedAtAccessibilitySize",
-    "SelectedGameJourneyTests/testPickerSelectionSurvivesOfflineRelaunchAndCanChange",
-    "SelectedGameJourneyTests/testAccessibilityLayoutStressKeepsReadingsAndControlsReachable",
+    "PickerReturnJourneyTests/testNetworkFailureGuidanceRetainsChoicesAndRecoversSelection"
+  ],
+  "controls": [
     "SelectedGameUpdatingJourneyTests/testUpdatingIsVisibleUntilRequestFinishes",
     "SelectedGameUpdatingJourneyTests/testUpdatingIsVisibleAtAccessibilitySize",
     "WatchDiagnosticsJourneyTests/testConsentSettingPersistsAndRevokesAtStandardSize",
-    "WatchDiagnosticsJourneyTests/testConsentSettingPersistsAndRevokesAtAccessibilitySize"
+    "WatchDiagnosticsJourneyTests/testConsentSettingPersistsAndRevokesAtAccessibilitySize",
+    "PickerSelectedStateJourneyTests/testSelectedGameIsMarkedInPickerAndCanChange",
+    "PickerSelectedStateJourneyTests/testSelectedGameIsMarkedAtAccessibilitySize",
+    "SelectedGameJourneyTests/testPickerSelectionSurvivesOfflineRelaunchAndCanChange",
+    "SelectedGameJourneyTests/testAccessibilityLayoutStressKeepsReadingsAndControlsReachable"
   ],
   "widgets": [
     "RectangularWidgetHostJourneyTests/testActualRectangularWidgetShowsPublishedSavedReading",
