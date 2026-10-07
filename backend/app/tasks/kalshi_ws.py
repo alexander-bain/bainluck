@@ -808,7 +808,28 @@ async def _run_kalshi_ws_consumer(*, sessions):
         if ticker in open_contract_ids and ticker not in ticker_to_ids:
             await handle_open_contract_lifecycle(ticker, msg)
 
-    async def handle_lifecycle(msg: dict):
+    _UNCAPTURED = object()
+
+    async def prepare_lifecycle(msg: dict):
+        """Capture closing inputs before deferring slow settlement work (#10667)."""
+        from functools import partial
+
+        ticker = (msg.get("market_ticker") or "").upper()
+        parts = ticker.rsplit("-", 1)
+        closing_price = _UNCAPTURED
+        if (
+            not (ticker in open_contract_ids and ticker not in ticker_to_ids)
+            and is_terminal(msg.get("status", ""))
+            and len(parts) == 2
+            and parts[0] in market_id_by_ext
+        ):
+            async with buffer_lock:
+                ids = ticker_to_ids.get(ticker)
+                buffered = price_buffer.get(ids[1]) if ids else None
+                closing_price = buffered[0] if buffered else None
+        return partial(handle_lifecycle, closing_price=closing_price)
+
+    async def handle_lifecycle(msg: dict, *, closing_price=_UNCAPTURED):
         ticker = (msg.get("market_ticker") or "").upper()
         status = msg.get("status", "")
         result = msg.get("result")
@@ -836,11 +857,13 @@ async def _run_kalshi_ws_consumer(*, sessions):
 
         market_id = market_id_by_ext[event_ticker]
 
-        # Capture closing price from the buffer before flushing
-        async with buffer_lock:
-            ids = ticker_to_ids.get(ticker)
-            buffered = price_buffer.get(ids[1]) if ids else None
-            closing_price = buffered[0] if buffered else None
+        # Direct callers retain the original capture path. Prepared callbacks
+        # carry an explicit value, including None, captured before offloading.
+        if closing_price is _UNCAPTURED:
+            async with buffer_lock:
+                ids = ticker_to_ids.get(ticker)
+                buffered = price_buffer.get(ids[1]) if ids else None
+                closing_price = buffered[0] if buffered else None
 
         try:
             async with get_task_session() as session:
@@ -911,6 +934,7 @@ async def _run_kalshi_ws_consumer(*, sessions):
 
     ws.on_ticker = handle_ticker
     ws.on_lifecycle = handle_lifecycle
+    ws.on_lifecycle_prepare = prepare_lifecycle
 
     # -- Periodic flush task --
     # #10090: start to start, so the flush's own work is not added to the
