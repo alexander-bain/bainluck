@@ -75,7 +75,7 @@ final class RectangularWidgetHostJourneyTests: XCTestCase {
         capture(host, "Actual rectangular Your game gallery entry")
         installed.tap()
         XCUIDevice.shared.press(.home)
-        XCUIDevice.shared.press(.home)
+        try activateConfiguredModularFace(in: host)
         XCTAssertTrue(host.wait(for: .runningForeground, timeout: 15))
         XCTAssertTrue(host.otherElements["Watch Face"].firstMatch.waitForExistence(timeout: 15))
         let center = host.otherElements["center"].firstMatch
@@ -98,6 +98,39 @@ final class RectangularWidgetHostJourneyTests: XCTestCase {
         print("WATCH_RECTANGULAR_INSTALLED_OBSERVED=\(observed.label)")
         capture(host, "Actual mounted rectangular saved reading")
 
+    }
+
+    @MainActor
+    private func activateConfiguredModularFace(in host: XCUIApplication) throws {
+        let library = host.otherElements["Face Library View"].firstMatch
+        let face = host.otherElements["Watch Face"].firstMatch
+        let arrived = XCTNSPredicateExpectation(predicate: NSPredicate { _, _ in
+            library.exists || face.exists
+        }, object: host)
+        XCTAssertEqual(XCTWaiter.wait(for: [arrived], timeout: 15), .completed,
+                       "Configured Modular face did not leave its editor")
+        if library.exists {
+            let title = host.staticTexts["Switcher Face Title"].firstMatch
+            let previews = host.scrollViews.matching(NSPredicate(
+                format: "label ==[c] %@", "modular, Customizable"))
+            let preview = previews.firstMatch
+            XCTAssertTrue(title.waitForExistence(timeout: 15) && title.label == "Modular"
+                          && preview.waitForExistence(timeout: 15) && previews.count == 1
+                          && preview.isHittable
+                          && host.frame.contains(CGPoint(x: preview.frame.midX, y: preview.frame.midY)),
+                          "Face Library has no unambiguous visible Modular preview")
+            capture(host, "Configured Modular preview before activation")
+            // The retained hosted failure stopped in this library. Select the
+            // named configured face instead of assuming a second crown press activates it.
+            preview.tap()
+        }
+        let activated = XCTNSPredicateExpectation(predicate: NSPredicate { _, _ in
+            face.exists && !library.exists
+        }, object: host)
+        XCTAssertEqual(XCTWaiter.wait(for: [activated], timeout: 15), .completed,
+                       "Configured Modular face did not become active")
+        XCTAssertTrue(face.isHittable)
+        capture(host, "Configured Modular active Watch Face")
     }
 
     @MainActor
