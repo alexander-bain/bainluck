@@ -167,12 +167,15 @@ class _HybridSession:
     def info(self):
         return self.sync_session.info
 
-    async def execute(self, stmt, *_a, **_kw):
+    async def execute(self, stmt, *args, **kwargs):
         if _routes_to_the_database(stmt):
             self.wrote_a_price |= (
                 isinstance(stmt, Update) and stmt.table.name == "futures_outcomes"
             )
-            return self.sync_session.execute(stmt)
+            # #10689: the Kalshi price statement is prepared once and its row
+            # values arrive as execute's parameters — drop them and the real
+            # session raises a missing bind, so they must reach it verbatim.
+            return self.sync_session.execute(stmt, *args, **kwargs)
         if isinstance(stmt, Update):
             return _Replayed([], rowcount=0)
         return _Replayed(self._batches.pop(0) if self._batches else [])
@@ -478,6 +481,40 @@ class TestTheKalshiSocketSaysWhichMarketMoved:
         assert parsed["terminal"] is True and parsed["outcome_ids"] == []
         settled_at = _as_utc(_stored(engine, "futures_markets", "settled_at", MARKET_ID))
         assert _as_utc(parsed["updated_at"]) == settled_at
+
+
+class TestTheRigForwardsWhatTheSocketExecutes:
+    """#10689: the rig is not database-gated, so this runs everywhere.
+
+    The Kalshi price statement is built once and each row's values travel as
+    execute's parameters. A proxy that drops them made all four real-PG Kalshi
+    cases in integration/test_ws_quote_moved_9484_pg.py fail on a missing
+    `kalshi_stored_probability` bind; this pins the forwarding itself.
+    """
+
+    async def test_the_row_values_reach_the_real_session(self):
+        from app.utils.kalshi_price_statement import (
+            KALSHI_PRICE_STATEMENTS, kalshi_price_parameters,
+        )
+
+        calls = []
+
+        class _Spy:
+            info = {}
+
+            def execute(self, *args, **kwargs):
+                calls.append((args, kwargs))
+                return _Replayed([])
+
+        session = _HybridSession(_Spy(), [])
+        statement = KALSHI_PRICE_STATEMENTS[True]
+        parameters = kalshi_price_parameters(OUTCOME_ID, 0.42, 0.40, 0.44)
+        options = {"synchronize_session": False}
+
+        await session.execute(statement, parameters, execution_options=options)
+
+        assert calls == [((statement, parameters), {"execution_options": options})]
+        assert session.wrote_a_price is True
 
 
 class TestThePolymarketSocketSaysWhichMarketMoved:
