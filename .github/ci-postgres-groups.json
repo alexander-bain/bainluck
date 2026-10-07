@@ -141,6 +141,7 @@
     "#2471 socket consumer keeps one engine per run (real Postgres)",
     "#10664 Polymarket bulk price transaction contracts (real Postgres)",
     "#10689 Kalshi typed statement transaction contracts (real Postgres)",
+    "#10693 guarded Kalshi pipeline supported floor (real Postgres)",
     "#4586 restore compare-and-swap (real Postgres)",
     "#678 account deletion actually deletes (real Postgres)",
     "#6221 folded market cross-sport net (real Postgres)",
