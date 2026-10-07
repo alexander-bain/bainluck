@@ -518,8 +518,20 @@ struct NativeEventDiscoverCard: View {
         )
     }
 
+    /// #10714 — a tile that spells a result word ("Learner Tien" `TIE`, "Dallas
+    /// Wings" `WIN`) is re-lettered (`LT`, `DW`); every other badge is the pair's.
+    /// `event.sport` reaches only the re-lettering, so a person gets first and last
+    /// initial; the pair itself is asked exactly as before.
     private var cardBadges: (away: String, home: String) {
-        TeamShortName.abbreviationPair(away: event.awayTeam, home: event.homeTeam)
+        Self.cardBadges(away: event.awayTeam, home: event.homeTeam, sportKey: event.sport)
+    }
+
+    static func cardBadges(away: String, home: String, sportKey: String?) -> (away: String, home: String) {
+        let pair = TeamShortName.abbreviationPair(away: away, home: home)
+        return (
+            TeamShortName.refusingResultWord(pair.away, name: away, sportKey: sportKey),
+            TeamShortName.refusingResultWord(pair.home, name: home, sportKey: sportKey)
+        )
     }
 
     /// The avatar decision for one side, exposed so the suite can pin the WIRING
