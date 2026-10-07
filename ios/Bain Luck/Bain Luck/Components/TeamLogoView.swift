@@ -153,15 +153,22 @@ struct TeamLogoView: View {
     /// the one thing on this circle that needed to know whether the competitor
     /// is a person. A caller that does not supply it draws exactly the badge it
     /// draws today.
+    ///
+    /// #10714 — this circle is a reader-facing tile, so a badge that spells a
+    /// result word ("Chak Lam Coleman Wong" `WON`, beside the real WON chip on the
+    /// finished hero) is re-lettered (`CW`). `abbreviation` itself is untouched.
     static func badge(teamName: String, opponentName: String?, sportKey: String? = nil) -> String {
-        guard let opponentName, !opponentName.isEmpty, opponentName != teamName else {
-            return TeamShortName.abbreviation(teamName, sportKey: sportKey)
+        let badge: String
+        if let opponentName, !opponentName.isEmpty, opponentName != teamName {
+            badge = TeamShortName.abbreviationPair(
+                away: teamName,
+                home: opponentName,
+                sportKey: sportKey
+            ).away
+        } else {
+            badge = TeamShortName.abbreviation(teamName, sportKey: sportKey)
         }
-        return TeamShortName.abbreviationPair(
-            away: teamName,
-            home: opponentName,
-            sportKey: sportKey
-        ).away
+        return TeamShortName.refusingResultWord(badge, name: teamName, sportKey: sportKey)
     }
 
     private var initialsFallback: some View {
