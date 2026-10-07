@@ -83,6 +83,8 @@ export interface LiveStreamDeps {
    * open. The caller gates its polling on this.
    */
   onDeliveringChange: (delivering: boolean) => void;
+  /** #10666: local monotonic recovery ordinal, never a quote revision. */
+  onRecovery?: (ordinal: number) => void;
   /**
    * #10200 — what the TRANSPORT is doing, for the reader-facing status only.
    *
@@ -183,12 +185,13 @@ export interface LiveStreamController {
 export function createLiveStreamController(
   deps: LiveStreamDeps,
 ): LiveStreamController {
-  const { open, now, onFrame, onDeliveringChange, onStatusChange } = deps;
+  const { open, now, onFrame, onDeliveringChange, onStatusChange, onRecovery } = deps;
 
   let handle: StreamHandle | null = null;
   let delivering = false;
   let stopped = false;
   let connections = 0;
+  let recoveryNotifications = 0;
   let openedAt = 0;
   let lastMessageAt = 0;
   let lastDataAt = 0;
@@ -276,12 +279,29 @@ export function createLiveStreamController(
     lastDataAt = openedAt;
     setStatus('connecting');
 
+    let recoveryGeneration = 0;
     next.addEventListener('open', () => {
       if (stopped || handle !== next) return;
+      // Native retry can reopen this handle against another server worker.
+      recoveryGeneration = 0;
       lastMessageAt = now();
       lastDataAt = now();
       setDelivering(true);
       setStatus('open');
+    });
+
+    next.addEventListener('resync', (event) => {
+      if (stopped || handle !== next) return;
+      let generation: unknown;
+      try {
+        generation = JSON.parse(String((event as { data?: unknown })?.data)).generation;
+      } catch {
+        return;
+      }
+      if (typeof generation !== 'number' || !Number.isSafeInteger(generation) || generation <= recoveryGeneration) return;
+      recoveryGeneration = generation;
+      // Recovery signals delivery debt, never fresh data or a new quote clock.
+      onRecovery?.(++recoveryNotifications);
     });
 
     next.addEventListener('probability', (event) => {

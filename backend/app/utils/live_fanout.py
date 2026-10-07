@@ -70,6 +70,7 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
+from dataclasses import dataclass
 import logging
 from typing import Any, Dict, Optional, Set
 
@@ -103,6 +104,13 @@ class _Closed:
 
 
 CLOSED = _Closed()
+
+
+@dataclass(frozen=True)
+class Recovery:
+    """Internal resubscription completed; read authoritative state once."""
+
+    generation: int
 
 
 class Subscription:
@@ -165,6 +173,8 @@ class LiveFanout:
         self._client = None
         self._pubsub = None
         self._reader: Optional[asyncio.Task] = None
+        self._recovery_generation = 0
+        self._recovery_pending: Set[str] = set()
 
     # -- what a guard test reads -------------------------------------------
 
@@ -246,7 +256,7 @@ class LiveFanout:
                 await asyncio.sleep(0)
                 try:
                     message = await pubsub.get_message(
-                        ignore_subscribe_messages=True, timeout=READ_TIMEOUT_S
+                        ignore_subscribe_messages=False, timeout=READ_TIMEOUT_S
                     )
                     failures = 0
                 except asyncio.CancelledError:
@@ -269,7 +279,9 @@ class LiveFanout:
                         continue  # build failed; the counter decides when to stop
                     pubsub = replacement
                     continue
-                if message is not None and message.get("type") == "message":
+                if message is not None and message.get("type") == "subscribe":
+                    self._confirm_recovery(message)
+                elif message is not None and message.get("type") == "message":
                     self._dispatch(message)
                 if self._pending_unsubscribe or not self._subscribers:
                     if await self._housekeep():
@@ -299,8 +311,9 @@ class LiveFanout:
         re-subscribes every live channel itself, and nobody's stream ends.
 
         Frames published during the gap are lost, which is the transport's
-        stated bargain (`live_push`: pub/sub stores nothing) and self-heals on
-        the refresher's next stamp. Giving up is the ANNOUNCED path — `_fail`,
+        stated bargain (`live_push`: pub/sub stores nothing). After Redis
+        acknowledges every restored channel, readers receive one catch-up
+        signal, even when no later quote arrives. Giving up is the ANNOUNCED path — `_fail`,
         then every stream reconnects — never a silent freeze.
 
         ONE ATTEMPT. How many are worth making is the reader loop's question,
@@ -309,6 +322,7 @@ class LiveFanout:
         nothing, and counting builds would let that loop forever.
         """
         async with self._lock:
+            self._recovery_pending.clear()
             if self._pubsub is old:
                 # Still the live handle, and it is the broken one.
                 await self._release_connection_locked()
@@ -326,6 +340,10 @@ class LiveFanout:
                 await self._connect_locked()
                 for channel in channels:
                     await self._pubsub.subscribe(channel)
+                # subscribe() writes a command; it does not await Redis' ACK.
+                # Signalling now could race a REST read ahead of resubscription.
+                # The single reader consumes ACKs before announcing recovery.
+                self._recovery_pending = channels
                 logger.warning(
                     "live_fanout: shared pub/sub rebuilt (%d channels)",
                     len(channels),
@@ -337,6 +355,21 @@ class LiveFanout:
                 )
                 await self._release_connection_locked()
                 return None
+
+    def _confirm_recovery(self, message: dict) -> None:
+        channel = message.get("channel")
+        if isinstance(channel, bytes):
+            channel = channel.decode("utf-8")
+        if channel not in self._recovery_pending:
+            return
+        self._recovery_pending.discard(channel)
+        if self._recovery_pending:
+            return
+        self._recovery_generation += 1
+        recovery = Recovery(self._recovery_generation)
+        for subscribers in self._subscribers.values():
+            for subscriber in subscribers:
+                subscriber.offer(recovery)
 
     def _dispatch(self, message: dict) -> None:
         channel = _as_text(message.get("channel"))
@@ -380,6 +413,7 @@ class LiveFanout:
         pubsub, client = self._pubsub, self._client
         self._pubsub = self._client = None
         self._pending_unsubscribe.clear()
+        self._recovery_pending.clear()
         for closeable in (pubsub, client):
             if closeable is None:
                 continue

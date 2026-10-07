@@ -24,6 +24,7 @@ import { withoutEventOwnMoneyline } from "@/lib/eventOwnMoneyline";
 import { eventPageProjectedPair } from "@/lib/projectedFinalPair";
 import { teamTextColor } from "@/lib/teamColors";
 import { useLiveEventStream, type LiveFrame } from "@/hooks/useLiveEventStream";
+import { createReconnectCatchup } from "@/lib/reconnectCatchup";
 import { fetchEventWithLiveFrame, keepNewerHeldHeadline } from "@/lib/reconcileEventPoll";
 import { appendHeroObservation, mergeLiveChartHistory, quoteChartFrames } from "@/lib/liveChartHistory";
 import { canSubscribeEventQuotes, quotePairCoversTrigger } from "@/lib/eventQuoteStream";
@@ -329,20 +330,23 @@ export default function EventPage({ params }: EventPageProps) {
   // when a client-side navigation reuses the component for another event.
   const pairedQuoteReadRef = useRef<(() => Promise<unknown>) | null>(null);
   const quoteTriggerRef = useRef<LiveFrame | null>(null);
+  const recoveryIntentRef = useRef(0);
+  const quoteReadLifetimeRef = useRef(0);
   const quoteEventIdRef = useRef(eventId);
+  if (quoteEventIdRef.current !== eventId) recoveryIntentRef.current = 0;
   if (quoteEventIdRef.current !== eventId) quoteTriggerRef.current = null;
   quoteEventIdRef.current = eventId;
   const refreshEventRef = useRef(refreshEvent);
   refreshEventRef.current = refreshEvent;
   const [foldedRefetch] = useState(() => createFoldedRefetchScheduler(
     () => {
-      if (quoteTriggerRef.current && pairedQuoteReadRef.current) return pairedQuoteReadRef.current();
+      if ((quoteTriggerRef.current || recoveryIntentRef.current) && pairedQuoteReadRef.current) return pairedQuoteReadRef.current();
       freshNextEventReadRef.current = true;
       return refreshEventRef.current();
     }, FOLDED_FRAME_REFETCH_MS, Date.now,
     // A failed/behind pair still owes this quote even if the stream goes quiet.
     // One bounded retry uses the existing scheduler; normal polling remains.
-    () => quoteTriggerRef.current !== null && canSubscribeEventQuotes(heldEventRef.current),
+    () => (quoteTriggerRef.current !== null || recoveryIntentRef.current !== 0) && canSubscribeEventQuotes(heldEventRef.current),
   ));
   useEffect(() => () => foldedRefetch.cancel(), [foldedRefetch]);
 
@@ -397,7 +401,7 @@ export default function EventPage({ params }: EventPageProps) {
   // ── live/034 S2 — SSE push ────────────────────────────────────────────────
   // Quote delivery is independent of the sports badge. The number
   // in the database was already live (worker-ws flushes every 2s, the blend is
-  // stamped at most once per event per 5s) — it was the 32s poll that made it
+  // delivered independently of the page poll) — it was the 32s poll that made it
   // look stale on screen.
   const quoteEligible = canSubscribeEventQuotes(event);
   const {
@@ -405,11 +409,36 @@ export default function EventPage({ params }: EventPageProps) {
     connected: streamConnected,
     chartPoints,
     status: reportedStreamStatus,
+    recoveryGeneration,
   } = useLiveEventStream(eventId, quoteEligible);
   // #10200: the transport's own observation, for the chart status only — the
   // disconnect refetch below still keys on `streamConnected`. A stream that reports only
   // `connected` (an older hook, a test double) reads as open or idle.
   const streamStatus = reportedStreamStatus ?? (streamConnected ? "open" : "idle");
+
+  // #10666: spread recovery reads without adding a poll or replacing the
+  // existing single-inflight folded scheduler. Navigation/eligibility teardown
+  // retires both queued jitter and old-lifetime response adoption.
+  const recoveryRef = useRef<ReturnType<typeof createReconnectCatchup> | null>(null);
+  useEffect(() => {
+    if (!quoteEligible) return;
+    const recovery = createReconnectCatchup((epoch) => {
+      if (!canSubscribeEventQuotes(heldEventRef.current)) return;
+      recoveryIntentRef.current = epoch;
+      foldedRefetch.request();
+    });
+    recoveryRef.current = recovery;
+    return () => {
+      recovery.cancel();
+      recoveryRef.current = null;
+      recoveryIntentRef.current = 0;
+      quoteReadLifetimeRef.current += 1;
+      foldedRefetch.cancel();
+    };
+  }, [eventId, quoteEligible, foldedRefetch]);
+  useEffect(() => {
+    if (quoteEligible && recoveryGeneration) recoveryRef.current?.recover(recoveryGeneration);
+  }, [recoveryGeneration, quoteEligible, eventId]);
 
   // Apply a pushed frame to the SWR cache rather than holding it in a local
   // override. One source of truth: the stream writes the same cache the poller
@@ -841,18 +870,24 @@ export default function EventPage({ params }: EventPageProps) {
   pairedQuoteReadRef.current = async () => {
     const readingEventId = eventId;
     const trigger = quoteTriggerRef.current;
+    const recovery = recoveryIntentRef.current;
+    const readingLifetime = quoteReadLifetimeRef.current;
     const [detail, history] = await Promise.all([
       fetchEvent(readingEventId, true),
       fetchEventHistory(readingEventId, EVENT_BOOT_HISTORY_HOURS,
         historyRangeParam(fullHistoryRequested), true),
     ]);
-    if (quoteEventIdRef.current !== readingEventId || quoteHistoryRangeRef.current !== fullHistoryRequested ||
-        !quotePairCoversTrigger(detail, history, readingEventId, quoteTriggerRef.current?.rev)) return;
+    if (quoteReadLifetimeRef.current !== readingLifetime ||
+        quoteEventIdRef.current !== readingEventId || quoteHistoryRangeRef.current !== fullHistoryRequested ||
+        !quotePairCoversTrigger(detail, history, readingEventId, quoteTriggerRef.current?.rev) ||
+        !quotePairCoversTrigger(detail, history, readingEventId, detail.blend_fold_revision) ||
+        keepNewerHeldHeadline(detail, heldEventRef.current) !== detail) return;
     await Promise.all([
       refreshHistoryRef.current(history, { revalidate: false }),
       refreshEventRef.current(keepNewerHeldHeadline(detail, heldEventRef.current), { revalidate: false }),
     ]);
     if (quoteTriggerRef.current === trigger) quoteTriggerRef.current = null;
+    if (recoveryIntentRef.current === recovery) recoveryIntentRef.current = 0;
     setLastRefresh(Date.now());
   };
 

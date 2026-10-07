@@ -264,7 +264,7 @@ describe("structural pin: the harness carries the page's own wiring", () => {
     expect(PAGE).toMatch(/fetchEventWithLiveFrame\(\s*\(\) => fetchEvent\(eventId, takeFreshRead\(freshNextEventReadRef\)\),\s*\(\) => latestLiveFrameRef\.current,\s*\(\) => latestBlendEdgeRef\.current,\s*\(\) => heldEventRef\.current,/);
     expect(PAGE).toMatch(/refreshInterval: eventPollInterval/);
     // The scheduler, built once, torn down with the page.
-    expect(PAGE).toMatch(/createFoldedRefetchScheduler\(\s*\(\) => \{\s*if \(quoteTriggerRef\.current && pairedQuoteReadRef\.current\) return pairedQuoteReadRef\.current\(\);\s*freshNextEventReadRef\.current = true;\s*return refreshEventRef\.current\(\);\s*\}, FOLDED_FRAME_REFETCH_MS,/);
+    expect(PAGE).toMatch(/createFoldedRefetchScheduler\(\s*\(\) => \{\s*if \(\(quoteTriggerRef\.current \|\| recoveryIntentRef\.current\) && pairedQuoteReadRef\.current\) return pairedQuoteReadRef\.current\(\);\s*freshNextEventReadRef\.current = true;\s*return refreshEventRef\.current\(\);\s*\}, FOLDED_FRAME_REFETCH_MS,/);
     expect(PAGE).toMatch(/useEffect\(\(\) => \(\) => foldedRefetch\.cancel\(\), \[foldedRefetch\]\)/);
     // The push effect: a refused frame requests a refetch and writes NOTHING.
     expect(PAGE).toMatch(/if \(frameInvalidatesFoldedBlend\(heldEventRef\.current, liveFrame\)\) \{\s*foldedRefetch\.request\(\);\s*return;\s*\}/);

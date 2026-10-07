@@ -81,6 +81,7 @@ function setup(detailRevisions: Array<() => Promise<number>>) {
     createFoldedRefetchScheduler, canSubscribeEventQuotes, quotePairCoversTrigger,
     keepNewerHeldHeadline, historyRangeParam, EVENT_BOOT_HISTORY_HOURS, FOLDED_FRAME_REFETCH_MS,
     pairedQuoteReadRef, quoteTriggerRef, heldEventRef,
+    recoveryIntentRef: { current: 0 }, quoteReadLifetimeRef: { current: 0 },
     eventId: EVENT_ID, fullHistoryRequested: false,
     quoteEventIdRef: { current: EVENT_ID }, quoteHistoryRangeRef: { current: false },
     freshNextEventReadRef: { current: false },
@@ -128,7 +129,7 @@ afterEach(() => {
 describe("#10646 the page's scheduler opts the quote pair into one bounded retry", () => {
   it("the factory passes the page clock and an unresolved-quote predicate", () => {
     const code = EXPR.factory.replace(/\/\/[^\n]*/g, "");
-    expect(code).toMatch(/\}, FOLDED_FRAME_REFETCH_MS, Date\.now,\s*\(\) => quoteTriggerRef\.current !== null && canSubscribeEventQuotes\(heldEventRef\.current\),\s*\)$/);
+    expect(code).toMatch(/\}, FOLDED_FRAME_REFETCH_MS, Date\.now,\s*\(\) => \(quoteTriggerRef\.current !== null \|\| recoveryIntentRef\.current !== 0\) && canSubscribeEventQuotes\(heldEventRef\.current\),\s*\)$/);
     expect(FOLDED_FRAME_REFETCH_MS).toBe(1000);
   });
 });
