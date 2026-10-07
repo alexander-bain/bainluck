@@ -47,10 +47,20 @@ final class WatchDiscoveryStore: ObservableObject {
         isRefreshing = false
     }
 
+    /// Optional UI-owned diagnostics; tests and background data owners default to no sink.
+    var telemetry: (@MainActor (String, Int, Int) -> Void)?
+
     @MainActor func refresh() async {
         guard !Task.isCancelled else { return }
         revision += 1
         let requestRevision = revision
+        let telemetryStart = ProcessInfo.processInfo.systemUptime
+        var telemetryOutcome = "cancelled"
+        var telemetryCount = 0
+        defer {
+            let elapsed = Int(min(3_600_000, max(0, (ProcessInfo.processInfo.systemUptime - telemetryStart) * 1000)))
+            telemetry?(telemetryOutcome, elapsed, telemetryCount)
+        }
         isRefreshing = true
         do {
             let result = try await transport.fetch()
@@ -58,6 +68,8 @@ final class WatchDiscoveryStore: ObservableObject {
             guard requestRevision == revision else { return }
             var seen = Set<Int>()
             readings = Array(result.filter { $0.isValid && seen.insert($0.id).inserted }.prefix(3))
+            telemetryCount = readings.count
+            telemetryOutcome = readings.isEmpty ? "empty" : "success"
             let receivedAt = now()
             fetchedAt = receivedAt
             isSavedReading = false
@@ -70,6 +82,11 @@ final class WatchDiscoveryStore: ObservableObject {
             guard requestRevision == revision else { return }
             isRefreshing = false
             if Task.isCancelled || error is CancellationError || (error as? URLError)?.code == .cancelled { return }
+            switch (error as? URLError)?.code {
+            case .notConnectedToInternet, .networkConnectionLost: telemetryOutcome = "offline"
+            case .timedOut: telemetryOutcome = "timeout"
+            default: telemetryOutcome = "failure"
+            }
             isSavedReading = fetchedAt != nil
             switch error {
             case let error as URLError where [.notConnectedToInternet, .networkConnectionLost].contains(error.code):
