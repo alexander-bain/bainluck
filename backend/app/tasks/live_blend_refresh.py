@@ -886,7 +886,9 @@ def heartbeat_deadline(max_gap_s: float, sample_interval_s: float) -> float:
 FLUSH_CLOCK_SLACK_S = 1e-6
 
 
-async def run_flush_cadence(flush, period: float, stop=None) -> None:
+async def run_flush_cadence(
+    flush, period: float, stop=None, *, failed_retry_interval_s: Optional[float] = None,
+) -> None:
     """#10090 — start a flush every ``period`` seconds, START to START.
 
     WHY. Both sockets used to `sleep(PRICE_FLUSH_SECONDS)` AFTER each flush
@@ -906,8 +908,10 @@ async def run_flush_cadence(flush, period: float, stop=None) -> None:
       cadence is the bound, as it always was. A flush that takes longer than
       ``period`` is followed by the next at once (rate ``1/work``, not more).
     * The retry interval. A flush that reports failure (returns ``False``) waits
-      a full ``period`` from when it FAILED, exactly as before — a database in
-      trouble is not asked again any sooner.
+      a full ``period`` from when it FAILED, exactly as before. An opt-in caller
+      may pass ``failed_retry_interval_s`` to keep its previous retry delay while
+      shortening only its healthy timer (#10662). Unchanged callers retain their
+      configured period, including custom periods.
     * The first flush is one ``period`` after the loop starts, as before.
 
     ``flush`` is called with the flush's start on the refresher's clock
@@ -928,6 +932,7 @@ async def run_flush_cadence(flush, period: float, stop=None) -> None:
     def stopped() -> bool:
         return stop is not None and stop.is_set()
 
+    retry_period = period if failed_retry_interval_s is None else failed_retry_interval_s
     due = _mono() + period
     while not stopped():
         wait = due - _mono()
@@ -937,7 +942,7 @@ async def run_flush_cadence(flush, period: float, stop=None) -> None:
                 return
         started = max(due, _mono())
         ok = await flush(started)
-        due = started + period if ok is not False else _mono() + period
+        due = started + period if ok is not False else _mono() + retry_period
 
 
 #: #10657 — how long a consumer waits, after its final drain, for its stopped

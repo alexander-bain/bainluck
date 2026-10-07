@@ -1,0 +1,120 @@
+============================= test session starts ==============================
+platform darwin -- Python 3.12.15+meta, pytest-9.0.3, pluggy-1.6.0
+rootdir: /Users/bain/bainluck-dev/latency/.worktrees/10662-pm-cadence/backend
+configfile: pytest.ini
+plugins: asyncio-1.4.0, anyio-4.13.0
+asyncio: mode=Mode.AUTO, debug=False, asyncio_default_fixture_loop_scope=None, asyncio_default_test_loop_scope=function
+collected 6 items
+
+tests/test_mutation_guard.py FFF                                         [ 50%]
+tests/test_delivery_receipt_10090.py F                                   [ 66%]
+tests/test_live_blend_tail_receipt_837.py FF                             [100%]
+
+=================================== FAILURES ===================================
+___________ test_no_mutant_is_sitting_in_a_harness_target_right_now ____________
+tests/test_mutation_guard.py:418: in test_no_mutant_is_sitting_in_a_harness_target_right_now
+    assert result.returncode == 0, (
+E   AssertionError: mutation-residue scan exit 1
+E     PASS A — target integrity: 599 needles across 51 target file(s)
+E       + 4 harness(es) declared disk-free and verified (MUTATES_WORKING_TREE = False): browse_single_scan_mutations, search_suggestions_mirror_mutations, tag_counts_group_by_mutations, typeahead_fuzzy_index_mutations
+E         They write no target file, so they cannot leave residue.
+E       ✅ every needle present EXACTLY ONCE in its own target — no mutant is sitting in a target file
+E
+E     PASS B — broad sweep: 466 literals x 24 files (changed .json .py .swift .ts .tsx vs origin/master)
+E       = 11184 pairwise checks
+E       133 replacement(s) under 24 chars excluded here as coincidence-prone — all of them are cleared by Pass A.
+E
+E     🔴 RESIDUE: 1 candidate mutant(s) outside a declared target
+E          backend/app/tasks/polymarket_ws.py  <-  futures_categories_warm_mutations:M9
+E
+E
+E   assert 1 == 0
+E    +  where 1 = CompletedProcess(args=['/usr/local/fbcode/platform010/Python3.12.framework/Versions/3.12/bin/python3.12', '/Users/bain...ide a declared target\n     backend/app/tasks/polymarket_ws.py  <-  futures_categories_warm_mutations:M9\n', stderr='').returncode
+___________ test_a_drifted_or_newly_ambiguous_needle_FAILS_the_scan ____________
+tests/test_mutation_guard.py:488: in test_a_drifted_or_newly_ambiguous_needle_FAILS_the_scan
+    assert clean.returncode == 0, f"{clean.stdout}\n{clean.stderr}"
+E   AssertionError: PASS A — target integrity: 599 needles across 51 target file(s)
+E       + 4 harness(es) declared disk-free and verified (MUTATES_WORKING_TREE = False): browse_single_scan_mutations, search_suggestions_mirror_mutations, tag_counts_group_by_mutations, typeahead_fuzzy_index_mutations
+E         They write no target file, so they cannot leave residue.
+E       ✅ every needle present EXACTLY ONCE in its own target — no mutant is sitting in a target file
+E
+E     PASS B — broad sweep: 466 literals x 24 files (changed .json .py .swift .ts .tsx vs origin/master)
+E       = 11184 pairwise checks
+E       133 replacement(s) under 24 chars excluded here as coincidence-prone — all of them are cleared by Pass A.
+E
+E     🔴 RESIDUE: 1 candidate mutant(s) outside a declared target
+E          backend/app/tasks/polymarket_ws.py  <-  futures_categories_warm_mutations:M9
+E
+E
+E   assert 1 == 0
+E    +  where 1 = CompletedProcess(args=['/usr/local/fbcode/platform010/Python3.12.framework/Versions/3.12/bin/python3.12', '/Users/bain...ide a declared target\n     backend/app/tasks/polymarket_ws.py  <-  futures_categories_warm_mutations:M9\n', stderr='').returncode
+__________ test_the_ambiguity_baseline_matches_the_tree_it_describes ___________
+tests/test_mutation_guard.py:521: in test_the_ambiguity_baseline_matches_the_tree_it_describes
+    assert result.returncode == 0, f"{result.stdout}\n{result.stderr}"
+E   AssertionError: PASS A — target integrity: 599 needles across 51 target file(s)
+E       + 4 harness(es) declared disk-free and verified (MUTATES_WORKING_TREE = False): browse_single_scan_mutations, search_suggestions_mirror_mutations, tag_counts_group_by_mutations, typeahead_fuzzy_index_mutations
+E         They write no target file, so they cannot leave residue.
+E       ✅ every needle present EXACTLY ONCE in its own target — no mutant is sitting in a target file
+E
+E     PASS B — broad sweep: 466 literals x 24 files (changed .json .py .swift .ts .tsx vs origin/master)
+E       = 11184 pairwise checks
+E       133 replacement(s) under 24 chars excluded here as coincidence-prone — all of them are cleared by Pass A.
+E
+E     🔴 RESIDUE: 1 candidate mutant(s) outside a declared target
+E          backend/app/tasks/polymarket_ws.py  <-  futures_categories_warm_mutations:M9
+E
+E
+E   assert 1 == 0
+E    +  where 1 = CompletedProcess(args=['/usr/local/fbcode/platform010/Python3.12.framework/Versions/3.12/bin/python3.12', '/Users/bain...ide a declared target\n     backend/app/tasks/polymarket_ws.py  <-  futures_categories_warm_mutations:M9\n', stderr='').returncode
+_ TestTheRealPolymarketConsumer.test_a_refused_wide_book_is_raw_but_not_an_input _
+tests/test_delivery_receipt_10090.py:392: in test_a_refused_wide_book_is_raw_but_not_an_input
+    await poly_task._run_polymarket_ws_consumer()
+app/tasks/ws_consumer_sessions.py:150: in run
+    return await consumer(*args, sessions=sessions, **kwargs)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+app/tasks/polymarket_ws.py:1393: in _run_polymarket_ws_consumer
+    blend_refresher = LiveBlendRefresher(
+tests/test_delivery_receipt_10090.py:367: in __init__
+    super().__init__(source, min_refresh_interval_s=0.01, **kw)
+E   TypeError: app.tasks.live_blend_refresh.LiveBlendRefresher.__init__() got multiple values for keyword argument 'min_refresh_interval_s'
+_ TestTheRealConsumerCarriesTheReceiveMark.test_a_quiet_held_price_is_receipted_end_to_end _
+tests/test_live_blend_tail_receipt_837.py:498: in test_a_quiet_held_price_is_receipted_end_to_end
+    r, writes = await _run_consumer(monkeypatch, frames)
+                ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+tests/test_live_blend_tail_receipt_837.py:483: in _run_consumer
+    await poly_task._run_polymarket_ws_consumer()
+app/tasks/ws_consumer_sessions.py:150: in run
+    return await consumer(*args, sessions=sessions, **kwargs)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+app/tasks/polymarket_ws.py:1393: in _run_polymarket_ws_consumer
+    blend_refresher = LiveBlendRefresher(
+tests/test_live_blend_tail_receipt_837.py:463: in __init__
+    super().__init__(source, min_refresh_interval_s=throttle, **kw)
+E   TypeError: app.tasks.live_blend_refresh.LiveBlendRefresher.__init__() got multiple values for keyword argument 'min_refresh_interval_s'
+_ TestTheRealConsumerCarriesTheReceiveMark.test_a_same_price_repeat_inside_the_hold_breaks_quiet _
+tests/test_live_blend_tail_receipt_837.py:522: in test_a_same_price_repeat_inside_the_hold_breaks_quiet
+    await _run_consumer(monkeypatch, frames)
+tests/test_live_blend_tail_receipt_837.py:483: in _run_consumer
+    await poly_task._run_polymarket_ws_consumer()
+app/tasks/ws_consumer_sessions.py:150: in run
+    return await consumer(*args, sessions=sessions, **kwargs)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+app/tasks/polymarket_ws.py:1393: in _run_polymarket_ws_consumer
+    blend_refresher = LiveBlendRefresher(
+tests/test_live_blend_tail_receipt_837.py:463: in __init__
+    super().__init__(source, min_refresh_interval_s=throttle, **kw)
+E   TypeError: app.tasks.live_blend_refresh.LiveBlendRefresher.__init__() got multiple values for keyword argument 'min_refresh_interval_s'
+=============================== warnings summary ===============================
+tests/test_mutation_guard.py::test_no_mutant_is_sitting_in_a_harness_target_right_now
+  /Users/bain/bainluck-dev/latency/.worktrees/10662-pm-cadence/backend/app/routes/auth.py:121: PydanticDeprecatedSince20: Support for class-based `config` is deprecated, use ConfigDict instead. Deprecated in Pydantic V2.0 to be removed in V3.0. See Pydantic V2 Migration Guide at https://errors.pydantic.dev/2.13/migration/
+    class UserProfileResponse(BaseModel):
+
+-- Docs: https://docs.pytest.org/en/stable/how-to/capture-warnings.html
+=========================== short test summary info ============================
+FAILED tests/test_mutation_guard.py::test_no_mutant_is_sitting_in_a_harness_target_right_now
+FAILED tests/test_mutation_guard.py::test_a_drifted_or_newly_ambiguous_needle_FAILS_the_scan
+FAILED tests/test_mutation_guard.py::test_the_ambiguity_baseline_matches_the_tree_it_describes
+FAILED tests/test_delivery_receipt_10090.py::TestTheRealPolymarketConsumer::test_a_refused_wide_book_is_raw_but_not_an_input
+FAILED tests/test_live_blend_tail_receipt_837.py::TestTheRealConsumerCarriesTheReceiveMark::test_a_quiet_held_price_is_receipted_end_to_end
+FAILED tests/test_live_blend_tail_receipt_837.py::TestTheRealConsumerCarriesTheReceiveMark::test_a_same_price_repeat_inside_the_hold_breaks_quiet
+========================= 6 failed, 1 warning in 5.88s =========================

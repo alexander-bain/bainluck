@@ -1,0 +1,24 @@
+============================= test session starts ==============================
+platform darwin -- Python 3.12.15+meta, pytest-9.0.3, pluggy-1.6.0
+rootdir: /Users/bain/bainluck-dev/latency/.worktrees/10662-pm-cadence/backend
+configfile: pytest.ini
+plugins: asyncio-1.4.0, anyio-4.13.0
+asyncio: mode=Mode.AUTO, debug=False, asyncio_default_fixture_loop_scope=None, asyncio_default_test_loop_scope=function
+collected 124 items
+
+tests/test_mutation_guard.py ..........................                  [ 20%]
+tests/test_delivery_receipt_10090.py ...............                     [ 33%]
+tests/test_live_blend_tail_receipt_837.py ........................       [ 52%]
+tests/test_pm_flush_cadence_10662.py ...................                 [ 67%]
+tests/test_ws_flush_cadence_10090.py .............                       [ 78%]
+tests/test_ws_loop_stop_10657.py .......                                 [ 83%]
+tests/test_ws_flush_retry_q491.py ................                       [ 96%]
+tests/test_startup.py ....                                               [100%]
+
+=============================== warnings summary ===============================
+tests/test_mutation_guard.py::test_the_guard_module_exists_where_the_harnesses_import_it_from
+  /Users/bain/bainluck-dev/latency/.worktrees/10662-pm-cadence/backend/app/routes/auth.py:121: PydanticDeprecatedSince20: Support for class-based `config` is deprecated, use ConfigDict instead. Deprecated in Pydantic V2.0 to be removed in V3.0. See Pydantic V2 Migration Guide at https://errors.pydantic.dev/2.13/migration/
+    class UserProfileResponse(BaseModel):
+
+-- Docs: https://docs.pytest.org/en/stable/how-to/capture-warnings.html
+======================= 124 passed, 1 warning in 42.16s ========================
