@@ -86,6 +86,7 @@ final class RectangularWidgetHostJourneyTests: XCTestCase {
         ])).firstMatch
         XCTAssertTrue(reading.waitForExistence(timeout: 20), "Actual installed WidgetKit extension must render a typed fitting reading")
         XCTAssertTrue(reading.label.contains("San Francisco Giants win"))
+        XCTAssertTrue(reading.label.contains("Saved"))
         XCTAssertTrue(reading.label.contains("64% · Live"))
         XCTAssertTrue(reading.label.contains("Observed "))
         XCTAssertEqual(reading.label.components(separatedBy: "64% · Live").count, 2)
