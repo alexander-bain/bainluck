@@ -235,9 +235,22 @@ class TestRefresherPublishContainment:
     async def test_a_publish_failure_is_counted_not_raised(self, monkeypatch):
         from app.tasks import live_blend_refresh as mod
 
+        from types import SimpleNamespace
+        from unittest.mock import AsyncMock, Mock
+
         class BrokenRedis:
-            async def publish(self, channel, payload):
-                raise ConnectionError("redis is gone")
+            def __init__(self):
+                connection = SimpleNamespace(
+                    pack_commands=Mock(side_effect=list),
+                    send_packed_command=AsyncMock(
+                        side_effect=ConnectionError("redis is gone")
+                    ),
+                    disconnect=AsyncMock(),
+                )
+                self.connection_pool = SimpleNamespace(
+                    get_connection=AsyncMock(return_value=connection),
+                    release=AsyncMock(),
+                )
 
         monkeypatch.setattr(
             "app.tasks.redis_state.get_async_redis_client", lambda: BrokenRedis()
@@ -305,17 +318,28 @@ class TestRefresherPublishContainment:
     async def test_successful_publishes_are_counted(self, monkeypatch):
         from app.tasks import live_blend_refresh as mod
 
+        from types import SimpleNamespace
+        from unittest.mock import AsyncMock, Mock
+
         class FakeRedis:
             def __init__(self):
                 self.sent = []
+                connection = SimpleNamespace(
+                    pack_commands=Mock(side_effect=list),
+                    send_packed_command=AsyncMock(side_effect=self.send),
+                    read_response=AsyncMock(return_value=0),
+                    disconnect=AsyncMock(),
+                )
+                self.connection_pool = SimpleNamespace(
+                    get_connection=AsyncMock(return_value=connection),
+                    release=AsyncMock(),
+                )
 
-            async def publish(self, channel, payload):
-                self.sent.append(channel)
+            async def send(self, commands):
+                self.sent.extend(channel for _, channel, _ in commands)
 
         fake = FakeRedis()
-        monkeypatch.setattr(
-            "app.tasks.redis_state.get_async_redis_client", lambda: fake
-        )
+        monkeypatch.setattr("app.tasks.redis_state.get_async_redis_client", lambda: fake)
         r = mod.LiveBlendRefresher("kalshi")
         await r._publish([_frame(event_id=1), _frame(event_id=2)])
         assert r.stats["published"] == 2
