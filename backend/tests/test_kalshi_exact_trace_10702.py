@@ -881,3 +881,53 @@ def test_two_target_tickers_for_same_outcome_do_not_collapse_write_identity():
     trace.committed(mark(2), datetime.fromtimestamp(1002, timezone.utc))
     assert records[-1]["stage"] == "PRICE_COMMITTED"
     assert records[-1]["ticker"] == "ALIAS" and records[-1]["input_seq"] == 2
+
+
+def test_materialized_decision_and_commit_keep_occurrence_separate_from_emission():
+    trace, records, clock = trace_for()
+    first = accepted(trace)
+    trace.committed(first, datetime.fromtimestamp(1001, timezone.utc))
+    clock[:] = [1001.5, 11.5]
+    msg = dict(market_ticker=TICKER, price_dollars=".68")
+    trace.received("socket", msg)
+    clock[:] = [1002, 12]
+    repeat = mark(2)
+    trace.decided(
+        msg,
+        reason="ACCEPTED",
+        market=7,
+        outcome=81,
+        event=900,
+        probability=0.68,
+        mark=repeat,
+    )
+    clock[:] = [1003, 13]
+    observed = datetime.fromtimestamp(1003, timezone.utc)
+    trace.committed(repeat, observed)  # unchanged commit is retained silently
+    clock[:] = [1004, 14]
+    trace.stamp(900, {"81": observed.timestamp()}, 253, observed.isoformat())
+    chain = [r for r in records if r.get("input_seq") == 2]
+    decision, commit = [
+        r for r in chain if r["stage"] in ("DECISION", "PRICE_COMMITTED")
+    ]
+    assert (decision["receive_wall"], decision["receive_mono"]) == (1002, 12)
+    assert (commit["receive_wall"], commit["receive_mono"]) == (1003, 13)
+    assert decision["emitted_wall"] == commit["emitted_wall"] == 1004
+    assert decision["emitted_mono"] == commit["emitted_mono"] == 14
+
+    clock[:] = [1005, 15]
+    trace.publication(900, 253, "REDIS_ACK")
+    receive = next(
+        r for r in records if r["stage"] == "RECEIVED" and r["receive_id"] == 2
+    )
+    event = next(
+        r for r in records if r["stage"] == "EVENT_COMMITTED" and r["input_seq"] == 2
+    )
+    publication = records[-1]
+    assert [
+        receive["receive_wall"],
+        decision["receive_wall"],
+        commit["receive_wall"],
+        event["receive_wall"],
+        publication["receive_wall"],
+    ] == [1001.5, 1002, 1003, 1004, 1005]

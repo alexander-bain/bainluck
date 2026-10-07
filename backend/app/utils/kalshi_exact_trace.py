@@ -281,7 +281,12 @@ class ExactKalshiTrace:
             self._record(**entry["_receive"])
             entry["_receive_logged"] = True
         if not entry["_decision_logged"]:
-            self._record("DECISION", **self._fields(entry))
+            self._record(
+                "DECISION",
+                **self._fields(entry),
+                receive_wall=entry["_decision_wall"],
+                receive_mono=entry["_decision_mono"]
+            )
             entry["_decision_logged"] = True
 
     def snapshot(self, marks):
@@ -305,7 +310,12 @@ class ExactKalshiTrace:
     def _price_chain(self, entry):
         self._input_chain(entry)
         if not entry["_price_logged"]:
-            self._record("PRICE_COMMITTED", **self._fields(entry))
+            self._record(
+                "PRICE_COMMITTED",
+                **self._fields(entry),
+                receive_wall=entry["_price_wall"],
+                receive_mono=entry["_price_mono"]
+            )
             entry["_price_logged"] = True
 
     def decided(
@@ -357,6 +367,8 @@ class ExactKalshiTrace:
             _receive=received["record"] if received else None,
             _receive_logged=received["logged"] if received else True,
             _decision_logged=False,
+            _decision_wall=self.wall(),
+            _decision_mono=self.mono(),
             _signature=signature,
         )
         if mark is not None:
@@ -376,6 +388,7 @@ class ExactKalshiTrace:
             stored_epoch=observed_at.timestamp(),
         )
         fields["_price_logged"] = False
+        fields["_price_wall"], fields["_price_mono"] = self.wall(), self.mono()
         status = (fields["_signature"], "COMMITTED")
         changed = self.last_writes.get(mark.outcome_id) != status
         self._put(self.last_writes, mark.outcome_id, status)
