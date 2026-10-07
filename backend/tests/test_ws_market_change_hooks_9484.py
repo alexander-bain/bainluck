@@ -65,6 +65,7 @@ import app.tasks.kalshi_ws as kalshi_task
 import app.tasks.live_blend_refresh as blend_mod
 from app.models.models import FuturesOutcome
 from app.utils.market_quote_push import market_channel, parse_market_frame
+from tests._kalshi_price_session import bind_sessions
 
 pytestmark = pytest.mark.asyncio
 
@@ -356,8 +357,8 @@ async def _drive_kalshi(monkeypatch, engine, messages, event_id=EVENT_ID,
     monkeypatch.setattr(blend_mod, "LiveBlendRefresher", _Refresher)
     monkeypatch.setattr(redis_state, "get_async_redis_client", lambda: redis)
     monkeypatch.setattr(websockets, "connect", _connect)
-    monkeypatch.setattr(
-        task_base, "get_task_session", lambda *a, **kw: _SessionCtx()
+    monkeypatch.setattr(  # #10693: bound to the engine the run lends
+        task_base, "get_task_session", bind_sessions(lambda *a, **kw: _SessionCtx())
     )
     # A `market_resolved` push asks the venue (CLOB, then Gamma, #9418) before
     # it writes. Unstubbed, those were REAL network reads: fast refusals on a
