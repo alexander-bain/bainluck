@@ -26,7 +26,7 @@ tests/test_futures_rank_field_wide_6598.py:783: in test_every_writer_of_the_pric
     assert unaccounted == set(), (
 E   AssertionError: ['utils/kalshi_price_statement.py'] write futures_outcomes.current_probability and neither re-derive the field nor carry a reason. `rank` is derived from that column, so leaving it alone publishes the ordering of whatever wrote it last — which is CERT-3182's finding. Wire `rerank_market_field_stmt` at the write's own commit boundary, or add the module to EXEMPT_WRITERS with the reason.
 E   assert {'utils/kalsh...statement.py'} == set()
-E     
+E
 E     Extra items in the left set:
 E     'utils/kalshi_price_statement.py'
 E     Use -v to get more diff
@@ -62,7 +62,7 @@ tests/integration/test_kalshi_price_statement_10689_pg.py:104: in _run
     cursor.execute(statement, parameters)
 E   sqlalchemy.exc.IntegrityError: (psycopg2.errors.NotNullViolation) null value in column "active" of relation "sports" violates not-null constraint
 E   DETAIL:  Failing row contains (1, baseball_mlb, MLB, null, null).
-E   
+E
 E   [SQL: INSERT INTO sports (id,key,name) VALUES (1,'baseball_mlb','MLB')]
 E   (Background on this error at: https://sqlalche.me/e/20/gkpj)
 _ test_actual_flush_source_counters_snapshots_hooks_and_transaction_parity[later_row_writer] _
@@ -97,7 +97,7 @@ tests/integration/test_kalshi_price_statement_10689_pg.py:104: in _run
     cursor.execute(statement, parameters)
 E   sqlalchemy.exc.IntegrityError: (psycopg2.errors.NotNullViolation) null value in column "active" of relation "sports" violates not-null constraint
 E   DETAIL:  Failing row contains (1, baseball_mlb, MLB, null, null).
-E   
+E
 E   [SQL: INSERT INTO sports (id,key,name) VALUES (1,'baseball_mlb','MLB')]
 E   (Background on this error at: https://sqlalche.me/e/20/gkpj)
 _ test_actual_flush_source_counters_snapshots_hooks_and_transaction_parity[held_first_row_writer] _
@@ -132,7 +132,7 @@ tests/integration/test_kalshi_price_statement_10689_pg.py:104: in _run
     cursor.execute(statement, parameters)
 E   sqlalchemy.exc.IntegrityError: (psycopg2.errors.NotNullViolation) null value in column "active" of relation "sports" violates not-null constraint
 E   DETAIL:  Failing row contains (1, baseball_mlb, MLB, null, null).
-E   
+E
 E   [SQL: INSERT INTO sports (id,key,name) VALUES (1,'baseball_mlb','MLB')]
 E   (Background on this error at: https://sqlalche.me/e/20/gkpj)
 _ test_actual_flush_source_counters_snapshots_hooks_and_transaction_parity[real_book_move] _
@@ -167,7 +167,7 @@ tests/integration/test_kalshi_price_statement_10689_pg.py:104: in _run
     cursor.execute(statement, parameters)
 E   sqlalchemy.exc.IntegrityError: (psycopg2.errors.NotNullViolation) null value in column "active" of relation "sports" violates not-null constraint
 E   DETAIL:  Failing row contains (1, baseball_mlb, MLB, null, null).
-E   
+E
 E   [SQL: INSERT INTO sports (id,key,name) VALUES (1,'baseball_mlb','MLB')]
 E   (Background on this error at: https://sqlalche.me/e/20/gkpj)
 _ test_actual_flush_source_counters_snapshots_hooks_and_transaction_parity[mixed_books] _
@@ -202,7 +202,7 @@ tests/integration/test_kalshi_price_statement_10689_pg.py:104: in _run
     cursor.execute(statement, parameters)
 E   sqlalchemy.exc.IntegrityError: (psycopg2.errors.NotNullViolation) null value in column "active" of relation "sports" violates not-null constraint
 E   DETAIL:  Failing row contains (1, baseball_mlb, MLB, null, null).
-E   
+E
 E   [SQL: INSERT INTO sports (id,key,name) VALUES (1,'baseball_mlb','MLB')]
 E   (Background on this error at: https://sqlalche.me/e/20/gkpj)
 _ test_actual_flush_source_counters_snapshots_hooks_and_transaction_parity[precision_rounding] _
@@ -237,7 +237,7 @@ tests/integration/test_kalshi_price_statement_10689_pg.py:104: in _run
     cursor.execute(statement, parameters)
 E   sqlalchemy.exc.IntegrityError: (psycopg2.errors.NotNullViolation) null value in column "active" of relation "sports" violates not-null constraint
 E   DETAIL:  Failing row contains (1, baseball_mlb, MLB, null, null).
-E   
+E
 E   [SQL: INSERT INTO sports (id,key,name) VALUES (1,'baseball_mlb','MLB')]
 E   (Background on this error at: https://sqlalche.me/e/20/gkpj)
 _ test_actual_flush_source_counters_snapshots_hooks_and_transaction_parity[resolution_guards] _
@@ -272,7 +272,7 @@ tests/integration/test_kalshi_price_statement_10689_pg.py:104: in _run
     cursor.execute(statement, parameters)
 E   sqlalchemy.exc.IntegrityError: (psycopg2.errors.NotNullViolation) null value in column "active" of relation "sports" violates not-null constraint
 E   DETAIL:  Failing row contains (1, baseball_mlb, MLB, null, null).
-E   
+E
 E   [SQL: INSERT INTO sports (id,key,name) VALUES (1,'baseball_mlb','MLB')]
 E   (Background on this error at: https://sqlalche.me/e/20/gkpj)
 _ test_actual_flush_source_counters_snapshots_hooks_and_transaction_parity[rank] _
@@ -307,7 +307,7 @@ tests/integration/test_kalshi_price_statement_10689_pg.py:104: in _run
     cursor.execute(statement, parameters)
 E   sqlalchemy.exc.IntegrityError: (psycopg2.errors.NotNullViolation) null value in column "active" of relation "sports" violates not-null constraint
 E   DETAIL:  Failing row contains (1, baseball_mlb, MLB, null, null).
-E   
+E
 E   [SQL: INSERT INTO sports (id,key,name) VALUES (1,'baseball_mlb','MLB')]
 E   (Background on this error at: https://sqlalche.me/e/20/gkpj)
 _ test_actual_flush_source_counters_snapshots_hooks_and_transaction_parity[settlement] _
@@ -342,7 +342,7 @@ tests/integration/test_kalshi_price_statement_10689_pg.py:104: in _run
     cursor.execute(statement, parameters)
 E   sqlalchemy.exc.IntegrityError: (psycopg2.errors.NotNullViolation) null value in column "active" of relation "sports" violates not-null constraint
 E   DETAIL:  Failing row contains (1, baseball_mlb, MLB, null, null).
-E   
+E
 E   [SQL: INSERT INTO sports (id,key,name) VALUES (1,'baseball_mlb','MLB')]
 E   (Background on this error at: https://sqlalche.me/e/20/gkpj)
 _ test_actual_flush_source_counters_snapshots_hooks_and_transaction_parity[vanished] _
@@ -377,7 +377,7 @@ tests/integration/test_kalshi_price_statement_10689_pg.py:104: in _run
     cursor.execute(statement, parameters)
 E   sqlalchemy.exc.IntegrityError: (psycopg2.errors.NotNullViolation) null value in column "active" of relation "sports" violates not-null constraint
 E   DETAIL:  Failing row contains (1, baseball_mlb, MLB, null, null).
-E   
+E
 E   [SQL: INSERT INTO sports (id,key,name) VALUES (1,'baseball_mlb','MLB')]
 E   (Background on this error at: https://sqlalche.me/e/20/gkpj)
 _ test_actual_flush_source_counters_snapshots_hooks_and_transaction_parity[driver_error] _
@@ -412,7 +412,7 @@ tests/integration/test_kalshi_price_statement_10689_pg.py:104: in _run
     cursor.execute(statement, parameters)
 E   sqlalchemy.exc.IntegrityError: (psycopg2.errors.NotNullViolation) null value in column "active" of relation "sports" violates not-null constraint
 E   DETAIL:  Failing row contains (1, baseball_mlb, MLB, null, null).
-E   
+E
 E   [SQL: INSERT INTO sports (id,key,name) VALUES (1,'baseball_mlb','MLB')]
 E   (Background on this error at: https://sqlalche.me/e/20/gkpj)
 _ test_actual_flush_source_counters_snapshots_hooks_and_transaction_parity[retry] _
@@ -447,7 +447,7 @@ tests/integration/test_kalshi_price_statement_10689_pg.py:104: in _run
     cursor.execute(statement, parameters)
 E   sqlalchemy.exc.IntegrityError: (psycopg2.errors.NotNullViolation) null value in column "active" of relation "sports" violates not-null constraint
 E   DETAIL:  Failing row contains (1, baseball_mlb, MLB, null, null).
-E   
+E
 E   [SQL: INSERT INTO sports (id,key,name) VALUES (1,'baseball_mlb','MLB')]
 E   (Background on this error at: https://sqlalche.me/e/20/gkpj)
 _ test_actual_flush_source_counters_snapshots_hooks_and_transaction_parity[rollback] _
@@ -482,7 +482,7 @@ tests/integration/test_kalshi_price_statement_10689_pg.py:104: in _run
     cursor.execute(statement, parameters)
 E   sqlalchemy.exc.IntegrityError: (psycopg2.errors.NotNullViolation) null value in column "active" of relation "sports" violates not-null constraint
 E   DETAIL:  Failing row contains (1, baseball_mlb, MLB, null, null).
-E   
+E
 E   [SQL: INSERT INTO sports (id,key,name) VALUES (1,'baseball_mlb','MLB')]
 E   (Background on this error at: https://sqlalche.me/e/20/gkpj)
 _ test_actual_flush_source_counters_snapshots_hooks_and_transaction_parity[commit_error] _
@@ -517,7 +517,7 @@ tests/integration/test_kalshi_price_statement_10689_pg.py:104: in _run
     cursor.execute(statement, parameters)
 E   sqlalchemy.exc.IntegrityError: (psycopg2.errors.NotNullViolation) null value in column "active" of relation "sports" violates not-null constraint
 E   DETAIL:  Failing row contains (1, baseball_mlb, MLB, null, null).
-E   
+E
 E   [SQL: INSERT INTO sports (id,key,name) VALUES (1,'baseball_mlb','MLB')]
 E   (Background on this error at: https://sqlalche.me/e/20/gkpj)
 _ test_actual_flush_source_counters_snapshots_hooks_and_transaction_parity[cancellation] _
@@ -552,7 +552,7 @@ tests/integration/test_kalshi_price_statement_10689_pg.py:104: in _run
     cursor.execute(statement, parameters)
 E   sqlalchemy.exc.IntegrityError: (psycopg2.errors.NotNullViolation) null value in column "active" of relation "sports" violates not-null constraint
 E   DETAIL:  Failing row contains (1, baseball_mlb, MLB, null, null).
-E   
+E
 E   [SQL: INSERT INTO sports (id,key,name) VALUES (1,'baseball_mlb','MLB')]
 E   (Background on this error at: https://sqlalche.me/e/20/gkpj)
 _ test_actual_flush_source_counters_snapshots_hooks_and_transaction_parity[newer_tick] _
@@ -587,7 +587,7 @@ tests/integration/test_kalshi_price_statement_10689_pg.py:104: in _run
     cursor.execute(statement, parameters)
 E   sqlalchemy.exc.IntegrityError: (psycopg2.errors.NotNullViolation) null value in column "active" of relation "sports" violates not-null constraint
 E   DETAIL:  Failing row contains (1, baseball_mlb, MLB, null, null).
-E   
+E
 E   [SQL: INSERT INTO sports (id,key,name) VALUES (1,'baseball_mlb','MLB')]
 E   (Background on this error at: https://sqlalche.me/e/20/gkpj)
 =============================== warnings summary ===============================

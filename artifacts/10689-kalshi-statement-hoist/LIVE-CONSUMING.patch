@@ -1,18 +1,12 @@
 --- a/backend/app/tasks/kalshi_ws.py
 +++ b/backend/app/tasks/kalshi_ws.py
-@@ -152,6 +152,9 @@
-     from app.utils.futures_rank import rerank_market_fields_stmt  # #6598
-     from app.utils.price_change_stamp import price_changed_at_value
+@@ -154,2 +154,5 @@
      from app.utils.price_change_stamp import quote_moved_column  # #9484
 +    from app.utils.kalshi_price_statement import (
 +        KALSHI_PRICE_STATEMENTS, kalshi_price_parameters,
 +    )  # #10689: imported once, outside the row loop
      from app.utils.resolution_authority import AUTHORITATIVE_SOURCES
- 
-     # #2471: one engine for this run, a fresh session per operation; the
-@@ -432,78 +435,8 @@
-                             # the Core form keeps the CursorResult (asyncpg sets
-                             # its rowcount from the command status) and returns
+@@ -434,74 +437,4 @@
                              # the rows that actually took the price.
 -                            update(FuturesOutcome.__table__)
 -                            .where(
@@ -89,5 +83,3 @@
 +                            KALSHI_PRICE_STATEMENTS[tick_has_book],
 +                            kalshi_price_parameters(outcome_id, prob, yes_bid, yes_ask)
                          )
-                         # #5411 — a settled row matches the id and fails the guard, so
-                         # the statement affects 0 rows. (A row deleted between

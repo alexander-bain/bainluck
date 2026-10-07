@@ -2,7 +2,7 @@
   "base_commit": "eeaabe1083aa556f5163d330c7955c2acb9eb40f",
   "consuming_writer_unchanged": "backend/app/tasks/kalshi_ws.py",
   "consuming_writer_sha256": "22e8b5e168863ed644d94914f49f7934951f0186350376bf97428993cc78fb2f",
-  "consuming_patch_sha256": "b98841133f6bdc5b420c1d0543f65e0e13eb7697966d41e11e43865a6813f715",
+  "consuming_patch_sha256": "34dd5a4205f3f45777cca593f1a75b9cf13dafed0481e5b444ab1cec21019bc6",
   "consuming_flush_only_execute_arguments_change": true,
   "source_files": {
     "backend/app/utils/kalshi_price_statement.py": "ac3f633e58e6c50c509dad48f49e63ef1d69cc94eae47bc64ae1453340b87288",
