@@ -460,7 +460,8 @@ async def _run_consumer(monkeypatch, frames, throttle=0.5, recycle=1.5):
 
     class _Recording(LiveBlendRefresher):
         def __init__(self, source, **kw):
-            super().__init__(source, min_refresh_interval_s=throttle, **kw)
+            kw["min_refresh_interval_s"] = throttle
+            super().__init__(source, **kw)
             seen["refresher"] = self
 
         async def _refresh_batch(self, event_ids, now):

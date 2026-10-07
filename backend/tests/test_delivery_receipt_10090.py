@@ -364,7 +364,8 @@ class TestTheRealPolymarketConsumer:
 
         class _Recording(LiveBlendRefresher):
             def __init__(self, source, **kw):
-                super().__init__(source, min_refresh_interval_s=0.01, **kw)
+                kw["min_refresh_interval_s"] = 0.01
+                super().__init__(source, **kw)
                 self._rev = 700
 
             async def _refresh_batch(self, event_ids, now):

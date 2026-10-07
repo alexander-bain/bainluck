@@ -994,10 +994,10 @@ async def _run_polymarket_ws_consumer(*, sessions):
     if override is not None:
         try:
             flush_period = float(override)
-        except ValueError as exc:
+        except ValueError as invalid_cadence:
             raise ValueError(
                 "PM_WS_PRICE_FLUSH_SECONDS must be a positive finite number"
-            ) from exc
+            ) from invalid_cadence
         if not math.isfinite(flush_period) or flush_period <= 0:
             raise ValueError(
                 "PM_WS_PRICE_FLUSH_SECONDS must be a positive finite number"
