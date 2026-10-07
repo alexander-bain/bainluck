@@ -553,3 +553,381 @@ async def test_trace_predicate_failure_never_costs_actual_event_stamp(monkeypatc
     await r.refresh([1])
     assert calls == [1] and r.stats["stamped"] == 1 and r.stats["errors"] == 0
     assert len(session.updates) == 1 and [f["event_id"] for f in published] == [1]
+
+
+async def test_production_repeat_pattern_keeps_budget_for_late_exact_changed_chain():
+    # Raw run10a12bf6: 52 receives, ATL23/LAD29, each with identical full book.
+    # This repeats the actual accepted numeric books through the real handler.
+    atl = "KXMLBGAME-26OCT071800LADATL-ATL"
+    lad = "KXMLBGAME-26OCT071800LADATL-LAD"
+    trace, records, clock = trace_for(atl + "," + lad)
+    on, off = handler(trace), handler(None)
+    for ns in (on, off):
+        ns["ticker_to_ids"] = {atl: (7, 81), lad: (7, 82)}
+        ns["event_id_by_outcome"] = {81: 900, 82: 900}
+    pattern = LIVE_REPEAT_PATTERN
+    for index, ticker in enumerate(pattern):
+        bid, ask, last = (0.54, 0.55, 0.55) if ticker == "ATL" else (0.45, 0.46, 0.46)
+        msg = dict(
+            market_ticker=atl if ticker == "ATL" else lad,
+            price_dollars=last,
+            yes_bid_dollars=bid,
+            yes_ask_dollars=ask,
+        )
+        trace.received("socket", msg)
+        await on["handle_ticker"](msg)
+        await off["handle_ticker"](dict(msg))
+        # Twelve successful unchanged price commits were present in the receipt.
+        if index in (1, 5, 9, 13, 17, 31):
+            trace.snapshot(on["input_marks"].values())
+            for mark_value in on["input_marks"].values():
+                trace.committed(
+                    mark_value, datetime.fromtimestamp(1001 + index, timezone.utc)
+                )
+        clock[0] += 0.6
+        clock[1] += 0.6
+    assert len(pattern) == 52 and pattern.count("ATL") == 23
+    assert (
+        on["tail_receipts"].stats["inputs"]
+        == off["tail_receipts"].stats["inputs"]
+        == 52
+    )
+    assert on["price_buffer"] == off["price_buffer"]
+    assert len(records) < 20 and not trace.stopped
+    # >64 same-price accepts after a writer snapshot must preserve that old mark.
+    snapshot_mark = on["input_marks"][81]
+    trace.snapshot([snapshot_mark])
+    for _ in range(100):
+        msg = dict(
+            market_ticker=atl,
+            price_dollars=0.55,
+            yes_bid_dollars=0.54,
+            yes_ask_dollars=0.55,
+        )
+        trace.received("socket", msg)
+        await on["handle_ticker"](msg)
+        await off["handle_ticker"](dict(msg))
+        clock[0] += 0.3
+        clock[1] += 0.3
+    assert clock[0] > 1060 and trace.tracks(snapshot_mark)
+    stored = datetime.fromtimestamp(1062, timezone.utc)
+    trace.committed(snapshot_mark, stored)
+    trace.stamp(900, {"81": stored.timestamp()}, 252, stored.isoformat())
+    trace.publication(900, 252, "REDIS_ACK")
+    old_chain = [r for r in records if r.get("input_seq") == snapshot_mark.seq]
+    assert {r["stage"] for r in old_chain} >= {
+        "DECISION",
+        "PRICE_COMMITTED",
+        "EVENT_COMMITTED",
+        "EVENT_PUBLICATION",
+    }
+    assert (
+        old_chain[-1]["receive_id"] == 52
+    )  # exact earlier snapshot, never newest repeat
+    # A changed quote followed by an identical superseding repeat: chain must
+    # belong to the newest InputMark, not the first changed input.
+    for _ in range(2):
+        msg = dict(
+            market_ticker=atl,
+            price_dollars=0.47,
+            yes_bid_dollars=0.46,
+            yes_ask_dollars=0.47,
+        )
+        trace.received("socket", msg)
+        await on["handle_ticker"](msg)
+        await off["handle_ticker"](dict(msg))
+        clock[0] += 0.1
+        clock[1] += 0.1
+    latest = on["input_marks"][81]
+    trace.snapshot([latest])
+    observed = datetime.fromtimestamp(1063, timezone.utc)
+    trace.committed(latest, observed)
+    trace.stamp(900, {"81": observed.timestamp()}, 253, observed.isoformat())
+    trace.publication(900, 253, "REDIS_ACK")
+    chain = [r for r in records if r.get("input_seq") == latest.seq]
+    assert [r["stage"] for r in chain] == [
+        "DECISION",
+        "PRICE_COMMITTED",
+        "EVENT_COMMITTED",
+        "EVENT_PUBLICATION",
+    ]
+    receive = next(
+        r
+        for r in records
+        if r["stage"] == "RECEIVED" and r["receive_id"] == chain[0]["receive_id"]
+    )
+    assert latest.seq == 154 and receive["receive_id"] == 154
+    assert receive["emitted_mono"] > receive["receive_mono"]
+    assert all(
+        r["input_recv_wall"] == latest.recv_wall
+        and r["input_recv_mono"] == latest.recv_mono
+        for r in chain
+    )
+    assert len(records) < 40 and not trace.stopped
+    assert on["price_buffer"] == off["price_buffer"]
+    assert on["tail_receipts"].stats == off["tail_receipts"].stats
+
+
+@pytest.mark.parametrize(
+    "change", ["connection", "mapping", "reason", "fields", "book"]
+)
+def test_repeat_compression_keeps_every_semantic_transition(change):
+    trace, records, _ = trace_for()
+    accepted(trace)
+    msg = dict(market_ticker=TICKER, price_dollars=".68")
+    if change == "fields":
+        msg["price"] = 68
+    if change == "book":
+        msg.update(yes_bid_dollars=".67", yes_ask_dollars=".69")
+    trace.received("reconnected" if change == "connection" else "socket", msg)
+    trace.decided(
+        msg,
+        reason="PRICE_POLICY_REFUSED" if change == "reason" else "ACCEPTED",
+        market=8 if change == "mapping" else 7,
+        outcome=81,
+        event=900,
+        probability=0.68,
+        mark=None if change == "reason" else mark(2),
+    )
+    assert [r["stage"] for r in records][-2:] == ["RECEIVED", "DECISION"]
+    assert records[-1]["receive_id"] == 2
+
+
+@pytest.mark.parametrize(
+    "failure", ["LOCK_TIMEOUT", "ROLLED_BACK", "DECLINED_SETTLED_OR_MISSING"]
+)
+def test_suppressed_repeat_failure_and_retry_keep_exact_chain(failure):
+    trace, records, _ = trace_for()
+    first = accepted(trace)
+    trace.committed(first, datetime.fromtimestamp(1001, timezone.utc))
+    repeat = accepted(trace, mark(2))
+    trace.snapshot([repeat])
+    trace.write_failed([repeat], failure)
+    assert records[-1]["stage"] == "PRICE_NOT_COMMITTED"
+    assert (
+        records[-1]["input_seq"] == repeat.seq
+        and records[-1]["write_reason"] == failure
+    )
+    observed = datetime.fromtimestamp(1002, timezone.utc)
+    trace.committed(repeat, observed)
+    assert (
+        records[-1]["stage"] == "PRICE_COMMITTED"
+        and records[-1]["input_seq"] == repeat.seq
+    )
+    trace.stamp(900, {"81": observed.timestamp()}, 253, observed.isoformat())
+    trace.publication(900, 253, "REDIS_ERROR")
+    assert records[-1]["publication"] == "REDIS_ERROR"
+
+
+def test_new_repeat_state_stays_bounded_and_is_cleared_on_expiry():
+    trace, records, clock = trace_for()
+    for seq in range(1, 200):
+        accepted(trace, mark(seq))
+    trace.snapshot([mark(199)])
+    assert len(trace.accepted) == MAX_PENDING and len(trace.pinned) == 1
+    assert len(trace.last_quotes) == len(trace.last_decisions) == 1
+    assert len(records) == 3
+    clock[0] = 1100
+    assert not trace.active()
+    assert all(
+        not state
+        for state in (
+            trace.accepted,
+            trace.pinned,
+            trace.last_quotes,
+            trace.last_decisions,
+            trace.last_writes,
+        )
+    )
+
+
+async def test_snapshot_failure_is_fail_open_for_actual_consumer(monkeypatch):
+    from tests.test_kalshi_socket_prices_by_the_rest_rule_8753 import (
+        TICKER as ticker,
+        _price_updates,
+        _stored_after,
+        _tick,
+    )
+
+    trace, records, _ = trace_for(ticker)
+
+    def failed(*_args):
+        raise RuntimeError("diagnostic snapshot failed")
+
+    trace.snapshot = failed
+    monkeypatch.setattr(ExactKalshiTrace, "from_env", lambda *_a, **_kw: trace)
+    writes = await _price_updates(
+        monkeypatch,
+        _tick(price_dollars=".96", yes_bid_dollars=".59", yes_ask_dollars=".95"),
+    )
+    assert len(writes) == 1 and _stored_after(writes[0]) == pytest.approx(
+        (0.77, 0.59, 0.95)
+    )
+
+
+LIVE_REPEAT_PATTERN = [
+    "ATL",
+    "LAD",
+    "ATL",
+    "LAD",
+    "LAD",
+    "LAD",
+    "ATL",
+    "ATL",
+    "LAD",
+    "LAD",
+    "ATL",
+    "ATL",
+    "LAD",
+    "ATL",
+    "LAD",
+    "LAD",
+    "ATL",
+    "ATL",
+    "LAD",
+    "ATL",
+    "LAD",
+    "LAD",
+    "LAD",
+    "ATL",
+    "LAD",
+    "ATL",
+    "LAD",
+    "ATL",
+    "LAD",
+    "ATL",
+    "LAD",
+    "ATL",
+    "LAD",
+    "ATL",
+    "LAD",
+    "LAD",
+    "ATL",
+    "LAD",
+    "LAD",
+    "ATL",
+    "ATL",
+    "LAD",
+    "ATL",
+    "LAD",
+    "ATL",
+    "LAD",
+    "LAD",
+    "LAD",
+    "LAD",
+    "LAD",
+    "ATL",
+    "ATL",
+]
+
+
+@pytest.mark.parametrize("limit", [5, 6, 7])
+def test_stop_during_deferred_failure_erases_state_without_repopulation(limit):
+    trace, records, _ = trace_for(limit=limit)
+    accepted(trace)
+    repeat = accepted(trace, mark(2))
+    trace.snapshot([repeat])
+    trace.write_failed([repeat], "ROLLED_BACK")
+    trace.active()
+    assert records[-1]["stage"] == "STOP"
+    assert sum(r["stage"] == "STOP" for r in records) == 1
+    assert len(records) <= limit
+    assert all(
+        not state
+        for state in (
+            trace.commands,
+            trace.receives,
+            trace.accepted,
+            trace.commits,
+            trace.stamps,
+            trace.pinned,
+            trace.last_quotes,
+            trace.last_decisions,
+            trace.last_writes,
+        )
+    )
+
+
+def test_emitter_failure_on_deferred_materialization_never_raises_or_changes_mark():
+    trace, _records, _ = trace_for()
+    first = accepted(trace)
+    trace.committed(first, datetime.fromtimestamp(1001, timezone.utc))
+    repeat = accepted(trace, mark(2))
+
+    def failed(_record):
+        raise RuntimeError("logger unavailable")
+
+    trace.emit = failed
+    trace.write_failed([repeat], "ROLLED_BACK")
+    trace.committed(repeat, datetime.fromtimestamp(1002, timezone.utc))
+    assert trace.tracks(repeat) and trace.commits[81]["input_seq"] == repeat.seq
+
+
+def test_two_target_tickers_for_same_outcome_do_not_collapse_write_identity():
+    trace, records, _ = trace_for(TICKER + ",ALIAS")
+    first = accepted(trace)
+    trace.committed(first, datetime.fromtimestamp(1001, timezone.utc))
+    msg = dict(market_ticker="ALIAS", price_dollars=".68")
+    trace.received("socket", msg)
+    trace.decided(
+        msg,
+        reason="ACCEPTED",
+        market=7,
+        outcome=81,
+        event=900,
+        probability=0.68,
+        mark=mark(2),
+    )
+    trace.committed(mark(2), datetime.fromtimestamp(1002, timezone.utc))
+    assert records[-1]["stage"] == "PRICE_COMMITTED"
+    assert records[-1]["ticker"] == "ALIAS" and records[-1]["input_seq"] == 2
+
+
+def test_materialized_decision_and_commit_keep_occurrence_separate_from_emission():
+    trace, records, clock = trace_for()
+    first = accepted(trace)
+    trace.committed(first, datetime.fromtimestamp(1001, timezone.utc))
+    clock[:] = [1001.5, 11.5]
+    msg = dict(market_ticker=TICKER, price_dollars=".68")
+    trace.received("socket", msg)
+    clock[:] = [1002, 12]
+    repeat = mark(2)
+    trace.decided(
+        msg,
+        reason="ACCEPTED",
+        market=7,
+        outcome=81,
+        event=900,
+        probability=0.68,
+        mark=repeat,
+    )
+    clock[:] = [1003, 13]
+    observed = datetime.fromtimestamp(1003, timezone.utc)
+    trace.committed(repeat, observed)  # unchanged commit is retained silently
+    clock[:] = [1004, 14]
+    trace.stamp(900, {"81": observed.timestamp()}, 253, observed.isoformat())
+    chain = [r for r in records if r.get("input_seq") == 2]
+    decision, commit = [
+        r for r in chain if r["stage"] in ("DECISION", "PRICE_COMMITTED")
+    ]
+    assert (decision["receive_wall"], decision["receive_mono"]) == (1002, 12)
+    assert (commit["receive_wall"], commit["receive_mono"]) == (1003, 13)
+    assert decision["emitted_wall"] == commit["emitted_wall"] == 1004
+    assert decision["emitted_mono"] == commit["emitted_mono"] == 14
+
+    clock[:] = [1005, 15]
+    trace.publication(900, 253, "REDIS_ACK")
+    receive = next(
+        r for r in records if r["stage"] == "RECEIVED" and r["receive_id"] == 2
+    )
+    event = next(
+        r for r in records if r["stage"] == "EVENT_COMMITTED" and r["input_seq"] == 2
+    )
+    publication = records[-1]
+    assert [
+        receive["receive_wall"],
+        decision["receive_wall"],
+        commit["receive_wall"],
+        event["receive_wall"],
+        publication["receive_wall"],
+    ] == [1001.5, 1002, 1003, 1004, 1005]
