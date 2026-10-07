@@ -510,6 +510,9 @@ async def _run_kalshi_ws_consumer(*, sessions, prices):
             batch_marks = {
                 oid: input_marks[oid] for oid in batch if oid in input_marks
             }
+            if exact_trace is not None:
+                with contextlib.suppress(Exception):
+                    exact_trace.snapshot(batch_marks.values())
         if not batch:
             # #837 tail — a flush with no new prices still owes the stamps a row
             # lock deferred: those prices are already stored, so waiting for the

@@ -5,6 +5,9 @@ WS_KALSHI_TRACE_EXPIRES_AT no more than 600s away. WS_KALSHI_TRACE_MAX_LINES
 defaults to 128 (hard cap 256, including STOP). No payloads, headers, server
 error text or credentials are retained. Exhaustion/expiry discard all state.
 ACK proves the correlated command/channel response, never ticker membership.
+Identical repeats retain exact receive/InputMark identities without spending
+lines. A commit, failure or event basis materializes its required input chain;
+received clocks stay original even when the evidence is emitted later.
 
 Post-deploy procedure (owner-controlled; this module changes no configuration):
 use the existing bounded worker log session and arrange owner-controlled
@@ -107,6 +110,8 @@ class ExactKalshiTrace:
             {},
         )
         self.receive_seq = 0
+        self.pinned = {}
+        self.last_quotes, self.last_decisions, self.last_writes = {}, {}, {}
 
     def _clear(self):
         for state in (
@@ -115,20 +120,26 @@ class ExactKalshiTrace:
             self.accepted,
             self.commits,
             self.stamps,
+            self.pinned,
+            self.last_quotes,
+            self.last_decisions,
+            self.last_writes,
         ):
             state.clear()
 
     def _send(self, record):
         self.lines += 1
         try:
-            self.emit(
-                dict(
-                    run=self.run,
-                    receive_wall=self.wall(),
-                    receive_mono=self.mono(),
-                    **record
-                )
+            wall, mono = self.wall(), self.mono()
+            envelope = dict(
+                run=self.run,
+                receive_wall=wall,
+                receive_mono=mono,
+                emitted_wall=wall,
+                emitted_mono=mono,
             )
+            envelope.update(record)
+            self.emit(envelope)
         except Exception:
             pass  # evidence must never cost a quote
 
@@ -240,15 +251,62 @@ class ExactKalshiTrace:
         identity = dict(
             connection=connection, receive_id=self.receive_seq, ticker=ticker.upper()
         )
-        self._put(self.receives, id(msg), identity)
-        self._record(
-            "RECEIVED",
+        record = dict(
+            stage="RECEIVED",
             **identity,
+            receive_wall=self.wall(),
+            receive_mono=self.mono(),
             supplied_fields=[f for f in FIELDS if f in msg],
             prices={f: number(msg[f]) for f in FIELDS if f in msg},
             vendor_clock={f: number(msg[f]) for f in CLOCK_FIELDS if f in msg}
             or "UNAVAILABLE"
         )
+        signature = (connection, tuple(record["prices"].items()))
+        changed = self.last_quotes.get(identity["ticker"]) != signature
+        self._put(self.last_quotes, identity["ticker"], signature)
+        self._put(
+            self.receives,
+            id(msg),
+            dict(identity=identity, record=record, logged=changed),
+        )
+        if changed:
+            self._record(**record)
+
+    @staticmethod
+    def _fields(entry):
+        return {k: v for k, v in entry.items() if not k.startswith("_")}
+
+    def _input_chain(self, entry):
+        if not entry["_receive_logged"] and entry["_receive"] is not None:
+            self._record(**entry["_receive"])
+            entry["_receive_logged"] = True
+        if not entry["_decision_logged"]:
+            self._record("DECISION", **self._fields(entry))
+            entry["_decision_logged"] = True
+
+    def snapshot(self, marks):
+        """Pin the writer's actual snapshot identities across a repeat burst."""
+        if not self.active():
+            return
+        self.pinned.clear()
+        for mark in marks:
+            entry = self.accepted.get(mark.seq)
+            if entry is not None and entry["outcome"] == mark.outcome_id:
+                self._put(self.pinned, mark.seq, entry)
+
+    def _accepted(self, mark):
+        if mark is None:
+            return None
+        entry = self.pinned.get(mark.seq) or self.accepted.get(mark.seq)
+        return (
+            entry if entry is not None and entry["outcome"] == mark.outcome_id else None
+        )
+
+    def _price_chain(self, entry):
+        self._input_chain(entry)
+        if not entry["_price_logged"]:
+            self._record("PRICE_COMMITTED", **self._fields(entry))
+            entry["_price_logged"] = True
 
     def decided(
         self,
@@ -266,8 +324,11 @@ class ExactKalshiTrace:
         ticker = msg.get("market_ticker") or msg.get("ticker")
         if not isinstance(ticker, str) or ticker.upper() not in self.targets:
             return
-        identity = self.receives.pop(
-            id(msg), dict(ticker=ticker.upper(), receive_id="UNAVAILABLE")
+        received = self.receives.pop(id(msg), None)
+        identity = (
+            received["identity"]
+            if received
+            else dict(ticker=ticker.upper(), receive_id="UNAVAILABLE")
         )
         fields = dict(
             **identity,
@@ -280,43 +341,70 @@ class ExactKalshiTrace:
             input_recv_wall=mark.recv_wall if mark is not None else "UNAVAILABLE",
             input_recv_mono=mark.recv_mono if mark is not None else "UNAVAILABLE"
         )
+        signature = (
+            identity["ticker"],
+            identity.get("connection"),
+            tuple(received["record"]["prices"].items()) if received else None,
+            reason,
+            market,
+            outcome,
+            event,
+            probability,
+        )
+        changed = self.last_decisions.get(ticker.upper()) != signature
+        self._put(self.last_decisions, ticker.upper(), signature)
+        fields.update(
+            _receive=received["record"] if received else None,
+            _receive_logged=received["logged"] if received else True,
+            _decision_logged=False,
+            _signature=signature,
+        )
         if mark is not None:
             self._put(self.accepted, mark.seq, fields)
-        self._record("DECISION", **fields)
+        if changed:
+            self._input_chain(fields)
 
     def committed(self, mark, observed_at):
         if not self.active() or mark is None:
             return
-        identity = self.accepted.get(mark.seq)
-        if identity is None or identity["outcome"] != mark.outcome_id:
+        identity = self._accepted(mark)
+        if identity is None:
             return
         fields = dict(
             identity,
             stored_at=observed_at.isoformat(),
             stored_epoch=observed_at.timestamp(),
         )
+        fields["_price_logged"] = False
+        status = (fields["_signature"], "COMMITTED")
+        changed = self.last_writes.get(mark.outcome_id) != status
+        self._put(self.last_writes, mark.outcome_id, status)
         self._put(self.commits, mark.outcome_id, fields)
-        self._record("PRICE_COMMITTED", **fields)
+        if changed:
+            self._price_chain(fields)
 
     def tracks(self, mark):
-        return (
-            self.active()
-            and mark is not None
-            and mark.seq in self.accepted
-            and self.accepted[mark.seq]["outcome"] == mark.outcome_id
-        )
+        return self.active() and self._accepted(mark) is not None
 
     def tracks_event(self, event):
         return self.active() and any(v["event"] == event for v in self.commits.values())
 
     def write_failed(self, marks, reason):
         for mark in marks:
-            if self.active() and mark is not None and mark.seq in self.accepted:
-                self._record(
-                    "PRICE_NOT_COMMITTED",
-                    **self.accepted[mark.seq],
-                    write_reason=reason
-                )
+            if not self.active():
+                return
+            entry = self._accepted(mark)
+            if entry is not None:
+                status = (entry["_signature"], reason)
+                changed = self.last_writes.get(mark.outcome_id) != status
+                self._put(self.last_writes, mark.outcome_id, status)
+                if changed:
+                    self._input_chain(entry)
+                    self._record(
+                        "PRICE_NOT_COMMITTED",
+                        **self._fields(entry),
+                        write_reason=reason
+                    )
 
     def stamp(self, event, basis, revision, updated_at):
         if not self.active():
@@ -329,9 +417,10 @@ class ExactKalshiTrace:
         if matched:
             self._put(self.stamps, (event, revision), matched)
             for identity in matched:
+                self._price_chain(identity)
                 self._record(
                     "EVENT_COMMITTED",
-                    **identity,
+                    **self._fields(identity),
                     revision=revision,
                     event_updated_at=updated_at,
                     linkage="EXACT_OUTCOME_OBSERVATION_BASIS"
@@ -347,7 +436,7 @@ class ExactKalshiTrace:
         for identity in self.stamps.get((event, revision), ()):
             self._record(
                 "EVENT_PUBLICATION",
-                **identity,
+                **self._fields(identity),
                 revision=revision,
                 publication=status,
                 browser_delivery="UNAVAILABLE"
