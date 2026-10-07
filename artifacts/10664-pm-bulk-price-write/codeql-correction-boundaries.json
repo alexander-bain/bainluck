@@ -1,0 +1,8 @@
+{
+  "previous_head": "5e2c80a463d79421126993c99b21024f91dc03bb",
+  "application_unchanged": {
+    "backend/app/tasks/polymarket_ws.py": "af0763354597c667403c8d5a0cfb1860c5349fa28319fc4f07a358022fe94cdc",
+    "backend/app/utils/price_change_stamp.py": "97671b67f8eb87f82af6e9f0463847d5be97be4ab9b5b760e99da7c5dda9f114",
+    "backend/app/tasks/live_blend_refresh.py": "c7ebaa14d5c8b3e1c9c7c6432b332da1bd54f0d9ad2a3ff67d3d56086d1d6714"
+  }
+}

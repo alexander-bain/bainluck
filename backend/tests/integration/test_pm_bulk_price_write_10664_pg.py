@@ -18,7 +18,7 @@ from sqlalchemy import event, insert, text
 from sqlalchemy.ext.asyncio import create_async_engine
 
 from app.models.models import Base, FuturesOutcome, FuturesMarket
-from app.tasks.base import get_task_session
+import app.tasks.base as task_base
 import app.tasks.polymarket_ws as module
 from app.utils import market_quote_push
 from app.utils.futures_rank import rerank_market_fields_stmt
@@ -177,7 +177,7 @@ async def rig():
 
     @asynccontextmanager
     async def factory():
-        async with get_task_session(engine=engine) as session:
+        async with task_base.get_task_session(engine=engine) as session:
             yield Proxy(session)
             if r.before_exit is not None:
                 r.before_exit()
@@ -232,7 +232,8 @@ async def _write(r, chunk):
 
 async def test_order_precision_null_vanished_and_post_commit_publication(rig):
     chunk = {3: 0.30000001, 999: 0.8, 2: None, 1: 0.4567894}
-    assert await _write(rig, chunk)
+    write_succeeded = await _write(rig, chunk)
+    assert write_succeeded
     assert await _prices(rig) == {
         1: Decimal("0.456789"),
         2: None,
@@ -266,12 +267,14 @@ async def test_settled_price_coverage_is_unchanged(rig):
                 "UPDATE futures_outcomes SET resolution_source='settled', is_winner=true WHERE id=1"
             )
         )
-    assert await _write(rig, {1: 0.6})
+    write_succeeded = await _write(rig, {1: 0.6})
+    assert write_succeeded
     assert (await _prices(rig))[1] == Decimal(".600000")
 
 
 async def test_atomic_overflow_returns_no_unchanged_observations(rig):
-    assert not await _write(rig, {1: 0.3, 2: 10.0})
+    write_succeeded = await _write(rig, {1: 0.3, 2: 10.0})
+    assert not write_succeeded
     assert await _prices(rig) == {i: Decimal(".300000") for i in (1, 2, 3)}
     assert rig.publisher.frames == []
     assert rig.stats["quotes_unchanged"] == 0
@@ -292,7 +295,8 @@ async def test_later_failure_rolls_back_retains_latest_and_counts_returned_obser
     else:
         rig.before_exit = fail_outer
         rig.fail_commit = True
-    assert not await _write(rig, {1: 0.3, 2: 0.6})
+    write_succeeded = await _write(rig, {1: 0.3, 2: 0.6})
+    assert not write_succeeded
     assert await _prices(rig) == {i: Decimal(".300000") for i in (1, 2, 3)}
     assert rig.publisher.frames == []
     assert rig.stats["quotes_unchanged"] == 1
@@ -303,11 +307,13 @@ async def test_later_failure_rolls_back_retains_latest_and_counts_returned_obser
 
 async def test_newer_tick_survives_a_successful_old_write(rig):
     rig.before_exit = lambda: rig.buffer.update({1: 0.8})
-    assert await _write(rig, {1: 0.6})
+    write_succeeded = await _write(rig, {1: 0.6})
+    assert write_succeeded
     assert rig.buffer == {1: 0.8}
     assert (await _prices(rig))[1] == Decimal(".600000")
     rig.before_exit = None
-    assert await rig.write(dict(rig.buffer))
+    write_succeeded = await rig.write(dict(rig.buffer))
+    assert write_succeeded
     assert rig.buffer == {}
     assert (await _prices(rig))[1] == Decimal(".800000")
     assert len(rig.publisher.frames) == 2
@@ -341,7 +347,8 @@ async def test_concurrent_deletion_of_held_row_signals_only_surviving_row(rig):
             await _wait_for_lock(rig)
             assert not pending.done() and rig.publisher.frames == []
             await txn.commit()
-            assert await asyncio.wait_for(pending, 2)
+            write_succeeded = await asyncio.wait_for(pending, 2)
+            assert write_succeeded
         finally:
             if txn.is_active:
                 await txn.rollback()
@@ -365,7 +372,7 @@ async def test_cancelled_real_lock_wait_keeps_latest_input_and_publishes_nothing
             rig.buffer[1] = 0.8
             pending.cancel()
             with pytest.raises(asyncio.CancelledError):
-                await pending
+                await asyncio.wait_for(pending, 2)
         finally:
             if not pending.done():
                 pending.cancel()
