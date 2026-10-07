@@ -3,6 +3,8 @@
     "ComplicationContentJourneyTests/testSavedLiveScoreFinalAndEmptyRectangularContent",
     "ComplicationContentJourneyTests/testSavedCircularNamedProbabilityFinalAndScoreLayout",
     "ComplicationContentJourneyTests/testCircularOldUnknownAndNonfittingReadingsStayLaunchers",
+    "ComplicationContentJourneyTests/testRectangularTypedNamedValuesFitWithMonochromeRendering",
+    "ComplicationContentJourneyTests/testRectangularLegacyMismatchUnknownAndEmptyStayHonest",
     "ProbabilityRoundingJourneyTests/testPairedRoundingPersistsOfflineAndDrawSportKeepsScalarRounding",
     "WatchDiscoverJourneyTests/testSelectedGameStaysFirstAndDiscoveriesSurviveOfflineRelaunch",
     "WatchDiscoverJourneyTests/testDiscoveriesAtAccessibilitySizeKeepReadingAndReturnReachable",

@@ -35,6 +35,8 @@ class RectangularReceiptTests(unittest.TestCase):
                      case_line("WidgetTapJourneyTests", "testFreshConfiguredFaceIsActiveBeforeActualLauncherTap"),
                      case_line("PickerReturnJourneyTests", "testNetworkFailureGuidanceRetainsChoicesAndRecoversSelection"),
                      *(case_line(*case) for case in CASES),
+                     case_line("SelectedGameUpdatingJourneyTests", "testUpdatingIsVisibleUntilRequestFinishes"),
+                     case_line("SelectedGameUpdatingJourneyTests", "testUpdatingIsVisibleAtAccessibilitySize"),
                      case_line("PickerSelectedStateJourneyTests", "testSelectedGameIsMarkedInPickerAndCanChange"),
                      case_line("PickerSelectedStateJourneyTests", "testSelectedGameIsMarkedAtAccessibilitySize")]
 
