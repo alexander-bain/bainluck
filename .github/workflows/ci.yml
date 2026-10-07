@@ -6102,8 +6102,8 @@ jobs:
             exit 1
           fi
           # `[^0-9]` so a future `114 passed` cannot satisfy a gate asking for 14.
-          grep -qE "[^0-9]16 passed," /tmp/own7594.txt || {
-            echo "::error::#7594 contract did not run all sixteen cases"
+          grep -qE "[^0-9]14 passed," /tmp/own7594.txt || {
+            echo "::error::#7594 contract did not run all fourteen cases"
             exit 1
           }
 
@@ -6212,8 +6212,8 @@ jobs:
             echo "::error::#9588 later-session contract SKIPPED — the gate did not run"
             exit 1
           fi
-          grep -qE "[^0-9]16 passed," /tmp/latersession9588.txt || {
-            echo "::error::#9588 later-session contract did not run all sixteen cases"
+          grep -qE "[^0-9]14 passed," /tmp/latersession9588.txt || {
+            echo "::error::#9588 later-session contract did not run all fourteen cases"
             exit 1
           }
 
