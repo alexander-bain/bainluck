@@ -1,0 +1,12 @@
+{
+  "wire": [
+    "retry: 5000\n\n",
+    "event: open\ndata: {\"event_id\": 15324742}\n\n",
+    "event: probability\ndata: {\"event_id\": 15324742, \"p\": 0.4, \"status\": \"scheduled\", \"rev\": {\"900\": 11}}\n\n",
+    "event: resync\ndata: {\"generation\": 1}\n\n"
+  ],
+  "last_quote_lost": true,
+  "stream_retained": true,
+  "generation": 1,
+  "limits": "Controlled local fault, actual route with one proposed new signal arm. No application integration, browser networking or production timing."
+}

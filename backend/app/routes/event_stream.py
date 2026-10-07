@@ -349,7 +349,7 @@ async def _stream(
     """Yield SSE frames for one event until the client leaves or time is up."""
     global _open_connections
 
-    from app.utils.live_fanout import CLOSED, fanout
+    from app.utils.live_fanout import CLOSED, Recovery, fanout
 
     hub = fanout()
     subscription = _FoldSubscription(hub)
@@ -361,6 +361,7 @@ async def _stream(
         yield sse_encode(json.dumps({"event_id": event_id}), event="open")
 
         last_beat = started
+        recovery_generation = 0
         while True:
             # The client going away is the common exit, and it is the one that
             # actually frees the slot — check it every pass, not just on send.
@@ -378,6 +379,14 @@ async def _stream(
             # coroutine yielding control back to the loop that is also serving
             # `/api/feed`.
             origin_id, payload = await subscription.next(timeout=FRAME_WAIT_S)
+            if isinstance(payload, Recovery):
+                # Fold subscriptions share a hub generation; emit it only once.
+                if payload.generation > recovery_generation:
+                    recovery_generation = payload.generation
+                    yield sse_encode(
+                        json.dumps({"generation": recovery_generation}), event="resync"
+                    )
+                continue
             if payload is CLOSED:
                 # The shared reader stopped, so no frame will ever arrive on
                 # this subscription again. Saying so is not optional: the

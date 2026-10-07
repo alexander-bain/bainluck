@@ -17,15 +17,11 @@ import {
  * #9509: live, scheduled and suspended pages may subscribe; the server
  * checks actual contract eligibility. Refused connections retain polling.
  *
- * The number in the database is already live — `worker-ws` flushes prices every
- * 2s and the blend is stamped at most once per event per 5s. What was not live
- * was the number on screen: the page polled every 32s, so a value 3s old in
- * Postgres could be 32s old in front of a user. This hook closes that gap.
- *
- * THE RULE THIS HOOK EXISTS TO ENFORCE: a push path that dies must degrade to
- * polling, never to a frozen number. Every failure mode — refused, errored,
- * closed, aged out, or *silently* dead — ends with `connected: false`, and the
- * caller restores its poll interval on that.
+ * The page keeps its ordinary metadata polling. Push carries quote updates;
+ * refusal or silence restores fallback behavior. A server resync signals a
+ * possible missed publication and exposes catch-up intent separately from the
+ * latest quote, so the page can read a fresh coherent detail/history pair.
+ * A heartbeat or resync never claims that a new price was published.
  *
  * THE LIFECYCLE ITSELF LIVES IN `@/lib/liveStreamController`, not here, and
  * that is deliberate. CERT-717 blocked this branch on two lifecycle defects
@@ -47,7 +43,7 @@ export type LiveStreamStatus = LiveTransportStatus | 'idle';
 interface UseLiveEventStreamResult {
   /** Latest frame, or null until one arrives. */
   frame: LiveFrame | null;
-  /** True only while push is DELIVERING. Callers gate polling on this. */
+  /** Controller delivery state; the page retains periodic metadata reads. */
   connected: boolean;
   /**
    * Actual publications received for this event while the page is open: the
@@ -58,11 +54,13 @@ interface UseLiveEventStreamResult {
   chartPoints: LiveChartFrame[];
   /**
    * #10200 — what the transport is doing, for the reader-facing status by the
-   * chart. Observational: `connected` above is still the polling gate. Keyed to
+   * chart. Observational: `connected` remains available for fallback decisions. Keyed to
    * `eventId` like `chartPoints`, so a client-side navigation never shows the
    * previous event's interruption on the next one.
    */
   status: LiveStreamStatus;
+  /** #10666: hook-lifetime monotonic recovery ordinal, scoped to this event. */
+  recoveryGeneration: number;
 }
 
 export function useLiveEventStream(
@@ -77,6 +75,9 @@ export function useLiveEventStream(
   const [{ statusEventId, status }, setStatus] = useState<{
     statusEventId: number | undefined; status: LiveStreamStatus;
   }>({ statusEventId: eventId, status: 'idle' });
+  const [recovery, setRecovery] = useState({ eventId, ordinal: 0 });
+  // A replacement controller starts its own ordinal at one; the hook does not.
+  const recoveryOrdinal = useRef(0);
   // A ref so the controller's callbacks never close over a stale setter.
   const mounted = useRef(true);
 
@@ -88,6 +89,7 @@ export function useLiveEventStream(
   }, []);
 
   useEffect(() => {
+    setRecovery({ eventId, ordinal: 0 });
     if (!enabled || !eventId || typeof window === 'undefined') {
       setConnected(false);
       setStatus({ statusEventId: eventId, status: 'idle' });
@@ -118,6 +120,12 @@ export function useLiveEventStream(
           }));
         }
       },
+      onRecovery: () => {
+        if (mounted.current) {
+          recoveryOrdinal.current += 1;
+          setRecovery({ eventId, ordinal: recoveryOrdinal.current });
+        }
+      },
       onDeliveringChange: (delivering) => {
         if (mounted.current) setConnected(delivering);
       },
@@ -142,6 +150,7 @@ export function useLiveEventStream(
   return {
     frame,
     connected,
+    recoveryGeneration: enabled && recovery.eventId === eventId ? recovery.ordinal : 0,
     chartPoints: chartEventId === eventId ? points : [],
     // Before this event's controller has said anything, it is connecting if
     // it is going to try at all — never the last event's word.

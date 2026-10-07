@@ -307,9 +307,9 @@ describe("structural pin: the harness carries the page's own wiring", () => {
     // The fetcher, with the held-event getter a REST read reconciles against.
     expect(PAGE).toMatch(/fetchEventWithLiveFrame\(\s*\(\) => fetchEvent\(eventId, takeFreshRead\(freshNextEventReadRef\)\),\s*\(\) => latestLiveFrameRef\.current,\s*\(\) => latestBlendEdgeRef\.current,\s*\(\) => heldEventRef\.current,/);
     // The scheduler and its two branches.
-    expect(PAGE).toMatch(/createFoldedRefetchScheduler\(\s*\(\) => \{\s*if \(quoteTriggerRef\.current && pairedQuoteReadRef\.current\) return pairedQuoteReadRef\.current\(\);\s*freshNextEventReadRef\.current = true;\s*return refreshEventRef\.current\(\);\s*\}, FOLDED_FRAME_REFETCH_MS,/);
+    expect(PAGE).toMatch(/createFoldedRefetchScheduler\(\s*\(\) => \{\s*if \(\(quoteTriggerRef\.current \|\| recoveryIntentRef\.current\) && pairedQuoteReadRef\.current\) return pairedQuoteReadRef\.current\(\);\s*freshNextEventReadRef\.current = true;\s*return refreshEventRef\.current\(\);\s*\}, FOLDED_FRAME_REFETCH_MS,/);
     // The hook, its status, and the fallback for a stream that reports only `connected`.
-    expect(PAGE).toMatch(/status: reportedStreamStatus,\s*\} = useLiveEventStream\(eventId, quoteEligible\);/);
+    expect(PAGE).toMatch(/status: reportedStreamStatus,\s*recoveryGeneration,\s*\} = useLiveEventStream\(eventId, quoteEligible\);/);
     expect(PAGE).toMatch(/const streamStatus = reportedStreamStatus \?\? \(streamConnected \? "open" : "idle"\);/);
     // The push effect: refuse-and-refetch first, then the one guarded write.
     expect(PAGE).toMatch(/if \(held && canSubscribeEventQuotes\(held\) && \(\s*liveFrame\.p === null \|\| held\.hero_probability_source !== "blend" \|\|\s*\(liveFrame\.status && liveFrame\.status !== held\.status\) \|\|\s*\(held\.status !== "live" && frameInvalidatesFoldedBlend\(held, liveFrame\)\)\s*\)\) \{\s*quoteTriggerRef\.current = liveFrame;\s*foldedRefetch\.request\(\);\s*return;\s*\}/);

@@ -114,6 +114,8 @@ function HeldPage({ net, eventId, liveFrame }: { net: Net; eventId: number; live
   // ── app/events/[id]/page.tsx — these lines as the page writes them ────────
   const pairedQuoteReadRef = useRef<(() => Promise<unknown>) | null>(null);
   const quoteTriggerRef = useRef<LiveFrame | null>(null);
+  const recoveryIntentRef = useRef(0);
+  const quoteReadLifetimeRef = useRef(0);
   const quoteEventIdRef = useRef(eventId);
   if (quoteEventIdRef.current !== eventId) quoteTriggerRef.current = null;
   quoteEventIdRef.current = eventId;
@@ -121,7 +123,7 @@ function HeldPage({ net, eventId, liveFrame }: { net: Net; eventId: number; live
   refreshEventRef.current = refreshEvent;
   const [foldedRefetch] = useState(() => FACTORY.runInNewContext({
     createFoldedRefetchScheduler, canSubscribeEventQuotes, FOLDED_FRAME_REFETCH_MS, Date,
-    quoteTriggerRef, pairedQuoteReadRef, freshNextEventReadRef, refreshEventRef, heldEventRef,
+    recoveryIntentRef, quoteReadLifetimeRef, quoteTriggerRef, pairedQuoteReadRef, freshNextEventReadRef, refreshEventRef, heldEventRef,
   }) as ReturnType<typeof createFoldedRefetchScheduler>);
   useEffect(() => () => foldedRefetch.cancel(), [foldedRefetch]);
 
@@ -146,7 +148,7 @@ function HeldPage({ net, eventId, liveFrame }: { net: Net; eventId: number; live
   pairedQuoteReadRef.current = PAIR.runInNewContext({
     eventId, fullHistoryRequested, fetchEvent, fetchEventHistory, EVENT_BOOT_HISTORY_HOURS, historyRangeParam,
     quotePairCoversTrigger, keepNewerHeldHeadline, setLastRefresh, Date,
-    quoteTriggerRef, quoteEventIdRef, quoteHistoryRangeRef, refreshHistoryRef, refreshEventRef, heldEventRef,
+    recoveryIntentRef, quoteReadLifetimeRef, quoteTriggerRef, quoteEventIdRef, quoteHistoryRangeRef, refreshHistoryRef, refreshEventRef, heldEventRef,
   });
 
   if (!event || !historyData) return <>loading</>;
