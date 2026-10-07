@@ -60,6 +60,7 @@ import app.services.kalshi_ws as kalshi_svc
 import app.tasks.kalshi_ws as kalshi_task
 import app.tasks.live_blend_refresh as blend_mod
 from app.models.models import FuturesOutcome
+from app.utils.repair_lock_budget import SET_LOCK_TIMEOUT_SQL
 from app.utils.resolution_authority import (
     AUTHORITATIVE_SOURCES,
     GUESS_FAMILY_SOURCES,
@@ -137,7 +138,9 @@ class _CapturingSession:
         self._captured = captured
         self._rowcount = rowcount
 
-    async def execute(self, stmt):
+    async def execute(self, stmt, params=None):
+        if stmt is SET_LOCK_TIMEOUT_SQL:  # #10661: the flush's per-phase lock budget
+            return _Result([])
         if isinstance(stmt, Update):
             if stmt.table.name == "futures_outcomes" and _sets_the_price(stmt):
                 self._captured.append(stmt)

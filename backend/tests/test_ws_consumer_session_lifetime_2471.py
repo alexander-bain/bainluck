@@ -42,6 +42,7 @@ import app.tasks.base as task_base
 import app.tasks.kalshi_ws as kalshi_task
 import app.tasks.live_blend_refresh as blend_mod
 import app.tasks.polymarket_ws as poly_task
+from app.utils.repair_lock_budget import SET_LOCK_TIMEOUT_SQL
 
 from tests.test_ws_flush_retry_q491 import (
     KALSHI_SLATE,
@@ -103,7 +104,9 @@ class _Rig:
             def __init__(self):
                 self.info = {}
 
-            async def execute(self, stmt):
+            async def execute(self, stmt, params=None):
+                if stmt is SET_LOCK_TIMEOUT_SQL:  # #10661: the flush's lock budget
+                    return _Result([])
                 if isinstance(stmt, Update):
                     params = stmt.compile(dialect=postgresql.dialect()).params
                     if (

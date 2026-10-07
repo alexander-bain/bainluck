@@ -20,6 +20,11 @@ from app.utils.kalshi_market_status import is_terminal
 from app.tasks.ws_consumer_sessions import owns_consumer_sessions  # #2471
 from app.utils.market_quote_push import queue_market_change
 from app.utils.market_settlement import settled_values
+from app.utils.repair_lock_budget import (
+    SET_LOCK_TIMEOUT_SQL,
+    is_lock_timeout,
+    lock_timeout_value,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -54,6 +59,16 @@ PRICE_FLUSH_SECONDS = float(os.getenv("WS_PRICE_FLUSH_SECONDS", "2"))
 # session (and so a fresh connection), which is what a connection-level transient
 # actually needs in order to clear.
 FINAL_FLUSH_ATTEMPTS = int(os.getenv("WS_FINAL_FLUSH_ATTEMPTS", "3"))
+
+#: #10661 — how long one periodic flush phase may WAIT for any single row lock.
+#: A sibling writer holding a game's rows used to stall every later game in the
+#: flush; past this the phase rolls back with SQLSTATE 55P03, keeps its prices
+#: buffered for the next flush, and the independent phases after it proceed.
+#: Transaction-local (`SET_LOCK_TIMEOUT_SQL`), so a pooled connection never
+#: carries it. It bounds each lock acquisition, not the phase or pool checkout.
+#: The final drain does NOT use it: `FINAL_FLUSH_ATTEMPTS` back-to-back attempts
+#: would otherwise give up on a lock held ~1.5 s and drop the last prices.
+PRICE_PHASE_LOCK_TIMEOUT_MS = 500
 
 
 def _kalshi_slate_event_window():
@@ -393,7 +408,7 @@ async def _run_kalshi_ws_consumer(*, sessions):
     # prices are already stored; the first flush below stamps them.
     stats["blend_pending_adopted"] = adopt_handed_off(blend_refresher)
 
-    async def flush_prices(flush_started=None):
+    async def flush_prices(flush_started=None, *, final_drain=False):
         """Write buffered price updates to DB — #10640: game markets first.
 
         Returns False when a write failed (its rows stay buffered and the
@@ -405,8 +420,10 @@ async def _run_kalshi_ws_consumer(*, sessions):
         BEFORE the unrelated phase opens its transaction, so a held or failed
         futures/prop write can neither delay nor undo a committed game price.
         Each phase keeps every rule below on its own rows. #10655 separates
-        independent games too; a failed phase stops the flush with that phase
-        and all later phases retained. Earlier committed games stay done.
+        independent games too. #10661: a lock timeout retains its phase and
+        permits later independent phases; other failures retain the remaining
+        tail. Earlier committed games stay done. ``final_drain`` waits for locks
+        as long as Postgres does: the drain has no next flush to retry in.
         """
         async with buffer_lock:
             batch = dict(price_buffer)
@@ -434,11 +451,20 @@ async def _run_kalshi_ws_consumer(*, sessions):
             batch, market_id_by_outcome, event_id_by_outcome,
             pending_events=blend_refresher.pending_event_ids(),
         )
+        had_lock_failure = False
+        flush_counted = False
         for index, phase in enumerate(phases):
             declined = 0
             written_outcome_ids: list[int] = []
             try:
                 async with get_task_session() as session:
+                    # #10661: bound each lock acquisition in this transaction.
+                    # Pool checkout and total phase duration have separate costs.
+                    if not final_drain:
+                        await session.execute(
+                            SET_LOCK_TIMEOUT_SQL,
+                            {"ms": lock_timeout_value(PRICE_PHASE_LOCK_TIMEOUT_MS)},
+                        )
                     for outcome_id, (prob, yes_bid, yes_ask) in phase.items():
                         # #8753: the book columns move only when the tick carried
                         # BOTH sides; otherwise each is set to itself (a no-op). Half
@@ -581,15 +607,16 @@ async def _run_kalshi_ws_consumer(*, sessions):
                                 rerank_market_fields_stmt(sorted(reranked_markets))
                             )
                         ).rowcount
-                if index == 0:
+                if not flush_counted:
                     stats["flushes"] += 1
+                    flush_counted = True
                 stats["price_updates"] += len(phase) - declined
                 stats["settled_declined"] += declined
                 stats["open_contract_prices_written"] += sum(
                     1 for oid in written_outcome_ids
                     if oid in open_contract_outcome_ids
                 )
-            except Exception:
+            except Exception as exc:
                 # Q491 — the batch is still in `price_buffer`, so the next flush
                 # retries it. Before Q491 the buffer was drained up front and a
                 # failed write discarded those prices outright: the socket only
@@ -597,14 +624,23 @@ async def _run_kalshi_ws_consumer(*, sessions):
                 # Polymarket markets never tick, so one transient error left the
                 # card on its old number with a stale `last_updated` (#2024).
                 #
-                # #10640: what is unpaid is this phase and every later one;
-                # committed earlier phases are already acknowledged and stay done.
-                unpaid = sum(len(p) for p in phases[index:])
+                # #10661: a lock timeout retains this component but permits later
+                # independent components. Other errors still stop the unpaid tail.
+                lock_timed_out = is_lock_timeout(exc)
+                unpaid = (
+                    len(phase) if lock_timed_out
+                    else sum(len(p) for p in phases[index:])
+                )
                 stats["errors"] += 1
                 stats["requeued"] += unpaid
                 logger.exception(
                     "Kalshi WS: flush error (%d updates retained for retry)", unpaid
                 )
+                if lock_timed_out:
+                    # The transaction rolled back; all its prices remain buffered.
+                    # Only proceed to phases the unchanged planner separated.
+                    had_lock_failure = True
+                    continue
                 return False
 
             # #9484 — the commit landed, so the rows it carried may now say so on
@@ -648,7 +684,7 @@ async def _run_kalshi_ws_consumer(*, sessions):
                 await blend_refresher.refresh(
                     linked_events, flush_started=flush_started,
                 )
-        return True
+        return not had_lock_failure
 
     async def drain_prices():
         """The LAST flush of this consumer's life — retry, never requeue.
@@ -662,10 +698,14 @@ async def _run_kalshi_ws_consumer(*, sessions):
 
         Every attempt after the first is counted, so a dyno that routinely needs
         them is visible rather than merely quiet.
+
+        #10661: without the periodic per-phase lock timeout. Three immediate
+        attempts at 500 ms each would drop a price whose row is held ~1.5 s;
+        waiting for the lock is what lets that price commit.
         """
         try:
             for attempt in range(FINAL_FLUSH_ATTEMPTS):
-                await flush_prices()
+                await flush_prices(final_drain=True)
                 async with buffer_lock:
                     if not price_buffer:
                         return

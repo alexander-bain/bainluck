@@ -15,29 +15,51 @@ from types import SimpleNamespace
 import pytest
 from sqlalchemy import func, or_, update
 from sqlalchemy.dialects import postgresql
+from sqlalchemy.exc import OperationalError
 
 from app.models.models import FuturesOutcome
-from app.tasks.kalshi_ws import linked_first_phases
+from app.tasks.kalshi_ws import (  # noqa: F401 — the exec'd flush reads these
+    PRICE_PHASE_LOCK_TIMEOUT_MS,
+    linked_first_phases,
+)
 from app.tasks.live_blend_refresh import event_ids_for_outcomes
 from app.utils.futures_rank import rerank_market_fields_stmt
 from app.utils.price_change_stamp import price_changed_at_value, quote_moved_column
+from app.utils.repair_lock_budget import (  # noqa: F401 — read by the exec'd flush
+    SET_LOCK_TIMEOUT_SQL,
+    is_lock_timeout,
+    lock_timeout_value,
+)
 from app.utils.resolution_authority import AUTHORITATIVE_SOURCES
 
 
-def rig(*, failed=None, declined=None, pending=()):
+class LockNotAvailable(Exception):
+    """asyncpg's shape: the SQLSTATE rides the driver error SQLAlchemy wraps."""
+    sqlstate = "55P03"
+
+
+def rig(*, failed=None, declined=None, pending=(), locked=()):
     batch = {1: (.6, .59, .61), 2: (.4, .39, .41),
              3: (.7, .69, .71), 9: (.1, .09, .11)}
     markets, events = {1: 10, 2: 10, 3: 20, 9: 90}, {1: 100, 2: 100, 3: 200}
     trace, committed = [], []
     entered, release = asyncio.Event(), asyncio.Event()
-    control = {"failed": failed, "declined": declined}
+    control = {"failed": failed, "declined": declined, "locked": set(locked)}
+    # #10661: a row another writer holds. Like Postgres, a transaction that set
+    # `lock_timeout` gives up with 55P03; one that did not waits for the holder.
+    lock_released = asyncio.Event()
     stats = defaultdict(int)
 
     class Session:
         def __init__(self):
             self.rows = []
+            self.lock_timeout = None
 
-        async def execute(self, stmt):
+        async def execute(self, stmt, bind=None):
+            if stmt is SET_LOCK_TIMEOUT_SQL:
+                self.lock_timeout = bind["ms"]
+                trace.append(("lock_timeout", bind["ms"]))
+                return SimpleNamespace(rowcount=1)
             params = stmt.compile(dialect=postgresql.dialect()).params
             if "current_probability" not in params:
                 trace.append(("rank", tuple(self.rows)))
@@ -47,6 +69,11 @@ def rig(*, failed=None, declined=None, pending=()):
             if oid == 3:
                 entered.set()
                 await release.wait()
+            if oid in control["locked"] and not lock_released.is_set():
+                if self.lock_timeout is not None:
+                    raise OperationalError("UPDATE", {}, LockNotAvailable())
+                trace.append(("lock-wait", oid))
+                await lock_released.wait()
             if oid == control["failed"]:
                 raise RuntimeError("controlled later-game write failure")
             if oid == control["declined"]:
@@ -100,7 +127,8 @@ def rig(*, failed=None, declined=None, pending=()):
     exec(compile(ast.Module(body=nodes, type_ignores=[]), str(path), 'exec'), ns)
     return SimpleNamespace(flush=ns['flush_prices'], batch=batch, trace=trace,
                            committed=committed, entered=entered, release=release,
-                           control=control, stats=stats, events=events)
+                           control=control, stats=stats, events=events,
+                           lock_released=lock_released, ns=ns)
 
 
 async def test_ready_game_publishes_while_later_game_write_is_held():
