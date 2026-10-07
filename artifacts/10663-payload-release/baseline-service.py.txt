@@ -615,99 +615,90 @@ class PolymarketWebSocket:
 
                     try:
                         async for raw in ws:
+                            if raw == "PONG":
+                                continue
+                            self._message_count += 1
+
                             try:
-                                if raw == "PONG":
-                                    continue
-                                self._message_count += 1
+                                data = json.loads(raw)
+                            except (json.JSONDecodeError, TypeError):
+                                continue
+                            finally:
+                                # First frame received and parsed — the dump is
+                                # no longer in flight. Idempotent after that.
+                                permit.release()
 
-                                try:
-                                    data = json.loads(raw)
-                                except (json.JSONDecodeError, TypeError):
-                                    continue
-                                finally:
-                                    # First frame received and parsed — the dump is
-                                    # no longer in flight. Idempotent after that.
-                                    permit.release()
-
-                                # #837 coverage is counted HERE — on the wire, above
-                                # every skip and before any event_type or handler
-                                # dispatch. A count taken after filtering answers a
-                                # different question ("did we act on this shard?")
-                                # and reads zero for a shard the venue is in fact
-                                # serving, which would make an unhandled shard
-                                # indistinguishable from a starved one.
-                                #
-                                # It is recorded RAW, and narrowed to the
-                                # subscription at the read (`_served_by_shard`),
-                                # not here: an id the venue sent us unasked is a
-                                # real thing this connection received, and dropping
-                                # it at the write would erase the only evidence that
-                                # it happened. Filtering here would also make the
-                                # counter silently depend on `_shard_ids` having
-                                # been populated first.
-                                on_wire = _assets_in(data)
-                                if on_wire:
-                                    self._shard_wire.setdefault(shard, set()).update(
-                                        on_wire
-                                    )
-
-                                event_type = (
-                                    "book"
-                                    if isinstance(data, list)
-                                    else data.get("event_type", "")
+                            # #837 coverage is counted HERE — on the wire, above
+                            # every skip and before any event_type or handler
+                            # dispatch. A count taken after filtering answers a
+                            # different question ("did we act on this shard?")
+                            # and reads zero for a shard the venue is in fact
+                            # serving, which would make an unhandled shard
+                            # indistinguishable from a starved one.
+                            #
+                            # It is recorded RAW, and narrowed to the
+                            # subscription at the read (`_served_by_shard`),
+                            # not here: an id the venue sent us unasked is a
+                            # real thing this connection received, and dropping
+                            # it at the write would erase the only evidence that
+                            # it happened. Filtering here would also make the
+                            # counter silently depend on `_shard_ids` having
+                            # been populated first.
+                            on_wire = _assets_in(data)
+                            if on_wire:
+                                self._shard_wire.setdefault(shard, set()).update(
+                                    on_wire
                                 )
 
-                                if event_type == "book":
-                                    # #9733: the venue's current book. Priced only
-                                    # by a client that asked for it; skipped by
-                                    # every other, as before.
-                                    if self._price_book_snapshots and self.on_price:
-                                        await self._price_snapshot(data)
-                                    continue
+                            event_type = (
+                                "book"
+                                if isinstance(data, list)
+                                else data.get("event_type", "")
+                            )
 
-                                if event_type == "best_bid_ask" and self.on_price:
-                                    try:
-                                        result = self.on_price(data)
-                                        if asyncio.iscoroutine(result):
-                                            await result
-                                    except Exception:
-                                        logger.exception("Polymarket price handler error")
+                            if event_type == "book":
+                                # #9733: the venue's current book. Priced only
+                                # by a client that asked for it; skipped by
+                                # every other, as before.
+                                if self._price_book_snapshots and self.on_price:
+                                    await self._price_snapshot(data)
+                                continue
 
-                                elif event_type == "last_trade_price" and self.on_trade:
-                                    try:
-                                        result = self.on_trade(data)
-                                        if asyncio.iscoroutine(result):
-                                            await result
-                                    except Exception:
-                                        logger.exception("Polymarket trade handler error")
+                            if event_type == "best_bid_ask" and self.on_price:
+                                try:
+                                    result = self.on_price(data)
+                                    if asyncio.iscoroutine(result):
+                                        await result
+                                except Exception:
+                                    logger.exception("Polymarket price handler error")
 
-                                elif event_type == "market_resolved" and self.on_resolved:
-                                    try:
-                                        result = self.on_resolved(data)
-                                        if asyncio.iscoroutine(result):
-                                            await result
-                                    except Exception:
-                                        logger.exception(
-                                            "Polymarket resolution handler error"
-                                        )
+                            elif event_type == "last_trade_price" and self.on_trade:
+                                try:
+                                    result = self.on_trade(data)
+                                    if asyncio.iscoroutine(result):
+                                        await result
+                                except Exception:
+                                    logger.exception("Polymarket trade handler error")
 
-                                elif event_type == "new_market" and self.on_new_market:
-                                    try:
-                                        result = self.on_new_market(data)
-                                        if asyncio.iscoroutine(result):
-                                            await result
-                                    except Exception:
-                                        logger.exception(
-                                            "Polymarket new_market handler error"
-                                        )
+                            elif event_type == "market_resolved" and self.on_resolved:
+                                try:
+                                    result = self.on_resolved(data)
+                                    if asyncio.iscoroutine(result):
+                                        await result
+                                except Exception:
+                                    logger.exception(
+                                        "Polymarket resolution handler error"
+                                    )
 
-                            finally:
-                                # #10663: a quiet socket must not retain its last
-                                # processed full-depth book while awaiting input.
-                                # Awaited callbacks finish/unwind before cleanup.
-                                raw = None
-                                data = None
-                                result = None
+                            elif event_type == "new_market" and self.on_new_market:
+                                try:
+                                    result = self.on_new_market(data)
+                                    if asyncio.iscoroutine(result):
+                                        await result
+                                except Exception:
+                                    logger.exception(
+                                        "Polymarket new_market handler error"
+                                    )
 
                     finally:
                         hb.cancel()

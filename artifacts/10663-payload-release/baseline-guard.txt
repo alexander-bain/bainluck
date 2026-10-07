@@ -1,0 +1,161 @@
+============================= test session starts ==============================
+platform darwin -- Python 3.12.15+meta, pytest-9.0.3, pluggy-1.6.0
+rootdir: /Users/bain/.codex-personal/worktrees/10663-release-book-payloads/bainluck/backend
+configfile: pytest.ini
+plugins: asyncio-1.4.0, anyio-4.13.0
+asyncio: mode=Mode.AUTO, debug=False, asyncio_default_fixture_loop_scope=None, asyncio_default_test_loop_scope=function
+collected 15 items
+
+tests/test_poly_ws_processed_payload_lifetime_10663.py FFFFFFFFFFFFFFF   [100%]
+
+=================================== FAILURES ===================================
+_______________ test_processed_book_root_is_released[False-None] _______________
+tests/test_poly_ws_processed_payload_lifetime_10663.py:83: in test_processed_book_root_is_released
+    assert len(references) == 1 and references[0]() is None
+E   AssertionError: assert (1 == 1 and [{'event_type': 'book', 'asset_id': 'asset', 'bids': [{'price': '0.4', 'size': '20'}], 'asks': [{'price': '0.6', 'size': '30'}]}] is None)
+E    +  where 1 = len([<weakref at 0x10c94a7a0; to 'BookRoot' at 0x10c94a6c0>])
+E    +  and   [{'event_type': 'book', 'asset_id': 'asset', 'bids': [{'price': '0.4', 'size': '20'}], 'asks': [{'price': '0.6', 'size': '30'}]}] = <weakref at 0x10c94a7a0; to 'BookRoot' at 0x10c94a6c0>()
+_______________ test_processed_book_root_is_released[False-PONG] _______________
+tests/test_poly_ws_processed_payload_lifetime_10663.py:83: in test_processed_book_root_is_released
+    assert len(references) == 1 and references[0]() is None
+E   AssertionError: assert (1 == 1 and [{'event_type': 'book', 'asset_id': 'asset', 'bids': [{'price': '0.4', 'size': '20'}], 'asks': [{'price': '0.6', 'size': '30'}]}] is None)
+E    +  where 1 = len([<weakref at 0x109f67ab0; to 'BookRoot' at 0x109f64500>])
+E    +  and   [{'event_type': 'book', 'asset_id': 'asset', 'bids': [{'price': '0.4', 'size': '20'}], 'asks': [{'price': '0.6', 'size': '30'}]}] = <weakref at 0x109f67ab0; to 'BookRoot' at 0x109f64500>()
+____________ test_processed_book_root_is_released[False-{malformed] ____________
+tests/test_poly_ws_processed_payload_lifetime_10663.py:83: in test_processed_book_root_is_released
+    assert len(references) == 1 and references[0]() is None
+E   AssertionError: assert (1 == 1 and [{'event_type': 'book', 'asset_id': 'asset', 'bids': [{'price': '0.4', 'size': '20'}], 'asks': [{'price': '0.6', 'size': '30'}]}] is None)
+E    +  where 1 = len([<weakref at 0x10c9aad40; to 'BookRoot' at 0x10c9ab700>])
+E    +  and   [{'event_type': 'book', 'asset_id': 'asset', 'bids': [{'price': '0.4', 'size': '20'}], 'asks': [{'price': '0.6', 'size': '30'}]}] = <weakref at 0x10c9aad40; to 'BookRoot' at 0x10c9ab700>()
+_______________ test_processed_book_root_is_released[True-None] ________________
+tests/test_poly_ws_processed_payload_lifetime_10663.py:83: in test_processed_book_root_is_released
+    assert len(references) == 1 and references[0]() is None
+E   AssertionError: assert (1 == 1 and [{'event_type': 'book', 'asset_id': 'asset', 'bids': [{'price': '0.4', 'size': '20'}], 'asks': [{'price': '0.6', 'size': '30'}]}] is None)
+E    +  where 1 = len([<weakref at 0x10c9ab1f0; to 'BookRoot' at 0x10c9ab1b0>])
+E    +  and   [{'event_type': 'book', 'asset_id': 'asset', 'bids': [{'price': '0.4', 'size': '20'}], 'asks': [{'price': '0.6', 'size': '30'}]}] = <weakref at 0x10c9ab1f0; to 'BookRoot' at 0x10c9ab1b0>()
+_______________ test_processed_book_root_is_released[True-PONG] ________________
+tests/test_poly_ws_processed_payload_lifetime_10663.py:83: in test_processed_book_root_is_released
+    assert len(references) == 1 and references[0]() is None
+E   AssertionError: assert (1 == 1 and [{'event_type': 'book', 'asset_id': 'asset', 'bids': [{'price': '0.4', 'size': '20'}], 'asks': [{'price': '0.6', 'size': '30'}]}] is None)
+E    +  where 1 = len([<weakref at 0x10c9ab830; to 'BookRoot' at 0x10c9ab7f0>])
+E    +  and   [{'event_type': 'book', 'asset_id': 'asset', 'bids': [{'price': '0.4', 'size': '20'}], 'asks': [{'price': '0.6', 'size': '30'}]}] = <weakref at 0x10c9ab830; to 'BookRoot' at 0x10c9ab7f0>()
+____________ test_processed_book_root_is_released[True-{malformed] _____________
+tests/test_poly_ws_processed_payload_lifetime_10663.py:83: in test_processed_book_root_is_released
+    assert len(references) == 1 and references[0]() is None
+E   AssertionError: assert (1 == 1 and [{'event_type': 'book', 'asset_id': 'asset', 'bids': [{'price': '0.4', 'size': '20'}], 'asks': [{'price': '0.6', 'size': '30'}]}] is None)
+E    +  where 1 = len([<weakref at 0x10c9abc90; to 'BookRoot' at 0x10c9abc50>])
+E    +  and   [{'event_type': 'book', 'asset_id': 'asset', 'bids': [{'price': '0.4', 'size': '20'}], 'asks': [{'price': '0.6', 'size': '30'}]}] = <weakref at 0x10c9abc90; to 'BookRoot' at 0x10c9abc50>()
+_____ test_callback_payload_intact_but_frame_releases[False-best_bid_ask] ______
+tests/test_poly_ws_processed_payload_lifetime_10663.py:118: in test_callback_payload_intact_but_frame_releases
+    assert socket.released()
+E   assert False
+E    +  where False = released()
+E    +    where released = <tests.test_poly_ws_processed_payload_lifetime_10663.Socket object at 0x10c9a2840>.released
+___ test_callback_payload_intact_but_frame_releases[False-last_trade_price] ____
+tests/test_poly_ws_processed_payload_lifetime_10663.py:118: in test_callback_payload_intact_but_frame_releases
+    assert socket.released()
+E   assert False
+E    +  where False = released()
+E    +    where released = <tests.test_poly_ws_processed_payload_lifetime_10663.Socket object at 0x10c9a1b20>.released
+____ test_callback_payload_intact_but_frame_releases[False-market_resolved] ____
+tests/test_poly_ws_processed_payload_lifetime_10663.py:118: in test_callback_payload_intact_but_frame_releases
+    assert socket.released()
+E   assert False
+E    +  where False = released()
+E    +    where released = <tests.test_poly_ws_processed_payload_lifetime_10663.Socket object at 0x10c9a0ef0>.released
+______ test_callback_payload_intact_but_frame_releases[False-new_market] _______
+tests/test_poly_ws_processed_payload_lifetime_10663.py:118: in test_callback_payload_intact_but_frame_releases
+    assert socket.released()
+E   assert False
+E    +  where False = released()
+E    +    where released = <tests.test_poly_ws_processed_payload_lifetime_10663.Socket object at 0x10c9a02f0>.released
+______ test_callback_payload_intact_but_frame_releases[True-best_bid_ask] ______
+tests/test_poly_ws_processed_payload_lifetime_10663.py:118: in test_callback_payload_intact_but_frame_releases
+    assert socket.released()
+E   assert False
+E    +  where False = released()
+E    +    where released = <tests.test_poly_ws_processed_payload_lifetime_10663.Socket object at 0x10c923530>.released
+------------------------------ Captured log call -------------------------------
+ERROR    baseline_polymarket_10663:baseline-service.py.txt:673 Polymarket price handler error
+Traceback (most recent call last):
+  File "/Users/bain/.codex-personal/worktrees/10663-release-book-payloads/bainluck/artifacts/10663-payload-release/baseline-service.py.txt", line 669, in _run_one
+    result = self.on_price(data)
+             ^^^^^^^^^^^^^^^^^^^
+  File "/Users/bain/.codex-personal/worktrees/10663-release-book-payloads/bainluck/backend/tests/test_poly_ws_processed_payload_lifetime_10663.py", line 107, in callback
+    raise ValueError("owned callback failure")
+ValueError: owned callback failure
+____ test_callback_payload_intact_but_frame_releases[True-last_trade_price] ____
+tests/test_poly_ws_processed_payload_lifetime_10663.py:118: in test_callback_payload_intact_but_frame_releases
+    assert socket.released()
+E   assert False
+E    +  where False = released()
+E    +    where released = <tests.test_poly_ws_processed_payload_lifetime_10663.Socket object at 0x10c9e3e30>.released
+------------------------------ Captured log call -------------------------------
+ERROR    baseline_polymarket_10663:baseline-service.py.txt:681 Polymarket trade handler error
+Traceback (most recent call last):
+  File "/Users/bain/.codex-personal/worktrees/10663-release-book-payloads/bainluck/artifacts/10663-payload-release/baseline-service.py.txt", line 677, in _run_one
+    result = self.on_trade(data)
+             ^^^^^^^^^^^^^^^^^^^
+  File "/Users/bain/.codex-personal/worktrees/10663-release-book-payloads/bainluck/backend/tests/test_poly_ws_processed_payload_lifetime_10663.py", line 107, in callback
+    raise ValueError("owned callback failure")
+ValueError: owned callback failure
+____ test_callback_payload_intact_but_frame_releases[True-market_resolved] _____
+tests/test_poly_ws_processed_payload_lifetime_10663.py:118: in test_callback_payload_intact_but_frame_releases
+    assert socket.released()
+E   assert False
+E    +  where False = released()
+E    +    where released = <tests.test_poly_ws_processed_payload_lifetime_10663.Socket object at 0x10c9e13a0>.released
+------------------------------ Captured log call -------------------------------
+ERROR    baseline_polymarket_10663:baseline-service.py.txt:689 Polymarket resolution handler error
+Traceback (most recent call last):
+  File "/Users/bain/.codex-personal/worktrees/10663-release-book-payloads/bainluck/artifacts/10663-payload-release/baseline-service.py.txt", line 685, in _run_one
+    result = self.on_resolved(data)
+             ^^^^^^^^^^^^^^^^^^^^^^
+  File "/Users/bain/.codex-personal/worktrees/10663-release-book-payloads/bainluck/backend/tests/test_poly_ws_processed_payload_lifetime_10663.py", line 107, in callback
+    raise ValueError("owned callback failure")
+ValueError: owned callback failure
+_______ test_callback_payload_intact_but_frame_releases[True-new_market] _______
+tests/test_poly_ws_processed_payload_lifetime_10663.py:118: in test_callback_payload_intact_but_frame_releases
+    assert socket.released()
+E   assert False
+E    +  where False = released()
+E    +    where released = <tests.test_poly_ws_processed_payload_lifetime_10663.Socket object at 0x10c9e1d60>.released
+------------------------------ Captured log call -------------------------------
+ERROR    baseline_polymarket_10663:baseline-service.py.txt:699 Polymarket new_market handler error
+Traceback (most recent call last):
+  File "/Users/bain/.codex-personal/worktrees/10663-release-book-payloads/bainluck/artifacts/10663-payload-release/baseline-service.py.txt", line 695, in _run_one
+    result = self.on_new_market(data)
+             ^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/Users/bain/.codex-personal/worktrees/10663-release-book-payloads/bainluck/backend/tests/test_poly_ws_processed_payload_lifetime_10663.py", line 107, in callback
+    raise ValueError("owned callback failure")
+ValueError: owned callback failure
+__________________ test_cancel_unwinds_handler_before_cleanup __________________
+tests/test_poly_ws_processed_payload_lifetime_10663.py:153: in test_cancel_unwinds_handler_before_cleanup
+    assert cancelled == [True] and socket.exited is True
+E   assert ([True] == [True]
+E
+E     Use -v to get more diff and False is True)
+E    +  where False = <tests.test_poly_ws_processed_payload_lifetime_10663.Socket object at 0x10c9e3ce0>.exited
+=============================== warnings summary ===============================
+tests/test_poly_ws_processed_payload_lifetime_10663.py::test_processed_book_root_is_released[False-None]
+  /Users/bain/.codex-personal/worktrees/10663-release-book-payloads/bainluck/backend/app/routes/auth.py:121: PydanticDeprecatedSince20: Support for class-based `config` is deprecated, use ConfigDict instead. Deprecated in Pydantic V2.0 to be removed in V3.0. See Pydantic V2 Migration Guide at https://errors.pydantic.dev/2.13/migration/
+    class UserProfileResponse(BaseModel):
+
+-- Docs: https://docs.pytest.org/en/stable/how-to/capture-warnings.html
+=========================== short test summary info ============================
+FAILED tests/test_poly_ws_processed_payload_lifetime_10663.py::test_processed_book_root_is_released[False-None]
+FAILED tests/test_poly_ws_processed_payload_lifetime_10663.py::test_processed_book_root_is_released[False-PONG]
+FAILED tests/test_poly_ws_processed_payload_lifetime_10663.py::test_processed_book_root_is_released[False-{malformed]
+FAILED tests/test_poly_ws_processed_payload_lifetime_10663.py::test_processed_book_root_is_released[True-None]
+FAILED tests/test_poly_ws_processed_payload_lifetime_10663.py::test_processed_book_root_is_released[True-PONG]
+FAILED tests/test_poly_ws_processed_payload_lifetime_10663.py::test_processed_book_root_is_released[True-{malformed]
+FAILED tests/test_poly_ws_processed_payload_lifetime_10663.py::test_callback_payload_intact_but_frame_releases[False-best_bid_ask]
+FAILED tests/test_poly_ws_processed_payload_lifetime_10663.py::test_callback_payload_intact_but_frame_releases[False-last_trade_price]
+FAILED tests/test_poly_ws_processed_payload_lifetime_10663.py::test_callback_payload_intact_but_frame_releases[False-market_resolved]
+FAILED tests/test_poly_ws_processed_payload_lifetime_10663.py::test_callback_payload_intact_but_frame_releases[False-new_market]
+FAILED tests/test_poly_ws_processed_payload_lifetime_10663.py::test_callback_payload_intact_but_frame_releases[True-best_bid_ask]
+FAILED tests/test_poly_ws_processed_payload_lifetime_10663.py::test_callback_payload_intact_but_frame_releases[True-last_trade_price]
+FAILED tests/test_poly_ws_processed_payload_lifetime_10663.py::test_callback_payload_intact_but_frame_releases[True-market_resolved]
+FAILED tests/test_poly_ws_processed_payload_lifetime_10663.py::test_callback_payload_intact_but_frame_releases[True-new_market]
+FAILED tests/test_poly_ws_processed_payload_lifetime_10663.py::test_cancel_unwinds_handler_before_cleanup
+======================== 15 failed, 1 warning in 1.15s =========================
