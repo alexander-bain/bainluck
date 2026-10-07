@@ -4546,8 +4546,8 @@ jobs:
             echo "::error::#10702 exact trace real PostgreSQL gate skipped"
             exit 1
           fi
-          grep -qE "(^|[^0-9])3 passed([,[:space:]]|$)" /tmp/trace10702.txt || {
-            echo "::error::#10702 exact trace gate did not run all three cases"
+          grep -qE "(^|[^0-9])12 passed([,[:space:]]|$)" /tmp/trace10702.txt || {
+            echo "::error::#10702 exact trace gate did not run all twelve on/off, repeat-race and rollback cases"
             exit 1
           }
 
