@@ -1,0 +1,62 @@
+============================= test session starts ==============================
+platform darwin -- Python 3.12.15+meta, pytest-9.0.3, pluggy-1.6.0
+rootdir: /Users/bain/bainluck-dev/latency/.worktrees/8129-grouped-blend-refresh/backend
+configfile: pytest.ini
+plugins: asyncio-1.4.0, anyio-4.13.0
+asyncio: mode=Mode.AUTO, debug=False, asyncio_default_fixture_loop_scope=None, asyncio_default_test_loop_scope=function
+collected 771 items
+
+tests/test_a_settled_leg_takes_no_live_price_5411.py ................... [  2%]
+....                                                                     [  2%]
+tests/test_backfill_wps_admission_gate_5273.py ......                    [  3%]
+tests/test_blend_source_writer_scan_5311.py ............................ [  7%]
+                                                                         [  7%]
+tests/test_ci_postgres_groups.py ...................................     [ 11%]
+tests/test_delivery_receipt_10090.py ...............                     [ 13%]
+tests/test_kalshi_socket_prices_by_the_rest_rule_8753.py .......         [ 14%]
+tests/test_live_blend.py ..................                              [ 17%]
+tests/test_live_blend_refresh.py ....................................... [ 22%]
+..............                                                           [ 23%]
+tests/test_live_blend_tail_receipt_837.py ........................       [ 27%]
+tests/test_live_blend_unobserved_restamp_5661.py ..................      [ 29%]
+tests/test_live_push.py ...............................................  [ 35%]
+tests/test_live_speaker_kickoff_parity_9037.py ......................... [ 38%]
+...                                                                      [ 39%]
+tests/test_named_nba_devig_keeps_its_team_8814.py ....................   [ 41%]
+tests/test_named_polymarket_quote_keeps_its_team_8814.py .............   [ 43%]
+tests/test_named_quote_identity_survives_missing_partition_8814.py ..... [ 44%]
+.........                                                                [ 45%]
+tests/test_named_three_way_quotes_keep_their_team_8814.py ..........     [ 46%]
+tests/test_poly_fast_lane_token_topup_q490.py ................           [ 48%]
+tests/test_poly_moneyline_leg_streams_q500.py ................           [ 50%]
+tests/test_poly_ws_asset_outcome_map_q489.py ......                      [ 51%]
+tests/test_poly_ws_side1_leg_pairing_8403.py ..............              [ 53%]
+tests/test_polymarket_host_orientation_7739.py ......................... [ 56%]
+...........................                                              [ 60%]
+tests/test_settled_speaker_without_result_5820.py ...................... [ 62%]
+...........                                                              [ 64%]
+tests/test_sse_shares_one_pubsub_connection_6515.py .................... [ 66%]
+..........                                                               [ 68%]
+tests/test_startup.py ....                                               [ 68%]
+tests/test_win_prob_snapshot_heartbeat.py ............                   [ 70%]
+tests/test_wrapped_draw_keeps_away_quote_8814.py ................        [ 72%]
+tests/test_ws_admission_mapped_legs_9462.py .......................      [ 75%]
+tests/test_ws_consumer_session_lifetime_2471.py ...................      [ 77%]
+tests/test_ws_fast_lane_wiring.py .................                      [ 80%]
+tests/test_ws_flush_cadence_10090.py .............                       [ 81%]
+tests/test_ws_flush_retry_q491.py ................                       [ 83%]
+tests/test_ws_kalshi_linked_first_10640.py ...........                   [ 85%]
+tests/test_ws_loop_stop_10657.py .......                                 [ 86%]
+tests/test_ws_market_change_hooks_9484.py .........                      [ 87%]
+tests/test_ws_open_contract_prices_9484.py ............................. [ 91%]
+.....                                                                    [ 91%]
+tests/test_ws_polymarket_open_contract_prices_9484.py .................. [ 94%]
+..............................................                           [100%]
+
+=============================== warnings summary ===============================
+app/routes/auth.py:121
+  /Users/bain/bainluck-dev/latency/.worktrees/8129-grouped-blend-refresh/backend/app/routes/auth.py:121: PydanticDeprecatedSince20: Support for class-based `config` is deprecated, use ConfigDict instead. Deprecated in Pydantic V2.0 to be removed in V3.0. See Pydantic V2 Migration Guide at https://errors.pydantic.dev/2.13/migration/
+    class UserProfileResponse(BaseModel):
+
+-- Docs: https://docs.pytest.org/en/stable/how-to/capture-warnings.html
+================== 771 passed, 1 warning in 99.83s (0:01:39) ===================

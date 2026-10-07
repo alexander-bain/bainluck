@@ -1,0 +1,10 @@
+{
+  "_publish": "a9f9096f4f8b690eafc8d1f9bf0fc2d9ae8772852cf3ce178eed268706f28cdf",
+  "_oriented": "d6f4a5aeafad9c38e99adec644c355d5ec8c0531fbaa473e751c6320af324394",
+  "_maybe_snapshot": "46dc2d4b2f938916562967051d8d99473908c0e55deaf3a546e032c52912964f",
+  "_snapshot_slots_follow_the_commit": "cbcc070e5829cabdc547a542368f12623ea74886df17eaa5135387e80dbf9eeb",
+  "run_flush_cadence": "342d731f6d2294610d9e31a0bcfb2152a8b99969d150829f9da63d9cb817375b",
+  "fresh_master": "b15a38e9dc9b6e053ebc4c2be119c95eaac15438",
+  "app_sha256": "6ad7bf15e69d356630aa224bf3eaf01a5382d4d4a082840c569fb723a55d641a",
+  "pg_test_sha256": "f520fbc6f2ce6f414b40923a8cf39faf27c5c078de0457784a60cb168a84c6b8"
+}

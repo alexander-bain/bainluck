@@ -1,0 +1,30 @@
+============================= test session starts ==============================
+platform darwin -- Python 3.12.15+meta, pytest-9.0.3, pluggy-1.6.0 -- /usr/local/fbcode/platform010/Python3.12.framework/Versions/3.12/bin/python3.12
+cachedir: .pytest_cache
+rootdir: /Users/bain/bainluck-dev/latency/.worktrees/8129-grouped-blend-refresh/backend
+configfile: pytest.ini
+plugins: asyncio-1.4.0, anyio-4.13.0
+asyncio: mode=Mode.AUTO, debug=False, asyncio_default_fixture_loop_scope=None, asyncio_default_test_loop_scope=function
+collecting ... collected 13 items
+
+tests/integration/test_live_blend_concurrent_stamp_pg.py::TestConcurrentArmsDoNotEraseEachOther::test_the_read_modify_write_shape_still_loses_a_key PASSED [  7%]
+tests/integration/test_live_blend_concurrent_stamp_pg.py::TestConcurrentArmsDoNotEraseEachOther::test_both_arms_survive_the_same_interleaving PASSED [ 15%]
+tests/integration/test_live_blend_concurrent_stamp_pg.py::TestConcurrentArmsDoNotEraseEachOther::test_the_returned_row_carries_the_sibling_arms_reading PASSED [ 23%]
+tests/integration/test_live_blend_concurrent_stamp_pg.py::TestConcurrentArmsDoNotEraseEachOther::test_the_second_arm_never_publishes_what_the_row_does_not_hold PASSED [ 30%]
+tests/integration/test_live_blend_concurrent_stamp_pg.py::TestTheServerSideMergePreservesWhatThePythonHelperDid::test_sibling_keys_inside_the_entry_are_not_stripped PASSED [ 38%]
+tests/integration/test_live_blend_concurrent_stamp_pg.py::TestTheServerSideMergePreservesWhatThePythonHelperDid::test_a_missing_eligibility_does_not_clear_a_recorded_one PASSED [ 46%]
+tests/integration/test_live_blend_concurrent_stamp_pg.py::TestTheServerSideMergePreservesWhatThePythonHelperDid::test_a_blank_column_is_stamped_rather_than_corrupted[sql NULL] PASSED [ 53%]
+tests/integration/test_live_blend_concurrent_stamp_pg.py::TestTheServerSideMergePreservesWhatThePythonHelperDid::test_a_blank_column_is_stamped_rather_than_corrupted[the JSONB scalar null] PASSED [ 61%]
+tests/integration/test_live_blend_concurrent_stamp_pg.py::TestTheServerSideMergePreservesWhatThePythonHelperDid::test_it_agrees_with_the_python_helper_on_the_uncontended_path PASSED [ 69%]
+tests/integration/test_live_blend_concurrent_stamp_pg.py::test_newer_committed_blend_has_newer_frame_clock[commit-order-database-clock] PASSED [ 76%]
+tests/integration/test_live_blend_concurrent_stamp_pg.py::test_newer_committed_blend_has_newer_frame_clock[commit-order-old-clock-control] PASSED [ 84%]
+tests/integration/test_live_blend_concurrent_stamp_pg.py::test_newer_committed_blend_has_newer_frame_clock[late-old-frame-database-clock] PASSED [ 92%]
+tests/integration/test_live_blend_concurrent_stamp_pg.py::test_newer_committed_blend_has_newer_frame_clock[late-old-frame-old-clock-control] PASSED [100%]
+
+=============================== warnings summary ===============================
+tests/integration/test_live_blend_concurrent_stamp_pg.py::TestConcurrentArmsDoNotEraseEachOther::test_the_read_modify_write_shape_still_loses_a_key
+  /Users/bain/bainluck-dev/latency/.worktrees/8129-grouped-blend-refresh/backend/app/routes/auth.py:121: PydanticDeprecatedSince20: Support for class-based `config` is deprecated, use ConfigDict instead. Deprecated in Pydantic V2.0 to be removed in V3.0. See Pydantic V2 Migration Guide at https://errors.pydantic.dev/2.13/migration/
+    class UserProfileResponse(BaseModel):
+
+-- Docs: https://docs.pytest.org/en/stable/how-to/capture-warnings.html
+======================== 13 passed, 1 warning in 1.43s =========================
