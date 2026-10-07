@@ -146,6 +146,21 @@ def queue_market_change(
     sync.info.setdefault(_PENDING, []).append((transaction, change))
 
 
+async def _checkout(pool):
+    """A pooled connection on every redis-py our ``>=5.0.1`` floor admits.
+
+    5.3 deprecated ``get_connection``'s ``command_name`` (it warns on every call
+    and is slated for removal); 5.0.x requires it. Calling without arguments
+    first means a future removal cannot silently stop every publication. A
+    missing-argument ``TypeError`` is raised at call binding, before anything
+    is checked out, so the fallback never leaks a connection.
+    """
+    try:
+        return await pool.get_connection()
+    except TypeError:
+        return await pool.get_connection("PUBLISH")
+
+
 async def publish_committed_market_changes(session, redis_client) -> int:
     """Drain outer-commit-confirmed changes using a caller-owned Redis client.
 
@@ -160,8 +175,7 @@ async def publish_committed_market_changes(session, redis_client) -> int:
     try:
         async with asyncio.timeout(5):
             pool = redis_client.connection_pool
-            # redis-py 5.0.1 (our supported floor) requires command_name.
-            connection = await pool.get_connection("PUBLISH")
+            connection = await _checkout(pool)
             try:
                 for start in range(0, len(changes), _PUBLISH_BATCH_SIZE):
                     batch = changes[start : start + _PUBLISH_BATCH_SIZE]

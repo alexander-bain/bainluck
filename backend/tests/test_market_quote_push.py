@@ -284,3 +284,36 @@ async def test_deadline_disconnects_unread_batch_and_preserves_acknowledged_coun
     redis.connection.disconnect.assert_awaited_once()
     redis.connection_pool.release.assert_awaited_once_with(redis.connection)
     assert len(redis.commands) == 2
+
+
+async def test_checkout_uses_the_argless_pool_api_and_falls_back_for_the_5_0_floor(
+    session,
+):
+    """#10659: redis-py >=5.3 warns on ``command_name`` (and may drop it); 5.0.x
+    requires it. Both pool shapes must publish, and the modern one is called
+    with no arguments."""
+
+    class ModernPool:
+        def __init__(self, connection):
+            self.connection, self.calls = connection, []
+            self.release = AsyncMock()
+
+        async def get_connection(self, *args):
+            if args:
+                raise AssertionError("deprecated command_name passed")
+            self.calls.append(args)
+            return self.connection
+
+    class FloorPool(ModernPool):
+        async def get_connection(self, command_name, *keys, **options):
+            self.calls.append(command_name)
+            return self.connection
+
+    for pool_class, expected_calls in ((ModernPool, [()]), (FloorPool, ["PUBLISH"])):
+        with session.sync_session.begin():
+            queue(session)
+        redis = FakeRedis()
+        redis.connection_pool = pool_class(redis.connection)
+        assert await push.publish_committed_market_changes(session, redis) == 1
+        assert redis.connection_pool.calls == expected_calls
+        redis.connection_pool.release.assert_awaited_once_with(redis.connection)

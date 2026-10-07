@@ -135,6 +135,8 @@ async def test_real_command_error_does_not_hide_healthy_siblings(redis_socket):
             "SETUSER",
             "publisher",
             "reset",
+            # Redis 6.2 defaults a reset user to allchannels; 7 to none.
+            "resetchannels",
             "on",
             "nopass",
             "+publish",
