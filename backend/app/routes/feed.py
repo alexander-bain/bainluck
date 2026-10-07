@@ -15458,8 +15458,8 @@ def _drop_futures_blended_into_tournaments(items: list[dict]) -> list[dict]:
 def _tournament_is_live(t: dict, now: datetime) -> bool:
     """Check if a tournament is currently live."""
     # #9212: ESPN called it final. Checked first, because every arm below can
-    # still say yes to a tournament that has ended: the date window runs 12h past
-    # the last day, and a winner's 24h movement outlives the final putt.
+    # still say yes to a tournament that has ended: the date window covers the
+    # whole last day, and an in-progress status can lag the final putt.
     if t.get("champion"):
         return False
     if t.get("schedule_status") == "in-progress":
@@ -15471,8 +15471,8 @@ def _tournament_is_live(t: dict, now: datetime) -> bool:
             if start.tzinfo is None:
                 start = start.replace(tzinfo=timezone.utc)
             # #5105: price discovery before play is not live golf. A known
-            # future start must also block the movement fallback below, even
-            # when the listing has no end date. Explicit in-progress above
+            # future start cannot be live, even when the listing has no end
+            # date. Explicit in-progress above
             # still takes precedence over a stale schedule.
             if start > now:
                 return False
@@ -15483,14 +15483,18 @@ def _tournament_is_live(t: dict, now: datetime) -> bool:
             end = datetime.fromisoformat(t["end_date"])
             if end.tzinfo is None:
                 end = end.replace(tzinfo=timezone.utc)
-            if start <= now <= end + timedelta(hours=12):
+            # Published play dates name calendar days, not finish instants.
+            # Match the web's supported window: the full last day, exclusive
+            # of the following midnight. Removing the price fallback must
+            # not retire the final round at noon.
+            if start <= now < end + timedelta(days=1):
                 return True
         except (ValueError, TypeError):
             pass
-    # Fallback: significant movement = in progress
-    golfers = t.get("golfers", [])
-    if any(g.get("movement_24h") and abs(g["movement_24h"]) >= 0.01 for g in golfers):
-        return True
+    # #9596 / #5105: odds can move before play or after it ends. The web
+    # retired this price-only live inference already; without a live status
+    # or a supported play window, do not grant the headline or live bonus.
+    # The separate movement component in _score_tournament is unchanged.
     return False
 
 
