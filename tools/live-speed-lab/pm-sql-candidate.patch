@@ -1,0 +1,181 @@
+diff --git a/backend/app/tasks/polymarket_ws.py b/backend/app/tasks/polymarket_ws.py
+index 71f316e984..d6a8ede07f 100644
+--- a/backend/app/tasks/polymarket_ws.py
++++ b/backend/app/tasks/polymarket_ws.py
+@@ -221,6 +221,75 @@ async def withdraw_book_refuted_prices(session, books: dict) -> list:
+     return withdrawn
+ 
+ 
++def chunk_price_update_stmt(chunk: dict):
++    """#10664: a flush chunk's price writes as ONE guarded UPDATE ... RETURNING.
++
++    ``write_chunk`` awaited one UPDATE per outcome — 500 round trips for a full
++    chunk before its commit and publication. This is the same write, row for
++    row, in one statement:
++
++    * the SAME set clause: the price bound as ``NUMERIC(7, 6)`` and compared as
++      ``FLOAT`` through :func:`price_changed_at_value`, exactly as the per-row
++      statement binds them, so rounding and the change-stamp cannot drift;
++    * the SAME row-lock order: ``locked`` takes the row locks one at a time in
++      chunk order (``ORDER BY ord ... FOR UPDATE``; LockRows runs above the
++      Sort), as the per-row loop did, so the binary-pair and lock-cycle work
++      that reasons about that order still holds;
++    * the SAME coverage: a buffered id whose row is gone joins nothing and
++      returns nothing, as before; ``ord`` comes back so the caller walks the
++      returned rows in chunk order and stages identical invalidations.
++
++    One parameter per column (arrays), so the prepared statement is shared by
++    every chunk size.
++    """
++    from sqlalchemy import ARRAY, Float, Integer, Numeric, bindparam, column, func, select, update
++    from app.models.models import FuturesOutcome
++    from app.utils.price_change_stamp import price_changed_at_value, quote_moved_column
++
++    table = FuturesOutcome.__table__
++    prices = list(chunk.values())
++    given = (
++        func.unnest(
++            bindparam("chunk_ids", list(chunk), type_=ARRAY(Integer)),
++            bindparam("chunk_prices", prices, type_=ARRAY(Numeric(7, 6))),
++            bindparam("chunk_compare", prices, type_=ARRAY(Float)),
++        )
++        .table_valued(
++            column("id", Integer),
++            column("price", Numeric(7, 6)),
++            column("compared", Float),
++            with_ordinality="ord",
++        )
++        .render_derived(name="given")
++    )
++    locked = (
++        select(table.c.id, given.c.ord, given.c.price, given.c.compared)
++        .join_from(given, table, table.c.id == given.c.id)
++        .order_by(given.c.ord)
++        .with_for_update(of=table)
++        .cte("locked")
++        .prefix_with("MATERIALIZED")
++    )
++    return (
++        update(table)
++        .where(table.c.id == locked.c.id)
++        .values(
++            current_probability=locked.c.price,
++            last_updated=func.now(),
++            price_changed_at=price_changed_at_value(
++                table.c.current_probability, table.c.price_changed_at, locked.c.compared
++            ),
++        )
++        .returning(
++            locked.c.ord,
++            table.c.id,
++            table.c.market_id,
++            table.c.last_updated,
++            quote_moved_column(table),
++        )
++    )
++
++
+ def legs_in_token_order(pairs: list) -> list:
+     """Order one market's ``(outcome_id, external_id)`` legs as its CLOB tokens are.
+ 
+@@ -1341,49 +1410,27 @@ async def _run_polymarket_ws_consumer(*, sessions):
+         # "put back", because it was never taken away.
+         try:
+             async with get_task_session() as session:
+-                for outcome_id, prob in chunk.items():
+-                    result = await session.execute(
+-                        # #9484, twin of the Kalshi socket's: the TABLE, so the
+-                        # UPDATE ... RETURNING stays a Core CursorResult.
+-                        update(FuturesOutcome.__table__)
+-                        .where(FuturesOutcome.id == outcome_id)
+-                        .values(
+-                            current_probability=prob,
+-                            # Same contract as every other price writer (#2024):
+-                            # a live socket owes the touch-stamp AND the
+-                            # change-stamp, or downstream liveness gates read a
+-                            # streaming row as long dead.
+-                            last_updated=func.now(),
+-                            price_changed_at=price_changed_at_value(
+-                                FuturesOutcome.current_probability,
+-                                FuturesOutcome.price_changed_at,
+-                                prob,
+-                            ),
+-                        )
+-                        .returning(
+-                            FuturesOutcome.id,
+-                            FuturesOutcome.market_id,
+-                            FuturesOutcome.last_updated,
+-                            # Price arm only: this socket writes no book.
+-                            quote_moved_column(FuturesOutcome.__table__),
+-                        )
++                # #10664: the chunk's price writes in ONE statement — the same
++                # set clause, row-lock order and returned-row coverage as the
++                # per-row UPDATEs it replaces (`chunk_price_update_stmt`).
++                result = await session.execute(chunk_price_update_stmt(chunk))
++                # #9484: only a row the UPDATE returned is evidence — a
++                # buffered id whose row is gone signals nothing. And only
++                # a row whose stored price moved: the same price again
++                # still re-stamps `last_updated` (liveness), but a frame
++                # for it sends every held page to re-read an unchanged row
++                # (twin of the Kalshi socket's, ux #9526). Walked in chunk
++                # order, so invalidations stage exactly as they did per row.
++                for row in sorted(result.all(), key=lambda r: r.ord):
++                    if not row.quote_moved:
++                        stats["quotes_unchanged"] += 1
++                        continue
++                    queue_market_change(
++                        session,
++                        market_id=row.market_id,
++                        source="polymarket",
++                        outcome_observed_at={row.id: row.last_updated},
+                     )
+-                    # #9484: only a row the UPDATE returned is evidence — a
+-                    # buffered id whose row is gone signals nothing. And only
+-                    # a row whose stored price moved: the same price again
+-                    # still re-stamps `last_updated` (liveness), but a frame
+-                    # for it sends every held page to re-read an unchanged row
+-                    # (twin of the Kalshi socket's, ux #9526).
+-                    for row in result.all():
+-                        if not row.quote_moved:
+-                            stats["quotes_unchanged"] += 1
+-                            continue
+-                        queue_market_change(
+-                            session,
+-                            market_id=row.market_id,
+-                            source="polymarket",
+-                            outcome_observed_at={row.id: row.last_updated},
+-                        )
+ 
+                 # #6598 / CERT-3182, twin of the Kalshi socket's. Every price
+                 # above moved the value `rank` is derived from and this module
+diff --git a/backend/app/utils/price_change_stamp.py b/backend/app/utils/price_change_stamp.py
+index c9eb88dfd1..87edf62cf3 100644
+--- a/backend/app/utils/price_change_stamp.py
++++ b/backend/app/utils/price_change_stamp.py
+@@ -44,6 +44,7 @@ from __future__ import annotations
+ from typing import Any
+ 
+ from sqlalchemy import Numeric, case, cast, func, literal, or_, select
++from sqlalchemy.sql.elements import ColumnElement
+ 
+ #: The stored type of `FuturesOutcome.current_probability`. Comparisons happen
+ #: at the precision the database actually keeps, never at the provider's.
+@@ -66,12 +67,16 @@ def price_changed_at_value(current_col: Any, stamp_col: Any, new_probability: An
+         when nothing moved.
+     :param new_probability: the price about to be written. May be ``None``: a
+         price going away IS a change, and ``IS DISTINCT FROM`` says so without
+-        the NULL-swallowing that ``!=`` would introduce.
++        the NULL-swallowing that ``!=`` would introduce. #10664: may also be a
++        SQL expression (a set-based writer's per-row input column); it is cast
++        exactly as a bound value is, so one rule serves both shapes.
+     """
++    if not isinstance(new_probability, ColumnElement):
++        new_probability = literal(new_probability)
+     return case(
+         (
+             cast(current_col, PRICE_NUMERIC).is_distinct_from(
+-                cast(literal(new_probability), PRICE_NUMERIC)
++                cast(new_probability, PRICE_NUMERIC)
+             ),
+             func.now(),
+         ),

@@ -1,0 +1,39 @@
+{
+ "base": "779da46f8b8e20a7a380db77be259dffaa433b77",
+ "source_sha256": {
+  "backend/app/tasks/polymarket_ws.py": "30474bba04f46ac6",
+  "backend/app/utils/price_change_stamp.py": "bb58375c69edb19e"
+ },
+ "patch_sha256": "85b41876e7a85205",
+ "static": {
+  "stamp_helper_scalar_sql_identical": true
+ },
+ "write_chunk_compiles_both_arms": true,
+ "identical_outside_price_block": {
+  "outside_try": true,
+  "handlers": true,
+  "after_session": true,
+  "session_items": true,
+  "rerank_tail": true
+ },
+ "only_the_price_block_differs": true,
+ "candidate_sql": "WITH locked AS MATERIALIZED \n(SELECT futures_outcomes.id AS id, given.ord AS ord, given.price AS price, given.compared AS compared \nFROM unnest($1::INTEGER[], $2::NUMERIC(7, 6)[], $3::FLOAT[]) WITH ORDINALITY AS given(id, price, compared, ord) JOIN futures_outcomes ON futures_outcomes.id = given.id ORDER BY given.ord FOR UPDATE OF futures_outcomes)\n UPDATE futures_outcomes SET current_probability=locked.price, last_updated=now(), price_changed_at=CASE WHEN (CAST(futures_outcomes.current_probability AS NUMERIC(7, 6)) IS DISTINCT FROM CAST(locked.compared AS NUMERIC(7, 6))) THEN now() ELSE futures_outcomes.price_changed_at END FROM locked WHERE futures_outcomes.id = locked.id RETURNING locked.ord, futures_outcomes.id, futures_outcomes.market_id, futures_outcomes.last_updated, futures_outcomes.price_changed_at = futures_outcomes.last_updated AS quote_moved",
+ "candidate_params": {
+  "chunk_ids": [
+   11,
+   3,
+   7
+  ],
+  "chunk_prices": [
+   0.25,
+   0.0512345678,
+   null
+  ],
+  "chunk_compare": [
+   0.25,
+   0.0512345678,
+   null
+  ]
+ },
+ "candidate_param_count_independent_of_chunk_size": true
+}
