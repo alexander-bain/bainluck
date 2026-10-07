@@ -45,6 +45,8 @@ on:
       - 'tools/tests/test_watch_iphone_receipt.py'
       - 'tools/tests/watch-telemetry/**'
       - 'ios/Bain Luck/BainLuckTests/WatchTelemetryConsentTests.swift'
+      - 'tools/watch_diagnostics_receipt.py'
+      - 'tools/tests/test_watch_diagnostics_receipt.py'
       - 'tools/watch_ga4_schema.py'
       - 'tools/tests/test_watch_ga4_schema.py'
       - 'ios/Bain Luck/Bain Luck/Utilities/WatchTelemetryProtocol.swift'
@@ -97,6 +99,8 @@ on:
       - 'tools/tests/test_watch_iphone_receipt.py'
       - 'tools/tests/watch-telemetry/**'
       - 'ios/Bain Luck/BainLuckTests/WatchTelemetryConsentTests.swift'
+      - 'tools/watch_diagnostics_receipt.py'
+      - 'tools/tests/test_watch_diagnostics_receipt.py'
       - 'tools/watch_ga4_schema.py'
       - 'tools/tests/test_watch_ga4_schema.py'
       - 'ios/Bain Luck/Bain Luck/Utilities/WatchTelemetryProtocol.swift'
@@ -138,6 +142,8 @@ jobs:
         run: bash tools/tests/watch-selected-game/run.sh
       - name: Verify idempotent GA4 schema planning without credentials
         run: python3 -m unittest discover -s tools/tests -p test_watch_ga4_schema.py
+      - name: Require complete rendered diagnostics consent evidence
+        run: python3 -m unittest discover -s tools/tests -p test_watch_diagnostics_receipt.py
       - name: Exercise consent-gated Watch telemetry without network or simulator
         run: sh tools/tests/watch-telemetry/run.sh
       - name: Build unsigned Watch simulator and device executables

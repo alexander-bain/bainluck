@@ -26,7 +26,13 @@ final class WatchTelemetry: NSObject, ObservableObject, WCSessionDelegate, @unch
     private static let storageKey = "bainluck_watch_telemetry_buffer_v1"
 
     @MainActor private override init() {
+        #if DEBUG
+        if let fixture = WatchUIFixture.current {
+            defaults = UserDefaults(suiteName: fixture.suite)!
+        } else { defaults = .standard }
+        #else
         defaults = .standard
+        #endif
         buffer = WatchTelemetryBuffer.restore(defaults.data(forKey: Self.storageKey), now: Date())
         super.init()
         enabled = buffer.watchEpoch != nil

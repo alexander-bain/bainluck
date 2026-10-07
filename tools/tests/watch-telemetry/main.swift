@@ -101,7 +101,7 @@ import Foundation
         precondition(tracker.accept(.discoveries, fetchedAt: now, saved: false), "Saved to fresh transition is distinct")
         precondition(tracker.accept(.game, fetchedAt: now.addingTimeInterval(1), saved: false))
         tracker.reset()
-        precondition(tracker.accept(.game, fetchedAt: now, saved: false), "New consent epoch resets dedupe")
+        precondition(tracker.accept(.game, fetchedAt: now.addingTimeInterval(1), saved: false), "New consent epoch resets dedupe")
         print("WATCH_TELEMETRY_BUFFER=PASS deny/local+phone consent/revocation/regrant/ack/bounds/restore/expiry/schema")
     }
 }

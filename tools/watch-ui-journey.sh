@@ -319,6 +319,10 @@ for case in ('testSelectedGameIsMarkedInPickerAndCanChange', 'testSelectedGameIs
         raise SystemExit(f'Selected picker case {case} did not pass exactly once; gate unpaid')
 PYVERIFY
 fi
+PHASE='rendered diagnostics consent verification'
+if [[ "$TEST_EXIT" -eq 0 ]]; then
+  python3 "$ROOT/tools/watch_diagnostics_receipt.py" --log "$OUT/tests.log"
+fi
 PHASE='full-suite receipt verification'
 python3 "$ROOT/tools/watch_iphone_receipt.py" --log "$OUT/tests.log" \
   --exit-code "$TEST_EXIT" --sha "$SHA" --output "$OUT/receipt.json"

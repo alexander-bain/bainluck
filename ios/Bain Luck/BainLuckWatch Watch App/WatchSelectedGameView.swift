@@ -100,7 +100,7 @@ struct WatchSelectedGameView: View {
                     showingDiscoveries = true
                 }
                     .accessibilityIdentifier("watch.discoveries-entry")
-                NavigationLink("Diagnostics") { WatchDiagnosticsView() }
+                NavigationLink("Diagnostics") { WatchDiagnosticsView().dynamicTypeSize(dynamicTypeSize) }
                     .accessibilityIdentifier("watch.diagnostics")
                 #if DEBUG
                 if WatchUIFixture.current?.launchReceipt == true {

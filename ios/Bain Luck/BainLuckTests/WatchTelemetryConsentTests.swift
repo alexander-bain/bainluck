@@ -135,7 +135,7 @@ final class WatchTelemetryConsentTests: XCTestCase {
         XCTAssertTrue(tracker.accept(.discoveries, fetchedAt: date, saved: false))
         XCTAssertTrue(tracker.accept(.game, fetchedAt: date.addingTimeInterval(1), saved: false))
         tracker.reset()
-        XCTAssertTrue(tracker.accept(.game, fetchedAt: date, saved: false))
+        XCTAssertTrue(tracker.accept(.game, fetchedAt: date.addingTimeInterval(1), saved: false))
     }
 
     @MainActor func testDiscoveryReceiptsDistinguishOfflineEmptyCancelledAndSuperseded() async throws {
