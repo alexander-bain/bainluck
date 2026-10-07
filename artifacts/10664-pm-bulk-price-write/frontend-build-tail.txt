@@ -1,0 +1,24 @@
+├ ○ /share/my-odds                                       2.3 kB          150 kB
+├ ○ /sitemap.xml                                         0 B                0 B
+├ ○ /sport                                               2.15 kB         145 kB
+├ ƒ /sport/[sport]                                       4.78 kB         151 kB
+├ ƒ /sport/[sport]/[league]                              10.6 kB         233 kB
+├ ƒ /sport/[sport]/[league]/[slug]                       4.16 kB         166 kB
+├ ƒ /sport/[sport]/[league]/opengraph-image              0 B                0 B
+├ ƒ /sport/[sport]/[league]/team/[team]                  11.9 kB         188 kB
+├ ƒ /sport/[sport]/[league]/team/[team]/opengraph-image  0 B                0 B
+├ ƒ /sport/[sport]/opengraph-image                       0 B                0 B
+├ ○ /sports                                              14.6 kB         244 kB
+├ ƒ /sports/[key]                                        3.81 kB         209 kB
+├ ƒ /tournaments/[slug]                                  19.8 kB         200 kB
+├ ƒ /tournaments/[slug]/opengraph-image                  0 B                0 B
+└ ○ /weather                                             14.9 kB         163 kB
++ First Load JS shared by all                            115 kB
+  ├ chunks/2003-0eba95976f83438d.js                      32.8 kB
+  ├ chunks/2a84a195-f837cbd6b76191a9.js                  53.8 kB
+  ├ chunks/main-app-caae273d825d3987.js                  25.6 kB
+  └ other shared chunks (total)                          2.88 kB
+
+
+○  (Static)   prerendered as static content
+ƒ  (Dynamic)  server-rendered on demand

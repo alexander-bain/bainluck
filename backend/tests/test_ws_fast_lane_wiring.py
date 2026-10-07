@@ -65,7 +65,13 @@ def _write_helpers(module, consumer_name: str, flush) -> list[ast.AsyncFunctionD
 
 def _write_path(module, consumer_name: str) -> list[ast.AsyncFunctionDef]:
     flush = _flush_function(module, consumer_name)
-    return [flush, *_write_helpers(module, consumer_name, flush)]
+    path = [flush, *_write_helpers(module, consumer_name, flush)]
+    # #10664: follow called module-level statement builders as well.
+    tree = ast.parse(inspect.getsource(module))
+    called = {n.func.id for fn in path for n in ast.walk(fn)
+              if isinstance(n, ast.Call) and isinstance(n.func, ast.Name)}
+    return [*path, *(fn for fn in tree.body
+                    if isinstance(fn, ast.FunctionDef) and fn.name in called)]
 
 
 def _calls_named(node, name: str) -> list[ast.Call]:

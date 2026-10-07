@@ -1,0 +1,83 @@
+============================= test session starts ==============================
+platform darwin -- Python 3.12.15+meta, pytest-9.0.3, pluggy-1.6.0
+rootdir: /Users/bain/bainluck-dev/latency/.worktrees/10664-pm-bulk-price-write/backend
+configfile: pytest.ini
+plugins: asyncio-1.4.0, anyio-4.13.0
+asyncio: mode=Mode.AUTO, debug=False, asyncio_default_fixture_loop_scope=None, asyncio_default_test_loop_scope=function
+collected 1037 items
+
+tests/integration/test_pm_bulk_price_write_10664_pg.py ........          [  0%]
+tests/test_concept_bout_price_support_6777.py .......................... [  3%]
+                                                                         [  3%]
+tests/test_datagolf_price_changed_at_4958.py .....                       [  3%]
+tests/test_delivery_receipt_10090.py ...............                     [  5%]
+tests/test_event_chart_backfill.py ..................................... [  8%]
+.................................................                        [ 13%]
+tests/test_futures_price_refresh_grades_answered_legs_9220.py .......... [ 14%]
+..........                                                               [ 15%]
+tests/test_futures_rank_field_wide_6598.py .....................         [ 17%]
+tests/test_futures_stamp_semantics.py .............                      [ 18%]
+tests/test_link_loss_receipts_linkloss02.py ............................ [ 21%]
+............                                                             [ 22%]
+tests/test_live_blend_tail_receipt_837.py ........................       [ 24%]
+tests/test_live_blend_unobserved_restamp_5661.py ..................      [ 26%]
+tests/test_live_poll_fetch_share_6179.py ...........                     [ 27%]
+tests/test_market_quote_push.py .............................            [ 30%]
+tests/test_market_quote_push_redis.py ssss                               [ 30%]
+tests/test_market_stream.py .................................            [ 34%]
+tests/test_poly_fast_lane_token_topup_q490.py ................           [ 35%]
+tests/test_poly_moneyline_leg_streams_q500.py ................           [ 37%]
+tests/test_poly_topup_both_legs_837.py .................                 [ 38%]
+tests/test_poly_topup_window_advances_6634.py ........                   [ 39%]
+tests/test_poly_ws_asset_outcome_map_q489.py ......                      [ 40%]
+tests/test_poly_ws_binary_complement_9733.py ........................... [ 42%]
+......                                                                   [ 43%]
+tests/test_poly_ws_book_snapshot_prices_9733.py ....................     [ 45%]
+tests/test_poly_ws_held_price_outside_book_9934.py .................     [ 46%]
+tests/test_poly_ws_min_order_trade_9733.py ...................           [ 48%]
+tests/test_poly_ws_side1_leg_pairing_8403.py ..............              [ 50%]
+tests/test_poly_ws_wide_book_trade_9913.py ...................           [ 51%]
+tests/test_polymarket_snapshot_fairness_10665.py ..........              [ 52%]
+tests/test_polymarket_untradeable_book.py ...........................    [ 55%]
+tests/test_polymarket_withdrawal_speed_10651.py ........                 [ 56%]
+tests/test_polymarket_ws_initial_dump_max_size_837.py ...                [ 56%]
+tests/test_polymarket_ws_real_consumer_837.py ..                         [ 56%]
+tests/test_polymarket_ws_resolution.py ................................. [ 59%]
+.............                                                            [ 61%]
+tests/test_polymarket_ws_subscription_fanout_837.py .................... [ 63%]
+.........................................                                [ 67%]
+tests/test_price_change_stamp.py .......                                 [ 67%]
+tests/test_price_stamp_writer_scan_4958.py .....................         [ 69%]
+tests/test_settled_outcomes_carry_no_price_5246.py ..................... [ 71%]
+..................................................                       [ 76%]
+tests/test_taste_price_freshness_null_policy.py ......                   [ 77%]
+tests/test_touch_stamp_provenance_live077.py ..................          [ 78%]
+tests/test_ws_admission_9418.py ......................                   [ 81%]
+tests/test_ws_admission_mapped_legs_9462.py .......................      [ 83%]
+tests/test_ws_consumer_session_lifetime_2471.py ...................      [ 85%]
+tests/test_ws_fast_lane_wiring.py .................                      [ 86%]
+tests/test_ws_flush_cadence_10090.py .............                       [ 87%]
+tests/test_ws_flush_retry_q491.py ................                       [ 89%]
+tests/test_ws_market_change_hooks_9484.py .........                      [ 90%]
+tests/test_ws_polymarket_open_contract_prices_9484.py .................. [ 92%]
+..............................................                           [ 96%]
+tests/test_ws_recycle_cancellation_q460.py ...............               [ 97%]
+tests/test_ws_shadow.py ..................                               [ 99%]
+tests/test_ws_slate_suspended_arm_wiring_9484.py ...                     [100%]
+
+=============================== warnings summary ===============================
+app/routes/auth.py:121
+  /Users/bain/bainluck-dev/latency/.worktrees/10664-pm-bulk-price-write/backend/app/routes/auth.py:121: PydanticDeprecatedSince20: Support for class-based `config` is deprecated, use ConfigDict instead. Deprecated in Pydantic V2.0 to be removed in V3.0. See Pydantic V2 Migration Guide at https://errors.pydantic.dev/2.13/migration/
+    class UserProfileResponse(BaseModel):
+
+tests/test_price_change_stamp.py::test_a_none_price_still_produces_a_real_comparison
+  /Users/bain/bainluck-dev/latency/.worktrees/10664-pm-bulk-price-write/backend/tests/test_price_change_stamp.py:35: SAWarning: Bound parameter '%(4612253424 param)s' rendering literal NULL in a SQL expression; comparisons to NULL should not use operators outside of 'is' or 'is not' (this warning may be suppressed after 10 occurrences)
+    expr.compile(
+
+-- Docs: https://docs.pytest.org/en/stable/how-to/capture-warnings.html
+=========================== short test summary info ============================
+SKIPPED [1] tests/test_market_quote_push_redis.py:102: Set MARKET_QUOTE_REDIS_SERVER to run disposable Redis gates
+SKIPPED [1] tests/test_market_quote_push_redis.py:125: Set MARKET_QUOTE_REDIS_SERVER to run disposable Redis gates
+SKIPPED [1] tests/test_market_quote_push_redis.py:131: Set MARKET_QUOTE_REDIS_SERVER to run disposable Redis gates
+SKIPPED [1] tests/test_market_quote_push_redis.py:165: Set MARKET_QUOTE_REDIS_SERVER to run disposable Redis gates
+=========== 1033 passed, 4 skipped, 2 warnings in 113.39s (0:01:53) ============

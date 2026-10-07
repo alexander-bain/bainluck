@@ -1,0 +1,15 @@
+{
+  "reviewed_candidate_sha256": "85b41876e7a852057b073a040697d0496c9abf82de7f6db9073a5d0859854f51",
+  "candidate_ast_match": {
+    "chunk_price_update_stmt": true,
+    "write_chunk": true,
+    "price_changed_at_value": true
+  },
+  "scalar_sql_match": {
+    "None": true,
+    "0": true,
+    "0.3": true,
+    "0.0512345678": true,
+    "10": true
+  }
+}
