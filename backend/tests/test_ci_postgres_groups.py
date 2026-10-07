@@ -21,6 +21,8 @@ ROOT = Path(__file__).resolve().parents[2]
 WORKFLOW = ROOT / ".github/workflows/ci.yml"
 MANIFEST = ROOT / ".github/ci-postgres-groups.json"
 TAIL_PROVISIONER = "#10703 shared tail — provision pg_trgm on the fresh database"
+MIDDLE_PROVISIONER = "#10717 shared middle — provision pg_trgm on the fresh database"
+MIDDLE_FIRST_GATE = "#8466 a Polymarket leg resolves on its own date, and a re-ingest repairs it (real Postgres)"
 TAIL_FIRST_GATE = "#2927 container assembly writes and re-writes (real Postgres)"
 
 
@@ -58,12 +60,13 @@ def _validate_fresh_tail(worker, fixture_source):
     assert [step["name"] for step in tail[:2]] == [TAIL_PROVISIONER, TAIL_FIRST_GATE]
     original_shared = [
         step["name"] for step in worker["steps"]
-        if step.get("if") in ("matrix.group == 'shared'", "matrix.group == 'shared-tail'")
-        and step.get("name") != TAIL_PROVISIONER
+        if step.get("if") in ("matrix.group == 'shared'", "matrix.group == 'shared-middle'", "matrix.group == 'shared-tail'")
+        and step.get("name") not in (TAIL_PROVISIONER, MIDDLE_PROVISIONER)
     ]
     prefix = [
         step["name"] for step in worker["steps"]
-        if step.get("if") == "matrix.group == 'shared'"
+        if step.get("if") in ("matrix.group == 'shared'", "matrix.group == 'shared-middle'")
+        and step.get("name") != MIDDLE_PROVISIONER
     ]
     boundary = original_shared.index(TAIL_FIRST_GATE)
     assert prefix == original_shared[:boundary]
@@ -171,7 +174,7 @@ def test_common_setup_services_and_intentional_scope_skip():
     assert worker["needs"] == "change-scope"
     assert worker["if"] == "needs.change-scope.outputs.scope != 'frontend'"
     assert worker["strategy"]["fail-fast"] is False
-    assert worker["strategy"]["matrix"]["group"] == ["shared", "shared-tail", "isolated"]
+    assert worker["strategy"]["matrix"]["group"] == ["shared", "shared-middle", "shared-tail", "isolated"]
     assert worker["services"]["postgres"]["image"] == "postgres:15"
     assert worker["services"]["postgres"]["env"]["POSTGRES_DB"] == "bl_searchtest"
     assert worker["services"]["redis"]["ports"] == ["56379:6379"]
@@ -302,3 +305,54 @@ def test_actual_aggregate_command_only_accepts_completed_success(scope_result, i
         capture_output=True, text=True, check=False,
     )
     assert (result.returncode == 0) == (scope_result == integration_result == "success")
+
+
+def _validate_fresh_middle(worker, fixture_source):
+    chain = [s for s in worker["steps"]
+             if s.get("if") in ("matrix.group == 'shared'", "matrix.group == 'shared-middle'")
+             and s.get("name") != MIDDLE_PROVISIONER]
+    prefix = [s["name"] for s in worker["steps"] if s.get("if") == "matrix.group == 'shared'"]
+    middle = [s for s in worker["steps"] if s.get("if") == "matrix.group == 'shared-middle'"]
+    boundary = next(i for i, s in enumerate(chain) if s["name"] == MIDDLE_FIRST_GATE)
+    assert prefix == [s["name"] for s in chain[:boundary]]
+    assert [s["name"] for s in middle[:2]] == [MIDDLE_PROVISIONER, MIDDLE_FIRST_GATE]
+    assert [s["name"] for s in middle[1:]] == [s["name"] for s in chain[boundary:]]
+    _validate_tail_provisioner(middle[0])
+    fixture = next(n for n in ast.parse(fixture_source).body
+                   if isinstance(n, ast.AsyncFunctionDef) and n.name == "pg_engine")
+    calls = {ast.unparse(n.args[0]): n.lineno for n in ast.walk(fixture)
+             if isinstance(n, ast.Call) and ast.unparse(n.func).endswith("run_sync") and n.args}
+    yielded = next(n.lineno for n in ast.walk(fixture) if isinstance(n, ast.Yield))
+    assert calls["Base.metadata.drop_all"] < calls["Base.metadata.create_all"] < yielded
+    assert "import app.models.models" in ast.unparse(fixture)
+
+
+def _middle_fixture_source():
+    return (ROOT / "backend/tests/integration/test_polymarket_leg_resolution_date_8466_pg.py").read_text()
+
+
+def test_middle_runner_starts_with_extension_and_full_registered_schema_reset():
+    jobs, _ = _inputs()
+    _validate_fresh_middle(jobs["database-integration"], _middle_fixture_source())
+
+
+@pytest.mark.parametrize("mutation", ["missing_reset", "missing_extension", "wrong_url", "late_provisioner", "split_suffix"])
+def test_middle_guard_rejects_broken_fresh_database_boundary(mutation):
+    jobs, _ = _inputs()
+    worker = jobs["database-integration"]
+    source = _middle_fixture_source()
+    provisioner = next(s for s in worker["steps"] if s.get("name") == MIDDLE_PROVISIONER)
+    if mutation == "missing_reset":
+        source = source.replace("await conn.run_sync(Base.metadata.drop_all)", "pass")
+    elif mutation == "missing_extension":
+        provisioner["run"] = provisioner["run"].replace("CREATE EXTENSION IF NOT EXISTS pg_trgm", "SELECT 1")
+    elif mutation == "wrong_url":
+        provisioner["run"] = provisioner["run"].replace("SEARCH_TEST_DATABASE_URL", "WRONG_DATABASE_URL")
+    elif mutation == "late_provisioner":
+        worker["steps"].remove(provisioner)
+        index = next(i for i, s in enumerate(worker["steps"]) if s.get("name") == MIDDLE_FIRST_GATE)
+        worker["steps"].insert(index + 1, provisioner)
+    else:
+        next(s for s in worker["steps"] if s.get("name", "").startswith("#8935 "))["if"] = "matrix.group == 'shared'"
+    with pytest.raises((AssertionError, KeyError)):
+        _validate_fresh_middle(worker, source)
