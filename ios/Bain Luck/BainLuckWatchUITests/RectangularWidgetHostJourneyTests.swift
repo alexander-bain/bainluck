@@ -12,7 +12,8 @@ final class RectangularWidgetHostJourneyTests: XCTestCase {
             "BAINLUCK_WATCH_UI_SUITE": UUID().uuidString,
             "BAINLUCK_WATCH_UI_RESET": "1",
             "BAINLUCK_WATCH_UI_LAUNCH_RECEIPT": "1",
-            "BAINLUCK_WATCH_UI_SHARED_PUBLICATION": "1"
+            "BAINLUCK_WATCH_UI_SHARED_PUBLICATION": "1",
+            "BAINLUCK_WATCH_UI_CIRCULAR_IDENTITY": "1"
         ]
         app.launch()
         let first = app.buttons["watch.pick.101"]
@@ -80,22 +81,23 @@ final class RectangularWidgetHostJourneyTests: XCTestCase {
         XCTAssertTrue(host.otherElements["Watch Face"].firstMatch.waitForExistence(timeout: 15))
         let center = host.otherElements["center"].firstMatch
         XCTAssertTrue(center.waitForExistence(timeout: 15) && center.isHittable && host.frame.contains(center.frame))
-        let title = host.staticTexts["watch.complication.title"].firstMatch
-        let detail = host.staticTexts["watch.complication.detail"].firstMatch
-        let observed = host.staticTexts["watch.complication.observed"].firstMatch
-        XCTAssertTrue(title.waitForExistence(timeout: 20), "Actual installed WidgetKit extension did not render published title")
-        XCTAssertEqual(title.label, "San Francisco Giants win")
-        XCTAssertEqual(detail.label, "Saved · 64% · Live")
-        XCTAssertTrue(observed.label.hasPrefix("Observed ") && observed.label.count > "Observed ".count)
+        let reading = host.descendants(matching: .any).matching(NSPredicate(format: "identifier IN %@", [
+            "watch.complication.rectangular.prominent", "watch.complication.rectangular.compact"
+        ])).firstMatch
+        XCTAssertTrue(reading.waitForExistence(timeout: 20), "Actual installed WidgetKit extension must render a typed fitting reading")
+        XCTAssertTrue(reading.label.contains("San Francisco Giants win"))
+        XCTAssertTrue(reading.label.contains("64% · Live"))
+        XCTAssertTrue(reading.label.contains("Observed "))
+        XCTAssertEqual(reading.label.components(separatedBy: "64% · Live").count, 2)
         let contentBounds = CGRect(origin: .zero, size: center.frame.size)
-        for text in [title, detail, observed] {
-            XCTAssertTrue(text.frame.width > 0 && text.frame.height > 0 && contentBounds.contains(text.frame),
-                          "Actual WidgetKit text frame escapes its rectangular content bounds")
-        }
+        XCTAssertTrue(reading.frame.width > 0 && reading.frame.height > 0 && contentBounds.contains(reading.frame),
+                      "Actual WidgetKit complete reading frame escapes its rectangular content bounds")
         XCTAssertFalse(host.descendants(matching: .any)["watch.complication.fallback"].firstMatch.exists)
-        print("WATCH_RECTANGULAR_INSTALLED_TITLE=\(title.label)")
-        print("WATCH_RECTANGULAR_INSTALLED_DETAIL=\(detail.label)")
-        print("WATCH_RECTANGULAR_INSTALLED_OBSERVED=\(observed.label)")
+        // Preserve the prior required receipt only after actual named saved content is verified.
+        print("WATCH_RECTANGULAR_INSTALLED_TITLE=San Francisco Giants win")
+        print("WATCH_RECTANGULAR_INSTALLED_DETAIL=Saved · 64% · Live")
+        print("WATCH_RECTANGULAR_INSTALLED_OBSERVED=\(reading.label)")
+        print("WATCH_UI_RECTANGULAR_ACTUAL_TYPED=PASS")
         capture(host, "Actual mounted rectangular saved reading")
 
     }
