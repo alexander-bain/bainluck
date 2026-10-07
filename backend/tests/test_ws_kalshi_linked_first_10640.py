@@ -203,10 +203,13 @@ def _refresher(rig):
         stats = {"stamped": 0, "no_reading": 0, "throttled": 0, "errors": 0}
 
         def __init__(self, *_a, **_kw):
-            pass
+            self.source = _a[0] if _a else "kalshi"
 
         async def refresh(self, event_ids, **_kw):
             rig.trace.append(("refresh", tuple(sorted(event_ids))))
+
+        def pending_event_ids(self):
+            return frozenset()
 
         async def refresh_pending(self, **_kw):
             return None

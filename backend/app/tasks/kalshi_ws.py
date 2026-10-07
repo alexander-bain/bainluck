@@ -79,40 +79,59 @@ def _kalshi_slate_event_window():
     )
 
 
-def linked_first_phases(batch, market_id_by_outcome, event_id_by_outcome):
-    """#10640 — split one flush's batch into the game phase and the rest.
+def linked_first_phases(
+    batch, market_id_by_outcome, event_id_by_outcome, pending_events=(),
+):
+    """Publish independent games separately, followed by unrelated contracts.
 
-    WHY. The #9484 open-contract shards feed the same buffer as the game
-    socket, and the flush wrote every buffered row in ONE transaction, then
-    committed, published, and only then re-stamped event blends. So a live
-    game's Kalshi move waited behind every futures/prop row buffered in the
-    same 2 s (≥60% of written rows, from the 17:53Z stats line) before its
-    commit, its market frame and its blend stamp. Root's hold/release control
-    reproduced it on the #2471 head.
+    #10640 put all linked games before futures/props. #10655 also lets a
+    completed game's phase commit and refresh before a different game's
+    later writes. A phase contains whole markets and every market connected
+    through a shared event, transitively: never publish a partial game cut.
 
-    A MARKET goes first if any of its buffered rows has a linked event (a slate
-    leg, or the #9484 bridge), and goes WHOLE: its siblings stay in the same
-    transaction, so the price rows and the field re-rank describe one cut of
-    the batch. Returns ``[batch]`` — the old single transaction — when either
-    phase would be empty, or when any row's market is unknown (guessing that
-    an unknown row has no siblings could split a market). Never two phases
-    that share a market. Pure: no I/O, the batch is not mutated.
+    Use the known subscription map, including siblings without a buffered
+    tick, so sparse arrivals cannot split an event's markets. Preserve batch
+    order within each component and first-seen order between components.
+    Unknown market membership retains the original single transaction.
+    If a refresh is already owed, retain the all-games phase: refresh() also
+    drains that debt, so splitting could stamp a later game before its new
+    price is written and throttle its actual new reading.
+    This only plans phases; the existing flush owns SQL, retry and publish.
     """
-    if any(oid not in market_id_by_outcome for oid in batch):
+    if not batch or any(market_id_by_outcome.get(oid) is None for oid in batch):
         return [batch]
-    linked_markets = {
-        market_id_by_outcome[oid]
-        for oid in batch
-        if event_id_by_outcome.get(oid) is not None
-    }
-    first = {
-        oid: entry for oid, entry in batch.items()
-        if market_id_by_outcome[oid] in linked_markets
-    }
-    if not first or len(first) == len(batch):
-        return [batch]
-    rest = {oid: entry for oid, entry in batch.items() if oid not in first}
-    return [first, rest]
+
+    parent = {}
+
+    def root(market):
+        parent.setdefault(market, market)
+        while parent[market] != market:
+            parent[market] = parent[parent[market]]
+            market = parent[market]
+        return market
+
+    first_market_by_event = {}
+    for oid, event in event_id_by_outcome.items():
+        market = market_id_by_outcome.get(oid)
+        if event is None or market is None:
+            continue
+        first = first_market_by_event.setdefault(event, market)
+        parent[root(market)] = root(first)
+
+    games, rest = {}, {}
+    for oid, entry in batch.items():
+        market = market_id_by_outcome[oid]
+        if market in parent:
+            games.setdefault(root(market), {})[oid] = entry
+        else:
+            rest[oid] = entry
+    if pending_events and games:
+        # Preserve batch order in the original single game transaction.
+        games = {None: {oid: entry for oid, entry in batch.items() if oid not in rest}}
+    phases = list(games.values())
+    if rest:
+        phases.append(rest)
+    return phases
 
 
 @owns_consumer_sessions("kalshi")
@@ -385,8 +404,9 @@ async def _run_kalshi_ws_consumer(*, sessions):
         written, committed, published, acknowledged and its blends refreshed
         BEFORE the unrelated phase opens its transaction, so a held or failed
         futures/prop write can neither delay nor undo a committed game price.
-        Each phase keeps every rule below on its own rows. A failed game phase
-        stops the flush with the whole batch retained, as before.
+        Each phase keeps every rule below on its own rows. #10655 separates
+        independent games too; a failed phase stops the flush with that phase
+        and all later phases retained. Earlier committed games stay done.
         """
         async with buffer_lock:
             batch = dict(price_buffer)
@@ -412,6 +432,7 @@ async def _run_kalshi_ws_consumer(*, sessions):
         # "put back", because it was never taken away.
         phases = linked_first_phases(
             batch, market_id_by_outcome, event_id_by_outcome,
+            pending_events=blend_refresher.pending_event_ids(),
         )
         for index, phase in enumerate(phases):
             declined = 0
@@ -576,8 +597,8 @@ async def _run_kalshi_ws_consumer(*, sessions):
                 # Polymarket markets never tick, so one transient error left the
                 # card on its old number with a stale `last_updated` (#2024).
                 #
-                # #10640: what is unpaid is this phase and every later one — a
-                # committed game phase is already acknowledged and stays done.
+                # #10640: what is unpaid is this phase and every later one;
+                # committed earlier phases are already acknowledged and stay done.
                 unpaid = sum(len(p) for p in phases[index:])
                 stats["errors"] += 1
                 stats["requeued"] += unpaid
@@ -611,9 +632,9 @@ async def _run_kalshi_ws_consumer(*, sessions):
             # revisions this write committed ride into this refresh, and only this
             # one (a settled row the #5411 guard declined committed nothing).
             #
-            # #10640: the game phase refreshes (with every owed retry, exactly as
-            # the single transaction did) BEFORE the unrelated phase is written.
-            # That phase has no linked event by construction, so it refreshes
+            # #10640/#10655: each game component refreshes BEFORE any later
+            # component or unrelated phase is written.
+            # The unrelated phase has no linked event by construction, so it refreshes
             # only if the #9484 bridge named one of its rows since the split.
             linked_events = event_ids_for_outcomes(event_id_by_outcome, phase.keys())
             if index == 0 or linked_events:
