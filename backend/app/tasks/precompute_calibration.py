@@ -3694,6 +3694,41 @@ def _futures_generation_sql() -> str:
     )
 
 
+#: Rows per fetch when the Stage A roster is streamed. Large enough that 1.2M
+#: rows cost ~60 round trips, small enough that one batch of driver records is
+#: a few MB rather than the whole roster.
+ROSTER_STREAM_BATCH = 20_000
+
+
+async def _read_futures_roster(db) -> list:
+    """Run the Stage A roster read and return it as slim :class:`RosterRow` tuples.
+
+    Streamed in batches, so the driver never holds every record at once, and each
+    batch is copied into plain tuples before the next arrives. This is a memory
+    change only: same statement, same rows, same order, same values (see
+    :class:`~app.utils.calibration_staged_futures.RosterRow`). The beat's worker
+    dyno was R15-killed twice on 2026-10-07 while holding two full rosters of
+    ``Row`` objects, and each kill cost that hour's publish.
+
+    A session with no ``stream`` (the test doubles) is read with ``execute`` and
+    converted the same way.
+    """
+    from app.utils.calibration_staged_futures import slim_roster
+
+    statement = text(_futures_generation_sql())
+    stream = getattr(db, "stream", None)
+    if stream is None:
+        return slim_roster((await db.execute(statement)).all())
+    result = await stream(statement.execution_options(yield_per=ROSTER_STREAM_BATCH))
+    roster: list = []
+    try:
+        async for batch in result.partitions(ROSTER_STREAM_BATCH):
+            slim_roster(batch, into=roster)
+    finally:
+        await result.close()
+    return roster
+
+
 def _calibration_population_ctes(
     *,
     curve_price: str | None = None,
@@ -6139,7 +6174,7 @@ async def _run_staged_futures(db, runner, sql_builder, *, rebuild_only=False):
 
     # -- Stage 1: freeze the generation ---------------------------------------
     with runner.stage("read:futures_generation"):
-        roster = (await db.execute(text(_futures_generation_sql()))).all()
+        roster = await _read_futures_roster(db)
     await runner.commit(db)
 
     gen_digest = generation_fingerprint(roster)
