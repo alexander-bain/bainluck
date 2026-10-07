@@ -13,6 +13,7 @@ import asyncio
 import contextlib
 import json
 import logging
+import math
 import os
 import time
 from typing import Optional
@@ -952,7 +953,8 @@ async def _run_polymarket_ws_consumer(*, sessions):
     )
     from app.services.polymarket_ws import PolymarketWebSocket
     from app.tasks.live_blend_refresh import (
-        LiveBlendRefresher, TailReceipts, adopt_handed_off,
+        DEFAULT_MIN_REFRESH_INTERVAL_S, LiveBlendRefresher, TailReceipts,
+        adopt_handed_off,
         event_ids_for_outcomes, hand_off_pending, reap_stopped_loops,
         run_flush_cadence,
     )
@@ -982,6 +984,25 @@ async def _run_polymarket_ws_consumer(*, sessions):
     # decorator disposes it after the final drain. Same call shape as the
     # task factory, so every site below is unchanged.
     get_task_session = sessions.session
+
+    # #10662: opt in only this consumer. Removing the override restores both
+    # the legacy shared timer and the existing blend floor. A faster healthy
+    # timer must not also shorten the preexisting failed-write retry period.
+    flush_period = PRICE_FLUSH_SECONDS
+    blend_floor = DEFAULT_MIN_REFRESH_INTERVAL_S
+    override = os.getenv("PM_WS_PRICE_FLUSH_SECONDS")
+    if override is not None:
+        try:
+            flush_period = float(override)
+        except ValueError as exc:
+            raise ValueError(
+                "PM_WS_PRICE_FLUSH_SECONDS must be a positive finite number"
+            ) from exc
+        if not math.isfinite(flush_period) or flush_period <= 0:
+            raise ValueError(
+                "PM_WS_PRICE_FLUSH_SECONDS must be a positive finite number"
+            )
+        blend_floor = flush_period
 
     # #9484 — every other unsettled Polymarket contract, for PRICES only, on a
     # second client (`app.tasks.polymarket_open_contracts`). Never added to the
@@ -1370,7 +1391,8 @@ async def _run_polymarket_ws_consumer(*, sessions):
         if market_id in event_id_by_market
     }
     blend_refresher = LiveBlendRefresher(
-        "polymarket", session_factory=get_task_session,  # #2471
+        "polymarket", min_refresh_interval_s=blend_floor,
+        session_factory=get_task_session,  # #2471
     )
     # #837 receipt — every accepted input is stamped (seq, receive instant) as
     # it is buffered, so a held price can be followed from the socket to the
@@ -2056,7 +2078,10 @@ async def _run_polymarket_ws_consumer(*, sessions):
     loops_stop = asyncio.Event()
 
     async def flush_loop():
-        await run_flush_cadence(flush_prices, PRICE_FLUSH_SECONDS, stop=loops_stop)
+        await run_flush_cadence(
+            flush_prices, flush_period, stop=loops_stop,
+            failed_retry_interval_s=PRICE_FLUSH_SECONDS,
+        )
 
     async def stats_loop():
         while True:
