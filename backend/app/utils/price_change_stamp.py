@@ -108,6 +108,8 @@ def quote_moved_column(table: Any, book: tuple[Any, Any] | None = None) -> Any:
     a served change. RETURNING only sees the new row; a scalar subquery inside it
     reads the statement's snapshot, which in Postgres is the row BEFORE this
     UPDATE. Compared at the columns' own types, as the price is.
+    Book inputs may be scalar values or SQL expressions; both are cast to the
+    stored column type. Scalar callers retain their original literal coercion.
     SQLite evaluates that subquery after the write (it sees the new row), so on
     SQLite this arm is always false — the Postgres test is its evidence.
     """
@@ -115,11 +117,13 @@ def quote_moved_column(table: Any, book: tuple[Any, Any] | None = None) -> Any:
     if book is not None:
         before = table.alias("quote_before")
         bid, ask = before.c.current_yes_bid, before.c.current_yes_ask
+        new_bid = book[0] if isinstance(book[0], ColumnElement) else literal(book[0])
+        new_ask = book[1] if isinstance(book[1], ColumnElement) else literal(book[1])
         book_moved = (
             select(
                 or_(
-                    bid.is_distinct_from(cast(literal(book[0]), bid.type)),
-                    ask.is_distinct_from(cast(literal(book[1]), ask.type)),
+                    bid.is_distinct_from(cast(new_bid, bid.type)),
+                    ask.is_distinct_from(cast(new_ask, ask.type)),
                 )
             )
             .where(before.c.id == table.c.id)

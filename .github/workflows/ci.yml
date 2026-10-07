@@ -4066,6 +4066,18 @@ jobs:
             exit 1
           fi
 
+      - name: "#10689 Kalshi typed statement transaction contracts (real Postgres)"
+        if: matrix.group == 'shared'
+        run: |
+          result=0
+          python -m pytest tests/test_kalshi_price_statement_10689.py tests/test_price_change_stamp.py tests/integration/test_kalshi_price_statement_10689_pg.py -v -rs > /tmp/kalshi10689.txt 2>&1 || result=$?
+          cat /tmp/kalshi10689.txt
+          if [ "$result" -ne 0 ]; then exit "$result"; fi
+          if grep -qiE "[0-9]+ skipped" /tmp/kalshi10689.txt; then
+            echo "::error::#10689 real PostgreSQL gate skipped"
+            exit 1
+          fi
+
       - name: "#4586 restore compare-and-swap (real Postgres)"
         # CERT-2439's required repair, `4586-RESTORE-CAS-PRESERVES-LATER-RELINKS`.
         # The forward repair compare-and-swaps on the link it planned; its D51

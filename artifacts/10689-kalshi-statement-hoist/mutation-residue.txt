@@ -1,0 +1,83 @@
+PASS A — target integrity: 599 needles across 51 target file(s)
+  + 4 harness(es) declared disk-free and verified (MUTATES_WORKING_TREE = False): browse_single_scan_mutations, search_suggestions_mirror_mutations, tag_counts_group_by_mutations, typeahead_fuzzy_index_mutations
+    They write no target file, so they cannot leave residue.
+  ✅ every needle present EXACTLY ONCE in its own target — no mutant is sitting in a target file
+
+PASS B — broad sweep: 466 literals x 9320 files (all tracked .json .py .swift .ts .tsx)
+  = 4343120 pairwise checks
+  133 replacement(s) under 24 chars excluded here as coincidence-prone — all of them are cleared by Pass A.
+
+  72 literal(s) matched a replacement but are ALREADY in that file at origin/master — pre-existing source, not residue:
+     backend/app/routes/admin.py  <-  typeahead_outcome_arm_mutations:M2-NO-LIMIT
+     backend/app/routes/admin.py  <-  typeahead_outcome_arm_mutations:M21-SECOND-STATEMENT-UNARMED
+     backend/app/routes/admin_cohort.py  <-  typeahead_outcome_arm_mutations:M2-NO-LIMIT
+     backend/app/routes/admin_data_quality.py  <-  typeahead_outcome_arm_mutations:M21-SECOND-STATEMENT-UNARMED
+     backend/app/routes/admin_engagement.py  <-  futures_detail_sources_cache_mutations:M-REDIS
+     backend/app/routes/admin_engagement.py  <-  typeahead_outcome_arm_mutations:M21-SECOND-STATEMENT-UNARMED
+     backend/app/routes/admin_judgments.py  <-  search_suggestions_movers_pool_mutations:M-POOL-NO-STATUS
+     backend/app/routes/admin_judgments.py  <-  search_suggestions_movers_pool_mutations:M-POOL-IGNORES-CONDITIONS
+     backend/app/routes/admin_judgments.py  <-  typeahead_outcome_arm_mutations:M21-SECOND-STATEMENT-UNARMED
+     backend/app/routes/admin_matching.py  <-  kalshi_segment_resolved_link_mutations:M1
+     backend/app/routes/admin_matching.py  <-  typeahead_outcome_arm_mutations:M21-SECOND-STATEMENT-UNARMED
+     backend/app/routes/admin_source_health.py  <-  typeahead_outcome_arm_mutations:M21-SECOND-STATEMENT-UNARMED
+     backend/app/routes/admin_taxonomy.py  <-  typeahead_outcome_arm_mutations:M2-NO-LIMIT
+     backend/app/routes/admin_taxonomy.py  <-  typeahead_outcome_arm_mutations:M21-SECOND-STATEMENT-UNARMED
+     backend/app/routes/admin_teams.py  <-  typeahead_outcome_arm_mutations:M21-SECOND-STATEMENT-UNARMED
+     backend/app/routes/admin_utils.py  <-  typeahead_outcome_arm_mutations:M21-SECOND-STATEMENT-UNARMED
+     backend/app/routes/event.py  <-  prop_families_cache_mutations:M9
+     backend/app/routes/feed.py  <-  search_suggestions_movers_pool_mutations:M-POOL-NO-STATUS
+     backend/app/routes/feed.py  <-  search_suggestions_movers_pool_mutations:M-POOL-IGNORES-CONDITIONS
+     backend/app/routes/feed.py  <-  typeahead_outcome_arm_mutations:M21-SECOND-STATEMENT-UNARMED
+     backend/app/routes/futures.py  <-  kalshi_segment_resolved_link_mutations:M1
+     backend/app/routes/futures.py  <-  typeahead_outcome_arm_mutations:M21-SECOND-STATEMENT-UNARMED
+     backend/app/routes/golf.py  <-  kalshi_segment_resolved_link_mutations:M1
+     backend/app/routes/league_futures.py  <-  tennis_population_mutations:M7
+     backend/app/routes/playoffs.py  <-  typeahead_outcome_arm_mutations:M21-SECOND-STATEMENT-UNARMED
+     backend/app/routes/sports.py  <-  typeahead_outcome_arm_mutations:M21-SECOND-STATEMENT-UNARMED
+     backend/app/routes/tournaments.py  <-  typeahead_outcome_arm_mutations:M2-NO-LIMIT
+     backend/app/services/durable_snapshots.py  <-  typeahead_outcome_arm_mutations:M2-NO-LIMIT
+     backend/app/services/durable_snapshots.py  <-  typeahead_outcome_arm_mutations:M21-SECOND-STATEMENT-UNARMED
+     backend/app/tasks/__init__.py  <-  typeahead_outcome_arm_mutations:M21-SECOND-STATEMENT-UNARMED
+     backend/app/tasks/calibration_beat_gauge_sampler.py  <-  typeahead_outcome_arm_mutations:M2-NO-LIMIT
+     backend/app/tasks/calibration_main_build.py  <-  typeahead_outcome_arm_mutations:M2-NO-LIMIT
+     backend/app/tasks/calibration_published_twin_worker.py  <-  typeahead_outcome_arm_mutations:M2-NO-LIMIT
+     backend/app/tasks/cohort_cell_census_worker.py  <-  typeahead_outcome_arm_mutations:M2-NO-LIMIT
+     backend/app/tasks/create_events_from_truth.py  <-  typeahead_outcome_arm_mutations:M2-NO-LIMIT
+     backend/app/tasks/daily_digest.py  <-  search_suggestions_movers_pool_mutations:M-SET-WIDEN
+     backend/app/tasks/datagolf.py  <-  kalshi_segment_resolved_link_mutations:M1
+     backend/app/tasks/espn_sync.py  <-  search_suggestions_cold_mutations:M23
+     backend/app/tasks/futures.py  <-  kalshi_segment_resolved_link_mutations:M1
+     backend/app/tasks/futures_categories_warm.py  <-  typeahead_outcome_arm_mutations:M2-NO-LIMIT
+     backend/app/tasks/odds_polling.py  <-  search_suggestions_cold_mutations:M23
+     backend/app/tasks/precompute_calibration.py  <-  typeahead_outcome_arm_mutations:M2-NO-LIMIT
+     backend/app/tasks/precompute_calibration.py  <-  typeahead_outcome_arm_mutations:M21-SECOND-STATEMENT-UNARMED
+     backend/app/tasks/prediction_market_matching.py  <-  search_suggestions_cold_mutations:M23
+     backend/app/tasks/prop_families_warm.py  <-  tennis_population_mutations:M7
+     backend/app/tasks/push_notifications.py  <-  typeahead_outcome_arm_mutations:M21-SECOND-STATEMENT-UNARMED
+     backend/app/tasks/repair_event_espn_id.py  <-  typeahead_outcome_arm_mutations:M2-NO-LIMIT
+     backend/app/tasks/repair_event_team_binding.py  <-  typeahead_outcome_arm_mutations:M2-NO-LIMIT
+     backend/app/tasks/repair_kalshi_fabricated_loss.py  <-  typeahead_outcome_arm_mutations:M2-NO-LIMIT
+     backend/app/tasks/repair_pm_never_graded.py  <-  typeahead_outcome_arm_mutations:M2-NO-LIMIT
+     backend/app/tasks/repair_team_identity_mapping.py  <-  typeahead_outcome_arm_mutations:M2-NO-LIMIT
+     backend/app/tasks/task_checkpoint.py  <-  typeahead_outcome_arm_mutations:M2-NO-LIMIT
+     backend/app/tasks/taxonomy.py  <-  kalshi_segment_resolved_link_mutations:M1
+     backend/app/tasks/taxonomy.py  <-  search_suggestions_cold_mutations:M23
+     backend/app/tasks/tournament_price_refresh.py  <-  typeahead_outcome_arm_mutations:M2-NO-LIMIT
+     backend/app/tasks/typeahead_index.py  <-  polymarket_leg_label_drain_mutations:M-VENUESILENT
+     backend/app/utils/calibration_durable_baseline.py  <-  typeahead_outcome_arm_mutations:M2-NO-LIMIT
+     backend/app/utils/event_concept_cache.py  <-  game_markets_shared_cache_mutations:M13
+     backend/app/utils/event_concept_cache.py  <-  tennis_population_mutations:M7
+     backend/app/utils/event_concept_population.py  <-  kalshi_segment_resolved_link_mutations:M1
+     backend/app/utils/feed_event_candidates.py  <-  search_suggestions_cold_mutations:M23
+     backend/app/utils/search_match_class.py  <-  search_scorer_wiring_mutations:M9
+     backend/scripts/evals/duration_sample_window_mutations.py  <-  duration_sample_window_mutations:M07-stop-stamping-the-sample
+     backend/scripts/evals/duration_sample_window_mutations.py  <-  duration_sample_window_mutations:M10-drop-durations-expire
+     backend/scripts/evals/probe_registry.json  <-  outcome_evidence_class_mutations:M4
+     backend/scripts/evals/search_entity_probes.json  <-  outcome_evidence_class_mutations:M4
+     backend/scripts/lat_p132_mutation_battery.py  <-  season_market_discovery_mutations:M15
+     backend/scripts/lat_p133_mutation_battery.py  <-  market_born_duplicate_drain_mutations:M14
+     backend/scripts/replay_discover_ranking.py  <-  typeahead_outcome_arm_mutations:M21-SECOND-STATEMENT-UNARMED
+     backend/tests/evals/test_probe_registry.py  <-  outcome_evidence_class_mutations:M4
+     backend/tests/test_sentry_filter.py  <-  futures_categories_warm_mutations:M9
+     backend/tests/test_suspended_is_reachable_cert_786.py  <-  search_suggestions_cold_mutations:M23
+✅ CLEAN — 0 residual mutants: 599 needles verified in place, 4343120 broad checks

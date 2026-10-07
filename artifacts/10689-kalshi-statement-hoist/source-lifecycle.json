@@ -1,0 +1,23 @@
+{
+  "temp": "/tmp/kalshi-source10689-v6jac1lx",
+  "port": 55531,
+  "stopped": true,
+  "pid": 8243,
+  "gates": [
+    {
+      "name": "source-postgres-final",
+      "exit": 0,
+      "skipped": false,
+      "command": [
+        "/usr/local/fbcode/platform010/Python3.12.framework/Versions/3.12/bin/python3.12",
+        "-m",
+        "pytest",
+        "tests/test_kalshi_price_statement_10689.py",
+        "tests/integration/test_kalshi_price_statement_10689_pg.py",
+        "tests/test_startup.py",
+        "-q",
+        "-rs"
+      ]
+    }
+  ]
+}
