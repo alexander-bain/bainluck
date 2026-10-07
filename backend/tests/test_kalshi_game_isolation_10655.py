@@ -19,6 +19,7 @@ from sqlalchemy.exc import OperationalError
 from app.models.models import FuturesOutcome
 from app.tasks.kalshi_ws import (  # noqa: F401 — the exec'd flush reads these
     PRICE_PHASE_LOCK_TIMEOUT_MS,
+    _KalshiPriceOwner,
     linked_first_phases,
 )
 from app.tasks.live_blend_refresh import event_ids_for_outcomes
@@ -34,6 +35,7 @@ from app.utils.repair_lock_budget import (  # noqa: F401 — read by the exec'd 
     lock_timeout_value,
 )
 from app.utils.resolution_authority import AUTHORITATIVE_SOURCES
+from tests._kalshi_price_session import bind_session, consumer_engine
 from tests.pm_bulk_test_support import price_writes, statement_params
 
 
@@ -42,13 +44,14 @@ class LockNotAvailable(Exception):
     sqlstate = "55P03"
 
 
-def rig(*, failed=None, declined=None, pending=(), locked=()):
+def rig(*, failed=None, declined=None, pending=(), locked=(), unchanged=()):
     batch = {1: (.6, .59, .61), 2: (.4, .39, .41),
              3: (.7, .69, .71), 9: (.1, .09, .11)}
     markets, events = {1: 10, 2: 10, 3: 20, 9: 90}, {1: 100, 2: 100, 3: 200}
     trace, committed = [], []
     entered, release = asyncio.Event(), asyncio.Event()
-    control = {"failed": failed, "declined": declined, "locked": set(locked)}
+    control = {"failed": failed, "declined": declined, "locked": set(locked),
+               "unchanged": set(unchanged)}  # #10693: written, quote did not move
     # #10661: a row another writer holds. Like Postgres, a transaction that set
     # `lock_timeout` gives up with 55P03; one that did not waits for the holder.
     lock_released = asyncio.Event()
@@ -84,13 +87,17 @@ def rig(*, failed=None, declined=None, pending=(), locked=()):
             if oid == control["declined"]:
                 return SimpleNamespace(rowcount=0, all=lambda: [])
             self.rows.append(oid)
-            row = SimpleNamespace(id=oid, market_id=markets[oid],
-                                  last_updated=oid, quote_moved=True)
+            row = SimpleNamespace(id=oid, market_id=markets[oid], last_updated=oid,
+                                  quote_moved=oid not in control["unchanged"])
             return SimpleNamespace(rowcount=1, all=lambda: [row])
+
+    # #10693: the flush writes through the run's price pipeline, installed on
+    # the engine its sessions are bound to.
+    engine = consumer_engine()
 
     @asynccontextmanager
     async def session():
-        s = Session()
+        s = bind_session(Session(), engine)
         try:
             yield s
         except BaseException:
@@ -122,6 +129,7 @@ def rig(*, failed=None, declined=None, pending=(), locked=()):
               input_marks={oid: oid for oid in batch}, tail_receipts=Receipts(),
               open_contract_outcome_ids={9}, blend_refresher=Refresher(),
               get_task_session=session, stats=stats,
+              prices=_KalshiPriceOwner(),
               logger=logging.getLogger(__name__),
               queue_market_change=lambda *args, **kwargs: None)
     path = Path(__file__).resolve().parents[1] / 'app/tasks/kalshi_ws.py'

@@ -66,6 +66,7 @@ from app.utils.resolution_authority import (
     GUESS_FAMILY_SOURCES,
     TERMINAL_SOURCES,
 )
+from tests._kalshi_price_session import bind_sessions, returned
 
 MARKET_ID = 7
 EVENT_ID = 900
@@ -145,6 +146,14 @@ class _CapturingSession:
             if stmt.table.name == "futures_outcomes" and _sets_the_price(stmt):
                 # #10689: the reused template and THIS row's values.
                 self._captured.append((stmt, params))
+                # #10693: a write that landed is a row the UPDATE RETURNED. Its
+                # quote is "unchanged" so no market invalidation is staged — the
+                # #9484 files own that path; this one owns the guard.
+                landed = (
+                    [returned(params["kalshi_outcome_id"], quote_moved=False)]
+                    if self._rowcount else []
+                )
+                return _Result(landed, rowcount=self._rowcount)
             return _Result([], rowcount=self._rowcount)
         return _Result(self._batches.pop(0) if self._batches else [])
 
@@ -223,7 +232,9 @@ async def _drive_the_socket(monkeypatch, rowcount=1):
     monkeypatch.setattr(kalshi_task, "PRICE_FLUSH_SECONDS", 0.02)
     monkeypatch.setattr(blend_mod, "LiveBlendRefresher", _NoopRefresher)
     monkeypatch.setattr(websockets, "connect", _connect)
-    monkeypatch.setattr(task_base, "get_task_session", lambda *a, **kw: _SessionCtx())
+    monkeypatch.setattr(
+        task_base, "get_task_session", bind_sessions(lambda *a, **kw: _SessionCtx())
+    )
 
     stats = await kalshi_task._run_kalshi_ws_consumer()
     return captured, stats

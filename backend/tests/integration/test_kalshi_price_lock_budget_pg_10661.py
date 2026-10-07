@@ -30,6 +30,15 @@ it wait in production.
 * ``test_cancelling_a_waiting_flush_keeps_every_unpaid_price``: cancelled while
   game A waits, nothing is published or lost and the pooled connection resets.
 
+#10693: the price rows now go through the run's price pipeline, installed on
+this engine and closed before it is disposed, exactly as the consumer owns it.
+Game B's two legs are one consecutive no-book run, so on the supported
+SQLAlchemy/asyncpg pair they are ONE pipelined round trip; on any other pair,
+one execute per row. The two ``..._inside_a_pipelined_run`` cases hold a row
+the PRICE write itself takes, in the middle of game A's two-row run, so the
+lock wait (and the 55P03 it ends in) happens inside the pipeline's round trip,
+not in the re-rank after it. ``_selected_path`` names which path ran.
+
 Synthetic rows; ordering and safety only, not production timing.
 """
 
@@ -92,6 +101,9 @@ async def pg():
         await conn.run_sync(Base.metadata.create_all, tables=wanted)
     ids = await _seed(async_sessionmaker(side, expire_on_commit=False))
     yield engine, side, ids
+    # #10693: the listener goes before the engine it is installed on.
+    while _OWNERS:
+        _OWNERS.pop().close()
     await engine.dispose()
     await side.dispose()
 
@@ -154,6 +166,10 @@ class _Receipts:
         self.trace.append(("receipt", tuple(sorted(marks))))
 
 
+#: #10693: every rig's price owner, closed by `pg` before engine disposal.
+_OWNERS: list = []
+
+
 def _rig(engine, ids, batch):
     """The shipped closures, bound to this database and a recording refresher."""
     from app.models.models import FuturesOutcome
@@ -206,7 +222,9 @@ def _rig(engine, ids, batch):
         open_contract_outcome_ids=set(), blend_refresher=RecordingRefresher("kalshi"),
         get_task_session=partial(get_task_session, engine=engine),
         stats=stats, logger=logging.getLogger(__name__),
+        prices=kalshi_ws._KalshiPriceOwner(),  # #10693: the run's price pipeline
     )
+    _OWNERS.append(ns["prices"])
     tree = ast.parse(SOURCE.read_text())
     nodes = [n for n in ast.walk(tree) if isinstance(n, ast.AsyncFunctionDef)
              and n.name in ("flush_prices", "drain_prices")]
@@ -383,3 +401,93 @@ async def test_cancelling_a_waiting_flush_keeps_every_unpaid_price(pg):
     assert (await _prices(side, ids))["a1"] == (0.3, 2)
     async with engine.connect() as conn:
         assert await conn.scalar(text("SHOW lock_timeout")) == "0"
+
+
+# ------------------------------------------------- #10693 pipelined runs ----
+
+
+def _selected_path(engine):
+    """Record whether a price write ran as one executemany round trip.
+
+    The pipelined path is a driver executemany of the price template; the
+    ordinary path is one execute per row. Which one ran is a fact about the
+    installed SQLAlchemy/asyncpg pair, so the cases assert it against that.
+    """
+    from sqlalchemy import event
+
+    seen = []
+
+    def before(_conn, _cursor, statement, _params, _context, executemany):
+        if statement.lstrip().upper().startswith("UPDATE FUTURES_OUTCOMES SET CURRENT_PROBABILITY"):
+            seen.append(executemany)
+
+    event.listen(engine.sync_engine, "before_cursor_execute", before)
+    return seen
+
+
+def _pipelined_expected():
+    from app.utils.kalshi_price_pipeline import _load_compatibility
+
+    return _load_compatibility() is not None
+
+
+def _pipelined_batch(ids):
+    """Game A's two legs buffered together: one consecutive two-row run."""
+    legs = ids["legs"]
+    return {
+        legs["a1"]: (0.7, None, None), legs["a2"]: (0.2, None, None),
+        legs["b1"]: (0.6, None, None), legs["b_settled"]: (0.2, None, None),
+        legs["x1"]: (0.4, None, None),
+    }
+
+
+async def test_a_held_row_inside_a_pipelined_run_lets_the_later_games_commit(pg):
+    engine, side, ids = pg
+    legs, events = ids["legs"], ids["events"]
+    batch = _pipelined_batch(ids)
+    ns, trace, stats = _rig(engine, ids, batch)
+    path = _selected_path(engine)
+
+    async with _holding(side, legs["a2"]) as held:
+        assert await asyncio.wait_for(ns["flush_prices"](), 5) is False
+        assert held.is_active
+
+        stored = await _prices(side, ids)
+        assert stored["a1"] == (0.3, 2) and stored["a2"] == (0.5, 1)  # A rolled back whole
+        assert stored["b1"][0] == 0.6
+        assert stored["b_settled"][0] == 1.0  # #5411 refusal survives the pipeline
+        assert stored["x1"][0] == 0.4
+        assert batch == {legs["a1"]: (0.7, None, None), legs["a2"]: (0.2, None, None)}
+        assert [t for t in trace if t[0] == "refresh"] == [("refresh", (events["b"],))]
+        assert not any(t[0] == "receipt" and legs["a1"] in t[1] for t in trace)
+        assert stats["errors"] == 1 and stats["requeued"] == 2
+        assert stats["settled_declined"] == 1
+        async with engine.connect() as conn:
+            assert await conn.scalar(text("SHOW lock_timeout")) == "0"
+
+    assert await asyncio.wait_for(ns["flush_prices"](), 5) is True
+    stored = await _prices(side, ids)
+    assert stored["a1"] == (0.7, 1) and stored["a2"] == (0.2, 2)
+    assert not batch
+    assert any(path) is _pipelined_expected(), (path, _pipelined_expected())
+
+
+async def test_the_final_drain_outlasts_a_hold_inside_a_pipelined_run(pg):
+    engine, side, ids = pg
+    legs = ids["legs"]
+    batch = _pipelined_batch(ids)
+    ns, _trace, stats = _rig(engine, ids, batch)
+    path = _selected_path(engine)
+
+    async with _holding(side, legs["a2"]) as held:
+        task = asyncio.create_task(ns["drain_prices"]())
+        await _wait_for_a_lock_wait(side)
+        await asyncio.sleep(DRAIN_HOLD_S)
+        assert not task.done()
+        await held.rollback()
+        await asyncio.wait_for(task, 5)
+    assert stats["final_flush_dropped"] == 0
+    assert not batch
+    stored = await _prices(side, ids)
+    assert stored["a1"] == (0.7, 1) and stored["a2"] == (0.2, 2)
+    assert any(path) is _pipelined_expected(), (path, _pipelined_expected())

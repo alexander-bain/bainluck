@@ -41,7 +41,11 @@ import app.tasks.base as task_base
 import app.tasks.kalshi_ws as kalshi_task
 import app.tasks.live_blend_refresh as blend_mod
 import app.tasks.polymarket_ws as poly_task
+from app.utils.kalshi_price_pipeline import _OWNER as PIPELINE_OWNER
 from app.utils.repair_lock_budget import SET_LOCK_TIMEOUT_SQL
+from sqlalchemy import create_engine
+
+from tests._kalshi_price_session import bind_session, is_price_write, returned
 
 from tests.test_ws_flush_retry_q491 import (
     KALSHI_SLATE,
@@ -66,9 +70,16 @@ class _FakeEngine:
         self.n = n
         self.log = log
         self.disposed = 0
+        # #10693: the Kalshi price pipeline installs its listener on the
+        # engine's sync half, so that half is a real (never-connected) Engine.
+        self.sync_engine = create_engine("sqlite://")
+        self.pipeline_at_dispose = []
 
     async def dispose(self):
         self.disposed += 1
+        self.pipeline_at_dispose.append(
+            getattr(self.sync_engine, PIPELINE_OWNER, None)
+        )
         self.log.append(("dispose", self.n))
 
 
@@ -113,12 +124,15 @@ class _Rig:
                         and price_writes(stmt, params)
                     ):
                         rig.writes.extend(price_writes(stmt, params))
+                        if is_price_write(stmt):  # #10693: the RETURNED row
+                            (oid, _prob), = price_writes(stmt, params)
+                            return _Result([returned(oid, quote_moved=False)])
                     return _Result([])
                 return _Result(rig.batches.pop(0) if rig.batches else [])
 
         class _Ctx:
             async def __aenter__(self_inner):
-                session = _Session()
+                session = bind_session(_Session(), engine)  # #10693
                 rig.calls.append(
                     {"engine": engine, "budget": budget, "session": session}
                 )
