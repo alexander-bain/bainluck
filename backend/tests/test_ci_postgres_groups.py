@@ -1,4 +1,4 @@
-"""#9670: distribute real-DB work without losing a gate or its provisioning.
+"""#9670 / #10703: distribute real-DB work without losing a gate or provisioning.
 
 These are offline workflow checks, not claims that hosted integration passed.
 The manifest is an explicit assignment of execution units, not a test allowlist:
@@ -6,12 +6,13 @@ every unit in the workflow must appear once, and every entry must execute once.
 """
 from __future__ import annotations
 
-from collections import Counter
+import ast
 import json
 import os
 from pathlib import Path
 import re
 import subprocess
+from collections import Counter
 
 import pytest
 import yaml
@@ -19,6 +20,109 @@ import yaml
 ROOT = Path(__file__).resolve().parents[2]
 WORKFLOW = ROOT / ".github/workflows/ci.yml"
 MANIFEST = ROOT / ".github/ci-postgres-groups.json"
+TAIL_PROVISIONER = "#10703 shared tail — provision pg_trgm on the fresh database"
+TAIL_FIRST_GATE = "#2927 container assembly writes and re-writes (real Postgres)"
+
+
+def _validate_tail_provisioner(step):
+    """Check the fresh database baseline and error propagation, not script bytes."""
+    lines = step["run"].splitlines()
+    heredoc = re.fullmatch(r"python(?:3)? - <<'([A-Z_]+)'", lines[0])
+    assert heredoc and lines[-1] == heredoc.group(1)
+    tree = ast.parse("\n".join(lines[1:-1]))
+    provision = next(node for node in tree.body
+                     if isinstance(node, ast.AsyncFunctionDef) and node.name == "provision")
+    calls = [node for node in ast.walk(provision) if isinstance(node, ast.Call)]
+    engine = next(node for node in calls if ast.unparse(node.func) == "create_async_engine")
+    assert ast.unparse(engine.args[0]) == "os.environ['SEARCH_TEST_DATABASE_URL']"
+    transaction = next(node for node in ast.walk(provision) if isinstance(node, ast.AsyncWith))
+    assert ast.unparse(transaction.items[0].context_expr) == "engine.begin()"
+    write = next(node.value for node in ast.walk(transaction)
+                 if isinstance(node, ast.Await) and isinstance(node.value, ast.Call))
+    assert ast.unparse(write.func) == "conn.execute"
+    assert ast.unparse(write.args[0].func) == "text"
+    assert write.args[0].args[0].value == "CREATE EXTENSION IF NOT EXISTS pg_trgm"
+    cleanup = next(node for node in ast.walk(provision) if isinstance(node, ast.Try))
+    assert not cleanup.handlers and not cleanup.orelse
+    assert any(isinstance(node, ast.Await) and ast.unparse(node.value) == "engine.dispose()"
+               for statement in cleanup.finalbody for node in ast.walk(statement))
+    assert any(isinstance(node, ast.Expr) and ast.unparse(node.value) == "asyncio.run(provision())"
+               for node in tree.body)
+
+
+def _validate_fresh_tail(worker, fixture_source):
+    tail = [
+        step for step in worker["steps"]
+        if step.get("if") == "matrix.group == 'shared-tail'"
+    ]
+    assert [step["name"] for step in tail[:2]] == [TAIL_PROVISIONER, TAIL_FIRST_GATE]
+    original_shared = [
+        step["name"] for step in worker["steps"]
+        if step.get("if") in ("matrix.group == 'shared'", "matrix.group == 'shared-tail'")
+        and step.get("name") != TAIL_PROVISIONER
+    ]
+    prefix = [
+        step["name"] for step in worker["steps"]
+        if step.get("if") == "matrix.group == 'shared'"
+    ]
+    boundary = original_shared.index(TAIL_FIRST_GATE)
+    assert prefix == original_shared[:boundary]
+    assert [step["name"] for step in tail[1:]] == original_shared[boundary:]
+    _validate_tail_provisioner(tail[0])
+    fixture = next(
+        node for node in ast.parse(fixture_source).body
+        if isinstance(node, ast.AsyncFunctionDef) and node.name == "pg_session"
+    )
+    calls = {
+        ast.unparse(node.args[0]): node.lineno for node in ast.walk(fixture)
+        if isinstance(node, ast.Call) and ast.unparse(node.func).endswith("run_sync")
+        and node.args
+    }
+    yielded = next(node.lineno for node in ast.walk(fixture) if isinstance(node, ast.Yield))
+    assert calls["Base.metadata.drop_all"] < calls["Base.metadata.create_all"] < yielded
+    assert "import app.models.models" in ast.unparse(fixture)
+    assert "DROP TABLE IF EXISTS container_corrections" in ast.unparse(fixture)
+
+
+def _tail_fixture_source():
+    return (ROOT / "backend/tests/integration/test_container_assembly_real_postgres.py").read_text()
+
+
+def test_fresh_tail_provisions_the_extension_before_its_full_schema_reset():
+    jobs, _ = _inputs()
+    _validate_fresh_tail(jobs["database-integration"], _tail_fixture_source())
+
+
+@pytest.mark.parametrize(
+    "mutation", ["wrong_group", "late_provisioner", "missing_reset", "missing_extension",
+                 "split_tail", "wrong_url", "swallowed_error"]
+)
+def test_fresh_tail_guard_rejects_broken_provisioning(mutation):
+    jobs, _ = _inputs()
+    worker = jobs["database-integration"]
+    steps = worker["steps"]
+    provisioner = next(s for s in steps if s.get("name") == TAIL_PROVISIONER)
+    source = _tail_fixture_source()
+    if mutation == "wrong_group":
+        provisioner["if"] = "matrix.group == 'shared'"
+    elif mutation == "late_provisioner":
+        steps.remove(provisioner)
+        first = next(i for i, s in enumerate(steps) if s.get("name") == TAIL_FIRST_GATE)
+        steps.insert(first + 1, provisioner)
+    elif mutation == "missing_reset":
+        source = source.replace("await conn.run_sync(Base.metadata.drop_all)", "pass")
+    elif mutation == "missing_extension":
+        provisioner["run"] = provisioner["run"].replace("CREATE EXTENSION IF NOT EXISTS pg_trgm", "SELECT 1")
+    elif mutation == "split_tail":
+        next(s for s in steps if s.get("name", "").startswith("#9653 "))["if"] = "matrix.group == 'shared'"
+    elif mutation == "wrong_url":
+        provisioner["run"] = provisioner["run"].replace("SEARCH_TEST_DATABASE_URL", "OTHER_DATABASE_URL")
+    else:
+        provisioner["run"] = provisioner["run"].replace(
+            "    finally:", "    except Exception:\n        pass\n    finally:"
+        )
+    with pytest.raises((AssertionError, KeyError)):
+        _validate_fresh_tail(worker, source)
 
 
 def _inputs():
@@ -67,7 +171,7 @@ def test_common_setup_services_and_intentional_scope_skip():
     assert worker["needs"] == "change-scope"
     assert worker["if"] == "needs.change-scope.outputs.scope != 'frontend'"
     assert worker["strategy"]["fail-fast"] is False
-    assert worker["strategy"]["matrix"]["group"] == ["shared", "isolated"]
+    assert worker["strategy"]["matrix"]["group"] == ["shared", "shared-tail", "isolated"]
     assert worker["services"]["postgres"]["image"] == "postgres:15"
     assert worker["services"]["postgres"]["env"]["POSTGRES_DB"] == "bl_searchtest"
     assert worker["services"]["redis"]["ports"] == ["56379:6379"]
