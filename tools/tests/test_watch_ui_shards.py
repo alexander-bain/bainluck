@@ -56,9 +56,9 @@ class WatchUIShardTests(unittest.TestCase):
     def verify(self):
         return gate.aggregate(self.root, self.sha, self.groups, verify_markers=False)
 
-    def test_complete_distinct_pairs_cover_all_31_debug_cases(self):
-        self.assertEqual(self.verify()["tests"], 31)
-        self.assertEqual(len(self.groups["readings"]), 11)
+    def test_complete_distinct_pairs_cover_all_33_debug_cases(self):
+        self.assertEqual(self.verify()["tests"], 33)
+        self.assertEqual(len(self.groups["readings"]), 13)
         self.assertEqual(len(self.groups["navigation"]), 6)
         self.assertEqual(len(self.groups["controls"]), 8)
         self.assertEqual(len(self.groups["widgets"]), 6)
@@ -187,9 +187,11 @@ class WatchUIShardTests(unittest.TestCase):
         ]
         complete = original + "\n" + "\n".join(rows)
         path.write_text(complete)
-        self.assertEqual(gate.aggregate(self.root, self.sha, self.groups)["tests"], 31)
+        self.assertEqual(gate.aggregate(self.root, self.sha, self.groups)["tests"], 33)
         for marker in (
             "WATCH_UI_DISCOVERIES_POLISH_STANDARD=PASS",
+            "WATCH_UI_RECTANGULAR_ACTUAL_TYPED=PASS",
+            "WATCH_UI_RECTANGULAR_MONOCHROME=PASS",
             "WATCH_UI_GAME_UPDATING_LARGE=PASS",
             "WATCH_UI_DIAGNOSTICS_LARGE=PASS",
         ):

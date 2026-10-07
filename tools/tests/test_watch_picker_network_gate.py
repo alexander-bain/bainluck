@@ -1,4 +1,3 @@
-UPDATING_CASES = [f"Test Case '-[BainLuckWatchUITests.SelectedGameUpdatingJourneyTests {case}]' passed (12.0 seconds)." for case in ("testUpdatingIsVisibleUntilRequestFinishes", "testUpdatingIsVisibleAtAccessibilitySize")]
 """Typed network guidance requires the complete visible recovery journey."""
 import ast
 from pathlib import Path
@@ -6,6 +5,8 @@ import subprocess
 import sys
 import tempfile
 import unittest
+
+UPDATING_CASES = [f"Test Case '-[BainLuckWatchUITests.SelectedGameUpdatingJourneyTests {case}]' passed (12.0 seconds)." for case in ("testUpdatingIsVisibleUntilRequestFinishes", "testUpdatingIsVisibleAtAccessibilitySize")]
 
 ROOT = Path(__file__).resolve().parents[2]
 NETWORK = ("WATCH_UI_PICKER_NETWORK_OFFLINE=PASS", "WATCH_UI_PICKER_NETWORK_INTERRUPTED=PASS", "WATCH_UI_PICKER_NETWORK_TIMEOUT=PASS")
