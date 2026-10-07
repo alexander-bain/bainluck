@@ -10,6 +10,7 @@ final class WatchTelemetry: NSObject, ObservableObject, WCSessionDelegate, @unch
     @MainActor @Published private(set) var consentSaved = true
     @MainActor private var buffer: WatchTelemetryBuffer
     @MainActor private var started = false
+    @MainActor private var foregroundActive = false
     @MainActor private var sending = false
     @MainActor private var handshaking = false
     @MainActor private var shownScreen: WatchTelemetrySurface?
@@ -54,6 +55,8 @@ final class WatchTelemetry: NSObject, ObservableObject, WCSessionDelegate, @unch
     }
 
     @MainActor func foreground() {
+        guard !foregroundActive else { return }
+        foregroundActive = true
         start()
         if let shownScreen { screen(shownScreen) }
         record(.appOpen, surface: currentScreen ?? .game)
@@ -61,6 +64,8 @@ final class WatchTelemetry: NSObject, ObservableObject, WCSessionDelegate, @unch
     }
 
     @MainActor func background() {
+        guard foregroundActive else { return }
+        foregroundActive = false
         finishScreen()
         record(.appBackground, surface: currentScreen ?? .game)
         currentScreen = nil

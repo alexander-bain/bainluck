@@ -16,6 +16,9 @@ struct WatchDiagnosticsView: View {
             }
         }
         .navigationTitle("Diagnostics")
-        .onAppear { telemetry.screen(.diagnostics) }
+        .onAppear {
+            telemetry.screen(.diagnostics)
+            telemetry.content(.diagnostics)
+        }
     }
 }

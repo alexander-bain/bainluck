@@ -9,6 +9,7 @@ struct BainLuckWatchApp: App {
     var body: some Scene {
         WindowGroup {
             WatchTabView()
+                .onAppear { WatchTelemetry.shared.foreground() }
         }
         .onChange(of: scenePhase) { _, phase in
             if phase == .active { WatchTelemetry.shared.foreground() }
