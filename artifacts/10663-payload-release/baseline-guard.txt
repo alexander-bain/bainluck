@@ -133,7 +133,7 @@ __________________ test_cancel_unwinds_handler_before_cleanup __________________
 tests/test_poly_ws_processed_payload_lifetime_10663.py:153: in test_cancel_unwinds_handler_before_cleanup
     assert cancelled == [True] and socket.exited is True
 E   assert ([True] == [True]
-E     
+E
 E     Use -v to get more diff and False is True)
 E    +  where False = <tests.test_poly_ws_processed_payload_lifetime_10663.Socket object at 0x10c9e3ce0>.exited
 =============================== warnings summary ===============================
