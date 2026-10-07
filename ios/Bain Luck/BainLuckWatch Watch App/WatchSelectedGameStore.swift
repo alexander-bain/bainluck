@@ -77,6 +77,8 @@ final class WatchSelectedGameStore: ObservableObject {
     // Monotonic process clock keeps a wall-clock correction from extending the pause.
     private let retryClock: () -> TimeInterval
     private var retryNotBefore: TimeInterval?
+    // Keep the completed-request cadence across task cancellation / wrist raises.
+    private var automaticRefreshNotBefore: TimeInterval?
     private static let selectionKey = "bainluck_watch_selected_event_id"
 
     private static let snapshotKey = "bainluck_watch_selected_game_snapshot_v1"
@@ -114,6 +116,7 @@ final class WatchSelectedGameStore: ObservableObject {
         revision += 1
         consecutiveFailures = 0
         retryNotBefore = nil
+        automaticRefreshNotBefore = nil
         selectedEventID = eventID
         publish(nil, nil)
         defaults.set(eventID, forKey: Self.selectionKey)
@@ -129,6 +132,7 @@ final class WatchSelectedGameStore: ObservableObject {
         revision += 1
         consecutiveFailures = 0
         retryNotBefore = nil
+        automaticRefreshNotBefore = nil
         selectedEventID = nil
         publish(nil, nil)
         defaults.removeObject(forKey: Self.selectionKey)
@@ -154,7 +158,10 @@ final class WatchSelectedGameStore: ObservableObject {
     }
 
     /// Only an explicit user action bypasses the current server-directed pause.
-    @MainActor func allowManualRetry() { retryNotBefore = nil }
+    @MainActor func allowManualRetry() {
+        retryNotBefore = nil
+        automaticRefreshNotBefore = nil
+    }
 
     @MainActor func runForegroundRefresh(
         sleep: (TimeInterval) async throws -> Void = { seconds in
@@ -162,18 +169,24 @@ final class WatchSelectedGameStore: ObservableObject {
         }
     ) async {
         while !Task.isCancelled, selectedEventID != nil {
-            // A scene restart must not bypass a service's requested pause.
-            let delay = remainingServerDelay
+            // A scene restart reuses a recent reading and preserves failure/server waits.
+            let cadenceDelay = max(0, automaticRefreshNotBefore.map { $0 - retryClock() } ?? 0)
+            let delay = max(cadenceDelay, remainingServerDelay)
             if delay > 0 {
                 do { try await sleep(delay) }
                 catch { return }
                 guard !Task.isCancelled, selectedEventID != nil else { return }
                 continue
             }
+            automaticRefreshNotBefore = nil // Consume only an elapsed local deadline.
             await refresh()
             guard !Task.isCancelled, selectedEventID != nil else { return }
-            do { try await sleep(nextRefreshDelay) }
-            catch { return }
+            // Superseded or transport-canceled work did not record a deadline.
+            // Preserve the ordinary wait rather than starting a tight retry loop.
+            if automaticRefreshNotBefore == nil {
+                do { try await sleep(nextRefreshDelay) }
+                catch { return }
+            }
         }
     }
 
@@ -203,6 +216,7 @@ final class WatchSelectedGameStore: ObservableObject {
             } else {
                 defaults.removeObject(forKey: Self.snapshotKey)
             }
+            automaticRefreshNotBefore = retryClock() + nextRefreshDelay
             publish(result, receivedAt)
             isRefreshing = false
         } catch {
@@ -229,6 +243,7 @@ final class WatchSelectedGameStore: ObservableObject {
             default:
                 errorMessage = "Couldn't refresh. Try again."
             }
+            automaticRefreshNotBefore = retryClock() + nextRefreshDelay
             // Keep the last successful game and its original timestamps.
         }
     }

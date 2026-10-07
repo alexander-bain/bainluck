@@ -14,14 +14,19 @@ MARKERS = (
     "WATCH_UI_ACTUAL_WIDGET_EMPTY=PASS", "WATCH_UI_FRESH_FACE_ACTIVATION=PASS",
     "WATCH_RECTANGULAR_INSTALLED_DETAIL=Saved · 64% · Live",
     "WATCH_UI_CLEAR_SELECTION=PASS", "WATCH_UI_PICKER_RETURN=PASS",
+    "WATCH_UI_PICKER_NETWORK_OFFLINE=PASS", "WATCH_UI_PICKER_NETWORK_INTERRUPTED=PASS",
+    "WATCH_UI_PICKER_NETWORK_TIMEOUT=PASS",
     "WATCH_UI_DISCOVERIES_SAVED=PASS", "WATCH_UI_DISCOVERIES_LARGE=PASS",
     "WATCH_UI_DISCOVERIES_UNSELECTED=PASS", "WATCH_UI_DISCOVERIES_CONTINUATION=PASS",
     "WATCH_UI_DISCOVERIES_RETURN_STANDARD=PASS", "WATCH_UI_DISCOVERIES_RETURN_LARGE=PASS",
     "WATCH_UI_DISCOVERIES_HEADING_STANDARD=PASS", "WATCH_UI_DISCOVERIES_HEADING_LARGE=PASS",
     "WATCH_UI_CIRCULAR_CONTENT=PASS", "WATCH_UI_CIRCULAR_FALLBACK=PASS", "WATCH_UI_ACTUAL_CIRCULAR_SAVED=PASS",
+    "WATCH_UI_PICKER_SELECTED_STANDARD=PASS", "WATCH_UI_PICKER_SELECTED_LARGE=PASS",
 )
 CASE = ("Test Case '-[BainLuckWatchUITests.WidgetTapJourneyTests "
         "testFreshConfiguredFaceIsActiveBeforeActualLauncherTap]' passed (90.123 seconds).")
+NETWORK_CASE = ("Test Case '-[BainLuckWatchUITests.PickerReturnJourneyTests "
+                "testNetworkFailureGuidanceRetainsChoicesAndRecoversSelection]' passed (80.123 seconds).")
 SUMMARY = ("Test Suite 'All tests' passed at 2026-10-06 00:00:00.000.\n"
            "\t Executed 17 tests, with 0 failures (0 unexpected) in 1200 seconds\n"
            "** TEST EXECUTE SUCCEEDED **\n")
@@ -37,7 +42,9 @@ def gate(log, tmp_path):
 
 
 def accepted_log():
-    return "\n".join((*MARKERS, CASE, SUMMARY))
+    selected = [f"Test Case '-[BainLuckWatchUITests.PickerSelectedStateJourneyTests {case}]' passed (12.0 seconds)."
+                for case in ("testSelectedGameIsMarkedInPickerAndCanChange", "testSelectedGameIsMarkedAtAccessibilitySize")]
+    return "\n".join((*MARKERS, CASE, NETWORK_CASE, *selected, SUMMARY))
 
 
 def test_seventeen_test_summary_and_real_activation_case_are_accepted(tmp_path):

@@ -845,14 +845,22 @@ class PolymarketWebSocket:
 
     async def _price_snapshot(self, data: Any) -> None:
         """Each book in a snapshot frame, through `on_price` like a quote."""
-        for quote in _snapshot_quotes(data):
-            self._book_snapshot_quotes += 1
-            try:
-                result = self.on_price(quote)
-                if asyncio.iscoroutine(result):
-                    await result
-            except Exception:
-                logger.exception("Polymarket book snapshot price handler error")
+        # An async price callback can complete without suspending. Bound book
+        # extraction as well as callbacks so a reconnect dump cannot monopolize
+        # the loop ahead of ready quotes on other shards (#10665).
+        entries = data if isinstance(data, list) else [data]
+        batch_size = 32
+        for start in range(0, len(entries), batch_size):
+            for quote in _snapshot_quotes(entries[start : start + batch_size]):
+                self._book_snapshot_quotes += 1
+                try:
+                    result = self.on_price(quote)
+                    if asyncio.iscoroutine(result):
+                        await result
+                except Exception:
+                    logger.exception("Polymarket book snapshot price handler error")
+            if start + batch_size < len(entries):
+                await asyncio.sleep(0)
 
     @property
     def stats(self) -> dict:

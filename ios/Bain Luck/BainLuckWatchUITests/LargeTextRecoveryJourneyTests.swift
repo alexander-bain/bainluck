@@ -30,7 +30,7 @@ final class LargeTextRecoveryJourneyTests: XCTestCase {
         try reveal(heading, in: app)
         capture(app, "Verified largest text sheet heading")
         try reveal(error, in: app)
-        XCTAssertEqual(error.label, "Couldn't refresh available games. Try again.")
+        XCTAssertEqual(error.label, "Offline. Connect to the internet, then refresh games.")
         capture(app, "Largest text offline picker recovery")
         let cancel = app.buttons["watch.picker-cancel"].firstMatch
         try reveal(cancel, in: app)
@@ -118,7 +118,7 @@ final class LargeTextRecoveryJourneyTests: XCTestCase {
         XCTAssertFalse(app.buttons["watch.choose-another"].exists)
         let error = app.staticTexts["watch.picker-error"]
         XCTAssertTrue(error.waitForExistence(timeout: 15))
-        XCTAssertEqual(error.label, "Couldn't refresh available games. Try again.")
+        XCTAssertEqual(error.label, "Offline. Connect to the internet, then refresh games.")
         try reveal(heading, in: app)
         try reveal(error, in: app)
         let refresh = app.buttons["Refresh games"]
