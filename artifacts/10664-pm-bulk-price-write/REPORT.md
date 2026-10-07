@@ -21,7 +21,7 @@ There is no settlement guard on the existing PM price update. This candidate pre
 - Final new actual-engine controls after narrowing lock observation to the exact backend PID: **8 passed / 0 skipped**, exit 0. Cover stored rounding, NULL, unchanged/moved timestamps, vanished id, settled coverage compatibility, numeric overflow atomicity, post-price SQL rerank failure, actual outer commit-event failure, newer ticks on rollback and successful writes, concurrent deletion under a held row, real lock-wait cancellation, and publication with independent post-commit readback.
 - Startup: **4 passed**, exit 0.
 - Frontend build: exit 0. Typecheck: exit 0, **66 == baseline 66**.
-- New test files Black-check passed; changed application regions formatted; diff-check passed; CI YAML parsed.
+- New test files Black-check passed; changed application regions formatted; diff-check passed; CI YAML parsed. Existing CI execution-manifest guard: **35 passed** after registering the new shared step in its matching order.
 
 Recording-only fake sessions use one scalar/array price-bind decoder and still return no fabricated database rows. Existing deliberate failures, missing rows, retry/newer-input orchestration, and actual Session events/independent publication readback are preserved. No application SQLite fallback was added. AST timestamp guards follow the called module statement builder while retaining both assertions.
 
