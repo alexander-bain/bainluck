@@ -87,7 +87,8 @@ def test_disposable_consumers_keep_their_provisioner_on_the_same_runner():
     # Generic history is deliberately one chain: all three consumers use its
     # nonce, scratch Postgres, and Redis. WS suspended uses WS slate's DB.
     chains = [
-        ("bl_blend_deadlock_837", ["test_live_blend_stamp_deadlock_pg_837.py"]),
+        ("bl_blend_deadlock_837", ["test_live_blend_stamp_deadlock_pg_837.py",
+          "test_kalshi_price_lock_budget_pg_10661.py"]),
         ("bl_movement_accept_4079", ["test_numeric_movement_fields_4079_amended_real_postgres.py"]),
         ("bl_timeline_route_7284", ["test_the_timeline_route_loads_on_a_real_session_7284.py"]),
         ("bl_generic_history_7351", ["test_generic_market_history_7351_real_pg_redis.py",

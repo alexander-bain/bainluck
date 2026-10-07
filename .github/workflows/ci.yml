@@ -4480,6 +4480,30 @@ jobs:
             exit 1
           }
 
+      - name: "#10661 a held Kalshi game no longer holds the games after it (real Postgres)"
+        # The Kalshi socket's periodic flush writes each independent game in its
+        # own transaction (#10655); a game whose row another writer held used to
+        # stop the flush there, so every later game's ready price waited too.
+        # #10661 gives each phase a 500 ms transaction-local lock_timeout and
+        # continues only past 55P03. Only real row locks can show it, and only
+        # they can show the other half: the final drain at recycle keeps NO
+        # timeout, so a hold longer than three back-to-back 500 ms attempts still
+        # commits instead of being dropped (strawman included). Reuses the #837
+        # database provisioned above; same skip detection plus a count.
+        if: matrix.group == 'isolated'
+        run: |
+          set -o pipefail
+          python -m pytest tests/integration/test_kalshi_price_lock_budget_pg_10661.py \
+            -v -rs 2>&1 | tee /tmp/pricelock10661.txt
+          if grep -qiE "[0-9]+ skipped" /tmp/pricelock10661.txt; then
+            echo "::error::#10661 price lock budget gate SKIPPED — the gate did not run"
+            exit 1
+          fi
+          grep -qE "[^0-9]5 passed," /tmp/pricelock10661.txt || {
+            echo "::error::#10661 price lock budget gate did not run all five cases"
+            exit 1
+          }
+
       - name: "#1927 a negative rank term never excludes, at the route (real Postgres)"
         # The wide half of #1927. Discover judges a live game "exceptional" by
         # reading its personalised `score`, so a stored Nah (×0.4) or eight real

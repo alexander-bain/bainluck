@@ -198,6 +198,7 @@
   "isolated": [
     "#837 blend stamp deadlock \u2014 provision the disposable database",
     "#837 two venues' live stamps do not deadlock each other (real Postgres)",
+    "#10661 a held Kalshi game no longer holds the games after it (real Postgres)",
     "#4079 numeric movement acceptance \u2014 provision the disposable database",
     "#4079 the served movement NUMBERS are dated or unavailable (real Postgres)",
     "#7284 chart-route real-session guard \u2014 provision the disposable database",

@@ -52,6 +52,7 @@ import app.services.kalshi_ws as kalshi_svc
 import app.tasks.kalshi_ws as kalshi_task
 import app.tasks.live_blend_refresh as blend_mod
 import app.tasks.polymarket_ws as poly_task
+from app.utils.repair_lock_budget import SET_LOCK_TIMEOUT_SQL
 
 YES_TOKEN = "111"
 NO_TOKEN = "222"
@@ -179,7 +180,9 @@ class _FlakySession:
         self._gate = gate
         self._ack = ack
 
-    async def execute(self, stmt):
+    async def execute(self, stmt, params=None):
+        if stmt is SET_LOCK_TIMEOUT_SQL:  # #10661: the flush's per-phase lock budget
+            return _Result([])
         if isinstance(stmt, Update):
             params = stmt.compile(dialect=postgresql.dialect()).params
             if (

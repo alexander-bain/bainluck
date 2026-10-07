@@ -29,6 +29,7 @@ import app.services.kalshi_ws as kalshi_svc
 import app.tasks.kalshi_ws as kalshi_task
 import app.tasks.live_blend_refresh as blend_mod
 import app.tasks.ws_admission as admission
+from app.utils.repair_lock_budget import SET_LOCK_TIMEOUT_SQL
 
 GAME_EVENT_TICKER = "KXATPMATCH-26SEP28ANGJOH"
 GAME_TICKER = "KXATPMATCH-26SEP28ANGJOH-ANG"
@@ -150,7 +151,9 @@ def _install_session(monkeypatch, rig):
         def __init__(self, tx):
             self._tx = tx
 
-        async def execute(self, stmt):
+        async def execute(self, stmt, params=None):
+            if stmt is SET_LOCK_TIMEOUT_SQL:  # #10661: the flush's per-phase lock budget
+                return _Result([])
             if isinstance(stmt, Update):
                 params = stmt.compile(dialect=postgresql.dialect()).params
                 if (stmt.table.name == "futures_outcomes"

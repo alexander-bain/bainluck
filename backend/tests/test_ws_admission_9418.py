@@ -26,6 +26,7 @@ import app.services.kalshi_ws as kalshi_svc
 import app.tasks.kalshi_ws as kalshi_task
 import app.tasks.polymarket_ws as poly_task
 import app.tasks.ws_admission as admission
+from app.utils.repair_lock_budget import SET_LOCK_TIMEOUT_SQL
 
 
 # ---------------------------------------------------------------- fakes ----
@@ -98,7 +99,9 @@ def _install_session(monkeypatch, slate_batches, reread):
     state = {"slate": list(slate_batches), "rereads": [], "reread_calls": 0}
 
     class _Session:
-        async def execute(self, stmt):
+        async def execute(self, stmt, params=None):
+            if stmt is SET_LOCK_TIMEOUT_SQL:  # #10661: the flush's per-phase lock budget
+                return _Result([])
             if _is_poly_open_contract_read(stmt):
                 return _Result([])
             if state["slate"]:
