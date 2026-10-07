@@ -1284,13 +1284,53 @@ def offline():
 # Replay
 # --------------------------------------------------------------------------- #
 
+#: #10356 / #5105 — a candidate policy that changes ONE named stage of the
+#: shared chain, for an offline arm. ``arm`` can only rewrite the pool; a policy
+#: that lives inside the chain (which cards the first page selects) is reached
+#: by rebinding that one stage for the duration of the replay, inside the same
+#: offline fence, and restoring it afterwards. Never the production default:
+#: ``routes/feed.py`` is unchanged and nothing outside a replay passes this.
+#: ``cold_start_first_cards``: ``diversify_discover_first_page`` with
+#: ``cold_start_window=COLD_START_WINDOW_FIRST_CARDS`` (see that constant).
+STAGE_POLICY_COLD_START_FIRST_CARDS = "cold_start_first_cards"
+STAGE_POLICIES = frozenset({STAGE_POLICY_COLD_START_FIRST_CARDS})
+
+
+@contextmanager
+def _stage_policy(feed_route: Any, policy: Optional[str]):
+    if policy is None:
+        yield
+        return
+    from functools import partial
+
+    from app.utils.feed_market_quality import (
+        COLD_START_WINDOW_FIRST_CARDS,
+        diversify_discover_first_page,
+    )
+
+    original = feed_route.diversify_discover_first_page
+    feed_route.diversify_discover_first_page = partial(
+        diversify_discover_first_page,
+        cold_start_window=COLD_START_WINDOW_FIRST_CARDS,
+    )
+    try:
+        yield
+    finally:
+        feed_route.diversify_discover_first_page = original
+
+
 
 def replay_capture(
-    capture: dict, *, arm: Optional[Callable[[list], list]] = None
+    capture: dict,
+    *,
+    arm: Optional[Callable[[list], list]] = None,
+    stage_policy: Optional[str] = None,
 ) -> dict:
     """Run one arm of a validated capture offline. Returns the replayed deck,
     page and diagnostics. ``arm`` (a candidate policy) receives a fresh decoded
-    copy of the pool; the baseline arm is ``arm=None``.
+    copy of the pool; the baseline arm is ``arm=None``. ``stage_policy`` (one
+    of :data:`STAGE_POLICIES`) swaps one chain stage for a candidate rule; the
+    baseline arm is ``stage_policy=None``.
 
     Never consults ``capture['expected']`` — that is the oracle, read only by
     :func:`verify_baseline`. Refuses (``validate_replay_inputs``) any capture
@@ -1303,12 +1343,14 @@ def replay_capture(
     from app.utils.feed_editions import EDITION_STATUS_PINNED, apply_pinned_edition
     from app.utils.personalization import PersonalizationContext
 
+    if stage_policy is not None and stage_policy not in STAGE_POLICIES:
+        raise DisplayReplayError(UNSUPPORTED, f"unknown stage_policy {stage_policy!r}")
     validate_replay_inputs(capture)
     kw = capture["chain_kwargs"]
     request = decode_value(capture["effective_request"])
     now = _dt.datetime.fromisoformat(capture["clocks"]["scoring_now"])
 
-    with offline():
+    with offline(), _stage_policy(feed_route, stage_policy):
         pool = decode_value(capture["scored_pool"]["items"])
         if arm is not None:
             pool = arm(pool)
@@ -1378,6 +1420,7 @@ def replay_capture(
         "public_response": payload,
         "chain_meta": meta,
         "stage_identities": stages,
+        "stage_policy": stage_policy,
     }
 
 

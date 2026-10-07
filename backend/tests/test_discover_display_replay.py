@@ -1458,3 +1458,61 @@ async def test_an_exception_in_the_build_is_not_a_cache_refusal(
     monkeypatch.setattr(feed_route, "get_feed", _boom)
     with pytest.raises(RuntimeError, match="build failed"):
         await _script_capture(harness, monkeypatch, tmp_path, warm_rail=True)
+
+
+# --------------------------------------------------------------------------- #
+# #10356 / #5105 — a stage policy is an offline arm, never the default
+# --------------------------------------------------------------------------- #
+
+
+async def test_a_stage_policy_rebinds_one_stage_only_for_its_replay(harness, monkeypatch):
+    from app.utils.feed_market_quality import COLD_START_WINDOW_FIRST_CARDS
+
+    artifact = await _capture(harness)
+    original = harness.feed.diversify_discover_first_page
+    seen: list = []
+    real_chain = harness.feed.apply_discover_display_chain
+
+    def spy(items, **kw):
+        seen.append(harness.feed.diversify_discover_first_page)
+        return real_chain(items, **kw)
+
+    monkeypatch.setattr(harness.feed, "apply_discover_display_chain", spy)
+    replay = ddr.replay_capture(
+        artifact, stage_policy=ddr.STAGE_POLICY_COLD_START_FIRST_CARDS
+    )
+    assert replay["stage_policy"] == ddr.STAGE_POLICY_COLD_START_FIRST_CARDS
+    assert seen[0] is not original
+    assert seen[0].keywords == {"cold_start_window": COLD_START_WINDOW_FIRST_CARDS}
+    assert harness.feed.diversify_discover_first_page is original
+    # The oracle arm is untouched by an arm that ran before it.
+    assert ddr.verify_baseline(artifact)["verdict"] == ddr.PASS
+    assert ddr.replay_capture(artifact)["stage_policy"] is None
+
+
+async def test_a_stage_policy_is_restored_when_the_replay_raises(harness):
+    artifact = await _capture(harness)
+    original = harness.feed.diversify_discover_first_page
+
+    def broken(_pool):
+        raise RuntimeError("arm failed")
+
+    with pytest.raises(RuntimeError):
+        ddr.replay_capture(
+            artifact,
+            arm=broken,
+            stage_policy=ddr.STAGE_POLICY_COLD_START_FIRST_CARDS,
+        )
+    assert harness.feed.diversify_discover_first_page is original
+
+
+async def test_an_unknown_stage_policy_refuses_before_any_stage(harness, monkeypatch):
+    artifact = await _capture(harness)
+    called: list = []
+    monkeypatch.setattr(
+        harness.feed, "apply_discover_display_chain", lambda *a, **k: called.append(1)
+    )
+    with pytest.raises(ddr.DisplayReplayError) as refused:
+        ddr.replay_capture(artifact, stage_policy="interleave_sports")
+    assert refused.value.code == ddr.UNSUPPORTED
+    assert called == []

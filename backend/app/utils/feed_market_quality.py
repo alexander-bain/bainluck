@@ -3546,11 +3546,28 @@ _DISCOVER_REQUIRED_ARCHETYPES: tuple[EditorialArchetype, ...] = (
 )
 
 
+#: #10356 / #5105 — how long the cold-start cap of 2 binds. ``SERVED`` is what
+#: production does and stays the default: the cap holds until all eight
+#: category groups have been seen, and the single forward walk never returns to
+#: a card the temporary cap refused. ``FIRST_CARDS`` is the docstring's rule
+#: (#850, "the first 8 cards"), and when that window closes the walk starts
+#: again from the top so a stronger card the cap refused is reconsidered before
+#: a weaker one further down. OFFLINE ARM ONLY: no production caller passes it;
+#: it is reached through ``discover_display_replay.replay_capture``'s
+#: ``stage_policy``. Measured on the r4 capture (e93246d2…): ``SERVED`` seats
+#: cards scored 25–51 while cards scored 93–98 wait below the first page.
+COLD_START_WINDOW_SERVED = "served"
+COLD_START_WINDOW_FIRST_CARDS = "first_cards"
+COLD_START_WINDOWS = frozenset({COLD_START_WINDOW_SERVED, COLD_START_WINDOW_FIRST_CARDS})
+_COLD_START_CARDS = 8
+
+
 def diversify_discover_first_page(
     items: list[dict],
     *,
     first_page_size: int = 20,
     cold_start: bool = False,
+    cold_start_window: str = COLD_START_WINDOW_SERVED,
 ) -> list[dict]:
     """Reorder the first Discover page so it feels curated, not clustered.
 
@@ -3558,7 +3575,12 @@ def diversify_discover_first_page(
     to 2 for the first 8 cards, ensuring >= 5 distinct category groups appear
     before any category repeats heavily. This makes the first page informative
     for new users without adding friction (#850).
+
+    ``cold_start_window`` selects how that tightening is bounded; see
+    :data:`COLD_START_WINDOW_SERVED`. The default is the served behaviour.
     """
+    if cold_start_window not in COLD_START_WINDOWS:
+        raise ValueError(f"unknown cold_start_window: {cold_start_window!r}")
     if first_page_size <= 0 or len(items) <= 1:
         return items
 
@@ -3568,14 +3590,19 @@ def diversify_discover_first_page(
     story_counts: dict[str, int] = {}
 
     cold_start_cap = 2 if cold_start else None
+    first_cards = cold_start_window == COLD_START_WINDOW_FIRST_CARDS
+
+    def cold_start_binds() -> bool:
+        if cold_start_cap is None:
+            return False
+        if first_cards:
+            return len(selected) < _COLD_START_CARDS
+        return len([s for s in category_counts.values()]) < 8
 
     def can_select(item: dict, *, enforce_archetype: bool, enforce_story: bool) -> bool:
         group = _discover_category_group(item)
         cap = _DISCOVER_FIRST_PAGE_CATEGORY_CAPS.get(group, 3)
-        if (
-            cold_start_cap is not None
-            and len([s for s in category_counts.values()]) < 8
-        ):
+        if cold_start_binds():
             cap = min(cap, cold_start_cap)
         if category_counts.get(group, 0) >= cap:
             return False
@@ -3611,19 +3638,32 @@ def diversify_discover_first_page(
         (True, False),
         (False, False),
     ):
-        for item in items:
-            if len(selected) >= target_size:
-                break
-            key = _feed_item_key(item)
-            if key in selected_keys:
-                continue
-            if not can_select(
-                item, enforce_archetype=enforce_archetype, enforce_story=enforce_story
-            ):
-                continue
-            selected.append(item)
-            selected_keys.add(key)
-            record(item)
+        rewalk = True
+        while rewalk:
+            rewalk = False
+            for item in items:
+                if len(selected) >= target_size:
+                    break
+                key = _feed_item_key(item)
+                if key in selected_keys:
+                    continue
+                if not can_select(
+                    item, enforce_archetype=enforce_archetype, enforce_story=enforce_story
+                ):
+                    continue
+                selected.append(item)
+                selected_keys.add(key)
+                record(item)
+                # FIRST_CARDS only: the cap just loosened, so the cards it
+                # refused above this point are eligible again — walk from the
+                # top. ``len`` reaches the window exactly once, so this ends.
+                if (
+                    first_cards
+                    and cold_start_cap is not None
+                    and len(selected) == _COLD_START_CARDS
+                ):
+                    rewalk = True
+                    break
         if len(selected) >= target_size:
             break
 
