@@ -30,6 +30,7 @@ import app.tasks.kalshi_ws as kalshi_task
 import app.tasks.live_blend_refresh as blend_mod
 import app.tasks.ws_admission as admission
 from app.utils.repair_lock_budget import SET_LOCK_TIMEOUT_SQL
+from tests._kalshi_price_session import bind_sessions, returned
 from tests.pm_bulk_test_support import price_writes, statement_params
 
 GAME_EVENT_TICKER = "KXATPMATCH-26SEP28ANGJOH"
@@ -167,7 +168,10 @@ def _install_session(monkeypatch, rig):
                     rowcount = 1 if hook is None else await hook(prob, attempt)
                     if rowcount:
                         self._tx.append((oid, prob))
-                    return _Result([], rowcount=rowcount)
+                    # #10693: a landed write is a RETURNED row (quote unchanged:
+                    # this file orders writes, it does not invalidate markets).
+                    landed = [returned(oid, quote_moved=False)] if rowcount else []
+                    return _Result(landed, rowcount=rowcount)
                 if stmt.table.name == "futures_outcomes":  # the #6598 re-rank
                     rig.trace.append(("rerank", tuple(o for o, _ in self._tx)))
                     return _Result([], rowcount=0)
@@ -199,7 +203,9 @@ def _install_session(monkeypatch, rig):
                 rig.trace.append(("rollback", oids))
             return False
 
-    monkeypatch.setattr(task_base, "get_task_session", lambda *a, **kw: _Ctx())
+    monkeypatch.setattr(
+        task_base, "get_task_session", bind_sessions(lambda *a, **kw: _Ctx())
+    )
 
 
 def _refresher(rig):

@@ -30,6 +30,7 @@ import app.tasks.live_blend_refresh as blend_mod
 import app.tasks.ws_admission as admission
 from app.tasks import ws_open_contracts as oc
 from app.utils.repair_lock_budget import SET_LOCK_TIMEOUT_SQL
+from tests._kalshi_price_session import bind_sessions, is_price_write, returned
 from tests.pm_bulk_test_support import price_writes, statement_params
 
 
@@ -180,10 +181,16 @@ def _install_session(monkeypatch, *, linked, open_rows, reread=lambda: [],
             if stmt is SET_LOCK_TIMEOUT_SQL:  # #10661: the flush's per-phase lock budget
                 return _Result([])
             if isinstance(stmt, Update):
+                if is_price_write(stmt):
+                    # #10693: the write landed, so the UPDATE RETURNED its row;
+                    # an unchanged quote stages no invalidation (#9484's own
+                    # market-invalidation tests own that path).
+                    landed = [returned(params["kalshi_outcome_id"], quote_moved=False)]
+                    params = statement_params(stmt, params)  # #10689
+                    state["price_writes"].extend(price_writes(stmt, params))
+                    return _Result(landed)
                 params = statement_params(stmt, params)  # #10689
-                if stmt.table.name == "futures_outcomes" and price_writes(stmt, params):
-                    state["price_writes"].extend(price_writes(stmt, params))  # #10689
-                elif stmt.table.name == "futures_markets":
+                if stmt.table.name == "futures_markets":
                     state["market_writes"].append(params)
                 return _Result([])
             sql = _sql(stmt)
@@ -214,7 +221,9 @@ def _install_session(monkeypatch, *, linked, open_rows, reread=lambda: [],
         async def __aexit__(self, *_exc):
             return False
 
-    monkeypatch.setattr(task_base, "get_task_session", lambda *a, **kw: _Ctx())
+    monkeypatch.setattr(
+        task_base, "get_task_session", bind_sessions(lambda *a, **kw: _Ctx())
+    )
     return state
 
 

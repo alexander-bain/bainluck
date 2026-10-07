@@ -44,6 +44,7 @@ import asyncio
 import json
 
 import pytest
+from tests._kalshi_price_session import bind_sessions, is_price_write, returned
 from tests.pm_bulk_test_support import price_writes, statement_params
 import websockets
 from sqlalchemy.sql.dml import Update
@@ -214,6 +215,11 @@ class _FlakySession:
                             )
                     raise RuntimeError("simulated statement_timeout")
                 self._writes.extend(price_writes(stmt, params))
+                if is_price_write(stmt):
+                    # #10693: a landed Kalshi write is the row the UPDATE
+                    # RETURNED. (Polymarket's writer reads no rows here.)
+                    (oid, _prob), = price_writes(stmt, params)
+                    return _Result([returned(oid, quote_moved=False)])
             return _Result([])
         return _Result(self._batches.pop(0) if self._batches else [])
 
@@ -230,7 +236,9 @@ def _install_slate(monkeypatch, slate, writes, budget, gate=None, ack=None):
         async def __aexit__(self, *_exc):
             return False
 
-    monkeypatch.setattr(task_base, "get_task_session", lambda *a, **kw: _Ctx())
+    monkeypatch.setattr(
+        task_base, "get_task_session", bind_sessions(lambda *a, **kw: _Ctx())
+    )
 
 
 class _NoopRefresher:

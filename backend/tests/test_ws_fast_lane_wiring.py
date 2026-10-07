@@ -19,6 +19,7 @@ import inspect
 
 import app.tasks.kalshi_ws as kalshi_ws
 import app.tasks.polymarket_ws as polymarket_ws
+import app.utils.kalshi_price_pipeline as kalshi_price_pipeline
 import app.utils.kalshi_price_statement as kalshi_price_statement
 from app.tasks.polymarket import sub_market_metadata
 
@@ -73,7 +74,48 @@ def _write_path(module, consumer_name: str) -> list[ast.AsyncFunctionDef]:
               if isinstance(n, ast.Call) and isinstance(n.func, ast.Name)}
     builders = [fn for fn in tree.body
                 if isinstance(fn, ast.FunctionDef) and fn.name in called]
-    return [*path, *builders, *_factory_builders(module, path)]
+    path = [*path, *builders, *_pipeline_hops(module, path)]
+    return [*path, *_factory_builders(module, path)]
+
+
+#: #10693: the Kalshi flush writes each phase through the run's price pipeline —
+#: `prices.phase(...)` (`_KalshiPriceOwner` in the consumer module), which
+#: installs `utils/kalshi_price_pipeline.py` and drives its `iter_phase`, which
+#: executes the factory's statements. Followed hop by hop, by NAME: a method of
+#: a consumer-module class the flush calls, that names the pipeline's installer;
+#: then the pipeline methods that method calls. A flush that stops calling the
+#: pipeline loses the pipeline — and with it the factory's stamps — from its path.
+PRICE_PIPELINES = {kalshi_ws: kalshi_price_pipeline}
+
+
+def _pipeline_hops(module, path) -> list:
+    pipeline = PRICE_PIPELINES.get(module)
+    if pipeline is None:
+        return []
+    installers = {
+        fn.name for fn in ast.parse(inspect.getsource(pipeline)).body
+        if isinstance(fn, ast.FunctionDef) and not fn.name.startswith("_")
+    }
+
+    def methods(tree):
+        return [m for cls in tree.body if isinstance(cls, ast.ClassDef)
+                for m in cls.body
+                if isinstance(m, (ast.FunctionDef, ast.AsyncFunctionDef))]
+
+    def attr_calls(fns):
+        return {n.func.attr for fn in fns for n in ast.walk(fn)
+                if isinstance(n, ast.Call) and isinstance(n.func, ast.Attribute)}
+
+    owners = [
+        m for m in methods(ast.parse(inspect.getsource(module)))
+        if m.name in attr_calls(path)
+        and installers & {n.id for n in ast.walk(m) if isinstance(n, ast.Name)}
+    ]
+    if not owners:
+        return []
+    driven = attr_calls(owners)
+    return [*owners, *(m for m in methods(ast.parse(inspect.getsource(pipeline)))
+                       if m.name in driven)]
 
 
 #: #10689: a statement FACTORY a consumer executes but does not spell. The

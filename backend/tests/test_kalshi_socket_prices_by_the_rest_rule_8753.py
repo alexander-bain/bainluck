@@ -40,6 +40,7 @@ from tests.test_a_settled_leg_takes_no_live_price_5411 import (
     _Frames,
     _NoopRefresher,
 )
+from tests._kalshi_price_session import bind_sessions
 
 MARKET_ID = 61817501
 EVENT_ID = 15315945
@@ -102,7 +103,9 @@ async def _price_updates(monkeypatch, frame) -> list[tuple[Update, dict | None]]
     monkeypatch.setattr(kalshi_task, "PRICE_FLUSH_SECONDS", 0.02)
     monkeypatch.setattr(blend_mod, "LiveBlendRefresher", _NoopRefresher)
     monkeypatch.setattr(websockets, "connect", _connect)
-    monkeypatch.setattr(task_base, "get_task_session", lambda *a, **kw: _SessionCtx())
+    monkeypatch.setattr(
+        task_base, "get_task_session", bind_sessions(lambda *a, **kw: _SessionCtx())
+    )
 
     await kalshi_task._run_kalshi_ws_consumer()
     return captured
