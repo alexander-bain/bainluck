@@ -237,7 +237,7 @@ actor Stub: WatchSelectedGameTransport {
         try await checkWatchGamePicker()
         try await checkWatchGameFlow()
         let lifecycleTransport = Stub()
-        let lifecycle = WatchSelectedGameStore(transport: lifecycleTransport, defaults: defaults, now: { clock })
+        let lifecycle = WatchSelectedGameStore(transport: lifecycleTransport, defaults: defaults, now: { clock }, retryClock: { 1000 })
         lifecycle.select(eventID: 10)
         precondition(lifecycle.nextRefreshDelay == 300, "A game without a live reading uses the five-minute cadence")
         func refreshLifecycle(_ result: Result<WatchSelectedGame, Error>) async {
@@ -266,6 +266,7 @@ actor Stub: WatchSelectedGameTransport {
         precondition(lifecycle.nextRefreshDelay == 30, "A new selection starts with the first failure delay")
         for (status, delay) in [("live", 30), ("in_progress", 30), ("scheduled", 300), ("closed", 300), ("unknown", 300)] as [(String, TimeInterval)] {
             var sleeps: [TimeInterval] = []
+            lifecycle.allowManualRetry()
             let loop = Task {
                 await lifecycle.runForegroundRefresh { interval in
                     sleeps.append(interval)
@@ -277,6 +278,7 @@ actor Stub: WatchSelectedGameTransport {
             await loop.value
             precondition(sleeps == [delay], "Throwing sleep exits the loop after its immediate refresh")
         }
+        lifecycle.allowManualRetry()
         let beforeSleepCancellation = await lifecycleTransport.fetchCount
         let cancelDuringSleep = Task {
             await lifecycle.runForegroundRefresh { _ in

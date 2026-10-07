@@ -105,6 +105,7 @@ private actor FlowDetailTransport: WatchSelectedGameTransport {
     await transport.assertConsumed()
     print("PASS: Discover picker to canonical live detail, named home probability, independent ages, offline restoration, retained final, changed selection, and cleared snapshot")
     try await checkWatchRetryDeadline()
+    try await checkWatchWristCadence()
 }
 
 @MainActor private final class RetryClock {
@@ -191,4 +192,163 @@ private actor FlowDetailTransport: WatchSelectedGameTransport {
     }
     await transport.assertConsumed()
     print("PASS: server retry deadline, interrupted foreground preservation, remaining-delay wait, no double sleep, success/selection/clear reset, explicit manual retry, finite positive validation and one-hour cap")
+}
+
+/// A wrist raise restarts the task, not the completed-request cadence.
+@MainActor private func checkWatchWristCadence() async throws {
+    let suite = "watch-wrist-cadence-\(UUID().uuidString)"
+    let defaults = UserDefaults(suiteName: suite)!
+    defer { defaults.removePersistentDomain(forName: suite) }
+    let clock = RetryClock()
+    let live = try event(10635, extras: ",\"status\":\"live\",\"score_observed_at\":\"2026-10-06T18:00:00Z\"")
+    let second = try event(4932, extras: ",\"status\":\"completed\"")
+    let transport = FlowDetailTransport([
+        (100, .success(live)), // Canonicalization changes the task ID.
+        (10635, .success(live)), (10635, .success(live)),
+        (4932, .success(second)), (4932, .success(second)),
+        (4932, .failure(URLError(.notConnectedToInternet))),
+        (4932, .failure(URLError(.notConnectedToInternet))),
+        (4932, .failure(WatchSelectedGameRequestError.retryAfter(180))),
+        (4932, .success(second)),
+    ])
+    let store = WatchSelectedGameStore(transport: transport, defaults: defaults,
+        now: { clock.date }, retryClock: { clock.elapsed })
+    func foregroundOnce() async -> [TimeInterval] {
+        var sleeps: [TimeInterval] = []
+        await store.runForegroundRefresh { delay in
+            sleeps.append(delay)
+            throw CancellationError() // Backgrounding interrupts the scheduled wait.
+        }
+        return sleeps
+    }
+    store.select(eventID: 100)
+    let firstSleeps = await foregroundOnce()
+    precondition(firstSleeps == [30] && store.selectedEventID == 10635)
+    let savedFetch = store.fetchedAt
+    let savedObservation = store.game?.scoreObservedAt
+    let canonicalRestart = await foregroundOnce()
+    let requestCount1 = await transport.fetchCount
+    precondition(canonicalRestart == [30] && requestCount1 == 1,
+        "Canonical-ID task restart must not duplicate a successful request")
+    clock.elapsed += 5
+    clock.date += 7200
+    let earlyRaise = await foregroundOnce()
+    let requestCount2 = await transport.fetchCount
+    precondition(earlyRaise == [25] && requestCount2 == 1)
+    precondition(store.fetchedAt == savedFetch && store.game?.scoreObservedAt == savedObservation,
+        "Reusing the reading must not rewrite fetch or observation clocks")
+    clock.elapsed += 25
+    let dueRaise = await foregroundOnce()
+    let requestCount3 = await transport.fetchCount
+    precondition(dueRaise == [30] && requestCount3 == 2,
+        "At the original due time the next wrist raise fetches once")
+    store.allowManualRetry()
+    let manualRaise = await foregroundOnce()
+    let requestCount4 = await transport.fetchCount
+    precondition(manualRaise == [30] && requestCount4 == 3,
+        "Explicit Refresh bypasses a recent successful-request cadence")
+    store.select(eventID: 4932)
+    let selected = await foregroundOnce()
+    let requestCount5 = await transport.fetchCount
+    precondition(selected == [300] && requestCount5 == 4,
+        "Changing selection fetches immediately rather than reusing another game's deadline")
+    clock.elapsed += 300
+    let finalReentry = await foregroundOnce()
+    let requestCount6 = await transport.fetchCount
+    precondition(finalReentry == [300] && requestCount6 == 5,
+        "Final readings retain periodic refresh; they never stop permanently")
+    store.allowManualRetry()
+    let firstFailure = await foregroundOnce()
+    precondition(firstFailure == [30])
+    clock.elapsed += 5
+    let failedRaise = await foregroundOnce()
+    let requestCount7 = await transport.fetchCount
+    precondition(failedRaise == [25] && requestCount7 == 6
+        && store.errorMessage?.hasPrefix("Offline.") == true,
+        "A scene restart must preserve the failure backoff and honest error")
+    clock.elapsed += 25
+    let secondFailure = await foregroundOnce()
+    let requestCount8 = await transport.fetchCount
+    precondition(secondFailure == [60] && requestCount8 == 7)
+    store.allowManualRetry()
+    let busy = await foregroundOnce()
+    precondition(busy == [180])
+    clock.elapsed += 10
+    let busyRaise = await foregroundOnce()
+    let requestCount9 = await transport.fetchCount
+    precondition(busyRaise == [170] && requestCount9 == 8,
+        "Automatic reentry honors the remaining server pause")
+    store.allowManualRetry()
+    let explicitBusyRetry = await foregroundOnce()
+    let requestCount10 = await transport.fetchCount
+    precondition(explicitBusyRetry == [300] && requestCount10 == 9,
+        "The established explicit-user exception to Retry-After remains available")
+    await transport.assertConsumed()
+    let restartedTransport = FlowDetailTransport([(4932, .success(second))])
+    let restarted = WatchSelectedGameStore(transport: restartedTransport,
+        defaults: defaults, now: { clock.date }, retryClock: { clock.elapsed })
+    precondition(restarted.isRestoredReading)
+    await restarted.runForegroundRefresh { delay in
+        precondition(delay == 300)
+        throw CancellationError()
+    }
+    let restartedCount = await restartedTransport.fetchCount
+    precondition(restartedCount == 1 && !restarted.isRestoredReading,
+        "Process restart restores the reading but never persists an automatic due time")
+    await restartedTransport.assertConsumed()
+
+    // A canceled in-flight result never records a successful cadence or publishes.
+    let pending = Stub()
+    store.clearSelection()
+    let canceledStore = WatchSelectedGameStore(transport: pending, defaults: defaults,
+        now: { clock.date }, retryClock: { clock.elapsed })
+    canceledStore.select(eventID: 10635)
+    var sleeps = 0
+    let request = Task {
+        await canceledStore.runForegroundRefresh { _ in
+            sleeps += 1
+            throw CancellationError()
+        }
+    }
+    await pending.waitFor(10635)
+    let requestCount11 = await pending.fetchCount
+    precondition(requestCount11 == 1 && sleeps == 0,
+        "An unfinished request does not overlap another poll or start its cadence")
+    request.cancel()
+    await pending.finish(10635, result: .success(live))
+    await request.value
+    precondition(canceledStore.game == nil && !canceledStore.isRefreshing && sleeps == 0)
+    let reentry = Task {
+        await canceledStore.runForegroundRefresh { delay in
+            precondition(delay == 30)
+            throw CancellationError()
+        }
+    }
+    await pending.waitFor(10635)
+    clock.elapsed += 90 // A slow transport must earn its cadence at completion.
+    await pending.finish(10635, result: .success(live))
+    await reentry.value
+    let requestCount12 = await pending.fetchCount
+    precondition(requestCount12 == 2 && canceledStore.game?.id == 10635,
+        "After canceled work, reentry still obtains the first successful reading")
+    let transportCanceled = FlowDetailTransport([
+        (10635, .failure(URLError(.cancelled))), (10635, .success(live)),
+    ])
+    canceledStore.clearSelection()
+    let transportCanceledStore = WatchSelectedGameStore(transport: transportCanceled,
+        defaults: defaults, now: { clock.date }, retryClock: { clock.elapsed })
+    transportCanceledStore.select(eventID: 10635)
+    await transportCanceledStore.runForegroundRefresh { delay in
+        precondition(delay == 300)
+        throw CancellationError()
+    }
+    let canceledCount = await transportCanceled.fetchCount
+    precondition(canceledCount == 1 && transportCanceledStore.errorMessage == nil,
+        "Transport cancellation cannot cause a tight retry loop or pretend failure")
+    await transportCanceledStore.runForegroundRefresh { delay in
+        precondition(delay == 30)
+        throw CancellationError()
+    }
+    await transportCanceled.assertConsumed()
+    print("PASS: wrist-raise and canonical-ID reentry reuse, due refresh, explicit refresh, changed selection, final polling, failure/server deadline preservation and canceled in-flight recovery")
 }

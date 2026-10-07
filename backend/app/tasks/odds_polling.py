@@ -781,7 +781,10 @@ async def _create_or_update_snapshot(
 
 
 # _create_or_update_win_prob_snapshot moved to tasks/snapshots.py
-from app.tasks.snapshots import _create_or_update_win_prob_snapshot  # noqa: F401
+from app.tasks.snapshots import (  # noqa: F401
+    STAT_MODEL_LIVE_HEARTBEAT_S,
+    _create_or_update_win_prob_snapshot,
+)
 
 
 async def _create_snapshot(
@@ -2542,6 +2545,9 @@ async def _poll_all_odds():
                                                 "source": "odds_poll",
                                                 "time_source": "espn" if event_obj.game_clock else "wall_clock",
                                             },
+                                            # #10673: live-only arm (gated on
+                                            # `event_status == "live"` above).
+                                            max_gap_seconds=STAT_MODEL_LIVE_HEARTBEAT_S,
                                         )
                                         if is_new:
                                             session.add(stat_snap)

@@ -588,7 +588,18 @@ final class TheLiveChartEndCarriesTheHeroNumber9436Tests: XCTestCase {
     /// backlog in one batch is a pause of its own (≈1 s here: a 1.0 s glide
     /// delayed 0.4 s had finished before the next frame), so after 0.8 s the
     /// backlog is scanned between follow-up frames instead.
-    private func sampleGlide(_ hosted: Hosted) async throws -> (columns: [Int], stamps: [Double], starts: [Double]) {
+    ///
+    /// `undrawn` counts the leading frames byte-identical to `unchanged` — a
+    /// frame read the same way just before the change. Those frames predate
+    /// the commit: on a loaded runner the main thread can hold the update past
+    /// the first capture (Watch run 37567475850: the first frame, read 0.06 s
+    /// after the change, was still the old chart — old axis, dot at the old
+    /// 78% end, 355 — and the next, at 0.28 s, the new axis with the dot
+    /// leaving 337, so `[355, 337, …]` read as a reversal). Pixel identity, not
+    /// the column: a drawn frame with the new axis never matches, so a dot that
+    /// really jumps back after the commit stays in the judged frames.
+    private func sampleGlide(_ hosted: Hosted, unchanged: UIImage) async throws
+        -> (columns: [Int], stamps: [Double], starts: [Double], undrawn: Int) {
         let start = CACurrentMediaTime()
         var captures = try await captureFrames(hosted, for: 0.8, since: start)
         var columns: [Int] = []
@@ -612,7 +623,26 @@ final class TheLiveChartEndCarriesTheHeroNumber9436Tests: XCTestCase {
             try await Task.sleep(for: .milliseconds(2))
         }
         recordMotionFrames(captures)
-        return (columns, captures.map(\.acquiredAt), captures.map { $0.acquiredAt - $0.duration })
+        let undrawn = Self.leadingUndrawnFrames(captures.map { $0.image.pngData() }, unchanged: unchanged.pngData())
+        return (columns, captures.map(\.acquiredAt), captures.map { $0.acquiredAt - $0.duration }, undrawn)
+    }
+
+    /// How many frames, from the first, are byte-identical to the unchanged
+    /// chart. Only a leading run: the same old picture after a drawn frame is
+    /// the app going back, and is judged. No reference, no undrawn frames.
+    private static func leadingUndrawnFrames(_ frames: [Data?], unchanged: Data?) -> Int {
+        guard let unchanged else { return 0 }
+        return frames.prefix { $0 == unchanged }.count
+    }
+
+    func testOnlyALeadingRunOfTheUnchangedChartIsUndrawn() {
+        let (old, new) = (Data([1]), Data([2]))
+        XCTAssertEqual(Self.leadingUndrawnFrames([old, old, new, old], unchanged: old), 2,
+                       "the old chart after a drawn frame is a jump back, not an undrawn frame")
+        XCTAssertEqual(Self.leadingUndrawnFrames([new, old], unchanged: old), 0)
+        XCTAssertEqual(Self.leadingUndrawnFrames([old], unchanged: nil), 0)
+        XCTAssertEqual(Self.leadingUndrawnFrames([nil, new], unchanged: nil), 0,
+                       "an unencodable reference never matches an unencodable frame")
     }
 
     /// Frames that must begin after the settle deadline before the settle can
@@ -920,25 +950,28 @@ final class TheLiveChartEndCarriesTheHeroNumber9436Tests: XCTestCase {
         defer { hosted.close() }
         try await Task.sleep(for: .milliseconds(600))
         let before = try XCTUnwrap(markerColumn(hosted.shot(scale: 1)))
+        let unchanged = hosted.shot(afterScreenUpdates: false, scale: 1)
 
         // One accepted frame a minute later, at 60% — hero and chart together.
         let next = try XCTUnwrap("2026-09-21T12:14:00Z".asDate)
         feed.frames.append(LiveBlendPoint(date: next, homeProbability: 0.60))
         feed.edge = LiveEdgeReading(homeProbability: 0.60, homeLabel: "60%")
-        let (columns, stamps, starts) = try await sampleGlide(hosted)
+        let (columns, stamps, starts, undrawn) = try await sampleGlide(hosted, unchanged: unchanged)
         let sampledLast = try XCTUnwrap(columns.last)
         let settled = try XCTUnwrap(markerColumn(hosted.shot(scale: 1)))
         XCTAssertEqual(sampledLast, settled, "Sampling must reach the independently captured final endpoint")
-        print("#9436 glide tip columns: before=\(before) frames=\(columns)")
+        print("#9436 glide tip columns: before=\(before) undrawn=\(undrawn) frames=\(columns)")
 
         // The glide is visible: at least two distinct positions short of the
         // settled end (a snap has none — this arm is red when `glides` is
         // false), never reversing. Two, not more: sampling is real time on a
         // shared machine, and 60 fps is the recording's claim, not this test's.
-        let inBetween = Set(columns.filter { $0 < settled })
-        XCTAssertGreaterThanOrEqual(inBetween.count, 2, "no visible glide: \(columns)")
-        XCTAssertLessThan(columns.first!, settled, "the first frame after the change was already settled")
-        XCTAssertEqual(columns, columns.sorted(), "the tip reversed: \(columns)")
+        // Judged from the first frame drawn after the change (`sampleGlide`).
+        let drawn = Array(columns.dropFirst(undrawn))
+        let inBetween = Set(drawn.filter { $0 < settled })
+        XCTAssertGreaterThanOrEqual(inBetween.count, 2, "no visible glide: \(columns) undrawn=\(undrawn)")
+        XCTAssertLessThan(try XCTUnwrap(drawn.first), settled, "the first frame after the change was already settled")
+        XCTAssertEqual(drawn, drawn.sorted(), "the tip reversed: \(columns) undrawn=\(undrawn)")
         // Bounded: no frame read after the glide window (plus a frame of
         // slack) is still short of the settled end. A frame's time is when its
         // capture BEGAN — the displayed frame is read then — so a slow capture
@@ -961,24 +994,27 @@ final class TheLiveChartEndCarriesTheHeroNumber9436Tests: XCTestCase {
         let beforeImage = hosted.shot(scale: 1)
         recordMotionFrame(beforeImage, name: "pin-before")
         let before = try XCTUnwrap(markerColumn(beforeImage))
+        let unchanged = hosted.shot(afterScreenUpdates: false, scale: 1)
 
         feed.history = try pinnedHistory(pinAt: 16, 0.58)
         feed.edge = LiveEdgeReading(homeProbability: 0.58, homeLabel: "58%")
-        let (columns, stamps, starts) = try await sampleGlide(hosted)
+        let (columns, stamps, starts, undrawn) = try await sampleGlide(hosted, unchanged: unchanged)
         let sampledLast = try XCTUnwrap(columns.last)
         let finalImage = hosted.shot(scale: 1)
         recordMotionFrame(finalImage, name: "pin-final")
         let settled = try XCTUnwrap(markerColumn(finalImage))
         XCTAssertEqual(sampledLast, settled, "Sampling must reach the independently captured final endpoint")
-        print("#9436 pin-replacement tip columns: before=\(before) frames=\(columns)")
+        print("#9436 pin-replacement tip columns: before=\(before) undrawn=\(undrawn) frames=\(columns)")
 
         // A later pin widens the x-domain in the same update, so `before`
         // (old axis) and these columns (new axis) are not comparable; the
         // glide starts at the old pin's data position under the new axis.
-        let inBetween = Set(columns.filter { $0 < settled })
-        XCTAssertGreaterThanOrEqual(inBetween.count, 2, "no visible glide on a pin replacement: \(columns)")
-        XCTAssertLessThan(columns.first!, settled, "the first frame after the replacement was already settled")
-        XCTAssertEqual(columns, columns.sorted(), "the tip reversed: \(columns)")
+        // An undrawn old-axis frame is not comparable either (`sampleGlide`).
+        let drawn = Array(columns.dropFirst(undrawn))
+        let inBetween = Set(drawn.filter { $0 < settled })
+        XCTAssertGreaterThanOrEqual(inBetween.count, 2, "no visible glide on a pin replacement: \(columns) undrawn=\(undrawn)")
+        XCTAssertLessThan(try XCTUnwrap(drawn.first), settled, "the first frame after the replacement was already settled")
+        XCTAssertEqual(drawn, drawn.sorted(), "the tip reversed: \(columns) undrawn=\(undrawn)")
         assertSettledByTheGlideWindow(columns, starts: starts, stamps: stamps, settled: settled)
     }
 

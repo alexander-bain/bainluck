@@ -324,6 +324,7 @@ struct WatchSelectedGameView: View {
                 }
             }
             ForEach(picker.games) { game in
+                let isSelected = game.id == store.selectedEventID
                 Button {
                     store.select(eventID: game.id)
                     choosingGame = false
@@ -333,8 +334,16 @@ struct WatchSelectedGameView: View {
                             .fixedSize(horizontal: false, vertical: true)
                         Text(WatchSelectedGame.stateLabel(for: game.status))
                             .font(.footnote).foregroundStyle(.secondary)
+                        if isSelected {
+                            Label("Your game", systemImage: "checkmark")
+                                .font(.footnote)
+                                .fixedSize(horizontal: false, vertical: true)
+                                .accessibilityHidden(true)
+                        }
                     }
                 }
+                .accessibilityLabel("\(game.awayTeam ?? "Away team") at \(game.homeTeam ?? "Home team"). \(WatchSelectedGame.stateLabel(for: game.status))" + (isSelected ? ". Your game" : ""))
+                .accessibilityAddTraits(isSelected ? .isSelected : [])
                 .accessibilityIdentifier("watch.pick.\(game.id)")
             }
             Button("Refresh games") {

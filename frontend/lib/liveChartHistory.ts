@@ -125,6 +125,62 @@ function extendServedSourceSeries(
 }
 
 /**
+ * #10671 — a source that re-confirmed its last served value while the page was
+ * open was observed through that confirmation.
+ *
+ * The backend stores a `win_prob_history` row only when a source's value
+ * CHANGES, so a model that re-publishes the same number every minute leaves
+ * one stored row and then silence. Under the 7878.v1 contract that silence is
+ * a trailing hole: the chart withdrew the line and printed "last reading
+ * 9:11 PM · none in the 5m since" on 15324650 while the page had received the
+ * model's 0.9262 again at 9:15 and 9:16. Those frames sit before the served
+ * `live_edge`, so `extendServedSourceSeries` rightly cannot draw them.
+ *
+ * What they prove is the contract's own `observed` shape — "looked again, it
+ * had not moved" — so that is what the last served reading gets:
+ * `covered_through` = the latest frame for that source that carries exactly the
+ * same value, counting only frames before the first one that differs (after a
+ * change, an equal value later is a return, not a continuation). Nothing is
+ * drawn, no value is moved, and a reading the contract marks as anything but a
+ * plain reading or `observed` is left alone (fails closed, as the chart does).
+ */
+function confirmServedSourceCoverage(
+  served: Record<string, WinProbHistoryPoint[]> | null | undefined,
+  points: LiveChartFrame[],
+): Record<string, WinProbHistoryPoint[]> | null {
+  if (!served) return null;
+  let next: Record<string, WinProbHistoryPoint[]> | null = null;
+  for (const [source, series] of Object.entries(served)) {
+    if (!series?.length) continue;
+    let index = series.length - 1;
+    while (index >= 0 && (series[index].live_edge === true || series[index].evidence?.kind === "live_edge")) index--;
+    if (index < 0) continue;
+    const reading = series[index];
+    const kind = reading.evidence?.kind;
+    if (kind !== undefined && kind !== "observed") continue;
+    const value = reading.home_probability;
+    const readAt = Date.parse(reading.timestamp);
+    if (typeof value !== "number" || !Number.isFinite(readAt)) continue;
+    // `points` is sorted by `rememberLiveChartFrame`.
+    let confirmed: string | null = null;
+    for (const point of points) {
+      if (point.source !== source || typeof point.source_probability !== "number" ||
+          !(Date.parse(point.timestamp) > readAt)) continue;
+      if (point.source_probability !== value) break;
+      confirmed = point.timestamp;
+    }
+    if (confirmed === null) continue;
+    const held = kind === "observed" ? Date.parse(reading.evidence?.covered_through ?? "") : NaN;
+    if (Number.isFinite(held) && held >= Date.parse(confirmed)) continue;
+    next ??= { ...served };
+    next[source] = series.map((point, i) => i === index
+      ? { ...point, evidence: { kind: "observed", covered_through: confirmed as string } }
+      : point);
+  }
+  return next;
+}
+
+/**
  * Sportsbook consensus lives in `history`, not `win_prob_history.betting`.
  * Without a served blend, it is MODE B's existing primary line. Extend that
  * line with the betting source's own observations, never the blended `p` or
@@ -163,9 +219,11 @@ function extendServedBettingHistory(
  * `history` is the SERVED response, so `aggregate_line` here is the backend's
  * own — the same question `page.tsx` answers for the chart as
  * `backendBlendServed` (#8066). Where the backend blended, the blend line
- * carries the push and the source series are left exactly as served. Where it
- * did not, the source line is the line the reader reads the match off, and it
- * is the one that has to keep up.
+ * carries the push and the source series keep exactly their served points and
+ * values. Where it did not, the source line is the line the reader reads the
+ * match off, and it is the one that has to keep up. Either way a source that
+ * re-confirmed its last served value extends that reading's coverage
+ * (`confirmServedSourceCoverage`, #10671) — evidence only, nothing drawn.
  */
 export function mergeLiveChartHistory<T extends ChartHistory>(
   history: T | undefined, points: LiveChartFrame[] = [],
@@ -174,9 +232,10 @@ export function mergeLiveChartHistory<T extends ChartHistory>(
   const served = history.aggregate_line ?? [];
   const instants = new Set(served.map(point => Date.parse(point.timestamp)));
   const added = points.filter(point => !instants.has(Date.parse(point.timestamp)));
+  const confirmed = confirmServedSourceCoverage(history.win_prob_history, points);
   const extended = served.length === 0
-    ? extendServedSourceSeries(history.win_prob_history, points)
-    : null;
+    ? extendServedSourceSeries(confirmed ?? history.win_prob_history, points) ?? confirmed
+    : confirmed;
   const betting = served.length === 0
     ? extendServedBettingHistory(history.history, points)
     : null;

@@ -224,11 +224,12 @@ def _refresher(rig):
 async def _gated_cadence(rig):
     """`run_flush_cadence`, except the first flush waits until BOTH ticks are
     buffered — so the game leg and the open contract share one batch, which
-    is the head-of-line shape. Failure keeps the real rule: wait, then retry."""
+    is the head-of-line shape. Failure keeps the real rule: wait, then retry.
+    #10657: it takes and honours the consumer's ``stop`` like the real one."""
 
-    async def cadence(flush, period):
+    async def cadence(flush, period, stop=None):
         await rig.both_buffered.wait()
-        while True:
+        while stop is None or not stop.is_set():
             ok = await flush(blend_mod._mono())
             await asyncio.sleep(0.01 if ok is not False else 0.03)
 

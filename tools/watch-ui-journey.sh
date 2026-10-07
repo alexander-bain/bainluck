@@ -306,11 +306,17 @@ if 'WATCH_UI_STRESS_TYPE=accessibility5' not in lines:
     raise SystemExit('App did not confirm accessibility5 layout stress; gate unpaid')
 if not any(line.startswith('WATCH_UI_STANDARD_TYPE=') for line in lines):
     raise SystemExit('Default text-size journey did not report its actual size; gate unpaid')
-for marker in ('WATCH_UI_ROUNDING_PAIR=45', 'WATCH_UI_ROUNDING_DRAW=46', 'WATCH_UI_LAUNCHER_COLD=PASS', 'WATCH_UI_COMPLICATION_CONTENT=PASS', 'WATCH_UI_ACTUAL_WIDGET_WARM=PASS', 'WATCH_UI_ACTUAL_WIDGET_COLD=PASS', 'WATCH_UI_ACTUAL_WIDGET_EMPTY=PASS', 'WATCH_UI_FRESH_FACE_ACTIVATION=PASS', 'WATCH_RECTANGULAR_INSTALLED_DETAIL=Saved · 64% · Live', 'WATCH_UI_CLEAR_SELECTION=PASS', 'WATCH_UI_PICKER_RETURN=PASS', 'WATCH_UI_DISCOVERIES_SAVED=PASS', 'WATCH_UI_DISCOVERIES_LARGE=PASS', 'WATCH_UI_DISCOVERIES_UNSELECTED=PASS', 'WATCH_UI_DISCOVERIES_CONTINUATION=PASS', 'WATCH_UI_DISCOVERIES_RETURN_STANDARD=PASS', 'WATCH_UI_DISCOVERIES_RETURN_LARGE=PASS', 'WATCH_UI_DISCOVERIES_HEADING_STANDARD=PASS', 'WATCH_UI_DISCOVERIES_HEADING_LARGE=PASS', 'WATCH_UI_CIRCULAR_CONTENT=PASS', 'WATCH_UI_CIRCULAR_FALLBACK=PASS', 'WATCH_UI_ACTUAL_CIRCULAR_SAVED=PASS'):
+for marker in ('WATCH_UI_ROUNDING_PAIR=45', 'WATCH_UI_ROUNDING_DRAW=46', 'WATCH_UI_LAUNCHER_COLD=PASS', 'WATCH_UI_COMPLICATION_CONTENT=PASS', 'WATCH_UI_ACTUAL_WIDGET_WARM=PASS', 'WATCH_UI_ACTUAL_WIDGET_COLD=PASS', 'WATCH_UI_ACTUAL_WIDGET_EMPTY=PASS', 'WATCH_UI_FRESH_FACE_ACTIVATION=PASS', 'WATCH_RECTANGULAR_INSTALLED_DETAIL=Saved · 64% · Live', 'WATCH_UI_CLEAR_SELECTION=PASS', 'WATCH_UI_PICKER_RETURN=PASS', 'WATCH_UI_PICKER_NETWORK_OFFLINE=PASS', 'WATCH_UI_PICKER_NETWORK_INTERRUPTED=PASS', 'WATCH_UI_PICKER_NETWORK_TIMEOUT=PASS', 'WATCH_UI_DISCOVERIES_SAVED=PASS', 'WATCH_UI_DISCOVERIES_LARGE=PASS', 'WATCH_UI_DISCOVERIES_UNSELECTED=PASS', 'WATCH_UI_DISCOVERIES_CONTINUATION=PASS', 'WATCH_UI_DISCOVERIES_RETURN_STANDARD=PASS', 'WATCH_UI_DISCOVERIES_RETURN_LARGE=PASS', 'WATCH_UI_DISCOVERIES_HEADING_STANDARD=PASS', 'WATCH_UI_DISCOVERIES_HEADING_LARGE=PASS', 'WATCH_UI_CIRCULAR_CONTENT=PASS', 'WATCH_UI_CIRCULAR_FALLBACK=PASS', 'WATCH_UI_ACTUAL_CIRCULAR_SAVED=PASS', 'WATCH_UI_PICKER_SELECTED_STANDARD=PASS', 'WATCH_UI_PICKER_SELECTED_LARGE=PASS'):
     if marker not in lines:
         raise SystemExit(f'Watch journey did not confirm {marker}; gate unpaid')
 if not re.search(r"^Test Case '-\[BainLuckWatchUITests\.WidgetTapJourneyTests testFreshConfiguredFaceIsActiveBeforeActualLauncherTap\]' passed \([0-9.]+ seconds\)\.$", log, re.MULTILINE):
     raise SystemExit('Fresh-face activation regression did not pass; gate unpaid')
+if not re.search(r"^Test Case '-\[BainLuckWatchUITests\.PickerReturnJourneyTests testNetworkFailureGuidanceRetainsChoicesAndRecoversSelection\]' passed \([0-9.]+ seconds\)\.$", log, re.MULTILINE):
+    raise SystemExit('Picker network recovery did not complete its visible retained-choice journey; gate unpaid')
+for case in ('testSelectedGameIsMarkedInPickerAndCanChange', 'testSelectedGameIsMarkedAtAccessibilitySize'):
+    pattern = rf"^Test Case '-\[BainLuckWatchUITests\.PickerSelectedStateJourneyTests {case}\]' (passed|failed|skipped) \([0-9.]+ seconds\)\.$"
+    if re.findall(pattern, log, re.MULTILINE) != ['passed']:
+        raise SystemExit(f'Selected picker case {case} did not pass exactly once; gate unpaid')
 PYVERIFY
 fi
 PHASE='full-suite receipt verification'

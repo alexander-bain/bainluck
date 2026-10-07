@@ -37,6 +37,7 @@ private actor PickerTransportStub: WatchGamePickerTransport {
 }
 
 @MainActor func checkWatchGamePicker() async throws {
+    try await checkPickerNetworkGuidance()
     let transport = PickerTransportStub()
     let store = WatchGamePickerStore(transport: transport)
     precondition(store.games.isEmpty && !store.isLoading && store.errorMessage == nil && store.omittedGameCount == 0)
@@ -154,4 +155,41 @@ private actor PickerTransportStub: WatchGamePickerTransport {
                  "All malformed event rows remain visibly distinguishable from a genuine empty feed")
     print("PASS: watch picker ordered valid games, first-valid deduplication, omission count, retained failure/retry, cancellation, empty success, and overlapping request fencing")
     print("PASS: malformed event decode omissions, combined decode/validation counts, and all-malformed feed distinction")
+}
+
+@MainActor private func checkPickerNetworkGuidance() async throws {
+    let failures: [(Error, String)] = [
+        (URLError(.notConnectedToInternet), "Offline. Connect to the internet, then refresh games."),
+        (URLError(.networkConnectionLost), "Connection interrupted. Refresh games to try again."),
+        (URLError(.timedOut), "Connection timed out. Refresh games to try again."),
+        (URLError(.badServerResponse), "Couldn't refresh available games. Try again."),
+        (WatchSelectedGameRequestError.serviceBusy, "Couldn't refresh available games. Try again."),
+    ]
+    for (error, expected) in failures {
+        let transport = PickerTransportStub()
+        let store = WatchGamePickerStore(transport: transport)
+        let initial = Task { await store.refresh() }
+        await transport.waitFor(1)
+        await transport.finishBatch(1, .success(WatchGamePickerBatch(games: try [pickerEvent(101)], omittedGameCount: 2)))
+        await initial.value
+        let failed = Task { await store.refresh() }
+        await transport.waitFor(2)
+        await transport.finish(2, .failure(error))
+        await failed.value
+        precondition(store.errorMessage == expected && !store.isLoading)
+        precondition(store.games.map(\.id) == [101] && store.omittedGameCount == 2,
+                     "Network guidance must keep prior usable options and omission truth")
+        let cancelled = Task { await store.refresh() }
+        await transport.waitFor(3)
+        await transport.finish(3, .failure(URLError(.cancelled)))
+        await cancelled.value
+        precondition(store.errorMessage == expected && store.games.map(\.id) == [101])
+        let recovered = Task { await store.refresh() }
+        await transport.waitFor(4)
+        await transport.finish(4, .success(try [pickerEvent(202)]))
+        await recovered.value
+        precondition(store.errorMessage == nil && !store.isLoading && store.games.map(\.id) == [202] && store.omittedGameCount == 0,
+                     "Only completed successful refresh clears failure guidance and updates choices")
+    }
+    print("PASS: picker offline, interrupted, timeout and generic guidance retain choices, ignore cancellation and clear only on recovery")
 }
