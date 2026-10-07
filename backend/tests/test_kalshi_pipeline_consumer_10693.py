@@ -7,7 +7,7 @@ pair (`app/utils/kalshi_price_pipeline.py`, whose own tests own that path).
 WHAT THIS FILE PROVES — the consumer's half, against the FROZEN pre-#10693
 flush (`fixtures/kalshi_flush_before_10693.py.txt`, never edited to match):
 
-1. After removing the four exact, independently reviewed #10702 observer
+1. After removing the five exact, independently reviewed #10702 observer
    statements, `flush_prices` differs in exactly ONE statement, the price loop. The 500 ms phase budget, 55P03-only continuation,
    pending-debt grouping, newest-tick retention, commit-before-publication,
    receipts and the timeout-free final drain are the same code, not a rewrite.
@@ -96,6 +96,7 @@ def _frozen_loop():
 TRACE_OBSERVERS = (
     'exact_trace = getattr(tail_receipts, "exact_trace", None)',
     'written_observations: dict = {}',
+    'if exact_trace is not None:\n    with contextlib.suppress(Exception):\n        exact_trace.snapshot(batch_marks.values())',
     'if exact_trace is not None:\n    with contextlib.suppress(Exception):\n        exact_trace.write_failed(\n            [batch_marks[oid] for oid in phase if oid in batch_marks],\n            "LOCK_TIMEOUT" if lock_timed_out else "ROLLED_BACK",\n        )',
     'if exact_trace is not None:\n    with contextlib.suppress(Exception):\n        for oid, observed_at in written_observations.items():\n            exact_trace.committed(batch_marks.get(oid), observed_at)\n        exact_trace.write_failed(\n            [batch_marks[oid] for oid in phase\n             if oid not in written_outcome_ids and oid in batch_marks],\n            "DECLINED_SETTLED_OR_MISSING",\n        )',
 )
@@ -103,6 +104,24 @@ TRACE_OBSERVERS = (
 
 def _without_reviewed_observers(fn):
     accepted = {ast.dump(ast.parse(source).body[0]) for source in TRACE_OBSERVERS}
+    snapshot = ast.dump(ast.parse(TRACE_OBSERVERS[2]).body[0])
+    # Pin only the writer's snapshot, under the original buffer lock, before
+    # another callback can supersede it. The exact hook elsewhere is not approved.
+    locks = [node for node in ast.walk(fn) if isinstance(node, ast.AsyncWith)
+             and len(node.items) == 1
+             and isinstance(node.items[0].context_expr, ast.Name)
+             and node.items[0].context_expr.id == "buffer_lock"]
+    locations = [(lock, index) for lock in locks
+                 for index, statement in enumerate(lock.body)
+                 if ast.dump(statement) == snapshot]
+    assert len(locations) == 1
+    lock, index = locations[0]
+    assert index == len(lock.body) - 1 and index > 0
+    preceding = lock.body[index - 1]
+    assert isinstance(preceding, ast.Assign) and any(
+        isinstance(target, ast.Name) and target.id == "batch_marks"
+        for target in preceding.targets
+    )
     removed = []
 
     class RemoveExactObservers(ast.NodeTransformer):
@@ -153,6 +172,31 @@ async def test_changed_observer_cannot_hide_a_price_write():
         )
     )
     observer.body.append(ast.parse("price_buffer.clear()").body[0])
+    with pytest.raises(AssertionError):
+        _without_reviewed_observers(current)
+
+
+@pytest.mark.parametrize("mutation", ["argument", "body", "exception_guard", "condition", "placement"])
+async def test_only_the_exact_locked_snapshot_hook_is_reviewed(mutation):
+    current = _without_docstring(flush_ast())
+    approved = ast.dump(ast.parse(TRACE_OBSERVERS[2]).body[0])
+    observer = next(node for node in ast.walk(current)
+                    if isinstance(node, ast.If) and ast.dump(node) == approved)
+    guarded = observer.body[0]
+    if mutation == "argument":
+        call = guarded.body[0].value
+        call.args[0] = ast.parse("input_marks.values()", mode="eval").body
+    elif mutation == "body":
+        guarded.body.append(ast.parse("price_buffer.clear()").body[0])
+    elif mutation == "exception_guard":
+        guarded.items[0].context_expr.args[0].id = "BaseException"
+    elif mutation == "condition":
+        observer.test = ast.parse("exact_trace", mode="eval").body
+    else:
+        lock = next(node for node in ast.walk(current)
+                    if isinstance(node, ast.AsyncWith) and observer in node.body)
+        lock.body.remove(observer)
+        current.body.append(observer)
     with pytest.raises(AssertionError):
         _without_reviewed_observers(current)
 
