@@ -1431,7 +1431,6 @@ async def _poll_kalshi_markets():
     # to the first ~240s so the create/process loop (and its incremental commits)
     # always gets the remaining budget. Leaves ample margin under soft=600.
     _FETCH_DEADLINE_S = 240.0
-    _COMMIT_EVERY = 200  # events between incremental commits
 
     service = KalshiAPIService()
     stats = {
@@ -1727,9 +1726,9 @@ async def _poll_kalshi_markets():
 
             _mark_phase("upsert_loop")
             for event in events:
-                # #150: PER-EVENT budget check (not only at %_COMMIT_EVERY
-                # boundaries). A slow cycle that processes < _COMMIT_EVERY events
-                # otherwise never re-checks the deadline and runs into the soft
+                # #150: PER-EVENT budget check (it once ran only at the 200-event
+                # commit boundaries). A slow cycle that processed < 200 events
+                # never re-checked the deadline and ran into the soft
                 # limit (ops r120: SoftTimeLimitExceeded @437.8s = the #38/#995
                 # create-starvation signature). Commit what we have and exit
                 # cleanly so a slow cycle degrades to PARTIAL progress, never to a
@@ -2509,6 +2508,21 @@ async def _poll_kalshi_markets():
                             stats.get("ranks_rederived", 0) + _reranked
                         )
                     await _event_sp.commit()
+                    # #10732: releasing the SAVEPOINT releases no row lock. The
+                    # outer transaction kept every row this event wrote locked
+                    # until the next 200-event commit, so the NEXT event's series
+                    # metadata call (a venue round trip) ran with them held, and
+                    # the live socket's price UPDATE on those rows waited out its
+                    # lock budget and rolled back (reproduced on real Postgres,
+                    # CATALOG-ROOT-ACCEPTANCE-91688). Commit here, after the
+                    # event's market, outcomes, snapshots and whole-field rerank
+                    # are all written, so the event lands as one unit and holds
+                    # nothing across the next provider call. Inside the try on
+                    # purpose: a soft limit here is the handler below, and a
+                    # failed COMMIT is this event's SQL failure — rolled back,
+                    # reported in `errors`, never replayed. `events_processed`
+                    # counted the ATTEMPT above and is no proof of this commit.
+                    await session.commit()
 
                 except SoftTimeLimitExceeded:
                     # #150: the soft limit fired DURING this event's processing.
@@ -2542,23 +2556,43 @@ async def _poll_kalshi_markets():
                             "poll_kalshi: event %s failed (%s): %s",
                             event.event_ticker, type(e).__name__, str(e)[:300],
                         )
-                    continue
-
-                # Persist progress incrementally so a SIGKILL/timeout never wipes
-                # the whole run. Core upserts hold no ORM rows across the commit,
-                # so periodic commits are safe here. (events_processed is already
-                # incremented above, at the per-event upsert — we only read it.)
-                if stats["events_processed"] % _COMMIT_EVERY == 0:
-                    await session.commit()
-                    if time.monotonic() - _task_started > _LOOP_DEADLINE_S:
-                        stats["deadline_hit"] = True
+                    # #10732: the failed event's tail, resolved before the next
+                    # event's provider call like a healthy one. A non-SQL failure
+                    # RELEASED its savepoint and keeps what it wrote (#9460), and
+                    # those rows stay locked until committed; after a SQL failure
+                    # the rollback left nothing, so this commit is empty. Outside
+                    # the per-event try on purpose: if THIS commit fails the
+                    # session is not trusted for another event, so it ends the
+                    # beat through the top-level error and the session's own
+                    # rollback. A soft limit here keeps the handler above's stop.
+                    try:
+                        await session.commit()
+                    except SoftTimeLimitExceeded:
+                        stats["soft_limit_hit"] = True
+                        try:
+                            await session.commit()
+                        except Exception:
+                            pass
                         logger.warning(
-                            "poll_kalshi: loop deadline reached after %d/%d events "
-                            "(%.0fs) — committing partial progress and exiting cleanly",
-                            stats["events_processed"], len(events),
-                            time.monotonic() - _task_started,
+                            "poll_kalshi: SoftTimeLimitExceeded mid-loop after %d "
+                            "events — committed partial progress and exiting",
+                            stats["events_processed"],
                         )
                         break
+                    continue
+
+                # #150's second deadline read. Every event now commits as it
+                # finishes (#10732), so there is no batch left to commit here;
+                # this only stops the loop before the next event's provider call.
+                if time.monotonic() - _task_started > _LOOP_DEADLINE_S:
+                    stats["deadline_hit"] = True
+                    logger.warning(
+                        "poll_kalshi: loop deadline reached after %d/%d events "
+                        "(%.0fs) — progress committed, exiting cleanly",
+                        stats["events_processed"], len(events),
+                        time.monotonic() - _task_started,
+                    )
+                    break
 
             await session.commit()
 

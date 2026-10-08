@@ -3519,6 +3519,28 @@ jobs:
             exit 1
           }
 
+      - name: "#10732 a finished Kalshi event holds no row lock across the next event's venue call (real Postgres)"
+        # The discovery poll released each event's savepoint but committed the
+        # outer transaction only every 200 events, so a finished event's rows
+        # stayed locked while the loop awaited the next event's series metadata
+        # and the live socket's price UPDATE on them timed out. Each event now
+        # commits as it finishes. Only Postgres row locks can show that, read
+        # from a second connection at the venue call. Same rig and database as
+        # the #9460 step. Skip detection plus a count.
+        if: matrix.group == 'shared-middle'
+        run: |
+          set -o pipefail
+          python -m pytest tests/integration/test_kalshi_poll_releases_event_locks_before_metadata_real_postgres_10732.py \
+            -v -rs 2>&1 | tee /tmp/kalshieventcommit10732.txt
+          if grep -qiE "[0-9]+ skipped" /tmp/kalshieventcommit10732.txt; then
+            echo "::error::#10732 Kalshi event commit boundary gate SKIPPED — the gate did not run"
+            exit 1
+          fi
+          grep -qE "[^0-9]11 passed" /tmp/kalshieventcommit10732.txt || {
+            echo "::error::#10732 Kalshi event commit boundary gate did not run all eleven cases"
+            exit 1
+          }
+
       - name: "#9543 the Kalshi beat reaches the existing rows it wrote longest ago first (real Postgres)"
         # The poll breaks on a deadline every beat and walked existing events in
         # the venue's listing order, so the same tail was cut off every beat
