@@ -77,19 +77,28 @@ class _RecordingSession:
     matched N rows" and drive the task's own arithmetic from it.
     """
 
-    def __init__(self, rowcounts: list[int] | None = None) -> None:
+    def __init__(
+        self, rowcounts: list[int] | None = None, *, fail_bank: bool = False,
+    ) -> None:
         self.calls: list[tuple[str, dict]] = []
         self.events: list[str] = []
         self._rowcounts = list(rowcounts or [])
+        self.fail_bank = fail_bank
+        self.warm_snapshots = []
 
     async def execute(self, stmt, params=None):  # noqa: ANN001
         sql = " ".join(str(stmt).split())
         self.calls.append((sql, params or {}))
         self.events.append(sql)
+        if self.fail_bank and "jsonb_object_agg" in sql:
+            raise RuntimeError("bank failed")
         return _Result(self._rowcounts.pop(0) if self._rowcounts else 0)
 
     async def commit(self):
         self.events.append("COMMIT")
+
+    async def rollback(self):
+        self.events.append("ROLLBACK")
 
 
 class _SessionCtx:
@@ -111,13 +120,18 @@ def run_task(monkeypatch):
     task imports both INSIDE its own body — patching `app.tasks` would miss.
     """
 
-    def _run(rowcounts: list[int] | None = None) -> tuple[dict, _RecordingSession]:
-        # Counter controls name the established A..A10/B/C phase order. A10
-        # now executes independently first; preserve each control's phase value.
-        counts = list(rowcounts or [])
-        opening_count = counts.pop(11) if len(counts) > 11 else 0
-        counts.insert(0, opening_count)
-        session = _RecordingSession(counts)
+    def _run(
+        rowcounts: list[int] | None = None, *, fail_bank: bool = False,
+    ) -> tuple[dict, _RecordingSession]:
+        # Counter controls name the established A..A10/B/C phase order.
+        # Execute A10 first, then A1-A7/B/C, then the four bank operations.
+        # Preserve each control's named phase value across that reorder.
+        phase_counts = list(rowcounts or []) + [0] * 14
+        order = (11, 0, 1, 2, 3, 4, 5, 6, 12, 13, 7, 8, 9, 10)
+        session = _RecordingSession(
+            [phase_counts[i] for i in order], fail_bank=fail_bank,
+        )
+        _run.last_session = session
 
         import app.tasks.base as base_mod
         import app.tasks.futures_movers_warm as warm_mod
@@ -125,6 +139,7 @@ def run_task(monkeypatch):
         monkeypatch.setattr(base_mod, "get_task_session", lambda: _SessionCtx(session))
 
         async def _fake_warm(_session):
+            session.warm_snapshots.append(list(session.events))
             return {"terminal": "ok", "completed": 1}
 
         monkeypatch.setattr(warm_mod, "warm_futures_movers", _fake_warm)
@@ -136,15 +151,18 @@ def run_task(monkeypatch):
 
 
 def _movement_events(session: _RecordingSession) -> list[str]:
-    """A10 commits alone; every delta/rank/bank/max statement commits together."""
+    """A10 and banks commit separately; delta/rank/max core stays atomic."""
     events = session.events
-    assert events.count("COMMIT") == 2, events
-    assert events[1] == "COMMIT", events
+    commits = [i for i, event in enumerate(events) if event == "COMMIT"]
+    assert len(commits) == 3, events
+    assert commits[0] == 1, events
     assert "unpriced_opening_ids" in events[0], events
     assert "probability_change_24h" not in events[0], events[0]
     assert "rank_change_24h" not in events[0], events[0]
-    assert events[-1] == "COMMIT", events
-    return events[2:]
+    assert commits[-1] == len(events) - 1, events
+    core = events[2:commits[1] + 1]
+    assert "jsonb_object_agg" not in " ".join(core), core
+    return core
 
 
 def test_opening_sweep_releases_market_locks_before_any_outcome_write(run_task):
@@ -430,17 +448,9 @@ def test_a_full_batch_reports_the_backlog_as_undrained(run_task) -> None:
 def test_a_short_batch_reports_the_backlog_as_drained(run_task) -> None:
     """And the day it comes up short, the sweep has caught up.
 
-    The list is consumed in EXECUTION order, so every statement added to the
-    task shifts everything after it. Seven outcome sweeps now — A, A2, A3, A4,
-    the two RANK sweeps A5/A6, and A7, the dated-direction sweep — then #4079's
-    DataGolf bank and unbank (A8-DG / A9-DG, which run first so the shared
-    exclusions are load-bearing), then A8/A9, which publish and retire the
-    dated-basis bank, then #8612's A10, which lists
-    unpriced openings, which puts the two `max_movement_24h` statements at
-    positions 13 and 14. Each counter is
-    asserted against a DISTINCT value so a statement that read its sibling's
-    rowcount could not pass — which is the whole reason this fixture is a
-    sequence rather than a repeated number.
+    The fixture names counters in the established A1-A7, four bank arms,
+    A10, B/C order and maps them to the actual execution order. Each counter
+    uses a distinct value, so reading a sibling's rowcount cannot pass.
     """
     result, _ = run_task([12, 6, 9, 8, 1, 1, 5, 14, 15, 7, 3, 13, 4, 2])
 
@@ -463,7 +473,7 @@ def test_a_short_batch_reports_the_backlog_as_drained(run_task) -> None:
 def test_the_result_still_carries_the_original_contract(run_task) -> None:
     """LAT-P115's keys survive: the warm is still reported, never swallowed.
 
-    Positions 5 and 6 are #4079's rank sweeps A5/A6, position 7 is its
+    Counter-control positions 5 and 6 are #4079's rank sweeps A5/A6, position 7 is its
     dated-direction sweep A7, positions 8 and 9 are #10248's DataGolf bank and
     unbank (A8-DG / A9-DG), positions 10 and 11 are #4079's dated-basis bank
     (A8) and unbank (A9) and position 12 is #8612's unpriced-opening list
@@ -1546,41 +1556,49 @@ def test_a_market_out_of_claim_scope_loses_its_bank(run_task) -> None:
     )
 
 
-def test_the_bank_lands_inside_the_one_transaction(run_task) -> None:
-    """A reader must never see a bank against un-swept deltas, or the reverse.
-
-    Between A7's retirements and the bank there is a state where a card's
-    evidence and its selection disagree; the single commit is what makes that
-    state unobservable, exactly as it is for A/A2/A3/A4/A7 and B/C.
-    """
+def test_the_bank_commits_after_the_atomic_core_and_before_the_warm(run_task) -> None:
+    """Core quote locks are released before all four metadata maintenance arms."""
     _, session = run_task()
-    events = _movement_events(session)
-
-    assert events.count("COMMIT") == 1, (
-        f"the sweep no longer commits exactly once: {events}"
+    _movement_events(session)
+    events = session.events
+    commits = [i for i, event in enumerate(events) if event == "COMMIT"]
+    banked = [i for i, event in enumerate(events) if "jsonb_object_agg" in event]
+    assert len(banked) == 2, events
+    assert commits[1] < min(banked) <= max(banked) < commits[2], events
+    assert all(
+        "UPDATE futures_markets" in event
+        for event in events[commits[1] + 1:commits[2]]
     )
-    commit = events.index("COMMIT")
-    banked = [i for i, s in enumerate(events) if "jsonb_object_agg" in s]
-    assert banked and max(banked) < commit, (
-        f"the dated-basis bank landed outside the single transaction: {events}"
-    )
+    assert session.warm_snapshots == [events], session.warm_snapshots
 
 
-def test_the_bank_runs_after_every_retirement_and_before_the_recompute(
+def test_bank_failure_rolls_back_and_warms_committed_core_then_propagates(run_task) -> None:
+    with pytest.raises(RuntimeError, match="bank failed"):
+        run_task(fail_bank=True)
+    session = run_task.last_session
+    events = session.events
+    assert events.count("COMMIT") == 2, events
+    assert events[-1] == "ROLLBACK", events
+    core_commit = max(i for i, event in enumerate(events) if event == "COMMIT")
+    assert "SET max_movement_24h = NULL" in events[core_commit - 1], events
+    assert "jsonb_object_agg" in events[core_commit + 1], events
+    assert session.warm_snapshots == [events], session.warm_snapshots
+
+
+def test_the_bank_runs_after_every_retirement_and_the_committed_recompute(
     run_task,
 ) -> None:
     """Order is load-bearing in both directions.
 
-    AFTER the retirements, so a delta A7 is about to retire never gets evidence
-    banked for it. BEFORE B and C, so the run's arithmetic on the column reads
-    one settled state rather than two.
+    AFTER the retirements and B/C commit, so the expensive metadata scans
+    read coherent committed movement without holding outcome quote locks.
     """
     events = _statements(run_task()[1])
     sweeps = [i for i, s in enumerate(events) if "UPDATE futures_outcomes" in s]
     bank = next(i for i, s in enumerate(events) if "jsonb_object_agg" in s)
     recompute = next(i for i, s in enumerate(events) if "max_movement_24h = sub.max_mv" in s)
 
-    assert max(sweeps) < bank < recompute, (
+    assert max(sweeps) < recompute < bank, (
         f"the bank is out of order — sweeps={sweeps} bank={bank} "
         f"recompute={recompute}: {events}"
     )
