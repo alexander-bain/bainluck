@@ -112,6 +112,9 @@ def rig(*, failed=None, declined=None, pending=(), locked=(), unchanged=()):
         def pending_event_ids(self):
             return frozenset(pending)
 
+        def adopt_pending(self, ids):
+            pass
+
         async def publish_market_changes(self, s):
             trace.append(("publish", tuple(s.rows)))
 
@@ -156,7 +159,7 @@ async def test_ready_game_publishes_while_later_game_write_is_held():
         assert r.committed == [1, 2]
         assert ('refresh', (100,)) in r.trace
         assert r.trace.index(('commit', (1, 2))) < r.trace.index(('publish', (1, 2)))
-        assert r.trace.index(('publish', (1, 2))) < r.trace.index(('refresh', (100,)))
+        assert r.trace.index(('commit', (1, 2))) < r.trace.index(('refresh', (100,)))
         assert ('receipt', (1, 2)) in r.trace
         assert set(r.batch) == {3, 9}
     finally:

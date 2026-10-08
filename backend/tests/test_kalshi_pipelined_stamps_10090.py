@@ -23,11 +23,14 @@ pytestmark = pytest.mark.asyncio
 def held_refresher(r, hold_ids=(100,)):
     gate = asyncio.Event()
     calls = {"started": [], "finished": [], "cancelled": [], "running": 0,
-             "most_running": 0}
+             "most_running": 0, "adopted": []}
 
     class Refresher:
         def pending_event_ids(self):
             return frozenset()
+
+        def adopt_pending(self, ids):
+            calls["adopted"].append(set(ids))
 
         async def publish_market_changes(self, s):
             r.trace.append(("publish", tuple(s.rows)))
@@ -138,7 +141,7 @@ async def test_a_cancel_landing_on_the_last_stamp_join_still_joins_it():
     flush = asyncio.create_task(r.flush())
     for _ in range(50):
         await asyncio.sleep(0)
-        if r.committed == [1, 2, 3, 9]:
+        if r.committed == [1, 2, 3, 9] and calls["started"] == [(100,), (200,)]:
             break
     # Premise: every write committed; only game 200's stamp is still running.
     assert r.committed == [1, 2, 3, 9]
