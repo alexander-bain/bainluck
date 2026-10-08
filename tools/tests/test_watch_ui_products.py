@@ -259,6 +259,10 @@ class RuntimeSupportTests(unittest.TestCase):
         }
         mapping = gate.runtime_support(self.payload, runtime)
         gate.verify_runtime_support(self.payload, mapping, self.environment)
+        legacy = copy.deepcopy(mapping)
+        legacy[0].pop("original_paths")
+        legacy[0].pop("runtime_checker_path")
+        gate.verify_runtime_support(self.payload, legacy, self.environment)
         self.assertEqual(
             plistlib.loads(self.run.read_bytes())[gate.XCTEST]["TestTimeoutsEnabled"],
             False,
@@ -270,6 +274,129 @@ class RuntimeSupportTests(unittest.TestCase):
         self.run.write_bytes(plistlib.dumps(changed))
         with self.assertRaisesRegex(ValueError, "beyond exact"):
             gate.verify_runtime_support(self.payload, mapping, self.environment)
+
+    def cryptex_fixture(self, extra_path=None):
+        # Exact retained hosted path; simctl names /private/var, Xcode /var.
+        injected = (
+            "/var/run/com.apple.security.cryptexd/mnt/"
+            "com.apple.WatchOS.SimulatorRuntime-v24.18.362.0.wdAulf/"
+            "Library/Developer/CoreSimulator/Profiles/Runtimes/"
+            "watchOS 27.0.simruntime/Contents/Resources/RuntimeRoot/"
+            "usr/lib/libMainThreadChecker.dylib"
+        )
+        selected = "/private" + injected
+        runtime = {
+            "runtimeRoot": str(Path(selected).parents[2]),
+            "identifier": "com.apple.CoreSimulator.SimRuntime.watchOS-27-0",
+            "version": "27.0",
+            "buildversion": "24R362",
+            "isAvailable": True,
+            "platform": "watchOS",
+        }
+        data = plistlib.loads(self.run.read_bytes())
+        data[gate.XCTEST]["TestingEnvironmentVariables"] = {
+            "DYLD_INSERT_LIBRARIES": injected,
+            "OTHER_DIAGNOSTIC": "retained",
+        }
+        data[gate.XCTEST]["EnvironmentVariables"] = {
+            "DYLD_INSERT_LIBRARIES": selected + (":" + extra_path if extra_path else "")
+        }
+        self.run.write_bytes(plistlib.dumps(data))
+        return injected, selected, runtime
+
+    def test_hosted_cryptex_var_alias_relocates_only_identical_selected_checker(self):
+        from unittest.mock import call, patch
+
+        injected, selected, runtime = self.cryptex_fixture()
+        original = self.run.read_bytes()
+
+        def copy_checker(source, destination):
+            self.assertEqual(source, selected)
+            destination.write_bytes(b"selected-runtime-checker")
+
+        with patch.object(Path, "samefile", autospec=True, return_value=True) as same:
+            with patch.object(gate.shutil, "copy2", side_effect=copy_checker):
+                mapping = gate.runtime_support(self.payload, runtime)
+        # Old source leaves the /var spelling absolute, reproducing hosted refusal.
+        gate.check_layout(self.payload)
+        self.assertCountEqual(
+            same.call_args_list,
+            [call(Path(injected), selected), call(Path(selected), selected)],
+        )
+        self.assertEqual(mapping[0]["runtime_checker_path"], selected)
+        self.assertEqual(set(mapping[0]["original_paths"]), {injected, selected})
+        self.assertEqual(
+            (self.payload / "provenance/original.xctestrun").read_bytes(), original
+        )
+        gate.verify_runtime_support(self.payload, mapping, self.environment)
+        gate.check_layout(self.payload)
+        self.assertEqual(mapping[0]["runtime_build"], "24R362")
+        self.assertEqual(mapping[0]["runtime"], runtime["identifier"])
+        self.assertEqual(
+            plistlib.loads(self.run.read_bytes())[gate.XCTEST][
+                "TestingEnvironmentVariables"
+            ]["OTHER_DIAGNOSTIC"],
+            "retained",
+        )
+        for bad_path in (injected.replace("wdAulf", "another"), "/tmp/checker"):
+            bad = copy.deepcopy(mapping)
+            bad[0]["original_paths"].append(bad_path)
+            with self.assertRaisesRegex(ValueError, "alias provenance"):
+                gate.verify_runtime_support(self.payload, bad, self.environment)
+        bad = copy.deepcopy(mapping)
+        bad[0]["runtime_checker_path"] = selected.replace("wdAulf", "another")
+        with self.assertRaisesRegex(ValueError, "alias provenance"):
+            gate.verify_runtime_support(self.payload, bad, self.environment)
+        with self.assertRaisesRegex(ValueError, "provenance"):
+            gate.verify_runtime_support(self.payload, mapping, {"watch_sdk": "26.0"})
+
+    def test_cryptex_alias_different_or_missing_file_fails_before_copy(self):
+        from unittest.mock import patch
+
+        _, _, runtime = self.cryptex_fixture()
+        original = self.run.read_bytes()
+        for result in (False, FileNotFoundError("missing selected checker")):
+            with self.subTest(result=result):
+                with patch.object(Path, "samefile", side_effect=[result]) as same:
+                    with patch.object(gate.shutil, "copy2") as copy_checker:
+                        with self.assertRaises((ValueError, FileNotFoundError)):
+                            gate.runtime_support(self.payload, runtime)
+                        copy_checker.assert_not_called()
+                    same.assert_called_once()
+                self.assertEqual(self.run.read_bytes(), original)
+
+    def test_cryptex_unknown_external_library_remains_rejected(self):
+        from unittest.mock import patch
+
+        _, _, runtime = self.cryptex_fixture("/var/run/unknown/libOther.dylib")
+        with patch.object(Path, "samefile", return_value=True):
+            with patch.object(
+                gate.shutil,
+                "copy2",
+                side_effect=lambda source, destination: destination.write_bytes(
+                    b"checker"
+                ),
+            ):
+                mapping = gate.runtime_support(self.payload, runtime)
+        gate.verify_runtime_support(self.payload, mapping, self.environment)
+        with self.assertRaisesRegex(ValueError, "External absolute"):
+            gate.check_layout(self.payload)
+
+    def test_same_named_checker_in_other_mount_is_not_an_alias(self):
+        from unittest.mock import patch
+
+        injected, _, runtime = self.cryptex_fixture()
+        data = plistlib.loads(self.run.read_bytes())
+        del data[gate.XCTEST]["EnvironmentVariables"]
+        data[gate.XCTEST]["TestingEnvironmentVariables"]["DYLD_INSERT_LIBRARIES"] = (
+            injected.replace("wdAulf", "different")
+        )
+        self.run.write_bytes(plistlib.dumps(data))
+        with patch.object(Path, "samefile") as same:
+            self.assertEqual(gate.runtime_support(self.payload, runtime), [])
+            same.assert_not_called()
+        with self.assertRaisesRegex(ValueError, "External absolute"):
+            gate.check_layout(self.payload)
 
     def test_unknown_external_checker_is_never_whitelisted(self):
         data = plistlib.loads(self.run.read_bytes())

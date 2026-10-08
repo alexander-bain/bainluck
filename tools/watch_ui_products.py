@@ -180,6 +180,16 @@ def check_layout(payload, environment=None, carrier_stubs=None):
     return run.relative_to(payload).as_posix()
 
 
+def checker_aliases(path):
+    """Only macOS's /var spelling of the selected /private/var checker."""
+    aliases = {path}
+    if path.startswith("/private/var/"):
+        aliases.add(path.removeprefix("/private"))
+    elif path.startswith("/var/"):
+        aliases.add("/private" + path)
+    return aliases
+
+
 def runtime_support(payload, runtime):
     """Copy only the selected runtime's known checker, retaining diagnostics."""
     runs = list((payload / "watch/Build/Products").glob("*.xctestrun"))
@@ -192,6 +202,8 @@ def runtime_support(payload, runtime):
     known = str(Path(runtime["runtimeRoot"]) / "usr/lib/libMainThreadChecker.dylib")
     replacement = "__TESTROOT__/RuntimeSupport/libMainThreadChecker.dylib"
     changes = []
+    originals = set()
+    aliases = checker_aliases(known)
     for section in (
         "EnvironmentVariables",
         "TestingEnvironmentVariables",
@@ -200,10 +212,17 @@ def runtime_support(payload, runtime):
         environment = target.get(section, {})
         raw = environment.get("DYLD_INSERT_LIBRARIES", "")
         parts = raw.split(":")
-        if known in parts:
+        matched = set(parts) & aliases
+        if matched:
+            # A spelling resemblance is insufficient: both paths must exist and
+            # identify the exact checker belonging to the selected runtime.
+            for part in matched:
+                if not Path(part).samefile(known):
+                    raise ValueError("Checker alias is not the selected runtime file")
             environment["DYLD_INSERT_LIBRARIES"] = ":".join(
-                replacement if part == known else part for part in parts
+                replacement if part in matched else part for part in parts
             )
+            originals.update(matched)
             changes.append(section)
     if not changes:
         return []
@@ -218,7 +237,9 @@ def runtime_support(payload, runtime):
     run.write_bytes(plistlib.dumps(data))
     return [
         {
-            "original_path": known,
+            "original_path": sorted(originals)[0],
+            "original_paths": sorted(originals),
+            "runtime_checker_path": known,
             "replacement": replacement,
             "sections": changes,
             "runtime": runtime["identifier"],
@@ -245,6 +266,18 @@ def verify_runtime_support(payload, mapping, environment):
         or item["runtime_version"] != environment["watch_sdk"]
     ):
         raise ValueError("Unexpected runtime checker provenance")
+    original_paths = item.get("original_paths", [item["original_path"]])
+    if (
+        not isinstance(original_paths, list)
+        or not original_paths
+        or any(not isinstance(path, str) for path in original_paths)
+        or len(set(original_paths)) != len(original_paths)
+        or item["original_path"] not in original_paths
+        or not set(original_paths) <= checker_aliases(item["original_path"])
+        or item.get("runtime_checker_path", item["original_path"])
+        not in checker_aliases(item["original_path"])
+    ):
+        raise ValueError("Unexpected runtime checker alias provenance")
     original = payload / "provenance/original.xctestrun"
     run = next((payload / "watch/Build/Products").glob("*.xctestrun"))
     support = run.parent / "RuntimeSupport/libMainThreadChecker.dylib"
@@ -254,6 +287,7 @@ def verify_runtime_support(payload, mapping, environment):
     ):
         raise ValueError("Runtime checker provenance hash mismatch")
     expected = plistlib.loads(original.read_bytes())
+    observed_paths = set()
     for section in item["sections"]:
         if section not in {
             "EnvironmentVariables",
@@ -262,12 +296,15 @@ def verify_runtime_support(payload, mapping, environment):
         }:
             raise ValueError("Unexpected checker injection setting")
         parts = expected[XCTEST][section]["DYLD_INSERT_LIBRARIES"].split(":")
-        if item["original_path"] not in parts:
+        matched = set(parts) & set(original_paths)
+        if not matched:
             raise ValueError("Checker mapping does not match original setting")
+        observed_paths.update(matched)
         expected[XCTEST][section]["DYLD_INSERT_LIBRARIES"] = ":".join(
-            item["replacement"] if part == item["original_path"] else part
-            for part in parts
+            item["replacement"] if part in matched else part for part in parts
         )
+    if observed_paths != set(original_paths):
+        raise ValueError("Checker alias mapping was not present in original settings")
     if expected != plistlib.loads(run.read_bytes()):
         raise ValueError("xctestrun changed beyond exact checker path relocation")
 
