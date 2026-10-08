@@ -977,6 +977,21 @@ async def reap_stopped_loops(source: str, tasks, *, timeout_s: float = LOOP_REAP
     return len(still)
 
 
+# Event context needed by the prepared resolver/stamp, including aggregate
+# fallbacks. Unrelated score/metadata JSON must not ride every linked prop row.
+PREPARED_EVENT_FIELDS = (
+    "id",
+    "home_team_name",
+    "away_team_name",
+    "status",
+    "completed_at",
+    "commence_time",
+    "win_probability_sources",
+    "espn_win_prob_home",
+    "opening_home_probability",
+)
+
+
 class LiveBlendRefresher:
     """Stateful per-source refresher, owned by one WS consumer run.
 
@@ -1362,33 +1377,73 @@ class LiveBlendRefresher:
 
     async def _read_groups(self, session, event_ids: list[int]) -> dict[int, tuple]:
         from sqlalchemy import select
+        from sqlalchemy.orm import load_only
         from app.models.models import Event, FuturesMarket, FuturesOutcome
-        from app.utils.live_blend import MarketOutcomes
+        from app.utils.live_blend import MarketOutcomes, is_game_winner_market
 
-        market_rows = (
-            await session.execute(
-                select(FuturesMarket, Event)
-                .join(Event, FuturesMarket.event_id == Event.id)
-                .where(
-                    FuturesMarket.source == self.source,
-                    FuturesMarket.event_id.in_(event_ids),
+        market_rows = list(
+            (
+                await session.execute(
+                    select(FuturesMarket).where(
+                        FuturesMarket.source == self.source,
+                        FuturesMarket.event_id.in_(event_ids),
+                    )
                 )
-            )
-        ).all()
+            ).scalars()
+        )
         if not market_rows:
             return {}
 
-        market_ids = [m.id for m, _ in market_rows]
+        events = {
+            event.id: event
+            for event in (
+                await session.execute(
+                    select(Event)
+                    .options(
+                        load_only(
+                            *(getattr(Event, key) for key in PREPARED_EVENT_FIELDS),
+                            raiseload=True,
+                        )
+                    )
+                    .where(
+                        Event.id.in_(
+                            list(
+                                dict.fromkeys(market.event_id for market in market_rows)
+                            )
+                        )
+                    )
+                )
+            ).scalars()
+        }
+        # Preserve the old inner join's orphan refusal.
+        market_rows = [market for market in market_rows if market.event_id in events]
+        if not market_rows:
+            return {}
+        # Do not drop market entries: len(group) is the resolver's devig gate.
+        # Only their impossible Kalshi outcomes can be omitted; the same ticker
+        # rule refuses them as primary, fallback and contributor.
+        # Missing tickers keep their outcomes: the resolver still tries names.
+        market_ids = [
+            market.id
+            for market in market_rows
+            if self.source != "kalshi"
+            or not getattr(market, "external_id", None)
+            or is_game_winner_market(market)
+        ]
         outcomes_by_market: dict[int, list] = {}
-        for outcome in (
-            await session.execute(
-                select(FuturesOutcome).where(FuturesOutcome.market_id.in_(market_ids))
-            )
-        ).scalars():
-            outcomes_by_market.setdefault(outcome.market_id, []).append(outcome)
+        if market_ids:
+            for outcome in (
+                await session.execute(
+                    select(FuturesOutcome).where(
+                        FuturesOutcome.market_id.in_(market_ids)
+                    )
+                )
+            ).scalars():
+                outcomes_by_market.setdefault(outcome.market_id, []).append(outcome)
 
         grouped: dict[int, tuple] = {}
-        for market, event in market_rows:
+        for market in market_rows:
+            event = events[market.event_id]
             entry = grouped.setdefault(event.id, (event, []))
             entry[1].append(
                 MarketOutcomes(
@@ -1400,8 +1455,8 @@ class LiveBlendRefresher:
                     # seconds from the same rows, so without the same input
                     # it would re-publish what the matcher just cleared and
                     # the two writers would disagree — the one thing this
-                    # module exists to prevent. The Event row is already
-                    # joined here, so it costs no query.
+                    # module exists to prevent. The Event context is loaded
+                    # once for this group, not once per linked market.
                     event_has_result=event.completed_at is not None,
                     # #9037: use the same kickoff admission as the
                     # matcher and poll for live unresolved games. A stale
@@ -1442,7 +1497,12 @@ class LiveBlendRefresher:
             grouped = await self._read_groups(session, event_ids)
             return {
                 event_id: (
-                    scalar(event),
+                    SimpleNamespace(
+                        **{
+                            key: copy.deepcopy(getattr(event, key))
+                            for key in PREPARED_EVENT_FIELDS
+                        }
+                    ),
                     [
                         MarketOutcomes(
                             market=scalar(entry.market),
