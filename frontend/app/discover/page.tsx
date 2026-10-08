@@ -51,7 +51,7 @@ import {
   writeFeedSnapshot,
   writeScrollMark,
 } from "@/lib/discover/feedRestore";
-import { firstDeckOwner, readFirstDeck, writeFirstDeck } from "@/lib/discover/firstDeck";
+import { firstDeckOwner, firstDeckRequestPrincipal, readFirstDeck, writeFirstDeck } from "@/lib/discover/firstDeck";
 import FeedBootScript from "@/components/discover/FeedBootScript";
 import { deriveGroupDisplayTitle } from "@/lib/discover/groupTitle";
 import { futuresGroupKey } from "@/lib/discover/groupKey";
@@ -560,7 +560,7 @@ export default function DiscoverPage() {
   const [savedDeckPreview, setSavedDeckPreview] = useState(false);
   const previewOwnerRef = useRef<string | null>(null);
   const replacePreviewRef = useRef(false);
-  const requestPrincipal = authLoading ? null : (user?.uid ?? "anonymous");
+  const requestPrincipal = firstDeckRequestPrincipal(user?.uid, authLoading);
   const previousPrincipalRef = useRef<string | null>(null);
   // L2-238: the backend typed the last response `cache.status = "unavailable"`.
   // A transient no-data terminal, not an empty feed — surfaces this page's own

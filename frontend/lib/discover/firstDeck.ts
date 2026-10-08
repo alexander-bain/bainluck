@@ -34,6 +34,12 @@ export function firstDeckOwner(uid: string | null | undefined, authLoading: bool
   } catch { return null; }
 }
 
+/** Known guests need not wait for Firebase; persisted/unknown accounts do. */
+export function firstDeckRequestPrincipal(uid: string | null | undefined, authLoading: boolean): string | null {
+  if (!authLoading) return uid ?? "anonymous";
+  return firstDeckOwner(uid, true)?.startsWith("anonymous:") ? "anonymous" : null;
+}
+
 function checksum(body: string): number {
   let hash = 0;
   for (let i = 0; i < body.length; i++) hash = (Math.imul(hash, 31) + body.charCodeAt(i)) | 0;

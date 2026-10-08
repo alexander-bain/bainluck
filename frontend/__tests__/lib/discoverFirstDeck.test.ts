@@ -1,5 +1,5 @@
 import type { FeedItem } from "@/lib/types";
-import { FIRST_DECK_KEY, FIRST_DECK_TTL_MS, firstDeckOwner, parseFirstDeck, readFirstDeck, writeFirstDeck } from "@/lib/discover/firstDeck";
+import { FIRST_DECK_KEY, FIRST_DECK_TTL_MS, firstDeckOwner, firstDeckRequestPrincipal, parseFirstDeck, readFirstDeck, writeFirstDeck } from "@/lib/discover/firstDeck";
 
 const storage = () => {
   const values = new Map<string, string>();
@@ -55,4 +55,13 @@ it("unavailable browser storage safely falls back to the ordinary feed", () => {
   expect(firstDeckOwner(null, true)).toBeNull();
   expect(readFirstDeck("user:alex")).toBeNull();
   expect(() => writeFirstDeck({ items: cards(1), hasMore: true }, "user:alex")).not.toThrow();
+});
+it("starts known-anonymous requests during auth restore, while holding persisted or ambiguous users", () => {
+  expect(firstDeckRequestPrincipal(null, true)).toBe("anonymous");
+  local.setItem("bainluck_previouslySignedIn", "true");
+  expect(firstDeckRequestPrincipal(null, true)).toBeNull();
+  local.setItem("bainluck_backendAuth", JSON.stringify({ uid: "alex", expiresAt: now + 600_000 }));
+  expect(firstDeckRequestPrincipal(null, true)).toBeNull();
+  expect(firstDeckRequestPrincipal("alex", false)).toBe("alex");
+  expect(firstDeckRequestPrincipal(null, false)).toBe("anonymous");
 });
