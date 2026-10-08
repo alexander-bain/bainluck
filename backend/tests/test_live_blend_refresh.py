@@ -835,6 +835,63 @@ class _LockTimeout(Exception):
 
 class TestSingleEventStampTransaction:
     @pytest.mark.asyncio
+    @pytest.mark.parametrize("count,snapshot_due", [(1, False), (2, False), (1, True), (2, True)])
+    async def test_snapshot_clock_skips_only_chart_transaction_work(
+        self, monkeypatch, count, snapshot_due,
+    ):
+        from contextlib import asynccontextmanager
+        from copy import copy
+
+        event, market = _event_and_market()
+        rows = [(market, event)]
+        if count == 2:
+            other_event, other_market = copy(event), copy(market)
+            other_event.id = other_market.event_id = 2
+            other_market.id = 20
+            rows.append((other_market, other_event))
+        session = _RecordingSession(rows, [], {
+            "polymarket": {"value": 0.9, "updated_at": "2026-10-08T15:00:00+00:00"},
+        })
+        session.returned_rev = 42
+        r, _ = _one_event_refresher(monkeypatch, session)
+        monkeypatch.setattr("app.tasks.live_blend_refresh.time.monotonic", lambda: 1000.0)
+        if not snapshot_due:
+            r._last_snapshot_at = {event_id: 999.0 for event_id in range(1, count + 1)}
+        snapshots, flushes, committed, published = [], [], [], []
+
+        async def snapshot(session, event_id, *args):
+            snapshots.append(event_id)
+
+        async def flush():
+            flushes.append(True)
+
+        @asynccontextmanager
+        async def factory():
+            yield session
+            committed.append(True)
+
+        async def publish(frames):
+            assert committed == [True]
+            published.extend(frames)
+
+        r._session_factory = factory
+        monkeypatch.setattr(r, "_maybe_snapshot", snapshot)
+        monkeypatch.setattr(r, "_publish", publish)
+        monkeypatch.setattr(session, "flush", flush)
+        await r.refresh(list(range(1, count + 1)))
+        assert len(session.updates) == count
+        assert r.stats["stamped"] == count
+        assert snapshots == (list(range(1, count + 1)) if snapshot_due else [])
+        assert len(flushes) == (count if snapshot_due else 0)
+        event_savepoints = 0 if count == 1 else count
+        assert session.savepoints == ["release"] * (
+            event_savepoints + (count if snapshot_due else 0)
+        )
+        assert len(published) == count
+        assert all(frame["p"] == 0.9 for frame in published)
+        assert all(frame["rev"][str(frame["event_id"])] == 42 for frame in published)
+
+    @pytest.mark.asyncio
     @pytest.mark.parametrize("single_event", [True, False])
     async def test_failed_scope_rolls_back_its_own_boundary(self, single_event):
         session = _RecordingSession([], [], None)

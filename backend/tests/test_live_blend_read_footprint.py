@@ -7,7 +7,12 @@ from datetime import datetime, timedelta, timezone
 import pytest
 
 from app.models.models import Event, FuturesMarket, FuturesOutcome
-from app.tasks.live_blend_refresh import LiveBlendRefresher, PREPARED_EVENT_FIELDS
+from app.tasks.live_blend_refresh import (
+    LiveBlendRefresher,
+    PREPARED_EVENT_FIELDS,
+    PREPARED_MARKET_FIELDS,
+    PREPARED_OUTCOME_FIELDS,
+)
 from app.utils.live_blend import MarketOutcomes, compute_source_home_probability
 
 
@@ -139,12 +144,22 @@ async def test_read_projects_one_event_context_and_omits_only_impossible_kalshi_
     ]  # A missing ticker is not a structural refusal.
     assert grouped[1][1][0].outcomes == []
     assert grouped[1][1][2].outcomes
-    market_sql, event_sql, _ = [
+    market_sql, event_sql, outcome_sql = [
         str(statement.compile()) for statement in session.statements
     ]
     assert "JOIN" not in market_sql.upper()
     assert "events." not in market_sql
     assert "box_score_data" not in event_sql
+    for sql, table, fields in [
+        (market_sql, "futures_markets", PREPARED_MARKET_FIELDS),
+        (outcome_sql, "futures_outcomes", PREPARED_OUTCOME_FIELDS),
+    ]:
+        assert {
+            field.strip()
+            for field in sql.split("\nFROM")[0].removeprefix("SELECT ").split(", ")
+        } == {
+            f"{table}.{key}" for key in fields
+        }
     selected_event_fields = [
         field.strip()
         for field in event_sql.split("\nFROM")[0].removeprefix("SELECT ").split(", ")
@@ -224,6 +239,16 @@ async def test_smaller_read_retains_resolver_value_and_fallback(case):
     if case == "prop_only":
         assert len(session.statements) == 2  # No empty outcome query.
 
+    @asynccontextmanager
+    async def factory():
+        yield session
+
+    prepared = await LiveBlendRefresher(
+        markets[0].source, session_factory=factory
+    )._prepare_groups([1])
+    assert reading_signature(prepared[1][1]) == reading_signature(baseline)
+    assert len(prepared[1][1]) == len(baseline)
+
 
 @pytest.mark.asyncio
 async def test_prepared_context_keeps_fallbacks_and_detaches_json_without_copying_unused_event_fields():
@@ -251,5 +276,7 @@ async def test_prepared_context_keeps_fallbacks_and_detaches_json_without_copyin
     assert set(vars(context)) == set(PREPARED_EVENT_FIELDS)
     assert context.espn_win_prob_home == 0.7
     assert context.opening_home_probability == 0.6
+    assert set(vars(prepared[1][1][0].market)) == set(PREPARED_MARKET_FIELDS)
+    assert set(vars(prepared[1][1][0].outcomes[0])) == set(PREPARED_OUTCOME_FIELDS)
     context.win_probability_sources["espn"]["value"] = 0.1
     assert e.win_probability_sources["espn"]["value"] == 0.7
