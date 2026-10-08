@@ -20,8 +20,8 @@ class Result:
     def __init__(self, rows):
         self.rows = rows
 
-    def scalars(self):
-        return iter(self.rows)
+    def all(self):
+        return self.rows
 
 
 class ReadSession:
@@ -32,20 +32,33 @@ class ReadSession:
 
     async def execute(self, statement):
         self.statements.append(statement)
-        entity = statement.column_descriptions[0]["entity"]
-        if entity is FuturesMarket:
-            return Result(self.markets)
-        if entity is Event:
-            return Result(self.events)
-        assert entity is FuturesOutcome
-        self.outcome_ids = next(iter(statement.compile().params.values()))
-        return Result(
-            [
-                outcome
-                for outcome in self.outcomes
-                if outcome.market_id in self.outcome_ids
-            ]
-        )
+        from app.utils.live_blend import is_game_winner_market
+
+        self.outcome_ids = []
+        rows = []
+        for market in self.markets:
+            event = next((e for e in self.events if e.id == market.event_id), None)
+            if event is None:
+                continue
+            eligible = (
+                market.source != "kalshi" or not market.external_id
+                or is_game_winner_market(market)
+            )
+            if eligible:
+                self.outcome_ids.append(market.id)
+            outcomes = [
+                o for o in self.outcomes if o.market_id == market.id
+            ] if eligible else []
+            for outcome in outcomes or [None]:
+                rows.append(tuple(
+                    getattr(obj, key, None)
+                    for obj, keys in (
+                        (market, PREPARED_MARKET_FIELDS),
+                        (event, PREPARED_EVENT_FIELDS),
+                        (outcome, PREPARED_OUTCOME_FIELDS),
+                    ) for key in keys
+                ))
+        return Result(rows)
 
 
 def event():
@@ -144,30 +157,23 @@ async def test_read_projects_one_event_context_and_omits_only_impossible_kalshi_
     ]  # A missing ticker is not a structural refusal.
     assert grouped[1][1][0].outcomes == []
     assert grouped[1][1][2].outcomes
-    market_sql, event_sql, outcome_sql = [
-        str(statement.compile()) for statement in session.statements
+    assert len(session.statements) == 1
+    sql = str(session.statements[0].compile())
+    assert "JOIN events" in sql
+    assert "LEFT OUTER JOIN futures_outcomes" in sql
+    assert "split_part(lower(futures_markets.external_id)" in sql
+    assert "box_score_data" not in sql
+    assert "calibration_probability" not in sql
+    # Scalar columns only: no ORM hydration or unprojected payload columns.
+    assert [str(column) for column in session.statements[0].selected_columns] == [
+        f"{table}.{key}"
+        for table, fields in (
+            ("futures_markets", PREPARED_MARKET_FIELDS),
+            ("events", PREPARED_EVENT_FIELDS),
+            ("futures_outcomes", PREPARED_OUTCOME_FIELDS),
+        ) for key in fields
     ]
-    assert "JOIN" not in market_sql.upper()
-    assert "events." not in market_sql
-    assert "box_score_data" not in event_sql
-    for sql, table, fields in [
-        (market_sql, "futures_markets", PREPARED_MARKET_FIELDS),
-        (outcome_sql, "futures_outcomes", PREPARED_OUTCOME_FIELDS),
-    ]:
-        assert {
-            field.strip()
-            for field in sql.split("\nFROM")[0].removeprefix("SELECT ").split(", ")
-        } == {
-            f"{table}.{key}" for key in fields
-        }
-    selected_event_fields = [
-        field.strip()
-        for field in event_sql.split("\nFROM")[0].removeprefix("SELECT ").split(", ")
-    ]
-    assert set(selected_event_fields) == {
-        f"events.{key}" for key in PREPARED_EVENT_FIELDS
-    }
-    assert session.statements[1].compile().params == {"id_1": [1, 999]}
+    assert session.statements[0].compile().params["event_id_1"] == [1, 999]
 
 
 @pytest.mark.asyncio
@@ -237,7 +243,7 @@ async def test_smaller_read_retains_resolver_value_and_fallback(case):
     if case == "polymarket_fallback":
         assert session.outcome_ids == [1, 2]
     if case == "prop_only":
-        assert len(session.statements) == 2  # No empty outcome query.
+        assert len(session.statements) == 1  # Empty prop retained by outer join.
 
     @asynccontextmanager
     async def factory():
@@ -280,3 +286,32 @@ async def test_prepared_context_keeps_fallbacks_and_detaches_json_without_copyin
     assert set(vars(prepared[1][1][0].outcomes[0])) == set(PREPARED_OUTCOME_FIELDS)
     context.win_probability_sources["espn"]["value"] = 0.1
     assert e.win_probability_sources["espn"]["value"] == 0.7
+
+
+@pytest.mark.asyncio
+async def test_one_read_replays_latest_quote_withdrawal_and_settlement():
+    e = event()
+    m = market(2)
+    rows = outcomes(m)
+    session = ReadSession([e], [m], rows)
+    refresher = LiveBlendRefresher("kalshi")
+
+    first = await refresher._read_groups(session, [1])
+    original = reading_signature(first[1][1])
+    assert original is not None
+    rows[0].current_probability = 0.81
+    rows[1].current_probability = 0.19
+    rows[0].last_updated = rows[1].last_updated = datetime.now(timezone.utc)
+    moved = await refresher._read_groups(session, [1])
+    assert reading_signature(moved[1][1])[0] == pytest.approx(0.81)
+    assert reading_signature(first[1][1]) == original
+
+    rows[0].current_probability = rows[1].current_probability = None
+    withdrawn = await refresher._read_groups(session, [1])
+    assert reading_signature(withdrawn[1][1]) is None
+    rows[0].current_probability = 0.81
+    rows[1].current_probability = 0.19
+    m.status = "closed"
+    settled = await refresher._read_groups(session, [1])
+    assert reading_signature(settled[1][1]) is None
+    assert len(session.statements) == 4
