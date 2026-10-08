@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useMemo, useCallback, useRef, useEffect } from "react";
+import { useState, useMemo, useCallback, useRef, useEffect, type ReactNode } from "react";
 import ErrorBoundary from "@/components/ErrorBoundary";
 import useSWR from "swr";
 import { motion } from "@/components/motion";
@@ -41,6 +41,8 @@ import { orderSportsGameSections } from "@/lib/sports/headline";
 import { FinishedMoreResultsNote } from "@/components/sports/FinishedMoreResultsNote";
 import { trackEvent } from "@/lib/analytics";
 import CombinedFeedCard from "@/components/CombinedFeedCard";
+import { useDiscoverPriceStream } from "@/hooks/useDiscoverPriceStream";
+import { usePriceVisibility } from "@/hooks/usePriceVisibility";
 import { useCategoryInterests, stepUp, stepDown } from "@/hooks/useCategoryInterests";
 import {
   useAnalytics,
@@ -61,6 +63,39 @@ function getSportsItemId(item: FeedItem): string {
   if (item.type === "futures") return `futures-${(item.data as FeedFuturesData).id}`;
   if (item.type === "concept") return `concept-${(item.data as FeedConceptData).key}`;
   return `tournament-${(item.data as FeedTournamentData).key}`;
+}
+
+type PriceVisibilityReport = (owner: string, keys: string[], visible: boolean) => void;
+
+/**
+ * #1469 — a Sports card that tells the price stream it is on screen, so its
+ * probability is refreshed and streamed like a Discover card's instead of
+ * waiting for the 30 s feed poll (whose body can be minutes old from the
+ * shared feed cache).
+ */
+function SportsCardShell({ owner, items, itemIndex, onPriceVisibility, children }: {
+  owner: string;
+  items: FeedItem[];
+  itemIndex: number;
+  onPriceVisibility: PriceVisibilityReport;
+  children: ReactNode;
+}) {
+  const ref = usePriceVisibility(owner, items, onPriceVisibility);
+  return (
+    <motion.div
+      ref={ref}
+      data-testid="sports-card"
+      initial={{ opacity: 0, y: 8 }}
+      animate={{ opacity: 1, y: 0 }}
+      transition={{
+        duration: 0.3,
+        ease: "easeOut",
+        delay: Math.min(itemIndex, 10) * 0.05 + 0.15,
+      }}
+    >
+      {children}
+    </motion.div>
+  );
 }
 
 export default function SportsPage() {
@@ -281,6 +316,22 @@ export default function SportsPage() {
     [page1Items, pagedItems]
   );
 
+  // #1469 — the same price stream Discover runs: on-screen cards get a fresh
+  // price read at once, then live pushes (event frames, market invalidations)
+  // re-read them within seconds. Projected AFTER ranking/paging, BEFORE the
+  // finished/freshness guards, so a game the stream reports final moves to
+  // Results on the same frame. The feed poll below keeps its own cadence.
+  const priceGroups = useMemo(
+    () => mergedItems.map((item) => ({ type: "single" as const, item })),
+    [mergedItems]
+  );
+  const streamedPrices = useDiscoverPriceStream(priceGroups, user?.uid ?? "anonymous");
+  const setPriceVisibility = streamedPrices.setPriceVisibility;
+  const pricedItems = useMemo(
+    () => streamedPrices.items.flatMap((group) => (group.item ? [group.item] : [])),
+    [streamedPrices.items]
+  );
+
   // =========================================================================
   // L2-241 Item 2 — honest foreground terminal for the INITIAL request
   // =========================================================================
@@ -389,7 +440,7 @@ export default function SportsPage() {
   //   lib/sports/finishedSection.ts. The guard is unchanged and still runs over
   //   everything else, so a closed/resolved futures market is still stale.
   const guardedFeed = useMemo(() => {
-    if (mergedItems.length === 0) {
+    if (pricedItems.length === 0) {
       return {
         items: [] as FeedItem[],
         agedOut: [] as FeedItem[],
@@ -397,10 +448,10 @@ export default function SportsPage() {
         finishedGames: [] as FeedItem[],
       };
     }
-    const renderable = mergedItems.filter((item) => feedItemHasRenderableContent(item));
+    const renderable = pricedItems.filter((item) => feedItemHasRenderableContent(item));
     const { finished, rest } = partitionFinishedGames(renderable);
     return { ...applyFinishedCardGuard(rest), finishedGames: finished };
-  }, [mergedItems]);
+  }, [pricedItems]);
 
   // #4454 SECOND PASS — every settled game the reader could have, from either
   // source, deduped.
@@ -608,34 +659,26 @@ export default function SportsPage() {
                 groupedMarkets.ordered.map((entry, itemIndex) => {
                   if (isGroupedMarket(entry)) {
                     return (
-                      <motion.div
+                      <SportsCardShell
                         key={`grouped-${entry.canonicalKey}`}
-                        data-testid="sports-card"
-                        initial={{ opacity: 0, y: 8 }}
-                        animate={{ opacity: 1, y: 0 }}
-                        transition={{
-                          duration: 0.3,
-                          ease: "easeOut",
-                          delay: Math.min(itemIndex, 10) * 0.05 + 0.15,
-                        }}
+                        owner={`grouped-${entry.canonicalKey}`}
+                        items={entry.items}
+                        itemIndex={itemIndex}
+                        onPriceVisibility={setPriceVisibility}
                       >
                         <CombinedFeedCard group={entry} />
-                      </motion.div>
+                      </SportsCardShell>
                     );
                   }
                   const singleData = entry.data as FeedFuturesData;
                   const category = singleData.llm_sport_category ?? "other";
                   return (
-                    <motion.div
+                    <SportsCardShell
                       key={`feed-futures-${singleData.id}`}
-                      data-testid="sports-card"
-                      initial={{ opacity: 0, y: 8 }}
-                      animate={{ opacity: 1, y: 0 }}
-                      transition={{
-                        duration: 0.3,
-                        ease: "easeOut",
-                        delay: Math.min(itemIndex, 10) * 0.05 + 0.15,
-                      }}
+                      owner={`feed-futures-${singleData.id}`}
+                      items={[entry]}
+                      itemIndex={itemIndex}
+                      onPriceVisibility={setPriceVisibility}
                     >
                       <FeedCard
                         item={entry}
@@ -643,7 +686,7 @@ export default function SportsPage() {
                         onThumbsDown={handleThumbsDown}
                         category={category}
                       />
-                    </motion.div>
+                    </SportsCardShell>
                   );
                 })
               : /* Other sections: render as before */
@@ -663,16 +706,12 @@ export default function SportsPage() {
                     ? (item.data as FeedConceptData).domain ?? "other"
                     : (item.data as FeedFuturesData).llm_sport_category ?? "other";
                   return (
-                    <motion.div
+                    <SportsCardShell
                       key={key}
-                      data-testid="sports-card"
-                      initial={{ opacity: 0, y: 8 }}
-                      animate={{ opacity: 1, y: 0 }}
-                      transition={{
-                        duration: 0.3,
-                        ease: "easeOut",
-                        delay: Math.min(itemIndex, 10) * 0.05 + 0.15,
-                      }}
+                      owner={key}
+                      items={[item]}
+                      itemIndex={itemIndex}
+                      onPriceVisibility={setPriceVisibility}
                     >
                       <FeedCard
                         item={item}
@@ -680,14 +719,14 @@ export default function SportsPage() {
                         onThumbsDown={handleThumbsDown}
                         category={category}
                       />
-                    </motion.div>
+                    </SportsCardShell>
                   );
                 })}
           </div>
         </section>
       );
     },
-    [handleThumbsUp, handleThumbsDown]
+    [handleThumbsUp, handleThumbsDown, setPriceVisibility]
   );
 
   // =========================================================================
