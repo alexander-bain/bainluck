@@ -4,15 +4,22 @@ Runs Kalshi + Polymarket WebSocket consumers concurrently on a single dyno.
 Both maintain persistent connections for real-time price updates and
 settlement events.
 
+WS_VENUE_PROCESSES=1 isolates the venues in two fresh Python processes within
+the SAME dyno. Unset it to use the existing shared-loop path. The parent owns
+no app clients and never respawns a child; Heroku retains dyno restart ownership.
+
 Usage (Procfile):
     worker-ws: python3 run_kalshi_ws.py
 """
 
+import argparse
 import asyncio
 import logging
 import os
+import signal
 import sys
 import time
+from contextlib import contextmanager
 
 logging.basicConfig(
     level=logging.INFO,
@@ -32,21 +39,22 @@ HEARTBEAT_SECONDS = int(os.getenv("WS_HEARTBEAT_SECONDS", "120"))
 #: line (gotcha #53 — an absence is not a response shape).
 HEARTBEAT_ARMS = ("kalshi", "polymarket")
 
-#: #10090 — the heartbeat wakes this often to time the shared event loop.
-#: Every arm's await resumes on that one loop, so a wake that comes late is the
-#: wait a Kalshi stamp or a Polymarket write pays between its DB round trips.
+#: #10090 — allow existing final drains/session disposal to finish before the
+#: platform's shutdown deadline. Escalation is ONLY for shutdown, not a watchdog.
+SHUTDOWN_SECONDS = 25.0
+
+#: #10090 — the heartbeat wakes this often to sample this process's loop.
+#: Late wakes describe scheduling delay; they do not time an individual stamp.
 LOOP_SAMPLE_SECONDS = 0.25
 
 
 class LoopLoad:
-    """#10090 — how busy the ONE loop every arm shares was since the last line.
+    """#10090 — CPU and scheduling lag in this process since the last line.
 
     `cpu` is this process's CPU seconds over wall seconds (threads included, so
-    it can pass 1.00): near or above 1.00 the loop never idled. `lag` is how
-    late a `LOOP_SAMPLE_SECONDS` sleep woke (p50 / p95 / max). The 2026-10-08
-    exact trace and `pg_stat_statements` put a Kalshi stamp's DB statements at
-    a few ms while the stats line charges ~100 ms per stamp; this is the one
-    number that says whether the rest is the loop.
+    it can pass 1.00). `lag` is how late a `LOOP_SAMPLE_SECONDS` sleep woke
+    (p50 / p95 / max); it is a scheduling sample, not per-stamp latency. In
+    venue mode each line describes that venue's process, not the whole dyno.
     """
 
     def __init__(self, clock=time.monotonic, cpu=time.process_time):
@@ -155,7 +163,7 @@ async def run_polymarket_shadow():
         await asyncio.sleep(30)
 
 
-async def heartbeat():
+async def heartbeat(arms=HEARTBEAT_ARMS):
     """Q504-b — one line per `HEARTBEAT_SECONDS`, from OUTSIDE both consumers.
 
     THE FAILURE THIS CLOSES. On 2026-09-01 `worker-ws` was reported dead: two
@@ -196,7 +204,7 @@ async def heartbeat():
             now = time.monotonic()
             logger.info(
                 "%s uptime=%ds %s",
-                render(HEARTBEAT_ARMS, now), int(now - started), load.line(),
+                render(arms, now), int(now - started), load.line(),
             )
         except Exception:
             logger.exception("worker-ws heartbeat failed")
@@ -213,5 +221,121 @@ async def main():
     )
 
 
+@contextmanager
+def _stop_signals(stop):
+    """Repeated TERM/INT requests never recancel a consumer's final drain."""
+    loop = asyncio.get_running_loop()
+    for signum in (signal.SIGTERM, signal.SIGINT):
+        loop.add_signal_handler(signum, stop.set)
+    try:
+        yield
+    finally:
+        for signum in (signal.SIGTERM, signal.SIGINT):
+            loop.remove_signal_handler(signum)
+
+
+async def run_venue(venue):
+    """One production arm, its deploy-dark shadow, and its local heartbeat.
+
+    Consumer retries and epoch handoff stay inside this process. Cancellation
+    joins the existing final drain before the consumer disposes its engine.
+    No engine, Redis socket or in-memory handoff is inherited from the parent.
+    """
+    if venue == "kalshi":
+        arms = (run_kalshi, run_kalshi_shadow)
+    elif venue == "polymarket":
+        arms = (run_polymarket, run_polymarket_shadow)
+    else:
+        raise ValueError(f"unknown venue: {venue}")
+
+    stop = asyncio.Event()
+    with _stop_signals(stop):
+        logger.info("Starting %s WebSocket process pid=%d", venue, os.getpid())
+        tasks = [asyncio.create_task(arm()) for arm in arms]
+        tasks.append(asyncio.create_task(heartbeat((venue,))))
+        stopped = asyncio.create_task(stop.wait())
+        try:
+            done, _ = await asyncio.wait(
+                [*tasks, stopped], return_when=asyncio.FIRST_COMPLETED,
+            )
+            if stopped not in done:
+                for task in done:
+                    task.result()  # propagate a failed arm; never silently lose it
+                raise RuntimeError(f"{venue} WebSocket task returned unexpectedly")
+        finally:
+            # Signal handlers only set the event, so a second TERM while this
+            # gather awaits a drain cannot cancel the drain again.
+            for task in [*tasks, stopped]:
+                if not task.done():
+                    task.cancel()
+            await asyncio.gather(*tasks, stopped, return_exceptions=True)
+
+
+async def _join_children(children, waiters):
+    """Stop once, join, and escalate only when the shutdown bound expires."""
+    for child in children:
+        if child.returncode is None:
+            try:
+                child.terminate()
+            except ProcessLookupError:
+                pass  # exited between returncode inspection and the signal
+    if not waiters:
+        return
+    _, pending = await asyncio.wait(waiters, timeout=SHUTDOWN_SECONDS)
+    if pending:
+        logger.error("WebSocket child drain exceeded %.0fs; killing", SHUTDOWN_SECONDS)
+        for child, waiter in zip(children, waiters):
+            if waiter in pending and child.returncode is None:
+                try:
+                    child.kill()
+                except ProcessLookupError:
+                    pass
+    await asyncio.gather(*waiters)
+
+
+async def supervise_venues():
+    """Exactly two exec children; any unexpected exit stops the whole dyno.
+
+    The lightweight parent imports only stdlib. No respawn loop means a dead
+    child's process-local stamp handoff is never mistaken for a normal epoch,
+    and a replacement can never overlap a still-draining production copy.
+    """
+    stop = asyncio.Event()
+    children, waiters = [], []
+    with _stop_signals(stop):
+        stopped = asyncio.create_task(stop.wait())
+        try:
+            for venue in HEARTBEAT_ARMS:
+                child = await asyncio.create_subprocess_exec(
+                    sys.executable, os.path.abspath(__file__), "--venue", venue,
+                )
+                children.append(child)
+                waiters.append(asyncio.create_task(child.wait()))
+                logger.info("Started %s child pid=%d", venue, child.pid)
+            done, _ = await asyncio.wait(
+                [*waiters, stopped], return_when=asyncio.FIRST_COMPLETED,
+            )
+            if stopped in done:
+                return 0
+            logger.error("WebSocket child exited unexpectedly; stopping sibling")
+            return 1
+        finally:
+            await _join_children(children, waiters)
+            stopped.cancel()
+            await asyncio.gather(stopped, return_exceptions=True)
+
+
+async def entrypoint(venue=None):
+    if venue is not None:
+        await run_venue(venue)
+        return 0
+    if os.getenv("WS_VENUE_PROCESSES") == "1":
+        return await supervise_venues()
+    await main()
+    return 0
+
+
 if __name__ == "__main__":
-    asyncio.run(main())
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--venue", choices=HEARTBEAT_ARMS)
+    sys.exit(asyncio.run(entrypoint(parser.parse_args().venue)))
