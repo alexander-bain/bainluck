@@ -73,6 +73,10 @@ async def _run_fetch(client, monkeypatch, main_scan_events=()):
             events = list(main_scan_events)
             main_scan_events_consumed.append(1)
             return (events if len(main_scan_events_consumed) == 1 else [], None)
+        if kw.get("status") == "open":
+            # #10719: the open derivative pass, on its own carve ahead of the
+            # floor. These tests are about the floor's order.
+            return ([], None)
         supplementary.append(st)
         nested_by_series[st] = kw.get("with_nested_markets")
         return ([], None)

@@ -551,7 +551,7 @@ class TestFetchDeadlineAndSettledTrim:
         seen_kw = []
 
         async def fake_get_events(status=None, **kw):
-            statuses.append(status)
+            statuses.append((status, kw.get("series_ticker")))
             seen_kw.append(kw)
             return ([], None)  # no cursor -> one page per scan
 
@@ -559,8 +559,12 @@ class TestFetchDeadlineAndSettledTrim:
         monkeypatch.setattr(asyncio, "sleep", _no_sleep)
         await client._fetch_all_events_unfiltered(deadline=None)
         assert statuses, "expected at least the main-scan page"
-        assert "settled" not in statuses
-        assert all(s is None for s in statuses)
+        assert "settled" not in [s for s, _ in statuses]
+        # #10719: the open derivative pass asks for `open`, and only it does.
+        assert all(
+            s is None or (s == "open" and st in ka._OPEN_DERIVATIVE_SERIES_TICKERS)
+            for s, st in statuses
+        ), statuses
         # deadline is threaded through to every get_events call so page-level
         # 429 backoff also honors it (#995).
         assert all("deadline" in kw for kw in seen_kw)
@@ -599,6 +603,9 @@ class TestSupplementaryRescueBudgetReservation:
     _PRIORITY = ka._PRIORITY_RESCUE_PREFIXES
     _RESCUE_RESERVE_S = 60.0
     _BACKFILL_RESERVE_S = 45.0
+    # #10719: the open derivative pass runs at the head of the rescue window on
+    # its own carve, added to the rescue's, so the floor keeps its 60s.
+    _OPEN_RESERVE_S = ka._OPEN_DERIVATIVE_RESERVE_S
 
     async def test_rescue_runs_when_main_scan_exhausts_capped_budget(self, client, monkeypatch):
         import asyncio
@@ -642,7 +649,9 @@ class TestSupplementaryRescueBudgetReservation:
         assert "_FETCH_DEADLINE_S = 240.0" in fetch_src, (
             "the fetch budget moved — re-check it still exceeds the reserves"
         )
-        reserves = self._RESCUE_RESERVE_S + self._BACKFILL_RESERVE_S
+        reserves = (
+            self._RESCUE_RESERVE_S + self._OPEN_RESERVE_S + self._BACKFILL_RESERVE_S
+        )
         assert reserves < 240.0, (
             f"reserves ({reserves}s) must leave the main scan real budget out "
             f"of the 240s fetch deadline"
@@ -660,7 +669,9 @@ class TestSupplementaryRescueBudgetReservation:
 
         async def fake_get_events(**kw):
             st = kw.get("series_ticker")
-            if st is not None:
+            # #10719: the open pass has its own carve and takes nothing from
+            # golf's claim on the floor's 60s; the order asserted is the floor's.
+            if st is not None and kw.get("status") != "open":
                 order.append(st)
             return ([], None)
 
@@ -694,14 +705,26 @@ class TestSupplementaryRescueBudgetReservation:
         full = time.monotonic() + 1000
         await client._fetch_all_events_unfiltered(deadline=full)
         main_dls = [kw.get("deadline") for kw in calls if kw.get("series_ticker") is None]
-        supp_dls = [kw.get("deadline") for kw in calls if kw.get("series_ticker") is not None]
+        supp_dls = [
+            kw.get("deadline") for kw in calls
+            if kw.get("series_ticker") is not None and kw.get("status") != "open"
+        ]
+        open_dls = [kw.get("deadline") for kw in calls if kw.get("status") == "open"]
         assert main_dls, "expected a main-scan page fetch"
         assert supp_dls, "expected supplementary series fetches"
-        # Main scan pays for both reserves; the rescue pays only for the backfill.
-        main_cap = full - self._RESCUE_RESERVE_S - self._BACKFILL_RESERVE_S
+        assert open_dls, "expected the open derivative pass (#10719)"
+        # Main scan pays for every reserve; the rescue pays only for the backfill.
+        main_cap = (
+            full - self._RESCUE_RESERVE_S - self._OPEN_RESERVE_S
+            - self._BACKFILL_RESERVE_S
+        )
         supp_cap = full - self._BACKFILL_RESERVE_S
         assert all(abs(d - main_cap) < 1e-6 for d in main_dls)
         assert all(abs(d - supp_cap) < 1e-6 for d in supp_dls)
+        # #10719: the open pass pages against its own bound, never past the
+        # floor's, and never more than its reserve from when it started.
+        assert all(d <= supp_cap and d <= time.monotonic() + self._OPEN_RESERVE_S
+                   for d in open_dls)
         # And the ordering of the three caps is the split itself.
         assert main_cap < supp_cap < full
 
