@@ -949,10 +949,8 @@ final class EventDetailViewModel: ObservableObject {
         // raw-row value that hero never was. Only a strictly newer write to the
         // one row the hero reads lands — even one whose clock is older. An
         // unorderable frame still says the blend moved: read it again.
-        let foldOrder = FoldRevision.frameOrder(
-            held: LiveEventPriceReconciliation.pairedFoldRevision(in: current),
-            frame: frame.rev?.revision
-        )
+        let heldRevision = LiveEventPriceReconciliation.pairedFoldRevision(in: current)
+        let foldOrder = FoldRevision.frameOrder(held: heldRevision, frame: frame.rev?.revision)
         let priceIsNotNewer: Bool
         if EventPriceStreaming.isEligible(current.status),
            current.heroProbabilitySource != "blend",
@@ -1029,10 +1027,20 @@ final class EventDetailViewModel: ObservableObject {
         // The venue reading rides along (#836/#837/#920): on a single-source page
         // the backend blends nothing, and that venue's own line is the one the
         // chart draws — so it is the one that has to keep up with the hero.
+        //
+        // #10753 — a frame adopted by commit order on the held one-row blend,
+        // before any status it carries is applied, also carries that proof, so
+        // the chart that draws it may keep it across the finish. Every other
+        // accepted frame draws exactly as before and earns no such place.
         if !priceIsNotNewer, let p = frame.p, let stamped {
+            let admission = acceptedNewPrice && foldOrder == .newer
+                ? LiveBlendAdmission(eventId: current.id, held: heldRevision,
+                                     frame: frame.rev?.revision, frameStatus: frame.status)
+                : nil
             liveBlend = LiveBlendBuffer.appending(
                 LiveBlendPoint(date: stamped, homeProbability: p,
-                               source: frame.source, sourceProbability: frame.sourceValue),
+                               source: frame.source, sourceProbability: frame.sourceValue,
+                               admission: admission),
                 to: liveBlend
             )
         }

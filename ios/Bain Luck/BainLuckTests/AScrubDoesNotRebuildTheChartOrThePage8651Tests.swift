@@ -97,7 +97,7 @@ final class AScrubDoesNotRebuildTheChartOrThePage8651Tests: XCTestCase {
     /// Every body-time point build goes through the memo.
     func testTheChartBuildsItsPointsOnlyThroughTheMemo() throws {
         let chart = try code("Bain Luck/Components/OddsChartView.swift")
-        XCTAssertTrue(chart.contains("vm.chartPoints(liveFrames:liveFrames)"),
+        XCTAssertTrue(chart.contains("vm.chartPoints(liveFrames:liveFrames,finish:finishInputs)"),
                       "the chart no longer asks its view model for points")
         let direct = chart.components(separatedBy: "OddsChartView.chartPoints(from:history,liveFrames:liveFrames)").count - 1
             + chart.components(separatedBy: "Self.chartPoints(from:").count - 1

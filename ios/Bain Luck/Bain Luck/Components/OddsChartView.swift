@@ -247,7 +247,15 @@ final class OddsChartViewModel: ObservableObject {
     /// #8651 — the last `chartPoints` result and what it was built from. Plain
     /// stored state, not `@Published`: it is written while a body is being
     /// evaluated, and publishing from there would schedule another one.
-    private var pointsMemo: (generation: Int, liveFrames: [LiveBlendPoint], points: [ChartDataPoint])?
+    private var pointsMemo: (generation: Int, liveFrames: [LiveBlendPoint], finish: LiveBlendFinishInputs,
+                             points: [ChartDataPoint])?
+    /// #10753 — the proved pushed blends this chart DREW past its served edge
+    /// while the game was on (`DrawnBlendRetention`). Recorded only from a
+    /// pre-finish payload on a pre-finish page, so it is frozen by the finish:
+    /// no terminal or late frame enlarges it, and a page that opened finished
+    /// never records anything. Plain stored state, like the memos.
+    private(set) var drawnBeforeFinish: [LiveBlendPoint] = []
+    private var servedEdgeMemo: (generation: Int, edge: Date?)?
 
     /// #8651 — the chart's points, built once per payload and live edge rather
     /// than once per body.
@@ -260,29 +268,72 @@ final class OddsChartViewModel: ObservableObject {
     /// pushed live frames and on nothing a finger changes, so a selection must
     /// never rebuild them. Returning the same array also keeps each point's
     /// `id`, which the plot is keyed on.
-    func chartPoints(liveFrames: [LiveBlendPoint]) -> [ChartDataPoint] {
+    ///
+    /// #10753 — `finish` is the page's status and the finished detail's raw
+    /// fold vector. On a pre-finish payload the frames just drawn past the
+    /// served edge are recorded; on a finished one the recorded points that
+    /// still prove out are drawn as the blend's end until the served line
+    /// covers them (`DrawnBlendRetention.retained`).
+    func chartPoints(liveFrames: [LiveBlendPoint],
+                     finish: LiveBlendFinishInputs = LiveBlendFinishInputs()) -> [ChartDataPoint] {
         guard let history else { return [] }
-        if let memo = pointsMemo, memo.generation == historyGeneration, memo.liveFrames == liveFrames {
+        // The finish inputs change the points only on a finished payload, so
+        // only there do they key the memo; before it, a status change must not
+        // rebuild (and a frozen page records nothing new on a memo hit).
+        let historyFinished = EventState.isFinished(history.status) || history.completedAt != nil
+        let finishKey = historyFinished ? finish : LiveBlendFinishInputs()
+        if let memo = pointsMemo, memo.generation == historyGeneration, memo.liveFrames == liveFrames,
+           memo.finish == finishKey {
             return memo.points
         }
-        let points = OddsChartView.chartPoints(from: history, liveFrames: liveFrames)
-        pointsMemo = (historyGeneration, liveFrames, points)
+        var points = OddsChartView.chartPoints(from: history, liveFrames: liveFrames)
+        let servedEdge = servedBlendEdge(of: history)
+        if historyFinished {
+            let retained = DrawnBlendRetention.retained(
+                drawnBeforeFinish, eventId: eventId, finished: finish.finishedSourceFold,
+                servedEdge: servedEdge,
+                gameEnd: OddsChartView.gameEndDate(status: finish.pageStatus, history: history))
+            points += retained.map {
+                ChartDataPoint(date: $0.date, probability: $0.homeProbability, source: "aggregate")
+            }
+        } else if !EventState.isFinished(finish.pageStatus) {
+            drawnBeforeFinish = DrawnBlendRetention.recording(
+                drawn: liveFrames, servedEdge: servedEdge, eventId: eventId, into: drawnBeforeFinish)
+        }
+        pointsMemo = (historyGeneration, liveFrames, finishKey, points)
         return points
     }
-    private var enrichedMemo: (generation: Int, liveFrames: [LiveBlendPoint], points: [ChartDataPoint])?
+
+    /// #10753 — the served blend's own edge: the last `aggregate_line` point
+    /// the transform draws (only beside win-probability sources), parsed once
+    /// per payload. Nil when the payload draws no served blend.
+    private func servedBlendEdge(of history: EventHistoryResponse) -> Date? {
+        if let memo = servedEdgeMemo, memo.generation == historyGeneration { return memo.edge }
+        let edge = (history.winProbHistory?.isEmpty ?? true)
+            ? nil : (history.aggregateLine ?? []).compactMap { $0.timestamp.asDate }.max()
+        servedEdgeMemo = (historyGeneration, edge)
+        return edge
+    }
+    private var enrichedMemo: (generation: Int, liveFrames: [LiveBlendPoint], finish: LiveBlendFinishInputs,
+                               points: [ChartDataPoint])?
     /// Nonpublishing seam for the actual render-path regression test. It is nil
     /// in the app and never schedules rendering or runs on a recurring timer.
     var onPlotBuild: (() -> Void)?
     private(set) var enrichmentBuildCount = 0
 
-    func enrichedChartPoints(liveFrames: [LiveBlendPoint]) -> [ChartDataPoint] {
+    func enrichedChartPoints(liveFrames: [LiveBlendPoint],
+                             finish: LiveBlendFinishInputs = LiveBlendFinishInputs()) -> [ChartDataPoint] {
         guard let history else { return [] }
-        if let memo = enrichedMemo, memo.generation == historyGeneration, memo.liveFrames == liveFrames {
+        let finishKey = EventState.isFinished(history.status) || history.completedAt != nil
+            ? finish : LiveBlendFinishInputs()
+        if let memo = enrichedMemo, memo.generation == historyGeneration, memo.liveFrames == liveFrames,
+           memo.finish == finishKey {
             return memo.points
         }
-        let points = OddsChartView.enrichWithGameState(chartPoints(liveFrames: liveFrames), history: history)
+        let points = OddsChartView.enrichWithGameState(
+            chartPoints(liveFrames: liveFrames, finish: finish), history: history)
         enrichmentBuildCount += 1
-        enrichedMemo = (historyGeneration, liveFrames, points)
+        enrichedMemo = (historyGeneration, liveFrames, finishKey, points)
         return points
     }
 
@@ -341,6 +392,14 @@ final class OddsChartViewModel: ObservableObject {
     }
 }
 
+/// #10753 — what the chart needs from the page to decide the finish: the page's
+/// status and the finished detail's raw fold vector. Both are the page's
+/// existing reads; nothing here is derived by the chart.
+struct LiveBlendFinishInputs: Equatable {
+    var pageStatus: String?
+    var finishedSourceFold: FinishedSourceFold?
+}
+
 // MARK: - View
 
 struct OddsChartView: View {
@@ -390,6 +449,9 @@ struct OddsChartView: View {
     /// Blends pushed to the page since it opened (#920), drawn as the live end
     /// of the backend's own aggregate line. Empty on every non-live surface.
     var liveFrames: [LiveBlendPoint] = []
+    /// #10753 — the finished detail's raw fold vector, with its game. Nil until
+    /// the page is finished; only `DrawnBlendRetention` reads it.
+    var finishedSourceFold: FinishedSourceFold?
     /// The page's current history, kept as a property and not merely consumed by
     /// `init`, because `init` runs once and this keeps arriving. `historyEdge`
     /// watches it; `OddsChartViewModel.adopt` decides.
@@ -554,6 +616,7 @@ struct OddsChartView: View {
          preloadedHistory: EventHistoryResponse? = nil,
          preloadedHistoryEdge: Date?? = nil,
          liveFrames: [LiveBlendPoint] = [],
+         finishedSourceFold: FinishedSourceFold? = nil,
          readout: GamePlayCardView? = nil,
          publicationJourney: PublicationJourney4974.Journey? = nil,
          model: OddsChartViewModel? = nil,
@@ -580,6 +643,7 @@ struct OddsChartView: View {
         self.legacyDataDomain = legacyDataDomain
         self.pageAxisPlotWidth = pageAxisPlotWidth
         self.liveFrames = liveFrames
+        self.finishedSourceFold = finishedSourceFold
         self.preloadedHistory = preloadedHistory
         self.preloadedHistoryEdge = preloadedHistoryEdge
         self.readout = readout
@@ -788,7 +852,7 @@ struct OddsChartView: View {
                     .foregroundStyle(.secondary)
                     .frame(height: chartHeight)
             } else if let history = vm.history {
-                let enrichedPoints = vm.enrichedChartPoints(liveFrames: liveFrames)
+                let enrichedPoints = vm.enrichedChartPoints(liveFrames: liveFrames, finish: finishInputs)
                 let dataPoints = filterPoints(enrichedPoints)
                 let periodMarkers = extractPeriodMarkers(history, filteredPoints: dataPoints)
                 let checkpoints = checkpointMount(for: dataPoints)
@@ -901,7 +965,7 @@ struct OddsChartView: View {
         NavigationView {
             Group {
                 if let history = vm.history {
-                    let enrichedPoints = vm.enrichedChartPoints(liveFrames: liveFrames)
+                    let enrichedPoints = vm.enrichedChartPoints(liveFrames: liveFrames, finish: finishInputs)
                     let dataPoints = filterPoints(enrichedPoints)
                     let periodMarkers = extractPeriodMarkers(history, filteredPoints: dataPoints)
                     // #4974 — the same mount as the inline chart, so the two
@@ -2083,7 +2147,11 @@ struct OddsChartView: View {
     private func buildDataPoints(_ history: EventHistoryResponse) -> [ChartDataPoint] {
         // #8651 — through the view model's memo: this runs on every body, and
         // a scrub re-runs the body on every step.
-        vm.chartPoints(liveFrames: liveFrames)
+        vm.chartPoints(liveFrames: liveFrames, finish: finishInputs)
+    }
+
+    private var finishInputs: LiveBlendFinishInputs {
+        LiveBlendFinishInputs(pageStatus: status, finishedSourceFold: finishedSourceFold)
     }
 
     /// Pure transform: decoded event history → observed chart points.

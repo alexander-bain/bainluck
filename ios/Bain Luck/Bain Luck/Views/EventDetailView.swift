@@ -414,6 +414,12 @@ struct EventDetailView: View {
                                      // already showing, so the chart's right
                                      // edge reaches the same moment it does.
                                      liveFrames: vm.liveBlend,
+                                     // #10753 — the finished detail's RAW fold
+                                     // vector, with its game: the source rows
+                                     // it read, never the settled hero's.
+                                     finishedSourceFold: FinishedSourceFold(
+                                        eventId: event.id, status: event.status,
+                                        revision: event.blendFoldRevision?.revision),
                                      // #925 — the scrub readout rides INSIDE the
                                      // chart, above its plot, so the finger on
                                      // the chart and the text it rewrites are on

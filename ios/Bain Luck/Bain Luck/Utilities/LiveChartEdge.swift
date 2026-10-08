@@ -48,16 +48,24 @@ import Foundation
 /// (`OddsChartView.extendingServedSourceSeries`, #836/#837/#920). Held on the
 /// same validity bar as the blend — a named source and a finite probability —
 /// or not at all; a frame without one is still a perfectly good blend reading.
+///
+/// `admission` (#10753) is the proof the frame was adopted on this game by
+/// commit order while the game was still on. Nil for every caller that has no
+/// such proof, and a nil point keeps exactly its live behaviour — it simply
+/// earns no place on a finished chart.
 nonisolated struct LiveBlendPoint: Sendable, Equatable {
     let date: Date
     let homeProbability: Double
     let source: String?
     let sourceProbability: Double?
+    let admission: LiveBlendAdmission?
 
     init(date: Date, homeProbability: Double,
-         source: String? = nil, sourceProbability: Double? = nil) {
+         source: String? = nil, sourceProbability: Double? = nil,
+         admission: LiveBlendAdmission? = nil) {
         self.date = date
         self.homeProbability = homeProbability
+        self.admission = admission
         if let source, !source.isEmpty,
            let value = sourceProbability, value.isFinite, (0...1).contains(value) {
             self.source = source
@@ -66,6 +74,97 @@ nonisolated struct LiveBlendPoint: Sendable, Equatable {
             self.source = nil
             self.sourceProbability = nil
         }
+    }
+}
+
+/// #10753 — why a pushed blend may outlive the finish on the chart that drew it.
+///
+/// A frame earns this only on the page's ordinary revised-price branch: the page
+/// held a live blend folded from ONE row (`held`), and the frame wrote that same
+/// row strictly later (`frame`). Nothing here is minted — both vectors are the
+/// producer's own — and a frame whose status says the game is over earns none,
+/// because a terminal frame is not a pre-finish observation.
+nonisolated struct LiveBlendAdmission: Sendable, Equatable {
+    let eventId: Int
+    let held: FoldRevision
+    let frame: FoldRevision
+
+    init?(eventId: Int, held: FoldRevision?, frame: FoldRevision?, frameStatus: String?) {
+        guard let held, let frame,
+              FoldRevision.frameOrder(held: held, frame: frame) == .newer,
+              frameStatus.map(EventPriceStreaming.isEligible) ?? true else { return nil }
+        self.eventId = eventId
+        self.held = held
+        self.frame = frame
+    }
+}
+
+/// #10753 — a finished game's detail fold vector, raw, with the game it belongs to.
+///
+/// The detail serves `blend_fold_revision` on a finished game too, as the
+/// revision of the source rows it folded — NOT of the settled hero, the game end
+/// or the final history (#10753, Root qualification 17055). So it is read raw,
+/// never through `pairedFoldRevision` (which refuses a settled hero), and it is
+/// used for one question only: has every retained frame's row been written no
+/// later than what the finished detail read?
+nonisolated struct FinishedSourceFold: Sendable, Equatable {
+    let eventId: Int
+    let revision: FoldRevision
+
+    init?(eventId: Int, status: String?, revision: FoldRevision?) {
+        guard EventState.isFinished(status), let revision else { return nil }
+        self.eventId = eventId
+        self.revision = revision
+    }
+}
+
+/// #10753 — the pushed movement a reader already saw, kept across the finish.
+///
+/// A page left open through the end of a game draws pushed blends past the
+/// served aggregate. The finished history that follows can land before the
+/// server's blend includes them, and the finished payload is never extended
+/// (settled means settled) — so the movement the reader watched vanished. These
+/// rules keep exactly the part that was proved and drawn, and nothing else.
+nonisolated enum DrawnBlendRetention {
+    /// Record the admitted frames a PRE-FINISH chart just drew past its served
+    /// blend edge. Only frames proved on this game count; ordered and bounded
+    /// like the buffer they came from.
+    static func recording(
+        drawn liveFrames: [LiveBlendPoint], servedEdge: Date?, eventId: Int,
+        into snapshot: [LiveBlendPoint]
+    ) -> [LiveBlendPoint] {
+        guard let servedEdge else { return snapshot }
+        var next = snapshot
+        for frame in liveFrames where frame.date > servedEdge && frame.admission?.eventId == eventId {
+            next = LiveBlendBuffer.appending(frame, to: next)
+        }
+        return next
+    }
+
+    /// The recorded points a FINISHED chart may still draw.
+    ///
+    /// All or nothing on the proof: every point must be admitted on this game
+    /// and the finished detail's vector must be the same one row, equal to or
+    /// newer than each point's frame and its held context. Anything else —
+    /// changed rows, mixed directions, an older or missing finished vector, a
+    /// different game — retains nothing. Then each point must still be past the
+    /// served blend (an exact served time or later coverage retires it) and no
+    /// later than the game's end. No end, no served blend: nothing.
+    static func retained(
+        _ snapshot: [LiveBlendPoint], eventId: Int, finished: FinishedSourceFold?,
+        servedEdge: Date?, gameEnd: Date?
+    ) -> [LiveBlendPoint] {
+        guard !snapshot.isEmpty, let finished, finished.eventId == eventId,
+              let servedEdge, let gameEnd else { return [] }
+        func covers(_ revision: FoldRevision) -> Bool {
+            let order = FoldRevision.compare(finished.revision, revision)
+            return order == .newer || order == .same
+        }
+        for point in snapshot {
+            guard let admission = point.admission, admission.eventId == eventId,
+                  covers(admission.frame), covers(admission.held) else { return [] }
+        }
+        return snapshot.filter { $0.date > servedEdge && $0.date <= gameEnd }
     }
 }
 
