@@ -8,6 +8,7 @@ No reserved slot, score bonus, assembly, or publication decision lives here.
 import asyncio
 import hashlib
 import logging
+import time
 
 from sqlalchemy import text
 
@@ -16,6 +17,7 @@ from app.utils.container_corrections import PUBLICATION_COLUMN, REVISION_COLUMN
 
 logger = logging.getLogger(__name__)
 COLLECTION_READ_BUDGET_SECONDS = 0.25
+_fingerprint_cache: tuple[float, str] | None = None
 
 #: #10003: what a cached collection-bearing page is keyed on. One row per
 #: discoverable published root hub, as ``id:membership_revision``. The revision
@@ -53,7 +55,7 @@ def feed_collections_enabled(
     )
 
 
-async def feed_collections_cache_fingerprint(db):
+async def feed_collections_cache_fingerprint(db, *, max_age_seconds=0.0):
     """The publication state a collection-bearing page may be cached under, or None.
 
     #10003. ``add_feed_collections`` reads publication on every BUILD; this
@@ -67,6 +69,18 @@ async def feed_collections_cache_fingerprint(db):
     has no ``membership_revision``) rolls back alone instead of aborting the
     request's transaction or expiring its loaded rows.
     """
+    # Discover opens reuse this public publication hash for at most five seconds.
+    # This removes three DB round trips from a warm feed request. Prices and
+    # personalized payloads keep their existing independent cache lifetimes.
+    global _fingerprint_cache
+    now = time.monotonic()
+    max_age_seconds = min(max(0.0, max_age_seconds), 5.0)
+    if (
+        max_age_seconds > 0
+        and _fingerprint_cache is not None
+        and now - _fingerprint_cache[0] < max_age_seconds
+    ):
+        return _fingerprint_cache[1]
     try:
         async with db.begin_nested():
             raw = (
@@ -83,7 +97,10 @@ async def feed_collections_cache_fingerprint(db):
         return None
     if not isinstance(raw, str):
         return None
-    return hashlib.sha256(f"v1|{raw}".encode()).hexdigest()[:16]
+    fingerprint = hashlib.sha256(f"v1|{raw}".encode()).hexdigest()[:16]
+    if max_age_seconds > 0:
+        _fingerprint_cache = (now, fingerprint)
+    return fingerprint
 
 
 #: #10290: which branch ``add_feed_collections`` took, for an ``observe`` hook.
