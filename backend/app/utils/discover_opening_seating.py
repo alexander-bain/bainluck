@@ -42,8 +42,8 @@ A card is restricted when BOTH hold:
      window, e.g. F1's four hours of lights-out lead, which the start contradicts).
 
    Missing or unparseable evidence is UNKNOWN, and unknown is not live: the
-   card keeps ordinary handling. Conflicts and unknowns are reported, never
-   counted as live.
+   card keeps ordinary handling. Unknowns are reported, never counted as live.
+   A CONFLICT is never counted as live OR as not-live: see "Conflicts" below.
 
 2. It carries no exemption. Exempt is a POSITIVE typed sign only:
    ``data.is_major is True``, ``data.is_marquee is True``, or BOTH event tags
@@ -75,6 +75,22 @@ relative order. So the eligible subsequence and the restricted subsequence of
 the deck are both unchanged; the displaced cards lead the tail at seat 11.
 Nothing is re-ranked. (Seating a tail card INTO the vacated seat in place was
 considered and rejected: it lifts, say, seat 40 above seat 3 — a re-rank.)
+
+Conflicts
+---------
+
+A direct ``event``/``tournament``/``concept`` card whose lifecycle is CONFLICT
+and that carries no exemption is one this module cannot judge: its own typed
+fields say both live and not live, so the arm cannot show the opening holds no
+ordinary live event. If such a card would sit in the CANDIDATE opening — the
+first :data:`OPENING_SEATS` cards of the deck the stable move would return,
+which includes a conflicted tail card the move would promote into a vacated
+seat — the whole call is UNSUPPORTED with the input order unchanged and the
+conflicted identities named in ``refused_conflicts``. It is never skipped in
+favour of the next card, demoted, rescored, or treated as live or settled;
+which lifecycle source should win is not this module's decision. A conflict
+outside the candidate opening does not refuse an otherwise supported opening.
+An exempt conflict keeps its seat exactly as an exempt live card does.
 
 When fewer than :data:`OPENING_SEATS` cards are eligible and a restricted card
 would occupy the opening, the outcome is UNRESOLVED_SPARSE_SUPPLY with the
@@ -162,6 +178,9 @@ class OpeningSeatingOutcome:
     entered: list = field(default_factory=list)
     #: per-card conclusions, input order (empty when refused before classifying)
     cards: list = field(default_factory=list)
+    #: identities, in candidate-opening order, of unexempt CONFLICT cards that
+    #: made the call UNSUPPORTED (empty for every other outcome)
+    refused_conflicts: list = field(default_factory=list)
 
     @property
     def changed(self) -> bool:
@@ -177,6 +196,7 @@ class OpeningSeatingOutcome:
             "opening_seats": OPENING_SEATS,
             "displaced": list(self.displaced),
             "entered": list(self.entered),
+            "refused_conflicts": list(self.refused_conflicts),
             "restricted": pick(lambda c: c.restricted),
             "exempt_live": pick(lambda c: c.lifecycle == LIVE and c.exempt_by),
             "conflicts": pick(lambda c: c.lifecycle == CONFLICT),
@@ -379,10 +399,9 @@ def seat_opening(items: list, *, now: datetime) -> OpeningSeatingOutcome:
             if reason is not None:
                 return refuse(UNSUPPORTED, reason, cards)
 
-    if not any(c.restricted for c in cards[:OPENING_SEATS]):
-        return refuse(COMPLIANT, "no restricted card in the opening", cards)
+    restricted_in_opening = any(c.restricted for c in cards[:OPENING_SEATS])
     eligible = [i for i, c in enumerate(cards) if not c.restricted]
-    if len(eligible) < OPENING_SEATS:
+    if restricted_in_opening and len(eligible) < OPENING_SEATS:
         return refuse(
             UNRESOLVED_SPARSE_SUPPLY,
             f"{len(eligible)} eligible card(s) for {OPENING_SEATS} opening seats; "
@@ -390,7 +409,27 @@ def seat_opening(items: list, *, now: datetime) -> OpeningSeatingOutcome:
             cards,
         )
 
+    # The candidate opening: the deck's own first seats when nothing restricted
+    # sits there (they are then exactly the first eligible cards), otherwise the
+    # first eligible cards the stable move would seat.
     opening = eligible[:OPENING_SEATS]
+    conflicted = [
+        i for i in opening if cards[i].lifecycle == CONFLICT and not cards[i].exempt_by
+    ]
+    if conflicted:
+        outcome = refuse(
+            UNSUPPORTED,
+            "unexempt lifecycle conflict(s) in the candidate opening: "
+            + ", ".join(f"{cards[i].identity} (input seat {i + 1})" for i in conflicted)
+            + "; their typed fields say both live and not live, so the opening "
+            "cannot be shown free of ordinary live events",
+            cards,
+        )
+        outcome.refused_conflicts = [cards[i].identity for i in conflicted]
+        return outcome
+    if not restricted_in_opening:
+        return refuse(COMPLIANT, "no restricted card in the opening", cards)
+
     chosen = set(opening)
     order = opening + [i for i in range(len(items)) if i not in chosen]
     return OpeningSeatingOutcome(

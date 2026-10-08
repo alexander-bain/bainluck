@@ -511,6 +511,10 @@ def test_randomised_decks_keep_every_invariant():
                 deck.append(_tournament(f"m{trial}_{i}", is_major=True))
             elif roll < 0.3:
                 deck.append(_event(10_000 * trial + i, status=rng.choice(["live", "scheduled", "completed"])))
+            elif roll < 0.33:
+                deck.append(_event(10_000 * trial + i, start=NOW + timedelta(hours=2)))
+            elif roll < 0.35:
+                deck.append(_tournament(f"c{trial}_{i}", **_FUTURE_WINDOW))
             else:
                 deck.append(_futures(10_000 * trial + i))
         snapshot = copy.deepcopy(deck)
@@ -518,6 +522,16 @@ def test_randomised_decks_keep_every_invariant():
         assert deck == snapshot, "the caller's list and cards are never mutated"
         assert sorted(map(id, out.items)) == sorted(map(id, deck))
         restricted = [c.restricted for c in out.cards]
+        eligible = [i for i, r in enumerate(restricted) if not r]
+        candidate = eligible[:OPENING_SEATS]
+        conflicted = [i for i in candidate
+                      if out.cards[i].lifecycle == CONFLICT and not out.cards[i].exempt_by]
+        sparse = any(restricted[:OPENING_SEATS]) and len(eligible) < OPENING_SEATS
+        if conflicted and not sparse:
+            assert out.status == UNSUPPORTED and out.items == deck
+            assert out.refused_conflicts == [out.cards[i].identity for i in conflicted]
+            continue
+        assert out.refused_conflicts == []
         if out.status == APPLIED:
             by_id = {id(card): r for card, r in zip(deck, restricted)}
             assert not any(by_id[id(card)] for card in out.items[:OPENING_SEATS])
@@ -532,6 +546,180 @@ def test_randomised_decks_keep_every_invariant():
             else:
                 assert out.status == UNRESOLVED_SPARSE_SUPPLY
                 assert sum(not r for r in restricted) < OPENING_SEATS
+
+
+# --------------------------------------------------------------------------- #
+# Conflicts: an unexempt CONFLICT in the candidate opening refuses, unmoved
+# --------------------------------------------------------------------------- #
+
+#: An asserted in-progress status on a window that has not started — Root's
+#: reproduction shape (October 10–13 play dates read on October 4).
+_FUTURE_WINDOW = {"schedule_status": "in-progress", "start": "2026-10-10T00:00:00+00:00",
+                  "end": "2026-10-13T00:00:00+00:00"}
+
+
+def _conflicted(kind="tournament", key="future_ordinary", **data):
+    if kind == "tournament":
+        return _tournament(key, **_FUTURE_WINDOW, **data)
+    if kind == "event":
+        return _event(key, start=NOW + timedelta(hours=3), **data)
+    return _concept(key, start=_iso(NOW + timedelta(hours=3)), **data)
+
+
+def _assert_refused_unmoved(out, deck, snapshot, conflicts):
+    assert out.status == UNSUPPORTED
+    assert out.refused_conflicts == conflicts
+    assert all(ident in out.detail for ident in conflicts)
+    assert out.items == snapshot and out.items is not deck
+    assert all(a is b for a, b in zip(out.items, deck)) and len(out.items) == len(deck)
+    assert deck == snapshot, "no card is rescored, relabelled or moved"
+    assert out.displaced == [] and out.entered == []
+
+
+def test_roots_reproduction_refuses_instead_of_claiming_compliance():
+    """Root's specimen (composed 5423658c1d, clock October 4 13:00Z): an
+    ordinary tournament asserting in-progress on an October 10–13 window, at
+    seat 1 over twelve futures. The served predicate reads it live; seating's
+    own fields say CONFLICT. Before this correction the call returned COMPLIANT
+    and kept it at seat 1."""
+    from app.routes.feed import _tournament_is_live
+
+    now = datetime(2026, 10, 4, 13, tzinfo=timezone.utc)
+    card = _conflicted()
+    assert _tournament_is_live(card["data"], now) is True  # the divergence is real
+    deck = [card] + [_futures(i, score=90 - i) for i in range(12)]
+    snapshot = copy.deepcopy(deck)
+    out = seat_opening(deck, now=now)
+    assert out.cards[0].lifecycle == CONFLICT and not out.cards[0].restricted
+    _assert_refused_unmoved(out, deck, snapshot, ["tournament:future_ordinary"])
+    summary = out.summary()
+    assert summary["status"] == UNSUPPORTED
+    assert summary["refused_conflicts"] == ["tournament:future_ordinary"]
+    assert [c["identity"] for c in summary["conflicts"]] == ["tournament:future_ordinary"]
+
+
+@pytest.mark.parametrize(
+    "kind, ident",
+    [("tournament", "tournament:future_ordinary"), ("event", "event:future_ordinary"),
+     ("concept", "concept:future_ordinary")],
+)
+def test_a_conflict_at_seat_ten_refuses_and_at_seat_eleven_does_not(kind, ident):
+    at_ten = _deck(20, {OPENING_SEATS - 1: _conflicted(kind)})
+    snapshot = copy.deepcopy(at_ten)
+    _assert_refused_unmoved(seat_opening(at_ten, now=NOW), at_ten, snapshot, [ident])
+
+    at_eleven = _deck(20, {OPENING_SEATS: _conflicted(kind)})
+    out = seat_opening(at_eleven, now=NOW)
+    assert out.status == COMPLIANT and out.items == at_eleven
+    assert out.refused_conflicts == []
+
+
+def test_a_conflicted_tail_card_the_move_would_promote_refuses():
+    """A restricted card at seat 1 vacates a seat; the stable move would fill
+    seat 10 from seat 11 — a conflict. It is not skipped for seat 12's card,
+    and the restricted card is not displaced either: nothing moves."""
+    deck = _deck(20, {0: _live("a"), OPENING_SEATS: _conflicted()})
+    snapshot = copy.deepcopy(deck)
+    out = seat_opening(deck, now=NOW)
+    _assert_refused_unmoved(out, deck, snapshot, ["tournament:future_ordinary"])
+    assert _ids(out.items)[0] == "tournament:a"  # the refusal displaces nothing
+    assert "input seat 11" in out.detail
+
+
+def test_a_conflict_beyond_the_promotion_leaves_the_move_alone():
+    """One seat further down the conflict is never promoted: the ordinary live
+    card is still displaced to seat 11 and the conflict keeps its seat 12."""
+    deck = _deck(20, {0: _live("a"), OPENING_SEATS + 1: _conflicted()})
+    out = seat_opening(deck, now=NOW)
+    assert out.status == APPLIED and out.refused_conflicts == []
+    ids = _ids(out.items)
+    assert ids.index("tournament:a") == OPENING_SEATS
+    assert ids.index("tournament:future_ordinary") == OPENING_SEATS + 1
+    assert out.displaced == ["tournament:a"] and out.entered == ["futures:9"]
+
+
+def test_a_conflict_beside_a_restricted_card_in_the_opening_refuses():
+    deck = _deck(20, {1: _live("a"), 4: _conflicted()})
+    snapshot = copy.deepcopy(deck)
+    _assert_refused_unmoved(seat_opening(deck, now=NOW), deck, snapshot,
+                            ["tournament:future_ordinary"])
+
+
+def test_every_conflict_in_the_candidate_opening_is_named_in_seat_order():
+    deck = _deck(20, {2: _conflicted("event", key=700), 6: _conflicted("concept", key="f1")})
+    snapshot = copy.deepcopy(deck)
+    _assert_refused_unmoved(seat_opening(deck, now=NOW), deck, snapshot,
+                            ["event:700", "concept:f1"])
+
+
+@pytest.mark.parametrize(
+    "card, sign",
+    [
+        (_conflicted(is_major=True), "is_major"),
+        (_conflicted(is_marquee=True), "is_marquee"),
+        (_conflicted("concept", is_major=True), "is_major"),
+        (_conflicted("event", key=701, tags=("tier:1", "importance:playoff")),
+         "tier:1+importance:playoff"),
+    ],
+)
+def test_an_exempt_conflict_keeps_its_seat(card, sign):
+    """A positive exemption protects a seat whatever the lifecycle reads, so an
+    exempt conflict is not refused — alone or beside a move."""
+    got = classify_card(card, now=NOW)
+    assert got.lifecycle == CONFLICT and got.exempt_by == [sign]
+    alone = _deck(20, {2: card})
+    out = seat_opening(alone, now=NOW)
+    assert out.status == COMPLIANT and out.items == alone and out.refused_conflicts == []
+    moved = _deck(20, {0: _live("a"), 2: card})
+    out = seat_opening(moved, now=NOW)
+    assert out.status == APPLIED and out.refused_conflicts == []
+    assert _ids(out.items).index(got.identity) == 1  # closes up over seat 1, stays in
+
+
+def test_an_unexempt_conflict_needs_both_playoff_tags():
+    card = _conflicted("event", key=702, tags=("tier:1",))
+    deck = _deck(20, {0: card})
+    snapshot = copy.deepcopy(deck)
+    _assert_refused_unmoved(seat_opening(deck, now=NOW), deck, snapshot, ["event:702"])
+
+
+def test_the_retained_tail_f1_conflict_does_not_refuse_the_supported_opening():
+    """The October 4 capture's shape: three ordinary live tournaments at seats
+    8–10, the F1 Bahrain concept conflicted at seat 21. The conflict is below
+    the candidate opening, so the move is applied exactly as without it and the
+    conflict holds seat 21."""
+    f1 = _concept("event:f1:bahrain-grand-prix-main-race-winner",
+                  start="2026-10-04T13:00:00+00:00")
+    restricted = {7: _live("bank_of_utah"), 8: _live("dunhill"), 9: _live("lotte")}
+    with_f1 = _deck(30, {**restricted, 20: f1})
+    out = seat_opening(with_f1, now=NOW)
+    assert out.status == APPLIED and out.refused_conflicts == []
+    assert [c["identity"] for c in out.summary()["conflicts"]] == [seating._identity(f1)]
+    ids = _ids(out.items)
+    assert ids[OPENING_SEATS:OPENING_SEATS + 3] == [
+        "tournament:bank_of_utah", "tournament:dunhill", "tournament:lotte"]
+    assert ids.index(seating._identity(f1)) == 20
+    without = [c for c in with_f1 if c is not f1]
+    expected = _ids(seat_opening(without, now=NOW).items)
+    assert [i for i in ids if i != seating._identity(f1)] == expected
+
+
+def test_unknown_lifecycle_in_the_opening_is_still_ordinary():
+    deck = _deck(20, {0: _live("a"), 3: _tournament("undated", schedule_status=None,
+                                                     start=None, end=None)})
+    out = seat_opening(deck, now=NOW)
+    assert out.status == APPLIED and out.refused_conflicts == []
+    assert "tournament:undated" in _ids(out.items)[:OPENING_SEATS]
+
+
+def test_sparse_supply_and_group_refusals_keep_their_own_verdicts():
+    sparse = _deck(8, {0: _live("a"), 2: _conflicted()})
+    out = seat_opening(sparse, now=NOW)
+    assert out.status == UNRESOLVED_SPARSE_SUPPLY and out.refused_conflicts == []
+    grouped = _deck(20, {0: _conflicted(), 5: _collection(7, status="live")})
+    out = seat_opening(grouped, now=NOW)
+    assert out.status == UNSUPPORTED and "collection status" in out.detail
+    assert out.refused_conflicts == []
 
 
 # --------------------------------------------------------------------------- #
@@ -656,11 +844,12 @@ def test_the_summary_names_every_conclusion():
     deck = _deck(20, {
         0: _live("a"),
         1: _tournament("major", is_major=True),
-        2: _concept("f1", start=_iso(NOW + timedelta(hours=3))),
         3: _tournament("undated", schedule_status=None, start=None, end=None),
+        15: _concept("f1", start=_iso(NOW + timedelta(hours=3))),
     })
     summary = seat_opening(deck, now=NOW).summary()
     assert summary["status"] == APPLIED
+    assert summary["refused_conflicts"] == []  # the conflict sits below the opening
     assert [c["identity"] for c in summary["restricted"]] == ["tournament:a"]
     assert [c["identity"] for c in summary["exempt_live"]] == ["tournament:major"]
     assert [c["identity"] for c in summary["conflicts"]] == ["concept:f1"]

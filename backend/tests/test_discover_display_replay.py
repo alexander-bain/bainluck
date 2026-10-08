@@ -1918,6 +1918,48 @@ async def test_a_refused_seating_refuses_the_arm(harness, monkeypatch, status):
     assert status in refused.value.detail
 
 
+def _make_tournament_ordinary_conflicted(harness, score):
+    """The pool's tournament asserts in-progress on a window that has not
+    started (Root's #5105 reproduction shape): an unexempt CONFLICT."""
+    card = next(c for c in harness.pool if c["type"] == "tournament")
+    card["score"] = card["_rank_score"] = score
+    card["data"].update(
+        schedule_status="in-progress",
+        start_date=_iso(harness.now + timedelta(days=6)),
+        end_date=_iso(harness.now + timedelta(days=9)),
+        champion=None,
+        is_major=False,
+        is_marquee=False,
+    )
+
+
+async def test_a_real_conflict_in_the_opening_refuses_the_arm_not_a_compliant_deck(harness):
+    """No stub: the helper's own UNSUPPORTED for a conflicted opening card
+    reaches the caller as a refusal; the arm never returns a compliant deck."""
+    _make_tournament_ordinary_conflicted(harness, score=99.0)
+    artifact = await _capture(harness)
+    plain = ddr.replay_capture(artifact)
+    assert plain["deck_identities"].index(_LIVE_TOURNAMENT) < 10  # it really opens
+    with pytest.raises(ddr.DisplayReplayError) as refused:
+        ddr.replay_capture(artifact, opening_seating=True)
+    assert refused.value.code == ddr.UNSUPPORTED
+    assert "opening seating unsupported" in refused.value.detail
+    assert _LIVE_TOURNAMENT in refused.value.detail and "conflict" in refused.value.detail
+    assert ddr.verify_baseline(artifact)["verdict"] == ddr.PASS
+
+
+async def test_a_real_conflict_below_the_opening_leaves_the_arm_supported(harness):
+    _make_tournament_ordinary_conflicted(harness, score=1.0)
+    artifact = await _capture(harness)
+    plain = ddr.replay_capture(artifact)
+    assert plain["deck_identities"].index(_LIVE_TOURNAMENT) >= 11  # beyond any promotion
+    seated = ddr.replay_capture(artifact, opening_seating=True)
+    summary = seated["opening_seating"]
+    assert summary["status"] in ("applied", "compliant")
+    assert summary["refused_conflicts"] == []
+    assert [c["identity"] for c in summary["conflicts"]] == [_LIVE_TOURNAMENT]
+
+
 @pytest.mark.parametrize("vandalism", ["score", "drop", "rank"])
 async def test_a_seating_stage_that_touches_a_card_is_a_mismatch(harness, monkeypatch, vandalism):
     from app.utils import discover_opening_seating as seating
