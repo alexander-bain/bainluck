@@ -36,9 +36,10 @@ def held_refresher(r, hold_ids=(10,), pending_events=()):
 
         async def refresh(self, ids, **kwargs):
             key = tuple(sorted(ids))
-            calls["admitted"].append(tuple(sorted(set(ids) | pending)))
+            admitted = (set(ids) | pending).difference(kwargs.get("defer_event_ids", ()))
+            calls["admitted"].append(tuple(sorted(admitted)))
             # The real refresher takes due debt before its first DB await.
-            pending.clear()
+            pending.difference_update(admitted)
             calls["started"].append(key)
             calls["running"] += 1
             calls["most_running"] = max(calls["most_running"], calls["running"])
@@ -164,9 +165,9 @@ async def test_a_cancel_landing_on_the_last_stamp_join_still_joins_it():
 
 
 @pytest.mark.parametrize("future_event", [90, 20])
-async def test_inflight_pending_event_cannot_overlap_its_unwritten_chunks_or_withdrawal(future_event):
+async def test_unfinished_pending_cohort_stays_owed_while_independent_stamp_overlaps_write(future_event):
     # Event90 spans two later chunks and has a withdrawal. It also enters the
-    # first refresh as debt, so checking only ready event10 is insufficient.
+    # first refresh as debt; admission must leave it owed until coherent.
     r = rig(
         batch={1: 0.6, 2: 0.4, 900: 0.1, 901: 0.9},
         mapping={1: 10, 2: 10, 900: future_event, 901: future_event, 44: 90},
@@ -178,14 +179,14 @@ async def test_inflight_pending_event_cannot_overlap_its_unwritten_chunks_or_wit
     flush = asyncio.create_task(r.ns["flush_prices"](flush_started=100))
     try:
         await settle(r, lambda: calls["started"] == [(10,)])
-        assert calls["admitted"] == [(10, 90)]
-        assert not r.ns["blend_refresher"].pending_event_ids(), "due debt was consumed"
-        await settle(r, lambda: False, turns=30)
-        assert ("write", [900]) not in r.trace, "pending cohort must read before any later write"
+        await settle(r, lambda: ("write", [900]) in r.trace)
+        assert calls["admitted"] == [(10,)]
+        assert r.ns["blend_refresher"].pending_event_ids() == frozenset({90})
+        assert ("write", [900]) in r.trace, "independent stamp must not stop price progress"
         assert ("write", [901]) not in r.trace
         gate.set()
         assert await asyncio.wait_for(flush, 2) is True
-        assert r.trace.index(("refresh", [10])) < r.trace.index(("write", [900]))
+        assert r.trace.index(("write", [900])) < r.trace.index(("refresh", [10]))
         assert r.trace.index(("write", [900])) < r.trace.index(("write", [901]))
         assert r.trace.index(("write", [901])) < r.trace.index(("withdraw", [44]))
         if future_event == 20:

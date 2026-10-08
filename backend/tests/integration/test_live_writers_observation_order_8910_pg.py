@@ -277,10 +277,12 @@ async def _run_ws_refresh(
     refresher = refresher or LiveBlendRefresher("kalshi")
     real_oriented = LiveBlendRefresher._oriented
 
-    async def _oriented(self, session, eid, home_prob, *, reading=None):
+    async def _oriented(self, session, eid, home_prob, *, reading=None, before_fallback=None):
         if at_orient is not None:
             await at_orient()
-        return await real_oriented(self, session, eid, home_prob, reading=reading)
+        return await real_oriented(
+            self, session, eid, home_prob, reading=reading, before_fallback=before_fallback,
+        )
 
     async def _publish(self, pending):
         if frames is not None:
