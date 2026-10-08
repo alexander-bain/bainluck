@@ -1413,6 +1413,7 @@ async def _run_polymarket_ws_consumer(*, sessions):
     price_buffer: dict[int, float] = {}
     buffer_lock = asyncio.Lock()
     lock_retry_until: dict[int, float] = {}
+    withdrawal_retry_until: dict[int, float] = {}
     # Q460: outcome → linked event, for the blend re-stamp after each flush.
     #
     # Built from `market_by_outcome` (every outcome of every slate market) and
@@ -1583,18 +1584,30 @@ async def _run_polymarket_ws_consumer(*, sessions):
         only_events: Optional[set[int]] = None,
         exclude_events: frozenset[int] | set[int] = frozenset(),
         standalone: Optional[bool] = None,
+        final: bool = False,
     ) -> Optional[list[int]]:
         """#9934: withdraw the held prices the latest wide books priced out.
 
         Same bookkeeping as ``write_chunk``: an entry leaves the buffer only
         after its transaction lands, and only if no newer book replaced it
-        meanwhile. Returns withdrawn ids, or None on transaction failure.
+        meanwhile. Returns withdrawn ids, or None on non-lock failure. A held
+        withdrawal returns no ids and keeps its book/cohort owed for retry.
         #10651: a finished game's work can run before unrelated price chunks.
         The tail excludes attempted events, so even a failure is tried once.
         #10090: ``standalone`` True/False takes only/no standalone legs, so
         each loop withdraws after its own prices; None (final drain) takes all.
         """
+        from app.tasks.live_blend_refresh import _mono
+
         async with buffer_lock:
+            held_events = (
+                {
+                    event_id_by_outcome.get(oid)
+                    for oid, until in withdrawal_retry_until.items()
+                    if oid in withdraw_buffer and until > _mono()
+                }
+                if not final else set()
+            )
             alone = (
                 standalone_open_outcome_ids(
                     withdraw_buffer, open_outcome_ids, event_id_by_outcome,
@@ -1609,11 +1622,17 @@ async def _run_polymarket_ws_consumer(*, sessions):
                 if (standalone is None or (oid in alone) == standalone)
                 and (only_events is None or event_id_by_outcome.get(oid) in only_events)
                 and event_id_by_outcome.get(oid) not in exclude_events
+                and event_id_by_outcome.get(oid) not in held_events
             }
         if not books:
             return []
         try:
             async with get_task_session() as session:
+                if not final:
+                    await session.execute(
+                        SET_LOCK_TIMEOUT_SQL,
+                        {"ms": lock_timeout_value(PRICE_CHUNK_LOCK_TIMEOUT_MS)},
+                    )
                 rows = await withdraw_book_refuted_prices(session, books)
                 for row in rows:
                     if row.last_updated is None:
@@ -1630,12 +1649,20 @@ async def _run_polymarket_ws_consumer(*, sessions):
                     stats["ranks_rederived"] += (
                         await session.execute(rerank_market_fields_stmt(markets))
                     ).rowcount
-        except Exception:
+        except Exception as exc:
             stats["errors"] += 1
             logger.exception(
                 "Polymarket WS: withdrawal error (%d retained for retry)", len(books)
             )
+            if not final and is_lock_timeout(exc):
+                # Keep the complete failed transaction; newer books on another
+                # leg of its event must not bypass this eligibility cooldown.
+                until = _mono() + PRICE_FLUSH_SECONDS
+                withdrawal_retry_until.update(dict.fromkeys(books, until))
+                return []
             return None
+        for oid in books:
+            withdrawal_retry_until.pop(oid, None)
         await blend_refresher.publish_market_changes(session)
         async with buffer_lock:
             for oid, book in books.items():
@@ -1800,7 +1827,9 @@ async def _run_polymarket_ws_consumer(*, sessions):
                     }
                     if mature:
                         attempted_withdraw_events.update(mature)
-                        early_withdrawn = await flush_withdrawals(only_events=mature)
+                        early_withdrawn = await flush_withdrawals(
+                            only_events=mature, final=final,
+                        )
                         if early_withdrawn is None:
                             wrote_all = False  # retain the ordinary tail fallback
                         else:
@@ -1874,6 +1903,7 @@ async def _run_polymarket_ws_consumer(*, sessions):
             # blocked outcome locks and bypass the price eligibility cooldown.
             exclude_events=attempted_withdraw_events | lock_deferred_events,
             standalone=None if final else False,
+            final=final,
         )
         if withdrawn is None:
             wrote_all = False

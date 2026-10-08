@@ -12,6 +12,9 @@ from pathlib import Path
 from types import SimpleNamespace
 from typing import Iterable, Mapping, Optional
 
+from app.tasks.polymarket_ws import PRICE_CHUNK_LOCK_TIMEOUT_MS
+from app.utils.repair_lock_budget import SET_LOCK_TIMEOUT_SQL, is_lock_timeout, lock_timeout_value
+
 ROOT = Path(__file__).resolve().parents[1]
 
 
@@ -63,7 +66,9 @@ def rig(
             trace.append(("pending", None))
 
     class Session:
-        async def execute(self, statement):
+        async def execute(self, statement, params=None):
+            if statement is SET_LOCK_TIMEOUT_SQL:
+                trace.append(("lock_budget", params))
             return SimpleNamespace(rowcount=1)
 
     @asynccontextmanager
@@ -108,6 +113,12 @@ def rig(
         "buffer_lock": asyncio.Lock(),
         "price_buffer": batch,
         "withdraw_buffer": books,
+        "withdrawal_retry_until": {},
+        "PRICE_CHUNK_LOCK_TIMEOUT_MS": PRICE_CHUNK_LOCK_TIMEOUT_MS,
+        "SET_LOCK_TIMEOUT_SQL": SET_LOCK_TIMEOUT_SQL,
+        "lock_timeout_value": lock_timeout_value,
+        "is_lock_timeout": is_lock_timeout,
+        "PRICE_FLUSH_SECONDS": 2,
         "input_marks": {oid: oid for oid in batch},
         "event_id_by_outcome": mapping,
         "open_outcome_ids": {900, 901},
@@ -271,5 +282,88 @@ def test_no_withdrawal_keeps_original_early_refresh_and_final_drain():
         assert await r.ns["flush_prices"](final=True)
         assert ("withdraw", [1]) not in r.trace
         assert r.trace.index(("refresh", [10])) < r.trace.index(("write", [900]))
+
+    asyncio.run(run())
+
+
+def test_lock_held_withdrawal_keeps_books_and_fence_without_sleeping_healthy_flush(monkeypatch):
+    from app.tasks import live_blend_refresh as module
+
+    clock = [1000.0]
+    monkeypatch.setattr(module, "_mono", lambda: clock[0])
+
+    class LockHeld(Exception):
+        sqlstate = "55P03"
+
+    async def run():
+        r = rig()
+        r.release.set()
+        original = r.ns["withdraw_book_refuted_prices"]
+        attempts, admissions = [], []
+        original_refresher = r.ns["blend_refresher"]
+
+        async def withdraw(session, books):
+            attempts.append((clock[0], set(books)))
+            if len(attempts) == 1:
+                clock[0] += 0.5
+                r.books[1] = (0.2, 0.8)  # newer book survives the rollback
+                raise LockHeld()
+            return await original(session, books)
+
+        class Refresher:
+            publish_market_changes = original_refresher.publish_market_changes
+
+            async def refresh(self, ids, **kwargs):
+                admissions.append(set(ids) - set(kwargs.get("defer_event_ids", ())))
+
+            async def refresh_pending(self, **kwargs):
+                admissions.append({10} - set(kwargs.get("defer_event_ids", ())))
+
+        r.ns["withdraw_book_refuted_prices"] = withdraw
+        r.ns["blend_refresher"] = Refresher()
+        assert await r.ns["flush_prices"](flush_started=1000) is True
+        assert attempts == [(1000.0, {1})]
+        assert r.books == {1: (0.2, 0.8)}
+        assert r.ns["withdrawal_retry_until"] == {1: 1002.5}
+        assert ("rollback", None) in r.trace and any(90 in ids for ids in admissions)
+        assert all(10 not in ids for ids in admissions)
+        assert r.trace.count(("lock_budget", {"ms": "500ms"})) == 1
+
+        # A new book on another leg of the held event cannot bypass cooldown.
+        r.books[2] = (0.3, 0.7)
+        clock[0] = 1001
+        r.ns["price_buffer"][900] = 0.8
+        assert await r.ns["flush_prices"](flush_started=1001) is True
+        assert len(attempts) == 1 and set(r.books) == {1, 2}
+        assert r.trace.count(("write", [900])) == 2
+        assert all(10 not in ids for ids in admissions)
+
+        # Healthy event withdrawal can still commit during that held interval.
+        r.books[900] = (0.2, 0.8)
+        assert await r.ns["flush_withdrawals"](only_events={90}) == [900]
+        assert attempts[-1] == (1001, {900}) and set(r.books) == {1, 2}
+        clock[0] = 1002.5
+        assert await r.ns["flush_prices"](flush_started=1002.5) is True
+        assert attempts[-1] == (1002.5, {1, 2})
+        assert not r.books and not r.ns["withdrawal_retry_until"]
+        assert 10 in admissions[-1]
+
+    asyncio.run(run())
+
+
+def test_final_withdrawal_ignores_cooldown_and_sets_no_periodic_budget(monkeypatch):
+    from app.tasks import live_blend_refresh as module
+
+    monkeypatch.setattr(module, "_mono", lambda: 1000)
+
+    async def run():
+        r = rig(batch={})
+        r.ns["withdrawal_retry_until"] = {1: 1002}
+        assert await r.ns["flush_withdrawals"](only_events={10}) == []
+        assert r.books and not r.trace
+        assert await r.ns["flush_prices"](final=True) is True
+        assert ("withdraw", [1]) in r.trace and not r.books
+        assert not any(kind == "lock_budget" for kind, _ in r.trace)
+        assert not r.ns["withdrawal_retry_until"]
 
     asyncio.run(run())
