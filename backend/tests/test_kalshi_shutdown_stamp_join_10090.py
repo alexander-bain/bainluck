@@ -45,7 +45,7 @@ class _SlowUnwind(lbr.LiveBlendRefresher):
         self.cancelled = 0
         _SlowUnwind.instances.append(self)
 
-    async def refresh_pending(self, *, flush_started=None):
+    async def refresh_pending(self, *, flush_started=None, defer_event_ids=()):
         self.calls += 1
         first = self.calls == 1
         self.running += 1
