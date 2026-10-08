@@ -1261,9 +1261,19 @@ class LiveBlendRefresher:
 
         try:
             prepared = await self._prepare_groups(due)
-            ordered = sorted(due)
-            for start in range(0, len(ordered), 4):
-                group_ids = ordered[start : start + 4]
+            # A newly committed quote should not wait for older retry/deferred
+            # groups merely because its event ID is higher. Keep fresh groups
+            # separate so an older row lock cannot delay their transaction.
+            # Every due event is still attempted; locking within a group keeps
+            # its existing sorted order.
+            fresh_due = sorted(fresh.intersection(due))
+            pending_due = sorted(set(due).difference(fresh))
+            groups = [
+                population[start : start + 4]
+                for population in (fresh_due, pending_due)
+                for start in range(0, len(population), 4)
+            ]
+            for group_ids in groups:
                 try:
                     await self._refresh_batch(
                         group_ids,
