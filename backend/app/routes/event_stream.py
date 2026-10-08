@@ -22,7 +22,8 @@ with `/api/feed`. Every connection here is long-lived, so any per-tick database
 work or blocking call would put feed latency behind stream fanout for every
 other request on the same loop. After the bounded live-gate and fold lookup at connect there
 is no database access on this path at all: frames carry their own values, and
-the client's initial state comes from the REST payload the page already fetched.
+one bounded Redis read after subscription replays the latest committed frame,
+while the REST payload remains the authoritative full event detail.
 
 AND IT MUST NOT OPEN A REDIS CONNECTION PER STREAM (#6515). It used to: the
 uncached `get_async_redis_client()` lived inside `_stream`, so N readers meant N
@@ -40,6 +41,7 @@ import asyncio
 import json
 import logging
 import os
+from collections import deque
 from datetime import datetime, timedelta, timezone
 from typing import AsyncIterator, Optional
 
@@ -52,7 +54,7 @@ from sqlalchemy.orm import selectinload
 from app.models import Event, FuturesMarket
 from app.services.database import async_session_maker
 from app.utils.live_push import (
-    MAX_FRAME_AGE_S, event_channel, parse_frame, sse_encode,
+    MAX_FRAME_AGE_S, event_channel, latest_frames, parse_frame, sse_encode,
 )
 
 logger = logging.getLogger(__name__)
@@ -360,6 +362,10 @@ async def _stream(
         yield f"retry: {RETRY_MS}\n\n"
         yield sse_encode(json.dumps({"event_id": event_id}), event="open")
 
+        # Replay immediately after initiating subscription. This is best-effort:
+        # Redis may not have acknowledged SUBSCRIBE yet. The existing live path
+        # and client revision guards handle later and duplicate frames.
+        replay = deque(await latest_frames([event_id, *(contributor_ids or [])]))
         last_beat = started
         recovery_generation = 0
         while True:
@@ -378,7 +384,10 @@ async def _stream(
             # when the market is completely silent, and what keeps this
             # coroutine yielding control back to the loop that is also serving
             # `/api/feed`.
-            origin_id, payload = await subscription.next(timeout=FRAME_WAIT_S)
+            if replay:
+                origin_id, payload = replay.popleft()
+            else:
+                origin_id, payload = await subscription.next(timeout=FRAME_WAIT_S)
             if isinstance(payload, Recovery):
                 # Fold subscriptions share a hub generation; emit it only once.
                 if payload.generation > recovery_generation:

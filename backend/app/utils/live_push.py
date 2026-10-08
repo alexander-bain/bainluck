@@ -7,19 +7,16 @@ so a drifted channel string would not fail a test — it would simply deliver
 nothing, forever, quietly. Keeping both halves on these two functions is what
 makes that drift impossible rather than merely unlikely.
 
-Transport is Redis **pub/sub**, deliberately not a list or a stream: pub/sub
-stores nothing, so the live push adds zero bytes to the 100 MB LRU that Celery
-shares. The cost of that choice is honest and stated in the design doc — a frame
-published while nobody is subscribed is simply gone. The stream is a latency
-optimisation over a database that remains the source of truth, never a delivery
-guarantee; a dropped frame self-heals on the next tick, and the refresher's 45 s
-unchanged-re-stamp puts a floor under how long "the next tick" can be.
+Redis pub/sub carries updates. A short-lived last committed frame per event
+also lets a newly opened stream catch up immediately instead of waiting for the
+next trade. Revision ordering and the existing age limit keep replay bounded.
 """
 
 from __future__ import annotations
 
 import json
 import logging
+from datetime import datetime, timezone
 from typing import Any, Optional
 
 logger = logging.getLogger(__name__)
@@ -34,6 +31,91 @@ MAX_FRAME_AGE_S = 30.0
 def event_channel(event_id: int) -> str:
     """The pub/sub channel carrying one event's live blend updates."""
     return f"live:event:{int(event_id)}"
+
+
+def latest_frame_key(event_id: int) -> str:
+    return f"live:last-event:{int(event_id)}"
+
+
+def _frame_revision(frame: dict) -> Optional[int]:
+    event_id = frame.get("event_id")
+    rev = frame.get("rev")
+    if type(event_id) is not int or not isinstance(rev, dict):
+        return None
+    if set(rev) != {str(event_id)}:
+        return None
+    value = rev[str(event_id)]
+    return value if type(value) is int and value >= 0 else None
+
+
+# Keep publication and last-frame storage in one Redis command. Concurrent
+# source publishers may finish out of order; only a newer revision replaces it.
+# PUBLISH's integer reply is retained for the packed sender's accounting.
+# A full replay cache must not suppress delivery to existing subscribers.
+RETAIN_AND_PUBLISH = """
+local prior = redis.call('GET', KEYS[1])
+local keep = true
+if prior then
+    local ok, frame = pcall(cjson.decode, prior)
+    if ok and type(frame) == 'table' and type(frame.rev) == 'table' then
+        local revision = frame.rev[ARGV[2]]
+        if type(revision) == 'number' and revision >= tonumber(ARGV[3]) then
+            keep = false
+        end
+    end
+end
+if keep then
+    redis.pcall('SET', KEYS[1], ARGV[1], 'EX', ARGV[4])
+end
+return redis.call('PUBLISH', KEYS[2], ARGV[1])
+"""
+
+
+def frame_publish_command(frame: dict) -> tuple:
+    payload = json.dumps(frame)
+    channel = event_channel(frame["event_id"])
+    rev = _frame_revision(frame)
+    if rev is None:
+        return ("PUBLISH", channel, payload)
+    return (
+        "EVAL", RETAIN_AND_PUBLISH, 2, latest_frame_key(frame["event_id"]),
+        channel, payload, str(frame["event_id"]), rev, int(MAX_FRAME_AGE_S),
+    )
+
+
+async def latest_frames(event_ids: list[int]) -> list[tuple[int, str]]:
+    """One bounded read after subscribing; failure leaves ordinary push live."""
+    from app.utils.request_cache import bounded_redis_call, get_shared_async_redis
+
+    ids = list(dict.fromkeys(event_ids))
+    try:
+        client = await get_shared_async_redis()
+        result = await bounded_redis_call(
+            lambda: client.mget([latest_frame_key(i) for i in ids]),
+            deadline_ms=250,
+        )
+        if not result.is_ok or not isinstance(result.value, (list, tuple)):
+            return []
+        accepted = []
+        now = datetime.now(timezone.utc)
+        for event_id, raw in zip(ids, result.value):
+            frame = parse_frame(raw)
+            if (frame is None or frame.get("event_id") != event_id
+                    or _frame_revision(frame) is None):
+                continue
+            try:
+                stamp = datetime.fromisoformat(frame["updated_at"])
+                if stamp.tzinfo is None:
+                    stamp = stamp.replace(tzinfo=timezone.utc)
+                age = (now - stamp).total_seconds()
+            except (KeyError, TypeError, ValueError):
+                continue
+            if 0 <= age <= MAX_FRAME_AGE_S:
+                accepted.append((event_id, json.dumps(frame)))
+        return accepted
+    except Exception:
+        logger.debug("live_push: latest-frame read unavailable", exc_info=True)
+        return []
 
 
 def build_frame(
@@ -95,9 +177,11 @@ async def publish_frame(redis_client, frame: dict[str, Any]) -> bool:
     is failing every time is visible rather than quiet (gotcha #53).
     """
     try:
-        await redis_client.publish(
-            event_channel(frame["event_id"]), json.dumps(frame)
-        )
+        command = frame_publish_command(frame)
+        if command[0] == "PUBLISH":
+            await redis_client.publish(*command[1:])
+        else:
+            await redis_client.execute_command(*command)
         return True
     except Exception:
         logger.warning(
