@@ -6430,6 +6430,28 @@ jobs:
             exit 1
           }
 
+      - name: "#10734 a deferred open-contract grade ends where the inline grade ended (real Postgres)"
+        # Open-contract connections now hand their per-leg grade to the #10667
+        # dispatcher so an unrelated quote is stored while another contract's
+        # settlement is still in its transaction. Whether the rows still end
+        # graded, refused and resolved exactly as the inline path left them —
+        # and whether a market spanning two ticker prefixes must stay inline —
+        # is a question about open transactions only Postgres can answer.
+        # Reuses the #7617 database: this file drops and creates its own tables.
+        if: matrix.group == 'isolated'
+        run: |
+          set -o pipefail
+          python -m pytest tests/integration/test_open_contract_deferred_grade_pg_10734.py \
+            -v -rs 2>&1 | tee /tmp/deferredgrade10734.txt
+          if grep -qiE "[0-9]+ skipped" /tmp/deferredgrade10734.txt; then
+            echo "::error::#10734 deferred open-contract grade gate SKIPPED — the gate did not run"
+            exit 1
+          fi
+          grep -qE "[^0-9]2 passed" /tmp/deferredgrade10734.txt || {
+            echo "::error::#10734 deferred open-contract grade gate did not run both cases"
+            exit 1
+          }
+
       - name: "#7878 win-prob evidence collapse — provision the disposable database"
         # Its own database for the reason the #7617 step above gives: the file
         # drops and creates the five tables it touches.
