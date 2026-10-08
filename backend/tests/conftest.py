@@ -145,6 +145,7 @@ def _reset_request_cache_state():
     """
     from app.utils import request_cache as _rc
     from app.utils import candidate_base as _cb
+    from app.utils import event_history_cache as _ehc
     from app.utils.principal_independent_cache import clear_shared_builds
 
     def _reset_staged():
@@ -158,6 +159,7 @@ def _reset_request_cache_state():
     _rc._reset_shared_client_for_tests()
     _cb._reset_l0_for_tests()
     clear_shared_builds()
+    _ehc._reset_for_tests()
     _reset_staged()
     yield
     _rc._reset_last_good_for_tests()
@@ -165,6 +167,7 @@ def _reset_request_cache_state():
     _rc._reset_shared_client_for_tests()
     _cb._reset_l0_for_tests()
     clear_shared_builds()
+    _ehc._reset_for_tests()
     _reset_staged()
 
 
