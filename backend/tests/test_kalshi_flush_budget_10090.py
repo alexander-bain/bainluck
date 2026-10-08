@@ -322,6 +322,7 @@ async def test_the_timings_count_phases_and_split_the_flush(fake_clock):
     tick_everything(r, 0.6)
     await r.flush(None)
     timings = r.prices.timings
+    timings.flushed(1.0)  # what `timed_flush` does when the flush returns
     # One live phase, the 29 other games in phases of eight (8+8+8+5), and the
     # three futures markets (30 rows) in one.
     assert timings.phases == 6
@@ -333,6 +334,7 @@ async def test_the_timings_count_phases_and_split_the_flush(fake_clock):
 
     t = _FlushTimings()
     assert await t.timed("stamp", slow)() == "ok"
+    assert t.spent["stamp"] == 0  # in flight until its flush returns
     t.flushed(0.5)
     t.flushed(1.5)
     assert t.spent["stamp"] > 0
@@ -341,3 +343,16 @@ async def test_the_timings_count_phases_and_split_the_flush(fake_clock):
     assert "rank_commit=" in line and "stamp=0.0s" in line
     t.reset()
     assert t.flushes == 0 and t.total == 0 and t.spent["stamp"] == 0
+
+
+async def test_a_minute_reset_mid_flush_keeps_the_flush_in_one_minute():
+    """CERT-4016 follow-up: a reset between a flush's phases and its end must
+    not leave the minute with bucket time but no total (or the reverse)."""
+    t = _FlushTimings()
+    t.add("save", 0.75, phase=True)  # the flush's first phase, before the line
+    t.reset()                        # the stats line fires mid-flush
+    t.add("stamp", 0.25)
+    t.flushed(1.5)                   # the flush returns in the new minute
+    assert t.spent == {"save": 0.75, "publish": 0.0, "stamp": 0.25}
+    assert t.phases == 1 and t.total == 1.5
+    assert "rank_commit=0.5s" in t.line()

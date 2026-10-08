@@ -117,24 +117,40 @@ class _FlushTimings:
     `publish` the market invalidations, `stamp` the event blend refresh, and
     `rank_commit` the rest of the flush: re-rank, commit, session checkout and
     bookkeeping. One flush's phases are the transactions it opened.
+
+    A flush's bucket time is held IN FLIGHT and joins the minute only with
+    that flush's total (`flushed`), so a stats-line reset mid-flush cannot
+    split the two and misattribute `rank_commit` (CERT-4016 follow-up).
     """
 
     BUCKETS = ("save", "publish", "stamp")
 
     def __init__(self):
+        self.in_flight = dict.fromkeys(self.BUCKETS, 0.0)
+        self.in_flight_phases = 0
         self.reset()
 
     def reset(self):
+        """Start a new minute. In-flight time stays with its flush."""
         self.flushes = 0
         self.phases = 0
         self.total = 0.0
         self.longest = 0.0
         self.spent = dict.fromkeys(self.BUCKETS, 0.0)
 
+    def add(self, bucket, seconds, *, phase=False):
+        self.in_flight[bucket] += seconds
+        self.in_flight_phases += int(phase)
+
     def flushed(self, seconds):
         self.flushes += 1
         self.total += seconds
         self.longest = max(self.longest, seconds)
+        self.phases += self.in_flight_phases
+        for bucket, spent in self.in_flight.items():
+            self.spent[bucket] += spent
+        self.in_flight = dict.fromkeys(self.BUCKETS, 0.0)
+        self.in_flight_phases = 0
 
     def timed(self, bucket, method):
         """``method`` (a coroutine function) with its duration added to ``bucket``."""
@@ -145,7 +161,7 @@ class _FlushTimings:
             try:
                 return await method(*args, **kwargs)
             finally:
-                self.spent[bucket] += time.monotonic() - started
+                self.add(bucket, time.monotonic() - started)
 
         return run
 
@@ -192,8 +208,7 @@ class _KalshiPriceOwner:
                     yield result
         finally:
             if self.timings is not None:
-                self.timings.phases += 1
-                self.timings.spent["save"] += time.monotonic() - started
+                self.timings.add("save", time.monotonic() - started, phase=True)
 
     def close(self):
         if self.pipeline is not None:
