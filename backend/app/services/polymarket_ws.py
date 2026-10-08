@@ -19,6 +19,24 @@ logger = logging.getLogger(__name__)
 
 WS_URL = "wss://ws-subscriptions-clob.polymarket.com/ws/market"
 
+
+async def _cooperative_messages(socket):
+    """Let ready stamp/publish work run during an already-buffered burst.
+
+    Receiving a cached frame and awaiting an uncontended price handler need
+    not suspend. Yield between processed messages, before consuming the next
+    one, so the other venue and probability writers get regular loop turns.
+    """
+    processed = 0
+    async for raw in socket:
+        yield raw
+        raw = None  # Do not retain the last full-depth book on a quiet socket.
+        processed += 1
+        if processed >= 32:
+            processed = 0
+            await asyncio.sleep(0)
+
+
 # #837 — THE VENUE ACCEPTS AN OVERSIZED SUBSCRIBE AND SERVES A FRACTION OF IT,
 # silently: no error, no close, the connection just holds and streams a few
 # hundred assets. Measured against the public CLOB socket by live/512 with a
@@ -614,7 +632,7 @@ class PolymarketWebSocket:
                     hb = asyncio.create_task(heartbeat())
 
                     try:
-                        async for raw in ws:
+                        async for raw in _cooperative_messages(ws):
                             try:
                                 if raw == "PONG":
                                     continue
