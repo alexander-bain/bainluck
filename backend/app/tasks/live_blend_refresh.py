@@ -1386,110 +1386,86 @@ class LiveBlendRefresher:
         self._throttle_deferred.update(event_ids)
 
     async def _read_groups(self, session, event_ids: list[int]) -> dict[int, tuple]:
-        from sqlalchemy import select
-        from sqlalchemy.orm import load_only
+        from types import SimpleNamespace
+        from sqlalchemy import and_, func, or_, select
         from app.models.models import Event, FuturesMarket, FuturesOutcome
-        from app.utils.live_blend import MarketOutcomes, is_game_winner_market
-
-        market_rows = list(
-            (
-                await session.execute(
-                    select(FuturesMarket).options(
-                        load_only(
-                            *(getattr(FuturesMarket, key) for key in PREPARED_MARKET_FIELDS),
-                            raiseload=True,
-                        )
-                    ).where(
-                        FuturesMarket.source == self.source,
-                        FuturesMarket.event_id.in_(event_ids),
-                    )
-                )
-            ).scalars()
+        from app.utils.live_blend import MarketOutcomes
+        from app.utils.prediction_market_matching import (
+            COMBAT_FIGHT_WINNER_PREFIXES, TENNIS_MATCH_WINNER_PREFIXES,
         )
-        if not market_rows:
-            return {}
 
-        events = {
-            event.id: event
-            for event in (
-                await session.execute(
-                    select(Event)
-                    .options(
-                        load_only(
-                            *(getattr(Event, key) for key in PREPARED_EVENT_FIELDS),
-                            raiseload=True,
-                        )
-                    )
-                    .where(
-                        Event.id.in_(
-                            list(
-                                dict.fromkeys(market.event_id for market in market_rows)
-                            )
-                        )
-                    )
+        # One fresh statement snapshot of graph, admission and quotes. No ORM
+        # hydration and no per-quote Market -> Event -> Outcome round trips.
+        # The OUTER JOIN keeps empty/prop markets: group length gates devig.
+        outcome_join = FuturesOutcome.market_id == FuturesMarket.id
+        if self.source == "kalshi":
+            # Exact feeds_win_prob_blend ticker rule, using its shared sets.
+            # Missing/empty tickers retain the resolver's name fallback.
+            prefix = func.split_part(func.lower(FuturesMarket.external_id), "-", 1)
+            outcome_join = and_(
+                outcome_join,
+                or_(
+                    FuturesMarket.external_id.is_(None),
+                    FuturesMarket.external_id == "",
+                    prefix.endswith("game"),
+                    prefix.in_(sorted(
+                        COMBAT_FIGHT_WINNER_PREFIXES | TENNIS_MATCH_WINNER_PREFIXES
+                    )),
+                ),
+            )
+        fields = (
+            (FuturesMarket, PREPARED_MARKET_FIELDS),
+            (Event, PREPARED_EVENT_FIELDS),
+            (FuturesOutcome, PREPARED_OUTCOME_FIELDS),
+        )
+        rows = (
+            await session.execute(
+                select(*(getattr(model, key) for model, keys in fields for key in keys))
+                .select_from(FuturesMarket)
+                .join(Event, Event.id == FuturesMarket.event_id)
+                .outerjoin(FuturesOutcome, outcome_join)
+                .where(
+                    FuturesMarket.source == self.source,
+                    FuturesMarket.event_id.in_(event_ids),
                 )
-            ).scalars()
-        }
-        # Preserve the old inner join's orphan refusal.
-        market_rows = [market for market in market_rows if market.event_id in events]
-        if not market_rows:
-            return {}
-        # Do not drop market entries: len(group) is the resolver's devig gate.
-        # Only their impossible Kalshi outcomes can be omitted; the same ticker
-        # rule refuses them as primary, fallback and contributor.
-        # Missing tickers keep their outcomes: the resolver still tries names.
-        market_ids = [
-            market.id
-            for market in market_rows
-            if self.source != "kalshi"
-            or not getattr(market, "external_id", None)
-            or is_game_winner_market(market)
-        ]
-        outcomes_by_market: dict[int, list] = {}
-        if market_ids:
-            for outcome in (
-                await session.execute(
-                    select(FuturesOutcome).options(
-                        load_only(
-                            *(getattr(FuturesOutcome, key) for key in PREPARED_OUTCOME_FIELDS),
-                            raiseload=True,
-                        )
-                    ).where(
-                        FuturesOutcome.market_id.in_(market_ids)
-                    )
-                )
-            ).scalars():
-                outcomes_by_market.setdefault(outcome.market_id, []).append(outcome)
-
+            )
+        ).all()
         grouped: dict[int, tuple] = {}
-        for market in market_rows:
-            event = events[market.event_id]
-            entry = grouped.setdefault(event.id, (event, []))
-            entry[1].append(
-                MarketOutcomes(
+        entries: dict[int, MarketOutcomes] = {}
+        for row in rows:
+            market_id = row[0]
+            entry = entries.get(market_id)
+            if entry is None:
+                offset = 0
+                market = SimpleNamespace(**dict(zip(
+                    PREPARED_MARKET_FIELDS, row[:len(PREPARED_MARKET_FIELDS)]
+                )))
+                offset += len(PREPARED_MARKET_FIELDS)
+                event_values = row[offset:offset + len(PREPARED_EVENT_FIELDS)]
+                event_id = event_values[0]
+                if event_id not in grouped:
+                    grouped[event_id] = (
+                        SimpleNamespace(**dict(zip(PREPARED_EVENT_FIELDS, event_values))),
+                        [],
+                    )
+                event, group = grouped[event_id]
+                entry = MarketOutcomes(
                     market=market,
-                    outcomes=outcomes_by_market.get(market.id, []),
-                    # #5820. The 15-minute matcher retires a leg whose only
-                    # speaker is a settled market on a game with no result;
-                    # this lane recomputes the same number every two
-                    # seconds from the same rows, so without the same input
-                    # it would re-publish what the matcher just cleared and
-                    # the two writers would disagree — the one thing this
-                    # module exists to prevent. The Event context is loaded
-                    # once for this group, not once per linked market.
+                    outcomes=[],
                     event_has_result=event.completed_at is not None,
-                    # #9037: use the same kickoff admission as the
-                    # matcher and poll for live unresolved games. A stale
-                    # pre-kickoff book must not alternate with their fresh
-                    # speaker between writes. The Event is already loaded.
                     event_commence_time=(
-                        getattr(event, "commence_time", None)
-                        if getattr(event, "status", None) == "live"
-                        and event.completed_at is None
+                        event.commence_time
+                        if event.status == "live" and event.completed_at is None
                         else None
                     ),
                 )
-            )
+                entries[market_id] = entry
+                group.append(entry)
+            outcome_values = row[len(PREPARED_MARKET_FIELDS) + len(PREPARED_EVENT_FIELDS):]
+            if outcome_values[0] is not None:
+                entry.outcomes.append(SimpleNamespace(**dict(zip(
+                    PREPARED_OUTCOME_FIELDS, outcome_values
+                ))))
         return grouped
 
     async def _prepare_groups(self, event_ids: list[int]) -> dict[int, tuple]:

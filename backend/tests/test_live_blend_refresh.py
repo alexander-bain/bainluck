@@ -538,11 +538,24 @@ class _RecordingSession:
             self.updates.append(statement)
             return _Result(scalar=self._returned, rev=self.returned_rev)
         self._selects += 1
-        if self._selects == 1:
-            return _Result(rows=[market for market, _ in self._market_rows])
-        if self._selects == 2:
-            return _Result(rows=list({event.id: event for _, event in self._market_rows}.values()))
-        return _Result(rows=self._outcomes)
+        from app.tasks.live_blend_refresh import (
+            PREPARED_EVENT_FIELDS, PREPARED_MARKET_FIELDS, PREPARED_OUTCOME_FIELDS,
+        )
+        return _Result(rows=[
+            tuple(
+                getattr(obj, key, None)
+                for obj, fields in (
+                    (market, PREPARED_MARKET_FIELDS),
+                    (event, PREPARED_EVENT_FIELDS),
+                    (outcome, PREPARED_OUTCOME_FIELDS),
+                ) for key in fields
+            )
+            for market, event in self._market_rows
+            for outcome in (
+                [o for o in self._outcomes if getattr(o, "market_id", None) == market.id]
+                or [None]
+            )
+        ])
 
     def add(self, row):
         pass
