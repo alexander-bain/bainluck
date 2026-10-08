@@ -2,7 +2,7 @@
 # #5007 (THRU-H) — which CI jobs actually protect this candidate?
 #
 # Usage:  ci-change-scope.sh <BASE_SHA> <HEAD_SHA>
-# Prints: "full" or "frontend" on stdout (plus reasoning on stderr).
+# Prints: "full", "frontend" or "native" on stdout (plus reasoning on stderr).
 #
 #   full      run everything (backend shards, shard-completeness, search-recall)
 #   frontend  the candidate cannot reach anything those jobs test
@@ -38,19 +38,13 @@ MANIFEST="${CI_CROSS_TIER_MANIFEST:-$(dirname "$0")/../ci-cross-tier-paths.txt}"
 say () { echo "$*" >&2; }
 emit () { echo "$1"; say "DECISION: $1 ($2)"; exit 0; }
 
-# Only `frontend/` is a candidate for reduced scope.
-#
-# NOT `ios/`, though CI compiles no Swift and it looks equally inert:
-# `backend/tests/test_cold_path_charter.py` reads six `ios/**` Swift files as
-# cross-tier parity guards, so an ios-only change can redden a backend shard.
-# NOT `docs/` or root markdown either — `test_claude_md_size.py` guards
-# CLAUDE.md's size and the ruling-ledger gates read `docs/rulings/`, so a
-# docs-only candidate needs backend jobs that a naive reading calls irrelevant.
-# Those buckets are deliberately absent rather than forgotten; adding one needs
-# its own evidence that no backend test reads it.
-is_frontend_path () {
+# #10708 INACTIVE preparation: current ci.yml normalizes native to full.
+# Native classification is not accepted reduced coverage. Transitive readers,
+# database reach and residue-scanner range still require activation review.
+path_bucket () {
   case "$1" in
-    frontend/*) return 0 ;;
+    frontend/*) echo frontend ;;
+    ios/*) echo native ;;
     *) return 1 ;;
   esac
 }
@@ -79,15 +73,20 @@ CHANGED="$(git diff --name-only --no-renames "$BASE" "$HEAD_SHA")" \
 [ -n "$CHANGED" ] || emit full "empty diff — cannot prove the candidate is frontend-only"
 
 # Read the manifest into a newline-delimited blob, dropping comments and blanks.
-CROSS_TIER="$(sed -e 's/#.*//' -e 's/[[:space:]]*$//' "$MANIFEST" | grep -v '^$')"
-[ -n "$CROSS_TIER" ] \
-  && say "cross-tier manifest: $(printf '%s\n' "$CROSS_TIER" | wc -l | tr -d ' ') paths"
+CROSS_TIER="$(sed -e 's/#.*//' -e 's/^[[:space:]]*//' -e 's/[[:space:]]*$//' "$MANIFEST" | grep -v '^$')" \
+  || emit full "manifest parsing failed or empty — cannot prove safety"
+[ -n "$CROSS_TIER" ] || emit full "empty cross-tier manifest — cannot prove safety"
+say "cross-tier manifest: $(printf '%s\n' "$CROSS_TIER" | wc -l | tr -d ' ') paths"
 
+BUCKET=""
 say "changed files:"
 while IFS= read -r f; do
   [ -z "$f" ] && continue
   say "  $f"
-  is_frontend_path "$f" || emit full "$f is outside frontend/"
+  CURRENT="$(path_bucket "$f")" || emit full "$f is outside frontend/ and ios/"
+  [ -z "$BUCKET" ] || [ "$CURRENT" = "$BUCKET" ] || emit full "mixed frontend/native candidate"
+  BUCKET="$CURRENT"
+  [ "$CURRENT" = frontend ] || continue
   # File entries match a WHOLE LINE; a substring test would let
   # `frontend/lib/marketShape.ts.bak` satisfy the entry
   # `frontend/lib/marketShape.ts` and skip the shard that reads the real file.
@@ -101,4 +100,8 @@ while IFS= read -r f; do
   done <<< "$CROSS_TIER"
 done <<< "$CHANGED"
 
-emit frontend "every changed path is under frontend/ and none is read by a backend test"
+case "$BUCKET" in
+  frontend) emit frontend "every changed path is under frontend/ and none is listed cross-tier" ;;
+  native) emit native "pure ios/ candidate; INACTIVE preparation, workflow retains full selection" ;;
+  *) emit full "unparseable candidate bucket" ;;
+esac
