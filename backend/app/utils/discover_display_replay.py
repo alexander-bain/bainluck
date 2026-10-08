@@ -1293,13 +1293,108 @@ def offline():
 #: ``cold_start_first_cards``: ``diversify_discover_first_page`` with
 #: ``cold_start_window=COLD_START_WINDOW_FIRST_CARDS`` (see that constant).
 STAGE_POLICY_COLD_START_FIRST_CARDS = "cold_start_first_cards"
-STAGE_POLICIES = frozenset({STAGE_POLICY_COLD_START_FIRST_CARDS})
+
+#: #5105 D2 — the variety-promotion comparison. All three run the served
+#: ``diversify_discover_first_page`` with its opt-in promotion hook
+#: (``feed_market_quality.PromotionGate``) and return the per-seat trace:
+#:
+#: ``d2_baseline_trace``: an OBSERVER gate — every check is computed and
+#: recorded, every promotion is allowed, so the deck is the served one (the
+#: parity test asserts it byte for byte against the capture's oracle).
+#: ``d2_arm_a``: a variety-only promotion must pass ``_is_clean_replacement_for``
+#: at its destination slot (quality class, ladder, silence, and the type-agnostic
+#: why-now inside ``FIRST_PAGE_WHY_NOW_WINDOW``) and the score bar its own
+#: mechanism already applies (none for a cap-walk seat).
+#: ``d2_arm_b``: A, plus ``lacks_a_why_now`` (the type-scoped clause-(d) check:
+#: futures and bundles) at every first-page slot, plus a DEFINED bar — the
+#: higher of the card's category hunger threshold and the required-archetype
+#: bar, for whichever of the two applies to it. A card to which neither applies
+#: has no defined bar and is NOT variety-promotable under B: it keeps ordinary
+#: rank-earned seats only ("unbarred categories still earn ordinary ranked
+#: seats"), and no threshold is invented for it.
+#:
+#: Ordinary rank-earned seats are never gated. Nothing outside this module
+#: passes a gate; ``routes/feed.py`` is unchanged.
+STAGE_POLICY_D2_BASELINE_TRACE = "d2_baseline_trace"
+STAGE_POLICY_D2_ARM_A = "d2_arm_a"
+STAGE_POLICY_D2_ARM_B = "d2_arm_b"
+D2_POLICIES = (
+    STAGE_POLICY_D2_BASELINE_TRACE,
+    STAGE_POLICY_D2_ARM_A,
+    STAGE_POLICY_D2_ARM_B,
+)
+STAGE_POLICIES = frozenset({STAGE_POLICY_COLD_START_FIRST_CARDS, *D2_POLICIES})
+
+
+def d2_defined_bar(card: dict) -> Optional[int]:
+    """Arm B's bar for ``card``: the higher of the existing bars that apply to it.
+
+    The category hunger threshold when the card's category has one, and the
+    required-archetype bar when its archetype is a required texture. ``None``
+    for a card in neither — politics, geopolitics, an unlisted archetype: it is
+    unbarred, keeps rank-earned access, and cannot be variety-promoted under B.
+    No blanket threshold is introduced.
+    """
+    from app.utils.feed_market_quality import (
+        _DISCOVER_REQUIRED_ARCHETYPES,
+        DISCOVER_CATEGORY_HUNGER_THRESHOLDS,
+        DISCOVER_REQUIRED_ARCHETYPE_MIN_SCORE,
+        _discover_archetype_group,
+        _discover_category_group,
+    )
+
+    bars = []
+    category_bar = DISCOVER_CATEGORY_HUNGER_THRESHOLDS.get(_discover_category_group(card))
+    if category_bar is not None:
+        bars.append(category_bar)
+    if _discover_archetype_group(card) in _DISCOVER_REQUIRED_ARCHETYPES:
+        bars.append(DISCOVER_REQUIRED_ARCHETYPE_MIN_SCORE)
+    return max(bars) if bars else None
+
+
+def d2_promotion_gate(policy: str) -> Callable[..., tuple[bool, dict]]:
+    """The ``PromotionGate`` for one D2 policy. Every check is computed for every
+    arm and recorded, so the ledger shows what A and B would each have said
+    about a baseline promotion; only ``policy`` decides what is allowed."""
+    if policy not in D2_POLICIES:
+        raise DisplayReplayError(UNSUPPORTED, f"unknown D2 policy {policy!r}")
+    from app.utils import feed_market_quality as fmq
+
+    def gate(card: dict, *, slot: int, mechanism: str, existing_bar: Any) -> tuple[bool, dict]:
+        score = card.get("score", 0)
+        window = fmq.FIRST_PAGE_WHY_NOW_WINDOW
+        clean = fmq._is_clean_replacement_for(card, position=slot, why_now_window=window)
+        bar = d2_defined_bar(card)
+        checks = {
+            "score_read_by_bars": score,
+            "quality_class_ok": not fmq.is_first_page_quality_offender(card),
+            "not_wholly_silent": not fmq.is_wholly_silent_card(card),
+            "why_now_first_ten_ok": slot >= window or not fmq._is_reasonless(card),
+            "clean_replacement": clean,
+            "existing_bar": existing_bar,
+            "existing_bar_ok": existing_bar is None or score >= existing_bar,
+            "why_now_twenty_ok": not fmq.lacks_a_why_now(card),
+            "defined_bar": bar,
+            "defined_bar_ok": bar is not None and score >= bar,
+        }
+        checks["a_allowed"] = checks["clean_replacement"] and checks["existing_bar_ok"]
+        checks["b_allowed"] = (
+            checks["a_allowed"] and checks["why_now_twenty_ok"] and checks["defined_bar_ok"]
+        )
+        if policy == STAGE_POLICY_D2_ARM_A:
+            return checks["a_allowed"], checks
+        if policy == STAGE_POLICY_D2_ARM_B:
+            return checks["b_allowed"], checks
+        return True, checks
+
+    return gate
 
 
 @contextmanager
 def _stage_policy(feed_route: Any, policy: Optional[str]):
+    """Yields the D2 promotion trace (a list) for a D2 policy, else ``None``."""
     if policy is None:
-        yield
+        yield None
         return
     from functools import partial
 
@@ -1308,15 +1403,60 @@ def _stage_policy(feed_route: Any, policy: Optional[str]):
         diversify_discover_first_page,
     )
 
+    trace: Optional[list] = None
+    if policy == STAGE_POLICY_COLD_START_FIRST_CARDS:
+        replacement = partial(
+            diversify_discover_first_page,
+            cold_start_window=COLD_START_WINDOW_FIRST_CARDS,
+        )
+    else:
+        trace = []
+        replacement = partial(
+            diversify_discover_first_page,
+            promotion_gate=d2_promotion_gate(policy),
+            promotion_trace=trace,
+        )
     original = feed_route.diversify_discover_first_page
-    feed_route.diversify_discover_first_page = partial(
-        diversify_discover_first_page,
-        cold_start_window=COLD_START_WINDOW_FIRST_CARDS,
-    )
+    feed_route.diversify_discover_first_page = replacement
     try:
-        yield
+        yield trace
     finally:
         feed_route.diversify_discover_first_page = original
+
+
+def _trace_card(card: Optional[dict]) -> Optional[dict]:
+    if card is None:
+        return None
+    from app.utils.feed_market_quality import (
+        _discover_archetype_group,
+        _discover_category_group,
+    )
+
+    data = card.get("data") if isinstance(card.get("data"), dict) else {}
+    return {
+        "identity": _member(card),
+        "type": card.get("type"),
+        "title": data.get("name") or card.get("headline"),
+        "score": card.get("score"),
+        # Never the display score standing in for a missing ordering score.
+        "ordering_score": card.get("_rank_score"),
+        "quality_class": card.get("_quality_class"),
+        "ladder_or_bucket": card.get("_quality_ladder_or_bucket"),
+        "category_group": _discover_category_group(card),
+        "archetype_group": _discover_archetype_group(card),
+    }
+
+
+def _serialize_promotion_trace(trace: list) -> list[dict]:
+    out = []
+    for entry in trace:
+        row = {k: v for k, v in entry.items() if k not in ("card", "displaced", "deferred")}
+        row["card"] = _trace_card(entry.get("card"))
+        for key in ("displaced", "deferred"):
+            if key in entry:
+                row[key] = _trace_card(entry[key])
+        out.append(row)
+    return out
 
 
 
@@ -1350,7 +1490,7 @@ def replay_capture(
     request = decode_value(capture["effective_request"])
     now = _dt.datetime.fromisoformat(capture["clocks"]["scoring_now"])
 
-    with offline(), _stage_policy(feed_route, stage_policy):
+    with offline(), _stage_policy(feed_route, stage_policy) as promotion_trace:
         pool = decode_value(capture["scored_pool"]["items"])
         if arm is not None:
             pool = arm(pool)
@@ -1390,6 +1530,12 @@ def replay_capture(
             if edition_status == EDITION_STATUS_PINNED and pinned is not None:
                 items = pinned
         stages["pre_slice"] = deck_identities(items)
+        # D2 only: read the internal fields BEFORE publication, which strips
+        # ``_rank_score`` / ``_quality_*`` from the dicts in place.
+        promotion_rows = card_facts = None
+        if promotion_trace is not None:
+            promotion_rows = _serialize_promotion_trace(promotion_trace)
+            card_facts = {_member(item): _trace_card(item) for item in items}
 
         total = len(items)
         offset, limit = request["offset"], request["limit"]
@@ -1421,6 +1567,8 @@ def replay_capture(
         "chain_meta": meta,
         "stage_identities": stages,
         "stage_policy": stage_policy,
+        "promotion_trace": promotion_rows,
+        "card_facts": card_facts,
     }
 
 

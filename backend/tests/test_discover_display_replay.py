@@ -1506,6 +1506,24 @@ async def test_a_stage_policy_is_restored_when_the_replay_raises(harness):
     assert harness.feed.diversify_discover_first_page is original
 
 
+@pytest.mark.parametrize("policy", ddr.D2_POLICIES)
+async def test_a_d2_policy_is_an_offline_arm_restored_after_its_replay(harness, policy):
+    """#5105 D2 — the observer arm reproduces the oracle; every arm restores the
+    stage and returns its trace plus the pre-publication facts it reads."""
+    artifact = await _capture(harness)
+    original = harness.feed.diversify_discover_first_page
+    replay = ddr.replay_capture(artifact, stage_policy=policy)
+    assert harness.feed.diversify_discover_first_page is original
+    assert replay["stage_policy"] == policy
+    assert isinstance(replay["promotion_trace"], list) and replay["promotion_trace"]
+    assert set(replay["card_facts"]) == set(replay["deck_identities"])
+    if policy == ddr.STAGE_POLICY_D2_BASELINE_TRACE:
+        assert ddr._compare(artifact, replay)["verdict"] == ddr.PASS
+    plain = ddr.replay_capture(artifact)
+    assert plain["promotion_trace"] is None and plain["card_facts"] is None
+    assert ddr.verify_baseline(artifact)["verdict"] == ddr.PASS
+
+
 async def test_an_unknown_stage_policy_refuses_before_any_stage(harness, monkeypatch):
     artifact = await _capture(harness)
     called: list = []

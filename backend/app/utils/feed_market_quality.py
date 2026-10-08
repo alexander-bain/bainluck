@@ -15,7 +15,7 @@ from __future__ import annotations
 import re
 from collections import Counter
 from dataclasses import dataclass, field
-from typing import Iterable, Literal, Sequence
+from typing import Callable, Iterable, Literal, Optional, Sequence
 
 from app.utils.card_integrity import is_anonymized_market
 from app.utils.feed_reasons import RESOLVING_WITHIN_MONTH_HEADLINE
@@ -3644,6 +3644,64 @@ _DISCOVER_REQUIRED_ARCHETYPES: tuple[EditorialArchetype, ...] = (
     "absurd_but_real",
 )
 
+#: The score a card needs before ``_ensure_required_archetypes`` will insert it
+#: for a missing texture, and before ``_ensure_category_hunger`` will insert it
+#: for a missing category. Named so the offline promotion arms (#5105 D2) read
+#: the same bars instead of restating them; the values are the served ones.
+DISCOVER_REQUIRED_ARCHETYPE_MIN_SCORE = 90
+DISCOVER_CATEGORY_HUNGER_THRESHOLDS: dict[str, int] = {
+    "entertainment": 80,
+    "tech": 90,
+    "economics": 90,
+    "weather_health": 90,
+    "sports_culture": 90,
+}
+
+#: #5105 D2 — OFFLINE ARM HOOK ONLY. A variety promotion is a first-page seat a
+#: card gets for a reason other than its rank: the cap walk seating it while a
+#: higher-ranked card waits behind a cap, or a required-archetype, category-
+#: hunger or strict-variety insertion. ``promotion_gate(card, slot=, mechanism=,
+#: existing_bar=)`` returns ``(allowed, checks)``; a refused card is simply not
+#: eligible for that promotion and the mechanism's own next candidate (or its
+#: own fallback) applies. ``promotion_trace`` receives one dict per seat and per
+#: promotion decision. Both default to ``None``, and with both ``None`` every
+#: decision is the served one — no production caller passes either; they are
+#: reached through ``discover_display_replay.replay_capture``'s ``stage_policy``.
+PromotionGate = Callable[..., "tuple[bool, dict]"]
+
+
+def _promotion_allowed(
+    gate: Optional[PromotionGate],
+    trace: Optional[list],
+    card: dict,
+    *,
+    slot: int,
+    mechanism: str,
+    existing_bar: Optional[float],
+    displaced: Optional[dict] = None,
+    cause: Optional[str] = None,
+) -> bool:
+    if gate is None and trace is None:
+        return True
+    allowed, checks = (True, {}) if gate is None else gate(
+        card, slot=slot, mechanism=mechanism, existing_bar=existing_bar
+    )
+    if trace is not None:
+        trace.append(
+            {
+                "event": "promotion",
+                "mechanism": mechanism,
+                "slot": slot,
+                "card": card,
+                "displaced": displaced,
+                "cause": cause,
+                "existing_bar": existing_bar,
+                "checks": checks,
+                "allowed": bool(allowed),
+            }
+        )
+    return bool(allowed)
+
 
 #: #10356 / #5105 — how long the cold-start cap of 2 binds. ``SERVED`` is what
 #: production does and stays the default: the cap holds until all eight
@@ -3667,6 +3725,8 @@ def diversify_discover_first_page(
     first_page_size: int = 20,
     cold_start: bool = False,
     cold_start_window: str = COLD_START_WINDOW_SERVED,
+    promotion_gate: Optional[PromotionGate] = None,
+    promotion_trace: Optional[list] = None,
 ) -> list[dict]:
     """Reorder the first Discover page so it feels curated, not clustered.
 
@@ -3677,6 +3737,7 @@ def diversify_discover_first_page(
 
     ``cold_start_window`` selects how that tightening is bounded; see
     :data:`COLD_START_WINDOW_SERVED`. The default is the served behaviour.
+    ``promotion_gate`` / ``promotion_trace``: see :data:`PromotionGate`.
     """
     if cold_start_window not in COLD_START_WINDOWS:
         raise ValueError(f"unknown cold_start_window: {cold_start_window!r}")
@@ -3698,27 +3759,72 @@ def diversify_discover_first_page(
             return len(selected) < _COLD_START_CARDS
         return len([s for s in category_counts.values()]) < 8
 
-    def can_select(item: dict, *, enforce_archetype: bool, enforce_story: bool) -> bool:
+    def refusal(item: dict, *, enforce_archetype: bool, enforce_story: bool) -> Optional[str]:
+        """The cap that refuses ``item`` here, or ``None`` when it may be seated."""
         group = _discover_category_group(item)
         cap = _DISCOVER_FIRST_PAGE_CATEGORY_CAPS.get(group, 3)
-        if cold_start_binds():
+        cold = cold_start_binds()
+        if cold:
             cap = min(cap, cold_start_cap)
         if category_counts.get(group, 0) >= cap:
-            return False
+            return "cold_start_category_cap" if cold else "category_cap"
 
         if enforce_archetype:
             archetype = _discover_archetype_group(item)
             if archetype_counts.get(
                 archetype, 0
             ) >= _DISCOVER_FIRST_PAGE_ARCHETYPE_CAPS.get(archetype, 3):
-                return False
+                return "archetype_cap"
 
         if enforce_story:
             story_key = item.get("_quality_story_key")
             if story_key and story_counts.get(story_key, 0) >= 2:
-                return False
+                return "story_cap"
 
-        return True
+        return None
+
+    instrumented = promotion_gate is not None or promotion_trace is not None
+
+    def seat_allowed(item: dict, waiting: dict, *, mechanism: str) -> bool:
+        """Rank-earned unless a higher-ranked card is waiting behind a cap."""
+        if not instrumented:
+            return True
+        if not waiting:
+            if promotion_trace is not None:
+                promotion_trace.append(
+                    {
+                        "event": "seat",
+                        "mechanism": mechanism,
+                        "slot": len(selected),
+                        "card": item,
+                        "kind": "rank",
+                    }
+                )
+            return True
+        deferred, cause = next(iter(waiting.values()))
+        allowed = _promotion_allowed(
+            promotion_gate,
+            promotion_trace,
+            item,
+            slot=len(selected),
+            mechanism=mechanism,
+            existing_bar=None,
+            displaced=deferred,
+            cause=cause,
+        )
+        if allowed and promotion_trace is not None:
+            promotion_trace.append(
+                {
+                    "event": "seat",
+                    "mechanism": mechanism,
+                    "slot": len(selected),
+                    "card": item,
+                    "kind": "cap_promotion",
+                    "deferred": deferred,
+                    "cause": cause,
+                }
+            )
+        return allowed
 
     def record(item: dict) -> None:
         group = _discover_category_group(item)
@@ -3740,15 +3846,21 @@ def diversify_discover_first_page(
         rewalk = True
         while rewalk:
             rewalk = False
+            waiting: dict[tuple, tuple[dict, str]] = {}
             for item in items:
                 if len(selected) >= target_size:
                     break
                 key = _feed_item_key(item)
                 if key in selected_keys:
                     continue
-                if not can_select(
+                refused = refusal(
                     item, enforce_archetype=enforce_archetype, enforce_story=enforce_story
-                ):
+                )
+                if refused is not None:
+                    if instrumented:
+                        waiting.setdefault(key, (item, refused))
+                    continue
+                if not seat_allowed(item, waiting, mechanism="cap_walk"):
                     continue
                 selected.append(item)
                 selected_keys.add(key)
@@ -3777,6 +3889,7 @@ def diversify_discover_first_page(
         for relaxed_extra in (2, 5, None):
             if len(selected) >= target_size:
                 break
+            waiting = {}
             for item in items:
                 if len(selected) >= target_size:
                     break
@@ -3789,14 +3902,30 @@ def diversify_discover_first_page(
                         _DISCOVER_FIRST_PAGE_CATEGORY_CAPS.get(group, 3) + relaxed_extra
                     )
                     if category_counts.get(group, 0) >= cap:
+                        if instrumented:
+                            cause = f"relaxed_category_cap+{relaxed_extra}"
+                            waiting.setdefault(key, (item, cause))
                         continue
+                # The unbounded pass refuses nothing, so ``waiting`` stays empty
+                # and every seat it fills is rank order — the explicit fallback.
+                if not seat_allowed(
+                    item,
+                    waiting,
+                    mechanism=(
+                        "fallback_rank_fill" if relaxed_extra is None
+                        else f"relaxed_fill+{relaxed_extra}"
+                    ),
+                ):
+                    continue
                 selected.append(item)
                 selected_keys.add(key)
                 record(item)
 
-    _ensure_required_archetypes(selected, items)
-    _ensure_category_hunger(selected, items)
-    _improve_strict_variety(selected, items)
+    _ensure_required_archetypes(
+        selected, items, gate=promotion_gate, trace=promotion_trace
+    )
+    _ensure_category_hunger(selected, items, gate=promotion_gate, trace=promotion_trace)
+    _improve_strict_variety(selected, items, gate=promotion_gate, trace=promotion_trace)
 
     selected_keys = {_feed_item_key(item) for item in selected}
     remainder = [
@@ -4598,53 +4727,61 @@ def space_discover_concept_families(
     return out, meta
 
 
-def _ensure_category_hunger(selected: list[dict], all_items: list[dict]) -> None:
+def _ensure_category_hunger(
+    selected: list[dict],
+    all_items: list[dict],
+    *,
+    gate: Optional[PromotionGate] = None,
+    trace: Optional[list] = None,
+) -> None:
     """Give a strong missing category one first-page slot when possible."""
     if not selected:
         return
 
     selected_keys = {_feed_item_key(item) for item in selected}
-    desired_thresholds = {
-        "entertainment": 80,
-        "tech": 90,
-        "economics": 90,
-        "weather_health": 90,
-        "sports_culture": 90,
-    }
 
-    for target, min_score in desired_thresholds.items():
+    for target, min_score in DISCOVER_CATEGORY_HUNGER_THRESHOLDS.items():
         if any(_discover_category_group(item) == target for item in selected):
             continue
 
-        candidate = next(
-            (
-                item
-                for item in all_items
-                if _feed_item_key(item) not in selected_keys
-                and _discover_category_group(item) == target
-                and item.get("score", 0) >= min_score
-            ),
-            None,
+        candidates = (
+            item
+            for item in all_items
+            if _feed_item_key(item) not in selected_keys
+            and _discover_category_group(item) == target
+            and item.get("score", 0) >= min_score
         )
-        if candidate is None:
-            continue
-
         category_counts = Counter(_discover_category_group(item) for item in selected)
         archetype_counts = Counter(_discover_archetype_group(item) for item in selected)
-        replacement_idx = next(
-            (
-                idx
-                for idx in range(len(selected) - 1, -1, -1)
-                if category_counts[_discover_category_group(selected[idx])] > 1
-                and not (
-                    _discover_archetype_group(selected[idx])
-                    in _DISCOVER_REQUIRED_ARCHETYPES
-                    and archetype_counts[_discover_archetype_group(selected[idx])] <= 1
-                )
-                and selected[idx].get("score", 0) <= candidate.get("score", 0) + 15
-            ),
-            None,
-        )
+        # The served rule takes the FIRST candidate and gives up on the target
+        # when it has no slot. A gate-refused candidate (#5105 D2, offline only)
+        # yields to the next one under that same rule.
+        for candidate in candidates:
+            replacement_idx = next(
+                (
+                    idx
+                    for idx in range(len(selected) - 1, -1, -1)
+                    if category_counts[_discover_category_group(selected[idx])] > 1
+                    and not (
+                        _discover_archetype_group(selected[idx])
+                        in _DISCOVER_REQUIRED_ARCHETYPES
+                        and archetype_counts[_discover_archetype_group(selected[idx])]
+                        <= 1
+                    )
+                    and selected[idx].get("score", 0) <= candidate.get("score", 0) + 15
+                ),
+                None,
+            )
+            if replacement_idx is None:
+                break
+            if _promotion_allowed(
+                gate, trace, candidate, slot=replacement_idx,
+                mechanism="category_hunger", existing_bar=min_score,
+                displaced=selected[replacement_idx], cause=f"missing category {target}",
+            ):
+                break
+        else:
+            continue
         if replacement_idx is None:
             continue
 
@@ -4654,7 +4791,13 @@ def _ensure_category_hunger(selected: list[dict], all_items: list[dict]) -> None
         selected_keys.add(_feed_item_key(candidate))
 
 
-def _ensure_required_archetypes(selected: list[dict], all_items: list[dict]) -> None:
+def _ensure_required_archetypes(
+    selected: list[dict],
+    all_items: list[dict],
+    *,
+    gate: Optional[PromotionGate] = None,
+    trace: Optional[list] = None,
+) -> None:
     """Make room for at least one strong card from key first-page textures."""
     selected_keys = {_feed_item_key(item) for item in selected}
 
@@ -4662,17 +4805,14 @@ def _ensure_required_archetypes(selected: list[dict], all_items: list[dict]) -> 
         if any(_discover_archetype_group(item) == target for item in selected):
             continue
 
-        candidate = next(
-            (
-                item
-                for item in all_items
-                if _feed_item_key(item) not in selected_keys
-                and _discover_archetype_group(item) == target
-                and item.get("score", 0) >= 90
-            ),
-            None,
-        )
-        if candidate is None:
+        candidates = [
+            item
+            for item in all_items
+            if _feed_item_key(item) not in selected_keys
+            and _discover_archetype_group(item) == target
+            and item.get("score", 0) >= DISCOVER_REQUIRED_ARCHETYPE_MIN_SCORE
+        ]
+        if not candidates:
             continue
 
         archetype_counts = Counter(_discover_archetype_group(item) for item in selected)
@@ -4695,13 +4835,38 @@ def _ensure_required_archetypes(selected: list[dict], all_items: list[dict]) -> 
         if replacement_idx is None:
             continue
 
+        # The slot does not depend on the candidate. The served rule takes the
+        # first candidate; a gate-refused one (#5105 D2) yields to the next.
+        candidate = next(
+            (
+                c
+                for c in candidates
+                if _promotion_allowed(
+                    gate, trace, c, slot=replacement_idx,
+                    mechanism="required_archetype",
+                    existing_bar=DISCOVER_REQUIRED_ARCHETYPE_MIN_SCORE,
+                    displaced=selected[replacement_idx],
+                    cause=f"missing archetype {target}",
+                )
+            ),
+            None,
+        )
+        if candidate is None:
+            continue
+
         removed = selected[replacement_idx]
         selected[replacement_idx] = candidate
         selected_keys.discard(_feed_item_key(removed))
         selected_keys.add(_feed_item_key(candidate))
 
 
-def _improve_strict_variety(selected: list[dict], all_items: list[dict]) -> None:
+def _improve_strict_variety(
+    selected: list[dict],
+    all_items: list[dict],
+    *,
+    gate: Optional[PromotionGate] = None,
+    trace: Optional[list] = None,
+) -> None:
     """Repair strict first-page texture targets after the initial score pass."""
     if len(selected) <= 1:
         return
@@ -4741,6 +4906,8 @@ def _improve_strict_variety(selected: list[dict], all_items: list[dict]) -> None
             ),
             None,
         )
+        if replacement_idx is None:
+            break
         candidate_idx = next(
             (
                 idx
@@ -4748,10 +4915,16 @@ def _improve_strict_variety(selected: list[dict], all_items: list[dict]) -> None
                 if _discover_category_group(selected[idx])
                 not in {"politics", "geopolitics"}
                 and selected[idx].get("score", 0) >= 90
+                and _promotion_allowed(
+                    gate, trace, selected[idx], slot=replacement_idx,
+                    mechanism="strict_top10_non_political", existing_bar=90,
+                    displaced=selected[replacement_idx],
+                    cause="fewer than 4 non-politics cards in the top 10",
+                )
             ),
             None,
         )
-        if replacement_idx is None or candidate_idx is None:
+        if candidate_idx is None:
             break
         swap_positions(replacement_idx, candidate_idx)
 
@@ -4760,31 +4933,40 @@ def _improve_strict_variety(selected: list[dict], all_items: list[dict]) -> None
     # for culture, celebrity, weird news, or big-name drama.
     top10 = selected[:top10_size]
     if not any(_discover_archetype_group(item) in fun_archetypes for item in top10):
+        # Depends only on the top ten, so it is the same slot whichever
+        # candidate is chosen; computed first so a gate can judge that slot.
+        swap_idx = next(
+            (
+                idx
+                for idx in range(top10_size - 1, -1, -1)
+                if _discover_archetype_group(selected[idx])
+                not in {
+                    "breaking_news",
+                    "health_weather_risk",
+                }
+            ),
+            top10_size - 1,
+        )
         candidate_idx = next(
             (
                 idx
                 for idx in range(top10_size, first_page_size)
                 if _discover_archetype_group(selected[idx]) in fun_archetypes
                 and selected[idx].get("score", 0) >= 88
+                and _promotion_allowed(
+                    gate, trace, selected[idx], slot=swap_idx,
+                    mechanism="strict_fun_card_swap", existing_bar=88,
+                    displaced=selected[swap_idx],
+                    cause="no social/fun card in the top 10",
+                )
             ),
             None,
         )
         if candidate_idx is not None:
-            replacement_idx = next(
-                (
-                    idx
-                    for idx in range(top10_size - 1, -1, -1)
-                    if _discover_archetype_group(selected[idx])
-                    not in {
-                        "breaking_news",
-                        "health_weather_risk",
-                    }
-                ),
-                top10_size - 1,
-            )
-            swap_positions(replacement_idx, candidate_idx)
-        else:
+            swap_positions(swap_idx, candidate_idx)
+        elif top10_size > 0:
             selected_keys = {_feed_item_key(item) for item in selected}
+            replacement_idx = top10_size - 1
             candidate = next(
                 (
                     item
@@ -4792,11 +4974,16 @@ def _improve_strict_variety(selected: list[dict], all_items: list[dict]) -> None
                     if _feed_item_key(item) not in selected_keys
                     and _discover_archetype_group(item) in fun_archetypes
                     and item.get("score", 0) >= 88
+                    and _promotion_allowed(
+                        gate, trace, item, slot=replacement_idx,
+                        mechanism="strict_fun_card_insert", existing_bar=88,
+                        displaced=selected[replacement_idx],
+                        cause="no social/fun card in the top 10",
+                    )
                 ),
                 None,
             )
-            if candidate is not None and top10_size > 0:
-                replacement_idx = top10_size - 1
+            if candidate is not None:
                 selected[replacement_idx] = candidate
 
     # Keep diplomatic clusters from exceeding the strict world-event cap in the
@@ -4828,6 +5015,12 @@ def _improve_strict_variety(selected: list[dict], all_items: list[dict]) -> None
                 for idx in range(first_page_size, len(selected))
                 if _discover_archetype_group(selected[idx]) != "world_event"
                 and selected[idx].get("score", 0) >= 88
+                and _promotion_allowed(
+                    gate, trace, selected[idx], slot=replacement_idx,
+                    mechanism="strict_world_event_cap_swap", existing_bar=88,
+                    displaced=selected[replacement_idx],
+                    cause="more than 4 world_event cards on the first page",
+                )
             ),
             None,
         )
@@ -4842,6 +5035,12 @@ def _improve_strict_variety(selected: list[dict], all_items: list[dict]) -> None
                 if _feed_item_key(item) not in selected_keys
                 and _discover_archetype_group(item) != "world_event"
                 and item.get("score", 0) >= 88
+                and _promotion_allowed(
+                    gate, trace, item, slot=replacement_idx,
+                    mechanism="strict_world_event_cap_insert", existing_bar=88,
+                    displaced=selected[replacement_idx],
+                    cause="more than 4 world_event cards on the first page",
+                )
             ),
             None,
         )
