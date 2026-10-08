@@ -135,6 +135,11 @@ DEFAULT_SNAPSHOT_MAX_GAP_S = 60.0
 #: queues behind.
 DEFAULT_STAMP_LOCK_TIMEOUT_MS = 500
 
+# Old stamp retries must not occupy an entire periodic flush while fresh quote
+# writes wait for the next one. Cooperative: finish each attempted transaction
+# and publication; never cancel a stamp merely because this budget elapsed.
+PENDING_STAMP_BUDGET_S = 1.0
+
 #: #837 receipt — the per-event floor between receipt lines for chains that
 #: cannot qualify as a quiet tail (a busy market's routine deferrals, a held
 #: price that rounded to the stored value). Those are summarised with a count.
@@ -1053,6 +1058,10 @@ class LiveBlendRefresher:
         #: markets ticked. On a quiet game the wait is the next tick or the
         #: 120s poll.
         self._throttle_deferred: set[int] = set()
+        self._pending_continuation: list[int] = []
+        self._pending_flush_started: Optional[float] = None
+        self._pending_started_at: Optional[float] = None
+        self._pending_attempted = False
         self._last_refresh_at: dict[int, float] = {}
         #: Events whose last batch failed -> the monotonic time before which
         #: they are not due, whatever the throttle says.
@@ -1187,6 +1196,27 @@ class LiveBlendRefresher:
         # partial board; ordinary callers retain the same admission behavior.
         excluded = set(defer_event_ids)
         due = [eid for eid in wanted if eid not in excluded and self._due(eid, clock)]
+        self._pending_continuation = [
+            eid for eid in self._pending_continuation if eid in wanted
+        ]
+        if flush_started != self._pending_flush_started:
+            self._pending_flush_started = flush_started
+            self._pending_started_at = None
+            self._pending_attempted = False
+
+        def pending_budget_spent():
+            return (
+                flush_started is not None
+                and self._pending_attempted
+                and self._pending_started_at is not None
+                and _mono() - self._pending_started_at >= PENDING_STAMP_BUDGET_S
+            )
+
+        # A flush can call refresh more than once. Once its old-work budget is
+        # spent, leave all remaining debt owed without repeating its read. Fresh
+        # committed prices are always admitted, even within that same flush.
+        if pending_budget_spent():
+            due = [eid for eid in due if eid in fresh]
         # A queued retry leaves the set only when a batch actually takes it.
         self._lock_retry = retry.difference(due)
         # A throttled event is owed the price it just had written, so it waits
@@ -1207,6 +1237,14 @@ class LiveBlendRefresher:
         # prepare once and commit each independently so a later row lock cannot
         # hold an earlier stamp or its publication until the batch ends.
         if len(due) == 1:
+            pending_only = due[0] not in fresh
+            if pending_only and flush_started is not None:
+                if self._pending_started_at is None:
+                    self._pending_started_at = _mono()
+                self._pending_attempted = True
+            self._pending_continuation = [
+                eid for eid in self._pending_continuation if eid not in due
+            ]
             try:
                 await self._refresh_batch(due, clock)
             except CancelledError as exc:
@@ -1253,6 +1291,7 @@ class LiveBlendRefresher:
 
         completed: set[int] = set()
         failed_groups: set[int] = set()
+        budget_deferred: set[int] = set()
         publishing = None
         waiting_frames = None
 
@@ -1328,6 +1367,18 @@ class LiveBlendRefresher:
             for population in (fresh.intersection(due), set(due).difference(fresh)):
                 if not population:
                     continue
+                pending_only = population.isdisjoint(fresh)
+                if pending_only and pending_budget_spent():
+                    # A repeated mixed call may have consumed the remaining
+                    # budget on its fresh work since the admission check above.
+                    # Do not read old debt when no old stamp can be attempted.
+                    budget_deferred.update(population)
+                    self._lock_retry.update(population.intersection(retry))
+                    self._throttle_deferred.update(population.difference(retry))
+                    continue
+                if pending_only and flush_started is not None:
+                    if self._pending_started_at is None:
+                        self._pending_started_at = _mono()
                 try:
                     prepared = await self._prepare_groups(list(population))
                 except Exception as exc:
@@ -1348,7 +1399,32 @@ class LiveBlendRefresher:
                     context = prepared.get(event_id)
                     return (context is None or context[0].status != "live", event_id)
 
-                for event_id in sorted(population, key=stamp_order):
+                ordered = sorted(population, key=stamp_order)
+                if pending_only:
+                    # Finish last flush's unattempted debt before beginning a
+                    # new live-first debt cycle. Fresh remains ahead of both;
+                    # repeated locked live IDs cannot starve quieter old debt.
+                    continuation = [
+                        eid for eid in self._pending_continuation if eid in population
+                    ]
+                    carried = set(continuation)
+                    ordered = continuation + [eid for eid in ordered if eid not in carried]
+                for index, event_id in enumerate(ordered):
+                    if pending_only and pending_budget_spent():
+                        remaining = set(ordered[index:])
+                        budget_deferred.update(remaining)
+                        self._lock_retry.update(remaining.intersection(retry))
+                        self._throttle_deferred.update(remaining.difference(retry))
+                        self._pending_continuation = ordered[index:] + [
+                            eid for eid in self._pending_continuation
+                            if eid not in population
+                        ]
+                        break
+                    self._pending_continuation = [
+                        eid for eid in self._pending_continuation if eid != event_id
+                    ]
+                    if pending_only and flush_started is not None:
+                        self._pending_attempted = True
                     group_ids = [event_id]
                     try:
                         await self._refresh_batch(
@@ -1382,7 +1458,7 @@ class LiveBlendRefresher:
                             committed(group_ids)
             await publication_done()
         except CancelledError as exc:
-            remaining = set(due).difference(completed, failed_groups)
+            remaining = set(due).difference(completed, failed_groups, budget_deferred)
             self._refresh_failed(
                 remaining,
                 retry,
@@ -1400,7 +1476,7 @@ class LiveBlendRefresher:
             self.stats["errors"] += 1
             logger.exception("live_blend_refresh[%s]: preparation failed", self.source)
             self._refresh_failed(
-                set(due).difference(completed, failed_groups),
+                set(due).difference(completed, failed_groups, budget_deferred),
                 retry,
                 clock,
                 receipts,

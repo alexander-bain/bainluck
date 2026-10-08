@@ -79,6 +79,106 @@ async def settle_until(predicate):
             await asyncio.sleep(0)
 
 
+async def test_pending_budget_frees_next_fresh_flush_and_fairly_resumes_old_debt(monkeypatch):
+    from app.tasks import live_blend_refresh as module
+
+    clock = [1000.0]
+    monkeypatch.setattr(module, "_mono", lambda: clock[0])
+    x = rig(monkeypatch, count=7, failure="lock", statuses={
+        1: "scheduled", 2: "live", 3: "live", 4: "live",
+        5: "live", 6: "live", 7: "live",
+    })
+    x.r._lock_retry = set(range(1, 7))
+    attempt = x.r._refresh_batch
+    attempted = []
+
+    async def slow_stamp(ids, *args, **kwargs):
+        attempted.extend(ids)
+        if ids != [7]:
+            clock[0] += 0.6
+        await attempt(ids, *args, **kwargs)
+
+    x.r._refresh_batch = slow_stamp
+    await x.r.refresh([7], flush_started=1000)
+    assert attempted == [7, 2, 3]
+    assert x.published == [7, 3]
+    assert x.r.pending_event_ids() == frozenset({1, 2, 4, 5, 6})
+    assert not x.r._failed_hold_until
+
+    # More callbacks in the SAME producer flush must not buy another budget.
+    reads = x.commands.count("read")
+    await x.r.refresh_pending(flush_started=1000)
+    assert attempted == [7, 2, 3] and x.commands.count("read") == reads
+    await x.r.refresh([7], flush_started=1000)
+    assert attempted == [7, 2, 3, 7]  # fresh remains admitted
+
+    # Newly arrived fresh work leads, but repeatedly locked live2 cannot jump
+    # ahead of the untouched debt left by the previous flush, including1.
+    await x.r.refresh([7], flush_started=1002)
+    assert attempted[-3:] == [7, 4, 5]
+    await x.r.refresh_pending(flush_started=1004)
+    assert attempted[-2:] == [6, 1]
+    assert x.r.pending_event_ids() == frozenset({2})
+    await x.r.refresh_pending(flush_started=1006)
+    assert attempted[-1] == 2  # quiet singleton still retries
+    assert set(x.published) == {1, 3, 4, 5, 6, 7}
+
+
+async def test_final_drain_attempts_all_pending_after_periodic_budget_exhausted(monkeypatch):
+    from app.tasks import live_blend_refresh as module
+
+    clock = [1000.0]
+    monkeypatch.setattr(module, "_mono", lambda: clock[0])
+    x = rig(monkeypatch, count=5)
+    x.r._throttle_deferred = set(range(1, 6))
+    attempt = x.r._refresh_batch
+
+    async def slow_stamp(ids, *args, **kwargs):
+        clock[0] += 1.1
+        await attempt(ids, *args, **kwargs)
+
+    x.r._refresh_batch = slow_stamp
+    await x.r.refresh_pending(flush_started=1000)
+    assert x.published == [1]
+    assert x.r.pending_event_ids() == frozenset({2, 3, 4, 5})
+    await x.r.refresh_pending()  # ordinary final-drain calling convention
+    assert x.published == [1, 2, 3, 4, 5]
+    assert not x.r.pending_event_ids() and not x.r._pending_continuation
+
+
+async def test_fresh_work_spending_residual_budget_skips_later_pending_read(monkeypatch):
+    from app.tasks import live_blend_refresh as module
+
+    clock = [1000.0]
+    monkeypatch.setattr(module, "_mono", lambda: clock[0])
+    x = rig(monkeypatch, count=4, failure="lock")
+    x.r._lock_retry = {2}
+    attempt, prepare = x.r._refresh_batch, x.r._prepare_groups
+    second_call = False
+    reads = []
+
+    async def slow_stamp(ids, *args, **kwargs):
+        if ids == [2]:
+            clock[0] += 0.6
+        elif second_call:
+            clock[0] += 0.3
+        await attempt(ids, *args, **kwargs)
+
+    async def read(ids):
+        reads.append(set(ids))
+        return await prepare(ids)
+
+    x.r._refresh_batch, x.r._prepare_groups = slow_stamp, read
+    await x.r.refresh([4], flush_started=1000)
+    assert x.r._lock_retry == {2}
+    second_call = True
+    await x.r.refresh([3, 4], flush_started=1000)
+    assert reads == [{4}, {2}, {3, 4}]
+    assert 3 in x.committed and 3 in x.published
+    assert x.r.pending_event_ids() == frozenset({2})
+    assert not x.r._failed_hold_until
+
+
 async def test_live_stamps_lead_within_fresh_and_pending_but_fresh_stays_first(monkeypatch):
     x = rig(monkeypatch, count=4, statuses={
         1: "scheduled", 2: "scheduled", 3: "live", 4: "live",
