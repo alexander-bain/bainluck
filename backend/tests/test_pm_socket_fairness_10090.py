@@ -63,7 +63,9 @@ async def test_ready_stamp_runs_during_burst_with_order_and_all_quotes_preserved
         await asyncio.wait_for(socket.drained.wait(), 1)
         await asyncio.gather(*siblings)
         assert delivered == list(range(128))
-        assert 0 < sibling_at[0] <= 32, sibling_at
+        # A runnable writer gets control after the current callback, before
+        # this shard consumes any more cached frames.
+        assert sibling_at == [1]
     finally:
         task.cancel()
         with pytest.raises(asyncio.CancelledError):
