@@ -100,7 +100,10 @@ test('the page derives historyData through appendHeroObservation on the live arm
   const path = require('path');
   const page: string = fs.readFileSync(path.join(__dirname, '../../app/events/[id]/page.tsx'), 'utf8');
   const memo = page.slice(page.indexOf('const historyData = useMemo('), page.indexOf('const backendBlendServed'));
-  expect(memo).toContain('mergeLiveChartHistory(servedHistory, quoteEligible ? quoteChartFrames(chartPoints, event) : [])');
+  // #10751: the live arm merges the subset `admitChartFrames` admits (the same
+  // `quoteChartFrames` filter); the finished arm is `finishedChartFrames`.
+  expect(memo).toContain('if (quoteEligible) admittedChartRef.current = admitChartFrames(eventId, chartPoints, event);');
+  expect(memo).toContain('const pushed = mergeLiveChartHistory(servedHistory, frames);');
   expect(memo).toContain('quoteEligible ? appendHeroObservation(joined, event, servedHistory) : joined');
-  expect(memo).toMatch(/\[servedHistory, event, quoteEligible, chartPoints\]/);
+  expect(memo).toMatch(/\[servedHistory, event, quoteEligible, chartPoints, eventId\]/);
 });
