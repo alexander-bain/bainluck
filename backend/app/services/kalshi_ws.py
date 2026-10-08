@@ -22,6 +22,23 @@ WS_URL = "wss://api.elections.kalshi.com/trade-api/ws/v2"
 WS_SIGN_PATH = "/trade-api/ws/v2"
 
 
+async def _cooperative_messages(socket):
+    """Give ready probability writers a turn during an already-buffered burst.
+
+    A cached receive and an uncontended inline callback need not suspend.
+    Yield between processed frames, including ignored/invalid inputs, before
+    consuming the next one. Dispatch retains its existing settlement ordering.
+    """
+    processed = 0
+    async for raw in socket:
+        yield raw
+        raw = None
+        processed += 1
+        if processed >= 32:
+            processed = 0
+            await asyncio.sleep(0)
+
+
 # Includes lifecycle callbacks and quotes queued behind their own event's
 # settlement. The reader backpressures at this bound; it never drops a frame.
 MAX_PENDING_CALLBACKS = 64
@@ -295,12 +312,14 @@ class KalshiWebSocket:
 
                     async with _KalshiCallbackDispatch() as dispatch:
                         try:
-                            async for raw in ws:
+                            async for raw in _cooperative_messages(ws):
                                 self._message_count += 1
                                 try:
                                     data = json.loads(raw)
                                 except (json.JSONDecodeError, TypeError):
                                     continue
+                                finally:
+                                    raw = None
 
                                 msg_type = data.get("type")
                                 payload = data.get("msg", data)
