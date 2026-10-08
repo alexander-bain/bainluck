@@ -148,8 +148,10 @@ async def test_the_real_refresher_stamps_the_continued_game_after_its_commit():
     assert await bounded(r.flush(flush_started=100.0)) is False
     stamps = [t for t in r.trace if t[0] == "real-refresh"]
     assert stamps == [("real-refresh", (200,), (3,))]
+    # Stamp vs MARKET publish order is #10090's (2959d4bc51), owned by
+    # test_kalshi_event_before_market_10090.py; here both follow the commit.
     assert r.trace.index(("commit", (3,))) < r.trace.index(("publish", (3,)))
-    assert r.trace.index(("publish", (3,))) < r.trace.index(stamps[0])
+    assert r.trace.index(("commit", (3,))) < r.trace.index(stamps[0])
     assert r.trace.index(stamps[0]) < r.trace.index(("commit", (9,)))
     assert refresher.pending_event_ids() == frozenset()
 
