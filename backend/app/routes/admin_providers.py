@@ -142,6 +142,9 @@ async def reset_kalshi_cliff_drain(
 async def trigger_kalshi_poll(
     request: Request,
     secret: str = Query(None, description="Admin secret for authorization"),
+    event_ticker: Optional[str] = Query(
+        None, description="One exact full-game winner event; omit for normal polling"
+    ),
 ):
     """
     Manually trigger Kalshi market polling.
@@ -151,6 +154,14 @@ async def trigger_kalshi_poll(
     Requires KALSHI_API_KEY to be configured.
     """
     _check_admin_secret(secret, request=request)
+
+    if event_ticker is not None:
+        from app.tasks.kalshi import _validate_exact_kalshi_game_event_ticker
+
+        try:
+            _validate_exact_kalshi_game_event_ticker(event_ticker)
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
 
     kalshi_key = os.getenv("KALSHI_API_KEY")
     if not kalshi_key:
@@ -163,7 +174,11 @@ async def trigger_kalshi_poll(
     from app.tasks import poll_kalshi_markets
 
     try:
-        task = poll_kalshi_markets.delay()
+        task = (
+            poll_kalshi_markets.delay(event_ticker=event_ticker)
+            if event_ticker is not None
+            else poll_kalshi_markets.delay()
+        )
         return {
             "status": "queued",
             "task_id": task.id,
