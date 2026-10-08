@@ -1,0 +1,27 @@
+============================= test session starts ==============================
+platform darwin -- Python 3.12.15+meta, pytest-9.0.3, pluggy-1.6.0
+rootdir: /Users/bain/.codex-personal/worktrees/10708-native-scope-prep/bainluck/backend
+configfile: pytest.ini
+plugins: asyncio-1.4.0, anyio-4.13.0
+asyncio: mode=Mode.AUTO, debug=False, asyncio_default_fixture_loop_scope=None, asyncio_default_test_loop_scope=function
+collected 88 items
+
+tests/test_ci_cross_tier_manifest.py ................................... [ 39%]
+....................................                                     [ 80%]
+tests/test_ci_deploy_base_7610.py .................                      [100%]
+
+=============================== warnings summary ===============================
+tests/test_ci_cross_tier_manifest.py::TestTheManifestDescribesReality::test_every_listed_path_exists_on_disk
+  /Users/bain/.codex-personal/worktrees/10708-native-scope-prep/bainluck/backend/app/routes/auth.py:121: PydanticDeprecatedSince20: Support for class-based `config` is deprecated, use ConfigDict instead. Deprecated in Pydantic V2.0 to be removed in V3.0. See Pydantic V2 Migration Guide at https://errors.pydantic.dev/2.13/migration/
+    class UserProfileResponse(BaseModel):
+
+tests/test_ci_cross_tier_manifest.py::TestNativeInactivePreparation::test_known_direct_signals_are_rostered_without_completeness_claim
+  /Users/bain/.codex-personal/worktrees/10708-native-scope-prep/bainluck/backend/tests/integration/test_faceted_answerless_rows_6354_real_postgres.py:34: SyntaxWarning: invalid escape sequence '\s'
+    * **`\s` is not `[[:space:]]`, and whether it is depends on the server.**
+
+tests/test_ci_cross_tier_manifest.py::TestNativeInactivePreparation::test_known_direct_signals_are_rostered_without_completeness_claim
+  /Users/bain/.codex-personal/worktrees/10708-native-scope-prep/bainluck/backend/tests/test_kalshi_league_token_sport_5621.py:323: SyntaxWarning: invalid escape sequence '\`'
+    and even `clean=False` has already eaten the `\` line-continuations in the
+
+-- Docs: https://docs.pytest.org/en/stable/how-to/capture-warnings.html
+======================= 88 passed, 3 warnings in 52.19s ========================
