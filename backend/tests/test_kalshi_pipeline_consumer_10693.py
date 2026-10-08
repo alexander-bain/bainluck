@@ -16,7 +16,9 @@ flush (`fixtures/kalshi_flush_before_10693.py.txt`, never edited to match):
    #10655 rig, produce the same return values, transaction trace, commits,
    surviving buffer, stats and market invalidations — plain, settled refusal,
    failure, lock timeout, cancellation, newer tick, unchanged quotes, mixed
-   book shapes and the final drain.
+   book shapes and the final drain. One reviewed reorder is read back to the
+   frozen order first: #10090 starts a phase's event refresh before its MARKET
+   publication (`_with_frozen_market_order`).
 3. The hand-off: `_KalshiPriceOwner.phase` issues the frozen loop's statements,
    binds and order on a session with no driver cursor — the ordinary path every
    pair takes for singletons and every unsupported pair takes for runs.
@@ -297,10 +299,14 @@ def _without_reviewed_pipelined_stamps(fn):
     index = kept.index(owner)
     fn.body = kept[:index] + owner.body + kept[index + 1:]
     (loop,) = [n for n in owner.body if isinstance(n, ast.For)]
+    # The fences sit right after the budget and the preemption (loop.body[0:2]).
+    # Pinning their place keeps those two checks ahead of any stamp await: the
+    # later budget/preemption reads run after the fences are gone and could not
+    # see a move across them on their own.
     for source in PIPELINE_FENCE:
         expected = _dumps(source)
         matches = [i for i, s in enumerate(loop.body) if ast.dump(s) == expected[0]]
-        assert len(matches) == 1, "the same-event stamp fence changed"
+        assert matches == [2], "the same-event stamp fence changed or moved"
         del loop.body[matches[0]]
     for source in COMMITTED_STAMP_QUEUE:
         expected = _dumps(source)
@@ -528,6 +534,30 @@ def _observe(r, results):
     }
 
 
+# #10090 (2959d4bc51) starts a phase's event refresh before awaiting its MARKET
+# notification. The only reviewed reorder: a publish moves back over the
+# receipt/refresh entries directly before it, nothing else. The frozen trace
+# has every publish right after its own commit, so a publish that lands
+# anywhere else, a missing one, or one past a write still differs.
+STAMP_BEFORE_PUBLISH = {"receipt", "refresh"}
+
+
+def _with_frozen_market_order(trace):
+    trace = list(trace)
+    for i, entry in enumerate(trace):
+        if entry[0] != "publish":
+            continue
+        j = i - 1
+        while j >= 0 and trace[j][0] in STAMP_BEFORE_PUBLISH:
+            j -= 1
+        trace[j + 1:i + 1] = [entry] + trace[j + 1:i]
+    return trace
+
+
+def _frozen_order(observation):
+    return {**observation, "trace": _with_frozen_market_order(observation["trace"])}
+
+
 async def _plain(r):
     r.release.set()
     return [await asyncio.wait_for(r.flush(), 2)]
@@ -622,7 +652,7 @@ async def test_the_flush_behaves_exactly_as_the_frozen_flush(scenario, shape):
     for r in (current, frozen):
         _reshape(**SHAPES[shape])(r)
         observed.append(_observe(r, await drive(r)))
-    assert observed[0] == observed[1]
+    assert _frozen_order(observed[0]) == observed[1]
     # Non-vacuity: the scenario wrote prices through the price statement.
     assert any(t[0] == "write" for t in observed[0]["trace"]), observed[0]
 
@@ -634,6 +664,29 @@ async def test_strawman_the_comparator_sees_a_dropped_invalidation():
     dropped = [t for t in current.trace if t[0] == "queue"][0]
     current.trace.remove(dropped)
     assert _observe(current, results[0]) != _observe(frozen, results[1])
+
+
+def _displace_first_publish(trace, where):
+    publish = next(t for t in trace if t[0] == "publish")
+    trace.remove(publish)
+    if where == "dropped":
+        return
+    commit = trace.index(("commit", publish[1]))
+    if where == "before_commit":
+        trace.insert(commit, publish)
+    else:  # past the next phase's first write
+        nxt = next(i for i in range(commit, len(trace)) if trace[i][0] == "write")
+        trace.insert(nxt + 1, publish)
+
+
+@pytest.mark.parametrize("where", ["dropped", "before_commit", "past_next_write"])
+async def test_strawman_the_reviewed_reorder_cannot_hide_a_moved_publish(where):
+    """Only publish-after-its-own-stamp is accepted; every other move differs."""
+    current, frozen = _pair()
+    results = [await _plain(r) for r in (current, frozen)]
+    assert _frozen_order(_observe(current, results[0])) == _observe(frozen, results[1])
+    _displace_first_publish(current.trace, where)
+    assert _frozen_order(_observe(current, results[0])) != _observe(frozen, results[1])
 
 
 # --------------------------------------------------- 3. the hand-off ----
