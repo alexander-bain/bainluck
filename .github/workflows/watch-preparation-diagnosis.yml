@@ -1,0 +1,105 @@
+name: Watch preparation diagnosis (10736)
+
+# One diagnostic attempt; never a release acceptance or a forty-case suite.
+on:
+  push:
+    branches: [codex/watch-prepare-diagnosis-10736]
+    paths: [.github/workflows/watch-preparation-diagnosis.yml]
+
+permissions:
+  contents: read
+  actions: read
+
+jobs:
+  preparation:
+    runs-on: xcode-27
+    timeout-minutes: 35
+    concurrency:
+      group: watch-prepare-diagnosis-10736
+      cancel-in-progress: false
+    env:
+      DEVELOPER_DIR: /Applications/Xcode_27.0.app/Contents/Developer
+      WATCH_UI_SHARD: widgets
+    steps:
+      - name: Checkout diagnostic harness
+        uses: actions/checkout@v6
+        with:
+          path: harness
+          persist-credentials: false
+      - name: Checkout exact product source
+        uses: actions/checkout@v6
+        with:
+          ref: 83ac7ebb7fa8f560ebb517a7e0044fc2f046568b
+          path: source
+          persist-credentials: false
+      - name: Bind reviewed logging overlay to original source
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(git -C source rev-parse HEAD)" = 83ac7ebb7fa8f560ebb517a7e0044fc2f046568b
+          python3 - <<'PY'
+          import hashlib, json, shutil, subprocess
+          from pathlib import Path
+          patch = Path('harness/tools/watch-ui-journey.sh')
+          expected = '9b3dad81b88e8b053023fce1b6ae6bda9ca2d697778dbc19a2d663cd4dee2a2b'
+          actual = hashlib.sha256(patch.read_bytes()).hexdigest()
+          if actual != expected:
+              raise SystemExit('Unreviewed diagnostic harness')
+          shutil.copyfile(patch, 'source/tools/watch-ui-journey.sh')
+          changed = subprocess.check_output(['git', '-C', 'source', 'diff', '--name-only'], text=True).splitlines()
+          if changed != ['tools/watch-ui-journey.sh']:
+              raise SystemExit('Unexpected diagnostic overlay scope')
+          out = Path('source/build/watch-ui-journey')
+          out.mkdir(parents=True)
+          record = {
+              'scope': 'DIAGNOSTIC_ONLY_NOT_RELEASE_ACCEPTANCE',
+              'product_source_sha': '83ac7ebb7fa8f560ebb517a7e0044fc2f046568b',
+              'diagnostic_commit': subprocess.check_output(['git', '-C', 'harness', 'rev-parse', 'HEAD'], text=True).strip(),
+              'harness_sha256': actual,
+              'producer_run': 37735639300,
+              'product_artifact': 11532339822,
+              'attempts': 1,
+          }
+          (out / 'diagnostic-identity.json').write_text(json.dumps(record, indent=2) + '\n')
+          PY
+      - name: Reuse immutable original products
+        uses: actions/download-artifact@v4
+        timeout-minutes: 5
+        with:
+          artifact-ids: '11532339822'
+          run-id: '37735639300'
+          github-token: ${{ github.token }}
+          path: source/build/watch-ui-products
+          merge-multiple: true
+      - name: Verify original archive identity
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          import hashlib
+          from pathlib import Path
+          p = Path('source/build/watch-ui-products/products.tar.gz')
+          h = hashlib.sha256()
+          with p.open('rb') as stream:
+              for block in iter(lambda: stream.read(1024 * 1024), b''):
+                  h.update(block)
+          if h.hexdigest() != '95d9c81256021e6ecc9330f28973fed05eef978285a0420718bd53f9d7737314':
+              raise SystemExit('Original product archive identity mismatch')
+          PY
+      - name: One preparation attempt with unchanged deadline
+        working-directory: source
+        run: python3 tools/watch_ui_stage.py prepare --output-dir build/watch-ui-journey -- bash tools/watch-ui-journey.sh prepare
+      - name: Preserve preparation diagnostic evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        timeout-minutes: 2
+        with:
+          name: watch-preparation-diagnosis-10736
+          path: |
+            source/build/watch-ui-journey/*.txt
+            source/build/watch-ui-journey/*.json
+            source/build/watch-ui-journey/*.jsonl
+            source/build/watch-ui-journey/*.log
+            source/build/watch-ui-journey/stage-*/**
+          if-no-files-found: error
+          retention-days: 7

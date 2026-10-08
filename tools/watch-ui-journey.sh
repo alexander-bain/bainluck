@@ -151,11 +151,17 @@ xcrun simctl install "$PHONE_UDID" "$BUILT_PHONE" >> "$OUT/preflight.log" 2>&1
 xcrun simctl install "$TEST_UDID" "$BUILT_APP" >> "$OUT/preflight.log" 2>&1
 xcrun simctl get_app_container "$PHONE_UDID" com.bainluck.Bain-Luck app >> "$OUT/install-lifecycle.txt"
 xcrun simctl get_app_container "$TEST_UDID" com.bainluck.Bain-Luck.watchkitapp app >> "$OUT/install-lifecycle.txt"
-PHASE='restart only this run disposable simulator after installation'
+PHASE='post-install shutdown of only this run disposable Watch'
 python3 "$ROOT/tools/watch_ui_stage.py" phase --output-dir "$OUT" --phase "$PHASE"
 xcrun simctl shutdown "$TEST_UDID" >> "$OUT/preflight.log" 2>&1
+PHASE='post-install boot of only this run disposable Watch'
+python3 "$ROOT/tools/watch_ui_stage.py" phase --output-dir "$OUT" --phase "$PHASE"
 xcrun simctl boot "$TEST_UDID" >> "$OUT/preflight.log" 2>&1
+PHASE='post-install boot readiness of only this run disposable Watch'
+python3 "$ROOT/tools/watch_ui_stage.py" phase --output-dir "$OUT" --phase "$PHASE"
 xcrun simctl bootstatus "$TEST_UDID" -b >> "$OUT/preflight.log" 2>&1
+PHASE='post-install Watch ready; verify installed containers'
+python3 "$ROOT/tools/watch_ui_stage.py" phase --output-dir "$OUT" --phase "$PHASE"
 date -u '+%Y-%m-%dT%H:%M:%SZ boot-ready' >> "$OUT/install-lifecycle.txt"
 xcrun simctl get_app_container "$PHONE_UDID" com.bainluck.Bain-Luck app >> "$OUT/install-lifecycle.txt"
 xcrun simctl get_app_container "$TEST_UDID" com.bainluck.Bain-Luck.watchkitapp app >> "$OUT/install-lifecycle.txt"
