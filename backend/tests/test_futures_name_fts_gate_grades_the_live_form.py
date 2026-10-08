@@ -173,6 +173,21 @@ class TestCriterionOneNoLongerRequiresABitmapOr:
             "and scans the other is the defect, not a partial pass."
         )
 
+    def test_the_open_partial_trigram_serves_the_trigram_branch(self):
+        """#1866: after the attended `ix_futures_name_trgm_open` lands, the
+        planner serves the open-only trigram arm from it and the full index
+        leaves the plan. That is the improvement and must grade green."""
+        gate = _gate()
+        ok, missing = gate._shape_verdict(
+            {"ix_futures_name_fts_open", "ix_futures_name_trgm_open"}
+        )
+        assert ok and missing == []
+
+    def test_the_open_partial_trigram_does_not_stand_in_for_fts(self):
+        gate = _gate()
+        ok, missing = gate._shape_verdict({"ix_futures_name_trgm_open"})
+        assert not ok and missing == ["ix_futures_name_fts_open"]
+
     def test_the_status_scan_fallback_is_red(self):
         # The exact plan `winner` produced under the fold: neither GIN.
         gate = _gate()
