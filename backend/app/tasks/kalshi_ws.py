@@ -169,6 +169,27 @@ def live_input_waiting(buffer, batch, event_id_by_outcome, live_events):
     )
 
 
+def yield_written_nonlive_tail(
+    buffer, phase, written_outcome_ids, event_id_by_outcome, live_events,
+    final_drain,
+):
+    """A served nonlive cohort's newer quotes yield to untouched tail work.
+
+    Called under the buffer lock after commit and ordinary removal. Never
+    moves live quotes, failed/unwritten rows, or final-drain work. The retained
+    entry is still the newest one; only its scheduling position changes.
+    """
+    if final_drain or not live_events or any(
+        event_id_by_outcome.get(oid) in live_events for oid in phase
+    ):
+        return
+    written = set(written_outcome_ids)
+    for oid, entry in phase.items():
+        if oid in written and oid in buffer and buffer[oid] != entry:
+            newest = buffer.pop(oid)
+            buffer[oid] = newest
+
+
 def live_preempts_tail(
     flush_started, period, nonlive_started, buffer, batch, event_id_by_outcome,
     live_events,
@@ -177,8 +198,8 @@ def live_preempts_tail(
     because a live game has new input waiting (see `flush_prices`).
 
     Only after ``period`` on the refresher's clock and once at least one
-    non-live phase has started (``nonlive_started``), so every flush moves the
-    non-live tail forward. Never without a start (the final drain, a direct
+    non-live phase has started (``nonlive_started``), so preemption permits
+    nonlive work before yielding. Never without a start (the final drain, a direct
     call) or without a live set.
     """
     if flush_started is None or not live_events or not nonlive_started:
@@ -817,7 +838,8 @@ async def _run_kalshi_ws_consumer(*, sessions, prices):
         # phase has started, a non-live phase is not started while such input
         # waits: the tail stays buffered, at the head, like a budget deferral,
         # and the cadence starts the next flush at once with live games first.
-        # One non-live phase per flush always runs, so the tail cannot starve.
+        # Preemption permits one non-live phase; the existing budget still
+        # applies. Served hot non-live entries yield to the untouched tail.
         nonlive_started = 0
 
         async def stamp_done(*, cancel=False):
@@ -1057,6 +1079,11 @@ async def _run_kalshi_ws_consumer(*, sessions, prices):
                     for outcome_id, entry in phase.items():
                         if price_buffer.get(outcome_id) == entry:
                             del price_buffer[outcome_id]
+                    if live_event_ids and not final_drain:
+                        yield_written_nonlive_tail(
+                            price_buffer, phase, written_outcome_ids,
+                            event_id_by_outcome, live_event_ids, final_drain,
+                        )
 
                 # Q460 — THE SHIP. Prices in `futures_outcomes` are invisible; the card
                 # renders `Event.win_probability_sources`. Push the freshly-flushed

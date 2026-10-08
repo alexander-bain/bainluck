@@ -49,6 +49,7 @@ from app.tasks.kalshi_ws import (  # noqa: F401 — the exec'd flush reads these
     flush_budget_spent,
     linked_first_phases,
     live_preempts_tail,
+    yield_written_nonlive_tail,
 )
 from app.tasks.live_blend_refresh import event_ids_for_outcomes  # noqa: F401
 from app.utils.futures_rank import rerank_market_fields_stmt  # noqa: F401
@@ -504,3 +505,38 @@ class TestPreemptRule:
         assert live_preempts_tail(None, 1.0, 1, {1: 1}, {}, self.EVENTS, self.LIVE) is False
         assert live_preempts_tail(0.0, 1.0, 1, {1: 1}, {}, self.EVENTS, set()) is False
         assert live_preempts_tail(0.0, 1.0, 1, {1: 1}, {}, self.EVENTS, None) is False
+
+
+async def test_hot_served_nonlive_prefix_yields_to_untouched_tail(fake_clock):
+    state = {"p": 0.3}
+
+    def newer_quotes(now):
+        state["p"] += 0.001
+        tick(r, 0, round(state["p"], 4))  # busy live game retains priority
+        for oid in range(2, 18):  # first eight nonlive games remain hot
+            tick(r, oid, round(state["p"], 4))
+
+    r = rig(games=40, after_write=newer_quotes)
+    fake_clock["rig"] = r
+    tick_everything(r, 0.6)
+    cold = set(range(18, 80))
+    for _ in range(10):
+        assert await r.flush(r.clock["now"]) is True
+    assert cold.issubset(oid for oid, _ in r.written)
+    assert cold.isdisjoint(r.buffer)
+    assert r.stats["live_preempted"] > 0
+    # Repositioning retained hot quotes must never restore the written value.
+    assert r.buffer[0][0] == round(state["p"], 4)
+    assert all(r.buffer[oid][0] == round(state["p"], 4) for oid in range(2, 18))
+
+
+@pytest.mark.parametrize("final,live,written", [
+    (True, {7}, [2]), (False, set(), [2]), (False, {8}, [2]),
+    (False, {7}, []),
+])
+def test_rotation_keeps_final_live_and_unwritten_entries_in_place(final, live, written):
+    buffer = {2: (0.6,), 3: (0.4,)}
+    before = dict(buffer)
+    yield_written_nonlive_tail(buffer, {2: (0.5,)}, written, {2: 8}, live, final)
+    assert list(buffer) == list(before)
+    assert buffer == before

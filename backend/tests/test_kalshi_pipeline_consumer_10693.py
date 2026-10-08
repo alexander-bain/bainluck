@@ -134,9 +134,9 @@ def _without_reviewed_observers(fn):
 
     result = RemoveExactObservers().visit(fn)
     assert len(removed) == len(accepted) and set(removed) == accepted
-    return _without_reviewed_preemption(
+    return _without_reviewed_tail_rotation(_without_reviewed_preemption(
         _without_reviewed_budget(_without_reviewed_pipelined_stamps(result))
-    )
+    ))
 
 
 # #10090 pipelined stamps: a phase's refresh runs as one task while the next
@@ -789,3 +789,49 @@ async def test_an_empty_batch_returns_before_any_phase_is_planned():
     batch = {1: "a", 3: "c", 9: "z", 2: "b"}
     for markets in ({1: 10, 2: 10, 3: 20, 9: 90}, {1: 10}):
         assert all(kalshi_task.linked_first_phases(batch, markets, {1: 100, 3: 200}))
+
+
+# #10090 fairness: only this exact call, under the original removal lock.
+TAIL_ROTATION_CALL = """if live_event_ids and not final_drain:
+    yield_written_nonlive_tail(
+        price_buffer, phase, written_outcome_ids,
+        event_id_by_outcome, live_event_ids, final_drain,
+    )"""
+
+
+def _without_reviewed_tail_rotation(fn):
+    (expected,) = _dumps(TAIL_ROTATION_CALL)
+    locks = [node for node in ast.walk(fn) if isinstance(node, ast.AsyncWith)
+             and len(node.items) == 1
+             and isinstance(node.items[0].context_expr, ast.Name)
+             and node.items[0].context_expr.id == "buffer_lock"]
+    places = [(lock, index) for lock in locks
+              for index, statement in enumerate(lock.body)
+              if ast.dump(statement) == expected]
+    assert len(places) == 1, "the fairness call is not the exact reviewed one"
+    lock, index = places[0]
+    assert index == 1 and len(lock.body) == 2, "fairness must follow locked removal"
+    lock.body.pop(index)
+    return fn
+
+
+@pytest.mark.parametrize("mutation", ["body", "keyword", "placement"])
+async def test_only_the_exact_locked_tail_rotation_is_reviewed(mutation):
+    current = _without_docstring(flush_ast())
+    call = next(n for n in ast.walk(current) if isinstance(n, ast.Expr)
+                and isinstance(n.value, ast.Call)
+                and isinstance(n.value.func, ast.Name)
+                and n.value.func.id == "yield_written_nonlive_tail")
+    rotation = next(n for n in ast.walk(current) if isinstance(n, ast.If)
+                    and call in n.body)
+    lock = next(n for n in ast.walk(current) if isinstance(n, ast.AsyncWith)
+                and rotation in n.body)
+    if mutation == "body":
+        call.value.func.id = "clear_buffer"
+    elif mutation == "keyword":
+        call.value.args[-1] = ast.Constant(False)
+    else:
+        lock.body.remove(rotation)
+        lock.body.insert(0, rotation)
+    with pytest.raises(AssertionError):
+        _without_reviewed_observers(current)
