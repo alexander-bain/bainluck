@@ -180,6 +180,7 @@ describe("incompatible pages are refused without touching caller state", () => {
     opening: [...prior.opening],
     continuation: [...prior.continuation],
     membership: [...prior.membership],
+    positions: [...prior.positions],
   };
 
   it.each([
@@ -194,6 +195,7 @@ describe("incompatible pages are refused without touching caller state", () => {
     expect(prior.opening).toEqual(snapshot.opening);
     expect(prior.continuation).toEqual(snapshot.continuation);
     expect([...prior.membership]).toEqual(snapshot.membership);
+    expect([...prior.positions]).toEqual(snapshot.positions);
   });
 
   it("a section page after a legacy page is unsupported", () => {
@@ -210,6 +212,105 @@ describe("incompatible pages are refused without touching caller state", () => {
     expect(foldContinuationPage(withCard, shifted, getId)).toEqual({ status: "unsupported", reason: "membership_conflict" });
     expect(ids(withCard.continuation)).toEqual(["c30"]);
     expect(withCard.membership.get("c30")).toBe("continuation");
+  });
+});
+
+describe("one identity per server position (section decks)", () => {
+  // Root's specimen: total 4, boundary 3, one edition.
+  const cards = deck(4);
+  const at = (offset: number, items: Card[]): ContinuationPageInput<Card> => ({
+    items,
+    offset,
+    total: 4,
+    edition: "ed-1",
+    continuation_start: 3,
+  });
+  const snap = (s: Sections<Card>) => ({
+    opening: [...s.opening],
+    continuation: [...s.continuation],
+    membership: [...s.membership],
+    positions: [...s.positions],
+  });
+
+  it("an earlier page arriving after a later one is seated in server order", () => {
+    const later = fold(null, at(2, cards.slice(2)));
+    const before = snap(later);
+    const both = fold(later, at(0, cards.slice(0, 2)));
+    // Strawman: arrival order would read c2, c0, c1.
+    expect(ids(both.opening)).toEqual(["c0", "c1", "c2"]);
+    expect(ids(both.continuation)).toEqual(["c3"]);
+    both.opening.forEach((card, n) => expect(card).toBe(cards[n]));
+    expect(both.continuation[0]).toBe(cards[3]);
+    expect(snap(later)).toEqual(before);
+    // A retry of either page after the out-of-order pair is still idempotent.
+    const retried = fold(fold(both, at(2, cards.slice(2))), at(0, cards.slice(0, 2)));
+    expect(ids(retried.opening)).toEqual(["c0", "c1", "c2"]);
+    expect(ids(retried.continuation)).toEqual(["c3"]);
+  });
+
+  it("another identity at a held position is refused, prior untouched", () => {
+    const first = fold(null, at(0, cards.slice(0, 2)));
+    const before = snap(first);
+    const replacement: Card = { id: "replacement", data: { n: 0 } };
+    expect(foldContinuationPage(first, at(0, [replacement, cards[1]]), getId)).toEqual({
+      status: "unsupported",
+      reason: "position_conflict",
+    });
+    expect(snap(first)).toEqual(before);
+  });
+
+  it("a held identity at another position in the same section is refused", () => {
+    const first = fold(null, at(0, [cards[0]]));
+    const before = snap(first);
+    // Position 1 is unheld and still opening: only the id's own position contradicts.
+    expect(foldContinuationPage(first, at(1, [cards[0]]), getId)).toEqual({
+      status: "unsupported",
+      reason: "position_conflict",
+    });
+    // The same id twice inside one page is the same contradiction.
+    expect(foldContinuationPage(null, at(0, [cards[0], cards[0]]), getId)).toEqual({
+      status: "unsupported",
+      reason: "position_conflict",
+    });
+    expect(snap(first)).toEqual(before);
+  });
+
+  it("a consistent partial overlap adds only the new positions", () => {
+    const wide = deck(8);
+    const first = fold(null, page(wide, 0, 4, { continuation_start: 3 }));
+    const overlap = fold(first, page(wide, 2, 4, { continuation_start: 3 }));
+    expect(ids(overlap.opening)).toEqual(["c0", "c1", "c2"]);
+    expect(ids(overlap.continuation)).toEqual(["c3", "c4", "c5"]);
+    expect([...overlap.positions]).toEqual(wide.slice(0, 6).map((card, n) => [card.id, n]));
+  });
+
+  it("a nonempty page past total is refused; an empty one is ordinary pagination", () => {
+    const outside: Card = { id: "outside", data: { n: 4 } };
+    expect(foldContinuationPage(null, at(4, [outside]), getId)).toEqual({
+      status: "unsupported",
+      reason: "page_out_of_range",
+    });
+    const first = fold(null, at(0, cards.slice(0, 3)));
+    const before = snap(first);
+    // Straddling the end: position 3 exists, position 4 does not.
+    expect(foldContinuationPage(first, at(3, [cards[3], outside]), getId)).toEqual({
+      status: "unsupported",
+      reason: "page_out_of_range",
+    });
+    expect(snap(first)).toEqual(before);
+    for (const offset of [4, 9]) {
+      const empty = fold(first, at(offset, []));
+      expect(snap(empty)).toEqual(before);
+      expect(fold(null, at(offset, [])).opening).toEqual([]);
+    }
+  });
+
+  it("legacy decks keep their existing reconciliation", () => {
+    const legacyPage = (offset: number, items: Card[]) => ({ items, offset, total: 4 });
+    const later = fold(null, legacyPage(2, cards.slice(2)));
+    const both = fold(later, legacyPage(0, cards.slice(0, 2)));
+    expect(ids(both.opening)).toEqual(["c2", "c3", "c0", "c1"]);
+    expect(both.positions.size).toBe(0);
   });
 });
 

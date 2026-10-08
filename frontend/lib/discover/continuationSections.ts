@@ -28,6 +28,14 @@
  * `unsupported` with the caller's state untouched — this module never expires,
  * clears or merges sessions. Accept/reset policy belongs to the caller.
  *
+ * 🔴 ONE IDENTITY PER SERVER POSITION (section decks). Each received card's
+ * position is recorded; a page that puts another card at a held position, or a
+ * held card at another position, is not the same deck (`position_conflict`).
+ * Sections are kept in server-position order whatever order pages arrive in,
+ * and a nonempty page reaching past `total` is refused (an empty page at or
+ * past the end is ordinary pagination). Legacy decks keep their existing
+ * first-sight, arrival-order reconciliation.
+ *
  * Identity is the caller's `getId` (the page's `getItemId`); this module builds
  * no ids of its own. Item references are kept as received.
  */
@@ -41,7 +49,9 @@ export type ContinuationUnsupportedReason =
   | "edition_missing"
   | "edition_mismatch"
   | "total_mismatch"
-  | "membership_conflict";
+  | "membership_conflict"
+  | "position_conflict"
+  | "page_out_of_range";
 
 /** The page fields this module reads, as received (untrusted JSON). */
 export interface ContinuationPageInput<T> {
@@ -67,6 +77,8 @@ export interface ContinuationSections<T> {
   readonly opening: readonly T[];
   readonly continuation: readonly T[];
   readonly membership: ReadonlyMap<string, ContinuationSection>;
+  /** Section decks: card id -> global server position. Empty for legacy. */
+  readonly positions: ReadonlyMap<string, number>;
 }
 
 export type ContinuationResult<T> =
@@ -102,7 +114,9 @@ function readEdition(raw: unknown): string | null {
  *
  * A card already held (a duplicate page, or a page overlapping one already
  * folded) is not added twice. A held card the new page places in the OTHER
- * section means the two pages are not one deck: `membership_conflict`.
+ * section means the two pages are not one deck: `membership_conflict`. In a
+ * section deck the same holds for positions: a held position under another id,
+ * or a held id at another position, is `position_conflict`.
  */
 export function foldContinuationPage<T>(
   prior: ContinuationSections<T> | null,
@@ -127,22 +141,41 @@ export function foldContinuationPage<T>(
       if (prior.total !== page.total) return { status: "unsupported", reason: "total_mismatch" };
     }
   }
+  if (start !== null && page.items.length > 0 && page.offset + page.items.length > page.total) {
+    return { status: "unsupported", reason: "page_out_of_range" };
+  }
 
   const membership = new Map<string, ContinuationSection>(prior?.membership ?? []);
+  const positions = new Map<string, number>(prior?.positions ?? []);
+  const idAt = new Map<number, string>();
+  for (const [id, position] of positions) idAt.set(position, id);
   const opening: T[] = [...(prior?.opening ?? [])];
   const continuation: T[] = [...(prior?.continuation ?? [])];
   for (let index = 0; index < page.items.length; index += 1) {
     const item = page.items[index];
-    const section: ContinuationSection =
-      start !== null && page.offset + index >= start ? "continuation" : "opening";
+    const position = page.offset + index;
+    const section: ContinuationSection = start !== null && position >= start ? "continuation" : "opening";
     const id = getId(item);
     const held = membership.get(id);
-    if (held !== undefined) {
-      if (held !== section) return { status: "unsupported", reason: "membership_conflict" };
-      continue;
+    if (held !== undefined && held !== section) return { status: "unsupported", reason: "membership_conflict" };
+    if (start !== null) {
+      const heldPosition = positions.get(id);
+      const heldId = idAt.get(position);
+      if ((heldPosition !== undefined && heldPosition !== position) || (heldId !== undefined && heldId !== id)) {
+        return { status: "unsupported", reason: "position_conflict" };
+      }
+      positions.set(id, position);
+      idAt.set(position, id);
     }
+    if (held !== undefined) continue;
     membership.set(id, section);
     (section === "opening" ? opening : continuation).push(item);
+  }
+  if (start !== null) {
+    // Pages may arrive in any order; the sections stay in server order.
+    const byPosition = (a: T, b: T) => (positions.get(getId(a)) ?? 0) - (positions.get(getId(b)) ?? 0);
+    opening.sort(byPosition);
+    continuation.sort(byPosition);
   }
 
   return {
@@ -154,6 +187,7 @@ export function foldContinuationPage<T>(
       opening,
       continuation,
       membership,
+      positions,
     },
   };
 }
