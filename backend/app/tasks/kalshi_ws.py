@@ -291,9 +291,14 @@ def linked_first_phases(
     tick, so sparse arrivals cannot split an event's markets. Preserve batch
     order within each component and first-seen order between components.
     Unknown market membership retains the original single transaction.
-    If a refresh is already owed, retain the all-games phase: refresh() also
-    drains that debt, so splitting could stamp a later game before its new
-    price is written and throttle its actual new reading.
+    If a refresh is already owed for an event this batch writes, retain the
+    all-games phase: refresh() also drains that debt, so splitting could stamp
+    a later game before its new price is written and throttle its actual new
+    reading. #10728 — debt owed ONLY to events with no price in this batch (a
+    quiet game's held stamp) keeps the split: its price is already stored, so
+    the first phase's refresh paying it early stamps nothing unwritten, and
+    joining would put every game behind the slowest one and defeat the live
+    first plan and its budget below. Any overlap, mixed or not, joins.
     This only plans phases; the existing flush owns SQL, retry and publish.
 
     #10090 — with ``live_events`` (the run's live event ids; ``None`` keeps
@@ -331,7 +336,9 @@ def linked_first_phases(
             games.setdefault(root(market), {})[oid] = entry
         else:
             rest[oid] = entry
-    if pending_events and games:
+    if games and not set(pending_events).isdisjoint(
+        event_id_by_outcome.get(oid) for oid in batch
+    ):
         # Preserve batch order in the original single game transaction.
         games = {None: {oid: entry for oid, entry in batch.items() if oid not in rest}}
     if live_events is None:
