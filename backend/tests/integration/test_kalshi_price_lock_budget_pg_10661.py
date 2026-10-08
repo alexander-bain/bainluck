@@ -224,6 +224,7 @@ def _rig(engine, ids, batch):
         stats=stats, logger=logging.getLogger(__name__),
         prices=kalshi_ws._KalshiPriceOwner(),  # #10693: the run's price pipeline
         live_event_ids=None,  # #10090: the pre-#10090 plan, no flush budget
+        flush_budget=None,  # #10090 (9b7e867c53): the unset run's default budget
     )
     _OWNERS.append(ns["prices"])
     tree = ast.parse(SOURCE.read_text())
