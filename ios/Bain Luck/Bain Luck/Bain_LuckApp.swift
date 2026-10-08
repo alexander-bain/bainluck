@@ -58,6 +58,13 @@ struct Bain_LuckApp: App {
         // time since launch rather than time since whichever screen happened to
         // measure itself first (latency/121).
         AppLaunchClock.touch()
+        // Decode the last-good deck while Firebase and the window bootstrap run,
+        // instead of starting disk I/O only after Discover's appearance task.
+        // Detached work enters APIClient's actor; it does not touch UI or relax
+        // the identity/credential gates that admit this data on first paint.
+        Task.detached(priority: .userInitiated) {
+            await APIClient.shared.prepareLastGoodFeedForLaunch()
+        }
         FirebaseConfiguration.shared.setLoggerLevel(.min)
         FirebaseApp.configure()
         // Resolve consent BEFORE the first telemetry call below (Queue 311 A3 /
