@@ -312,7 +312,7 @@ final class EventDetailViewModel: ObservableObject {
     }
 
     @MainActor
-    func load() async {
+    func load(fresh: Bool = true) async {
         loading = event == nil
 
         // Start secondary fetches immediately (they only need eventId)
@@ -337,11 +337,17 @@ final class EventDetailViewModel: ObservableObject {
 
         // Await primary fetch (controls loading state)
         do {
-            // An open, return or poll asks for the current blend, rather than
-            // renewing an older 15s device/30s server detail lease. The existing
+            // An open, return or manual refresh asks for the current blend,
+            // rather than renewing a 15s device/30s server detail lease. The existing
             // fresh endpoint coalesces reads; adopt still protects newer held
-            // fold revisions and pushed prices from older responses.
-            let fetched = try await client.fetchFreshEvent(id: eventId)
+            // fold revisions and pushed prices from older responses. Routine
+            // timer polls retain the ordinary server cache and its shared build.
+            let fetched: EventDetail
+            if fresh {
+                fetched = try await client.fetchFreshEvent(id: eventId)
+            } else {
+                fetched = try await client.fetchEvent(id: eventId)
+            }
             adopt(fetched)
             // A refusal retires the controller, not this page's eligibility for
             // push forever. Only a successful eligible detail may authorize another
@@ -814,7 +820,7 @@ final class EventDetailViewModel: ObservableObject {
                     await self.rereadGameState()
                 } else {
                     slot = 0
-                    await self.load()
+                    await self.load(fresh: false)
                 }
             }
         }
