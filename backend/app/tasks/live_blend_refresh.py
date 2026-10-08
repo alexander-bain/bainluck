@@ -34,12 +34,12 @@ therefore ~4.8x the 120s poll on a continuously-moving market and 0x on a flat
 one — not 60x. What it buys is Alex's stated bar: a live match page gains a
 chart point within a minute instead of within two.
 
-Each chart point shares its event's blend transaction. Batches with up to four
-admitted events keep one transaction; larger batches prepare inputs once, then
-commit contiguous ascending groups of four. Earlier completed groups publish
-and release their row locks while later groups still do stamp work. A failing
-or waiting event can still hold its own group's healthy siblings; a waiting
-first group still delays later groups.
+Each chart point shares its event's blend transaction. A single admitted event
+keeps its direct read/write path; multiple events prepare inputs once, then
+commit one event per transaction, with fresh inputs ahead of older debt. Earlier
+completed events publish and release their row locks while later events still
+do stamp work. A waiting first event still delays later stamps, but cannot hold
+an earlier event's committed stamp or publication.
 
 THREE THINGS IT DELIBERATELY DOES NOT DO.
 
@@ -1202,10 +1202,10 @@ class LiveBlendRefresher:
             return self.stats
 
         self._dispositions = {}
-        # Only admitted work counts: retries/deferred prices can make a tiny
-        # incoming flush larger than four. One group buys no earlier release,
-        # so keep the original transaction/read path for <=4 due events.
-        if len(due) <= 4:
+        # One event already owns its transaction. For multiple admitted events,
+        # prepare once and commit each independently so a later row lock cannot
+        # hold an earlier stamp or its publication until the batch ends.
+        if len(due) == 1:
             try:
                 await self._refresh_batch(due, clock)
             except CancelledError as exc:
@@ -1325,14 +1325,14 @@ class LiveBlendRefresher:
             # A newly committed quote should not wait for older retry/deferred
             # groups merely because its event ID is higher. Keep fresh groups
             # separate so an older row lock cannot delay their transaction.
-            # Every due event is still attempted; locking within a group keeps
-            # its existing sorted order.
+            # Every due event is still attempted in ascending order within its
+            # population, with one event owning each write transaction.
             fresh_due = sorted(fresh.intersection(due))
             pending_due = sorted(set(due).difference(fresh))
             groups = [
-                population[start : start + 4]
+                [event_id]
                 for population in (fresh_due, pending_due)
-                for start in range(0, len(population), 4)
+                for event_id in population
             ]
             for group_ids in groups:
                 try:
