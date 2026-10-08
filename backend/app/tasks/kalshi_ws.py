@@ -389,7 +389,7 @@ async def _run_kalshi_ws_consumer(*, sessions, prices):
     from app.tasks.kalshi import _kalshi_yes_probability  # #8753
     from app.tasks.live_blend_refresh import (
         LiveBlendRefresher, TailReceipts, adopt_handed_off, event_ids_for_outcomes,
-        hand_off_pending, reap_stopped_loops, run_flush_cadence,
+        LOOP_REAP_TIMEOUT_S, hand_off_pending, reap_stopped_loops, run_flush_cadence,
     )
     from app.tasks.ws_admission import (  # #9418
         run_until_admission, unadmitted_live_events,
@@ -727,11 +727,22 @@ async def _run_kalshi_ws_consumer(*, sessions, prices):
         # final drain can never run a second refresh beside it.
         stamping = None
 
-        async def stamp_done():
+        async def stamp_done(*, cancel=False):
             nonlocal stamping
             if stamping is None:
                 return
-            await asyncio.wait({stamping})
+            if cancel:
+                stamping.cancel()
+            # Joined even when this flush is cancelled while it waits: the
+            # stamp is cancelled too and still awaited, so it never outlives
+            # the flush and the final drain never refreshes beside it.
+            interrupted = None
+            while not stamping.done():
+                try:
+                    await asyncio.wait({stamping})
+                except asyncio.CancelledError as exc:
+                    interrupted = exc
+                    stamping.cancel()
             task, stamping = stamping, None
             if not task.cancelled() and task.exception() is not None:
                 # `refresh` never raises; if it ever does, its write already
@@ -740,6 +751,8 @@ async def _run_kalshi_ws_consumer(*, sessions, prices):
                     "Kalshi WS: blend refresh raised after its write committed",
                     exc_info=task.exception(),
                 )
+            if interrupted is not None:
+                raise interrupted
 
         try:
             for index, phase in enumerate(phases):
@@ -975,10 +988,11 @@ async def _run_kalshi_ws_consumer(*, sessions, prices):
             return not had_lock_failure
         except asyncio.CancelledError:
             # A recycle mid-flush cancels the in-flight stamp too, exactly as it
-            # cancelled a stamp it interrupted before: the refresher's own
-            # cancellation path keeps the stamp owed for the hand-off.
-            if stamping is not None:
-                stamping.cancel()
+            # cancelled a stamp it interrupted before, and joins it before the
+            # flush ends. The refresher's cancellation path (both arms, #10090
+            # review) keeps a stamp cancelled before its COMMIT owed for the
+            # hand-off, including retry/deferred work that stamp had taken.
+            await stamp_done(cancel=True)
             raise
         finally:
             await stamp_done()
@@ -1034,6 +1048,38 @@ async def _run_kalshi_ws_consumer(*, sessions, prices):
                 "attempts — these are lost, not deferred",
                 stranded, FINAL_FLUSH_ATTEMPTS,
             )
+
+    async def join_flush_then_drain():
+        """#10090 review: the cancelled periodic flush — and the stamp it joins
+        on the way out — finishes before the final drain enters the refresher,
+        so two refreshes never share its throttle/retry sets and receipts.
+
+        Joined to COMPLETION, never to a timeout (Root 1648Z): a flush whose
+        rollback outlasts the reap bound is still inside the refresher, so
+        draining then would be the overlap this exists to prevent. Its own
+        DB/socket bounds end it, and `loops_stop` ends a flush that lost its
+        cancellation at its next turn. A second cancellation landing on the
+        join is recorded, not obeyed early: the join and the drain both still
+        run, then the cancellation propagates.
+        """
+        interrupted = None
+        while not flush_task.done():
+            try:
+                await asyncio.wait({flush_task}, timeout=LOOP_REAP_TIMEOUT_S)
+            except asyncio.CancelledError as exc:
+                interrupted = exc
+                continue
+            if not flush_task.done():
+                logger.error(
+                    "Kalshi WS: cancelled flush still running after %.0fs; "
+                    "the final drain waits for it",
+                    LOOP_REAP_TIMEOUT_S,
+                )
+        try:
+            await drain_prices()
+        finally:
+            if interrupted is not None:
+                raise interrupted
 
     def _parse_dollar(val) -> float | None:
         if val is None or val == "":
@@ -1522,7 +1568,7 @@ async def _run_kalshi_ws_consumer(*, sessions, prices):
         # Q491 repair (CERT-654 BLOCK): the last flush has no successor, so it
         # must RETRY rather than requeue into a buffer nobody will read again.
         try:
-            await drain_prices()
+            await join_flush_then_drain()
         finally:
             # #9462 review: the drain returns once the price BUFFER is empty,
             # but a price it (or the last flush) committed inside the 2 s

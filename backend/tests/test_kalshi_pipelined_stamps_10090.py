@@ -126,3 +126,25 @@ async def test_cancellation_cancels_the_running_stamp_before_returning():
     assert calls["cancelled"] == [(100,)]
     assert calls["running"] == 0, "no stamp outlives its flush"
     assert r.committed == [1, 2] and set(r.batch) == {3, 9}
+
+
+async def test_a_cancel_landing_on_the_last_stamp_join_still_joins_it():
+    """#10090 review (43455): the flush's last stamp is awaited in `finally`.
+    A recycle cancel that lands on THAT await used to leave the stamp running
+    after the flush returned, beside the final drain's own refresh."""
+    r = rig()
+    r.release.set()
+    gate, calls = held_refresher(r, hold_ids=(200,))
+    flush = asyncio.create_task(r.flush())
+    for _ in range(50):
+        await asyncio.sleep(0)
+        if r.committed == [1, 2, 3, 9]:
+            break
+    # Premise: every write committed; only game 200's stamp is still running.
+    assert r.committed == [1, 2, 3, 9]
+    assert calls["started"] == [(100,), (200,)] and calls["running"] == 1
+    flush.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await asyncio.wait_for(flush, 2)
+    assert calls["cancelled"] == [(200,)]
+    assert calls["running"] == 0, "no stamp outlives its flush"

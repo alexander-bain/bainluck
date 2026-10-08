@@ -143,23 +143,32 @@ def _without_reviewed_observers(fn):
 # the refresh branch. Any other statement inside them must still fail.
 PIPELINE_DECLARATIONS = (
     "stamping = None",
-    "async def stamp_done():\n"
+    "async def stamp_done(*, cancel=False):\n"
     "    nonlocal stamping\n"
     "    if stamping is None:\n"
     "        return\n"
-    "    await asyncio.wait({stamping})\n"
+    "    if cancel:\n"
+    "        stamping.cancel()\n"
+    "    interrupted = None\n"
+    "    while not stamping.done():\n"
+    "        try:\n"
+    "            await asyncio.wait({stamping})\n"
+    "        except asyncio.CancelledError as exc:\n"
+    "            interrupted = exc\n"
+    "            stamping.cancel()\n"
     "    task, stamping = stamping, None\n"
     "    if not task.cancelled() and task.exception() is not None:\n"
     "        logger.error(\n"
     "            'Kalshi WS: blend refresh raised after its write committed',\n"
     "            exc_info=task.exception(),\n"
-    "        )",
+    "        )\n"
+    "    if interrupted is not None:\n"
+    "        raise interrupted",
 )
 PIPELINE_HANDLER = (
     "try:\n    pass\n"
     "except asyncio.CancelledError:\n"
-    "    if stamping is not None:\n"
-    "        stamping.cancel()\n"
+    "    await stamp_done(cancel=True)\n"
     "    raise\n"
     "finally:\n"
     "    await stamp_done()"
