@@ -167,6 +167,9 @@ class _SeededRedis:
         self.gets: list[str] = []
         self.setex_calls: list[tuple[str, int, str]] = []
 
+    async def mget(self, keys):
+        return [await self.get(key) for key in keys]
+
     async def get(self, key):
         self.gets.append(key)
         return self.contents.get(key)

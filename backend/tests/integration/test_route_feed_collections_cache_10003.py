@@ -86,6 +86,9 @@ class _DictRedis:
         self.store: dict[str, str] = {}
         self.reads: list[str] = []
 
+    async def mget(self, keys):
+        return [await self.get(key) for key in keys]
+
     async def get(self, key):
         self.reads.append(key)
         return self.store.get(key)
@@ -127,7 +130,9 @@ async def test_one_publication_state_is_served_from_cache_and_a_withdrawal_misse
 ):
     fake, scheduled = redis
     state = {"fingerprint": "published-rev-1"}
-    fingerprint = AsyncMock(side_effect=lambda db: state["fingerprint"])
+    fingerprint = AsyncMock(
+        side_effect=lambda db, *, max_age_seconds: state["fingerprint"]
+    )
     monkeypatch.setattr(consumer, "feed_collections_cache_fingerprint", fingerprint)
     read = AsyncMock(return_value=SimpleNamespace(collections=[card]))
     monkeypatch.setattr(producer, "discover_collections", read)

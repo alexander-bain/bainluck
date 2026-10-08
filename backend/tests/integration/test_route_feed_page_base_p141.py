@@ -55,6 +55,9 @@ class _DictRedis:
         self.reads: list[str] = []
         self.writes: list[tuple[str, int]] = []
 
+    async def mget(self, keys):
+        return [await self.get(key) for key in keys]
+
     async def get(self, key):
         self.reads.append(key)
         return self.store.get(key)
