@@ -1,4 +1,4 @@
-"""An earlier game's committed frame survives a later game's stamp wait/failure."""
+"""Fresh siblings progress with two stamps and one committed-frame sender."""
 
 import asyncio
 from contextlib import asynccontextmanager
@@ -263,13 +263,14 @@ async def test_first_game_commits_and_publishes_while_second_stamp_waits(monkeyp
     task = asyncio.create_task(x.r.refresh(range(1, count + 1), flush_started=1000))
     try:
         await asyncio.wait_for(x.second_stamp.wait(), 1)
-        await settle_until(lambda: x.published == [1])
-        assert x.committed == [1]
+        ready = [1, *range(3, count + 1)]
+        await settle_until(lambda: x.published == ready)
+        assert x.committed == ready
         assert not task.done()
-        assert x.r._last_written_value == {1: 0.9}
+        assert x.r._last_written_value == dict.fromkeys(ready, 0.9)
         x.release.set()
         await asyncio.wait_for(task, 1)
-        assert x.published == x.committed == list(range(1, count + 1))
+        assert x.published == x.committed == [*ready, 2]
         assert x.r.stats["stamped"] == count
         assert not x.r.pending_event_ids()
     finally:
@@ -311,14 +312,14 @@ async def test_cancelled_later_stamp_joins_prior_sender_and_preserves_uncommitte
     task = asyncio.create_task(x.r.refresh([1, 2, 3], flush_started=1000))
     try:
         await asyncio.wait_for(x.second_stamp.wait(), 1)
-        await settle_until(lambda: x.published == [1])
+        await settle_until(lambda: x.published == [1, 3])
         task.cancel()
         with pytest.raises(asyncio.CancelledError):
             await asyncio.wait_for(task, 1)
-        assert x.published == x.committed == [1]
-        assert x.r.pending_event_ids() == frozenset({2, 3})
+        assert x.published == x.committed == [1, 3]
+        assert x.r.pending_event_ids() == frozenset({2})
         assert not x.r._failed_hold_until
-        assert x.r._last_written_value == {1: 0.9}
+        assert x.r._last_written_value == {1: 0.9, 3: 0.9}
     finally:
         x.release.set()
         await asyncio.gather(task, return_exceptions=True)
@@ -329,7 +330,9 @@ async def test_cancel_joins_active_sender_cleanup_before_returning(monkeypatch):
     entered, cleaning, cleaned, release_cleanup = (asyncio.Event() for _ in range(4))
 
     async def publish(frames):
-        assert x.committed == [1]
+        assert all(frame["event_id"] in x.committed for frame in frames)
+        if frames[0]["event_id"] != 1:
+            return
         entered.set()
         try:
             await asyncio.Event().wait()
@@ -343,6 +346,7 @@ async def test_cancel_joins_active_sender_cleanup_before_returning(monkeypatch):
     try:
         await asyncio.wait_for(x.second_stamp.wait(), 1)
         await asyncio.wait_for(entered.wait(), 1)
+        await settle_until(lambda: x.committed == [1, 3])
         task.cancel()
         await asyncio.wait_for(cleaning.wait(), 1)
         task.cancel()
@@ -352,8 +356,167 @@ async def test_cancel_joins_active_sender_cleanup_before_returning(monkeypatch):
         with pytest.raises(asyncio.CancelledError):
             await asyncio.wait_for(task, 1)
         assert cleaned.is_set()
-        assert x.r.pending_event_ids() == frozenset({2, 3})
-        assert x.r._last_written_value == {1: 0.9}
+        assert x.r.pending_event_ids() == frozenset({2})
+        assert x.r._last_written_value == {1: 0.9, 3: 0.9}
+    finally:
+        release_cleanup.set()
+        x.release.set()
+        await asyncio.gather(task, return_exceptions=True)
+
+
+async def test_blocked_first_fresh_stamp_does_not_hold_sibling_publication(monkeypatch):
+    x = rig(monkeypatch, block=True)
+    task = asyncio.create_task(x.r.refresh([2, 3], flush_started=1000))
+    try:
+        await asyncio.wait_for(x.second_stamp.wait(), 1)
+        await settle_until(lambda: x.published == [3])
+        assert x.committed == [3] and not task.done()
+        assert x.commands.count("read") == 1
+        x.release.set()
+        await asyncio.wait_for(task, 1)
+        assert x.published == x.committed == [3, 2]
+        assert not x.r.pending_event_ids()
+    finally:
+        x.release.set()
+        await asyncio.gather(task, return_exceptions=True)
+
+
+async def test_fresh_population_uses_only_two_fixed_stamp_workers(monkeypatch):
+    x = rig(monkeypatch, count=9)
+    stamp = x.r._refresh_batch
+    entered, release = asyncio.Event(), asyncio.Event()
+    active = maximum = 0
+    owners = set()
+
+    async def gated_stamp(ids, *args, **kwargs):
+        nonlocal active, maximum
+        owners.add(asyncio.current_task())
+        active += 1
+        maximum = max(maximum, active)
+        if active == 2:
+            entered.set()
+        try:
+            await release.wait()
+            await stamp(ids, *args, **kwargs)
+        finally:
+            active -= 1
+
+    x.r._refresh_batch = gated_stamp
+    task = asyncio.create_task(x.r.refresh(range(1, 10), flush_started=1000))
+    try:
+        await asyncio.wait_for(entered.wait(), 1)
+        await asyncio.sleep(0)
+        assert active == maximum == len(owners) == 2
+        release.set()
+        await asyncio.wait_for(task, 1)
+        assert maximum == len(owners) == 2 and active == 0
+        assert all(owner.done() for owner in owners)
+        assert x.commands.count("read") == 1
+        assert set(x.published) == set(x.committed) == set(range(1, 10))
+    finally:
+        release.set()
+        await asyncio.gather(task, return_exceptions=True)
+
+
+async def test_cancel_preserves_both_waiting_committed_groups_and_one_sender(monkeypatch):
+    x = rig(monkeypatch, count=6)
+    entered, cleaning, release_cleanup, cleanup_send, release_send = (
+        asyncio.Event() for _ in range(5)
+    )
+    active = maximum = 0
+    submitted, delivered = [], []
+
+    async def publish(frames):
+        nonlocal active, maximum
+        ids = [frame["event_id"] for frame in frames]
+        assert set(ids).issubset(x.committed)
+        submitted.append(ids)
+        active += 1
+        maximum = max(maximum, active)
+        try:
+            if ids == [1]:
+                entered.set()
+                try:
+                    await asyncio.Event().wait()
+                finally:
+                    cleaning.set()
+                    await release_cleanup.wait()
+            else:
+                cleanup_send.set()
+                await release_send.wait()
+                delivered.extend(ids)
+        finally:
+            active -= 1
+
+    x.r._publish = publish
+    task = asyncio.create_task(x.r.refresh(range(1, 7), flush_started=1000))
+    try:
+        await asyncio.wait_for(entered.wait(), 1)
+        await settle_until(lambda: x.committed == [1, 2, 3])
+        task.cancel()
+        await asyncio.wait_for(cleaning.wait(), 1)
+        task.cancel()
+        await asyncio.sleep(0)
+        assert not task.done()
+        release_cleanup.set()
+        await asyncio.wait_for(cleanup_send.wait(), 1)
+        assert submitted == [[1], [2, 3]]
+        task.cancel()
+        await asyncio.sleep(0)
+        assert not task.done() and active == maximum == 1
+        release_send.set()
+        with pytest.raises(asyncio.CancelledError):
+            await asyncio.wait_for(task, 1)
+        assert delivered == [2, 3] and active == 0 and maximum == 1
+        assert x.r.pending_event_ids() == frozenset({4, 5, 6})
+        assert not x.r._failed_hold_until
+        assert set(x.r._last_written_value) == {1, 2, 3}
+    finally:
+        release_cleanup.set()
+        release_send.set()
+        await asyncio.gather(task, return_exceptions=True)
+
+
+async def test_repeated_cancel_joins_both_stamp_workers_before_debt(monkeypatch):
+    x = rig(monkeypatch, count=4, block=True)
+    stamp = x.r._refresh_batch
+    third_stamp, release_cleanup = asyncio.Event(), asyncio.Event()
+    cleaning, cleaned = set(), set()
+    owners = set()
+
+    async def stamp_with_cleanup(ids, *args, **kwargs):
+        if ids == [1]:
+            return await stamp(ids, *args, **kwargs)
+        eid = ids[0]
+        owners.add(asyncio.current_task())
+        try:
+            if eid == 3:
+                third_stamp.set()
+                await asyncio.Event().wait()
+            await stamp(ids, *args, **kwargs)
+        finally:
+            cleaning.add(eid)
+            await release_cleanup.wait()
+            cleaned.add(eid)
+
+    x.r._refresh_batch = stamp_with_cleanup
+    task = asyncio.create_task(x.r.refresh(range(1, 5), flush_started=1000))
+    try:
+        await asyncio.wait_for(x.second_stamp.wait(), 1)
+        await asyncio.wait_for(third_stamp.wait(), 1)
+        await settle_until(lambda: x.published == [1])
+        task.cancel()
+        await settle_until(lambda: cleaning == {2, 3})
+        task.cancel()
+        await asyncio.sleep(0)
+        assert not task.done() and not cleaned
+        release_cleanup.set()
+        with pytest.raises(asyncio.CancelledError):
+            await asyncio.wait_for(task, 1)
+        assert cleaned == {2, 3} and all(owner.done() for owner in owners)
+        assert x.committed == x.published == [1]
+        assert x.r.pending_event_ids() == frozenset({2, 3, 4})
+        assert not x.r._failed_hold_until
     finally:
         release_cleanup.set()
         x.release.set()
