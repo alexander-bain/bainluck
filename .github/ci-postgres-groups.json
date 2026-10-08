@@ -230,6 +230,7 @@
     "#9588 a venue stamp does not start a later StatPal session (real Postgres)",
     "#10300 a live row with a future reported start and no play goes back to scheduled (real Postgres)",
     "#10022 an open-contract leg the socket sees finalize is graded alone (real Postgres)",
+    "#10734 a deferred open-contract grade ends where the inline grade ended (real Postgres)",
     "#7878 win-prob evidence collapse — provision the disposable database",
     "#7878 win-prob retention keeps observation evidence (real Postgres)",
     "#8796 one failed statement does not discard the ESPN pass (real Postgres)",

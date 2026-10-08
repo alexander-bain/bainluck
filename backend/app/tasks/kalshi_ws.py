@@ -394,7 +394,7 @@ async def _run_kalshi_ws_consumer(*, sessions, prices):
         open_contract_channels, open_contract_event_bridge,
         open_contract_event_candidates, open_contract_prices_enabled,
         open_contract_settlement_enabled, open_contract_ticker_map,
-        shard_tickers,
+        prepared_shard_indexes, shard_tickers,
     )
     from app.utils.futures_rank import rerank_market_fields_stmt  # #6598
     from app.utils.kalshi_exact_trace import ExactKalshiTrace
@@ -1111,6 +1111,10 @@ async def _run_kalshi_ws_consumer(*, sessions, prices):
         if ticker in open_contract_ids and ticker not in ticker_to_ids:
             await handle_open_contract_lifecycle(ticker, msg)
 
+    async def prepare_shard_lifecycle(msg: dict):
+        """Defer the per-leg grader; it has no buffer-derived closing input."""
+        return handle_shard_lifecycle
+
     _UNCAPTURED = object()
 
     async def prepare_lifecycle(msg: dict):
@@ -1342,11 +1346,14 @@ async def _run_kalshi_ws_consumer(*, sessions, prices):
         shards = shard_tickers(ids)
         stats["open_contract_tickers"] = len(ids)
         stats["open_contract_connections"] = len(shards)
-        for shard in shards:
+        prepared_shards = prepared_shard_indexes(ids, shards)
+        for shard_index, shard in enumerate(shards):
             sock = KalshiWebSocket()
             sock.exact_trace = exact_trace
             sock.on_ticker = handle_ticker
             sock.on_lifecycle = handle_shard_lifecycle
+            if shard_index in prepared_shards:
+                sock.on_lifecycle_prepare = prepare_shard_lifecycle
             open_contract_sockets.append(sock)
             open_contract_tasks.append(
                 asyncio.create_task(
