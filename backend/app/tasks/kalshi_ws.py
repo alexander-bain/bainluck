@@ -89,17 +89,19 @@ FLUSH_BUDGET_SECONDS = 2 * PRICE_FLUSH_SECONDS
 #: consumer keeps the shared 2 s timer and the refresher's 2 s per-event floor,
 #: which together cap a held game at one Kalshi stamp per 2 s (production
 #: 2026-10-08 17:05–17:12Z: 20–28 flushes a minute, most ~1 s of work then idle
-#: until the next 2 s start). Set, it is the timer, the blend floor and (twice
-#: it) the non-live budget, so live games are not queued behind a budget sized
-#: for the slower timer. The failed-write retry keeps `PRICE_FLUSH_SECONDS`.
+#: until the next 2 s start). Set, it is the timer and the blend floor. The
+#: failed-write retry keeps `PRICE_FLUSH_SECONDS` and the non-live budget keeps
+#: `FLUSH_BUDGET_SECONDS`: the budget counts live-phase time too, so halving it
+#: would starve non-live phases whenever live work takes 2-4 s.
 KALSHI_FLUSH_PERIOD_ENV = "KALSHI_WS_PRICE_FLUSH_SECONDS"
 
 
 def kalshi_flush_cadence():
     """``(period, blend_floor, failed_retry, budget)`` for one consumer run.
 
-    ``failed_retry`` and ``budget`` are ``None`` without the override, so the
-    unset path calls the cadence and the budget exactly as before. Raises
+    ``failed_retry`` is ``None`` without the override, so the unset path calls
+    the cadence exactly as before; ``budget`` is always ``None`` (the module
+    `FLUSH_BUDGET_SECONDS`, read at call time). Raises
     ValueError for anything but a positive finite number.
     """
     import math
@@ -117,7 +119,7 @@ def kalshi_flush_cadence():
         ) from invalid
     if not math.isfinite(period) or period <= 0:
         raise ValueError(f"{KALSHI_FLUSH_PERIOD_ENV} must be a positive finite number")
-    return period, period, PRICE_FLUSH_SECONDS, 2 * period
+    return period, period, PRICE_FLUSH_SECONDS, None
 
 #: #10090 — the most rows one non-live phase packs. Pre-game games are packed
 #: whole, several per transaction, and futures/props whole MARKETS at a time, so

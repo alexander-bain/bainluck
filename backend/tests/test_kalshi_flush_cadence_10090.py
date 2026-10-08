@@ -2,8 +2,9 @@
 
 THE SHIP. A held live game's Kalshi number can move about once a second. Unset,
 the shared 2 s timer and the refresher's 2 s per-event floor cap it at one stamp
-per 2 s. `KALSHI_WS_PRICE_FLUSH_SECONDS` sets the timer, the floor and (twice
-it) the non-live budget; the failed-write retry keeps `PRICE_FLUSH_SECONDS`.
+per 2 s. `KALSHI_WS_PRICE_FLUSH_SECONDS` sets the timer and the floor; the
+failed-write retry keeps `PRICE_FLUSH_SECONDS` and the non-live budget keeps
+`FLUSH_BUDGET_SECONDS`.
 Removing the variable restores the unset run exactly.
 """
 
@@ -113,10 +114,10 @@ def test_cadence_without_override_is_the_shared_timer_read_at_call_time(monkeypa
     )
 
 
-def test_override_budget_is_twice_its_period(monkeypatch):
+def test_override_keeps_the_module_non_live_budget(monkeypatch):
     monkeypatch.setenv(ENV, "1")
     monkeypatch.setattr(kalshi_task, "PRICE_FLUSH_SECONDS", 2)
-    assert kalshi_task.kalshi_flush_cadence() == (1.0, 1.0, 2, 2.0)
+    assert kalshi_task.kalshi_flush_cadence() == (1.0, 1.0, 2, None)
 
 
 class TestBudgetArgument:
