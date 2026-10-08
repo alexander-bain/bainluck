@@ -897,7 +897,7 @@ async def test_a_failed_collection_read_replays_its_fail_open_branch(
     assert ddr.verify_baseline(artifact)["verdict"] == ddr.PASS
 
 
-async def test_venue_settlement_deltas_keep_absent_apart_from_false(harness, monkeypatch):
+def _arm_venue_reads(harness, monkeypatch):
     from app.utils import venue_settlement_reader
 
     harness.venue_rows = [
@@ -930,6 +930,10 @@ async def test_venue_settlement_deltas_keep_absent_apart_from_false(harness, mon
                 brief["venue_closed_no_winner"] = True
 
     monkeypatch.setattr(venue_settlement_reader, "attach_venue_settlement", attach)
+
+
+async def test_venue_settlement_deltas_keep_absent_apart_from_false(harness, monkeypatch):
+    _arm_venue_reads(harness, monkeypatch)
     artifact = await _capture(harness)
     venue = artifact["downstream"]["venue_settlement"]
     assert venue["branch"] == "read"
@@ -1782,3 +1786,180 @@ def test_full_card_compare_does_not_mutate_either_deck():
     snapshot = (ddr.canonical(before), ddr.canonical(after))
     _compare(before, after)
     assert (ddr.canonical(before), ddr.canonical(after)) == snapshot
+
+
+# --------------------------------------------------------------------------- #
+# #5105 Option A — opening seating is an opt-in offline arm over the final deck
+# --------------------------------------------------------------------------- #
+
+
+_LIVE_TOURNAMENT = "tournament:golf-tour-championship-2026"
+
+
+def _make_tournament_ordinary_live(harness, score=99.0):
+    """The pool's tournament becomes an ordinary (not major, not marquee) event
+    the schedule says is in progress at the build clock, scored to open the deck."""
+    card = next(c for c in harness.pool if c["type"] == "tournament")
+    card["score"] = card["_rank_score"] = score
+    card["data"].update(
+        schedule_status="in-progress",
+        start_date=_iso(harness.now - timedelta(days=1)),
+        end_date=_iso(harness.now + timedelta(days=2)),
+        champion=None,
+        is_major=False,
+        is_marquee=False,
+    )
+
+
+async def test_opening_seating_is_off_by_default_and_moves_only_order(harness):
+    _make_tournament_ordinary_live(harness)
+    artifact = await _capture(harness)
+    assert ddr.verify_baseline(artifact)["verdict"] == ddr.PASS
+    plain = ddr.replay_capture(artifact)
+    off = ddr.replay_capture(artifact, opening_seating=False)
+    assert plain["opening_seating"] is None and off["opening_seating"] is None
+    assert ddr.canonical(off["deck"]) == ddr.canonical(plain["deck"])
+    assert ddr.canonical(off["public_response"]) == ddr.canonical(plain["public_response"])
+    # The specimen really opens the served deck, or this proves nothing.
+    assert plain["deck_identities"].index(_LIVE_TOURNAMENT) < 10
+
+    seated = ddr.replay_capture(artifact, opening_seating=True)
+    summary = seated["opening_seating"]
+    assert summary["status"] == "applied"
+    assert summary["displaced"] == [_LIVE_TOURNAMENT]
+    assert seated["deck_identities"].index(_LIVE_TOURNAMENT) == 10
+    assert seated["stage_identities"]["pre_seating"] == plain["deck_identities"]
+    assert seated["stage_identities"]["pre_slice"] == seated["deck_identities"]
+    assert seated["total"] == plain["total"]
+    guard = ddr.compare_decks_by_identity(plain["deck"], seated["deck"])
+    assert guard["verdict"] == ddr.PASS and not guard["content_changes"]
+    page = [ddr._member(c) for c in seated["public_response"]["items"]]
+    assert page == seated["deck_identities"][:20]
+    # Facts are read before publication strips the private ranking fields.
+    facts = {f["identity"]: f for f in summary["card_facts"]}
+    assert facts[_LIVE_TOURNAMENT]["_rank_score"] == 99.0
+    # The oracle arm is untouched by the arm that ran before it.
+    assert ddr.verify_baseline(artifact)["verdict"] == ddr.PASS
+
+
+async def test_a_second_page_is_a_slice_of_the_same_seated_deck(harness):
+    _make_tournament_ordinary_live(harness)
+    first = ddr.replay_capture(await _capture(harness), opening_seating=True)
+    second_capture = await _capture(harness, url="/api/feed?limit=20&offset=20")
+    assert ddr.verify_baseline(second_capture)["verdict"] == ddr.PASS
+    second = ddr.replay_capture(second_capture, opening_seating=True)
+    assert second["deck_identities"] == first["deck_identities"]
+    page = [ddr._member(c) for c in second["public_response"]["items"]]
+    assert page == first["deck_identities"][20:40]
+
+
+async def test_opening_seating_composes_with_a_d2_policy(harness):
+    _make_tournament_ordinary_live(harness)
+    artifact = await _capture(harness)
+    original = harness.feed.diversify_discover_first_page
+    b = ddr.replay_capture(artifact, stage_policy=ddr.STAGE_POLICY_D2_ARM_B)
+    both = ddr.replay_capture(
+        artifact, stage_policy=ddr.STAGE_POLICY_D2_ARM_B, opening_seating=True
+    )
+    assert harness.feed.diversify_discover_first_page is original
+    assert both["stage_identities"]["pre_seating"] == b["deck_identities"]
+    assert both["opening_seating"]["status"] in ("applied", "compliant")
+    assert _LIVE_TOURNAMENT not in both["deck_identities"][:10]
+    guard = ddr.compare_decks_by_identity(b["deck"], both["deck"])
+    assert guard["verdict"] == ddr.PASS
+
+
+async def test_opening_seating_refuses_a_pinned_edition_before_any_stage(harness, monkeypatch):
+    from tests.integration.test_route_feed_collections_cache_10003 import _DictRedis
+
+    fake = _DictRedis()
+    harness.set_redis(fake)
+    scheduled: list = []
+    harness.monkeypatch.setattr(_rc, "schedule_background", scheduled.append)
+    first = await harness.get("/api/feed?limit=20")
+    while scheduled:
+        await scheduled.pop(0)
+    url = f"/api/feed?limit=20&offset=20&edition={first.json()['edition']}"
+    for key in [k for k in fake.store if not k.startswith("feed_cache:edition:")]:
+        del fake.store[key]
+    artifact = await _capture(harness, url=url)
+    assert artifact["downstream"]["edition"]["status"] == "pinned"
+
+    called: list = []
+    real_chain = harness.feed.apply_discover_display_chain
+    monkeypatch.setattr(
+        harness.feed,
+        "apply_discover_display_chain",
+        lambda *a, **k: called.append(1) or real_chain(*a, **k),
+    )
+    with pytest.raises(ddr.DisplayReplayError) as refused:
+        ddr.replay_capture(artifact, opening_seating=True)
+    assert refused.value.code == ddr.UNSUPPORTED
+    assert "pinned edition is never reordered" in refused.value.detail
+    assert called == []
+    assert ddr.verify_baseline(artifact)["verdict"] == ddr.PASS
+
+
+@pytest.mark.parametrize("status", ["unresolved_sparse_supply", "unsupported"])
+async def test_a_refused_seating_refuses_the_arm(harness, monkeypatch, status):
+    from app.utils import discover_opening_seating as seating
+
+    artifact = await _capture(harness)
+    monkeypatch.setattr(
+        seating,
+        "seat_opening",
+        lambda items, now: seating.OpeningSeatingOutcome(
+            status=status, items=list(items), detail="refused for the test"
+        ),
+    )
+    with pytest.raises(ddr.DisplayReplayError) as refused:
+        ddr.replay_capture(artifact, opening_seating=True)
+    assert refused.value.code == ddr.UNSUPPORTED
+    assert status in refused.value.detail
+
+
+@pytest.mark.parametrize("vandalism", ["score", "drop", "rank"])
+async def test_a_seating_stage_that_touches_a_card_is_a_mismatch(harness, monkeypatch, vandalism):
+    from app.utils import discover_opening_seating as seating
+
+    artifact = await _capture(harness)
+
+    def vandal(items, now):
+        out = [dict(card) for card in items]
+        if vandalism == "score":
+            out[3]["score"] = out[3]["score"] + 1
+        elif vandalism == "rank":
+            out[3]["_rank_score"] = -1.0
+        else:
+            out.pop()
+        return seating.OpeningSeatingOutcome(status=seating.APPLIED, items=out)
+
+    monkeypatch.setattr(seating, "seat_opening", vandal)
+    with pytest.raises(ddr.DisplayReplayError) as refused:
+        ddr.replay_capture(artifact, opening_seating=True)
+    assert refused.value.code == ddr.MISMATCH
+
+
+async def test_seating_checks_venue_deltas_against_the_captured_order(harness, monkeypatch):
+    """Deltas name the position the capture saw. Seating moves the same card
+    objects, so a moved settled game still gets its delta — checked at its
+    captured position, not refused because it now sits one seat earlier."""
+    _arm_venue_reads(harness, monkeypatch)
+    _make_tournament_ordinary_live(harness)
+    for card in harness.pool:
+        if card["type"] == "event" and card["data"]["id"] in _ASKABLE_IDS:
+            card["score"] = card["_rank_score"] = 98.0
+    artifact = await _capture(harness)
+    deltas = artifact["downstream"]["venue_settlement"]["deltas"]
+    assert deltas, "the specimen needs venue deltas"
+    plain = ddr.replay_capture(artifact)
+    tournament_at = plain["deck_identities"].index(_LIVE_TOURNAMENT)
+    # At least one delta sits behind the tournament inside the opening, so the
+    # move shifts it: the case a position check on the seated deck would refuse.
+    assert any(tournament_at < d["position"] <= 10 for d in deltas)
+    seated = ddr.replay_capture(artifact, opening_seating=True)
+    assert seated["opening_seating"]["status"] == "applied"
+    guard = ddr.compare_decks_by_identity(plain["deck"], seated["deck"])
+    assert guard["verdict"] == ddr.PASS
+    settled = next(c for c in seated["deck"] if ddr._member(c) == f"event:{_ASKABLE_IDS[0]}")
+    assert settled["data"]["venue_settled"] is True

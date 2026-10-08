@@ -1465,12 +1465,25 @@ def replay_capture(
     *,
     arm: Optional[Callable[[list], list]] = None,
     stage_policy: Optional[str] = None,
+    opening_seating: bool = False,
 ) -> dict:
     """Run one arm of a validated capture offline. Returns the replayed deck,
     page and diagnostics. ``arm`` (a candidate policy) receives a fresh decoded
     copy of the pool; the baseline arm is ``arm=None``. ``stage_policy`` (one
     of :data:`STAGE_POLICIES`) swaps one chain stage for a candidate rule; the
     baseline arm is ``stage_policy=None``.
+
+    ``opening_seating`` (#5105, Alex's Option A) runs
+    ``discover_opening_seating.seat_opening`` over the FINAL full deck — after
+    collections, before pagination — at the capture's scoring clock. It
+    composes with any ``stage_policy``. It refuses (``UNSUPPORTED``) a capture
+    with an active edition, because reordering a pinned edition is exactly what
+    the edition contract forbids and minting one under a new policy is release
+    wiring this offline arm does not invent; it also refuses when the helper
+    returns anything but applied/compliant (sparse supply, group membership,
+    unknown kinds), so an unsupported shape is never counted as a pass. It
+    raises ``MISMATCH`` if the stage changed, added or dropped any card.
+    Default ``False``: the baseline arm is untouched.
 
     Never consults ``capture['expected']`` — that is the oracle, read only by
     :func:`verify_baseline`. Refuses (``validate_replay_inputs``) any capture
@@ -1486,6 +1499,13 @@ def replay_capture(
     if stage_policy is not None and stage_policy not in STAGE_POLICIES:
         raise DisplayReplayError(UNSUPPORTED, f"unknown stage_policy {stage_policy!r}")
     validate_replay_inputs(capture)
+    if opening_seating and capture["downstream"]["edition"].get("active"):
+        raise DisplayReplayError(
+            UNSUPPORTED,
+            "opening_seating does not replay an active-edition capture: a pinned "
+            "edition is never reordered, and minting one under a new seating "
+            "policy is release wiring this offline arm does not have",
+        )
     kw = capture["chain_kwargs"]
     request = decode_value(capture["effective_request"])
     now = _dt.datetime.fromisoformat(capture["clocks"]["scoring_now"])
@@ -1529,6 +1549,11 @@ def replay_capture(
             )
             if edition_status == EDITION_STATUS_PINNED and pinned is not None:
                 items = pinned
+        pre_seating = items
+        seating = None
+        if opening_seating:
+            stages["pre_seating"] = deck_identities(items)
+            items, seating = _seat_opening(items, now)
         stages["pre_slice"] = deck_identities(items)
         # D2 only: read the internal fields BEFORE publication, which strips
         # ``_rank_score`` / ``_quality_*`` from the dicts in place.
@@ -1541,7 +1566,9 @@ def replay_capture(
         offset, limit = request["offset"], request["limit"]
         paginated = items[offset : offset + limit]
 
-        _apply_venue_deltas(items, capture["downstream"]["venue_settlement"])
+        # Deltas name the CAPTURED position; seating moves the same card objects,
+        # so they are checked against the order the capture saw.
+        _apply_venue_deltas(pre_seating, capture["downstream"]["venue_settlement"])
 
         for item in items:
             feed_route._publish_feed_item(item)
@@ -1569,7 +1596,43 @@ def replay_capture(
         "stage_policy": stage_policy,
         "promotion_trace": promotion_rows,
         "card_facts": card_facts,
+        "opening_seating": seating,
     }
+
+
+def _seat_opening(items: list, now: _dt.datetime) -> tuple[list, dict]:
+    """The ``opening_seating`` stage, fenced: refuse what the helper refuses and
+    prove — on the unpublished cards, private ranking fields included — that it
+    moved cards without touching one."""
+    from app.utils.discover_opening_seating import APPLIED, COMPLIANT, seat_opening
+
+    def facts(card: dict) -> dict:
+        return {
+            "identity": _member(card),
+            "type": card.get("type"),
+            "score": card.get("score"),
+            "_rank_score": card.get("_rank_score"),
+        }
+
+    before = {_member(card): (_digest(card), facts(card)) for card in items}
+    outcome = seat_opening(items, now=now)
+    if outcome.status not in (APPLIED, COMPLIANT):
+        raise DisplayReplayError(
+            UNSUPPORTED, f"opening seating {outcome.status}: {outcome.detail}"
+        )
+    after = {_member(card): (_digest(card), facts(card)) for card in outcome.items}
+    if not len(items) == len(before) == len(after) == len(outcome.items) or set(
+        after
+    ) != set(before):
+        raise DisplayReplayError(MISMATCH, "opening seating changed the deck's membership")
+    changed = [ident for ident in before if before[ident] != after[ident]]
+    if changed:
+        raise DisplayReplayError(
+            MISMATCH, f"opening seating changed card content: {changed[:5]}"
+        )
+    summary = outcome.summary()
+    summary["card_facts"] = [after[_member(card)][1] for card in outcome.items]
+    return outcome.items, summary
 
 
 def _apply_venue_deltas(items: list, venue: dict) -> None:
