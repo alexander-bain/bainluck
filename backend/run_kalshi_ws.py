@@ -32,6 +32,47 @@ HEARTBEAT_SECONDS = int(os.getenv("WS_HEARTBEAT_SECONDS", "120"))
 #: line (gotcha #53 — an absence is not a response shape).
 HEARTBEAT_ARMS = ("kalshi", "polymarket")
 
+#: #10090 — the heartbeat wakes this often to time the shared event loop.
+#: Every arm's await resumes on that one loop, so a wake that comes late is the
+#: wait a Kalshi stamp or a Polymarket write pays between its DB round trips.
+LOOP_SAMPLE_SECONDS = 0.25
+
+
+class LoopLoad:
+    """#10090 — how busy the ONE loop every arm shares was since the last line.
+
+    `cpu` is this process's CPU seconds over wall seconds (threads included, so
+    it can pass 1.00): near or above 1.00 the loop never idled. `lag` is how
+    late a `LOOP_SAMPLE_SECONDS` sleep woke (p50 / p95 / max). The 2026-10-08
+    exact trace and `pg_stat_statements` put a Kalshi stamp's DB statements at
+    a few ms while the stats line charges ~100 ms per stamp; this is the one
+    number that says whether the rest is the loop.
+    """
+
+    def __init__(self, clock=time.monotonic, cpu=time.process_time):
+        self._clock, self._cpu = clock, cpu
+        self._reset()
+
+    def _reset(self):
+        self._wall0, self._cpu0, self._lags = self._clock(), self._cpu(), []
+
+    def sample(self, lag):
+        self._lags.append(max(0.0, lag))
+
+    def line(self):
+        wall = self._clock() - self._wall0
+        cpu = (self._cpu() - self._cpu0) / wall if wall > 0 else 0.0
+        lags = sorted(self._lags)
+        n = len(lags)
+        self._reset()
+        if not n:
+            return f"loop cpu={cpu:.2f} lag n=0"
+        p50, p95 = lags[n // 2], lags[min(n - 1, int(n * 0.95))]
+        return (
+            f"loop cpu={cpu:.2f} lag p50={p50 * 1000:.0f}ms "
+            f"p95={p95 * 1000:.0f}ms max={lags[-1] * 1000:.0f}ms n={n}"
+        )
+
 
 async def run_kalshi():
     from app.tasks.kalshi_ws import _run_kalshi_ws_consumer
@@ -139,12 +180,23 @@ async def heartbeat():
     from app.tasks.ws_liveness import render
 
     started = time.monotonic()
+    load = LoopLoad()
     while True:
-        await asyncio.sleep(HEARTBEAT_SECONDS)
+        # #10090: the same interval, slept in short steps so each wake can be
+        # timed. Always at least one await, so an interval of 0 still yields.
+        deadline = time.monotonic() + HEARTBEAT_SECONDS
+        while True:
+            step = min(LOOP_SAMPLE_SECONDS, max(0.0, deadline - time.monotonic()))
+            before = time.monotonic()
+            await asyncio.sleep(step)
+            load.sample(time.monotonic() - before - step)
+            if time.monotonic() >= deadline:
+                break
         try:
             now = time.monotonic()
             logger.info(
-                "%s uptime=%ds", render(HEARTBEAT_ARMS, now), int(now - started),
+                "%s uptime=%ds %s",
+                render(HEARTBEAT_ARMS, now), int(now - started), load.line(),
             )
         except Exception:
             logger.exception("worker-ws heartbeat failed")
