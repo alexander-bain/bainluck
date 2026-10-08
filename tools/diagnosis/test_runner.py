@@ -198,6 +198,67 @@ class WorkerTests(unittest.TestCase):
                 20,
             )
 
+    def test_automatic_scout_refuses_foreign_lane_before_active_claim(self):
+        def issue(n, lane=None):
+            labels = [{"name": "needs-agent"}, {"name": "priority:p1"}]
+            if lane:
+                labels.append({"name": lane})
+            return dict(number=n, labels=labels, assignees=[], state="OPEN")
+
+        for lane in [
+            "lane:latency",
+            "lane:native",
+            "lane:lane1b",
+            "lane:future-builder",
+        ]:
+            routed = issue(10488, lane)
+            self.assertFalse(r.eligible(routed))
+            with patch.object(r, "gh", side_effect=[[routed, issue(10489)], []]):
+                self.assertEqual(r.choose(self.root, {})[1]["issue"], 10489)
+        self.assertTrue(r.eligible(issue(10488, "lane:diagnosis")))
+        mixed = issue(10488, "lane:diagnosis")
+        mixed["labels"].append({"name": "lane:latency"})
+        self.assertFalse(r.eligible(mixed))
+
+    def test_automatic_run_rechecks_lane_changed_after_scout(self):
+        issue = dict(
+            number=10488,
+            labels=[{"name": "needs-agent"}, {"name": "lane:latency"}],
+            comments=[],
+            assignees=[],
+            state="OPEN",
+        )
+        with patch.object(r, "gh", side_effect=[issue, []]), patch.object(
+            r, "snapshot_git"
+        ) as snap:
+            result = r.run(self.root, self.root, {"issue": 10488}, None, 1)
+        self.assertEqual(result["result"], "ownership_changed")
+        snap.assert_not_called()
+
+    def test_explicit_scoped_mission_preserves_coordinator_assignment(self):
+        issue = dict(
+            number=10488,
+            labels=[{"name": "needs-agent"}, {"name": "lane:latency"}],
+            comments=[],
+            assignees=[],
+            state="OPEN",
+        )
+        mission = {
+            "issue": 10488,
+            "explicit_scope": True,
+            "prompt": "local source review only",
+        }
+        r.save(self.root / "inbox" / "assigned.json", mission)
+        self.assertEqual(r.choose(self.root, {})[1], mission)
+        # Stop before snapshot/runtime creation; this asserts admission, not execution.
+        with patch.object(r, "gh", return_value=issue), patch.object(
+            r, "command", return_value="pin"
+        ), patch.object(
+            r, "snapshot_git", side_effect=RuntimeError("admission passed")
+        ):
+            with self.assertRaisesRegex(RuntimeError, "admission passed"):
+                r.run(self.root, self.root, mission, None, 1)
+
     def test_truncated_pr_inventory_is_unknown(self):
         with patch.object(r, "gh", side_effect=[[], [{}] * 500]):
             with self.assertRaises(RuntimeError):
