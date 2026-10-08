@@ -28,8 +28,17 @@ from app.tasks.polymarket import _poly_book_is_untradeable
 from app.tasks.ws_consumer_sessions import owns_consumer_sessions  # #2471
 from app.utils.market_quote_push import queue_market_change
 from app.utils.market_settlement import settled_values
+from app.utils.repair_lock_budget import (
+    SET_LOCK_TIMEOUT_SQL,
+    is_lock_timeout,
+    lock_timeout_value,
+)
 
 logger = logging.getLogger(__name__)
+
+# Ordinary chunks retain their whole rollback boundary; the final drain has
+# no later periodic retry and keeps its existing database wait behavior.
+PRICE_CHUNK_LOCK_TIMEOUT_MS = 500
 
 
 #: A leg whose external id ends in one of these is the book of Gamma's
@@ -1403,6 +1412,7 @@ async def _run_polymarket_ws_consumer(*, sessions):
     # Buffered price updates
     price_buffer: dict[int, float] = {}
     buffer_lock = asyncio.Lock()
+    lock_retry_until: dict[int, float] = {}
     # Q460: outcome → linked event, for the blend re-stamp after each flush.
     #
     # Built from `market_by_outcome` (every outcome of every slate market) and
@@ -1453,7 +1463,7 @@ async def _run_polymarket_ws_consumer(*, sessions):
     # clears the entry, since its midpoint is about to replace the price.
     withdraw_buffer: dict[int, tuple] = {}
 
-    async def write_chunk(chunk: dict[int, float]) -> bool:
+    async def write_chunk(chunk: dict[int, float], *, final=False) -> bool | None:
         """One flush transaction: write, re-rank, commit, publish, un-buffer.
 
         #9484: the flush used to write its whole batch in ONE transaction, so a
@@ -1469,8 +1479,19 @@ async def _run_polymarket_ws_consumer(*, sessions):
         # and the write lost the batch with `errors=0, requeued=0` — invisible.
         # Entries now leave only after the write lands, so nothing needs to be
         # "put back", because it was never taken away.
+        from app.tasks.live_blend_refresh import _mono
+
+        # None means a lock-held whole chunk, not a global cadence failure.
+        # Newer ticks on its rows cannot bypass the existing two-second hold.
+        if not final and any(lock_retry_until.get(oid, 0) > _mono() for oid in chunk):
+            return None
         try:
             async with get_task_session() as session:
+                if not final:
+                    await session.execute(
+                        SET_LOCK_TIMEOUT_SQL,
+                        {"ms": lock_timeout_value(PRICE_CHUNK_LOCK_TIMEOUT_MS)},
+                    )
                 # #10664: the chunk's price writes in ONE statement — the same
                 # set clause, row-lock order and returned-row coverage as the
                 # per-row UPDATEs it replaces (`chunk_price_update_stmt`).
@@ -1516,7 +1537,7 @@ async def _run_polymarket_ws_consumer(*, sessions):
             stats["open_contract_prices_written"] += sum(
                 1 for oid in chunk if oid in open_outcome_ids
             )
-        except Exception:
+        except Exception as exc:
             # Q491 — THE SHIP. The chunk is still in `price_buffer`, so the next
             # flush retries it. Before Q491 the buffer was drained up front and
             # a failed write DISCARDED those prices outright: the socket only
@@ -1533,8 +1554,14 @@ async def _run_polymarket_ws_consumer(*, sessions):
             logger.exception(
                 "Polymarket WS: flush error (%d retained for retry)", len(chunk)
             )
+            if not final and is_lock_timeout(exc):
+                until = _mono() + PRICE_FLUSH_SECONDS
+                lock_retry_until.update(dict.fromkeys(chunk, until))
+                return None
             return False
 
+        for oid in chunk:
+            lock_retry_until.pop(oid, None)
         # #9484 — twin of the Kalshi socket's: the commit landed, so publish
         # before the buffer bookkeeping and the blend refresh can suppress it.
         await blend_refresher.publish_market_changes(session)
@@ -1618,8 +1645,8 @@ async def _run_polymarket_ws_consumer(*, sessions):
         return [row.id for row in rows]
 
     async def flush_prices(flush_started=None, final=False):
-        """One flush. Returns False when any chunk's write failed (it stays
-        buffered and the cadence waits a full interval); #10090
+        """One flush. Non-lock failures return False for the cadence retry;
+        lock-held whole chunks retain their own eligibility cooldown. #10090
         ``flush_started`` is this flush's start, for the refresher's floor."""
         import asyncio  # the pipelined stamp below; executed rigs bring no globals
 
@@ -1646,6 +1673,7 @@ async def _run_polymarket_ws_consumer(*, sessions):
         wrote_all = True
         attempted_withdraw_events: set[int] = set()
         failed_price_events: set[int] = set()
+        lock_deferred_events: set[int] = set()
         if batch:
             # #9484: every linked row, then a bounded number of open-contract
             # chunks, oldest-dirty first (the buffer's insertion order). Open
@@ -1741,7 +1769,9 @@ async def _run_polymarket_ws_consumer(*, sessions):
                             unwritten_events | withdraw_events
                         ):
                             await stamp_done()
-                    wrote = await write_chunk({oid: batch[oid] for oid in chunk_ids})
+                    wrote = await write_chunk(
+                        {oid: batch[oid] for oid in chunk_ids}, final=final,
+                    )
                     # Join any safe overlapping stamp before this chunk's
                     # withdrawals, receipts or refresh.
                     await stamp_done()
@@ -1749,7 +1779,12 @@ async def _run_polymarket_ws_consumer(*, sessions):
                         unfinished_price_ids.difference_update(chunk_ids)
                         owed.extend(chunk_ids)
                     else:
-                        wrote_all = False
+                        if wrote is False:
+                            wrote_all = False
+                        else:
+                            lock_deferred_events.update(
+                                event_ids_for_outcomes(event_id_by_outcome, chunk_ids)
+                            )
                         failed_price_events.update(
                             event_ids_for_outcomes(event_id_by_outcome, chunk_ids)
                         )
@@ -1835,7 +1870,9 @@ async def _run_polymarket_ws_consumer(*, sessions):
         # withdrawal failed or a newer book arrived during the transaction.
         # All other withdrawals retain their ordinary after-price ordering.
         withdrawn = await flush_withdrawals(
-            exclude_events=attempted_withdraw_events,
+            # A withdrawal on the held cohort would immediately reacquire its
+            # blocked outcome locks and bypass the price eligibility cooldown.
+            exclude_events=attempted_withdraw_events | lock_deferred_events,
             standalone=None if final else False,
         )
         if withdrawn is None:
@@ -1906,7 +1943,7 @@ async def _run_polymarket_ws_consumer(*, sessions):
                 len(c) for c in chunks
             )
             for chunk_ids in chunks:
-                if not await write_chunk({oid: batch[oid] for oid in chunk_ids}):
+                if await write_chunk({oid: batch[oid] for oid in chunk_ids}) is False:
                     wrote_all = False
         if await flush_withdrawals(standalone=True) is None:
             wrote_all = False
