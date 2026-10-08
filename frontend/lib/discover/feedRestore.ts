@@ -37,6 +37,9 @@
 // Everything here is pure except the four thin `sessionStorage` wrappers at the
 // bottom, so the decisions are testable without a browser.
 
+import type { ContinuationSections } from "./continuationSections";
+import { decodeContinuationDeck, encodeContinuationDeck, type StoredContinuationDeck } from "./continuationSnapshot";
+
 /** The reader's loaded edition. Rewritten when the loaded pages change. */
 export const FEED_SNAPSHOT_KEY = "discover_feed_snapshot";
 
@@ -49,6 +52,17 @@ export const FEED_SCROLL_KEY = "discover_feed_scroll";
  *  refused rather than coerced — a half-understood edition is worse than a
  *  cold load, which is merely today's behaviour. */
 export const FEED_SNAPSHOT_VERSION = 2;
+
+/**
+ * #5105 — the version a snapshot carrying a section deck is written under.
+ *
+ * Deliberately NOT a bump of `FEED_SNAPSHOT_VERSION`: legacy snapshots and the
+ * scroll mark keep version 2 and their exact bytes. It is a distinct value so
+ * that any reader that does not opt into sections — an older build, or today's
+ * page — refuses the edition (a cold load) instead of flattening the
+ * continuation back into the opening.
+ */
+export const FEED_SECTION_SNAPSHOT_VERSION = "2+continuation.1";
 
 /**
  * How long a snapshot is worth restoring.
@@ -94,8 +108,23 @@ export interface FeedScrollMark {
   savedAt: number;
 }
 
+/** #5105 — opt into section decks. Identity is the caller's (the page's `getItemId`). */
+export interface FeedSectionOptions<T> {
+  getId: (item: T) => string;
+}
+
+/** A snapshot read by a section-aware caller. `null` sections = a legacy edition. */
+export interface FeedSectionSnapshot<T> extends FeedSnapshot<T> {
+  sections: ContinuationSections<T> | null;
+}
+
 interface StoredSnapshot<T> extends FeedSnapshot<T> {
   v: number;
+}
+
+interface StoredSectionSnapshot<T> extends FeedSnapshot<T> {
+  v: typeof FEED_SECTION_SNAPSHOT_VERSION;
+  sections: StoredContinuationDeck;
 }
 
 interface StoredScroll extends FeedScrollMark {
@@ -122,10 +151,32 @@ export function capSnapshotItems<T>(page1: T[], rest: T[]): { page1: T[]; rest: 
 }
 
 /** Serialize an edition for storage, or `null` when there is nothing worth
- *  keeping. An empty page one is a cold feed — there is no edition to protect. */
-export function serializeFeedSnapshot<T>(snapshot: FeedSnapshot<T>): string | null {
+ *  keeping. An empty page one is a cold feed — there is no edition to protect.
+ *
+ *  #5105: with `section.deck` a section deck (non-null boundary), the edition is
+ *  written under `FEED_SECTION_SNAPSHOT_VERSION` with each retained card's
+ *  position evidence, and `null` is returned when that evidence cannot be bound
+ *  — never a legacy snapshot of an intended section. Without `section`, or with
+ *  a legacy deck, the bytes are exactly today's. */
+export function serializeFeedSnapshot<T>(
+  snapshot: FeedSnapshot<T>,
+  section?: { deck: ContinuationSections<unknown> | null } & FeedSectionOptions<T>,
+): string | null {
   if (!Array.isArray(snapshot.page1) || snapshot.page1.length === 0) return null;
   const capped = capSnapshotItems(snapshot.page1, snapshot.rest ?? []);
+  if (section?.deck && section.deck.boundary !== null) {
+    const sections = encodeContinuationDeck(section.deck, [...capped.page1, ...capped.rest], section.getId);
+    if (!sections) return null;
+    const stored: StoredSectionSnapshot<T> = {
+      v: FEED_SECTION_SNAPSHOT_VERSION,
+      page1: capped.page1,
+      rest: capped.rest,
+      visibleCount: snapshot.visibleCount,
+      hasMore: snapshot.hasMore,
+      sections,
+    };
+    return JSON.stringify(stored);
+  }
   const stored: StoredSnapshot<T> = {
     v: FEED_SNAPSHOT_VERSION,
     page1: capped.page1,
@@ -145,7 +196,19 @@ export function serializeFeedSnapshot<T>(snapshot: FeedSnapshot<T>): string | nu
  * half-trusted one is a reader dropped into a document built from a shape we
  * guessed at.
  */
-export function parseFeedSnapshot<T>(raw: string | null): FeedSnapshot<T> | null {
+export function parseFeedSnapshot<T>(raw: string | null): FeedSnapshot<T> | null;
+/**
+ * #5105 — the section-aware read. Accepts a legacy (v2) edition as
+ * `sections: null` and a section edition only when its deck rebuilds through
+ * the adapter against exactly the stored cards. A v2 body carrying section
+ * evidence, or a section body whose evidence is missing or does not bind, is
+ * refused — it never falls through to legacy.
+ */
+export function parseFeedSnapshot<T>(raw: string | null, section: FeedSectionOptions<T>): FeedSectionSnapshot<T> | null;
+export function parseFeedSnapshot<T>(
+  raw: string | null,
+  section?: FeedSectionOptions<T>,
+): FeedSnapshot<T> | FeedSectionSnapshot<T> | null {
   if (!raw) return null;
   let parsed: unknown;
   try {
@@ -154,8 +217,28 @@ export function parseFeedSnapshot<T>(raw: string | null): FeedSnapshot<T> | null
     return null;
   }
   if (!parsed || typeof parsed !== "object") return null;
-  const candidate = parsed as Partial<StoredSnapshot<T>>;
-  if (candidate.v !== FEED_SNAPSHOT_VERSION) return null;
+  const candidate = parsed as Partial<StoredSnapshot<T>> | Partial<StoredSectionSnapshot<T>>;
+  if (candidate.v === FEED_SNAPSHOT_VERSION) {
+    const snapshot = readStoredEdition(candidate);
+    if (!snapshot || !section) return snapshot;
+    if ("sections" in candidate) return null;
+    return { ...snapshot, sections: null };
+  }
+  // Without the opt-in a section edition is refused exactly as an unknown
+  // version is: a cold load, not a flattened deck.
+  if (candidate.v !== FEED_SECTION_SNAPSHOT_VERSION || !section) return null;
+  const snapshot = readStoredEdition(candidate);
+  if (!snapshot) return null;
+  const sections = decodeContinuationDeck(
+    (candidate as Partial<StoredSectionSnapshot<T>>).sections,
+    [...snapshot.page1, ...snapshot.rest],
+    section.getId,
+  );
+  if (!sections) return null;
+  return { ...snapshot, sections };
+}
+
+function readStoredEdition<T>(candidate: Partial<FeedSnapshot<T>>): FeedSnapshot<T> | null {
   if (!Array.isArray(candidate.page1) || candidate.page1.length === 0) return null;
   if (!Array.isArray(candidate.rest)) return null;
   if (!isPositiveInt(candidate.visibleCount)) return null;
@@ -264,20 +347,37 @@ export function shouldRestoreOnMount(args: {
 // — and none of them are a reason to break Discover. A failed read is a cold
 // load; a failed write is a Back that behaves the way it does today.
 
-export function readFeedSnapshot<T>(): FeedSnapshot<T> | null {
+export function readFeedSnapshot<T>(): FeedSnapshot<T> | null;
+export function readFeedSnapshot<T>(section: FeedSectionOptions<T>): FeedSectionSnapshot<T> | null;
+export function readFeedSnapshot<T>(
+  section?: FeedSectionOptions<T>,
+): FeedSnapshot<T> | FeedSectionSnapshot<T> | null {
   if (typeof window === "undefined") return null;
   try {
-    return parseFeedSnapshot<T>(window.sessionStorage.getItem(FEED_SNAPSHOT_KEY));
+    const raw = window.sessionStorage.getItem(FEED_SNAPSHOT_KEY);
+    return section ? parseFeedSnapshot<T>(raw, section) : parseFeedSnapshot<T>(raw);
   } catch {
     return null;
   }
 }
 
-export function writeFeedSnapshot<T>(snapshot: FeedSnapshot<T>): void {
+export function writeFeedSnapshot<T>(
+  snapshot: FeedSnapshot<T>,
+  section?: { deck: ContinuationSections<unknown> | null } & FeedSectionOptions<T>,
+): void {
   if (typeof window === "undefined") return;
   try {
-    const raw = serializeFeedSnapshot(snapshot);
-    if (raw === null) return;
+    const raw = serializeFeedSnapshot(snapshot, section);
+    if (raw === null) {
+      // #5105: a section deck whose evidence would not bind is not written —
+      // and the edition already stored is an OLDER one, which must not be
+      // restored as the reader's place. Without a section deck this is
+      // today's empty-page-one no-op.
+      if (snapshot.page1?.length && section?.deck && section.deck.boundary !== null) {
+        window.sessionStorage.removeItem(FEED_SNAPSHOT_KEY);
+      }
+      return;
+    }
     window.sessionStorage.setItem(FEED_SNAPSHOT_KEY, raw);
   } catch {
     // Over quota is the expected failure. Drop the edition rather than leave a
