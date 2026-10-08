@@ -1,0 +1,8 @@
+{"term": "ranger", "exec_ms": 321.609, "rows": 210, "removed_by_filter": 5197, "blocks": 4614, "read_blocks": 2460, "indexes": ["ix_futures_name_trgm"]}
+{"term": "steeler", "exec_ms": 43.951, "rows": 230, "removed_by_filter": 1087, "blocks": 1244, "read_blocks": 556, "indexes": ["ix_futures_name_trgm"]}
+{"term": "falcon", "exec_ms": 67.768, "rows": 170, "removed_by_filter": null, "blocks": 1161, "read_blocks": 21, "indexes": ["ix_futures_name_trgm", "ix_futures_markets_status"]}
+{"term": "eagle", "exec_ms": 170.029, "rows": 225, "removed_by_filter": 2727, "blocks": 2606, "read_blocks": 1473, "indexes": ["ix_futures_name_trgm"]}
+{"term": "dodger", "exec_ms": 34.796, "rows": 8, "removed_by_filter": null, "blocks": 1008, "read_blocks": 0, "indexes": ["ix_futures_name_trgm", "ix_futures_markets_status"]}
+{"term": "yankee", "exec_ms": 17.731, "rows": 2, "removed_by_filter": 2324, "blocks": 1558, "read_blocks": 1, "indexes": ["ix_futures_name_trgm"]}
+{"term": "celtic", "exec_ms": 16.68, "rows": 89, "removed_by_filter": null, "blocks": 1077, "read_blocks": 21, "indexes": ["ix_futures_name_trgm", "ix_futures_markets_status"]}
+{"term": "packer", "exec_ms": 21.68, "rows": 85, "removed_by_filter": 595, "blocks": 705, "read_blocks": 329, "indexes": ["ix_futures_name_trgm"]}
