@@ -112,6 +112,9 @@ def rig(*, failed=None, declined=None, pending=(), locked=(), unchanged=()):
         def pending_event_ids(self):
             return frozenset(pending)
 
+        def adopt_pending(self, ids):
+            pass
+
         async def publish_market_changes(self, s):
             trace.append(("publish", tuple(s.rows)))
 

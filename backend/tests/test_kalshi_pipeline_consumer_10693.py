@@ -139,55 +139,108 @@ def _without_reviewed_observers(fn):
     ))
 
 
-# #10090 pipelined stamps: a phase's refresh runs as one task while the next
-# phase writes. Only these exact ASTs are reverted to the serial original: the
-# two declarations before the loop, the try that owns the in-flight stamp, and
-# the refresh branch. Any other statement inside them must still fail.
+# #10090 coalesced stamps: only these exact reviewed controls are removed
+# for the frozen serial comparison; every write/commit/publication remains.
 PIPELINE_DECLARATIONS = (
-    "stamping = None",
-    "async def stamp_done(*, cancel=False):\n"
-    "    nonlocal stamping\n"
-    "    if stamping is None:\n"
-    "        return\n"
-    "    if cancel:\n"
-    "        stamping.cancel()\n"
-    "    interrupted = None\n"
-    "    while not stamping.done():\n"
-    "        try:\n"
-    "            await asyncio.wait({stamping})\n"
-    "        except asyncio.CancelledError as exc:\n"
-    "            interrupted = exc\n"
-    "            stamping.cancel()\n"
-    "    task, stamping = stamping, None\n"
-    "    if not task.cancelled() and task.exception() is not None:\n"
-    "        logger.error(\n"
-    "            'Kalshi WS: blend refresh raised after its write committed',\n"
-    "            exc_info=task.exception(),\n"
-    "        )\n"
-    "    if interrupted is not None:\n"
-    "        raise interrupted",
+    """stamping = None""",
+    """stamping_events = set()""",
+    """stamping_fresh = set()""",
+    """queued_events = set()""",
+    """queued_marks = {}""",
+    """queued_refresh = False""",
+    """cancelled = False""",
+    """async def stamp_done(*, cancel=False):
+    nonlocal stamping, stamping_events, stamping_fresh
+    if stamping is None:
+        return
+    if cancel and (not stamping.cancelling()):
+        stamping.cancel()
+    interrupted = None
+    while not stamping.done():
+        try:
+            await asyncio.wait({stamping})
+        except asyncio.CancelledError as exc:
+            interrupted = exc
+            if not stamping.cancelling():
+                stamping.cancel()
+    task, stamping = (stamping, None)
+    fresh, stamping_fresh = (stamping_fresh, set())
+    stamping_events = set()
+    if task.cancelled() or task.exception() is not None:
+        blend_refresher.adopt_pending(fresh)
+        if not task.cancelled():
+            logger.error('Kalshi WS: blend refresh raised after its write committed', exc_info=task.exception())
+    if interrupted is not None:
+        raise interrupted""",
+    """async def stamp_start():
+    nonlocal stamping, stamping_events, stamping_fresh, queued_refresh
+    stamping_fresh = set(queued_events)
+    stamping_events = stamping_fresh | set(blend_refresher.pending_event_ids())
+    with contextlib.suppress(Exception):
+        tail_receipts.stage(list(queued_marks.values()))
+    stamping = asyncio.create_task(blend_refresher.refresh(stamping_fresh, flush_started=flush_started))
+    queued_events.clear()
+    queued_marks.clear()
+    queued_refresh = False
+    await asyncio.sleep(0)""",
+    """def keep_queued():
+    nonlocal queued_refresh
+    blend_refresher.adopt_pending(queued_events)
+    queued_events.clear()
+    queued_marks.clear()
+    queued_refresh = False""",
+    """def queue_committed(index, phase, written_outcome_ids):
+    nonlocal queued_refresh
+    blend_outcomes = phase.keys() if final_drain else (oid for oid in phase if oid not in non_blend_outcome_ids)
+    linked_events = event_ids_for_outcomes(event_id_by_outcome, blend_outcomes)
+    if index == 0 or linked_events:
+        queued_events.update(linked_events)
+        queued_marks.update({oid: batch_marks[oid] for oid in written_outcome_ids if oid in batch_marks})
+        queued_refresh = True""",
 )
-PIPELINE_HANDLER = (
-    "try:\n    pass\n"
-    "except asyncio.CancelledError:\n"
-    "    await stamp_done(cancel=True)\n"
-    "    raise\n"
-    "finally:\n"
-    "    await stamp_done()"
+PIPELINE_HANDLER = """try:
+    pass
+except asyncio.CancelledError:
+    cancelled = True
+    raise
+finally:
+    if cancelled:
+        try:
+            await stamp_done(cancel=True)
+        finally:
+            keep_queued()
+    else:
+        try:
+            await stamp_done()
+            if queued_refresh:
+                await stamp_start()
+                await stamp_done()
+        except asyncio.CancelledError:
+            try:
+                await stamp_done(cancel=True)
+            finally:
+                keep_queued()
+            raise"""
+PIPELINE_FENCE = (
+    """if stamping is not None and stamping.done():
+    await stamp_done()
+    if queued_refresh:
+        await stamp_start()""",
+    """if not stamping_events.isdisjoint(event_ids_for_outcomes(event_id_by_outcome, phase.keys())):
+    await stamp_done()""",
 )
+COMMITTED_STAMP_QUEUE = """queue_committed(index, phase, written_outcome_ids)"""
+SERIAL_EVENT_PREFIX = """blend_outcomes = phase.keys() if final_drain else (oid for oid in phase if oid not in non_blend_outcome_ids)
+linked_events = event_ids_for_outcomes(event_id_by_outcome, blend_outcomes)"""
 _STAGE = (
     "with contextlib.suppress(Exception):\n"
     "    tail_receipts.stage(\n"
     "        [batch_marks[oid] for oid in written_outcome_ids if oid in batch_marks]\n"
     "    )\n"
 )
-PIPELINED_REFRESH = (
-    "await stamp_done()\n" + _STAGE
-    + "stamping = asyncio.create_task(blend_refresher.refresh(\n"
-    "    linked_events, flush_started=flush_started,\n"
-    "))\n"
-    "await asyncio.sleep(0)"
-)
+PIPELINED_REFRESH = """await stamp_done()
+if queued_refresh:
+    await stamp_start()"""
 SERIAL_REFRESH = (
     _STAGE + "await blend_refresher.refresh(linked_events, flush_started=flush_started)"
 )
@@ -201,27 +254,40 @@ def _without_reviewed_pipelined_stamps(fn):
     declarations = {d for source in PIPELINE_DECLARATIONS for d in _dumps(source)}
     kept = [s for s in fn.body if ast.dump(s) not in declarations]
     assert len(kept) == len(fn.body) - len(declarations), (
-        "the #10090 pipelined-stamp declarations are not the exact reviewed ones"
+        "the #10090 stamp declarations are not the exact reviewed ones"
     )
     (handler,) = ast.parse(PIPELINE_HANDLER).body
     tries = [s for s in kept if isinstance(s, ast.Try)
              and any(isinstance(n, ast.For) and ast.unparse(n.target) == "(index, phase)"
                      for n in s.body)]
-    assert len(tries) == 1, "the phase loop is not inside the pipelined-stamp try"
+    assert len(tries) == 1
     (owner,) = tries
     assert [ast.dump(h) for h in owner.handlers] == [ast.dump(h) for h in handler.handlers]
     assert [ast.dump(s) for s in owner.finalbody] == [ast.dump(s) for s in handler.finalbody]
     assert not owner.orelse
     index = kept.index(owner)
     fn.body = kept[:index] + owner.body + kept[index + 1:]
-    branches = [n for n in ast.walk(fn) if isinstance(n, ast.If)
-                and ast.unparse(n.test) == "index == 0 or linked_events"]
+    (loop,) = [n for n in owner.body if isinstance(n, ast.For)]
+    for source in PIPELINE_FENCE:
+        expected = _dumps(source)
+        matches = [i for i, s in enumerate(loop.body) if ast.dump(s) == expected[0]]
+        assert len(matches) == 1, "the same-event stamp fence changed"
+        del loop.body[matches[0]]
+    expected = _dumps(COMMITTED_STAMP_QUEUE)
+    matches = [i for i in range(len(loop.body) - len(expected) + 1)
+               if [ast.dump(s) for s in loop.body[i:i + len(expected)]] == expected]
+    assert len(matches) == 2, "the committed and late-bridge stamp queues changed"
+    for index in reversed(matches):
+        del loop.body[index:index + len(expected)]
+    branches = [n for n in loop.body if isinstance(n, ast.If)
+                and ast.unparse(n.test) == "stamping is None or stamping.done()"]
     assert len(branches) == 1
     (branch,) = branches
-    assert [ast.dump(s) for s in branch.body] == _dumps(PIPELINED_REFRESH), (
-        "the #10090 pipelined refresh branch is not the exact reviewed one"
-    )
-    branch.body = ast.parse(SERIAL_REFRESH).body
+    assert [ast.dump(s) for s in branch.body] == _dumps(PIPELINED_REFRESH)
+    serial_branch = ast.parse("if index == 0 or linked_events:\n    pass").body[0]
+    serial_branch.body = ast.parse(SERIAL_REFRESH).body
+    index = loop.body.index(branch)
+    loop.body[index:index + 1] = ast.parse(SERIAL_EVENT_PREFIX).body + [serial_branch]
     return fn
 
 
