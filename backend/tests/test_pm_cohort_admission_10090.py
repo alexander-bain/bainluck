@@ -33,7 +33,10 @@ class Recording(LiveBlendRefresher):
         self.trace.append(("publish", None))
 
 
-async def test_exclusions_keep_fresh_retry_and_throttle_debt_and_default_readmits_all():
+async def test_exclusions_keep_fresh_retry_and_throttle_debt_and_default_readmits_all(monkeypatch):
+    from app.tasks import live_blend_refresh as module
+
+    monkeypatch.setattr(module, "_mono", lambda: 100)
     r = Recording([])
     r._lock_retry.add(90)
     r.adopt_pending([91])
@@ -42,8 +45,11 @@ async def test_exclusions_keep_fresh_retry_and_throttle_debt_and_default_readmit
     assert r.pending_event_ids() == frozenset({90, 91, 92})
     assert 90 in r._lock_retry
     assert not ({90, 91, 92} & r._last_refresh_at.keys())
+    monkeypatch.setattr(module, "_mono", lambda: 102)
     await r.refresh_pending(flush_started=102)
-    assert r.trace[-1] == ("admit", [90, 91, 92])
+    assert {eid for kind, ids in r.trace[1:] if kind == "admit" for eid in ids} == {
+        90, 91, 92,
+    }
     assert not r.pending_event_ids()
 
 

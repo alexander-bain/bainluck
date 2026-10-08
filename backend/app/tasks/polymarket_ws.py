@@ -16,7 +16,8 @@ import logging
 import math
 import os
 import time
-from typing import Optional
+from collections.abc import Collection, Iterator, Mapping
+from typing import Any, Optional
 from datetime import datetime, timezone
 
 from app.tasks.kalshi_ws import (
@@ -39,6 +40,35 @@ logger = logging.getLogger(__name__)
 # Ordinary chunks retain their whole rollback boundary; the final drain has
 # no later periodic retry and keeps its existing database wait behavior.
 PRICE_CHUNK_LOCK_TIMEOUT_MS = 500
+
+
+def pm_non_speaking_metadata(metadata: Any) -> bool:
+    """Only the shared venue-label refutation can exclude a loaded question."""
+    from types import SimpleNamespace
+    from app.utils.content_understanding import venue_label_refutes_full_contest_winner
+
+    return venue_label_refutes_full_contest_winner(
+        SimpleNamespace(market_metadata=metadata)
+    )
+
+
+class _PMHeadlineEvents(Mapping[int, int]):
+    """Live owner-map view; only venue-refuted questions leave WIN cohorts."""
+
+    def __init__(self, events: Mapping[int, int], non_speakers: Collection[int]):
+        self.events = events
+        self.non_speakers = non_speakers
+
+    def __getitem__(self, outcome_id: int) -> int:
+        if outcome_id in self.non_speakers:
+            raise KeyError(outcome_id)
+        return self.events[outcome_id]
+
+    def __iter__(self) -> Iterator[int]:
+        return (oid for oid in self.events if oid not in self.non_speakers)
+
+    def __len__(self) -> int:
+        return sum(1 for _ in self)
 
 
 #: A leg whose external id ends in one of these is the book of Gamma's
@@ -1155,6 +1185,7 @@ async def _run_polymarket_ws_consumer(*, sessions):
     condition_to_market: dict[str, int] = {}  # condition_id → market_id
 
     tokens_by_market: dict[int, list[str]] = {}
+    non_blend_market_ids: set[int] = set()
 
     async with get_task_session() as session:
         market_result = await session.execute(
@@ -1163,6 +1194,11 @@ async def _run_polymarket_ws_consumer(*, sessions):
         )
         ext_by_market: dict[int, str] = {}
         for mid, mext, metadata in market_result.all():
+            # Same authoritative refutation as shared WIN admission, using the
+            # catalog metadata this token read already owns. Missing labels
+            # remain conservative; titles and outcome names are never guessed.
+            if pm_non_speaking_metadata(metadata):
+                non_blend_market_ids.add(mid)
             if mext:
                 condition_to_market[mext] = mid
                 ext_by_market[mid] = mext
@@ -1428,6 +1464,10 @@ async def _run_polymarket_ws_consumer(*, sessions):
         for outcome_id, market_id in market_by_outcome.items()
         if market_id in event_id_by_market
     }
+    non_blend_outcome_ids = {
+        oid for oid, mid in market_by_outcome.items()
+        if mid in non_blend_market_ids
+    }
     blend_refresher = LiveBlendRefresher(
         "polymarket", min_refresh_interval_s=blend_floor,
         session_factory=get_task_session,  # #2471
@@ -1676,6 +1716,11 @@ async def _run_polymarket_ws_consumer(*, sessions):
         lock-held whole chunks retain their own eligibility cooldown. #10090
         ``flush_started`` is this flush's start, for the refresher's floor."""
         import asyncio  # the pipelined stamp below; executed rigs bring no globals
+        from app.tasks.polymarket_ws import _PMHeadlineEvents
+
+        headline_event_ids = _PMHeadlineEvents(
+            event_id_by_outcome, () if final else non_blend_outcome_ids,
+        )
 
         async with buffer_lock:
             batch = dict(price_buffer)
@@ -1710,12 +1755,20 @@ async def _run_polymarket_ws_consumer(*, sessions):
             # transaction or wait together — never one side read beside the
             # other's old price.
             chunks = plan_flush_chunks(
-                batch,
+                (oid for oid in batch if oid not in headline_event_ids.non_speakers),
                 open_outcome_ids,
                 FLUSH_CHUNK_ROWS,
                 None if final else OPEN_FLUSH_CHUNKS_PER_FLUSH,
                 open_complement_of,
             )
+            # Split the known unrelated slate questions into their own normal
+            # tail transactions. All linked prices still write; complement
+            # pairs stay atomic and the existing open-contract cap is intact.
+            if not final:
+                chunks.extend(plan_flush_chunks(
+                    (oid for oid in batch if oid in non_blend_outcome_ids),
+                    set(), FLUSH_CHUNK_ROWS, None, open_complement_of,
+                ))
             stats["open_contract_flush_deferred"] += len(batch) - sum(
                 len(c) for c in chunks
             )
@@ -1734,9 +1787,16 @@ async def _run_polymarket_ws_consumer(*, sessions):
             # throttle, so an event a later chunk still writes waits for that
             # chunk, and one with a pending withdrawal waits for it.
             last_chunk_of_event: dict[int, int] = {}
+            # Withdrawals judge the final stored price, including non-speakers.
+            # Their maturity must therefore wait for every planned event price,
+            # even when WIN readiness no longer waits for that prop's quote.
+            last_price_chunk_of_event: dict[int, int] = {}
             for index, chunk_ids in enumerate(chunks):
                 for oid in chunk_ids:
-                    event_id = event_id_by_outcome.get(oid)
+                    price_event_id = event_id_by_outcome.get(oid)
+                    if price_event_id is not None:
+                        last_price_chunk_of_event[price_event_id] = index
+                    event_id = headline_event_ids.get(oid)
                     if event_id is not None:
                         last_chunk_of_event[event_id] = index
             # #10090 — PIPELINED STAMPS, twin of the Kalshi socket's. A chunk's
@@ -1822,7 +1882,7 @@ async def _run_polymarket_ws_consumer(*, sessions):
                     mature = {
                         eid
                         for eid in withdraw_events - attempted_withdraw_events
-                        if last_chunk_of_event.get(eid, len(chunks)) <= index
+                        if last_price_chunk_of_event.get(eid, len(chunks)) <= index
                         and eid not in failed_price_events
                     }
                     if mature:
@@ -1845,7 +1905,7 @@ async def _run_polymarket_ws_consumer(*, sessions):
                     ready: list[int] = []
                     held: list[int] = []
                     for oid in owed:
-                        event_id = event_id_by_outcome.get(oid)
+                        event_id = headline_event_ids.get(oid)
                         done = event_id is None or (
                             last_chunk_of_event.get(event_id, index) <= index
                             and event_id not in withdraw_events
@@ -1858,14 +1918,15 @@ async def _run_polymarket_ws_consumer(*, sessions):
                         # renders. #837 receipt: the revisions these writes
                         # committed ride into this refresh, and only this one.
                         tail_receipts.stage(
-                            [batch_marks[oid] for oid in ready if oid in batch_marks]
+                            [batch_marks[oid] for oid in ready if oid in batch_marks
+                             and oid not in headline_event_ids.non_speakers]
                         )
                         refresh_events = event_ids_for_outcomes(
-                            event_id_by_outcome, ready,
+                            headline_event_ids, ready,
                         )
                         pending_reader = getattr(blend_refresher, "pending_event_ids", None)
                         unfinished_events = (
-                            event_ids_for_outcomes(event_id_by_outcome, unfinished_price_ids)
+                            event_ids_for_outcomes(headline_event_ids, unfinished_price_ids)
                             | withdraw_events
                         )
                         # Capture BEFORE refresh consumes due debt and starts
@@ -1910,7 +1971,7 @@ async def _run_polymarket_ws_consumer(*, sessions):
             withdrawn = []
         async with buffer_lock:
             unfinished_events = (
-                event_ids_for_outcomes(event_id_by_outcome, unfinished_price_ids)
+                event_ids_for_outcomes(headline_event_ids, unfinished_price_ids)
                 | event_ids_for_outcomes(
                     event_id_by_outcome,
                     withdraw_cohort_ids.intersection(withdraw_buffer),
@@ -1936,10 +1997,12 @@ async def _run_polymarket_ws_consumer(*, sessions):
         # refresh, never a second for an event the chunks already refreshed.
         if owed:
             tail_receipts.stage(
-                [batch_marks[oid] for oid in owed if oid in batch_marks]
+                [batch_marks[oid] for oid in owed if oid in batch_marks
+                 and oid not in headline_event_ids.non_speakers]
             )
         await blend_refresher.refresh(
-            event_ids_for_outcomes(event_id_by_outcome, owed + withdrawn),
+            event_ids_for_outcomes(headline_event_ids, owed)
+            | event_ids_for_outcomes(event_id_by_outcome, withdrawn),
             flush_started=flush_started,
             defer_event_ids=unfinished_events,
         )
