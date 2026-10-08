@@ -365,15 +365,16 @@ def test_price_movement_alone_is_never_final_day_evidence(now):
 
 def test_golfer_movement_and_a_live_headline_never_make_a_tournament_live():
     """The Korn Ferry card on the October 4 capture: no dates, no schedule
-    status, a "Live" headline, and golfers moving. The served
-    ``_tournament_is_live`` says yes on movement alone; this does not."""
+    status, a "Live" headline, and golfers moving. The capture-era served
+    ``_tournament_is_live`` said yes on movement alone; this does not, and
+    since ae529f5423 retired that arm neither does the served function."""
     from app.routes.feed import _tournament_is_live
 
     card = _tournament("compliance_solutions_championship", schedule_status=None,
                        start=None, end=None)
     card["data"]["golfers"] = [{"name": "A", "movement_24h": 0.08}]
     assert card["headline"] == "Live"
-    assert _tournament_is_live(card["data"], NOW) is True  # the trap is real
+    assert _tournament_is_live(card["data"], NOW) is False  # served agrees (ae529f5423)
     got = classify_card(card, now=NOW)
     assert got.lifecycle == UNKNOWN and not got.restricted
     deck = _deck(20, {0: card})
