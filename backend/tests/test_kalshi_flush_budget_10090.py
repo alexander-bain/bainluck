@@ -150,6 +150,7 @@ def rig(*, games, futures_markets=0, live=frozenset({LIVE_EVENT})):
               open_contract_outcome_ids=set(), blend_refresher=Refresher(),
               get_task_session=session, stats=stats, prices=prices,
               live_event_ids=None if live is None else set(live),
+              flush_budget=None,  # the unset run: `FLUSH_BUDGET_SECONDS`
               logger=logging.getLogger(__name__),
               queue_market_change=lambda *a, **k: None)
     path = Path(__file__).resolve().parents[1] / "app/tasks/kalshi_ws.py"

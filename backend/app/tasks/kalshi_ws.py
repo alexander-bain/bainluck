@@ -85,6 +85,40 @@ PRICE_PHASE_LOCK_TIMEOUT_MS = 500
 #: buffered, at the front, for the next flush. Never applied to the final drain.
 FLUSH_BUDGET_SECONDS = 2 * PRICE_FLUSH_SECONDS
 
+#: #10090 — opt-in Kalshi cadence, the #10662 Polymarket shape. Unset, the
+#: consumer keeps the shared 2 s timer and the refresher's 2 s per-event floor,
+#: which together cap a held game at one Kalshi stamp per 2 s (production
+#: 2026-10-08 17:05–17:12Z: 20–28 flushes a minute, most ~1 s of work then idle
+#: until the next 2 s start). Set, it is the timer, the blend floor and (twice
+#: it) the non-live budget, so live games are not queued behind a budget sized
+#: for the slower timer. The failed-write retry keeps `PRICE_FLUSH_SECONDS`.
+KALSHI_FLUSH_PERIOD_ENV = "KALSHI_WS_PRICE_FLUSH_SECONDS"
+
+
+def kalshi_flush_cadence():
+    """``(period, blend_floor, failed_retry, budget)`` for one consumer run.
+
+    ``failed_retry`` and ``budget`` are ``None`` without the override, so the
+    unset path calls the cadence and the budget exactly as before. Raises
+    ValueError for anything but a positive finite number.
+    """
+    import math
+
+    from app.tasks.live_blend_refresh import DEFAULT_MIN_REFRESH_INTERVAL_S
+
+    override = os.getenv(KALSHI_FLUSH_PERIOD_ENV)
+    if override is None:
+        return PRICE_FLUSH_SECONDS, DEFAULT_MIN_REFRESH_INTERVAL_S, None, None
+    try:
+        period = float(override)
+    except ValueError as invalid:
+        raise ValueError(
+            f"{KALSHI_FLUSH_PERIOD_ENV} must be a positive finite number"
+        ) from invalid
+    if not math.isfinite(period) or period <= 0:
+        raise ValueError(f"{KALSHI_FLUSH_PERIOD_ENV} must be a positive finite number")
+    return period, period, PRICE_FLUSH_SECONDS, 2 * period
+
 #: #10090 — the most rows one non-live phase packs. Pre-game games are packed
 #: whole, several per transaction, and futures/props whole MARKETS at a time, so
 #: the budget can stop between phases instead of behind one unbounded one. A
@@ -98,12 +132,16 @@ NONLIVE_PHASE_MAX_ROWS = 200
 NONLIVE_PHASE_MAX_GAMES = 8
 
 
-def flush_budget_spent(flush_started, phase, event_id_by_outcome, live_events):
+def flush_budget_spent(
+    flush_started, phase, event_id_by_outcome, live_events, budget_seconds=None,
+):
     """#10090 — True when a periodic flush should leave ``phase`` buffered.
 
     Never for a phase holding a live game's outcome, never without a start
     (the final drain, a direct call) and never without a live set (the
     pre-#10090 plan). Read on the refresher's clock, which `flush_started` is.
+    ``budget_seconds`` is the run's (`kalshi_flush_cadence`); ``None`` reads
+    `FLUSH_BUDGET_SECONDS` at call time.
     """
     if flush_started is None or live_events is None:
         return False
@@ -111,7 +149,8 @@ def flush_budget_spent(flush_started, phase, event_id_by_outcome, live_events):
         return False
     from app.tasks.live_blend_refresh import _mono
 
-    return _mono() - flush_started >= FLUSH_BUDGET_SECONDS
+    budget = FLUSH_BUDGET_SECONDS if budget_seconds is None else budget_seconds
+    return _mono() - flush_started >= budget
 
 
 class _FlushTimings:
@@ -407,6 +446,9 @@ async def _run_kalshi_ws_consumer(*, sessions, prices):
     from app.utils.futures_rank import rerank_market_fields_stmt  # #6598
     from app.utils.kalshi_exact_trace import ExactKalshiTrace
 
+    # #10090: an invalid override fails here, before the slate or a socket.
+    flush_period, blend_floor, failed_retry, flush_budget = kalshi_flush_cadence()
+
     # A START exists even when slate loading never finishes or selects nothing.
     exact_trace = None
     with contextlib.suppress(Exception):
@@ -646,6 +688,7 @@ async def _run_kalshi_ws_consumer(*, sessions, prices):
     prices.timings = flush_timings
     blend_refresher = LiveBlendRefresher(
         "kalshi", session_factory=get_task_session,  # #2471
+        min_refresh_interval_s=blend_floor,
     )
     # #10090 — the receipt Polymarket has carried since #837: every accepted
     # input is marked (seq, receive instant) as it is buffered, so the
@@ -760,6 +803,7 @@ async def _run_kalshi_ws_consumer(*, sessions, prices):
                 # budget every later phase stays buffered for the next flush.
                 if not final_drain and flush_budget_spent(
                     flush_started, phase, event_id_by_outcome, live_event_ids,
+                    flush_budget,
                 ):
                     stats["budget_deferred"] += sum(len(p) for p in phases[index:])
                     break
@@ -1372,7 +1416,13 @@ async def _run_kalshi_ws_consumer(*, sessions, prices):
             flush_timings.flushed(time.monotonic() - started)
 
     async def flush_loop():
-        await run_flush_cadence(timed_flush, PRICE_FLUSH_SECONDS, stop=loops_stop)
+        if failed_retry is None:
+            await run_flush_cadence(timed_flush, flush_period, stop=loops_stop)
+        else:
+            await run_flush_cadence(
+                timed_flush, flush_period, stop=loops_stop,
+                failed_retry_interval_s=failed_retry,
+            )
 
     # -- Periodic stats logging --
     async def stats_loop():

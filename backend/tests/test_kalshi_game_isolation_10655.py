@@ -130,7 +130,7 @@ def rig(*, failed=None, declined=None, pending=(), locked=(), unchanged=()):
               input_marks={oid: oid for oid in batch}, tail_receipts=Receipts(),
               open_contract_outcome_ids={9}, blend_refresher=Refresher(),
               # #10090: no live set is the pre-#10090 plan, and no budget.
-              live_event_ids=None,
+              live_event_ids=None, flush_budget=None,
               get_task_session=session, stats=stats,
               prices=_KalshiPriceOwner(),
               logger=logging.getLogger(__name__),

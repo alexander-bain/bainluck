@@ -230,6 +230,7 @@ def _without_reviewed_pipelined_stamps(fn):
 BUDGET_STATEMENT = (
     'if not final_drain and flush_budget_spent(\n'
     '    flush_started, phase, event_id_by_outcome, live_event_ids,\n'
+    '    flush_budget,\n'
     '):\n'
     '    stats["budget_deferred"] += sum(len(p) for p in phases[index:])\n'
     '    break'
