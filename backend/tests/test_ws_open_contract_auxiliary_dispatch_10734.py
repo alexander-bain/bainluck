@@ -310,3 +310,149 @@ class TestTheDeferredGradeKeepsItsGuarantees:
         assert calls == []
         assert state["market_writes"] == []
         assert stats["settlements"] == 0
+
+
+class TestOpenGradePoolReserve:
+    def test_bound_tracks_the_actual_task_pool(self, monkeypatch):
+        from app.tasks import base, kalshi_ws as task
+
+        captured = {}
+
+        def create(_url, **kwargs):
+            captured.update(kwargs)
+            return object()
+
+        monkeypatch.setattr(base, "create_async_engine", create)
+        base._get_task_engine()
+        assert (
+            task.OPEN_CONTRACT_GRADE_CONCURRENCY
+            == (captured["pool_size"] + captured["max_overflow"] - 1)
+            == 4
+        )
+
+    @pytest.mark.parametrize(
+        "mode", ["success", "entry_failure", "grade_failure", "recycle"]
+    )
+    async def test_main_and_auxiliary_share_one_allowance_and_unwind(
+        self, monkeypatch, mode
+    ):
+        import types
+        from app.tasks import base, kalshi_ws as task
+        from tests import test_ws_open_contract_prices_9484 as rig
+
+        gates, requested = [], asyncio.Event()
+        original_semaphore = asyncio.Semaphore
+
+        class RecordingSemaphore(original_semaphore):
+            def __init__(self, value):
+                super().__init__(value)
+                self.owners, self.requests, self.peak = set(), 0, 0
+                gates.append(self)
+
+            async def acquire(self):
+                self.requests += 1
+                if self.requests == 5:
+                    requested.set()
+                result = await super().acquire()
+                self.owners.add(asyncio.current_task())
+                self.peak = max(self.peak, len(self.owners))
+                return result
+
+            def release(self):
+                self.owners.remove(asyncio.current_task())
+                return super().release()
+
+        api = dict(vars(asyncio))
+        api["Semaphore"] = RecordingSemaphore
+        monkeypatch.setattr(task, "asyncio", types.SimpleNamespace(**api))
+        release, quote_seen = asyncio.Event(), asyncio.Event()
+        calls = _recording_grader(monkeypatch)
+        _recording_changes(monkeypatch)
+        recorded_grade = oc.grade_open_contract_leg
+        failure = []
+
+        async def grade(session, **kw):
+            if mode == "grade_failure" and not failure:
+                failure.append("grade")
+                raise RuntimeError("one grade failed")
+            await release.wait()
+            return await recorded_grade(session, **kw)
+
+        monkeypatch.setattr(oc, "grade_open_contract_leg", grade)
+        original_install = rig._install_session
+
+        def install(*args, **kwargs):
+            state = original_install(*args, **kwargs)
+            original_factory = base.get_task_session
+
+            def factory(*a, **kw):
+                if (
+                    mode == "entry_failure"
+                    and not failure
+                    and any(asyncio.current_task() in g.owners for g in gates)
+                ):
+                    failure.append("entry")
+
+                    class BrokenEntry:
+                        async def __aenter__(self):
+                            raise RuntimeError("one session entry failed")
+
+                        async def __aexit__(self, *_exc):
+                            raise AssertionError("entry never succeeded")
+
+                    return BrokenEntry()
+                return original_factory(*a, **kw)
+
+            monkeypatch.setattr(base, "get_task_session", factory)
+            return state
+
+        monkeypatch.setattr(rig, "_install_session", install)
+        original_note = blend_mod.TailReceipts.note_input
+
+        def note(self, event, outcome, probability, origin):
+            if outcome == OPEN_ID:
+                quote_seen.set()
+            return original_note(self, event, outcome, probability, origin)
+
+        monkeypatch.setattr(blend_mod.TailReceipts, "note_input", note)
+        original_next = rig._Socket.__anext__
+
+        async def next_frame(sock):
+            # The game socket's open-leg fallback must see completed admission.
+            if sock._pending and sock._pending[0] == main_frame:
+                await quote_seen.wait()
+            return await original_next(sock)
+
+        monkeypatch.setattr(rig._Socket, "__anext__", next_frame)
+        tickers = [f"KXRESERVE-26C{i}-A" for i in range(5)]
+        rows = [(t, 100 + i, 1000 + i) for i, t in enumerate(tickers)]
+        rows.append((OPEN_TICKER, 50, OPEN_ID))
+        main_frame = _settle(tickers[4])
+        job = asyncio.create_task(
+            _run(
+                monkeypatch,
+                frames_for={
+                    rig.LINKED_TICKER: [main_frame],
+                    tickers[0]: [_settle(t) for t in tickers[:3]]
+                    + [_tick(OPEN_TICKER), _settle(tickers[3])],
+                },
+                open_rows=rows,
+                refresh=0.4 if mode == "recycle" else 1.0,
+            )
+        )
+        try:
+            await asyncio.wait_for(requested.wait(), 2)
+            assert len(gates) == 1, "one allowance for the consumer, not per socket"
+            assert gates[0].peak <= 4
+            if mode != "recycle":
+                release.set()
+            stats, _record, _state = await job
+        finally:
+            if not job.done():
+                job.cancel()
+            await asyncio.gather(job, return_exceptions=True)
+        assert gates[0].owners == set()
+        assert gates[0]._value == 4
+        assert len(calls) == (0 if mode == "recycle" else 4 if failure else 5)
+        assert stats["open_contract_settlements"] == len(calls)
+        assert stats["errors"] == (1 if failure else 0)

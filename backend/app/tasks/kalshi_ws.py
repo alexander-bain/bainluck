@@ -47,6 +47,10 @@ SUBSCRIPTION_REFRESH_SECONDS = int(
 #: this is how long after the failure the price waits for the next attempt.
 PRICE_FLUSH_SECONDS = float(os.getenv("WS_PRICE_FLUSH_SECONDS", "2"))
 
+# #10737: leave one of the task engine's existing 3+2 slots outside this
+# grade class. Other consumer operations can still contend for that slot.
+OPEN_CONTRACT_GRADE_CONCURRENCY = 4
+
 # Q491 repair (CERT-654 BLOCK). The periodic flush can afford to requeue a failed
 # batch because another flush is `PRICE_FLUSH_SECONDS` away. **The final flush has
 # no successor** — after it the consumer returns and the buffer is garbage — so
@@ -1053,6 +1057,10 @@ async def _run_kalshi_ws_consumer(*, sessions, prices):
                         event=event_id_by_outcome.get(outcome_id), probability=prob, mark=mark,
                     )
 
+    # Shared by every auxiliary socket and the main/fallback open-leg route.
+    # Wait before opening a session; unwind the transaction before the permit.
+    open_grade_admission = asyncio.Semaphore(OPEN_CONTRACT_GRADE_CONCURRENCY)
+
     async def handle_open_contract_lifecycle(ticker: str, msg: dict):
         """#10022: one open-contract leg, graded by its own frame — never the
         two-sided write below (see `ws_open_contracts`)."""
@@ -1064,7 +1072,7 @@ async def _run_kalshi_ws_consumer(*, sessions, prices):
             return
         market_id, outcome_id = open_contract_ids[ticker]
         try:
-            async with get_task_session() as session:
+            async with open_grade_admission, get_task_session() as session:
                 graded, resolved = await grade_open_contract_leg(
                     session, market_id=market_id, outcome_id=outcome_id,
                     state=lifecycle_state(msg), result=msg.get("result"),
