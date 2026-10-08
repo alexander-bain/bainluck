@@ -35,8 +35,9 @@ one — not 60x. What it buys is Alex's stated bar: a live match page gains a
 chart point within a minute instead of within two.
 
 Each chart point shares its event's blend transaction. A single admitted event
-keeps its direct read/write path; multiple events prepare inputs once, then
-commit one event per transaction, with fresh inputs ahead of older debt. Earlier
+keeps its direct read/write path; multiple events share preparation within each
+fresh/pending population, then commit one event per transaction. Fresh stamps
+do not wait for older debt's preparation reads. Earlier
 completed events publish and release their row locks while later events still
 do stamp work. A waiting first event still delays later stamps, but cannot hold
 an earlier event's committed stamp or publication.
@@ -1321,57 +1322,64 @@ class LiveBlendRefresher:
                 )
 
         try:
-            prepared = await self._prepare_groups(due)
-            # A newly committed quote should not wait for older retry/deferred
-            # groups merely because its event ID is higher. Keep fresh groups
-            # separate so an older row lock cannot delay their transaction.
-            # Within each population, use the already-prepared status to stamp
-            # live games before scheduled games. A producer's live-first price
-            # plan does not survive the event-id sets or mixed pending debt.
-            # Missing prepared rows remain due; treat them as non-live.
-            # IDs break ties; one event still owns each write transaction.
-            def stamp_order(event_id: int) -> tuple[bool, int]:
-                context = prepared.get(event_id)
-                return (context is None or context[0].status != "live", event_id)
-
-            fresh_due = sorted(fresh.intersection(due), key=stamp_order)
-            pending_due = sorted(set(due).difference(fresh), key=stamp_order)
-            groups = [
-                [event_id]
-                for population in (fresh_due, pending_due)
-                for event_id in population
-            ]
-            for group_ids in groups:
+            # Read/stamp fresh prices before reading older debt. Each nonempty
+            # population shares one prepared view; one-population calls still
+            # pay one read, and the singleton path above remains unchanged.
+            for population in (fresh.intersection(due), set(due).difference(fresh)):
+                if not population:
+                    continue
                 try:
-                    await self._refresh_batch(
-                        group_ids,
-                        clock,
-                        prepared=prepared,
-                        on_committed=committed,
-                        publish_committed=publish_committed,
-                    )
+                    prepared = await self._prepare_groups(list(population))
                 except Exception as exc:
                     self.stats["errors"] += 1
                     logger.exception(
-                        "live_blend_refresh[%s]: group failed for %s",
-                        self.source,
-                        group_ids,
+                        "live_blend_refresh[%s]: preparation failed for %s",
+                        self.source, population,
                     )
-                    if not completed.issuperset(group_ids):
-                        self._refresh_failed(
+                    self._refresh_failed(
+                        population, retry, clock, receipts, staged, stored_wall, exc,
+                    )
+                    failed_groups.update(population)
+                    continue
+
+                # Preserve live-first order within each population and numeric
+                # tie-breaking; missing prepared rows remain due as non-live.
+                def stamp_order(event_id: int) -> tuple[bool, int]:
+                    context = prepared.get(event_id)
+                    return (context is None or context[0].status != "live", event_id)
+
+                for event_id in sorted(population, key=stamp_order):
+                    group_ids = [event_id]
+                    try:
+                        await self._refresh_batch(
                             group_ids,
-                            retry,
                             clock,
-                            receipts,
-                            staged,
-                            stored_wall,
-                            exc,
+                            prepared=prepared,
+                            on_committed=committed,
+                            publish_committed=publish_committed,
                         )
-                        failed_groups.update(group_ids)
-                else:
-                    # Empty/no-market groups also finished successfully.
-                    if not completed.issuperset(group_ids):
-                        committed(group_ids)
+                    except Exception as exc:
+                        self.stats["errors"] += 1
+                        logger.exception(
+                            "live_blend_refresh[%s]: group failed for %s",
+                            self.source,
+                            group_ids,
+                        )
+                        if not completed.issuperset(group_ids):
+                            self._refresh_failed(
+                                group_ids,
+                                retry,
+                                clock,
+                                receipts,
+                                staged,
+                                stored_wall,
+                                exc,
+                            )
+                            failed_groups.update(group_ids)
+                    else:
+                        # Empty/no-market groups also finished successfully.
+                        if not completed.issuperset(group_ids):
+                            committed(group_ids)
             await publication_done()
         except CancelledError as exc:
             remaining = set(due).difference(completed, failed_groups)
@@ -1387,12 +1395,12 @@ class LiveBlendRefresher:
             )
             raise
         except Exception as exc:
-            # Preparation failed before any group could commit. The already
-            # committed prices remain owed, including immediately due locks.
+            # Setup can fail between populations after earlier stamps committed.
+            # Only unfinished work remains owed, including immediately due locks.
             self.stats["errors"] += 1
             logger.exception("live_blend_refresh[%s]: preparation failed", self.source)
             self._refresh_failed(
-                set(due).difference(completed),
+                set(due).difference(completed, failed_groups),
                 retry,
                 clock,
                 receipts,
