@@ -3604,6 +3604,22 @@ DATED_BASIS_BANK_LEAD_MINUTES = 30
 #: how soon a new listing's opening is judged.
 OPENING_BOOK_SLICES = 12
 
+#: How long one lock acquisition in the movement core may WAIT (#10090).
+#:
+#: The core (A1-A7, B, C) is one transaction by design, so every outcome row it
+#: retires stays locked until C commits, and the quote writers UPDATE those same
+#: rows every flush. A1-A7 take their targets with `SKIP LOCKED`, so they never
+#: queue behind a row a writer holds; a skipped row still qualifies on the next
+#: ten-minute run. This bounds every OTHER wait in that transaction — B and C's
+#: market rows, any relation lock — so maintenance can never sit in a lock queue
+#: while holding quote rows it already took. When it fires the core raises
+#: 55P03 and rolls back whole: no outcome is cleared against an unrecomputed
+#: market, every quote row is released at once, and the run fails loudly.
+#: Half a second for `DEFAULT_STAMP_LOCK_TIMEOUT_MS`'s reason: under the
+#: server's 1 s `deadlock_timeout`, so the core stops waiting before a deadlock
+#: with a writer can be detected against the writer.
+MOVEMENT_CORE_LOCK_TIMEOUT_MS = 500
+
 
 def _opening_book_slice(epoch_seconds: float) -> int:
     """The slice statement A10 judges on a run starting at `epoch_seconds`."""
@@ -3742,6 +3758,7 @@ def update_max_movement(self):
         # imported from their owners so the sweep and the reader cannot drift.
         from app.utils.futures_highlights import MODERATE_SURPRISE_THRESHOLD
         from app.utils.futures_market_snapshot import UNPRICED_OPENING_METADATA_KEY
+        from app.utils.repair_lock_budget import SET_LOCK_TIMEOUT_SQL, lock_timeout_value
 
         # 🔴 A4's two thresholds are bound as `Decimal`, and a `float` here is a
         # REAL BUG, not a style preference. Both columns A4 compares are
@@ -3874,6 +3891,15 @@ def update_max_movement(self):
 
             await session.commit()
 
+            # The core yields to quotes (#10090). First statement of the core
+            # transaction, so `is_local` scopes it to exactly A1-A7/B/C; the
+            # A1-A7 target selections below lock with `SKIP LOCKED` and never
+            # wait at all. See MOVEMENT_CORE_LOCK_TIMEOUT_MS.
+            await session.execute(
+                SET_LOCK_TIMEOUT_SQL,
+                {"ms": lock_timeout_value(MOVEMENT_CORE_LOCK_TIMEOUT_MS)},
+            )
+
             # A. Retire deltas whose row has not been written inside the window.
             #    `last_updated` is the right stamp and `price_changed_at` is the
             #    wrong one: this asks "has any writer touched this row", not "did
@@ -3892,6 +3918,7 @@ def update_max_movement(self):
                           AND last_updated < now() - (:window_hours * interval '1 hour')
                         ORDER BY abs(probability_change_24h) DESC
                         LIMIT :batch
+                        FOR UPDATE SKIP LOCKED
                     )
                 """),
                 {"window_hours": MOVEMENT_WINDOW_HOURS, "batch": STALE_DELTA_BATCH},
@@ -3950,6 +3977,7 @@ def update_max_movement(self):
                           AND resolution_source IS NOT NULL
                         ORDER BY abs(probability_change_24h) DESC
                         LIMIT :batch
+                        FOR UPDATE SKIP LOCKED
                     )
                 """),
                 {"batch": GRADED_DELTA_BATCH},
@@ -4035,6 +4063,7 @@ def update_max_movement(self):
                                OR current_probability - probability_change_24h > 1)
                         ORDER BY abs(probability_change_24h) DESC
                         LIMIT :batch
+                        FOR UPDATE SKIP LOCKED
                     )
                 """),
                 {"batch": IMPOSSIBLE_PRIOR_BATCH},
@@ -4187,6 +4216,7 @@ def update_max_movement(self):
                               END
                         ORDER BY abs(fo.probability_change_24h) DESC
                         LIMIT :batch
+                        FOR UPDATE OF fo SKIP LOCKED
                     )
                 """),
                 {
@@ -4236,6 +4266,7 @@ def update_max_movement(self):
                           AND rank_change_24h != 0
                           AND last_updated < now() - (:window_hours * interval '1 hour')
                         LIMIT :batch
+                        FOR UPDATE SKIP LOCKED
                     )
                 """),
                 {"window_hours": MOVEMENT_WINDOW_HOURS, "batch": STALE_RANK_BATCH},
@@ -4272,6 +4303,7 @@ def update_max_movement(self):
                           AND rank_change_24h != 0
                           AND resolution_source IS NOT NULL
                         LIMIT :batch
+                        FOR UPDATE SKIP LOCKED
                     )
                 """),
                 {"batch": GRADED_RANK_BATCH},
@@ -4415,6 +4447,7 @@ def update_max_movement(self):
                               END
                         ORDER BY abs(fo.probability_change_24h) DESC
                         LIMIT :batch
+                        FOR UPDATE OF fo SKIP LOCKED
                     )
                 """),
                 {

@@ -85,9 +85,16 @@ class _RecordingSession:
         self._rowcounts = list(rowcounts or [])
         self.fail_bank = fail_bank
         self.warm_snapshots = []
+        # (position in `events`, params) per transaction lock budget. Kept out
+        # of `events`/`calls`/`rowcounts` so the phase-indexed controls below
+        # keep reading A..C; its own control pins where it lands.
+        self.lock_budgets: list[tuple[int, dict]] = []
 
     async def execute(self, stmt, params=None):  # noqa: ANN001
         sql = " ".join(str(stmt).split())
+        if "set_config('lock_timeout'" in sql:
+            self.lock_budgets.append((len(self.events), params or {}))
+            return _Result(0)
         self.calls.append((sql, params or {}))
         self.events.append(sql)
         if self.fail_bank and "jsonb_object_agg" in sql:
@@ -169,6 +176,37 @@ def test_opening_sweep_releases_market_locks_before_any_outcome_write(run_task):
     events = _movement_events(run_task()[1])
     assert "UPDATE futures_outcomes" in events[0], events
     assert "unpriced_opening_ids" not in " ".join(events), events
+
+
+def test_the_core_yields_quote_rows_instead_of_waiting_for_them(run_task):
+    """#10090: maintenance never queues behind a quote writer holding outcomes.
+
+    Every outcome target is taken with SKIP LOCKED (a skipped row qualifies
+    again next run), and the core's remaining waits — B/C market rows — are
+    bounded by a transaction-local lock budget issued as the core's FIRST
+    statement, after A10 commits and before any outcome lock is taken.
+    """
+    from app.tasks import MOVEMENT_CORE_LOCK_TIMEOUT_MS
+
+    _, session = run_task()
+    core = _movement_events(session)
+    commits = [i for i, event in enumerate(session.events) if event == "COMMIT"]
+    assert session.lock_budgets == [
+        (commits[0] + 1, {"ms": f"{MOVEMENT_CORE_LOCK_TIMEOUT_MS}ms"})
+    ], session.lock_budgets
+    assert MOVEMENT_CORE_LOCK_TIMEOUT_MS < 1000  # under deadlock_timeout
+
+    outcome_writes = [s for s in core if s.startswith("UPDATE futures_outcomes")]
+    assert len(outcome_writes) == 7, core
+    for sql in outcome_writes:
+        lock = "FOR UPDATE OF fo SKIP LOCKED" if "futures_outcomes fo" in sql else (
+            "FOR UPDATE SKIP LOCKED"
+        )
+        assert f"LIMIT :batch {lock} )" in sql, sql
+    # B/C keep their coherent recompute: no market is skipped.
+    for sql in core:
+        if sql.startswith("UPDATE futures_markets"):
+            assert "SKIP LOCKED" not in sql, sql
 
 
 def _statements(session: _RecordingSession) -> list[str]:
