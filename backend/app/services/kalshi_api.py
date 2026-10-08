@@ -762,6 +762,55 @@ _ALWAYS_FETCH_SERIES = {
     "KXATPEXACTMATCH", "KXWTAEXACTMATCH",
     "KXRAIN", "KXRAINWKND",
 } | set(_WEATHER_MONTHLY_SERIES_TICKERS)
+
+# #10719 (+ #10256): the per-game spread, total and player series, fetched as
+# OPEN events with their markets attached, on every beat, before the floor.
+#
+# The golf-class gap again, and this time the main scan's own report names the
+# mechanism. That scan walks `status=None` — every event Kalshi has ever listed,
+# expiry-DESC — 5,000 events a beat on a resumable cursor, and 24 of 24 beats in
+# the ring read `starved`, `never_wrapped`. Once the cursor passes the present
+# it walks settled history and does not come back to today for weeks. Every
+# series it alone reached stopped at that moment: MLB player series newest
+# 09-28 06:56Z / 09-29 02:53Z, every WNBA spread/total/player series 09-28
+# 06:56Z, NHL player series 07-17. Kalshi listed ~200 of them on the night's
+# LAD@ATL and 95 on NY@ATL game 2 (2026-10-07); we held the winner only.
+#
+# KXMLBSPREAD/TOTAL/TEAMTOTAL were already on the floor and went dark anyway
+# (newest 09-28 02:50Z), through the short-circuit above: the main scan is now
+# paging through the regular season's settled MLB spreads, so "the scan already
+# holds a KXMLBSPREAD event" was true on every beat and the rescue was skipped.
+#
+# Why `status="open"` and not the floor's `status=None`: the floor walks up to
+# five 200-event pages of history per series (gotcha #41 — ask what the
+# ordering starts on), which is affordable only stripped, and stripped means
+# waiting on the bounded market backfill. Open-only is small enough to take
+# nested. Measured at the venue 2026-10-07 ~00:30Z, one
+# `/events?series_ticker=…&status=open&with_nested_markets=true&limit=200` per
+# series: every one returned a single page of 0-13 events and at most 257
+# markets (KXMLBHRR), in 0.11-0.18s. These rows only need their OPEN events
+# from this pass; settled capture is `kalshi_settled`'s job (#995).
+#
+# Never short-circuited and upserted with the floor (`tasks/kalshi.py
+# _floor_series_first`): they turn over nightly exactly like the winner series.
+_OPEN_DERIVATIVE_SERIES_TICKERS = [
+    # MLB game-level and player series (#10719)
+    "KXMLBSPREAD", "KXMLBTOTAL", "KXMLBTEAMTOTAL", "KXMLBF5", "KXMLBRFI",
+    "KXMLBHIT", "KXMLBHR", "KXMLBTB", "KXMLBKS", "KXMLBRBI", "KXMLBHRR",
+    "KXMLBSB",
+    # WNBA spread, total and player series (#10719; #1898 left them out to
+    # spend the backfill reserve on the winner only — this pass doesn't touch it)
+    "KXWNBASPREAD", "KXWNBATOTAL", "KXWNBAPTS", "KXWNBAREB", "KXWNBAAST",
+    "KXWNBA3PT",
+    # NHL player series (#10256), dark since 2026-07-17
+    "KXNHLPTS", "KXNHLGOAL", "KXNHLAST", "KXNHLSAVES",
+]
+#: Seconds the open pass may spend, carved from the main scan like every other
+#: rescue reserve (its cursor is resumable). 22 requests at ~0.15s plus the 0.3s
+#: politeness sleep is ~10s; the pass stops at this bound regardless, so it can
+#: never eat into the floor's own 60s.
+_OPEN_DERIVATIVE_RESERVE_S = 15.0
+
 # #995 attempt-8 (targeted): game-level series (GAME/SPREAD/TOTAL/1H/2H/
 # WINNER/SERIES) explode into monster nested-markets payloads — the exact
 # blobs whose sync parse froze the loop (KXMLBGAME, KXNBA1HSPREAD). Fetch
@@ -2240,7 +2289,10 @@ class KalshiAPIService(BaseAPIClient):
         ) = fetch_stage_deadlines(
             deadline,
             has_discovered=bool(_discovered_series),
-            rescue_reserve_s=_RESCUE_RESERVE_S,
+            # #10719: the open derivative pass runs at the head of the
+            # guaranteed window, so its seconds are added to that window's
+            # carve rather than taken from the floor's 60.
+            rescue_reserve_s=_RESCUE_RESERVE_S + _OPEN_DERIVATIVE_RESERVE_S,
             discovery_reserve_s=_DISCOVERY_RESERVE_S,
             backfill_reserve_s=_BACKFILL_RESERVE_S,
         )
@@ -2419,6 +2471,62 @@ class KalshiAPIService(BaseAPIClient):
         # indistinguishable from a repair that never ran — the shape that let
         # `KXRAINNYCM-26SEP` sit market-less through every beat.
         _supp_upgraded = 0
+        # #10719: tonight's spread, total and player events, before the floor.
+        # See `_OPEN_DERIVATIVE_SERIES_TICKERS` for why these need their own
+        # pass. Bounded by its own reserve so the floor keeps all of its 60s.
+        _open_pass_deadline = None
+        if _supp_deadline is not None:
+            _open_pass_deadline = min(
+                _supp_deadline, _time.monotonic() + _OPEN_DERIVATIVE_RESERVE_S
+            )
+        _open_added = 0
+        _open_series_fetched = 0
+        _tel["open_derivative_truncated_after"] = None
+        for st in _OPEN_DERIVATIVE_SERIES_TICKERS:
+            if (
+                _open_pass_deadline is not None
+                and _time.monotonic() >= _open_pass_deadline
+            ):
+                _tel["open_derivative_truncated_after"] = _open_series_fetched
+                logger.warning(
+                    "Kalshi open derivative pass hit its %.0fs reserve after "
+                    "%d of %d series", _OPEN_DERIVATIVE_RESERVE_S,
+                    _open_series_fetched, len(_OPEN_DERIVATIVE_SERIES_TICKERS),
+                )
+                break
+            _progress(f"fetch:open:{st}")
+            try:
+                await asyncio.sleep(0.3)
+                events_page, _ = await asyncio.wait_for(
+                    self.get_events(
+                        status="open",
+                        series_ticker=st,
+                        with_nested_markets=True,
+                        limit=200,
+                        deadline=_open_pass_deadline,
+                        progress_cb=_progress,
+                    ),
+                    timeout=20.0,
+                )
+                parsed_page = await asyncio.wait_for(
+                    self._parse_events_offloaded(events_page), timeout=30.0
+                )
+            except Exception as e:
+                logger.debug("Open derivative fetch for %s failed: %s", st, e)
+                continue
+            _open_series_fetched += 1
+            for parsed_event in parsed_page:
+                if not parsed_event:
+                    continue
+                _verdict = merge_fetched_event(all_events, parsed_event)
+                if _verdict == MERGE_ADDED:
+                    supplemented += 1
+                    _open_added += 1
+                elif _verdict == MERGE_UPGRADED:
+                    _supp_upgraded += 1
+        _tel["open_derivative_series_fetched"] = _open_series_fetched
+        _tel["open_derivative_events_added"] = _open_added
+
         _ordered_series = sorted(
             _RESCUE_SERIES_TICKERS,
             key=lambda s: 0 if s.upper().startswith(_PRIORITY_RESCUE_PREFIXES) else 1,
@@ -2436,8 +2544,14 @@ class KalshiAPIService(BaseAPIClient):
             # main scan finds SOME of their open events and misses the rest, and
             # for these the difference between "some" and "all" is the whole
             # slate. Everything else may short-circuit on presence.
+            #
+            # #10719: keyed on the event's SERIES, not a string prefix. "KXMLB"
+            # (the championship) is a prefix of every MLB series, so once the
+            # open pass above holds tonight's KXMLBHIT events, a prefix test
+            # would skip the World Series rescue on every game day.
             if st not in _ALWAYS_FETCH_SERIES and any(
-                e.event_ticker.upper().startswith(st.upper()) for e in all_events.values()
+                event_series_ticker(e.event_ticker) == st.upper()
+                for e in all_events.values()
             ):
                 continue
             try:

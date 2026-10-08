@@ -1293,17 +1293,36 @@ def _floor_series_first(events):
 
     The floor is ~285 open events; the new events it displaces are still new
     next beat and go first then, so creation is delayed a beat, never lost.
-    Relative order within each group is preserved."""
-    from app.services.kalshi_api import _ALWAYS_FETCH_SERIES, event_series_ticker
+    Relative order within each group is preserved.
 
-    floor = [
-        e for e in events
-        if event_series_ticker(e.event_ticker) in _ALWAYS_FETCH_SERIES
-    ]
-    rest = [
-        e for e in events
-        if event_series_ticker(e.event_ticker) not in _ALWAYS_FETCH_SERIES
-    ]
+    #10719: tonight's spread, total and player events
+    (``_OPEN_DERIVATIVE_SERIES_TICKERS``) join the floor while any of their
+    markets is still trading. Fetching them is not enough: they arrive behind
+    ~4,800 new history events from the main scan, and the loop's deadline cut
+    the new partition short on 20 of 24 beats in the ring. A settled event from
+    those series keeps its place, so the floor-series' history does not ride
+    along."""
+    from app.services.kalshi_api import (
+        _ALWAYS_FETCH_SERIES,
+        _OPEN_DERIVATIVE_SERIES_TICKERS,
+        event_series_ticker,
+    )
+
+    open_series = set(_OPEN_DERIVATIVE_SERIES_TICKERS)
+
+    def _is_floor(e) -> bool:
+        series = event_series_ticker(e.event_ticker)
+        if series in _ALWAYS_FETCH_SERIES:
+            return True
+        return (
+            series in open_series
+            and bool(e.markets)
+            and not all_terminal(m.status for m in e.markets)
+        )
+
+    floor, rest = [], []
+    for e in events:
+        (floor if _is_floor(e) else rest).append(e)
     return floor + rest
 
 
