@@ -35,6 +35,7 @@ UNWIND = 0.05
 
 class _SlowUnwind(lbr.LiveBlendRefresher):
     instances: list = []
+    unwind = UNWIND
 
     def __init__(self, *a, **kw):
         super().__init__(*a, **kw)
@@ -54,7 +55,7 @@ class _SlowUnwind(lbr.LiveBlendRefresher):
             await asyncio.sleep(2.0 if first else 0)
         except asyncio.CancelledError:
             self.cancelled += 1
-            await asyncio.sleep(UNWIND)  # a rollback still unwinding
+            await asyncio.sleep(self.unwind)  # a rollback still unwinding
             raise
         finally:
             self.running -= 1
@@ -77,6 +78,54 @@ async def test_the_final_drain_waits_for_the_cancelled_flush(monkeypatch):
     assert refresher.calls >= 2, "premise: the final drain refreshed too"
     assert refresher.most_running == 1, "the drain refreshed beside the flush"
     assert stats["loops_unreaped"] == 0
+
+
+async def test_the_drain_waits_past_the_reap_bound(monkeypatch):
+    """Root 1648Z: a rollback outlasting the reap timeout is still inside the
+    refresher; the join never falls through its timeout into the drain."""
+    module, consumer, slate = _arm(monkeypatch, "kalshi")
+    monkeypatch.setattr(_SlowUnwind, "instances", [])
+    monkeypatch.setattr(_SlowUnwind, "unwind", 0.3)
+    monkeypatch.setattr(lbr, "LiveBlendRefresher", _SlowUnwind)
+    monkeypatch.setattr(lbr, "LOOP_REAP_TIMEOUT_S", 0.02)
+    monkeypatch.setattr(module, "PRICE_FLUSH_SECONDS", 0.01)
+    _install_quiet_socket(monkeypatch)
+    _timing(monkeypatch, module, refresh=0.3)
+    _install_session(monkeypatch, slate, lambda n: [])
+
+    await asyncio.wait_for(consumer(), timeout=5)
+
+    (refresher,) = _SlowUnwind.instances
+    assert refresher.cancelled == 1, "premise: the recycle cancelled a refresh"
+    assert refresher.calls >= 2, "premise: the final drain refreshed too"
+    assert refresher.most_running == 1, "the drain refreshed beside the flush"
+
+
+async def test_a_second_cancel_on_the_join_still_joins_then_drains(monkeypatch):
+    """A shutdown cancel landing while the join waits is recorded: the flush
+    still finishes first, the drain still runs, then the cancel propagates."""
+    module, consumer, slate = _arm(monkeypatch, "kalshi")
+    monkeypatch.setattr(_SlowUnwind, "instances", [])
+    monkeypatch.setattr(_SlowUnwind, "unwind", 0.3)
+    monkeypatch.setattr(lbr, "LiveBlendRefresher", _SlowUnwind)
+    monkeypatch.setattr(module, "PRICE_FLUSH_SECONDS", 0.01)
+    _install_quiet_socket(monkeypatch)
+    _timing(monkeypatch, module, refresh=0.3)
+    _install_session(monkeypatch, slate, lambda n: [])
+
+    run = asyncio.create_task(consumer())
+    for _ in range(400):
+        if _SlowUnwind.instances and _SlowUnwind.instances[0].cancelled:
+            break
+        await asyncio.sleep(0.01)
+    (refresher,) = _SlowUnwind.instances
+    assert refresher.cancelled == 1, "premise: the recycle cancelled a refresh"
+    assert refresher.running == 1, "premise: the flush is still unwinding"
+    run.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await asyncio.wait_for(run, timeout=5)
+    assert refresher.calls >= 2, "the drain was skipped by the second cancel"
+    assert refresher.most_running == 1, "the drain refreshed beside the flush"
 
 
 class _HeldBatch(lbr.LiveBlendRefresher):

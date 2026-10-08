@@ -1054,14 +1054,32 @@ async def _run_kalshi_ws_consumer(*, sessions, prices):
         on the way out — finishes before the final drain enters the refresher,
         so two refreshes never share its throttle/retry sets and receipts.
 
-        Bounded like the reap below; a flush still running past it is left to
-        that reap's error line rather than costing the drain. The drain runs in
-        `finally`, so a second cancellation landing on the join cannot skip it.
+        Joined to COMPLETION, never to a timeout (Root 1648Z): a flush whose
+        rollback outlasts the reap bound is still inside the refresher, so
+        draining then would be the overlap this exists to prevent. Its own
+        DB/socket bounds end it, and `loops_stop` ends a flush that lost its
+        cancellation at its next turn. A second cancellation landing on the
+        join is recorded, not obeyed early: the join and the drain both still
+        run, then the cancellation propagates.
         """
+        interrupted = None
+        while not flush_task.done():
+            try:
+                await asyncio.wait({flush_task}, timeout=LOOP_REAP_TIMEOUT_S)
+            except asyncio.CancelledError as exc:
+                interrupted = exc
+                continue
+            if not flush_task.done():
+                logger.error(
+                    "Kalshi WS: cancelled flush still running after %.0fs; "
+                    "the final drain waits for it",
+                    LOOP_REAP_TIMEOUT_S,
+                )
         try:
-            await asyncio.wait({flush_task}, timeout=LOOP_REAP_TIMEOUT_S)
-        finally:
             await drain_prices()
+        finally:
+            if interrupted is not None:
+                raise interrupted
 
     def _parse_dollar(val) -> float | None:
         if val is None or val == "":
