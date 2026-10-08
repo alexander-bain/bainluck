@@ -8,7 +8,8 @@ WHAT THIS FILE PROVES — the consumer's half, against the FROZEN pre-#10693
 flush (`fixtures/kalshi_flush_before_10693.py.txt`, never edited to match):
 
 1. After removing the five exact, independently reviewed #10702 observer
-   statements, `flush_prices` differs in exactly ONE statement, the price loop. The 500 ms phase budget, 55P03-only continuation,
+   statements and the exact #10090 flush budget (one statement, one keyword),
+   `flush_prices` differs in exactly ONE statement, the price loop. The 500 ms phase budget, 55P03-only continuation,
    pending-debt grouping, newest-tick retention, commit-before-publication,
    receipts and the timeout-free final drain are the same code, not a rewrite.
 2. Executed: the current and the frozen flush, each on its own copy of the
@@ -133,7 +134,38 @@ def _without_reviewed_observers(fn):
 
     result = RemoveExactObservers().visit(fn)
     assert len(removed) == len(accepted) and set(removed) == accepted
-    return result
+    return _without_reviewed_budget(result)
+
+
+# #10090 adds the flush budget: the planner learns the run's live set, and a
+# periodic flush stops STARTING non-live phases once its budget is spent. Only
+# these exact ASTs, in these exact places, are excluded: a changed condition, a
+# body that touches the buffer, or either piece moved must still fail.
+BUDGET_STATEMENT = (
+    'if not final_drain and flush_budget_spent(\n'
+    '    flush_started, phase, event_id_by_outcome, live_event_ids,\n'
+    '):\n'
+    '    stats["budget_deferred"] += sum(len(p) for p in phases[index:])\n'
+    '    break'
+)
+BUDGET_KEYWORD = "live_events=live_event_ids"
+
+
+def _without_reviewed_budget(fn):
+    statement = ast.dump(ast.parse(BUDGET_STATEMENT).body[0])
+    (loop,) = [n for n in ast.walk(fn) if isinstance(n, ast.For)
+               and ast.unparse(n.target) == "(index, phase)"]
+    assert loop.body and ast.dump(loop.body[0]) == statement, (
+        "the #10090 budget is not the exact first statement of the phase loop"
+    )
+    loop.body = loop.body[1:]
+    (planner,) = [n for n in ast.walk(fn) if isinstance(n, ast.Call)
+                  and isinstance(n.func, ast.Name)
+                  and n.func.id == "linked_first_phases"]
+    kept = [kw for kw in planner.keywords if ast.unparse(kw) != BUDGET_KEYWORD]
+    assert len(kept) == len(planner.keywords) - 1, "the planner lost its live set"
+    planner.keywords = kept
+    return fn
 
 
 async def test_the_flush_changed_in_exactly_the_price_loop():
@@ -172,6 +204,29 @@ async def test_changed_observer_cannot_hide_a_price_write():
         )
     )
     observer.body.append(ast.parse("price_buffer.clear()").body[0])
+    with pytest.raises(AssertionError):
+        _without_reviewed_observers(current)
+
+
+@pytest.mark.parametrize("mutation", ["body", "condition", "placement", "keyword"])
+async def test_only_the_exact_10090_budget_is_reviewed(mutation):
+    current = _without_docstring(flush_ast())
+    (loop,) = [n for n in ast.walk(current) if isinstance(n, ast.For)
+               and ast.unparse(n.target) == "(index, phase)"]
+    budget = loop.body[0]
+    if mutation == "body":
+        budget.body.insert(0, ast.parse("price_buffer.clear()").body[0])
+    elif mutation == "condition":
+        budget.test = budget.test.values[1]  # the final drain loses its exemption
+    elif mutation == "placement":
+        loop.body.remove(budget)
+        loop.body.insert(1, budget)
+    else:
+        (planner,) = [n for n in ast.walk(current) if isinstance(n, ast.Call)
+                      and isinstance(n.func, ast.Name)
+                      and n.func.id == "linked_first_phases"]
+        planner.keywords = [kw for kw in planner.keywords
+                            if kw.arg != "live_events"]
     with pytest.raises(AssertionError):
         _without_reviewed_observers(current)
 

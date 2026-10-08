@@ -71,6 +71,109 @@ FINAL_FLUSH_ATTEMPTS = int(os.getenv("WS_FINAL_FLUSH_ATTEMPTS", "3"))
 #: would otherwise give up on a lock held ~1.5 s and drop the last prices.
 PRICE_PHASE_LOCK_TIMEOUT_MS = 500
 
+#: #10090 — how long one periodic flush may keep STARTING phases that hold no
+#: live game. Production 2026-10-08 00:25–00:35Z (run b47fefde): a flush on the
+#: 2 s cadence took 1.5–3.3 min, because it wrote every game that ticked since
+#: the last one — ~55 s of per-game phases across ~976 subscribed events — and
+#: then one ~1,300-row futures/props transaction, so a live game's moving price
+#: waited minutes for its turn. Live games are now planned first and always
+#: written (`linked_first_phases`); past this budget the remaining phases stay
+#: buffered, at the front, for the next flush. Never applied to the final drain.
+FLUSH_BUDGET_SECONDS = 2 * PRICE_FLUSH_SECONDS
+
+#: #10090 — the most rows one non-live phase packs. Pre-game games are packed
+#: whole, several per transaction, and futures/props whole MARKETS at a time, so
+#: the budget can stop between phases instead of behind one unbounded one. A
+#: single game or market larger than this is still one phase, never cut.
+NONLIVE_PHASE_MAX_ROWS = 200
+
+#: #10090 — the most games one non-live phase packs. The phase's blend refresh
+#: stamps each of its games, so its cost grows per game, and the longest phase
+#: a flush starts before its budget runs out is what the next flush's live games
+#: wait behind. Production's ~0.5 s per game phase puts eight at a few seconds.
+NONLIVE_PHASE_MAX_GAMES = 8
+
+
+def flush_budget_spent(flush_started, phase, event_id_by_outcome, live_events):
+    """#10090 — True when a periodic flush should leave ``phase`` buffered.
+
+    Never for a phase holding a live game's outcome, never without a start
+    (the final drain, a direct call) and never without a live set (the
+    pre-#10090 plan). Read on the refresher's clock, which `flush_started` is.
+    """
+    if flush_started is None or live_events is None:
+        return False
+    if any(event_id_by_outcome.get(oid) in live_events for oid in phase):
+        return False
+    from app.tasks.live_blend_refresh import _mono
+
+    return _mono() - flush_started >= FLUSH_BUDGET_SECONDS
+
+
+class _FlushTimings:
+    """#10090 — where the Kalshi flush time went, per stats-line minute.
+
+    `save` is the price pipeline (rows written, including their lock waits),
+    `publish` the market invalidations, `stamp` the event blend refresh, and
+    `rank_commit` the rest of the flush: re-rank, commit, session checkout and
+    bookkeeping. One flush's phases are the transactions it opened.
+
+    A flush's bucket time is held IN FLIGHT and joins the minute only with
+    that flush's total (`flushed`), so a stats-line reset mid-flush cannot
+    split the two and misattribute `rank_commit` (CERT-4016 follow-up).
+    """
+
+    BUCKETS = ("save", "publish", "stamp")
+
+    def __init__(self):
+        self.in_flight = dict.fromkeys(self.BUCKETS, 0.0)
+        self.in_flight_phases = 0
+        self.reset()
+
+    def reset(self):
+        """Start a new minute. In-flight time stays with its flush."""
+        self.flushes = 0
+        self.phases = 0
+        self.total = 0.0
+        self.longest = 0.0
+        self.spent = dict.fromkeys(self.BUCKETS, 0.0)
+
+    def add(self, bucket, seconds, *, phase=False):
+        self.in_flight[bucket] += seconds
+        self.in_flight_phases += int(phase)
+
+    def flushed(self, seconds):
+        self.flushes += 1
+        self.total += seconds
+        self.longest = max(self.longest, seconds)
+        self.phases += self.in_flight_phases
+        for bucket, spent in self.in_flight.items():
+            self.spent[bucket] += spent
+        self.in_flight = dict.fromkeys(self.BUCKETS, 0.0)
+        self.in_flight_phases = 0
+
+    def timed(self, bucket, method):
+        """``method`` (a coroutine function) with its duration added to ``bucket``."""
+
+        @functools.wraps(method)
+        async def run(*args, **kwargs):
+            started = time.monotonic()
+            try:
+                return await method(*args, **kwargs)
+            finally:
+                self.add(bucket, time.monotonic() - started)
+
+        return run
+
+    def line(self):
+        rank_commit = max(0.0, self.total - sum(self.spent.values()))
+        return (
+            f"flush n={self.flushes} total={self.total:.1f}s "
+            f"max={self.longest:.1f}s phases={self.phases} "
+            f"save={self.spent['save']:.1f}s rank_commit={rank_commit:.1f}s "
+            f"publish={self.spent['publish']:.1f}s stamp={self.spent['stamp']:.1f}s"
+        )
+
 
 class _KalshiPriceOwner:
     """#10693 — one consumer run's Kalshi price pipeline, installed lazily.
@@ -83,6 +186,8 @@ class _KalshiPriceOwner:
 
     def __init__(self):
         self.pipeline = None
+        # #10090: the consumer's `_FlushTimings`, when it keeps one.
+        self.timings = None
 
     async def phase(self, session, phase):
         """Yield `PriceRunResult`s for one phase. Consume in `aclosing`.
@@ -92,13 +197,18 @@ class _KalshiPriceOwner:
         """
         from app.utils.kalshi_price_pipeline import install_kalshi_price_pipeline
 
-        if self.pipeline is None:
-            self.pipeline = install_kalshi_price_pipeline(session.bind)
-        async with contextlib.aclosing(
-            self.pipeline.iter_phase(session, phase)
-        ) as results:
-            async for result in results:
-                yield result
+        started = time.monotonic()
+        try:
+            if self.pipeline is None:
+                self.pipeline = install_kalshi_price_pipeline(session.bind)
+            async with contextlib.aclosing(
+                self.pipeline.iter_phase(session, phase)
+            ) as results:
+                async for result in results:
+                    yield result
+        finally:
+            if self.timings is not None:
+                self.timings.add("save", time.monotonic() - started, phase=True)
 
     def close(self):
         if self.pipeline is not None:
@@ -148,8 +258,27 @@ def _kalshi_slate_event_window():
     )
 
 
+def _packed(groups, max_rows, max_groups=None):
+    """Consecutive whole ``groups`` merged into phases of at most ``max_rows``
+    rows and ``max_groups`` groups."""
+    phases, current, count = [], {}, 0
+    for group in groups:
+        if current and (
+            len(current) + len(group) > max_rows
+            or (max_groups is not None and count >= max_groups)
+        ):
+            phases.append(current)
+            current, count = {}, 0
+        current.update(group)
+        count += 1
+    if current:
+        phases.append(current)
+    return phases
+
+
 def linked_first_phases(
     batch, market_id_by_outcome, event_id_by_outcome, pending_events=(),
+    live_events=None,
 ):
     """Publish independent games separately, followed by unrelated contracts.
 
@@ -166,6 +295,14 @@ def linked_first_phases(
     drains that debt, so splitting could stamp a later game before its new
     price is written and throttle its actual new reading.
     This only plans phases; the existing flush owns SQL, retry and publish.
+
+    #10090 — with ``live_events`` (the run's live event ids; ``None`` keeps
+    the plan above), each game holding a live event is its own phase, FIRST,
+    in batch order. Every other game is packed whole (at most
+    `NONLIVE_PHASE_MAX_GAMES` per phase), and futures/props whole markets at a
+    time, into phases of at most `NONLIVE_PHASE_MAX_ROWS` rows, in
+    batch order — oldest buffered first, so a budget-deferred tail
+    (`flush_budget_spent`) is the head of the next flush's non-live work.
     """
     if not batch or any(market_id_by_outcome.get(oid) is None for oid in batch):
         return [batch]
@@ -197,10 +334,24 @@ def linked_first_phases(
     if pending_events and games:
         # Preserve batch order in the original single game transaction.
         games = {None: {oid: entry for oid, entry in batch.items() if oid not in rest}}
-    phases = list(games.values())
-    if rest:
-        phases.append(rest)
-    return phases
+    if live_events is None:
+        phases = list(games.values())
+        if rest:
+            phases.append(rest)
+        return phases
+
+    live, other = [], []
+    for game in games.values():
+        holds_live = any(event_id_by_outcome.get(oid) in live_events for oid in game)
+        (live if holds_live else other).append(game)
+    markets = {}
+    for oid, entry in rest.items():
+        markets.setdefault(market_id_by_outcome[oid], {})[oid] = entry
+    return (
+        live
+        + _packed(other, NONLIVE_PHASE_MAX_ROWS, NONLIVE_PHASE_MAX_GAMES)
+        + _packed(markets.values(), NONLIVE_PHASE_MAX_ROWS)
+    )
 
 
 @owns_consumer_sessions("kalshi")
@@ -443,6 +594,10 @@ async def _run_kalshi_ws_consumer(*, sessions, prices):
         "open_contract_bridged_outcomes": 0,
         "open_contract_bridged_events": 0,
         "open_contract_bridge_error": False,
+        # #10090: buffered prices a periodic flush left for the next one after
+        # spending `FLUSH_BUDGET_SECONDS` (non-live phases only). Deferred, not
+        # dropped: they stay at the head of the buffer.
+        "budget_deferred": 0,
     }
 
     # -- Buffered price updates --
@@ -468,6 +623,12 @@ async def _run_kalshi_ws_consumer(*, sessions, prices):
     # the flush read through these same objects.
     open_contract_ids: dict[str, tuple[int, int]] = {}
     open_contract_outcome_ids: set[int] = set()
+    # #10090: the slate's live events, refilled IN PLACE by the #9418 live
+    # reread (`load_unadmitted_live_event_ids`, at once and every 30 s). The
+    # flush writes their games first and never defers them.
+    live_event_ids: set[int] = set()
+    flush_timings = _FlushTimings()
+    prices.timings = flush_timings
     blend_refresher = LiveBlendRefresher(
         "kalshi", session_factory=get_task_session,  # #2471
     )
@@ -533,10 +694,18 @@ async def _run_kalshi_ws_consumer(*, sessions, prices):
         phases = linked_first_phases(
             batch, market_id_by_outcome, event_id_by_outcome,
             pending_events=blend_refresher.pending_event_ids(),
+            live_events=live_event_ids,
         )
         had_lock_failure = False
         flush_counted = False
         for index, phase in enumerate(phases):
+            # #10090: live games are planned first and never deferred; past the
+            # budget every later phase stays buffered for the next flush.
+            if not final_drain and flush_budget_spent(
+                flush_started, phase, event_id_by_outcome, live_event_ids,
+            ):
+                stats["budget_deferred"] += sum(len(p) for p in phases[index:])
+                break
             declined = 0
             written_outcome_ids: list[int] = []
             written_observations: dict = {}
@@ -1070,8 +1239,26 @@ async def _run_kalshi_ws_consumer(*, sessions, prices):
     # a flush still ends the loop at its next turn (`run_flush_cadence`).
     loops_stop = asyncio.Event()
 
+    # #10090: each flush's duration, and its publish and stamp time, for the
+    # stats line (`_FlushTimings`; the price save is timed by `prices`).
+    # `refresh_pending` stamps through `self.refresh`, so it is timed there.
+    for name, bucket in (
+        ("publish_market_changes", "publish"),
+        ("refresh", "stamp"),
+    ):
+        method = getattr(blend_refresher, name, None)
+        if method is not None:
+            setattr(blend_refresher, name, flush_timings.timed(bucket, method))
+
+    async def timed_flush(flush_started):
+        started = time.monotonic()
+        try:
+            return await flush_prices(flush_started)
+        finally:
+            flush_timings.flushed(time.monotonic() - started)
+
     async def flush_loop():
-        await run_flush_cadence(flush_prices, PRICE_FLUSH_SECONDS, stop=loops_stop)
+        await run_flush_cadence(timed_flush, PRICE_FLUSH_SECONDS, stop=loops_stop)
 
     # -- Periodic stats logging --
     async def stats_loop():
@@ -1087,7 +1274,7 @@ async def _run_kalshi_ws_consumer(*, sessions, prices):
             logger.info(
                 "Kalshi WS: %d updates, %d flushes, %d settlements, %d errors, "
                 "%d msgs | blend stamped=%d no_reading=%d throttled=%d errors=%d "
-                "lock_skipped=%d unobserved=%d stale=%d",
+                "lock_skipped=%d unobserved=%d stale=%d | %s deferred=%d live=%d",
                 stats["price_updates"], stats["flushes"],
                 stats["settlements"], stats["errors"],
                 ws.stats.get("messages", 0),
@@ -1097,7 +1284,10 @@ async def _run_kalshi_ws_consumer(*, sessions, prices):
                 blend.get("unobserved_skipped", 0),
                 # #8910: readings refused as older than the stored observation.
                 blend.get("stale_readings_refused", 0),
+                # #10090: this minute's flush phases, then cumulative deferrals.
+                flush_timings.line(), stats["budget_deferred"], len(live_event_ids),
             )
+            flush_timings.reset()
             _report_liveness(
                 "kalshi", "streaming" if ws.is_connected else "disconnected",
                 legs=len(market_tickers),
@@ -1193,7 +1383,11 @@ async def _run_kalshi_ws_consumer(*, sessions, prices):
                 )
                 .distinct()
             )
-            return unadmitted_live_events(result.all(), legged_market_ids)
+            rows = list(result.all())
+        # #10090: the same read names the live games the flush writes first.
+        live_event_ids.clear()
+        live_event_ids.update(row[0] for row in rows)
+        return unadmitted_live_events(rows, legged_market_ids)
 
     try:
         # Q460: RECYCLE, don't run forever. The subscription list above is built
