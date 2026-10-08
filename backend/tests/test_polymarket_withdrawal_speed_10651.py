@@ -53,9 +53,6 @@ def rig(
     control = {"fail": fail, "replace": replace}
 
     class Refresher:
-        def adopt_pending(self, ids):
-            trace.append(("adopt", sorted(ids)))
-
         async def publish_market_changes(self, session):
             trace.append(("publish", None))
 
@@ -90,15 +87,13 @@ def rig(
             SimpleNamespace(id=oid, market_id=oid, last_updated=1) for oid in selected
         ]
 
-    async def write(chunk, *, after_commit=None):
+    async def write(chunk):
         trace.append(("write", list(chunk)))
         if 900 in chunk:
             entered.set()
             await release.wait()
         if failed_price is not None and failed_price in chunk:
             return False
-        if after_commit is not None:
-            after_commit()
         for oid, value in chunk.items():
             if batch.get(oid) == value:
                 batch.pop(oid)
