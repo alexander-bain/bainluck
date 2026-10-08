@@ -26,6 +26,11 @@ THE CASES:
                           PostgreSQL session: with a standalone chunk parked
                           at its UPDATE, a later game quote is stored and its
                           event refreshed. Before, it waited for the release.
+    TestTheShutdown ..... Root review of 962ced1dc6: a standalone write the
+                          shutdown cancels mid-UPDATE finishes unwinding before
+                          the final drain writes the same leg again; and the
+                          cancelled game flush's refresh unwinds before the
+                          drain's (Live's c686 guard, on the Polymarket arm).
 """
 
 import asyncio
@@ -33,6 +38,14 @@ import asyncio
 import pytest
 from tests.pm_bulk_test_support import cleanup_pg_engines  # noqa: F401
 from tests.test_polymarket_withdrawal_speed_10651 import rig as exec_rig
+from tests.pm_bulk_test_support import price_writes
+from tests.test_kalshi_shutdown_stamp_join_10090 import _SlowUnwind
+from tests.test_ws_admission_mapped_legs_9462 import (
+    _arm,
+    _install_quiet_socket,
+    _install_session,
+    _timing,
+)
 from tests.test_ws_polymarket_open_contract_prices_9484 import (
     EVENT_ID,
     GAME_OUTCOME,
@@ -45,10 +58,14 @@ from tests.test_ws_polymarket_open_contract_prices_9484 import (
     _frames_by_token,
     _HeldUpdate,
     _Rig,
+    _Session,
     _stored,
     _tick,
 )
 
+from sqlalchemy.sql.dml import Update
+
+import app.tasks.live_blend_refresh as lbr
 import app.tasks.polymarket_open_contracts as open_mod
 from app.tasks.polymarket_ws import standalone_open_outcome_ids
 
@@ -147,3 +164,75 @@ class TestTheConsumer:
         assert stats["errors"] == 0
         assert stats["final_flush_dropped"] == 0
         assert {EVENT_ID} in rig.refreshed
+
+
+class TestTheShutdown:
+    async def test_the_final_drain_waits_for_the_cancelled_standalone_write(
+        self, monkeypatch, tmp_path
+    ):
+        """Standalone 71's UPDATE is parked when the recycle cancels its loop,
+        and its rollback takes a moment. The final drain still holds 71 in the
+        buffer (entries leave only after a write lands), so draining at once
+        would write 71 beside the unwinding one. Premise asserted: the cancel
+        landed inside 71's write."""
+        engine = _database(tmp_path)
+        rig = _Rig(
+            engine, GAME_SLATE, (OPEN_MARKET_ROWS, OPEN_OUTCOME_ROWS),
+            _frames_by_token({"711": [(0.0, _tick("711"))]}),
+        )
+        monkeypatch.setattr(open_mod, "FLUSH_CHUNK_ROWS", 1)
+        seen = {"in_flight": 0, "most": 0, "cancelled": 0, "writes": 0}
+        never = asyncio.Event()
+
+        class _Unwinding(_Session):
+            async def execute(self, stmt, *a, **kw):
+                if not (
+                    isinstance(stmt, Update)
+                    and stmt.table.name == "futures_outcomes"
+                    and 71 in dict(price_writes(stmt))
+                ):
+                    return await super().execute(stmt, *a, **kw)
+                seen["writes"] += 1
+                seen["in_flight"] += 1
+                seen["most"] = max(seen["most"], seen["in_flight"])
+                try:
+                    if seen["writes"] == 1:
+                        try:
+                            await never.wait()  # parked until the recycle
+                        except asyncio.CancelledError:
+                            seen["cancelled"] += 1
+                            await asyncio.sleep(0.05)  # rollback unwinding
+                            raise
+                    return await super().execute(stmt, *a, **kw)
+                finally:
+                    seen["in_flight"] -= 1
+
+        stats = await asyncio.wait_for(_drive(
+            monkeypatch, rig, refresh=0.3, flush=0.04, session=_Unwinding,
+        ), 5)
+
+        assert seen["cancelled"] == 1, "premise: the recycle cancelled 71's write"
+        assert seen["writes"] >= 2, "premise: the final drain wrote 71 too"
+        assert seen["most"] == 1, "the drain wrote 71 beside the unwinding write"
+        assert _stored(engine, 71) == pytest.approx(0.42)
+        assert stats["final_flush_dropped"] == 0
+        assert stats["loops_unreaped"] == 0
+
+    async def test_the_final_drain_waits_for_the_cancelled_game_flush(
+        self, monkeypatch
+    ):
+        module, consumer, slate = _arm(monkeypatch, "polymarket")
+        monkeypatch.setattr(_SlowUnwind, "instances", [])
+        monkeypatch.setattr(lbr, "LiveBlendRefresher", _SlowUnwind)
+        monkeypatch.setattr(module, "PRICE_FLUSH_SECONDS", 0.01)
+        _install_quiet_socket(monkeypatch)
+        _timing(monkeypatch, module, refresh=0.3)
+        _install_session(monkeypatch, slate, lambda n: [])
+
+        stats = await asyncio.wait_for(consumer(), timeout=5)
+
+        (refresher,) = _SlowUnwind.instances
+        assert refresher.cancelled == 1, "premise: the recycle cancelled a refresh"
+        assert refresher.calls >= 2, "premise: the final drain refreshed too"
+        assert refresher.most_running == 1, "the drain refreshed beside the flush"
+        assert stats["loops_unreaped"] == 0

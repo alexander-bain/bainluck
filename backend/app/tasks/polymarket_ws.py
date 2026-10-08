@@ -982,8 +982,8 @@ async def _run_polymarket_ws_consumer(*, sessions):
     from app.tasks.live_blend_refresh import (
         DEFAULT_MIN_REFRESH_INTERVAL_S, LiveBlendRefresher, TailReceipts,
         adopt_handed_off,
-        event_ids_for_outcomes, hand_off_pending, reap_stopped_loops,
-        run_flush_cadence,
+        LOOP_REAP_TIMEOUT_S, event_ids_for_outcomes, hand_off_pending,
+        reap_stopped_loops, run_flush_cadence,
     )
     from app.tasks.polymarket_token_topup import (
         topup_clob_tokens, topup_outcome_clob_tokens,
@@ -1837,6 +1837,40 @@ async def _run_polymarket_ws_consumer(*, sessions):
                 stranded, FINAL_FLUSH_ATTEMPTS,
             )
 
+    async def join_flushes_then_drain():
+        """#10090 review: both cancelled flush loops — the game flush with the
+        stamp it joins on the way out, and the standalone flush — finish before
+        the final drain reads the buffer.
+
+        A cancelled write can still be rolling back, committing or publishing;
+        draining beside it would capture the same buffer and write it again,
+        and put two refreshes in the refresher. Live's c686 join (Kalshi):
+        joined to COMPLETION, never to a timeout, with an error line each bound
+        a loop overruns; `loops_stop` and the flushes' own DB bounds end them.
+        A second cancellation landing on the join is recorded, not obeyed
+        early: the join and the drain both still run, then it propagates.
+        """
+        flushes = {flush_task, standalone_task}
+        interrupted = None
+        while not all(task.done() for task in flushes):
+            try:
+                await asyncio.wait(flushes, timeout=LOOP_REAP_TIMEOUT_S)
+            except asyncio.CancelledError as exc:
+                interrupted = exc
+                continue
+            running = sorted(t.get_name() for t in flushes if not t.done())
+            if running:
+                logger.error(
+                    "Polymarket WS: cancelled flush %s still running after "
+                    "%.0fs; the final drain waits for it",
+                    ", ".join(running), LOOP_REAP_TIMEOUT_S,
+                )
+        try:
+            await drain_prices()
+        finally:
+            if interrupted is not None:
+                raise interrupted
+
     # #9418: one CLOB client for the consumer's resolutions, made on first use
     # and closed with the consumer; and the in-flight resolution tasks, held so
     # a running settle is not garbage-collected and can be cancelled at exit.
@@ -2375,8 +2409,9 @@ async def _run_polymarket_ws_consumer(*, sessions):
         admission_task.cancel()
         # Q491 repair (CERT-654 BLOCK): the last flush has no successor, so it
         # must RETRY rather than requeue into a buffer nobody will read again.
+        # #10090 review: only after both cancelled flushes have finished.
         try:
-            await drain_prices()
+            await join_flushes_then_drain()
         finally:
             # #9462 review: the drain returns once the price BUFFER is empty,
             # but a price it (or the last flush) committed inside the 2 s
