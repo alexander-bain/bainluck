@@ -43,6 +43,9 @@ class _RecordingRedis:
         self.reads: list[str] = []
         self._stale = json.dumps(stale_payload) if stale_payload is not None else None
 
+    async def mget(self, keys):
+        return [await self.get(key) for key in keys]
+
     async def get(self, key):
         self.reads.append(key)
         if self._stale is not None and key.endswith(":stale"):

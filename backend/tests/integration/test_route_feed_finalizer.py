@@ -28,6 +28,9 @@ class _FakeRedis:
         self.mode = mode
         self._json = json.dumps(payload) if payload is not None else None
 
+    async def mget(self, keys):
+        return [await self.get(key) for key in keys]
+
     async def get(self, key):
         if self.mode == "error":
             raise RuntimeError("redis down")
