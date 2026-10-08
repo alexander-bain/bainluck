@@ -2125,3 +2125,52 @@ async def test_seating_checks_venue_deltas_against_the_captured_order(harness, m
     assert guard["verdict"] == ddr.PASS
     settled = next(c for c in seated["deck"] if ddr._member(c) == f"event:{_ASKABLE_IDS[0]}")
     assert settled["data"]["venue_settled"] is True
+
+
+# --------------------------------------------------------------------------- #
+# #5105 page envelope — the seating arm hands its global boundary to the shared
+# ``_feed_page_payload``, which carries it beside the cards and binds it into
+# the edition token. Every other arm stays on the route's default.
+# --------------------------------------------------------------------------- #
+
+
+@pytest.mark.parametrize("offset", [0, 1, 2, 3, 4])
+async def test_every_seated_page_envelope_carries_one_boundary_and_one_token(harness, offset):
+    from app.utils.feed_cache import feed_edition_token
+
+    _thin_pool(harness)
+    first = ddr.replay_capture(await _capture(harness), opening_seating=True)
+    boundary = first["opening_seating"]["continuation_start"]
+    assert boundary == 3
+    capture = await _capture(harness, url=f"/api/feed?limit=2&offset={offset}")
+    paged = ddr.replay_capture(capture, opening_seating=True)
+    public = paged["public_response"]
+
+    assert public["continuation_start"] == boundary  # global, not page-local
+    assert public["edition"] == first["public_response"]["edition"]
+    assert public["edition"] == feed_edition_token(paged["deck"], boundary)
+    # Same cards, same order, no boundary => a different (legacy) token.
+    assert public["edition"] != feed_edition_token(paged["deck"])
+    assert public["total"] == len(paged["deck_identities"]) == 5
+    assert [ddr._member(c) for c in public["items"]] == (
+        first["deck_identities"][offset : offset + 2]
+    )
+
+
+async def test_a_seated_deck_without_a_continuation_keeps_the_legacy_envelope(harness):
+    from app.utils.feed_cache import feed_edition_token
+
+    _make_tournament_ordinary_live(harness)
+    artifact = await _capture(harness)
+    seated = ddr.replay_capture(artifact, opening_seating=True)
+    assert seated["opening_seating"]["status"] == "applied"
+    assert "continuation_start" not in seated["public_response"]
+    assert seated["public_response"]["edition"] == feed_edition_token(seated["deck"])
+
+
+async def test_the_baseline_arm_never_states_a_boundary_even_under_thin_supply(harness):
+    _thin_pool(harness)
+    artifact = await _capture(harness)
+    plain = ddr.replay_capture(artifact)
+    assert "continuation_start" not in plain["public_response"]
+    assert ddr.verify_baseline(artifact)["verdict"] == ddr.PASS

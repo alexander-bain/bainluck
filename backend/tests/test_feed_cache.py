@@ -455,3 +455,168 @@ def test_computing_the_token_does_not_mutate_the_feed():
     feed_edition_token(items)
 
     assert items == snapshot
+
+
+# =============================================================================
+# #5105 thin supply: the continuation boundary is layout, so it is part of the
+# edition — and absent, it changes nothing.
+#
+# ``continuation_start`` is the FULL-deck 0-based position where an ordinary-live
+# continuation begins. Same cards, same order, boundary moved => a different
+# layout, which must not reuse a token a client reconciled against. ``None``
+# (every ``get_feed`` call today) must hash EXACTLY what it hashed before: the
+# literals below were computed by the 1a660e2d7c ``feed_edition_token`` itself,
+# so a change that kept the module self-consistent but moved legacy values (a
+# new separator, a version prefix) fails here, not on a reader's phone.
+# =============================================================================
+
+
+def _legacy_specimen_deck() -> list:
+    return [
+        edition_card("event", 1000),
+        edition_card("futures", 1001),
+        edition_card("bundle", 1002),
+        edition_card("concept", "c-key"),
+        edition_card("tournament", "t-key"),
+        {"type": "mystery", "data": {}},
+        "junk",
+    ]
+
+
+def test_an_absent_boundary_keeps_the_legacy_token_byte_for_byte():
+    deck = _legacy_specimen_deck()
+    assert feed_edition_token(deck) == "7d1197bf5b2c9cce"
+    assert feed_edition_token(deck, None) == "7d1197bf5b2c9cce"
+    assert feed_edition_token(deck, continuation_start=None) == "7d1197bf5b2c9cce"
+    assert feed_edition_token(deck[:1]) == "31ee8fe226f74a86"
+    assert feed_edition_token([], None) is None
+    assert feed_edition_token(None) is None
+
+
+def test_the_boundary_is_part_of_the_edition_and_zero_is_a_boundary():
+    deck = an_edition_feed(6)
+    unbounded = feed_edition_token(deck)
+    bounded = {b: feed_edition_token(deck, b) for b in range(6)}
+
+    # Zero is a real layout (no eligible opening), never "missing".
+    assert bounded[0] is not None and bounded[0] != unbounded
+    # Every boundary is its own layout, and none collides with "no section".
+    assert len(set(bounded.values()) | {unbounded}) == 7
+    # Reproducible, like the legacy token.
+    assert all(feed_edition_token(deck, b) == t for b, t in bounded.items())
+    assert all(len(t) == 16 for t in bounded.values())
+
+
+def test_a_bounded_token_still_ignores_prices_reasons_and_scores():
+    before = an_edition_feed(6)
+    after = [
+        edition_card(c["type"], c["data"]["id"], probability=0.91, score=12, reason="moved")
+        for c in before
+    ]
+    assert feed_edition_token(after, 2) == feed_edition_token(before, 2)
+    # ...and still moves with membership order at the same boundary.
+    assert feed_edition_token(list(reversed(before)), 2) != feed_edition_token(before, 2)
+
+
+@pytest.mark.parametrize("bad", [True, False, -1, 6, 7, 10_000, "3", 2.0])
+def test_a_malformed_boundary_is_refused_not_hashed(bad):
+    with pytest.raises(ValueError, match="continuation_start"):
+        feed_edition_token(an_edition_feed(6), bad)
+
+
+@pytest.mark.parametrize("items", [[], None, {"items": []}])
+def test_a_boundary_on_no_deck_is_refused(items):
+    with pytest.raises(ValueError, match="continuation_start"):
+        feed_edition_token(items, 0)
+
+
+# --- the shared page envelope (``routes/feed.py::_feed_page_payload``) --------
+
+
+def _envelope(feed_items, *, offset=0, limit=2, **kw):
+    from app.routes.feed import _feed_page_payload
+
+    return _feed_page_payload(
+        feed_items,
+        feed_items[offset : offset + limit],
+        total=len(feed_items),
+        limit=limit,
+        offset=offset,
+        edition_status=None,
+        **kw,
+    )
+
+
+def test_the_default_envelope_is_unchanged_whether_the_boundary_is_missing_or_none():
+    import json
+
+    deck = _legacy_specimen_deck()
+    missing = _envelope(deck, limit=3)
+    explicit = _envelope(deck, limit=3, continuation_start=None)
+
+    assert json.dumps(missing, default=str) == json.dumps(explicit, default=str)
+    assert list(missing) == ["items", "total", "limit", "offset", "has_more", "edition"]
+    assert "continuation_start" not in missing
+    assert missing["edition"] == "7d1197bf5b2c9cce"
+
+
+def test_a_supplied_boundary_rides_the_envelope_beside_the_cards():
+    deck = an_edition_feed(9)
+    for boundary in (0, 3, 8):
+        page = _envelope(deck, offset=2, limit=2, continuation_start=boundary)
+        assert page["continuation_start"] == boundary
+        assert type(page["continuation_start"]) is int
+        assert page["edition"] == feed_edition_token(deck, boundary)
+        assert page["edition"] != feed_edition_token(deck)
+        # No header pseudo-card: items, total and offsets count real cards.
+        assert page["items"] == deck[2:4]
+        assert page["total"] == 9 and page["offset"] == 2 and page["has_more"] is True
+
+
+@pytest.mark.parametrize("bad", [True, -1, 9])
+def test_the_envelope_refuses_a_malformed_boundary(bad):
+    with pytest.raises(ValueError, match="continuation_start"):
+        _envelope(an_edition_feed(9), continuation_start=bad)
+
+
+@pytest.mark.parametrize("offset", [0, 2, 3, 4, 6, 8, 10])
+def test_the_global_boundary_and_token_survive_stored_base_pagination(offset):
+    """E=3 over nine real cards, pages of two: pages that end before, straddle,
+    start AT and start after the boundary — and one past the end — all carry the
+    same global boundary and token, and equal a direct build of that page. The
+    base is built the way ``get_feed`` stores it (whole deck, per-serve keys
+    dropped, JSON round-trip), and ``render_feed_page_from_base`` is unedited."""
+    import json
+
+    deck = an_edition_feed(9)
+    whole = _envelope(deck, offset=0, limit=2, continuation_start=3)
+    base = dict(whole)
+    base["items"] = deck
+    base["total"] = len(deck)
+    for per_serve in ("cache", "limit", "offset", "has_more"):
+        base.pop(per_serve, None)
+    stored = json.loads(json.dumps(base, default=str))
+
+    page = render_feed_page_from_base(stored, limit=2, offset=offset)
+    direct = _envelope(deck, offset=offset, limit=2, continuation_start=3)
+
+    assert page == direct
+    assert page["continuation_start"] == 3
+    assert page["edition"] == whole["edition"] == feed_edition_token(deck, 3)
+
+
+def test_stored_base_pagination_keeps_zero_and_keeps_absent_absent():
+    import json
+
+    deck = an_edition_feed(5)
+    for boundary in (0, None):
+        base = dict(_envelope(deck, continuation_start=boundary))
+        base.update(items=deck, total=len(deck))
+        stored = json.loads(json.dumps(base, default=str))
+        page = render_feed_page_from_base(stored, limit=2, offset=2)
+        if boundary is None:
+            assert "continuation_start" not in page
+            assert page["edition"] == feed_edition_token(deck)
+        else:
+            assert page["continuation_start"] == 0
+            assert page["edition"] == feed_edition_token(deck, 0)

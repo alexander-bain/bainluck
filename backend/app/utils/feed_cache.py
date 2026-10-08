@@ -666,7 +666,9 @@ def _feed_edition_member(item: Any) -> str:
 feed_edition_member = _feed_edition_member
 
 
-def feed_edition_token(items: Any) -> Optional[str]:
+def feed_edition_token(
+    items: Any, continuation_start: Optional[int] = None
+) -> Optional[str]:
     """Stable identifier for one ORDERED feed list.
 
     Pure: no clock, no I/O, no Redis, no randomness — the same list yields the
@@ -681,10 +683,36 @@ def feed_edition_token(items: Any) -> Optional[str]:
     client that reconciled against a stable "empty edition" token would be
     treating three different failures as one authoritative ordering. Absent is
     also what an older backend sends, so the client needs that branch regardless.
+
+    ``continuation_start`` (#5105, thin supply): the FULL-deck 0-based position
+    where an ordinary-live continuation section begins. It is LAYOUT, so it is
+    part of the edition: the same cards in the same order with the boundary
+    moved are a different thing to paint, and must not reuse a token a client
+    already reconciled against. ``None`` (the default) is "no section" and
+    hashes exactly what this function always hashed — legacy tokens are
+    byte-for-byte unchanged, not merely self-consistent. ``0`` is a real
+    boundary (no eligible opening), never "missing". Anything else that is not
+    an ``int`` inside the deck — ``bool``, negative, ``>= len(items)``, or any
+    boundary on an empty/non-list deck — raises ``ValueError``: a malformed
+    boundary is refused, never silently hashed as some other layout.
     """
+    if continuation_start is not None and not (
+        type(continuation_start) is int
+        and isinstance(items, list)
+        and 0 <= continuation_start < len(items)
+    ):
+        raise ValueError(
+            f"continuation_start {continuation_start!r} is not a position in the "
+            f"{len(items) if isinstance(items, list) else 'non-list'} card deck"
+        )
     if not isinstance(items, list) or not items:
         return None
     joined = "\n".join(_feed_edition_member(item) for item in items)
+    if continuation_start is not None:
+        # A trailer line no member can produce (members are ``?`` or
+        # ``kind:ident``, never NUL-led), so a bounded deck can never hash to
+        # any unbounded deck's token.
+        joined += f"\n\x00continuation_start={continuation_start}"
     return hashlib.sha256(joined.encode("utf-8")).hexdigest()[:_FEED_EDITION_HEX_LEN]
 
 

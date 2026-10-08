@@ -6710,12 +6710,21 @@ def _feed_page_payload(
     limit: int,
     offset: int,
     edition_status: str | None,
+    continuation_start: int | None = None,
 ) -> dict:
     """The page envelope ``get_feed`` builds over a published list (#10290).
 
     Extracted unchanged so the offline display replay builds the same envelope
     by calling this, not by restating it. Fields added afterwards by the route
     (cache metadata, build quality, personalization, debug) stay in the route.
+
+    ``continuation_start`` (#5105, thin supply) is the GLOBAL 0-based position
+    in ``feed_items`` — never in ``paginated`` — where an ordinary-live
+    continuation begins. Absent/``None`` (every ``get_feed`` call today) leaves
+    the envelope and edition token exactly as before. When supplied — including
+    ``0`` — it rides the envelope as ``continuation_start`` beside the cards,
+    never as a card, so ``total``/offsets still count real cards, and it is bound
+    into the edition token. A malformed boundary raises ``ValueError``.
     """
     payload = {
         "items": paginated,
@@ -6739,7 +6748,14 @@ def _feed_page_payload(
     # identities a client sees, and before the page base is stored, so
     # ``render_feed_page_from_base`` carries it to every page for free (it
     # copies every key that is not per-serve, and this is not per-serve).
-    _edition = feed_edition_token(feed_items)
+    #
+    # #5105: the token call is also the boundary's validation (it raises on a
+    # malformed one), so it runs BEFORE the boundary is written. The boundary is
+    # a whole-deck fact for the same reason the token is: every offset page of
+    # one deck carries the same value, and the slicer copies it unchanged.
+    _edition = feed_edition_token(feed_items, continuation_start)
+    if continuation_start is not None:
+        payload["continuation_start"] = continuation_start
     if _edition is not None:
         payload[FEED_EDITION_FIELD] = _edition
     if edition_status is not None:

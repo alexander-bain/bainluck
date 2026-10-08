@@ -1486,7 +1486,10 @@ def replay_capture(
     ``continuation_start`` is the FULL-deck position where the ordinary-live
     continuation begins (``None`` when there is none); every page is a slice of
     that one deck, so a page at ``offset`` meets it at ``continuation_start -
-    offset`` when that falls inside the page. It raises ``MISMATCH`` if the
+    offset`` when that falls inside the page. The same global value rides
+    ``public_response`` as ``continuation_start`` and is bound into its edition
+    token (``_feed_page_payload``); absent when there is no continuation. It
+    raises ``MISMATCH`` if the
     stage changed, added or dropped any card.
     Default ``False``: the baseline arm is untouched.
 
@@ -1584,6 +1587,9 @@ def replay_capture(
             limit=limit,
             offset=offset,
             edition_status=edition_status,
+            # Only the opt-in seating arm states a boundary; the baseline arm
+            # (and every non-sparse outcome) passes ``None`` — the route's default.
+            continuation_start=seating["continuation_start"] if seating else None,
         )
         # The route adds these only for a degraded build, from the futures
         # stage's outcome — an upstream fact, carried and declared as such.
