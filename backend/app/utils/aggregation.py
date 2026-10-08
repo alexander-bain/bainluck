@@ -5,7 +5,8 @@ Combines sportsbook consensus, prediction markets (Kalshi, Polymarket),
 and statistical models (ESPN, Bain Luck Model) into a single "Bain Luck"
 aggregate probability.
 
-Algorithm: Weighted median with staleness decay and a per-source weight cap.
+Algorithm: Eligible live readings use a weighted average; other readings use a
+weighted median. Both retain staleness decay and the per-source weight cap.
 NO smoothing — see below.
 
 A weighted median is outlier-resistant only under two conditions the plain
@@ -895,11 +896,17 @@ def _weighted_median(values: list[float], weights: list[float]) -> float:
     return paired[-1][0]
 
 
+def _weighted_average(values: list[float], weights: list[float]) -> float:
+    """Average the admitted readings using their effective, capped weights."""
+    return sum(value * weight for value, weight in zip(values, weights)) / sum(weights)
+
+
 def compute_aggregated_probability(
     sources: dict[str, list[TimestampedProb]],
     bucket_seconds: int = 30,
     custom_weights: Optional[dict[str, float]] = None,
     pregame_until: Optional[datetime] = None,
+    live_blend: bool = False,
 ) -> list[TimestampedProb]:
     """
     Aggregate multiple probability sources into a single time series.
@@ -1028,6 +1035,9 @@ def compute_aggregated_probability(
         sources: Dict mapping source key → list of timestamped probabilities
         bucket_seconds: Time bucket size in seconds (default 30s)
         custom_weights: Override default source weights
+        live_blend: Use the guarded weighted average after kickoff. Keep this
+            enabled for completed events so their live history does not redraw.
+            Pregame and final_result buckets retain their existing median.
 
     Returns:
         Aggregated time series of probabilities
@@ -1200,21 +1210,27 @@ def compute_aggregated_probability(
         if not readings:
             continue
 
-        # Compute weighted median. The #1829 share cap applies HERE TOO, and
-        # that is deliberate: the hero and this series answer the same question,
-        # so a cap on one and not the other is exactly the two-verdicts-for-one-
-        # rule shape that produced the 87-13-header-vs-~0-chart contradiction in
-        # the first place. Since #6461 this path runs the relative rule as well,
-        # so the two surfaces now share BOTH halves of #1829 rather than one
-        # each — same question, same recency policy, same cap.
+        # Retain the same freshness-derived weights and #1829 share cap for
+        # both policies. Only the statistic changes for live observations.
+        keys = [r.source for r in readings]
         values = [r.probability for r in readings]
         wts = cap_weight_shares(
             [r.weight for r in readings],
             exempt=[r.source in _UNCAPPED_SOURCES for r in readings],
         )
-        raw_aggregate = _weighted_median(values, wts)
+        if live_blend and not bucket_is_pregame and "final_result" not in keys:
+            # A broken pair must not manufacture a third number. History has
+            # already dropped zero-weight arms and has no hero freshness floor.
+            divergence = assess_divergence(*_gate_population(keys, values, wts, set()))
+            raw_aggregate = (
+                divergence.primary_value
+                if divergence is not None
+                else _weighted_average(values, wts)
+            )
+        else:
+            raw_aggregate = _weighted_median(values, wts)
 
-        # No smoothing (ruling #4): emit the bucket's honest weighted median.
+        # No smoothing (ruling #4): emit this bucket's actual blend.
         aggregated.append(
             TimestampedProb(
                 timestamp=bucket_time,
@@ -1579,39 +1595,10 @@ def compute_aggregate_probability_tiered(
     )
 
     if keys:
-        # Weighted MEDIAN (not mean) — the same outlier-resistant method the
-        # time-series blend (compute_aggregated_probability → the chart's
-        # aggregate_line) uses. This is the module's stated design (see the
-        # docstring): a single stale/lagged source cannot drag the aggregate.
-        #
-        # A weighted MEAN here let a stale sportsbook "betting" reading (weight
-        # 3.0) that had not caught up to the live game state pull the hero toward
-        # the pre-game number (~57%) while the chart's median-based blend line
-        # read the live value (~20%) on the same screen — the 57%-hero vs
-        # 20%-chart contradiction (#240 Item 1). Using the median here makes the
-        # point-in-time hero match the chart's blend line: one number per
-        # question.
-        #
-        # #1829 adds the two halves the median was always missing: RECENCY
-        # DECAY (a source aged against the freshest stamped source on this same
-        # event) and a SHARE CAP (no single source may straddle the midpoint by
-        # itself). See the constants block for the specimen and the reasoning.
-        # Both are no-ops on the shapes that dominate today — an event with no
-        # stamps decays nothing, an event with fewer than three sources caps
-        # nothing — so this is additive to a hero, not a replacement for one.
-        #
-        # THE DIVERGENCE GATE (ruling (b), cycle 99). Two sources 40+ points
-        # apart cannot both be describing this game, so we render one source's
-        # own number rather than let a statistic arbitrate a broken pair. See
-        # `utils/source_divergence.py` for the measured threshold and for why
-        # "primary" is the highest EFFECTIVE weight — a base-weight primary
-        # would print the stale pregame line over a live blowout, which is #240
-        # rebuilt. On the 2026-08-19 population this changes 0 of 76 displayed
-        # heroes and flags 4; the value it protects is the invariant that a
-        # rendered probability is always a number some source actually stated.
-        # #5542: the gate's population is the arms still SPEAKING — a third arm
-        # decayed to the floor no longer switches the protection off. The BLEND
-        # below is unchanged and still weighs every source.
+        # #10764: eligible LIVE sources contribute proportionally, retaining
+        # the admission, relative freshness and effective share cap above.
+        # Preserve the existing divergence gate before either statistic: a
+        # semantically broken pair is rendered from its primary source alone.
         divergence = assess_divergence(
             *_gate_population(keys, values, weights, floored)
         )
@@ -1619,7 +1606,13 @@ def compute_aggregate_probability_tiered(
             return round(divergence.primary_value, 6), TIER_SOURCES
 
         if any(w > 0 for w in weights):
-            return round(_weighted_median(values, weights), 6), TIER_SOURCES
+            status = event_status or getattr(event, "status", None)
+            blend = (
+                _weighted_average(values, weights)
+                if status == "live" and "final_result" not in keys
+                else _weighted_median(values, weights)
+            )
+            return round(blend, 6), TIER_SOURCES
 
     # Tier 2: ESPN win probability (live games, single source)
     espn_prob = getattr(event, "espn_win_prob_home", None)
