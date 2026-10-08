@@ -1189,6 +1189,24 @@ class LiveBlendRefresher:
         if len(due) <= 4:
             try:
                 await self._refresh_batch(due, clock)
+            except CancelledError as exc:
+                # #10090 review: a recycle can cancel this stamp after its
+                # prices committed and left the buffer, so no later input
+                # re-asks for it. Keep it owed for the hand-off exactly as the
+                # grouped arm below does, with the retry/deferred work it took.
+                # A cancel that lands after COMMIT (while publishing) costs one
+                # redundant re-stamp, never a lost one.
+                self._refresh_failed(
+                    due,
+                    retry,
+                    clock,
+                    receipts,
+                    staged,
+                    stored_wall,
+                    exc,
+                    hold=False,
+                )
+                raise
             except Exception as exc:
                 self.stats["errors"] += 1
                 logger.exception("live_blend_refresh[%s]: batch failed", self.source)
