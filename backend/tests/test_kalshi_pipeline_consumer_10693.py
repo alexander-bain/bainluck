@@ -134,7 +134,9 @@ def _without_reviewed_observers(fn):
 
     result = RemoveExactObservers().visit(fn)
     assert len(removed) == len(accepted) and set(removed) == accepted
-    return _without_reviewed_budget(_without_reviewed_pipelined_stamps(result))
+    return _without_reviewed_preemption(
+        _without_reviewed_budget(_without_reviewed_pipelined_stamps(result))
+    )
 
 
 # #10090 pipelined stamps: a phase's refresh runs as one task while the next
@@ -291,6 +293,55 @@ async def test_changed_observer_cannot_hide_a_price_write():
         )
     )
     observer.body.append(ast.parse("price_buffer.clear()").body[0])
+    with pytest.raises(AssertionError):
+        _without_reviewed_observers(current)
+
+
+# #10090 live input preempts the non-live tail: one counter before the loop
+# and one statement right after the budget. Only these exact ASTs, in these
+# exact places, are excluded; anything else in or around them must still fail.
+PREEMPT_DECLARATION = "nonlive_started = 0"
+PREEMPT_STATEMENT = (
+    "if live_event_ids and not final_drain and not any(\n"
+    "    event_id_by_outcome.get(oid) in live_event_ids for oid in phase\n"
+    "):\n"
+    "    if live_preempts_tail(\n"
+    "        flush_started, flush_period, nonlive_started, price_buffer,\n"
+    "        batch, event_id_by_outcome, live_event_ids,\n"
+    "    ):\n"
+    '        stats["live_preempted"] += sum(len(p) for p in phases[index:])\n'
+    "        break\n"
+    "    nonlive_started += 1"
+)
+
+
+def _without_reviewed_preemption(fn):
+    (declaration,) = _dumps(PREEMPT_DECLARATION)
+    kept = [s for s in fn.body if ast.dump(s) != declaration]
+    assert len(kept) == len(fn.body) - 1, "the #10090 preempt counter is not the reviewed one"
+    fn.body = kept
+    (loop,) = [n for n in ast.walk(fn) if isinstance(n, ast.For)
+               and ast.unparse(n.target) == "(index, phase)"]
+    assert loop.body and ast.dump(loop.body[0]) == _dumps(PREEMPT_STATEMENT)[0], (
+        "the #10090 preemption is not the exact statement after the budget"
+    )
+    loop.body = loop.body[1:]
+    return fn
+
+
+@pytest.mark.parametrize("mutation", ["body", "condition", "placement"])
+async def test_only_the_exact_10090_preemption_is_reviewed(mutation):
+    current = _without_docstring(flush_ast())
+    (loop,) = [n for n in ast.walk(current) if isinstance(n, ast.For)
+               and ast.unparse(n.target) == "(index, phase)"]
+    preempt = loop.body[1]
+    if mutation == "body":
+        preempt.body.insert(0, ast.parse("price_buffer.clear()").body[0])
+    elif mutation == "condition":
+        preempt.test = preempt.test.values[0]  # the final drain loses its exemption
+    else:
+        loop.body.remove(preempt)
+        loop.body.insert(2, preempt)
     with pytest.raises(AssertionError):
         _without_reviewed_observers(current)
 
