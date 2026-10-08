@@ -44,7 +44,9 @@ def rig(
     failed_price=None
 ):
     batch = dict(batch if batch is not None else {1: 0.6, 2: 0.4, 900: 0.1})
-    mapping = mapping or {1: 10, 2: 10}
+    # #10090: 900 is a BRIDGED open leg (event 90), so it stays on the game
+    # flush; an eventless open leg is `flush_standalone`'s.
+    mapping = mapping or {1: 10, 2: 10, 900: 90}
     books = dict(books if books is not None else {1: (0.1, 0.9)})
     trace, marks = [], []
     entered, release = asyncio.Event(), asyncio.Event()
@@ -125,7 +127,14 @@ def rig(
         ROOT / "app/tasks/polymarket_open_contracts.py", ["plan_flush_chunks"], ns
     )
     compile_functions(
-        ROOT / "app/tasks/polymarket_ws.py", ["flush_withdrawals", "flush_prices"], ns
+        ROOT / "app/tasks/polymarket_ws.py",
+        [
+            "standalone_open_outcome_ids",
+            "flush_withdrawals",
+            "flush_prices",
+            "flush_standalone",
+        ],
+        ns,
     )
     return SimpleNamespace(
         ns=ns,
@@ -227,13 +236,14 @@ def test_newer_book_during_withdrawal_is_retained_for_next_flush():
 
 def test_unrelated_and_unmapped_withdrawals_keep_after_price_order():
     async def run():
+        # 55: a slate leg with no event (not open), so still the game flush's.
         r = rig(
-            books={1: (0.1, 0.9), 44: (0.2, 0.8), 900: (0.3, 0.7)},
-            mapping={1: 10, 2: 10, 44: 20},
+            books={1: (0.1, 0.9), 44: (0.2, 0.8), 55: (0.3, 0.7)},
+            mapping={1: 10, 2: 10, 44: 20, 900: 90},
         )
         r.release.set()
         assert await r.ns["flush_prices"]()
-        assert r.trace.index(("withdraw", [44, 900])) > r.trace.index(("write", [900]))
+        assert r.trace.index(("withdraw", [44, 55])) > r.trace.index(("write", [900]))
         assert not r.books
 
     asyncio.run(run())
