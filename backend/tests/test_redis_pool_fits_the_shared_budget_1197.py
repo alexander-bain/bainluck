@@ -54,7 +54,9 @@ def _pool_holding_processes(procfile_text: str) -> int:
 
     The cache key carries the pid, so a Celery prefork parent and each of its
     ``--concurrency`` children counts separately. ``release`` is not a
-    long-running process and holds nothing.
+    long-running process and holds nothing. The opt-in worker-ws split counts
+    both venue children for the worst supported envelope; its stdlib parent
+    never imports an app client and holds no pool.
     """
     total = 0
     for line in procfile_text.splitlines():
@@ -65,6 +67,11 @@ def _pool_holding_processes(procfile_text: str) -> int:
         if name.strip() == "release":
             continue
         concurrency = re.search(r"--concurrency[= ](\d+)", command)
+        if name.strip() == "worker-ws" and "run_kalshi_ws.py" in command:
+            from run_kalshi_ws import HEARTBEAT_ARMS
+
+            total += len(HEARTBEAT_ARMS)
+            continue
         # A prefork worker is a parent plus N children; anything else is one
         # process (uvicorn is started without --workers).
         total += 1 + int(concurrency.group(1)) if concurrency else 1
@@ -72,6 +79,9 @@ def _pool_holding_processes(procfile_text: str) -> int:
 
 
 class TestTheCeilingFitsThePlanLimit:
+    def test_optional_ws_split_counts_children_without_a_parent_pool(self):
+        assert _pool_holding_processes("worker-ws: python3 run_kalshi_ws.py") == 2
+
     def test_the_procfile_is_readable_and_declares_processes(self):
         """If this ever reads 0 the budget assertion below is vacuous."""
         assert _pool_holding_processes(_procfile_path().read_text()) >= 10
