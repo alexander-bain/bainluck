@@ -88,9 +88,73 @@ async def test_live_stamps_lead_within_fresh_and_pending_but_fresh_stays_first(m
     # Fresh live 3 precedes fresh scheduled 1; both still precede debt,
     # where live 4 precedes scheduled 2. No event is dropped or grouped.
     assert x.committed == x.published == [3, 1, 4, 2]
-    assert [s.event_ids for s in x.sessions[1:]] == [[3], [1], [4], [2]]
+    assert [s.event_ids for s in x.sessions if s.event_ids] == [[3], [1], [4], [2]]
     assert x.r.stats["stamped"] == 4
     assert not x.r.pending_event_ids()
+
+
+@pytest.mark.parametrize("outcome", ["release", "failure", "cancel"])
+async def test_fresh_stamp_publishes_before_pending_preparation(monkeypatch, outcome):
+    x = rig(monkeypatch)
+    x.r._lock_retry = {1, 2}
+    prepare = x.r._prepare_groups
+    reads = []
+    entered, release = asyncio.Event(), asyncio.Event()
+
+    async def prepare_population(event_ids):
+        reads.append(set(event_ids))
+        if 1 in event_ids:
+            entered.set()
+            await release.wait()
+            if outcome == "failure":
+                raise RuntimeError("pending preparation failed")
+        return await prepare(event_ids)
+
+    x.r._prepare_groups = prepare_population
+    task = asyncio.create_task(x.r.refresh([3], flush_started=1000))
+    try:
+        await asyncio.wait_for(entered.wait(), 1)
+        await settle_until(lambda: x.published == [3])
+        assert x.committed == [3]
+        assert reads == [{3}, {1, 2}]
+        if outcome == "cancel":
+            task.cancel()
+            with pytest.raises(asyncio.CancelledError):
+                await task
+        else:
+            release.set()
+            await asyncio.wait_for(task, 1)
+        if outcome == "release":
+            assert x.published == x.committed == [3, 1, 2]
+            assert x.commands.count("read") == 2
+            assert not x.r.pending_event_ids()
+        else:
+            assert x.published == x.committed == [3]
+            assert x.r.pending_event_ids() == frozenset({1, 2})
+            assert x.r._lock_retry == {1, 2}
+            assert not x.r._failed_hold_until
+            assert x.r.stats["errors"] == (outcome == "failure")
+    finally:
+        release.set()
+        await asyncio.gather(task, return_exceptions=True)
+
+
+async def test_fresh_preparation_failure_keeps_fresh_owed_and_attempts_pending(monkeypatch):
+    x = rig(monkeypatch)
+    x.r._lock_retry = {1, 2}
+    prepare = x.r._prepare_groups
+
+    async def prepare_population(event_ids):
+        if 3 in event_ids:
+            raise RuntimeError("fresh preparation failed")
+        return await prepare(event_ids)
+
+    x.r._prepare_groups = prepare_population
+    await x.r.refresh([3], flush_started=1000)
+    assert x.published == x.committed == [1, 2]
+    assert x.r.pending_event_ids() == frozenset({3})
+    assert x.r._failed_hold_until == {3: 1005}
+    assert x.r.stats["errors"] == 1
 
 
 @pytest.mark.parametrize("count", [2, 4, 5])
