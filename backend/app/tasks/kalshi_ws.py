@@ -155,6 +155,62 @@ def flush_budget_spent(
     return _mono() - flush_started >= budget
 
 
+def live_input_waiting(buffer, batch, event_id_by_outcome, live_events):
+    """#10090 — True when ``buffer`` holds input for a live game that
+    ``batch`` (this flush's snapshot) does not: a new outcome, or a value that
+    changed since the snapshot. An entry still equal to its snapshot (a phase
+    this flush has not reached, or one a lock timeout kept) is not new input.
+    """
+    if not live_events:
+        return False
+    return any(
+        entry != batch.get(oid) and event_id_by_outcome.get(oid) in live_events
+        for oid, entry in buffer.items()
+    )
+
+
+def yield_written_nonlive_tail(
+    buffer, phase, written_outcome_ids, event_id_by_outcome, live_events,
+    final_drain,
+):
+    """A served nonlive cohort's newer quotes yield to untouched tail work.
+
+    Called under the buffer lock after commit and ordinary removal. Never
+    moves live quotes, failed/unwritten rows, or final-drain work. The retained
+    entry is still the newest one; only its scheduling position changes.
+    """
+    if final_drain or not live_events or any(
+        event_id_by_outcome.get(oid) in live_events for oid in phase
+    ):
+        return
+    written = set(written_outcome_ids)
+    for oid, entry in phase.items():
+        if oid in written and oid in buffer and buffer[oid] != entry:
+            newest = buffer.pop(oid)
+            buffer[oid] = newest
+
+
+def live_preempts_tail(
+    flush_started, period, nonlive_started, buffer, batch, event_id_by_outcome,
+    live_events,
+):
+    """#10090 — True when a periodic flush should stop before a non-live phase
+    because a live game has new input waiting (see `flush_prices`).
+
+    Only after ``period`` on the refresher's clock and once at least one
+    non-live phase has started (``nonlive_started``), so preemption permits
+    nonlive work before yielding. Never without a start (the final drain, a direct
+    call) or without a live set.
+    """
+    if flush_started is None or not live_events or not nonlive_started:
+        return False
+    from app.tasks.live_blend_refresh import _mono
+
+    if _mono() - flush_started < period:
+        return False
+    return live_input_waiting(buffer, batch, event_id_by_outcome, live_events)
+
+
 class _FlushTimings:
     """#10090 — where the Kalshi flush time went, per stats-line minute.
 
@@ -657,6 +713,10 @@ async def _run_kalshi_ws_consumer(*, sessions, prices):
         # spending `FLUSH_BUDGET_SECONDS` (non-live phases only). Deferred, not
         # dropped: they stay at the head of the buffer.
         "budget_deferred": 0,
+        # #10090: buffered non-live prices a periodic flush left for the next
+        # one because a live game had new input waiting (`live_input_waiting`).
+        # Deferred like `budget_deferred`, never dropped.
+        "live_preempted": 0,
     }
 
     # -- Buffered price updates --
@@ -771,6 +831,16 @@ async def _run_kalshi_ws_consumer(*, sessions, prices):
         # committed and published; and no stamp outlives its flush, so the
         # final drain can never run a second refresh beside it.
         stamping = None
+        # #10090 — LIVE INPUT PREEMPTS THE NON-LIVE TAIL. A live game's tick
+        # that arrived after the snapshot used to wait for every later phase of
+        # this flush (up to the whole non-live budget) before the next flush
+        # could take it. Once one period has passed and at least one non-live
+        # phase has started, a non-live phase is not started while such input
+        # waits: the tail stays buffered, at the head, like a budget deferral,
+        # and the cadence starts the next flush at once with live games first.
+        # Preemption permits one non-live phase; the existing budget still
+        # applies. Served hot non-live entries yield to the untouched tail.
+        nonlive_started = 0
 
         async def stamp_done(*, cancel=False):
             nonlocal stamping
@@ -809,6 +879,16 @@ async def _run_kalshi_ws_consumer(*, sessions, prices):
                 ):
                     stats["budget_deferred"] += sum(len(p) for p in phases[index:])
                     break
+                if live_event_ids and not final_drain and not any(
+                    event_id_by_outcome.get(oid) in live_event_ids for oid in phase
+                ):
+                    if live_preempts_tail(
+                        flush_started, flush_period, nonlive_started, price_buffer,
+                        batch, event_id_by_outcome, live_event_ids,
+                    ):
+                        stats["live_preempted"] += sum(len(p) for p in phases[index:])
+                        break
+                    nonlive_started += 1
                 declined = 0
                 written_outcome_ids: list[int] = []
                 written_observations: dict = {}
@@ -999,6 +1079,11 @@ async def _run_kalshi_ws_consumer(*, sessions, prices):
                     for outcome_id, entry in phase.items():
                         if price_buffer.get(outcome_id) == entry:
                             del price_buffer[outcome_id]
+                    if live_event_ids and not final_drain:
+                        yield_written_nonlive_tail(
+                            price_buffer, phase, written_outcome_ids,
+                            event_id_by_outcome, live_event_ids, final_drain,
+                        )
 
                 # Q460 — THE SHIP. Prices in `futures_outcomes` are invisible; the card
                 # renders `Event.win_probability_sources`. Push the freshly-flushed
@@ -1440,7 +1525,8 @@ async def _run_kalshi_ws_consumer(*, sessions, prices):
             logger.info(
                 "Kalshi WS: %d updates, %d flushes, %d settlements, %d errors, "
                 "%d msgs | blend stamped=%d no_reading=%d throttled=%d errors=%d "
-                "lock_skipped=%d unobserved=%d stale=%d | %s deferred=%d live=%d",
+                "lock_skipped=%d unobserved=%d stale=%d | %s deferred=%d "
+                "preempted=%d live=%d",
                 stats["price_updates"], stats["flushes"],
                 stats["settlements"], stats["errors"],
                 ws.stats.get("messages", 0),
@@ -1451,7 +1537,8 @@ async def _run_kalshi_ws_consumer(*, sessions, prices):
                 # #8910: readings refused as older than the stored observation.
                 blend.get("stale_readings_refused", 0),
                 # #10090: this minute's flush phases, then cumulative deferrals.
-                flush_timings.line(), stats["budget_deferred"], len(live_event_ids),
+                flush_timings.line(), stats["budget_deferred"],
+                stats["live_preempted"], len(live_event_ids),
             )
             flush_timings.reset()
             _report_liveness(

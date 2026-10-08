@@ -48,6 +48,8 @@ from app.tasks.kalshi_ws import (  # noqa: F401 — the exec'd flush reads these
     _KalshiPriceOwner,
     flush_budget_spent,
     linked_first_phases,
+    live_preempts_tail,
+    yield_written_nonlive_tail,
 )
 from app.tasks.live_blend_refresh import event_ids_for_outcomes  # noqa: F401
 from app.utils.futures_rank import rerank_market_fields_stmt  # noqa: F401
@@ -88,7 +90,11 @@ def maps(games, futures_markets=0, outcomes_per_future=10):
     return markets, events
 
 
-def rig(*, games, futures_markets=0, live=frozenset({LIVE_EVENT})):
+#: The opt-in 1 s Kalshi timer (`KALSHI_WS_PRICE_FLUSH_SECONDS=1`).
+FLUSH_PERIOD = 1.0
+
+
+def rig(*, games, futures_markets=0, live=frozenset({LIVE_EVENT}), after_write=None):
     """The shipped flush over ``games`` games and some futures, on a fake clock.
 
     Batch order puts the live game LAST: it ticked most recently, the worst
@@ -123,6 +129,8 @@ def rig(*, games, futures_markets=0, live=frozenset({LIVE_EVENT})):
         yield s
         clock["now"] += PHASE_COST + ROW_COST * len(s.rows)
         written.extend((oid, clock["now"]) for oid in s.rows)
+        if after_write is not None:
+            after_write(clock["now"])
 
     class Refresher:
         def pending_event_ids(self):
@@ -151,6 +159,7 @@ def rig(*, games, futures_markets=0, live=frozenset({LIVE_EVENT})):
               get_task_session=session, stats=stats, prices=prices,
               live_event_ids=None if live is None else set(live),
               flush_budget=None,  # the unset run: `FLUSH_BUDGET_SECONDS`
+              flush_period=FLUSH_PERIOD,
               logger=logging.getLogger(__name__),
               queue_market_change=lambda *a, **k: None)
     path = Path(__file__).resolve().parents[1] / "app/tasks/kalshi_ws.py"
@@ -357,3 +366,177 @@ async def test_a_minute_reset_mid_flush_keeps_the_flush_in_one_minute():
     assert t.spent == {"save": 0.75, "publish": 0.0, "stamp": 0.25}
     assert t.phases == 1 and t.total == 1.5
     assert "rank_commit=0.5s" in t.line()
+
+
+# ------------------------------- 5. live input preempts the non-live tail ----
+#
+# A live game's tick that lands after the snapshot must not wait for the rest
+# of this flush's non-live budget. Two games matter: the live one, whose new
+# quote must commit in the NEXT flush, and the non-live tail, which must still
+# move forward every flush.
+
+
+def _mid_flush_tick(r, at, oid=0, p=0.77):
+    """Buffer a new live tick once the simulated clock passes ``at``."""
+    fired = {"at": None}
+
+    def after_write(now):
+        if fired["at"] is None and now >= at:
+            fired["at"] = now
+            tick(r, oid, p)
+    return fired, after_write
+
+
+async def _write_delay_of_mid_flush_tick(fake_clock, *, preempt=True):
+    holder = {}
+    r = rig(games=400, futures_markets=40,
+            after_write=lambda now: holder["hook"](now))
+    fake_clock["rig"] = r
+    fired, holder["hook"] = _mid_flush_tick(r, at=1.5)
+    if not preempt:
+        r.flush.__globals__["live_preempts_tail"] = lambda *a: False
+    tick_everything(r, 0.6)
+    assert await r.flush(0.0) is True
+    first_flush_end = r.clock["now"]
+    assert await r.flush(r.clock["now"]) is True
+    (at,) = [w for oid, w in r.written if oid == 0 and w > fired["at"]][:1]
+    return at - fired["at"], first_flush_end, r
+
+
+async def test_a_live_tick_mid_flush_is_written_without_waiting_out_the_tail(fake_clock):
+    delay, first_end, r = await _write_delay_of_mid_flush_tick(fake_clock)
+    assert r.stats["live_preempted"] > 0
+    # The preempted flush ended within one non-live phase of the tick, and the
+    # next flush wrote the live game first.
+    biggest = PHASE_COST + ROW_COST * NONLIVE_PHASE_MAX_ROWS
+    biggest += STAMP_COST * NONLIVE_PHASE_MAX_GAMES
+    assert delay <= biggest + PHASE_COST + ROW_COST * 2 + STAMP_COST
+    assert first_end < FLUSH_BUDGET_SECONDS
+    assert r.stats["errors"] == 0
+
+
+async def test_strawman_without_preemption_the_tick_waits_out_the_budget(fake_clock):
+    delay, first_end, _ = await _write_delay_of_mid_flush_tick(fake_clock, preempt=False)
+    with_preempt, _, _ = await _write_delay_of_mid_flush_tick(fake_clock)
+    assert first_end >= FLUSH_BUDGET_SECONDS
+    assert delay > with_preempt + 1.0, (delay, with_preempt)
+    print(f"mid-flush live tick to write: {delay:.2f}s without, {with_preempt:.2f}s with")
+
+
+async def test_an_unchanged_or_nonlive_tick_does_not_preempt(fake_clock):
+    for oid, p in ((0, 0.6), (40, 0.11)):  # same live value; a non-live game
+        holder = {}
+        r = rig(games=400, futures_markets=40,
+                after_write=lambda now: holder["hook"](now))
+        fake_clock["rig"] = r
+        _, holder["hook"] = _mid_flush_tick(r, at=1.5, oid=oid, p=p)
+        tick_everything(r, 0.6)
+        assert await r.flush(0.0) is True
+        assert r.stats["live_preempted"] == 0
+        assert r.stats["budget_deferred"] > 0  # it ran to the budget instead
+
+
+async def test_constant_live_ticks_still_move_the_tail_every_flush(fake_clock):
+    state = {"p": 0.3}
+
+    def always(now):
+        state["p"] += 0.001
+        tick(r, 0, round(state["p"], 4))
+
+    r = rig(games=400, futures_markets=40, after_write=always)
+    fake_clock["rig"] = r
+    tick_everything(r, 0.6)
+    expected = [oid for oid in r.buffer if r.events.get(oid) != LIVE_EVENT]
+    flushes = 0
+    while any(r.events.get(oid) != LIVE_EVENT for oid in r.buffer):
+        before = sum(1 for oid, _ in r.written if r.events.get(oid) != LIVE_EVENT)
+        flushes += 1
+        assert await r.flush(r.clock["now"]) is True
+        after = sum(1 for oid, _ in r.written if r.events.get(oid) != LIVE_EVENT)
+        assert after > before, "a flush moved no non-live phase"
+        assert flushes < 200
+    nonlive = [oid for oid, _ in r.written if r.events.get(oid) != LIVE_EVENT]
+    assert nonlive == expected  # oldest first, none skipped, none lost
+    assert r.stats["live_preempted"] > 0
+
+
+async def test_the_final_drain_is_never_preempted(fake_clock):
+    holder = {}
+    r = rig(games=400, futures_markets=40, after_write=lambda now: holder["hook"](now))
+    fake_clock["rig"] = r
+    _, holder["hook"] = _mid_flush_tick(r, at=1.5)
+    tick_everything(r, 0.6)
+    assert await r.flush(0.0, final_drain=True) is True
+    assert r.stats["live_preempted"] == 0
+    assert all(r.events.get(oid) == LIVE_EVENT for oid in r.buffer)
+
+
+class TestPreemptRule:
+    LIVE = {7}
+    EVENTS = {1: 7, 2: 8}
+
+    def _rule(self, monkeypatch, *, elapsed=2.0, started=1, buffer=None, batch=None):
+        monkeypatch.setattr(lbr, "_mono", lambda: 100.0 + elapsed)
+        return live_preempts_tail(
+            100.0, FLUSH_PERIOD, started,
+            {1: (0.5,)} if buffer is None else buffer,
+            {1: (0.4,)} if batch is None else batch,
+            self.EVENTS, self.LIVE,
+        )
+
+    def test_new_live_value_after_a_period_preempts(self, monkeypatch):
+        assert self._rule(monkeypatch) is True
+
+    def test_new_live_outcome_absent_from_the_snapshot_preempts(self, monkeypatch):
+        assert self._rule(monkeypatch, batch={}) is True
+
+    def test_not_before_one_period(self, monkeypatch):
+        assert self._rule(monkeypatch, elapsed=0.5) is False
+
+    def test_not_before_one_nonlive_phase_started(self, monkeypatch):
+        assert self._rule(monkeypatch, started=0) is False
+
+    def test_not_for_the_snapshot_value_or_a_nonlive_event(self, monkeypatch):
+        assert self._rule(monkeypatch, batch={1: (0.5,)}) is False
+        assert self._rule(monkeypatch, buffer={2: (0.5,)}, batch={}) is False
+
+    def test_not_without_a_start_or_live_set(self, monkeypatch):
+        monkeypatch.setattr(lbr, "_mono", lambda: 1e9)
+        assert live_preempts_tail(None, 1.0, 1, {1: 1}, {}, self.EVENTS, self.LIVE) is False
+        assert live_preempts_tail(0.0, 1.0, 1, {1: 1}, {}, self.EVENTS, set()) is False
+        assert live_preempts_tail(0.0, 1.0, 1, {1: 1}, {}, self.EVENTS, None) is False
+
+
+async def test_hot_served_nonlive_prefix_yields_to_untouched_tail(fake_clock):
+    state = {"p": 0.3}
+
+    def newer_quotes(now):
+        state["p"] += 0.001
+        tick(r, 0, round(state["p"], 4))  # busy live game retains priority
+        for oid in range(2, 18):  # first eight nonlive games remain hot
+            tick(r, oid, round(state["p"], 4))
+
+    r = rig(games=40, after_write=newer_quotes)
+    fake_clock["rig"] = r
+    tick_everything(r, 0.6)
+    cold = set(range(18, 80))
+    for _ in range(10):
+        assert await r.flush(r.clock["now"]) is True
+    assert cold.issubset(oid for oid, _ in r.written)
+    assert cold.isdisjoint(r.buffer)
+    assert r.stats["live_preempted"] > 0
+    # Repositioning retained hot quotes must never restore the written value.
+    assert r.buffer[0][0] == round(state["p"], 4)
+    assert all(r.buffer[oid][0] == round(state["p"], 4) for oid in range(2, 18))
+
+
+@pytest.mark.parametrize("final,live,written", [
+    (True, {7}, [2]), (False, set(), [2]), (False, {8}, [2]),
+    (False, {7}, []),
+])
+def test_rotation_keeps_final_live_and_unwritten_entries_in_place(final, live, written):
+    buffer = {2: (0.6,), 3: (0.4,)}
+    before = dict(buffer)
+    yield_written_nonlive_tail(buffer, {2: (0.5,)}, written, {2: 8}, live, final)
+    assert list(buffer) == list(before)
+    assert buffer == before
