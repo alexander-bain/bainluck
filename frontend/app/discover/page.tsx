@@ -51,6 +51,7 @@ import {
   writeFeedSnapshot,
   writeScrollMark,
 } from "@/lib/discover/feedRestore";
+import { readWarmFeed, writeWarmFeed } from "@/lib/discover/feedWarmStart";
 import FeedBootScript from "@/components/discover/FeedBootScript";
 import { deriveGroupDisplayTitle } from "@/lib/discover/groupTitle";
 import { futuresGroupKey } from "@/lib/discover/groupKey";
@@ -287,6 +288,7 @@ function FeedItemShell({
   positionIndex,
   personalizationTrace,
   onSeen,
+  impressionsHeld = false,
   priceOwner,
   onPriceVisibility,
   children,
@@ -303,6 +305,13 @@ function FeedItemShell({
    * scrolling at all, and a scroll-distance threshold would never fire.
    */
   onSeen?: (positionIndex: number) => void;
+  /**
+   * #1469 — true while the card is a warm (last-visit) card. An impression is a
+   * seen/dismiss signal the server suppresses on, so it waits for the served
+   * page: a card that survives into it is counted then, one that does not
+   * never is.
+   */
+  impressionsHeld?: boolean;
   priceOwner?: string;
   onPriceVisibility?: (owner: string, keys: string[], visible: boolean) => void;
   children: ReactNode;
@@ -325,7 +334,7 @@ function FeedItemShell({
   }, [priceKeys, priceOwner, onPriceVisibility]);
 
   useEffect(() => {
-    if (tracked.current) return;
+    if (tracked.current || impressionsHeld) return;
     const node = ref.current;
     if (!node) return;
 
@@ -351,7 +360,7 @@ function FeedItemShell({
     );
     observer.observe(node);
     return () => observer.disconnect();
-  }, [analytics, positionIndex, onSeen]);
+  }, [analytics, positionIndex, onSeen, impressionsHeld]);
 
   return (
     <div ref={ref} data-personalization-trace={personalizationTrace}>
@@ -556,6 +565,9 @@ export default function DiscoverPage() {
   // rendering off `data.items` directly is what let an unavailable revalidation
   // blank a populated feed and then show "all caught up".
   const [page1Items, setPage1Items] = useState<FeedItem[]>([]);
+  // #1469 — last visit's first page, painted only while the first request is
+  // in flight and never folded into `page1Items`. See `feedWarmStart.ts`.
+  const [warmItems, setWarmItems] = useState<FeedItem[]>([]);
   // L2-238: the backend typed the last response `cache.status = "unavailable"`.
   // A transient no-data terminal, not an empty feed — surfaces this page's own
   // retry state and freezes auto-pagination until the reader retries.
@@ -727,6 +739,12 @@ export default function DiscoverPage() {
     }
   }, []);
 
+  // #1469 — read after mount, never in a state initializer: localStorage does
+  // not exist on the server, and a warm first render would not hydrate.
+  useEffect(() => {
+    setWarmItems(readWarmFeed());
+  }, []);
+
   const { data, isLoading, error: feedError, mutate: mutateFeed } = useSWR(
     "discover-feed",
     () => {
@@ -740,6 +758,14 @@ export default function DiscoverPage() {
     },
     { refreshInterval: 120000, revalidateOnFocus: false, keepPreviousData: true }
   );
+
+  // #1469 — the warm page shows ONLY until the first payload: once `data` lands
+  // (or the request fails) this is false and the served page replaces it
+  // wholesale through the cold-load arm of `reconcilePage1` — `page1Items` was
+  // never seeded, so no stored card can be held over. A restored edition
+  // (Back) takes precedence.
+  const warmActive =
+    isLoading && !data && warmItems.length > 0 && page1Items.length === 0 && allItems.length === 0;
 
   // #6445 — a null key is SWR's "do not fetch". The banner is hidden for the
   // initial release, so the page stops asking the backend for settled guesses
@@ -782,6 +808,8 @@ export default function DiscoverPage() {
     if (decision.acceptItems) {
       const incoming = data.items ?? [];
       setPage1Items((prev) => reconcilePage1(prev, incoming, getItemId));
+      // #1469 — next visit paints this page while its own request is in flight.
+      if (!decision.showUnavailable) writeWarmFeed(incoming);
     }
     setHasMore(decision.hasMore);
   }, [data]);
@@ -1121,7 +1149,7 @@ export default function DiscoverPage() {
   const processedItems = useMemo((): DiscoverGroupedItem[] => {
     // L2-238: the last ACCEPTED page-1 items, not `data.items` — an unavailable
     // revalidation must never blank the generation already on screen.
-    const raw = [...page1Items, ...allItems];
+    const raw = warmActive ? warmItems : [...page1Items, ...allItems];
     // Deduplicate by stable item ID across pages (defense in depth — a paging
     // hiccup can never render the same card twice).
     const deduped = dedupeById(raw, getItemId);
@@ -1130,7 +1158,8 @@ export default function DiscoverPage() {
     const { ordinary: unique, anchored: collections } = splitCollections(deduped, getItemId);
     // #2603 — first sight fixes a card's ranking score for this edition.
     const editionScores = editionScoresRef.current;
-    recordEditionScores(editionScores, unique, getItemId);
+    // #1469 — a warm card's score is last visit's; the edition opens on the served page.
+    if (!warmActive) recordEditionScores(editionScores, unique, getItemId);
     // L2-215 Item 1 — fail closed on empty predictive envelopes (#1486): drop any
     // card that carries neither a renderable probability nor an authoritative result
     // (empty concept/bundle/tournament/futures) BEFORE grouping, so no bare tile,
@@ -1170,7 +1199,7 @@ export default function DiscoverPage() {
       (gi) => (gi.type === "single" ? (gi.item ? [gi.item] : []) : gi.items ?? []).map(getItemId),
       (item) => ({ type: "single", item }),
     );
-  }, [page1Items, allItems, dismissed, dismissedOwner, interactionProfile, orderingProfile, learningState, user?.uid]);
+  }, [page1Items, allItems, warmActive, warmItems, dismissed, dismissedOwner, interactionProfile, orderingProfile, learningState, user?.uid]);
 
   // L2-215 Item 1 — suppression telemetry. Count the empty predictive envelopes
   // dropped by the fail-closed filter, by card type + machine reason, with NO
@@ -1527,7 +1556,7 @@ export default function DiscoverPage() {
           the column ladder is deliberately untouched. */}
       <DiscoverFeedbackAttemptContext.Provider value={handleFeedbackAttempt}>
       <main className="max-w-content mx-auto px-4 py-4">
-        {isLoading && <DiscoverSkeletonGrid />}
+        {isLoading && !warmActive && <DiscoverSkeletonGrid />}
 
         {/* UX-P087 (#1909): the same component the typed-UNAVAILABLE case uses,
             told by REASON. It was an inline copy of that markup with different
@@ -1657,6 +1686,7 @@ export default function DiscoverPage() {
                 className={isFirstCard ? "animate-peek-right" : ""}
               >
                 <FeedItemShell groupedItem={gi} positionIndex={idx} personalizationTrace={personalizationTrace} onSeen={handleCardSeen}
+                  impressionsHeld={warmActive}
                   priceOwner={key} onPriceVisibility={streamedPrices.setPriceVisibility}>
                   {isGuessSlot ? (
                     <GuessCard item={gi.item!} onGuessCompleted={incrementDailyGuesses} />
