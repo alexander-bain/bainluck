@@ -15,6 +15,7 @@ import functools
 import logging
 import os
 import time
+from collections.abc import Collection, Iterator, Mapping
 from datetime import datetime, timezone
 
 from app.utils.kalshi_market_status import is_terminal
@@ -176,6 +177,30 @@ def kalshi_non_speaking_ticker(external_id: str | None) -> bool:
         prefix in KALSHI_TICKER_TO_SPORT_KEY
         or prefix in KALSHI_FUTURES_TICKER_TO_SPORT_KEY
     )
+
+
+class _KalshiHeadlineEvents(Mapping[int, int]):
+    """Live view of existing event admission, omitting known non-speakers.
+
+    Unknown identities retain their full event cohort. Admission may bridge an
+    outcome while a flush awaits publication; read the owner maps in place so
+    the existing unfinished-event fences see that bridge immediately.
+    """
+
+    def __init__(self, events: Mapping[int, int], non_speakers: Collection[int]):
+        self.events = events
+        self.non_speakers = non_speakers
+
+    def __getitem__(self, outcome_id: int) -> int:
+        if outcome_id in self.non_speakers:
+            raise KeyError(outcome_id)
+        return self.events[outcome_id]
+
+    def __iter__(self) -> Iterator[int]:
+        return (oid for oid in self.events if oid not in self.non_speakers)
+
+    def __len__(self) -> int:
+        return sum(1 for _ in self)
 
 
 def live_input_waiting(buffer, batch, event_id_by_outcome, live_events):
@@ -765,8 +790,9 @@ async def _run_kalshi_ws_consumer(*, sessions, prices):
     market_id_by_outcome: dict[int, int] = {
         outcome_id: market_id for market_id, outcome_id in ticker_to_ids.values()
     }
-    # #10090: a separate trigger predicate; full outcome/event/market maps
-    # still own every write, priority, lifecycle and market invalidation.
+    # #10090: full outcome/event/market maps still own every price write,
+    # lifecycle and market invalidation. Known non-speakers can use the normal
+    # tail without joining the event's headline cohort or live priority.
     # Derive from the market ticker already read for admission, with no query.
     _ticker_by_market = {
         market_id: ticker for ticker, market_id in market_id_by_ext.items()
@@ -823,6 +849,14 @@ async def _run_kalshi_ws_consumer(*, sessions, prices):
         tail. Earlier committed games stay done. ``final_drain`` waits for locks
         as long as Postgres does: the drain has no next flush to retry in.
         """
+        from app.tasks.kalshi_ws import _KalshiHeadlineEvents
+
+        # Winner/source questions commit together. Known props still write and
+        # publish, but cannot hold their event's headline stamp or live priority.
+        # Final drain retains its full original event-cohort contract.
+        cohort_event_ids = _KalshiHeadlineEvents(
+            event_id_by_outcome, () if final_drain else non_blend_outcome_ids,
+        )
         exact_trace = getattr(tail_receipts, "exact_trace", None)
         from app.tasks.live_blend_refresh import _mono
 
@@ -856,7 +890,7 @@ async def _run_kalshi_ws_consumer(*, sessions, prices):
         # — can lose a price the buffer was holding. Nothing needs to be
         # "put back", because it was never taken away.
         phases = linked_first_phases(
-            batch, market_id_by_outcome, event_id_by_outcome,
+            batch, market_id_by_outcome, cohort_event_ids,
             pending_events=blend_refresher.pending_event_ids(),
             live_events=live_event_ids,
             pending_events_fenced=True,
@@ -921,7 +955,7 @@ async def _run_kalshi_ws_consumer(*, sessions, prices):
             nonlocal stamping, stamping_events, stamping_fresh, queued_refresh
             stamping_fresh = set(queued_events)
             unfinished_events = event_ids_for_outcomes(
-                event_id_by_outcome, unfinished_price_ids,
+                cohort_event_ids, unfinished_price_ids,
             )
             # refresh takes implicit debt too. Capture before its first turn.
             # Excluded cohorts remain owed but cannot read a partially written
@@ -946,14 +980,14 @@ async def _run_kalshi_ws_consumer(*, sessions, prices):
                 phase.keys() if final_drain else
                 (oid for oid in phase if oid not in non_blend_outcome_ids)
             )
-            linked_events = event_ids_for_outcomes(event_id_by_outcome, blend_outcomes)
+            linked_events = event_ids_for_outcomes(cohort_event_ids, blend_outcomes)
             new_events = linked_events if registered is None else linked_events - registered
             if (index == 0 and registered is None) or new_events:
                 queued_events.update(new_events)
                 queued_marks.update({
                     oid: batch_marks[oid]
                     for oid in written_outcome_ids if oid in batch_marks
-                    and (registered is None or event_id_by_outcome.get(oid) in new_events)
+                    and (registered is None or cohort_event_ids.get(oid) in new_events)
                 })
                 queued_refresh = True
             return linked_events
@@ -976,17 +1010,17 @@ async def _run_kalshi_ws_consumer(*, sessions, prices):
                 # #10090: live games are first and never budget-deferred; past the
                 # budget every later phase stays buffered for the next flush.
                 if not final_drain and flush_budget_spent(
-                    flush_started, phase, event_id_by_outcome, live_event_ids,
+                    flush_started, phase, cohort_event_ids, live_event_ids,
                     flush_budget,
                 ):
                     stats["budget_deferred"] += sum(len(p) for p in phases[index:])
                     break
                 if live_event_ids and not final_drain and not any(
-                    event_id_by_outcome.get(oid) in live_event_ids for oid in phase
+                    cohort_event_ids.get(oid) in live_event_ids for oid in phase
                 ):
                     if live_preempts_tail(
                         flush_started, flush_period, nonlive_started, price_buffer,
-                        batch, event_id_by_outcome, live_event_ids,
+                        batch, cohort_event_ids, live_event_ids,
                     ):
                         stats["live_preempted"] += sum(len(p) for p in phases[index:])
                         break
@@ -999,7 +1033,7 @@ async def _run_kalshi_ws_consumer(*, sessions, prices):
                 # late bridge may name an event in a later phase; implicit debt
                 # captured by the active refresh must obey the same fence.
                 if not stamping_events.isdisjoint(
-                    event_ids_for_outcomes(event_id_by_outcome, phase.keys())
+                    event_ids_for_outcomes(cohort_event_ids, phase.keys())
                 ):
                     await stamp_done()
                 declined = 0
@@ -1211,7 +1245,7 @@ async def _run_kalshi_ws_consumer(*, sessions, prices):
                     if live_event_ids and not final_drain:
                         yield_written_nonlive_tail(
                             price_buffer, phase, written_outcome_ids,
-                            event_id_by_outcome, live_event_ids, final_drain,
+                            cohort_event_ids, live_event_ids, final_drain,
                         )
 
                 # Admission may fill an unknown bridge during the postcommit

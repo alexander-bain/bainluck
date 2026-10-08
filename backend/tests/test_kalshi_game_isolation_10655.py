@@ -19,6 +19,7 @@ from sqlalchemy.exc import OperationalError
 from app.models.models import FuturesOutcome
 from app.tasks.kalshi_ws import (  # noqa: F401 — the exec'd flush reads these
     PRICE_PHASE_LOCK_TIMEOUT_MS,
+    PRICE_FLUSH_SECONDS,
     _KalshiPriceOwner,
     flush_budget_spent,
     linked_first_phases,
@@ -245,18 +246,19 @@ def test_unknown_or_missing_market_falls_back_and_empty_is_preserved():
     assert linked_first_phases({}, {}, {}) == [{}]
 
 
-async def test_existing_refresh_debt_keeps_game_prices_together():
+async def test_existing_refresh_debt_keeps_unfinished_game_fenced():
     r = rig(pending={200})
     task = asyncio.create_task(r.flush())
     try:
         await asyncio.wait_for(r.entered.wait(), 2)
-        assert not r.committed
-        assert not any(t[0] == 'refresh' for t in r.trace)
+        assert r.committed == [1, 2]
+        assert ('refresh', (100,)) in r.trace
+        assert not any(t[0] == 'refresh' and 200 in t[1] for t in r.trace)
     finally:
         r.release.set()
         await asyncio.wait_for(task, 2)
-    assert ('commit', (1, 2, 3)) in r.trace
-    assert ('refresh', (100, 200)) in r.trace
+    assert ('commit', (3,)) in r.trace
+    assert ('refresh', (200,)) in r.trace
     assert r.committed == [1, 2, 3, 9]
 
 
@@ -268,7 +270,7 @@ def test_pending_fallback_preserves_batch_order():
     assert phases[1] == {9: 'z'}
 
 
-async def test_real_refresher_debt_is_paid_after_both_games_commit():
+async def test_real_refresher_debt_waits_for_its_own_game_commit():
     from app.tasks.live_blend_refresh import LiveBlendRefresher
 
     r = rig()
@@ -288,10 +290,11 @@ async def test_real_refresher_debt_is_paid_after_both_games_commit():
     task = asyncio.create_task(r.flush(flush_started=100.0))
     try:
         await asyncio.wait_for(r.entered.wait(), 2)
-        assert not any(t[0] == 'real-refresh' for t in r.trace)
+        assert ('real-refresh', (100,), (1, 2)) in r.trace
+        assert not any(t[0] == 'real-refresh' and 200 in t[1] for t in r.trace)
     finally:
         r.release.set()
         await asyncio.wait_for(task, 2)
-    assert ('real-refresh', (100, 200), (1, 2, 3)) in r.trace
+    assert ('real-refresh', (200,), (1, 2, 3)) in r.trace
     assert refresher.pending_event_ids() == frozenset()
     assert refresher.stats['throttled'] == 0

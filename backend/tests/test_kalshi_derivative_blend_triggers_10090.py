@@ -1,6 +1,7 @@
 """Prop price delivery continues while redundant fresh winner refresh is skipped."""
 
 import pytest
+import asyncio
 
 from app.tasks.kalshi_ws import kalshi_non_speaking_ticker
 from app.utils.futures_rank import rerank_market_fields_stmt
@@ -31,10 +32,9 @@ async def test_derivatives_write_publish_but_winner_unknown_debt_and_drain_refre
 
     prop = setup({1: derivative, 2: derivative})
     assert await prop.flush() is True
-    assert prop.committed == [1, 2, 3, 9] and not prop.batch
-    assert ("publish", (1, 2)) in prop.trace
+    assert prop.committed == [3, 1, 2, 9] and not prop.batch
+    assert ("publish", (1, 2, 9)) in prop.trace
     assert ("refresh", (100,)) not in prop.trace
-    assert ("refresh", ()) in prop.trace
     assert ("refresh", (200,)) in prop.trace
 
     for ticker in (winner, None, "", "KXUNLISTEDPROP-26OCT08NYJBUF"):
@@ -59,3 +59,30 @@ async def test_derivatives_write_publish_but_winner_unknown_debt_and_drain_refre
     assert await drain.flush(final_drain=True) is True
     assert ("refresh", (100,)) in drain.trace
     assert drain.committed == [1, 2] and not drain.batch
+
+
+@pytest.mark.asyncio
+async def test_known_prop_hold_does_not_hold_complete_winner_question_or_stamp():
+    async def run(non_speaking):
+        x = rig()
+        x.events[3] = 100  # a distinct prop market linked to the winner's event
+        x.ns["non_blend_outcome_ids"] = {3} if non_speaking else set()
+        task = asyncio.create_task(x.flush(flush_started=1000))
+        try:
+            await asyncio.wait_for(x.entered.wait(), 1)  # prop price write held
+            if non_speaking:
+                assert x.committed == [1, 2]  # both winner legs commit together
+                assert ("publish", (1, 2)) in x.trace
+                assert ("refresh", (100,)) in x.trace
+            else:
+                # No admitted prop identity: retain the original event cohort.
+                assert not x.committed
+                assert ("refresh", (100,)) not in x.trace
+            assert 3 in x.batch and not task.done()
+        finally:
+            x.release.set()
+            assert await asyncio.wait_for(task, 1)
+        assert not x.batch and ("publish", (3, 9) if non_speaking else (1, 2, 3)) in x.trace
+
+    await run(True)
+    await run(False)
