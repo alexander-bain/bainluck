@@ -343,4 +343,91 @@ final class FuturesStreamingTests: XCTestCase {
         two.invalidate()
         XCTAssertEqual(calls.count, 2)
     }
+
+    // #10740: the shared hub can restore its Redis subscription without
+    // replacing this socket; frames published in the gap are lost.
+    func testResyncReconcilesOneMarketWithoutAnotherQuote() {
+        var clock: TimeInterval = 100
+        var calls: [[Int]] = [], connections = 0
+        let handle = Handle()
+        let subscription = MarketStreamSubscription(makeHandle: { _ in
+            connections += 1
+            return handle
+        }, onInvalidate: { calls.append($0) }, now: { clock })
+        subscription.start(ids: [7])
+        clock = 160
+        handle.fire("resync", #"{"generation":1}"#)
+        XCTAssertEqual(calls, [[7]])
+        clock = 166
+        subscription.tick()
+        XCTAssertFalse(handle.isClosed, "a recovery frame is wire activity")
+        XCTAssertEqual(connections, 1)
+        subscription.stop()
+    }
+
+    func testResyncDeduplicatesGenerationsAndReadsOnlyRemainingMarkets() {
+        var calls: [[Int]] = []
+        let handle = Handle()
+        let subscription = MarketStreamSubscription(makeHandle: { _ in handle },
+            onInvalidate: { calls.append($0) }, now: { 100 })
+        subscription.start(ids: [7, 8])
+        handle.fire("market", #"{"market_id":7,"invalidation":true,"terminal":true}"#)
+        calls = []
+        handle.fire("resync", #"{"generation":2}"#)
+        handle.fire("resync", #"{"generation":2}"#)
+        handle.fire("resync", #"{"generation":1}"#)
+        XCTAssertEqual(calls, [[8]])
+        handle.fire("resync", #"{"generation":3}"#)
+        XCTAssertEqual(calls, [[8], [8]])
+        handle.fire("market", #"{"market_id":8,"invalidation":true,"terminal":true}"#)
+        calls = []
+        handle.fire("resync", #"{"generation":4}"#)
+        XCTAssertEqual(calls, [], "recovery never re-reads a final market")
+        XCTAssertFalse(handle.isClosed)
+        subscription.stop()
+    }
+
+    func testResyncRefusesInvalidGenerationWithoutAdvancingComparison() {
+        let refused = ["", "not json", "1", "[1]", "{}", #"{"generation":null}"#,
+            #"{"generation":true}"#, #"{"generation":false}"#, #"{"generation":"1"}"#,
+            #"{"generation":0}"#, #"{"generation":-1}"#, #"{"generation":1.5}"#,
+            #"{"generation":9007199254740992}"#, #"{"generation":1e300}"#,
+            #"{"generation":[]}"#, #"{"generation":{}}"#]
+        for raw in refused {
+            var calls: [[Int]] = []
+            let handle = Handle()
+            let subscription = MarketStreamSubscription(makeHandle: { _ in handle },
+                onInvalidate: { calls.append($0) }, now: { 100 })
+            subscription.start(ids: [7])
+            handle.fire("resync", raw)
+            XCTAssertEqual(calls, [], raw)
+            handle.fire("resync", #"{"generation":1}"#)
+            XCTAssertEqual(calls, [[7]], raw)
+            subscription.stop()
+        }
+    }
+
+    func testResyncFencesOldAndStoppedHandlesAndNewHandleResetsComparison() {
+        var clock: TimeInterval = 100
+        var calls: [[Int]] = [], connections = 0
+        let one = Handle(), two = Handle()
+        let subscription = MarketStreamSubscription(makeHandle: { _ in
+            connections += 1
+            return connections == 1 ? one : two
+        }, onInvalidate: { calls.append($0) }, now: { clock })
+        subscription.start(ids: [7])
+        one.fire("resync", #"{"generation":8}"#)
+        one.fire("reconnect")
+        clock = 105
+        subscription.tick()
+        XCTAssertEqual(connections, 2)
+        calls = []
+        one.fire("resync", #"{"generation":9}"#)
+        XCTAssertEqual(calls, [])
+        two.fire("resync", #"{"generation":1}"#)
+        XCTAssertEqual(calls, [[7]], "a new hub connection may begin at 1")
+        subscription.stop()
+        two.fire("resync", #"{"generation":2}"#)
+        XCTAssertEqual(calls, [[7]])
+    }
 }
