@@ -16,7 +16,7 @@ from app.utils.ladder_monotonicity import (
     cumulative_ladder_is_dated,
     cumulative_outcome_ladder,
 )
-from app.utils.outcome_display import drop_incoherent_ladder_outcomes
+from app.utils.outcome_display import display_rank_order, drop_incoherent_ladder_outcomes
 
 # Market tier weights (lower tier number = more important)
 MARKET_TIER_WEIGHTS = {
@@ -893,7 +893,16 @@ def compute_futures_highlight(
         biggest_mover_name = None
 
         rank_changes_in_top5 = 0
-        current_leader = None
+        # #5105: rank-change evidence must belong to the row the card names.
+        # Stored ranks can disagree with current price/display order. Keep this
+        # view separate: dropping placeholders here must not change the existing
+        # mover, shakeup or surprise scoring over the original outcomes.
+        leader_view = display_rank_order(
+            sorted(outcomes, key=lambda o: float(o.get("probability") or 0), reverse=True),
+            lambda o: o.get("name"),
+            lambda o: o.get("probability"),
+        )
+        current_leader = leader_view[0] if leader_view else None
         leader_was_different = False
 
         for o in outcomes:
@@ -917,8 +926,7 @@ def compute_futures_highlight(
                 rank_changes_in_top5 += 1
 
             # Track leader change
-            if rank == 1:
-                current_leader = o.get("name")
+            if o is current_leader and current_prob is not None and rank == 1:
                 if rank_claim_is_evidence(o):
                     leader_was_different = True
 
