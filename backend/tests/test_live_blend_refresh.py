@@ -538,7 +538,9 @@ class _RecordingSession:
             return _Result(scalar=self._returned, rev=self.returned_rev)
         self._selects += 1
         if self._selects == 1:
-            return _Result(rows=self._market_rows)
+            return _Result(rows=[market for market, _ in self._market_rows])
+        if self._selects == 2:
+            return _Result(rows=list({event.id: event for _, event in self._market_rows}.values()))
         return _Result(rows=self._outcomes)
 
     def add(self, row):
