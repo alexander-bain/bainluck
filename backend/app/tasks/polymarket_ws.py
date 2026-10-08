@@ -301,6 +301,33 @@ def chunk_price_update_stmt(chunk: dict):
     )
 
 
+def standalone_open_outcome_ids(
+    outcome_ids,
+    open_outcome_ids,
+    event_id_by_outcome: dict,
+    complement_of: dict,
+) -> set[int]:
+    """#10090: the buffered legs no blend reads — open, with no event, and a
+    binary partner (if any) with none either.
+
+    These leave the game flush for their own loop, so a standalone chunk's
+    write never holds the next game quote. A bridged leg (#10091) feeds its
+    event's blend and stays; a pair with one bridged side stays whole on the
+    game side (CERT-3868: one transaction or wait together). Read at flush
+    time: admission bridges a leg before it marks it open, with no await
+    between, so a leg is never standalone ahead of its bridge.
+    """
+    def eventless_open(oid) -> bool:
+        return oid in open_outcome_ids and event_id_by_outcome.get(oid) is None
+
+    standalone: set[int] = set()
+    for oid in outcome_ids:
+        other = complement_of.get(oid)
+        if eventless_open(oid) and (other is None or eventless_open(other)):
+            standalone.add(oid)
+    return standalone
+
+
 def legs_in_token_order(pairs: list) -> list:
     """Order one market's ``(outcome_id, external_id)`` legs as its CLOB tokens are.
 
@@ -955,8 +982,8 @@ async def _run_polymarket_ws_consumer(*, sessions):
     from app.tasks.live_blend_refresh import (
         DEFAULT_MIN_REFRESH_INTERVAL_S, LiveBlendRefresher, TailReceipts,
         adopt_handed_off,
-        event_ids_for_outcomes, hand_off_pending, reap_stopped_loops,
-        run_flush_cadence,
+        LOOP_REAP_TIMEOUT_S, event_ids_for_outcomes, hand_off_pending,
+        reap_stopped_loops, run_flush_cadence,
     )
     from app.tasks.polymarket_token_topup import (
         topup_clob_tokens, topup_outcome_clob_tokens,
@@ -1528,6 +1555,7 @@ async def _run_polymarket_ws_consumer(*, sessions):
         *,
         only_events: Optional[set[int]] = None,
         exclude_events: frozenset[int] | set[int] = frozenset(),
+        standalone: Optional[bool] = None,
     ) -> Optional[list[int]]:
         """#9934: withdraw the held prices the latest wide books priced out.
 
@@ -1536,12 +1564,23 @@ async def _run_polymarket_ws_consumer(*, sessions):
         meanwhile. Returns withdrawn ids, or None on transaction failure.
         #10651: a finished game's work can run before unrelated price chunks.
         The tail excludes attempted events, so even a failure is tried once.
+        #10090: ``standalone`` True/False takes only/no standalone legs, so
+        each loop withdraws after its own prices; None (final drain) takes all.
         """
         async with buffer_lock:
+            alone = (
+                standalone_open_outcome_ids(
+                    withdraw_buffer, open_outcome_ids, event_id_by_outcome,
+                    open_complement_of,
+                )
+                if standalone is not None
+                else set()
+            )
             books = {
                 oid: book
                 for oid, book in withdraw_buffer.items()
-                if (only_events is None or event_id_by_outcome.get(oid) in only_events)
+                if (standalone is None or (oid in alone) == standalone)
+                and (only_events is None or event_id_by_outcome.get(oid) in only_events)
                 and event_id_by_outcome.get(oid) not in exclude_events
             }
         if not books:
@@ -1584,6 +1623,14 @@ async def _run_polymarket_ws_consumer(*, sessions):
         ``flush_started`` is this flush's start, for the refresher's floor."""
         async with buffer_lock:
             batch = dict(price_buffer)
+            if not final:
+                # #10090: standalone legs are `flush_standalone`'s; the final
+                # drain has no such loop after it, so it takes them too.
+                for oid in standalone_open_outcome_ids(
+                    batch, open_outcome_ids, event_id_by_outcome,
+                    open_complement_of,
+                ):
+                    del batch[oid]
             batch_marks = {oid: input_marks[oid] for oid in batch if oid in input_marks}
             # #10090 / #837: events a held-price withdrawal may still touch
             # this flush. Their refresh waits for that transaction too.
@@ -1682,10 +1729,9 @@ async def _run_polymarket_ws_consumer(*, sessions):
         # Events already attempted above wait for the next flush if their
         # withdrawal failed or a newer book arrived during the transaction.
         # All other withdrawals retain their ordinary after-price ordering.
-        withdrawn = (
-            await flush_withdrawals(exclude_events=attempted_withdraw_events)
-            if attempted_withdraw_events
-            else await flush_withdrawals()
+        withdrawn = await flush_withdrawals(
+            exclude_events=attempted_withdraw_events,
+            standalone=None if final else False,
         )
         if withdrawn is None:
             wrote_all = False
@@ -1709,6 +1755,40 @@ async def _run_polymarket_ws_consumer(*, sessions):
             event_ids_for_outcomes(event_id_by_outcome, owed + withdrawn),
             flush_started=flush_started,
         )
+        return wrote_all
+
+    async def flush_standalone(flush_started=None):
+        """#10090: write the standalone open legs, then their withdrawals.
+
+        Their own loop, so a standalone chunk's UPDATE no longer holds the next
+        game flush (the game loop starts a flush only when the last returns).
+        These legs have no event, so nothing here refreshes a blend or stages a
+        receipt. Same chunk plan, cap and buffer bookkeeping as the game flush;
+        the two loops write disjoint rows. ``flush_started`` is unused.
+        """
+        async with buffer_lock:
+            alone = standalone_open_outcome_ids(
+                price_buffer, open_outcome_ids, event_id_by_outcome,
+                open_complement_of,
+            )
+            batch = {oid: p for oid, p in price_buffer.items() if oid in alone}
+        wrote_all = True
+        if batch:
+            chunks = plan_flush_chunks(
+                batch,
+                open_outcome_ids,
+                FLUSH_CHUNK_ROWS,
+                OPEN_FLUSH_CHUNKS_PER_FLUSH,
+                open_complement_of,
+            )
+            stats["open_contract_flush_deferred"] += len(batch) - sum(
+                len(c) for c in chunks
+            )
+            for chunk_ids in chunks:
+                if not await write_chunk({oid: batch[oid] for oid in chunk_ids}):
+                    wrote_all = False
+        if await flush_withdrawals(standalone=True) is None:
+            wrote_all = False
         return wrote_all
 
     async def drain_prices():
@@ -1756,6 +1836,40 @@ async def _run_polymarket_ws_consumer(*, sessions):
                 "attempts — these are lost, not deferred",
                 stranded, FINAL_FLUSH_ATTEMPTS,
             )
+
+    async def join_flushes_then_drain():
+        """#10090 review: both cancelled flush loops — the game flush with the
+        stamp it joins on the way out, and the standalone flush — finish before
+        the final drain reads the buffer.
+
+        A cancelled write can still be rolling back, committing or publishing;
+        draining beside it would capture the same buffer and write it again,
+        and put two refreshes in the refresher. Live's c686 join (Kalshi):
+        joined to COMPLETION, never to a timeout, with an error line each bound
+        a loop overruns; `loops_stop` and the flushes' own DB bounds end them.
+        A second cancellation landing on the join is recorded, not obeyed
+        early: the join and the drain both still run, then it propagates.
+        """
+        flushes = {flush_task, standalone_task}
+        interrupted = None
+        while not all(task.done() for task in flushes):
+            try:
+                await asyncio.wait(flushes, timeout=LOOP_REAP_TIMEOUT_S)
+            except asyncio.CancelledError as exc:
+                interrupted = exc
+                continue
+            running = sorted(t.get_name() for t in flushes if not t.done())
+            if running:
+                logger.error(
+                    "Polymarket WS: cancelled flush %s still running after "
+                    "%.0fs; the final drain waits for it",
+                    ", ".join(running), LOOP_REAP_TIMEOUT_S,
+                )
+        try:
+            await drain_prices()
+        finally:
+            if interrupted is not None:
+                raise interrupted
 
     # #9418: one CLOB client for the consumer's resolutions, made on first use
     # and closed with the consumer; and the in-flight resolution tasks, held so
@@ -2083,6 +2197,11 @@ async def _run_polymarket_ws_consumer(*, sessions):
             failed_retry_interval_s=PRICE_FLUSH_SECONDS,
         )
 
+    async def standalone_loop():
+        await run_flush_cadence(
+            flush_standalone, PRICE_FLUSH_SECONDS, stop=loops_stop,
+        )
+
     async def stats_loop():
         while True:
             await asyncio.sleep(60)
@@ -2115,6 +2234,9 @@ async def _run_polymarket_ws_consumer(*, sessions):
             )
 
     flush_task = asyncio.create_task(flush_loop(), name="polymarket-flush-loop")
+    standalone_task = asyncio.create_task(
+        standalone_loop(), name="polymarket-standalone-flush-loop"
+    )
     stats_task = asyncio.create_task(stats_loop(), name="polymarket-stats-loop")
 
     _report_liveness("polymarket", "subscribing", legs=len(asset_ids))
@@ -2276,6 +2398,7 @@ async def _run_polymarket_ws_consumer(*, sessions):
     finally:
         loops_stop.set()
         flush_task.cancel()
+        standalone_task.cancel()
         stats_task.cancel()
         # #9418: an unfinished settle rolls back; the market stays for the
         # Gamma rail, which is where an `unconfirmed` verdict leaves it anyway.
@@ -2286,8 +2409,9 @@ async def _run_polymarket_ws_consumer(*, sessions):
         admission_task.cancel()
         # Q491 repair (CERT-654 BLOCK): the last flush has no successor, so it
         # must RETRY rather than requeue into a buffer nobody will read again.
+        # #10090 review: only after both cancelled flushes have finished.
         try:
-            await drain_prices()
+            await join_flushes_then_drain()
         finally:
             # #9462 review: the drain returns once the price BUFFER is empty,
             # but a price it (or the last flush) committed inside the 2 s
@@ -2297,7 +2421,7 @@ async def _run_polymarket_ws_consumer(*, sessions):
             # #10657: a loop that lost its cancellation ends here, after the
             # drain, rather than outliving the run on its closed sessions.
             stats["loops_unreaped"] = await reap_stopped_loops(
-                "polymarket", (flush_task, stats_task),
+                "polymarket", (flush_task, standalone_task, stats_task),
             )
             # #9418: closed after the drain, never before it, so a cancellation
             # landing on this await cannot skip a flush.
