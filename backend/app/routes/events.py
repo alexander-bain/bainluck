@@ -32966,6 +32966,8 @@ async def get_event_odds_history(
                 agg_sources,
                 bucket_seconds=60,
                 pregame_until=chart_pregame_until,
+                # Keep post-kickoff live history on the same policy after final.
+                live_blend=event.status in ("live", "completed", "closed"),
             )
             aggregate_line = [
                 {
