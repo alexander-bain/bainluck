@@ -127,6 +127,7 @@ def rig(*, failed=None, declined=None, pending=(), locked=(), unchanged=()):
 
     ns = dict(globals(), price_buffer=batch, buffer_lock=asyncio.Lock(),
               market_id_by_outcome=markets, event_id_by_outcome=events,
+              non_blend_outcome_ids=set(),
               input_marks={oid: oid for oid in batch}, tail_receipts=Receipts(),
               open_contract_outcome_ids={9}, blend_refresher=Refresher(),
               # #10090: no live set is the pre-#10090 plan, and no budget.

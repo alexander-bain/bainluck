@@ -155,6 +155,29 @@ def flush_budget_spent(
     return _mono() - flush_started >= budget
 
 
+def kalshi_non_speaking_ticker(external_id: str | None) -> bool:
+    """Suppress blend triggers only for a known series rejected by admission.
+
+    Classify the MARKET ticker, just like LiveBlendRefresher._read_groups.
+    Missing/empty/unknown series retain refresh rather than guess at new rules.
+    """
+    from app.utils.prediction_market_matching import feeds_win_prob_blend
+    from app.utils.sport_keys import (
+        KALSHI_FUTURES_TICKER_TO_SPORT_KEY,
+        KALSHI_TICKER_TO_SPORT_KEY,
+    )
+
+    if not isinstance(external_id, str) or not external_id:
+        return False
+    prefix, separator, suffix = external_id.lower().partition("-")
+    if not separator or not suffix or feeds_win_prob_blend(external_id):
+        return False
+    return (
+        prefix in KALSHI_TICKER_TO_SPORT_KEY
+        or prefix in KALSHI_FUTURES_TICKER_TO_SPORT_KEY
+    )
+
+
 def live_input_waiting(buffer, batch, event_id_by_outcome, live_events):
     """#10090 — True when ``buffer`` holds input for a live game that
     ``batch`` (this flush's snapshot) does not: a new outcome, or a value that
@@ -738,6 +761,16 @@ async def _run_kalshi_ws_consumer(*, sessions, prices):
     market_id_by_outcome: dict[int, int] = {
         outcome_id: market_id for market_id, outcome_id in ticker_to_ids.values()
     }
+    # #10090: a separate trigger predicate; full outcome/event/market maps
+    # still own every write, priority, lifecycle and market invalidation.
+    # Derive from the market ticker already read for admission, with no query.
+    _ticker_by_market = {
+        market_id: ticker for ticker, market_id in market_id_by_ext.items()
+    }
+    non_blend_outcome_ids = {
+        outcome_id for outcome_id, market_id in market_id_by_outcome.items()
+        if kalshi_non_speaking_ticker(_ticker_by_market.get(market_id))
+    }
     # #9484: filled IN PLACE by `admit_open_contracts`, which the handlers and
     # the flush read through these same objects.
     open_contract_ids: dict[str, tuple[int, int]] = {}
@@ -1100,7 +1133,14 @@ async def _run_kalshi_ws_consumer(*, sessions, prices):
                 # game's write AND stamp in turn (see `stamping` above).
                 # The unrelated phase has no linked event by construction, so it refreshes
                 # only if the #9484 bridge named one of its rows since the split.
-                linked_events = event_ids_for_outcomes(event_id_by_outcome, phase.keys())
+                # Known derivative-only writes cannot change the winner blend.
+                # Unknown IDs fall through; final drain keeps the existing full
+                # refresh. The first phase still calls refresh([]) to pay debt.
+                blend_outcomes = (
+                    phase.keys() if final_drain else
+                    (oid for oid in phase if oid not in non_blend_outcome_ids)
+                )
+                linked_events = event_ids_for_outcomes(event_id_by_outcome, blend_outcomes)
                 if index == 0 or linked_events:
                     await stamp_done()
                     with contextlib.suppress(Exception):
@@ -1570,6 +1610,9 @@ async def _run_kalshi_ws_consumer(*, sessions, prices):
         # slate entry — the map excluded every ticker the slate carries.
         for outcome_id, event_id in bridge.items():
             event_id_by_outcome.setdefault(outcome_id, event_id)
+            # Bridge candidates passed canonical winner admission; keep this
+            # new/refreshed map member speaking even if an old entry existed.
+            non_blend_outcome_ids.discard(outcome_id)
         stats["open_contract_bridged_outcomes"] = len(bridge)
         stats["open_contract_bridged_events"] = len(set(bridge.values()))
         # An open contract's field is re-ranked like a linked one's.
