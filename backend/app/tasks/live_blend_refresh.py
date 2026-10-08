@@ -1497,7 +1497,7 @@ class LiveBlendRefresher:
 
     async def _read_groups(self, session, event_ids: list[int]) -> dict[int, tuple]:
         from types import SimpleNamespace
-        from sqlalchemy import and_, func, or_, select
+        from sqlalchemy import and_, func, literal, or_, select
         from app.models.models import Event, FuturesMarket, FuturesOutcome
         from app.utils.live_blend import MarketOutcomes
         from app.utils.prediction_market_matching import (
@@ -1530,7 +1530,12 @@ class LiveBlendRefresher:
         )
         rows = (
             await session.execute(
-                select(*(getattr(model, key) for model, keys in fields for key in keys))
+                select(*(
+                    Event.win_probability_sources.op("->")(literal(self.source)).label(key)
+                    if model is Event and key == "win_probability_sources"
+                    else getattr(model, key)
+                    for model, keys in fields for key in keys
+                ))
                 .select_from(FuturesMarket)
                 .join(Event, Event.id == FuturesMarket.event_id)
                 .outerjoin(FuturesOutcome, outcome_join)
@@ -1554,8 +1559,14 @@ class LiveBlendRefresher:
                 event_values = row[offset:offset + len(PREPARED_EVENT_FIELDS)]
                 event_id = event_values[0]
                 if event_id not in grouped:
+                    context = dict(zip(PREPARED_EVENT_FIELDS, event_values))
+                    # Before the UPDATE only this source's restamp guard reads
+                    # the JSON. The full aggregate uses UPDATE RETURNING below.
+                    context["win_probability_sources"] = {
+                        self.source: context["win_probability_sources"],
+                    }
                     grouped[event_id] = (
-                        SimpleNamespace(**dict(zip(PREPARED_EVENT_FIELDS, event_values))),
+                        SimpleNamespace(**context),
                         [],
                     )
                 event, group = grouped[event_id]

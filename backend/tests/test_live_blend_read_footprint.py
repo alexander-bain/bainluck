@@ -34,6 +34,18 @@ class ReadSession:
         self.statements.append(statement)
         from app.utils.live_blend import is_game_winner_market
 
+        columns = list(getattr(statement, "selected_columns", ()))
+        column = columns[len(PREPARED_MARKET_FIELDS) + PREPARED_EVENT_FIELDS.index(
+            "win_probability_sources"
+        )] if columns else None
+        source = column.element.right.value if hasattr(column, "element") else None
+
+        def field(obj, key):
+            raw = getattr(obj, key, None)
+            if key == "win_probability_sources" and source is not None:
+                return raw.get(source) if isinstance(raw, dict) else None
+            return raw
+
         self.outcome_ids = []
         rows = []
         for market in self.markets:
@@ -51,7 +63,7 @@ class ReadSession:
             ] if eligible else []
             for outcome in outcomes or [None]:
                 rows.append(tuple(
-                    getattr(obj, key, None)
+                    field(obj, key)
                     for obj, keys in (
                         (market, PREPARED_MARKET_FIELDS),
                         (event, PREPARED_EVENT_FIELDS),
@@ -165,14 +177,19 @@ async def test_read_projects_one_event_context_and_omits_only_impossible_kalshi_
     assert "box_score_data" not in sql
     assert "calibration_probability" not in sql
     # Scalar columns only: no ORM hydration or unprojected payload columns.
-    assert [str(column) for column in session.statements[0].selected_columns] == [
+    columns = list(session.statements[0].selected_columns)
+    source_position = len(PREPARED_MARKET_FIELDS) + PREPARED_EVENT_FIELDS.index(
+        "win_probability_sources"
+    )
+    assert [str(column) for i, column in enumerate(columns) if i != source_position] == [
         f"{table}.{key}"
         for table, fields in (
             ("futures_markets", PREPARED_MARKET_FIELDS),
             ("events", PREPARED_EVENT_FIELDS),
             ("futures_outcomes", PREPARED_OUTCOME_FIELDS),
-        ) for key in fields
+        ) for key in fields if key != "win_probability_sources"
     ]
+    assert columns[source_position].element.right.value == "kalshi"
     assert session.statements[0].compile().params["event_id_1"] == [1, 999]
 
 
@@ -259,6 +276,7 @@ async def test_smaller_read_retains_resolver_value_and_fallback(case):
 @pytest.mark.asyncio
 async def test_prepared_context_keeps_fallbacks_and_detaches_json_without_copying_unused_event_fields():
     e = event()
+    e.win_probability_sources["kalshi"] = {"value": 0.67}
 
     class GuardedEvent:
         def __getattr__(self, key):
@@ -284,7 +302,9 @@ async def test_prepared_context_keeps_fallbacks_and_detaches_json_without_copyin
     assert context.opening_home_probability == 0.6
     assert set(vars(prepared[1][1][0].market)) == set(PREPARED_MARKET_FIELDS)
     assert set(vars(prepared[1][1][0].outcomes[0])) == set(PREPARED_OUTCOME_FIELDS)
-    context.win_probability_sources["espn"]["value"] = 0.1
+    assert set(context.win_probability_sources) == {"kalshi"}
+    context.win_probability_sources["kalshi"]["value"] = 0.1
+    assert e.win_probability_sources["kalshi"]["value"] == 0.67
     assert e.win_probability_sources["espn"]["value"] == 0.7
 
 

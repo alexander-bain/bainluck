@@ -104,9 +104,21 @@ class _Session:
         from app.tasks.live_blend_refresh import (
             PREPARED_EVENT_FIELDS, PREPARED_MARKET_FIELDS, PREPARED_OUTCOME_FIELDS,
         )
+        columns = list(getattr(statement, "selected_columns", ()))
+        column = columns[len(PREPARED_MARKET_FIELDS) + PREPARED_EVENT_FIELDS.index(
+            "win_probability_sources"
+        )] if columns else None
+        source = column.element.right.value if hasattr(column, "element") else None
+
+        def field(obj, key):
+            raw = getattr(obj, key, None)
+            if key == "win_probability_sources" and source is not None:
+                return raw.get(source) if isinstance(raw, dict) else None
+            return raw
+
         rows = [
             tuple(
-                getattr(obj, key, None)
+                field(obj, key)
                 for obj, fields in (
                     (market, PREPARED_MARKET_FIELDS),
                     (event, PREPARED_EVENT_FIELDS),
