@@ -17,17 +17,22 @@ from tests.test_polymarket_withdrawal_speed_10651 import ROOT, rig
 
 pytestmark = pytest.mark.asyncio
 
-PIPELINED = "stamping = asyncio.create_task(blend_refresher.refresh("
-SERIAL = "await (blend_refresher.refresh("
+EARLY = "early_ready = stamp_ready(index)"
+PIPELINED = "await asyncio.sleep(0)"
+SERIAL = "await stamp_done()"
 
 
 def held_refresher(r, hold_ids=(10,), pending_events=()):
     gate = asyncio.Event()
     calls = {"started": [], "finished": [], "cancelled": [], "running": 0,
-             "most_running": 0, "admitted": []}
+             "most_running": 0, "admitted": [], "adopted": []}
     pending = set(pending_events)
 
     class Refresher:
+        def adopt_pending(self, ids):
+            pending.update(ids)
+            calls["adopted"].append(set(ids))
+
         def pending_event_ids(self):
             return frozenset(pending)
 
@@ -67,12 +72,18 @@ def serial_flush(r):
     """The shipped flush with its stamp awaited inline again (the pre-#10090
     shape): installs it in the rig in place of the pipelined one."""
     source = (ROOT / "app/tasks/polymarket_ws.py").read_text()
-    assert source.count(PIPELINED) == 1
-    tree = ast.parse(source.replace(PIPELINED, SERIAL))
+    tree = ast.parse(source)
     (node,) = [
         n for n in ast.walk(tree)
         if isinstance(n, ast.AsyncFunctionDef) and n.name == "flush_prices"
     ]
+    # Disable the pre-MARKET start, then await the ordinary post-MARKET stamp
+    # inline. The control holds the next write exactly as the serial path did.
+    text = ast.unparse(node)
+    assert text.count(EARLY) == text.count(PIPELINED) == 1
+    (node,) = ast.parse(text.replace(EARLY, "early_ready = []").replace(
+        PIPELINED, SERIAL,
+    )).body
     exec(compile(ast.Module(body=[node], type_ignores=[]), "serial", "exec"), r.ns)
 
 
