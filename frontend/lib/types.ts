@@ -2045,6 +2045,12 @@ export interface FeedResponse {
    * opinion, so reconcile rather than reorder.
    */
   edition?: string;
+  /**
+   * #5105 — GLOBAL 0-based deck position where the ordinary-live continuation
+   * begins; the same on every page of one edition. Absent/null = no section;
+   * 0 is a real boundary. Read via `lib/discover/continuationSections`.
+   */
+  continuation_start?: number | null;
   // Present when my_teams_only=true
   my_teams_only?: boolean;
   requires_auth?: boolean;
