@@ -120,6 +120,7 @@
     "#3433 Kalshi game commence wiring (real Postgres)",
     "#3518 A listed Kalshi leg is never left with zero outcomes (real Postgres)",
     "#9460 one Kalshi event's failed write does not sink the rest of the beat (real Postgres)",
+    "#10732 a finished Kalshi event holds no row lock across the next event's venue call (real Postgres)",
     "#9543 the Kalshi beat reaches the existing rows it wrote longest ago first (real Postgres)",
     "#3569 The live poll speaks the venue's current price dialect (real Postgres)",
     "#9399 A Polymarket leg we refuse to price stops keeping a number its own book prices out (real Postgres)",
