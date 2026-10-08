@@ -116,6 +116,49 @@ async def test_dead_hub_announces_reconnect_and_releases_all(monkeypatch):
     assert set(hub.released) == {"live:market:1", "live:market:2"}
 
 
+async def test_recovery_reconciles_one_market_without_another_quote(monkeypatch):
+    hub, stream = await opened(monkeypatch, ids=(1,))
+    try:
+        hub.subscriptions["live:market:1"].offer(live_fanout.Recovery(1))
+        message = await asyncio.wait_for(anext(stream), 1)
+        assert message.startswith("event: resync")
+        assert json.loads(message.split("data: ")[1]) == {"generation": 1}
+    finally:
+        await stream.aclose()
+
+
+async def test_recovery_deduplicates_channels_and_keeps_market_truth(monkeypatch):
+    hub, stream = await opened(monkeypatch)
+    try:
+        for sub in hub.subscriptions.values():
+            sub.offer(live_fanout.Recovery(2))
+        assert '"generation": 2' in await asyncio.wait_for(anext(stream), 1)
+        hub.subscriptions["live:market:1"].offer(live_fanout.Recovery(1))
+        hub.subscriptions["live:market:2"].offer(frame(2, terminal=True))
+        message = await asyncio.wait_for(anext(stream), 1)
+        assert message.startswith("event: market")
+        assert json.loads(message.split("data: ")[1])["terminal"] is True
+        hub.subscriptions["live:market:1"].offer(live_fanout.Recovery(3))
+        assert '"generation": 3' in await asyncio.wait_for(anext(stream), 1)
+        assert hub.released == ["live:market:2"]
+        hub.subscriptions["live:market:1"].offer(frame(1, terminal=True))
+        assert (await asyncio.wait_for(anext(stream), 1)).startswith("event: market")
+        assert (await asyncio.wait_for(anext(stream), 1)).startswith("event: closed")
+    finally:
+        await stream.aclose()
+
+
+async def test_new_market_connection_accepts_generation_one(monkeypatch):
+    for generation in (8, 1):
+        hub, stream = await opened(monkeypatch, ids=(1,))
+        try:
+            hub.subscriptions["live:market:1"].offer(live_fanout.Recovery(generation))
+            message = await asyncio.wait_for(anext(stream), 1)
+            assert json.loads(message.split("data: ")[1]) == {"generation": generation}
+        finally:
+            await stream.aclose()
+
+
 async def test_cancellation_during_wait_releases_every_subscription(monkeypatch):
     hub, stream = await opened(monkeypatch)
     pending = asyncio.create_task(anext(stream))

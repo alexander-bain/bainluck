@@ -11,7 +11,8 @@ import oddsVerified from "../fixtures/verifiedTitle10224/detail-odds-verified.js
 import oddsRefused from "../fixtures/verifiedTitle10224/detail-odds-refused.json";
 import kalshiVerified from "../fixtures/verifiedTitle10224/detail-kalshi-verified.json";
 import kalshiDefault from "../fixtures/verifiedTitle10224/detail-kalshi-default.json";
-import { createFuturesDetailReconciler } from "@/lib/futuresDetailStream";
+import { createFuturesDetailReconciler, createFuturesReadScheduler } from "@/lib/futuresDetailStream";
+import { createMarketStreamController } from "@/lib/marketStreamController";
 import { fetchFuturesMarket, fetchProbabilityTimeline } from "@/lib/api";
 import type { FuturesMarketDetailResponse } from "@/lib/types";
 
@@ -106,4 +107,58 @@ describe("API methods: default URLs unchanged, opt-in appends one parameter", ()
     expect((await fetchFuturesMarket(86832, { representation: "verified_title" })).outcomes[0].rank_change_24h).toBeNull();
     expect((await fetchFuturesMarket(86832)).outcomes[0].rank_change_24h).toBe(3);
   });
+});
+
+test.each(["quote", "terminal"])("recovery owes a paced canonical REST %s without another market frame", async kind => {
+  const initial = detail(kalshiDefault);
+  const recovered = detail(kalshiDefault);
+  recovered.outcomes.forEach((row, i) => {
+    row.last_updated = new Date(Date.parse(row.last_updated!) + 1000).toISOString();
+    row.probability = i === 0 ? 1 : 0;
+    if (kind === "terminal") row.is_winner = i === 0;
+  });
+  if (kind === "terminal") recovered.status = "resolved";
+  let served = initial;
+  global.fetch = jest.fn(async () => ({
+    ok: true, status: 200, json: async () => served, headers: new Headers(),
+  })) as unknown as typeof fetch;
+  let now = 0;
+  const reconciler = createFuturesDetailReconciler(initial);
+  const read = jest.fn(async (_signal: AbortSignal, current: () => boolean) => {
+    const body = await fetchFuturesMarket(initial.id, { fresh: true });
+    if (current()) reconciler.adopt(body);
+  });
+  const scheduler = createFuturesReadScheduler({ now: () => now, read });
+  const listeners = new Map<string, (event: unknown) => void>();
+  const wire = {
+    readyState: 1,
+    addEventListener: (name: string, callback: (event: unknown) => void) => { listeners.set(name, callback); },
+    close: jest.fn(),
+  };
+  const controller = createMarketStreamController({
+    marketIds: [initial.id], now: () => now, open: () => wire,
+    onInvalidate: ids => { expect(ids).toEqual([initial.id]); scheduler.request(); },
+  });
+  const drain = async () => { for (let i = 0; i < 8; i++) await Promise.resolve(); };
+  try {
+    controller.start();
+    listeners.get("open")?.({ data: "{}" });
+    await drain();
+    served = recovered;
+    now = 1000;
+    listeners.get("resync")?.({ data: '{"generation":1}' });
+    listeners.get("resync")?.({ data: '{"generation":1}' });
+    listeners.get("heartbeat")?.({ data: "{}" });
+    expect(read).toHaveBeenCalledTimes(1);
+    expect(reconciler.current()).toBe(initial);
+    now = 1999; scheduler.tick();
+    expect(read).toHaveBeenCalledTimes(1);
+    now = 2000; scheduler.tick(); await drain();
+    expect(read).toHaveBeenCalledTimes(2);
+    expect(reconciler.current()).toBe(recovered);
+    if (kind === "terminal") expect(reconciler.current().outcomes[0].is_winner).toBe(true);
+    expect(wire.close).not.toHaveBeenCalled();
+  } finally {
+    controller.stop(); scheduler.stop();
+  }
 });
