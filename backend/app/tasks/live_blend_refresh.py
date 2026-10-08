@@ -1293,7 +1293,10 @@ class LiveBlendRefresher:
         failed_groups: set[int] = set()
         budget_deferred: set[int] = set()
         publishing = None
-        waiting_frames = None
+        waiting_frames = []
+        import asyncio
+
+        publication_lock = asyncio.Lock()
 
         async def publication_done(*, cancel=False, cancel_on_interrupt=True):
             nonlocal publishing
@@ -1331,18 +1334,17 @@ class LiveBlendRefresher:
                     )
 
         async def publish_committed(frames):
-            nonlocal publishing, waiting_frames
-            import asyncio
+            nonlocal publishing
 
-            # Only one sender owns frames/socket state. The next disjoint DB
-            # group can commit while its predecessor awaits Redis, but its
-            # publication starts only after that predecessor is joined.
-            # Preserve this definitely-unsent group if interrupted while its
-            # predecessor's ambiguous send is being joined.
-            waiting_frames = frames or None
-            await publication_done()
-            frames, waiting_frames = waiting_frames, None
-            if frames:
+            if not frames:
+                return
+            # Record definitely-unsent frames before waiting for ownership.
+            # Concurrent stamps may commit, but only one sender owns the socket.
+            waiting_frames.append(frames)
+            async with publication_lock:
+                await publication_done()
+                waiting_frames.remove(frames)
+                # No cancellation point between removing and submitting frames.
                 publishing = asyncio.create_task(self._publish(frames))
 
         def committed(group_ids):
@@ -1409,17 +1411,8 @@ class LiveBlendRefresher:
                     ]
                     carried = set(continuation)
                     ordered = continuation + [eid for eid in ordered if eid not in carried]
-                for index, event_id in enumerate(ordered):
-                    if pending_only and pending_budget_spent():
-                        remaining = set(ordered[index:])
-                        budget_deferred.update(remaining)
-                        self._lock_retry.update(remaining.intersection(retry))
-                        self._throttle_deferred.update(remaining.difference(retry))
-                        self._pending_continuation = ordered[index:] + [
-                            eid for eid in self._pending_continuation
-                            if eid not in population
-                        ]
-                        break
+
+                async def stamp_event(event_id):
                     self._pending_continuation = [
                         eid for eid in self._pending_continuation if eid != event_id
                     ]
@@ -1456,6 +1449,59 @@ class LiveBlendRefresher:
                         # Empty/no-market groups also finished successfully.
                         if not completed.issuperset(group_ids):
                             committed(group_ids)
+
+                if not pending_only:
+                    # Two fixed workers claim fresh IDs in order; a waiting
+                    # stamp cannot hold every fresh sibling behind its row lock.
+                    # No task/session fanout proportional to population size.
+                    event_ids = iter(ordered)
+
+                    async def fresh_worker():
+                        for event_id in event_ids:
+                            await stamp_event(event_id)
+
+                    workers = {
+                        asyncio.create_task(fresh_worker())
+                        for _ in range(min(2, len(ordered)))
+                    }
+                    try:
+                        active = workers.copy()
+                        while active:
+                            done, active = await asyncio.wait(
+                                active, return_when=asyncio.FIRST_COMPLETED,
+                            )
+                            for task in done:
+                                task.result()
+                    except BaseException:
+                        # Join stamp cleanup before computing cancellation debt.
+                        # Repeated consumer cancellation cannot abandon a session
+                        # or a worker that owns publication cleanup.
+                        for task in workers:
+                            if not task.done() and not task.cancelling():
+                                task.cancel()
+                        active = {task for task in workers if not task.done()}
+                        while active:
+                            try:
+                                _, active = await asyncio.wait(active)
+                            except CancelledError:
+                                continue
+                        for task in workers:
+                            if not task.cancelled():
+                                task.exception()
+                        raise
+                else:
+                    for index, event_id in enumerate(ordered):
+                        if pending_budget_spent():
+                            remaining = set(ordered[index:])
+                            budget_deferred.update(remaining)
+                            self._lock_retry.update(remaining.intersection(retry))
+                            self._throttle_deferred.update(remaining.difference(retry))
+                            self._pending_continuation = ordered[index:] + [
+                                eid for eid in self._pending_continuation
+                                if eid not in population
+                            ]
+                            break
+                        await stamp_event(event_id)
             await publication_done()
         except CancelledError as exc:
             remaining = set(due).difference(completed, failed_groups, budget_deferred)
@@ -1497,7 +1543,8 @@ class LiveBlendRefresher:
                     # bounded send before exit; do not retry the predecessor's
                     # uncertain send or interrupt this cleanup on a second
                     # consumer cancellation. _publish retains its 5s bound.
-                    frames, waiting_frames = waiting_frames, None
+                    frames = [frame for group in waiting_frames for frame in group]
+                    waiting_frames.clear()
                     publishing = asyncio.create_task(self._publish(frames))
                     await publication_done(cancel_on_interrupt=False)
         return self.stats
