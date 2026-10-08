@@ -1983,40 +1983,48 @@ def national_race_representative_kind(
 
 
 def _national_race_representatives(
-    sorted_items: list[dict], *, exact_counts: dict[str, int]
-) -> dict[str, int]:
-    """``{story key: id(item)}`` — the member each national race seats (#10356).
+    sorted_items: list[dict],
+    *,
+    exact_counts: dict[str, int],
+    exact_family_cap: int = 1,
+) -> dict[str, list[int]]:
+    """``{story key: [id(item), ...]}`` — each national race's candidate
+    representatives, most preferred first (#10356).
 
-    ``sorted_items`` is the cap's own rank order, so the first member of the most
-    preferred kind wins a tie on kind. Choosing a member never un-seats one: a
-    race that already has its card in ``already_kept`` is at its cap, which
-    refuses every member before this choice is consulted — the #9877 rule that
-    a relaxed-only question does not displace a strict survivor.
+    Ordered by kind (overall winner before first-round winner), then by the
+    cap's own rank order, so the first member of the most preferred kind leads.
+    A race with no member of either kind has no entry and keeps today's choice.
 
-    A member is only chosen if the exact-family cap is certain to admit it when
-    the walk reaches it: its family is not already placed and no earlier item
-    shares it. Otherwise holding the race's other members back could leave the
-    race with no card at all, so the race keeps today's choice instead.
+    Only a family the caller's exact cap ALREADY refuses (``already_kept`` filled
+    it) is left out here, because that refusal is certain. Whether an earlier
+    item in this pool spends a family seat is NOT predicted: that item can itself
+    be refused by its own full story, or held for its own race's representative,
+    and then it spends nothing. ``diversify_quality_families`` runs the cap walk
+    and moves a race to its next candidate only if the walk did not seat the one
+    chosen.
     """
-    chosen: dict[str, tuple[int, int]] = {}
-    seen_families: set[str] = set(exact_counts)
-    for item in sorted_items:
+    ranked: dict[str, list[tuple[int, int, int]]] = {}
+    for position, item in enumerate(sorted_items):
         family = item.get("_quality_family_key")
-        story = item.get("_quality_story_key")
-        family_is_clear = not family or family not in seen_families
-        if family:
-            seen_families.add(family)
-        if not family_is_clear:
+        if (
+            family
+            and exact_family_cap > 0
+            and exact_counts.get(family, 0) >= exact_family_cap
+        ):
             continue
+        story = item.get("_quality_story_key")
         kind = national_race_representative_kind(
             (item.get("data") or {}).get("name"), story
         )
         if kind is None:
             continue
-        order = _NATIONAL_RACE_REPRESENTATIVE_ORDER[kind]
-        if story not in chosen or order < chosen[story][0]:
-            chosen[story] = (order, id(item))
-    return {story: item_id for story, (_order, item_id) in chosen.items()}
+        ranked.setdefault(story, []).append(
+            (_NATIONAL_RACE_REPRESENTATIVE_ORDER[kind], position, id(item))
+        )
+    return {
+        story: [item_id for _order, _position, item_id in sorted(members)]
+        for story, members in ranked.items()
+    }
 
 
 # Margin-of-victory + voter-turnout election markets — Alex product decision
@@ -5118,7 +5126,6 @@ def diversify_quality_families(
             exact_counts[placed_family] = exact_counts.get(placed_family, 0) + 1
         if placed_story:
             story_counts[placed_story] = story_counts.get(placed_story, 0) + 1
-    kept: list[dict] = []
     per_story_caps = {
         "story:middle_east_conflict": 4,
         "story:russia_ukraine": 2,
@@ -5187,58 +5194,103 @@ def diversify_quality_families(
                 return value
         return story_family_cap
 
+    def _walk(
+        national_representative: dict[str, int],
+    ) -> tuple[list[dict], dict[str, list[dict]], dict[str, list[int]]]:
+        walk_exact = dict(exact_counts)
+        walk_story = dict(story_counts)
+        pending = dict(national_representative)
+        walk_kept: list[dict] = []
+        story_overflow: dict[str, list[dict]] = {}
+        # Positions in `kept`, NOT the survivor dicts themselves: the reserve is
+        # written to a COPY at the end of this function (see below), so the
+        # carrier has to be replaced in the list rather than mutated where it sits.
+        story_kept_idx: dict[str, list[int]] = {}
+
+        for item in sorted_items:
+            family = item.get("_quality_family_key")
+            story = item.get("_quality_story_key")
+
+            if family and exact_family_cap > 0:
+                count = walk_exact.get(family, 0)
+                if count >= exact_family_cap:
+                    continue
+
+            if story and story_family_cap > 0:
+                count = walk_story.get(story, 0)
+                cap = min(story_family_cap, _cap_for(story))
+                representative = pending.get(story)
+                held_for_representative = (
+                    representative is not None and representative != id(item)
+                )
+                if count >= cap or held_for_representative:
+                    # #7426: the cap is a SLOT budget, and a story that folds into
+                    # one theme bundle spends one slot however many members it
+                    # carries. So the surplus is remembered rather than deleted —
+                    # see STORY_OVERFLOW_RESERVE. It does NOT go back in `kept`:
+                    # the returned list, and therefore every ranking, first-page
+                    # and slot decision downstream, is byte-identical to before
+                    # this block.
+                    overflow = story_overflow.setdefault(story, [])
+                    if len(overflow) < STORY_OVERFLOW_RESERVE:
+                        overflow.append(item)
+                    continue
+
+            if family:
+                walk_exact[family] = walk_exact.get(family, 0) + 1
+            if story:
+                walk_story[story] = walk_story.get(story, 0) + 1
+                story_kept_idx.setdefault(story, []).append(len(walk_kept))
+                pending.pop(story, None)
+            walk_kept.append(item)
+        return walk_kept, story_overflow, story_kept_idx
+
     # #10356: a national race's card is its overall-winner question, else its
-    # first-round-winner question, else (no entry here) the top-ranked member as
+    # first-round-winner question, else (no entry) the top-ranked member as
     # before. Until that member is seated, the race's other members take the
     # overflow path the cap would have sent them down anyway — the cap is 1, so
     # exactly one member is seated either way, and nothing outside these races
-    # is touched. (Consulted only inside the story-cap branch, so a disabled
-    # story cap never reads it.)
-    national_representative = _national_race_representatives(
-        sorted_items, exact_counts=exact_counts
+    # is touched. A disabled story cap, or a race `already_kept` has filled,
+    # gets no entry: no member can be held back or seated there either way.
+    candidates = (
+        {
+            story: ids
+            for story, ids in _national_race_representatives(
+                sorted_items,
+                exact_counts=exact_counts,
+                exact_family_cap=exact_family_cap,
+            ).items()
+            if story_counts.get(story, 0) < min(story_family_cap, _cap_for(story))
+        }
+        if story_family_cap > 0
+        else {}
     )
-
-    story_overflow: dict[str, list[dict]] = {}
-    # Positions in `kept`, NOT the survivor dicts themselves: the reserve is
-    # written to a COPY at the end of this function (see below), so the carrier
-    # has to be replaced in the list rather than mutated where it sits.
-    story_kept_idx: dict[str, list[int]] = {}
-
-    for item in sorted_items:
-        family = item.get("_quality_family_key")
-        story = item.get("_quality_story_key")
-
-        if family and exact_family_cap > 0:
-            count = exact_counts.get(family, 0)
-            if count >= exact_family_cap:
-                continue
-
-        if story and story_family_cap > 0:
-            count = story_counts.get(story, 0)
-            cap = min(story_family_cap, _cap_for(story))
-            representative = national_representative.get(story)
-            held_for_representative = (
-                representative is not None and representative != id(item)
-            )
-            if count >= cap or held_for_representative:
-                # #7426: the cap is a SLOT budget, and a story that folds into one
-                # theme bundle spends one slot however many members it carries. So
-                # the surplus is remembered rather than deleted — see
-                # STORY_OVERFLOW_RESERVE. It does NOT go back in `kept`: the
-                # returned list, and therefore every ranking, first-page and slot
-                # decision downstream, is byte-identical to before this block.
-                overflow = story_overflow.setdefault(story, [])
-                if len(overflow) < STORY_OVERFLOW_RESERVE:
-                    overflow.append(item)
-                continue
-
-        if family:
-            exact_counts[family] = exact_counts.get(family, 0) + 1
-        if story:
-            story_counts[story] = story_counts.get(story, 0) + 1
-            story_kept_idx.setdefault(story, []).append(len(kept))
-            national_representative.pop(story, None)
-        kept.append(item)
+    # A candidate is kept only if the walk actually SEATS it. An earlier item
+    # sharing its family can be refused by its own full story (or held for its
+    # own race) and so spend no family seat — predicting that ahead of the walk
+    # vetoed eligible overall questions. When the walk refuses a choice, holding
+    # the race back left it with no card, so that race moves to its next
+    # candidate and, when none remain, to today's top-ranked member. Every round
+    # retires at least one candidate, so this ends; with no refusal (the normal
+    # case) the walk runs once.
+    next_candidate = {story: 0 for story in candidates}
+    while True:
+        national_representative = {
+            story: ids[next_candidate[story]]
+            for story, ids in candidates.items()
+            if next_candidate[story] < len(ids)
+        }
+        kept, story_overflow, story_kept_idx = _walk(national_representative)
+        seated = {id(item) for item in kept}
+        refused = [
+            story
+            for story, item_id in national_representative.items()
+            if item_id not in seated
+        ]
+        if not refused:
+            break
+        for story in refused:
+            next_candidate[story] += 1
 
     # Attach each story's surplus to EVERY survivor of that story, sharing one
     # list object. Not just the top one: a later pass may drop any single item,

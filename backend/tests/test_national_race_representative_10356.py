@@ -329,3 +329,119 @@ def test_distinct_editions_are_distinct_races():
     # Each edition seats its own card; the dated overall does not stand in for
     # the undated race, so Brazil's undated race keeps its state row.
     assert _ids(kept) == [TOCANTINS[0], dated[0]]
+
+
+# --- a family seat is spent only by an item the walk actually seats ---------
+#
+# Root review of 739907af02 (ROOT-REVIEW.md): the selector treated every EARLIER
+# item's family as spent. An earlier twin that its own full story refuses never
+# takes a family seat, yet it vetoed the overall question and a state row took
+# the race's card.
+
+
+def _persisted_twin(row=(900003, "Brazil Presidential Election", 150.0)) -> dict:
+    twin = _item(row)
+    twin["_quality_story_key"] = "story:some_persisted_slug"
+    return twin
+
+
+def _full_story(story="story:some_persisted_slug", n=5) -> list[dict]:
+    return [
+        {"_quality_family_key": f"unrelated:{i}", "_quality_story_key": story}
+        for i in range(n)
+    ]
+
+
+def test_a_twin_refused_by_its_full_story_does_not_veto_the_overall_question():
+    kept = diversify_quality_families(
+        [_persisted_twin(), _item(TOCANTINS), _item(OVERALL)],
+        already_kept=_full_story(),
+    )
+    assert _ids(kept) == [OVERALL[0]]
+    assert _overflow_ids(kept) == [TOCANTINS[0]]
+
+
+def test_a_refused_twin_of_the_overall_question_still_lets_the_first_round_lose_to_it():
+    kept = diversify_quality_families(
+        [_persisted_twin(), _item(TOCANTINS), _item(FIRST_ROUND), _item(OVERALL)],
+        already_kept=_full_story(),
+    )
+    assert _brazil_ids(kept) == [OVERALL[0]]
+    assert _overflow_ids(kept) == [TOCANTINS[0], FIRST_ROUND[0]]
+
+
+def test_a_seated_twin_of_the_overall_question_falls_to_the_first_round_not_the_state():
+    kept = diversify_quality_families(
+        [_persisted_twin(), _item(TOCANTINS), _item(FIRST_ROUND), _item(OVERALL)]
+    )
+    assert _ids(kept) == [900003, FIRST_ROUND[0]]
+    assert _overflow_ids(kept) == [TOCANTINS[0]]
+
+
+def test_a_seated_twin_of_every_preferred_question_keeps_todays_choice(monkeypatch):
+    twins = [
+        _persisted_twin(),
+        _persisted_twin((900005, FIRST_ROUND[1], 149.0)),
+    ]
+    twins[1]["_quality_story_key"] = "story:another_persisted_slug"
+    rows = [*twins, _item(TOCANTINS), _item(FIRST_ROUND), _item(OVERALL)]
+    after = diversify_quality_families([dict(i) for i in rows])
+    _without_representatives(monkeypatch)
+    before = diversify_quality_families([dict(i) for i in rows])
+    assert after == before
+    assert _brazil_ids(after) == [TOCANTINS[0]]
+
+
+def test_a_family_already_kept_at_its_cap_is_never_chosen():
+    placed = _persisted_twin()
+    kept = diversify_quality_families(
+        [_item(TOCANTINS), _item(FIRST_ROUND), _item(OVERALL)],
+        already_kept=[placed],
+    )
+    assert _ids(kept) == [FIRST_ROUND[0]]
+
+
+# --- the caller's exact cap, not an assumed cap of 1 -------------------------
+
+
+@pytest.mark.parametrize("exact_family_cap", [0, 2])
+def test_an_exact_cap_that_admits_the_twin_still_seats_the_overall_question(
+    exact_family_cap,
+):
+    kept = diversify_quality_families(
+        [_persisted_twin(), _item(TOCANTINS), _item(OVERALL)],
+        exact_family_cap=exact_family_cap,
+    )
+    assert _ids(kept) == [900003, OVERALL[0]]
+    assert _overflow_ids(kept) == [TOCANTINS[0]]
+
+
+def test_an_exact_cap_of_two_with_one_already_kept_still_admits_the_overall():
+    kept = diversify_quality_families(
+        [_item(TOCANTINS), _item(OVERALL)],
+        exact_family_cap=2,
+        already_kept=[_persisted_twin()],
+    )
+    assert _ids(kept) == [OVERALL[0]]
+
+
+def test_the_candidate_list_is_kind_then_rank_and_skips_only_a_full_family():
+    pool = sorted(
+        [_item(r) for r in (TOCANTINS, FIRST_ROUND, OVERALL_KALSHI, OVERALL)],
+        key=lambda x: x["_rank_score"],
+        reverse=True,
+    )
+    by_id = {id(i): i["data"]["id"] for i in pool}
+    candidates = fmq._national_race_representatives(pool, exact_counts={})
+    assert [by_id[c] for c in candidates[BRAZIL]] == [
+        OVERALL_KALSHI[0],
+        OVERALL[0],
+        FIRST_ROUND[0],
+    ]
+    full = {_item(OVERALL)["_quality_family_key"]: 1}
+    candidates = fmq._national_race_representatives(pool, exact_counts=full)
+    assert [by_id[c] for c in candidates[BRAZIL]] == [OVERALL_KALSHI[0], FIRST_ROUND[0]]
+    candidates = fmq._national_race_representatives(
+        pool, exact_counts=full, exact_family_cap=2
+    )
+    assert OVERALL[0] in [by_id[c] for c in candidates[BRAZIL]]
