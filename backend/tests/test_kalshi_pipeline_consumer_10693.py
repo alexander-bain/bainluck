@@ -134,7 +134,84 @@ def _without_reviewed_observers(fn):
 
     result = RemoveExactObservers().visit(fn)
     assert len(removed) == len(accepted) and set(removed) == accepted
-    return _without_reviewed_budget(result)
+    return _without_reviewed_budget(_without_reviewed_pipelined_stamps(result))
+
+
+# #10090 pipelined stamps: a phase's refresh runs as one task while the next
+# phase writes. Only these exact ASTs are reverted to the serial original: the
+# two declarations before the loop, the try that owns the in-flight stamp, and
+# the refresh branch. Any other statement inside them must still fail.
+PIPELINE_DECLARATIONS = (
+    "stamping = None",
+    "async def stamp_done():\n"
+    "    nonlocal stamping\n"
+    "    if stamping is None:\n"
+    "        return\n"
+    "    await asyncio.wait({stamping})\n"
+    "    task, stamping = stamping, None\n"
+    "    if not task.cancelled() and task.exception() is not None:\n"
+    "        logger.error(\n"
+    "            'Kalshi WS: blend refresh raised after its write committed',\n"
+    "            exc_info=task.exception(),\n"
+    "        )",
+)
+PIPELINE_HANDLER = (
+    "try:\n    pass\n"
+    "except asyncio.CancelledError:\n"
+    "    if stamping is not None:\n"
+    "        stamping.cancel()\n"
+    "    raise\n"
+    "finally:\n"
+    "    await stamp_done()"
+)
+_STAGE = (
+    "with contextlib.suppress(Exception):\n"
+    "    tail_receipts.stage(\n"
+    "        [batch_marks[oid] for oid in written_outcome_ids if oid in batch_marks]\n"
+    "    )\n"
+)
+PIPELINED_REFRESH = (
+    "await stamp_done()\n" + _STAGE
+    + "stamping = asyncio.create_task(blend_refresher.refresh(\n"
+    "    linked_events, flush_started=flush_started,\n"
+    "))\n"
+    "await asyncio.sleep(0)"
+)
+SERIAL_REFRESH = (
+    _STAGE + "await blend_refresher.refresh(linked_events, flush_started=flush_started)"
+)
+
+
+def _dumps(source):
+    return [ast.dump(s) for s in ast.parse(source).body]
+
+
+def _without_reviewed_pipelined_stamps(fn):
+    declarations = {d for source in PIPELINE_DECLARATIONS for d in _dumps(source)}
+    kept = [s for s in fn.body if ast.dump(s) not in declarations]
+    assert len(kept) == len(fn.body) - len(declarations), (
+        "the #10090 pipelined-stamp declarations are not the exact reviewed ones"
+    )
+    (handler,) = ast.parse(PIPELINE_HANDLER).body
+    tries = [s for s in kept if isinstance(s, ast.Try)
+             and any(isinstance(n, ast.For) and ast.unparse(n.target) == "(index, phase)"
+                     for n in s.body)]
+    assert len(tries) == 1, "the phase loop is not inside the pipelined-stamp try"
+    (owner,) = tries
+    assert [ast.dump(h) for h in owner.handlers] == [ast.dump(h) for h in handler.handlers]
+    assert [ast.dump(s) for s in owner.finalbody] == [ast.dump(s) for s in handler.finalbody]
+    assert not owner.orelse
+    index = kept.index(owner)
+    fn.body = kept[:index] + owner.body + kept[index + 1:]
+    branches = [n for n in ast.walk(fn) if isinstance(n, ast.If)
+                and ast.unparse(n.test) == "index == 0 or linked_events"]
+    assert len(branches) == 1
+    (branch,) = branches
+    assert [ast.dump(s) for s in branch.body] == _dumps(PIPELINED_REFRESH), (
+        "the #10090 pipelined refresh branch is not the exact reviewed one"
+    )
+    branch.body = ast.parse(SERIAL_REFRESH).body
+    return fn
 
 
 # #10090 adds the flush budget: the planner learns the run's live set, and a
