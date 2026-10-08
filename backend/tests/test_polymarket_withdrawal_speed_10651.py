@@ -121,6 +121,7 @@ def rig(
         "PRICE_FLUSH_SECONDS": 2,
         "input_marks": {oid: oid for oid in batch},
         "event_id_by_outcome": mapping,
+        "non_blend_outcome_ids": set(),
         "open_outcome_ids": {900, 901},
         "open_complement_of": {1: 2, 2: 1},
         "stats": defaultdict(int),
