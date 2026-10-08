@@ -42,9 +42,11 @@ final class GameChartKeepsDrawnMovementThroughFinish10753Tests: XCTestCase {
         """.utf8))
     }
 
-    /// A drawable game: ESPN readings through `espnEnd` and a served blend whose
-    /// points are `aggregate`. Finished payloads carry `completed`, a
-    /// completion and ESPN through the end of the game (17:30 → game end 17:32).
+    /// A drawable game: ESPN readings (both the `espn_history` the page's window
+    /// reads and the `win_prob_history` series the chart's game end reads)
+    /// through `espnEnd`, and a served blend whose points are `aggregate`.
+    /// Finished payloads carry `completed`, a completion and ESPN through the
+    /// actual end of the game: page window ends 17:30:30, chart game end 17:32.
     private func history(finished: Bool, aggregate: [(String, Double)] = [(t0, 0.55)],
                          espnEnd: String? = nil, completedAt: String? = "2026-09-25T18:10:00Z",
                          withAggregate: Bool = true) throws -> EventHistoryResponse {
@@ -58,6 +60,8 @@ final class GameChartKeepsDrawnMovementThroughFinish10753Tests: XCTestCase {
          "status":"\(finished ? "completed" : "live")",
          "completed_at":\(finished ? (completedAt.map { "\"\($0)\"" } ?? "null") : "null"),
          "history":[],
+         "espn_history":[{"timestamp":"2026-09-25T16:05:00Z","home_probability":0.5,"period":"1"},
+                         {"timestamp":"\(end)","home_probability":0.9,"period":"\(finished ? "9" : "5")"}],
          "win_prob_history":{"espn":[{"timestamp":"2026-09-25T16:05:00Z","home_probability":0.5},
                                      {"timestamp":"\(end)","home_probability":0.9}]},
          "aggregate_line":\(withAggregate ? "[\(line)]" : "null")}
@@ -100,13 +104,24 @@ final class GameChartKeepsDrawnMovementThroughFinish10753Tests: XCTestCase {
             now: { 1_790_355_605 }, sleep: { _ in try? await Task.sleep(nanoseconds: 60_000_000_000) })
     }
 
-    /// The chart exactly as the event page mounts it, on a shared model.
+    /// The page's own window for this state (`EventDetailView.pageSharedChartDomain`
+    /// with no stored journey is exactly this). `now` is the reader's clock, which
+    /// only a live window reads.
+    private func pageWindow(_ page: EventDetailViewModel, now: Date) -> ClosedRange<Date>? {
+        EventDetailView.pageLegacyChartDomain(event: page.event, history: page.history, range: .sinceStart, now: now)
+    }
+
+    private static let readerNow = "2026-09-25T17:11:00Z"
+
+    /// The chart exactly as the event page mounts it, on a shared model, with
+    /// the page's own window — never one widened for the fixture.
     private func chart(_ model: OddsChartViewModel, page: EventDetailViewModel) -> some View {
         let event = page.event
         return OddsChartView(
             eventId: 4242, commenceTime: Self.commence, status: event?.status,
             homeTeamName: "Red Sox", awayTeamName: "Cubs",
             homeTeamAbbrev: "BOS", awayTeamAbbrev: "CHC",
+            forcedDomain: pageWindow(page, now: Self.readerNow.asDate ?? Date()),
             preloadedHistory: page.history,
             liveFrames: page.liveBlend,
             finishedSourceFold: event.flatMap {
@@ -198,8 +213,13 @@ final class GameChartKeepsDrawnMovementThroughFinish10753Tests: XCTestCase {
         XCTAssertEqual(try value(at: Self.t1, in: lagging), [0.65], "the drawn T1 movement was lost at the finish")
         XCTAssertEqual(try value(at: Self.t2, in: lagging), [0.72], "the drawn T2 movement was lost at the finish")
         XCTAssertEqual(try value(at: Self.terminalAt, in: lagging), [], "a terminal frame adds no movement")
-        XCTAssertTrue(lagging.allSatisfy { $0.date <= (try? self.date("2026-09-25T17:32:00Z")) ?? .distantPast },
-                      "nothing past the game's end")
+        let window = try XCTUnwrap(pageWindow(run.page, now: try date(Self.readerNow)))
+        let gameEnd = try XCTUnwrap(OddsChartView.gameEndDate(status: run.page.event?.status, history: run.page.history))
+        for kept in [Self.t1, Self.t2] {
+            XCTAssertTrue(window.contains(try date(kept)), "\(kept) must be inside the page's own finished window")
+            XCTAssertLessThanOrEqual(try date(kept), gameEnd, "\(kept) must be inside the chart's own game end")
+        }
+        XCTAssertTrue(lagging.allSatisfy { $0.date <= gameEnd }, "nothing past the game's end")
         try mount(run.chart, page: run.page, artifact: "lifecycle-2-final-history-lagging")
 
         // A late frame on the finished page is refused too.
@@ -294,6 +314,21 @@ final class GameChartKeepsDrawnMovementThroughFinish10753Tests: XCTestCase {
         let points = blend(run.chart, page: run.page)
         XCTAssertEqual(try value(at: Self.t1, in: points), [0.65])
         XCTAssertEqual(try value(at: Self.t2, in: points), [], "the game end is never widened for a witness")
+    }
+
+    /// Native's existing bounds, unchanged: when the finished history's own game
+    /// readings also stop at the old edge, the page window and the chart's game
+    /// end both close before T1/T2, so the retained points are not drawn. The
+    /// bounds are never widened to show them (fails closed, no regression).
+    func testWhenTheFinishedGameReadingsAlsoLagTheUnchangedBoundsClipTheRetainedPoints() async throws {
+        let run = try await crossTheFinish(
+            finishedHistory: try history(finished: true, espnEnd: Self.t0), artifactPrefix: "bounds-lag")
+        defer { run.page.stopRefresh() }
+        let window = try XCTUnwrap(pageWindow(run.page, now: try date(Self.readerNow)))
+        let gameEnd = try XCTUnwrap(OddsChartView.gameEndDate(status: run.page.event?.status, history: run.page.history))
+        XCTAssertFalse(window.contains(try date(Self.t1)), "the page window is the finished history's, not widened")
+        XCTAssertLessThan(gameEnd, try date(Self.t1))
+        try mount(run.chart, page: run.page, artifact: "bounds-lag-2-final-history-lagging")
     }
 
     func testServedCoverageRetiresEveryRetainedPointAtOrBeforeItsEdge() async throws {
