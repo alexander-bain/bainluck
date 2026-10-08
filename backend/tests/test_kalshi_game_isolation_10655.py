@@ -20,6 +20,7 @@ from app.models.models import FuturesOutcome
 from app.tasks.kalshi_ws import (  # noqa: F401 — the exec'd flush reads these
     PRICE_PHASE_LOCK_TIMEOUT_MS,
     _KalshiPriceOwner,
+    flush_budget_spent,
     linked_first_phases,
 )
 from app.tasks.live_blend_refresh import event_ids_for_outcomes
@@ -128,6 +129,8 @@ def rig(*, failed=None, declined=None, pending=(), locked=(), unchanged=()):
               market_id_by_outcome=markets, event_id_by_outcome=events,
               input_marks={oid: oid for oid in batch}, tail_receipts=Receipts(),
               open_contract_outcome_ids={9}, blend_refresher=Refresher(),
+              # #10090: no live set is the pre-#10090 plan, and no budget.
+              live_event_ids=None,
               get_task_session=session, stats=stats,
               prices=_KalshiPriceOwner(),
               logger=logging.getLogger(__name__),
