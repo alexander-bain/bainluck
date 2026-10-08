@@ -1128,6 +1128,9 @@ export default function EventPage({ params }: EventPageProps) {
         // #925 — the header's own inning, for a live game whose history rows
         // never named one. Live only: a finished row's period is its result.
         event?.status === "live" ? event?.espn ?? null : null,
+        // #10747 — the event's own status: only an explicitly live page lets a
+        // newer confirmed whole pair replace an older held history pair.
+        event?.status,
       ),
     [historyData, servedScore, event?.status, event?.espn],
   );
