@@ -14,12 +14,14 @@ from tests.test_live_blend_refresh import (
 )
 
 
-def rig(monkeypatch, *, count=3, block=False, failure=None):
+def rig(monkeypatch, *, count=3, block=False, failure=None, statuses=None):
     event, market = _event_and_market()
     rows = []
     for eid in range(1, count + 1):
         e, m = copy(event), copy(market)
         e.id = m.event_id = eid
+        if statuses is not None:
+            e.status = statuses[eid]
         m.id = eid * 10
         rows.append((m, e))
     returned = {"polymarket": {"value": 0.9, "updated_at": "2026-10-08T18:00:00+00:00"}}
@@ -75,6 +77,20 @@ async def settle_until(predicate):
     async with asyncio.timeout(1):
         while not predicate():
             await asyncio.sleep(0)
+
+
+async def test_live_stamps_lead_within_fresh_and_pending_but_fresh_stays_first(monkeypatch):
+    x = rig(monkeypatch, count=4, statuses={
+        1: "scheduled", 2: "scheduled", 3: "live", 4: "live",
+    })
+    x.r._lock_retry = {2, 4}
+    await x.r.refresh([1, 3], flush_started=1000)
+    # Fresh live 3 precedes fresh scheduled 1; both still precede debt,
+    # where live 4 precedes scheduled 2. No event is dropped or grouped.
+    assert x.committed == x.published == [3, 1, 4, 2]
+    assert [s.event_ids for s in x.sessions[1:]] == [[3], [1], [4], [2]]
+    assert x.r.stats["stamped"] == 4
+    assert not x.r.pending_event_ids()
 
 
 @pytest.mark.parametrize("count", [2, 4, 5])

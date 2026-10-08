@@ -1325,10 +1325,17 @@ class LiveBlendRefresher:
             # A newly committed quote should not wait for older retry/deferred
             # groups merely because its event ID is higher. Keep fresh groups
             # separate so an older row lock cannot delay their transaction.
-            # Every due event is still attempted in ascending order within its
-            # population, with one event owning each write transaction.
-            fresh_due = sorted(fresh.intersection(due))
-            pending_due = sorted(set(due).difference(fresh))
+            # Within each population, use the already-prepared status to stamp
+            # live games before scheduled games. A producer's live-first price
+            # plan does not survive the event-id sets or mixed pending debt.
+            # Missing prepared rows remain due; treat them as non-live.
+            # IDs break ties; one event still owns each write transaction.
+            def stamp_order(event_id: int) -> tuple[bool, int]:
+                context = prepared.get(event_id)
+                return (context is None or context[0].status != "live", event_id)
+
+            fresh_due = sorted(fresh.intersection(due), key=stamp_order)
+            pending_due = sorted(set(due).difference(fresh), key=stamp_order)
             groups = [
                 [event_id]
                 for population in (fresh_due, pending_due)
