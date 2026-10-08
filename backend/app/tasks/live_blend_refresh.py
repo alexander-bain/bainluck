@@ -1926,7 +1926,7 @@ class LiveBlendRefresher:
 
             from redis.exceptions import ResponseError
 
-            from app.utils.live_push import event_channel
+            from app.utils.live_push import frame_publish_command
             from app.utils.market_quote_push import _checkout
 
             async with asyncio.timeout(5):
@@ -1935,18 +1935,12 @@ class LiveBlendRefresher:
                 connection = await _checkout(pool)
                 try:
                     for start in range(0, len(frames), 32):
-                        commands: list[tuple[str, str, str]] = []
+                        commands: list[tuple] = []
                         event_ids: list[int] = []
                         event_revisions: list = []
                         for frame in frames[start : start + 32]:
                             try:
-                                commands.append(
-                                    (
-                                        "PUBLISH",
-                                        event_channel(frame["event_id"]),
-                                        json.dumps(frame),
-                                    )
-                                )
+                                commands.append(frame_publish_command(frame))
                                 event_ids.append(frame["event_id"])
                                 event_revisions.append(frame.get("rev"))
                             except Exception:
