@@ -406,7 +406,7 @@ def _packed(groups, max_rows, max_groups=None):
 
 def linked_first_phases(
     batch, market_id_by_outcome, event_id_by_outcome, pending_events=(),
-    live_events=None,
+    live_events=None, pending_events_fenced=False,
 ):
     """Publish independent games separately, followed by unrelated contracts.
 
@@ -426,7 +426,8 @@ def linked_first_phases(
     quiet game's held stamp) keeps the split: its price is already stored, so
     the first phase's refresh paying it early stamps nothing unwritten, and
     joining would put every game behind the slowest one and defeat the live
-    first plan and its budget below. Any overlap, mixed or not, joins.
+    first plan and its budget below. Any overlap, mixed or not, joins unless
+    the caller fences unfinished cohorts out of each refresh explicitly.
     This only plans phases; the existing flush owns SQL, retry and publish.
 
     #10090 — with ``live_events`` (the run's live event ids; ``None`` keeps
@@ -464,7 +465,7 @@ def linked_first_phases(
             games.setdefault(root(market), {})[oid] = entry
         else:
             rest[oid] = entry
-    if games and not set(pending_events).isdisjoint(
+    if games and not pending_events_fenced and not set(pending_events).isdisjoint(
         event_id_by_outcome.get(oid) for oid in batch
     ):
         # Preserve batch order in the original single game transaction.
@@ -848,7 +849,11 @@ async def _run_kalshi_ws_consumer(*, sessions, prices):
             batch, market_id_by_outcome, event_id_by_outcome,
             pending_events=blend_refresher.pending_event_ids(),
             live_events=live_event_ids,
+            pending_events_fenced=True,
         )
+        # Includes failed/budget-deferred phases until a whole phase commits.
+        # Re-resolve through the current map at each launch for late bridges.
+        unfinished_price_ids = set(batch)
         had_lock_failure = False
         flush_counted = False
         # #10090: one refresh may cover several committed whole-event phases.
@@ -905,12 +910,20 @@ async def _run_kalshi_ws_consumer(*, sessions, prices):
         async def stamp_start():
             nonlocal stamping, stamping_events, stamping_fresh, queued_refresh
             stamping_fresh = set(queued_events)
+            unfinished_events = event_ids_for_outcomes(
+                event_id_by_outcome, unfinished_price_ids,
+            )
             # refresh takes implicit debt too. Capture before its first turn.
-            stamping_events = stamping_fresh | set(blend_refresher.pending_event_ids())
+            # Excluded cohorts remain owed but cannot read a partially written
+            # board or hold unrelated whole-game price transactions together.
+            stamping_events = (
+                stamping_fresh | set(blend_refresher.pending_event_ids())
+            ).difference(unfinished_events)
             with contextlib.suppress(Exception):
                 tail_receipts.stage(list(queued_marks.values()))
             stamping = asyncio.create_task(blend_refresher.refresh(
                 stamping_fresh, flush_started=flush_started,
+                defer_event_ids=unfinished_events,
             ))
             queued_events.clear()
             queued_marks.clear()
@@ -1139,6 +1152,7 @@ async def _run_kalshi_ws_consumer(*, sessions, prices):
 
                 # The transaction has committed. Register debt before any
                 # publication/bookkeeping await can be interrupted.
+                unfinished_price_ids.difference_update(phase)
                 registered = queue_committed(index, phase, written_outcome_ids)
 
                 if exact_trace is not None:
