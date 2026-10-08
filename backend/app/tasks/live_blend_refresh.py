@@ -1516,6 +1516,22 @@ class LiveBlendRefresher:
                 for event_id, (event, group) in grouped.items()
             }
 
+    @contextlib.asynccontextmanager
+    async def _event_stamp_scope(self, session, *, single_event: bool):
+        """One event already owns the transaction; only siblings need a savepoint."""
+        if not single_event:
+            async with session.begin_nested():
+                yield
+            return
+        try:
+            yield
+        except BaseException:
+            # A lock timeout aborts PostgreSQL's transaction. Without the
+            # redundant event SAVEPOINT, rollback the whole single-event
+            # transaction before the caller handles/requeues the failure.
+            await session.rollback()
+            raise
+
     async def _refresh_batch(
         self,
         event_ids: list[int],
@@ -1584,7 +1600,11 @@ class LiveBlendRefresher:
             if not grouped:
                 return
 
-            # #837 — ONE LOCK ORDER, ONE SAVEPOINT PER EVENT. This batch stamps
+            # #837 — ONE LOCK ORDER, ONE SAVEPOINT PER EVENT WITH SIBLINGS.
+            # A single event owns its whole transaction, so its stamp scope
+            # rolls back that transaction on failure instead of paying an
+            # extra SAVEPOINT/RELEASE pair on every successful stamp.
+            # This batch stamps
             # every event in a single transaction, and the sibling arm (the other
             # venue's consumer, same class, same column) does the same
             # concurrently. Walked in join order, two overlapping batches locked
@@ -1669,7 +1689,9 @@ class LiveBlendRefresher:
                     # for why the condition lives in this UPDATE.
                     basis = observation_basis(contributing)
                     admits = observation_admits_clause(self.source, basis)
-                    async with session.begin_nested():
+                    async with self._event_stamp_scope(
+                        session, single_event=len(grouped) == 1,
+                    ):
                         # `synchronize_session=False`: the ORM cannot evaluate
                         # the guard's SQL in Python, and its "fetch" fallback
                         # rewrites RETURNING to the primary key — the frame
@@ -1726,8 +1748,8 @@ class LiveBlendRefresher:
 
                         stamped_at = new_sources[self.source]["updated_at"]
 
-                        # The chart point rides a savepoint of its own inside
-                        # the stamp's: a snapshot that cannot be written must
+                        # The chart point retains its own savepoint: a
+                        # snapshot that cannot be written must
                         # not cost the stamp (see `_maybe_snapshot`), and the
                         # flush puts its ORM writes INSIDE this event's
                         # savepoint rather than autoflushing into the next
@@ -1746,8 +1768,8 @@ class LiveBlendRefresher:
                                 self.source, event_id,
                             )
 
-                    # Noted only once the savepoint has released (a stamp that
-                    # rolled back must not read as written), and applied only
+                    # Noted only once the stamp scope has succeeded (a stamp
+                    # that rolled back must not read as written), and applied only
                     # once the transaction commits — see `written` above.
                     written[event_id] = value
                     if exact_trace is not None:
