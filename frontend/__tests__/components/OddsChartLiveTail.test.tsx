@@ -34,8 +34,10 @@ jest.mock("recharts", () => ({
 
 import OddsChart, { intraMinuteRanges } from "@/components/OddsChart";
 import {
-  mergeLiveChartHistory, quoteChartFrames, rememberLiveChartFrame, type LiveChartFrame,
+  admitChartFrames, finishedChartFrames, mergeLiveChartHistory, quoteChartFrames,
+  rememberLiveChartFrame, type LiveChartFrame,
 } from "@/lib/liveChartHistory";
+import { computeSharedChartDomain } from "@/lib/eventKeyStats";
 import type { EventHistoryResponse } from "@/lib/types";
 import type { LiveStreamFrame } from "@/lib/liveStreamController";
 
@@ -180,5 +182,78 @@ describe("#10093 a live within-minute spike and reversal stays on the web chart"
       { timestamp: "not a time", home_probability: 0.9 },
       { timestamp: "2026-10-01T17:44:10Z", home_probability: 0.1 },
     ]).size).toBe(0);
+  });
+});
+
+// #10751 — a game that finishes while its next history read is in flight keeps
+// the movement it drew. Distinct minutes this time: the finished chart inks no
+// within-minute range (the control above), so a finished witness must be
+// movement ACROSS minute categories. The domain is the page's own
+// `computeSharedChartDomain` on the composed body — nothing passed in to make
+// room — and `OddsChart`'s finished filters are untouched.
+describe("#10751 a finished chart keeps the distinct-minute movement it drew", () => {
+  const MOVEMENT = [
+    frame("2026-10-01T17:43:05Z", 0.42, 222),
+    frame("2026-10-01T17:44:05Z", 0.55, 223),
+    frame("2026-10-01T17:45:05Z", 0.43, 224),
+  ];
+  // The held hero after the last frame applied; then the ordinary finished detail.
+  const held = { ...hero, hero_probability: 0.43, hero_probability_observed_at: "2026-10-01T17:45:05Z",
+    blend_fold_revision: { [EVENT_ID]: 224 } };
+  const completed = { id: EVENT_ID, status: "completed", completed_at: "2026-10-01T17:50:00Z",
+    blend_fold_revision: { [EVENT_ID]: 225 } };
+  const admitted = admitChartFrames(EVENT_ID, remember(MOVEMENT), held);
+
+  const draw = (body: EventHistoryResponse, status: "live" | "completed") => {
+    const domain = computeSharedChartDomain(body, "live", status, COMMENCE, "tennis_atp_doubles", null);
+    return renderToStaticMarkup(<OddsChart
+      history={body.history} bookmakerHistory={body.bookmaker_history}
+      aggregateLine={body.aggregate_line ?? undefined}
+      winProbHistory={body.win_prob_history} winProbSources={body.win_prob_sources}
+      backendBlendServed homeTeam="Harris/Hsieh" awayTeam="Lammons/Withrow"
+      isLive={status === "live"} eventStatus={status} commenceTime={COMMENCE}
+      completedAt={body.completed_at ?? undefined}
+      chartStartTime={domain?.start} chartEndTime={domain?.end}
+    />);
+  };
+  const yTicks = (html: string) =>
+    [...html.matchAll(/<tspan[^>]*>(\d+)%<\/tspan>/g)].map(m => Number(m[1]));
+
+  it("live: the three minutes are drawn — the axis reaches 55%, the line ends on 43%", () => {
+    const html = draw(mergeLiveChartHistory(served, admitted.points)!, "live");
+    expect(callout(html)).toBe("43%");
+    expect(Math.max(...yTicks(html))).toBeGreaterThanOrEqual(55);
+  });
+
+  it("finished, old history still held: the same movement stays drawn, with no within-minute stroke", () => {
+    const kept = finishedChartFrames(admitted, EVENT_ID, completed, served);
+    expect(kept.map(p => p.home_probability)).toEqual([0.42, 0.55, 0.43]);
+    const html = draw(mergeLiveChartHistory(served, kept)!, "completed");
+    expect(callout(html)).toBe("43%");
+    expect(Math.max(...yTicks(html))).toBeGreaterThanOrEqual(55);
+    expect(ranges(html)).toEqual([]);
+  });
+
+  it("CONTROL (the defect): finished with no retained frames, the chart falls back to the flat 25%", () => {
+    const html = draw(mergeLiveChartHistory(served, [])!, "completed");
+    expect(callout(html)).toBe("25%");
+    expect(yTicks(html).length).toBeGreaterThan(0);
+    expect(Math.max(...yTicks(html))).toBeLessThan(55);
+  });
+
+  it("CONTROL: the chart's own game-end cut still applies — an ESPN end before the frames trims them", () => {
+    const withEnd: EventHistoryResponse = {
+      ...served,
+      win_prob_history: {
+        ...served.win_prob_history,
+        espn: [{ timestamp: "2026-10-01T17:41:00Z", home_probability: 0.25, away_probability: 0.75 }],
+      },
+    };
+    const kept = finishedChartFrames(admitted, EVENT_ID, completed, withEnd);
+    expect(kept).toHaveLength(3); // the selector keeps them; the renderer decides
+    const html = draw(mergeLiveChartHistory(withEnd, kept)!, "completed");
+    expect(callout(html)).toBe("25%");
+    expect(yTicks(html).length).toBeGreaterThan(0);
+    expect(Math.max(...yTicks(html))).toBeLessThan(55);
   });
 });
