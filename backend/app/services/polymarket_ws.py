@@ -15,9 +15,25 @@ import logging
 import random
 from typing import Any, Callable, Optional
 
+from pydantic_core import from_json
+
 logger = logging.getLogger(__name__)
 
 WS_URL = "wss://ws-subscriptions-clob.polymarket.com/ws/market"
+
+
+def _decode_message(raw):
+    """#10090: lower receive CPU without narrowing stdlib JSON semantics.
+
+    The existing Pydantic dependency parses arbitrary-size integers exactly.
+    Disable its string cache for the changing asset/book stream. Inputs it
+    refuses (e.g. lone surrogate escapes) go through the original decoder,
+    which also preserves the original accepted values and exception contract.
+    """
+    try:
+        return from_json(raw, cache_strings=False)
+    except (ValueError, TypeError):
+        return json.loads(raw)
 
 
 async def _cooperative_messages(socket):
@@ -87,7 +103,7 @@ MAX_ASSETS_PER_CONNECTION = 500
 # uptime 1560s, `shards=3/3`, two shards subscribed at the full 500 assets
 # (`0:448/500 1:482/500`) — the socket had received and json-parsed 186,472
 # messages and delivered 3,611 prices to `on_price` with 0 errors and no 1009.
-# `_shard_wire` is written only after `json.loads` succeeds, so those counts are
+# `_shard_wire` is written only after JSON decoding succeeds, so those counts are
 # proof of RECEIPT. They are WIRE counts and not the coverage figure `served=`
 # reports today: they were taken before the numerator was narrowed to the
 # subscription, so do not line them up against a current `served=` reading. Whichever spares us (thin sports books landing
@@ -639,7 +655,7 @@ class PolymarketWebSocket:
                                 self._message_count += 1
 
                                 try:
-                                    data = json.loads(raw)
+                                    data = _decode_message(raw)
                                 except (json.JSONDecodeError, TypeError):
                                     continue
                                 finally:
