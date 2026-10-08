@@ -102,7 +102,8 @@ async def test_kalshi_override_does_not_change_real_pm_consumer(monkeypatch):
 
     monkeypatch.setattr(poly_task, "PRICE_FLUSH_SECONDS", 3.5)
     calls, instances = await _run_recording(monkeypatch, "polymarket")
-    assert calls == [(3.5, 3.5)]
+    # The PM game flush, then its standalone flush on the base timer (962ced).
+    assert calls == [(3.5, 3.5), (3.5, None)]
     assert instances[0].min_refresh_interval_s == 2
 
 

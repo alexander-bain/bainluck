@@ -1621,6 +1621,8 @@ async def _run_polymarket_ws_consumer(*, sessions):
         """One flush. Returns False when any chunk's write failed (it stays
         buffered and the cadence waits a full interval); #10090
         ``flush_started`` is this flush's start, for the refresher's floor."""
+        import asyncio  # the pipelined stamp below; executed rigs bring no globals
+
         async with buffer_lock:
             batch = dict(price_buffer)
             if not final:
@@ -1678,53 +1680,139 @@ async def _run_polymarket_ws_consumer(*, sessions):
                     event_id = event_id_by_outcome.get(oid)
                     if event_id is not None:
                         last_chunk_of_event[event_id] = index
-            for index, chunk_ids in enumerate(chunks):
-                if await write_chunk({oid: batch[oid] for oid in chunk_ids}):
-                    owed.extend(chunk_ids)
-                else:
-                    wrote_all = False
-                    failed_price_events.update(
-                        event_ids_for_outcomes(event_id_by_outcome, chunk_ids)
+            # #10090 — PIPELINED STAMPS, twin of the Kalshi socket's. A chunk's
+            # refresh used to finish before the next chunk's write could open,
+            # so an event in a later chunk waited for every earlier chunk's
+            # write AND stamp in turn. A safe independent chunk N+1's write
+            # overlaps chunk N's stamp. Unchanged: writes stay strictly sequential, one in flight;
+            # the refresher still runs ONE refresh at a time, in chunk order
+            # (each joins the previous one before its receipts are staged); a
+            # chunk's stamp starts only after its own write committed and
+            # published; withdrawals still follow the stamp before them; and
+            # no stamp outlives its flush, so the final drain never refreshes
+            # beside it.
+            stamping = None
+            stamping_events = None
+
+            async def stamp_done(*, cancel=False):
+                nonlocal stamping, stamping_events
+                if stamping is None:
+                    return
+                if cancel:
+                    stamping.cancel()
+                # Joined even when this flush is cancelled while it waits: the
+                # stamp is cancelled too and still awaited, so it never outlives
+                # the flush and the final drain never refreshes beside it.
+                interrupted = None
+                while not stamping.done():
+                    try:
+                        await asyncio.wait({stamping})
+                    except asyncio.CancelledError as exc:
+                        interrupted = exc
+                        stamping.cancel()
+                task, stamping = stamping, None
+                stamping_events = None
+                if not task.cancelled() and task.exception() is not None:
+                    # `refresh` never raises; if it ever does, its write already
+                    # committed, so say so rather than fail the flush after it.
+                    logger.error(
+                        "Polymarket WS: blend refresh raised after its write committed",
+                        exc_info=task.exception(),
                     )
-                # #10651: finish this event's withdrawals once all of its
-                # planned price writes have completed successfully. An unrelated
-                # later chunk must not delay its coherent blend publication.
-                mature = {
-                    eid
-                    for eid in withdraw_events - attempted_withdraw_events
-                    if last_chunk_of_event.get(eid, len(chunks)) <= index
-                    and eid not in failed_price_events
-                }
-                if mature:
-                    attempted_withdraw_events.update(mature)
-                    early_withdrawn = await flush_withdrawals(only_events=mature)
-                    if early_withdrawn is None:
-                        wrote_all = False  # retain the ordinary tail fallback
+                if interrupted is not None:
+                    raise interrupted
+
+            try:
+                for index, chunk_ids in enumerate(chunks):
+                    if stamping is not None:
+                        unwritten_events = {
+                            eid for eid, last in last_chunk_of_event.items()
+                            if last >= index
+                        }
+                        # refresh() also admits retry/deferred events. Their
+                        # read must stay before the next write if any cohort
+                        # or withdrawal is still unfinished. Unknown debt
+                        # retains the serial path rather than assuming safety.
+                        if stamping_events is None or not stamping_events.isdisjoint(
+                            unwritten_events | withdraw_events
+                        ):
+                            await stamp_done()
+                    wrote = await write_chunk({oid: batch[oid] for oid in chunk_ids})
+                    # Join any safe overlapping stamp before this chunk's
+                    # withdrawals, receipts or refresh.
+                    await stamp_done()
+                    if wrote:
+                        owed.extend(chunk_ids)
                     else:
-                        owed.extend(oid for oid in early_withdrawn if oid not in owed)
-                        withdraw_events.difference_update(mature)
-                ready: list[int] = []
-                held: list[int] = []
-                for oid in owed:
-                    event_id = event_id_by_outcome.get(oid)
-                    done = event_id is None or (
-                        last_chunk_of_event.get(event_id, index) <= index
-                        and event_id not in withdraw_events
-                    )
-                    (ready if done else held).append(oid)
-                owed = held
-                if ready:
-                    # Q460 — THE SHIP: carry the committed prices through to
-                    # `Event.win_probability_sources`, the JSONB the card
-                    # renders. #837 receipt: the revisions these writes
-                    # committed ride into this refresh, and only this one.
-                    tail_receipts.stage(
-                        [batch_marks[oid] for oid in ready if oid in batch_marks]
-                    )
-                    await blend_refresher.refresh(
-                        event_ids_for_outcomes(event_id_by_outcome, ready),
-                        flush_started=flush_started,
-                    )
+                        wrote_all = False
+                        failed_price_events.update(
+                            event_ids_for_outcomes(event_id_by_outcome, chunk_ids)
+                        )
+                    # #10651: finish this event's withdrawals once all of its
+                    # planned price writes have completed successfully. An
+                    # unrelated later chunk must not delay its coherent blend
+                    # publication.
+                    mature = {
+                        eid
+                        for eid in withdraw_events - attempted_withdraw_events
+                        if last_chunk_of_event.get(eid, len(chunks)) <= index
+                        and eid not in failed_price_events
+                    }
+                    if mature:
+                        attempted_withdraw_events.update(mature)
+                        early_withdrawn = await flush_withdrawals(only_events=mature)
+                        if early_withdrawn is None:
+                            wrote_all = False  # retain the ordinary tail fallback
+                        else:
+                            owed.extend(
+                                oid for oid in early_withdrawn if oid not in owed
+                            )
+                            withdraw_events.difference_update(mature)
+                    ready: list[int] = []
+                    held: list[int] = []
+                    for oid in owed:
+                        event_id = event_id_by_outcome.get(oid)
+                        done = event_id is None or (
+                            last_chunk_of_event.get(event_id, index) <= index
+                            and event_id not in withdraw_events
+                        )
+                        (ready if done else held).append(oid)
+                    owed = held
+                    if ready:
+                        # Q460 — THE SHIP: carry the committed prices through to
+                        # `Event.win_probability_sources`, the JSONB the card
+                        # renders. #837 receipt: the revisions these writes
+                        # committed ride into this refresh, and only this one.
+                        tail_receipts.stage(
+                            [batch_marks[oid] for oid in ready if oid in batch_marks]
+                        )
+                        refresh_events = event_ids_for_outcomes(
+                            event_id_by_outcome, ready,
+                        )
+                        pending_reader = getattr(blend_refresher, "pending_event_ids", None)
+                        # Capture BEFORE refresh consumes due debt and starts
+                        # awaiting its database read; querying it later can miss
+                        # the very in-flight cohort that needs the exclusion.
+                        stamping_events = (
+                            None if pending_reader is None
+                            else refresh_events | set(pending_reader())
+                        )
+                        stamping = asyncio.create_task(blend_refresher.refresh(
+                            refresh_events, flush_started=flush_started,
+                        ))
+                        # One turn of the loop: the refresh takes this chunk's
+                        # staged receipts and asks for its connection before
+                        # the next write.
+                        await asyncio.sleep(0)
+            except asyncio.CancelledError:
+                # A recycle mid-flush cancels the in-flight stamp too, exactly
+                # as it cancelled a stamp it interrupted before, and joins it
+                # before the flush ends. The refresher's cancellation path keeps
+                # a stamp cancelled before its COMMIT owed for the hand-off.
+                await stamp_done(cancel=True)
+                raise
+            finally:
+                await stamp_done()
         # #9934: after the prices, so a held number is judged as it now stands.
         # Events already attempted above wait for the next flush if their
         # withdrawal failed or a newer book arrived during the transaction.

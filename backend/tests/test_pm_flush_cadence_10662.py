@@ -57,7 +57,9 @@ async def test_real_pm_consumer_binds_timer_floor_and_legacy_retry(
     monkeypatch.setattr(lbr, "LiveBlendRefresher", RecordingRefresher)
     monkeypatch.setattr(lbr, "run_flush_cadence", cadence)
     await asyncio.wait_for(consumer(), timeout=3)
-    assert calls == [(expected_period, legacy)]
+    # #10090: the game flush, then the standalone open-contract flush on
+    # the base timer with the base retry (962ced1dc6).
+    assert calls == [(expected_period, legacy), (legacy, None)]
     (refresher,) = instances
     assert refresher.min_refresh_interval_s == expected_floor
     assert refresher.failed_retry_interval_s == 5
