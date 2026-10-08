@@ -1928,6 +1928,97 @@ def is_national_presidential_election_story_key(story_key: str | None) -> bool:
         and story_key.endswith(NATIONAL_PRESIDENTIAL_ELECTION_STORY_SUFFIX)
     )
 
+
+# #10356 slice 1 (Alex, October 7). The #9877 cap seats ONE card per national
+# presidential race, and it seated whichever member ranked highest — on the
+# October 4 production build (r4 capture e93246d2) that was "Brazil Presidential
+# Election First Round: 1st Place in Tocantins" (rank 106), one state's result,
+# standing for the whole race while "Brazil Presidential Election First Round
+# Winner" (104) and "Brazil Presidential Election" (91) waited in the overflow.
+#
+# Alex's rule: the overall-winner question represents the race; failing that, the
+# first-round-winner question; failing both, today's choice exactly. These are
+# the two kinds, and a title is one of them only by POSITIVE identification: the
+# whole title is the race's own name plus nothing ("Brazil Presidential
+# Election", "Brazil Presidential election winner?") or plus exactly "First Round
+# Winner". A title that merely names no state is not national by that absence —
+# "First Round: 3rd Place" and "win outright in the first round" are other
+# propositions, and they keep competing exactly as before. The race is the story
+# key the title itself computes, never `canonical_market_key` (every one of these
+# rows carries `politics:US:championship:2026`, which identifies nothing).
+NATIONAL_RACE_OVERALL_WINNER = "overall_winner"
+NATIONAL_RACE_FIRST_ROUND_WINNER = "first_round_winner"
+
+_NATIONAL_RACE_OVERALL_REST_RE = re.compile(r"(?:winner)?\s*\??", re.IGNORECASE)
+_NATIONAL_RACE_FIRST_ROUND_REST_RE = re.compile(
+    r"[:\-–—]?\s*first\s+round\s+winner\s*\??", re.IGNORECASE
+)
+
+#: Lower is preferred. A kind absent from this map is not a representative kind.
+_NATIONAL_RACE_REPRESENTATIVE_ORDER = {
+    NATIONAL_RACE_OVERALL_WINNER: 0,
+    NATIONAL_RACE_FIRST_ROUND_WINNER: 1,
+}
+
+
+def national_race_representative_kind(
+    name: str | None, story_key: str | None
+) -> str | None:
+    """Which national-race question ``name`` is, if it is the overall winner or
+    the first-round winner of the race ``story_key`` names; else ``None``."""
+    if not name or not is_national_presidential_election_story_key(story_key):
+        return None
+    # The title must name THIS race on its own — the same country and edition.
+    if national_presidential_election_story_key(name) != story_key:
+        return None
+    match = _NATIONAL_PRESIDENTIAL_ELECTION_RE.search(name)
+    if match is None or name[: match.start()].strip():
+        return None
+    rest = name[match.end() :].strip()
+    if _NATIONAL_RACE_OVERALL_REST_RE.fullmatch(rest):
+        return NATIONAL_RACE_OVERALL_WINNER
+    if _NATIONAL_RACE_FIRST_ROUND_REST_RE.fullmatch(rest):
+        return NATIONAL_RACE_FIRST_ROUND_WINNER
+    return None
+
+
+def _national_race_representatives(
+    sorted_items: list[dict], *, exact_counts: dict[str, int]
+) -> dict[str, int]:
+    """``{story key: id(item)}`` — the member each national race seats (#10356).
+
+    ``sorted_items`` is the cap's own rank order, so the first member of the most
+    preferred kind wins a tie on kind. Choosing a member never un-seats one: a
+    race that already has its card in ``already_kept`` is at its cap, which
+    refuses every member before this choice is consulted — the #9877 rule that
+    a relaxed-only question does not displace a strict survivor.
+
+    A member is only chosen if the exact-family cap is certain to admit it when
+    the walk reaches it: its family is not already placed and no earlier item
+    shares it. Otherwise holding the race's other members back could leave the
+    race with no card at all, so the race keeps today's choice instead.
+    """
+    chosen: dict[str, tuple[int, int]] = {}
+    seen_families: set[str] = set(exact_counts)
+    for item in sorted_items:
+        family = item.get("_quality_family_key")
+        story = item.get("_quality_story_key")
+        family_is_clear = not family or family not in seen_families
+        if family:
+            seen_families.add(family)
+        if not family_is_clear:
+            continue
+        kind = national_race_representative_kind(
+            (item.get("data") or {}).get("name"), story
+        )
+        if kind is None:
+            continue
+        order = _NATIONAL_RACE_REPRESENTATIVE_ORDER[kind]
+        if story not in chosen or order < chosen[story][0]:
+            chosen[story] = (order, id(item))
+    return {story: item_id for story, (_order, item_id) in chosen.items()}
+
+
 # Margin-of-victory + voter-turnout election markets — Alex product decision
 # (2026-06-24). These two families flooded Discover: ~1,100 open variants, one
 # per state/district (KXMIDTERMMOV-*, KXMIDTERMVOTETURN-*, ...), and Alex judged
@@ -5096,6 +5187,17 @@ def diversify_quality_families(
                 return value
         return story_family_cap
 
+    # #10356: a national race's card is its overall-winner question, else its
+    # first-round-winner question, else (no entry here) the top-ranked member as
+    # before. Until that member is seated, the race's other members take the
+    # overflow path the cap would have sent them down anyway — the cap is 1, so
+    # exactly one member is seated either way, and nothing outside these races
+    # is touched. (Consulted only inside the story-cap branch, so a disabled
+    # story cap never reads it.)
+    national_representative = _national_race_representatives(
+        sorted_items, exact_counts=exact_counts
+    )
+
     story_overflow: dict[str, list[dict]] = {}
     # Positions in `kept`, NOT the survivor dicts themselves: the reserve is
     # written to a COPY at the end of this function (see below), so the carrier
@@ -5114,7 +5216,11 @@ def diversify_quality_families(
         if story and story_family_cap > 0:
             count = story_counts.get(story, 0)
             cap = min(story_family_cap, _cap_for(story))
-            if count >= cap:
+            representative = national_representative.get(story)
+            held_for_representative = (
+                representative is not None and representative != id(item)
+            )
+            if count >= cap or held_for_representative:
                 # #7426: the cap is a SLOT budget, and a story that folds into one
                 # theme bundle spends one slot however many members it carries. So
                 # the surplus is remembered rather than deleted — see
@@ -5131,6 +5237,7 @@ def diversify_quality_families(
         if story:
             story_counts[story] = story_counts.get(story, 0) + 1
             story_kept_idx.setdefault(story, []).append(len(kept))
+            national_representative.pop(story, None)
         kept.append(item)
 
     # Attach each story's surplus to EVERY survivor of that story, sharing one
