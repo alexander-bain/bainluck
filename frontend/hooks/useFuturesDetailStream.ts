@@ -29,6 +29,7 @@ export function useFuturesDetailStream(options: {
   const reconciler = useRef<ReturnType<typeof createFuturesDetailReconciler>>();
   const parentSeed = useRef<FuturesMarketDetailResponse>();
   const history = useRef<FuturesHistoryResponse>();
+  const historyParent = useRef<FuturesHistoryResponse>();
   const scheduler = useRef<ReturnType<typeof createFuturesReadScheduler>>();
   const ready = options.market?.id === options.marketId && Array.isArray(options.market?.outcomes);
   const enabled = ready && !!options.market && !futuresDetailSettled(options.market) &&
@@ -44,11 +45,20 @@ export function useFuturesDetailStream(options: {
     parentSeed.current = parent;
   }, [ready, options.market]);
 
+  // Chart history has its own SWR key and can advance independently of detail.
+  useEffect(() => {
+    const parent = options.history;
+    if (!ready || parent?.market_id !== options.marketId || parent.hours !== options.historyHours) return;
+    if (historyParent.current !== parent) history.current = reconcileFuturesHistory(history.current, parent, reconciler.current?.current());
+    historyParent.current = parent;
+  }, [ready, options.history, options.marketId, options.historyHours]);
+
   useEffect(() => {
     if (!ready || !callbacks.current.market) return;
     const initial = callbacks.current.market;
     if (reconciler.current?.current().id !== initial.id) reconciler.current = createFuturesDetailReconciler(initial);
-    history.current = callbacks.current.history?.market_id === initial.id ? callbacks.current.history : undefined;
+    history.current = callbacks.current.history?.market_id === initial.id && callbacks.current.history.hours === options.historyHours
+      ? callbacks.current.history : undefined;
     const marketId = options.marketId, hours = options.historyHours;
     const worker = createFuturesReadScheduler({
       now: () => Date.now(),
@@ -72,9 +82,21 @@ export function useFuturesDetailStream(options: {
           // Let an authoritative final verdict authorize its final chart value,
           // while the headline itself never waits for history to download.
           await detailRead.catch(() => undefined);
-          if (!current() || callbacks.current.marketId !== marketId || callbacks.current.historyHours !== hours || next.market_id !== marketId) return;
-          history.current = reconcileFuturesHistory(history.current, next, reconciler.current?.current());
-          await callbacks.current.setHistory(history.current);
+          if (!current() || callbacks.current.marketId !== marketId || callbacks.current.historyHours !== hours || next.market_id !== marketId || next.hours !== hours) return;
+          const parent = callbacks.current.history;
+          if (parent?.market_id === marketId && parent.hours === hours && historyParent.current !== parent) {
+            history.current = reconcileFuturesHistory(history.current, parent, reconciler.current?.current());
+            historyParent.current = parent;
+          }
+          const held = history.current;
+          const accepted = reconcileFuturesHistory(held, next, reconciler.current?.current());
+          const heldRows = new Set(held?.outcomes);
+          // Every incoming series was rejected: retain the canonical parent's
+          // whole body and metadata instead of mutating its key with stale data.
+          if (held && accepted.outcomes.length > 0 && accepted.outcomes.length === held.outcomes.length &&
+            accepted.outcomes.every(row => heldRows.has(row))) return;
+          history.current = accepted;
+          await callbacks.current.setHistory(accepted);
         });
         const results = await Promise.allSettled([detailRead, historyRead]);
         // Preserve failed final-read debt even while healthy heartbeats continue.
