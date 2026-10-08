@@ -21,17 +21,24 @@ PIPELINED = "stamping = asyncio.create_task(blend_refresher.refresh("
 SERIAL = "await (blend_refresher.refresh("
 
 
-def held_refresher(r, hold_ids=(10,)):
+def held_refresher(r, hold_ids=(10,), pending_events=()):
     gate = asyncio.Event()
     calls = {"started": [], "finished": [], "cancelled": [], "running": 0,
-             "most_running": 0}
+             "most_running": 0, "admitted": []}
+    pending = set(pending_events)
 
     class Refresher:
+        def pending_event_ids(self):
+            return frozenset(pending)
+
         async def publish_market_changes(self, session):
             r.trace.append(("publish", None))
 
         async def refresh(self, ids, **kwargs):
             key = tuple(sorted(ids))
+            calls["admitted"].append(tuple(sorted(set(ids) | pending)))
+            # The real refresher takes due debt before its first DB await.
+            pending.clear()
             calls["started"].append(key)
             calls["running"] += 1
             calls["most_running"] = max(calls["most_running"], calls["running"])
@@ -154,3 +161,41 @@ async def test_a_cancel_landing_on_the_last_stamp_join_still_joins_it():
         await asyncio.wait_for(flush, 2)
     assert calls["cancelled"] == [(90,)]
     assert calls["running"] == 0, "no stamp outlives its flush"
+
+
+@pytest.mark.parametrize("future_event", [90, 20])
+async def test_inflight_pending_event_cannot_overlap_its_unwritten_chunks_or_withdrawal(future_event):
+    # Event90 spans two later chunks and has a withdrawal. It also enters the
+    # first refresh as debt, so checking only ready event10 is insufficient.
+    r = rig(
+        batch={1: 0.6, 2: 0.4, 900: 0.1, 901: 0.9},
+        mapping={1: 10, 2: 10, 900: future_event, 901: future_event, 44: 90},
+        books={44: (0.2, 0.8)},
+    )
+    r.ns["FLUSH_CHUNK_ROWS"] = 1  # binary1+2 stays atomic;900 and901 separate
+    r.release.set()
+    gate, calls = held_refresher(r, pending_events=(90,))
+    flush = asyncio.create_task(r.ns["flush_prices"](flush_started=100))
+    try:
+        await settle(r, lambda: calls["started"] == [(10,)])
+        assert calls["admitted"] == [(10, 90)]
+        assert not r.ns["blend_refresher"].pending_event_ids(), "due debt was consumed"
+        await settle(r, lambda: False, turns=30)
+        assert ("write", [900]) not in r.trace, "pending cohort must read before any later write"
+        assert ("write", [901]) not in r.trace
+        gate.set()
+        assert await asyncio.wait_for(flush, 2) is True
+        assert r.trace.index(("refresh", [10])) < r.trace.index(("write", [900]))
+        assert r.trace.index(("write", [900])) < r.trace.index(("write", [901]))
+        assert r.trace.index(("write", [901])) < r.trace.index(("withdraw", [44]))
+        if future_event == 20:
+            # Debt90 only overlaps an unfinished withdrawal; next writes are
+            # independent. This makes the withdrawal exclusion load-bearing.
+            assert r.trace.index(("refresh", [20])) < r.trace.index(("withdraw", [44]))
+        assert r.trace.index(("withdraw", [44])) < r.trace.index(("refresh", [90]))
+        assert calls["most_running"] == 1
+        assert r.marks == [1, 2, 900, 901]
+        assert not r.ns["price_buffer"]
+    finally:
+        gate.set()
+        await asyncio.gather(flush, return_exceptions=True)

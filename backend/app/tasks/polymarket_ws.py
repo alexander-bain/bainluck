@@ -1683,8 +1683,8 @@ async def _run_polymarket_ws_consumer(*, sessions):
             # #10090 — PIPELINED STAMPS, twin of the Kalshi socket's. A chunk's
             # refresh used to finish before the next chunk's write could open,
             # so an event in a later chunk waited for every earlier chunk's
-            # write AND stamp in turn. Now chunk N+1's write overlaps chunk N's
-            # stamp. Unchanged: writes stay strictly sequential, one in flight;
+            # write AND stamp in turn. A safe independent chunk N+1's write
+            # overlaps chunk N's stamp. Unchanged: writes stay strictly sequential, one in flight;
             # the refresher still runs ONE refresh at a time, in chunk order
             # (each joins the previous one before its receipts are staged); a
             # chunk's stamp starts only after its own write committed and
@@ -1692,9 +1692,10 @@ async def _run_polymarket_ws_consumer(*, sessions):
             # no stamp outlives its flush, so the final drain never refreshes
             # beside it.
             stamping = None
+            stamping_events = None
 
             async def stamp_done(*, cancel=False):
-                nonlocal stamping
+                nonlocal stamping, stamping_events
                 if stamping is None:
                     return
                 if cancel:
@@ -1710,6 +1711,7 @@ async def _run_polymarket_ws_consumer(*, sessions):
                         interrupted = exc
                         stamping.cancel()
                 task, stamping = stamping, None
+                stamping_events = None
                 if not task.cancelled() and task.exception() is not None:
                     # `refresh` never raises; if it ever does, its write already
                     # committed, so say so rather than fail the flush after it.
@@ -1722,9 +1724,22 @@ async def _run_polymarket_ws_consumer(*, sessions):
 
             try:
                 for index, chunk_ids in enumerate(chunks):
+                    if stamping is not None:
+                        unwritten_events = {
+                            eid for eid, last in last_chunk_of_event.items()
+                            if last >= index
+                        }
+                        # refresh() also admits retry/deferred events. Their
+                        # read must stay before the next write if any cohort
+                        # or withdrawal is still unfinished. Unknown debt
+                        # retains the serial path rather than assuming safety.
+                        if stamping_events is None or not stamping_events.isdisjoint(
+                            unwritten_events | withdraw_events
+                        ):
+                            await stamp_done()
                     wrote = await write_chunk({oid: batch[oid] for oid in chunk_ids})
-                    # The previous chunk's stamp ran beside that write; it ends
-                    # before this chunk's withdrawals, receipts or refresh.
+                    # Join any safe overlapping stamp before this chunk's
+                    # withdrawals, receipts or refresh.
                     await stamp_done()
                     if wrote:
                         owed.extend(chunk_ids)
@@ -1771,9 +1786,19 @@ async def _run_polymarket_ws_consumer(*, sessions):
                         tail_receipts.stage(
                             [batch_marks[oid] for oid in ready if oid in batch_marks]
                         )
+                        refresh_events = event_ids_for_outcomes(
+                            event_id_by_outcome, ready,
+                        )
+                        pending_reader = getattr(blend_refresher, "pending_event_ids", None)
+                        # Capture BEFORE refresh consumes due debt and starts
+                        # awaiting its database read; querying it later can miss
+                        # the very in-flight cohort that needs the exclusion.
+                        stamping_events = (
+                            None if pending_reader is None
+                            else refresh_events | set(pending_reader())
+                        )
                         stamping = asyncio.create_task(blend_refresher.refresh(
-                            event_ids_for_outcomes(event_id_by_outcome, ready),
-                            flush_started=flush_started,
+                            refresh_events, flush_started=flush_started,
                         ))
                         # One turn of the loop: the refresh takes this chunk's
                         # staged receipts and asks for its connection before
