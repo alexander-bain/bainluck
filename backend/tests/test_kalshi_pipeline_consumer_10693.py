@@ -189,14 +189,16 @@ PIPELINE_DECLARATIONS = (
     queued_events.clear()
     queued_marks.clear()
     queued_refresh = False""",
-    """def queue_committed(index, phase, written_outcome_ids):
+    """def queue_committed(index, phase, written_outcome_ids, *, registered=None):
     nonlocal queued_refresh
     blend_outcomes = phase.keys() if final_drain else (oid for oid in phase if oid not in non_blend_outcome_ids)
     linked_events = event_ids_for_outcomes(event_id_by_outcome, blend_outcomes)
-    if index == 0 or linked_events:
-        queued_events.update(linked_events)
-        queued_marks.update({oid: batch_marks[oid] for oid in written_outcome_ids if oid in batch_marks})
-        queued_refresh = True""",
+    new_events = linked_events if registered is None else linked_events - registered
+    if (index == 0 and registered is None) or new_events:
+        queued_events.update(new_events)
+        queued_marks.update({oid: batch_marks[oid] for oid in written_outcome_ids if oid in batch_marks and (registered is None or event_id_by_outcome.get(oid) in new_events)})
+        queued_refresh = True
+    return linked_events""",
 )
 PIPELINE_HANDLER = """try:
     pass
@@ -229,7 +231,10 @@ PIPELINE_FENCE = (
     """if not stamping_events.isdisjoint(event_ids_for_outcomes(event_id_by_outcome, phase.keys())):
     await stamp_done()""",
 )
-COMMITTED_STAMP_QUEUE = """queue_committed(index, phase, written_outcome_ids)"""
+COMMITTED_STAMP_QUEUE = (
+    "registered = queue_committed(index, phase, written_outcome_ids)",
+    "queue_committed(index, phase, written_outcome_ids, registered=registered)",
+)
 SERIAL_EVENT_PREFIX = """blend_outcomes = phase.keys() if final_drain else (oid for oid in phase if oid not in non_blend_outcome_ids)
 linked_events = event_ids_for_outcomes(event_id_by_outcome, blend_outcomes)"""
 _STAGE = (
@@ -273,17 +278,20 @@ def _without_reviewed_pipelined_stamps(fn):
         matches = [i for i, s in enumerate(loop.body) if ast.dump(s) == expected[0]]
         assert len(matches) == 1, "the same-event stamp fence changed"
         del loop.body[matches[0]]
-    expected = _dumps(COMMITTED_STAMP_QUEUE)
-    matches = [i for i in range(len(loop.body) - len(expected) + 1)
-               if [ast.dump(s) for s in loop.body[i:i + len(expected)]] == expected]
-    assert len(matches) == 2, "the committed and late-bridge stamp queues changed"
-    for index in reversed(matches):
-        del loop.body[index:index + len(expected)]
+    for source in COMMITTED_STAMP_QUEUE:
+        expected = _dumps(source)
+        matches = [i for i, statement in enumerate(loop.body)
+                   if ast.dump(statement) == expected[0]]
+        assert len(matches) == 1, "the committed or late-bridge stamp queue changed"
+        del loop.body[matches[0]]
     branches = [n for n in loop.body if isinstance(n, ast.If)
                 and ast.unparse(n.test) == "stamping is None or stamping.done()"]
-    assert len(branches) == 1
-    (branch,) = branches
-    assert [ast.dump(s) for s in branch.body] == _dumps(PIPELINED_REFRESH)
+    assert len(branches) == 2
+    for candidate in branches:
+        assert [ast.dump(s) for s in candidate.body] == _dumps(PIPELINED_REFRESH)
+    # Remove the new early launch and restore serial refresh at its old boundary.
+    loop.body.remove(branches[0])
+    branch = branches[1]
     serial_branch = ast.parse("if index == 0 or linked_events:\n    pass").body[0]
     serial_branch.body = ast.parse(SERIAL_REFRESH).body
     index = loop.body.index(branch)

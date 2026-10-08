@@ -917,20 +917,23 @@ async def _run_kalshi_ws_consumer(*, sessions, prices):
             queued_refresh = False
             await asyncio.sleep(0)
 
-        def queue_committed(index, phase, written_outcome_ids):
+        def queue_committed(index, phase, written_outcome_ids, *, registered=None):
             nonlocal queued_refresh
             blend_outcomes = (
                 phase.keys() if final_drain else
                 (oid for oid in phase if oid not in non_blend_outcome_ids)
             )
             linked_events = event_ids_for_outcomes(event_id_by_outcome, blend_outcomes)
-            if index == 0 or linked_events:
-                queued_events.update(linked_events)
+            new_events = linked_events if registered is None else linked_events - registered
+            if (index == 0 and registered is None) or new_events:
+                queued_events.update(new_events)
                 queued_marks.update({
                     oid: batch_marks[oid]
                     for oid in written_outcome_ids if oid in batch_marks
+                    and (registered is None or event_id_by_outcome.get(oid) in new_events)
                 })
                 queued_refresh = True
+            return linked_events
 
         def keep_queued():
             nonlocal queued_refresh
@@ -1136,7 +1139,7 @@ async def _run_kalshi_ws_consumer(*, sessions, prices):
 
                 # The transaction has committed. Register debt before any
                 # publication/bookkeeping await can be interrupted.
-                queue_committed(index, phase, written_outcome_ids)
+                registered = queue_committed(index, phase, written_outcome_ids)
 
                 if exact_trace is not None:
                     with contextlib.suppress(Exception):
@@ -1148,10 +1151,16 @@ async def _run_kalshi_ws_consumer(*, sessions, prices):
                             "DECLINED_SETTLED_OR_MISSING",
                         )
 
-                # #9484 — the commit landed, so the rows it carried may now say so on
-                # `live:market:{id}`. Before the buffer bookkeeping and the blend
-                # refresh, so neither can suppress it: a standalone future or prop has
-                # no event blend, and its moved quote is just as real.
+                # The event refresh uses its own session and committed prices.
+                # Start it before awaiting the separate MARKET notification;
+                # either delivery can progress while the other awaits Redis.
+                if stamping is None or stamping.done():
+                    await stamp_done()
+                    if queued_refresh:
+                        await stamp_start()
+
+                # #9484: keep every committed MARKET notification, including
+                # standalone futures/props which have no event blend.
                 await blend_refresher.publish_market_changes(session)
 
                 # Q491 repair 2 — the write landed, so and only so do these entries
@@ -1172,10 +1181,9 @@ async def _run_kalshi_ws_consumer(*, sessions, prices):
 
                 # Admission may fill an unknown bridge during the postcommit
                 # awaits. Recheck at the original trigger boundary as well.
-                queue_committed(index, phase, written_outcome_ids)
-                # Start only after this phase's MARKET invalidation and buffer
-                # bookkeeping. If a refresh is running, later whole-event
-                # commits accumulate for its successor instead of waiting here.
+                queue_committed(index, phase, written_outcome_ids, registered=registered)
+                # Only newly admitted bridge events need another launch. Known
+                # events were already registered before MARKET publication.
                 if stamping is None or stamping.done():
                     await stamp_done()
                     if queued_refresh:
