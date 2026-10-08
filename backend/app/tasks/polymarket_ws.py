@@ -1787,8 +1787,15 @@ async def _run_polymarket_ws_consumer(*, sessions):
             # throttle, so an event a later chunk still writes waits for that
             # chunk, and one with a pending withdrawal waits for it.
             last_chunk_of_event: dict[int, int] = {}
+            # Withdrawals judge the final stored price, including non-speakers.
+            # Their maturity must therefore wait for every planned event price,
+            # even when WIN readiness no longer waits for that prop's quote.
+            last_price_chunk_of_event: dict[int, int] = {}
             for index, chunk_ids in enumerate(chunks):
                 for oid in chunk_ids:
+                    price_event_id = event_id_by_outcome.get(oid)
+                    if price_event_id is not None:
+                        last_price_chunk_of_event[price_event_id] = index
                     event_id = headline_event_ids.get(oid)
                     if event_id is not None:
                         last_chunk_of_event[event_id] = index
@@ -1875,7 +1882,7 @@ async def _run_polymarket_ws_consumer(*, sessions):
                     mature = {
                         eid
                         for eid in withdraw_events - attempted_withdraw_events
-                        if last_chunk_of_event.get(eid, len(chunks)) <= index
+                        if last_price_chunk_of_event.get(eid, len(chunks)) <= index
                         and eid not in failed_price_events
                     }
                     if mature:

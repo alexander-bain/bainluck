@@ -95,9 +95,23 @@ async def test_known_prop_complements_keep_their_whole_transaction():
 async def test_prop_withdrawal_retains_existing_event_fence():
     x = rig(mapping={1: 10, 2: 10, 900: 10}, books={900: (0.2, 0.8)})
     x.ns["non_blend_outcome_ids"].add(900)
-    x.release.set()
-    assert await x.ns["flush_prices"]()
-    assert x.trace.index(("withdraw", [900])) < x.trace.index(("refresh", [10]))
+    x.ns["open_outcome_ids"].discard(900)
+    task = asyncio.create_task(x.ns["flush_prices"]())
+    try:
+        await asyncio.wait_for(x.entered.wait(), 1)
+        assert ("write", [1, 2]) in x.trace
+        assert ("withdraw", [900]) not in x.trace
+        assert ("refresh", [10]) not in x.trace
+        assert 900 in x.ns["price_buffer"] and 900 in x.books
+    finally:
+        x.release.set()
+        assert await asyncio.wait_for(task, 1)
+    assert (
+        x.trace.index(("write", [1, 2]))
+        < x.trace.index(("write", [900]))
+        < x.trace.index(("withdraw", [900]))
+        < x.trace.index(("refresh", [10]))
+    )
     assert not x.books
 
 
