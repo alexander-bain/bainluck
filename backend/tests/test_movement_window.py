@@ -66,8 +66,15 @@ from app.utils.futures_highlights import MODERATE_MOVEMENT_THRESHOLD
 
 
 class _Result:
-    def __init__(self, rowcount: int) -> None:
+    def __init__(self, rowcount: int, ids: list[int] | None = None) -> None:
         self.rowcount = rowcount
+        self._ids = list(ids or [])
+
+    def scalars(self):
+        return self
+
+    def all(self):
+        return list(self._ids)
 
 
 class _RecordingSession:
@@ -89,12 +96,26 @@ class _RecordingSession:
         # of `events`/`calls`/`rowcounts` so the phase-indexed controls below
         # keep reading A..C; its own control pins where it lands.
         self.lock_budgets: list[tuple[int, dict]] = []
+        # (position in `events`, sql, params) per A4/A7 lock-free prepare read
+        # (#10090), kept out of `events` for the lock budget's reason. Each
+        # answers `prepared_ids[label]`, so a control can follow the ids into
+        # the core's locking write.
+        self.prepares: list[tuple[int, str, dict]] = []
+        self.prepared_ids = {"A4": [41, 42], "A7": [71]}
+        # Relative order of the two out-of-band kinds above.
+        self.out_of_band: list[str] = []
 
     async def execute(self, stmt, params=None):  # noqa: ANN001
         sql = " ".join(str(stmt).split())
         if "set_config('lock_timeout'" in sql:
             self.lock_budgets.append((len(self.events), params or {}))
+            self.out_of_band.append("LOCK BUDGET")
             return _Result(0)
+        if "/* movement prepare:" in sql:
+            self.prepares.append((len(self.events), sql, params or {}))
+            label = "A4" if "movement prepare: A4" in sql else "A7"
+            self.out_of_band.append(f"PREPARE {label}")
+            return _Result(0, self.prepared_ids[label])
         self.calls.append((sql, params or {}))
         self.events.append(sql)
         if self.fail_bank and "jsonb_object_agg" in sql:
@@ -207,6 +228,46 @@ def test_the_core_yields_quote_rows_instead_of_waiting_for_them(run_task):
     for sql in core:
         if sql.startswith("UPDATE futures_markets"):
             assert "SKIP LOCKED" not in sql, sql
+
+
+def test_snapshot_scans_run_before_any_outcome_lock(run_task):
+    """#10090: A4/A7's snapshot LATERAL scans no longer run while A1-A3's
+    outcome locks are held.
+
+    Each runs first as a plain read (no row lock) after A10 commits and before
+    the core's lock budget; the core's locking write re-evaluates the SAME
+    predicate text restricted to exactly the ids that read returned, so a row
+    rewritten or cleared in between is re-judged, never retired on stale word.
+    """
+    from app.tasks import A4_UNOBSERVED_PREDICATE, A7_CONTRADICTED_PREDICATE
+
+    _, session = run_task()
+    commits = [i for i, event in enumerate(session.events) if event == "COMMIT"]
+    assert session.out_of_band == [
+        "PREPARE A4", "PREPARE A7", "LOCK BUDGET",
+    ], session.out_of_band
+    assert [p[0] for p in session.prepares] == [commits[0] + 1] * 2
+
+    core = _movement_events(session)
+    for (_, prep_sql, prep_params), predicate, label in zip(
+        session.prepares,
+        (A4_UNOBSERVED_PREDICATE, A7_CONTRADICTED_PREDICATE),
+        ("A4", "A7"),
+    ):
+        shared = " ".join(predicate.split())
+        assert "FOR UPDATE" not in prep_sql, prep_sql
+        assert prep_sql.startswith(f"/* movement prepare: {label} */ SELECT fo.id {shared} ORDER BY"), prep_sql
+        writes = [
+            (sql, params) for sql, params in session.calls
+            if sql.startswith("UPDATE futures_outcomes") and shared in sql
+        ]
+        assert len(writes) == 1, (label, core)
+        sql, params = writes[0]
+        assert f"{shared} AND fo.id = ANY(:prepared_ids) ORDER BY" in sql, sql
+        assert "FOR UPDATE OF fo SKIP LOCKED" in sql, sql
+        assert params["prepared_ids"] == session.prepared_ids[label], params
+        assert params["batch"] == prep_params["batch"], (params, prep_params)
+        assert {k: v for k, v in params.items() if k != "prepared_ids"} == prep_params
 
 
 def _statements(session: _RecordingSession) -> list[str]:

@@ -3620,6 +3620,95 @@ OPENING_BOOK_SLICES = 12
 #: with a writer can be detected against the writer.
 MOVEMENT_CORE_LOCK_TIMEOUT_MS = 500
 
+#: A4's and A7's eligibility, ONE text each, shared by the lock-free prepare
+#: read and the locking write (#10090). Their `futures_odds_snapshots` LATERAL
+#: over every candidate leg is the core's costly scan; run inside the core it
+#: kept every outcome A1-A3 had already taken locked for its whole duration.
+#: So it runs FIRST, before any outcome lock, and returns at most `:batch` ids;
+#: the core then re-evaluates this SAME predicate restricted to those ids
+#: (`fo.id = ANY(:prepared_ids)`) under `FOR UPDATE OF fo SKIP LOCKED`. The
+#: re-check is the version check: a row a writer rewrote, or that A1-A3 cleared
+#: in this transaction, or whose window moved, simply no longer qualifies and is
+#: left as it is — nothing is retired on the prepare read's word alone. A row
+#: that newly qualifies after the prepare waits for the next run, as a skipped
+#: locked row already does. Comments inside stay with the shared text.
+A4_UNOBSERVED_PREDICATE = """                        FROM futures_outcomes fo
+                        JOIN futures_markets fm ON fm.id = fo.market_id
+                        CROSS JOIN LATERAL (
+                            SELECT min(s.probability) AS lo,
+                                   max(s.probability) AS hi,
+                                   bool_or(
+                                       s.bookmaker <> ALL(:scale_identical)
+                                   ) AS foreign_scale
+                            FROM futures_odds_snapshots s
+                            WHERE s.outcome_id = fo.id
+                              AND s.captured_at
+                                  > now() - (:window_hours * interval '1 hour')
+                        ) obs
+                        WHERE fo.probability_change_24h IS NOT NULL
+                          AND fo.current_probability IS NOT NULL
+                          AND abs(fo.probability_change_24h) >= :floor
+                          AND fm.status = 'open'
+                          AND obs.lo IS NOT NULL
+                          -- `IS FALSE`, never `NOT foreign_scale`: NULL (no
+                          -- rows) and TRUE (a vigged row) must BOTH fail, and
+                          -- `NOT NULL` is NULL, which the planner drops anyway
+                          -- — spelled this way so the fail-closed intent is
+                          -- readable rather than incidental.
+                          AND obs.foreign_scale IS FALSE
+                          AND CASE
+                                WHEN fo.probability_change_24h > 0
+                                THEN fo.probability_change_24h
+                                     > (fo.current_probability - obs.lo)
+                                       + :tolerance
+                                ELSE fo.probability_change_24h
+                                     < (fo.current_probability - obs.hi)
+                                       - :tolerance
+                              END
+"""
+
+A7_CONTRADICTED_PREDICATE = """                        FROM futures_outcomes fo
+                        JOIN futures_markets fm ON fm.id = fo.market_id
+                        CROSS JOIN LATERAL (
+                            SELECT (array_agg(
+                                        s.probability ORDER BY s.captured_at
+                                    ))[1] AS basis,
+                                   min(s.captured_at) AS basis_at,
+                                   count(DISTINCT s.bookmaker) AS sources,
+                                   bool_or(
+                                       s.bookmaker <> ALL(:scale_identical)
+                                   ) AS foreign_scale
+                            FROM futures_odds_snapshots s
+                            WHERE s.outcome_id = fo.id
+                              AND s.captured_at
+                                  > now() - (:window_hours * interval '1 hour')
+                        ) obs
+                        WHERE fo.probability_change_24h IS NOT NULL
+                          AND fo.current_probability IS NOT NULL
+                          AND abs(fo.probability_change_24h) >= :floor
+                          AND fm.status = 'open'
+                          AND obs.basis IS NOT NULL
+                          -- `IS FALSE` for A4's reason: NULL and TRUE must both
+                          -- fail, so the fail-closed intent is readable.
+                          AND obs.foreign_scale IS FALSE
+                          AND obs.sources = 1
+                          AND obs.basis_at
+                              <= now()
+                                 - (:basis_age_hours * interval '1 hour')
+                          -- Direction AND materiality in one CASE, written as
+                          -- two subtractions rather than `abs()` + `sign()` so
+                          -- that each arm reads as the contradiction it tests:
+                          -- a claim that it ROSE, refuted by a dated FALL of at
+                          -- least the card floor, and the mirror.
+                          AND CASE
+                                WHEN fo.probability_change_24h > 0
+                                THEN obs.basis - fo.current_probability
+                                     >= :floor
+                                ELSE fo.current_probability - obs.basis
+                                     >= :floor
+                              END
+"""
+
 
 def _opening_book_slice(epoch_seconds: float) -> int:
     """The slice statement A10 judges on a run starting at `epoch_seconds`."""
@@ -3891,10 +3980,48 @@ def update_max_movement(self):
 
             await session.commit()
 
-            # The core yields to quotes (#10090). First statement of the core
-            # transaction, so `is_local` scopes it to exactly A1-A7/B/C; the
-            # A1-A7 target selections below lock with `SKIP LOCKED` and never
-            # wait at all. See MOVEMENT_CORE_LOCK_TIMEOUT_MS.
+            # A4/A7 PREPARE (#10090): their snapshot LATERAL scans run here,
+            # plain reads that take no row lock, so no quote row is held while
+            # they run. The core re-checks the same predicate on these ids only.
+            # See A4_UNOBSERVED_PREDICATE.
+            a4_prepared_ids = list((await session.execute(
+                text("""
+                    /* movement prepare: A4 */
+                    SELECT fo.id
+                """ + A4_UNOBSERVED_PREDICATE + """
+                    ORDER BY abs(fo.probability_change_24h) DESC
+                    LIMIT :batch
+                """),
+                {
+                    "window_hours": MOVEMENT_WINDOW_HOURS,
+                    "tolerance": tolerance,
+                    "floor": floor,
+                    "batch": UNOBSERVED_PRIOR_BATCH,
+                    "scale_identical": list(SCALE_IDENTICAL_SNAPSHOT_SOURCES),
+                },
+            )).scalars().all())
+            a7_prepared_ids = list((await session.execute(
+                text("""
+                    /* movement prepare: A7 */
+                    SELECT fo.id
+                """ + A7_CONTRADICTED_PREDICATE + """
+                    ORDER BY abs(fo.probability_change_24h) DESC
+                    LIMIT :batch
+                """),
+                {
+                    "window_hours": MOVEMENT_WINDOW_HOURS,
+                    "basis_age_hours": DATED_BASIS_MIN_AGE_HOURS,
+                    "floor": floor,
+                    "batch": CONTRADICTED_DIRECTION_BATCH,
+                    "scale_identical": list(SCALE_IDENTICAL_SNAPSHOT_SOURCES),
+                },
+            )).scalars().all())
+
+            # The core yields to quotes (#10090). First statement after the
+            # lock-free prepare reads, so `is_local` scopes it to exactly
+            # A1-A7/B/C; the A1-A7 target selections below lock with
+            # `SKIP LOCKED` and never wait at all. See
+            # MOVEMENT_CORE_LOCK_TIMEOUT_MS.
             await session.execute(
                 SET_LOCK_TIMEOUT_SQL,
                 {"ms": lock_timeout_value(MOVEMENT_CORE_LOCK_TIMEOUT_MS)},
@@ -4181,39 +4308,8 @@ def update_max_movement(self):
                         rank_change_24h = NULL
                     WHERE id IN (
                         SELECT fo.id
-                        FROM futures_outcomes fo
-                        JOIN futures_markets fm ON fm.id = fo.market_id
-                        CROSS JOIN LATERAL (
-                            SELECT min(s.probability) AS lo,
-                                   max(s.probability) AS hi,
-                                   bool_or(
-                                       s.bookmaker <> ALL(:scale_identical)
-                                   ) AS foreign_scale
-                            FROM futures_odds_snapshots s
-                            WHERE s.outcome_id = fo.id
-                              AND s.captured_at
-                                  > now() - (:window_hours * interval '1 hour')
-                        ) obs
-                        WHERE fo.probability_change_24h IS NOT NULL
-                          AND fo.current_probability IS NOT NULL
-                          AND abs(fo.probability_change_24h) >= :floor
-                          AND fm.status = 'open'
-                          AND obs.lo IS NOT NULL
-                          -- `IS FALSE`, never `NOT foreign_scale`: NULL (no
-                          -- rows) and TRUE (a vigged row) must BOTH fail, and
-                          -- `NOT NULL` is NULL, which the planner drops anyway
-                          -- — spelled this way so the fail-closed intent is
-                          -- readable rather than incidental.
-                          AND obs.foreign_scale IS FALSE
-                          AND CASE
-                                WHEN fo.probability_change_24h > 0
-                                THEN fo.probability_change_24h
-                                     > (fo.current_probability - obs.lo)
-                                       + :tolerance
-                                ELSE fo.probability_change_24h
-                                     < (fo.current_probability - obs.hi)
-                                       - :tolerance
-                              END
+                """ + A4_UNOBSERVED_PREDICATE + """
+                          AND fo.id = ANY(:prepared_ids)
                         ORDER BY abs(fo.probability_change_24h) DESC
                         LIMIT :batch
                         FOR UPDATE OF fo SKIP LOCKED
@@ -4222,6 +4318,7 @@ def update_max_movement(self):
                 {
                     "window_hours": MOVEMENT_WINDOW_HOURS,
                     "tolerance": tolerance,
+                    "prepared_ids": a4_prepared_ids,
                     # MODERATE_MOVEMENT_THRESHOLD: below it no card names a mover
                     # and no chip is drawn, so a sub-2-point delta cannot reach a
                     # reader to lie to them. Bounding the statement there is what
@@ -4405,46 +4502,8 @@ def update_max_movement(self):
                     SET probability_change_24h = NULL
                     WHERE id IN (
                         SELECT fo.id
-                        FROM futures_outcomes fo
-                        JOIN futures_markets fm ON fm.id = fo.market_id
-                        CROSS JOIN LATERAL (
-                            SELECT (array_agg(
-                                        s.probability ORDER BY s.captured_at
-                                    ))[1] AS basis,
-                                   min(s.captured_at) AS basis_at,
-                                   count(DISTINCT s.bookmaker) AS sources,
-                                   bool_or(
-                                       s.bookmaker <> ALL(:scale_identical)
-                                   ) AS foreign_scale
-                            FROM futures_odds_snapshots s
-                            WHERE s.outcome_id = fo.id
-                              AND s.captured_at
-                                  > now() - (:window_hours * interval '1 hour')
-                        ) obs
-                        WHERE fo.probability_change_24h IS NOT NULL
-                          AND fo.current_probability IS NOT NULL
-                          AND abs(fo.probability_change_24h) >= :floor
-                          AND fm.status = 'open'
-                          AND obs.basis IS NOT NULL
-                          -- `IS FALSE` for A4's reason: NULL and TRUE must both
-                          -- fail, so the fail-closed intent is readable.
-                          AND obs.foreign_scale IS FALSE
-                          AND obs.sources = 1
-                          AND obs.basis_at
-                              <= now()
-                                 - (:basis_age_hours * interval '1 hour')
-                          -- Direction AND materiality in one CASE, written as
-                          -- two subtractions rather than `abs()` + `sign()` so
-                          -- that each arm reads as the contradiction it tests:
-                          -- a claim that it ROSE, refuted by a dated FALL of at
-                          -- least the card floor, and the mirror.
-                          AND CASE
-                                WHEN fo.probability_change_24h > 0
-                                THEN obs.basis - fo.current_probability
-                                     >= :floor
-                                ELSE fo.current_probability - obs.basis
-                                     >= :floor
-                              END
+                """ + A7_CONTRADICTED_PREDICATE + """
+                          AND fo.id = ANY(:prepared_ids)
                         ORDER BY abs(fo.probability_change_24h) DESC
                         LIMIT :batch
                         FOR UPDATE OF fo SKIP LOCKED
@@ -4453,6 +4512,7 @@ def update_max_movement(self):
                 {
                     "window_hours": MOVEMENT_WINDOW_HOURS,
                     "basis_age_hours": DATED_BASIS_MIN_AGE_HOURS,
+                    "prepared_ids": a7_prepared_ids,
                     # Decimal, never the float — A4's note above explains why a
                     # `float` here makes a delta sitting exactly on the floor
                     # fail its own floor test.
