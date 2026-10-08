@@ -1153,6 +1153,7 @@ class LiveBlendRefresher:
 
     async def refresh(
         self, event_ids: Iterable[int], *, flush_started: Optional[float] = None,
+        defer_event_ids: Iterable[int] = (),
     ) -> dict[str, int]:
         """Recompute and stamp the blend for these events. Never raises.
 
@@ -1176,7 +1177,11 @@ class LiveBlendRefresher:
         deferred = set(self._throttle_deferred)
         fresh = set(event_ids)
         wanted = fresh | retry | deferred
-        due = [eid for eid in wanted if self._due(eid, clock)]
+        # A caller may still be writing this event's price/withdrawal cohort.
+        # Leave its fresh inputs and existing debt owed without reading a
+        # partial board; ordinary callers retain the same admission behavior.
+        excluded = set(defer_event_ids)
+        due = [eid for eid in wanted if eid not in excluded and self._due(eid, clock)]
         # A queued retry leaves the set only when a batch actually takes it.
         self._lock_retry = retry.difference(due)
         # A throttled event is owed the price it just had written, so it waits
@@ -1454,6 +1459,7 @@ class LiveBlendRefresher:
         self,
         *,
         flush_started: Optional[float] = None,
+        defer_event_ids: Iterable[int] = (),
     ) -> dict[str, int]:
         """#837 tail — stamp only the deferred events. Never raises.
 
@@ -1469,7 +1475,9 @@ class LiveBlendRefresher:
                 # #10090: a quiet flush still closes a finished minute.
                 self._receipt_call(self.receipts.roll)
             return self.stats
-        return await self.refresh((), flush_started=flush_started)
+        return await self.refresh(
+            (), flush_started=flush_started, defer_event_ids=defer_event_ids,
+        )
 
     def pending_event_ids(self) -> frozenset:
         """Every event this refresher still owes a stamp (#9462 review)."""
