@@ -268,10 +268,39 @@ describe("#5105 contradictory or unbound evidence is refused, never guessed", ()
     expect(parseFeedSnapshot<Card>(JSON.stringify(stored), { getId: readId })).toBeNull();
   });
 
-  it("refuses a v2 body carrying section evidence instead of reading it as legacy", () => {
+  it("refuses a v2 body carrying section evidence in BOTH readers instead of reading it as legacy", () => {
     const stored = storedSection();
     stored.v = FEED_SNAPSHOT_VERSION;
-    expect(parseFeedSnapshot<Card>(JSON.stringify(stored), opt)).toBeNull();
+    const raw = JSON.stringify(stored);
+    expect(parseFeedSnapshot<Card>(raw, opt)).toBeNull();
+    expect(parseFeedSnapshot<Card>(raw)).toBeNull();
+    // The marker alone is enough — even null or empty section evidence.
+    for (const sections of [null, {}, []]) {
+      const marked = JSON.stringify({ ...stored, sections });
+      expect(parseFeedSnapshot<Card>(marked)).toBeNull();
+      expect(parseFeedSnapshot<Card>(marked, opt)).toBeNull();
+    }
+    // Strawman: the same body without the reserved field is an ordinary v2 edition.
+    delete stored.sections;
+    expect(parseFeedSnapshot<Card>(JSON.stringify(stored))).toEqual({
+      page1: stored.page1,
+      rest: stored.rest,
+      visibleCount: 20,
+      hasMore: true,
+    });
+  });
+
+  it("refuses to encode when the caller's getId throws on a retained card", () => {
+    const cards = deck(10);
+    const sections = sectionDeck(cards, 3, [[0, 5]]);
+    const readId = (card: Card) => card.id; // throws on a null card
+    const page1 = cards.slice(0, 5);
+    expect(() =>
+      serializeFeedSnapshot({ page1, rest: [null as unknown as Card], visibleCount: 20, hasMore: true }, { deck: sections, getId: readId }),
+    ).not.toThrow();
+    expect(
+      serializeFeedSnapshot({ page1, rest: [null as unknown as Card], visibleCount: 20, hasMore: true }, { deck: sections, getId: readId }),
+    ).toBeNull();
   });
 
   it("will not write a section deck as legacy when a retained card has no recorded position", () => {
@@ -303,19 +332,39 @@ describe("#5105 a reader that has not opted in refuses a section edition", () =>
 
 describe("#5105 storage wrappers", () => {
   let store: Map<string, string>;
+  let ops: string[];
+  let failSet: boolean;
   beforeEach(() => {
     store = new Map();
+    ops = [];
+    failSet = false;
     (globalThis as any).window = {
       sessionStorage: {
         getItem: (k: string) => store.get(k) ?? null,
-        setItem: (k: string, v: string) => void store.set(k, v),
-        removeItem: (k: string) => void store.delete(k),
+        setItem: (k: string, v: string) => {
+          ops.push(`set:${k}`);
+          if (failSet) throw new Error("QuotaExceededError");
+          store.set(k, v);
+        },
+        removeItem: (k: string) => {
+          ops.push(`remove:${k}`);
+          store.delete(k);
+        },
       },
     };
   });
   afterEach(() => {
     delete (globalThis as any).window;
   });
+
+  /** Store an accepted section edition, then forget the calls that did it. */
+  function acceptedSectionEdition(cards: Card[], sections: Sections<Card>): string {
+    writeFeedSnapshot({ page1: cards.slice(0, 5), rest: [], visibleCount: 20, hasMore: true }, { deck: sections, getId });
+    const before = store.get(FEED_SNAPSHOT_KEY);
+    expect(JSON.parse(before!).v).toBe(FEED_SECTION_SNAPSHOT_VERSION);
+    ops.length = 0;
+    return before!;
+  }
 
   it("writes and reads a section edition; the legacy read refuses it without touching storage", () => {
     const cards = deck(10);
@@ -327,22 +376,102 @@ describe("#5105 storage wrappers", () => {
     expect(ids(readFeedSnapshot<Card>(opt)!.sections!.continuation)).toEqual(["c3", "c4"]);
   });
 
-  it("drops an older stored edition when the new section deck will not bind", () => {
+  it("an unbound retained card refuses the write and leaves the accepted edition's bytes untouched", () => {
+    const cards = deck(10);
+    const sections = sectionDeck(cards, 3, [[0, 5]]);
+    const before = acceptedSectionEdition(cards, sections);
+    const stray: Card = { id: "synthetic", data: { n: -1 } };
+    writeFeedSnapshot({ page1: cards.slice(0, 5), rest: [stray], visibleCount: 20, hasMore: true }, { deck: sections, getId });
+    expect(ops).toEqual([]);
+    expect(store.get(FEED_SNAPSHOT_KEY)).toBe(before);
+  });
+
+  it("an unbound retained card leaves an older legacy edition untouched too", () => {
     const cards = deck(10);
     writeFeedSnapshot({ page1: cards.slice(0, 2), rest: [], visibleCount: 20, hasMore: true });
-    expect(store.has(FEED_SNAPSHOT_KEY)).toBe(true);
+    const before = store.get(FEED_SNAPSHOT_KEY);
+    ops.length = 0;
     const sections = sectionDeck(cards, 3, [[0, 5]]);
     const stray: Card = { id: "synthetic", data: { n: -1 } };
     writeFeedSnapshot({ page1: cards.slice(0, 5), rest: [stray], visibleCount: 20, hasMore: true }, { deck: sections, getId });
+    expect(ops).toEqual([]);
+    expect(store.get(FEED_SNAPSHOT_KEY)).toBe(before);
+  });
+
+  it("a malformed retained card whose getId throws refuses without deleting the accepted edition", () => {
+    const cards = deck(10);
+    const sections = sectionDeck(cards, 3, [[0, 5]]);
+    const before = acceptedSectionEdition(cards, sections);
+    const readId = (card: Card) => card.id; // throws on a null card
+    expect(() =>
+      writeFeedSnapshot(
+        { page1: cards.slice(0, 5), rest: [null as unknown as Card], visibleCount: 20, hasMore: true },
+        { deck: sections, getId: readId },
+      ),
+    ).not.toThrow();
+    expect(ops).toEqual([]);
+    expect(store.get(FEED_SNAPSHOT_KEY)).toBe(before);
+  });
+
+  it("a getId that throws on a well-formed card is also a refusal, not a storage failure", () => {
+    const cards = deck(10);
+    const sections = sectionDeck(cards, 3, [[0, 5]]);
+    const before = acceptedSectionEdition(cards, sections);
+    const explode = (card: Card) => {
+      if (card.id === "c4") throw new Error("unreadable");
+      return card.id;
+    };
+    writeFeedSnapshot({ page1: cards.slice(0, 5), rest: [], visibleCount: 20, hasMore: true }, { deck: sections, getId: explode });
+    expect(ops).toEqual([]);
+    expect(store.get(FEED_SNAPSHOT_KEY)).toBe(before);
+  });
+
+  it("a genuine failed setItem on a section write still drops the edition (quota cleanup kept)", () => {
+    const cards = deck(10);
+    const sections = sectionDeck(cards, 3, [[0, 5]]);
+    acceptedSectionEdition(cards, sections);
+    failSet = true;
+    writeFeedSnapshot({ page1: cards.slice(0, 5), rest: [], visibleCount: 20, hasMore: false }, { deck: sections, getId });
+    expect(ops).toEqual([`set:${FEED_SNAPSHOT_KEY}`, `remove:${FEED_SNAPSHOT_KEY}`]);
     expect(store.has(FEED_SNAPSHOT_KEY)).toBe(false);
+  });
+
+  it("a genuine failed setItem on a legacy write still drops the edition (today's behaviour)", () => {
+    const cards = deck(10);
+    writeFeedSnapshot({ page1: cards.slice(0, 2), rest: [], visibleCount: 20, hasMore: true });
+    ops.length = 0;
+    failSet = true;
+    writeFeedSnapshot({ page1: cards.slice(0, 3), rest: [], visibleCount: 20, hasMore: true });
+    expect(ops).toEqual([`set:${FEED_SNAPSHOT_KEY}`, `remove:${FEED_SNAPSHOT_KEY}`]);
+    expect(store.has(FEED_SNAPSHOT_KEY)).toBe(false);
+  });
+
+  it("a legacy write stores today's exact bytes with one setItem", () => {
+    const cards = deck(10);
+    const legacy = { page1: cards.slice(0, 2), rest: [cards[2]], visibleCount: 20, hasMore: true };
+    writeFeedSnapshot(legacy);
+    writeFeedSnapshot(legacy, { deck: null, getId });
+    expect(ops).toEqual([`set:${FEED_SNAPSHOT_KEY}`, `set:${FEED_SNAPSHOT_KEY}`]);
+    expect(store.get(FEED_SNAPSHOT_KEY)).toBe(JSON.stringify({ v: FEED_SNAPSHOT_VERSION, ...legacy }));
+    expect(readFeedSnapshot<Card>()).toEqual(legacy);
   });
 
   it("keeps today's empty-page-one no-op", () => {
     const cards = deck(10);
     writeFeedSnapshot({ page1: cards.slice(0, 2), rest: [], visibleCount: 20, hasMore: true });
     const before = store.get(FEED_SNAPSHOT_KEY);
+    ops.length = 0;
     writeFeedSnapshot({ page1: [], rest: [], visibleCount: 20, hasMore: true });
     writeFeedSnapshot({ page1: [], rest: [], visibleCount: 20, hasMore: true }, { deck: sectionDeck(cards, 3, [[0, 5]]), getId });
+    expect(ops).toEqual([]);
     expect(store.get(FEED_SNAPSHOT_KEY)).toBe(before);
+  });
+
+  it("the default reader refuses a stored v2 body carrying section evidence", () => {
+    const stored = storedSection();
+    stored.v = FEED_SNAPSHOT_VERSION;
+    store.set(FEED_SNAPSHOT_KEY, JSON.stringify(stored));
+    expect(readFeedSnapshot<Card>()).toBeNull();
+    expect(readFeedSnapshot<Card>(opt)).toBeNull();
   });
 });

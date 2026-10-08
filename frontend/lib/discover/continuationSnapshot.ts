@@ -98,7 +98,8 @@ export function decodeContinuationDeck<T>(
 /**
  * Encode the evidence for `retained` from an accepted section deck, or `null`
  * when the deck is not a section deck, or any retained card has no recorded
- * position (or a membership that disagrees with it). The encoding is decoded
+ * position (or a membership that disagrees with it, or cannot be read by
+ * `getId`). The encoding is decoded
  * once before it is returned, so nothing is written that the reader would
  * refuse.
  */
@@ -111,7 +112,15 @@ export function encodeContinuationDeck<T>(
   if (boundary === null || edition === null) return null;
   const cards: Array<[string, number]> = [];
   for (const item of retained) {
-    const id = getId(item);
+    // A retained card the caller's getId cannot read is malformed evidence —
+    // a refusal, never an exception for the storage wrapper to mistake for a
+    // failed write.
+    let id: string;
+    try {
+      id = getId(item);
+    } catch {
+      return null;
+    }
     const position = deck.positions.get(id);
     if (position === undefined) return null;
     const section = position >= boundary ? "continuation" : "opening";

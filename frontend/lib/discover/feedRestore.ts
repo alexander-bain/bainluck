@@ -219,9 +219,13 @@ export function parseFeedSnapshot<T>(
   if (!parsed || typeof parsed !== "object") return null;
   const candidate = parsed as Partial<StoredSnapshot<T>> | Partial<StoredSectionSnapshot<T>>;
   if (candidate.v === FEED_SNAPSHOT_VERSION) {
+    // `sections` is reserved for the section edition. A v2 body carrying it is
+    // contradictory, and BOTH readers refuse it — the default reader returning
+    // its cards would flatten a continuation into the opening. Today's v2
+    // bytes never hold the field, so their read is unchanged.
+    if ("sections" in candidate) return null;
     const snapshot = readStoredEdition(candidate);
     if (!snapshot || !section) return snapshot;
-    if ("sections" in candidate) return null;
     return { ...snapshot, sections: null };
   }
   // Without the opt-in a section edition is refused exactly as an unknown
@@ -366,22 +370,46 @@ export function writeFeedSnapshot<T>(
   section?: { deck: ContinuationSections<unknown> | null } & FeedSectionOptions<T>,
 ): void {
   if (typeof window === "undefined") return;
+  if (section?.deck && section.deck.boundary !== null) {
+    writeSectionSnapshot(snapshot, section);
+    return;
+  }
   try {
     const raw = serializeFeedSnapshot(snapshot, section);
-    if (raw === null) {
-      // #5105: a section deck whose evidence would not bind is not written —
-      // and the edition already stored is an OLDER one, which must not be
-      // restored as the reader's place. Without a section deck this is
-      // today's empty-page-one no-op.
-      if (snapshot.page1?.length && section?.deck && section.deck.boundary !== null) {
-        window.sessionStorage.removeItem(FEED_SNAPSHOT_KEY);
-      }
-      return;
-    }
+    if (raw === null) return;
     window.sessionStorage.setItem(FEED_SNAPSHOT_KEY, raw);
   } catch {
     // Over quota is the expected failure. Drop the edition rather than leave a
     // truncated one behind — a partial edition parses fine and restores wrong.
+    try {
+      window.sessionStorage.removeItem(FEED_SNAPSHOT_KEY);
+    } catch {
+      /* storage is unavailable entirely; nothing to clean up */
+    }
+  }
+}
+
+/**
+ * #5105 — a section edition's write. Encoding happens BEFORE storage is touched:
+ * evidence that will not bind, or a card that cannot be encoded, is a refusal
+ * and leaves the stored edition exactly as it was. Missing evidence for a new
+ * candidate does not prove the accepted edition expired; resetting or replacing
+ * it is the caller's decision. Only a failed `setItem` reaches today's cleanup.
+ */
+function writeSectionSnapshot<T>(
+  snapshot: FeedSnapshot<T>,
+  section: { deck: ContinuationSections<unknown> | null } & FeedSectionOptions<T>,
+): void {
+  let raw: string | null;
+  try {
+    raw = serializeFeedSnapshot(snapshot, section);
+  } catch {
+    return;
+  }
+  if (raw === null) return;
+  try {
+    window.sessionStorage.setItem(FEED_SNAPSHOT_KEY, raw);
+  } catch {
     try {
       window.sessionStorage.removeItem(FEED_SNAPSHOT_KEY);
     } catch {
