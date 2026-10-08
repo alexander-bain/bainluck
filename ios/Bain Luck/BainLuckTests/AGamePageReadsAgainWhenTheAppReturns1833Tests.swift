@@ -35,9 +35,17 @@ final class AGamePageReadsAgainWhenTheAppReturns1833Tests: XCTestCase {
         private var script: [EventDetail]
         private var last: EventDetail?
         private var details = 0
+        private var cachedDetails = 0
         init(_ script: [EventDetail]) { self.script = script }
         var detailCount: Int { lock.withLock { details } }
+        var cachedDetailCount: Int { lock.withLock { cachedDetails } }
         func fetchEvent(id: Int) async throws -> EventDetail {
+            // A cached read could replay the pre-background price. Initial
+            // opens and returns must select the fresh endpoint instead.
+            lock.withLock { cachedDetails += 1 }
+            throw Declined()
+        }
+        func fetchFreshEvent(id: Int) async throws -> EventDetail {
             let next: EventDetail? = lock.withLock {
                 details += 1
                 if !script.isEmpty { last = script.removeFirst() }
@@ -88,6 +96,7 @@ final class AGamePageReadsAgainWhenTheAppReturns1833Tests: XCTestCase {
         await vm.load()
         XCTAssertEqual(vm.event?.status, "live")
         XCTAssertEqual(client.detailCount, 1)
+        XCTAssertEqual(client.cachedDetailCount, 0, "an open must request current probabilities")
         return (vm, client)
     }
 
@@ -106,6 +115,7 @@ final class AGamePageReadsAgainWhenTheAppReturns1833Tests: XCTestCase {
         await read?.value
 
         XCTAssertEqual(client.detailCount, 2)
+        XCTAssertEqual(client.cachedDetailCount, 0, "a return must not replay its cached price")
         XCTAssertEqual(vm.event?.status, "completed", "the reopened page still reads live")
         XCTAssertFalse(vm.isAutoRefreshing, "a settled page kept polling")
     }

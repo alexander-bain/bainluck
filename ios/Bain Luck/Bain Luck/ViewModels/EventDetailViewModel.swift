@@ -337,7 +337,11 @@ final class EventDetailViewModel: ObservableObject {
 
         // Await primary fetch (controls loading state)
         do {
-            let fetched = try await client.fetchEvent(id: eventId)
+            // An open, return or poll asks for the current blend, rather than
+            // renewing an older 15s device/30s server detail lease. The existing
+            // fresh endpoint coalesces reads; adopt still protects newer held
+            // fold revisions and pushed prices from older responses.
+            let fetched = try await client.fetchFreshEvent(id: eventId)
             adopt(fetched)
             // A refusal retires the controller, not this page's eligibility for
             // push forever. Only a successful eligible detail may authorize another
