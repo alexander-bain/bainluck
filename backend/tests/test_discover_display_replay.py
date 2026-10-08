@@ -1900,6 +1900,8 @@ async def test_opening_seating_refuses_a_pinned_edition_before_any_stage(harness
     assert ddr.verify_baseline(artifact)["verdict"] == ddr.PASS
 
 
+# "unresolved_sparse_supply" is retired (thin supply now continues, 2026-10-08):
+# a status the arm does not accept still refuses.
 @pytest.mark.parametrize("status", ["unresolved_sparse_supply", "unsupported"])
 async def test_a_refused_seating_refuses_the_arm(harness, monkeypatch, status):
     from app.utils import discover_opening_seating as seating
@@ -1916,6 +1918,124 @@ async def test_a_refused_seating_refuses_the_arm(harness, monkeypatch, status):
         ddr.replay_capture(artifact, opening_seating=True)
     assert refused.value.code == ddr.UNSUPPORTED
     assert status in refused.value.detail
+
+
+def _ordinary_live_tournament(harness, key, score):
+    return {
+        "type": "tournament",
+        "score": score,
+        "_rank_score": score,
+        "_sort_time": 0,
+        "reason": "Tournament",
+        "headline": None,
+        "data": {
+            "key": key,
+            "name": key,
+            "schedule_status": "in-progress",
+            "start_date": _iso(harness.now - timedelta(days=1)),
+            "end_date": _iso(harness.now + timedelta(days=2)),
+            "champion": None,
+            "is_major": False,
+            "is_marquee": False,
+        },
+    }
+
+
+_THIN_LIVE = ("tournament:thin-live-a", "tournament:thin-live-b")
+
+
+def _thin_pool(harness):
+    """Two ordinary live tournaments scored to open the deck over three
+    futures: fewer than ten eligible cards (Alex's 2026-10-08 thin-supply case)."""
+    harness.pool = [
+        _ordinary_live_tournament(harness, "thin-live-a", 99.0),
+        _ordinary_live_tournament(harness, "thin-live-b", 98.0),
+        *(_futures(95001 + n, 70.0 - n, "politics", 0.4) for n in range(3)),
+    ]
+
+
+async def test_thin_supply_replays_the_eligible_opening_then_the_continuation(harness):
+    _thin_pool(harness)
+    artifact = await _capture(harness)
+    assert ddr.verify_baseline(artifact)["verdict"] == ddr.PASS
+    plain = ddr.replay_capture(artifact)
+    # The specimen really opens with the ordinary live cards, or this proves nothing.
+    assert plain["deck_identities"][:2] == list(_THIN_LIVE)
+    eligible = [i for i in plain["deck_identities"] if i not in _THIN_LIVE]
+    assert 0 < len(eligible) < 10
+
+    seated = ddr.replay_capture(artifact, opening_seating=True)
+    summary = seated["opening_seating"]
+    assert summary["status"] == "sparse_continuation"
+    assert summary["continuation_start"] == len(eligible)
+    assert seated["deck_identities"] == eligible + list(_THIN_LIVE)
+    assert seated["total"] == plain["total"] == len(plain["deck_identities"])
+    guard = ddr.compare_decks_by_identity(plain["deck"], seated["deck"])
+    assert guard["verdict"] == ddr.PASS and not guard["content_changes"]
+    # The boundary is beside the cards: no header pseudo-card was inserted.
+    assert sorted(seated["deck_identities"]) == sorted(plain["deck_identities"])
+    facts = {f["identity"]: f for f in summary["card_facts"]}
+    assert facts[_THIN_LIVE[0]]["_rank_score"] == 99.0
+    assert ddr.verify_baseline(artifact)["verdict"] == ddr.PASS
+
+
+@pytest.mark.parametrize("offset", [0, 1, 2, 3, 4])
+async def test_every_page_carries_the_one_full_deck_boundary(harness, offset):
+    """Pages that end before, start before, start AT and start after the
+    boundary all read the same global ``continuation_start`` and are slices of
+    the same seated deck — there is no page-local boundary to drift."""
+    _thin_pool(harness)
+    first = ddr.replay_capture(await _capture(harness), opening_seating=True)
+    boundary = first["opening_seating"]["continuation_start"]
+    assert boundary == 3
+    capture = await _capture(harness, url=f"/api/feed?limit=2&offset={offset}")
+    assert ddr.verify_baseline(capture)["verdict"] == ddr.PASS
+    paged = ddr.replay_capture(capture, opening_seating=True)
+    assert paged["opening_seating"]["continuation_start"] == boundary
+    assert paged["deck_identities"] == first["deck_identities"]
+    page = [ddr._member(c) for c in paged["public_response"]["items"]]
+    assert page == first["deck_identities"][offset : offset + 2]
+    in_page = boundary - offset
+    if 0 <= in_page < len(page):
+        assert page[in_page] == _THIN_LIVE[0]
+        assert all(p not in _THIN_LIVE for p in page[:in_page])
+    elif in_page < 0:
+        assert all(p in _THIN_LIVE for p in page)
+    else:
+        assert not any(p in _THIN_LIVE for p in page)
+
+
+async def test_enough_supply_replays_with_no_continuation_marker(harness):
+    _make_tournament_ordinary_live(harness)
+    seated = ddr.replay_capture(await _capture(harness), opening_seating=True)
+    assert seated["opening_seating"]["status"] == "applied"
+    assert "continuation_start" in seated["opening_seating"]
+    assert seated["opening_seating"]["continuation_start"] is None
+
+
+@pytest.mark.parametrize(
+    "status, boundary",
+    [("sparse_continuation", None), ("applied", 3), ("compliant", 0),
+     ("sparse_continuation", -1), ("sparse_continuation", 10_000),
+     ("sparse_continuation", True)],
+)
+async def test_a_boundary_that_disagrees_with_its_status_is_a_mismatch(
+    harness, monkeypatch, status, boundary
+):
+    from app.utils import discover_opening_seating as seating
+
+    artifact = await _capture(harness)
+    monkeypatch.setattr(
+        seating,
+        "seat_opening",
+        lambda items, now: seating.OpeningSeatingOutcome(
+            status=status, items=list(items), continuation_start=boundary
+        ),
+    )
+    with pytest.raises(ddr.DisplayReplayError) as refused:
+        ddr.replay_capture(artifact, opening_seating=True)
+    assert refused.value.code == ddr.MISMATCH
+    assert "continuation_start" in refused.value.detail
 
 
 def _make_tournament_ordinary_conflicted(harness, score):

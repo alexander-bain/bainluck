@@ -7,8 +7,9 @@ seat on being live. It competes from seat 11 down. Scores stay untouched."
 production calls it (the offline replay arm does). These pin the rule's
 boundary (seat 10 vs 11), each exemption alone and together, what counts as
 RELIABLY live (typed lifecycle with an explicit clock — never a "Live" headline
-or golfer movement), the minimal stable move, sparse supply, group laundering,
-and that the stage never touches a card.
+or golfer movement), the minimal stable move, thin supply (an eligible opening then an explicitly
+bounded ordinary-live continuation, Alex 2026-10-08), group laundering, and
+that the stage never touches a card.
 """
 
 from __future__ import annotations
@@ -27,8 +28,8 @@ from app.utils.discover_opening_seating import (
     LIVE,
     NOT_LIVE,
     OPENING_SEATS,
+    SPARSE_CONTINUATION,
     UNKNOWN,
-    UNRESOLVED_SPARSE_SUPPLY,
     UNSUPPORTED,
     classify_card,
     seat_opening,
@@ -434,29 +435,141 @@ def test_exactly_ten_eligible_fill_the_opening_in_order():
     assert ids[:OPENING_SEATS] == [f"futures:{i}" for i in range(10)]
     assert ids[OPENING_SEATS:] == ["tournament:a", "tournament:b", "tournament:c"]
     assert out.displaced == ["tournament:a", "tournament:b"]
+    # Enough supply: the accepted move, and no continuation marker.
+    assert out.continuation_start is None
+    assert out.summary()["continuation_start"] is None
 
 
-def test_nine_eligible_is_unresolved_and_changes_nothing():
+def _assert_continuation(out, deck, snapshot, boundary):
+    """The thin-supply contract: every input object exactly once, untouched;
+    eligible cards first and restricted cards after, each in input order; the
+    boundary is a number beside the cards, never a card."""
+    assert out.status == SPARSE_CONTINUATION and out.changed
+    assert out.continuation_start == boundary and type(out.continuation_start) is int
+    assert out.summary()["continuation_start"] == boundary
+    assert out.refused_conflicts == []
+    assert deck == snapshot, "no card is rescored, relabelled or mutated"
+    assert len(out.items) == len(deck) and sorted(map(id, out.items)) == sorted(map(id, deck))
+    restricted = {id(card) for card, c in zip(deck, out.cards) if c.restricted}
+    head, tail = out.items[:boundary], out.items[boundary:]
+    assert not any(id(card) in restricted for card in head)
+    assert tail and all(id(card) in restricted for card in tail)
+    order = [next(i for i, d in enumerate(deck) if d is card) for card in out.items]
+    assert order[:boundary] == sorted(order[:boundary])
+    assert order[boundary:] == sorted(order[boundary:])
+    for card, index in zip(out.items, order):
+        original = snapshot[index]
+        assert card == original
+        for key in ("score", "_rank_score", "_blended_market_ids", "headline", "reason"):
+            assert card.get(key) == original.get(key)
+
+
+def test_nine_eligible_open_the_deck_and_the_live_cards_continue_after_them():
     deck = _deck(9, {0: _live("a"), 5: _live("b")})
     snapshot = copy.deepcopy(deck)
     out = seat_opening(deck, now=NOW)
-    assert out.status == UNRESOLVED_SPARSE_SUPPLY
-    assert "9 eligible" in out.detail
-    assert out.items == snapshot and all(a is b for a, b in zip(out.items, deck))
+    _assert_continuation(out, deck, snapshot, 9)
     assert out.items is not deck
-    assert out.displaced == [] and out.entered == []
-    assert len(out.items) == len(deck)  # nothing dropped, no blank inserted
+    assert _ids(out.items) == [f"futures:{i}" for i in range(9)] + ["tournament:a", "tournament:b"]
+    assert "9 eligible" in out.detail and "position 9" in out.detail
+    assert out.displaced == ["tournament:a", "tournament:b"]
+    assert out.entered == ["futures:8"]  # input seat 11 joins the opening
+
+
+@pytest.mark.parametrize("n_eligible, boundary", [(0, 0), (1, 1), (9, 9), (10, None), (11, None)])
+def test_the_boundary_exists_exactly_when_eligible_supply_is_thin(n_eligible, boundary):
+    deck = _deck(n_eligible, {0: _live("a"), 1: _live("b")})
+    snapshot = copy.deepcopy(deck)
+    out = seat_opening(deck, now=NOW)
+    if boundary is None:
+        assert out.status == APPLIED and out.continuation_start is None
+        assert _ids(out.items)[OPENING_SEATS:OPENING_SEATS + 2] == ["tournament:a", "tournament:b"]
+    else:
+        _assert_continuation(out, deck, snapshot, boundary)
+
+
+def test_zero_eligible_is_a_continuation_only_deck_and_zero_is_not_missing():
+    deck = [_live("a"), _event(5, tags=("tier:1",)), _concept("c")]
+    snapshot = copy.deepcopy(deck)
+    out = seat_opening(deck, now=NOW)
+    _assert_continuation(out, deck, snapshot, 0)
+    assert out.items == deck and all(a is b for a, b in zip(out.items, deck))
+    assert out.summary()["continuation_start"] == 0
+    assert out.summary()["continuation_start"] is not None  # zero is a boundary
+    assert len(out.items) == 3  # no fabricated opening slot
+
+
+def test_missing_and_zero_boundaries_are_distinct_values():
+    none = seat_opening(_deck(5, {}), now=NOW).summary()
+    zero = seat_opening([_live("a")], now=NOW).summary()
+    assert "continuation_start" in none and none["continuation_start"] is None
+    assert zero["continuation_start"] == 0 and zero["status"] == SPARSE_CONTINUATION
 
 
 def test_a_compliant_short_deck_is_not_rejected():
     deck = _deck(5, {})
     out = seat_opening(deck, now=NOW)
     assert out.status == COMPLIANT and out.items == deck
+    assert out.continuation_start is None and not out.changed
 
 
-def test_a_short_deck_holding_a_restricted_card_is_unresolved():
-    deck = _deck(5, {4: _live()})
-    assert seat_opening(deck, now=NOW).status == UNRESOLVED_SPARSE_SUPPLY
+def test_an_empty_deck_is_compliant_with_no_boundary():
+    out = seat_opening([], now=NOW)
+    assert out.status == COMPLIANT and out.items == [] and out.continuation_start is None
+
+
+def test_a_short_deck_holding_a_restricted_card_continues_after_its_eligible_cards():
+    deck = _deck(5, {2: _live()})
+    snapshot = copy.deepcopy(deck)
+    out = seat_opening(deck, now=NOW)
+    _assert_continuation(out, deck, snapshot, 5)
+    assert _ids(out.items)[-1] == "tournament:ordinary"
+
+
+def test_an_already_partitioned_short_deck_still_names_its_boundary():
+    """Order is already right, but the explicit section is the ruling: the
+    reader must be told where the ordinary live cards start."""
+    deck = _deck(3, {3: _live("a"), 4: _live("b")})
+    snapshot = copy.deepcopy(deck)
+    out = seat_opening(deck, now=NOW)
+    _assert_continuation(out, deck, snapshot, 3)
+    assert out.items == deck and all(a is b for a, b in zip(out.items, deck))
+
+
+def test_protected_cards_keep_the_thin_opening():
+    """Exempt live cards, an exempt conflict and an UNKNOWN lifecycle are all
+    eligible: they open the deck in their own order; only the ordinary live
+    cards form the continuation."""
+    major = _tournament("major", is_major=True)
+    marquee = _concept("marquee", is_marquee=True)
+    playoff = _event(301, tags=("tier:1", "importance:playoff"))
+    unknown = _tournament("undated", schedule_status=None, start=None, end=None)
+    exempt_conflict = _conflicted(is_major=True, key="future_major")
+    deck = [_live("a"), major, _futures(1), unknown, _live("b"), playoff, marquee,
+            exempt_conflict]
+    snapshot = copy.deepcopy(deck)
+    out = seat_opening(deck, now=NOW)
+    _assert_continuation(out, deck, snapshot, 6)
+    assert _ids(out.items) == [
+        "tournament:major", "futures:1", "tournament:undated", "event:301",
+        "concept:marquee", "tournament:future_major", "tournament:a", "tournament:b",
+    ]
+    summary = out.summary()
+    assert [c["identity"] for c in summary["unknown_lifecycle"]] == ["tournament:undated"]
+    assert {c["identity"] for c in summary["exempt_live"]} == {
+        "tournament:major", "event:301", "concept:marquee"}
+
+
+def test_a_thin_deck_with_a_group_still_refuses_unchanged():
+    deck = _deck(3, {0: _live("a"), 2: _bundle("weekend", [_tournament("child")])})
+    snapshot = copy.deepcopy(deck)
+    out = seat_opening(deck, now=NOW)
+    assert out.status == UNSUPPORTED and out.items == snapshot
+    assert out.continuation_start is None and not out.changed
+    # A group with nothing to launder is an ordinary eligible card.
+    fine = _deck(3, {0: _live("a"), 2: _bundle("fine", [_futures(50)])})
+    snapshot = copy.deepcopy(fine)
+    _assert_continuation(seat_opening(fine, now=NOW), fine, snapshot, 4)
 
 
 # --------------------------------------------------------------------------- #
@@ -526,12 +639,20 @@ def test_randomised_decks_keep_every_invariant():
         candidate = eligible[:OPENING_SEATS]
         conflicted = [i for i in candidate
                       if out.cards[i].lifecycle == CONFLICT and not out.cards[i].exempt_by]
-        sparse = any(restricted[:OPENING_SEATS]) and len(eligible) < OPENING_SEATS
-        if conflicted and not sparse:
+        sparse = any(restricted) and len(eligible) < OPENING_SEATS
+        if conflicted:
             assert out.status == UNSUPPORTED and out.items == deck
             assert out.refused_conflicts == [out.cards[i].identity for i in conflicted]
+            assert out.continuation_start is None
             continue
         assert out.refused_conflicts == []
+        if sparse:
+            assert out.status == SPARSE_CONTINUATION
+            assert out.continuation_start == len(eligible)
+            order = [deck.index(card) for card in out.items]
+            assert order == eligible + [i for i, r in enumerate(restricted) if r]
+            continue
+        assert out.continuation_start is None
         if out.status == APPLIED:
             by_id = {id(card): r for card, r in zip(deck, restricted)}
             assert not any(by_id[id(card)] for card in out.items[:OPENING_SEATS])
@@ -541,11 +662,8 @@ def test_randomised_decks_keep_every_invariant():
             assert elig == sorted(elig) and restr == sorted(restr)
         else:
             assert out.items == deck
-            if out.status == COMPLIANT:
-                assert not any(restricted[:OPENING_SEATS])
-            else:
-                assert out.status == UNRESOLVED_SPARSE_SUPPLY
-                assert sum(not r for r in restricted) < OPENING_SEATS
+            assert out.status == COMPLIANT
+            assert not any(restricted[:OPENING_SEATS])
 
 
 # --------------------------------------------------------------------------- #
@@ -712,10 +830,19 @@ def test_unknown_lifecycle_in_the_opening_is_still_ordinary():
     assert "tournament:undated" in _ids(out.items)[:OPENING_SEATS]
 
 
-def test_sparse_supply_and_group_refusals_keep_their_own_verdicts():
-    sparse = _deck(8, {0: _live("a"), 2: _conflicted()})
-    out = seat_opening(sparse, now=NOW)
-    assert out.status == UNRESOLVED_SPARSE_SUPPLY and out.refused_conflicts == []
+def test_a_conflict_cannot_be_laundered_through_thin_supply():
+    """Thin supply makes EVERY eligible card the candidate opening, so an
+    unexempt conflict anywhere among them refuses — including one that sits
+    past seat ten, which a full-supply move would never have promoted."""
+    for deck in (_deck(8, {0: _live("a"), 2: _conflicted()}),
+                 _deck(8, {0: _live("a"), 1: _live("b"), 10: _conflicted()})):
+        snapshot = copy.deepcopy(deck)
+        out = seat_opening(deck, now=NOW)
+        _assert_refused_unmoved(out, deck, snapshot, ["tournament:future_ordinary"])
+        assert out.continuation_start is None and not out.changed
+
+
+def test_a_group_refusal_keeps_its_own_verdict_beside_a_conflict():
     grouped = _deck(20, {0: _conflicted(), 5: _collection(7, status="live")})
     out = seat_opening(grouped, now=NOW)
     assert out.status == UNSUPPORTED and "collection status" in out.detail

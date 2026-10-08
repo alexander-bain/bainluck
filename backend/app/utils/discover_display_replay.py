@@ -1480,9 +1480,14 @@ def replay_capture(
     with an active edition, because reordering a pinned edition is exactly what
     the edition contract forbids and minting one under a new policy is release
     wiring this offline arm does not invent; it also refuses when the helper
-    returns anything but applied/compliant (sparse supply, group membership,
-    unknown kinds), so an unsupported shape is never counted as a pass. It
-    raises ``MISMATCH`` if the stage changed, added or dropped any card.
+    returns anything but applied/compliant/sparse_continuation (group
+    membership, lifecycle conflicts, unknown kinds), so an unsupported shape is
+    never counted as a pass. Under thin supply the summary's
+    ``continuation_start`` is the FULL-deck position where the ordinary-live
+    continuation begins (``None`` when there is none); every page is a slice of
+    that one deck, so a page at ``offset`` meets it at ``continuation_start -
+    offset`` when that falls inside the page. It raises ``MISMATCH`` if the
+    stage changed, added or dropped any card.
     Default ``False``: the baseline arm is untouched.
 
     Never consults ``capture['expected']`` — that is the oracle, read only by
@@ -1604,7 +1609,12 @@ def _seat_opening(items: list, now: _dt.datetime) -> tuple[list, dict]:
     """The ``opening_seating`` stage, fenced: refuse what the helper refuses and
     prove — on the unpublished cards, private ranking fields included — that it
     moved cards without touching one."""
-    from app.utils.discover_opening_seating import APPLIED, COMPLIANT, seat_opening
+    from app.utils.discover_opening_seating import (
+        APPLIED,
+        COMPLIANT,
+        SPARSE_CONTINUATION,
+        seat_opening,
+    )
 
     def facts(card: dict) -> dict:
         return {
@@ -1616,7 +1626,7 @@ def _seat_opening(items: list, now: _dt.datetime) -> tuple[list, dict]:
 
     before = {_member(card): (_digest(card), facts(card)) for card in items}
     outcome = seat_opening(items, now=now)
-    if outcome.status not in (APPLIED, COMPLIANT):
+    if outcome.status not in (APPLIED, COMPLIANT, SPARSE_CONTINUATION):
         raise DisplayReplayError(
             UNSUPPORTED, f"opening seating {outcome.status}: {outcome.detail}"
         )
@@ -1625,6 +1635,15 @@ def _seat_opening(items: list, now: _dt.datetime) -> tuple[list, dict]:
         after
     ) != set(before):
         raise DisplayReplayError(MISMATCH, "opening seating changed the deck's membership")
+    boundary = outcome.continuation_start
+    if (boundary is None) != (outcome.status != SPARSE_CONTINUATION) or (
+        boundary is not None
+        and not (type(boundary) is int and 0 <= boundary < len(outcome.items))
+    ):
+        raise DisplayReplayError(
+            MISMATCH,
+            f"opening seating {outcome.status} carried continuation_start {boundary!r}",
+        )
     changed = [ident for ident in before if before[ident] != after[ident]]
     if changed:
         raise DisplayReplayError(

@@ -8,7 +8,9 @@ Scores stay untouched. This is a seating test, not a scoring change."
 This module is the PURE half: given a finished Discover deck (after every
 ordering writer, before pagination) and the clock the deck was composed at, it
 returns the same cards in an order whose first :data:`OPENING_SEATS` hold no
-RESTRICTED card, or an explicit refusal with the input order unchanged. It does
+RESTRICTED card (under thin supply: whose eligible opening is followed by an
+explicitly bounded continuation), or an explicit refusal with the input order
+unchanged. It does
 no I/O, reads no clock of its own, never mutates a card, never drops or adds a
 card, and never touches a score, ``_rank_score``, probability or provenance
 field — the output holds the very same dict objects.
@@ -92,10 +94,23 @@ which lifecycle source should win is not this module's decision. A conflict
 outside the candidate opening does not refuse an otherwise supported opening.
 An exempt conflict keeps its seat exactly as an exempt live card does.
 
-When fewer than :data:`OPENING_SEATS` cards are eligible and a restricted card
-would occupy the opening, the outcome is UNRESOLVED_SPARSE_SUPPLY with the
-order unchanged. Sparse-supply policy is Alex's to decide; this never relaxes
-the rule, drops a card or inserts a blank. A short deck with no restricted card
+Thin supply: an explicit continuation
+-------------------------------------
+
+When fewer than :data:`OPENING_SEATS` cards are eligible and the deck holds a
+restricted card (Alex, 2026-10-08: "Show the eligible opening, then an explicit
+continuation section for ordinary live cards"), the outcome is
+SPARSE_CONTINUATION: every eligible card in its existing relative order, then
+every restricted card in its existing relative order, and
+``continuation_start`` — the 0-based position in the FULL deck where the
+ordinary-live continuation section begins — equal to the number of eligible
+cards. Zero is meaningful: with no eligible card the deck is continuation only,
+and no opening seat is fabricated. The boundary is a number beside the cards,
+never a header card inside them; no card is dropped, blanked, rescored or
+grouped. The candidate opening is then every eligible card, so an unexempt
+CONFLICT among them refuses exactly as above. ``continuation_start`` is
+``None`` for every other outcome: at least :data:`OPENING_SEATS` eligible cards
+keep the stable move with no marker, and a short deck with no restricted card
 in it is simply compliant.
 """
 
@@ -138,7 +153,7 @@ CONFLICT = "conflict"
 # Outcome statuses.
 APPLIED = "applied"
 COMPLIANT = "compliant"
-UNRESOLVED_SPARSE_SUPPLY = "unresolved_sparse_supply"
+SPARSE_CONTINUATION = "sparse_continuation"
 UNSUPPORTED = "unsupported"
 
 
@@ -167,7 +182,8 @@ class CardSeating:
 @dataclass
 class OpeningSeatingOutcome:
     """``items`` is a NEW list holding the input's own card objects. For any
-    status other than :data:`APPLIED` it is the input order, unchanged."""
+    status other than :data:`APPLIED` or :data:`SPARSE_CONTINUATION` it is the
+    input order, unchanged."""
 
     status: str
     items: list
@@ -181,10 +197,14 @@ class OpeningSeatingOutcome:
     #: identities, in candidate-opening order, of unexempt CONFLICT cards that
     #: made the call UNSUPPORTED (empty for every other outcome)
     refused_conflicts: list = field(default_factory=list)
+    #: 0-based position in ``items`` (the full deck, not a page) of the first
+    #: card of the explicit ordinary-live continuation section. ``None`` when
+    #: there is no such section; ``0`` when no card is eligible.
+    continuation_start: Optional[int] = None
 
     @property
     def changed(self) -> bool:
-        return self.status == APPLIED
+        return self.status in (APPLIED, SPARSE_CONTINUATION)
 
     def summary(self) -> dict:
         def pick(pred):
@@ -197,6 +217,7 @@ class OpeningSeatingOutcome:
             "displaced": list(self.displaced),
             "entered": list(self.entered),
             "refused_conflicts": list(self.refused_conflicts),
+            "continuation_start": self.continuation_start,
             "restricted": pick(lambda c: c.restricted),
             "exempt_live": pick(lambda c: c.lifecycle == LIVE and c.exempt_by),
             "conflicts": pick(lambda c: c.lifecycle == CONFLICT),
@@ -401,17 +422,14 @@ def seat_opening(items: list, *, now: datetime) -> OpeningSeatingOutcome:
 
     restricted_in_opening = any(c.restricted for c in cards[:OPENING_SEATS])
     eligible = [i for i, c in enumerate(cards) if not c.restricted]
-    if restricted_in_opening and len(eligible) < OPENING_SEATS:
-        return refuse(
-            UNRESOLVED_SPARSE_SUPPLY,
-            f"{len(eligible)} eligible card(s) for {OPENING_SEATS} opening seats; "
-            "sparse-supply behaviour is undecided, order left unchanged",
-            cards,
-        )
+    # With fewer eligible cards than seats every restricted card necessarily
+    # sits in the first seats, so this is "thin supply with something to move".
+    sparse = restricted_in_opening and len(eligible) < OPENING_SEATS
 
     # The candidate opening: the deck's own first seats when nothing restricted
     # sits there (they are then exactly the first eligible cards), otherwise the
-    # first eligible cards the stable move would seat.
+    # first eligible cards the stable move would seat — under thin supply, all
+    # of them.
     opening = eligible[:OPENING_SEATS]
     conflicted = [
         i for i in opening if cards[i].lifecycle == CONFLICT and not cards[i].exempt_by
@@ -432,11 +450,21 @@ def seat_opening(items: list, *, now: datetime) -> OpeningSeatingOutcome:
 
     chosen = set(opening)
     order = opening + [i for i in range(len(items)) if i not in chosen]
+    left = sum(c.restricted for c in cards[:OPENING_SEATS])
+    if sparse:
+        detail = (
+            f"{len(eligible)} eligible card(s) for {OPENING_SEATS} opening seats: "
+            f"the opening is every eligible card and the ordinary-live continuation "
+            f"of {len(items) - len(opening)} card(s) starts at deck position {len(opening)}"
+        )
+    else:
+        detail = f"{left} restricted card(s) left the opening"
     return OpeningSeatingOutcome(
-        status=APPLIED,
+        status=SPARSE_CONTINUATION if sparse else APPLIED,
         items=[items[i] for i in order],
-        detail=f"{sum(c.restricted for c in cards[:OPENING_SEATS])} restricted card(s) left the opening",
-        displaced=[cards[i].identity for i in order[OPENING_SEATS:] if i < OPENING_SEATS],
+        detail=detail,
+        displaced=[cards[i].identity for i in order[len(opening):] if i < OPENING_SEATS],
         entered=[cards[i].identity for i in opening if i >= OPENING_SEATS],
         cards=cards,
+        continuation_start=len(opening) if sparse else None,
     )
