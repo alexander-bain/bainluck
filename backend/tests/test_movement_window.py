@@ -112,7 +112,12 @@ def run_task(monkeypatch):
     """
 
     def _run(rowcounts: list[int] | None = None) -> tuple[dict, _RecordingSession]:
-        session = _RecordingSession(rowcounts)
+        # Counter controls name the established A..A10/B/C phase order. A10
+        # now executes independently first; preserve each control's phase value.
+        counts = list(rowcounts or [])
+        opening_count = counts.pop(11) if len(counts) > 11 else 0
+        counts.insert(0, opening_count)
+        session = _RecordingSession(counts)
 
         import app.tasks.base as base_mod
         import app.tasks.futures_movers_warm as warm_mod
@@ -128,6 +133,24 @@ def run_task(monkeypatch):
         return result, session
 
     return _run
+
+
+def _movement_events(session: _RecordingSession) -> list[str]:
+    """A10 commits alone; every delta/rank/bank/max statement commits together."""
+    events = session.events
+    assert events.count("COMMIT") == 2, events
+    assert events[1] == "COMMIT", events
+    assert "unpriced_opening_ids" in events[0], events
+    assert "probability_change_24h" not in events[0], events[0]
+    assert "rank_change_24h" not in events[0], events[0]
+    assert events[-1] == "COMMIT", events
+    return events[2:]
+
+
+def test_opening_sweep_releases_market_locks_before_any_outcome_write(run_task):
+    events = _movement_events(run_task()[1])
+    assert "UPDATE futures_outcomes" in events[0], events
+    assert "unpriced_opening_ids" not in " ".join(events), events
 
 
 def _statements(session: _RecordingSession) -> list[str]:
@@ -359,7 +382,7 @@ def test_the_two_market_statements_are_complements(run_task) -> None:
 
 def test_the_sweep_runs_before_both_market_statements(run_task) -> None:
     """Order is load-bearing: B and C must see the swept state, not the old one."""
-    events = _statements(run_task()[1])
+    events = _movement_events(run_task()[1])
     sweep = next(i for i, s in enumerate(events) if "UPDATE futures_outcomes" in s)
     markets = [i for i, s in enumerate(events) if "UPDATE futures_markets" in s]
 
@@ -378,7 +401,7 @@ def test_all_three_statements_share_one_transaction(run_task) -> None:
     true. One commit, at the end, is the guarantee.
     """
     _, session = run_task()
-    events = session.events
+    events = _movement_events(session)
 
     assert events.count("COMMIT") == 1, (
         f"expected exactly one commit; got {events.count('COMMIT')}: {events}"
@@ -668,7 +691,7 @@ def test_both_sweeps_run_before_either_market_statement(run_task) -> None:
     The count is the half that catches a DROPPED sweep, which is why it is
     pinned here rather than left to the per-statement `_phase_*` helpers.
     """
-    events = _statements(run_task()[1])
+    events = _movement_events(run_task()[1])
     outcome_idx = [i for i, s in enumerate(events) if "UPDATE futures_outcomes" in s]
     market_idx = [i for i, s in enumerate(events) if "UPDATE futures_markets" in s]
 
@@ -683,7 +706,7 @@ def test_both_sweeps_run_before_either_market_statement(run_task) -> None:
 
 def test_all_four_statements_share_one_transaction(run_task) -> None:
     """A2 joins the existing transaction; it does not open a second one."""
-    events = run_task()[1].events
+    events = _movement_events(run_task()[1])
 
     assert events.count("COMMIT") == 1, (
         f"the graded sweep added a commit; got {events.count('COMMIT')}: {events}"
@@ -1238,7 +1261,7 @@ def test_all_eight_statements_share_one_transaction(run_task) -> None:
     commit landing between the delta sweeps and the rank sweeps would serve, for
     that window, exactly the "New favorite with no movement" this ship ends.
     """
-    events = run_task()[1].events
+    events = _movement_events(run_task()[1])
 
     assert events.count("COMMIT") == 1, (
         f"a rank sweep added a commit; got {events.count('COMMIT')}: {events}"
@@ -1531,7 +1554,7 @@ def test_the_bank_lands_inside_the_one_transaction(run_task) -> None:
     state unobservable, exactly as it is for A/A2/A3/A4/A7 and B/C.
     """
     _, session = run_task()
-    events = session.events
+    events = _movement_events(session)
 
     assert events.count("COMMIT") == 1, (
         f"the sweep no longer commits exactly once: {events}"

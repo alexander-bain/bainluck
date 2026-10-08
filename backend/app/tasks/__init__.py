@@ -3761,7 +3761,119 @@ def update_max_movement(self):
         floor = Decimal(str(MODERATE_MOVEMENT_THRESHOLD))
         tolerance = Decimal(str(UNOBSERVED_PRIOR_TOLERANCE))
 
+        priced = (
+            "((s.yes_bid IS NULL AND s.yes_ask IS NULL)"
+            " OR s.yes_ask - s.yes_bid < :max_spread)"
+        )
+        max_spread = Decimal(str(FEED_PHANTOM_MIN_SPREAD))
+
+        # A10 reads opening/current prices and snapshots, never the delta or
+        # rank fields retired below. Finish its independent metadata write
+        # before taking outcome locks, so its snapshot sweep cannot prolong
+        # quote blocking. Release market locks here as well: carrying them
+        # into the outcome sweeps would reverse the existing lock order.
         async with get_task_session() as session:
+            # A10. LIST THE OPENINGS THAT WERE NEVER A PRICE (#8612).
+            #
+            #     A8's rule, applied to the lifetime baseline. A card says
+            #     "down 86.3 points since Aug 19" by subtracting
+            #     `opening_probability`, and on 2026-09-25 Discover card 40 did
+            #     exactly that for "Kanye West performs in Russia by October
+            #     31?" from a 0.94 opening stored off a 16c/96c book. Card 73 was
+            #     the untraded midpoint (#5539): Starship, 0.495 on 2c/97c,
+            #     "up 37 points since Jul 31". Of 3,144 open legs at or past
+            #     the surprise rung in one slice, 1,381 had an opening like that.
+            #
+            #     The judgement uses A8's `priced` rule on the snapshot taken at
+            #     `opening_captured_at`: no book at all is a price, a spread
+            #     under the rail is a price, and anything else (wide, or one
+            #     side empty) is not. A leg with no snapshot at that instant is
+            #     NOT listed: the LEFT JOIN leaves both sides NULL, which is the
+            #     no-book arm. We cannot show it was junk, and absence has
+            #     always meant "measure from it".
+            #
+            #     Only the refused are listed, as `[outcome_id, ...]` under the
+            #     reader's key. An empty verdict REMOVES the key, and
+            #     `IS DISTINCT FROM` skips the unchanged, for A8's reason: this
+            #     rides the size-capped shared artifact, and a market with
+            #     nothing to refuse should carry nothing.
+            #
+            #     🔴 THE COLUMN ITSELF IS NOT TOUCHED. `opening_probability` is
+            #     calibration's fallback price (gotcha #144), so rewriting it
+            #     would move the published curve. The list only tells the card
+            #     which subtraction it may not print.
+            #
+            #     Sliced by `id % OPENING_BOOK_SLICES`; the constant explains why.
+            opening_key = UNPRICED_OPENING_METADATA_KEY
+            opening_slice = _opening_book_slice(_time.time())
+            openings = await session.execute(
+                text(f"""
+                    UPDATE futures_markets fm
+                    SET market_metadata =
+                            CASE WHEN verdict.ids = '[]'::jsonb
+                                 THEN fm.market_metadata
+                                      - CAST('{opening_key}' AS text)
+                                 -- Not `coalesce`: a JSON `null` (what an ORM
+                                 -- `None` stores) is not SQL NULL, and
+                                 -- `'null' || {...}` builds an ARRAY.
+                                 ELSE (CASE WHEN jsonb_typeof(fm.market_metadata)
+                                                 = 'object'
+                                            THEN fm.market_metadata
+                                            ELSE '{{}}'::jsonb END)
+                                      || jsonb_build_object('{opening_key}', verdict.ids)
+                            END
+                    FROM (
+                        SELECT fo.market_id,
+                               coalesce(
+                                   jsonb_agg(fo.id ORDER BY fo.id)
+                                       -- `coalesce(..., false)`: a ONE-sided
+                                       -- book makes `priced` NULL (NULL minus
+                                       -- a number), and it must list, not drop.
+                                       -- A leg with no snapshot reads both
+                                       -- sides NULL, the no-book arm: unlisted.
+                                       FILTER (WHERE NOT coalesce({priced}, false)),
+                                   '[]'::jsonb
+                               ) AS ids
+                        FROM futures_outcomes fo
+                        JOIN futures_markets m ON m.id = fo.market_id
+                        LEFT JOIN LATERAL (
+                            SELECT s.yes_bid, s.yes_ask
+                            FROM futures_odds_snapshots s
+                            WHERE s.outcome_id = fo.id
+                              AND s.captured_at >= fo.opening_captured_at
+                              AND s.captured_at
+                                  < fo.opening_captured_at + interval '1 second'
+                            ORDER BY s.captured_at
+                            LIMIT 1
+                        ) s ON true
+                        WHERE m.status = 'open'
+                          AND m.id % :slices = :slice
+                          AND fo.opening_probability IS NOT NULL
+                          AND fo.current_probability IS NOT NULL
+                          AND fo.opening_captured_at IS NOT NULL
+                          AND abs(fo.current_probability - fo.opening_probability)
+                              >= :surprise_floor
+                        GROUP BY fo.market_id
+                    ) verdict
+                    WHERE fm.id = verdict.market_id
+                      AND (fm.market_metadata -> '{opening_key}')
+                          IS DISTINCT FROM verdict.ids
+                      AND (
+                          verdict.ids <> '[]'::jsonb
+                          OR jsonb_exists(fm.market_metadata, '{opening_key}')
+                      )
+                """),
+                {
+                    "slices": OPENING_BOOK_SLICES,
+                    "slice": opening_slice,
+                    # Decimal for A4's reason: both columns are numeric(7, 6).
+                    "surprise_floor": Decimal(str(MODERATE_SURPRISE_THRESHOLD)),
+                    "max_spread": max_spread,
+                },
+            )
+
+            await session.commit()
+
             # A. Retire deltas whose row has not been written inside the window.
             #    `last_updated` is the right stamp and `price_changed_at` is the
             #    wrong one: this asks "has any writer touched this row", not "did
@@ -4317,12 +4429,7 @@ def update_max_movement(self):
                 },
             )
 
-            # A8's price test and carrier key, shared by A8-DG / A9-DG below.
-            priced = (
-                "((s.yes_bid IS NULL AND s.yes_ask IS NULL)"
-                " OR s.yes_ask - s.yes_bid < :max_spread)"
-            )
-            max_spread = Decimal(str(FEED_PHANTOM_MIN_SPREAD))
+            # A8's carrier key, shared by A8-DG / A9-DG below.
             bank_key = DATED_BASIS_METADATA_KEY
 
             # A8-DG. THE DATAGOLF BANK (#10248, D3).
@@ -4743,105 +4850,6 @@ def update_max_movement(self):
                       )
                 """),
                 {"floor": floor},
-            )
-
-            # A10. LIST THE OPENINGS THAT WERE NEVER A PRICE (#8612).
-            #
-            #     A8's rule, applied to the lifetime baseline. A card says
-            #     "down 86.3 points since Aug 19" by subtracting
-            #     `opening_probability`, and on 2026-09-25 Discover card 40 did
-            #     exactly that for "Kanye West performs in Russia by October
-            #     31?" from a 0.94 opening stored off a 16c/96c book. Card 73 was
-            #     the untraded midpoint (#5539): Starship, 0.495 on 2c/97c,
-            #     "up 37 points since Jul 31". Of 3,144 open legs at or past
-            #     the surprise rung in one slice, 1,381 had an opening like that.
-            #
-            #     The judgement uses A8's `priced` rule on the snapshot taken at
-            #     `opening_captured_at`: no book at all is a price, a spread
-            #     under the rail is a price, and anything else (wide, or one
-            #     side empty) is not. A leg with no snapshot at that instant is
-            #     NOT listed: the LEFT JOIN leaves both sides NULL, which is the
-            #     no-book arm. We cannot show it was junk, and absence has
-            #     always meant "measure from it".
-            #
-            #     Only the refused are listed, as `[outcome_id, ...]` under the
-            #     reader's key. An empty verdict REMOVES the key, and
-            #     `IS DISTINCT FROM` skips the unchanged, for A8's reason: this
-            #     rides the size-capped shared artifact, and a market with
-            #     nothing to refuse should carry nothing.
-            #
-            #     🔴 THE COLUMN ITSELF IS NOT TOUCHED. `opening_probability` is
-            #     calibration's fallback price (gotcha #144), so rewriting it
-            #     would move the published curve. The list only tells the card
-            #     which subtraction it may not print.
-            #
-            #     Sliced by `id % OPENING_BOOK_SLICES`; the constant explains why.
-            opening_key = UNPRICED_OPENING_METADATA_KEY
-            opening_slice = _opening_book_slice(_time.time())
-            openings = await session.execute(
-                text(f"""
-                    UPDATE futures_markets fm
-                    SET market_metadata =
-                            CASE WHEN verdict.ids = '[]'::jsonb
-                                 THEN fm.market_metadata
-                                      - CAST('{opening_key}' AS text)
-                                 -- Not `coalesce`: a JSON `null` (what an ORM
-                                 -- `None` stores) is not SQL NULL, and
-                                 -- `'null' || {...}` builds an ARRAY.
-                                 ELSE (CASE WHEN jsonb_typeof(fm.market_metadata)
-                                                 = 'object'
-                                            THEN fm.market_metadata
-                                            ELSE '{{}}'::jsonb END)
-                                      || jsonb_build_object('{opening_key}', verdict.ids)
-                            END
-                    FROM (
-                        SELECT fo.market_id,
-                               coalesce(
-                                   jsonb_agg(fo.id ORDER BY fo.id)
-                                       -- `coalesce(..., false)`: a ONE-sided
-                                       -- book makes `priced` NULL (NULL minus
-                                       -- a number), and it must list, not drop.
-                                       -- A leg with no snapshot reads both
-                                       -- sides NULL, the no-book arm: unlisted.
-                                       FILTER (WHERE NOT coalesce({priced}, false)),
-                                   '[]'::jsonb
-                               ) AS ids
-                        FROM futures_outcomes fo
-                        JOIN futures_markets m ON m.id = fo.market_id
-                        LEFT JOIN LATERAL (
-                            SELECT s.yes_bid, s.yes_ask
-                            FROM futures_odds_snapshots s
-                            WHERE s.outcome_id = fo.id
-                              AND s.captured_at >= fo.opening_captured_at
-                              AND s.captured_at
-                                  < fo.opening_captured_at + interval '1 second'
-                            ORDER BY s.captured_at
-                            LIMIT 1
-                        ) s ON true
-                        WHERE m.status = 'open'
-                          AND m.id % :slices = :slice
-                          AND fo.opening_probability IS NOT NULL
-                          AND fo.current_probability IS NOT NULL
-                          AND fo.opening_captured_at IS NOT NULL
-                          AND abs(fo.current_probability - fo.opening_probability)
-                              >= :surprise_floor
-                        GROUP BY fo.market_id
-                    ) verdict
-                    WHERE fm.id = verdict.market_id
-                      AND (fm.market_metadata -> '{opening_key}')
-                          IS DISTINCT FROM verdict.ids
-                      AND (
-                          verdict.ids <> '[]'::jsonb
-                          OR jsonb_exists(fm.market_metadata, '{opening_key}')
-                      )
-                """),
-                {
-                    "slices": OPENING_BOOK_SLICES,
-                    "slice": opening_slice,
-                    # Decimal for A4's reason: both columns are numeric(7, 6).
-                    "surprise_floor": Decimal(str(MODERATE_SURPRISE_THRESHOLD)),
-                    "max_spread": max_spread,
-                },
             )
 
             # B. Recompute the per-market maximum over what survived A, A2, A3,
