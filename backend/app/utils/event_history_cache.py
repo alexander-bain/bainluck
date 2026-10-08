@@ -15,31 +15,27 @@ build.
 regardless of TTL — quota state and sentinel verdicts among them. Bytes, not
 dicts, so the bound below is a real bound on memory.
 
-Lease, read off the served payload's own `status` / `completed_at`:
+Lease (Root scope, Oct 8): FINISHED games only, 45 s. Anything else — live,
+scheduled, a past-start game nobody settled — is never stored, so no live chart
+can be served older than it was before this cache existed. Never stored either:
 
-  live                       10 s   the page re-reads every 32 s; stream frames
-                                    carry the edge in between
-  settled ≥ 10 min ago      600 s   the route already tells browsers an hour
-  settled < 10 min ago       30 s   a settlement that just happened may reverse
-  anything else              60 s
+  * a PARTIAL body — the build swallows a failed read (scores, ESPN, win-prob
+    history, periods, spread, aggregate, moments, start recovery, refill) and
+    returns what it has; that body stays the reader's answer but is not kept
+    (`mark_partial`, called from each of those `except` blocks);
+  * a chart whose refill was just ENQUEUED — it is about to change.
 
-`fresh=true` never reads the cache; its result is published for the next reader.
+`fresh=true` neither reads nor writes the cache.
 """
 
 from __future__ import annotations
 
+import contextvars
 import time
 from collections import OrderedDict
-from datetime import datetime, timezone
 from typing import Optional
 
-LIVE_TTL = 10.0
-SETTLED_TTL = 600.0
-FRESHLY_SETTLED_TTL = 30.0
-FRESHLY_SETTLED_WINDOW = 600.0
-DEFAULT_TTL = 60.0
-
-SETTLED_STATUSES = frozenset({"completed", "closed"})
+FINISHED_TTL = 45.0
 
 #: Per-process ceiling on cached body bytes. Oldest entries go first.
 MAX_BYTES = 32 * 1024 * 1024
@@ -55,34 +51,52 @@ def cache_key(event_id: int, hours: int, chart_range: str) -> tuple:
     return (int(event_id), int(hours), str(chart_range))
 
 
-def _parse_iso(raw) -> Optional[datetime]:
-    if isinstance(raw, datetime):
-        dt = raw
-    elif isinstance(raw, str):
-        try:
-            dt = datetime.fromisoformat(raw)
-        except ValueError:
-            return None
-    else:
-        return None
-    if dt.tzinfo is None:
-        dt = dt.replace(tzinfo=timezone.utc)
-    return dt
+class BuildMarks:
+    """What the build learned about its own body, read by the cache policy."""
+
+    __slots__ = ("finished", "partial")
+
+    def __init__(self) -> None:
+        self.finished = False
+        self.partial = False
 
 
-def lease_for(payload: dict, now: float) -> float:
-    """How long this payload may be served from memory."""
-    status = str(payload.get("status") or "").lower()
-    if status == "live":
-        return LIVE_TTL
-    if status in SETTLED_STATUSES:
-        completed = _parse_iso(payload.get("completed_at"))
-        # No usable finish time ⇒ the short lease: a missing stamp is not
-        # evidence the settlement has stopped moving.
-        if completed is None or now - completed.timestamp() < FRESHLY_SETTLED_WINDOW:
-            return FRESHLY_SETTLED_TTL
-        return SETTLED_TTL
-    return DEFAULT_TTL
+_marks: "contextvars.ContextVar[Optional[BuildMarks]]" = contextvars.ContextVar(
+    "event_history_build_marks", default=None
+)
+
+
+def begin_marks() -> tuple[BuildMarks, contextvars.Token]:
+    """Install fresh marks for one build; pass the token to ``end_marks``."""
+    marks = BuildMarks()
+    return marks, _marks.set(marks)
+
+
+def end_marks(token: contextvars.Token) -> None:
+    _marks.reset(token)
+
+
+def mark_partial() -> None:
+    """The build swallowed a failed read: its body must not be stored."""
+    marks = _marks.get()
+    if marks is not None:
+        marks.partial = True
+
+
+def mark_finished(finished) -> None:
+    marks = _marks.get()
+    if marks is not None:
+        marks.finished = bool(finished)
+
+
+def lease_for(marks: BuildMarks, payload) -> float:
+    """Seconds this body may be served from memory; 0 = do not store."""
+    if not isinstance(payload, dict) or not marks.finished or marks.partial:
+        return 0.0
+    refill = payload.get("on_demand_backfill")
+    if isinstance(refill, dict) and refill.get("enqueue"):
+        return 0.0
+    return FINISHED_TTL
 
 
 def read(key: tuple, now: Optional[float] = None) -> Optional[tuple[bytes, Optional[str]]]:
