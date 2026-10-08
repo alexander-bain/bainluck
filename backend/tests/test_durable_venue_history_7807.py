@@ -409,8 +409,8 @@ class _Redis:
     def __init__(self):
         self.sets = []
 
-    def set(self, key, value, ex=None):
-        self.sets.append({"key": key, "ex": ex})
+    def set(self, key, value, ex=None, nx=False):
+        self.sets.append({"key": key, "ex": ex, "nx": nx})
         return True
 
 
@@ -429,6 +429,9 @@ def test_an_expired_remainder_is_not_written_back_at_all():
     rc = _Redis()
     assert fill.write_cached_history(1, _payload(), settled=False, rc=rc, ttl_s=0) is False
     assert fill.write_cached_history(1, _payload(), settled=False, rc=rc, ttl_s=-5) is False
+    assert fill.write_cached_history(
+        1, _payload(), settled=False, rc=rc, ttl_s=0, only_if_absent=True
+    ) is False
     assert rc.sets == []
 
 
@@ -438,6 +441,9 @@ def test_an_ordinary_write_still_gets_the_full_declared_ttl():
     fill.write_cached_history(1, _payload(), settled=False, rc=rc)
     fill.write_cached_history(1, _payload(), settled=True, rc=rc)
     assert [s["ex"] for s in rc.sets] == [fill.CACHE_TTL_SECONDS, fill.SETTLED_CACHE_TTL_SECONDS]
+    assert [s["nx"] for s in rc.sets] == [False, False], (
+        "the fill is the producer: it replaces whatever bank is there (#10749)"
+    )
     assert fill.declared_ttl_seconds(settled=False) == fill.CACHE_TTL_SECONDS
     assert fill.declared_ttl_seconds(settled=True) == fill.SETTLED_CACHE_TTL_SECONDS
 
@@ -556,6 +562,10 @@ async def test_a_durable_hit_is_put_back_in_front_of_the_next_reader(monkeypatch
         "a rehydrated bank given the full TTL would gain a fresh lifetime on "
         "every eviction — an unbounded chain of individually reasonable extensions"
     )
+    assert rc.sets[0]["nx"] is True, (
+        "rehydration may only fill an EMPTY key — a fill may have cached a newer "
+        "bank while this read held the older one (#10749)"
+    )
 
 
 # ── the shared predicate #7736 and #7807 both write on ──────────────────────
@@ -643,7 +653,7 @@ class _OrderedRedis:
 
 
 async def _run_fill(monkeypatch, *, log, commit_raises=False, durable_status=None,
-                    points=None):
+                    points=None, rc=None, built_at=None):
     """Drive the real `fill_generic_market_history` over recording doubles."""
     market = _market()
     market.outcomes = [_outcome()]
@@ -652,7 +662,7 @@ async def _run_fill(monkeypatch, *, log, commit_raises=False, durable_status=Non
     # fill reads `outcomes_built` out of them on both its exit paths, and a fake
     # missing one fails the test for a shape reason that looks nothing like the
     # ordering question being asked.
-    payload = _payload(market, points=points, stats={
+    payload = _payload(market, points=points, built_at=built_at, stats={
         "source": market.source,
         "outcomes_built": 0 if points == [] else 1,
         "outcomes_empty": 1 if points == [] else 0,
@@ -675,7 +685,7 @@ async def _run_fill(monkeypatch, *, log, commit_raises=False, durable_status=Non
         monkeypatch.setattr(ds, "publish_snapshot_in_txn", _ok)
 
     session = _OrderedSession(market, log, commit_raises=commit_raises)
-    rc = _OrderedRedis(log)
+    rc = rc if rc is not None else _OrderedRedis(log)
     result = await fill.fill_generic_market_history(session, market.id, rc=rc, now=NOW)
     return result, session, rc
 
@@ -766,3 +776,187 @@ async def test_an_empty_answer_survives_a_failed_commit_it_owed_nothing_to(monke
         "nothing durable was owed, so a failed commit must not also cost the "
         "market its negative cache"
     )
+
+
+# ── a delayed rehydration never covers a newer bank (#10749) ────────────────
+#
+# The reader misses Redis, reads the durable bank A, and only THEN offers A back
+# to Redis. A fill can commit and cache bank B in between. An unconditional
+# re-cache put A back over B, so every LATER reader saw the older series while
+# Postgres held the newer one — losing B's venue points from the chart until the
+# key next expired. Rehydration now only fills an EMPTY key (atomic SET NX EX).
+# The reader that already holds A may still serve A; what is protected is every
+# later read of a B that is resident.
+
+
+class _SharedRedis(_OrderedRedis):
+    """One Redis the reader and the fill both use — with real NX and the TTL.
+
+    A double that ignored `nx` would pass the regression on either source, so
+    it models the occupied-key refusal the real `SET NX` returns (None)."""
+
+    def __init__(self, log):
+        super().__init__(log)
+        self.ttl = {}
+        self.attempts = []
+
+    def set(self, key, value, ex=None, nx=False):
+        self.attempts.append({"key": key, "ex": ex, "nx": nx})
+        if nx and key in self.kv:
+            self.log.append("redis-set-refused")
+            return None
+        self.log.append("redis-set")
+        self.kv[key] = value
+        self.ttl[key] = ex
+        return True
+
+
+class _RaisingRedis:
+    def set(self, *_a, **_k):
+        raise ConnectionError("redis is down")
+
+
+def _row_times(venue, oid=10):
+    return {row.captured_at for row in venue.rows.get(oid, [])}
+
+
+async def test_a_delayed_rehydration_never_covers_a_newer_bank_the_fill_published(
+    monkeypatch,
+):
+    """🔴 THE ORDERING, staged with the real seam and the real fill.
+
+    1. a reader misses Redis and captures durable bank A, then is held;
+    2. the real fill commits bank B and caches it in the SAME Redis;
+    3. a read meanwhile is served B, including B's own venue point;
+    4. the held reader resumes and attempts to put A back;
+    5. a later read must still be served B — B-only point and all.
+    """
+    import asyncio
+
+    from app.routes import futures
+
+    log = []
+    rc = _SharedRedis(log)
+    key = fill.cache_key(1)
+    market, outcome = _market(), _outcome()
+
+    bank_a = _payload(built_at=NOW - timedelta(hours=10))
+    b_only_at = NOW - timedelta(hours=2)
+    points_b = [list(p) for p in bank_a["outcomes"]["10"]["points"]] + [
+        [b_only_at.isoformat(), 0.142, 0.14, 0.144, None, "kalshi_candle_60m"]
+    ]
+
+    captured, release = asyncio.Event(), asyncio.Event()
+    durable_reads = []
+
+    async def _held_durable(session, market_id, *, now=None):
+        durable_reads.append(market_id)
+        if len(durable_reads) == 1:
+            # Only A's FIRST read is held; nothing after it ever blocks.
+            captured.set()
+            await release.wait()
+        return bank_a
+
+    monkeypatch.setattr(futures, "_request_path_redis", lambda: rc)
+    monkeypatch.setattr(fill, "read_durable_history", _held_durable)
+
+    async def _seam():
+        return await futures._load_generic_venue_history(market, [outcome], set(), object())
+
+    # 1. The reader misses and captures A.
+    reader_a = asyncio.create_task(_seam())
+    await asyncio.wait_for(captured.wait(), timeout=5)
+    assert key not in rc.kv, "the reader must have missed Redis to reach Postgres"
+
+    # 2. The real fill publishes B — Postgres first, then Redis.
+    result, _session, _ = await _run_fill(
+        monkeypatch, log=log, rc=rc, points=points_b, built_at=NOW
+    )
+    assert result["cached"] is True and result["durable"] == "ok"
+    assert log.index("pg-commit") < log.index("redis-set")
+    b_raw, b_ttl = rc.kv[key], rc.ttl[key]
+    assert b_ttl == fill.CACHE_TTL_SECONDS
+
+    # 3. A read while B is resident is served B, B-only point included.
+    during = await _seam()
+    assert during.tier == "cache" and during.state == "warm"
+    assert b_only_at in _row_times(during), (
+        "the B-only point must survive binding/support validation, or it cannot "
+        "show that B's coverage was lost"
+    )
+
+    # 4. The held reader resumes with A and attempts the rehydration.
+    release.set()
+    venue_a = await asyncio.wait_for(reader_a, timeout=5)
+    assert venue_a.tier == "durable" and venue_a.state == "warm"
+    assert b_only_at not in _row_times(venue_a), (
+        "the request that already captured A still serves A — the known limit"
+    )
+
+    # 5. A later read still gets B — the reader-visible assertion, asked first.
+    later = await _seam()
+    assert later.tier == "cache"
+    assert b_only_at in _row_times(later), (
+        "a later reader lost B's venue point to the older rehydrated bank"
+    )
+    assert durable_reads == [1], "every read after the first was a cache hit"
+
+    # …and why: the occupied key refused A, value and expiry both untouched.
+    assert rc.kv[key] == b_raw, "A was written back over the newer bank B"
+    assert rc.ttl[key] == b_ttl, "A's attempt must not shorten or extend B's life"
+    assert rc.attempts[-1]["nx"] is True, "rehydration must ask for an empty key"
+    assert "redis-set-refused" in log, "the occupied key must refuse A"
+
+
+def test_rehydration_into_an_empty_key_keeps_the_exact_remainder():
+    rc = _SharedRedis([])
+    assert fill.write_cached_history(
+        1, _payload(), settled=False, rc=rc, ttl_s=1800, only_if_absent=True
+    ) is True
+    assert rc.ttl[fill.cache_key(1)] == 1800
+    assert rc.attempts == [{"key": fill.cache_key(1), "ex": 1800, "nx": True}]
+
+
+def test_rehydration_leaves_an_occupied_key_byte_for_byte_alone():
+    """Losing the race is a skipped optimisation: False, no exception."""
+    rc = _SharedRedis([])
+    key = fill.cache_key(1)
+    fill.write_cached_history(1, _payload(stats={"b": 1}), settled=False, rc=rc)
+    before = (rc.kv[key], rc.ttl[key])
+    assert fill.write_cached_history(
+        1, _payload(stats={"a": 1}), settled=False, rc=rc, ttl_s=60, only_if_absent=True
+    ) is False
+    assert (rc.kv[key], rc.ttl[key]) == before
+
+
+def test_an_ordinary_write_still_replaces_an_occupied_key_with_its_full_ttl():
+    rc = _SharedRedis([])
+    key = fill.cache_key(1)
+    fill.write_cached_history(
+        1, _payload(stats={"a": 1}), settled=False, rc=rc, ttl_s=60, only_if_absent=True
+    )
+    assert fill.write_cached_history(1, _payload(stats={"b": 1}), settled=False, rc=rc) is True
+    assert '"b":1' in rc.kv[key] and rc.ttl[key] == fill.CACHE_TTL_SECONDS
+
+
+def test_a_dead_redis_still_fails_the_rehydration_open():
+    assert fill.write_cached_history(
+        1, _payload(), settled=False, rc=_RaisingRedis(), ttl_s=60, only_if_absent=True
+    ) is False
+
+
+async def test_the_real_fill_replaces_a_rehydrated_bank(monkeypatch):
+    """The control: NX binds the reader only. A fill landing on top of a
+    rehydrated A still replaces it, with the full declared life."""
+    log = []
+    rc = _SharedRedis(log)
+    key = fill.cache_key(1)
+    fill.write_cached_history(
+        1, _payload(built_at=NOW - timedelta(hours=10)), settled=False, rc=rc,
+        ttl_s=60, only_if_absent=True,
+    )
+    a_raw = rc.kv[key]
+    result, _session, _ = await _run_fill(monkeypatch, log=log, rc=rc, built_at=NOW)
+    assert result["cached"] is True
+    assert rc.kv[key] != a_raw and rc.ttl[key] == fill.CACHE_TTL_SECONDS
+    assert rc.attempts[-1]["nx"] is False
