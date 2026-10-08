@@ -1118,6 +1118,7 @@ class LiveBlendRefresher:
 
     async def _oriented(
         self, session, event_id: int, home_prob: float, *, reading=None,
+        before_fallback: Optional[Callable[[], Awaitable[None]]] = None,
     ) -> float:
         """Apply the inversion verdict, computing it at most once per TTL.
 
@@ -1142,6 +1143,9 @@ class LiveBlendRefresher:
 
         from app.tasks.prediction_market_matching import _check_and_fix_inversion
 
+        if before_fallback is not None:
+            # Preserve the existing bound on the cold Event/OddsSnapshot reads.
+            await before_fallback()
         corrected = await _check_and_fix_inversion(
             session, event_id, home_prob, self.source,
         )
@@ -1728,11 +1732,26 @@ class LiveBlendRefresher:
             # rest back (see `DEFAULT_STAMP_LOCK_TIMEOUT_MS`). Transaction-local,
             # set here rather than at session open so the joins above keep their
             # ordinary waits; a timed-out stamp rolls back only its savepoint.
-            if self.stamp_lock_timeout_ms:
-                await session.execute(
-                    SET_LOCK_TIMEOUT_SQL,
-                    {"ms": lock_timeout_value(self.stamp_lock_timeout_ms)},
-                )
+            lock_budget_set = False
+            lock_budget_failed = False
+
+            async def ensure_lock_budget():
+                nonlocal lock_budget_set, lock_budget_failed
+                if not self.stamp_lock_timeout_ms or lock_budget_set:
+                    return
+                try:
+                    await session.execute(
+                        SET_LOCK_TIMEOUT_SQL,
+                        {"ms": lock_timeout_value(self.stamp_lock_timeout_ms)},
+                    )
+                except Exception:
+                    # Budget setup used to fail outside the event loop. Keep
+                    # its whole-batch rollback/requeue, never swallow it as a
+                    # single failed event in an unbounded transaction.
+                    lock_budget_failed = True
+                    raise
+                lock_budget_set = True
+
             for event_id in sorted(grouped):
                 event, group = grouped[event_id]
                 try:
@@ -1746,6 +1765,7 @@ class LiveBlendRefresher:
 
                     home_prob = await self._oriented(
                         session, event_id, reading.home_probability, reading=reading,
+                        before_fallback=ensure_lock_budget,
                     )
                     value = round(home_prob, 4)
 
@@ -1795,6 +1815,10 @@ class LiveBlendRefresher:
                     # for why the condition lives in this UPDATE.
                     basis = observation_basis(contributing)
                     admits = observation_admits_clause(self.source, basis)
+                    # Known-orientation readings that were refused above need
+                    # no SET command. Every actual stamp still installs the
+                    # same budget before its savepoint and row UPDATE.
+                    await ensure_lock_budget()
                     async with self._event_stamp_scope(
                         session, single_event=len(grouped) == 1,
                     ):
@@ -1940,6 +1964,8 @@ class LiveBlendRefresher:
                         )
                     )
                 except Exception as exc:
+                    if lock_budget_failed:
+                        raise
                     if is_lock_timeout(exc):
                         # Another transaction holds this row. Its price is
                         # already stored; stamp it on the next flush, due at
