@@ -29,9 +29,11 @@ A card is restricted when BOTH hold:
      ``now`` contradicts it (a CONFLICT, not live).
    * ``tournament``: no ``champion``, and either an ASSERTED schedule status
      (``event_concept._golf_status`` — the shared classifier that returns
-     "live" only from ``schedule_status``) or the served date arm of
-     ``routes/feed._tournament_is_live`` (``start_date <= now <= end_date +
-     12h``). The served function's third arm — any golfer's 24h movement — is
+     "live" only from ``schedule_status``) or a published play window that
+     covers the whole last calendar day (``start_date <= now < end_date + 1
+     day`` — the reviewed #5105 contract of ``ae529f5423``, not the capture-era
+     ``end_date + 12h`` tail, which retires a final round at noon UTC). The
+     served function's movement arm — any golfer's 24h movement — is
      deliberately NOT used: on the October 4 capture it is the only reason the
      undated Korn Ferry card reads "Live". An asserted status whose own dates
      say not-yet-started or long-over is a CONFLICT.
@@ -90,10 +92,12 @@ from typing import Any, Optional
 #: The opening Alex's ruling protects: seats 1–10 (0-based positions 0–9).
 OPENING_SEATS = 10
 
-#: The served tournament date arm's tail past ``end_date``
-#: (``routes/feed._tournament_is_live``): ``end_date`` is a calendar day stamped
-#: at midnight, and the last round runs into it.
-TOURNAMENT_END_TAIL = timedelta(hours=12)
+#: How far a tournament's play window runs past ``end_date``: published play
+#: dates name calendar days, not finish instants, so the window covers the whole
+#: last day and is EXCLUSIVE of the following midnight (``now < end + 1 day``).
+#: The reviewed #5105 contract (``ae529f5423``); the capture-era 12h tail
+#: retired the final round at noon UTC.
+TOURNAMENT_END_TAIL = timedelta(days=1)
 
 #: The event status that means in play (``routes/event_stream.LIVE_STATUSES``).
 EVENT_LIVE_STATUSES = frozenset({"live"})
@@ -227,14 +231,15 @@ def _tournament_lifecycle(data: dict, now: datetime) -> tuple[str, dict]:
         return NOT_LIVE, evidence
     # The shared classifier fed ONLY the asserted status: "live" / "settled" when
     # the schedule says so, "upcoming" when it asserts neither. Its own date
-    # fallbacks never run here — the dates are read below, by the served arm.
+    # fallbacks never run here — the dates are read below, as a calendar-day
+    # play window.
     asserted = _golf_status({"schedule_status": data.get("schedule_status")}, now)
     start, end = _parse(data.get("start_date")), _parse(data.get("end_date"))
     dated: Optional[str] = None
     if start is not None and end is not None:
         if now < start:
             dated = "future"
-        elif now <= end + TOURNAMENT_END_TAIL:
+        elif now < end + TOURNAMENT_END_TAIL:
             dated = "live"
         else:
             dated = "past"

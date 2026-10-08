@@ -261,11 +261,12 @@ def test_event_and_concept_lifecycle(card, lifecycle):
           "end": "2027-09-19T00:00:00+00:00"}, CONFLICT),
         ({"schedule_status": None, "start": "2026-09-24T00:00:00+00:00",
           "end": "2026-09-27T00:00:00+00:00"}, NOT_LIVE),
-        # The served 12h tail past the end date's midnight, and one second past it.
+        # The window runs a full day past the end stamp, exclusive: one second
+        # inside it, and exactly at its edge.
         ({"schedule_status": None, "start": "2026-10-01T00:00:00+00:00",
-          "end": "2026-10-03T22:18:07+00:00"}, LIVE),
+          "end": "2026-10-03T10:18:08+00:00"}, LIVE),
         ({"schedule_status": None, "start": "2026-10-01T00:00:00+00:00",
-          "end": "2026-10-03T22:18:06+00:00"}, NOT_LIVE),
+          "end": "2026-10-03T10:18:07+00:00"}, NOT_LIVE),
         ({"schedule_status": None, "start": "not a date", "end": None}, UNKNOWN),
         ({"schedule_status": None, "start": "2026-10-01", "end": "2026-10-04"}, LIVE),
     ],
@@ -275,6 +276,91 @@ def test_tournament_lifecycle(overrides, lifecycle):
     kwargs = {k: overrides.pop(k) for k in ("schedule_status", "start", "end") if k in overrides}
     card = _tournament("t", **kwargs, **overrides)
     assert classify_card(card, now=NOW).lifecycle == lifecycle
+
+
+# LOTTE-shaped: no schedule status, October 1–4 play dates. The final day is
+# October 4 all day UTC; the following midnight is outside (#5105 final-day
+# correction — the capture-era end+12h tail made it NOT_LIVE from 12:00:01Z).
+_FINAL_DAY_LIVE = [
+    datetime(2026, 10, 4, 10, tzinfo=timezone.utc),
+    datetime(2026, 10, 4, 12, tzinfo=timezone.utc),
+    datetime(2026, 10, 4, 12, 0, 1, tzinfo=timezone.utc),
+    datetime(2026, 10, 4, 13, tzinfo=timezone.utc),
+    datetime(2026, 10, 4, 23, tzinfo=timezone.utc),
+    datetime(2026, 10, 4, 23, 59, 59, tzinfo=timezone.utc),
+]
+_NEXT_MIDNIGHT = datetime(2026, 10, 5, 0, 0, 0, tzinfo=timezone.utc)
+
+
+@pytest.mark.parametrize(
+    "start, end",
+    [
+        ("2026-10-01", "2026-10-04"),  # date-only
+        ("2026-10-01T00:00:00+00:00", "2026-10-04T00:00:00+00:00"),  # aware
+        ("2026-10-01T00:00:00Z", "2026-10-04T00:00:00Z"),  # aware, Z suffix
+        ("2026-10-01T00:00:00", "2026-10-04T00:00:00"),  # naive = UTC
+    ],
+)
+@pytest.mark.parametrize("now", _FINAL_DAY_LIVE, ids=lambda d: d.strftime("%H%M%S"))
+def test_a_no_status_tournament_stays_live_and_restricted_all_final_day(start, end, now):
+    card = _tournament("lotte", schedule_status=None, start=start, end=end)
+    got = classify_card(card, now=now)
+    assert got.lifecycle == LIVE and got.restricted
+    # The restriction bites: seated at 1, it competes from seat 11.
+    deck = _deck(20, {0: card})
+    outcome = seat_opening(deck, now=now)
+    assert outcome.status == APPLIED
+    assert _ids(outcome.items).index("tournament:lotte") == OPENING_SEATS
+
+
+@pytest.mark.parametrize(
+    "start, end",
+    [
+        ("2026-10-01", "2026-10-04"),
+        ("2026-10-01T00:00:00+00:00", "2026-10-04T00:00:00+00:00"),
+    ],
+)
+def test_the_following_midnight_is_outside_the_final_day(start, end):
+    card = _tournament("lotte", schedule_status=None, start=start, end=end)
+    got = classify_card(card, now=_NEXT_MIDNIGHT)
+    assert got.lifecycle == NOT_LIVE and not got.restricted
+    assert seat_opening(_deck(20, {0: card}), now=_NEXT_MIDNIGHT).status == COMPLIANT
+
+
+def test_an_offset_end_date_closes_at_its_own_next_midnight():
+    """An aware non-UTC end stamp is honoured as written: its following
+    midnight is 07:00Z for a −07:00 date."""
+    card = _tournament("pacific", schedule_status=None,
+                       start="2026-10-01T00:00:00-07:00", end="2026-10-04T00:00:00-07:00")
+    inside = datetime(2026, 10, 5, 6, 59, 59, tzinfo=timezone.utc)
+    edge = datetime(2026, 10, 5, 7, tzinfo=timezone.utc)
+    assert classify_card(card, now=inside).lifecycle == LIVE
+    assert classify_card(card, now=edge).lifecycle == NOT_LIVE
+
+
+@pytest.mark.parametrize("now", [_FINAL_DAY_LIVE[3], _FINAL_DAY_LIVE[-1]],
+                         ids=["13Z", "235959Z"])
+def test_final_day_status_rules_are_unchanged(now):
+    """Asserted in-progress agrees with the final-day window (LIVE); an asserted
+    completed contradicts it (CONFLICT, reported, never restricted)."""
+    live = _tournament("t", schedule_status="in-progress",
+                       start="2026-10-01", end="2026-10-04")
+    done = _tournament("t", schedule_status="completed",
+                       start="2026-10-01", end="2026-10-04")
+    assert classify_card(live, now=now).lifecycle == LIVE
+    got = classify_card(done, now=now)
+    assert got.lifecycle == CONFLICT and not got.restricted
+
+
+@pytest.mark.parametrize("now", [_FINAL_DAY_LIVE[3], _FINAL_DAY_LIVE[-1], _NEXT_MIDNIGHT],
+                         ids=["13Z", "235959Z", "next-midnight"])
+def test_price_movement_alone_is_never_final_day_evidence(now):
+    """No dates, no status, golfers moving: UNKNOWN and unrestricted at any
+    clock — the window widening grants nothing to an undated card."""
+    card = _tournament("moving", schedule_status=None, start=None, end=None)
+    card["data"]["golfers"] = [{"name": "A", "movement_24h": 0.08}]
+    got = classify_card(card, now=now)
+    assert got.lifecycle == UNKNOWN and not got.restricted
 
 
 def test_golfer_movement_and_a_live_headline_never_make_a_tournament_live():
