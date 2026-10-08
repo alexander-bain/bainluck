@@ -40,17 +40,13 @@ async def _cooperative_messages(socket):
     """Let ready stamp/publish work run during an already-buffered burst.
 
     Receiving a cached frame and awaiting an uncontended price handler need
-    not suspend. Yield between processed messages, before consuming the next
-    one, so the other venue and probability writers get regular loop turns.
+    not suspend. Yield after every processed message, before consuming the next
+    one, so ready probability writers do not wait behind another frame batch.
     """
-    processed = 0
     async for raw in socket:
         yield raw
         raw = None  # Do not retain the last full-depth book on a quiet socket.
-        processed += 1
-        if processed >= 32:
-            processed = 0
-            await asyncio.sleep(0)
+        await asyncio.sleep(0)
 
 
 # #837 — THE VENUE ACCEPTS AN OVERSIZED SUBSCRIBE AND SERVES A FRACTION OF IT,
