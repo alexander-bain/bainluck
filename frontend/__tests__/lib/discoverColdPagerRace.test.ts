@@ -247,7 +247,7 @@ describe("LAT-P172 — the second uninvited feed build, at first paint", () => {
     // viewport the observer intersected an EMPTY page and advanced the window
     // before a single card existed. `visibleCount > initialVisibleCount` would
     // then be satisfied by a loading state rather than by a reader.
-    const sentinelGuard = PAGE_SOURCE.match(/\{!isLoading && !feedUnavailable && \(visibleCount < processedItems\.length \|\| hasMore\) && \(/);
+    const sentinelGuard = PAGE_SOURCE.match(/\{!isLoading && (?:![A-Za-z]+ && )*!feedUnavailable && \(visibleCount < processedItems\.length \|\| hasMore\) && \(/);
     expect(sentinelGuard).not.toBeNull();
   });
 

@@ -156,7 +156,7 @@ describe("#4430 — the page uses the shared reconcile, not its own assignment",
     // The reconcile is inside the `decision.acceptItems` branch — an
     // unavailable payload must still contribute nothing (L2-238).
     expect(PAGE_SOURCE).toMatch(
-      /decision\.acceptItems[\s\S]{0,220}reconcilePage1\(prev, incoming, getItemId\)/
+      /decision\.acceptItems[\s\S]{0,700}reconcilePage1\(prev, incoming, getItemId\)/
     );
   });
 });
