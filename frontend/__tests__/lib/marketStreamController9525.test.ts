@@ -29,6 +29,57 @@ test('open reconciles the whole requested set; heartbeat never invalidates a quo
   expect(r.onInvalidate).toHaveBeenCalledTimes(1);
 });
 
+test('resync reconciles one market without another quote', () => {
+  const r = rig([1]);
+  r.wires[0].emit('resync', { generation: 1 });
+  expect(r.onInvalidate).toHaveBeenCalledTimes(1);
+  expect(r.onInvalidate).toHaveBeenLastCalledWith([1]);
+  expect(r.wires[0].readyState).toBe(1);
+});
+
+test('resync deduplicates generations and reads only remaining requested markets', () => {
+  const r = rig();
+  r.wires[0].emit('market', { market_id: 1, invalidation: true, terminal: true });
+  r.onInvalidate.mockClear();
+  r.wires[0].emit('resync', { generation: 2 });
+  r.wires[0].emit('resync', { generation: 2 });
+  r.wires[0].emit('resync', { generation: 1 });
+  expect(r.onInvalidate.mock.calls).toEqual([[[2]]]);
+  r.wires[0].emit('resync', { generation: 3 });
+  expect(r.onInvalidate.mock.calls).toEqual([[[2]], [[2]]]);
+  r.wires[0].emit('market', { market_id: 2, invalidation: true, terminal: true });
+  r.onInvalidate.mockClear();
+  r.wires[0].emit('resync', { generation: 4 });
+  expect(r.onInvalidate).not.toHaveBeenCalled();
+  expect(r.wires[0].readyState).toBe(1);
+});
+
+test.each([undefined, null, true, false, '1', 0, -1, 1.5, Number.MAX_SAFE_INTEGER + 1, [], {}])(
+  'resync rejects invalid generation %p without advancing comparison', generation => {
+    const r = rig([1]);
+    r.wires[0].emit('resync', { generation });
+    expect(r.onInvalidate).not.toHaveBeenCalled();
+    r.wires[0].emit('resync', { generation: 1 });
+    expect(r.onInvalidate).toHaveBeenCalledTimes(1);
+  },
+);
+
+test('malformed resync and old or stopped handles have no authority; a new handle resets comparison', () => {
+  const r = rig([1]);
+  r.wires[0].listeners.get('resync')?.({ data: 'not json' });
+  r.wires[0].emit('resync', { generation: 8 });
+  r.wires[0].emit('reconnect');
+  r.tick(5_000);
+  r.onInvalidate.mockClear();
+  r.wires[0].emit('resync', { generation: 9 });
+  expect(r.onInvalidate).not.toHaveBeenCalled();
+  r.wires[1].emit('resync', { generation: 1 });
+  expect(r.onInvalidate).toHaveBeenCalledTimes(1);
+  r.controller.stop();
+  r.wires[1].emit('resync', { generation: 2 });
+  expect(r.onInvalidate).toHaveBeenCalledTimes(1);
+});
+
 test('only valid requested market invalidations land, including a final invalidation', () => {
   const r = rig();
   r.wires[0].emit('market', { market_id: 3, invalidation: true, terminal: false });

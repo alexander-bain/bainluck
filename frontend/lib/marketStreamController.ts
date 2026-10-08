@@ -44,6 +44,7 @@ export function createMarketStreamController(deps: MarketStreamDependencies) {
     catch { recycle(60_000); return; }
     handle = next;
     lastWire = deps.now();
+    let recoveryGeneration = 0;
     const current = () => !stopped && epoch === generation && handle === next;
     next.addEventListener('open', () => {
       if (!current()) return;
@@ -53,6 +54,15 @@ export function createMarketStreamController(deps: MarketStreamDependencies) {
     });
     next.addEventListener('heartbeat', () => {
       if (current()) lastWire = deps.now();
+    });
+    next.addEventListener('resync', event => {
+      if (!current()) return;
+      const recovered = payload(event)?.generation;
+      if (typeof recovered !== 'number' || !Number.isSafeInteger(recovered) || recovered <= recoveryGeneration) return;
+      recoveryGeneration = recovered;
+      // Recovery owns a REST read, never quote freshness or terminal truth.
+      const remaining = active.filter(id => !terminal.has(id));
+      if (remaining.length) deps.onInvalidate(remaining);
     });
     next.addEventListener('market', event => {
       if (!current()) return;
