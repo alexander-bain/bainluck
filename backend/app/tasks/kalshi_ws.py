@@ -314,6 +314,9 @@ class _KalshiPriceOwner:
 
     def __init__(self):
         self.pipeline = None
+        # The existing failed-price delay belongs to the failed whole cohort,
+        # not unrelated inputs sharing the consumer's normal flush timer.
+        self.lock_retry_until: dict[int, float] = {}
         # #10090: the consumer's `_FlushTimings`, when it keeps one.
         self.timings = None
 
@@ -805,8 +808,9 @@ async def _run_kalshi_ws_consumer(*, sessions, prices):
     async def flush_prices(flush_started=None, *, final_drain=False):
         """Write buffered price updates to DB — #10640: game markets first.
 
-        Returns False when a write failed (its rows stay buffered and the
-        cadence waits a full interval before retrying); #10090
+        Returns False for a non-lock failure (the cadence waits before retrying).
+        Lock-failed whole cohorts stay buffered and retain that same retry delay,
+        while unrelated phases keep the normal timer. #10090
         ``flush_started`` is this flush's start, for the refresher's floor.
 
         #10640 — the batch is split by `linked_first_phases`. The game phase is
@@ -820,8 +824,14 @@ async def _run_kalshi_ws_consumer(*, sessions, prices):
         as long as Postgres does: the drain has no next flush to retry in.
         """
         exact_trace = getattr(tail_receipts, "exact_trace", None)
+        from app.tasks.live_blend_refresh import _mono
+
         async with buffer_lock:
             batch = dict(price_buffer)
+            prices.lock_retry_until = {
+                oid: until for oid, until in prices.lock_retry_until.items()
+                if oid in batch and until > _mono()
+            }
             batch_marks = {
                 oid: input_marks[oid] for oid in batch if oid in input_marks
             }
@@ -957,7 +967,13 @@ async def _run_kalshi_ws_consumer(*, sessions, prices):
 
         try:
             for index, phase in enumerate(phases):
-                # #10090: live games are planned first and never deferred; past the
+                if not final_drain and any(
+                    prices.lock_retry_until.get(oid, 0) > _mono() for oid in phase
+                ):
+                    # Keep the planner's whole group and unfinished-price fence.
+                    # New ticks on the same game cannot bypass its held cohort.
+                    continue
+                # #10090: live games are first and never budget-deferred; past the
                 # budget every later phase stays buffered for the next flush.
                 if not final_drain and flush_budget_spent(
                     flush_started, phase, event_id_by_outcome, live_event_ids,
@@ -1147,11 +1163,16 @@ async def _run_kalshi_ws_consumer(*, sessions, prices):
                         # The transaction rolled back; all its prices remain buffered.
                         # Only proceed to phases the unchanged planner separated.
                         had_lock_failure = True
+                        if not final_drain:
+                            until = _mono() + PRICE_FLUSH_SECONDS
+                            prices.lock_retry_until.update(dict.fromkeys(phase, until))
                         continue
                     return False
 
                 # The transaction has committed. Register debt before any
                 # publication/bookkeeping await can be interrupted.
+                for oid in phase:
+                    prices.lock_retry_until.pop(oid, None)
                 unfinished_price_ids.difference_update(phase)
                 registered = queue_committed(index, phase, written_outcome_ids)
 
@@ -1202,7 +1223,9 @@ async def _run_kalshi_ws_consumer(*, sessions, prices):
                     await stamp_done()
                     if queued_refresh:
                         await stamp_start()
-            return not had_lock_failure
+            # Lock retries are bounded on their cohorts above. A handled lock
+            # must not add two seconds after unrelated successful work.
+            return not had_lock_failure if final_drain else True
         except asyncio.CancelledError:
             cancelled = True
             raise
