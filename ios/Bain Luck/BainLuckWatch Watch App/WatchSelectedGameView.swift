@@ -375,9 +375,9 @@ struct WatchSelectedGameView: View {
                 }
             }
             ForEach(picker.games) { game in
-                let isSelected = game.id == store.selectedEventID
+                let isSelected = store.isSelected(eventID: game.id)
                 Button {
-                    WatchTelemetry.shared.action(store.selectedEventID == game.id ? .reselectGame : .selectGame, surface: .picker)
+                    WatchTelemetry.shared.action(store.isSelected(eventID: game.id) ? .reselectGame : .selectGame, surface: .picker)
                     store.select(eventID: game.id)
                     choosingGame = false
                 } label: {

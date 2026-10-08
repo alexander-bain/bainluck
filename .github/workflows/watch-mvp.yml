@@ -282,7 +282,7 @@ jobs:
       cancel-in-progress: true
     needs: watch-ui-products
     runs-on: xcode-27
-    # Retain all36 cases across five isolated pairs using one immutable product package.
+    # Retain all40 cases across five isolated pairs using one immutable product package.
     # The aggregate requires exact coverage; all command/job/test limits stay fixed.
     timeout-minutes: 60
     env:

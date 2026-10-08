@@ -342,6 +342,30 @@ for case in ('testUpdatingIsVisibleUntilRequestFinishes', 'testUpdatingIsVisible
     if re.findall(pattern, log, re.MULTILINE) != ['passed']:
         raise SystemExit(f'Updating case {case} did not pass exactly once; gate unpaid')
 PYVERIFY
+  python3 - "$OUT/tests.log" <<'PYALIAS'
+import re
+import sys
+from pathlib import Path
+log = Path(sys.argv[1]).read_text()
+lines = log.splitlines()
+for marker in (
+    'WATCH_UI_PICKER_ALIAS_STANDARD=PASS',
+    'WATCH_UI_PICKER_ALIAS_LARGE=PASS',
+    'WATCH_UI_PICKER_ALIAS_UNPROVEN_CONTROL=PASS',
+    'WATCH_UI_PICKER_ALIAS_SAVED_BANNER_LARGE=PASS',
+):
+    if lines.count(marker) != 1:
+        raise SystemExit(f'Picker alias marker {marker} did not occur exactly once; gate unpaid')
+for case in (
+    'testResolvedAliasRetainsReadingOfflineAndAfterRestart',
+    'testResolvedAliasRetainsReadingAtAccessibilitySize',
+    'testUnprovenSameNameChoiceDoesNotReuseSavedReading',
+    'testRestoredSavedBannerIsReadableAtAccessibilitySize',
+):
+    pattern = rf"^Test Case '-\[BainLuckWatchUITests\.PickerAliasJourneyTests {case}\]' (passed|failed|skipped) \([0-9.]+ seconds\)\.$"
+    if re.findall(pattern, log, re.MULTILINE) != ['passed']:
+        raise SystemExit(f'Picker alias case {case} did not pass exactly once; gate unpaid')
+PYALIAS
   python3 "$ROOT/tools/watch_discovery_polish_receipt.py" "$OUT/tests.log"
 fi
 PHASE='rendered diagnostics consent verification'

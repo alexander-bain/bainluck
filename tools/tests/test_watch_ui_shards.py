@@ -19,6 +19,20 @@ gate = importlib.util.module_from_spec(SPEC)
 SPEC.loader.exec_module(gate)
 
 
+ALIAS_MARKERS = (
+    "WATCH_UI_PICKER_ALIAS_STANDARD=PASS",
+    "WATCH_UI_PICKER_ALIAS_LARGE=PASS",
+    "WATCH_UI_PICKER_ALIAS_UNPROVEN_CONTROL=PASS",
+    "WATCH_UI_PICKER_ALIAS_SAVED_BANNER_LARGE=PASS",
+)
+ALIAS_CASES = (
+    "testResolvedAliasRetainsReadingOfflineAndAfterRestart",
+    "testResolvedAliasRetainsReadingAtAccessibilitySize",
+    "testUnprovenSameNameChoiceDoesNotReuseSavedReading",
+    "testRestoredSavedBannerIsReadableAtAccessibilitySize",
+)
+
+
 class WatchUIShardTests(unittest.TestCase):
     def setUp(self):
         self.temp = tempfile.TemporaryDirectory()
@@ -65,16 +79,39 @@ class WatchUIShardTests(unittest.TestCase):
     def verify(self):
         return gate.aggregate(self.root, self.sha, self.groups, verify_markers=False)
 
-    def test_complete_distinct_pairs_cover_all_36_debug_cases(self):
-        self.assertEqual(self.verify()["tests"], 36)
+    def test_complete_distinct_pairs_cover_all_40_debug_cases(self):
+        self.assertEqual(self.verify()["tests"], 40)
         self.assertEqual(
             self.groups["corner"],
             ["WidgetTapJourneyTests/testActualCornerSavedReadingAndTap"],
         )
         self.assertEqual(len(self.groups["readings"]), 15)
-        self.assertEqual(len(self.groups["navigation"]), 6)
+        self.assertEqual(len(self.groups["navigation"]), 10)
         self.assertEqual(len(self.groups["controls"]), 8)
         self.assertEqual(len(self.groups["widgets"]), 6)
+
+    def test_composed_fixture_preserves_fixed_clock_and_provider_alias(self):
+        source = (
+            ROOT / "ios/Bain Luck/BainLuckWatch Watch App/WatchUIFixture.swift"
+        ).read_text()
+        environment_keys = source.split("let keys =", 1)[1].split(
+            "UserDefaults.standard.set", 1
+        )[0]
+        self.assertIn('"BAINLUCK_WATCH_UI_FIXED_OBSERVATION"', environment_keys)
+        for required in (
+            "var fixedObservation: Date? = nil",
+            'fixedObservation: environment["BAINLUCK_WATCH_UI_FIXED_OBSERVATION"]',
+            "fixedObservation ?? Date().addingTimeInterval(-60)",
+            "var pickerAlias: WatchPickerAliasFixture?",
+            'pickerAlias: environment["BAINLUCK_WATCH_UI_PICKER_ALIAS"]',
+            "if offline && pickerAlias == nil",
+            "if let pickerAlias { return try await pickerAlias.fetch(eventID: eventID) }",
+            "actor WatchPickerAliasFixture {",
+            "guard !resolved else { throw URLError(.notConnectedToInternet) }",
+            '"id": 111',
+        ):
+            with self.subTest(required=required):
+                self.assertIn(required, source)
 
     def test_preparation_builds_selected_architecture_in_fresh_runs(self):
         harness = (ROOT / "tools/watch-ui-products.sh").read_text()
@@ -206,6 +243,7 @@ class WatchUIShardTests(unittest.TestCase):
         original = path.read_text()
         rows = [
             *markers,
+            *ALIAS_MARKERS,
             "WATCH_UI_ACTUAL_CORNER_SAVED=PASS",
             "WATCH_UI_CORNER_FALLBACK=PASS",
             "WATCH_UI_CORNER_MAIN_FIT=PASS",
@@ -219,8 +257,9 @@ class WatchUIShardTests(unittest.TestCase):
         ]
         complete = original + "\n" + "\n".join(rows)
         path.write_text(complete)
-        self.assertEqual(gate.aggregate(self.root, self.sha, self.groups)["tests"], 36)
+        self.assertEqual(gate.aggregate(self.root, self.sha, self.groups)["tests"], 40)
         for marker in (
+            *ALIAS_MARKERS,
             "WATCH_UI_ACTUAL_CORNER_SAVED=PASS",
             "WATCH_UI_CORNER_FALLBACK=PASS",
             "WATCH_UI_CORNER_MAIN_FIT=PASS",
@@ -237,6 +276,47 @@ class WatchUIShardTests(unittest.TestCase):
         path.write_text(complete + "\nWATCH_UI_DIAGNOSTICS_LARGE=PASS")
         with self.assertRaises(subprocess.CalledProcessError):
             gate.aggregate(self.root, self.sha, self.groups)
+
+    def test_alias_receipt_requires_exact_markers_and_one_passed_case(self):
+        harness = (ROOT / "tools/watch-ui-journey.sh").read_text()
+        code = harness.split("<<'PYALIAS'\n", 1)[1].split("\nPYALIAS", 1)[0]
+        cases = [
+            f"Test Case '-[BainLuckWatchUITests.PickerAliasJourneyTests {case}]' passed (12.0 seconds)."
+            for case in ALIAS_CASES
+        ]
+        complete = "\n".join((*ALIAS_MARKERS, *cases))
+        log = self.root / "alias.log"
+
+        def verify(text):
+            log.write_text(text)
+            return subprocess.run(
+                [sys.executable, "-c", code, str(log)], capture_output=True, text=True
+            ).returncode
+
+        self.assertEqual(verify(complete), 0)
+        for marker in ALIAS_MARKERS:
+            for replacement in ("", marker + "\n" + marker, "prefix " + marker):
+                with self.subTest(marker=marker, replacement=replacement):
+                    self.assertEqual(verify(complete.replace(marker, replacement)), 1)
+        for case in cases:
+            for replacement in (
+                "",
+                case + "\n" + case,
+                case.replace("passed", "failed"),
+                case.replace("passed", "skipped"),
+                case + "\n" + case.replace("passed", "failed"),
+            ):
+                with self.subTest(case=case, replacement=replacement):
+                    self.assertEqual(verify(complete.replace(case, replacement)), 1)
+
+    def test_full_harness_executes_alias_gate_without_optional_condition(self):
+        harness = (ROOT / "tools/watch-ui-journey.sh").read_text()
+        full = harness.split(
+            'if [[ "$TEST_EXIT" -eq 0 && "$SHARD" == full ]]; then', 1
+        )[1]
+        full = full.split("\nfi\n", 1)[0]
+        between = full.split("\nPYVERIFY\n", 1)[1].split("<<'PYALIAS'", 1)[0]
+        self.assertEqual(between.strip(), 'python3 - "$OUT/tests.log"')
 
     def test_workflow_runs_every_shard_and_always_checks_aggregate(self):
         import re

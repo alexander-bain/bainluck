@@ -12,6 +12,7 @@ nonisolated struct WatchUIFixture: WatchSelectedGameTransport, WatchGamePickerTr
     var sharedPublication = false
     var circularIdentity = false
     var pickerNetworkFailure: WatchPickerNetworkFixture?
+    var pickerAlias: WatchPickerAliasFixture?
     var fixedObservation: Date? = nil
 
     static let current: WatchUIFixture? = {
@@ -48,6 +49,7 @@ nonisolated struct WatchUIFixture: WatchSelectedGameTransport, WatchGamePickerTr
                     sharedPublication: environment["BAINLUCK_WATCH_UI_SHARED_PUBLICATION"] == "1",
                     circularIdentity: environment["BAINLUCK_WATCH_UI_CIRCULAR_IDENTITY"] == "1",
                     pickerNetworkFailure: environment["BAINLUCK_WATCH_UI_PICKER_NETWORK"].map { WatchPickerNetworkFixture(scenario: $0) },
+                    pickerAlias: environment["BAINLUCK_WATCH_UI_PICKER_ALIAS"] == "1" ? WatchPickerAliasFixture() : nil,
                     fixedObservation: environment["BAINLUCK_WATCH_UI_FIXED_OBSERVATION"].flatMap { ISO8601DateFormatter().date(from: $0) })
     }()
 
@@ -64,7 +66,9 @@ nonisolated struct WatchUIFixture: WatchSelectedGameTransport, WatchGamePickerTr
 
     func fetchGames() async throws -> WatchGamePickerBatch {
         try await pickerNetworkFailure?.beforeFetch()
-        if offline { throw URLError(.notConnectedToInternet) }
+        // Alias journeys keep scripted rows available while the detail transport is
+        // offline. They test retained selection, not feed connectivity or caching.
+        if offline && pickerAlias == nil { throw URLError(.notConnectedToInternet) }
         let decoder = JSONDecoder()
         decoder.keyDecodingStrategy = .convertFromSnakeCase
         let standard = """
@@ -73,12 +77,16 @@ nonisolated struct WatchUIFixture: WatchSelectedGameTransport, WatchGamePickerTr
         let roundingFeed = """
         {"items":[{"type":"event","score":90,"data":{"id":101,"home_team":"Tampa Bay Rays","away_team":"Yankees","status":"live"}},{"type":"event","score":80,"data":{"id":202,"home_team":"Chelsea","away_team":"Arsenal","status":"scheduled"}}],"has_more":false}
         """
-        let feed = try decoder.decode(WatchFeedResponse.self, from: Data((rounding ? roundingFeed : standard).utf8))
+        let aliasFeed = """
+        {"items":[{"type":"event","score":90,"data":{"id":101,"home_team":"San Francisco Giants","away_team":"Los Angeles Dodgers","status":"live"}},{"type":"event","score":80,"data":{"id":202,"home_team":"San Francisco Giants","away_team":"Los Angeles Dodgers","status":"scheduled"}}],"has_more":false}
+        """
+        let feed = try decoder.decode(WatchFeedResponse.self, from: Data((pickerAlias != nil ? aliasFeed : (rounding ? roundingFeed : standard)).utf8))
         return WatchGamePickerBatch(feed: feed)
     }
 
     func fetch(eventID: Int) async throws -> WatchSelectedGame {
         if offline { throw URLError(.notConnectedToInternet) }
+        if let pickerAlias { return try await pickerAlias.fetch(eventID: eventID) }
         guard [101, 202].contains(eventID) else { throw WatchSelectedGameRequestError.unavailable }
         let first = eventID == 101
         let time = ISO8601DateFormatter().string(from: fixedObservation ?? Date().addingTimeInterval(-60))
@@ -119,6 +127,31 @@ actor WatchPickerNetworkFixture {
     func beforeFetch() throws {
         requests += 1
         if requests == 2, let failure { throw URLError(failure) }
+    }
+}
+/// One real store success establishes 101→111. Later requests cannot repair a
+/// lost reading. No snapshot/defaults injection: production persistence owns it.
+actor WatchPickerAliasFixture {
+    private var resolved = false
+
+    func fetch(eventID: Int) async throws -> WatchSelectedGame {
+        try Task.checkCancellation()
+        guard !resolved else { throw URLError(.notConnectedToInternet) }
+        guard eventID == 101 else { throw WatchSelectedGameRequestError.unavailable }
+        let formatter = ISO8601DateFormatter()
+        let now = Date()
+        let payload: [String: Any] = [
+            "id": 111, "home_team": "San Francisco Giants", "away_team": "Los Angeles Dodgers",
+            "status": "live", "home_score": 3, "away_score": 2,
+            "hero_probability": 0.64, "hero_probability_away": 0.36,
+            "score_observed_at": formatter.string(from: now.addingTimeInterval(-3660)),
+            "hero_probability_observed_at": formatter.string(from: now.addingTimeInterval(-10860))
+        ]
+        let result = try JSONDecoder().decode(WatchSelectedGame.self,
+            from: JSONSerialization.data(withJSONObject: payload))
+        try Task.checkCancellation()
+        resolved = true
+        return result
     }
 }
 #endif

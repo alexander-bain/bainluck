@@ -25,7 +25,11 @@
     "LargeTextRecoveryJourneyTests/testOfflineClearSurvivesRelaunchAtLargestTextSize",
     "LauncherURLJourneyTests/testColdLauncherURLDeliversAndRetainsOfflineSelection",
     "PickerReturnJourneyTests/testReturnFromPickerPreservesSelectedGameAndSavedOfflineReading",
-    "PickerReturnJourneyTests/testNetworkFailureGuidanceRetainsChoicesAndRecoversSelection"
+    "PickerReturnJourneyTests/testNetworkFailureGuidanceRetainsChoicesAndRecoversSelection",
+    "PickerAliasJourneyTests/testResolvedAliasRetainsReadingOfflineAndAfterRestart",
+    "PickerAliasJourneyTests/testResolvedAliasRetainsReadingAtAccessibilitySize",
+    "PickerAliasJourneyTests/testUnprovenSameNameChoiceDoesNotReuseSavedReading",
+    "PickerAliasJourneyTests/testRestoredSavedBannerIsReadableAtAccessibilitySize"
   ],
   "controls": [
     "SelectedGameUpdatingJourneyTests/testUpdatingIsVisibleUntilRequestFinishes",
