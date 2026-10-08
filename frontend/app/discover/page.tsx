@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useCallback, useEffect, useRef, useMemo, type ReactNode } from "react";
+import { useState, useCallback, useEffect, useLayoutEffect, useRef, useMemo, type ReactNode } from "react";
 import ErrorBoundary from "@/components/ErrorBoundary";
 import Link from "next/link";
 import useSWR from "swr";
@@ -51,6 +51,7 @@ import {
   writeFeedSnapshot,
   writeScrollMark,
 } from "@/lib/discover/feedRestore";
+import { firstDeckOwner, firstDeckRequestPrincipal, readFirstDeck, writeFirstDeck } from "@/lib/discover/firstDeck";
 import FeedBootScript from "@/components/discover/FeedBootScript";
 import { deriveGroupDisplayTitle } from "@/lib/discover/groupTitle";
 import { futuresGroupKey } from "@/lib/discover/groupKey";
@@ -556,6 +557,11 @@ export default function DiscoverPage() {
   // rendering off `data.items` directly is what let an unavailable revalidation
   // blank a populated feed and then show "all caught up".
   const [page1Items, setPage1Items] = useState<FeedItem[]>([]);
+  const [savedDeckPreview, setSavedDeckPreview] = useState(false);
+  const previewOwnerRef = useRef<string | null>(null);
+  const replacePreviewRef = useRef(false);
+  const requestPrincipal = firstDeckRequestPrincipal(user?.uid, authLoading);
+  const previousPrincipalRef = useRef<string | null>(null);
   // L2-238: the backend typed the last response `cache.status = "unavailable"`.
   // A transient no-data terminal, not an empty feed — surfaces this page's own
   // retry state and freezes auto-pagination until the reader retries.
@@ -695,24 +701,35 @@ export default function DiscoverPage() {
    * same reason `dismissed` and the first-run storage are read in mount effects
    * a few lines up, and not a style choice.
    */
-  useEffect(() => {
+  useLayoutEffect(() => {
+    if (restoreCheckedRef.current) return;
     restoreCheckedRef.current = true;
     const clientTransition = markAndDetectClientTransition(window);
     const navigationType =
       (performance.getEntriesByType("navigation")[0] as PerformanceNavigationTiming | undefined)
         ?.type ?? null;
 
+    const previewFirstDeck = () => {
+      const owner = firstDeckOwner(user?.uid, authLoading);
+      const deck = readFirstDeck(owner);
+      if (deck) {
+        previewOwnerRef.current = owner;
+        replacePreviewRef.current = true;
+        setSavedDeckPreview(true);
+        setPage1Items(deck.items);
+        setHasMore(deck.hasMore);
+      }
+    };
     if (!shouldRestoreOnMount({ clientTransition, navigationType })) {
-      // A reload or a fresh arrival. The reader asked for a fresh feed, so the
-      // stale edition is dropped rather than left to be restored by the NEXT
-      // Back — where its scroll mark would point past a document that has only
-      // just been rebuilt from page one.
+      // Keep reloads at the top: only the brief first-deck preview is reused,
+      // never the old loaded tail or scroll mark.
       clearFeedRestore();
+      previewFirstDeck();
       return;
     }
 
     const snapshot = readFeedSnapshot<FeedItem>();
-    if (!snapshot) return;
+    if (!snapshot) { previewFirstDeck(); return; }
 
     setPage1Items(snapshot.page1);
     setAllItems(snapshot.rest);
@@ -725,10 +742,29 @@ export default function DiscoverPage() {
       restorePendingRef.current = true;
       setPendingScrollY(mark.scrollY);
     }
-  }, []);
+  }, [authLoading, user?.uid]);
+
+  // Confirm the owner before fetching/writing a personalized deck. Persisted
+  // auth can paint its preview while Firebase restores; it is not fetch authority.
+  useLayoutEffect(() => {
+    const owner = firstDeckOwner(user?.uid, authLoading);
+    const switched = requestPrincipal !== null && previousPrincipalRef.current !== null &&
+      requestPrincipal !== previousPrincipalRef.current;
+    if (requestPrincipal !== null) previousPrincipalRef.current = requestPrincipal;
+    if (switched || (previewOwnerRef.current !== null && owner !== previewOwnerRef.current)) {
+      previewOwnerRef.current = null;
+      replacePreviewRef.current = false;
+      setSavedDeckPreview(false);
+      setPage1Items([]);
+      setAllItems([]);
+      editionScoresRef.current = new Map();
+      setVisibleCount(PAGE_SIZE);
+      setInitialVisibleCount(PAGE_SIZE);
+    }
+  }, [authLoading, user?.uid, requestPrincipal]);
 
   const { data, isLoading, error: feedError, mutate: mutateFeed } = useSWR(
-    "discover-feed",
+    requestPrincipal === null ? null : ["discover-feed", requestPrincipal],
     () => {
       // One bounded initial (offset-zero) request. SWR owns this single fetch;
       // background revalidation reuses the same key/shape (no duplicate initial).
@@ -736,9 +772,9 @@ export default function DiscoverPage() {
       return fetchFeed(
         { limit, offset, event_pct: FEED_EVENT_PCT },
         { sharedAnonEligible: sharedAnonEligibleRef.current, authenticated: !!user }
-      );
+      ).then(payload => ({ ...payload, firstDeckPrincipal: requestPrincipal } as typeof payload & { firstDeckPrincipal?: string | null }));
     },
-    { refreshInterval: 120000, revalidateOnFocus: false, keepPreviousData: true }
+    { refreshInterval: 120000, revalidateOnFocus: false, keepPreviousData: false }
   );
 
   // #6445 — a null key is SWR's "do not fetch". The banner is hidden for the
@@ -768,7 +804,8 @@ export default function DiscoverPage() {
   // raises the retry state; a genuinely empty, genuinely exhausted feed still
   // applies exactly as before.
   useEffect(() => {
-    if (!data) return;
+    if (!data || requestPrincipal === null ||
+        (data.firstDeckPrincipal !== undefined && data.firstDeckPrincipal !== requestPrincipal)) return;
     const decision = decideFeedPage({
       payload: data,
       previousHasMore: hasMoreRef.current,
@@ -781,10 +818,23 @@ export default function DiscoverPage() {
     // Cold load still takes the served page wholesale. See `reconcilePage1`.
     if (decision.acceptItems) {
       const incoming = data.items ?? [];
-      setPage1Items((prev) => reconcilePage1(prev, incoming, getItemId));
+      if (replacePreviewRef.current) {
+        // A reload asked for CURRENT page one, not the saved edition's order.
+        replacePreviewRef.current = false;
+        previewOwnerRef.current = null;
+        editionScoresRef.current = new Map();
+        setPage1Items(incoming);
+        setAllItems([]);
+        setSavedDeckPreview(false);
+        setVisibleCount(PAGE_SIZE);
+        setInitialVisibleCount(PAGE_SIZE);
+      } else {
+        setPage1Items((prev) => reconcilePage1(prev, incoming, getItemId));
+      }
+      writeFirstDeck({ items: incoming, hasMore: decision.hasMore }, firstDeckOwner(user?.uid, false));
     }
     setHasMore(decision.hasMore);
-  }, [data]);
+  }, [data, requestPrincipal, user?.uid]);
 
   // Load the next page from the API when client-side items run out. Exactly one
   // request, advancing monotonically from the returned page boundary — it never
@@ -910,6 +960,10 @@ export default function DiscoverPage() {
       setFeedUnavailable(outcome.showUnavailable);
       return;
     }
+    replacePreviewRef.current = false;
+    previewOwnerRef.current = null;
+    setSavedDeckPreview(false);
+    writeFirstDeck({ items: outcome.page1, hasMore: outcome.hasMore }, firstDeckOwner(user?.uid, false));
     editionScoresRef.current = outcome.scores;
     setOrderingProfile(readDiscoverInteractionProfile());
     setPage1Items(outcome.page1);
@@ -1022,10 +1076,10 @@ export default function DiscoverPage() {
    * that would blank the edition this whole module exists to preserve.
    */
   useEffect(() => {
-    if (!restoreCheckedRef.current) return;
+    if (!restoreCheckedRef.current || savedDeckPreview) return;
     if (page1Items.length === 0) return;
     writeFeedSnapshot({ page1: page1Items, rest: allItems, visibleCount, hasMore });
-  }, [page1Items, allItems, visibleCount, hasMore]);
+  }, [page1Items, allItems, visibleCount, hasMore, savedDeckPreview]);
 
   /**
    * #7417 — keep the scroll mark current, throttled.
@@ -1527,7 +1581,12 @@ export default function DiscoverPage() {
           the column ladder is deliberately untouched. */}
       <DiscoverFeedbackAttemptContext.Provider value={handleFeedbackAttempt}>
       <main className="max-w-content mx-auto px-4 py-4">
-        {isLoading && <DiscoverSkeletonGrid />}
+        {(isLoading || authLoading) && visibleItems.length === 0 && <DiscoverSkeletonGrid />}
+        {savedDeckPreview && visibleItems.length > 0 && (
+          <p role="status" className="mb-3 text-xs text-text-secondary">
+            {feedError || feedUnavailable ? "Saved cards · updates unavailable" : "Updating saved cards…"}
+          </p>
+        )}
 
         {/* UX-P087 (#1909): the same component the typed-UNAVAILABLE case uses,
             told by REASON. It was an inline copy of that markup with different
@@ -1538,7 +1597,7 @@ export default function DiscoverPage() {
         {!isLoading && feedError && !data && (
           <FeedUnavailableNotice
             onRetry={handleRetryFailedLoad}
-            variant="empty"
+            variant={visibleItems.length > 0 ? "inline" : "empty"}
             reason={feedFailureReason}
           />
         )}
@@ -1553,7 +1612,7 @@ export default function DiscoverPage() {
           <FeedUnavailableNotice onRetry={handleRetryUnavailable} variant="empty" />
         )}
 
-        {!isLoading && !feedError && !feedUnavailable && visibleItems.length === 0 && (
+        {!isLoading && !authLoading && !feedError && !feedUnavailable && visibleItems.length === 0 && (
           <div className="py-16 flex justify-center">
             <EndOfFeedCard count={0} onRefresh={handleRefreshFeed} />
           </div>
@@ -1696,13 +1755,13 @@ export default function DiscoverPage() {
             `!isLoading`, which SWR holds true only until the first payload —
             background revalidation keeps `data`, so the sentinel does not
             flicker out from under an infinite scroll already in progress. */}
-        {!isLoading && !feedUnavailable && (visibleCount < processedItems.length || hasMore) && (
+        {!isLoading && !authLoading && !savedDeckPreview && !feedUnavailable && (visibleCount < processedItems.length || hasMore) && (
           <div ref={sentinelRef} className="h-10 flex items-center justify-center mt-4">
             <div className="w-5 h-5 border-2 border-text-muted/30 border-t-text-muted rounded-full animate-spin" />
           </div>
         )}
 
-        {!feedUnavailable && visibleCount >= processedItems.length && !hasMore && processedItems.length > 0 && (
+        {!savedDeckPreview && !feedUnavailable && visibleCount >= processedItems.length && !hasMore && processedItems.length > 0 && (
           <div className="mt-6 mb-2 flex justify-center">
             {/* #9905 — a collection is not a market; the count names markets. */}
             <EndOfFeedCard
