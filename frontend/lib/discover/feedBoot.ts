@@ -117,7 +117,7 @@ export function bootEligibleFromKeys(keys: readonly string[]): boolean {
 }
 
 /**
- * The inline `<script>` body rendered into the Discover document.
+ * The boot script body, delivered to the Discover document by `feedBootScriptSrc`.
  *
  * Generated from the constants above so the script and the claim can never
  * describe different requests. Everything is wrapped in one try/catch: a
@@ -131,7 +131,12 @@ export function feedBootScript(apiBase: string): string {
   const slot = JSON.stringify(FEED_BOOT_GLOBAL);
   return (
     `(function(){try{` +
-    `var w=window,s=w.localStorage;if(!s)return;` +
+    // A cold load only. The script is delivered async (see `feedBootScriptSrc`), and the load event
+    // waits for every async script in the parsed document, so on a real cold load this always runs
+    // while readyState is "loading" or "interactive". "complete" means React inserted the element on
+    // a client navigation, where SWR's own fetch is already the request — booting would be a second.
+    `var w=window,d=w.document;if(d&&d.readyState==="complete")return;` +
+    `var s=w.localStorage;if(!s)return;` +
     `var b=${blocking};for(var i=0;i<b.length;i++){if(s.getItem(b[i])!==null)return;}` +
     `for(var j=0;j<s.length;j++){var k=s.key(j);if(k&&k.indexOf(${authPrefix})===0)return;}` +
     `var n=function(){return (w.performance&&w.performance.now)?w.performance.now():Date.now();};` +
@@ -143,6 +148,21 @@ export function feedBootScript(apiBase: string): string {
     `r.response=p;w[${slot}]=r;` +
     `}catch(e){}})();`
   );
+}
+
+/**
+ * The boot script as an `async` script's `src` (#1469).
+ *
+ * An INLINE script cannot run until every stylesheet above it has downloaded — the browser blocks
+ * parser-inserted scripts on pending stylesheets — and React writes the three render-blocking CSS
+ * files ahead of anything a route renders, so the inline form parked the feed request behind ~21 KB
+ * of CSS it does not use (measured on production 2026-10-08: CSS end 187 ms, boot 207-210 ms). An
+ * `async` script is never blocked by stylesheets, and React hoists `<script async src>` into the
+ * head, so the request now leaves as soon as the parser reaches the head. A `data:` URL keeps the
+ * script in the document — no extra request, no cache entry to go stale against `API_URL`.
+ */
+export function feedBootScriptSrc(apiBase: string): string {
+  return `data:text/javascript,${encodeURIComponent(feedBootScript(apiBase))}`;
 }
 
 /**

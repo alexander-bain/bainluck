@@ -37,6 +37,7 @@ import {
   bootFeedUrl,
   claimBootFeed,
   feedBootScript,
+  feedBootScriptSrc,
   type FeedBootRecord,
 } from "@/lib/discover/feedBoot";
 import {
@@ -370,11 +371,12 @@ describe("the inline script", () => {
   });
 
   it("runs as written: eligible storage boots, blocked storage does not", () => {
-    const run = (entries: Record<string, string>) => {
+    const run = (entries: Record<string, string>, readyState = "loading") => {
       const calls: string[] = [];
       const w: Record<string, unknown> = {
         localStorage: fakeStorage(entries),
         performance: { now: () => 5 },
+        document: { readyState },
       };
       w.fetch = (url: string) => {
         calls.push(url);
@@ -399,6 +401,29 @@ describe("the inline script", () => {
     }
     const signedIn = run({ [`${BOOT_AUTH_KEY_PREFIX}k:[DEFAULT]`]: "{}" });
     expect(signedIn.calls).toEqual([]);
+
+    // #1469: parsing ("loading") and parsed-but-not-loaded ("interactive") are both a cold load;
+    // "complete" is a client navigation inserting the element, where SWR already owns the request.
+    expect(run({}, "interactive").calls).toEqual([`https://api.example.test${bootFeedPath()}`]);
+    const softNav = run({}, "complete");
+    expect({ calls: softNav.calls, parked: softNav.parked }).toEqual({ calls: [], parked: undefined });
+  });
+});
+
+describe("the boot script is delivered async, so no stylesheet holds the request (#1469)", () => {
+  it("its data: src decodes to exactly the boot script", () => {
+    const src = feedBootScriptSrc("https://api.example.test");
+    const prefix = "data:text/javascript,";
+    expect(src.startsWith(prefix)).toBe(true);
+    expect(decodeURIComponent(src.slice(prefix.length))).toBe(
+      feedBootScript("https://api.example.test")
+    );
+  });
+
+  it("the component renders an async script with that src, not an inline body", () => {
+    const component = readSource("components/discover/FeedBootScript.tsx");
+    expect(component).toMatch(/<script[^>]*\basync\b[^>]*src=\{feedBootScriptSrc\(API_URL\)\}/);
+    expect(component).not.toContain("dangerouslySetInnerHTML");
   });
 });
 
