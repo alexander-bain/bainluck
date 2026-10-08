@@ -27,11 +27,22 @@ export function useFuturesDetailStream(options: {
 }): void {
   const callbacks = useRef(options); callbacks.current = options;
   const reconciler = useRef<ReturnType<typeof createFuturesDetailReconciler>>();
+  const parentSeed = useRef<FuturesMarketDetailResponse>();
   const history = useRef<FuturesHistoryResponse>();
   const scheduler = useRef<ReturnType<typeof createFuturesReadScheduler>>();
   const ready = options.market?.id === options.marketId && Array.isArray(options.market?.outcomes);
   const enabled = ready && !!options.market && !futuresDetailSettled(options.market) &&
     ['kalshi', 'polymarket'].includes(options.market.source ?? '');
+
+  // A same-ID SWR revalidation can advance the parent while our read is pending.
+  // Adopt through the existing fences; resetting would lose private withdrawals.
+  useEffect(() => {
+    const parent = options.market;
+    if (!ready || !parent) return;
+    if (reconciler.current?.current().id !== parent.id) reconciler.current = createFuturesDetailReconciler(parent);
+    else if (parentSeed.current !== parent) reconciler.current.adopt(parent);
+    parentSeed.current = parent;
+  }, [ready, options.market]);
 
   useEffect(() => {
     if (!ready || !callbacks.current.market) return;
@@ -47,6 +58,13 @@ export function useFuturesDetailStream(options: {
         const representation = callbacks.current.representation;
         const detailRead = fetchFuturesMarket(marketId, { fresh: true, signal, representation }).then(async next => {
           if (!current() || callbacks.current.marketId !== marketId || next.id !== marketId) return;
+          // Cover a parent render whose passive effect has not run yet. Consume
+          // each parent object once, without restarting the worker or its debt.
+          const parent = callbacks.current.market;
+          if (parent?.id === marketId && Array.isArray(parent.outcomes) && parentSeed.current !== parent) {
+            reconciler.current!.adopt(parent);
+            parentSeed.current = parent;
+          }
           const accepted = reconciler.current!.adopt(next);
           await callbacks.current.setMarket(accepted);
         });
