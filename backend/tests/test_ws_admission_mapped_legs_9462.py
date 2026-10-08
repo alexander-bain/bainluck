@@ -409,7 +409,7 @@ class _RecordingRefresher(lbr.LiveBlendRefresher):
         _RecordingRefresher.instances.append(self)
 
     async def _refresh_batch(
-        self, event_ids, now, *, prepared=None, on_committed=None
+        self, event_ids, now, *, prepared=None, on_committed=None, publish_committed=None
     ):
         self.batches.append(sorted(event_ids))
         self._last_refresh_at.update({e: now for e in event_ids})

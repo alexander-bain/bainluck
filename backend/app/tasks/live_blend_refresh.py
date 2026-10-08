@@ -69,7 +69,7 @@ import logging
 import math
 import time
 from dataclasses import dataclass
-from typing import Callable, Iterable, Optional
+from typing import Awaitable, Callable, Iterable, Optional
 
 logger = logging.getLogger(__name__)
 
@@ -1243,6 +1243,58 @@ class LiveBlendRefresher:
 
         completed: set[int] = set()
         failed_groups: set[int] = set()
+        publishing = None
+        waiting_frames = None
+
+        async def publication_done(*, cancel=False, cancel_on_interrupt=True):
+            nonlocal publishing
+            if publishing is None:
+                return
+            import asyncio
+
+            if cancel and not publishing.cancelling():
+                publishing.cancel()
+            interrupted = None
+            while not publishing.done():
+                try:
+                    await asyncio.wait({publishing})
+                except CancelledError as exc:
+                    interrupted = exc
+                    if cancel_on_interrupt and not publishing.cancelling():
+                        publishing.cancel()
+            task, publishing = publishing, None
+            if interrupted is not None:
+                # Retrieve even an unexpected failure before propagating the
+                # interruption; no publication task may outlive this refresh.
+                if not task.cancelled():
+                    task.exception()
+                raise interrupted
+            if task.cancelled():
+                if not cancel:
+                    raise CancelledError
+            else:
+                try:
+                    task.result()
+                except Exception:
+                    self.stats["errors"] += 1
+                    logger.exception(
+                        "live_blend_refresh[%s]: publication task failed", self.source,
+                    )
+
+        async def publish_committed(frames):
+            nonlocal publishing, waiting_frames
+            import asyncio
+
+            # Only one sender owns frames/socket state. The next disjoint DB
+            # group can commit while its predecessor awaits Redis, but its
+            # publication starts only after that predecessor is joined.
+            # Preserve this definitely-unsent group if interrupted while its
+            # predecessor's ambiguous send is being joined.
+            waiting_frames = frames or None
+            await publication_done()
+            frames, waiting_frames = waiting_frames, None
+            if frames:
+                publishing = asyncio.create_task(self._publish(frames))
 
         def committed(group_ids):
             # Called synchronously AFTER COMMIT and cache installation, BEFORE
@@ -1280,6 +1332,7 @@ class LiveBlendRefresher:
                         clock,
                         prepared=prepared,
                         on_committed=committed,
+                        publish_committed=publish_committed,
                     )
                 except Exception as exc:
                     self.stats["errors"] += 1
@@ -1303,6 +1356,7 @@ class LiveBlendRefresher:
                     # Empty/no-market groups also finished successfully.
                     if not completed.issuperset(group_ids):
                         committed(group_ids)
+            await publication_done()
         except CancelledError as exc:
             remaining = set(due).difference(completed, failed_groups)
             self._refresh_failed(
@@ -1330,6 +1384,22 @@ class LiveBlendRefresher:
                 stored_wall,
                 exc,
             )
+        finally:
+            # Cancellation or any pre-commit failure must not leave a sender
+            # running beside the consumer's final drain or next refresh.
+            try:
+                await publication_done(cancel=True)
+            finally:
+                if waiting_frames:
+                    import asyncio
+
+                    # These committed frames were NEVER submitted. Finish one
+                    # bounded send before exit; do not retry the predecessor's
+                    # uncertain send or interrupt this cleanup on a second
+                    # consumer cancellation. _publish retains its 5s bound.
+                    frames, waiting_frames = waiting_frames, None
+                    publishing = asyncio.create_task(self._publish(frames))
+                    await publication_done(cancel_on_interrupt=False)
         return self.stats
 
     def _refresh_failed(
@@ -1566,6 +1636,7 @@ class LiveBlendRefresher:
         *,
         prepared: Optional[dict[int, tuple]] = None,
         on_committed: Optional[Callable[[list[int]], None]] = None,
+        publish_committed: Optional[Callable[[list[dict]], Awaitable[None]]] = None,
     ) -> None:
         from types import SimpleNamespace
 
@@ -1898,7 +1969,7 @@ class LiveBlendRefresher:
                     exact_trace.stamp(event_id, basis, revision, stamped_at)
         if on_committed is not None:
             on_committed(event_ids)
-        await self._publish(pending)
+        await (self._publish if publish_committed is None else publish_committed)(pending)
 
     @contextlib.asynccontextmanager
     async def _snapshot_slots_follow_the_commit(self, event_ids: list[int]):

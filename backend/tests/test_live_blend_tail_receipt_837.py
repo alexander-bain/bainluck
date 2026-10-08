@@ -465,7 +465,7 @@ async def _run_consumer(monkeypatch, frames, throttle=0.5, recycle=1.5):
             seen["refresher"] = self
 
         async def _refresh_batch(
-            self, event_ids, now, *, prepared=None, on_committed=None
+            self, event_ids, now, *, prepared=None, on_committed=None, publish_committed=None
         ):
             for eid in event_ids:
                 self._last_refresh_at[eid] = now
