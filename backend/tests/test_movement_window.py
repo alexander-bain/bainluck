@@ -483,8 +483,9 @@ def test_a_full_batch_reports_the_backlog_as_undrained(run_task) -> None:
     )
 
 
-def test_a_short_batch_reports_the_backlog_as_drained(run_task) -> None:
-    """And the day it comes up short, the sweep has caught up.
+def test_a_short_batch_reports_the_backlog_drain_as_unverified(run_task) -> None:
+    """A short batch is not proof of drain (#10090: `SKIP LOCKED` passes over
+    eligible rows a writer holds), so the flag reads `None`, never `True`.
 
     The fixture names counters in the established A1-A7, four bank arms,
     A10, B/C order and maps them to the actual execution order. Each counter
@@ -503,8 +504,8 @@ def test_a_short_batch_reports_the_backlog_as_drained(run_task) -> None:
     assert result["dated_basis_unbanked_datagolf"] == 15
     assert result["unpriced_openings_written"] == 13
     assert result["cleared_markets"] == 2
-    assert result["backlog_drained"] is True, (
-        f"a short run did not report the backlog drained: {result}"
+    assert result["backlog_drained"] is None, (
+        f"a short SKIP LOCKED run claimed the backlog drained: {result}"
     )
 
 
@@ -778,12 +779,12 @@ def test_a_full_graded_batch_reports_the_backlog_as_undrained(run_task) -> None:
     )
 
 
-def test_both_backlogs_empty_reports_drained(run_task) -> None:
-    """And the day both come up short, the column is honest."""
+def test_both_short_batches_report_drain_unverified(run_task) -> None:
+    """Both short is still not proof under `SKIP LOCKED` (#10090)."""
     result, _ = run_task([2, 3, 4, 5, 6])
 
-    assert result["backlog_drained"] is True, f"{result}"
-    assert result["graded_backlog_drained"] is True, f"{result}"
+    assert result["backlog_drained"] is None, f"{result}"
+    assert result["graded_backlog_drained"] is None, f"{result}"
 
 
 # ---------------------------------------------------------------------------
@@ -1334,7 +1335,7 @@ def test_the_rank_counters_are_reported_separately(run_task) -> None:
     assert result["rank_expired"] == STALE_RANK_BATCH, result
     assert result["rank_graded_retired"] == 7, result
 
-    assert result["backlog_drained"] is True, (
+    assert result["backlog_drained"] is None, (
         "a full RANK batch reported the DELTA backlog as undrained — the two "
         f"populations drain on different schedules: {result}"
     )
@@ -1343,11 +1344,11 @@ def test_the_rank_counters_are_reported_separately(run_task) -> None:
     )
 
 
-def test_a_short_rank_batch_reports_the_rank_backlog_drained(run_task) -> None:
-    """And the day both rank sweeps come up short, the drain is over."""
+def test_a_short_rank_batch_reports_the_rank_drain_unverified(run_task) -> None:
+    """Short rank sweeps are not proof of drain under `SKIP LOCKED` (#10090)."""
     result, _ = run_task([2, 3, 4, 5, 6, 7, 8, 1])
 
-    assert result["rank_backlog_drained"] is True, result
+    assert result["rank_backlog_drained"] is None, result
 
 
 # ---------------------------------------------------------------------------

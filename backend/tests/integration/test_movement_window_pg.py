@@ -569,14 +569,15 @@ def test_a_bounded_run_retires_the_biggest_liar_first() -> None:
     )
 
 
-def test_a_run_with_nothing_to_do_reports_a_drained_backlog() -> None:
-    """And it must not disturb anything while saying so."""
+def test_a_run_with_nothing_to_do_reports_drain_unverified() -> None:
+    """Under `SKIP LOCKED` an empty run is not proof of drain (#10090), and it
+    must not disturb anything either way."""
     ids = asyncio.run(_reset_and_seed([("live", "open", 1, 0.22, 0.22)]))
     result = _run_task()
     after = asyncio.run(_read(ids))
 
     assert result["expired"] == 0
-    assert result["backlog_drained"] is True, result
+    assert result["backlog_drained"] is None, result
     assert after["live"] == (pytest.approx(0.22), pytest.approx(0.22)), (
         f"an idle run moved a healthy row: {after}"
     )

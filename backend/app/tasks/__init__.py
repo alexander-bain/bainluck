@@ -4976,9 +4976,11 @@ def update_max_movement(self):
 
             # `expired` and `backlog_drained` are reported so the drain is
             # observable while it runs: a run that retires exactly
-            # STALE_DELTA_BATCH rows means more are waiting, and the day the
-            # count sits below the batch the backlog is gone. Without them the
-            # only signal would be the strip quietly getting better.
+            # STALE_DELTA_BATCH rows means more are waiting. A run below the
+            # batch is NOT proof the backlog is gone (#10090: `SKIP LOCKED`
+            # passes over locked eligible rows), so the flag reads `None`, not
+            # `True`. Without them the only signal would be the strip quietly
+            # getting better.
             return {
                 "updated": updated,
                 "expired": expired_rows,
@@ -5037,11 +5039,24 @@ def update_max_movement(self):
                 # `backlog_drained` reports the AND. Reporting only A's would go
                 # true while 1.87 M graded deltas were still standing — a green
                 # light for the exact state this statement exists to end.
+                #
+                # #10090: the three drain flags are TRI-STATE. A1-A7 take their
+                # targets with `SKIP LOCKED`, so a SHORT batch no longer proves
+                # the backlog empty — eligible rows a quote/settlement writer
+                # held were passed over and wait for a later run. A full batch
+                # still proves more are waiting (`False`); a short one is
+                # unverified (`None`), never `True`. The rowcounts stay exact.
                 "backlog_drained": (
-                    expired_rows < STALE_DELTA_BATCH
-                    and graded_rows < GRADED_DELTA_BATCH
+                    False
+                    if (
+                        expired_rows >= STALE_DELTA_BATCH
+                        or graded_rows >= GRADED_DELTA_BATCH
+                    )
+                    else None
                 ),
-                "graded_backlog_drained": graded_rows < GRADED_DELTA_BATCH,
+                "graded_backlog_drained": (
+                    False if graded_rows >= GRADED_DELTA_BATCH else None
+                ),
                 # A5/A6. Reported on their own counters and NEVER folded into
                 # `expired`/`graded_retired`: those two are how the delta drain
                 # is read, and a rank row added to them would make a finished
@@ -5052,9 +5067,14 @@ def update_max_movement(self):
                 # keeps its meaning and this one is added beside it.
                 "rank_expired": rank_expired_rows,
                 "rank_graded_retired": rank_graded_rows,
+                # Tri-state for the same `SKIP LOCKED` reason as the two above.
                 "rank_backlog_drained": (
-                    rank_expired_rows < STALE_RANK_BATCH
-                    and rank_graded_rows < GRADED_RANK_BATCH
+                    False
+                    if (
+                        rank_expired_rows >= STALE_RANK_BATCH
+                        or rank_graded_rows >= GRADED_RANK_BATCH
+                    )
+                    else None
                 ),
                 "window_hours": MOVEMENT_WINDOW_HOURS,
                 "movers_warm": warm,
