@@ -175,8 +175,11 @@ def _flush_statements(flush):
     """
     for stmt in flush.body:
         yield stmt
-        if isinstance(stmt, ast.For):
-            yield from stmt.body
+        # #10090 pipelined stamps: the Kalshi phase loop sits in the try that
+        # owns its in-flight stamp, so look one level into a top-level try.
+        for loop in (stmt.body if isinstance(stmt, ast.Try) else [stmt]):
+            if isinstance(loop, ast.For):
+                yield from loop.body
 
 
 CONSUMERS = [
