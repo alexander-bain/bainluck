@@ -19,7 +19,7 @@ import app.tasks.kalshi_ws as task
 from app.tasks.kalshi import _kalshi_yes_probability
 from app.tasks.live_blend_refresh import InputMark, LiveBlendRefresher, TailReceipts
 from app.utils.kalshi_exact_trace import ExactKalshiTrace, MAX_PENDING
-from app.utils.live_push import build_frame
+from app.utils.live_push import build_frame, frame_publish_command
 from tests.test_event_frame_batching_10659 import ProtocolRedis
 from tests.test_kalshi_ws_lifecycle_dispatch_10667 import (
     Feed,
@@ -359,7 +359,7 @@ async def test_exact_observation_basis_and_revision_link_to_real_publisher_ack()
         rev=252,
     )
     await r._publish([frame])
-    assert client.commands == [("PUBLISH", "live:event:900", json.dumps(frame))]
+    assert client.commands == [frame_publish_command(frame)]
     assert records[-1]["stage"] == "EVENT_PUBLICATION"
     assert records[-1]["publication"] == "REDIS_ACK" and records[-1]["revision"] == 252
     assert (

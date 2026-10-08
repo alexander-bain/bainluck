@@ -45,6 +45,17 @@ MARKET_TICKER = "KXATPCHALLENGERDOUBLES-26OCT07BARVOCMARWAL"
 TICKER = MARKET_TICKER + "-BARVOC"
 
 
+def event_frames_sent(client):
+    """Event frames go out as PUBLISH, or as the retain-and-publish EVAL
+    (88a4a5cad3) whose KEYS[2] is the channel and ARGV[1] the payload."""
+    frames = []
+    for cmd in client.commands:
+        channel, payload = (cmd[4], cmd[5]) if cmd[0] == "EVAL" else cmd[1:3]
+        if channel == f"live:event:{EVENT}":
+            frames.append(json.loads(payload))
+    return frames
+
+
 @pytest.mark.parametrize("fail_stage", [None, "price", "event"])
 @pytest.mark.parametrize("repeat_race", [False, True])
 @pytest.mark.parametrize("trace_enabled", [True, False])
@@ -221,11 +232,7 @@ async def test_existing_full_path_and_outer_rollback_marks(
                 assert event.win_probability_sources["kalshi"][
                     "value"
                 ] == pytest.approx(expected)
-                frames = [
-                    json.loads(payload)
-                    for _verb, channel, payload in client.commands
-                    if channel == f"live:event:{EVENT}"
-                ]
+                frames = event_frames_sent(client)
                 assert len(frames) == (2 if repeat_race else 1)
                 assert frames[-1]["p"] == pytest.approx(expected)
                 assert frames[-1]["rev"] == {
@@ -286,11 +293,7 @@ async def test_existing_full_path_and_outer_rollback_marks(
         and publication["revision"] == revision
     )
     assert publication["publication"] == "REDIS_ACK"
-    event_frames = [
-        json.loads(payload)
-        for _verb, channel, payload in client.commands
-        if channel == f"live:event:{EVENT}"
-    ]
+    event_frames = event_frames_sent(client)
     assert len(event_frames) == (2 if repeat_race else 1)
     assert event_frames[-1]["p"] == pytest.approx(expected)
     assert event_frames[-1]["rev"] == {str(EVENT): revision}
