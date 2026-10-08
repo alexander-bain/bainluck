@@ -67,17 +67,21 @@ async def test_pending_later_game_does_not_hold_first_commit_or_stamp():
         await asyncio.gather(task, return_exceptions=True)
 
 
-async def test_locked_debt_game_stays_owed_while_independent_game_commits():
+async def test_locked_debt_game_stays_owed_while_independent_game_commits(monkeypatch):
+    from app.tasks import live_blend_refresh as module
+
+    monkeypatch.setattr(module, "_mono", lambda: 1000)
     x = rig(locked={1})
     r = bind(x, {100})
     x.release.set()
-    assert await x.flush(flush_started=1000) is False
+    assert await x.flush(flush_started=1000) is True
     assert x.committed == [3, 9]
     assert set(x.batch) == {1, 2}
     assert r.pending_event_ids() == frozenset({100})
     assert not any(t[0] == "admit" and 100 in t[1] for t in x.trace)
     assert any(t[0] == "admit" and 200 in t[1] for t in x.trace)
     x.lock_released.set()
+    monkeypatch.setattr(module, "_mono", lambda: 1002)
     assert await x.flush(flush_started=1002)
     assert not x.batch and not r.pending_event_ids()
 
