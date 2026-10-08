@@ -991,6 +991,16 @@ PREPARED_EVENT_FIELDS = (
     "opening_home_probability",
 )
 
+# Resolver identity, semantic/settlement admission and exact observation clocks.
+# Descriptions, images, calibration, volume and other presentation columns do
+# not participate in the live reading and must not hydrate/copy on every quote.
+PREPARED_MARKET_FIELDS = (
+    "id", "source", "external_id", "event_id", "name", "status", "market_metadata",
+)
+PREPARED_OUTCOME_FIELDS = (
+    "id", "market_id", "name", "rank", "current_probability", "last_updated", "is_winner",
+)
+
 
 class LiveBlendRefresher:
     """Stateful per-source refresher, owned by one WS consumer run.
@@ -1384,7 +1394,12 @@ class LiveBlendRefresher:
         market_rows = list(
             (
                 await session.execute(
-                    select(FuturesMarket).where(
+                    select(FuturesMarket).options(
+                        load_only(
+                            *(getattr(FuturesMarket, key) for key in PREPARED_MARKET_FIELDS),
+                            raiseload=True,
+                        )
+                    ).where(
                         FuturesMarket.source == self.source,
                         FuturesMarket.event_id.in_(event_ids),
                     )
@@ -1434,7 +1449,12 @@ class LiveBlendRefresher:
         if market_ids:
             for outcome in (
                 await session.execute(
-                    select(FuturesOutcome).where(
+                    select(FuturesOutcome).options(
+                        load_only(
+                            *(getattr(FuturesOutcome, key) for key in PREPARED_OUTCOME_FIELDS),
+                            raiseload=True,
+                        )
+                    ).where(
                         FuturesOutcome.market_id.in_(market_ids)
                     )
                 )
@@ -1484,11 +1504,11 @@ class LiveBlendRefresher:
         from app.tasks.base import get_task_session
         from app.utils.live_blend import MarketOutcomes
 
-        def scalar(row):
+        def scalar(row, fields):
             return SimpleNamespace(
                 **{
-                    column.key: copy.deepcopy(getattr(row, column.key))
-                    for column in row.__table__.columns
+                    key: copy.deepcopy(getattr(row, key))
+                    for key in fields
                 }
             )
 
@@ -1505,8 +1525,11 @@ class LiveBlendRefresher:
                     ),
                     [
                         MarketOutcomes(
-                            market=scalar(entry.market),
-                            outcomes=[scalar(outcome) for outcome in entry.outcomes],
+                            market=scalar(entry.market, PREPARED_MARKET_FIELDS),
+                            outcomes=[
+                                scalar(outcome, PREPARED_OUTCOME_FIELDS)
+                                for outcome in entry.outcomes
+                            ],
                             event_has_result=entry.event_has_result,
                             event_commence_time=entry.event_commence_time,
                         )
@@ -1755,12 +1778,20 @@ class LiveBlendRefresher:
                         # savepoint rather than autoflushing into the next
                         # event's UPDATE, where a failure would be charged to
                         # the wrong event.
+                        # Most changed quotes arrive before the chart clock is
+                        # due. Do not pay SAVEPOINT + RELEASE (or flush) merely
+                        # to call a snapshot helper that immediately returns.
+                        snapshot_at = self._last_snapshot_at.get(event_id)
+                        snapshot_due = snapshot_at is None or (
+                            now - snapshot_at >= self.snapshot_interval_s
+                        )
                         try:
-                            async with session.begin_nested():
-                                await self._maybe_snapshot(
-                                    session, event_id, value, reading, now,
-                                )
-                                await session.flush()
+                            if snapshot_due:
+                                async with session.begin_nested():
+                                    await self._maybe_snapshot(
+                                        session, event_id, value, reading, now,
+                                    )
+                                    await session.flush()
                         except Exception:
                             self.stats["errors"] += 1
                             logger.exception(
