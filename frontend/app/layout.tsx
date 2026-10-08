@@ -13,6 +13,7 @@ import BottomNav from "@/components/BottomNav";
 import EmbedGate from "@/components/EmbedGate";
 import DesktopNav from "@/components/DesktopNav";
 import Footer from "@/components/Footer";
+import EventOpenIntent from "@/components/event/EventOpenIntent";
 import { BUILD_META_NAME, frontendCommitSha } from "@/lib/buildInfo";
 import { getSiteUrl } from "@/lib/siteUrl";
 import { Suspense } from "react";
@@ -190,6 +191,8 @@ export default function RootLayout({
             promise about it stays true. */}
         <SpeedInsights />
         <Analytics />
+        {/* #1469: an event card's hero + chart requests leave at the tap, not after the route loads. */}
+        <EventOpenIntent />
         <SWRProvider>
         <AnalyticsProvider>
           <AuthProvider>

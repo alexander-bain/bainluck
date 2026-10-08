@@ -109,9 +109,11 @@ export const EVENT_BOOT_HISTORY_RANGE = "since_start";
  * suite can assert the set as a set.
  */
 export function eventBootPaths(eventId: number): string[] {
+  // #1469: `/game-markets` is NOT booted. The page reads it only through `fetchFreshGameMarkets`
+  // (`?fresh=true`, never claims a boot), so a parked plain `/game-markets` was a ~1 s server
+  // request on every cold event load whose body nobody ever read.
   return [
     `/api/events/${eventId}`,
-    `/api/events/${eventId}/game-markets`,
     `/api/events/${eventId}/team-progression`,
     `/api/events/${eventId}/history?hours=${EVENT_BOOT_HISTORY_HOURS}&range=${EVENT_BOOT_HISTORY_RANGE}`,
   ];
@@ -199,8 +201,11 @@ export function claimEventBoot(
   if (Object.keys(map).length === 0) delete host[EVENT_BOOT_GLOBAL];
 
   if (!entry || typeof entry !== "object") return null;
-  const record = entry as FeedBootRecord;
+  const record = entry as IntentBootRecord;
   if (record.url !== expectedUrl) return null;
+  // #1469: an intent-parked body (hover/tap, see `parkEventOpenIntent`) is only handed over while
+  // it is fresh. The cold-load boot entries carry no `intent` flag and keep today's behaviour.
+  if (record.intent && bootClock() - record.startedAt > EVENT_INTENT_MAX_AGE_MS) return null;
   const response = record.response as Promise<Response> | null;
   if (!response || typeof response.then !== "function") return null;
   return record;
@@ -217,3 +222,85 @@ export function claimEventBoot(
  * for the same reason they are equal to each other; a guard test asserts all three agree.
  */
 export const EVENT_BOOT_CLAIM_TIMEOUT_MS = 20000;
+
+/**
+ * #1469 — opening an event from a card starts its hero + chart requests at the TAP, not after the
+ * route payload and the page chunk arrive.
+ *
+ * Measured on production 2026-10-08 (Discover → tap an event card, 390 px, 3 runs): the RSC payload
+ * lands ~130 ms after the tap and the page's own `/api/events/{id}*` calls only leave at ~270-580 ms,
+ * once the page has mounted. The cold-load boot above cannot help — a soft navigation never executes
+ * the inline script. So the same map is filled from the CLIENT at the moment of intent, and the
+ * existing claims in `lib/api.ts` pick the bodies up unchanged.
+ *
+ * Unlike the cold boot this fires for signed-in readers too: none of the three routes takes a
+ * principal (`/api/events/{id}`, `/team-progression`, `/history` read no user), so the parked body
+ * is the body the reader's own request would have produced.
+ */
+export const EVENT_INTENT_MAX_AGE_MS = 15_000;
+
+type IntentBootRecord = FeedBootRecord & { intent?: true };
+
+function bootClock(): number {
+  return typeof performance !== "undefined" && performance.now ? performance.now() : Date.now();
+}
+
+/** `/events/123` (same origin, nothing after the id) → 123; anything else → null. */
+export function eventIdFromHref(href: string | null | undefined, origin: string): number | null {
+  if (!href) return null;
+  let url: URL;
+  try {
+    url = new URL(href, origin);
+  } catch {
+    return null;
+  }
+  if (url.origin !== origin) return null;
+  const match = /^\/events\/(\d+)\/?$/.exec(url.pathname);
+  if (!match) return null;
+  const id = Number.parseInt(match[1], 10);
+  return Number.isFinite(id) && id > 0 ? id : null;
+}
+
+/**
+ * Park the event page's first-screen requests for `eventId` now. Returns true when anything new
+ * was put on the wire. Never throws.
+ */
+export function parkEventOpenIntent(
+  apiBase: string,
+  eventId: number,
+  scope?: Record<string, unknown>,
+  fetcher: (url: string) => Promise<Response> = (url) => fetch(url),
+): boolean {
+  try {
+    const host =
+      scope ??
+      (typeof globalThis === "undefined"
+        ? undefined
+        : (globalThis as unknown as Record<string, unknown>));
+    if (!host) return false;
+    const existing = host[EVENT_BOOT_GLOBAL];
+    const map: Record<string, IntentBootRecord> =
+      existing && typeof existing === "object" ? (existing as Record<string, IntentBootRecord>) : {};
+    const now = bootClock();
+    for (const [url, rec] of Object.entries(map)) {
+      if (rec?.intent && now - rec.startedAt > EVENT_INTENT_MAX_AGE_MS) delete map[url];
+    }
+    let parked = false;
+    for (const url of eventBootUrls(apiBase, eventId)) {
+      if (map[url]) continue;
+      const record: IntentBootRecord = { url, startedAt: now, readyAt: null, response: null, intent: true };
+      const response = fetcher(url).then((res) => {
+        record.readyAt = bootClock();
+        return res;
+      });
+      response.catch(() => {});
+      record.response = response;
+      map[url] = record;
+      parked = true;
+    }
+    if (Object.keys(map).length > 0) host[EVENT_BOOT_GLOBAL] = map;
+    return parked;
+  } catch {
+    return false;
+  }
+}

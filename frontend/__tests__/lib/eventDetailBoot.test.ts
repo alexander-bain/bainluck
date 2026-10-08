@@ -42,12 +42,14 @@ import {
   eventBootPaths,
   eventBootScript,
   eventBootUrls,
+  eventIdFromHref,
+  parkEventOpenIntent,
+  EVENT_INTENT_MAX_AGE_MS,
 } from "@/lib/event/detailBoot";
 import {
   API_URL,
   fetchEvent,
   fetchEventHistory,
-  fetchGameMarkets,
   fetchTeamProgression,
 } from "@/lib/api";
 
@@ -136,7 +138,6 @@ describe("LAT-P219 · the four boot URLs are the URLs that reach the wire", () =
       // Nothing parked, so every one of these falls through to the real network path — which is
       // exactly the URL the boot must match.
       await fetchEvent(EVENT_ID);
-      await fetchGameMarkets(EVENT_ID);
       await fetchTeamProgression(EVENT_ID);
       // #6948: the page's FIRST-PAINT call, which is the one the boot has to match. The "All"
       // re-fetch deliberately omits the range and therefore deliberately misses the boot — it asks
@@ -149,7 +150,10 @@ describe("LAT-P219 · the four boot URLs are the URLs that reach the wire", () =
 
   it("parks exactly the four calls that gate the hero, and nothing that does not", () => {
     const paths = eventBootPaths(EVENT_ID);
-    expect(paths).toHaveLength(4);
+    expect(paths).toHaveLength(3);
+    // #1469: the page reads game markets only via `fetchFreshGameMarkets` (?fresh=true), which never
+    // claims a boot — a parked plain `/game-markets` was a ~1 s request nobody read.
+    expect(paths.join(" ")).not.toContain("/game-markets");
     // The three second-wave calls start AFTER the hero paints (3,394 / 4,245 / 6,341 ms on the
     // measured waterfall). Parking them would spend request budget for no first-screen gain.
     const joined = paths.join(" ");
@@ -411,7 +415,7 @@ describe("LAT-P219 · the claim is raced against a deadline", () => {
           } as unknown as Response),
         },
       });
-      await fetchGameMarkets(EVENT_ID);
+      await fetchTeamProgression(EVENT_ID);
       expect(wire).toEqual([urls[1]]);
     });
   });
@@ -422,7 +426,9 @@ describe("LAT-P219 · the claim is raced against a deadline", () => {
     await withWindow({}, async () => {
       const urls = eventBootUrls(API_URL, EVENT_ID);
       parkMap({ [urls[2]]: { response: Promise.reject(new Error("dead network")) } });
-      await expect(fetchTeamProgression(EVENT_ID)).resolves.toBeDefined();
+      await expect(
+        fetchEventHistory(EVENT_ID, EVENT_BOOT_HISTORY_HOURS, EVENT_BOOT_HISTORY_RANGE)
+      ).resolves.toBeDefined();
       expect(wire).toEqual([urls[2]]);
     });
   });
@@ -469,5 +475,84 @@ describe("#9294 live reconciliation bypasses cached server and browser responses
         { url: `${API_URL}/api/events/${EVENT_ID}/history?hours=168&range=since_start`, cache: undefined },
       ]);
     } finally { global.fetch = originalFetch; }
+  });
+});
+
+
+describe("#1469 · a tap parks the event page's first-screen requests", () => {
+  const realFetch = global.fetch;
+  const realNow = performance.now;
+  afterEach(() => {
+    global.fetch = realFetch;
+    performance.now = realNow;
+    delete (globalThis as unknown as Record<string, unknown>)[EVENT_BOOT_GLOBAL];
+  });
+
+  it("reads only same-origin /events/{id} links", () => {
+    const o = "https://www.bainluck.com";
+    expect(eventIdFromHref("/events/15325635", o)).toBe(15325635);
+    expect(eventIdFromHref("/events/15325635/", o)).toBe(15325635);
+    expect(eventIdFromHref("/events/15325635?tab=props", o)).toBe(15325635);
+    expect(eventIdFromHref(`${o}/events/7`, o)).toBe(7);
+    expect(eventIdFromHref("/events/15325635/models", o)).toBeNull();
+    expect(eventIdFromHref("/event/nfl/sb", o)).toBeNull();
+    expect(eventIdFromHref("https://evil.example/events/7", o)).toBeNull();
+    expect(eventIdFromHref("/events/0", o)).toBeNull();
+    expect(eventIdFromHref(null, o)).toBeNull();
+  });
+
+  it("the page's real fetchers claim the parked bodies — zero extra requests on the wire", async () => {
+    const parkedWire: string[] = [];
+    const parkFetch = (url: string) => {
+      parkedWire.push(url);
+      return Promise.resolve(fakeResponse({ parked: url }));
+    };
+    expect(parkEventOpenIntent(API_URL, EVENT_ID, undefined, parkFetch)).toBe(true);
+    expect(parkedWire).toEqual(eventBootUrls(API_URL, EVENT_ID));
+    // A second tap on the same card is a no-op, not a second set of requests.
+    expect(parkEventOpenIntent(API_URL, EVENT_ID, undefined, parkFetch)).toBe(false);
+
+    const wire: string[] = [];
+    global.fetch = recordingFetch(wire);
+    await withWindow({}, async () => {
+      parkEventOpenIntent(API_URL, EVENT_ID, undefined, parkFetch);
+      const ev = await fetchEvent(EVENT_ID);
+      const tp = await fetchTeamProgression(EVENT_ID);
+      const hist = await fetchEventHistory(EVENT_ID, EVENT_BOOT_HISTORY_HOURS, EVENT_BOOT_HISTORY_RANGE);
+      expect(ev).toEqual({ parked: `${API_URL}/api/events/${EVENT_ID}` });
+      expect(tp).toEqual({ parked: `${API_URL}/api/events/${EVENT_ID}/team-progression` });
+      expect((hist as unknown as { parked: string }).parked).toContain("/history?");
+    });
+    expect(wire).toEqual([]);
+  });
+
+  it("a stale intent body is refused, and the reader's own request runs", async () => {
+    let now = 1_000;
+    performance.now = () => now;
+    const parkFetch = () => Promise.resolve(fakeResponse({ parked: true }));
+    const wire: string[] = [];
+    global.fetch = recordingFetch(wire);
+    await withWindow({}, async () => {
+      parkEventOpenIntent(API_URL, EVENT_ID, undefined, parkFetch);
+      now += EVENT_INTENT_MAX_AGE_MS + 1;
+      const ev = await fetchEvent(EVENT_ID);
+      expect(ev).toEqual({ id: "network" });
+    });
+    expect(wire).toEqual([`${API_URL}/api/events/${EVENT_ID}`]);
+  });
+
+  it("parking a second card keeps the first card's fresh entries and prunes only stale ones", () => {
+    let now = 0;
+    performance.now = () => now;
+    const parkFetch = () => Promise.resolve(fakeResponse({}));
+    parkEventOpenIntent(API_URL, 1, undefined, parkFetch);
+    now = EVENT_INTENT_MAX_AGE_MS + 5;
+    parkEventOpenIntent(API_URL, 2, undefined, parkFetch);
+    now += 1;
+    parkEventOpenIntent(API_URL, 3, undefined, parkFetch);
+    const slot = (globalThis as unknown as Record<string, unknown>)[EVENT_BOOT_GLOBAL] as Record<string, unknown>;
+    expect(Object.keys(slot).sort()).toEqual(
+      [...eventBootUrls(API_URL, 2), ...eventBootUrls(API_URL, 3)].sort()
+    );
   });
 });
