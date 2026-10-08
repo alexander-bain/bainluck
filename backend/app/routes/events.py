@@ -31442,6 +31442,97 @@ def one_row_per_bookmaker_in_bucket(snaps: list) -> list:
 
 
 @router.get("/{event_id}/history")
+async def get_event_odds_history_cached(
+    event_id: int,
+    hours: int = Query(24, description="Hours of history to return"),
+    chart_range: str = Query(
+        "all",
+        alias="range",
+        description="'all' (default) or 'since_start'; see get_event_odds_history.",
+    ),
+    response: Response = None,
+    db: AsyncSession = Depends(get_db),
+    fresh: bool = False,
+):
+    """The history route's CACHE POLICY; the build is `get_event_odds_history`,
+    unchanged. Alex Oct 8 load-speed push (#10090, #1469) — the chart had no
+    server cache and cost 1.5–3.6 s on every open of a finished game. Lease and
+    the reason it is process memory only: `utils/event_history_cache.py`.
+    """
+    import asyncio as _asyncio
+
+    from fastapi.encoders import jsonable_encoder
+    from fastapi.responses import JSONResponse
+
+    from app.utils import event_history_cache as ehc
+    from app.utils import request_cache as _rc
+
+    key = ehc.cache_key(event_id, hours, chart_range)
+
+    def _respond(body: bytes, cache_control: Optional[str], state: str) -> Response:
+        headers = {"X-Feed-Cache": state}
+        if cache_control:
+            headers["Cache-Control"] = cache_control
+        return Response(content=body, media_type="application/json", headers=headers)
+
+    async def _build() -> tuple[bytes, Optional[str]]:
+        sub = Response()
+        payload = await get_event_odds_history(
+            event_id,
+            hours=hours,
+            chart_range=chart_range,
+            response=sub,
+            db=db,
+            fresh=fresh,
+        )
+        body = JSONResponse(content=jsonable_encoder(payload)).body
+        cache_control = sub.headers.get("cache-control")
+        now = time.time()
+        if isinstance(payload, dict):
+            ehc.write(key, body, cache_control, ehc.lease_for(payload, now), now)
+        return body, cache_control
+
+    if not fresh:
+        hit = ehc.read(key)
+        if hit is not None:
+            return _respond(hit[0], hit[1], "hit")
+
+        flight_key = f"event_history:{key[0]}:{key[1]}:{key[2]}"
+        leader, fut = _rc.begin_build(flight_key)
+        if not leader:
+            try:
+                body, cache_control = await _asyncio.wait_for(
+                    _asyncio.shield(fut), timeout=25.0
+                )
+                return _respond(body, cache_control, "coalesced")
+            except _asyncio.CancelledError:
+                raise
+            except Exception:
+                # The leader failed or is slow: build our own, as every reader
+                # did before this cache existed.
+                pass
+        else:
+            try:
+                built = await _build()
+            except BaseException as exc:
+                _rc.finish_build(
+                    flight_key,
+                    fut,
+                    exc=exc if isinstance(exc, Exception)
+                    else RuntimeError("event history build cancelled"),
+                )
+                # Nobody may be awaiting it; mark retrieved so asyncio does
+                # not log "exception was never retrieved".
+                if fut.done() and not fut.cancelled():
+                    fut.exception()
+                raise
+            _rc.finish_build(flight_key, fut, result=built)
+            return _respond(built[0], built[1], "miss")
+
+    body, cache_control = await _build()
+    return _respond(body, cache_control, "miss")
+
+
 async def get_event_odds_history(
     event_id: int,
     hours: int = Query(24, description="Hours of history to return"),
