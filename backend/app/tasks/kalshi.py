@@ -1374,7 +1374,52 @@ def _alarm_on_series_discovery(series_discovery, stats: dict) -> list:
     return _dead
 
 
-async def _poll_kalshi_markets():
+def _validate_exact_kalshi_game_event_ticker(event_ticker: str) -> None:
+    """An exact, supported full-game winner event; no series, leg or pattern."""
+    from app.utils.prediction_market_matching import feeds_win_prob_blend
+
+    if (
+        not isinstance(event_ticker, str)
+        or not _re.fullmatch(r"KX[A-Z0-9]+-[A-Z0-9]+", event_ticker)
+        or not _is_kalshi_game_ticker(event_ticker)
+        or not feeds_win_prob_blend(event_ticker)
+    ):
+        raise ValueError("event_ticker must name one supported full-game winner event")
+
+
+async def _fetch_exact_kalshi_game_event(service, event_ticker: str):
+    """Fetch one provider contract and fail closed before any database writes."""
+    import asyncio
+
+    _validate_exact_kalshi_game_event_ticker(event_ticker)
+    raw = await asyncio.wait_for(
+        service.get_event(event_ticker, with_nested_markets=True), timeout=30.0
+    )
+    if (
+        not isinstance(raw, dict)
+        or raw.get("event_ticker") != event_ticker
+        or not isinstance(raw.get("markets"), list)
+        or not raw["markets"]
+        or any(
+            not isinstance(leg, dict)
+            or leg.get("event_ticker") != event_ticker
+            or not isinstance(leg.get("ticker"), str)
+            or not leg["ticker"].startswith(event_ticker + "-")
+            for leg in raw["markets"]
+        )
+    ):
+        raise ValueError("Exact Kalshi event missing, empty or mismatched")
+    event = service._parse_event(raw)
+    if (
+        event is None
+        or event.event_ticker != event_ticker
+        or len(event.markets) != len(raw["markets"])
+    ):
+        raise ValueError("Exact Kalshi event could not be fully parsed")
+    return [event]
+
+
+async def _poll_kalshi_markets(event_ticker: Optional[str] = None):
     """Async implementation of Kalshi polling."""
     import asyncio
     import time
@@ -1384,6 +1429,9 @@ async def _poll_kalshi_markets():
     from app.utils.odds_math import probability_to_american
     from sqlalchemy.dialects.postgresql import insert as pg_insert
     import os
+
+    if event_ticker is not None:
+        _validate_exact_kalshi_game_event_ticker(event_ticker)
 
     # Check if Kalshi API key is configured
     if not os.getenv("KALSHI_API_KEY"):
@@ -1462,6 +1510,8 @@ async def _poll_kalshi_markets():
     # marker that survives the kill — the next run reads the phase that was live
     # when the worker died. Ship this WITH the fix so even a miss is diagnosable.
     _PHASE_KEY = "bainluck:poll_kalshi:phase"
+    if event_ticker is not None:
+        _PHASE_KEY = f"bainluck:poll_kalshi:exact:{event_ticker}:phase"
     _PHASE_OWNER_KEY = _PHASE_KEY + ":owner"  # #1280 Item 3
     _phase_boot_id = ""
     try:
@@ -1518,7 +1568,7 @@ async def _poll_kalshi_markets():
         # save, which runs inside the async fetch, can never freeze the loop.
         _MAIN_CURSOR_KEY = "bainluck:kalshi:main_scan_cursor"
         _start_cursor = None
-        if _phase_rc is not None:
+        if event_ticker is None and _phase_rc is not None:
             try:
                 _c = _phase_rc.get(_MAIN_CURSOR_KEY)
                 if _c:
@@ -1527,7 +1577,7 @@ async def _poll_kalshi_markets():
                 _start_cursor = None
 
         def _save_main_cursor(cursor):
-            if _phase_rc is None:
+            if event_ticker is not None or _phase_rc is None:
                 return
             try:
                 if cursor:
@@ -1552,7 +1602,7 @@ async def _poll_kalshi_markets():
         _DISCOVERY_KEY = "bainluck:kalshi:rescue_series:v1"
         _DISCOVERY_TTL_S = 10800
         _discovery_cache = None
-        if _phase_rc is not None:
+        if event_ticker is None and _phase_rc is not None:
             try:
                 _raw = _phase_rc.get(_DISCOVERY_KEY)
                 if _raw:
@@ -1564,7 +1614,7 @@ async def _poll_kalshi_markets():
                 _discovery_cache = None
 
         def _save_discovery(payload):
-            if _phase_rc is None:
+            if event_ticker is not None or _phase_rc is None:
                 return
             try:
                 _phase_rc.setex(
@@ -1582,19 +1632,22 @@ async def _poll_kalshi_markets():
         _scan_started_at = datetime.now(timezone.utc).isoformat()
 
         try:
-            events = await asyncio.wait_for(
-                service.get_all_events(
-                    categories=None,
-                    deadline=_task_started + _FETCH_DEADLINE_S,
-                    progress_cb=_mark_phase,
-                    start_cursor=_start_cursor,
-                    save_cursor=_save_main_cursor,
-                    telemetry=_scan_tel,
-                    discovery_cache=_discovery_cache,
-                    save_discovery=_save_discovery,
-                ),
-                timeout=_FETCH_WALL_S,
-            )
+            if event_ticker is not None:
+                events = await _fetch_exact_kalshi_game_event(service, event_ticker)
+            else:
+                events = await asyncio.wait_for(
+                    service.get_all_events(
+                        categories=None,
+                        deadline=_task_started + _FETCH_DEADLINE_S,
+                        progress_cb=_mark_phase,
+                        start_cursor=_start_cursor,
+                        save_cursor=_save_main_cursor,
+                        telemetry=_scan_tel,
+                        discovery_cache=_discovery_cache,
+                        save_discovery=_save_discovery,
+                    ),
+                    timeout=_FETCH_WALL_S,
+                )
         except asyncio.TimeoutError:
             _mark_phase("fetch_walltime_exceeded")
             logger.error(
@@ -1637,33 +1690,34 @@ async def _poll_kalshi_markets():
         ) as session:
             now = datetime.now(timezone.utc)
 
-            _mark_phase("orphan_cleanup")
-            # One-time bulk cleanup: delete ALL orphan outcomes with NULL
-            # external_id across all Kalshi markets.  These were created by
-            # an older code path and can never match the upsert ON CONFLICT
-            # (market_id, external_id) since NULL != NULL in SQL.
-            orphan_sub = select(FuturesOutcome.id).where(
-                FuturesOutcome.external_id.is_(None),
-                FuturesOutcome.market_id.in_(
-                    select(FuturesMarket.id).where(FuturesMarket.source == "kalshi")
-                ),
-            )
-            orphan_ids = (await session.execute(orphan_sub)).scalars().all()
-            if orphan_ids:
-                logger.info(
-                    "Bulk cleanup: deleting %d orphan outcomes with NULL external_id",
-                    len(orphan_ids),
+            if event_ticker is None:
+                _mark_phase("orphan_cleanup")
+                # One-time bulk cleanup: delete ALL orphan outcomes with NULL
+                # external_id across all Kalshi markets.  These were created by
+                # an older code path and can never match the upsert ON CONFLICT
+                # (market_id, external_id) since NULL != NULL in SQL.
+                orphan_sub = select(FuturesOutcome.id).where(
+                    FuturesOutcome.external_id.is_(None),
+                    FuturesOutcome.market_id.in_(
+                        select(FuturesMarket.id).where(FuturesMarket.source == "kalshi")
+                    ),
                 )
-                await session.execute(
-                    sa_delete(FuturesOddsSnapshot).where(
-                        FuturesOddsSnapshot.outcome_id.in_(orphan_ids)
+                orphan_ids = (await session.execute(orphan_sub)).scalars().all()
+                if orphan_ids:
+                    logger.info(
+                        "Bulk cleanup: deleting %d orphan outcomes with NULL external_id",
+                        len(orphan_ids),
                     )
-                )
-                await session.execute(
-                    sa_delete(FuturesOutcome).where(FuturesOutcome.id.in_(orphan_ids))
-                )
-                await session.commit()
-                logger.info("Bulk orphan cleanup complete")
+                    await session.execute(
+                        sa_delete(FuturesOddsSnapshot).where(
+                            FuturesOddsSnapshot.outcome_id.in_(orphan_ids)
+                        )
+                    )
+                    await session.execute(
+                        sa_delete(FuturesOutcome).where(FuturesOutcome.id.in_(orphan_ids))
+                    )
+                    await session.commit()
+                    logger.info("Bulk orphan cleanup complete")
 
             # Process-new-first ordering (#995). Kalshi's /events listing is
             # ordered by strike/expiry DESC — far-future events first, soonest-
@@ -1693,7 +1747,7 @@ async def _poll_kalshi_markets():
             last_polled: dict = {}
             # #9543: rows already resolved, for `_settled_rows_last`.
             resolved_tickers: set = set()
-            if fetched_tickers:
+            if fetched_tickers and event_ticker is None:
                 _rows = await session.execute(
                     text(
                         "SELECT external_id, volume_updated_at, status "
@@ -2595,6 +2649,15 @@ async def _poll_kalshi_markets():
                     break
 
             await session.commit()
+
+        if event_ticker is not None:
+            stats["event_ticker"] = event_ticker
+            stats["selection"] = "exact_event"
+            # With the broad preload skipped, no claim of new/existing status.
+            stats.pop("new_events_fetched", None)
+            stats.pop("existing_events_fetched", None)
+            _mark_phase("exact_done")
+            return stats
 
         # #1586/#1845: complete and persist the main-scan report.
         #

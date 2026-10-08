@@ -415,6 +415,10 @@ _SPORTS_SERIES_TICKERS = [
     "KXNFL", "KXNFLNFC", "KXNFLAFC",
     # Game winner (moneyline) — Kalshi retains settled events forever
     "KXNBAGAME", "KXNHLGAME", "KXMLBGAME", "KXNFLGAME",
+    # #10090: EuroLeague winner games are absent from the main scan and
+    # discovery refuses GAME payloads. Use the existing stripped rescue and
+    # market backfill; daily turnover also requires always-fetch membership.
+    "KXEUROLEAGUEGAME",
     # #1898: the golf/combat/tennis gap, fourth occurrence — this time WNBA.
     # The capture sentinel had been filing `basketball_wnba/moneyline
     # starved_class` since CAL-P063 (0.80 → 0.96 winner markets per game, and a
@@ -748,6 +752,7 @@ def stripped_market_series() -> set:
 # a daily series at least fails intermittently.
 _ALWAYS_FETCH_SERIES = {
     "KXNBAGAME", "KXNHLGAME", "KXMLBGAME", "KXNFLGAME",
+    "KXEUROLEAGUEGAME",
     # #1898: daily turnover, exactly like its four siblings above. Without
     # membership here one stale WNBA event surfacing in the main scan satisfies
     # the `any(startswith)` short-circuit and skips the whole slate — the
