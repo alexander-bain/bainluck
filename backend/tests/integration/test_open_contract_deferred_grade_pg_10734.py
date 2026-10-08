@@ -38,6 +38,7 @@ tables it names.
 from __future__ import annotations
 
 import asyncio
+from contextlib import asynccontextmanager
 import json
 import os
 
@@ -189,24 +190,17 @@ def _install_pg_sessions(monkeypatch, engine, open_rows):
     commits when the consumer's block exits cleanly and rolls back otherwise —
     the task factory's contract. SELECTs are the slate, replayed."""
     from sqlalchemy import Update
-    from sqlalchemy.ext.asyncio import AsyncSession
 
     import app.tasks.base as task_base
     from app.utils.repair_lock_budget import SET_LOCK_TIMEOUT_SQL
-    from tests._kalshi_price_session import bind_sessions
     from tests.test_ws_open_contract_prices_9484 import _Result, _sql
 
     class _Session:
         def __init__(self, real):
             self._real = real
 
-        @property
-        def sync_session(self):
-            return self._real.sync_session
-
-        @property
-        def info(self):
-            return self._real.info
+        def __getattr__(self, name):
+            return getattr(self._real, name)
 
         async def execute(self, stmt, params=None):
             if stmt is SET_LOCK_TIMEOUT_SQL or isinstance(stmt, Update):
@@ -217,24 +211,19 @@ def _install_pg_sessions(monkeypatch, engine, open_rows):
                 return _Result(list(open_rows))
             return _Result([])  # no linked slate, no bridge, no live re-read
 
-    class _Ctx:
-        async def __aenter__(self):
-            self.real = AsyncSession(engine, expire_on_commit=False)
-            return _Session(self.real)
+    # #10737: the setup engine is not the subject pool. Honor the exact engine
+    # ConsumerSessions lends, including its real driver and transaction factory.
+    monkeypatch.setattr(task_base, "DATABASE_URL", DB_URL)
+    original_factory = task_base.get_task_session
 
-        async def __aexit__(self, exc_type, *_exc):
-            try:
-                if exc_type is None:
-                    await self.real.commit()
-                else:
-                    await self.real.rollback()
-            finally:
-                await self.real.close()
-            return False
+    @asynccontextmanager
+    async def borrowed_session(*args, engine=None, **kwargs):
+        assert engine is not None
+        async with original_factory(*args, engine=engine, **kwargs) as real:
+            assert real.bind is engine
+            yield _Session(real)
 
-    monkeypatch.setattr(
-        task_base, "get_task_session", bind_sessions(lambda *a, **kw: _Ctx())
-    )
+    monkeypatch.setattr(task_base, "get_task_session", borrowed_session)
 
 
 class _Publisher:
@@ -293,7 +282,7 @@ def _hold_grades(monkeypatch, held, *, after=None):
     return entered, release
 
 
-async def _consume(monkeypatch, engine, *, frames, open_rows, publisher, refresh=1.5):
+async def _consume(monkeypatch, engine, *, frames, open_rows, publisher, refresh=1.5, flush=0.02):
     import app.tasks.kalshi_ws as kalshi_task
     import app.tasks.live_blend_refresh as blend_mod
     import app.tasks.ws_admission as admission
@@ -302,7 +291,7 @@ async def _consume(monkeypatch, engine, *, frames, open_rows, publisher, refresh
     monkeypatch.setenv("KALSHI_API_KEY_ID", "test-key")
     monkeypatch.setenv("KALSHI_RSA_PRIVATE_KEY", "test-secret")
     monkeypatch.setattr(kalshi_task, "SUBSCRIPTION_REFRESH_SECONDS", refresh)
-    monkeypatch.setattr(kalshi_task, "PRICE_FLUSH_SECONDS", 0.02)
+    monkeypatch.setattr(kalshi_task, "PRICE_FLUSH_SECONDS", flush)
     monkeypatch.setattr(admission, "ADMISSION_CHECK_SECONDS", 60.0)
     monkeypatch.setattr(admission, "ADMISSION_MIN_RECYCLE_SECONDS", 0)
     monkeypatch.setattr(blend_mod, "LiveBlendRefresher", _refresher(publisher))
@@ -496,3 +485,249 @@ async def test_two_prefixes_stay_inline(monkeypatch, pg):
     assert legs[SPLIT_X][:2] == (False, "api_settlement")
     assert legs[SPLIT_Y][:2] == (True, "api_settlement")
     assert board == ("open", False), "both legs graded, neither saw the other: board stranded"
+
+
+@pytest.mark.parametrize("finish", ["release", "recycle"])
+async def test_pool_reserve_and_recycle_keep_real_committed_state(
+    monkeypatch, pg, finish
+):
+    """#10737: reserve capacity; final drain survives acquired/queued cancellation.
+
+    The final drain intentionally omits the periodic lock-budget SET. Its
+    proof is the committed row after the real consumer joins, not that SET.
+    """
+    import types
+    from sqlalchemy import event
+    from app.tasks import base, kalshi_ws as task, ws_open_contracts as oc
+    import app.tasks.live_blend_refresh as blend
+    from tests import test_ws_open_contract_prices_9484 as socket_rig
+
+    engine, sync = pg
+    cohorts = [f"KXPOOL-26C{i}" for i in range(5)]
+    markets = {
+        c: [(c + "-A", 0.3, None, None), (c + "-B", 0.7, None, None)] for c in cohorts
+    }
+    markets["KXNBAMVP-27"] = [(SGA, 0.3, None, None)]
+    mids, ids = await _seed(engine, markets)
+    # Only the consumer's fresh task engine is active during the subject run.
+    await engine.dispose()
+    entered, quote_seen, release = asyncio.Event(), asyncio.Event(), asyncio.Event()
+    held, grade_tasks, checked = set(), {}, {}
+    subjects, listeners, marks, gates = [], [], [], []
+
+    def mark(kind, **values):
+        marks.append((kind, values))
+
+    def ready():
+        if len(held) == 4 and gates and gates[0].queued:
+            entered.set()
+
+    original_semaphore = asyncio.Semaphore
+
+    class Admission(original_semaphore):
+        def __init__(self, value):
+            super().__init__(value)
+            self.queued, self.releases, self.wait_cancelled = False, 0, 0
+            gates.append(self)
+
+        async def acquire(self):
+            if self.locked():
+                self.queued = True
+                mark("queued_before_session")
+                ready()
+            try:
+                return await super().acquire()
+            except asyncio.CancelledError:
+                self.wait_cancelled += 1
+                raise
+
+        def release(self):
+            self.releases += 1
+            return super().release()
+
+    api = dict(vars(asyncio))
+    api["Semaphore"] = Admission
+    monkeypatch.setattr(task, "asyncio", types.SimpleNamespace(**api))
+    original_engine = base._get_task_engine
+
+    def subject_engine(**kwargs):
+        subject = original_engine(**kwargs)
+        subjects.append(subject)
+
+        def checkout(_conn, record, _proxy):
+            checked[id(record)] = grade_tasks.get(asyncio.current_task(), "price")
+            mark("checkout", role=checked[id(record)], count=len(checked))
+            assert len(checked) <= 5
+
+        def checkin(_conn, record):
+            mark("checkin", role=checked.pop(id(record)), count=len(checked))
+
+        def rollback(_conn):
+            mark("rollback", role=grade_tasks.get(asyncio.current_task(), "price"))
+
+        def disposed(actual):
+            assert actual is subject.sync_engine and not checked
+            mark("dispose", checked=0)
+
+        for name, callback in (
+            ("checkout", checkout),
+            ("checkin", checkin),
+            ("rollback", rollback),
+            ("engine_disposed", disposed),
+        ):
+            event.listen(subject.sync_engine, name, callback)
+            listeners.append((subject.sync_engine, name, callback))
+        return subject
+
+    monkeypatch.setattr(base, "_get_task_engine", subject_engine)
+    original_grade = oc.grade_open_contract_leg
+    first_legs = {ids[c + "-A"] for c in cohorts}
+
+    async def grade(session, **kwargs):
+        oid = kwargs["outcome_id"]
+        grade_tasks[asyncio.current_task()] = oid
+        result = await original_grade(session, **kwargs)
+        if oid in first_legs:
+            assert oid in checked.values(), "a scope is not a checked-out connection"
+            held.add(oid)
+            mark("held_after_real_updates", outcome=oid)
+            ready()
+            await release.wait()
+        return result
+
+    monkeypatch.setattr(oc, "grade_open_contract_leg", grade)
+    original_note = blend.TailReceipts.note_input
+
+    def note(self, event_id, outcome, probability, origin):
+        if outcome == ids[SGA]:
+            mark("quote_buffered")
+            quote_seen.set()
+        return original_note(self, event_id, outcome, probability, origin)
+
+    monkeypatch.setattr(blend.TailReceipts, "note_input", note)
+    original_next = socket_rig._Socket.__anext__
+
+    async def next_frame(sock):
+        if sock._pending and sock._pending[0] == quote_frame:
+            await entered.wait()
+        return await original_next(sock)
+
+    monkeypatch.setattr(socket_rig._Socket, "__anext__", next_frame)
+    original_close = task._KalshiPriceOwner.close
+
+    def close(owner):
+        mark("price_listener_closed")
+        return original_close(owner)
+
+    monkeypatch.setattr(task._KalshiPriceOwner, "close", close)
+    quote_frame = socket_rig._tick(SGA)
+    frames = [socket_rig._settle(c + "-A", result="yes") for c in cohorts]
+    frames.append(quote_frame)
+    if finish == "release":
+        for c in cohorts:
+            frames += [
+                socket_rig._tick(c + "-A", bid="0.50", ask="0.52", price="0.51"),
+                socket_rig._settle(c + "-B", result="no"),
+            ]
+    rows = [(t, mids[c], ids[t]) for c, legs in markets.items() for t, *_ in legs]
+    publisher = _Publisher(sync, ids, mids)
+    job = asyncio.create_task(
+        _consume(
+            monkeypatch,
+            engine,
+            frames=frames,
+            open_rows=rows,
+            publisher=publisher,
+            refresh=1.5,
+            flush=60.0 if finish == "recycle" else 0.02,
+        )
+    )
+
+    async def barrier(signal):
+        waiter = asyncio.create_task(signal.wait())
+        try:
+            done, _ = await asyncio.wait(
+                (waiter, job), timeout=2, return_when=asyncio.FIRST_COMPLETED
+            )
+            if job in done:
+                job.result()  # surface the original consumer failure
+            assert signal.is_set(), "consumer ended or timed out before causal barrier"
+        finally:
+            waiter.cancel()
+            await asyncio.gather(waiter, return_exceptions=True)
+
+    try:
+        await barrier(entered)
+        await barrier(quote_seen)
+        assert len(subjects) == 1 and len(held) == 4 and gates[0].queued
+        assert held.issubset(set(checked.values()))
+        assert sum(role in held for role in checked.values()) == 4
+        if finish == "release":
+            assert await _until(lambda: _legs(sync, ids)[SGA][2] == 0.41)
+            assert all(_legs(sync, ids)[c + "-A"][:2] == (None, None) for c in cohorts)
+            release.set()
+        stats = await job  # final drain, callback joins and engine disposal are real
+        final = _legs(sync, ids)
+        assert final[SGA] == (None, None, 0.41, 0.5, 0.6)
+        assert _snapshot_rows(sync) == 0
+        assert all(row[3:] == (0.5, 0.6) for row in final.values())
+        assert gates[0]._value == 4 and not gates[0]._waiters
+        assert [v for k, v in marks if k == "dispose"] == [{"checked": 0}]
+        assert next(
+            i for i, (k, _) in enumerate(marks) if k == "price_listener_closed"
+        ) < next(i for i, (k, _) in enumerate(marks) if k == "dispose")
+        if finish == "recycle":
+            assert gates[0].wait_cancelled == 1 and gates[0].releases == 4
+            assert (
+                len([v for k, v in marks if k == "rollback" and v["role"] in held]) == 4
+            )
+            assert all(final[c + "-A"] == (None, None, 0.3, 0.5, 0.6) for c in cohorts)
+            assert all(final[c + "-B"] == (None, None, 0.7, 0.5, 0.6) for c in cohorts)
+            assert all(
+                tuple(_market(sync, mids[c])) == ("open", False) for c in cohorts
+            )
+            assert (
+                stats["open_contract_settlements"]
+                == stats["open_contract_markets_resolved"]
+                == 0
+            )
+            assert not any(f.get("terminal") for f, *_ in publisher.frames)
+            assert all(
+                f["market_id"] == mids["KXNBAMVP-27"] for f, *_ in publisher.frames
+            )
+        else:
+            assert (
+                stats["open_contract_settlements"] == 10
+                and stats["open_contract_markets_resolved"] == 5
+            )
+            assert stats["settled_declined"] >= 5
+            for c in cohorts:
+                assert final[c + "-A"] == (True, "api_settlement", 1.0, 0.5, 0.6)
+                assert final[c + "-B"] == (False, "api_settlement", 0.0, 0.5, 0.6)
+                assert tuple(_market(sync, mids[c])) == ("resolved", True)
+            assert len([f for f, *_ in publisher.frames if f.get("terminal")]) == 5
+        assert stats["errors"] == 0 and stats["loops_unreaped"] == 0
+        for frame, visible, boards in publisher.frames:
+            if frame["market_id"] == mids["KXNBAMVP-27"]:
+                assert visible[SGA][2] == 0.41, "quote published before commit"
+            elif frame.get("terminal"):
+                c = next(c for c, mid in mids.items() if mid == frame["market_id"])
+                assert boards[c] == ("resolved", True)
+            for oid in frame.get("outcome_ids") or []:
+                if oid != ids[SGA]:
+                    t = next(t for t, actual in ids.items() if actual == oid)
+                    assert visible[t][1] == "api_settlement"
+        assert not any(
+            t is not asyncio.current_task()
+            and not t.done()
+            and "ordered" in repr(t.get_coro())
+            for t in asyncio.all_tasks()
+        )
+    finally:
+        if not job.done():
+            job.cancel()
+        await asyncio.gather(job, return_exceptions=True)
+        release.set()
+        for subject, name, callback in listeners:
+            event.remove(subject, name, callback)
+            assert not event.contains(subject, name, callback)
