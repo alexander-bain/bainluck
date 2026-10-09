@@ -192,8 +192,15 @@ def _fresh_admission():
     final_drain = False
     batch_marks = {1: 'one', 2: 'two'}
     queued_events, queued_marks, queued_refresh = set(), {}, False
-    def state():
-        return queued_events, queued_marks, queued_refresh
+    implicit_debt_queued = False
+    def state(*, consume=False):
+        nonlocal queued_refresh
+        result = set(queued_events), dict(queued_marks), queued_refresh
+        if consume:
+            queued_events.clear()
+            queued_marks.clear()
+            queued_refresh = False
+        return result
     return queue_committed, state, event_id_by_outcome
 """)
     wrapper.body[0].body.insert(-1, copy.deepcopy(queue))
@@ -211,8 +218,18 @@ def test_sql_skipped_repeats_service_implicit_debt_without_fresh_event_reads():
     assert queue(0, phase, []) == set()
     # An empty refresh still services the refresher's previously owed debt.
     assert state() == (set(), {}, True)
+
+
+def test_first_successful_later_phase_services_implicit_debt_exactly_once():
     queue, state, _ = _fresh_admission()
+    phase = {1: (0.3, 0.2, 0.4), 2: (0.7, 0.6, 0.8)}
+    # Index zero was lock-held or cooldown-skipped, so it never acknowledged.
     assert queue(1, phase, []) == set()
+    assert state(consume=True) == (set(), {}, True)
+    assert queue(2, phase, []) == set()
+    assert state() == (set(), {}, False)
+    # The original phase's late-bridge recheck cannot spend implicit debt again.
+    assert queue(1, phase, [], registered=set()) == set()
     assert state() == (set(), {}, False)
 
 

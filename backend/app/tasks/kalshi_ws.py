@@ -922,6 +922,8 @@ async def _run_kalshi_ws_consumer(*, sessions, prices):
         queued_events = set()
         queued_marks = {}
         queued_refresh = False
+        # A skipped/failed first phase must not starve unrelated prior debt.
+        implicit_debt_queued = False
         cancelled = False
         # #10090 — LIVE INPUT PREEMPTS THE NON-LIVE TAIL. A live game's tick
         # that arrived after the snapshot used to wait for every later phase of
@@ -988,14 +990,17 @@ async def _run_kalshi_ws_consumer(*, sessions, prices):
             await asyncio.sleep(0)
 
         def queue_committed(index, phase, written_outcome_ids, *, registered=None):
-            nonlocal queued_refresh
+            nonlocal queued_refresh, implicit_debt_queued
             blend_outcomes = (
                 written_outcome_ids if final_drain else
                 (oid for oid in written_outcome_ids if oid not in non_blend_outcome_ids)
             )
             linked_events = event_ids_for_outcomes(cohort_event_ids, blend_outcomes)
             new_events = linked_events if registered is None else linked_events - registered
-            if (index == 0 and registered is None) or new_events:
+            first_ack = registered is None and not implicit_debt_queued
+            if first_ack:
+                implicit_debt_queued = True
+            if first_ack or new_events:
                 queued_events.update(new_events)
                 queued_marks.update({
                     oid: batch_marks[oid]
