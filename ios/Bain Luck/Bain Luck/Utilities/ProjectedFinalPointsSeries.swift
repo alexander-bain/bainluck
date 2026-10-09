@@ -78,6 +78,16 @@ nonisolated struct ProjectedFinalPointsSeries: Equatable {
         return true
     }
 
+    private static func pairRefusal(_ row: Pair) -> WithheldReason? {
+        guard let home = row.home, let away = row.away else { return .incomplete }
+        guard isPoints(home), isPoints(away) else { return .invalidPoints }
+        if let probability = row.homeProbability, probability.isFinite,
+           (probability > 0.5 && home < away) || (probability < 0.5 && home > away) {
+            return .contradictsMoneyline
+        }
+        return nil
+    }
+
     /// Nil omits this optional experiment for unsupported or unproven inputs.
     @MainActor
     static func build(_ input: Input) -> Self? {
@@ -96,7 +106,13 @@ nonisolated struct ProjectedFinalPointsSeries: Equatable {
                 isRecorded($0, input: input) && $0.at >= floor.addingTimeInterval(-3600) && $0.at < floor
             }.map(\.at).min() ?? floor
         } else {
-            defaultStart = end.addingTimeInterval(-6 * 3600)
+            // #10796: a quiet pregame market can hold real forecasts older
+            // than six hours. Keep that retained history; the existing gap
+            // and last-observation rules still refuse to call it current.
+            let firstForecast = input.pairs.filter {
+                isRecorded($0, input: input) && $0.at <= end && pairRefusal($0) == nil
+            }.map(\.at).min()
+            defaultStart = min(end.addingTimeInterval(-6 * 3600), firstForecast ?? end)
         }
         let start = input.windowStartAt ?? defaultStart
         guard start <= end else { return nil }
@@ -118,13 +134,8 @@ nonisolated struct ProjectedFinalPointsSeries: Equatable {
             lhs.element.at == rhs.element.at ? lhs.offset < rhs.offset : lhs.element.at < rhs.element.at
         }.map(\.element)
         func reason(_ row: Pair) -> WithheldReason? {
+            if let refusal = pairRefusal(row) { return refusal }
             guard let home = row.home, let away = row.away else { return .incomplete }
-            guard isPoints(home), isPoints(away) else { return .invalidPoints }
-            if let probability = row.homeProbability, probability.isFinite {
-                if (probability > 0.5 && home < away) || (probability < 0.5 && home > away) {
-                    return .contradictsMoneyline
-                }
-            }
             if let score = actual(at: row.at, in: actuals), home < score.home || away < score.away {
                 return .belowActual
             }

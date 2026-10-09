@@ -6,6 +6,7 @@ import Charts
 /// Shows projected score differential (spread) and actual score difference over time.
 /// Y-axis centered at 0. Positive = home team leading, negative = away team leading.
 struct ScoreDifferentialChartView: View {
+    @ScaledMetric(relativeTo: .caption2) private var axisFontSize: CGFloat = 12
     let history: EventHistoryResponse
     let homeTeam: String
     let awayTeam: String
@@ -516,7 +517,8 @@ struct ScoreDifferentialChartView: View {
         let plan = OddsChartView.xAxisPlan(
             for: domain,
             plotWidth: OddsChartView.axisPlanWidth(
-                own: plotWidth, pageNarrowest: pageAxisPlotWidth))
+                own: plotWidth, pageNarrowest: pageAxisPlotWidth),
+            labelScale: axisFontSize / 9)
         let ticks = OddsChartView.xAxisTicks(for: domain, plan: plan)
         let actualDiffs = dataPoints.compactMap(\.actualDiff)
         let projDiffs = dataPoints.compactMap(\.projectedDiff)
@@ -620,7 +622,7 @@ struct ScoreDifferentialChartView: View {
             AxisMarks(values: ticks) { _ in
                 AxisGridLine(stroke: StrokeStyle(lineWidth: 0.15))
                     .foregroundStyle(.secondary.opacity(0.3))
-                ChartTimeAxisLabels.reservedRow(format: plan.format)
+                ChartTimeAxisLabels.reservedRow(format: plan.format, fontSize: axisFontSize)
             }
         }
         .chartXSelection(value: $selectedDate)
