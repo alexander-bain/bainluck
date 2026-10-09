@@ -29,12 +29,30 @@
  * Every refusal is `null` — the caller's cold-load path. This module chooses no
  * expiry, replacement or reconciliation policy; it only carries a deck the
  * caller already accepted.
+ *
+ * #5105 — AN UNSECTIONED EDITION (`encodeUnsectionedDeck` /
+ * `decodeUnsectionedDeck`): a tokened deck the server drew no continuation for.
+ * Same evidence shape with `boundary: null`; it exists so such a deck keeps its
+ * edition token and raw positions through Back. The adapter does not check
+ * positions on a deck without a boundary, so the decoder holds them to the
+ * section rules itself — inside `total`, one identity per position — and hands
+ * them back on the rebuilt deck. A section body never decodes through it, nor
+ * an unsectioned body through the section decoder.
  */
 import { foldContinuationPage, type ContinuationSections } from "./continuationSections";
 
 /** The section deck as stored inside a snapshot. */
 export interface StoredContinuationDeck {
   boundary: number;
+  edition: string;
+  total: number;
+  /** `[id, global server position]`, aligned with the stored cards. */
+  cards: Array<[string, number]>;
+}
+
+/** A tokened deck without a continuation, as stored inside a snapshot. */
+export interface StoredUnsectionedDeck {
+  boundary: null;
   edition: string;
   total: number;
   /** `[id, global server position]`, aligned with the stored cards. */
@@ -129,4 +147,82 @@ export function encodeContinuationDeck<T>(
   }
   const stored: StoredContinuationDeck = { boundary, edition, total, cards };
   return decodeContinuationDeck(stored, retained, getId) ? stored : null;
+}
+
+/**
+ * Rebuild a tokened deck without a continuation from stored evidence and the
+ * stored cards, or `null` when the evidence is malformed, contradictory or does
+ * not bind to exactly these cards. The returned deck carries the validated
+ * positions (the adapter records none without a boundary).
+ */
+export function decodeUnsectionedDeck<T>(
+  raw: unknown,
+  retained: readonly T[],
+  getId: (item: T) => string,
+): ContinuationSections<T> | null {
+  if (!raw || typeof raw !== "object" || Array.isArray(raw)) return null;
+  const stored = raw as Partial<StoredUnsectionedDeck>;
+  if (stored.boundary !== null || !isNonNegativeInteger(stored.total)) return null;
+  if (typeof stored.edition !== "string" || stored.edition.length === 0) return null;
+  if (!Array.isArray(stored.cards) || stored.cards.length !== retained.length) return null;
+
+  const positions = new Map<string, number>();
+  const idAt = new Map<number, string>();
+  let deck: ContinuationSections<T> | null = null;
+  for (let index = 0; index < retained.length; index += 1) {
+    const entry: unknown = stored.cards[index];
+    if (!Array.isArray(entry) || entry.length !== 2) return null;
+    const [id, position] = entry;
+    if (typeof id !== "string" || !isNonNegativeInteger(position) || position >= stored.total) return null;
+    let itemId: string;
+    try {
+      itemId = getId(retained[index]);
+    } catch {
+      return null;
+    }
+    if (itemId !== id) return null;
+    const heldPosition = positions.get(id);
+    const heldId = idAt.get(position);
+    if ((heldPosition !== undefined && heldPosition !== position) || (heldId !== undefined && heldId !== id)) return null;
+    positions.set(id, position);
+    idAt.set(position, id);
+    const result = foldContinuationPage(
+      deck,
+      { items: [retained[index]], offset: position, total: stored.total, edition: stored.edition },
+      getId,
+    );
+    if (result.status !== "ok") return null;
+    deck = result.sections;
+  }
+  if (!deck) return null;
+  return { ...deck, edition: stored.edition, total: stored.total, positions };
+}
+
+/**
+ * Encode the evidence for `retained` from an accepted tokened deck without a
+ * continuation, or `null` when the deck has a boundary or no token, or any
+ * retained card has no recorded position (or cannot be read by `getId`). Like
+ * `encodeContinuationDeck`, decoded once before it is returned.
+ */
+export function encodeUnsectionedDeck<T>(
+  deck: ContinuationSections<unknown>,
+  retained: readonly T[],
+  getId: (item: T) => string,
+): StoredUnsectionedDeck | null {
+  const { boundary, edition, total } = deck;
+  if (boundary !== null || edition === null) return null;
+  const cards: Array<[string, number]> = [];
+  for (const item of retained) {
+    let id: string;
+    try {
+      id = getId(item);
+    } catch {
+      return null;
+    }
+    const position = deck.positions.get(id);
+    if (position === undefined) return null;
+    cards.push([id, position]);
+  }
+  const stored: StoredUnsectionedDeck = { boundary: null, edition, total, cards };
+  return decodeUnsectionedDeck(stored, retained, getId) ? stored : null;
 }

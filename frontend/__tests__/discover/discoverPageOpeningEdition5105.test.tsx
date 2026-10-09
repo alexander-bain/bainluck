@@ -111,8 +111,11 @@ jest.mock("@/components/discover/DiscoverSkeletonGrid", () => ({ __esModule: tru
 import DiscoverPage from "@/app/discover/page";
 import { fetchFeed } from "@/lib/api";
 import { CONTINUATION_HEADING } from "@/components/discover/ContinuationSections";
+import { foldContinuationPage, type ContinuationSections as Sections } from "@/lib/discover/continuationSections";
 import {
+  FEED_EDITION_SNAPSHOT_VERSION,
   FEED_SECTION_SNAPSHOT_VERSION,
+  FEED_SCROLL_KEY,
   FEED_SNAPSHOT_KEY,
   FEED_SNAPSHOT_MAX_ITEMS,
   FEED_SNAPSHOT_VERSION,
@@ -489,22 +492,19 @@ describe("#5105 option ON — a retired edition restarts from page zero once", (
     await settle(10);
     expect(calls).toHaveLength(3);
 
-    // Retry revalidates page zero pinned (the retired page zero IS the current
-    // list), and — today's retry rule — the unfrozen auto-pager resumes the
-    // window the reader had already asked for.
+    // Retry asks for ONE page zero pinned to the held edition (the retired page
+    // zero IS the current list). The old frontier is not paged beside it: a
+    // retired reply there would only ask for a second, competing replacement.
     await act(async () => { unavailable.onRetry!(); });
-    await settle();
+    await settle(10);
     const retried = calls.slice(3);
-    expect(retried.map((c) => c.params)).toEqual([
-      { limit: 20, offset: 0, event_pct: 0.15, edition: "E1" },
-      { limit: 20, offset: 20, event_pct: 0.15, edition: "E1" },
-    ]);
+    expect(retried.map((c) => c.params)).toEqual([{ limit: 20, offset: 0, event_pct: 0.15, edition: "E1" }]);
+    expect(has(page, "data-unavailable")).toBe(false);
     await answer(retried[0], reply(list(30, 300), 0, { edition: "E3", boundary: 2, status: "expired" }));
     expect(sequence(page)).toEqual(["c300", "c301", "H", ...ids(302, 320)]);
-    // The resumed page was issued against the retired deck: inert, asks nothing.
-    await answer(retried[1], reply(list(40, 500), 20, { edition: "E9", status: "expired" }));
-    expect(sequence(page)).toEqual(["c300", "c301", "H", ...ids(302, 320)]);
-    expect(calls).toHaveLength(5);
+    // The new edition's window is fresh; nothing more is asked.
+    await settle(10);
+    expect(calls).toHaveLength(4);
   });
 
   it("an unsupported replacement (untokened over a section deck) is refused the same way", async () => {
@@ -650,5 +650,361 @@ describe("#5105 option ON — Back restores the sections; refresh opens a new ed
     expect(cardsOf(page)).toEqual(ids(0, 40));
     expect(textOf(page, "c2")).toBe("c2:0.9");
     expect(headings(page)).toBe(0);
+  });
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Root review of 01edbca29c — copied verbatim from ROOT-PAGE-RETURN-REPRO.test.tsx
+// (all three FAILED, EXIT 1, on 01edbca29c).
+
+describe("Root independent page return cases", () => {
+  it("a new mount without a snapshot accepts its fresh response despite the old cold SWR reply", async () => {
+    const cache = new Map<unknown, unknown>();
+    let page = await mount(cache);
+    await answer(calls[0], reply(list(40), 0, { boundary: 3, edition: "OLD" }));
+    expect(cardsOf(page)).toEqual(ids(0,20));
+    await unmount();
+    session.clear();
+    local.clear();
+    const before = calls.length;
+    page = await mount(cache);
+    expect(calls.length).toBe(before + 1);
+    await answer(lastCall(), reply(list(40,200), 0, { boundary: 3, edition: "CURRENT" }));
+    expect(cardsOf(page)).toEqual(ids(200,220));
+  });
+  it("Back retains the edition token for an enabled full opening without a continuation boundary", async () => {
+    const cache = new Map<unknown, unknown>();
+    const page = await mount(cache);
+    await answer(calls[0], reply(list(40), 0, { edition: "FULL" }));
+    expect(cardsOf(page)).toEqual(ids(0,20));
+    await unmount();
+    const before = calls.length;
+    await mount(cache);
+    expect(calls.length).toBe(before + 1);
+    expect(lastCall().params.edition).toBe("FULL");
+  });
+});
+
+it("Root late old transport failure cannot freeze an accepted replacement", async () => {
+  const page = await mount();
+  await answer(calls[0], reply(list(40), 0, { boundary: 3, edition: "OLD" }));
+  await fireSentinel();
+  const oldTail = lastCall();
+  await revalidate();
+  await answer(lastCall(), reply(list(40,200), 0, { boundary: 3, edition: "NEW", status: "expired" }));
+  expect(cardsOf(page)).toEqual(ids(200,220));
+  (oldTail as Call & { done?: boolean }).done = true;
+  await act(async () => { oldTail.reject(new Error("old request timed out")); });
+  await settle();
+  expect(has(page,"data-unavailable")).toBe(false);
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+
+async function reject(call: Call, error = new Error("network")) {
+  (call as Call & { done?: boolean }).done = true;
+  await act(async () => { call.reject(error); });
+  await settle();
+}
+
+// The app keeps ONE SWR cache and its request bookkeeping across a client-side
+// navigation; only the page unmounts. `mount()` above remounts the provider
+// too, which makes SWR drop that bookkeeping, so these tests navigate inside
+// one provider instead.
+let showPage: ((on: boolean) => void) | null = null;
+function Navigator() {
+  const [on, setOn] = React.useState(true);
+  showPage = setOn;
+  return on ? <DiscoverPage /> : null;
+}
+async function mountApp(cache: Map<unknown, unknown>) {
+  const container = (document as unknown as { createElement: (t: string) => unknown }).createElement("div");
+  (document as unknown as { body: { appendChild: (n: unknown) => void } }).body.appendChild(container);
+  root = createRoot(container as Element);
+  await act(async () => {
+    root!.render(
+      <SWRConfig value={{ provider: () => cache as never, dedupingInterval: 0 }}>
+        <CaptureMutate />
+        <Navigator />
+      </SWRConfig>,
+    );
+  });
+  await settle();
+  return container as unknown as Node;
+}
+async function leavePage() {
+  await act(async () => { showPage!(false); });
+  await settle();
+}
+async function returnToPage() {
+  await act(async () => { showPage!(true); });
+  await settle();
+}
+/** No Back snapshot or scroll mark; the first-deck preview is left alone. */
+function dropBackSnapshot() {
+  session.removeItem(FEED_SNAPSHOT_KEY);
+  session.removeItem(FEED_SCROLL_KEY);
+}
+
+describe("#5105 option ON — a request belongs to the mount that issued it", () => {
+  it("a return with no snapshot takes its own reply over the earlier mount's cached one (one provider, as in the app)", async () => {
+    const cache = new Map<unknown, unknown>();
+    const page = await mountApp(cache);
+    await answer(calls[0], reply(list(40), 0, { boundary: 3, edition: "OLD" }));
+    expect(cardsOf(page)).toEqual(ids(0, 20));
+    await leavePage();
+    session.clear();
+    local.clear();
+    const before = calls.length;
+    await returnToPage();
+    expect(calls.length).toBe(before + 1);
+    expect(cardsOf(page)).toEqual([]);
+    // The refused cached reply is not an answer: loading, not an empty end card.
+    expect(has(page, "data-skeleton")).toBe(true);
+    expect(has(page, "data-end-of-feed")).toBe(false);
+    await answer(lastCall(), reply(list(40, 200), 0, { boundary: 3, edition: "CURRENT" }));
+    expect(cardsOf(page)).toEqual(ids(200, 220));
+    expect(has(page, "data-skeleton")).toBe(false);
+    await settle(10);
+    expect(calls.length).toBe(before + 1);
+  });
+
+  it("if that return's own request fails, the reader gets the failed-load retry — not a blank page", async () => {
+    const cache = new Map<unknown, unknown>();
+    const page = await mountApp(cache);
+    await answer(calls[0], reply(list(40), 0, { boundary: 3, edition: "OLD" }));
+    await leavePage();
+    session.clear();
+    local.clear();
+    await returnToPage();
+    await reject(lastCall());
+    expect(cardsOf(page)).toEqual([]);
+    expect(has(page, "data-skeleton")).toBe(false);
+    expect(walk(page).some((n) => n["data-unavailable"] === "empty")).toBe(true);
+  });
+
+  it("an own reply the edition refuses ends the wait under today's rules (no endless skeleton)", async () => {
+    const cache = new Map<unknown, unknown>();
+    const page = await mountApp(cache);
+    await answer(calls[0], reply(list(40), 0, { boundary: 3, edition: "OLD" }));
+    await leavePage();
+    session.clear();
+    local.clear();
+    await returnToPage();
+    // Unrequested status on an unpinned request: refused, nothing adopted.
+    await answer(lastCall(), reply(list(40, 200), 0, { boundary: 3, edition: "X", status: "pinned" }));
+    expect(cardsOf(page)).toEqual([]);
+    expect(has(page, "data-skeleton")).toBe(false);
+    expect(has(page, "data-end-of-feed")).toBe(true);
+  });
+
+  it("a fast return inside SWR's dedupe window refuses the earlier mount's in-flight reply and asks once for its own", async () => {
+    const cache = new Map<unknown, unknown>();
+    const page = await mountApp(cache);
+    expect(calls).toHaveLength(1);
+    await leavePage();
+    session.clear();
+    local.clear();
+    await returnToPage();
+    // SWR shares the earlier mount's in-flight request and skips its own.
+    expect(calls).toHaveLength(1);
+    await answer(calls[0], reply(list(40), 0, { boundary: 3, edition: "OLD" }));
+    expect(cardsOf(page)).toEqual([]);
+    // ...so this mount asks once, unpinned (it holds no deck), and only once.
+    expect(calls).toHaveLength(2);
+    expect(calls[1].params).toEqual({ limit: 20, offset: 0, event_pct: 0.15 });
+    await answer(calls[1], reply(list(40, 200), 0, { boundary: 3, edition: "CURRENT" }));
+    expect(cardsOf(page)).toEqual(ids(200, 220));
+    await settle(10);
+    expect(calls).toHaveLength(2);
+  });
+
+  it("the first-deck preview still paints, and this mount's own reply replaces it — not the cached one", async () => {
+    const cache = new Map<unknown, unknown>();
+    const page = await mountApp(cache);
+    await answer(calls[0], reply(list(40), 0, { boundary: 3, edition: "OLD" }));
+    await leavePage();
+    dropBackSnapshot();
+    const before = calls.length;
+    await returnToPage();
+    expect(cardsOf(page)).toEqual(ids(0, 20));
+    expect(calls.length).toBe(before + 1);
+    await answer(lastCall(), reply(list(40, 200), 0, { boundary: 3, edition: "CURRENT" }));
+    expect(cardsOf(page)).toEqual(ids(200, 220));
+    expect(calls.length).toBe(before + 1);
+  });
+});
+
+describe("#5105 option ON — a tokened opening with no continuation keeps its edition through Back", () => {
+  it("stores the token and raw cursor, restores flat, and pins the revalidation and the next page", async () => {
+    const cache = new Map<unknown, unknown>();
+    const deck = list(40);
+    let page = await mount(cache);
+    await answer(calls[0], reply(deck, 0, { edition: "FULL" }));
+    const stored = storedSnapshot();
+    expect(stored.v).toBe(FEED_EDITION_SNAPSHOT_VERSION);
+    expect(stored.cursor).toBe(20);
+    expect(stored.hasMore).toBe(true);
+    expect(stored.sections.boundary).toBeNull();
+    await unmount();
+
+    page = await mount(cache);
+    expect(cardsOf(page)).toEqual(ids(0, 20));
+    expect(headings(page)).toBe(0);
+    expect(lastCall().params).toEqual({ limit: 20, offset: 0, event_pct: 0.15, edition: "FULL" });
+    await answer(lastCall(), reply(deck, 0, { edition: "FULL", status: "pinned" }));
+    await fireSentinel();
+    expect(lastCall().params).toEqual({ limit: 20, offset: 20, event_pct: 0.15, edition: "FULL" });
+    await answer(lastCall(), reply(deck, 20, { edition: "FULL", status: "pinned" }));
+    expect(sequence(page)).toEqual(ids(0, 40));
+  });
+
+  it("an exhausted 160-card deck restored through the 120 cap still reaches the omitted 40, with its token", async () => {
+    const cache = new Map<unknown, unknown>();
+    const deck = list(160);
+    const first = await mount(cache);
+    await answer(calls[0], reply(deck, 0, {}));
+    for (let p = 1; p < 8; p += 1) {
+      await fireSentinel();
+      await answer(lastCall(), reply(deck, p * 20, { status: "pinned" }));
+    }
+    expect(cardsOf(first)).toHaveLength(160);
+    const stored = storedSnapshot();
+    expect(stored.v).toBe(FEED_EDITION_SNAPSHOT_VERSION);
+    expect(stored.cursor).toBe(120);
+    expect(stored.hasMore).toBe(true);
+    await unmount();
+
+    const page = await mount(cache);
+    expect(cardsOf(page)).toHaveLength(120);
+    await answer(lastCall(), reply(deck, 0, { status: "pinned" }));
+    await fireSentinel();
+    expect(lastCall().params).toEqual({ limit: 20, offset: 120, event_pct: 0.15, edition: "E1" });
+    await answer(lastCall(), reply(deck, 120, { status: "pinned" }));
+    await fireSentinel();
+    await answer(lastCall(), reply(deck, 140, { status: "pinned" }));
+    expect(sequence(page)).toEqual(ids(0, 160));
+    expect(headings(page)).toBe(0);
+  });
+
+  it("OFF, the same tokened opening still writes today's v2 bytes", async () => {
+    mockOptionOn = false;
+    await mount();
+    await answer(calls[0], reply(list(40), 0, { edition: "FULL" }));
+    const stored = storedSnapshot();
+    expect(stored.v).toBe(FEED_SNAPSHOT_VERSION);
+    expect("sections" in stored || "cursor" in stored).toBe(false);
+  });
+});
+
+describe("#5105 option ON — a failure is inert once its request is no longer current", () => {
+  it("a late failed replacement cannot freeze the page zero that replaced its deck", async () => {
+    const page = await mount();
+    await answer(calls[0], reply(list(40), 0, { boundary: 3 }));
+    await fireSentinel();
+    await answer(calls[1], reply(list(40, 500), 20, { edition: "E9", status: "expired" }));
+    const replacement = calls[2];
+    expect(replacement.params).toEqual({ limit: 20, offset: 0, event_pct: 0.15 });
+    await revalidate();
+    await answer(lastCall(), reply(list(40, 200), 0, { boundary: 3, edition: "NEW", status: "expired" }));
+    expect(cardsOf(page)).toEqual(ids(200, 220));
+    await reject(replacement);
+    expect(has(page, "data-unavailable")).toBe(false);
+    expect(cardsOf(page)).toEqual(ids(200, 220));
+  });
+
+  it("a late failed manual refresh cannot freeze the page zero that replaced its deck", async () => {
+    const page = await mount();
+    await answer(calls[0], reply(list(20), 0, { boundary: 3 }));
+    expect(endOfFeed.onRefresh).toBeDefined();
+    await act(async () => { endOfFeed.onRefresh!(); });
+    await settle();
+    const refresh = lastCall();
+    expect(refresh.params).toEqual({ limit: 20, offset: 0, event_pct: 0.15 });
+    await revalidate();
+    await answer(lastCall(), reply(list(40, 200), 0, { boundary: 3, edition: "NEW", status: "expired" }));
+    expect(cardsOf(page)).toEqual(ids(200, 220));
+    await reject(refresh);
+    expect(has(page, "data-unavailable")).toBe(false);
+    expect(cardsOf(page)).toEqual(ids(200, 220));
+  });
+
+  it("a CURRENT failed page still raises the retry and keeps every card; the retry holds the frontier until it resolves", async () => {
+    const page = await mount();
+    await answer(calls[0], reply(list(60), 0, { boundary: 3 }));
+    await fireSentinel();
+    await reject(calls[1]);
+    expect(walk(page).some((n) => n["data-unavailable"] === "inline")).toBe(true);
+    expect(sequence(page)).toEqual(["c0", "c1", "c2", "H", ...ids(3, 20)]);
+
+    // An unavailable retry: one page zero, the notice comes back, no page beside it.
+    await act(async () => { unavailable.onRetry!(); });
+    await settle(10);
+    expect(calls).toHaveLength(3);
+    expect(calls[2].params).toEqual({ limit: 20, offset: 0, event_pct: 0.15, edition: "E1" });
+    await answer(calls[2], UNAVAILABLE);
+    await settle(10);
+    expect(walk(page).some((n) => n["data-unavailable"] === "inline")).toBe(true);
+    expect(calls).toHaveLength(3);
+
+    // A pinned retry: only after it resolves does the pager resume the window
+    // the reader had already asked for — once.
+    await act(async () => { unavailable.onRetry!(); });
+    await settle(10);
+    expect(calls).toHaveLength(4);
+    expect(calls[3].params).toEqual({ limit: 20, offset: 0, event_pct: 0.15, edition: "E1" });
+    await answer(calls[3], reply(list(60), 0, { boundary: 3, status: "pinned" }));
+    expect(calls).toHaveLength(5);
+    expect(calls[4].params).toEqual({ limit: 20, offset: 20, event_pct: 0.15, edition: "E1" });
+    await answer(calls[4], reply(list(60), 20, { boundary: 3, status: "pinned" }));
+    expect(has(page, "data-unavailable")).toBe(false);
+    expect(sequence(page)).toEqual(["c0", "c1", "c2", "H", ...ids(3, 40)]);
+  });
+});
+
+describe("#5105 option ON — an accepted reply refreshes the bodies already on screen", () => {
+  it("an overlapping page of a tokened opening updates the held card, not only the deck", async () => {
+    const page = await mount();
+    await answer(calls[0], reply(list(40), 0, {}));
+    await fireSentinel();
+    expect(lastCall().params).toEqual({ limit: 20, offset: 20, event_pct: 0.15, edition: "E1" });
+    await answer(lastCall(), {
+      items: [card(19, 0.91), ...list(19, 20)],
+      offset: 20,
+      total: 40,
+      has_more: true,
+      edition: "E1",
+      edition_status: "pinned",
+    });
+    expect(textOf(page, "c19")).toBe("c19:0.91");
+    expect(cardsOf(page)).toEqual(ids(0, 39));
+  });
+
+  it("a repeated window of a restored section deck updates the tail cards it re-sends", async () => {
+    const all = list(60);
+    const pageId = (item: Card) => `event-${item.data.id}`;
+    let deck: Sections<Card> | null = null;
+    for (const offset of [0, 20]) {
+      const folded = foldContinuationPage(deck, { items: all.slice(offset, offset + 20), offset, total: 60, edition: "E1", continuation_start: 3 }, pageId);
+      if (folded.status !== "ok") throw new Error(folded.reason);
+      deck = folded.sections;
+    }
+    // c30 was received but not kept, so the stored cursor moves back to 30 and
+    // the next page re-sends c31..c39, which ARE on screen.
+    const kept = all.slice(0, 40).filter((c) => c.data.id !== 30);
+    const raw = serializeFeedSnapshot({ page1: kept.slice(0, 20), rest: kept.slice(20), visibleCount: 39, hasMore: true }, { deck: deck!, cursor: 40, getId: pageId })!;
+    expect(JSON.parse(raw).cursor).toBe(30);
+    session.setItem(FEED_SNAPSHOT_KEY, raw);
+    win.__blDiscoverDocumentSeen = true; // a client-side Back
+    const page = await mount();
+    expect(textOf(page, "c35")).toBe("c35:0.5");
+    await answer(lastCall(), reply(all, 0, { boundary: 3, status: "pinned" }));
+    await fireSentinel();
+    expect(lastCall().params).toEqual({ limit: 20, offset: 30, event_pct: 0.15, edition: "E1" });
+    const repriced = list(60, 0, 0.66);
+    await answer(lastCall(), reply(repriced, 30, { boundary: 3, status: "pinned" }));
+    expect(textOf(page, "c35")).toBe("c35:0.66");
+    expect(textOf(page, "c39")).toBe("c39:0.66");
+    expect(textOf(page, "c30")).toBe("c30:0.66");
   });
 });

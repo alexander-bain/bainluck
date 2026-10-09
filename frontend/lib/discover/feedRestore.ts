@@ -38,7 +38,14 @@
 // bottom, so the decisions are testable without a browser.
 
 import type { ContinuationSections } from "./continuationSections";
-import { decodeContinuationDeck, encodeContinuationDeck, type StoredContinuationDeck } from "./continuationSnapshot";
+import {
+  decodeContinuationDeck,
+  decodeUnsectionedDeck,
+  encodeContinuationDeck,
+  encodeUnsectionedDeck,
+  type StoredContinuationDeck,
+  type StoredUnsectionedDeck,
+} from "./continuationSnapshot";
 
 /** The reader's loaded edition. Rewritten when the loaded pages change. */
 export const FEED_SNAPSHOT_KEY = "discover_feed_snapshot";
@@ -63,6 +70,15 @@ export const FEED_SNAPSHOT_VERSION = 2;
  * continuation back into the opening.
  */
 export const FEED_SECTION_SNAPSHOT_VERSION = "2+continuation.1";
+
+/**
+ * #5105 — the version a TOKENED deck with no continuation is written under,
+ * for the same reason as the section version: a reader that does not opt in
+ * refuses it (a cold load) rather than read a pinned edition as a token-less
+ * legacy one. Only a section-aware writer that passes the deck's raw `cursor`
+ * produces it; without one, such a deck still writes today's v2 bytes.
+ */
+export const FEED_EDITION_SNAPSHOT_VERSION = "2+edition.1";
 
 /**
  * How long a snapshot is worth restoring.
@@ -137,6 +153,17 @@ export interface FeedSectionSnapshot<T> extends FeedSnapshot<T> {
  */
 export type FeedSectionWrite<T> = { deck: ContinuationSections<unknown> | null; cursor?: number } & FeedSectionOptions<T>;
 
+/**
+ * Whether a write carries an edition that must not be stored as legacy: a
+ * section deck, or a tokened deck without a section whose writer passed its raw
+ * cursor (`FEED_EDITION_SNAPSHOT_VERSION`). Everything else is today's v2.
+ */
+function writesEdition<T>(section: FeedSectionWrite<T> | undefined): section is FeedSectionWrite<T> & { deck: ContinuationSections<unknown> } {
+  if (!section?.deck) return false;
+  if (section.deck.boundary !== null) return true;
+  return section.deck.edition !== null && section.cursor !== undefined;
+}
+
 interface StoredSnapshot<T> extends FeedSnapshot<T> {
   v: number;
 }
@@ -145,6 +172,12 @@ interface StoredSectionSnapshot<T> extends FeedSnapshot<T> {
   v: typeof FEED_SECTION_SNAPSHOT_VERSION;
   sections: StoredContinuationDeck;
   cursor?: number;
+}
+
+interface StoredEditionSnapshot<T> extends FeedSnapshot<T> {
+  v: typeof FEED_EDITION_SNAPSHOT_VERSION;
+  sections: StoredUnsectionedDeck;
+  cursor: number;
 }
 
 interface StoredScroll extends FeedScrollMark {
@@ -195,14 +228,32 @@ export function capSnapshotItems<T>(page1: T[], rest: T[]): { page1: T[]; rest: 
  *  #5105: with `section.deck` a section deck (non-null boundary), the edition is
  *  written under `FEED_SECTION_SNAPSHOT_VERSION` with each retained card's
  *  position evidence, and `null` is returned when that evidence cannot be bound
- *  — never a legacy snapshot of an intended section. Without `section`, or with
- *  a legacy deck, the bytes are exactly today's. */
+ *  — never a legacy snapshot of an intended section. A tokened deck without a
+ *  section, written with its `cursor`, is stored the same way under
+ *  `FEED_EDITION_SNAPSHOT_VERSION`. Without `section`, or with a legacy deck,
+ *  the bytes are exactly today's. */
 export function serializeFeedSnapshot<T>(
   snapshot: FeedSnapshot<T>,
   section?: FeedSectionWrite<T>,
 ): string | null {
   if (!Array.isArray(snapshot.page1) || snapshot.page1.length === 0) return null;
   const capped = capSnapshotItems(snapshot.page1, snapshot.rest ?? []);
+  if (writesEdition(section) && section.deck.boundary === null && section.cursor !== undefined) {
+    const sections = encodeUnsectionedDeck(section.deck, [...capped.page1, ...capped.rest], section.getId);
+    if (!sections) return null;
+    const frontier = retainedFrontier(section.deck, new Set(sections.cards.map(([id]) => id)), section.cursor, snapshot.hasMore);
+    if (!frontier) return null;
+    const stored: StoredEditionSnapshot<T> = {
+      v: FEED_EDITION_SNAPSHOT_VERSION,
+      page1: capped.page1,
+      rest: capped.rest,
+      visibleCount: snapshot.visibleCount,
+      hasMore: frontier.hasMore,
+      sections,
+      cursor: frontier.cursor,
+    };
+    return JSON.stringify(stored);
+  }
   if (section?.deck && section.deck.boundary !== null) {
     const sections = encodeContinuationDeck(section.deck, [...capped.page1, ...capped.rest], section.getId);
     if (!sections) return null;
@@ -249,7 +300,9 @@ export function parseFeedSnapshot<T>(raw: string | null): FeedSnapshot<T> | null
  * `sections: null` and a section edition only when its deck rebuilds through
  * the adapter against exactly the stored cards. A v2 body carrying section
  * evidence, or a section body whose evidence is missing or does not bind, is
- * refused — it never falls through to legacy.
+ * refused — it never falls through to legacy. A tokened edition without a
+ * section (`FEED_EDITION_SNAPSHOT_VERSION`) is read the same way, with
+ * `sections.boundary` null and its required cursor.
  */
 export function parseFeedSnapshot<T>(raw: string | null, section: FeedSectionOptions<T>): FeedSectionSnapshot<T> | null;
 export function parseFeedSnapshot<T>(
@@ -275,8 +328,21 @@ export function parseFeedSnapshot<T>(
     if (!snapshot || !section) return snapshot;
     return { ...snapshot, sections: null };
   }
-  // Without the opt-in a section edition is refused exactly as an unknown
-  // version is: a cold load, not a flattened deck.
+  // Without the opt-in a section or tokened edition is refused exactly as an
+  // unknown version is: a cold load, not a flattened or unpinned deck.
+  if (candidate.v === FEED_EDITION_SNAPSHOT_VERSION && section) {
+    const snapshot = readStoredEdition(candidate);
+    if (!snapshot) return null;
+    const sections = decodeUnsectionedDeck(
+      (candidate as Partial<StoredEditionSnapshot<T>>).sections,
+      [...snapshot.page1, ...snapshot.rest],
+      section.getId,
+    );
+    if (!sections) return null;
+    const cursor = (candidate as Partial<StoredEditionSnapshot<T>>).cursor;
+    if (!isCursor(cursor, sections.total)) return null;
+    return { ...snapshot, sections, cursor };
+  }
   if (candidate.v !== FEED_SECTION_SNAPSHOT_VERSION || !section) return null;
   const snapshot = readStoredEdition(candidate);
   if (!snapshot) return null;
@@ -422,7 +488,7 @@ export function writeFeedSnapshot<T>(
   section?: FeedSectionWrite<T>,
 ): void {
   if (typeof window === "undefined") return;
-  if (section?.deck && section.deck.boundary !== null) {
+  if (writesEdition(section)) {
     writeSectionSnapshot(snapshot, section);
     return;
   }

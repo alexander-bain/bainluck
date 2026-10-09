@@ -79,8 +79,13 @@ import { useDiscoverPriceStream } from "@/hooks/useDiscoverPriceStream";
 import { groupedLeaves, priceKey } from "@/lib/discover/priceRefresh";
 import { admitCollection, isCollectionItem, placeCollections, splitCollections } from "@/lib/discover/collectionFeed";
 import { DISCOVER_OPENING_EDITION_ENABLED } from "@/lib/discover/openingEditionOption";
-import { useDiscoverOpeningEdition, type OpeningEditionTagged } from "@/hooks/useDiscoverOpeningEdition";
-import type { EditionDeck, EditionTransition, FeedEditionRequest } from "@/lib/discover/feedEditionTransition";
+import {
+  useDiscoverOpeningEdition,
+  type OpeningEditionTagged,
+  type OwnedEditionRequest,
+  type OwnedEditionTransition,
+} from "@/hooks/useDiscoverOpeningEdition";
+import type { EditionDeck } from "@/lib/discover/feedEditionTransition";
 import { partitionBySection } from "@/lib/discover/continuationSections";
 import ContinuationSections from "@/components/discover/ContinuationSections";
 
@@ -616,10 +621,29 @@ export default function DiscoverPage() {
     clear: clearEdition,
     restore: restoreEdition,
     restoreLegacy: restoreLegacyEdition,
+    owner: editionOwner,
     issuePageZero: issueEditionPageZero,
     issueNextPage: issueEditionNextPage,
+    owns: ownsEditionRequest,
     decide: decideEdition,
   } = useDiscoverOpeningEdition<FeedItem>(getItemId);
+  // #5105 — the principal this mount's SWR fetcher last issued an owned page
+  // zero for. A reply another mount issued is refused; if this mount has not
+  // asked yet, it asks once (see the data effect).
+  const editionSwrIssuedForRef = useRef<string | null>(null);
+  // #5105 — controlled page-zero requests in flight (a retry, a manual
+  // refresh, a replacement). While any is, the pager does not advance the old
+  // frontier beside it; releasing the hold re-runs the auto-pager.
+  const editionPagerHoldRef = useRef(0);
+  const [editionPagerHold, setEditionPagerHold] = useState(0);
+  const holdEditionPager = useCallback(() => {
+    editionPagerHoldRef.current += 1;
+    setEditionPagerHold(editionPagerHoldRef.current);
+  }, []);
+  const releaseEditionPager = useCallback(() => {
+    editionPagerHoldRef.current -= 1;
+    setEditionPagerHold(editionPagerHoldRef.current);
+  }, []);
   // Queue 309 — first-run orientation state. `null` means "storage not read
   // yet": the pre-mount render is deliberately today's Discover exactly, so no
   // first-run UI can appear in SSR markup and diverge from first hydration.
@@ -820,6 +844,7 @@ export default function DiscoverPage() {
       // issued, and travels with the reply (a background tick pins the held
       // edition; the first request holds none and its URL is unchanged).
       const openingRequest = editionEnabled && !editionLegacySessionRef.current ? issueEditionPageZero(true) : undefined;
+      if (openingRequest) editionSwrIssuedForRef.current = requestPrincipal;
       return fetchFeed(
         { limit, offset, event_pct: FEED_EVENT_PCT, ...(openingRequest?.edition ? { edition: openingRequest.edition } : {}) },
         { sharedAnonEligible: sharedAnonEligibleRef.current, authenticated: !!user }
@@ -868,7 +893,7 @@ export default function DiscoverPage() {
     items: readonly FeedItem[],
     swrValue?: NonNullable<typeof data>,
   ) => {
-    adoptEdition(next);
+    adoptEdition(next, items);
     replacePreviewRef.current = false;
     previewOwnerRef.current = null;
     setSavedDeckPreview(false);
@@ -893,11 +918,14 @@ export default function DiscoverPage() {
    * until a supported page zero replaces it; an unavailable, unsupported or
    * failed reply keeps the deck and its cursor and raises the retry state. A
    * second retirement of the same generation while this is in flight asks
-   * nothing more.
+   * nothing more, and the pager holds until it resolves. A failure of a
+   * request that is no longer current (another page zero replaced the deck
+   * meanwhile) is inert, exactly like a late success.
    */
-  const requestEditionReplacement = useCallback(async (request: FeedEditionRequest) => {
+  const requestEditionReplacement = useCallback(async (request: OwnedEditionRequest) => {
     if (editionReplacingRef.current !== null && editionReplacingRef.current === request.generation) return;
     editionReplacingRef.current = request.generation;
+    holdEditionPager();
     try {
       const { limit } = initialFeedRequest();
       const payload = await fetchFeed(
@@ -911,11 +939,12 @@ export default function DiscoverPage() {
         setFeedUnavailable(true);
       }
     } catch {
-      setFeedUnavailable(true);
+      if (ownsEditionRequest(request)) setFeedUnavailable(true);
     } finally {
       if (editionReplacingRef.current === request.generation) editionReplacingRef.current = null;
+      releaseEditionPager();
     }
-  }, [decideEdition, editionReplacingRef, replaceEdition, requestPrincipal, user]);
+  }, [decideEdition, editionReplacingRef, holdEditionPager, ownsEditionRequest, releaseEditionPager, replaceEdition, requestPrincipal, user]);
 
   /**
    * #5105 — apply one reply on the ON path. `decideEditionTransition` decides;
@@ -925,10 +954,13 @@ export default function DiscoverPage() {
    * Cards stay in the page's own state: a pinned page zero folds its fresh
    * bodies in through the existing `reconcilePage1`, a later page appends what
    * the deck had not held, and the deck records identity, position, section
-   * and the raw server cursor beside them.
+   * and the raw server cursor beside them. Every accepted reply's bodies also
+   * replace the displayed copies of cards already held, wherever they sit — an
+   * overlapping or repeated window must not leave old prices on screen while
+   * `deck.bodies` holds the new ones.
    */
-  const applyEditionReply = useCallback(async (request: FeedEditionRequest, payload: unknown, source: "page-zero" | "page") => {
-    const transition: EditionTransition<FeedItem> = decideEdition(request, payload, renderedCountRef.current > 0);
+  const applyEditionReply = useCallback(async (request: OwnedEditionRequest, payload: unknown, source: "page-zero" | "page") => {
+    const transition: OwnedEditionTransition<FeedItem> = decideEdition(request, payload, renderedCountRef.current > 0);
     if (transition.kind === "preserve") {
       if (transition.reason === "stale_request") return;
       // A page that cannot extend the edition must not be re-asked in a loop:
@@ -946,19 +978,32 @@ export default function DiscoverPage() {
     }
     // Every card the page holds was received into the deck it is replacing.
     const prior = editionDeckRef.current?.sections.membership ?? new Map<string, unknown>();
-    extendEdition(transition.deck);
+    extendEdition(transition.deck, request.offset, transition.items);
     const items = [...transition.items];
+    const bodies = new Map(items.map((item) => [getItemId(item), item] as const));
+    const refresh = (prev: FeedItem[]) => {
+      let changed = false;
+      const next = prev.map((item) => {
+        const body = bodies.get(getItemId(item));
+        if (body === undefined || body === item) return item;
+        changed = true;
+        return body;
+      });
+      return changed ? next : prev;
+    };
     if (request.offset === 0) {
       setPage1Items((prev) => reconcilePage1(prev, items, getItemId));
+      setAllItems(refresh);
       writeFirstDeck({ items, hasMore: transition.deck.hasMore }, firstDeckOwner(user?.uid, false));
     } else {
       const fresh = items.filter((item) => !prior.has(getItemId(item)));
-      if (fresh.length > 0) {
-        setAllItems((prev) => {
-          const prevIds = new Set(prev.map(getItemId));
-          return [...prev, ...fresh.filter((item) => !prevIds.has(getItemId(item)))];
-        });
-      }
+      setPage1Items(refresh);
+      setAllItems((prev) => {
+        const held = refresh(prev);
+        if (fresh.length === 0) return held;
+        const prevIds = new Set(held.map(getItemId));
+        return [...held, ...fresh.filter((item) => !prevIds.has(getItemId(item)))];
+      });
     }
     setFeedUnavailable(false);
     setHasMore(transition.deck.hasMore);
@@ -980,7 +1025,19 @@ export default function DiscoverPage() {
     // one that carries none is never consumed. A legacy session (restored from
     // a token-less snapshot) keeps today's handling below.
     if (editionEnabled && !editionLegacySessionRef.current) {
-      if (data.openingRequest) void applyEditionReplyRef.current(data.openingRequest, data, "page-zero");
+      if (data.openingRequest?.owner === editionOwner) {
+        void applyEditionReplyRef.current(data.openingRequest, data, "page-zero");
+        return;
+      }
+      // Another mount's reply (or an untagged one) is never this mount's. SWR
+      // shares a key's in-flight and just-finished request across mounts and
+      // then skips its own mount revalidation, so a mount that has not issued
+      // a page zero for this reader asks once now; a revalidation SWR deferred
+      // dedupes onto it, so this is still the one initial request.
+      if (editionSwrIssuedForRef.current !== requestPrincipal) {
+        editionSwrIssuedForRef.current = requestPrincipal;
+        void mutateFeed();
+      }
       return;
     }
     const decision = decideFeedPage({
@@ -1021,10 +1078,14 @@ export default function DiscoverPage() {
     // sentinel would re-fire against a backend that just said it has nothing,
     // spinning forever instead of terminating on an actionable retry.
     if (loadingMore || !hasMore || feedUnavailable) return;
+    // #5105 — ON: a controlled page zero in flight owns the frontier; the old
+    // one is not paged beside it (releasing the hold re-runs this).
+    if (editionEnabled && editionPagerHoldRef.current > 0) return;
     setLoadingMore(true);
     // #5105 — ON: the next page belongs to the held edition, at its RAW server
     // cursor (never a count of held cards), with its token. A retired reply
-    // keeps every card on screen while one unpinned page zero is asked for.
+    // keeps every card on screen while one unpinned page zero is asked for. A
+    // failure of a page whose deck has since been replaced is inert.
     if (editionEnabled && !editionLegacySessionRef.current) {
       const request = issueEditionNextPage();
       try {
@@ -1039,7 +1100,7 @@ export default function DiscoverPage() {
           await applyEditionReplyRef.current(request, resp, "page");
         }
       } catch {
-        setFeedUnavailable(true);
+        if (request === null || ownsEditionRequest(request)) setFeedUnavailable(true);
       }
       setLoadingMore(false);
       return;
@@ -1088,14 +1149,43 @@ export default function DiscoverPage() {
       setFeedUnavailable(true);
     }
     setLoadingMore(false);
-  }, [allItems, page1Items, loadingMore, hasMore, feedUnavailable, editionEnabled, editionLegacySessionRef, issueEditionNextPage]);
+    // `editionPagerHold` is read through its ref; it is listed so that releasing
+    // the hold gives the auto-pager effect a new callback and it runs again.
+  }, [allItems, page1Items, loadingMore, hasMore, feedUnavailable, editionEnabled, editionLegacySessionRef, issueEditionNextPage, ownsEditionRequest, editionPagerHold]);
 
   // L2-238: the reader's way out of an unavailable feed. Clears the state and
   // revalidates page 1 — already-rendered cards stay exactly where they are.
+  //
+  // #5105 — ON: the retry is one controlled page zero, pinned to the held
+  // edition and owned by this mount. The notice clears, but the pager holds
+  // until that page zero resolves — the old frontier is not paged beside it,
+  // so no second request (or a second replacement) can race it. A failure is
+  // shown only while the retry is still current.
+  const retryEditionPageZero = useCallback(async () => {
+    const request = issueEditionPageZero(true);
+    holdEditionPager();
+    setFeedUnavailable(false);
+    try {
+      const { limit, offset } = initialFeedRequest();
+      const payload = await fetchFeed(
+        { limit, offset, event_pct: FEED_EVENT_PCT, ...(request.edition ? { edition: request.edition } : {}) },
+        { sharedAnonEligible: sharedAnonEligibleRef.current, authenticated: !!user },
+      );
+      await applyEditionReplyRef.current(request, payload, "page-zero");
+    } catch {
+      if (ownsEditionRequest(request)) setFeedUnavailable(true);
+    } finally {
+      releaseEditionPager();
+    }
+  }, [holdEditionPager, issueEditionPageZero, ownsEditionRequest, releaseEditionPager, user]);
   const handleRetryUnavailable = useCallback(() => {
+    if (editionEnabled && !editionLegacySessionRef.current) {
+      void retryEditionPageZero();
+      return;
+    }
     setFeedUnavailable(false);
     mutateFeed();
-  }, [mutateFeed]);
+  }, [mutateFeed, editionEnabled, editionLegacySessionRef, retryEditionPageZero]);
 
   /**
    * UX-P087 (#1909) — retry a FAILED load without reloading the document.
@@ -1144,65 +1234,73 @@ export default function DiscoverPage() {
     // issued unpinned under the context held NOW. Only a replacement opens the
     // new edition, and today's refusal of an empty page one still holds.
     const openingRequest = editionEnabled ? issueEditionPageZero(false) : null;
-    const decided: { transition?: EditionTransition<FeedItem> } = {};
-    const outcome = await runManualRefresh({
-      fetchPage: () => {
-        const { limit, offset } = initialFeedRequest();
-        return fetchFeed(
-          { limit, offset, event_pct: FEED_EVENT_PCT },
-          { sharedAnonEligible: sharedAnonEligibleRef.current, authenticated: !!user }
-        );
-      },
-      decide: (payload) => {
-        if (!openingRequest) {
-          return decideFeedPage({
-            payload,
-            previousHasMore: hasMoreRef.current,
-            hasRenderedItems: renderedCountRef.current > 0,
-          });
-        }
-        const transition = decideEdition(openingRequest, payload, renderedCountRef.current > 0);
-        decided.transition = transition;
-        return transition.kind === "replace"
-          ? { acceptItems: true, hasMore: transition.deck.hasMore, showUnavailable: false }
-          : { acceptItems: false, hasMore: hasMoreRef.current, showUnavailable: transition.kind === "preserve" && transition.showUnavailable };
-      },
-      getId: getItemId,
-    });
-    if (outcome.kind === "keep") {
-      setFeedUnavailable(outcome.showUnavailable);
-      return;
+    const decided: { transition?: OwnedEditionTransition<FeedItem> } = {};
+    // The pager holds while this page zero is in flight (see
+    // `retryEditionPageZero`) and is released only after its outcome applied.
+    if (openingRequest) holdEditionPager();
+    try {
+      const outcome = await runManualRefresh({
+        fetchPage: () => {
+          const { limit, offset } = initialFeedRequest();
+          return fetchFeed(
+            { limit, offset, event_pct: FEED_EVENT_PCT },
+            { sharedAnonEligible: sharedAnonEligibleRef.current, authenticated: !!user }
+          );
+        },
+        decide: (payload) => {
+          if (!openingRequest) {
+            return decideFeedPage({
+              payload,
+              previousHasMore: hasMoreRef.current,
+              hasRenderedItems: renderedCountRef.current > 0,
+            });
+          }
+          const transition = decideEdition(openingRequest, payload, renderedCountRef.current > 0);
+          decided.transition = transition;
+          return transition.kind === "replace"
+            ? { acceptItems: true, hasMore: transition.deck.hasMore, showUnavailable: false }
+            : { acceptItems: false, hasMore: hasMoreRef.current, showUnavailable: transition.kind === "preserve" && transition.showUnavailable };
+        },
+        getId: getItemId,
+      });
+      if (outcome.kind === "keep") {
+        // A refresh another page zero overtook is inert, its failure included.
+        if (!openingRequest || ownsEditionRequest(openingRequest)) setFeedUnavailable(outcome.showUnavailable);
+        return;
+      }
+      if (openingRequest && decided.transition?.kind === "replace") {
+        replaceEdition(decided.transition.deck, outcome.page1, { ...outcome.payload, firstDeckPrincipal: requestPrincipal, openingRequest });
+        return;
+      }
+      replacePreviewRef.current = false;
+      previewOwnerRef.current = null;
+      setSavedDeckPreview(false);
+      writeFirstDeck({ items: outcome.page1, hasMore: outcome.hasMore }, firstDeckOwner(user?.uid, false));
+      editionScoresRef.current = outcome.scores;
+      setOrderingProfile(readDiscoverInteractionProfile());
+      setPage1Items(outcome.page1);
+      setAllItems([]);
+      setVisibleCount(PAGE_SIZE);
+      // 🔴 #7417 — THE SEED MOVES WITH THE WINDOW OR THE AUTO-PAGER STALLS. After
+      // a Back the seed is the restored window (say 60). Resetting `visibleCount`
+      // to 20 and leaving the seed at 60 makes `visibleCount <= initialVisibleCount`
+      // true, which `shouldLoadNextPage` reads as "the reader has not touched the
+      // window" — so pagination sits out the next three sentinel fires while the
+      // reader scrolls a 20-card feed. Reachable by anyone who presses Back and
+      // then taps refresh.
+      setInitialVisibleCount(PAGE_SIZE);
+      setHasMore(outcome.hasMore);
+      // A manual refresh is the reader asking for a fresh feed, exactly as a
+      // reload is. Keeping the old edition would let the NEXT Back restore the
+      // feed they just chose to discard.
+      clearFeedRestore();
+      // Hand SWR the same page so the next background tick folds into THIS
+      // edition (the data effect's reconcile of identical ids is a no-op).
+      mutateFeed(outcome.payload, { revalidate: false });
+    } finally {
+      if (openingRequest) releaseEditionPager();
     }
-    if (openingRequest && decided.transition?.kind === "replace") {
-      replaceEdition(decided.transition.deck, outcome.page1, { ...outcome.payload, firstDeckPrincipal: requestPrincipal, openingRequest });
-      return;
-    }
-    replacePreviewRef.current = false;
-    previewOwnerRef.current = null;
-    setSavedDeckPreview(false);
-    writeFirstDeck({ items: outcome.page1, hasMore: outcome.hasMore }, firstDeckOwner(user?.uid, false));
-    editionScoresRef.current = outcome.scores;
-    setOrderingProfile(readDiscoverInteractionProfile());
-    setPage1Items(outcome.page1);
-    setAllItems([]);
-    setVisibleCount(PAGE_SIZE);
-    // 🔴 #7417 — THE SEED MOVES WITH THE WINDOW OR THE AUTO-PAGER STALLS. After
-    // a Back the seed is the restored window (say 60). Resetting `visibleCount`
-    // to 20 and leaving the seed at 60 makes `visibleCount <= initialVisibleCount`
-    // true, which `shouldLoadNextPage` reads as "the reader has not touched the
-    // window" — so pagination sits out the next three sentinel fires while the
-    // reader scrolls a 20-card feed. Reachable by anyone who presses Back and
-    // then taps refresh.
-    setInitialVisibleCount(PAGE_SIZE);
-    setHasMore(outcome.hasMore);
-    // A manual refresh is the reader asking for a fresh feed, exactly as a
-    // reload is. Keeping the old edition would let the NEXT Back restore the
-    // feed they just chose to discard.
-    clearFeedRestore();
-    // Hand SWR the same page so the next background tick folds into THIS
-    // edition (the data effect's reconcile of identical ids is a no-op).
-    mutateFeed(outcome.payload, { revalidate: false });
-  }, [mutateFeed, user, editionEnabled, issueEditionPageZero, decideEdition, replaceEdition, requestPrincipal]);
+  }, [mutateFeed, user, editionEnabled, issueEditionPageZero, decideEdition, replaceEdition, requestPrincipal, holdEditionPager, releaseEditionPager, ownsEditionRequest]);
 
   // Infinite scroll observer. Re-armed whenever the sentinel unmounts and
   // remounts (L2-238: an unavailable page swaps the spinner for a retry, so the
@@ -1513,6 +1611,14 @@ export default function DiscoverPage() {
       trackEvent("feed_card_suppressed", { card_type, suppression_reason, count, surface: "discover" });
     }
   }, [suppressedEnvelopes]);
+
+  // #5105 — ON, with no deck held, SWR's value can be another mount's reply,
+  // which the data effect refuses. That is not this reader's answer yet: until
+  // this mount's own page zero lands it reads as loading, and if that request
+  // fails it reads as a failed load — never an empty "caught up" end card, and
+  // never a blank page. Off (or a legacy session), this is false.
+  const editionAwaitingOwnReply = editionEnabled && !editionLegacySessionRef.current && editionDeck === null &&
+    !!data && data.openingRequest?.owner !== editionOwner;
 
   const streamedPrices = useDiscoverPriceStream(processedItems, user?.uid ?? 'anonymous');
   const visibleItems = streamedPrices.items.slice(0, visibleCount);
@@ -1919,7 +2025,7 @@ export default function DiscoverPage() {
           the column ladder is deliberately untouched. */}
       <DiscoverFeedbackAttemptContext.Provider value={handleFeedbackAttempt}>
       <main className="max-w-content mx-auto px-4 py-4">
-        {(isLoading || authLoading) && visibleItems.length === 0 && <DiscoverSkeletonGrid />}
+        {(isLoading || authLoading || (editionAwaitingOwnReply && !feedError)) && visibleItems.length === 0 && <DiscoverSkeletonGrid />}
         {savedDeckPreview && visibleItems.length > 0 && (
           <p role="status" className="mb-3 text-xs text-text-secondary">
             {feedError || feedUnavailable ? "Saved cards · updates unavailable" : "Updating saved cards…"}
@@ -1932,7 +2038,7 @@ export default function DiscoverPage() {
             drifting apart is how one of them ends up saying something untrue.
             No latch: this branch is derived from SWR's error on every render, so
             a successful revalidation clears it without any reset of its own. */}
-        {!isLoading && feedError && !data && (
+        {!isLoading && feedError && (!data || editionAwaitingOwnReply) && (
           <FeedUnavailableNotice
             onRetry={handleRetryFailedLoad}
             variant={visibleItems.length > 0 ? "inline" : "empty"}
@@ -1950,7 +2056,7 @@ export default function DiscoverPage() {
           <FeedUnavailableNotice onRetry={handleRetryUnavailable} variant="empty" />
         )}
 
-        {!isLoading && !authLoading && !feedError && !feedUnavailable && visibleItems.length === 0 && (
+        {!isLoading && !authLoading && !feedError && !feedUnavailable && !editionAwaitingOwnReply && visibleItems.length === 0 && (
           <div className="py-16 flex justify-center">
             <EndOfFeedCard count={0} onRefresh={handleRefreshFeed} />
           </div>
