@@ -917,6 +917,7 @@ FLUSH_CLOCK_SLACK_S = 1e-6
 
 async def run_flush_cadence(
     flush, period: float, stop=None, *, failed_retry_interval_s: Optional[float] = None,
+    wake=None, work_count: Optional[Callable[[], int]] = None,
 ) -> None:
     """#10090 — start a flush every ``period`` seconds, START to START.
 
@@ -933,20 +934,22 @@ async def run_flush_cadence(
     * One flush at a time. The next starts only after the current one returns,
       so a slow flush makes the next start late — never two in flight — and the
       buffer keeps coalescing per outcome meanwhile (backpressure unchanged).
-    * The ceiling. Never more than one flush per ``period``: the configured
-      cadence is the bound, as it always was. A flush that takes longer than
-      ``period`` is followed by the next at once (rate ``1/work``, not more).
+    * The ceiling. Actual work starts at most once per ``period``. Unchanged
+      callers count every flush; opt-in callers distinguish empty probes from
+      attempted work. A flush taking longer than ``period`` is followed by
+      the next at once (rate ``1/work``, not more).
     * The retry interval. A flush that reports failure (returns ``False``) waits
       a full ``period`` from when it FAILED, exactly as before. An opt-in caller
       may pass ``failed_retry_interval_s`` to keep its previous retry delay while
       shortening only its healthy timer (#10662). Unchanged callers retain their
       configured period, including custom periods.
-    * The first flush is one ``period`` after the loop starts, as before.
+    * Unchanged callers first flush one ``period`` after the loop starts.
+      An opt-in wake may start unused budget sooner, including after idle.
 
     ``flush`` is called with the flush's start on the refresher's clock
-    (`_mono`), which the refresher uses for its per-event floor: starts are at
-    least ``period`` apart, so a floor equal to the period admits every flush,
-    whatever each flush's write happened to cost before its refresh ran.
+    (`_mono`), which the refresher uses for its per-event floor. Actual work
+    starts remain at least ``period`` apart; an empty probe stamped nothing,
+    so a subsequent input may wake sooner without bypassing that floor.
 
     #10657 — ``stop`` (an ``asyncio.Event``) ends the loop at its next turn.
     The consumer sets it before it cancels the loop, because a cancellation
@@ -956,6 +959,11 @@ async def run_flush_cadence(
     across a recycle). Checked after every sleep and every flush; a stopped
     loop never starts another flush — the consumer's own drain is the last.
     """
+    # An opt-in buffered-input event may shorten only an unused timer phase.
+    # `work_count` belongs to the caller: it increments inside the actual flush
+    # when price/withdrawal/debt work was attempted. Empty timer probes therefore
+    # cannot spend the real-work budget. No callback spawns a task per tick.
+    # Unchanged callers still count every flush, with their original first wait.
     import asyncio
 
     def stopped() -> bool:
@@ -963,15 +971,37 @@ async def run_flush_cadence(
 
     retry_period = period if failed_retry_interval_s is None else failed_retry_interval_s
     due = _mono() + period
+    not_before = _mono()  # no actual flush has used the budget yet
     while not stopped():
         wait = due - _mono()
         if wait > 0:
-            await asyncio.sleep(wait)
+            if wake is None or _mono() < not_before:
+                # Budget/retry waits never wake early. Ticks coalesce into the
+                # same Event while this sleep retains the full fixed bound.
+                await asyncio.sleep(wait)
+            else:
+                try:
+                    async with asyncio.timeout(wait):
+                        await wake.wait()
+                except TimeoutError:
+                    pass  # retain ordinary timer/debt probes during quiet input
+                else:
+                    wake.clear()
+                    due = _mono()
+                    continue
             if stopped():
                 return
         started = max(due, _mono())
+        before = work_count() if work_count is not None else None
+        if wake is not None:
+            # Clear BEFORE the flush captures its batch. A tick during its
+            # work sets the same bounded event for the next eligible turn.
+            wake.clear()
         ok = await flush(started)
+        used = work_count is None or work_count() != before
         due = started + period if ok is not False else _mono() + retry_period
+        if used or ok is False:
+            not_before = due
 
 
 #: #10657 — how long a consumer waits, after its final drain, for its stopped

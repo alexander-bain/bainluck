@@ -50,6 +50,8 @@ class _PMCatalogFlushBoundary:
         self.active = 0
         self.changing = False
         self.stamps: Optional["_PMStampOwner"] = None
+        self.flush_wake = asyncio.Event()
+        self.flush_work = 0
 
     def stamp_owner(self, refresher) -> "_PMStampOwner":
         if self.stamps is None:
@@ -2026,6 +2028,17 @@ async def _run_polymarket_ws_consumer(*, sessions, stop=None):
             withdraw_events = event_ids_for_outcomes(
                 event_id_by_outcome, withdraw_cohort_ids,
             )
+            standalone_books = standalone_open_outcome_ids(
+                withdraw_cohort_ids, open_outcome_ids, event_id_by_outcome,
+                open_complement_of,
+            )
+            pending_reader = getattr(blend_refresher, "pending_event_ids", None)
+            if batch or withdraw_cohort_ids - standalone_books or (
+                pending_reader is not None and pending_reader()
+            ):
+                # This flush attempts real price, withdrawal or owed blend
+                # work. An empty timer probe does not spend its rate budget.
+                catalog_boundary.flush_work += 1
         unfinished_price_ids: set[int] = set()
         # Committed this flush, refresh not yet called.
         owed: list[int] = []
@@ -2597,6 +2610,11 @@ async def _run_polymarket_ws_consumer(*, sessions, stop=None):
                     return
                 for outcome_id, leg_bid, leg_ask in legs:
                     withdraw_buffer[outcome_id] = (leg_bid, leg_ask)
+                if any(
+                    oid not in open_outcome_ids or event_id_by_outcome.get(oid) is not None
+                    for oid, _bid, _ask in legs
+                ):
+                    catalog_boundary.flush_wake.set()
             return
         if legs:
             async with buffer_lock:
@@ -2619,11 +2637,15 @@ async def _run_polymarket_ws_consumer(*, sessions, stop=None):
         async with buffer_lock:
             if input_generation != routing_generation:
                 return
-            for outcome_id, leg_prob in with_complements(
-                targets, prob, open_complement_of
-            ):
+            priced = with_complements(targets, prob, open_complement_of)
+            for outcome_id, leg_prob in priced:
                 price_buffer[outcome_id] = leg_prob
                 _mark_input(outcome_id, leg_prob, "price", msg)
+            if any(
+                oid not in open_outcome_ids or event_id_by_outcome.get(oid) is not None
+                for oid, _prob in priced
+            ):
+                catalog_boundary.flush_wake.set()
 
     def _tick_targets(asset_id: str) -> list[int]:
         """Every leg a tick in this token prices: its owner, then its mirrors.
@@ -2711,11 +2733,15 @@ async def _run_polymarket_ws_consumer(*, sessions, stop=None):
         async with buffer_lock:
             if input_generation != routing_generation:
                 return
-            for outcome_id, leg_prob in with_complements(
-                targets, prob, open_complement_of
-            ):
+            priced = with_complements(targets, prob, open_complement_of)
+            for outcome_id, leg_prob in priced:
                 price_buffer[outcome_id] = leg_prob
                 _mark_input(outcome_id, leg_prob, "trade", msg)
+            if any(
+                oid not in open_outcome_ids or event_id_by_outcome.get(oid) is not None
+                for oid, _prob in priced
+            ):
+                catalog_boundary.flush_wake.set()
         stats["trade_updates"] += 1
 
     async def handle_resolved(msg: dict):
@@ -2870,6 +2896,8 @@ async def _run_polymarket_ws_consumer(*, sessions, stop=None):
         await run_flush_cadence(
             flush_prices, flush_period, stop=loops_stop,
             failed_retry_interval_s=PRICE_FLUSH_SECONDS,
+            wake=catalog_boundary.flush_wake,
+            work_count=lambda: catalog_boundary.flush_work,
         )
 
     async def standalone_loop():
