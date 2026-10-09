@@ -57,19 +57,25 @@ final class FoldedQuoteStream10090Tests: XCTestCase {
     private final class Client: EventDetailProviding {
         struct Missing: Error {}
         var response: EventDetail
+        var historyResponse: EventHistoryResponse?
         private(set) var eventFetches = 0
         private(set) var historyFetches = 0
         init(_ response: EventDetail) { self.response = response }
         func fetchEvent(id: Int) async throws -> EventDetail { eventFetches += 1; return response }
-        func fetchEventHistory(id: Int, hours: Int) async throws -> EventHistoryResponse { historyFetches += 1; throw Missing() }
+        func fetchEventHistory(id: Int, hours: Int) async throws -> EventHistoryResponse {
+            historyFetches += 1
+            guard let historyResponse else { throw Missing() }
+            return historyResponse
+        }
         func fetchRelatedFutures(eventId: Int) async throws -> RelatedFuturesResponse { throw Missing() }
         func fetchTeamProgression(eventId: Int) async throws -> TeamProgressionResponse { throw Missing() }
         func fetchGameMarkets(eventId: Int) async throws -> GameMarketsResponse { throw Missing() }
         func fetchLineMovement(eventId: Int) async throws -> LineMovementResponse { throw Missing() }
     }
 
-    private func loaded(_ held: EventDetail) async -> (Client, Handle, EventDetailViewModel) {
+    private func loaded(_ held: EventDetail, history: EventHistoryResponse? = nil) async -> (Client, Handle, EventDetailViewModel) {
         let client = Client(held), handle = Handle()
+        client.historyResponse = history
         let vm = EventDetailViewModel(eventId: 4242, client: client, makeStreamHandle: { _ in handle },
             now: { 1_790_355_605 }, sleep: { _ in try? await Task.sleep(nanoseconds: 60_000_000_000) })
         await vm.load(); handle.fire("open")
@@ -170,6 +176,32 @@ final class FoldedQuoteStream10090Tests: XCTestCase {
         await vm.load()
         XCTAssertEqual(vm.event?.currentOdds?.homeProbability, 0.52)
         XCTAssertEqual(vm.event?.blendFoldRevision?.revision?.rows, ["4242": 21, "999": 5])
+    }
+
+    private func history(edgeAt: String) throws -> EventHistoryResponse {
+        let decoder = JSONDecoder()
+        decoder.keyDecodingStrategy = .convertFromSnakeCase
+        return try decoder.decode(EventHistoryResponse.self, from: Data("""
+        {"event_id":4242,"home_team":"Celtics","away_team":"Knicks","status":"live","history":[],
+         "aggregate_line":[{"timestamp":"\(edgeAt)","home_probability":0.6}],
+         "blend_edge_pinned":true,"blend_edge_fold_revision":\(Self.folded)}
+        """.utf8))
+    }
+
+    func testAnOlderClockRemovalAsksHistoryOnceAndAForwardQuoteAsksNothing() async throws {
+        // Quote observed 17:10. A drawn edge at 17:05 is overtaken by the quote's
+        // point; one at 17:11 (a removal left an older surviving quote) is not.
+        for (edge, rereads) in [("2026-09-25T17:05:00Z", 0), ("2026-09-25T17:11:00Z", 1)] {
+            let (client, handle, vm) = await loaded(try page(), history: try history(edgeAt: edge))
+            let (events, histories) = (client.eventFetches, client.historyFetches)
+            handle.pendingRaw()
+            handle.result(Self.quote())
+            for _ in 0..<200 where client.historyFetches == histories || client.eventFetches == events { await Task.yield() }
+            XCTAssertEqual(vm.event?.currentOdds?.homeProbability, 0.52, edge)
+            XCTAssertEqual(client.historyFetches, histories + rereads, edge)
+            XCTAssertEqual(client.eventFetches, events + rereads, edge)
+            vm.stopRefresh()
+        }
     }
 
     // MARK: - Opt-in

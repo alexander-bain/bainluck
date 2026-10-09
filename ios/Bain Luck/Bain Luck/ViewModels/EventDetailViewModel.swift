@@ -967,6 +967,10 @@ final class EventDetailViewModel: ObservableObject {
         recordPriceActivity(from: prior, to: current)
         if armScoreCatchUp, current.status == "live" { configureAutoRefresh() }
         stream?.acknowledgeAcceptedPrice()
+        // A removal can advance the fold on an OLDER clock, which the chart
+        // buffer refuses: the existing revision-aware check asks history once.
+        // A forward-clock quote ends the drawn line on the hero and asks nothing.
+        requestChartRevisionRefreshIfNeeded()
     }
 
     /// Write a pushed price into the model the page already reads.
