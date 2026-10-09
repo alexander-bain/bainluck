@@ -53,6 +53,7 @@ import app.services.kalshi_ws as kalshi_svc
 import app.tasks.kalshi_ws as kalshi_task
 import app.tasks.live_blend_refresh as blend_mod
 import app.tasks.polymarket_ws as poly_task
+import app.services.polymarket_ws as poly_svc
 from app.utils.repair_lock_budget import SET_LOCK_TIMEOUT_SQL
 
 YES_TOKEN = "111"
@@ -108,12 +109,13 @@ class _Frames:
                   The failing write awaits it before raising.
     """
 
-    def __init__(self, frames, gate=None, gated=(), ack=None):
+    def __init__(self, frames, gate=None, gated=(), ack=None, initial_ready=None):
         self._frames = list(frames)
         self._gate = gate
         self._gated = list(gated)
         self._ack = ack
         self._released = False
+        self._initial_ready = initial_ready
 
     async def send(self, _payload):
         return None
@@ -128,6 +130,11 @@ class _Frames:
             self._ack.set()
         if self._frames:
             return self._frames.pop(0)
+        if self._initial_ready is not None:
+            # The service asks for the next frame only after dispatching ALL
+            # initial frames. Batch tests use this as their scheduling premise,
+            # rather than assuming the timer will let both legs arrive first.
+            self._initial_ready.set()
         if self._gate is not None and self._gated:
             await self._gate.wait()
             self._released = True
@@ -136,11 +143,12 @@ class _Frames:
         raise StopAsyncIteration  # pragma: no cover
 
 
-def _install_socket(monkeypatch, frames, gate=None, gated=(), ack=None):
+def _install_socket(monkeypatch, frames, gate=None, gated=(), ack=None,
+                    initial_ready=None):
     def _connect(*_a, **_kw):
         class _Ctx:
             async def __aenter__(self_inner):
-                return _Frames(frames, gate, gated, ack)
+                return _Frames(frames, gate, gated, ack, initial_ready)
 
             async def __aexit__(self_inner, *_exc):
                 return False
@@ -190,6 +198,12 @@ class _FlakySession:
                 stmt.table.name == "futures_outcomes"
                 and price_writes(stmt, params)
             ):
+                if "observe_buffer" in self._budget:
+                    # Measure the actual retained buffer at the write boundary,
+                    # not cumulative requeue counts (which count attempts).
+                    self._budget["parked_samples"].append(
+                        self._budget["observe_buffer"]()
+                    )
                 # Q491 repair 2 (CERT-659): a recycle cancelling `flush_loop`
                 # lands as a CancelledError INSIDE the write, which is a
                 # BaseException and so slips past `except Exception`. Simulated
@@ -268,7 +282,8 @@ def _poly_frame(event_type, asset_id, **kw):
 
 
 async def _run_poly(monkeypatch, frames, fail_writes=0, gated=(), flush=0.02,
-                    recycle=0.5, cancel_writes=0):
+                    recycle=0.5, cancel_writes=0, batch_initial_frames=False,
+                    final_only=False):
     """Drive the real Polymarket consumer to one planned recycle.
 
     ``flush`` well under ``recycle`` so the loop gets many attempts: the ship is
@@ -277,14 +292,51 @@ async def _run_poly(monkeypatch, frames, fail_writes=0, gated=(), flush=0.02,
     """
     writes: list[tuple[int, float]] = []
     budget = {"fail_writes": fail_writes, "failed": 0,
-              "cancel_writes": cancel_writes, "cancelled": 0}
+              "cancel_writes": cancel_writes, "cancelled": 0,
+              "periodic_flushes": 0, "parked_samples": []}
     gate = asyncio.Event() if gated else None
     ack = asyncio.Event() if gated else None
+    initial_ready = asyncio.Event() if batch_initial_frames else None
+    clients = []
+    original_client = poly_svc.PolymarketWebSocket
+
+    class RecordingClient(original_client):
+        def __init__(self, **kwargs):
+            super().__init__(**kwargs)
+            clients.append(self)
+
+    def observe_buffer():
+        callback = clients[0].on_price
+        cells = dict(zip(callback.__code__.co_freevars, callback.__closure__))
+        return dict(cells["price_buffer"].cell_contents)
+
+    budget["observe_buffer"] = observe_buffer
+    monkeypatch.setattr(poly_svc, "PolymarketWebSocket", RecordingClient)
+    original_cadence = blend_mod.run_flush_cadence
+
+    async def controlled_cadence(write, period, stop=None, **kwargs):
+        # A long timer alone no longer suppresses the input wake. Explicitly
+        # hold periodic scheduling for tests whose subject is ONLY the real
+        # consumer's final drain; every production drain/write remains real.
+        if final_only:
+            await stop.wait()
+            return
+        if initial_ready is not None:
+            await initial_ready.wait()
+
+        async def counted_write(started):
+            if kwargs.get("wake") is not None:
+                budget["periodic_flushes"] += 1
+            return await write(started)
+
+        await original_cadence(counted_write, period, stop=stop, **kwargs)
+
+    monkeypatch.setattr(blend_mod, "run_flush_cadence", controlled_cadence)
 
     monkeypatch.setattr(poly_task, "SUBSCRIPTION_REFRESH_SECONDS", recycle)
     monkeypatch.setattr(poly_task, "PRICE_FLUSH_SECONDS", flush)
     monkeypatch.setattr(blend_mod, "LiveBlendRefresher", _NoopRefresher)
-    _install_socket(monkeypatch, frames, gate, gated, ack)
+    _install_socket(monkeypatch, frames, gate, gated, ack, initial_ready)
     _install_slate(monkeypatch, POLY_SLATE, writes, budget, gate, ack)
 
     stats = await poly_task._run_polymarket_ws_consumer()
@@ -375,6 +427,7 @@ class TestAFailedFlushKeepsThePrice:
             # `async with`, so BOTH legs of the batch are lost together. That
             # is precisely why the retry has to restore the batch, not a row.
             fail_writes=1,
+            batch_initial_frames=True,
         )
 
         assert dict(writes) == {
@@ -383,6 +436,29 @@ class TestAFailedFlushKeepsThePrice:
         }, writes
         assert len(writes) == 2, f"a leg was lost with the failed batch: {writes}"
         assert stats["errors"] == 1 and stats["requeued"] == 2, stats
+
+    async def test_an_idle_wake_before_the_second_leg_retains_both_prices(
+        self, monkeypatch,
+    ):
+        """The new ordering is safe too: the first leg wakes a write, and the
+        second arrives while that write is failing. Retry must retain the
+        failed leg without losing or duplicating the newly buffered sibling."""
+        writes, stats, budget = await _run_poly(
+            monkeypatch,
+            [_poly_frame("best_bid_ask", YES_TOKEN, best_bid="0.68", best_ask="0.72")],
+            fail_writes=1,
+            gated=[_poly_frame(
+                "best_bid_ask", NO_TOKEN, best_bid="0.28", best_ask="0.32",
+            )],
+        )
+        assert budget["parked_samples"][0] == {YES_OUTCOME_ID: pytest.approx(.70)}
+        assert dict(writes) == {
+            YES_OUTCOME_ID: pytest.approx(.70),
+            NO_OUTCOME_ID: pytest.approx(.30),
+        }
+        assert len(writes) == 2
+        assert stats["errors"] == 1 and stats["requeued"] == 1
+        assert stats["final_flush_dropped"] == 0
 
 
 class TestTheRetryNeverResurrectsAStalePrice:
@@ -449,6 +525,15 @@ class TestTheBufferCannotGrowWithoutBound:
                 _poly_frame("best_bid_ask", NO_TOKEN, best_bid="0.28", best_ask="0.32"),
             ],
             fail_writes=10_000,  # never recovers
+            batch_initial_frames=True,
+            gated=[
+                frame
+                for _ in range(20)
+                for frame in (
+                    _poly_frame("best_bid_ask", YES_TOKEN, best_bid=".88", best_ask=".92"),
+                    _poly_frame("best_bid_ask", NO_TOKEN, best_bid=".08", best_ask=".12"),
+                )
+            ],
         )
 
         assert writes == [], "no write should have landed during a total outage"
@@ -460,6 +545,12 @@ class TestTheBufferCannotGrowWithoutBound:
             "the parked set must stay at one entry per outcome; "
             f"got {stats}"
         )
+        assert len(budget["parked_samples"]) == budget["failed"]
+        assert all(set(sample) == {YES_OUTCOME_ID, NO_OUTCOME_ID}
+                   for sample in budget["parked_samples"]), budget["parked_samples"]
+        assert budget["parked_samples"][-1] == {
+            YES_OUTCOME_ID: pytest.approx(.90), NO_OUTCOME_ID: pytest.approx(.10),
+        }, "the bounded buffer must coalesce the burst to each leg's newest price"
 
 
 # ------------------------- the repair: CERT-654's BLOCK, made a test ----------
@@ -474,9 +565,10 @@ class TestTheFinalFlushRetriesInsteadOfRequeueing:
     `requeued=1`."* Exactly right, and the original Q491 guard could not see it
     because every case it tested received another PERIODIC flush.
 
-    These tests remove that safety net: ``flush`` is set LONGER than ``recycle``
-    so ``flush_loop`` never fires and **the only flush of the consumer's life is
-    the one in the `finally`**. That is the shape the certifier probed, and it
+    These tests remove that safety net: the test-only scheduling gate holds
+    periodic flushes until stop, so **the only flush of the consumer's life is
+    the one in the `finally`**. A long timer alone cannot suppress an input wake.
+    That is the shape the certifier probed, and it
     is the shape a real recycle hits every ``SUBSCRIPTION_REFRESH_SECONDS``.
     """
 
@@ -487,14 +579,16 @@ class TestTheFinalFlushRetriesInsteadOfRequeueing:
             monkeypatch,
             [_poly_frame("best_bid_ask", YES_TOKEN, best_bid="0.68", best_ask="0.72")],
             fail_writes=1,
-            flush=5.0,      # longer than the recycle: no periodic flush EVER runs
+            flush=5.0,
             recycle=0.25,
+            final_only=True,
         )
 
         assert budget["failed"] == 1, (
             "the harness must actually have failed a write, or this proves "
             f"nothing; got {budget}"
         )
+        assert budget["periodic_flushes"] == 0
         # THE REPAIR. Pre-repair this was `writes == []` — the price was requeued
         # into a buffer the consumer then abandoned.
         assert writes == [(YES_OUTCOME_ID, pytest.approx(0.70))], (
@@ -542,15 +636,17 @@ class TestTheFinalFlushRetriesInsteadOfRequeueing:
         With one healthy tick and no failures there must be exactly ONE write,
         produced by the final drain.
         """
-        writes, stats, _budget = await _run_poly(
+        writes, stats, budget = await _run_poly(
             monkeypatch,
             [_poly_frame("best_bid_ask", YES_TOKEN, best_bid="0.68", best_ask="0.72")],
             fail_writes=0,
             flush=5.0,
             recycle=0.25,
+            final_only=True,
         )
 
         assert writes == [(YES_OUTCOME_ID, pytest.approx(0.70))]
+        assert budget["periodic_flushes"] == 0
         assert stats["errors"] == 0
         assert stats["final_flush_retries"] == 0, (
             "a healthy final flush needs no retry; a non-zero count here means "
@@ -572,9 +668,11 @@ class TestTheFinalFlushRetriesInsteadOfRequeueing:
                 fail_writes=10_000,   # never recovers
                 flush=5.0,
                 recycle=0.25,
+                final_only=True,
             )
 
         assert writes == []
+        assert budget["periodic_flushes"] == 0
         assert budget["failed"] == 2, (
             "the drain must have made exactly FINAL_FLUSH_ATTEMPTS tries, so the "
             f"bound is real and not accidental; got {budget}"
@@ -699,8 +797,9 @@ class TestACancellationMidWriteCannotLoseAPrice:
                         "best_bid_ask", YES_TOKEN, best_bid="0.68", best_ask="0.72"
                     )],
                     cancel_writes=10_000,   # every write, drain attempts included
-                    flush=5.0,              # no periodic flush: the drain is the only one
+                    flush=5.0,
                     recycle=0.25,
+                    final_only=True,        # the drain is the only writer
                 )
 
         stranded = [
