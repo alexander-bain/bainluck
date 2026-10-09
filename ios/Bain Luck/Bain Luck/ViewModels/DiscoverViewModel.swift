@@ -34,6 +34,26 @@ protocol DiscoverFeedProviding: Sendable {
     /// over another's (the `boolean_only_a_to_b_publish` counterexample).
     nonisolated func currentFeedPrincipal() async -> String
 
+    /// #5102/#5105: the two fetches above, carrying an accepted edition token.
+    /// `nil` means an unpinned request (new opening, manual replacement). Defaulted
+    /// below to the token-less calls so every existing fake keeps compiling and
+    /// behaving as before; only `APIClient` and edition-aware fakes see the token.
+    nonisolated func fetchDiscoverFeed(
+        limit: Int,
+        offset: Int,
+        eventPct: Double?,
+        edition: String?,
+        cacheTTL: TimeInterval?
+    ) async throws -> FeedResponse
+
+    nonisolated func fetchDiscoverFeedResolvingPrincipal(
+        limit: Int,
+        offset: Int,
+        eventPct: Double?,
+        edition: String?,
+        cacheTTL: TimeInterval?
+    ) async throws -> DiscoverFeedFetchResult
+
     /// Whether the optimistic last-good cache seed may be admitted for the CURRENT
     /// persisted identity before auth restore resolves (L2-212 Item 1 / C76). Reports
     /// whether the current namespace is signed-in and whether a credential is
@@ -94,6 +114,30 @@ extension DiscoverFeedProviding {
     /// holds for principal-agnostic fakes and the publish/persist gate stays
     /// publish-always (same behavior as before this seam existed).
     nonisolated func currentFeedPrincipal() async -> String { "" }
+
+    /// Default: a fake that does not model editions ignores the token.
+    nonisolated func fetchDiscoverFeed(
+        limit: Int,
+        offset: Int,
+        eventPct: Double?,
+        edition: String?,
+        cacheTTL: TimeInterval?
+    ) async throws -> FeedResponse {
+        try await fetchDiscoverFeed(
+            limit: limit, offset: offset, eventPct: eventPct, cacheTTL: cacheTTL)
+    }
+
+    /// Default: a fake that does not model editions ignores the token.
+    nonisolated func fetchDiscoverFeedResolvingPrincipal(
+        limit: Int,
+        offset: Int,
+        eventPct: Double?,
+        edition: String?,
+        cacheTTL: TimeInterval?
+    ) async throws -> DiscoverFeedFetchResult {
+        try await fetchDiscoverFeedResolvingPrincipal(
+            limit: limit, offset: offset, eventPct: eventPct, cacheTTL: cacheTTL)
+    }
 
     /// Default: anonymous namespace, seed admissible — an unmodeled fake seeds its
     /// last-good exactly as before.
@@ -1697,6 +1741,33 @@ extension APIClient: DiscoverFeedProviding {
     /// actor so a mid-flight identity change is reflected at publication time.
     nonisolated func currentFeedPrincipal() async -> String {
         await resolvedFeedIdentity()
+    }
+
+    /// #5105: the edition-carrying twins route through the same two builders, so
+    /// the token reaches pagination AND the principal-resolving offset-0
+    /// revalidation with the identity-at-dispatch fences unchanged.
+    nonisolated func fetchDiscoverFeed(
+        limit: Int,
+        offset: Int,
+        eventPct: Double?,
+        edition: String?,
+        cacheTTL: TimeInterval?
+    ) async throws -> FeedResponse {
+        try await fetchFeedPersistingLastGood(
+            limit: limit, offset: offset, eventPct: eventPct, edition: edition,
+            cacheTTL: cacheTTL).response
+    }
+
+    nonisolated func fetchDiscoverFeedResolvingPrincipal(
+        limit: Int,
+        offset: Int,
+        eventPct: Double?,
+        edition: String?,
+        cacheTTL: TimeInterval?
+    ) async throws -> DiscoverFeedFetchResult {
+        try await fetchFeedPersistingLastGood(
+            limit: limit, offset: offset, eventPct: eventPct, edition: edition,
+            cacheTTL: cacheTTL)
     }
 
     /// The optimistic-seed admission context for the current identity (L2-212 Item 1
