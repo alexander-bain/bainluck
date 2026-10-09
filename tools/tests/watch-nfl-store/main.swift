@@ -169,6 +169,11 @@ actor SuspendedTransport: WatchNFLCollectionTransport {
         unchanged(sink)
         if mode == "cancel-surface" { check(store.membership == nil, "inactive cancellation clears membership") }
         if mode == "rollback" || mode == "failure" { check(store.errorMessage != nil, "failure is visible") }
+        if mode == "removed-member" {
+            check(store.errorMessage == "Dallas Cowboys at Philadelphia Eagles is no longer available in this collection. Choose another game or refresh.", "removed game explains the exact tapped pairing")
+            check(store.membership?.games.map(\.id) == [501], "healthy current sibling stays available")
+        }
+        if mode == "withdrawal" { check(store.errorMessage == nil, "withdrawal keeps the existing collection-unavailable presentation") }
         await finish(transport)
     }
     @MainActor static func newerOperationDeniesPendingTap(_ f: Fixtures) async throws {
@@ -177,9 +182,10 @@ actor SuspendedTransport: WatchNFLCollectionTransport {
         let selection = tap(store, sink); let tapRequest = await transport.next()
         let newer = Task { await store.refresh() }; let newerRequest = await transport.next()
         await transport.resolve(newerRequest, membership: try f.membership(revision: 6)); await newer.value
-        await transport.resolve(tapRequest, membership: try f.membership(revision: 5))
+        await transport.resolve(tapRequest, membership: try f.membership(revision: 5, removing: 502))
         let selected = await selection.value
         check(!selected && store.membership?.revision == 6, "superseded tap cannot borrow newer validation")
+        check(store.errorMessage == nil, "late missing-member response cannot add a stale removal notice")
         unchanged(sink); await finish(transport)
     }
     @MainActor static func validSelectsOnce(_ f: Fixtures) async throws {
@@ -208,6 +214,25 @@ actor SuspendedTransport: WatchNFLCollectionTransport {
         check(!selected && count == 1, "inactive tap cannot request or select")
         unchanged(sink); await finish(transport)
     }
+    @MainActor static func removedGameRecovers(_ f: Fixtures) async throws {
+        let transport = SuspendedTransport(), store = makeStore(transport), sink = SelectionSink()
+        try await display(store, transport, f)
+        let selection = tap(store, sink); let missing = await transport.next()
+        await transport.resolve(missing, membership: try f.membership(revision: 5, removing: 502))
+        let refused = await selection.value
+        check(!refused && store.errorMessage != nil, "current removal is explained")
+        unchanged(sink)
+        let refresh = Task { await store.refresh() }; let retry = await transport.next()
+        check(store.errorMessage == nil && store.isLoading, "explicit refresh clears old removal notice")
+        await transport.resolve(retry, membership: try f.membership(revision: 6)); await refresh.value
+        let next = tap(store, sink); let validation = await transport.next()
+        await transport.resolve(validation, membership: try f.membership(revision: 7))
+        let accepted = await next.value
+        check(accepted && sink.calls == [502] && store.errorMessage == nil, "returned game needs fresh validation and selects once")
+        let count = await transport.count()
+        check(count == 4, "display, denied tap, explicit refresh and valid tap only; no automatic retry")
+        await finish(transport)
+    }
     @MainActor static func main() async throws {
         let f = try Fixtures(directory: URL(fileURLWithPath: CommandLine.arguments[1]))
         try await olderRefreshLoses(f)
@@ -218,6 +243,7 @@ actor SuspendedTransport: WatchNFLCollectionTransport {
         try await newerOperationDeniesPendingTap(f)
         try await validSelectsOnce(f)
         try await inactiveBeforeTap(f)
-        print("12 deterministic NFL store scenarios PASS")
+        try await removedGameRecovers(f)
+        print("13 deterministic NFL store scenarios PASS")
     }
 }

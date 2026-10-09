@@ -70,12 +70,18 @@ final class WatchNFLCollectionStore: ObservableObject {
     }
     /// A tap validates current published membership once before changing selection.
     @MainActor func validateGame(_ id: Int) async -> Int? {
-        guard !isLoading, let week, membership?.games.contains(where: { $0.id == id }) == true else { return nil }
+        guard !isLoading, let week,
+              let tapped = membership?.games.first(where: { $0.id == id }) else { return nil }
         let expectedRevision = revision + 1
         await refresh()
         guard revision == expectedRevision, !Task.isCancelled, !isLoading, errorMessage == nil,
-              self.week == week, membership?.published == true,
-              membership?.games.contains(where: { $0.id == id }) == true else { return nil }
+              self.week == week, membership?.published == true else { return nil }
+        guard membership?.games.contains(where: { $0.id == id }) == true else {
+            // Only the current successful validation can explain a missing member.
+            // Retain the tapped names, never its old score or chance.
+            errorMessage = "\(tapped.away) at \(tapped.home) is no longer available in this collection. Choose another game or refresh."
+            return nil
+        }
         return id
     }
     /// Keep the final validation guard and selection effect in one MainActor turn.
