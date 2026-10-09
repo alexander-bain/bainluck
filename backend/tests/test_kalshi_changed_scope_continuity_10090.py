@@ -485,3 +485,70 @@ async def test_applying_a_production_sized_scope_does_not_stall_the_loop(monkeyp
             beat.cancel()
             await asyncio.gather(beat, return_exceptions=True)
         await _stop(running)
+
+
+class NewlyLiveScope(Scope):
+    def __init__(self, map_new_leg=True):
+        super().__init__()
+        self.map_new_leg = map_new_leg
+
+    async def execute(self, statement, *args):
+        columns = [str(c) for c in getattr(statement, "selected_columns", ())]
+        if len(columns) == 3 and "win_probability_sources" in " ".join(columns):
+            return Result([(900, 7, None)] + (
+                [(904, 9, None)] if self.version == 2 else []
+            ))
+        result = await super().execute(statement, *args)
+        if not self.map_new_leg and columns == [
+            "futures_outcomes.external_id", "futures_outcomes.market_id",
+            "futures_outcomes.id",
+        ]:
+            return Result([row for row in result.rows if row[0] != GAME_B])
+        return result
+
+
+@pytest.mark.asyncio
+async def test_new_live_leg_keeps_existing_streams_during_admission(monkeypatch):
+    scope = NewlyLiveScope()
+    running, sockets, _acking, socket_for, opened_sockets = _rig(monkeypatch, scope)
+    # Only admission, not the ten-minute refresh, can trigger this handoff.
+    monkeypatch.setattr(task, "SUBSCRIPTION_REFRESH_SECONDS", 1000)
+    try:
+        await _until(lambda: opened_sockets() == 3, "startup sockets")
+        original_game = socket_for({GAME_A})
+        original_open = socket_for({OPEN_1})
+        await original_game.deliver("ticker", {"market_ticker": GAME_A, "price_dollars": "0.60"})
+        scope.version = 2
+        await _until(lambda: opened_sockets() == 5, "admitted live leg")
+        assert not running.done()
+        successor = socket_for({GAME_A, GAME_B})
+        assert not original_game.closed and not original_open.closed
+        await original_game.deliver("ticker", {"market_ticker": GAME_A, "price_dollars": "0.61"})
+        await successor.deliver("ticker", {"market_ticker": GAME_B, "price_dollars": "0.30"})
+        # Give the restarted admission watcher several turns: it must recognize
+        # the newly mapped leg, rather than recycling again for the same event.
+        await asyncio.sleep(0.05)
+        assert not running.done() and opened_sockets() == 5
+    finally:
+        await _stop(running)
+    assert scope.written[71][0] == 0.61
+    assert scope.written[73][0] == 0.30
+    assert all(s.closed for s in sockets) and scope.active == 0
+
+
+@pytest.mark.asyncio
+async def test_unmapped_live_leg_still_takes_admission_rebuild(monkeypatch):
+    scope = NewlyLiveScope(map_new_leg=False)
+    running, sockets, _acking, _socket_for, opened_sockets = _rig(monkeypatch, scope)
+    monkeypatch.setattr(task, "SUBSCRIPTION_REFRESH_SECONDS", 1000)
+    try:
+        await _until(lambda: opened_sockets() == 3, "startup sockets")
+        scope.version = 2
+        stats = await asyncio.wait_for(running, 3)
+        assert stats["status"] == "resubscribe"
+        assert stats["recycle_reason"] == "admission"
+        assert stats["admitted_event_ids"] == [904]
+        assert stats.get("admission_in_place", 0) == 0
+        assert all(s.closed for s in sockets) and scope.active == 0
+    finally:
+        await _stop(running)
