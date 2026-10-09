@@ -75,6 +75,35 @@ the family (the same school in men's and women's basketball), or shares an
 abbreviation with a resolved team IN THE SAME LEAGUE. Cross-league siblings
 sharing an abbreviation (Lynx / Timberwolves, both ``MIN``) stay foreign.
 
+#3667 — A STRICT TRUNCATION OF OUR OWN PLACE IS NOT US. The equal span is
+safe only when the bare word IS our whole place. `_team_name_patterns` also
+cuts a longer place down to its words so short venue labels can match
+(``Alabama State Hornets`` → ``Alabama``, ``Florida A&M Rattlers`` →
+``Florida``), and a cut word can be EXACTLY another club's place. The label
+then names that club, not us. Production 2026-10-09, `/events/15326607`
+(Florida A&M @ Alabama State, FCS): Bigger Picture served "Will Alabama make
+the 2027 College Football Playoff National Championship Game?" and a 78%
+College Football Playoff path on the Hornets, and the Florida question with a
+33% path on the Rattlers. So an occurrence is also refused when, extended
+through the label along our own place's words (``St.`` reads as ``State`` or
+``Saint``), it still covers only PART of our place, and that part is exactly
+the name, location or alias of a family club none of ours claims:
+
+    Alabama State Hornets | Will Alabama make …   `Alabama` ⊊ `Alabama State`,
+                                                  `alabama` → Crimson Tide   REFUSED
+    Alabama State Hornets | Alabama St. vs Jackson St.  extends to `Alabama
+                                                  St.` = our whole place     admitted
+    Alabama Crimson Tide  | Alabama               `alabama` is ours          admitted
+    Miami Hurricanes      | Miami                 `Miami` IS our whole place
+                                                  (Dolphins list it too)     admitted
+    Texas Rangers         | Texas                 our whole place            admitted
+    S. Carolina State     | South Carolina St.    our whole place, so the
+                                                  Gamecocks' `South Carolina`
+                                                  covering `Carolina` is moot admitted
+
+The bare word is never refused for being short — only for being a strict part
+of a place that is longer than it AND exactly a place that is someone else's.
+
 WHAT THIS NEVER DOES. No nickname denylist, no score, no LLM, no query of its
 own — the roster rows are the ones the route already holds — and no refusal of
 a row whose only evidence is absence. An ambiguous alias (claimed by several
@@ -139,6 +168,10 @@ class LabelIdentity:
     # own words.
     resolved: bool = True
     name_words: frozenset = frozenset()
+    # #3667 — the word sequence of each of this side's own places: the event
+    # name minus its last word, kept only when it has two words or more
+    # (``alabama state``, ``florida a m``). A one-word place cannot be cut.
+    own_places: tuple = ()
     # Per-token memo of the foreign aliases that could cover it: the alias
     # scan is over the whole family (thousands of strings on a soccer page)
     # and the same handful of tokens recur on every row of one request.
@@ -147,6 +180,9 @@ class LabelIdentity:
     # foreign club also ends its name with it (or lists it bare).
     _own_words: dict = field(default_factory=dict, compare=False, repr=False)
     _shared: dict = field(default_factory=dict, compare=False, repr=False)
+    # #3667 memo: the claims re-keyed by `_norm`, so a label span reads back
+    # whatever punctuation either side carries (``Miami (OH)`` / ``miami oh``).
+    _norm_claims: dict = field(default_factory=dict, compare=False, repr=False)
 
     def is_armed(self) -> bool:
         return self.resolved and bool(self.claims) and bool(self.own)
@@ -186,6 +222,20 @@ class LabelIdentity:
             cached = frozenset(words)
             self._own_words["words"] = cached
         return cached
+
+    def foreign_only_claim(self, text: str) -> bool:
+        """#3667 — True when ``text`` (normalized) is a name, location or alias
+        some family club claims and NONE of ours does."""
+        index = self._norm_claims.get("index")
+        if index is None:
+            index = {}
+            for alias, ids in self.claims.items():
+                key = _norm(alias)
+                if key:
+                    index[key] = index.get(key, frozenset()) | ids
+            self._norm_claims["index"] = index
+        claimants = index.get(_norm(text))
+        return bool(claimants) and not (claimants & self.own)
 
     def foreign_club_shares(self, needle: str) -> bool:
         """True when a club that is not ours carries ``needle`` as its whole
@@ -254,12 +304,27 @@ def build_label_identity(
     return LabelIdentity(
         claims=_claims(rows),
         own=frozenset(own),
+        own_places=_own_places(own_team_names),
         own_abbreviations=frozenset(
             (row.get("abbreviation") or "").strip().lower()
             for row in rows
             if row.get("id") in own and (row.get("abbreviation") or "").strip()
         ),
     )
+
+
+def _own_places(names: Iterable[Optional[str]]) -> tuple:
+    """#3667 — each name's place half as words, the way `_team_name_patterns`
+    splits it (everything before the last whitespace-separated word)."""
+    places = []
+    for name in names:
+        parts = (name or "").strip().split()
+        if len(parts) < 2:
+            continue
+        words = tuple(_WORD.findall(" ".join(parts[:-1]).lower()))
+        if len(words) >= 2 and words not in places:
+            places.append(words)
+    return tuple(places)
 
 
 def _claims(rows: list) -> dict:
@@ -331,6 +396,7 @@ def _name_only_identity(
         own=frozenset(own),
         resolved=False,
         name_words=frozenset(words),
+        own_places=_own_places(own_names),
     )
 
 
@@ -379,8 +445,20 @@ def label_names_another_club(
     # checked on the label itself.
     for start, end in occurrences:
         needle = hay[start:end]
-        covered = False
-        for alias_pattern in identity.foreign_aliases_containing(needle):
+        # #3667 — read the occurrence against our own places first: reaching a
+        # whole place of ours (`South Carolina St.` for South Carolina State)
+        # is not covered by a foreign name that covers only part of it
+        # (`South Carolina`); a strict part that is exactly a foreign club's
+        # claim (`Alabama` for Alabama State) is refused like a covered token.
+        # A whole place still yields to a LONGER foreign name around it
+        # (`New York` inside `New York Rangers` on the Islanders), so the cover
+        # test below then runs on the extended span instead of the token.
+        place_reading, place_span = _read_against_our_places(label, start, end, identity)
+        if place_reading == _OURS:
+            start, end = place_span
+            needle = hay[start:end]
+        covered = place_reading == _FOREIGN
+        for alias_pattern in ([] if covered else identity.foreign_aliases_containing(needle)):
             for a_start, a_end in pattern_token_spans(label, alias_pattern):
                 if a_start <= start and end <= a_end and (a_end - a_start) > (end - start):
                     if name_words is not None and _adds_a_word_of_ours(
@@ -396,6 +474,63 @@ def label_names_another_club(
         covered_spans.append((start, end))
 
     return bool(covered_spans)
+
+
+#: #3667 — venue abbreviations of a place word (``Alabama St.``, ``St. Mary's``).
+_PLACE_WORD_ABBREVIATIONS = {"st": frozenset({"state", "saint"})}
+
+
+def _same_place_word(label_word: str, place_word: str) -> bool:
+    return label_word == place_word or place_word in _PLACE_WORD_ABBREVIATIONS.get(
+        label_word, ()
+    )
+
+
+_OURS, _FOREIGN = "ours", "foreign"
+
+
+def _read_against_our_places(
+    label: str, start: int, end: int, identity: LabelIdentity
+) -> tuple:
+    """#3667 — how the occurrence at ``[start, end)`` reads against our places.
+
+    Each alignment of the occurrence's words with one of our places is
+    extended through the label along that place (``St.`` reads as ``State`` or
+    ``Saint``). Returns ``(reading, span)``: ``(_OURS, extended span)`` when an
+    alignment reaches a whole place of ours; ``_FOREIGN`` when every alignment
+    stops at a strict part that is exactly a claim of a family club none of
+    ours makes; ``None`` otherwise (not part of our place, or a part nobody
+    foreign claims) — the module docstring."""
+    if not identity.own_places:
+        return None, None
+    words = [(m.group(0), m.start(), m.end()) for m in _WORD.finditer(label.lower())]
+    inside = [i for i, (_, ws, we) in enumerate(words) if start <= ws and we <= end]
+    if not inside:
+        return None, None
+    first, last = inside[0], inside[-1]
+    occ = [words[i][0] for i in range(first, last + 1)]
+    readings = set()
+    for place in identity.own_places:
+        for at in range(len(place) - len(occ) + 1):
+            if not all(_same_place_word(w, place[at + k]) for k, w in enumerate(occ)):
+                continue
+            lo, hi, p_lo, p_hi = first, last, at, at + len(occ) - 1
+            while lo > 0 and p_lo > 0 and _same_place_word(words[lo - 1][0], place[p_lo - 1]):
+                lo, p_lo = lo - 1, p_lo - 1
+            while (
+                hi + 1 < len(words)
+                and p_hi + 1 < len(place)
+                and _same_place_word(words[hi + 1][0], place[p_hi + 1])
+            ):
+                hi, p_hi = hi + 1, p_hi + 1
+            span = (min(start, words[lo][1]), max(end, words[hi][2]))
+            if p_lo == 0 and p_hi == len(place) - 1:
+                return _OURS, span
+            if identity.foreign_only_claim(label[words[lo][1]:words[hi][2]]):
+                readings.add(_FOREIGN)
+            else:
+                readings.add(None)
+    return (_FOREIGN if readings == {_FOREIGN} else None), None
 
 
 def _adds_a_word_of_ours(extra: str, name_words: frozenset) -> bool:
