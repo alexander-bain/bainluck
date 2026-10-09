@@ -133,3 +133,39 @@ test("unknown observation clock stays null; no source stamp or wall clock is inv
   expect(h.cache().hero_probability_away).toBeNull();
   expect(h.chart().aggregate_line).toEqual([{ timestamp: OLD_AT, home_probability: 0.37 }]);
 });
+
+test("backend-shaped sportsbook count metadata survives; actual sources still require probabilities", () => {
+  const books = { value: 4, display_name: "betting_book_count", type: "model", color: "#6b7280",
+    evidence_status: "not_applicable" };
+  const rail = { ...quote().win_probability_sources, betting_book_count: books };
+  const projected = { ...quote(), hero_sportsbook_count: 4, win_probability_sources: rail };
+  const h = harness();
+  h.emit("folded_probability", { ...raw(), folded_quote: projected });
+  expect(h.reads).not.toHaveBeenCalled();
+  expect(h.mutations).toHaveBeenCalledTimes(1);
+  expect(h.cache().win_probability_sources).toEqual(rail);
+  expect(adoptFoldedQuote(held(), { ...raw(), folded_quote: { ...projected,
+    win_probability_sources: { ...rail, polymarket: source(4) } } }, ID).handled).toBe(false);
+  expect(adoptFoldedQuote(held(), { ...raw(), folded_quote: { ...projected,
+    win_probability_sources: { ...rail, betting_book_count: { ...books, value: 4.5 } } } }, ID).handled).toBe(false);
+});
+
+test("statusless promised twin invalidation waits for authoritative result; null and status mismatch read", () => {
+  // _fold_invalidation omits status and carries no adoptable raw price/source.
+  const twin = { event_id: ID, origin_event_id: 15326779, invalidation: true,
+    p: null, source: null, source_value: null, updated_at: NEW_AT, rev: { 15326779: 64 },
+    folded_quote_pending: true } as unknown as LiveStreamFrame;
+  const h = harness();
+  h.emit("probability", twin);
+  expect(h.reads).not.toHaveBeenCalled();
+  expect(h.mutations).not.toHaveBeenCalled();
+  h.emit("folded_probability", { ...twin, folded_quote_pending: false, folded_quote: {
+    ...quote(), blend_fold_revision: { 15323012: 3796, 15326779: 64 } } });
+  expect(h.reads).not.toHaveBeenCalled();
+  expect(h.cache().hero_probability).toBe(0.43);
+  expect(h.chart().aggregate_line.at(-1)).toEqual({ timestamp: NEW_AT, home_probability: 0.43 });
+  h.emit("folded_probability", { ...twin, folded_quote_pending: false, folded_quote: null });
+  expect(h.reads).toHaveBeenCalledTimes(1);
+  h.emit("probability", { ...twin, status: "completed" });
+  expect(h.reads).toHaveBeenCalledTimes(2);
+});

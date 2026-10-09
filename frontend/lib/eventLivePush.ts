@@ -420,9 +420,14 @@ function readFoldedQuote(value: unknown, eventId: number): FoldedQuote | null {
   if (clock !== null && (typeof clock !== "string" || !Number.isFinite(Date.parse(clock)))) return null;
   const count = value.hero_sportsbook_count;
   if (count !== null && (typeof count !== "number" || !Number.isSafeInteger(count) || count < 0)) return null;
-  for (const source of Object.values(value.win_probability_sources)) {
-    if (!record(source) || typeof source.value !== "number" || !nullableProbability(source.value) ||
-        ["display_name", "type", "color"].some(key => typeof source[key] !== "string")) return null;
+  for (const [key, source] of Object.entries(value.win_probability_sources)) {
+    if (!record(source) || typeof source.value !== "number" ||
+        ["display_name", "type", "color"].some(field => typeof source[field] !== "string")) return null;
+    // The public rail deliberately carries the sportsbook count as numeric
+    // metadata; it is not a probability source.
+    if (key === "betting_book_count") {
+      if (!Number.isSafeInteger(source.value) || source.value < 0) return null;
+    } else if (!nullableProbability(source.value)) return null;
   }
   const quote = value as FoldedQuote;
   // Copy only the declared fields; an additive payload must not overwrite
@@ -461,7 +466,7 @@ export function adoptFoldedQuote<T>(
   // Only the raw promise can defer the read. The bounded producer always
   // follows it with object/null; explicit null must reach the legacy fallback.
   if (frame.folded_quote_pending === true && !("folded_quote" in frame) &&
-      frame.status === held.status && Object.keys(heldRevision).length > 1) {
+      (frame.status === undefined || frame.status === held.status) && Object.keys(heldRevision).length > 1) {
     return { handled: true, next: prev };
   }
   const quote = readFoldedQuote(frame.folded_quote, eventId);
