@@ -2167,9 +2167,13 @@ def backfill_polymarket_winners(self, limit: int = 10000, market_ids: list | Non
     unchanged. A targeted run never moves the shared cursor.
     """
     from app.tasks.backfill_winners import _backfill_polymarket_winners_from_api
+    # #10765: the scheduled sweep also grades what settled in the last 72h
+    # first; a targeted run names its own rows and never takes the head.
     return _tracked_run(
         "polymarket_winners",
-        _backfill_polymarket_winners_from_api(limit, market_ids=market_ids),
+        _backfill_polymarket_winners_from_api(
+            limit, market_ids=market_ids, recency_head=not market_ids
+        ),
     )
 
 
