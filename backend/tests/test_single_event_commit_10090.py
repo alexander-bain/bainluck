@@ -69,6 +69,15 @@ def rig(monkeypatch, *, count=3, block=False, failure=None, statuses=None, block
             published.append(frame["event_id"])
         frames.extend(batch)
 
+    read_groups = r._read_groups
+
+    async def filtered_read(session, event_ids):
+        # The fake session answers every read with all rows; the real query
+        # filters by event id. A queued fresh stamp rereads only its own event.
+        grouped = await read_groups(session, event_ids)
+        return {eid: group for eid, group in grouped.items() if eid in event_ids}
+
+    r._read_groups = filtered_read
     r._session_factory = factory
     r._publish = publish
     return SimpleNamespace(**locals())
@@ -264,14 +273,16 @@ async def test_first_game_commits_and_publishes_while_second_stamp_waits(monkeyp
     task = asyncio.create_task(x.r.refresh(range(1, count + 1), flush_started=1000))
     try:
         await asyncio.wait_for(x.second_stamp.wait(), 1)
+        # Independent fresh games publish in completion order (ruling A).
         ready = [1, *range(3, count + 1)]
-        await settle_until(lambda: x.published == ready)
-        assert x.committed == ready
+        await settle_until(lambda: sorted(x.published) == ready)
+        assert x.committed == x.published
         assert not task.done()
         assert x.r._last_written_value == dict.fromkeys(ready, 0.9)
         x.release.set()
         await asyncio.wait_for(task, 1)
-        assert x.published == x.committed == [*ready, 2]
+        assert x.published == x.committed and x.published[-1] == 2
+        assert sorted(x.published) == list(range(1, count + 1))
         assert x.r.stats["stamped"] == count
         assert not x.r.pending_event_ids()
     finally:
@@ -281,13 +292,17 @@ async def test_first_game_commits_and_publishes_while_second_stamp_waits(monkeyp
 
 @pytest.mark.parametrize("count", [1, 2, 4, 5])
 async def test_shared_read_and_per_event_command_tradeoff(monkeypatch, count):
+    from app.tasks.live_blend_refresh import FRESH_STAMP_WORKERS
+
     x = rig(monkeypatch, count=count)
     await x.r.refresh(range(1, count + 1), flush_started=1000)
-    assert x.commands.count("read") == 1
+    # One shared prepared read, plus one current reread per queued fresh event.
+    assert x.commands.count("read") == 1 + max(0, count - FRESH_STAMP_WORKERS)
     assert x.commands.count("budget") == x.commands.count("update") == count
     assert len(x.sessions) == (1 if count == 1 else count + 1)
     assert not any(s.savepoints or s.rollbacks for s in x.sessions)
-    assert x.published == list(range(1, count + 1))
+    assert x.published == x.committed
+    assert sorted(x.published) == list(range(1, count + 1))
 
 
 @pytest.mark.parametrize("failure", ["lock", "commit"])
@@ -477,7 +492,10 @@ async def test_cancel_preserves_both_waiting_committed_groups_and_one_sender(mon
     task = asyncio.create_task(x.r.refresh(range(1, 7), flush_started=1000))
     try:
         await asyncio.wait_for(entered.wait(), 1)
-        await settle_until(lambda: x.committed == [1, 2, 3])
+        # Event 1 plus one stamp per fixed worker commit (a queued event
+        # rereads its own row, 6d8b493900); then every worker waits on the
+        # one sender, so 2..4 form the second waiting group.
+        await settle_until(lambda: sorted(x.committed) == [1, 2, 3, 4])
         task.cancel()
         await asyncio.wait_for(cleaning.wait(), 1)
         task.cancel()
@@ -485,20 +503,22 @@ async def test_cancel_preserves_both_waiting_committed_groups_and_one_sender(mon
         assert not task.done()
         release_cleanup.set()
         await asyncio.wait_for(cleanup_send.wait(), 1)
-        assert submitted == [[1], [2, 3]]
+        assert [submitted[0], sorted(submitted[1])] == [[1], [2, 3, 4]]
+        assert len(submitted) == 2
         task.cancel()
         await asyncio.sleep(0)
         assert not task.done() and active == maximum == 1
         release_send.set()
         with pytest.raises(asyncio.CancelledError):
             await asyncio.wait_for(task, 1)
-        assert delivered == [2, 3] and active == 0 and maximum == 1
-        assert x.r.pending_event_ids() == frozenset({4, 5, 6})
+        assert sorted(delivered) == [2, 3, 4] and active == 0 and maximum == 1
+        assert x.r.pending_event_ids() == frozenset({5, 6})
         assert not x.r._failed_hold_until
-        assert set(x.r._last_written_value) == {1, 2, 3}
+        assert set(x.r._last_written_value) == {1, 2, 3, 4}
     finally:
         release_cleanup.set()
         release_send.set()
+        task.cancel()  # a failed wait must fail, not hang on publish([1])
         await asyncio.gather(task, return_exceptions=True)
 
 
