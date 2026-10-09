@@ -1,0 +1,400 @@
+{
+ "event_id": 15319175,
+ "home_team": "Racing Club de Lens",
+ "away_team": "Olympique Lyonnais",
+ "commence_time": "2026-10-09T18:45:00+00:00",
+ "completed_at": null,
+ "status": "live",
+ "time_domain": {
+  "start": "2026-10-09T18:45:00+00:00",
+  "end": "2026-10-09T19:20:57+00:00",
+  "is_live": true,
+  "min_window_seconds": 1800
+ },
+ "history": [],
+ "bookmaker_history": {},
+ "score_history": [],
+ "espn_history": [],
+ "win_prob_history": {
+  "polymarket": [
+   {
+    "timestamp": "2026-10-09T18:45:16.409910+00:00",
+    "home_probability": 0.365,
+    "away_probability": 0.355,
+    "draw_probability": 0.265,
+    "game_state": null
+   },
+   {
+    "timestamp": "2026-10-09T18:45:56.161074+00:00",
+    "home_probability": 0.37,
+    "away_probability": 0.365,
+    "draw_probability": 0.265,
+    "game_state": null
+   },
+   {
+    "timestamp": "2026-10-09T18:46:46.867183+00:00",
+    "home_probability": 0.375,
+    "away_probability": 0.37,
+    "draw_probability": 0.27,
+    "game_state": null
+   },
+   {
+    "timestamp": "2026-10-09T18:47:37.557949+00:00",
+    "home_probability": 0.37,
+    "away_probability": 0.37,
+    "draw_probability": 0.27,
+    "game_state": null
+   },
+   {
+    "timestamp": "2026-10-09T18:48:28.418196+00:00",
+    "home_probability": 0.375,
+    "away_probability": 0.37,
+    "draw_probability": 0.265,
+    "game_state": null
+   },
+   {
+    "timestamp": "2026-10-09T18:49:53.298719+00:00",
+    "home_probability": 0.38,
+    "away_probability": 0.365,
+    "draw_probability": 0.265,
+    "game_state": null
+   },
+   {
+    "timestamp": "2026-10-09T18:50:20.980478+00:00",
+    "home_probability": 0.375,
+    "away_probability": 0.365,
+    "draw_probability": 0.265,
+    "game_state": null
+   },
+   {
+    "timestamp": "2026-10-09T18:50:51.847362+00:00",
+    "home_probability": 0.37,
+    "away_probability": 0.385,
+    "draw_probability": 0.25,
+    "game_state": null
+   },
+   {
+    "timestamp": "2026-10-09T18:52:00.405372+00:00",
+    "home_probability": 0.38,
+    "away_probability": 0.38,
+    "draw_probability": 0.255,
+    "game_state": null
+   },
+   {
+    "timestamp": "2026-10-09T18:52:37.626027+00:00",
+    "home_probability": 0.31,
+    "away_probability": 0.365,
+    "draw_probability": 0.26,
+    "game_state": null
+   },
+   {
+    "timestamp": "2026-10-09T18:53:19.961178+00:00",
+    "home_probability": 0.375,
+    "away_probability": 0.365,
+    "draw_probability": 0.265,
+    "game_state": null
+   },
+   {
+    "timestamp": "2026-10-09T18:55:18.727756+00:00",
+    "home_probability": 0.355,
+    "away_probability": 0.375,
+    "draw_probability": 0.27,
+    "game_state": null
+   },
+   {
+    "timestamp": "2026-10-09T18:56:54.642413+00:00",
+    "home_probability": 0.355,
+    "away_probability": 0.365,
+    "draw_probability": 0.265,
+    "game_state": null
+   },
+   {
+    "timestamp": "2026-10-09T18:57:36.471790+00:00",
+    "home_probability": 0.365,
+    "away_probability": 0.355,
+    "draw_probability": 0.265,
+    "game_state": null
+   },
+   {
+    "timestamp": "2026-10-09T18:58:20.560649+00:00",
+    "home_probability": 0.365,
+    "away_probability": 0.36,
+    "draw_probability": 0.265,
+    "game_state": null
+   },
+   {
+    "timestamp": "2026-10-09T18:58:50.994655+00:00",
+    "home_probability": 0.355,
+    "away_probability": 0.36,
+    "draw_probability": 0.265,
+    "game_state": null
+   },
+   {
+    "timestamp": "2026-10-09T18:59:41.667254+00:00",
+    "home_probability": 0.355,
+    "away_probability": 0.37,
+    "draw_probability": 0.265,
+    "game_state": null
+   },
+   {
+    "timestamp": "2026-10-09T19:01:00.327555+00:00",
+    "home_probability": 0.355,
+    "away_probability": 0.37,
+    "draw_probability": 0.265,
+    "game_state": null
+   },
+   {
+    "timestamp": "2026-10-09T19:02:08.138323+00:00",
+    "home_probability": 0.355,
+    "away_probability": 0.35,
+    "draw_probability": 0.285,
+    "game_state": null
+   },
+   {
+    "timestamp": "2026-10-09T19:02:33.301355+00:00",
+    "home_probability": 0.36,
+    "away_probability": 0.355,
+    "draw_probability": 0.285,
+    "game_state": null
+   },
+   {
+    "timestamp": "2026-10-09T19:03:39.133924+00:00",
+    "home_probability": 0.36,
+    "away_probability": 0.36,
+    "draw_probability": 0.295,
+    "game_state": null
+   },
+   {
+    "timestamp": "2026-10-09T19:04:10.672098+00:00",
+    "home_probability": 0.36,
+    "away_probability": 0.36,
+    "draw_probability": 0.275,
+    "game_state": null
+   },
+   {
+    "timestamp": "2026-10-09T19:04:57.761495+00:00",
+    "home_probability": 0.355,
+    "away_probability": 0.355,
+    "draw_probability": 0.295,
+    "game_state": null
+   },
+   {
+    "timestamp": "2026-10-09T19:06:10.348770+00:00",
+    "home_probability": 0.365,
+    "away_probability": 0.335,
+    "draw_probability": 0.28,
+    "game_state": null
+   },
+   {
+    "timestamp": "2026-10-09T19:07:08.214400+00:00",
+    "home_probability": 0.345,
+    "away_probability": 0.35,
+    "draw_probability": 0.295,
+    "game_state": null
+   },
+   {
+    "timestamp": "2026-10-09T19:09:37.722189+00:00",
+    "home_probability": 0.335,
+    "away_probability": 0.36,
+    "draw_probability": 0.295,
+    "game_state": null
+   },
+   {
+    "timestamp": "2026-10-09T19:11:45.398380+00:00",
+    "home_probability": 0.355,
+    "away_probability": 0.345,
+    "draw_probability": 0.315,
+    "game_state": null
+   },
+   {
+    "timestamp": "2026-10-09T19:13:18.567687+00:00",
+    "home_probability": 0.365,
+    "away_probability": 0.325,
+    "draw_probability": 0.3,
+    "game_state": null
+   },
+   {
+    "timestamp": "2026-10-09T19:13:47.865612+00:00",
+    "home_probability": 0.37,
+    "away_probability": 0.31,
+    "draw_probability": 0.305,
+    "game_state": null
+   },
+   {
+    "timestamp": "2026-10-09T19:14:19.184639+00:00",
+    "home_probability": 0.38,
+    "away_probability": 0.315,
+    "draw_probability": 0.315,
+    "game_state": null
+   },
+   {
+    "timestamp": "2026-10-09T19:14:52.556277+00:00",
+    "home_probability": 0.365,
+    "away_probability": 0.325,
+    "draw_probability": 0.315,
+    "game_state": null
+   },
+   {
+    "timestamp": "2026-10-09T19:15:31.643409+00:00",
+    "home_probability": 0.355,
+    "away_probability": 0.325,
+    "draw_probability": 0.315,
+    "game_state": null
+   },
+   {
+    "timestamp": "2026-10-09T19:15:56.654875+00:00",
+    "home_probability": 0.365,
+    "away_probability": 0.305,
+    "draw_probability": 0.31,
+    "game_state": null
+   },
+   {
+    "timestamp": "2026-10-09T19:16:23.124671+00:00",
+    "home_probability": 0.38,
+    "away_probability": 0.315,
+    "draw_probability": 0.305,
+    "game_state": null
+   },
+   {
+    "timestamp": "2026-10-09T19:17:02.124146+00:00",
+    "home_probability": 0.38,
+    "away_probability": 0.285,
+    "draw_probability": 0.31,
+    "game_state": null
+   },
+   {
+    "timestamp": "2026-10-09T19:17:32.747537+00:00",
+    "home_probability": 0.37,
+    "away_probability": 0.295,
+    "draw_probability": 0.31,
+    "game_state": null
+   },
+   {
+    "timestamp": "2026-10-09T19:18:11.206246+00:00",
+    "home_probability": 0.385,
+    "away_probability": 0.285,
+    "draw_probability": 0.31,
+    "game_state": null
+   },
+   {
+    "timestamp": "2026-10-09T19:18:17.848458+00:00",
+    "home_probability": 0.37,
+    "away_probability": 0.3,
+    "draw_probability": 0.325,
+    "game_state": null
+   },
+   {
+    "timestamp": "2026-10-09T19:19:14.177084+00:00",
+    "home_probability": 0.365,
+    "away_probability": 0.3,
+    "draw_probability": 0.325,
+    "game_state": null
+   },
+   {
+    "timestamp": "2026-10-09T19:19:52.809656+00:00",
+    "home_probability": 0.38,
+    "away_probability": 0.295,
+    "draw_probability": 0.31,
+    "game_state": null
+   },
+   {
+    "timestamp": "2026-10-09T19:20:19.591414+00:00",
+    "home_probability": 0.36,
+    "away_probability": 0.305,
+    "draw_probability": 0.325,
+    "game_state": null
+   },
+   {
+    "timestamp": "2026-10-09T19:20:57+00:00",
+    "home_probability": 0.36,
+    "away_probability": 0.305,
+    "draw_probability": 0.325,
+    "game_state": null,
+    "live_edge": true,
+    "evidence": {
+     "kind": "live_edge"
+    }
+   }
+  ]
+ },
+ "evidence_contract": {
+  "v": "7878.v1",
+  "resolution_s": 300
+ },
+ "win_prob_sources": {
+  "polymarket": {
+   "display_name": "Polymarket",
+   "type": "market",
+   "color": "#3b82f6",
+   "dash_pattern": "8 4",
+   "description": "Win probability from Polymarket, the world's largest prediction market by volume. Polymarket prices reflect the consensus of thousands of traders betting real money on game outcomes.",
+   "methodology": "The outcome price from Polymarket's CLOB (Central Limit Order Book). Prices range from $0.00 to $1.00 and directly represent implied probability. For binary markets, the 'Yes' price equals the market's probability estimate.",
+   "attribution_url": "https://polymarket.com",
+   "attribution_name": "Polymarket",
+   "snapshot_count": 42
+  }
+ },
+ "scoring_plays": [],
+ "moments": [],
+ "period_markers": [],
+ "aggregate_line": null,
+ "blend_edge_pinned": false,
+ "blend_edge_observed_at": null,
+ "blend_edge_fold_revision": null,
+ "pre_window_omitted": true,
+ "commence_time_is_kickoff": true,
+ "pm_spread_data": {
+  "implied_spreads": {},
+  "implied_totals": {
+   "polymarket": {
+    "total": 2.8,
+    "confidence": 0.9,
+    "contracts": [
+     {
+      "threshold": 0.5,
+      "probability": 0.9995
+     },
+     {
+      "threshold": 1.5,
+      "probability": 0.865
+     },
+     {
+      "threshold": 2.5,
+      "probability": 0.585
+     },
+     {
+      "threshold": 3.5,
+      "probability": 0.305
+     },
+     {
+      "threshold": 4.5,
+      "probability": 0.135
+     },
+     {
+      "threshold": 5.5,
+      "probability": 0.045
+     },
+     {
+      "threshold": 6.5,
+      "probability": 0.0195
+     },
+     {
+      "threshold": 7.5,
+      "probability": 0.0025
+     },
+     {
+      "threshold": 8.5,
+      "probability": 0.002
+     }
+    ]
+   }
+  },
+  "projected_final": null
+ },
+ "points": 0,
+ "bookmaker_count": 0,
+ "snapshot_count": 0,
+ "espn_snapshot_count": 0,
+ "on_demand_backfill": null,
+ "_provenance": "#10090: production /api/events/15319175/history?hours=48&range=since_start read 2026-10-09 ~19:5xZ, CUT at the 19:20:57Z serve instant of the page's t=65s automatic history poll (stored polymarket rows <= 19:20:19.591414 kept), plus the synthetic live_edge the backend's _extend_win_prob_history_to_live_edge appends at that instant carrying the last stored row (evidence kind live_edge per winprob_evidence.served_evidence). time_domain.end moved to the same instant. Rows 209-218 (19:19:55-19:20:28) were published on the stream but never stored; 0.36@19:20:19.59 is rev217's reading."
+}

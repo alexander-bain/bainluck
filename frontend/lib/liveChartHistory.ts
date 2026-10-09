@@ -84,11 +84,19 @@ export function rememberLiveChartFrame(
  *      two pushed frames would put a 2-vertex line on the plot with no legend
  *      entry, no colour and no served history behind it — #8066 again, wearing
  *      the source's face instead of the blend's.
- *   2. STRICTLY NEWER THAN THE SERVED EDGE. A live payload already ends in the
- *      backend's synthetic `live_edge` point at "now" carrying the last real
- *      value, so a pushed reading stamped just before it would insert BEHIND a
- *      stale endpoint and draw the line backwards. Ties go to the served point
- *      for the same reason they do on the aggregate above.
+ *   2. STRICTLY NEWER THAN THE LAST REAL READING, AND NEVER BEHIND A STALE
+ *      ENDPOINT. A live payload can end in the backend's synthetic `live_edge`
+ *      point at "now" carrying the last STORED value. A pushed reading stamped
+ *      after that stored reading but before the edge is newer than the number
+ *      the edge carries — the backend stores only some publications (#10090:
+ *      on 15319175 it stored 0.36 at 19:20:19 and never 218's 0.37 at
+ *      19:20:28), so the next poll's edge at 19:20:57 still carried 0.36 and
+ *      dropping the reading froze the line one revision behind the headline.
+ *      So such a reading is inserted before the edge, and the edge carries the
+ *      newest one at or before its own time: what the backend would have
+ *      served had it stored that publication. The edge keeps its delivery time
+ *      and flag; nothing is drawn backwards because the endpoint moves with
+ *      the reading. Ties with a REAL served point go to the served point.
  *
  * What lands is an observation, not a delivery: these frames are stamped at
  * `live_blend_refresh`'s write time, so they carry no `live_edge` flag and
@@ -106,23 +114,55 @@ function extendServedSourceSeries(
     if (!series?.length) continue;
     const edge = Date.parse(series[series.length - 1].timestamp);
     if (!Number.isFinite(edge)) continue;
+    // The trailing synthetic edge(s), if any, and the real reading before them.
+    let real = series.length - 1;
+    while (real >= 0 && isSyntheticEdge(series[real])) real--;
+    const readAt = real >= 0 && real < series.length - 1 ? Date.parse(series[real].timestamp) : edge;
+    if (!Number.isFinite(readAt)) continue;
     // `points` is kept sorted by `rememberLiveChartFrame`, so a filter
-    // preserves that order and the concatenation below needs no re-sort.
-    const added = points
+    // preserves that order.
+    const readings = points
       .filter(point =>
         point.source === source &&
         typeof point.source_probability === "number" &&
-        Date.parse(point.timestamp) > edge)
+        Date.parse(point.timestamp) > readAt)
       .map(point => ({
         timestamp: point.timestamp,
         home_probability: point.source_probability as number,
         away_probability: null,
       }));
-    if (added.length === 0) continue;
+    if (readings.length === 0) continue;
+    let behind = readings.filter(point => Date.parse(point.timestamp) <= edge);
+    const ahead = readings.filter(point => Date.parse(point.timestamp) > edge);
+    // Readings that only re-confirm the carried value change no endpoint;
+    // #10671 already records them as coverage, and nothing is drawn for them.
+    if (!behind.some(point => point.home_probability !== series[real]?.home_probability)) behind = [];
+    if (behind.length === 0 && ahead.length === 0) continue;
+    let tail: WinProbHistoryPoint[] = [];
+    if (behind.length > 0) {
+      // Each synthetic point re-delivers the newest reading at or before it.
+      const carried = series.slice(real + 1).map(point => {
+        const at = Date.parse(point.timestamp);
+        let newest: WinProbHistoryPoint | null = null;
+        for (const reading of behind) if (Date.parse(reading.timestamp) <= at) newest = reading;
+        return newest === null || newest.home_probability === point.home_probability ? point
+          : { ...point, home_probability: newest.home_probability, away_probability: null, draw_probability: null };
+      });
+      // Stable sort: a reading tied with an edge stays before it.
+      tail = [...behind, ...carried]
+        .sort((a, b) => Date.parse(a.timestamp) - Date.parse(b.timestamp));
+    }
     next ??= { ...served };
-    next[source] = [...series, ...added];
+    next[source] = behind.length > 0
+      ? [...series.slice(0, real + 1), ...tail, ...ahead]
+      : [...series, ...ahead];
   }
   return next;
+}
+
+/** The backend's synthetic "now" point (#920 / #7878): a delivery time, not a reading. */
+function isSyntheticEdge(point: WinProbHistoryPoint): boolean {
+  return point.live_edge === true || point.evidence?.kind === "live_edge";
 }
 
 /**
