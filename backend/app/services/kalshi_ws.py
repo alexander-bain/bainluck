@@ -223,6 +223,10 @@ class KalshiWebSocket:
         self.on_trade: Optional[Callable] = None
         # #10702: supplied by the consumer, shared across its existing sockets.
         self.exact_trace = None
+        # #10090: set by `retire`. The reader stops at a frame boundary and its
+        # accepted callbacks drain; `run` then returns instead of reconnecting.
+        self._retiring = False
+        self._socket = None
 
     def _ensure_key(self):
         if self._private_key is None:
@@ -252,6 +256,8 @@ class KalshiWebSocket:
         max_backoff = 60.0
 
         while True:
+            if self._retiring:
+                return
             try:
                 headers = _sign_ws_request(self._private_key, self.api_key_id)
                 async with websockets.connect(
@@ -261,6 +267,7 @@ class KalshiWebSocket:
                     ping_timeout=10,
                     close_timeout=5,
                 ) as ws:
+                    self._socket = ws
                     connection = None
                     if self.exact_trace is not None:
                         try:
@@ -349,8 +356,13 @@ class KalshiWebSocket:
                                     await dispatch.submit(
                                         self.on_trade, payload, "Trade"
                                     )
+                                if self._retiring:
+                                    break
                         finally:
                             self._connected = False
+                            self._socket = None
+                    if self._retiring:
+                        return
 
             except asyncio.CancelledError:
                 # Q460 (CERT-491): RE-RAISE, never `return`. The caller bounds
@@ -370,6 +382,11 @@ class KalshiWebSocket:
 
             except Exception as e:
                 self._connected = False
+                self._socket = None
+                if self._retiring:
+                    # The close `retire` requested, or a transport error after
+                    # it: either way a successor owns these tickers now.
+                    return
                 logger.warning(
                     "Kalshi WS disconnected (%s: %s), reconnecting in %.0fs",
                     type(e).__name__,
@@ -378,6 +395,25 @@ class KalshiWebSocket:
                 )
                 await asyncio.sleep(backoff)
                 backoff = min(backoff * 2, max_backoff)
+
+    async def retire(self):
+        """#10090 — stop this client without losing input it already accepted.
+
+        Cancelling `run` would cancel its pending lifecycle callbacks. Here the
+        reader stops at its next frame boundary (or when the closed socket ends
+        its iteration), the dispatch drains every accepted callback, and `run`
+        returns. Frames still unread on the closed socket are not input; the
+        caller retires a client only once another connection carries its
+        tickers, or once none of them is in scope.
+        """
+        self._retiring = True
+        socket = self._socket
+        close = getattr(socket, "close", None)
+        if close is not None:
+            try:
+                await close()
+            except Exception:
+                logger.debug("Kalshi WS: close during retire failed", exc_info=True)
 
     @property
     def is_connected(self) -> bool:

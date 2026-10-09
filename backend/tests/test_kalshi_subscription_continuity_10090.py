@@ -1,4 +1,9 @@
-"""Healthy Kalshi clients retain quotes/callbacks across full routine refreshes."""
+"""Healthy Kalshi clients retain quotes/callbacks across full routine refreshes.
+
+#10090 changed-scope continuity: a mapping-only change (event, outcome, open
+contract or bridge) is now applied in place on the same connections; policy
+switches, ended clients, admission misses and stops keep their old paths.
+"""
 
 import asyncio
 import json
@@ -19,6 +24,7 @@ import app.tasks.ws_open_contracts as opened
 GAME = "KXNFLGAME-26OCT08SFLAR-SF"
 OPEN = "KXNFLGAME-26OCT09NYGBUF-NYG"
 STORED = datetime(2026, 10, 8, tzinfo=timezone.utc)
+IN_PLACE = {"event_map", "outcome_map", "open_map", "bridge"}
 
 
 class Result:
@@ -99,7 +105,7 @@ class Prices:
 
     async def phase(self, session, values, *, force_observation=False):
         self.scope.written.update(values)
-        rows = [SimpleNamespace(id=oid, market_id=7 if oid == 71 else 8,
+        rows = [SimpleNamespace(id=oid, market_id=7 if oid in (71, 72) else 8,
                                 quote_moved=False, last_updated=STORED)
                 for oid in values]
         yield SimpleNamespace(attempted=len(rows), rowcount=len(rows), all=lambda: rows)
@@ -236,6 +242,22 @@ async def test_real_clients_keep_latest_inputs_until_scope_change_or_final_stop(
             next(c for c in clients if c.targets == [OPEN]).owner.cancel()
         elif change == "stop":
             running.cancel()
+        elif change in IN_PLACE:
+            scope.change = change
+            reads = scope.bridge_reads
+            for _ in range(1000):  # one refresh applies it, the next keeps it
+                if scope.bridge_reads >= reads + 2:
+                    break
+                await asyncio.sleep(0.01)
+            assert not running.done()
+            assert len(clients) == len(sockets) == 2
+            assert all(not socket.closed for socket in sockets)
+            if change == "outcome_map":
+                await game.deliver("ticker", {"market_ticker": GAME, "price_dollars": "0.85"})
+            elif change == "open_map":
+                await other.deliver("ticker", {"market_ticker": OPEN, "price_dollars": "0.77"})
+            # A policy switch still ends the run through the full rebuild.
+            monkeypatch.setenv("WS_OPEN_CONTRACT_SETTLEMENT", "0")
         else:
             scope.change = change
         if change == "stop":
@@ -246,6 +268,14 @@ async def test_real_clients_keep_latest_inputs_until_scope_change_or_final_stop(
             assert stats["status"] == "resubscribe"
             assert stats["recycle_reason"] == ("admission" if change == "admission" else "scope")
             assert stats["final_flush_dropped"] == stats["errors"] == stats["loops_unreaped"] == 0
+            if change in IN_PLACE:
+                assert stats["scope_in_place"] == 1
+                assert (stats["clients_kept"], stats["clients_replaced"],
+                        stats["clients_started"], stats["clients_retired"]) == (2, 0, 0, 0)
+        if change == "outcome_map":
+            assert scope.written[72][0] == 0.85  # the new mapping, same connection
+        if change == "open_map":
+            assert scope.written[82][0] == 0.77
         assert scope.written[71][0] == 0.8  # no buffer reset during unchanged refreshes
         assert scope.written[81][0] == 0.75
         assert all(socket.closed for socket in sockets) and scope.active == 0
