@@ -87,16 +87,24 @@ def _is_poly_open_contract_read(stmt) -> bool:
     }
 
 
-def _install_session(monkeypatch, slate_batches, reread):
+def _install_session(monkeypatch, slate_batches, reread, *, replay_slate=False):
     """The slate's queries are answered in order; every later query is the
     admission reread, answered by `reread()` (which may raise).
 
     Routing by position, not by cycling, because the reread repeats every
     check: a cycling fake would hand the second reread the slate's first batch.
+
+    `replay_slate`: #10090 — the Kalshi refresh re-reads the slate with the
+    same statements; each is answered with its startup batch again (an
+    unchanged scope), never as a reread.
     """
     import app.tasks.base as task_base
 
-    state = {"slate": list(slate_batches), "rereads": [], "reread_calls": 0}
+    state = {
+        "slate": list(slate_batches), "rereads": [], "reread_calls": 0,
+        "slate_replays": 0,
+    }
+    answered = {}
 
     class _Session:
         async def execute(self, stmt, params=None):
@@ -105,7 +113,11 @@ def _install_session(monkeypatch, slate_batches, reread):
             if _is_poly_open_contract_read(stmt):
                 return _Result([])
             if state["slate"]:
+                answered[str(stmt)] = state["slate"][0]
                 return _Result(state["slate"].pop(0))
+            if replay_slate and str(stmt) in answered:
+                state["slate_replays"] += 1
+                return _Result(answered[str(stmt)])
             state["reread_calls"] += 1
             state["rereads"].append(stmt)
             return _Result([_reread_row(r) for r in reread()])
@@ -156,6 +168,33 @@ def _poly(_monkeypatch):
 
 
 ARMS = pytest.mark.parametrize("arm", [_kalshi, _poly], ids=["kalshi", "polymarket"])
+
+
+async def _still_streaming_after_a_refresh(consumer, state):
+    """#10090: an unchanged Kalshi scope no longer ends the run at its refresh
+    timer, so "did not recycle" reads as "still streaming once the refresh has
+    re-read the slate". The run is then shut down explicitly. Returns the
+    consumer's stats if it ended instead (a recycle), else None."""
+    running = asyncio.create_task(consumer())
+    try:
+        for _ in range(500):
+            if running.done() or (
+                state["slate_replays"] >= 2
+                and state["reread_calls"] >= _AT_LEAST_ONE_COMPARISON
+            ):
+                break
+            await asyncio.sleep(0.01)
+        # Room for a refresh verdict to end the run, as the old timer did.
+        await asyncio.sleep(0.2)
+        if running.done():
+            return running.result()
+        # Non-vacuity: the refresh ran and the watcher compared.
+        assert state["slate_replays"] >= 2, state
+        assert state["reread_calls"] >= _AT_LEAST_ONE_COMPARISON, state
+        return None
+    finally:
+        running.cancel()
+        await asyncio.gather(running, return_exceptions=True)
 
 
 #: The fewest rereads that prove the watcher compared at all: its baseline, then
@@ -214,7 +253,7 @@ class TestAMissingLiveEventRecycles:
 
 
 class TestACompleteSubscriptionDoesNotRecycle:
-    @ARMS
+    @pytest.mark.parametrize("arm", [_poly], ids=["polymarket"])
     async def test_every_live_event_subscribed_runs_to_the_timer(
         self, monkeypatch, arm,
     ):
@@ -232,7 +271,20 @@ class TestACompleteSubscriptionDoesNotRecycle:
         assert state["reread_calls"] >= _AT_LEAST_ONE_COMPARISON, state["reread_calls"]
         assert connects["n"] == 1
 
-    @ARMS
+    async def test_kalshi_every_live_event_subscribed_streams_through_the_refresh(
+        self, monkeypatch,
+    ):
+        module, consumer, slate = _kalshi(monkeypatch)
+        _timing(monkeypatch, module, refresh=0.3, check=0.01, floor=0)
+        connects = _install_quiet_socket(monkeypatch)
+        state = _install_session(monkeypatch, slate, lambda: [900], replay_slate=True)
+
+        ended = await _still_streaming_after_a_refresh(consumer, state)
+
+        assert ended is None, ended
+        assert connects["n"] == 1
+
+    @pytest.mark.parametrize("arm", [_poly], ids=["polymarket"])
     async def test_no_live_events_at_all_does_not_recycle(self, monkeypatch, arm):
         module, consumer, slate = arm(monkeypatch)
         _timing(monkeypatch, module, refresh=0.2, check=0.01, floor=0)
@@ -242,6 +294,17 @@ class TestACompleteSubscriptionDoesNotRecycle:
         stats = await asyncio.wait_for(consumer(), timeout=5)
 
         assert "recycle_reason" not in stats
+
+    async def test_kalshi_no_live_events_at_all_does_not_recycle(self, monkeypatch):
+        module, consumer, slate = _kalshi(monkeypatch)
+        _timing(monkeypatch, module, refresh=0.2, check=0.01, floor=0)
+        connects = _install_quiet_socket(monkeypatch)
+        state = _install_session(monkeypatch, slate, lambda: [], replay_slate=True)
+
+        ended = await _still_streaming_after_a_refresh(consumer, state)
+
+        assert ended is None, ended
+        assert connects["n"] == 1
 
 
 class TestTheThrashFloorHolds:
@@ -298,7 +361,7 @@ class TestTheThrashFloorHolds:
 
 
 class TestAFailedRereadNeverRecycles:
-    @ARMS
+    @pytest.mark.parametrize("arm", [_poly], ids=["polymarket"])
     async def test_a_reread_that_raises_keeps_the_subscription(
         self, monkeypatch, arm,
     ):
@@ -316,6 +379,23 @@ class TestAFailedRereadNeverRecycles:
         assert stats["status"] == "resubscribe"
         assert "recycle_reason" not in stats
         assert state["reread_calls"] >= _AT_LEAST_ONE_COMPARISON, state["reread_calls"]
+        assert connects["n"] == 1
+
+    async def test_kalshi_a_reread_that_raises_keeps_the_subscription(
+        self, monkeypatch,
+    ):
+        module, consumer, slate = _kalshi(monkeypatch)
+        _timing(monkeypatch, module, refresh=0.3, check=0.01, floor=0)
+        connects = _install_quiet_socket(monkeypatch)
+
+        def _boom():
+            raise RuntimeError("db down")
+
+        state = _install_session(monkeypatch, slate, _boom, replay_slate=True)
+
+        ended = await _still_streaming_after_a_refresh(consumer, state)
+
+        assert ended is None, ended
         assert connects["n"] == 1
 
     async def test_a_failure_then_a_missing_event_still_recycles(self):
@@ -363,7 +443,15 @@ class TestTheRereadIsTheSlatesLiveArm:
         _install_quiet_socket(monkeypatch)
         state = _install_session(monkeypatch, slate, lambda: [900])
 
-        await asyncio.wait_for(consumer(), timeout=5)
+        # #10090: a refresh no longer ends a run whose scope merely changed;
+        # this reads the reread's SQL, so stop once one has been recorded.
+        running = asyncio.create_task(consumer())
+        for _ in range(500):
+            if state["rereads"] or running.done():
+                break
+            await asyncio.sleep(0.01)
+        running.cancel()
+        await asyncio.gather(running, return_exceptions=True)
 
         assert state["rereads"], "the reread never ran"
         sql = _sql(state["rereads"][0])

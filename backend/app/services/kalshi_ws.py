@@ -16,6 +16,8 @@ from base64 import b64encode
 from itertools import count
 from typing import Any, Callable, Optional
 
+from app.utils.kalshi_orderbook import KalshiOrderBook
+
 logger = logging.getLogger(__name__)
 
 WS_URL = "wss://api.elections.kalshi.com/trade-api/ws/v2"
@@ -199,6 +201,11 @@ def _sign_ws_request(private_key, api_key_id: str) -> dict[str, str]:
     }
 
 
+#: #10090 — the order book channel: a snapshot, then signed quantity deltas
+#: sequenced per subscription (``sid``/``seq``).
+BOOK_CHANNEL = "orderbook_delta"
+
+
 class KalshiWebSocket:
     """Kalshi WebSocket consumer with auto-reconnect.
 
@@ -223,6 +230,90 @@ class KalshiWebSocket:
         self.on_trade: Optional[Callable] = None
         # #10702: supplied by the consumer, shared across its existing sockets.
         self.exact_trace = None
+        # #10090: set by `retire`. The reader stops at a frame boundary and its
+        # accepted callbacks drain; `run` then returns instead of reconnecting.
+        self._retiring = False
+        self._socket = None
+        # #10090: this connection's subscribe commands (id -> channel), the
+        # channels Kalshi acknowledged, and the first rejection. Reset at every
+        # connect and disconnect, so a successor is ready only while its
+        # current connection carries every channel it asked for.
+        self._subscribe_pending: dict[int, str] = {}
+        self._subscribed: set[str] = set()
+        self._subscribe_rejected: Optional[dict] = None
+        self._connected_at: Optional[float] = None
+        # #10090 direct book: the tickers whose order book this client should
+        # carry (set by the owner, `set_book_tickers`), and this connection's
+        # book state. Optional: a rejected or pending book never blocks
+        # readiness, and without a healthy book the ticker summary stands.
+        self.book_tickers: frozenset[str] = frozenset()
+        self._book: Optional[KalshiOrderBook] = None
+        self._book_sid: Optional[int] = None
+        self._book_pending: Optional[int] = None
+        self._book_requested: frozenset[str] = frozenset()
+        self._book_commands: dict[int, str] = {}
+        # Genuine last-trade price per ticker from this connection's ticker
+        # frames, carried on book quotes for the wide-book price policy.
+        self._last_trade: dict[str, str] = {}
+        self._book_quotes = 0
+        self._book_resnapshots = 0
+
+    def _reset_subscription(self):
+        self._subscribe_pending = {}
+        self._subscribed = set()
+        self._subscribe_rejected = None
+        self._connected_at = None
+        self._book = None
+        self._book_sid = None
+        self._book_pending = None
+        self._book_requested = frozenset()
+        self._book_commands = {}
+        self._last_trade = {}
+
+    def _note_subscription_response(self, msg_type, data) -> None:
+        """#10090 — record Kalshi's answer to one of this connection's
+        subscribe commands (``subscribed`` or ``error`` with its ``id``)."""
+        command_id = data.get("id")
+        if command_id is not None and command_id == self._book_pending:
+            self._book_pending = None
+            msg = data.get("msg") or {}
+            if msg_type == "subscribed" and isinstance(msg.get("sid"), int):
+                self._book_sid = msg["sid"]
+            else:
+                # Optional: the ticker summary carries on alone.
+                self._book = None
+                self._book_requested = frozenset()
+                logger.warning(
+                    "Kalshi WS: order book subscription REJECTED, ticker only: %s",
+                    str(msg)[:200],
+                )
+            return
+        action = self._book_commands.pop(command_id, None)
+        if action is not None:
+            if msg_type == "error":
+                # Membership/resync is now uncertain. Discard cached overlays;
+                # genuine ticker quotes must keep flowing on this connection.
+                self._book = None
+                self._book_requested = frozenset()
+                logger.warning(
+                    "Kalshi WS: order book %s refused: %s",
+                    action, str(data.get("msg"))[:200],
+                )
+            return
+        if msg_type not in ("subscribed", "error"):
+            return
+        channel = self._subscribe_pending.pop(command_id, None)
+        if channel is None:
+            return
+        if msg_type == "subscribed":
+            self._subscribed.add(channel)
+            return
+        if self._subscribe_rejected is None:
+            self._subscribe_rejected = {"channel": channel, "msg": data.get("msg")}
+        logger.warning(
+            "Kalshi WS: subscription to %s REJECTED: %s",
+            channel, str(data.get("msg"))[:200],
+        )
 
     def _ensure_key(self):
         if self._private_key is None:
@@ -252,6 +343,8 @@ class KalshiWebSocket:
         max_backoff = 60.0
 
         while True:
+            if self._retiring:
+                return
             try:
                 headers = _sign_ws_request(self._private_key, self.api_key_id)
                 async with websockets.connect(
@@ -261,6 +354,9 @@ class KalshiWebSocket:
                     ping_timeout=10,
                     close_timeout=5,
                 ) as ws:
+                    self._socket = ws
+                    self._reset_subscription()
+                    self._connected_at = time.monotonic()
                     connection = None
                     if self.exact_trace is not None:
                         try:
@@ -291,6 +387,7 @@ class KalshiWebSocket:
                             "cmd": "subscribe",
                             "params": params,
                         }
+                        self._subscribe_pending[cmd["id"]] = channel
                         await ws.send(json.dumps(cmd))
                         if self.exact_trace is not None and connection is not None:
                             try:
@@ -309,6 +406,10 @@ class KalshiWebSocket:
                                 else "all markets"
                             ),
                         )
+
+                    if self.book_tickers:
+                        self._book = KalshiOrderBook()
+                        await self._sync_book(ws)
 
                     async with _KalshiCallbackDispatch() as dispatch:
                         try:
@@ -330,7 +431,15 @@ class KalshiWebSocket:
                                             self.exact_trace.received(connection, payload)
                                     except Exception:
                                         pass
-                                if msg_type == "ticker" and self.on_ticker:
+                                if msg_type in ("subscribed", "error", "ok"):
+                                    self._note_subscription_response(msg_type, data)
+                                    if msg_type == "subscribed" and self._book is not None:
+                                        await self._sync_book(ws)
+                                if msg_type in ("orderbook_snapshot", "orderbook_delta"):
+                                    await self._handle_book_frame(ws, data, dispatch)
+                                elif msg_type == "ticker" and self.on_ticker:
+                                    if self._book is not None:
+                                        payload = self._overlay_ticker(payload)
                                     await dispatch.submit(
                                         self.on_ticker, payload, "Ticker"
                                     )
@@ -349,8 +458,14 @@ class KalshiWebSocket:
                                     await dispatch.submit(
                                         self.on_trade, payload, "Trade"
                                     )
+                                if self._retiring:
+                                    break
                         finally:
                             self._connected = False
+                            self._socket = None
+                            self._reset_subscription()
+                    if self._retiring:
+                        return
 
             except asyncio.CancelledError:
                 # Q460 (CERT-491): RE-RAISE, never `return`. The caller bounds
@@ -366,10 +481,17 @@ class KalshiWebSocket:
                 # expects, and lets a genuine shutdown cancel actually stop.
                 logger.info("Kalshi WS cancelled, shutting down")
                 self._connected = False
+                self._reset_subscription()
                 raise
 
             except Exception as e:
                 self._connected = False
+                self._socket = None
+                self._reset_subscription()
+                if self._retiring:
+                    # The close `retire` requested, or a transport error after
+                    # it: either way a successor owns these tickers now.
+                    return
                 logger.warning(
                     "Kalshi WS disconnected (%s: %s), reconnecting in %.0fs",
                     type(e).__name__,
@@ -379,9 +501,150 @@ class KalshiWebSocket:
                 await asyncio.sleep(backoff)
                 backoff = min(backoff * 2, max_backoff)
 
+    async def set_book_tickers(self, tickers) -> None:
+        """#10090 — the tickers whose order book this client carries. Applied
+        to the current connection (add/delete on its book subscription) and
+        subscribed afresh on every reconnect."""
+        tickers = frozenset(t.upper() for t in tickers)
+        if tickers == self.book_tickers:
+            return
+        self.book_tickers = tickers
+        socket = self._socket
+        if socket is None or not self._connected:
+            return
+        if self._book is None and tickers and self._book_sid is None:
+            self._book = KalshiOrderBook()
+        if self._book is not None:
+            await self._sync_book(socket)
+
+    async def _book_command(self, ws, action: str, params: dict) -> None:
+        cmd = {"id": next(self._cmd_counter), "cmd": "update_subscription",
+               "params": {"sids": [self._book_sid], **params, "action": action}}
+        self._book_commands[cmd["id"]] = action
+        await ws.send(json.dumps(cmd))
+
+    async def _sync_book(self, ws) -> None:
+        """Bring this connection's book subscription to ``book_tickers``."""
+        if self._book is None or self._book_pending is not None:
+            return  # no book, or its subscribe is unanswered: synced on ACK
+        desired, requested = self.book_tickers, self._book_requested
+        if self._book_sid is None:
+            if not desired:
+                return
+            cmd = {"id": next(self._cmd_counter), "cmd": "subscribe", "params": {
+                "channels": [BOOK_CHANNEL], "market_tickers": sorted(desired),
+            }}
+            self._book_pending = cmd["id"]
+            self._book_requested = desired
+            await ws.send(json.dumps(cmd))
+            logger.info("Order book subscription SENT (%d tickers)", len(desired))
+            return
+        added, removed = desired - requested, requested - desired
+        self._book_requested = desired
+        if removed:
+            self._book.forget(removed)
+            self._last_trade = {
+                t: p for t, p in self._last_trade.items() if t not in removed
+            }
+            await self._book_command(
+                ws, "delete_markets", {"market_tickers": sorted(removed)},
+            )
+        if added:
+            await self._book_command(ws, "add_markets", {"market_tickers": sorted(added)})
+
+    async def _handle_book_frame(self, ws, data, dispatch) -> None:
+        """#10090 — a changed best quote from this connection's book goes
+        through the ordered price callback, before any ticker summary."""
+        if self._book is None:
+            return
+        quote = self._book.apply(data)
+        if data.get("type") == "orderbook_snapshot":
+            self._book_commands.pop(data.get("id"), None)
+        payload = data.get("msg")
+        ticker = payload.get("market_ticker") if isinstance(payload, dict) else None
+        ticker = ticker.upper() if isinstance(ticker, str) else ""
+        if ticker not in self.book_tickers:
+            # Still consume the SID sequence: later wanted deltas share it.
+            # A queued snapshot after removal must not recreate an overlay.
+            self._book.forget([ticker])
+            quote = None
+        await self._request_resnapshots(ws)
+        if quote is None or not self.on_ticker:
+            return
+        last = self._last_trade.get(quote["market_ticker"])
+        if last is not None:
+            quote["price_dollars"] = last  # the genuine last trade, never local
+        self._book_quotes += 1
+        await dispatch.submit(self.on_ticker, quote, "Ticker")
+
+    def _overlay_ticker(self, payload: dict) -> dict:
+        """A delayed ticker summary never replaces a newer healthy book; its
+        genuine trade fields stand."""
+        ticker = (payload.get("market_ticker") or "").upper()
+        if payload.get("price_dollars") is not None:
+            self._last_trade[ticker] = payload["price_dollars"]
+        return self._book.overlay_ticker(payload)
+
+    async def _request_resnapshots(self, ws) -> None:
+        """A gapped, malformed or crossed book asks for a fresh snapshot; until
+        it arrives the book is gone and the ticker summary stands."""
+        for sid, tickers in self._book.take_resnapshot_requests().items():
+            tickers = [t for t in tickers if t in self._book_requested]
+            if not tickers:
+                continue
+            self._book_resnapshots += 1
+            cmd = {"id": next(self._cmd_counter), "cmd": "update_subscription",
+                   "params": {"sids": [sid], "market_tickers": tickers,
+                              "action": "get_snapshot"}}
+            self._book_commands[cmd["id"]] = "get_snapshot"
+            await ws.send(json.dumps(cmd))
+
+    async def retire(self):
+        """#10090 — stop this client without losing input it already accepted.
+
+        Cancelling `run` would cancel its pending lifecycle callbacks. Here the
+        reader stops at its next frame boundary (or when the closed socket ends
+        its iteration), the dispatch drains every accepted callback, and `run`
+        returns. Frames still unread on the closed socket are not input; the
+        caller retires a client only once another connection carries its
+        tickers, or once none of them is in scope.
+        """
+        self._retiring = True
+        socket = self._socket
+        close = getattr(socket, "close", None)
+        if close is not None:
+            try:
+                await close()
+            except Exception:
+                logger.debug("Kalshi WS: close during retire failed", exc_info=True)
+
     @property
     def is_connected(self) -> bool:
         return self._connected
+
+    @property
+    def is_subscribed(self) -> bool:
+        """#10090 — connected, every channel sent on this connection
+        acknowledged, and none rejected. ``is_connected`` turns true before the
+        subscribe commands are even sent, so it cannot say a successor carries
+        its tickers."""
+        return (
+            self._connected and self._subscribe_rejected is None
+            and not self._subscribe_pending and bool(self._subscribed)
+        )
+
+    def subscription_failed(self, ack_deadline_s: float) -> bool:
+        """#10090 — True when this connection's subscription was rejected, or
+        it has been connected ``ack_deadline_s`` without every acknowledgement:
+        a socket that may be silent, which only a rebuild repairs."""
+        if not self._connected:
+            return False
+        if self._subscribe_rejected is not None:
+            return True
+        return (
+            not self.is_subscribed and self._connected_at is not None
+            and time.monotonic() - self._connected_at >= ack_deadline_s
+        )
 
     @property
     def stats(self) -> dict:
@@ -389,4 +652,6 @@ class KalshiWebSocket:
             "connected": self._connected,
             "messages": self._message_count,
             "reconnects": self._reconnect_count,
+            "book_quotes": self._book_quotes,
+            "book_resnapshots": self._book_resnapshots,
         }

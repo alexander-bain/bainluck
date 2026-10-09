@@ -2167,9 +2167,13 @@ def backfill_polymarket_winners(self, limit: int = 10000, market_ids: list | Non
     unchanged. A targeted run never moves the shared cursor.
     """
     from app.tasks.backfill_winners import _backfill_polymarket_winners_from_api
+    # #10765: the scheduled sweep also grades what settled in the last 72h
+    # first; a targeted run names its own rows and never takes the head.
     return _tracked_run(
         "polymarket_winners",
-        _backfill_polymarket_winners_from_api(limit, market_ids=market_ids),
+        _backfill_polymarket_winners_from_api(
+            limit, market_ids=market_ids, recency_head=not market_ids
+        ),
     )
 
 
@@ -3606,12 +3610,13 @@ OPENING_BOOK_SLICES = 12
 
 #: How long one lock acquisition in the movement core may WAIT (#10090).
 #:
-#: A1-A7 and their actually affected market maxima commit together. Outcome
+#: A1-A6 and their actually affected market maxima commit together; A7 then
+#: commits its delta and affected maxima in its own transaction. Outcome
 #: targets use SKIP LOCKED; other waits in that transaction stay bounded so
 #: maintenance cannot queue indefinitely while holding quote rows. A full
 #: B/C recompute follows in its own transaction with the same wait bound and
 #: no outcome locks held. This bounds acquisition, not scan/lock-held duration:
-#: later A sweeps still share the retirement transaction.
+#: A1-A6 still share the prefix retirement transaction.
 #: Half a second is under the server's 1 s deadlock_timeout. A timeout raises
 #: 55P03 and rolls back that transaction, never a partial outcome/max pair.
 MOVEMENT_CORE_LOCK_TIMEOUT_MS = 500
@@ -4013,15 +4018,60 @@ def update_max_movement(self):
                 },
             )).scalars().all())
 
-            # The core yields to quotes (#10090). First statement after the
-            # lock-free prepare reads, so `is_local` scopes it to exactly
-            # A1-A7/B/C; the A1-A7 target selections below lock with
+            # A7 will commit separately, but judges the same window as its
+            # preparation and the first six retirements, never a later day.
+            retirement_asof = (await session.execute(
+                text("SELECT transaction_timestamp()"),
+            )).scalar_one()
+
+            # The core yields to quotes (#10090). After the lock-free
+            # prepare/clock reads, `is_local` scopes this budget to A1-A6
+            # and their affected maxima; the A1-A7 target selections below lock with
             # `SKIP LOCKED` and never wait at all. See
             # MOVEMENT_CORE_LOCK_TIMEOUT_MS.
             await session.execute(
                 SET_LOCK_TIMEOUT_SQL,
                 {"ms": lock_timeout_value(MOVEMENT_CORE_LOCK_TIMEOUT_MS)},
             )
+
+            async def recompute_maxima(market_ids=None):
+                # Restrict the aggregate's INPUT, not only the UPDATE target:
+                # core outcome locks must not wait behind an all-market scan.
+                params = {} if market_ids is None else {"market_ids": market_ids}
+                outcome_scope = (
+                    "" if market_ids is None else " AND fo.market_id = ANY(:market_ids)"
+                )
+                market_scope = (
+                    "" if market_ids is None else " AND fm.id = ANY(:market_ids)"
+                )
+                recomputed = await session.execute(text("""
+                    UPDATE futures_markets fm
+                    SET max_movement_24h = sub.max_mv
+                    FROM (
+                        SELECT fo.market_id, MAX(ABS(fo.probability_change_24h)) AS max_mv
+                        FROM futures_outcomes fo
+                        WHERE fo.probability_change_24h IS NOT NULL
+                """ + outcome_scope + """
+                        GROUP BY fo.market_id
+                    ) sub
+                    WHERE fm.id = sub.market_id
+                      AND fm.status IN ('open', 'active')
+                      AND (fm.max_movement_24h IS DISTINCT FROM sub.max_mv)
+                """), params)
+                emptied = await session.execute(text("""
+                    UPDATE futures_markets fm
+                    SET max_movement_24h = NULL
+                    WHERE fm.status IN ('open', 'active')
+                      AND fm.max_movement_24h IS NOT NULL
+                """ + market_scope + """
+                      AND NOT EXISTS (
+                          SELECT 1
+                          FROM futures_outcomes fo
+                          WHERE fo.market_id = fm.id
+                            AND fo.probability_change_24h IS NOT NULL
+                      )
+                """), params)
+                return recomputed.rowcount, emptied.rowcount
 
             # A. Retire deltas whose row has not been written inside the window.
             #    `last_updated` is the right stamp and `price_changed_at` is the
@@ -4498,72 +4548,6 @@ def update_max_movement(self):
             #     existing scan of `futures_odds_snapshots` rather than opening
             #     a second one; the run's total stays far inside the 120 s
             #     `soft_time_limit`.
-            contradicted = await session.execute(
-                text("""
-                    UPDATE futures_outcomes
-                    SET probability_change_24h = NULL
-                    WHERE id IN (
-                        SELECT fo.id
-                """ + A7_CONTRADICTED_PREDICATE + """
-                          AND fo.id = ANY(:prepared_ids)
-                        ORDER BY abs(fo.probability_change_24h) DESC
-                        LIMIT :batch
-                        FOR UPDATE OF fo SKIP LOCKED
-                    )
-                    RETURNING market_id
-                """),
-                {
-                    "window_hours": MOVEMENT_WINDOW_HOURS,
-                    "basis_age_hours": DATED_BASIS_MIN_AGE_HOURS,
-                    "prepared_ids": a7_prepared_ids,
-                    # Decimal, never the float — A4's note above explains why a
-                    # `float` here makes a delta sitting exactly on the floor
-                    # fail its own floor test.
-                    "floor": floor,
-                    "batch": CONTRADICTED_DIRECTION_BATCH,
-                    "scale_identical": list(SCALE_IDENTICAL_SNAPSHOT_SOURCES),
-                },
-            )
-
-            async def recompute_maxima(market_ids=None):
-                # Restrict the aggregate's INPUT, not only the UPDATE target:
-                # core outcome locks must not wait behind an all-market scan.
-                params = {} if market_ids is None else {"market_ids": market_ids}
-                outcome_scope = (
-                    "" if market_ids is None else " AND fo.market_id = ANY(:market_ids)"
-                )
-                market_scope = (
-                    "" if market_ids is None else " AND fm.id = ANY(:market_ids)"
-                )
-                recomputed = await session.execute(text("""
-                    UPDATE futures_markets fm
-                    SET max_movement_24h = sub.max_mv
-                    FROM (
-                        SELECT fo.market_id, MAX(ABS(fo.probability_change_24h)) AS max_mv
-                        FROM futures_outcomes fo
-                        WHERE fo.probability_change_24h IS NOT NULL
-                """ + outcome_scope + """
-                        GROUP BY fo.market_id
-                    ) sub
-                    WHERE fm.id = sub.market_id
-                      AND fm.status IN ('open', 'active')
-                      AND (fm.max_movement_24h IS DISTINCT FROM sub.max_mv)
-                """), params)
-                emptied = await session.execute(text("""
-                    UPDATE futures_markets fm
-                    SET max_movement_24h = NULL
-                    WHERE fm.status IN ('open', 'active')
-                      AND fm.max_movement_24h IS NOT NULL
-                """ + market_scope + """
-                      AND NOT EXISTS (
-                          SELECT 1
-                          FROM futures_outcomes fo
-                          WHERE fo.market_id = fm.id
-                            AND fo.probability_change_24h IS NOT NULL
-                      )
-                """), params)
-                return recomputed.rowcount, emptied.rowcount
-
             # Actual mutations name the only markets whose maxima retirement
             # can invalidate. Include rank sweeps too, without broadening any
             # retirement predicate, batch, ordering or SKIP LOCKED admission.
@@ -4571,7 +4555,7 @@ def update_max_movement(self):
                 market_id
                 for retirement in (
                     expired, graded, impossible, unobserved,
-                    rank_expired, rank_graded, contradicted,
+                    rank_expired, rank_graded,
                 )
                 for market_id in retirement.scalars().all()
                 if market_id is not None
@@ -4580,18 +4564,64 @@ def update_max_movement(self):
             if retired_market_ids:
                 core_updated, core_cleared = await recompute_maxima(retired_market_ids)
 
-            # Keep all seven delta/rank retirements and their affected maxima
-            # atomic. The full B/C scan belongs AFTER this commit: no quote row
-            # remains locked while unrelated markets' movement is aggregated.
+            # Keep A1–A6 and their affected maxima atomic. Their outcome rows
+            # release before A7 rechecks its prepared snapshot candidates; A7
+            # does not mutate rank, so the prefix's rank work is complete.
             await session.commit()
 
-            # The core has committed coherent deltas/ranks and maxima. The
-            # dated-bank maintenance reads that committed state without
+            # The prefix has committed coherent deltas/ranks and maxima. A7,
+            # the full recompute and dated-bank work follow without
             # holding outcome quote locks. A cleared claim stays silent
             # even while its old bank remains: the reader gates on NULL
             # before it reads metadata, including the DataGolf arm.
             bank_transaction_closed = False
             try:
+                # A7 is last in the original sweep order. Its own transaction
+                # must restore the local acquisition bound after prefix commit.
+                await session.execute(
+                    SET_LOCK_TIMEOUT_SQL,
+                    {"ms": lock_timeout_value(MOVEMENT_CORE_LOCK_TIMEOUT_MS)},
+                )
+                contradicted = await session.execute(
+                    text("""
+                        UPDATE futures_outcomes
+                        SET probability_change_24h = NULL
+                        WHERE id IN (
+                            SELECT fo.id
+                    """ + A7_CONTRADICTED_PREDICATE.replace(
+                        "now()", "CAST(:retirement_asof AS timestamptz)",
+                    ) + """
+                              AND fo.id = ANY(:prepared_ids)
+                            ORDER BY abs(fo.probability_change_24h) DESC
+                            LIMIT :batch
+                            FOR UPDATE OF fo SKIP LOCKED
+                        )
+                        RETURNING market_id
+                    """),
+                    {
+                        "retirement_asof": retirement_asof,
+                        "window_hours": MOVEMENT_WINDOW_HOURS,
+                        "basis_age_hours": DATED_BASIS_MIN_AGE_HOURS,
+                        "prepared_ids": a7_prepared_ids,
+                        # Decimal, never the float — A4's note above explains why a
+                        # `float` here makes a delta sitting exactly on the floor
+                        # fail its own floor test.
+                        "floor": floor,
+                        "batch": CONTRADICTED_DIRECTION_BATCH,
+                        "scale_identical": list(SCALE_IDENTICAL_SNAPSHOT_SOURCES),
+                    },
+                )
+
+                contradicted_market_ids = sorted({
+                    market_id for market_id in contradicted.scalars().all()
+                    if market_id is not None
+                })
+                if contradicted_market_ids:
+                    a7_updated, a7_cleared = await recompute_maxima(contradicted_market_ids)
+                    core_updated += a7_updated
+                    core_cleared += a7_cleared
+                await session.commit()
+
                 # Preserve the original full B/C maintenance for markets whose
                 # prices changed independently of retirement. Its new transaction
                 # owns no outcome locks, and re-arms the same local wait budget.

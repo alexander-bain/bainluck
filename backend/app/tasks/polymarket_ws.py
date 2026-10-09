@@ -417,7 +417,8 @@ def _pm_lock_isolated_chunks(
     admit another buffered row or change the open cap here. Within the admitted
     population a whole question and its complements stay indivisible; an
     oversized question keeps one transaction rather than exposing half of it.
-    Unaffected rows retain their original chunks and order.
+    Unaffected rows retain their original chunks and order, ahead of the
+    retried cohorts they share no event with.
     """
     if not retry_events:
         return chunks
@@ -468,8 +469,15 @@ def _pm_lock_isolated_chunks(
             current.extend(unit)
         if current:
             packed[events].append(current)
+    # A retried cohort is the one most likely still held, and each attempt can
+    # wait the full chunk lock budget. Its retained rows also lead the buffer,
+    # so first-appearance placement put that wait ahead of the fresh unrelated
+    # remainder. Run the remainder first; a cohort sharing an event with a
+    # remainder chunk is released ahead of it, in order, so overlapping events
+    # keep their write order.
     result = []
     emitted = set()
+    held = []
     for chunk in chunks:
         remainder = [oid for oid in chunk if oid not in group_by_outcome]
         remainder_emitted = False
@@ -477,13 +485,26 @@ def _pm_lock_isolated_chunks(
             events = group_by_outcome.get(oid)
             if events is None:
                 if not remainder_emitted:
+                    remainder_events = {
+                        event_by_outcome[o] for o in remainder if o in event_by_outcome
+                    }
+                    last = max(
+                        (i for i, cohort in enumerate(held)
+                         if not cohort.isdisjoint(remainder_events)),
+                        default=-1,
+                    )
+                    for cohort in held[: last + 1]:
+                        result.extend(packed[cohort])
+                    del held[: last + 1]
                     result.append(remainder)
                     remainder_emitted = True
             elif events not in emitted:
-                # Place each cohort at its first admitted appearance, keeping
-                # the unaffected remainder in its original transaction.
-                result.extend(packed[events])
+                # Each cohort keeps its first-appearance order among cohorts;
+                # the unaffected remainder keeps its original transaction.
+                held.append(events)
                 emitted.add(events)
+    for cohort in held:
+        result.extend(packed[cohort])
     return result
 
 
@@ -1159,7 +1180,7 @@ async def _run_polymarket_ws_consumer(*, sessions, stop=None):
     """Stream until cancellation; an explicit stop also runs the final drain."""
     # `text`/`or_`/`and_` left with `_slate_event_window`, which now owns the
     # only expression in this consumer that needed them.
-    from sqlalchemy import select, update, func
+    from sqlalchemy import select
 
     from app.models.models import (
         Event, FuturesMarket, FuturesOutcome,
@@ -1191,8 +1212,6 @@ async def _run_polymarket_ws_consumer(*, sessions, stop=None):
     )
     from app.tasks.ws_liveness import report as _report_liveness
     from app.utils.futures_rank import rerank_market_fields_stmt  # #6598
-    from app.utils.price_change_stamp import price_changed_at_value
-    from app.utils.price_change_stamp import quote_moved_column  # #9484
     # #2471: one engine for this run, a fresh session per operation; the
     # decorator disposes it after the final drain. Same call shape as the
     # task factory, so every site below is unchanged.
@@ -1675,7 +1694,9 @@ async def _run_polymarket_ws_consumer(*, sessions, stop=None):
     # clears the entry, since its midpoint is about to replace the price.
     withdraw_buffer: dict[int, tuple] = {}
 
-    async def write_chunk(chunk: dict[int, float], *, final=False) -> _PMPriceWriteResult | bool | None:
+    async def write_chunk(
+        chunk: dict[int, float], *, final=False, start_market_publish=None,
+    ) -> _PMPriceWriteResult | bool | None:
         """One flush transaction: write, re-rank, commit, publish, un-buffer.
 
         #9484: the flush used to write its whole batch in ONE transaction, so a
@@ -1786,9 +1807,14 @@ async def _run_polymarket_ws_consumer(*, sessions, stop=None):
         successful_price_write_at.update(dict.fromkeys(
             (row.id for row in written_rows), _mono(),
         ))
-        # #9484 — twin of the Kalshi socket's: the commit landed, so publish
-        # before the buffer bookkeeping and the blend refresh can suppress it.
-        await blend_refresher.publish_market_changes(session)
+        # Register publication immediately after COMMIT, before buffer cleanup
+        # can be interrupted. The game flush owns and joins its one sender so
+        # event stamping can proceed while this separate notification awaits
+        # Redis. Standalone writes retain their inline publication contract.
+        if start_market_publish is None:
+            await blend_refresher.publish_market_changes(session)
+        else:
+            start_market_publish(session)
 
         # Q491 repair 2 — the write landed, so and only so do these entries
         # leave the buffer. The `== prob` test is what used to be `setdefault`:
@@ -2003,12 +2029,48 @@ async def _run_polymarket_ws_consumer(*, sessions, stop=None):
             # overlaps chunk N's stamp. Unchanged: writes stay strictly sequential, one in flight;
             # the refresher still runs ONE refresh at a time, in chunk order
             # (each joins the previous one before its receipts are staged); a
-            # chunk's stamp starts only after its own write committed and
-            # published; withdrawals still follow the stamp before them; and
+            # chunk's stamp starts only after its own write committed;
+            # its market notification may run alongside the event stamp.
+            # Withdrawals still follow the stamp before them; and
             # no stamp outlives its flush, so the final drain never refreshes
             # beside it.
             stamping = None
             stamping_events = None
+            market_publishing = None
+
+            def start_market_publish(session):
+                nonlocal market_publishing
+                # The previous sender joins before the next price transaction.
+                # No publication backlog and no database session held open.
+                assert market_publishing is None
+                market_publishing = asyncio.create_task(
+                    blend_refresher.publish_market_changes(session),
+                    name="polymarket-committed-market-publish",
+                )
+
+            async def market_publish_done(*, cancel=False):
+                nonlocal market_publishing
+                if market_publishing is None:
+                    return
+                task = market_publishing
+                if cancel and not task.cancelling():
+                    task.cancel()
+                interrupted = None
+                while not task.done():
+                    try:
+                        await asyncio.wait({task})
+                    except asyncio.CancelledError as exc:
+                        interrupted = exc
+                        if not task.cancelling():
+                            task.cancel()
+                market_publishing = None
+                if not task.cancelled() and task.exception() is not None:
+                    logger.error(
+                        "Polymarket WS: committed market publication failed",
+                        exc_info=task.exception(),
+                    )
+                if interrupted is not None:
+                    raise interrupted
 
             async def stamp_done(*, cancel=False):
                 nonlocal stamping, stamping_events
@@ -2040,6 +2102,7 @@ async def _run_polymarket_ws_consumer(*, sessions, stop=None):
 
             try:
                 for index, chunk_ids in enumerate(chunks):
+                    await market_publish_done()
                     async with buffer_lock:
                         withdraw_cohort_ids.update(withdraw_buffer)
                         withdraw_events = event_ids_for_outcomes(
@@ -2070,7 +2133,10 @@ async def _run_polymarket_ws_consumer(*, sessions, stop=None):
                                 batch_marks[oid] = input_marks[oid]
                             else:
                                 batch_marks.pop(oid, None)
-                    wrote = await write_chunk(current_chunk, final=final)
+                    wrote = await write_chunk(
+                        current_chunk, final=final,
+                        start_market_publish=start_market_publish,
+                    )
                     # Join any safe overlapping stamp before this chunk's
                     # withdrawals, receipts or refresh.
                     await stamp_done()
@@ -2171,10 +2237,16 @@ async def _run_polymarket_ws_consumer(*, sessions, stop=None):
                 # as it cancelled a stamp it interrupted before, and joins it
                 # before the flush ends. The refresher's cancellation path keeps
                 # a stamp cancelled before its COMMIT owed for the hand-off.
-                await stamp_done(cancel=True)
+                try:
+                    await stamp_done(cancel=True)
+                finally:
+                    await market_publish_done(cancel=True)
                 raise
             finally:
-                await stamp_done()
+                try:
+                    await stamp_done()
+                finally:
+                    await market_publish_done()
         # Keep isolation beyond cooldown expiry until every failed price row
         # has committed. A newer quote on a successful row may batch normally.
         lock_retry_events.intersection_update(
@@ -2939,9 +3011,10 @@ async def _run_polymarket_ws_consumer(*, sessions, stop=None):
             return unadmitted_live_events(result.all(), legged_market_ids)
 
     def start_game_socket():
-        # `run([])` means every market to the legacy resolution client.
+        # Reuse the open arm's per-shard owner for game quotes/resolutions.
+        # Empty means no subscriptions here, never the legacy all-market run.
         return asyncio.create_task(
-            ws.run(asset_ids=asset_ids.copy()) if asset_ids else asyncio.Event().wait(),
+            ws.run_refreshable(asset_ids.copy()),
             name="polymarket-game-sockets",
         )
 
@@ -3030,13 +3103,16 @@ async def _run_polymarket_ws_consumer(*, sessions, stop=None):
                 )
                 run_started_at = time.monotonic()
                 continue
-            # Only the game arm recycles. Its existing resolution-only policy
-            # and fresh-slate subscribe behavior remain; the open arm keeps all
-            # unchanged sockets, callbacks, books, buffers and blend debt.
-            game_run_task.cancel()
-            await asyncio.gather(game_run_task, return_exceptions=True)
+            # Install new callback ownership before subscribing new tokens.
+            # The existing refreshable owner changes only affected shards, so
+            # unrelated live games keep their connections, books and coverage.
             await refresh_catalog(fresh_slate, fresh_open)
-            game_run_task = start_game_socket()
+            if game_run_task.done():
+                # Loading/updating can yield while the retained client exits.
+                # Propagate its failure (or end this run) just as the wait above.
+                game_run_task.result()
+                break
+            ws.update_asset_ids(asset_ids.copy())
             run_started_at = time.monotonic()
             stats["catalog_refreshes"] = stats.get("catalog_refreshes", 0) + 1
             stats["recycle_reason"] = "admission" if admitted else "timer"

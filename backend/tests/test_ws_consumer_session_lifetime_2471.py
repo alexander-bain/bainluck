@@ -101,6 +101,7 @@ class _Rig:
         self.open = 0
 
     def build_engine(self, **budget):
+        assert budget.pop("retain_full_pool", False) is True
         assert not budget, f"the consumer engine must carry no budget: {budget}"
         engine = _FakeEngine(len(self.engines), self.log)
         self.engines.append(engine)
@@ -586,8 +587,8 @@ class TestTheRealFactoryOnALentEngine:
 
 class TestTheEngineIsBounded:
     def test_pool_query_and_lock_bounds_are_the_task_engines(self, monkeypatch):
-        """No new knobs: the consumer engine is `_get_task_engine()` with no
-        budget — pool 3 + 2 overflow, pre-ping, 1800 s recycle and the resting
+        """The ordinary task engine retains pool 3 + 2 overflow, while socket
+        consumers retain all five. Both keep pre-ping, recycle and the resting
         statement bound on every connection. The one lock bound on this path is
         the refresher's, and it is TRANSACTION-local (`set_config(..., true)`),
         so it ends at commit and cannot ride a pooled connection into the next

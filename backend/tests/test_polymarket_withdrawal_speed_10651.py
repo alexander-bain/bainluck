@@ -92,13 +92,15 @@ def rig(
             SimpleNamespace(id=oid, market_id=oid, last_updated=1) for oid in selected
         ]
 
-    async def write(chunk, *, final=False):
+    async def write(chunk, *, final=False, start_market_publish=None):
         trace.append(("write", list(chunk)))
         if 900 in chunk:
             entered.set()
             await release.wait()
         if failed_price is not None and failed_price in chunk:
             return False
+        if start_market_publish is not None:
+            start_market_publish(None)
         for oid, value in chunk.items():
             if batch.get(oid) == value:
                 batch.pop(oid)

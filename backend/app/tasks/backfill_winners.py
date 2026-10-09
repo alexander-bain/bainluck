@@ -8363,10 +8363,115 @@ def _log_poly_api_run(stats: dict, last_max_id) -> None:
 _TARGETED_MARKET_CAP = 500
 
 
+# --- #10765: the recency head ------------------------------------------------
+#
+# The cursor below walks ~353k eligible rows ASCENDING by id, which is fair and
+# does not finish: a market settled today sits at the id frontier and is reached
+# only after a full wraparound. Gotcha #41's second clause — an oldest-first walk
+# over a population whose interesting rows are the newest needs BOTH bounds —
+# and the same shape #6734 fixed in `_sync_polymarket_resolved_status`.
+#
+# Why this rail and not that one. The ingest (`_process_event_batch`) stamps a
+# closed event `status='resolved'` with 0/1 prices and NO grade; the status sweep
+# selects `status != 'resolved'`, so a market the ingest closed first never
+# enters it; `clob_resolve` selects `external_id LIKE '0x%'`, so event-keyed
+# markets never enter that either. This phase is the one that grades
+# resolved-but-ungraded rows, and it already grades every shape correctly once
+# it reaches them (#7505's `_side1`, the event branch). It just never reaches
+# the fresh ones. Specimen (#10762): Polymarket 63849227 / 63849229, the
+# Brewers–Padres series, resolved 13:12:50Z on 10/08 with the Brewers legs at
+# 1.000 and `is_winner` NULL — printed "Lost" one card below Kalshi's "Won".
+# Measured the same day: 34,490 Polymarket markets settled in 72h, 25,467
+# crowned; ~7.4k of the rest held an ungraded leg already priced >= 0.99.
+#
+# What the head may select, and why it cannot grade anything new:
+#
+# * a strict SUBSET of the cursor's own population — resolved, Polymarket, a
+#   leg with `resolution_source IS NULL` (which the cursor's first HAVING arm
+#   admits), and nothing crowned. So it changes only WHEN a row is reached.
+# * settled inside the window, newest first. The window is the floor; rows that
+#   age out of it are still the cursor's, exactly as before.
+# * an ungraded leg whose STORED price is terminal. That is a selection rule
+#   only — it spends the head on markets the venue has visibly finished. The
+#   grade itself is read off Gamma's `outcomePrices` by the unchanged code
+#   below; our own price never decides a verdict.
+# * keyed by Gamma event id, so every head row goes down Phase B, where the
+#   head's time share is enforced.
+#
+# The head never enters the cursor decision (`_selected_ids` is the cursor page
+# alone) and gets at most half the run's wall clock, so the backlog is not
+# starved by the arm built to stop starvation.
+#
+# The EXISTS form is deliberate: a JOIN + GROUP BY over this window planned a
+# sequential scan of all 3.7M outcome rows (cost 374k); EXISTS plans a nested
+# loop on `ix_futures_markets_settled_at` + `ix_futures_outcomes_market_id`
+# (cost 57k). EXPLAINed against production 2026-10-08.
+#
+# The LIMIT is a ceiling on the select, not the head's throughput bound: the
+# time share is. At 500 the first live run (v5609, 05:47Z 10/09) took 500 rows
+# in 130 events and skipped none — the cap bound, not the clock — so the head
+# cleared ~500 rows per run against ~1.5–2.5k arrivals a day, on the one caller
+# that reaches it four times a day (backfill_winners stops at its budget guard
+# before this phase). That tracks arrivals instead of draining them, and the
+# specimen sat at rank ~697 behind them. 2000 rows ran in 3.1s under EXPLAIN
+# ANALYZE on production the same morning; Gamma answers an event in ~0.3s, so
+# the 150s share now binds first and skips the OLDEST head events (the select
+# is newest-first). `head_reached_s` reports how far into the share it got.
+_GAMMA_HEAD_WINDOW_HOURS = 72
+_GAMMA_HEAD_LIMIT = 2000
+_GAMMA_HEAD_TERMINAL_PRICE = 0.99
+_GAMMA_HEAD_BUDGET_S = 150.0
+
+_GAMMA_HEAD_SQL = """
+    SELECT fm.id, fm.external_id, fm.group_type,
+           fm.market_metadata->>'polymarket_event_id' AS poly_event_id
+    FROM futures_markets fm
+    WHERE fm.source = 'polymarket'
+      AND fm.status = 'resolved'
+      AND fm.settled_at > NOW() - make_interval(hours => :head_hours)
+      AND fm.market_metadata->>'polymarket_event_id' IS NOT NULL
+      AND EXISTS (
+          SELECT 1 FROM futures_outcomes fo
+          WHERE fo.market_id = fm.id
+            AND fo.resolution_source IS NULL
+            AND fo.current_probability >= :head_terminal
+      )
+      AND NOT EXISTS (
+          SELECT 1 FROM futures_outcomes fw
+          WHERE fw.market_id = fm.id AND fw.is_winner
+      )
+    ORDER BY fm.settled_at DESC, fm.id DESC
+    LIMIT :head_limit
+"""
+
+
+def _gamma_head_stop_at(t0: float, stop_at: float) -> float:
+    """When the head must yield. Pure.
+
+    The earlier of its own budget and HALF of what the run has left, so a caller
+    that hands this phase a short wall (backfill_winners at the end of its
+    pipeline) still leaves the cursor its half.
+    """
+    return t0 + min(_GAMMA_HEAD_BUDGET_S, max(0.0, stop_at - t0) / 2.0)
+
+
+def _merge_head_into_page(head_rows, cursor_rows):
+    """``(rows_to_process, head_only_ids)``. Pure.
+
+    Head rows first, so Phase B reaches them before the deadline; a row in both
+    lists is kept once, as a CURSOR row, because the cursor's completeness
+    accounting is the one that must see it.
+    """
+    cursor_ids = {r.id for r in cursor_rows}
+    head_only = [r for r in head_rows if r.id not in cursor_ids]
+    return head_only + list(cursor_rows), {r.id for r in head_only}
+
+
 async def _backfill_polymarket_winners_from_api(
     limit: int = 500,
     deadline: float | None = None,
     market_ids: list[int] | None = None,
+    recency_head: bool = False,
 ):
     """Phase 3: Fetch settlement prices from Polymarket Gamma API.
 
@@ -8508,6 +8613,32 @@ async def _backfill_polymarket_winners_from_api(
         )
         markets = stuck.all()
 
+    # #10765: the recency head. Scheduled callers only — a targeted run names
+    # its own rows, and the cursor-only callers keep exactly the old selection.
+    head_rows: list = []
+    stats["head_selected"] = 0
+    stats["head_events"] = 0
+    stats["head_events_skipped"] = 0
+    stats["head_reached_s"] = None
+    if recency_head and not _targeted:
+        try:
+            async with get_task_session() as session:
+                head_rows = (
+                    await session.execute(
+                        text(_GAMMA_HEAD_SQL),
+                        {
+                            "head_hours": _GAMMA_HEAD_WINDOW_HOURS,
+                            "head_terminal": _GAMMA_HEAD_TERMINAL_PRICE,
+                            "head_limit": _GAMMA_HEAD_LIMIT,
+                        },
+                    )
+                ).all()
+        except Exception as e:  # noqa: BLE001 — the backlog half must still run
+            # A head we could not read is reported, never a reason to skip the
+            # cursor's page (gotcha #42).
+            stats["errors"].append(f"head: {str(e)[:160]}")
+            head_rows = []
+
     if not markets:
         if _targeted:
             # A targeted run that matched nothing has NOT drained the sweep, and
@@ -8522,11 +8653,14 @@ async def _backfill_polymarket_winners_from_api(
         # Wrapped around — reset cursor for next run
         _rc.delete(_offset_key)
         logger.info("Polymarket API winner backfill: nothing to do (reset cursor)")
-        # Still stamped: an un-terminalled early return classifies as the
-        # legacy unknown, i.e. exactly as green as before. `markets_checked`
-        # is 0 here, so this reports `checked_zero` — a wraparound and a
-        # starved run are not the same fact and must not read the same.
-        return _finish(stats)
+        if not head_rows:
+            # Still stamped: an un-terminalled early return classifies as the
+            # legacy unknown, i.e. exactly as green as before. `markets_checked`
+            # is 0 here, so this reports `checked_zero` — a wraparound and a
+            # starved run are not the same fact and must not read the same.
+            return _finish(stats)
+        # #10765: the backlog wrapped but the head has fresh work. Process it;
+        # the cursor decision below sees an empty page and is a no-op.
 
     # CAL-P086A (`C-WINNER-WRITER-1` [P0]): the cursor is NOT written here.
     #
@@ -8545,6 +8679,11 @@ async def _backfill_polymarket_winners_from_api(
     _selected_ids = [row.id for row in markets]
     _completed_ids: set = set()
 
+    # #10765: head rows join the page AFTER `_selected_ids` is taken, so the
+    # cursor decision is a statement about the cursor's page alone.
+    markets, _head_only_ids = _merge_head_into_page(head_rows, markets)
+    stats["head_selected"] = len(_head_only_ids)
+
     # Separate markets by lookup strategy:
     # - With poly_event_id: group by event for batch event lookup
     # - Without: look up each market individually by condition_id
@@ -8555,6 +8694,14 @@ async def _backfill_polymarket_winners_from_api(
             by_event.setdefault(row.poly_event_id, []).append(row)
         else:
             by_condition.append(row)
+    # #10765: events made only of head rows are the ones the head's time share
+    # governs. An event that also carries a cursor row is the cursor's work and
+    # is never skipped on the head's clock.
+    _head_only_events = {
+        eid for eid, rows in by_event.items()
+        if all(r.id in _head_only_ids for r in rows)
+    }
+    stats["head_events"] = len(_head_only_events)
 
     logger.info(
         "Polymarket API winner backfill: %d by event (%d events), %d by condition",
@@ -8814,6 +8961,12 @@ async def _backfill_polymarket_winners_from_api(
 
         # --- Phase B: Event-ID lookups (original logic) ---
         event_ids = list(by_event.keys())
+        # #10765: the head's share is taken from what is left HERE, after
+        # Phase A, so a slow condition-id phase cannot spend it before the head
+        # has started.
+        _head_t0 = _time.monotonic()
+        _head_stop_at = _gamma_head_stop_at(_head_t0, _stop_at)
+        _head_last_entered = None
         batch_size = 200
         for batch_start in range(0, len(event_ids), batch_size):
             if _out_of_time():
@@ -8837,6 +8990,17 @@ async def _backfill_polymarket_winners_from_api(
                     if _out_of_time():
                         stats["deadline_hit"] = "phase_b_inner"
                         break
+                    if (
+                        event_id in _head_only_events
+                        and _time.monotonic() >= _head_stop_at
+                    ):
+                        # The head's share is spent. Its rows are not the
+                        # cursor's ledger, so skipping them moves nothing; the
+                        # next run's head selects them again.
+                        stats["head_events_skipped"] += 1
+                        continue
+                    if event_id in _head_only_events:
+                        _head_last_entered = _time.monotonic()
                     # CAL-P086A: split "Gamma answered, and the answer is no
                     # such event" from "Gamma did not answer". Both used to
                     # arrive here as `event_data = None` and both were counted
@@ -9252,6 +9416,12 @@ async def _backfill_polymarket_winners_from_api(
             )
             await asyncio.sleep(0.3)
 
+        # #10765: seconds into the head's share when its last head event began.
+        # Near `_GAMMA_HEAD_BUDGET_S` with skips ⇒ the clock bound it; well
+        # under with no skips ⇒ the select ran out first.
+        if _head_last_entered is not None:
+            stats["head_reached_s"] = round(_head_last_entered - _head_t0, 1)
+
     except Exception as e:
         stats["errors"].append(str(e))
         logger.error("Polymarket API winner backfill error: %s", e)
@@ -9267,7 +9437,10 @@ async def _backfill_polymarket_winners_from_api(
     _completed_ids.discard(None)
     _deferred_ids = set(_selected_ids) - _completed_ids
     stats["selected"] = len(_selected_ids)
-    stats["completed"] = len(_completed_ids)
+    # #10765: `completed` stays a statement about the cursor's page (it was a
+    # subset of `selected` before the head existed); the head reports its own.
+    stats["completed"] = len(_completed_ids & set(_selected_ids))
+    stats["head_completed"] = len(_completed_ids & _head_only_ids)
     stats["deferred"] = len(_deferred_ids)
     if _targeted:
         # #6110: a targeted run never touches the shared cursor. It selected an
@@ -9599,7 +9772,7 @@ async def _resolve_winners_only(limit: int = 2000):
     # Queue 357: the deadline, not just the pre-phase guard above. `_over_budget()`
     # tests entry and then cannot interrupt a seven-minute call.
     poly_api_stats = await _backfill_polymarket_winners_from_api(
-        limit=5000, deadline=_start + _DEADLINE_S
+        limit=5000, deadline=_start + _DEADLINE_S, recency_head=True
     )
     stats["polymarket_api"] = {
         "winners": poly_api_stats.get("winners_set", 0),
@@ -10305,7 +10478,9 @@ async def _backfill_all_winners(dry_run: bool = False, limit: int = 5000):
     # so the task spent its final 414s inside this one call. Same deadline form
     # the candlestick drainer below has carried since #107.
     poly_api_stats = await _backfill_polymarket_winners_from_api(
-        limit=10000, deadline=_pipeline_start + _SOFT_LIMIT_S - _BUDGET_MARGIN_S
+        limit=10000,
+        deadline=_pipeline_start + _SOFT_LIMIT_S - _BUDGET_MARGIN_S,
+        recency_head=True,
     )
     _end_phase("polymarket_api")
 

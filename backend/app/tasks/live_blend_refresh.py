@@ -35,8 +35,9 @@ one — not 60x. What it buys is Alex's stated bar: a live match page gains a
 chart point within a minute instead of within two.
 
 Each chart point shares its event's blend transaction. A single admitted event
-keeps its direct read/write path; multiple events share preparation within each
-fresh/pending population, then commit one event per transaction. Fresh stamps
+keeps its direct read/write path; multiple events prepare each fresh/pending
+population, then commit one event per transaction. Fresh worker tails reread
+current quotes in their write session. Fresh stamps
 do not wait for older debt's preparation reads. Earlier
 completed events publish and release their row locks while later events still
 do stamp work. A waiting first event still delays later stamps, but cannot hold
@@ -64,7 +65,6 @@ from __future__ import annotations
 
 from asyncio import CancelledError
 import contextlib
-import copy
 from collections import deque
 import logging
 import math
@@ -139,6 +139,17 @@ DEFAULT_STAMP_LOCK_TIMEOUT_MS = 500
 # writes wait for the next one. Cooperative: finish each attempted transaction
 # and publication; never cancel a stamp merely because this budget elapsed.
 PENDING_STAMP_BUDGET_S = 1.0
+# #10090 — a flush that carries fresh event IDs attempts at most this many old
+# stamps across all of its refresh calls; the rest stay owed in continuation
+# order for a quiet flush, which keeps the full time budget above. Without it a
+# busy flush's old debt ran serially for up to that second after its fresh work.
+FRESH_FLUSH_PENDING_ATTEMPTS = 1
+
+# #10090 — fixed fresh-stamp workers per refresh. Two disjoint stamps waiting
+# on rows/publication must not hold a third ready fresh event. Each holds one
+# session only inside its stamp; with a consumer's price writer and standalone
+# writer that is the lent engine's five connections (pool 3 + overflow 2).
+FRESH_STAMP_WORKERS = 3
 
 #: #837 receipt — the per-event floor between receipt lines for chains that
 #: cannot qualify as a quiet tail (a busy market's routine deferrals, a held
@@ -397,6 +408,11 @@ class TailReceipts:
         status = disposition[5] if len(disposition) > 5 else None
         was_live = event_id in self._live_events
         mark = self._committed.pop(event_id, None)
+        if len(disposition) > 6 and disposition[6] is False:
+            # A queued fresh stamp reread the board. The staged input is not
+            # joined to that reading; only the exact observation trace can
+            # make that claim. Record the stamp without input coverage.
+            mark = None
         if status == "live":
             if not was_live:
                 self._live_since[event_id] = _wall()
@@ -635,14 +651,16 @@ class TailReceipts:
             "live_blend_refresh[%s]: tail-receipt run=%s event=%s result=%s "
             "quiet=%s moved=%s origin=%s rev_seq=%d rev_outcome=%s rev_p=%.6f "
             "rev_kind=%s rev_recv_wall=%s rev_venue_ts_ms=%s stored_wall=%s "
-            "held_wall=%s stamp_rev_seq=%d stamped_at=%s value=%s previous=%s "
+            "held_wall=%s stamp_rev_seq=%s stamped_at=%s value=%s previous=%s "
             "later_inputs=%d later_committed=%d last_input_seq=%s "
             "lock_retries=%d commit_failures=%d batch_failures=%d held_s=%.3f "
             "recv_to_close_s=%.3f coalesced=%d error=%s",
             self.source, self.run, event_id, result, quiet, moved, chain.origin,
             rev.seq, rev.outcome_id, rev.probability, rev.kind,
             _iso(rev.recv_wall), rev.venue_ts_ms, _iso(chain.stored_wall),
-            _iso(chain.opened_wall), stamp_rev.seq, stamped_at, value, previous,
+            _iso(chain.opened_wall),
+            "-" if len(disposition) > 6 and disposition[6] is False else stamp_rev.seq,
+            stamped_at, value, previous,
             later_inputs, chain.later_committed,
             self._last_seq_by_event.get(event_id), chain.lock_retries,
             chain.commit_failures, chain.batch_failures,
@@ -1062,6 +1080,8 @@ class LiveBlendRefresher:
         self._pending_flush_started: Optional[float] = None
         self._pending_started_at: Optional[float] = None
         self._pending_attempted = False
+        self._pending_attempts = 0
+        self._pending_fresh_flush = False
         self._last_refresh_at: dict[int, float] = {}
         #: Events whose last batch failed -> the monotonic time before which
         #: they are not due, whatever the throttle says.
@@ -1203,11 +1223,23 @@ class LiveBlendRefresher:
             self._pending_flush_started = flush_started
             self._pending_started_at = None
             self._pending_attempted = False
+            self._pending_attempts = 0
+            self._pending_fresh_flush = False
+        if flush_started is not None and fresh:
+            # Sticky for the flush: old attempts made before its first fresh
+            # call count against the same allowance, so none is added after.
+            self._pending_fresh_flush = True
 
         def pending_budget_spent():
+            if flush_started is None:
+                return False
+            if (
+                self._pending_fresh_flush
+                and self._pending_attempts >= FRESH_FLUSH_PENDING_ATTEMPTS
+            ):
+                return True
             return (
-                flush_started is not None
-                and self._pending_attempted
+                self._pending_attempted
                 and self._pending_started_at is not None
                 and _mono() - self._pending_started_at >= PENDING_STAMP_BUDGET_S
             )
@@ -1242,6 +1274,7 @@ class LiveBlendRefresher:
                 if self._pending_started_at is None:
                     self._pending_started_at = _mono()
                 self._pending_attempted = True
+                self._pending_attempts += 1
             self._pending_continuation = [
                 eid for eid in self._pending_continuation if eid not in due
             ]
@@ -1294,6 +1327,7 @@ class LiveBlendRefresher:
         budget_deferred: set[int] = set()
         publishing = None
         waiting_frames = []
+        reread_events: set[int] = set()
         import asyncio
 
         publication_lock = asyncio.Lock()
@@ -1352,6 +1386,10 @@ class LiveBlendRefresher:
             # the first publication await. Interrupted delivery does not undo
             # a stored stamp or promise replay; _publish keeps its own contract.
             completed.update(group_ids)
+            for event_id in group_ids:
+                disposition = self._dispositions.get(event_id, ())
+                if event_id in reread_events and disposition[:1] == ("stamped",):
+                    self._dispositions[event_id] = disposition[:6] + (False,)
             if receipts is not None:
                 self._receipt_call(
                     receipts.resolve,
@@ -1364,8 +1402,9 @@ class LiveBlendRefresher:
 
         try:
             # Read/stamp fresh prices before reading older debt. Each nonempty
-            # population shares one prepared view; one-population calls still
-            # pay one read, and the singleton path above remains unchanged.
+            # population prepares one view for order and the initial worker
+            # claims. Queued fresh stamps reread below; old debt and the
+            # singleton path above keep their existing read behavior.
             for population in (fresh.intersection(due), set(due).difference(fresh)):
                 if not population:
                     continue
@@ -1381,8 +1420,40 @@ class LiveBlendRefresher:
                 if pending_only and flush_started is not None:
                     if self._pending_started_at is None:
                         self._pending_started_at = _mono()
+                # A fresh-bearing flush with one old attempt left and a due
+                # continuation head attempts exactly that head, which the
+                # shared read below could not reorder. It reads its own group,
+                # as a singleton does, instead of first reading every old
+                # event. The rest stay owed in their continuation order; debt
+                # without one gets its live-first order from a later read. A
+                # single old event without a head has no order to decide
+                # either, so it reads its own group the same way.
+                carried = [
+                    eid for eid in self._pending_continuation if eid in population
+                ]
+                head = None
+                if (
+                    pending_only
+                    and flush_started is not None
+                    and self._pending_fresh_flush
+                    and FRESH_FLUSH_PENDING_ATTEMPTS - self._pending_attempts == 1
+                ):
+                    if carried:
+                        head = carried[0]
+                    elif len(population) == 1:
+                        (head,) = population
+                head_only = head is not None
+                # A fresh population that fits the fixed workers has no claim
+                # order to decide: every event starts at once. Each stamp reads
+                # its own group in its own write session, as a singleton does,
+                # rather than every stamp first waiting on a separate session's
+                # read of all of them. A read failure stays with its own event.
+                prepared = None
                 try:
-                    prepared = await self._prepare_groups(list(population))
+                    if not head_only and (
+                        pending_only or len(population) > FRESH_STAMP_WORKERS
+                    ):
+                        prepared = await self._prepare_groups(list(population))
                 except Exception as exc:
                     self.stats["errors"] += 1
                     logger.exception(
@@ -1398,6 +1469,8 @@ class LiveBlendRefresher:
                 # Preserve live-first order within each population and numeric
                 # tie-breaking; missing prepared rows remain due as non-live.
                 def stamp_order(event_id: int) -> tuple[bool, int]:
+                    if prepared is None:
+                        return (False, event_id)
                     context = prepared.get(event_id)
                     return (context is None or context[0].status != "live", event_id)
 
@@ -1406,24 +1479,25 @@ class LiveBlendRefresher:
                     # Finish last flush's unattempted debt before beginning a
                     # new live-first debt cycle. Fresh remains ahead of both;
                     # repeated locked live IDs cannot starve quieter old debt.
-                    continuation = [
-                        eid for eid in self._pending_continuation if eid in population
-                    ]
-                    carried = set(continuation)
-                    ordered = continuation + [eid for eid in ordered if eid not in carried]
+                    queued = set(carried)
+                    ordered = carried + [eid for eid in ordered if eid not in queued]
 
-                async def stamp_event(event_id):
+                async def stamp_event(event_id, *, read_current=False):
                     self._pending_continuation = [
                         eid for eid in self._pending_continuation if eid != event_id
                     ]
                     if pending_only and flush_started is not None:
                         self._pending_attempted = True
+                        self._pending_attempts += 1
                     group_ids = [event_id]
+                    if read_current:
+                        reread_events.add(event_id)
                     try:
                         await self._refresh_batch(
                             group_ids,
                             clock,
-                            prepared=prepared,
+                            # None (no shared read): this session reads it.
+                            prepared=None if read_current else prepared,
                             on_committed=committed,
                             publish_committed=publish_committed,
                         )
@@ -1450,19 +1524,41 @@ class LiveBlendRefresher:
                         if not completed.issuperset(group_ids):
                             committed(group_ids)
 
-                if not pending_only:
-                    # Two fixed workers claim fresh IDs in order; a waiting
-                    # stamp cannot hold every fresh sibling behind its row lock.
-                    # No task/session fanout proportional to population size.
+                if head_only:
+                    await stamp_event(head)
+                    remaining = population.difference({head})
+                    budget_deferred.update(remaining)
+                    self._lock_retry.update(remaining.intersection(retry))
+                    self._throttle_deferred.update(remaining.difference(retry))
+                    self._pending_continuation = carried[1:] + [
+                        eid for eid in self._pending_continuation
+                        if eid not in population
+                    ]
+                elif not pending_only:
+                    # FRESH_STAMP_WORKERS fixed workers claim fresh IDs in
+                    # order; waiting stamps cannot hold every fresh sibling
+                    # behind their row locks. No population-sized fanout.
                     event_ids = iter(ordered)
 
-                    async def fresh_worker():
+                    async def fresh_worker(initial_event_id):
+                        await stamp_event(initial_event_id)
                         for event_id in event_ids:
-                            await stamp_event(event_id)
+                            # Another stamp/publication may have waited since
+                            # preparation. Read current quotes and their actual
+                            # observation clocks in this event's write session.
+                            # Cost: one joined read per queued fresh event.
+                            await stamp_event(event_id, read_current=True)
 
+                    # Claim every initial ID before scheduling any worker:
+                    # even a worker completing without yielding cannot consume
+                    # a sibling's initial prepared slot. No population fanout.
+                    initial_events = [
+                        next(event_ids)
+                        for _ in range(min(FRESH_STAMP_WORKERS, len(ordered)))
+                    ]
                     workers = {
-                        asyncio.create_task(fresh_worker())
-                        for _ in range(min(2, len(ordered)))
+                        asyncio.create_task(fresh_worker(event_id))
+                        for event_id in initial_events
                     }
                     try:
                         active = workers.copy()
@@ -1756,51 +1852,20 @@ class LiveBlendRefresher:
         return grouped
 
     async def _prepare_groups(self, event_ids: list[int]) -> dict[int, tuple]:
-        """Read once; no ORM identity or mutable JSON escapes this transaction.
+        """Read one fresh scalar graph owned only by this refresh call.
 
-        Groups belong to this call, passed explicitly rather than stored on the
-        refresher. The unproven/cold orientation fallback deliberately reads a
-        later Event/peer view in the group's write session; named proof uses the
-        prepared board, while the cache remains a boolean, never a price.
+        `_read_groups` materializes plain namespaces from scalar query rows,
+        including newly decoded JSON. No ORM objects or shared cache escape
+        the transaction, so rebuilding and recursively copying that graph
+        again only delays the first stamp. Each event's group belongs to one
+        worker. Queued fresh events still reread their current quotes; the
+        cold orientation fallback still reads in the stamp's own session.
         """
-        from types import SimpleNamespace
         from app.tasks.base import get_task_session
-        from app.utils.live_blend import MarketOutcomes
-
-        def scalar(row, fields):
-            return SimpleNamespace(
-                **{
-                    key: copy.deepcopy(getattr(row, key))
-                    for key in fields
-                }
-            )
 
         factory = self._session_factory or get_task_session
         async with factory() as session:
-            grouped = await self._read_groups(session, event_ids)
-            return {
-                event_id: (
-                    SimpleNamespace(
-                        **{
-                            key: copy.deepcopy(getattr(event, key))
-                            for key in PREPARED_EVENT_FIELDS
-                        }
-                    ),
-                    [
-                        MarketOutcomes(
-                            market=scalar(entry.market, PREPARED_MARKET_FIELDS),
-                            outcomes=[
-                                scalar(outcome, PREPARED_OUTCOME_FIELDS)
-                                for outcome in entry.outcomes
-                            ],
-                            event_has_result=entry.event_has_result,
-                            event_commence_time=entry.event_commence_time,
-                        )
-                        for entry in group
-                    ],
-                )
-                for event_id, (event, group) in grouped.items()
-            }
+            return await self._read_groups(session, event_ids)
 
     @contextlib.asynccontextmanager
     async def _event_stamp_scope(self, session, *, single_event: bool):
@@ -2261,8 +2326,6 @@ class LiveBlendRefresher:
         exact_trace = getattr(self.receipts, "exact_trace", None)
         try:
             import asyncio
-            import json
-
             from redis.exceptions import ResponseError
 
             from app.utils.live_push import frame_publish_command

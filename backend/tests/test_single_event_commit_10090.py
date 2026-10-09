@@ -1,4 +1,4 @@
-"""Fresh siblings progress with two stamps and one committed-frame sender."""
+"""Fresh siblings progress with fixed stamp workers and one committed-frame sender."""
 
 import asyncio
 from contextlib import asynccontextmanager
@@ -14,7 +14,7 @@ from tests.test_live_blend_refresh import (
 )
 
 
-def rig(monkeypatch, *, count=3, block=False, failure=None, statuses=None):
+def rig(monkeypatch, *, count=3, block=False, failure=None, statuses=None, blocked=(2,)):
     event, market = _event_and_market()
     rows = []
     for eid in range(1, count + 1):
@@ -44,8 +44,9 @@ def rig(monkeypatch, *, count=3, block=False, failure=None, statuses=None):
                 commands.append("update")
                 if eid == 2:
                     second_stamp.set()
-                    if block:
-                        await release.wait()
+                if block and eid in blocked:
+                    await release.wait()
+                if eid == 2:
                     if failure == "lock":
                         raise _LockTimeout("canceling statement due to lock timeout")
             else:
@@ -68,6 +69,15 @@ def rig(monkeypatch, *, count=3, block=False, failure=None, statuses=None):
             published.append(frame["event_id"])
         frames.extend(batch)
 
+    read_groups = r._read_groups
+
+    async def filtered_read(session, event_ids):
+        # The fake session answers every read with all rows; the real query
+        # filters by event id. A queued fresh stamp rereads only its own event.
+        grouped = await read_groups(session, event_ids)
+        return {eid: group for eid, group in grouped.items() if eid in event_ids}
+
+    r._read_groups = filtered_read
     r._session_factory = factory
     r._publish = publish
     return SimpleNamespace(**locals())
@@ -100,26 +110,30 @@ async def test_pending_budget_frees_next_fresh_flush_and_fairly_resumes_old_debt
 
     x.r._refresh_batch = slow_stamp
     await x.r.refresh([7], flush_started=1000)
-    assert attempted == [7, 2, 3]
-    assert x.published == [7, 3]
-    assert x.r.pending_event_ids() == frozenset({1, 2, 4, 5, 6})
+    # A flush carrying fresh work attempts ONE old stamp (#10090 successor).
+    assert attempted == [7, 2]
+    assert x.published == [7]
+    assert x.r.pending_event_ids() == frozenset({1, 2, 3, 4, 5, 6})
     assert not x.r._failed_hold_until
 
     # More callbacks in the SAME producer flush must not buy another budget.
     reads = x.commands.count("read")
     await x.r.refresh_pending(flush_started=1000)
-    assert attempted == [7, 2, 3] and x.commands.count("read") == reads
+    assert attempted == [7, 2] and x.commands.count("read") == reads
     await x.r.refresh([7], flush_started=1000)
-    assert attempted == [7, 2, 3, 7]  # fresh remains admitted
+    assert attempted == [7, 2, 7]  # fresh remains admitted
 
     # Newly arrived fresh work leads, but repeatedly locked live2 cannot jump
     # ahead of the untouched debt left by the previous flush, including1.
     await x.r.refresh([7], flush_started=1002)
-    assert attempted[-3:] == [7, 4, 5]
+    assert attempted[-2:] == [7, 3]
+    # Quiet flushes keep the full time budget and resume the continuation.
     await x.r.refresh_pending(flush_started=1004)
+    assert attempted[-2:] == [4, 5]
+    await x.r.refresh_pending(flush_started=1006)
     assert attempted[-2:] == [6, 1]
     assert x.r.pending_event_ids() == frozenset({2})
-    await x.r.refresh_pending(flush_started=1006)
+    await x.r.refresh_pending(flush_started=1008)
     assert attempted[-1] == 2  # quiet singleton still retries
     assert set(x.published) == {1, 3, 4, 5, 6, 7}
 
@@ -155,10 +169,11 @@ async def test_fresh_work_spending_residual_budget_skips_later_pending_read(monk
     x.r._lock_retry = {2}
     attempt, prepare = x.r._refresh_batch, x.r._prepare_groups
     second_call = False
-    reads = []
+    reads, old_attempts = [], []
 
     async def slow_stamp(ids, *args, **kwargs):
         if ids == [2]:
+            old_attempts.append(second_call)
             clock[0] += 0.6
         elif second_call:
             clock[0] += 0.3
@@ -173,7 +188,10 @@ async def test_fresh_work_spending_residual_budget_skips_later_pending_read(monk
     assert x.r._lock_retry == {2}
     second_call = True
     await x.r.refresh([3, 4], flush_started=1000)
-    assert reads == [{4}, {2}, {3, 4}]
+    # Fresh populations within the workers, and a lone old event, read in
+    # their own stamp sessions; the spent budget skips the second old attempt.
+    assert reads == []
+    assert old_attempts == [False]
     assert 3 in x.committed and 3 in x.published
     assert x.r.pending_event_ids() == frozenset({2})
     assert not x.r._failed_hold_until
@@ -185,10 +203,14 @@ async def test_live_stamps_lead_within_fresh_and_pending_but_fresh_stays_first(m
     })
     x.r._lock_retry = {2, 4}
     await x.r.refresh([1, 3], flush_started=1000)
-    # Fresh live 3 precedes fresh scheduled 1; both still precede debt,
-    # where live 4 precedes scheduled 2. No event is dropped or grouped.
-    assert x.committed == x.published == [3, 1, 4, 2]
-    assert [s.event_ids for s in x.sessions if s.event_ids] == [[3], [1], [4], [2]]
+    # Fresh 1 and 3 fit the workers, so both start at once with no claim
+    # order; both still precede debt, where live 4 precedes scheduled 2.
+    # A fresh-bearing flush attempts one old stamp; 2 stays owed, not dropped.
+    assert x.committed == x.published == [1, 3, 4]
+    assert x.r.pending_event_ids() == frozenset({2})
+    await x.r.refresh_pending(flush_started=1002)
+    assert x.committed == x.published == [1, 3, 4, 2]
+    assert [s.event_ids for s in x.sessions if s.event_ids] == [[1], [3], [4], [2]]
     assert x.r.stats["stamped"] == 4
     assert not x.r.pending_event_ids()
 
@@ -216,7 +238,8 @@ async def test_fresh_stamp_publishes_before_pending_preparation(monkeypatch, out
         await asyncio.wait_for(entered.wait(), 1)
         await settle_until(lambda: x.published == [3])
         assert x.committed == [3]
-        assert reads == [{3}, {1, 2}]
+        # Fresh 3 read in its own stamp session; only debt is prepared.
+        assert reads == [{1, 2}]
         if outcome == "cancel":
             task.cancel()
             with pytest.raises(asyncio.CancelledError):
@@ -225,8 +248,12 @@ async def test_fresh_stamp_publishes_before_pending_preparation(monkeypatch, out
             release.set()
             await asyncio.wait_for(task, 1)
         if outcome == "release":
-            assert x.published == x.committed == [3, 1, 2]
+            # One old attempt in the fresh-bearing flush; 2 waits for a quiet one.
+            assert x.published == x.committed == [3, 1]
             assert x.commands.count("read") == 2
+            assert x.r.pending_event_ids() == frozenset({2})
+            await x.r.refresh_pending(flush_started=1002)
+            assert x.published == x.committed == [3, 1, 2]
             assert not x.r.pending_event_ids()
         else:
             assert x.published == x.committed == [3]
@@ -242,19 +269,23 @@ async def test_fresh_stamp_publishes_before_pending_preparation(monkeypatch, out
 async def test_fresh_preparation_failure_keeps_fresh_owed_and_attempts_pending(monkeypatch):
     x = rig(monkeypatch)
     x.r._lock_retry = {1, 2}
-    prepare = x.r._prepare_groups
+    read = x.r._read_groups
 
-    async def prepare_population(event_ids):
+    async def read_population(session, event_ids):
         if 3 in event_ids:
             raise RuntimeError("fresh preparation failed")
-        return await prepare(event_ids)
+        return await read(session, event_ids)
 
-    x.r._prepare_groups = prepare_population
+    x.r._read_groups = read_population
     await x.r.refresh([3], flush_started=1000)
-    assert x.published == x.committed == [1, 2]
-    assert x.r.pending_event_ids() == frozenset({3})
+    # The failed fresh stamp still made this a fresh-bearing flush: one old.
+    assert x.published == x.committed == [1]
+    assert x.r.pending_event_ids() == frozenset({2, 3})
     assert x.r._failed_hold_until == {3: 1005}
     assert x.r.stats["errors"] == 1
+    await x.r.refresh_pending(flush_started=1002)
+    assert x.published == x.committed == [1, 2]
+    assert x.r.pending_event_ids() == frozenset({3})
 
 
 @pytest.mark.parametrize("count", [2, 4, 5])
@@ -263,14 +294,16 @@ async def test_first_game_commits_and_publishes_while_second_stamp_waits(monkeyp
     task = asyncio.create_task(x.r.refresh(range(1, count + 1), flush_started=1000))
     try:
         await asyncio.wait_for(x.second_stamp.wait(), 1)
+        # Independent fresh games publish in completion order (ruling A).
         ready = [1, *range(3, count + 1)]
-        await settle_until(lambda: x.published == ready)
-        assert x.committed == ready
+        await settle_until(lambda: sorted(x.published) == ready)
+        assert x.committed == x.published
         assert not task.done()
         assert x.r._last_written_value == dict.fromkeys(ready, 0.9)
         x.release.set()
         await asyncio.wait_for(task, 1)
-        assert x.published == x.committed == [*ready, 2]
+        assert x.published == x.committed and x.published[-1] == 2
+        assert sorted(x.published) == list(range(1, count + 1))
         assert x.r.stats["stamped"] == count
         assert not x.r.pending_event_ids()
     finally:
@@ -280,13 +313,21 @@ async def test_first_game_commits_and_publishes_while_second_stamp_waits(monkeyp
 
 @pytest.mark.parametrize("count", [1, 2, 4, 5])
 async def test_shared_read_and_per_event_command_tradeoff(monkeypatch, count):
+    from app.tasks.live_blend_refresh import FRESH_STAMP_WORKERS
+
     x = rig(monkeypatch, count=count)
     await x.r.refresh(range(1, count + 1), flush_started=1000)
-    assert x.commands.count("read") == 1
+    # Within the workers every stamp reads in its own session. Beyond them:
+    # one shared prepared read, plus one current reread per queued event.
+    fits = count <= FRESH_STAMP_WORKERS
+    assert x.commands.count("read") == (
+        count if fits else 1 + count - FRESH_STAMP_WORKERS
+    )
     assert x.commands.count("budget") == x.commands.count("update") == count
-    assert len(x.sessions) == (1 if count == 1 else count + 1)
+    assert len(x.sessions) == (count if fits else count + 1)
     assert not any(s.savepoints or s.rollbacks for s in x.sessions)
-    assert x.published == list(range(1, count + 1))
+    assert x.published == x.committed
+    assert sorted(x.published) == list(range(1, count + 1))
 
 
 @pytest.mark.parametrize("failure", ["lock", "commit"])
@@ -371,7 +412,8 @@ async def test_blocked_first_fresh_stamp_does_not_hold_sibling_publication(monke
         await asyncio.wait_for(x.second_stamp.wait(), 1)
         await settle_until(lambda: x.published == [3])
         assert x.committed == [3] and not task.done()
-        assert x.commands.count("read") == 1
+        # No separate preparation session: each stamp read its own event.
+        assert x.commands.count("read") == len(x.sessions) == 2
         x.release.set()
         await asyncio.wait_for(task, 1)
         assert x.published == x.committed == [3, 2]
@@ -381,7 +423,31 @@ async def test_blocked_first_fresh_stamp_does_not_hold_sibling_publication(monke
         await asyncio.gather(task, return_exceptions=True)
 
 
-async def test_fresh_population_uses_only_two_fixed_stamp_workers(monkeypatch):
+async def test_third_ready_game_publishes_while_two_stamps_wait_on_rows(monkeypatch):
+    x = rig(monkeypatch, count=3, block=True, blocked=(1, 2))
+    task = asyncio.create_task(x.r.refresh([1, 2, 3], flush_started=1000))
+    try:
+        await settle_until(
+            lambda: {eid for s in x.sessions for eid in s.event_ids} >= {1, 2}
+        )
+        # Two disjoint stamps hold their sessions on row waits; the third
+        # ready game still commits and publishes before either is released.
+        await settle_until(lambda: x.published == [3])
+        assert x.committed == [3] and not task.done()
+        # No separate preparation session: each stamp read its own event.
+        assert x.commands.count("read") == len(x.sessions) == 3
+        x.release.set()
+        await asyncio.wait_for(task, 1)
+        assert x.published == x.committed == [3, 1, 2]
+        assert not x.r.pending_event_ids()
+    finally:
+        x.release.set()
+        await asyncio.gather(task, return_exceptions=True)
+
+
+async def test_fresh_population_uses_only_fixed_stamp_workers(monkeypatch):
+    from app.tasks.live_blend_refresh import FRESH_STAMP_WORKERS
+
     x = rig(monkeypatch, count=9)
     stamp = x.r._refresh_batch
     entered, release = asyncio.Event(), asyncio.Event()
@@ -393,7 +459,7 @@ async def test_fresh_population_uses_only_two_fixed_stamp_workers(monkeypatch):
         owners.add(asyncio.current_task())
         active += 1
         maximum = max(maximum, active)
-        if active == 2:
+        if active == FRESH_STAMP_WORKERS:
             entered.set()
         try:
             await release.wait()
@@ -406,12 +472,13 @@ async def test_fresh_population_uses_only_two_fixed_stamp_workers(monkeypatch):
     try:
         await asyncio.wait_for(entered.wait(), 1)
         await asyncio.sleep(0)
-        assert active == maximum == len(owners) == 2
+        assert active == maximum == len(owners) == FRESH_STAMP_WORKERS == 3
         release.set()
         await asyncio.wait_for(task, 1)
-        assert maximum == len(owners) == 2 and active == 0
+        assert maximum == len(owners) == FRESH_STAMP_WORKERS and active == 0
         assert all(owner.done() for owner in owners)
-        assert x.commands.count("read") == 1
+        # One prepared read, plus one current reread per queued fresh event.
+        assert x.commands.count("read") == 1 + 9 - FRESH_STAMP_WORKERS
         assert set(x.published) == set(x.committed) == set(range(1, 10))
     finally:
         release.set()
@@ -452,7 +519,10 @@ async def test_cancel_preserves_both_waiting_committed_groups_and_one_sender(mon
     task = asyncio.create_task(x.r.refresh(range(1, 7), flush_started=1000))
     try:
         await asyncio.wait_for(entered.wait(), 1)
-        await settle_until(lambda: x.committed == [1, 2, 3])
+        # Event 1 plus one stamp per fixed worker commit (a queued event
+        # rereads its own row, 6d8b493900); then every worker waits on the
+        # one sender, so 2..4 form the second waiting group.
+        await settle_until(lambda: sorted(x.committed) == [1, 2, 3, 4])
         task.cancel()
         await asyncio.wait_for(cleaning.wait(), 1)
         task.cancel()
@@ -460,27 +530,29 @@ async def test_cancel_preserves_both_waiting_committed_groups_and_one_sender(mon
         assert not task.done()
         release_cleanup.set()
         await asyncio.wait_for(cleanup_send.wait(), 1)
-        assert submitted == [[1], [2, 3]]
+        assert [submitted[0], sorted(submitted[1])] == [[1], [2, 3, 4]]
+        assert len(submitted) == 2
         task.cancel()
         await asyncio.sleep(0)
         assert not task.done() and active == maximum == 1
         release_send.set()
         with pytest.raises(asyncio.CancelledError):
             await asyncio.wait_for(task, 1)
-        assert delivered == [2, 3] and active == 0 and maximum == 1
-        assert x.r.pending_event_ids() == frozenset({4, 5, 6})
+        assert sorted(delivered) == [2, 3, 4] and active == 0 and maximum == 1
+        assert x.r.pending_event_ids() == frozenset({5, 6})
         assert not x.r._failed_hold_until
-        assert set(x.r._last_written_value) == {1, 2, 3}
+        assert set(x.r._last_written_value) == {1, 2, 3, 4}
     finally:
         release_cleanup.set()
         release_send.set()
+        task.cancel()  # a failed wait must fail, not hang on publish([1])
         await asyncio.gather(task, return_exceptions=True)
 
 
-async def test_repeated_cancel_joins_both_stamp_workers_before_debt(monkeypatch):
-    x = rig(monkeypatch, count=4, block=True)
+async def test_repeated_cancel_joins_every_stamp_worker_before_debt(monkeypatch):
+    x = rig(monkeypatch, count=5, block=True)
     stamp = x.r._refresh_batch
-    third_stamp, release_cleanup = asyncio.Event(), asyncio.Event()
+    entered, release_cleanup = set(), asyncio.Event()
     cleaning, cleaned = set(), set()
     owners = set()
 
@@ -490,8 +562,8 @@ async def test_repeated_cancel_joins_both_stamp_workers_before_debt(monkeypatch)
         eid = ids[0]
         owners.add(asyncio.current_task())
         try:
-            if eid == 3:
-                third_stamp.set()
+            if eid in (3, 4):
+                entered.add(eid)
                 await asyncio.Event().wait()
             await stamp(ids, *args, **kwargs)
         finally:
@@ -500,24 +572,25 @@ async def test_repeated_cancel_joins_both_stamp_workers_before_debt(monkeypatch)
             cleaned.add(eid)
 
     x.r._refresh_batch = stamp_with_cleanup
-    task = asyncio.create_task(x.r.refresh(range(1, 5), flush_started=1000))
+    task = asyncio.create_task(x.r.refresh(range(1, 6), flush_started=1000))
     try:
         await asyncio.wait_for(x.second_stamp.wait(), 1)
-        await asyncio.wait_for(third_stamp.wait(), 1)
+        await settle_until(lambda: entered == {3, 4})
         await settle_until(lambda: x.published == [1])
         task.cancel()
-        await settle_until(lambda: cleaning == {2, 3})
+        await settle_until(lambda: cleaning == {2, 3, 4})
         task.cancel()
         await asyncio.sleep(0)
         assert not task.done() and not cleaned
         release_cleanup.set()
         with pytest.raises(asyncio.CancelledError):
             await asyncio.wait_for(task, 1)
-        assert cleaned == {2, 3} and all(owner.done() for owner in owners)
+        assert cleaned == {2, 3, 4} and all(owner.done() for owner in owners)
         assert x.committed == x.published == [1]
-        assert x.r.pending_event_ids() == frozenset({2, 3, 4})
+        assert x.r.pending_event_ids() == frozenset({2, 3, 4, 5})
         assert not x.r._failed_hold_until
     finally:
         release_cleanup.set()
         x.release.set()
+        task.cancel()  # a failed wait must fail, not hang on the held stamps
         await asyncio.gather(task, return_exceptions=True)

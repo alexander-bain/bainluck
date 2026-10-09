@@ -10,6 +10,7 @@ PING heartbeat every 8 seconds to keep connection alive.
 """
 
 import asyncio
+import inspect
 import json
 import logging
 import random
@@ -36,6 +37,30 @@ def _decode_message(raw):
         return json.loads(raw)
 
 
+def _decode_text_frame_bytes(raw):
+    """#10090: decode a text frame received as its undecoded UTF-8 bytes.
+
+    `from_json` validates UTF-8 itself. Its refusals take the old text path:
+    strict UTF-8 decode, then `_decode_message` on the string the library would
+    have returned. Never `json.loads(bytes)`, which would admit UTF-16/32
+    frames the text path refused. Invalid UTF-8 raises UnicodeDecodeError past
+    the loop's skip clause, so the shard redials as it did before.
+    """
+    try:
+        return from_json(raw, cache_strings=False)
+    except (ValueError, TypeError):
+        return _decode_message(raw.decode("utf-8"))
+
+
+def _receives_text_bytes(socket) -> bool:
+    """Modern websockets can return text frames undecoded (`decode=False`)."""
+    receive = getattr(socket, "recv", None)
+    try:
+        return receive is not None and "decode" in inspect.signature(receive).parameters
+    except (TypeError, ValueError):
+        return False
+
+
 async def _cooperative_messages(socket):
     """Let ready stamp/publish work run during an already-buffered burst.
 
@@ -43,6 +68,22 @@ async def _cooperative_messages(socket):
     not suspend. Yield after every processed message, before consuming the next
     one, so ready probability writers do not wait behind another frame batch.
     """
+    # Modern websockets can hand UTF-8 JSON directly to the byte-capable
+    # parser instead of decoding every frame to text first. Older clients
+    # retain their iterator contract. Decide once, outside the hot loop.
+    if _receives_text_bytes(socket):
+        receive = socket.recv
+        from websockets.exceptions import ConnectionClosedOK
+
+        while True:
+            try:
+                raw = await receive(decode=False)
+            except ConnectionClosedOK:
+                return
+            yield raw
+            raw = None
+            await asyncio.sleep(0)
+
     async for raw in socket:
         yield raw
         raw = None  # Do not retain the last full-depth book on a quiet socket.
@@ -755,15 +796,21 @@ class PolymarketWebSocket:
 
                     hb = asyncio.create_task(heartbeat())
 
+                    # Raw-received text frames take the strict UTF-8 decoder.
+                    decode = (
+                        _decode_text_frame_bytes
+                        if _receives_text_bytes(ws)
+                        else _decode_message
+                    )
                     try:
                         async for raw in _cooperative_messages(ws):
                             try:
-                                if raw == "PONG":
+                                if raw in ("PONG", b"PONG"):
                                     continue
                                 self._message_count += 1
 
                                 try:
-                                    data = _decode_message(raw)
+                                    data = decode(raw)
                                 except (json.JSONDecodeError, TypeError):
                                     continue
                                 finally:

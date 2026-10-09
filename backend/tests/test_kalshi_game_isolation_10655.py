@@ -216,6 +216,72 @@ async def test_newer_tick_and_settlement_refusal_survive_separation():
     assert not r.batch
 
 
+async def test_later_admitted_phase_adopts_latest_book_marks_and_keeps_newer_input():
+    r = rig(declined=9)
+    r.release.set()
+    first_started, first_release = asyncio.Event(), asyncio.Event()
+    submissions = {}
+    factory = r.ns['get_task_session']
+
+    class DelayedSession:
+        def __init__(self, session):
+            self.session = session
+
+        def __getattr__(self, name):
+            return getattr(self.session, name)
+
+        async def execute(self, stmt, bind=None):
+            writes = price_writes(stmt, bind)
+            if writes:
+                (oid, _), = writes
+                params = statement_params(stmt, bind)
+                submissions[oid] = (
+                    params['kalshi_stored_probability'],
+                    params.get('kalshi_stored_bid'), params.get('kalshi_stored_ask'),
+                )
+                if oid == 1:
+                    first_started.set()
+                    await first_release.wait()
+                elif oid == 3:
+                    # A later accepted input still survives the adopted write.
+                    async with r.ns['buffer_lock']:
+                        r.batch[3] = (.85, .84, .86)
+                        r.ns['input_marks'][3] = 'after-adoption'
+            return await self.session.execute(stmt, bind)
+
+    @asynccontextmanager
+    async def delayed_session():
+        async with factory() as session:
+            yield DelayedSession(session)
+
+    r.ns['get_task_session'] = delayed_session
+    task = asyncio.create_task(r.flush())
+    try:
+        await asyncio.wait_for(first_started.wait(), 2)
+        async with r.ns['buffer_lock']:
+            r.batch[3] = (.8, .79, .81)
+            r.ns['input_marks'][3] = 'latest-game-input'
+            r.batch[940] = (.7, .69, .71)  # Outside this flush's admitted IDs.
+            # Open-leg settlement may remove a captured key. The admitted
+            # fallback still reaches the existing refusal and returns no row.
+            r.batch.pop(9)
+        first_release.set()
+        assert await asyncio.wait_for(task, 2) is True
+    finally:
+        first_release.set()
+        await task
+        r.ns['prices'].close()
+    assert submissions == {
+        1: (.6, .59, .61), 2: (.4, .39, .41),
+        3: (.8, .79, .81), 9: (.1, .09, .11),
+    }
+    assert ('receipt', ('latest-game-input',)) in r.trace
+    assert ('receipt', ('after-adoption',)) not in r.trace
+    assert r.batch == {3: (.85, .84, .86), 940: (.7, .69, .71)}
+    assert r.committed == [1, 2, 3] and r.stats['settled_declined'] == 1
+    assert r.trace.index(('commit', (3,))) < r.trace.index(('refresh', (200,)))
+
+
 def test_components_keep_whole_markets_and_all_markets_of_one_event():
     batch = {1: 'a', 3: 'c', 9: 'z', 2: 'b', 4: 'd', 5: 'e'}
     markets = {1: 10, 2: 10, 3: 20, 4: 30, 5: 40, 9: 90}

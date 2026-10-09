@@ -24,8 +24,9 @@ WHAT IT REFUSES.
 * A per-call budget. ``statement_timeout_ms`` / ``lock_timeout_ms`` are
   per-ENGINE startup parameters (#4482), so they cannot vary per session on a
   shared engine. These consumers never passed one; the engine carries the same
-  resting bounds every task engine does (``_get_task_engine``: pool 3 + 2
-  overflow, pre-ping, 1800 s recycle, the resting ``statement_timeout``).
+  resting bounds every task engine does (five connections maximum, pre-ping,
+  1800 s recycle, the resting ``statement_timeout``). Socket consumers retain
+  all five connections so overlapping flush/stamp work can reuse them.
   A caller that needs a tighter budget uses ``get_task_session`` directly.
 * Use after close. Once the run has drained, a late caller cannot quietly
   re-create a pool nobody will dispose.
@@ -78,7 +79,7 @@ class ConsumerSessions:
             )
         loop = asyncio.get_running_loop()
         if self._engine is None:
-            self._engine = task_base._get_task_engine()
+            self._engine = task_base._get_task_engine(retain_full_pool=True)
             self._loop = loop
             self._pid = os.getpid()
         elif loop is not self._loop or os.getpid() != self._pid:

@@ -18,6 +18,7 @@ import random
 import re
 import time
 import unicodedata
+import weakref
 from collections import Counter
 from datetime import date, datetime, timedelta, timezone
 from functools import lru_cache
@@ -52,6 +53,7 @@ from app.routes.futures import withheld_price_outcome_ids_for_markets
 # Admission bounds for the shared candidate base live WITH the base (they exist
 # to bound its Redis key + process-local map), so there is one definition.
 from app.utils import candidate_base as _cb_limits
+from app.utils import championship_probs_cache as champ_cache
 from app.utils.canonical_market_key import canonical_key_identifies_one_question
 from app.utils.discover_provenance import PROVENANCE_HEADER, normalize_provenance
 # The state vocabulary has ONE definition (live/048). Discovery imports the name
@@ -15130,7 +15132,21 @@ _CANONICAL_CACHE_TTL = 300  # 5 minutes
 # Championship probability cache (for stakes weighting)
 _champ_prob_cache: Optional[dict[int, float]] = None
 _champ_prob_cache_ts: float = 0.0
-_CHAMP_PROB_CACHE_TTL = 300  # 5 minutes
+_CHAMP_PROB_CACHE_TTL = champ_cache.TTL_SECONDS  # 5 minutes, one number for L1 and L2
+
+
+#: #10772 — one lock per event loop, so concurrent cold builds in one process
+#: run the query once. Keyed by loop because an `asyncio.Lock` that has waited
+#: is bound to that loop, and tests run many.
+_champ_prob_locks: "weakref.WeakKeyDictionary[asyncio.AbstractEventLoop, asyncio.Lock]" = (
+    weakref.WeakKeyDictionary()
+)
+
+
+def _champ_prob_l1() -> Optional[dict[int, float]]:
+    if _champ_prob_cache is not None and champ_cache.is_fresh(_champ_prob_cache_ts):
+        return _champ_prob_cache
+    return None
 
 
 async def _get_championship_probabilities(db: AsyncSession) -> dict[int, float]:
@@ -15138,17 +15154,42 @@ async def _get_championship_probabilities(db: AsyncSession) -> dict[int, float]:
 
     Queries market_tier=1 (championship) futures outcomes with a linked team_id.
     Cached for 5 minutes since championship odds change slowly.
+
+    #10772: the map is global, so the per-process dict (L1) now falls through
+    to a SHARED slot (L2, `utils/championship_probs_cache.py`) before querying.
+    The query was 1.1 s mean, 25 s max, and ran once per process per 5 minutes.
+    L1 inherits the slot's `computed_at`, so the age bound stays 300 s whichever
+    level answers.
     """
-    import time
-
     global _champ_prob_cache, _champ_prob_cache_ts
-    now_ts = time.time()
-    if (
-        _champ_prob_cache is not None
-        and (now_ts - _champ_prob_cache_ts) < _CHAMP_PROB_CACHE_TTL
-    ):
-        return _champ_prob_cache
+    cached = _champ_prob_l1()
+    if cached is not None:
+        return cached
 
+    loop = asyncio.get_running_loop()
+    lock = _champ_prob_locks.get(loop)
+    if lock is None:
+        lock = _champ_prob_locks[loop] = asyncio.Lock()
+    async with lock:
+        # A build that waited on the lock finds the holder's answer here.
+        cached = _champ_prob_l1()
+        if cached is not None:
+            return cached
+
+        shared = champ_cache.read()
+        if shared is not None:
+            _champ_prob_cache, _champ_prob_cache_ts = shared
+            return _champ_prob_cache
+
+        computed_at = time.time()
+        cache = await _query_championship_probabilities(db)
+        _champ_prob_cache = cache
+        _champ_prob_cache_ts = computed_at
+        champ_cache.write(cache, computed_at)
+        return cache
+
+
+async def _query_championship_probabilities(db: AsyncSession) -> dict[int, float]:
     from sqlalchemy import text
 
     result = await db.execute(text("""
@@ -15162,10 +15203,7 @@ async def _get_championship_probabilities(db: AsyncSession) -> dict[int, float]:
               AND fo.current_probability > 0
             GROUP BY fo.team_id
         """))
-    cache = {row.team_id: float(row.max_prob) for row in result.all()}
-    _champ_prob_cache = cache
-    _champ_prob_cache_ts = now_ts
-    return cache
+    return {row.team_id: float(row.max_prob) for row in result.all()}
 
 
 def _canonical_source_universe_cte():
