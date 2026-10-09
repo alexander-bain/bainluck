@@ -4,8 +4,8 @@ Twin of `test_kalshi_pipelined_stamps_10090`. Executes the shipped
 `flush_prices` on the #10651 rig with a refresher whose stamp can be held.
 Proves ordering and lifetime, not production latency: the next chunk's write
 runs while the previous chunk's stamp is still running; refreshes never overlap
-each other; withdrawals still follow the stamp before them; no stamp outlives
-its flush, on success or on cancellation.
+each other; withdrawals still follow the stamp before them; persistent stamps
+join at catalog/final boundaries and on interrupted-batch cancellation.
 """
 
 import ast
@@ -17,7 +17,7 @@ from tests.test_polymarket_withdrawal_speed_10651 import ROOT, rig
 
 pytestmark = pytest.mark.asyncio
 
-PIPELINED = "stamping = asyncio.create_task(blend_refresher.refresh("
+PIPELINED = "stamp_owner.task = asyncio.create_task(blend_refresher.refresh("
 SERIAL = "await (blend_refresher.refresh("
 
 
@@ -75,11 +75,14 @@ def serial_flush(r):
     source = (ROOT / "app/tasks/polymarket_ws.py").read_text()
     assert source.count(PIPELINED) == 1
     tree = ast.parse(source.replace(PIPELINED, SERIAL))
-    (node,) = [
-        n for n in ast.walk(tree)
-        if isinstance(n, ast.AsyncFunctionDef) and n.name == "flush_prices"
+    nodes = [
+        n
+        for n in ast.walk(tree)
+        if isinstance(n, ast.AsyncFunctionDef)
+        and n.name in {"_flush_prices", "flush_prices"}
     ]
-    exec(compile(ast.Module(body=[node], type_ignores=[]), "serial", "exec"), r.ns)
+    assert {node.name for node in nodes} == {"_flush_prices", "flush_prices"}
+    exec(compile(ast.Module(body=nodes, type_ignores=[]), "serial", "exec"), r.ns)
 
 
 async def settle(r, until, turns=50):
@@ -99,9 +102,10 @@ async def test_the_next_chunk_writes_while_the_previous_stamp_runs():
     # Event 10's stamp is still held, and the bridged leg's chunk was written.
     assert calls["started"] == [(10,)] and calls["finished"] == []
     assert ("write", [900]) in r.trace
-    assert not flush.done(), "a flush never returns ahead of its stamp"
+    assert not flush.done(), "the refused next cohort must join the older owner"
     gate.set()
     assert await asyncio.wait_for(flush, 2) is True
+    await r.ns["catalog_boundary"].join_stamps()
     # One refresh at a time, in chunk order, each receipt staged in turn.
     assert calls["started"] == [(10,), (90,)]
     assert calls["finished"] == [(10,), (90,)]
@@ -155,7 +159,7 @@ async def test_cancellation_cancels_the_running_stamp_before_returning():
     assert 900 in r.ns["price_buffer"]
 
 
-async def test_a_cancel_landing_on_the_last_stamp_join_still_joins_it():
+async def test_a_cancel_landing_on_the_persistent_stamp_join_still_joins_it():
     r = rig(books={})
     r.release.set()
     gate, calls = held_refresher(r, hold_ids=(90,))
@@ -163,11 +167,14 @@ async def test_a_cancel_landing_on_the_last_stamp_join_still_joins_it():
     await settle(r, lambda: calls["started"] == [(10,), (90,)])
     # Premise: every write committed; only event 90's stamp is still running.
     assert not r.ns["price_buffer"] and calls["running"] == 1
-    flush.cancel()
+    assert await asyncio.wait_for(flush, 2) is True
+    joined = asyncio.create_task(r.ns["catalog_boundary"].join_stamps())
+    await asyncio.sleep(0)  # enter the actual persistent-owner join before cancel
+    joined.cancel()
     with pytest.raises(asyncio.CancelledError):
-        await asyncio.wait_for(flush, 2)
+        await asyncio.wait_for(joined, 2)
     assert calls["cancelled"] == [(90,)]
-    assert calls["running"] == 0, "no stamp outlives its flush"
+    assert calls["running"] == 0, "no stamp outlives its interrupted owner join"
 
 
 @pytest.mark.parametrize("future_event", [90, 20])
