@@ -22,6 +22,7 @@ import app.tasks.base as task_base
 import app.tasks.polymarket_ws as module
 from app.utils import market_quote_push
 from app.utils.futures_rank import rerank_market_fields_stmt
+from app.utils.repair_lock_budget import SET_LOCK_TIMEOUT_SQL, is_lock_timeout, lock_timeout_value
 from tests.pm_bulk_test_support import cleanup_pg_engines, pg_engine
 
 pytestmark = pytest.mark.asyncio
@@ -164,7 +165,9 @@ async def rig():
             self.sync_session = real.sync_session
             self.info = real.info
 
-        async def execute(self, stmt):
+        async def execute(self, stmt, params=None):
+            if params is not None:
+                return await self.real.execute(stmt, params)
             if "chunk_ids" in stmt.compile().params:
                 r.price_pid = await self.real.scalar(text("SELECT pg_backend_pid()"))
                 r.price_started.set()
@@ -202,6 +205,17 @@ async def rig():
         blend_refresher=r.publisher,
         buffer_lock=asyncio.Lock(),
         price_buffer=r.buffer,
+        lock_retry_until={},
+        lock_retry_events=set(),
+        successful_price_write_at={},
+        event_id_by_outcome={1: 10, 2: 10, 3: 10},
+        event_ids_for_outcomes=lambda mapping, ids: {mapping[oid] for oid in ids if oid in mapping},
+        PRICE_CHUNK_LOCK_TIMEOUT_MS=module.PRICE_CHUNK_LOCK_TIMEOUT_MS,
+        PRICE_FLUSH_SECONDS=module.PRICE_FLUSH_SECONDS,
+        SET_LOCK_TIMEOUT_SQL=SET_LOCK_TIMEOUT_SQL,
+        is_lock_timeout=is_lock_timeout,
+        lock_timeout_value=lock_timeout_value,
+        _PMPriceWriteResult=module._PMPriceWriteResult,
     )
     exec(compile(ast.Module(body=[fn], type_ignores=[]), module.__file__, "exec"), ns)
     r.write = ns["write_chunk"]
@@ -240,7 +254,7 @@ async def test_order_precision_null_vanished_and_post_commit_publication(rig):
         3: Decimal("0.300000"),
     }
     assert rig.stats == dict(
-        price_updates=4,
+        price_updates=3,
         quotes_unchanged=1,
         ranks_rederived=2,
         errors=0,
@@ -270,6 +284,38 @@ async def test_settled_price_coverage_is_unchanged(rig):
     write_succeeded = await _write(rig, {1: 0.6})
     assert write_succeeded
     assert (await _prices(rig))[1] == Decimal(".600000")
+
+
+async def test_repeat_ack_keeps_stamp_and_repairs_external_price_then_real_liveness(rig, monkeypatch):
+    from tests.test_ws_flush_cadence_10090 import _FakeTime
+
+    clock = _FakeTime(monkeypatch, t=1000)
+    assert (await _write(rig, {1: 0.30000001})).written_ids == (1,)
+
+    async def stamp():
+        async with rig.engine.connect() as conn:
+            return await conn.scalar(text("SELECT last_updated FROM futures_outcomes WHERE id=1"))
+
+    first_stamp = await stamp()
+    first_ranks = rig.stats["ranks_rederived"]
+    clock.t = 1001
+    assert (await _write(rig, {1: 0.30000001})).written_ids == ()
+    assert rig.buffer == {} and await stamp() == first_stamp
+    assert rig.stats["price_updates"] == 1
+    assert rig.stats["ranks_rederived"] == first_ranks
+    assert not rig.publisher.frames
+
+    async with rig.engine.begin() as conn:
+        await conn.execute(text("UPDATE futures_outcomes SET current_probability=0.4 WHERE id=1"))
+    clock.t = 1002
+    assert (await _write(rig, {1: 0.30000001})).written_ids == (1,)
+    assert (await _prices(rig))[1] == Decimal("0.300000")
+    assert len(rig.publisher.frames) == 1
+    changed_stamp = await stamp()
+    clock.t = 1032
+    assert (await _write(rig, {1: 0.30000001})).written_ids == (1,)
+    assert await stamp() != changed_stamp
+    assert len(rig.publisher.frames) == 1, "a liveness write sends no unchanged-price frame"
 
 
 async def test_atomic_overflow_returns_no_unchanged_observations(rig):
