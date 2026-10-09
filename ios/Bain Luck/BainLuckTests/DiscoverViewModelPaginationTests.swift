@@ -51,13 +51,22 @@ final class DiscoverViewModelPaginationTests: XCTestCase {
         private let lock = NSLock()
         private var script: [Reply]
         private var offsets: [Int] = []
+        private var editions: [String?] = []
+        private var limits: [Int] = []
         private var heldRequest: HeldRequest?
 
         init(_ script: [Reply]) { self.script = script }
 
         var requestedOffsets: [Int] { lock.withLock { offsets } }
+        /// #5105: the edition token each request carried (nil = unpinned).
+        var requestedEditions: [String?] { lock.withLock { editions } }
+        var requestedLimits: [Int] { lock.withLock { limits } }
 
-        func reset() { lock.withLock { offsets.removeAll() } }
+        func reset() {
+            lock.withLock { offsets.removeAll(); editions.removeAll(); limits.removeAll() }
+        }
+
+        func append(_ replies: [Reply]) { lock.withLock { script += replies } }
 
         func holdNextRequest(_ request: HeldRequest) {
             lock.withLock { heldRequest = request }
@@ -67,6 +76,17 @@ final class DiscoverViewModelPaginationTests: XCTestCase {
             limit: Int,
             offset: Int,
             eventPct: Double?,
+            cacheTTL: TimeInterval?
+        ) async throws -> FeedResponse {
+            try await fetchDiscoverFeed(
+                limit: limit, offset: offset, eventPct: eventPct, edition: nil, cacheTTL: cacheTTL)
+        }
+
+        nonisolated func fetchDiscoverFeed(
+            limit: Int,
+            offset: Int,
+            eventPct: Double?,
+            edition: String?,
             cacheTTL: TimeInterval?
         ) async throws -> FeedResponse {
             let held = lock.withLock {
@@ -83,6 +103,8 @@ final class DiscoverViewModelPaginationTests: XCTestCase {
             }
             return try lock.withLock {
                 offsets.append(offset)
+                editions.append(edition)
+                limits.append(limit)
                 guard !script.isEmpty else {
                     // Safety default: honest exhaustion so an over-scan can't crash.
                     return try DiscoverViewModelPaginationTests.emptyResponse(offset: offset, hasMore: false)
@@ -684,5 +706,127 @@ final class DiscoverViewModelPaginationTests: XCTestCase {
         let (vm, _) = try await loadedVM([.ok(page)])
         await vm.loadMoreIfNeeded()
         XCTAssertEqual(vm.items.count, 13, "NEW behaviour: exactly the one renderable card")
+    }
+
+    // MARK: - #5105: a retired seated edition is replaced, never scanned past
+
+    /// A page in the seated format: `edition` + `continuation_start`, and an
+    /// `edition_status` when the request was pinned.
+    private static func seatedPage(
+        ids: [Int], offset: Int, edition: String, status: String? = nil,
+        start: Int? = 3, limit: Int = 12, hasMore: Bool = true
+    ) throws -> FeedResponse {
+        let items = ids.map { futuresJSON(id: $0) }.joined(separator: ",")
+        var extra = #","edition":"\#(edition)""#
+        if let start { extra += #","continuation_start":\#(start)"# }
+        if let status { extra += #","edition_status":"\#(status)""# }
+        let json = """
+        {"items":[\(items)],"total":9999,"limit":\(limit),"offset":\(offset),"has_more":\(hasMore)\(extra)}
+        """
+        return try decoder().decode(FeedResponse.self, from: Data(json.utf8))
+    }
+
+    private func seatedVM(_ replies: [Reply]) async throws -> (DiscoverViewModel, FakeFeedClient) {
+        let fake = FakeFeedClient(
+            [.ok(try Self.seatedPage(ids: Array(1...12), offset: 0, edition: "ed-1"))] + replies)
+        let vm = DiscoverViewModel(client: fake, lastGood: nil, telemetry: nil)
+        await vm.load()
+        XCTAssertEqual(vm.acceptedSeatedEdition, "ed-1", "a seated network page is accepted")
+        fake.reset()
+        return (vm, fake)
+    }
+
+    @MainActor private func ids(_ vm: DiscoverViewModel) -> [Int] { vm.items.compactMap(\.futures?.id) }
+
+    /// A pinned page continues the deck: token and the edition's own page size
+    /// ride the request, and the cards append as before.
+    @MainActor
+    func testPinnedPageCarriesTokenAtTheEditionsPageSize5105() async throws {
+        let (vm, fake) = try await seatedVM([
+            .ok(try Self.seatedPage(ids: [13, 14], offset: 12, edition: "ed-1", status: "pinned")),
+        ])
+        await vm.loadMoreIfNeeded()
+
+        XCTAssertEqual(fake.requestedOffsets, [12])
+        XCTAssertEqual(fake.requestedEditions, ["ed-1"])
+        XCTAssertEqual(fake.requestedLimits, [12],
+            "the server binds an edition to its limit; 200 would read superseded every time")
+        XCTAssertEqual(ids(vm), Array(1...14))
+        XCTAssertFalse(vm.awaitingEditionReplacement)
+    }
+
+    /// An expired page N: nothing from it appends, the cursor does not move, no
+    /// forward scan happens, and exactly ONE unpinned page 0 replaces the deck.
+    @MainActor
+    func testExpiredPageIsReplacedByOneUnpinnedPageZero5105() async throws {
+        let (vm, fake) = try await seatedVM([
+            .ok(try Self.seatedPage(ids: [900, 901], offset: 12, edition: "ed-2", status: "expired")),
+            .ok(try Self.seatedPage(ids: Array(201...212), offset: 0, edition: "ed-2")),
+            .ok(try Self.seatedPage(ids: [213], offset: 12, edition: "ed-2", status: "pinned")),
+        ])
+        await vm.loadMoreIfNeeded()
+
+        XCTAssertEqual(fake.requestedOffsets, [12, 0], "one pinned ask, then one page 0 — no scan")
+        XCTAssertEqual(fake.requestedEditions, ["ed-1", nil], "the replacement is unpinned")
+        XCTAssertEqual(ids(vm), Array(201...212), "the replacement deck lands whole")
+        XCTAssertFalse(ids(vm).contains(900), "the retired page never appends")
+        XCTAssertEqual(vm.acceptedSeatedEdition, "ed-2")
+        XCTAssertFalse(vm.awaitingEditionReplacement)
+
+        // The cursor was reset with the deck: the next page is the NEW list's.
+        fake.reset()
+        await vm.loadMoreIfNeeded()
+        XCTAssertEqual(fake.requestedOffsets, [12])
+        XCTAssertEqual(fake.requestedEditions, ["ed-2"])
+        XCTAssertEqual(ids(vm), Array(201...213))
+    }
+
+    /// The replacement is refused: the cards stay, nothing ends the feed, and
+    /// Retry asks for page 0 again (one request per action), never the old offset.
+    @MainActor
+    func testRefusedReplacementKeepsCardsAndRetryTargetsPageZero5105() async throws {
+        let (vm, fake) = try await seatedVM([
+            .ok(try Self.seatedPage(ids: [900], offset: 12, edition: "ed-2", status: "superseded")),
+            .ok(try Self.unavailablePage()),
+        ])
+        await vm.loadMoreIfNeeded()
+
+        XCTAssertEqual(fake.requestedOffsets, [12, 0])
+        XCTAssertEqual(ids(vm), Array(1...12), "a refused replacement keeps the deck")
+        XCTAssertTrue(vm.awaitingEditionReplacement)
+        XCTAssertTrue(vm.hasMore, "no false end state")
+
+        fake.reset()
+        fake.append([.ok(try Self.unavailablePage())])
+        await vm.loadMoreIfNeeded()
+        XCTAssertEqual(fake.requestedOffsets, [0], "Retry is the replacement page 0 again")
+        XCTAssertEqual(fake.requestedEditions, [nil])
+        XCTAssertEqual(ids(vm), Array(1...12))
+        XCTAssertTrue(vm.awaitingEditionReplacement)
+
+        fake.reset()
+        fake.append([.ok(try Self.seatedPage(ids: Array(301...312), offset: 0, edition: "ed-3"))])
+        await vm.loadMoreIfNeeded()
+        XCTAssertEqual(fake.requestedOffsets, [0])
+        XCTAssertEqual(ids(vm), Array(301...312))
+        XCTAssertEqual(vm.acceptedSeatedEdition, "ed-3")
+        XCTAssertFalse(vm.awaitingEditionReplacement)
+    }
+
+    /// A legacy deck (no boundary) is never opted in: 200-card pages, no token.
+    @MainActor
+    func testLegacyDeckPaginatesUnpinnedAt200_5105() async throws {
+        let (vm, fake) = try await loadedVM([
+            .ok(try Self.response(ids: [500], offset: 12, hasMore: true)),
+        ])
+        XCTAssertNil(vm.acceptedSeatedEdition)
+        await vm.loadMoreIfNeeded()
+        XCTAssertEqual(fake.requestedEditions, [nil])
+        XCTAssertEqual(fake.requestedLimits, [200])
+    }
+
+    private static func unavailablePage() throws -> FeedResponse {
+        let json = #"{"items":[],"total":0,"limit":12,"offset":0,"has_more":false,"cache":{"status":"unavailable"}}"#
+        return try decoder().decode(FeedResponse.self, from: Data(json.utf8))
     }
 }
