@@ -37,6 +37,7 @@ from app.utils.feed_cache import (
     feed_response_cache_key,
 )
 from app.utils.feed_editions import (
+    EDITION_LEASE_SECONDS,
     edition_manifest_cache_key,
     edition_policy_fingerprint,
 )
@@ -61,20 +62,40 @@ class _DictRedis:
         self.store: dict[str, str] = dict(seed or {})
         self.reads: list[str] = []
         self.writes: list[tuple[str, int]] = []
+        self.nx_refused: list[str] = []
+        self.ops: list[tuple[str, str]] = []
 
     async def mget(self, keys):
         return [await self.get(key) for key in keys]
 
     async def get(self, key):
+        self.ops.append(("get", key))
         self.reads.append(key)
         return self.store.get(key)
 
     async def setex(self, key, ttl, value):
+        self.ops.append(("setex", key))
         self.writes.append((key, int(ttl)))
         self.store[key] = value
         return True
 
+    async def set(self, key, value, ex=None, nx=False):
+        """redis-py ``SET ... EX NX`` only, atomic here as in Redis (one dict
+        step). A plain ``SET`` stays unmodelled — it raises, exactly as it did
+        before this fake had ``set`` — so unrelated writers keep their old
+        (failed, swallowed) behaviour in every existing test."""
+        if not nx:
+            raise AttributeError("plain SET is not modelled by this fake")
+        self.ops.append(("set_nx", key))
+        if key in self.store:
+            self.nx_refused.append(key)
+            return None
+        self.writes.append((key, int(ex or 0)))
+        self.store[key] = value
+        return True
+
     def written(self, key):
+        """LANDED writes to ``key`` (an NX that found the key is not one)."""
         return [k for k, _ in self.writes if k == key]
 
 
@@ -855,6 +876,204 @@ async def test_crossing_start_keeps_the_pin_for_exempt_and_typed_non_live_cards(
     assert body["edition_status"] == "pinned"
     assert body["edition"] == token
     assert _ids(body["items"]) == _ids(deck)[20:40]
+
+
+# ---------------------------------------------------------------------------
+# D2. A read is never a mint: a replacement keeps the lease it was minted with
+# ---------------------------------------------------------------------------
+#
+# After a crossing the raw base still names its build's token, so EVERY later
+# read of it composes the same replacement R. Root's repro (0a55b3a3f6): the
+# retired token again, or an unpinned reader, re-published R at the later clock
+# and so extended the lease of anyone already pinned to R.
+
+
+async def _cross_and_mint_replacement(client, monkeypatch, seated):
+    fake, old = await _mint_before_start(client, monkeypatch, seated)
+    seated.now = T1
+    resp, first = await _get(client, offset=20, edition=old)
+    await _drain()
+    assert resp.headers["X-Feed-Cache"] == "page_base_hit"
+    replacement = first["edition"]
+    assert replacement != old
+    key = edition_manifest_cache_key(token=replacement, policy=SEATED_POLICY)
+    assert json.loads(fake.store[key])["built_at"] == T1.timestamp()
+    assert fake.written(key) == [key]
+    return fake, old, replacement, key
+
+
+@pytest.mark.parametrize("old_request", [True, False], ids=["retired-token", "unpinned"])
+async def test_a_reread_of_the_crossed_base_keeps_the_replacements_lease(
+    client, monkeypatch, seated, old_request
+):
+    fake, old, replacement, key = await _cross_and_mint_replacement(
+        client, monkeypatch, seated
+    )
+    original = fake.store[key]
+
+    seated.now = T1 + timedelta(seconds=5)
+    params = {"offset": 20, **({"edition": old} if old_request else {})}
+    resp, again = await _get(client, **params)
+    await _drain()
+
+    assert resp.headers["X-Feed-Cache"] == "page_base_hit"
+    assert again["edition"] == replacement
+    assert _ids(again["items"]) == CROSSED[20:40]
+    assert again.get("edition_status") == ("expired" if old_request else None)
+    assert fake.store[key] == original, "the replacement's built_at moved"
+    assert fake.written(key) == [key], "a read landed a second write"
+    assert ("setex", key) not in fake.ops
+
+
+async def test_a_reader_pinned_to_the_replacement_is_held_on_its_original_lease(
+    client, monkeypatch, seated
+):
+    fake, old, replacement, key = await _cross_and_mint_replacement(
+        client, monkeypatch, seated
+    )
+    # Rereads by others (retired token, unpinned) at later clocks ...
+    for seconds, params in ((5, {"edition": old}), (9, {})):
+        seated.now = T1 + timedelta(seconds=seconds)
+        await _get(client, offset=20, **params)
+        await _drain()
+    # ... and the pinned reader turns a page: held, under the T1 mint.
+    seated.now = T1 + timedelta(seconds=12)
+    resp, body = await _get(client, offset=40, edition=replacement)
+    await _drain()
+    assert body["edition_status"] == "pinned" and body["edition"] == replacement
+    assert _ids(body["items"]) == CROSSED[40:60]
+    assert json.loads(fake.store[key])["built_at"] == T1.timestamp()
+    assert fake.written(key) == [key]
+
+
+@pytest.mark.parametrize("land_first", ["earlier", "later"])
+async def test_overlapping_publishers_land_one_mint_atomically(
+    client, monkeypatch, seated, land_first
+):
+    """Two reads compose R before either publication lands (both saw no
+    manifest). Whichever lands first is the mint; the other is refused by the
+    write itself — not by a read the publisher made beforehand."""
+    fake, old = await _mint_before_start(client, monkeypatch, seated)
+    seated.now = T1
+    _, a = await _get(client, offset=20, edition=old)
+    pub_a = _SCHEDULED.pop()
+    seated.now = T1 + timedelta(seconds=5)
+    _, b = await _get(client, offset=20)
+    pub_b = _SCHEDULED.pop()
+    assert _SCHEDULED == []
+    assert a["edition"] == b["edition"]
+    key = edition_manifest_cache_key(token=a["edition"], policy=SEATED_POLICY)
+    assert key not in fake.store, "neither publication has landed yet"
+
+    fake.ops.clear()
+    order = (pub_a, pub_b) if land_first == "earlier" else (pub_b, pub_a)
+    for publication in order:
+        await publication
+    landed_at = T1 if land_first == "earlier" else T1 + timedelta(seconds=5)
+
+    assert fake.ops == [("set_nx", key), ("set_nx", key)], "no read-then-write"
+    assert fake.written(key) == [key]
+    assert fake.nx_refused == [key]
+    assert json.loads(fake.store[key])["built_at"] == landed_at.timestamp()
+    assert dict(fake.writes)[key] == int(EDITION_LEASE_SECONDS)
+
+
+async def test_a_lapsed_replacement_is_genuinely_reminted_by_the_next_read(
+    client, monkeypatch, seated
+):
+    """Control: NX fills an ABSENT manifest. Once the key's TTL (the lease)
+    lapses, the next read mints R afresh at its own clock."""
+    fake, old, replacement, key = await _cross_and_mint_replacement(
+        client, monkeypatch, seated
+    )
+    del fake.store[key]  # the Redis TTL lapsed
+    seated.now = T1 + timedelta(seconds=20)
+    _, again = await _get(client, offset=20)
+    await _drain()
+    assert again["edition"] == replacement
+    assert json.loads(fake.store[key])["built_at"] == (T1 + timedelta(seconds=20)).timestamp()
+    assert fake.written(key) == [key, key]
+
+
+async def test_a_build_is_still_a_mint_unchanged(client, monkeypatch, seated):
+    """Control on the scope: only the base READ publisher moved to NX. The
+    build's own mint keeps its existing SETEX (same as the OFF route)."""
+    fake = _install(monkeypatch, _DictRedis())
+    _plant(monkeypatch, FULL)
+    _, page0 = await _get(client, offset=0)
+    await _drain()
+    key = edition_manifest_cache_key(token=page0["edition"], policy=SEATED_POLICY)
+    assert ("setex", key) in fake.ops
+    assert ("set_nx", key) not in fake.ops
+
+
+# ---------------------------------------------------------------------------
+# D3. A seated build never completes a display capture
+# ---------------------------------------------------------------------------
+
+
+def _arm_capture(monkeypatch):
+    from app.utils import discover_display_replay as ddr
+
+    capture = ddr.DiscoverDisplayCapture(origin="synthetic")
+    monkeypatch.setattr(feed_module, "display_capture_from_request", lambda request: capture)
+    return ddr, capture
+
+
+async def _get_native(client, **params):
+    """The capture-supported shape: no ``event_pct``, so ``mode`` resolves to
+    Discover (the recorder refuses the web shape's ``mode=None`` up front)."""
+    query = "&".join(f"{k}={v}" for k, v in {"limit": 20, **params}.items())
+    resp = await client.get("/api/feed?" + query)
+    assert resp.status_code == 200, resp.text
+    return resp, resp.json()
+
+
+@pytest.mark.parametrize("requested", [False, True], ids=["unpinned", "retired-token"])
+async def test_a_seated_build_abandons_its_capture_and_still_serves(
+    client, monkeypatch, seated, requested
+):
+    fake = _install(monkeypatch, _DictRedis())
+    _plant(monkeypatch, CROSSING)
+    params = {"offset": 20}
+    if requested:
+        seated.now = T0
+        _, page0 = await _get_native(client, offset=0)
+        await _drain()
+        assert _ids(page0["items"]) == _ids(CROSSING)[:20]
+        # No base, so the edition request is a BUILD (its manifest goes too:
+        # this test is about the capture, not why the pin expires).
+        fake.store.clear()
+        params["edition"] = page0["edition"]
+    seated.now = T1
+    ddr, capture = _arm_capture(monkeypatch)
+
+    resp, body = await _get_native(client, **params)
+    await _drain()
+
+    assert resp.headers["X-Feed-Cache"] == "miss", "a real build reached the seam"
+    assert _ids(body["items"]) == CROSSED[20:40]
+    assert body.get("edition_status") == ("expired" if requested else None)
+    assert capture.status == "abandoned", capture.refusal
+    assert capture.refusal == {
+        "code": ddr.INCOMPLETE,
+        "detail": "build abandoned: " + feed_module._OPENING_SEATING_CAPTURE_UNSUPPORTED,
+    }
+    with pytest.raises(ddr.DisplayReplayError) as exc:
+        capture.artifact()
+    assert exc.value.code == ddr.INCOMPLETE
+
+
+async def test_off_the_same_capture_is_not_abandoned(client, monkeypatch):
+    """Control: the OFF route records this very build as before."""
+    _install(monkeypatch, _DictRedis())
+    _plant(monkeypatch, CROSSING)
+    ddr, capture = _arm_capture(monkeypatch)
+    resp, body = await _get_native(client, offset=20)
+    assert resp.headers["X-Feed-Cache"] == "miss"
+    assert _ids(body["items"]) == _ids(CROSSING)[20:40]
+    assert capture.status == "complete", capture.refusal
+    assert capture.artifact()["expected"]["full_deck_identities"] == _ids(CROSSING)
 
 
 # ---------------------------------------------------------------------------

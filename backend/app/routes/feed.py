@@ -4995,11 +4995,25 @@ async def get_feed(
                         ),
                     )
                 # #5105: a seated read that COMPOSED an edition other than the
-                # one the base's build already minted publishes its manifest, or
-                # the reader's next page could only read `expired` (a tournament
-                # that crossed its start since the build moves the token). A
-                # HELD pin never writes: re-minting it would renew the lease it
-                # is being judged under. The base itself is still not rewritten.
+                # one the base's build already minted FILLS its manifest if it
+                # is missing, or the reader's next page could only read
+                # `expired` (a tournament that crossed its start since the build
+                # moves the token). A HELD pin never writes: re-minting it would
+                # renew the lease it is being judged under. The base itself is
+                # still not rewritten.
+                #
+                # A READ IS NEVER A MINT. The raw base keeps its build's token
+                # after a crossing, so every later read of it — the retired
+                # token again, or an unpinned reader — composes the SAME
+                # replacement, which may already be minted and already pinned
+                # by someone. So the write is one atomic SET NX EX: it lands
+                # only where no manifest exists, the first landed publisher
+                # wins, and an existing replacement keeps its original
+                # `built_at` and Redis TTL. Never read-then-write (two
+                # overlapping readers would both see "absent"). Genuine expiry
+                # still remints: the key's TTL is the lease, so once it lapses
+                # the next read's NX lands. The token check below is only a
+                # shortcut that skips a write the build's own mint makes moot.
                 if (
                     _base_opening is not None
                     and _base_opening.status == OPENING_EDITION_COMPOSED
@@ -5019,8 +5033,8 @@ async def get_feed(
                             ),
                         ):
                             await _rc.bounded_redis_call(
-                                lambda: _client.setex(
-                                    _key, EDITION_LEASE_SECONDS, _json
+                                lambda: _client.set(
+                                    _key, _json, ex=EDITION_LEASE_SECONDS, nx=True
                                 )
                             )
 
@@ -5977,6 +5991,15 @@ async def get_feed(
         _served_items = feed_items
         _continuation_start = None
         if _opening_seating:
+            # A seated build is never a complete display capture. The recorder
+            # would mark ``expected`` complete from the RAW full deck while the
+            # response is cut from the SEATED (or held-subset) ``_served_items``,
+            # and the replay's baseline arm neither seats nor declares a seating
+            # policy — so either list would be an oracle the replay contradicts.
+            # Abandoned here, explicitly, before any hook can record; the served
+            # response itself is unaffected.
+            if _capture is not None:
+                _capture.abandon(_OPENING_SEATING_CAPTURE_UNSUPPORTED)
             _pin_manifest = (
                 await _read_edition_manifest() if _edition_request else None
             )
@@ -5995,14 +6018,6 @@ async def get_feed(
             _served_items = _opening.items
             _continuation_start = _opening.continuation_start
             _edition_status = _opening.edition_status if _edition_request else None
-            if _edition_request and _capture is not None:
-                _capture.record_edition(
-                    manifest=_pin_manifest,
-                    requested_policy=_edition_policy,
-                    now=now.timestamp(),
-                    status=_edition_status,
-                    items=_served_items,
-                )
         elif _edition_request:
             _pin_manifest = await _read_edition_manifest()
             _pin_now = time.time()
@@ -6670,7 +6685,9 @@ async def get_feed(
             shared_tiers=_shared_tiers,
         )
         # #10290: the ONLY point a capture may call itself complete — this
-        # build, returned. Every earlier exit leaves it incomplete.
+        # build, returned. Every earlier exit leaves it incomplete. ``feed_items``
+        # is the served deck only when unseated: a seated build abandoned its
+        # capture at the seam, so this call is inert for it (#5105).
         if _capture is not None:
             _capture.record_response(payload, feed_items, timings=_timings)
         return payload
@@ -7052,6 +7069,16 @@ _DISCOVER_OPENING_SEATING_SERVED = False
 #: deck at its OWN request clock and serves the leader's page only when the
 #: outcome is identical — a page alone cannot prove its opening is still valid.
 _OPENING_LEADER_DECK_KEY = "_opening_leader_deck"
+
+
+#: #5105 — why a seated build's display capture is abandoned (see the seam).
+#: ``discover_display_replay`` records the raw full deck as ``expected`` and its
+#: baseline replay arm does not seat, so no complete capture can be truthful.
+_OPENING_SEATING_CAPTURE_UNSUPPORTED = (
+    "opening_seating_unsupported: the served deck is the seated composition, "
+    "which the display capture's expected full deck and baseline replay do not "
+    "model"
+)
 
 
 def _feed_request_clock() -> datetime:
