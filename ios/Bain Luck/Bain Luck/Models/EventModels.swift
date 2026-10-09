@@ -52,7 +52,7 @@ nonisolated struct EventDetail: Decodable, Identifiable, Sendable {
     /// #9470 — the away side of the hero pair (`printable_away`, so absent on a
     /// draw-priced sport). Read only where the hero prints the server's pair
     /// (`OpeningLineHero`).
-    let heroProbabilityAway: Double?
+    var heroProbabilityAway: Double?
     var heroProbabilityObservedAt: String?
     var blendFoldRevision: ServedFoldRevision?
     let ei: EIData?
