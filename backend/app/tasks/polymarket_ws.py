@@ -299,12 +299,21 @@ async def withdraw_book_refuted_prices(session, books: dict) -> list:
     return withdrawn
 
 
-def chunk_price_update_stmt(chunk: dict):
+class _PMPriceWriteResult:
+    """A committed acknowledgement; only written rows may stage fresh receipts."""
+
+    def __init__(self, written_ids):
+        self.written_ids = tuple(written_ids)
+
+
+PM_QUOTE_LIVENESS_SECONDS = 30.0
+
+
+def chunk_price_update_stmt(chunk: dict, force_ids=None):
     """#10664: a flush chunk's price writes as ONE UPDATE ... RETURNING.
 
     ``write_chunk`` awaited one UPDATE per outcome — 500 round trips for a full
-    chunk before its commit and publication. This is the same write, row for
-    row, in one statement:
+    chunk before its commit and publication. One statement now preserves:
 
     * the SAME set clause: the price bound as ``NUMERIC(7, 6)`` and compared as
       ``FLOAT`` through :func:`price_changed_at_value`, exactly as the per-row
@@ -313,21 +322,25 @@ def chunk_price_update_stmt(chunk: dict):
       chunk order (``ORDER BY ord ... FOR UPDATE``; LockRows runs above the
       Sort), as the per-row loop did, so the binary-pair and lock-cycle work
       that reasons about that order still holds;
-    * the SAME coverage: a buffered id whose row is gone joins nothing and
-      returns nothing, as before; ``ord`` comes back so the caller walks the
-      returned rows in chunk order and stages identical invalidations.
+    * returned-row attribution: a buffered id whose row is gone joins nothing
+      and returns nothing; ``ord`` names only rows actually written. Unchanged
+      database prices are acknowledged without locks/writes unless the caller
+      forces a first observation or a bounded real liveness write.
 
     One parameter per column (arrays), so the prepared statement is shared by
     every chunk size.
     """
     from sqlalchemy import (
         ARRAY,
+        Boolean,
         Float,
         Integer,
         Numeric,
         bindparam,
+        cast,
         column,
         func,
+        or_,
         select,
         update,
     )
@@ -336,16 +349,19 @@ def chunk_price_update_stmt(chunk: dict):
 
     table = FuturesOutcome.__table__
     prices = list(chunk.values())
+    forced = set(chunk) if force_ids is None else force_ids
     given = (
         func.unnest(
             bindparam("chunk_ids", list(chunk), type_=ARRAY(Integer)),
             bindparam("chunk_prices", prices, type_=ARRAY(Numeric(7, 6))),
             bindparam("chunk_compare", prices, type_=ARRAY(Float)),
+            bindparam("chunk_force", [oid in forced for oid in chunk], type_=ARRAY(Boolean)),
         )
         .table_valued(
             column("id", Integer),
             column("price", Numeric(7, 6)),
             column("compared", Float),
+            column("force_write", Boolean),
             with_ordinality="ord",
         )
         .render_derived(name="given")
@@ -353,6 +369,15 @@ def chunk_price_update_stmt(chunk: dict):
     locked = (
         select(table.c.id, given.c.ord, given.c.price, given.c.compared)
         .join_from(given, table, table.c.id == given.c.id)
+        # Compare against the DATABASE value at its stored precision. A local
+        # repeated tick still repairs a price changed by another writer. Put
+        # this before LockRows so an unchanged row does not acquire a lock.
+        .where(or_(
+            given.c.force_write,
+            table.c.current_probability.is_distinct_from(
+                cast(given.c.price, table.c.current_probability.type)
+            ),
+        ))
         .order_by(given.c.ord)
         .with_for_update(of=table)
         .cte("locked")
@@ -1592,6 +1617,7 @@ async def _run_polymarket_ws_consumer(*, sessions, stop=None):
     catalog_boundary = _PMCatalogFlushBoundary()
     lock_retry_until: dict[int, float] = {}
     lock_retry_events: set[int] = set()
+    successful_price_write_at: dict[int, float] = {}
     withdrawal_retry_until: dict[int, float] = {}
     # Q460: outcome → linked event, for the blend re-stamp after each flush.
     #
@@ -1649,7 +1675,7 @@ async def _run_polymarket_ws_consumer(*, sessions, stop=None):
     # clears the entry, since its midpoint is about to replace the price.
     withdraw_buffer: dict[int, tuple] = {}
 
-    async def write_chunk(chunk: dict[int, float], *, final=False) -> bool | None:
+    async def write_chunk(chunk: dict[int, float], *, final=False) -> _PMPriceWriteResult | bool | None:
         """One flush transaction: write, re-rank, commit, publish, un-buffer.
 
         #9484: the flush used to write its whole batch in ONE transaction, so a
@@ -1666,6 +1692,7 @@ async def _run_polymarket_ws_consumer(*, sessions, stop=None):
         # Entries now leave only after the write lands, so nothing needs to be
         # "put back", because it was never taken away.
         from app.tasks.live_blend_refresh import _mono
+        from app.tasks.polymarket_ws import _PMPriceWriteResult, PM_QUOTE_LIVENESS_SECONDS
 
         # None means a lock-held whole chunk, not a global cadence failure.
         # Newer ticks on its rows cannot bypass the existing two-second hold.
@@ -1681,7 +1708,14 @@ async def _run_polymarket_ws_consumer(*, sessions, stop=None):
                 # #10664: the chunk's price writes in ONE statement — the same
                 # set clause, row-lock order and returned-row coverage as the
                 # per-row UPDATEs it replaces (`chunk_price_update_stmt`).
-                result = await session.execute(chunk_price_update_stmt(chunk))
+                now = _mono()
+                forced = {
+                    oid for oid in chunk
+                    if final or oid not in successful_price_write_at
+                    or now - successful_price_write_at[oid] >= PM_QUOTE_LIVENESS_SECONDS
+                }
+                result = await session.execute(chunk_price_update_stmt(chunk, force_ids=forced))
+                written_rows = sorted(result.all(), key=lambda r: r.ord)
                 # #9484: only a row the UPDATE returned is evidence — a
                 # buffered id whose row is gone signals nothing. And only
                 # a row whose stored price moved: the same price again
@@ -1689,7 +1723,7 @@ async def _run_polymarket_ws_consumer(*, sessions, stop=None):
                 # for it sends every held page to re-read an unchanged row
                 # (twin of the Kalshi socket's, ux #9526). Walked in chunk
                 # order, so invalidations stage exactly as they did per row.
-                for row in sorted(result.all(), key=lambda r: r.ord):
+                for row in written_rows:
                     if not row.quote_moved:
                         stats["quotes_unchanged"] += 1
                         continue
@@ -1709,9 +1743,7 @@ async def _run_polymarket_ws_consumer(*, sessions, stop=None):
                 # (plus the open contracts' legs) — no per-flush lookup on a
                 # two-second cadence.
                 reranked_markets = {
-                    market_by_outcome[oid]
-                    for oid in chunk
-                    if oid in market_by_outcome
+                    row.market_id for row in written_rows
                 }
                 if reranked_markets:
                     stats["ranks_rederived"] += (
@@ -1719,9 +1751,9 @@ async def _run_polymarket_ws_consumer(*, sessions, stop=None):
                             rerank_market_fields_stmt(sorted(reranked_markets))
                         )
                     ).rowcount
-            stats["price_updates"] += len(chunk)
+            stats["price_updates"] += len(written_rows)
             stats["open_contract_prices_written"] += sum(
-                1 for oid in chunk if oid in open_outcome_ids
+                1 for row in written_rows if row.id in open_outcome_ids
             )
         except Exception as exc:
             # Q491 — THE SHIP. The chunk is still in `price_buffer`, so the next
@@ -1751,6 +1783,9 @@ async def _run_polymarket_ws_consumer(*, sessions, stop=None):
 
         for oid in chunk:
             lock_retry_until.pop(oid, None)
+        successful_price_write_at.update(dict.fromkeys(
+            (row.id for row in written_rows), _mono(),
+        ))
         # #9484 — twin of the Kalshi socket's: the commit landed, so publish
         # before the buffer bookkeeping and the blend refresh can suppress it.
         await blend_refresher.publish_market_changes(session)
@@ -1765,7 +1800,10 @@ async def _run_polymarket_ws_consumer(*, sessions, stop=None):
             for outcome_id, prob in chunk.items():
                 if price_buffer.get(outcome_id) == prob:
                     del price_buffer[outcome_id]
-        return True
+        # A zero-return statement still acknowledged the unchanged inputs.
+        # Clear only matching buffered values, but never stamp those inputs as
+        # a new database observation or rerank their unchanged markets.
+        return _PMPriceWriteResult(row.id for row in written_rows)
 
     async def flush_withdrawals(
         *,
@@ -2002,6 +2040,11 @@ async def _run_polymarket_ws_consumer(*, sessions, stop=None):
 
             try:
                 for index, chunk_ids in enumerate(chunks):
+                    async with buffer_lock:
+                        withdraw_cohort_ids.update(withdraw_buffer)
+                        withdraw_events = event_ids_for_outcomes(
+                            event_id_by_outcome, withdraw_buffer,
+                        )
                     if stamping is not None:
                         unwritten_events = {
                             eid for eid, last in last_chunk_of_event.items()
@@ -2015,15 +2058,32 @@ async def _run_polymarket_ws_consumer(*, sessions, stop=None):
                             unwritten_events | withdraw_events
                         ):
                             await stamp_done()
-                    wrote = await write_chunk(
-                        {oid: batch[oid] for oid in chunk_ids}, final=final,
-                    )
+                    # The plan freezes membership/caps, not a later chunk's
+                    # prices. Adopt the newest values and their matching input
+                    # marks together, after any preceding stamp has joined.
+                    # Handlers update complementary legs under this same lock;
+                    # newly buffered ids still belong to a successor flush.
+                    async with buffer_lock:
+                        current_chunk = {oid: price_buffer[oid] for oid in chunk_ids}
+                        for oid in chunk_ids:
+                            if oid in input_marks:
+                                batch_marks[oid] = input_marks[oid]
+                            else:
+                                batch_marks.pop(oid, None)
+                    wrote = await write_chunk(current_chunk, final=final)
                     # Join any safe overlapping stamp before this chunk's
                     # withdrawals, receipts or refresh.
                     await stamp_done()
+                    # A wide book can arrive during the earlier write or this
+                    # one. It must mature/hold this event before its fresh stamp.
+                    async with buffer_lock:
+                        withdraw_cohort_ids.update(withdraw_buffer)
+                        withdraw_events = event_ids_for_outcomes(
+                            event_id_by_outcome, withdraw_buffer,
+                        )
                     if wrote:
                         unfinished_price_ids.difference_update(chunk_ids)
-                        owed.extend(chunk_ids)
+                        owed.extend(getattr(wrote, "written_ids", chunk_ids))
                     else:
                         if wrote is False:
                             wrote_all = False
@@ -2057,6 +2117,7 @@ async def _run_polymarket_ws_consumer(*, sessions, stop=None):
                             )
                             withdraw_events.difference_update(mature)
                             async with buffer_lock:
+                                withdraw_cohort_ids.update(withdraw_buffer)
                                 withdraw_events.update(event_ids_for_outcomes(
                                     event_id_by_outcome,
                                     withdraw_cohort_ids.intersection(withdraw_buffer),
@@ -2134,6 +2195,7 @@ async def _run_polymarket_ws_consumer(*, sessions, stop=None):
             wrote_all = False
             withdrawn = []
         async with buffer_lock:
+            withdraw_cohort_ids.update(withdraw_buffer)
             unfinished_events = (
                 event_ids_for_outcomes(headline_event_ids, unfinished_price_ids)
                 | event_ids_for_outcomes(

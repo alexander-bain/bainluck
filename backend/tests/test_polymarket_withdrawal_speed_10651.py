@@ -117,6 +117,7 @@ def rig(
         "withdrawal_retry_until": {},
         "lock_retry_until": {},
         "lock_retry_events": set(),
+        "successful_price_write_at": {},
         "PRICE_CHUNK_LOCK_TIMEOUT_MS": PRICE_CHUNK_LOCK_TIMEOUT_MS,
         "SET_LOCK_TIMEOUT_SQL": SET_LOCK_TIMEOUT_SQL,
         "lock_timeout_value": lock_timeout_value,
