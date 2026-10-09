@@ -274,6 +274,20 @@ final class DiscoverViewModel: ObservableObject {
     /// treats as "not equal".
     private(set) var paintedEdition: String?
 
+    /// #5105: the seated edition the reader is browsing, set ONLY by a network
+    /// publication whose page stated a usable opening boundary. A cache-seeded
+    /// preview, a legacy page and an empty refusal leave it nil, which keeps
+    /// pagination on the legacy path exactly as before. While set, every page
+    /// is requested pinned to this token at the edition's own page size.
+    private(set) var acceptedSeatedEdition: String?
+    /// #5105: the page size the accepted edition was minted at. The server binds
+    /// an edition to its `limit`, so a page asked at any other size reads
+    /// `superseded` by construction.
+    private var acceptedSeatedLimit = 50
+    /// #5105: a pinned page came back retired and the one replacement page 0 has
+    /// not landed. Pagination then targets that replacement, never the old offset.
+    @Published private(set) var awaitingEditionReplacement = false
+
     /// Provenance of the data that FIRST became renderable for the current load
     /// (L2-208 Item 2 / C67 P2): `true` when the last-good cache seed produced the
     /// first renderable cards, `false` when the network did. Captured ONCE per load
@@ -713,6 +727,8 @@ final class DiscoverViewModel: ObservableObject {
                     // same one. A pre-`edition` cached body leaves this nil, which
                     // the decision reads as "not equal" — the safe direction.
                     paintedEdition = cached.response.edition
+                    // #5105: a saved preview is never an accepted seated edition.
+                    acceptedSeatedEdition = nil
                     // First paint provenance: the cache seed produced first paint.
                     if firstDataFromCache == nil { firstDataFromCache = true }
                     // Freeze the render-generation token from the cache seed
@@ -928,6 +944,12 @@ final class DiscoverViewModel: ObservableObject {
                 // the staged edition and the record from the raw one would leave
                 // the NEXT refresh comparing against a token no list ever had.
                 paintedEdition = staged.edition
+                // #5105: the cursor, order and membership reset together here, so
+                // the accepted seated edition is decided at the same terminal.
+                Self.acceptSeatedEdition(
+                    response, paintedEdition: staged.edition,
+                    into: &acceptedSeatedEdition, limit: &acceptedSeatedLimit)
+                awaitingEditionReplacement = false
                 // First paint provenance: only stamp network when the cache seed
                 // did NOT already produce first paint this load — a background
                 // revalidation behind a served cache must not relabel the render
@@ -1262,6 +1284,8 @@ final class DiscoverViewModel: ObservableObject {
         // the previous identity's ordering — and an accidental match would
         // reconcile one account's feed into another's.
         paintedEdition = nil
+        acceptedSeatedEdition = nil
+        awaitingEditionReplacement = false
         nextOffset = 0
         hasMore = true
         isShowingCachedContent = false
@@ -1478,7 +1502,7 @@ final class DiscoverViewModel: ObservableObject {
     /// indefinite "Finding fresh markets…" spinner.
     @MainActor
     func loadMoreIfNeeded() async {
-        guard hasMore, !loading, !loadingMore else { return }
+        guard hasMore || awaitingEditionReplacement, !loading, !loadingMore else { return }
         loadingMore = true
         defer { loadingMore = false; reconcilePriceSubscriptions() }
 
@@ -1488,16 +1512,27 @@ final class DiscoverViewModel: ObservableObject {
         // generation's paging state.
         let generation = loadGeneration
 
+        // #5105: a retired edition's Retry is the replacement page 0, never the
+        // old offset of a list that no longer exists.
+        if awaitingEditionReplacement {
+            await replaceRetiredEdition(generation: generation)
+            return
+        }
+        // Read once: the whole scan belongs to the edition accepted when it began.
+        let seatedToken = acceptedSeatedEdition
+
         var scans = 0
         while hasMore, scans < Self.maxPageScans {
             scans += 1
 
+            let requestedOffset = nextOffset
             let response: FeedResponse
             do {
                 response = try await client.fetchDiscoverFeed(
-                    limit: 200,
-                    offset: nextOffset,
+                    limit: seatedToken == nil ? 200 : acceptedSeatedLimit,
+                    offset: requestedOffset,
                     eventPct: 0.15,
+                    edition: seatedToken,
                     cacheTTL: nil
                 )
             } catch let cancel where Self.isCancellation(cancel) {
@@ -1540,6 +1575,19 @@ final class DiscoverViewModel: ObservableObject {
             // calls straight back into this method.
             if response.isUnavailable {
                 self.error = "Couldn't load more markets"
+                return
+            }
+
+            // #5105: decide expiry BEFORE anything moves. A page that does not
+            // continue the accepted edition belongs to a different list: it must
+            // not append, must not advance the cursor, and must not be scanned
+            // past. The current cards stay; exactly one unpinned page 0 replaces
+            // the whole deck (order, membership and cursor together) or, failing
+            // that, Retry asks for that page 0 again.
+            if let seatedToken, !Self.continuesSeatedEdition(
+                response, token: seatedToken, requestedOffset: requestedOffset
+            ) {
+                await replaceRetiredEdition(generation: generation)
                 return
             }
 
@@ -1664,6 +1712,48 @@ final class DiscoverViewModel: ObservableObject {
         let serverPageEnd = response.offset + response.limit
         let decodedPageEnd = response.offset + response.items.count
         return max(currentOffset, serverPageEnd, decodedPageEnd)
+    }
+
+    /// #5105: the accepted seated edition after a network publication — the
+    /// painted token, but only when the page stated a usable opening boundary.
+    /// Anything else (legacy, invalid boundary, no token) is not opted in.
+    static func acceptSeatedEdition(
+        _ response: FeedResponse, paintedEdition: String?,
+        into accepted: inout String?, limit: inout Int
+    ) {
+        guard let paintedEdition, !paintedEdition.isEmpty,
+              case .at = response.continuationStart else {
+            accepted = nil
+            return
+        }
+        accepted = paintedEdition
+        limit = response.limit
+    }
+
+    /// #5105: whether a pinned page continues the accepted edition: the server
+    /// held the order (`pinned`), for THIS token, at the offset that was asked.
+    static func continuesSeatedEdition(
+        _ response: FeedResponse, token: String, requestedOffset: Int
+    ) -> Bool {
+        response.editionStatus == FeedResponse.pinnedEditionStatus
+            && response.edition == token
+            && response.offset == requestedOffset
+    }
+
+    /// #5105: one unpinned page 0 through `load()`, which already owns every
+    /// publication fence (generation, principal, renderability, price retention)
+    /// and resets order, membership and cursor at one terminal. With cards on
+    /// screen it never re-seeds the saved preview and never blanks the deck.
+    private func replaceRetiredEdition(generation: Int) async {
+        guard Self.shouldApplyPaginationResult(
+            capturedGeneration: generation, currentGeneration: loadGeneration
+        ) else { return }
+        awaitingEditionReplacement = true
+        // Only a network publication clears the flag (at the same terminal that
+        // swaps the deck). A refusal, failure or cancellation leaves it set, so the
+        // existing Retry asks for page 0 again; a newer load that publishes clears
+        // it there instead.
+        _ = await load()
     }
 
     /// Page-merge spacing: delegates to the shared pass (#8415), which keeps
