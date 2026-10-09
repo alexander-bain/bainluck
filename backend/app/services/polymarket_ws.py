@@ -10,6 +10,7 @@ PING heartbeat every 8 seconds to keep connection alive.
 """
 
 import asyncio
+import inspect
 import json
 import logging
 import random
@@ -43,6 +44,28 @@ async def _cooperative_messages(socket):
     not suspend. Yield after every processed message, before consuming the next
     one, so ready probability writers do not wait behind another frame batch.
     """
+    # Modern websockets can hand UTF-8 JSON directly to the byte-capable
+    # parser instead of decoding every frame to text first. Older clients
+    # retain their iterator contract. Decide once, outside the hot loop.
+    receive = getattr(socket, "recv", None)
+    try:
+        receives_bytes = (
+            receive is not None and "decode" in inspect.signature(receive).parameters
+        )
+    except (TypeError, ValueError):
+        receives_bytes = False
+    if receives_bytes:
+        from websockets.exceptions import ConnectionClosedOK
+
+        while True:
+            try:
+                raw = await receive(decode=False)
+            except ConnectionClosedOK:
+                return
+            yield raw
+            raw = None
+            await asyncio.sleep(0)
+
     async for raw in socket:
         yield raw
         raw = None  # Do not retain the last full-depth book on a quiet socket.
@@ -758,7 +781,7 @@ class PolymarketWebSocket:
                     try:
                         async for raw in _cooperative_messages(ws):
                             try:
-                                if raw == "PONG":
+                                if raw in ("PONG", b"PONG"):
                                     continue
                                 self._message_count += 1
 
