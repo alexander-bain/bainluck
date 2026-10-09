@@ -17,13 +17,12 @@ is the refresher's, upstream (`DEFAULT_MIN_REFRESH_INTERVAL_S`: the 2026-08-30
 ruling's "≤1 update/5 s", moved to one per 2 s flush for Alex's 2026-09-28 live
 benchmark). A second timer in this file could only drift away from the first.
 
-WHAT THIS FILE MUST NOT DO. It shares the web dyno's two uvicorn event loops
-with `/api/feed`. Every connection here is long-lived, so any per-tick database
-work or blocking call would put feed latency behind stream fanout for every
-other request on the same loop. After the bounded live-gate and fold lookup at connect there
-is no database access on this path at all: frames carry their own values, and
-one bounded Redis read after subscription replays the latest committed frame,
-while the REST payload remains the authoritative full event detail.
+It shares the web dyno's event loop with `/api/feed`. Single-row frames remain
+database-free after connection. Actual folded streams forward the raw update
+immediately, then request a bounded compact authoritative quote shared across
+recipients of that update. Projection never blocks the Redis fanout reader and
+failure retains the existing invalidation/detail fallback. No full page or
+history read belongs on this path.
 
 AND IT MUST NOT OPEN A REDIS CONNECTION PER STREAM (#6515). It used to: the
 uncached `get_async_redis_client()` lived inside `_stream`, so N readers meant N
@@ -414,11 +413,18 @@ async def _stream(
                         and frame["event_id"] == origin_id and _frame_is_fresh(
                             frame, datetime.now(timezone.utc)
                         )):
+                    incoming = frame
                     if origin_id != event_id:
                         frame = _fold_invalidation(frame, event_id, origin_id)
                         if frame is None:
                             continue
-                    yield sse_encode(json.dumps(frame), event="probability")
+                    project = getattr(hub, "project_folded_quote", None)
+                    pending_quote = (
+                        len(subscription.subscriptions) > 1 and callable(project)
+                        and not (origin_id == event_id and frame.get("status") not in QUOTE_STATUSES)
+                    )
+                    raw = {**frame, "folded_quote_pending": True} if pending_quote else frame
+                    yield sse_encode(json.dumps(raw), event="probability")
                     # A frame is as good as a heartbeat for keeping the router
                     # from reaping us; a busy market should not also pay for
                     # pings it does not need.
@@ -431,6 +437,16 @@ async def _stream(
                             json.dumps({"reason": "not_live"}), event="closed"
                         )
                         return
+                    if pending_quote:
+                        quote = await project(event_id, incoming)
+                        # Every promise completes, including null on failure.
+                        # Legacy clients ignore this named event; modern clients
+                        # can defer raw invalidation and fall back only on null.
+                        yield sse_encode(
+                            json.dumps({**frame, "folded_quote_pending": False,
+                                        "folded_quote": quote}),
+                            event="folded_probability",
+                        )
                 continue
 
             if loop_now - last_beat >= HEARTBEAT_INTERVAL_S:
