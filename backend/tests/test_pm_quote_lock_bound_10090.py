@@ -135,7 +135,8 @@ async def test_failed_whole_chunk_cooldown_preserves_healthy_cadence_and_fences(
     await run_flush_cadence(flush, 1, stop, failed_retry_interval_s=2)
     assert starts == [1001, 1002, 1003, 1004]
     assert [t for t, ids in state.attempts if 1 in ids] == [1001, 1004]
-    assert state.commits == [900, 900, 900, 1, 2, 900]
+    # The fresh unrelated quote writes ahead of the retried cohort.
+    assert state.commits == [900, 900, 900, 900, 1, 2]
     assert not r.ns["price_buffer"] and not r.ns["lock_retry_until"]
     assert not pending
     assert ("withdraw", [1]) in r.trace and ("refresh", [10]) in r.trace
@@ -237,10 +238,54 @@ def test_isolation_preserves_admitted_questions_complements_and_ordinary_remaind
     pairs = {1: 2, 2: 1}
     assert _pm_lock_isolated_chunks(chunks, set(), mapping, markets, pairs, 2) is chunks
     planned = _pm_lock_isolated_chunks(chunks, {10, 90}, mapping, markets, pairs, 2)
-    assert planned == [[700], [1, 2, 3], [900, 901], [902], [701, 702]]
+    # Unrelated remainders write before the retried cohorts' lock waits.
+    assert planned == [[700], [701, 702], [1, 2, 3], [900, 901], [902]]
     assert sorted(oid for chunk in planned for oid in chunk) == sorted(
         oid for chunk in chunks for oid in chunk
     ), "isolation cannot admit capped-out or newer buffered rows"
+
+
+def test_retried_cohort_keeps_order_ahead_of_a_remainder_sharing_its_event():
+    # Market 100's legs span events 10 (retried) and 20; 5 is event 20 alone.
+    chunks = [[1, 2, 5, 6]]
+    mapping = {1: 10, 2: 20, 5: 20, 6: 30}
+    markets = {1: 100, 2: 100, 5: 500, 6: 600}
+    planned = _pm_lock_isolated_chunks(chunks, {10}, mapping, markets, {}, 4)
+    assert planned == [[1, 2], [5, 6]], "event 20 keeps its write order"
+    planned = _pm_lock_isolated_chunks(
+        [[1, 2, 6], [5]], {10}, mapping, markets, {}, 4,
+    )
+    assert planned == [[6], [1, 2], [5]], (
+        "a disjoint remainder moves ahead; the overlapping one still waits"
+    )
+
+
+async def test_fresh_unrelated_event_writes_before_a_still_held_retried_cohort(monkeypatch):
+    clock = _FakeTime(monkeypatch, t=1000)
+    r, state = writer_rig(
+        clock, batch={1: 0.6, 2: 0.4}, mapping={1: 10, 2: 10, 5: 20}, books={},
+    )
+    r.ns["FLUSH_CHUNK_ROWS"] = 4
+    r.ns["open_outcome_ids"] = set()
+    assert await r.ns["flush_prices"](flush_started=1000)
+    assert state.attempts == [(1000, (1, 2))] and not state.commits
+    assert r.ns["lock_retry_events"] == {10}
+
+    clock.t = 1003
+    r.ns["price_buffer"][5] = 0.7
+    r.ns["market_by_outcome"][5] = 5
+    r.trace.clear()
+    assert await r.ns["flush_prices"](flush_started=1003)
+    # Event 20 commits at the flush start, not after event 10's 500 ms wait,
+    # and its stamp is not held behind that retry.
+    assert state.attempts == [(1000, (1, 2)), (1003, (5,)), (1003, (1, 2))]
+    assert state.commits == [5]
+    assert r.trace.index(("refresh", [20])) < r.trace.index(("rollback", None))
+    # The held cohort was still attempted this flush and keeps its debt.
+    assert r.ns["price_buffer"] == {1: 0.9, 2: 0.4}
+    assert r.ns["lock_retry_events"] == {10}
+    assert set(r.ns["lock_retry_until"]) == {1, 2}
+    assert ("refresh", [10]) not in r.trace
 
 
 def test_repeat_predicate_uses_database_precision_before_row_lock():

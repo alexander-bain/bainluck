@@ -417,7 +417,8 @@ def _pm_lock_isolated_chunks(
     admit another buffered row or change the open cap here. Within the admitted
     population a whole question and its complements stay indivisible; an
     oversized question keeps one transaction rather than exposing half of it.
-    Unaffected rows retain their original chunks and order.
+    Unaffected rows retain their original chunks and order, ahead of the
+    retried cohorts they share no event with.
     """
     if not retry_events:
         return chunks
@@ -468,8 +469,15 @@ def _pm_lock_isolated_chunks(
             current.extend(unit)
         if current:
             packed[events].append(current)
+    # A retried cohort is the one most likely still held, and each attempt can
+    # wait the full chunk lock budget. Its retained rows also lead the buffer,
+    # so first-appearance placement put that wait ahead of the fresh unrelated
+    # remainder. Run the remainder first; a cohort sharing an event with a
+    # remainder chunk is released ahead of it, in order, so overlapping events
+    # keep their write order.
     result = []
     emitted = set()
+    held = []
     for chunk in chunks:
         remainder = [oid for oid in chunk if oid not in group_by_outcome]
         remainder_emitted = False
@@ -477,13 +485,26 @@ def _pm_lock_isolated_chunks(
             events = group_by_outcome.get(oid)
             if events is None:
                 if not remainder_emitted:
+                    remainder_events = {
+                        event_by_outcome[o] for o in remainder if o in event_by_outcome
+                    }
+                    last = max(
+                        (i for i, cohort in enumerate(held)
+                         if not cohort.isdisjoint(remainder_events)),
+                        default=-1,
+                    )
+                    for cohort in held[: last + 1]:
+                        result.extend(packed[cohort])
+                    del held[: last + 1]
                     result.append(remainder)
                     remainder_emitted = True
             elif events not in emitted:
-                # Place each cohort at its first admitted appearance, keeping
-                # the unaffected remainder in its original transaction.
-                result.extend(packed[events])
+                # Each cohort keeps its first-appearance order among cohorts;
+                # the unaffected remainder keeps its original transaction.
+                held.append(events)
                 emitted.add(events)
+    for cohort in held:
+        result.extend(packed[cohort])
     return result
 
 
