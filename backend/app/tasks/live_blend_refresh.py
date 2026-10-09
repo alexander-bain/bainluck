@@ -1661,6 +1661,34 @@ class LiveBlendRefresher:
                     )),
                 ),
             )
+        elif self.source == "polymarket":
+            from app.services.polymarket_api import GAMMA_FULL_CONTEST_WINNER_TYPES
+            from app.utils.content_understanding import (
+                CONTENT_UNDERSTANDING_KEY,
+                CONTENT_UNDERSTANDING_VERSION,
+            )
+
+            # A known venue refusal cannot speak in the resolver, including
+            # as a devig sibling. Omit only its OUTCOMES, keeping the market
+            # shell and group length. Unknown/malformed/future/older records
+            # retain their outcomes; no title or inferred class gates this read.
+            understanding = FuturesMarket.market_metadata[CONTENT_UNDERSTANDING_KEY]
+            version = understanding["v"]
+            semantic = understanding["semantic_type"]
+            venue = understanding["venue_type"]
+            known_refusal = and_(
+                func.jsonb_typeof(FuturesMarket.market_metadata) == "object",
+                func.jsonb_typeof(understanding) == "object",
+                func.jsonb_typeof(version) == "number",
+                version.astext == str(CONTENT_UNDERSTANDING_VERSION),
+                func.jsonb_typeof(semantic) == "string",
+                semantic.astext != "",
+                func.jsonb_typeof(venue) == "string",
+                venue.astext != "",
+                venue.astext.not_in(sorted(GAMMA_FULL_CONTEST_WINNER_TYPES)),
+            )
+            # Missing JSON paths are SQL NULL: absence is never a refusal.
+            outcome_join = and_(outcome_join, ~func.coalesce(known_refusal, False))
         fields = (
             (FuturesMarket, PREPARED_MARKET_FIELDS),
             (Event, PREPARED_EVENT_FIELDS),
