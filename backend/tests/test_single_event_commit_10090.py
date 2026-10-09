@@ -183,7 +183,9 @@ async def test_fresh_work_spending_residual_budget_skips_later_pending_read(monk
     assert x.r._lock_retry == {2}
     second_call = True
     await x.r.refresh([3, 4], flush_started=1000)
-    assert reads == [{4}, {2}, {3, 4}]
+    # Fresh populations within the workers read in their own stamp sessions;
+    # only old debt takes a shared read, and the spent budget skips the second.
+    assert reads == [{2}]
     assert 3 in x.committed and 3 in x.published
     assert x.r.pending_event_ids() == frozenset({2})
     assert not x.r._failed_hold_until
@@ -195,10 +197,11 @@ async def test_live_stamps_lead_within_fresh_and_pending_but_fresh_stays_first(m
     })
     x.r._lock_retry = {2, 4}
     await x.r.refresh([1, 3], flush_started=1000)
-    # Fresh live 3 precedes fresh scheduled 1; both still precede debt,
-    # where live 4 precedes scheduled 2. No event is dropped or grouped.
-    assert x.committed == x.published == [3, 1, 4, 2]
-    assert [s.event_ids for s in x.sessions if s.event_ids] == [[3], [1], [4], [2]]
+    # Fresh 1 and 3 fit the workers, so both start at once with no claim
+    # order; both still precede debt, where live 4 precedes scheduled 2.
+    # No event is dropped or grouped.
+    assert x.committed == x.published == [1, 3, 4, 2]
+    assert [s.event_ids for s in x.sessions if s.event_ids] == [[1], [3], [4], [2]]
     assert x.r.stats["stamped"] == 4
     assert not x.r.pending_event_ids()
 
@@ -226,7 +229,8 @@ async def test_fresh_stamp_publishes_before_pending_preparation(monkeypatch, out
         await asyncio.wait_for(entered.wait(), 1)
         await settle_until(lambda: x.published == [3])
         assert x.committed == [3]
-        assert reads == [{3}, {1, 2}]
+        # Fresh 3 read in its own stamp session; only debt is prepared.
+        assert reads == [{1, 2}]
         if outcome == "cancel":
             task.cancel()
             with pytest.raises(asyncio.CancelledError):
@@ -252,14 +256,14 @@ async def test_fresh_stamp_publishes_before_pending_preparation(monkeypatch, out
 async def test_fresh_preparation_failure_keeps_fresh_owed_and_attempts_pending(monkeypatch):
     x = rig(monkeypatch)
     x.r._lock_retry = {1, 2}
-    prepare = x.r._prepare_groups
+    read = x.r._read_groups
 
-    async def prepare_population(event_ids):
+    async def read_population(session, event_ids):
         if 3 in event_ids:
             raise RuntimeError("fresh preparation failed")
-        return await prepare(event_ids)
+        return await read(session, event_ids)
 
-    x.r._prepare_groups = prepare_population
+    x.r._read_groups = read_population
     await x.r.refresh([3], flush_started=1000)
     assert x.published == x.committed == [1, 2]
     assert x.r.pending_event_ids() == frozenset({3})
@@ -296,10 +300,14 @@ async def test_shared_read_and_per_event_command_tradeoff(monkeypatch, count):
 
     x = rig(monkeypatch, count=count)
     await x.r.refresh(range(1, count + 1), flush_started=1000)
-    # One shared prepared read, plus one current reread per queued fresh event.
-    assert x.commands.count("read") == 1 + max(0, count - FRESH_STAMP_WORKERS)
+    # Within the workers every stamp reads in its own session. Beyond them:
+    # one shared prepared read, plus one current reread per queued event.
+    fits = count <= FRESH_STAMP_WORKERS
+    assert x.commands.count("read") == (
+        count if fits else 1 + count - FRESH_STAMP_WORKERS
+    )
     assert x.commands.count("budget") == x.commands.count("update") == count
-    assert len(x.sessions) == (1 if count == 1 else count + 1)
+    assert len(x.sessions) == (count if fits else count + 1)
     assert not any(s.savepoints or s.rollbacks for s in x.sessions)
     assert x.published == x.committed
     assert sorted(x.published) == list(range(1, count + 1))
@@ -387,7 +395,8 @@ async def test_blocked_first_fresh_stamp_does_not_hold_sibling_publication(monke
         await asyncio.wait_for(x.second_stamp.wait(), 1)
         await settle_until(lambda: x.published == [3])
         assert x.committed == [3] and not task.done()
-        assert x.commands.count("read") == 1
+        # No separate preparation session: each stamp read its own event.
+        assert x.commands.count("read") == len(x.sessions) == 2
         x.release.set()
         await asyncio.wait_for(task, 1)
         assert x.published == x.committed == [3, 2]
@@ -408,7 +417,8 @@ async def test_third_ready_game_publishes_while_two_stamps_wait_on_rows(monkeypa
         # ready game still commits and publishes before either is released.
         await settle_until(lambda: x.published == [3])
         assert x.committed == [3] and not task.done()
-        assert x.commands.count("read") == 1
+        # No separate preparation session: each stamp read its own event.
+        assert x.commands.count("read") == len(x.sessions) == 3
         x.release.set()
         await asyncio.wait_for(task, 1)
         assert x.published == x.committed == [3, 1, 2]

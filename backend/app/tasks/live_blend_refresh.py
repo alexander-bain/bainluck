@@ -1400,8 +1400,15 @@ class LiveBlendRefresher:
                 if pending_only and flush_started is not None:
                     if self._pending_started_at is None:
                         self._pending_started_at = _mono()
+                # A fresh population that fits the fixed workers has no claim
+                # order to decide: every event starts at once. Each stamp reads
+                # its own group in its own write session, as a singleton does,
+                # rather than every stamp first waiting on a separate session's
+                # read of all of them. A read failure stays with its own event.
+                prepared = None
                 try:
-                    prepared = await self._prepare_groups(list(population))
+                    if pending_only or len(population) > FRESH_STAMP_WORKERS:
+                        prepared = await self._prepare_groups(list(population))
                 except Exception as exc:
                     self.stats["errors"] += 1
                     logger.exception(
@@ -1417,6 +1424,8 @@ class LiveBlendRefresher:
                 # Preserve live-first order within each population and numeric
                 # tie-breaking; missing prepared rows remain due as non-live.
                 def stamp_order(event_id: int) -> tuple[bool, int]:
+                    if prepared is None:
+                        return (False, event_id)
                     context = prepared.get(event_id)
                     return (context is None or context[0].status != "live", event_id)
 
@@ -1444,6 +1453,7 @@ class LiveBlendRefresher:
                         await self._refresh_batch(
                             group_ids,
                             clock,
+                            # None (no shared read): this session reads it.
                             prepared=None if read_current else prepared,
                             on_committed=committed,
                             publish_committed=publish_committed,
