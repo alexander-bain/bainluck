@@ -824,7 +824,7 @@ final class DiscoverViewModelPaginationTests: XCTestCase {
         XCTAssertFalse(vm.awaitingEditionReplacement)
     }
 
-    /// A legacy deck (no boundary) is never opted in: 200-card pages, no token.
+    /// A legacy deck with no edition is never opted in: 200-card pages, no token.
     @MainActor
     func testLegacyDeckPaginatesUnpinnedAt200_5105() async throws {
         let (vm, fake) = try await loadedVM([
@@ -836,13 +836,12 @@ final class DiscoverViewModelPaginationTests: XCTestCase {
         XCTAssertEqual(fake.requestedLimits, [200])
     }
 
-    /// The option OFF — the value it ships with, like the web's switch — is
+    /// Explicitly disabling the option preserves
     /// today's Discover whatever page 0 states: an edition alone, an edition
     /// with a boundary, even a malformed boundary. Nothing pins, nothing pages
     /// at the edition's size, nothing is sectioned or refused.
     @MainActor
     func testOptionOffIsTheLegacyPathWhateverPageZeroStates5105() async throws {
-        XCTAssertFalse(DiscoverOpeningEditionOption.enabled, "ships OFF, beside the server switch")
         let pages: [(String, Int?)] = [("edition, no boundary", nil), ("boundary 3", 3), ("malformed", -1)]
         for (label, start) in pages {
             let fake = FakeFeedClient([
@@ -850,6 +849,7 @@ final class DiscoverViewModelPaginationTests: XCTestCase {
                 .ok(try Self.seatedPage(ids: [13], offset: 12, edition: "ed-1", start: start)),
             ])
             let vm = DiscoverViewModel(client: fake, lastGood: nil, telemetry: nil)
+            vm.openingEditionEnabled = false
             XCTAssertFalse(vm.openingEditionEnabled, label)
             await vm.load()
             XCTAssertEqual(ids(vm), Array(1...12), "\(label): painted, never refused")
@@ -1044,10 +1044,10 @@ final class DiscoverViewModelPaginationTests: XCTestCase {
         XCTAssertEqual(fake.requestedLimits, steps.map(\.limit), "limits", file: file, line: line)
     }
 
-    private func transcriptVM(_ steps: [TranscriptStep], enabled: Bool = true) -> (DiscoverViewModel, FakeFeedClient) {
+    private func transcriptVM(_ steps: [TranscriptStep], enabled: Bool? = nil) -> (DiscoverViewModel, FakeFeedClient) {
         let fake = FakeFeedClient(steps.map { .ok($0.response) })
         let vm = DiscoverViewModel(client: fake, lastGood: nil, telemetry: nil)
-        vm.openingEditionEnabled = enabled
+        if let enabled { vm.openingEditionEnabled = enabled }
         return (vm, fake)
     }
 
@@ -1057,6 +1057,7 @@ final class DiscoverViewModelPaginationTests: XCTestCase {
     /// which the phone has no twin of.)
     @MainActor
     func testTranscriptFullOpeningNoHeadingPinsPageOne5105() async throws {
+        XCTAssertTrue(DiscoverOpeningEditionOption.enabled, "the enabled candidate must exercise the shipping default")
         let steps = try Self.transcript("full_opening_back").filter { $0.label != "back-revalidate-page0" }
         XCTAssertEqual(steps.map(\.label), ["page0", "page1"])
         let (vm, fake) = transcriptVM(steps)

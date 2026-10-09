@@ -206,7 +206,7 @@ enum DiscoverLoadOutcome: Equatable, Sendable {
 /// size, a retired edition is replaced by one unpinned page 0, and the
 /// continuation (when there is one) is drawn under its own heading.
 ///
-/// OFF — the only value this ships with — Discover is exactly today's: the same
+/// OFF retains the prior Discover behavior: the same
 /// unpinned 200-card pages, the same merge, one flat list.
 ///
 /// A constant, not a launch argument or a server field: the wire cannot tell an
@@ -214,7 +214,7 @@ enum DiscoverLoadOutcome: Equatable, Sendable {
 /// edition with `continuation_start` absent), so turning this on is a release
 /// decision made beside the server switch, never inferred from a response.
 nonisolated enum DiscoverOpeningEditionOption {
-    static let enabled = false
+    static let enabled = true
 }
 
 final class DiscoverViewModel: ObservableObject {
