@@ -317,7 +317,10 @@ export function parseFeedSnapshot<T>(
     return null;
   }
   if (!parsed || typeof parsed !== "object") return null;
-  const candidate = parsed as Partial<StoredSnapshot<T>> | Partial<StoredSectionSnapshot<T>>;
+  const candidate = parsed as
+    | Partial<StoredSnapshot<T>>
+    | Partial<StoredSectionSnapshot<T>>
+    | Partial<StoredEditionSnapshot<T>>;
   if (candidate.v === FEED_SNAPSHOT_VERSION) {
     // `sections` is reserved for the section edition. A v2 body carrying it is
     // contradictory, and BOTH readers refuse it — the default reader returning

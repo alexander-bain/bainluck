@@ -8,7 +8,7 @@
  * produces the new body; everything else stays today's v2 bytes, and every
  * reader that did not opt in refuses it.
  */
-import { foldContinuationPage, type ContinuationSections as Sections } from "@/lib/discover/continuationSections";
+import { foldContinuationPage, type ContinuationResult, type ContinuationSections as Sections } from "@/lib/discover/continuationSections";
 import {
   FEED_EDITION_SNAPSHOT_VERSION,
   FEED_SECTION_SNAPSHOT_VERSION,
@@ -32,7 +32,7 @@ function tokenedDeck(all: Card[], received: number, edition: string | null = "ed
   const positions = new Map<string, number>();
   for (let offset = 0; offset < received; offset += 20) {
     const items = all.slice(offset, Math.min(offset + 20, received));
-    const result = foldContinuationPage(deck, { items, offset, total: all.length, ...(edition ? { edition } : {}) }, getId);
+    const result: ContinuationResult<Card> = foldContinuationPage(deck, { items, offset, total: all.length, ...(edition ? { edition } : {}) }, getId);
     if (result.status !== "ok") throw new Error(result.reason);
     items.forEach((item, i) => { if (!positions.has(item.id)) positions.set(item.id, offset + i); });
     deck = result.sections;

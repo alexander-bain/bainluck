@@ -111,7 +111,7 @@ jest.mock("@/components/discover/DiscoverSkeletonGrid", () => ({ __esModule: tru
 import DiscoverPage from "@/app/discover/page";
 import { fetchFeed } from "@/lib/api";
 import { CONTINUATION_HEADING } from "@/components/discover/ContinuationSections";
-import { foldContinuationPage, type ContinuationSections as Sections } from "@/lib/discover/continuationSections";
+import { foldContinuationPage, type ContinuationResult, type ContinuationSections as Sections } from "@/lib/discover/continuationSections";
 import {
   FEED_EDITION_SNAPSHOT_VERSION,
   FEED_SECTION_SNAPSHOT_VERSION,
@@ -1210,7 +1210,7 @@ describe("#5105 option ON — an accepted reply refreshes the bodies already on 
     const pageId = (item: Card) => `event-${item.data.id}`;
     let deck: Sections<Card> | null = null;
     for (const offset of [0, 20]) {
-      const folded = foldContinuationPage(deck, { items: all.slice(offset, offset + 20), offset, total: 60, edition: "E1", continuation_start: 3 }, pageId);
+      const folded: ContinuationResult<Card> = foldContinuationPage(deck, { items: all.slice(offset, offset + 20), offset, total: 60, edition: "E1", continuation_start: 3 }, pageId);
       if (folded.status !== "ok") throw new Error(folded.reason);
       deck = folded.sections;
     }

@@ -7,7 +7,7 @@
  * deck received but did not keep — so a restore never skips a dropped card and
  * never strands one behind an old `hasMore: false`.
  */
-import { foldContinuationPage, type ContinuationSections as Sections } from "@/lib/discover/continuationSections";
+import { foldContinuationPage, type ContinuationResult, type ContinuationSections as Sections } from "@/lib/discover/continuationSections";
 import {
   FEED_SECTION_SNAPSHOT_VERSION,
   FEED_SNAPSHOT_MAX_ITEMS,
@@ -22,7 +22,7 @@ const cards = (n: number) => Array.from({ length: n }, (_, i) => ({ id: `c${i}` 
 function sectionDeck(all: Card[], boundary: number, received: number, edition = "ed-1"): Sections<Card> {
   let deck: Sections<Card> | null = null;
   for (let offset = 0; offset < received; offset += 20) {
-    const result = foldContinuationPage(deck, {
+    const result: ContinuationResult<Card> = foldContinuationPage(deck, {
       items: all.slice(offset, Math.min(offset + 20, received)),
       offset,
       total: all.length,

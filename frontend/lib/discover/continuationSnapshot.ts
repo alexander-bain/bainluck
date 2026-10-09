@@ -39,7 +39,7 @@
  * them back on the rebuilt deck. A section body never decodes through it, nor
  * an unsectioned body through the section decoder.
  */
-import { foldContinuationPage, type ContinuationSections } from "./continuationSections";
+import { foldContinuationPage, type ContinuationResult, type ContinuationSections } from "./continuationSections";
 
 /** The section deck as stored inside a snapshot. */
 export interface StoredContinuationDeck {
@@ -96,7 +96,7 @@ export function decodeContinuationDeck<T>(
       return null;
     }
     if (itemId !== id) return null;
-    const result = foldContinuationPage(
+    const result: ContinuationResult<T> = foldContinuationPage(
       deck,
       {
         items: [item],
@@ -186,7 +186,7 @@ export function decodeUnsectionedDeck<T>(
     if ((heldPosition !== undefined && heldPosition !== position) || (heldId !== undefined && heldId !== id)) return null;
     positions.set(id, position);
     idAt.set(position, id);
-    const result = foldContinuationPage(
+    const result: ContinuationResult<T> = foldContinuationPage(
       deck,
       { items: [retained[index]], offset: position, total: stored.total, edition: stored.edition },
       getId,
