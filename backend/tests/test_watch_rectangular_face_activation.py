@@ -1,44 +1,183 @@
-"""The configured Modular library preview cannot stand in for an active face."""
+"""Both Modular mount paths must activate the named face before accepting content."""
 
 from pathlib import Path
+import re
+
+import pytest
 
 ROOT = Path(__file__).resolve().parents[2]
+SOURCE = (
+    ROOT / "ios/Bain Luck/BainLuckWatchUITests/RectangularWidgetHostJourneyTests.swift"
+)
 
 
-def test_rectangular_host_activates_named_face_before_accepting_widget_content():
-    source = (
-        ROOT
-        / "ios/Bain Luck/BainLuckWatchUITests/RectangularWidgetHostJourneyTests.swift"
-    ).read_text()
-    call = source.index("try activateConfiguredModularFace(in: host)")
-    assert source.index("installed.tap()") < call < source.index("let center =")
-    helper = source[
-        source.index("private func activateConfiguredModularFace") : source.index(
-            "private func swipeLeft"
+def function(source, name):
+    """Scope checks to one top-level XCTest method/helper, not the whole file."""
+    declarations = list(re.finditer(r"^    (?:private )?func (\w+)\(", source, re.M))
+    matches = [i for i, match in enumerate(declarations) if match[1] == name]
+    assert len(matches) == 1, name
+    index = matches[0]
+    end = (
+        declarations[index + 1].start()
+        if index + 1 < len(declarations)
+        else len(source)
+    )
+    return source[declarations[index].start() : end]
+
+
+def ordered(body, *steps):
+    position = 0
+    for step in steps:
+        location = body.find(step, position)
+        assert location >= 0, f"Missing or out-of-order activation/content step: {step}"
+        position = location + len(step)
+
+
+def require_activation_paths(source):
+    for name, center in [
+        (
+            "testActualRectangularWidgetShowsPublishedSavedReading",
+            'let center = host.otherElements["center"].firstMatch',
+        ),
+        (
+            "mountScoreFixtureOnModular",
+            'let centers = host.otherElements.matching(identifier: "center")',
+        ),
+    ]:
+        body = function(source, name)
+        ordered(
+            body,
+            "installed.tap()",
+            "XCUIDevice.shared.press(.home)",
+            "try activateConfiguredModularFace(in: host)",
+            "XCTAssertTrue(host.wait(for: .runningForeground, timeout: 15))",
+            'XCTAssertTrue(host.otherElements["Watch Face"].firstMatch.waitForExistence(timeout: 15))',
+            center,
         )
-    ]
-    for requirement in [
+        assert body.count("try activateConfiguredModularFace(in: host)") == 1
+
+    activation = function(source, "activateConfiguredModularFace")
+    ordered(
+        activation,
         "library.exists || face.exists",
+        "XCTAssertEqual(XCTWaiter.wait(for: [arrived], timeout: 15), .completed",
         "if library.exists",
-        'title.label == "Modular"',
+        'let title = host.staticTexts["Switcher Face Title"].firstMatch',
         '"modular, Customizable"',
+        'title.label == "Modular"',
         "previews.count == 1",
         "preview.isHittable",
         "preview.tap()",
         "face.exists && !library.exists",
-        "face.isHittable",
-    ]:
-        assert requirement in helper
-    assert source.count("XCUIDevice.shared.press(.home)") == 2
-    for assertion in [
+        "XCTAssertEqual(XCTWaiter.wait(for: [activated], timeout: 15), .completed",
+        "XCTAssertTrue(face.isHittable)",
+    )
+
+    published = function(
+        source, "testActualRectangularWidgetShowsPublishedSavedReading"
+    )
+    ordered(
+        published,
+        "try activateConfiguredModularFace(in: host)",
+        "let center =",
+        "let reading =",
         'XCTAssertTrue(reading.label.contains("San Francisco Giants win"))',
+        "contentBounds.contains(reading.frame)",
+        'print("WATCH_UI_RECTANGULAR_ACTUAL_TYPED=PASS")',
+    )
+    for assertion in [
         'XCTAssertTrue(reading.label.contains("Saved"))',
         'XCTAssertTrue(reading.label.contains("64% · Live"))',
         'XCTAssertTrue(reading.label.contains("Observed "))',
-        "contentBounds.contains(reading.frame)",
         "center.isHittable",
         'let observedParts = reading.label.components(separatedBy: "Observed ")',
         "XCTAssertEqual(observedParts.count, 2)",
         "XCTAssertFalse(observedTimestamp.isEmpty",
     ]:
-        assert assertion in source
+        assert assertion in published
+
+    mount = function(source, "mountScoreFixtureOnModular")
+    ordered(
+        mount,
+        "try activateConfiguredModularFace(in: host)",
+        "let center =",
+        "XCTAssertEqual(centers.count, 1",
+        "XCTAssertTrue(center.isHittable",
+        "return center",
+    )
+    score = function(source, "checkActualScoreColumnsColdTap")
+    ordered(
+        score,
+        "let center = try mountScoreFixtureOnModular(in: host)",
+        "let reading =",
+        "XCTAssertTrue(reading.waitForExistence(timeout: 20)",
+        "XCTAssertEqual(reading.label, expected)",
+        "center.frame.contains(reading.frame)",
+        'XCTAssertTrue(host.otherElements["Watch Face"].firstMatch.exists)',
+        'XCTAssertFalse(host.otherElements["Face Library View"].firstMatch.exists)',
+        "XCTAssertEqual(reading.label, expected)",
+        "center.tap()",
+        'print("WATCH_SCORE_MODULAR_HOST_ROUTE_CHECKS=PASS scenario=',
+    )
+    for suffix, arguments in [
+        ("LiveScore", 'scenario: "score", homeScore: 4, awayScore: 2, final: false'),
+        ("HomeWinner", 'scenario: "final", homeScore: 4, awayScore: 2, final: true'),
+        (
+            "AwayWinner",
+            'scenario: "away-final", homeScore: 2, awayScore: 4, final: true',
+        ),
+        ("Tied", 'scenario: "tie", homeScore: 2, awayScore: 2, final: true'),
+        ("ZeroScore", 'scenario: "zero", homeScore: 4, awayScore: 0, final: false'),
+    ]:
+        assert f"try checkActualScoreColumnsColdTap({arguments})" in function(
+            source, f"testActualRectangular{suffix}ColumnsColdTap"
+        )
+
+
+def test_rectangular_host_activates_named_face_before_accepting_widget_content():
+    require_activation_paths(SOURCE.read_text())
+
+
+@pytest.mark.parametrize(
+    "method,required",
+    [
+        (
+            "testActualRectangularWidgetShowsPublishedSavedReading",
+            "try activateConfiguredModularFace(in: host)",
+        ),
+        ("mountScoreFixtureOnModular", "try activateConfiguredModularFace(in: host)"),
+        (
+            "checkActualScoreColumnsColdTap",
+            "let center = try mountScoreFixtureOnModular(in: host)",
+        ),
+        ("activateConfiguredModularFace", "preview.tap()"),
+        ("activateConfiguredModularFace", "face.exists && !library.exists"),
+    ],
+)
+def test_each_activation_path_is_required_independently(method, required):
+    source = SOURCE.read_text()
+    body = function(source, method)
+    assert body.count(required) == 1
+    broken = source.replace(
+        body, body.replace(required, "REMOVED_ACTIVATION_STEP", 1), 1
+    )
+    with pytest.raises(AssertionError):
+        require_activation_paths(broken)
+
+
+@pytest.mark.parametrize(
+    "method",
+    [
+        "testActualRectangularWidgetShowsPublishedSavedReading",
+        "mountScoreFixtureOnModular",
+    ],
+)
+def test_content_cannot_be_accepted_before_named_face_activation(method):
+    source = SOURCE.read_text()
+    body = function(source, method)
+    call = "try activateConfiguredModularFace(in: host)"
+    # Keeping all tokens is insufficient: moving the call after the content
+    # declaration must be rejected separately for both mounting paths.
+    broken_body = body.replace(call, "", 1) + "\n" + call
+    with pytest.raises(AssertionError):
+        require_activation_paths(source.replace(body, broken_body, 1))

@@ -79,16 +79,16 @@ class WatchUIShardTests(unittest.TestCase):
     def verify(self):
         return gate.aggregate(self.root, self.sha, self.groups, verify_markers=False)
 
-    def test_complete_distinct_pairs_cover_all_40_debug_cases(self):
-        self.assertEqual(self.verify()["tests"], 40)
+    def test_complete_distinct_pairs_cover_all_137_debug_cases(self):
+        self.assertEqual(self.verify()["tests"], 137)
         self.assertEqual(
             self.groups["corner"],
             ["WidgetTapJourneyTests/testActualCornerSavedReadingAndTap"],
         )
-        self.assertEqual(len(self.groups["readings"]), 15)
-        self.assertEqual(len(self.groups["navigation"]), 10)
-        self.assertEqual(len(self.groups["controls"]), 8)
-        self.assertEqual(len(self.groups["widgets"]), 6)
+        self.assertEqual(len(self.groups["readings"]), 42)
+        self.assertEqual(len(self.groups["navigation"]), 42)
+        self.assertEqual(len(self.groups["controls"]), 41)
+        self.assertEqual(len(self.groups["widgets"]), 11)
 
     def test_composed_fixture_preserves_fixed_clock_and_provider_alias(self):
         source = (
@@ -257,7 +257,7 @@ class WatchUIShardTests(unittest.TestCase):
         ]
         complete = original + "\n" + "\n".join(rows)
         path.write_text(complete)
-        self.assertEqual(gate.aggregate(self.root, self.sha, self.groups)["tests"], 40)
+        self.assertEqual(gate.aggregate(self.root, self.sha, self.groups)["tests"], 137)
         for marker in (
             *ALIAS_MARKERS,
             "WATCH_UI_ACTUAL_CORNER_SAVED=PASS",
