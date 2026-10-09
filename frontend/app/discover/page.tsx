@@ -964,8 +964,13 @@ export default function DiscoverPage() {
     if (transition.kind === "preserve") {
       if (transition.reason === "stale_request") return;
       // A page that cannot extend the edition must not be re-asked in a loop:
-      // paging stops on the existing retry state. Page zero keeps today's rule.
-      setFeedUnavailable(source === "page" ? true : transition.showUnavailable);
+      // paging stops on the existing retry state. Page zero keeps today's rule
+      // over a deck or cards already on screen — except that a refused page
+      // zero with NOTHING accepted and nothing shown is not an empty edition:
+      // left quiet, it paints "caught up" over a reply that had cards. It takes
+      // the same retry state instead (one controlled page zero, no loop).
+      const nothingAccepted = editionDeckRef.current === null && renderedCountRef.current === 0;
+      setFeedUnavailable(source === "page" || nothingAccepted ? true : transition.showUnavailable);
       return;
     }
     if (transition.kind === "restart") {

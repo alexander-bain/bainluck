@@ -783,7 +783,7 @@ describe("#5105 option ON — a request belongs to the mount that issued it", ()
     expect(walk(page).some((n) => n["data-unavailable"] === "empty")).toBe(true);
   });
 
-  it("an own reply the edition refuses ends the wait under today's rules (no endless skeleton)", async () => {
+  it("an own reply the edition refuses ends the wait on the retry state (no endless skeleton, no false end card)", async () => {
     const cache = new Map<unknown, unknown>();
     const page = await mountApp(cache);
     await answer(calls[0], reply(list(40), 0, { boundary: 3, edition: "OLD" }));
@@ -795,7 +795,10 @@ describe("#5105 option ON — a request belongs to the mount that issued it", ()
     await answer(lastCall(), reply(list(40, 200), 0, { boundary: 3, edition: "X", status: "pinned" }));
     expect(cardsOf(page)).toEqual([]);
     expect(has(page, "data-skeleton")).toBe(false);
-    expect(has(page, "data-end-of-feed")).toBe(true);
+    // A refused reply is not an empty edition: nothing was accepted, so the
+    // reader is offered Retry, never told they are caught up.
+    expect(has(page, "data-end-of-feed")).toBe(false);
+    expect(walk(page).some((n) => n["data-unavailable"] === "empty")).toBe(true);
   });
 
   it("a fast return inside SWR's dedupe window refuses the earlier mount's in-flight reply and asks once for its own", async () => {
@@ -832,6 +835,128 @@ describe("#5105 option ON — a request belongs to the mount that issued it", ()
     await answer(lastCall(), reply(list(40, 200), 0, { boundary: 3, edition: "CURRENT" }));
     expect(cardsOf(page)).toEqual(ids(200, 220));
     expect(calls.length).toBe(before + 1);
+  });
+});
+
+describe("#5105 option ON — a first opening the edition refuses offers Retry, never \"caught up\"", () => {
+  /** Nonempty, sectioned, and missing the token that binds the section. */
+  const untokenedOpening = (from = 0) => reply(list(40, from), 0, { boundary: 3, edition: null });
+  const showsRetry = (page: Node) => walk(page).some((n) => n["data-unavailable"] === "empty");
+
+  it("a cold page whose own first reply is refused shows the retry state, not the empty end card", async () => {
+    const page = await mount();
+    expect(calls).toHaveLength(1);
+    await answer(calls[0], untokenedOpening());
+    expect(cardsOf(page)).toEqual([]);
+    expect(has(page, "data-skeleton")).toBe(false);
+    expect(has(page, "data-end-of-feed")).toBe(false);
+    expect(showsRetry(page)).toBe(true);
+    // Raising the notice asks nothing by itself: no retry loop.
+    await settle(10);
+    expect(calls).toHaveLength(1);
+  });
+
+  it("Retry is one unpinned page zero; a supported reply clears the notice and paints the opening", async () => {
+    const page = await mount();
+    await answer(calls[0], untokenedOpening());
+    await act(async () => { unavailable.onRetry!(); });
+    await settle(10);
+    expect(calls).toHaveLength(2);
+    expect(calls[1].params).toEqual({ limit: 20, offset: 0, event_pct: 0.15 });
+    await answer(calls[1], reply(list(40, 200), 0, { boundary: 3, edition: "E2" }));
+    expect(has(page, "data-unavailable")).toBe(false);
+    expect(has(page, "data-end-of-feed")).toBe(false);
+    expect(sequence(page)).toEqual(["c200", "c201", "c202", "H", ...ids(203, 220)]);
+    await settle(10);
+    expect(calls).toHaveLength(2);
+  });
+
+  it("a Retry the edition refuses again comes back to Retry, once, and still never ends the feed", async () => {
+    const page = await mount();
+    await answer(calls[0], untokenedOpening());
+    await act(async () => { unavailable.onRetry!(); });
+    await settle(10);
+    await answer(calls[1], untokenedOpening(200));
+    expect(cardsOf(page)).toEqual([]);
+    expect(has(page, "data-end-of-feed")).toBe(false);
+    expect(showsRetry(page)).toBe(true);
+    await settle(10);
+    expect(calls).toHaveLength(2);
+  });
+
+  it("control: a valid, complete, empty first reply is still the genuine end of the feed", async () => {
+    const page = await mount();
+    await answer(calls[0], reply([], 0, { edition: null }));
+    expect(cardsOf(page)).toEqual([]);
+    expect(has(page, "data-unavailable")).toBe(false);
+    expect(has(page, "data-end-of-feed")).toBe(true);
+  });
+
+  it("control: a typed-unavailable first reply keeps its existing retry state", async () => {
+    const page = await mount();
+    await answer(calls[0], UNAVAILABLE);
+    expect(has(page, "data-end-of-feed")).toBe(false);
+    expect(showsRetry(page)).toBe(true);
+  });
+
+  it("control: a refused reply to a cold request another page zero has overtaken is inert", async () => {
+    const page = await mount();
+    await answer(calls[0], untokenedOpening());
+    await act(async () => { unavailable.onRetry!(); });
+    await settle(10);
+    const overtaken = calls[1];
+    // A background revalidation lands first and opens the edition.
+    await revalidate();
+    expect(calls).toHaveLength(3);
+    await answer(calls[2], reply(list(40, 200), 0, { boundary: 3, edition: "E2" }));
+    expect(sequence(page)).toEqual(["c200", "c201", "c202", "H", ...ids(203, 220)]);
+    await answer(overtaken, untokenedOpening(400));
+    expect(has(page, "data-unavailable")).toBe(false);
+    expect(has(page, "data-end-of-feed")).toBe(false);
+    expect(sequence(page)).toEqual(["c200", "c201", "c202", "H", ...ids(203, 220)]);
+  });
+
+  it("control: an earlier mount's refused reply is not this mount's answer — it waits for its own", async () => {
+    const cache = new Map<unknown, unknown>();
+    const page = await mountApp(cache);
+    expect(calls).toHaveLength(1);
+    await leavePage();
+    session.clear();
+    local.clear();
+    await returnToPage();
+    expect(calls).toHaveLength(1);
+    await answer(calls[0], untokenedOpening());
+    expect(cardsOf(page)).toEqual([]);
+    expect(has(page, "data-unavailable")).toBe(false);
+    expect(has(page, "data-end-of-feed")).toBe(false);
+    expect(has(page, "data-skeleton")).toBe(true);
+    expect(calls).toHaveLength(2);
+    await answer(calls[1], reply(list(40, 200), 0, { boundary: 3, edition: "CURRENT" }));
+    expect(cardsOf(page)).toEqual(ids(200, 220));
+  });
+
+  it("control: an accepted deck keeps today's quiet refusal of a later unsupported page zero", async () => {
+    const page = await mount();
+    await answer(calls[0], reply(list(40), 0, { boundary: 3 }));
+    await revalidate();
+    // Pinned request, reply without its status: refused, the held deck stays.
+    await answer(lastCall(), reply(list(40, 200), 0, { boundary: 3 }));
+    expect(sequence(page)).toEqual(["c0", "c1", "c2", "H", ...ids(3, 20)]);
+    expect(has(page, "data-unavailable")).toBe(false);
+  });
+
+  it("control: a first-deck preview over a refused own reply keeps its cards and today's status line", async () => {
+    const cache = new Map<unknown, unknown>();
+    const page = await mountApp(cache);
+    await answer(calls[0], reply(list(40), 0, { boundary: 3, edition: "OLD" }));
+    await leavePage();
+    dropBackSnapshot();
+    await returnToPage();
+    expect(cardsOf(page)).toEqual(ids(0, 20));
+    await answer(lastCall(), untokenedOpening(200));
+    expect(cardsOf(page)).toEqual(ids(0, 20));
+    expect(has(page, "data-unavailable")).toBe(false);
+    expect(has(page, "data-end-of-feed")).toBe(false);
   });
 });
 
