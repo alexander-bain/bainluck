@@ -21,6 +21,7 @@ selection under test is the task's and not the double's.
 """
 
 import ast
+import asyncio
 import json
 from pathlib import Path
 
@@ -433,6 +434,70 @@ class TestTheHeadYieldsToTheBacklog:
         assert SPREAD_EVENT not in rig.event_calls
         assert "910" in rig.event_calls
         assert stats["completed"] == 1
+
+
+    async def test_a_head_that_runs_reports_how_far_into_its_share_it_got(
+        self, monkeypatch
+    ):
+        rig = _Rig(head=[SERIES_ROW, SPREAD_ROW])
+        _install(monkeypatch, rig)
+
+        stats = await bw._backfill_polymarket_winners_from_api(
+            limit=5, recency_head=True
+        )
+
+        assert stats["head_events_skipped"] == 0, stats
+        assert isinstance(stats["head_reached_s"], float), stats
+        assert 0.0 <= stats["head_reached_s"] < bw._GAMMA_HEAD_BUDGET_S
+
+    async def test_no_head_reports_no_reach(self, monkeypatch):
+        rig = _Rig(cursor=[_Row(10, "910", "negrisk", "910")],
+                   events={"910": _backlog_event("910")})
+        _install(monkeypatch, rig)
+
+        stats = await bw._backfill_polymarket_winners_from_api(
+            limit=5, recency_head=True
+        )
+
+        assert stats["head_reached_s"] is None, stats
+
+    async def test_when_the_clock_binds_the_oldest_head_event_is_the_one_skipped(
+        self, monkeypatch
+    ):
+        # The select is newest-first, so SERIES (first) is the newer event.
+        rig = _Rig(head=[SERIES_ROW, SPREAD_ROW])
+        _install(monkeypatch, rig)
+        base = poly_api_mod.PolymarketAPIService
+
+        class _SlowNewest(base):
+            async def get_event_by_id(self, eid):
+                if str(eid) == SERIES_EVENT:
+                    await asyncio.sleep(0.2)
+                return await super().get_event_by_id(eid)
+
+        monkeypatch.setattr(poly_api_mod, "PolymarketAPIService", _SlowNewest)
+        # A share of 50ms: spent by the first event's 200ms Gamma call.
+        monkeypatch.setattr(bw, "_gamma_head_stop_at", lambda t0, stop_at: t0 + 0.05)
+
+        stats = await bw._backfill_polymarket_winners_from_api(
+            limit=5, recency_head=True
+        )
+
+        assert rig.event_calls == [SERIES_EVENT], rig.event_calls
+        assert stats["head_events_skipped"] == 1, stats
+        assert stats["head_reached_s"] is not None
+
+
+class TestTheClockBindsTheHeadNotTheSelect:
+    # Measured on production 2026-10-09 (v5609's first head run): 500 rows were
+    # 130 events (~3.8 rows/event) and Gamma answered an event in ~0.3s. At
+    # 500 the select ran dry with the share a third spent and nothing skipped.
+    ROWS_PER_EVENT = 3.8
+    GAMMA_EVENT_S = 0.3
+
+    def test_the_select_can_fill_the_share_at_the_measured_density(self):
+        events_the_share_fits = bw._GAMMA_HEAD_BUDGET_S / self.GAMMA_EVENT_S
+        assert bw._GAMMA_HEAD_LIMIT >= events_the_share_fits * self.ROWS_PER_EVENT
 
 
 class TestPureHelpers:

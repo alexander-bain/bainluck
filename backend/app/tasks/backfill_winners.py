@@ -8406,8 +8406,19 @@ _TARGETED_MARKET_CAP = 500
 # sequential scan of all 3.7M outcome rows (cost 374k); EXISTS plans a nested
 # loop on `ix_futures_markets_settled_at` + `ix_futures_outcomes_market_id`
 # (cost 57k). EXPLAINed against production 2026-10-08.
+#
+# The LIMIT is a ceiling on the select, not the head's throughput bound: the
+# time share is. At 500 the first live run (v5609, 05:47Z 10/09) took 500 rows
+# in 130 events and skipped none — the cap bound, not the clock — so the head
+# cleared ~500 rows per run against ~1.5–2.5k arrivals a day, on the one caller
+# that reaches it four times a day (backfill_winners stops at its budget guard
+# before this phase). That tracks arrivals instead of draining them, and the
+# specimen sat at rank ~697 behind them. 2000 rows ran in 3.1s under EXPLAIN
+# ANALYZE on production the same morning; Gamma answers an event in ~0.3s, so
+# the 150s share now binds first and skips the OLDEST head events (the select
+# is newest-first). `head_reached_s` reports how far into the share it got.
 _GAMMA_HEAD_WINDOW_HOURS = 72
-_GAMMA_HEAD_LIMIT = 500
+_GAMMA_HEAD_LIMIT = 2000
 _GAMMA_HEAD_TERMINAL_PRICE = 0.99
 _GAMMA_HEAD_BUDGET_S = 150.0
 
@@ -8608,6 +8619,7 @@ async def _backfill_polymarket_winners_from_api(
     stats["head_selected"] = 0
     stats["head_events"] = 0
     stats["head_events_skipped"] = 0
+    stats["head_reached_s"] = None
     if recency_head and not _targeted:
         try:
             async with get_task_session() as session:
@@ -8952,7 +8964,9 @@ async def _backfill_polymarket_winners_from_api(
         # #10765: the head's share is taken from what is left HERE, after
         # Phase A, so a slow condition-id phase cannot spend it before the head
         # has started.
-        _head_stop_at = _gamma_head_stop_at(_time.monotonic(), _stop_at)
+        _head_t0 = _time.monotonic()
+        _head_stop_at = _gamma_head_stop_at(_head_t0, _stop_at)
+        _head_last_entered = None
         batch_size = 200
         for batch_start in range(0, len(event_ids), batch_size):
             if _out_of_time():
@@ -8985,6 +8999,8 @@ async def _backfill_polymarket_winners_from_api(
                         # next run's head selects them again.
                         stats["head_events_skipped"] += 1
                         continue
+                    if event_id in _head_only_events:
+                        _head_last_entered = _time.monotonic()
                     # CAL-P086A: split "Gamma answered, and the answer is no
                     # such event" from "Gamma did not answer". Both used to
                     # arrive here as `event_data = None` and both were counted
@@ -9399,6 +9415,12 @@ async def _backfill_polymarket_winners_from_api(
                 stats["api_miss"],
             )
             await asyncio.sleep(0.3)
+
+        # #10765: seconds into the head's share when its last head event began.
+        # Near `_GAMMA_HEAD_BUDGET_S` with skips ⇒ the clock bound it; well
+        # under with no skips ⇒ the select ran out first.
+        if _head_last_entered is not None:
+            stats["head_reached_s"] = round(_head_last_entered - _head_t0, 1)
 
     except Exception as e:
         stats["errors"].append(str(e))
