@@ -131,7 +131,7 @@ jobs:
       - name: Retain the record
         if: always()
         continue-on-error: true
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v6
         with:
           name: clock-timebomb-advisory-${{ github.run_id }}
           path: ${{ runner.temp }}/timebomb/

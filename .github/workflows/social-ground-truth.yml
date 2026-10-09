@@ -92,7 +92,7 @@ jobs:
 
       - name: Upload run artifacts
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v6
         with:
           name: social-ground-truth-${{ github.run_id }}
           path: /tmp/bainluck_social_ground_truth/

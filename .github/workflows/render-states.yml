@@ -137,7 +137,7 @@ jobs:
         # `if: always()` so a failed render keeps its screenshots — those are
         # the evidence that routes the defect.
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v6
         with:
           name: render-states-${{ inputs.frontend_sha }}-${{ github.run_id }}
           path: frontend/e2e/render-states-out/

@@ -154,7 +154,7 @@ jobs:
         run: bash tools/watch-build.sh
       - name: Preserve build diagnostics
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v6
         with:
           name: watch-mvp-build-logs
           path: build/watch-mvp/*.log
@@ -186,7 +186,7 @@ jobs:
         run: bash tools/watch-iphone-compatibility.sh
       - name: Preserve compatibility evidence
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v6
         with:
           name: watch-iphone-compatibility-evidence
           path: |
@@ -224,7 +224,7 @@ jobs:
         run: bash tools/watch-ui-journey.sh
       - name: Preserve UI journey evidence
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v6
         with:
           name: watch-ui-journey-evidence
           path: |
@@ -257,7 +257,7 @@ jobs:
         run: bash tools/watch-companion-archive.sh
       - name: Preserve diagnostics and receipt only
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v6
         with:
           name: watch-companion-archive-evidence
           path: |

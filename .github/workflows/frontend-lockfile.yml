@@ -306,7 +306,7 @@ jobs:
             for (const [p, m] of added) console.log(`  ${p}@${m.version ?? "?"}`);
           '
 
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v6
         with:
           name: frontend-dep-manifest
           path: |
