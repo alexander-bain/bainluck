@@ -284,6 +284,17 @@ final class DiscoverViewModel: ObservableObject {
     /// an edition to its `limit`, so a page asked at any other size reads
     /// `superseded` by construction.
     private var acceptedSeatedLimit = 50
+    /// #5105: the accepted edition's boundary. Every pinned page restates it; a
+    /// page that states another one is not the same deck.
+    private var acceptedSeatedStart: Int?
+    /// #5105: the section each card of the accepted edition was SERVED in, keyed
+    /// like the page dedup (`itemKey`). Recorded from the server's raw positions
+    /// before any client filter, first sight wins, reset with the edition — so a
+    /// filtered or malformed card can never move the boundary. Empty on the
+    /// legacy path. Written in the same main-actor turn as `items` at every
+    /// terminal that changes both, so the view never reads one list against the
+    /// other's record.
+    private(set) var seatedSections: [String: FeedSection] = [:]
     /// #5105: a pinned page came back retired and the one replacement page 0 has
     /// not landed. Pagination then targets that replacement, never the old offset.
     @Published private(set) var awaitingEditionReplacement = false
@@ -729,6 +740,8 @@ final class DiscoverViewModel: ObservableObject {
                     paintedEdition = cached.response.edition
                     // #5105: a saved preview is never an accepted seated edition.
                     acceptedSeatedEdition = nil
+                    acceptedSeatedStart = nil
+                    seatedSections = [:]
                     // First paint provenance: the cache seed produced first paint.
                     if firstDataFromCache == nil { firstDataFromCache = true }
                     // Freeze the render-generation token from the cache seed
@@ -871,7 +884,14 @@ final class DiscoverViewModel: ObservableObject {
                 // refuses to publish those as shared truth, so an empty one must
                 // not blank the generation on screen either. A genuinely empty,
                 // genuinely COMPLETE page still applies — that is real exhaustion.
-                if !response.mayReplaceRendered(hasRenderedItems: !items.isEmpty) {
+                //
+                // #5105: and a page that states a seated boundary it cannot back
+                // (malformed, out of range, or with no edition to bind it) is
+                // refused the same way. The server only sends the field when
+                // seating is on, so flattening it into the legacy single list
+                // would paint a deck whose sections we know we cannot draw.
+                if !response.mayReplaceRendered(hasRenderedItems: !items.isEmpty)
+                    || Self.seatedBoundary(response) == .refused {
                     loading = false
                     if items.isEmpty {
                         error = "Couldn't load feed"
@@ -922,6 +942,16 @@ final class DiscoverViewModel: ObservableObject {
                 // page dropped, identity-free, on the network path only.
                 reportSuppressedEnvelopes(response.items)
                 let mergeStart = Date()
+                // #5105: the cursor, order and membership reset together at this
+                // terminal, so the accepted seated edition and its section record
+                // are decided here too — before the repaint, whose spacing pass
+                // must run inside each section rather than across the boundary.
+                let seating = Self.acceptedSeating(response, paintedEdition: staged.edition)
+                acceptedSeatedEdition = seating?.edition
+                acceptedSeatedStart = seating?.start
+                if let seating { acceptedSeatedLimit = seating.limit }
+                seatedSections = seating?.sections ?? [:]
+                awaitingEditionReplacement = false
                 // #4110: THE FIX. This used to be an unconditional
                 // `items = Self.interleave(renderable)`, which re-derived the
                 // whole order from a different input than the boot seed had — so
@@ -934,7 +964,7 @@ final class DiscoverViewModel: ObservableObject {
                     incomingEdition: staged.edition
                 ) {
                 case .repaint:
-                    items = DiscoverPriceRefresh.retainingPrices(Self.interleave(renderable), accepted: &acceptedPriceCards, fences: &priceFences)
+                    items = DiscoverPriceRefresh.retainingPrices(Self.interleave(renderable, within: seatedSections), accepted: &acceptedPriceCards, fences: &priceFences)
                 case .reconcile:
                     items = DiscoverPriceRefresh.retainingPrices(DiscoverFeedReconcile.merge(
                         painted: items, incoming: renderable, key: Self.itemKey), accepted: &acceptedPriceCards, fences: &priceFences)
@@ -944,12 +974,6 @@ final class DiscoverViewModel: ObservableObject {
                 // the staged edition and the record from the raw one would leave
                 // the NEXT refresh comparing against a token no list ever had.
                 paintedEdition = staged.edition
-                // #5105: the cursor, order and membership reset together here, so
-                // the accepted seated edition is decided at the same terminal.
-                Self.acceptSeatedEdition(
-                    response, paintedEdition: staged.edition,
-                    into: &acceptedSeatedEdition, limit: &acceptedSeatedLimit)
-                awaitingEditionReplacement = false
                 // First paint provenance: only stamp network when the cache seed
                 // did NOT already produce first paint this load — a background
                 // revalidation behind a served cache must not relabel the render
@@ -1285,6 +1309,8 @@ final class DiscoverViewModel: ObservableObject {
         // reconcile one account's feed into another's.
         paintedEdition = nil
         acceptedSeatedEdition = nil
+        acceptedSeatedStart = nil
+        seatedSections = [:]
         awaitingEditionReplacement = false
         nextOffset = 0
         hasMore = true
@@ -1520,6 +1546,7 @@ final class DiscoverViewModel: ObservableObject {
         }
         // Read once: the whole scan belongs to the edition accepted when it began.
         let seatedToken = acceptedSeatedEdition
+        let seatedStart = acceptedSeatedStart
 
         var scans = 0
         while hasMore, scans < Self.maxPageScans {
@@ -1584,8 +1611,8 @@ final class DiscoverViewModel: ObservableObject {
             // past. The current cards stay; exactly one unpinned page 0 replaces
             // the whole deck (order, membership and cursor together) or, failing
             // that, Retry asks for that page 0 again.
-            if let seatedToken, !Self.continuesSeatedEdition(
-                response, token: seatedToken, requestedOffset: requestedOffset
+            if let seatedToken, let seatedStart, !Self.continuesSeatedEdition(
+                response, token: seatedToken, start: seatedStart, requestedOffset: requestedOffset
             ) {
                 await replaceRetiredEdition(generation: generation)
                 return
@@ -1625,6 +1652,13 @@ final class DiscoverViewModel: ObservableObject {
             // yields `fresh == []` and falls through to the duplicate-only branch,
             // which keeps scanning on the server's own `has_more` rather than
             // declaring a false exhaustion.
+            // #5105: a continuing page's sections are read off the server's raw
+            // positions NOW, before the renderable filter and the dedup below
+            // compact the page. A card already held keeps the section it was
+            // first served in.
+            if seatedToken != nil, let seatedStart {
+                Self.recordSections(response, start: seatedStart, into: &seatedSections)
+            }
             let renderable = Self.renderable(response.items)
             // The suppression metric had the same first-page-only blind spot
             // (`reportSuppressedEnvelopes` fired only on initial network publish),
@@ -1660,7 +1694,7 @@ final class DiscoverViewModel: ObservableObject {
                 // defect as the network path, just triggered by the reader instead
                 // of by the clock. The new page is interleaved among ITSELF so the
                 // page keeps its category diversity; the painted prefix does not move.
-                items = items + DiscoverPriceRefresh.retainingPrices(Self.interleave(fresh), accepted: &acceptedPriceCards, fences: &priceFences)
+                items = items + DiscoverPriceRefresh.retainingPrices(Self.interleave(fresh, within: seatedSections), accepted: &acceptedPriceCards, fences: &priceFences)
                 hasMore = response.hasMore
                 error = nil
                 return
@@ -1714,30 +1748,78 @@ final class DiscoverViewModel: ObservableObject {
         return max(currentOffset, serverPageEnd, decodedPageEnd)
     }
 
-    /// #5105: the accepted seated edition after a network publication — the
-    /// painted token, but only when the page stated a usable opening boundary.
-    /// Anything else (legacy, invalid boundary, no token) is not opted in.
-    static func acceptSeatedEdition(
-        _ response: FeedResponse, paintedEdition: String?,
-        into accepted: inout String?, limit: inout Int
-    ) {
-        guard let paintedEdition, !paintedEdition.isEmpty,
-              case .at = response.continuationStart else {
-            accepted = nil
-            return
+    /// #5105: what a page's `continuation_start` lets the client do with it.
+    enum SeatedBoundary: Equatable {
+        /// No section opinion (older backend, seating off, or no continuation).
+        case legacy
+        /// A usable global boundary bound to the page's edition.
+        case seated(Int)
+        /// Present but unusable: malformed, outside `0..<total`, or with no
+        /// edition to bind it. Never guessed into a boundary or flattened.
+        case refused
+    }
+
+    /// #5105: read a page's boundary with the server's own bound
+    /// (`0 <= start < total`, and only beside an edition token).
+    static func seatedBoundary(_ response: FeedResponse) -> SeatedBoundary {
+        switch response.continuationStart {
+        case .absent:
+            return .legacy
+        case .invalid:
+            return .refused
+        case .at(let start):
+            guard start < response.total, let edition = response.edition, !edition.isEmpty else {
+                return .refused
+            }
+            return .seated(start)
         }
-        accepted = paintedEdition
-        limit = response.limit
+    }
+
+    /// #5105: the seated edition a network page 0 opts the reader into — the
+    /// painted token, its boundary, its page size and its section record — or
+    /// nil for a legacy page (which keeps every existing path unchanged).
+    static func acceptedSeating(
+        _ response: FeedResponse, paintedEdition: String?
+    ) -> (edition: String, start: Int, limit: Int, sections: [String: FeedSection])? {
+        guard case .seated(let start) = seatedBoundary(response),
+              let paintedEdition, !paintedEdition.isEmpty else { return nil }
+        var sections: [String: FeedSection] = [:]
+        recordSections(response, start: start, into: &sections)
+        return (paintedEdition, start, response.limit, sections)
+    }
+
+    /// #5105: record each decoded card's section from its RAW server position
+    /// (`offset + rawPositions[i] >= start`). First sight wins: a card the
+    /// edition already placed is never re-sectioned by a later page.
+    static func recordSections(
+        _ response: FeedResponse, start: Int, into sections: inout [String: FeedSection]
+    ) {
+        for (item, raw) in zip(response.items, response.rawPositions) {
+            let key = itemKey(item)
+            if sections[key] == nil {
+                sections[key] = response.offset + raw >= start ? .continuation : .opening
+            }
+        }
+    }
+
+    /// #5105: the section the accepted seated edition served `item` in, or nil
+    /// on the legacy path (and for a card the edition never served).
+    func seatedSection(of item: FeedItem) -> FeedSection? {
+        guard acceptedSeatedEdition != nil else { return nil }
+        return seatedSections[Self.itemKey(item)]
     }
 
     /// #5105: whether a pinned page continues the accepted edition: the server
-    /// held the order (`pinned`), for THIS token, at the offset that was asked.
+    /// held the order (`pinned`), for THIS token and boundary, at the offset
+    /// that was asked. A page restating a different or unusable boundary is not
+    /// the same deck, so it is refused like a retired one — never flattened.
     static func continuesSeatedEdition(
-        _ response: FeedResponse, token: String, requestedOffset: Int
+        _ response: FeedResponse, token: String, start: Int, requestedOffset: Int
     ) -> Bool {
         response.editionStatus == FeedResponse.pinnedEditionStatus
             && response.edition == token
             && response.offset == requestedOffset
+            && seatedBoundary(response) == .seated(start)
     }
 
     /// #5105: one unpinned page 0 through `load()`, which already owns every
@@ -1764,6 +1846,19 @@ final class DiscoverViewModel: ObservableObject {
             items, sportsCategories: sportsCategories,
             category: category(for:), family: family(for:)
         )
+    }
+
+    /// #5105: the same spacing pass, run inside each served section so it can
+    /// never carry a card across the boundary. An empty record is the legacy
+    /// path: one pass over the whole list, exactly as before.
+    private static func interleave(
+        _ items: [FeedItem], within sections: [String: FeedSection]
+    ) -> [FeedItem] {
+        guard !sections.isEmpty else { return interleave(items) }
+        let continuation = items.filter { sections[itemKey($0)] == .continuation }
+        guard !continuation.isEmpty else { return interleave(items) }
+        let opening = items.filter { sections[itemKey($0)] != .continuation }
+        return interleave(opening) + interleave(continuation)
     }
 
     /// #1885: the page-merge interleave's finer run token. Same default
