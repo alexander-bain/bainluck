@@ -27,6 +27,7 @@
 import {
   rememberLiveChartFrame,
   mergeLiveChartHistory,
+  quoteChartFrames,
   type LiveChartFrame,
 } from "@/lib/liveChartHistory";
 import type { LiveStreamFrame } from "@/lib/liveStreamController";
@@ -119,12 +120,11 @@ describe("#8066 remainder: with no backend blend, push extends the source's own 
     expect(result.win_prob_history.polymarket).toBe(served.win_prob_history.polymarket);
   });
 
-  it("never inserts behind the served edge, including the synthetic live edge", () => {
-    // A live payload ends in the backend's `live_edge` point at "now" carrying
-    // the LAST REAL value. A reading stamped a moment before it is already
-    // behind a stale endpoint: appending it would draw 0.52 → 0.61 → 0.52.
+  it("never inserts behind a REAL served edge", () => {
+    // A reading stamped a moment before the last stored reading is already
+    // behind it: appending it would draw 0.52 → 0.61 → 0.52.
     const served = {
-      win_prob_history: { kalshi: [wp(0, .5), wp(30, .52, { live_edge: true })] },
+      win_prob_history: { kalshi: [wp(0, .5), wp(30, .52)] },
     };
     const result = mergeLiveChartHistory(served, buffer(
       frame(25, .61, .61), frame(30, .62, .62), frame(35, .63, .63),
@@ -134,6 +134,85 @@ describe("#8066 remainder: with no backend blend, push extends the source's own 
     expect(result.win_prob_history.kalshi.at(-1)!.home_probability).toBe(.63);
     const times = result.win_prob_history.kalshi.map(p => Date.parse(p.timestamp));
     expect([...times].sort((a, b) => a - b)).toEqual(times);
+  });
+
+  it("#10090: behind the synthetic live edge, the reading lands at its own time and the edge carries it", () => {
+    // The backend's `live_edge` at "now" carries the last STORED value (0.5 at
+    // :00). A pushed 0.61 at :25 is newer than that. The old rule dropped it, so
+    // the line ended on 0.5 while the headline showed 61% (production 15319175:
+    // 36% under a 37% headline after the next history poll). The edge keeps
+    // its time and its flag; it re-delivers the newest reading at or before it,
+    // so nothing is drawn backwards.
+    const served = {
+      win_prob_history: { kalshi: [wp(0, .5), wp(30, .5, { live_edge: true })] },
+    };
+    const result = mergeLiveChartHistory(served, buffer(frame(25, .61, .61), frame(35, .63, .63)))!;
+    const line = result.win_prob_history.kalshi;
+    expect(line.map(p => [p.timestamp, p.home_probability, p.live_edge === true]))
+      .toEqual([[t(0), .5, false], [t(25), .61, false], [t(30), .61, true], [t(35), .63, false]]);
+    // The moved edge carries no stale away price from the old reading.
+    expect(line[2].away_probability).toBeNull();
+    const times = line.map(p => Date.parse(p.timestamp));
+    expect([...times].sort((a, b) => a - b)).toEqual(times);
+    // The served payload is untouched.
+    expect(served.win_prob_history.kalshi[1].home_probability).toBe(.5);
+  });
+
+  it("#10090: an evidence-tagged edge (7878 contract) is the same synthetic edge", () => {
+    const served = {
+      win_prob_history: { kalshi: [wp(0, .5), wp(30, .5, { evidence: { kind: "live_edge" } })] },
+    };
+    const line = mergeLiveChartHistory(served, buffer(frame(25, .61, .61)))!.win_prob_history.kalshi;
+    expect(line.map(p => p.home_probability)).toEqual([.5, .61, .61]);
+    expect(line[2].evidence).toEqual({ kind: "live_edge" });
+  });
+
+  it("#10090: a reading behind the edge that only repeats the carried value adds nothing", () => {
+    // #10671 records such a repeat as coverage; there is no endpoint to move.
+    const served = {
+      win_prob_history: { kalshi: [wp(0, .5), wp(30, .5, { live_edge: true })] },
+    };
+    expect(mergeLiveChartHistory(served, buffer(frame(25, .5, .5)))!.win_prob_history.kalshi
+      .map(p => p.timestamp)).toEqual([t(0), t(30)]);
+  });
+
+  describe("#10090: a real reading's observed coverage bounds what may move the edge (Root review of ae5a413b63)", () => {
+    // The stored 0.5 at :00 was seen again, unmoved, through :40
+    // (`evidence.observed.covered_through`, winprob_evidence.py) — a genuine
+    // later observation, not a synthetic clock. The edge at :60 carries 0.5.
+    const covered = () => ({
+      win_prob_history: { kalshi: [
+        wp(0, .5, { evidence: { kind: "observed", covered_through: t(40) } }),
+        wp(60, .5, { live_edge: true, evidence: { kind: "live_edge" } }),
+      ] },
+    });
+    const held = (rev: number, p: number, s: number) => ({
+      status: "live", hero_probability: p, hero_probability_source: "blend",
+      hero_probability_observed_at: t(s), blend_fold_revision: { 42: rev },
+    });
+    const revFrame = (s: number, p: number, rev: number): LiveStreamFrame =>
+      ({ ...frame(s, p, p), rev: { 42: rev } });
+
+    it("REFUSES: a historical 0.6 at :25 (rev 10, kept by quoteChartFrames) never overwrites the 0.5 proven through :40", () => {
+      const served = covered();
+      const admitted = quoteChartFrames(buffer(revFrame(25, .6, 10)), held(11, .5, 40));
+      expect(admitted.map(p => p.timestamp)).toEqual([t(25)]); // legitimately retained
+      const line = mergeLiveChartHistory(served, admitted)!.win_prob_history.kalshi;
+      expect(line.map(p => [p.timestamp, p.home_probability])).toEqual([[t(0), .5], [t(60), .5]]);
+      expect(served.win_prob_history.kalshi[1].home_probability).toBe(.5);
+    });
+
+    it("REFUSES: a reading AT the coverage instant ties to the served proof", () => {
+      const line = mergeLiveChartHistory(covered(), buffer(frame(40, .6, .6)))!.win_prob_history.kalshi;
+      expect(line.map(p => p.home_probability)).toEqual([.5, .5]);
+    });
+
+    it("MOVES: a 0.6 genuinely newer than the coverage lands at its time and the edge carries it", () => {
+      const admitted = quoteChartFrames(buffer(revFrame(45, .6, 12)), held(12, .6, 45));
+      const line = mergeLiveChartHistory(covered(), admitted)!.win_prob_history.kalshi;
+      expect(line.map(p => [p.timestamp, p.home_probability, p.live_edge === true]))
+        .toEqual([[t(0), .5, false], [t(45), .6, false], [t(60), .6, true]]);
+    });
   });
 
   it("leaves the source series exactly as served once the backend has a blend", () => {
