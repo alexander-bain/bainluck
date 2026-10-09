@@ -1838,10 +1838,10 @@ async def _run_kalshi_ws_consumer(*, sessions, prices):
             # The old unconditional recycle also repaired an ended auxiliary
             # client. An unchanged mapping cannot certify its lifetime.
             return True
-        # An unfinished initial open read is not a refreshed scope. Its game
-        # sibling keeps streaming; inspect again at the next routine refresh.
+        # A stalled initial open/bridge read has no working arm to retain.
+        # Preserve the old deadline's bounded cleanup/rebuild repair.
         if not admission_task.done():
-            return False
+            return True
         if admission_task.cancelled() or admission_task.exception() is not None:
             return True  # rebuild a partially admitted arm through the safe path
         try:
