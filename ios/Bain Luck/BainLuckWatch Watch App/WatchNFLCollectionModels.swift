@@ -57,6 +57,15 @@ nonisolated struct WatchNFLGame: Identifiable, Sendable, Equatable {
     let away: String
     let status: String?
     let scheduledStart: String?
+    let startIsTbd: Bool?
+    let startedWithoutResult: Bool?
+    let authorityNotStarted: Bool?
+    let homeScore: Int?
+    let awayScore: Int?
+    let scoreSource: String?
+    let scoreObservedAt: String?
+    let heroProbability: Double?
+    let heroProbabilitySource: String?
 }
 
 nonisolated struct WatchNFLMembership: Sendable {
@@ -83,6 +92,39 @@ nonisolated enum WatchNFLCollectionDecoder {
         let sport: String?
         let commenceTime: String?
         let startIsTbd: Bool?
+        let startedWithoutResult: Bool?
+        let authorityNotStarted: Bool?
+        let homeScore: Int?
+        let awayScore: Int?
+        let scoreSource: String?
+        let scoreObservedAt: String?
+        let heroProbability: Double?
+        let heroProbabilitySource: String?
+
+        enum CodingKeys: String, CodingKey {
+            case id, homeTeam, awayTeam, status, sport, commenceTime, startIsTbd
+            case startedWithoutResult, authorityNotStarted, homeScore, awayScore
+            case scoreSource, scoreObservedAt, heroProbability, heroProbabilitySource
+        }
+        init(from decoder: Decoder) throws {
+            let c = try decoder.container(keyedBy: CodingKeys.self)
+            id = try c.decode(Int.self, forKey: .id)
+            homeTeam = try c.decodeIfPresent(String.self, forKey: .homeTeam)
+            awayTeam = try c.decodeIfPresent(String.self, forKey: .awayTeam)
+            sport = try c.decodeIfPresent(String.self, forKey: .sport)
+            // Malformed optional presentation fields cannot erase a valid route.
+            status = try? c.decode(String.self, forKey: .status)
+            commenceTime = try? c.decode(String.self, forKey: .commenceTime)
+            startIsTbd = try? c.decode(Bool.self, forKey: .startIsTbd)
+            startedWithoutResult = try? c.decode(Bool.self, forKey: .startedWithoutResult)
+            authorityNotStarted = try? c.decode(Bool.self, forKey: .authorityNotStarted)
+            homeScore = try? c.decode(Int.self, forKey: .homeScore)
+            awayScore = try? c.decode(Int.self, forKey: .awayScore)
+            scoreSource = try? c.decode(String.self, forKey: .scoreSource)
+            scoreObservedAt = try? c.decode(String.self, forKey: .scoreObservedAt)
+            heroProbability = try? c.decode(Double.self, forKey: .heroProbability)
+            heroProbabilitySource = try? c.decode(String.self, forKey: .heroProbabilitySource)
+        }
     }
     private struct Member: Decodable {
         let type: String
@@ -109,7 +151,12 @@ nonisolated enum WatchNFLCollectionDecoder {
             let away = rawAway.trimmingCharacters(in: .whitespacesAndNewlines)
             guard !home.isEmpty, !away.isEmpty else { return nil }
             return WatchNFLGame(id: id, home: home, away: away, status: card.status,
-                scheduledStart: card.status == "scheduled" && card.startIsTbd == false ? card.commenceTime : nil)
+                scheduledStart: card.status == "scheduled" && card.startIsTbd == false ? card.commenceTime : nil,
+                startIsTbd: card.startIsTbd, startedWithoutResult: card.startedWithoutResult,
+                authorityNotStarted: card.authorityNotStarted,
+                homeScore: card.homeScore, awayScore: card.awayScore,
+                scoreSource: card.scoreSource, scoreObservedAt: card.scoreObservedAt,
+                heroProbability: card.heroProbability, heroProbabilitySource: card.heroProbabilitySource)
         }
     }
     private struct Section: Decodable { let members: [Slot<Member>] }

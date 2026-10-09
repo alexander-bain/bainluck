@@ -17,6 +17,7 @@ struct WatchNFLCollectionView: View {
                         if !membership.published {
                             Text("This collection is no longer available.")
                         } else {
+                            Text(WatchNFLGamePresentation.availableGamesText(membership)).font(.footnote)
                             ForEach(membership.games) { game in
                                 Button {
                                     start {
@@ -29,13 +30,7 @@ struct WatchNFLCollectionView: View {
                                             })
                                     }
                                 } label: {
-                                    VStack(alignment: .leading, spacing: 3) {
-                                        Text("\(game.away) at \(game.home)")
-                                        Text(WatchSelectedGame.stateLabel(for: game.status)).font(.footnote)
-                                        if let raw = game.scheduledStart, let date = WatchFeedFutures.isoDate(raw) {
-                                            Text(date, format: .dateTime.month().day().hour().minute()).font(.footnote)
-                                        }
-                                    }.fixedSize(horizontal: false, vertical: true)
+                                    WatchNFLGameRow(game: game)
                                 }
                                 .disabled(browser.isLoading || scenePhase != .active)
                                 .accessibilityIdentifier("watch.nfl.game.\(game.id)")
@@ -79,5 +74,45 @@ struct WatchNFLCollectionView: View {
     private func start(_ operation: @escaping @MainActor () async -> Void) {
         action?.cancel()
         action = Task { await operation() }
+    }
+}
+
+/// Full names wrap before scores; no abbreviations, winner styling or rank.
+private struct WatchNFLGameRow: View {
+    let game: WatchNFLGame
+    var body: some View {
+        let reading = WatchNFLGamePresentation(game: game, now: Date())
+        VStack(alignment: .leading, spacing: 6) {
+            Text(reading.stateText).font(.footnote)
+            team(reading.awayName, score: reading.awayScore, role: "Away")
+            team(reading.homeName, score: reading.homeScore, role: "Home")
+            if let observed = reading.scoreObservedAt {
+                Text("Score observed \(observed.formatted(date: .abbreviated, time: .shortened))")
+                    .font(.footnote)
+                    .accessibilityLabel("Score observed \(observed.formatted(date: .complete, time: .complete))")
+            } else if let context = reading.scoreContext {
+                Text(context).font(.footnote)
+            }
+            if let chance = reading.chanceText { Text(chance).font(.footnote) }
+            if let context = reading.chanceContext { Text(context).font(.footnote) }
+            if let date = reading.scheduledStart, let label = reading.startLabel {
+                Text(label).font(.footnote)
+                Text(date, format: .dateTime.month().day().hour().minute()).font(.footnote)
+            }
+            if let missing = reading.startMissingText { Text(missing).font(.footnote) }
+        }
+        .fixedSize(horizontal: false, vertical: true)
+        .accessibilityElement(children: .combine)
+    }
+    private func team(_ name: String, score: String?, role: String) -> some View {
+        HStack(alignment: .top, spacing: 6) {
+            Text(name).fixedSize(horizontal: false, vertical: true)
+                .layoutPriority(1).accessibilityLabel("\(role): \(name)")
+            if let score {
+                Spacer(minLength: 0)
+                Text(score).monospacedDigit().font(.headline)
+                    .accessibilityLabel(score == "—" ? "Score unavailable" : "Score \(score)")
+            }
+        }
     }
 }
