@@ -2917,14 +2917,19 @@ class TestOneNationalPresidentialRaceIsOneStory9877:
             items, exact_family_cap=1, story_family_cap=5
         )
         names = [i["data"]["name"] for i in capped]
+        # #10356 (Alex, October 7): the race's card is its overall-winner
+        # question, not whichever member ranks highest — so the first-round
+        # question, though it ranks higher here, is the one held back.
         assert names == [
-            "Brazil Presidential Election First Round Winner",
             "Next French Presidential Election",
+            "Brazil Presidential Election",
         ]
         # Not hidden: the second question rides the #7426 reserve into the
         # race's bundle if one forms.
-        reserve = capped[0]["_story_overflow_members"]
-        assert [m["data"]["name"] for m in reserve] == ["Brazil Presidential Election"]
+        reserve = capped[1]["_story_overflow_members"]
+        assert [m["data"]["name"] for m in reserve] == [
+            "Brazil Presidential Election First Round Winner"
+        ]
 
     def test_the_4170_cross_venue_pair_is_the_same_story(self):
         poly = self._item(self.WINNER_POLY, 80)

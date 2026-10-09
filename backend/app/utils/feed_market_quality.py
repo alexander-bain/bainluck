@@ -15,7 +15,7 @@ from __future__ import annotations
 import re
 from collections import Counter
 from dataclasses import dataclass, field
-from typing import Iterable, Literal, Sequence
+from typing import Callable, Iterable, Literal, Optional, Sequence
 
 from app.utils.card_integrity import is_anonymized_market
 from app.utils.feed_reasons import RESOLVING_WITHIN_MONTH_HEADLINE
@@ -1928,6 +1928,105 @@ def is_national_presidential_election_story_key(story_key: str | None) -> bool:
         and story_key.endswith(NATIONAL_PRESIDENTIAL_ELECTION_STORY_SUFFIX)
     )
 
+
+# #10356 slice 1 (Alex, October 7). The #9877 cap seats ONE card per national
+# presidential race, and it seated whichever member ranked highest — on the
+# October 4 production build (r4 capture e93246d2) that was "Brazil Presidential
+# Election First Round: 1st Place in Tocantins" (rank 106), one state's result,
+# standing for the whole race while "Brazil Presidential Election First Round
+# Winner" (104) and "Brazil Presidential Election" (91) waited in the overflow.
+#
+# Alex's rule: the overall-winner question represents the race; failing that, the
+# first-round-winner question; failing both, today's choice exactly. These are
+# the two kinds, and a title is one of them only by POSITIVE identification: the
+# whole title is the race's own name plus nothing ("Brazil Presidential
+# Election", "Brazil Presidential election winner?") or plus exactly "First Round
+# Winner". A title that merely names no state is not national by that absence —
+# "First Round: 3rd Place" and "win outright in the first round" are other
+# propositions, and they keep competing exactly as before. The race is the story
+# key the title itself computes, never `canonical_market_key` (every one of these
+# rows carries `politics:US:championship:2026`, which identifies nothing).
+NATIONAL_RACE_OVERALL_WINNER = "overall_winner"
+NATIONAL_RACE_FIRST_ROUND_WINNER = "first_round_winner"
+
+_NATIONAL_RACE_OVERALL_REST_RE = re.compile(r"(?:winner)?\s*\??", re.IGNORECASE)
+_NATIONAL_RACE_FIRST_ROUND_REST_RE = re.compile(
+    r"[:\-–—]?\s*first\s+round\s+winner\s*\??", re.IGNORECASE
+)
+
+#: Lower is preferred. A kind absent from this map is not a representative kind.
+_NATIONAL_RACE_REPRESENTATIVE_ORDER = {
+    NATIONAL_RACE_OVERALL_WINNER: 0,
+    NATIONAL_RACE_FIRST_ROUND_WINNER: 1,
+}
+
+
+def national_race_representative_kind(
+    name: str | None, story_key: str | None
+) -> str | None:
+    """Which national-race question ``name`` is, if it is the overall winner or
+    the first-round winner of the race ``story_key`` names; else ``None``."""
+    if not name or not is_national_presidential_election_story_key(story_key):
+        return None
+    # The title must name THIS race on its own — the same country and edition.
+    if national_presidential_election_story_key(name) != story_key:
+        return None
+    match = _NATIONAL_PRESIDENTIAL_ELECTION_RE.search(name)
+    if match is None or name[: match.start()].strip():
+        return None
+    rest = name[match.end() :].strip()
+    if _NATIONAL_RACE_OVERALL_REST_RE.fullmatch(rest):
+        return NATIONAL_RACE_OVERALL_WINNER
+    if _NATIONAL_RACE_FIRST_ROUND_REST_RE.fullmatch(rest):
+        return NATIONAL_RACE_FIRST_ROUND_WINNER
+    return None
+
+
+def _national_race_representatives(
+    sorted_items: list[dict],
+    *,
+    exact_counts: dict[str, int],
+    exact_family_cap: int = 1,
+) -> dict[str, list[int]]:
+    """``{story key: [id(item), ...]}`` — each national race's candidate
+    representatives, most preferred first (#10356).
+
+    Ordered by kind (overall winner before first-round winner), then by the
+    cap's own rank order, so the first member of the most preferred kind leads.
+    A race with no member of either kind has no entry and keeps today's choice.
+
+    Only a family the caller's exact cap ALREADY refuses (``already_kept`` filled
+    it) is left out here, because that refusal is certain. Whether an earlier
+    item in this pool spends a family seat is NOT predicted: that item can itself
+    be refused by its own full story, or held for its own race's representative,
+    and then it spends nothing. ``diversify_quality_families`` runs the cap walk
+    and moves a race to its next candidate only if the walk did not seat the one
+    chosen.
+    """
+    ranked: dict[str, list[tuple[int, int, int]]] = {}
+    for position, item in enumerate(sorted_items):
+        family = item.get("_quality_family_key")
+        if (
+            family
+            and exact_family_cap > 0
+            and exact_counts.get(family, 0) >= exact_family_cap
+        ):
+            continue
+        story = item.get("_quality_story_key")
+        kind = national_race_representative_kind(
+            (item.get("data") or {}).get("name"), story
+        )
+        if kind is None:
+            continue
+        ranked.setdefault(story, []).append(
+            (_NATIONAL_RACE_REPRESENTATIVE_ORDER[kind], position, id(item))
+        )
+    return {
+        story: [item_id for _order, _position, item_id in sorted(members)]
+        for story, members in ranked.items()
+    }
+
+
 # Margin-of-victory + voter-turnout election markets — Alex product decision
 # (2026-06-24). These two families flooded Discover: ~1,100 open variants, one
 # per state/district (KXMIDTERMMOV-*, KXMIDTERMVOTETURN-*, ...), and Alex judged
@@ -3545,12 +3644,89 @@ _DISCOVER_REQUIRED_ARCHETYPES: tuple[EditorialArchetype, ...] = (
     "absurd_but_real",
 )
 
+#: The score a card needs before ``_ensure_required_archetypes`` will insert it
+#: for a missing texture, and before ``_ensure_category_hunger`` will insert it
+#: for a missing category. Named so the offline promotion arms (#5105 D2) read
+#: the same bars instead of restating them; the values are the served ones.
+DISCOVER_REQUIRED_ARCHETYPE_MIN_SCORE = 90
+DISCOVER_CATEGORY_HUNGER_THRESHOLDS: dict[str, int] = {
+    "entertainment": 80,
+    "tech": 90,
+    "economics": 90,
+    "weather_health": 90,
+    "sports_culture": 90,
+}
+
+#: #5105 D2 — OFFLINE ARM HOOK ONLY. A variety promotion is a first-page seat a
+#: card gets for a reason other than its rank: the cap walk seating it while a
+#: higher-ranked card waits behind a cap, or a required-archetype, category-
+#: hunger or strict-variety insertion. ``promotion_gate(card, slot=, mechanism=,
+#: existing_bar=)`` returns ``(allowed, checks)``; a refused card is simply not
+#: eligible for that promotion and the mechanism's own next candidate (or its
+#: own fallback) applies. ``promotion_trace`` receives one dict per seat and per
+#: promotion decision. Both default to ``None``, and with both ``None`` every
+#: decision is the served one — no production caller passes either; they are
+#: reached through ``discover_display_replay.replay_capture``'s ``stage_policy``.
+PromotionGate = Callable[..., "tuple[bool, dict]"]
+
+
+def _promotion_allowed(
+    gate: Optional[PromotionGate],
+    trace: Optional[list],
+    card: dict,
+    *,
+    slot: int,
+    mechanism: str,
+    existing_bar: Optional[float],
+    displaced: Optional[dict] = None,
+    cause: Optional[str] = None,
+) -> bool:
+    if gate is None and trace is None:
+        return True
+    allowed, checks = (True, {}) if gate is None else gate(
+        card, slot=slot, mechanism=mechanism, existing_bar=existing_bar
+    )
+    if trace is not None:
+        trace.append(
+            {
+                "event": "promotion",
+                "mechanism": mechanism,
+                "slot": slot,
+                "card": card,
+                "displaced": displaced,
+                "cause": cause,
+                "existing_bar": existing_bar,
+                "checks": checks,
+                "allowed": bool(allowed),
+            }
+        )
+    return bool(allowed)
+
+
+#: #10356 / #5105 — how long the cold-start cap of 2 binds. ``SERVED`` is what
+#: production does and stays the default: the cap holds until all eight
+#: category groups have been seen, and the single forward walk never returns to
+#: a card the temporary cap refused. ``FIRST_CARDS`` is the docstring's rule
+#: (#850, "the first 8 cards"), and when that window closes the walk starts
+#: again from the top so a stronger card the cap refused is reconsidered before
+#: a weaker one further down. OFFLINE ARM ONLY: no production caller passes it;
+#: it is reached through ``discover_display_replay.replay_capture``'s
+#: ``stage_policy``. Measured on the r4 capture (e93246d2…): ``SERVED`` seats
+#: cards scored 25–51 while cards scored 93–98 wait below the first page.
+COLD_START_WINDOW_SERVED = "served"
+COLD_START_WINDOW_FIRST_CARDS = "first_cards"
+COLD_START_WINDOWS = frozenset({COLD_START_WINDOW_SERVED, COLD_START_WINDOW_FIRST_CARDS})
+_COLD_START_CARDS = 8
+
 
 def diversify_discover_first_page(
     items: list[dict],
     *,
     first_page_size: int = 20,
     cold_start: bool = False,
+    cold_start_window: str = COLD_START_WINDOW_SERVED,
+    promotion_gate: Optional[PromotionGate] = None,
+    promotion_trace: Optional[list] = None,
 ) -> list[dict]:
     """Reorder the first Discover page so it feels curated, not clustered.
 
@@ -3558,7 +3734,13 @@ def diversify_discover_first_page(
     to 2 for the first 8 cards, ensuring >= 5 distinct category groups appear
     before any category repeats heavily. This makes the first page informative
     for new users without adding friction (#850).
+
+    ``cold_start_window`` selects how that tightening is bounded; see
+    :data:`COLD_START_WINDOW_SERVED`. The default is the served behaviour.
+    ``promotion_gate`` / ``promotion_trace``: see :data:`PromotionGate`.
     """
+    if cold_start_window not in COLD_START_WINDOWS:
+        raise ValueError(f"unknown cold_start_window: {cold_start_window!r}")
     if first_page_size <= 0 or len(items) <= 1:
         return items
 
@@ -3568,31 +3750,81 @@ def diversify_discover_first_page(
     story_counts: dict[str, int] = {}
 
     cold_start_cap = 2 if cold_start else None
+    first_cards = cold_start_window == COLD_START_WINDOW_FIRST_CARDS
 
-    def can_select(item: dict, *, enforce_archetype: bool, enforce_story: bool) -> bool:
+    def cold_start_binds() -> bool:
+        if cold_start_cap is None:
+            return False
+        if first_cards:
+            return len(selected) < _COLD_START_CARDS
+        return len([s for s in category_counts.values()]) < 8
+
+    def refusal(item: dict, *, enforce_archetype: bool, enforce_story: bool) -> Optional[str]:
+        """The cap that refuses ``item`` here, or ``None`` when it may be seated."""
         group = _discover_category_group(item)
         cap = _DISCOVER_FIRST_PAGE_CATEGORY_CAPS.get(group, 3)
-        if (
-            cold_start_cap is not None
-            and len([s for s in category_counts.values()]) < 8
-        ):
+        cold = cold_start_binds()
+        if cold:
             cap = min(cap, cold_start_cap)
         if category_counts.get(group, 0) >= cap:
-            return False
+            return "cold_start_category_cap" if cold else "category_cap"
 
         if enforce_archetype:
             archetype = _discover_archetype_group(item)
             if archetype_counts.get(
                 archetype, 0
             ) >= _DISCOVER_FIRST_PAGE_ARCHETYPE_CAPS.get(archetype, 3):
-                return False
+                return "archetype_cap"
 
         if enforce_story:
             story_key = item.get("_quality_story_key")
             if story_key and story_counts.get(story_key, 0) >= 2:
-                return False
+                return "story_cap"
 
-        return True
+        return None
+
+    instrumented = promotion_gate is not None or promotion_trace is not None
+
+    def seat_allowed(item: dict, waiting: dict, *, mechanism: str) -> bool:
+        """Rank-earned unless a higher-ranked card is waiting behind a cap."""
+        if not instrumented:
+            return True
+        if not waiting:
+            if promotion_trace is not None:
+                promotion_trace.append(
+                    {
+                        "event": "seat",
+                        "mechanism": mechanism,
+                        "slot": len(selected),
+                        "card": item,
+                        "kind": "rank",
+                    }
+                )
+            return True
+        deferred, cause = next(iter(waiting.values()))
+        allowed = _promotion_allowed(
+            promotion_gate,
+            promotion_trace,
+            item,
+            slot=len(selected),
+            mechanism=mechanism,
+            existing_bar=None,
+            displaced=deferred,
+            cause=cause,
+        )
+        if allowed and promotion_trace is not None:
+            promotion_trace.append(
+                {
+                    "event": "seat",
+                    "mechanism": mechanism,
+                    "slot": len(selected),
+                    "card": item,
+                    "kind": "cap_promotion",
+                    "deferred": deferred,
+                    "cause": cause,
+                }
+            )
+        return allowed
 
     def record(item: dict) -> None:
         group = _discover_category_group(item)
@@ -3611,19 +3843,38 @@ def diversify_discover_first_page(
         (True, False),
         (False, False),
     ):
-        for item in items:
-            if len(selected) >= target_size:
-                break
-            key = _feed_item_key(item)
-            if key in selected_keys:
-                continue
-            if not can_select(
-                item, enforce_archetype=enforce_archetype, enforce_story=enforce_story
-            ):
-                continue
-            selected.append(item)
-            selected_keys.add(key)
-            record(item)
+        rewalk = True
+        while rewalk:
+            rewalk = False
+            waiting: dict[tuple, tuple[dict, str]] = {}
+            for item in items:
+                if len(selected) >= target_size:
+                    break
+                key = _feed_item_key(item)
+                if key in selected_keys:
+                    continue
+                refused = refusal(
+                    item, enforce_archetype=enforce_archetype, enforce_story=enforce_story
+                )
+                if refused is not None:
+                    if instrumented:
+                        waiting.setdefault(key, (item, refused))
+                    continue
+                if not seat_allowed(item, waiting, mechanism="cap_walk"):
+                    continue
+                selected.append(item)
+                selected_keys.add(key)
+                record(item)
+                # FIRST_CARDS only: the cap just loosened, so the cards it
+                # refused above this point are eligible again — walk from the
+                # top. ``len`` reaches the window exactly once, so this ends.
+                if (
+                    first_cards
+                    and cold_start_cap is not None
+                    and len(selected) == _COLD_START_CARDS
+                ):
+                    rewalk = True
+                    break
         if len(selected) >= target_size:
             break
 
@@ -3638,6 +3889,7 @@ def diversify_discover_first_page(
         for relaxed_extra in (2, 5, None):
             if len(selected) >= target_size:
                 break
+            waiting = {}
             for item in items:
                 if len(selected) >= target_size:
                     break
@@ -3650,14 +3902,30 @@ def diversify_discover_first_page(
                         _DISCOVER_FIRST_PAGE_CATEGORY_CAPS.get(group, 3) + relaxed_extra
                     )
                     if category_counts.get(group, 0) >= cap:
+                        if instrumented:
+                            cause = f"relaxed_category_cap+{relaxed_extra}"
+                            waiting.setdefault(key, (item, cause))
                         continue
+                # The unbounded pass refuses nothing, so ``waiting`` stays empty
+                # and every seat it fills is rank order — the explicit fallback.
+                if not seat_allowed(
+                    item,
+                    waiting,
+                    mechanism=(
+                        "fallback_rank_fill" if relaxed_extra is None
+                        else f"relaxed_fill+{relaxed_extra}"
+                    ),
+                ):
+                    continue
                 selected.append(item)
                 selected_keys.add(key)
                 record(item)
 
-    _ensure_required_archetypes(selected, items)
-    _ensure_category_hunger(selected, items)
-    _improve_strict_variety(selected, items)
+    _ensure_required_archetypes(
+        selected, items, gate=promotion_gate, trace=promotion_trace
+    )
+    _ensure_category_hunger(selected, items, gate=promotion_gate, trace=promotion_trace)
+    _improve_strict_variety(selected, items, gate=promotion_gate, trace=promotion_trace)
 
     selected_keys = {_feed_item_key(item) for item in selected}
     remainder = [
@@ -4459,53 +4727,61 @@ def space_discover_concept_families(
     return out, meta
 
 
-def _ensure_category_hunger(selected: list[dict], all_items: list[dict]) -> None:
+def _ensure_category_hunger(
+    selected: list[dict],
+    all_items: list[dict],
+    *,
+    gate: Optional[PromotionGate] = None,
+    trace: Optional[list] = None,
+) -> None:
     """Give a strong missing category one first-page slot when possible."""
     if not selected:
         return
 
     selected_keys = {_feed_item_key(item) for item in selected}
-    desired_thresholds = {
-        "entertainment": 80,
-        "tech": 90,
-        "economics": 90,
-        "weather_health": 90,
-        "sports_culture": 90,
-    }
 
-    for target, min_score in desired_thresholds.items():
+    for target, min_score in DISCOVER_CATEGORY_HUNGER_THRESHOLDS.items():
         if any(_discover_category_group(item) == target for item in selected):
             continue
 
-        candidate = next(
-            (
-                item
-                for item in all_items
-                if _feed_item_key(item) not in selected_keys
-                and _discover_category_group(item) == target
-                and item.get("score", 0) >= min_score
-            ),
-            None,
+        candidates = (
+            item
+            for item in all_items
+            if _feed_item_key(item) not in selected_keys
+            and _discover_category_group(item) == target
+            and item.get("score", 0) >= min_score
         )
-        if candidate is None:
-            continue
-
         category_counts = Counter(_discover_category_group(item) for item in selected)
         archetype_counts = Counter(_discover_archetype_group(item) for item in selected)
-        replacement_idx = next(
-            (
-                idx
-                for idx in range(len(selected) - 1, -1, -1)
-                if category_counts[_discover_category_group(selected[idx])] > 1
-                and not (
-                    _discover_archetype_group(selected[idx])
-                    in _DISCOVER_REQUIRED_ARCHETYPES
-                    and archetype_counts[_discover_archetype_group(selected[idx])] <= 1
-                )
-                and selected[idx].get("score", 0) <= candidate.get("score", 0) + 15
-            ),
-            None,
-        )
+        # The served rule takes the FIRST candidate and gives up on the target
+        # when it has no slot. A gate-refused candidate (#5105 D2, offline only)
+        # yields to the next one under that same rule.
+        for candidate in candidates:
+            replacement_idx = next(
+                (
+                    idx
+                    for idx in range(len(selected) - 1, -1, -1)
+                    if category_counts[_discover_category_group(selected[idx])] > 1
+                    and not (
+                        _discover_archetype_group(selected[idx])
+                        in _DISCOVER_REQUIRED_ARCHETYPES
+                        and archetype_counts[_discover_archetype_group(selected[idx])]
+                        <= 1
+                    )
+                    and selected[idx].get("score", 0) <= candidate.get("score", 0) + 15
+                ),
+                None,
+            )
+            if replacement_idx is None:
+                break
+            if _promotion_allowed(
+                gate, trace, candidate, slot=replacement_idx,
+                mechanism="category_hunger", existing_bar=min_score,
+                displaced=selected[replacement_idx], cause=f"missing category {target}",
+            ):
+                break
+        else:
+            continue
         if replacement_idx is None:
             continue
 
@@ -4515,7 +4791,13 @@ def _ensure_category_hunger(selected: list[dict], all_items: list[dict]) -> None
         selected_keys.add(_feed_item_key(candidate))
 
 
-def _ensure_required_archetypes(selected: list[dict], all_items: list[dict]) -> None:
+def _ensure_required_archetypes(
+    selected: list[dict],
+    all_items: list[dict],
+    *,
+    gate: Optional[PromotionGate] = None,
+    trace: Optional[list] = None,
+) -> None:
     """Make room for at least one strong card from key first-page textures."""
     selected_keys = {_feed_item_key(item) for item in selected}
 
@@ -4523,17 +4805,14 @@ def _ensure_required_archetypes(selected: list[dict], all_items: list[dict]) -> 
         if any(_discover_archetype_group(item) == target for item in selected):
             continue
 
-        candidate = next(
-            (
-                item
-                for item in all_items
-                if _feed_item_key(item) not in selected_keys
-                and _discover_archetype_group(item) == target
-                and item.get("score", 0) >= 90
-            ),
-            None,
-        )
-        if candidate is None:
+        candidates = [
+            item
+            for item in all_items
+            if _feed_item_key(item) not in selected_keys
+            and _discover_archetype_group(item) == target
+            and item.get("score", 0) >= DISCOVER_REQUIRED_ARCHETYPE_MIN_SCORE
+        ]
+        if not candidates:
             continue
 
         archetype_counts = Counter(_discover_archetype_group(item) for item in selected)
@@ -4556,13 +4835,38 @@ def _ensure_required_archetypes(selected: list[dict], all_items: list[dict]) -> 
         if replacement_idx is None:
             continue
 
+        # The slot does not depend on the candidate. The served rule takes the
+        # first candidate; a gate-refused one (#5105 D2) yields to the next.
+        candidate = next(
+            (
+                c
+                for c in candidates
+                if _promotion_allowed(
+                    gate, trace, c, slot=replacement_idx,
+                    mechanism="required_archetype",
+                    existing_bar=DISCOVER_REQUIRED_ARCHETYPE_MIN_SCORE,
+                    displaced=selected[replacement_idx],
+                    cause=f"missing archetype {target}",
+                )
+            ),
+            None,
+        )
+        if candidate is None:
+            continue
+
         removed = selected[replacement_idx]
         selected[replacement_idx] = candidate
         selected_keys.discard(_feed_item_key(removed))
         selected_keys.add(_feed_item_key(candidate))
 
 
-def _improve_strict_variety(selected: list[dict], all_items: list[dict]) -> None:
+def _improve_strict_variety(
+    selected: list[dict],
+    all_items: list[dict],
+    *,
+    gate: Optional[PromotionGate] = None,
+    trace: Optional[list] = None,
+) -> None:
     """Repair strict first-page texture targets after the initial score pass."""
     if len(selected) <= 1:
         return
@@ -4602,6 +4906,8 @@ def _improve_strict_variety(selected: list[dict], all_items: list[dict]) -> None
             ),
             None,
         )
+        if replacement_idx is None:
+            break
         candidate_idx = next(
             (
                 idx
@@ -4609,10 +4915,16 @@ def _improve_strict_variety(selected: list[dict], all_items: list[dict]) -> None
                 if _discover_category_group(selected[idx])
                 not in {"politics", "geopolitics"}
                 and selected[idx].get("score", 0) >= 90
+                and _promotion_allowed(
+                    gate, trace, selected[idx], slot=replacement_idx,
+                    mechanism="strict_top10_non_political", existing_bar=90,
+                    displaced=selected[replacement_idx],
+                    cause="fewer than 4 non-politics cards in the top 10",
+                )
             ),
             None,
         )
-        if replacement_idx is None or candidate_idx is None:
+        if candidate_idx is None:
             break
         swap_positions(replacement_idx, candidate_idx)
 
@@ -4621,31 +4933,40 @@ def _improve_strict_variety(selected: list[dict], all_items: list[dict]) -> None
     # for culture, celebrity, weird news, or big-name drama.
     top10 = selected[:top10_size]
     if not any(_discover_archetype_group(item) in fun_archetypes for item in top10):
+        # Depends only on the top ten, so it is the same slot whichever
+        # candidate is chosen; computed first so a gate can judge that slot.
+        swap_idx = next(
+            (
+                idx
+                for idx in range(top10_size - 1, -1, -1)
+                if _discover_archetype_group(selected[idx])
+                not in {
+                    "breaking_news",
+                    "health_weather_risk",
+                }
+            ),
+            top10_size - 1,
+        )
         candidate_idx = next(
             (
                 idx
                 for idx in range(top10_size, first_page_size)
                 if _discover_archetype_group(selected[idx]) in fun_archetypes
                 and selected[idx].get("score", 0) >= 88
+                and _promotion_allowed(
+                    gate, trace, selected[idx], slot=swap_idx,
+                    mechanism="strict_fun_card_swap", existing_bar=88,
+                    displaced=selected[swap_idx],
+                    cause="no social/fun card in the top 10",
+                )
             ),
             None,
         )
         if candidate_idx is not None:
-            replacement_idx = next(
-                (
-                    idx
-                    for idx in range(top10_size - 1, -1, -1)
-                    if _discover_archetype_group(selected[idx])
-                    not in {
-                        "breaking_news",
-                        "health_weather_risk",
-                    }
-                ),
-                top10_size - 1,
-            )
-            swap_positions(replacement_idx, candidate_idx)
-        else:
+            swap_positions(swap_idx, candidate_idx)
+        elif top10_size > 0:
             selected_keys = {_feed_item_key(item) for item in selected}
+            replacement_idx = top10_size - 1
             candidate = next(
                 (
                     item
@@ -4653,11 +4974,16 @@ def _improve_strict_variety(selected: list[dict], all_items: list[dict]) -> None
                     if _feed_item_key(item) not in selected_keys
                     and _discover_archetype_group(item) in fun_archetypes
                     and item.get("score", 0) >= 88
+                    and _promotion_allowed(
+                        gate, trace, item, slot=replacement_idx,
+                        mechanism="strict_fun_card_insert", existing_bar=88,
+                        displaced=selected[replacement_idx],
+                        cause="no social/fun card in the top 10",
+                    )
                 ),
                 None,
             )
-            if candidate is not None and top10_size > 0:
-                replacement_idx = top10_size - 1
+            if candidate is not None:
                 selected[replacement_idx] = candidate
 
     # Keep diplomatic clusters from exceeding the strict world-event cap in the
@@ -4689,6 +5015,12 @@ def _improve_strict_variety(selected: list[dict], all_items: list[dict]) -> None
                 for idx in range(first_page_size, len(selected))
                 if _discover_archetype_group(selected[idx]) != "world_event"
                 and selected[idx].get("score", 0) >= 88
+                and _promotion_allowed(
+                    gate, trace, selected[idx], slot=replacement_idx,
+                    mechanism="strict_world_event_cap_swap", existing_bar=88,
+                    displaced=selected[replacement_idx],
+                    cause="more than 4 world_event cards on the first page",
+                )
             ),
             None,
         )
@@ -4703,6 +5035,12 @@ def _improve_strict_variety(selected: list[dict], all_items: list[dict]) -> None
                 if _feed_item_key(item) not in selected_keys
                 and _discover_archetype_group(item) != "world_event"
                 and item.get("score", 0) >= 88
+                and _promotion_allowed(
+                    gate, trace, item, slot=replacement_idx,
+                    mechanism="strict_world_event_cap_insert", existing_bar=88,
+                    displaced=selected[replacement_idx],
+                    cause="more than 4 world_event cards on the first page",
+                )
             ),
             None,
         )
@@ -4987,7 +5325,6 @@ def diversify_quality_families(
             exact_counts[placed_family] = exact_counts.get(placed_family, 0) + 1
         if placed_story:
             story_counts[placed_story] = story_counts.get(placed_story, 0) + 1
-    kept: list[dict] = []
     per_story_caps = {
         "story:middle_east_conflict": 4,
         "story:russia_ukraine": 2,
@@ -5056,42 +5393,103 @@ def diversify_quality_families(
                 return value
         return story_family_cap
 
-    story_overflow: dict[str, list[dict]] = {}
-    # Positions in `kept`, NOT the survivor dicts themselves: the reserve is
-    # written to a COPY at the end of this function (see below), so the carrier
-    # has to be replaced in the list rather than mutated where it sits.
-    story_kept_idx: dict[str, list[int]] = {}
+    def _walk(
+        national_representative: dict[str, int],
+    ) -> tuple[list[dict], dict[str, list[dict]], dict[str, list[int]]]:
+        walk_exact = dict(exact_counts)
+        walk_story = dict(story_counts)
+        pending = dict(national_representative)
+        walk_kept: list[dict] = []
+        story_overflow: dict[str, list[dict]] = {}
+        # Positions in `kept`, NOT the survivor dicts themselves: the reserve is
+        # written to a COPY at the end of this function (see below), so the
+        # carrier has to be replaced in the list rather than mutated where it sits.
+        story_kept_idx: dict[str, list[int]] = {}
 
-    for item in sorted_items:
-        family = item.get("_quality_family_key")
-        story = item.get("_quality_story_key")
+        for item in sorted_items:
+            family = item.get("_quality_family_key")
+            story = item.get("_quality_story_key")
 
-        if family and exact_family_cap > 0:
-            count = exact_counts.get(family, 0)
-            if count >= exact_family_cap:
-                continue
+            if family and exact_family_cap > 0:
+                count = walk_exact.get(family, 0)
+                if count >= exact_family_cap:
+                    continue
 
-        if story and story_family_cap > 0:
-            count = story_counts.get(story, 0)
-            cap = min(story_family_cap, _cap_for(story))
-            if count >= cap:
-                # #7426: the cap is a SLOT budget, and a story that folds into one
-                # theme bundle spends one slot however many members it carries. So
-                # the surplus is remembered rather than deleted — see
-                # STORY_OVERFLOW_RESERVE. It does NOT go back in `kept`: the
-                # returned list, and therefore every ranking, first-page and slot
-                # decision downstream, is byte-identical to before this block.
-                overflow = story_overflow.setdefault(story, [])
-                if len(overflow) < STORY_OVERFLOW_RESERVE:
-                    overflow.append(item)
-                continue
+            if story and story_family_cap > 0:
+                count = walk_story.get(story, 0)
+                cap = min(story_family_cap, _cap_for(story))
+                representative = pending.get(story)
+                held_for_representative = (
+                    representative is not None and representative != id(item)
+                )
+                if count >= cap or held_for_representative:
+                    # #7426: the cap is a SLOT budget, and a story that folds into
+                    # one theme bundle spends one slot however many members it
+                    # carries. So the surplus is remembered rather than deleted —
+                    # see STORY_OVERFLOW_RESERVE. It does NOT go back in `kept`:
+                    # the returned list, and therefore every ranking, first-page
+                    # and slot decision downstream, is byte-identical to before
+                    # this block.
+                    overflow = story_overflow.setdefault(story, [])
+                    if len(overflow) < STORY_OVERFLOW_RESERVE:
+                        overflow.append(item)
+                    continue
 
-        if family:
-            exact_counts[family] = exact_counts.get(family, 0) + 1
-        if story:
-            story_counts[story] = story_counts.get(story, 0) + 1
-            story_kept_idx.setdefault(story, []).append(len(kept))
-        kept.append(item)
+            if family:
+                walk_exact[family] = walk_exact.get(family, 0) + 1
+            if story:
+                walk_story[story] = walk_story.get(story, 0) + 1
+                story_kept_idx.setdefault(story, []).append(len(walk_kept))
+                pending.pop(story, None)
+            walk_kept.append(item)
+        return walk_kept, story_overflow, story_kept_idx
+
+    # #10356: a national race's card is its overall-winner question, else its
+    # first-round-winner question, else (no entry) the top-ranked member as
+    # before. Until that member is seated, the race's other members take the
+    # overflow path the cap would have sent them down anyway — the cap is 1, so
+    # exactly one member is seated either way, and nothing outside these races
+    # is touched. A disabled story cap, or a race `already_kept` has filled,
+    # gets no entry: no member can be held back or seated there either way.
+    candidates = (
+        {
+            story: ids
+            for story, ids in _national_race_representatives(
+                sorted_items,
+                exact_counts=exact_counts,
+                exact_family_cap=exact_family_cap,
+            ).items()
+            if story_counts.get(story, 0) < min(story_family_cap, _cap_for(story))
+        }
+        if story_family_cap > 0
+        else {}
+    )
+    # A candidate is kept only if the walk actually SEATS it. An earlier item
+    # sharing its family can be refused by its own full story (or held for its
+    # own race) and so spend no family seat — predicting that ahead of the walk
+    # vetoed eligible overall questions. When the walk refuses a choice, holding
+    # the race back left it with no card, so that race moves to its next
+    # candidate and, when none remain, to today's top-ranked member. Every round
+    # retires at least one candidate, so this ends; with no refusal (the normal
+    # case) the walk runs once.
+    next_candidate = {story: 0 for story in candidates}
+    while True:
+        national_representative = {
+            story: ids[next_candidate[story]]
+            for story, ids in candidates.items()
+            if next_candidate[story] < len(ids)
+        }
+        kept, story_overflow, story_kept_idx = _walk(national_representative)
+        seated = {id(item) for item in kept}
+        refused = [
+            story
+            for story, item_id in national_representative.items()
+            if item_id not in seated
+        ]
+        if not refused:
+            break
+        for story in refused:
+            next_candidate[story] += 1
 
     # Attach each story's surplus to EVERY survivor of that story, sharing one
     # list object. Not just the top one: a later pass may drop any single item,

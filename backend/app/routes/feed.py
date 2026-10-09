@@ -252,6 +252,11 @@ from app.utils.feed_editions import (
     edition_policy_fingerprint,
 )
 from app.utils.discover_display_replay import display_capture_from_request
+from app.utils.discover_opening_edition import (
+    COMPOSED as OPENING_EDITION_COMPOSED,
+    HELD as OPENING_EDITION_HELD,
+    compose_opening_edition,
+)
 from app.utils.polymarket_email_ground_truth import (
     load_polymarket_email_ground_truth_report_from_env,
     summarize_polymarket_email_ground_truth,
@@ -3845,6 +3850,23 @@ async def get_feed(
     _edition_request = (edition or "").strip() or None
     _edition_status = None
 
+    # --- #5105: the seated opening ---------------------------------------------
+    # ONE policy value drives the cache shape (response, shared and page-base
+    # keys) AND the edition fingerprint, so a seated page, base and manifest name
+    # one list. ONE request clock serves the lease and every lifecycle judgement
+    # — on the build, the page base and a coalesced waiter alike — because a
+    # dated tournament crosses its start with every card field unchanged.
+    _opening_seating = _feed_opening_seating_policy(
+        mode=mode,
+        sport=sport,
+        category=category,
+        tags=tags,
+        my_teams_only=my_teams_only,
+        include_events=include_events,
+        include_futures=include_futures,
+    )
+    _request_now = _feed_request_clock() if _opening_seating else None
+
     def _edition_policy_for(principal):
         return edition_policy_fingerprint(
             sport=sport,
@@ -3857,6 +3879,7 @@ async def get_feed(
             mode=mode,
             category=category,
             principal=principal,
+            opening_seating=_opening_seating,
         )
 
     _edition_policy = _edition_policy_for(
@@ -4014,13 +4037,86 @@ async def get_feed(
         through to a real build. Liveness has to be read off the payload BEFORE
         the age bound can be chosen, which is why this recalls twice rather
         than passing ``max_age_s`` on the first call — two dict lookups, no I/O.
+
+        #5105: a SEATED request admits no last-good. It is one offset's page,
+        and a page proves neither that its opening is still compliant at this
+        request's clock nor what the current replacement would be. Each caller
+        then takes its existing no-last-good branch (build, or a truthful
+        `unavailable` the client answers by keeping its accepted deck).
         """
+        if _opening_seating:
+            return None
         lg = _rc.recall_last_good(key)
         if isinstance(lg, dict) and payload_contains_live_event(lg):
             lg = _rc.recall_last_good(
                 key, max_age_s=FEED_LAST_GOOD_MAX_AGE_LIVE_SECONDS
             )
         return lg
+
+    def _opening_refusal(reason, *, singleflight="none"):
+        """#5105: the seated route's truthful availability refusal.
+
+        Served when no compliant deck can be shown at this request's clock —
+        the current full deck is unsupported by opening seating, or a coalesced
+        page cannot be confirmed. It is the existing `unavailable` shape, so a
+        client keeps the deck it already accepted (`decideFeedPage`) rather than
+        painting a noncompliant opening or a blank one. Nothing is published.
+        """
+        _finalize_feed_response(
+            response,
+            cache_status="unavailable",
+            singleflight=singleflight,
+            timings=_timings,
+            started_at=_started_at,
+            counts=_feed_obs_counts([], total=0, returned=0),
+        )
+        return {
+            "items": [],
+            "total": 0,
+            "limit": limit,
+            "offset": offset,
+            "has_more": False,
+            "cache": build_feed_cache_metadata(
+                "unavailable",
+                ttl_seconds=0,
+                stale_ttl_seconds=0,
+                reason=reason,
+            ),
+        }
+
+    async def _admit_coalesced_opening(leader_payload):
+        """#5105: may a SEATED waiter serve its leader's page? A copy or ``None``.
+
+        The leader composed at ITS clock; this waiter's clock is later. Same key
+        means same principal, offset and requested edition, so re-composing the
+        leader's raw full deck at this waiter's clock — under the policy the
+        leader resolved — reproduces the leader's page exactly when the outcome
+        (usable, token, boundary, status) is unchanged. Any difference, or a
+        payload without the deck, is refused: a waiter never builds.
+        """
+        carried = leader_payload.get(_OPENING_LEADER_DECK_KEY)
+        if not isinstance(carried, dict) or not isinstance(carried.get("items"), list):
+            return None
+        nonlocal _edition_policy
+        _edition_policy = carried.get("policy") or _edition_policy
+        outcome = compose_opening_edition(
+            carried["items"],
+            await _read_edition_manifest() if _edition_request else None,
+            requested_token=_edition_request,
+            requested_policy=_edition_policy,
+            now=_request_now,
+        )
+        if not (
+            outcome.usable
+            and outcome.token == leader_payload.get(FEED_EDITION_FIELD)
+            and outcome.continuation_start == leader_payload.get("continuation_start")
+            and (outcome.edition_status if _edition_request else None)
+            == leader_payload.get(FEED_EDITION_STATUS_FIELD)
+        ):
+            return None
+        admitted = dict(leader_payload)
+        admitted.pop(_OPENING_LEADER_DECK_KEY, None)
+        return admitted
 
     # Q467: both checks are BEFORE the cache read, so a refused request never
     # mints a cache entry.
@@ -4096,6 +4192,7 @@ async def get_feed(
             category=category,
             edition=_edition_request,
             collections=_collections_fingerprint,
+            opening_seating=_opening_seating,
         )
         # LAT-P001: shared key builder — the pre-warm beat writes through the
         # SAME function, so a warmed key can never drift from the read key.
@@ -4121,7 +4218,16 @@ async def get_feed(
             # publication below is unchanged. This also means live traffic keeps
             # being served the existing fresh/stale entry at ~15ms while the rebuild
             # runs underneath it, instead of being exposed to a cold window.
+            #
+            # #5105: a SEATED request does not admit the per-offset tiers either.
+            # An offset page is a window cut from a deck composed at an earlier
+            # clock; it cannot show the opening is still compliant now (a dated
+            # tournament crosses its start with unchanged fields) nor carry the
+            # full deck a replacement must be composed from. Treated as a clean
+            # miss, so it continues to the full-deck page base or a build.
             if _prewarm_rebuild:
+                _fresh, _stale = _rc.RedisResult(_rc.MISS), _rc.RedisResult(_rc.MISS)
+            elif _opening_seating:
                 _fresh, _stale = _rc.RedisResult(_rc.MISS), _rc.RedisResult(_rc.MISS)
             else:
                 _fresh, _stale = await _read_feed_cache_pair(_shared_redis, _cache_key)
@@ -4276,7 +4382,8 @@ async def get_feed(
     elif exclude_reviewed:
         _cache_status = "disabled_reviewed_filter"
 
-    now = datetime.now(timezone.utc)
+    # #5105: a seated build scores and composes at the ONE request clock.
+    now = _request_now if _opening_seating else datetime.now(timezone.utc)
 
     # Parse tag filter — static tags (SQL-pushable) key the shared candidate
     # base; dynamic tags (status, signal, timing, ei, importance) are filtered
@@ -4338,6 +4445,12 @@ async def get_feed(
                     )
                 except Exception:
                     _coalesced = None
+            if _opening_seating and isinstance(_coalesced, dict):
+                _coalesced = await _admit_coalesced_opening(_coalesced)
+                if _coalesced is None:
+                    return _opening_refusal(
+                        "opening_unverified", singleflight="waiter_unavailable"
+                    )
             if isinstance(_coalesced, dict):
                 out = dict(_coalesced)
                 _co_fresh_ttl, _co_stale_ttl = _live_ttls(_coalesced)
@@ -4526,6 +4639,9 @@ async def get_feed(
             and (feed_user or feed_session_id)
             and inert_principal_share_enabled()
             and ctx == PersonalizationContext()
+            # #5105: the shared entry is an offset page too — a seated inert
+            # reader takes the full-deck base below instead.
+            and not _opening_seating
         ):
             _shared_cache_key = feed_response_cache_key(
                 user_id=None, session_id=None, **_cache_shape
@@ -4742,7 +4858,38 @@ async def get_feed(
             # fall through to the unpinned render below, which is today's
             # behaviour plus the status field saying so.
             _base_pinned_items = None
-            if _edition_request and _base_body is not None:
+            # #5105: a SEATED base stores the RAW full deck (see the publish
+            # below), so every read composes it at THIS request's clock — the
+            # pin is held, or retired whole and replaced from this current deck;
+            # never an old opening over a new tail. A base the slicer would not
+            # vouch for (truncated / legacy) falls through to a build, exactly
+            # as it does unseated. An unsupported current deck is refused.
+            _base_opening = None
+            if _opening_seating and _base_body is not None:
+                _base_deck = _base_body.get("items")
+                _base_total = _base_body.get("total")
+                if not (
+                    isinstance(_base_deck, list)
+                    and isinstance(_base_total, int)
+                    and _base_total == len(_base_deck)
+                ):
+                    _base_body = None
+                else:
+                    _base_opening = compose_opening_edition(
+                        _base_deck,
+                        await _read_edition_manifest() if _edition_request else None,
+                        requested_token=_edition_request,
+                        requested_policy=_edition_policy,
+                        now=_request_now,
+                    )
+                    if not _base_opening.usable:
+                        if _is_build_leader and _sf_future is not None:
+                            _rc.finish_build(_cache_key, _sf_future, result=None)
+                        return _opening_refusal(
+                            "opening_unsupported",
+                            singleflight="leader" if _is_build_leader else "none",
+                        )
+            elif _edition_request and _base_body is not None:
                 _pin_items, _edition_status = apply_pinned_edition(
                     _base_body.get("items"),
                     await _read_edition_manifest(),
@@ -4751,7 +4898,21 @@ async def get_feed(
                 )
                 if _edition_status == EDITION_STATUS_PINNED:
                     _base_pinned_items = _pin_items
-            if _base_pinned_items is not None:
+            if _base_opening is not None:
+                _base_page = render_feed_page_from_base(
+                    {
+                        **_base_body,
+                        "items": _base_opening.items,
+                        "total": len(_base_opening.items),
+                    },
+                    limit=limit,
+                    offset=offset,
+                )
+                if _base_page is not None:
+                    _apply_opening_envelope(
+                        _base_page, _base_opening, requested=bool(_edition_request)
+                    )
+            elif _base_pinned_items is not None:
                 # Rendered through the same pure slicer, off a base whose items
                 # and total are the PINNED list — not the current one — so
                 # `has_more` ends the scroll where the pinned edition ends
@@ -4824,7 +4985,64 @@ async def get_feed(
                     built_at=_pb_built_at,
                 )
                 if _is_build_leader and _sf_future is not None:
-                    _rc.finish_build(_cache_key, _sf_future, result=_base_page)
+                    _rc.finish_build(
+                        _cache_key,
+                        _sf_future,
+                        result=(
+                            _with_opening_leader_deck(
+                                _base_page, _base_body["items"], _edition_policy
+                            )
+                            if _base_opening is not None
+                            else _base_page
+                        ),
+                    )
+                # #5105: a seated read that COMPOSED an edition other than the
+                # one the base's build already minted FILLS its manifest if it
+                # is missing, or the reader's next page could only read
+                # `expired` (a tournament that crossed its start since the build
+                # moves the token). A HELD pin never writes: re-minting it would
+                # renew the lease it is being judged under. The base itself is
+                # still not rewritten.
+                #
+                # A READ IS NEVER A MINT. The raw base keeps its build's token
+                # after a crossing, so every later read of it — the retired
+                # token again, or an unpinned reader — composes the SAME
+                # replacement, which may already be minted and already pinned
+                # by someone. So the write is one atomic SET NX EX: it lands
+                # only where no manifest exists, the first landed publisher
+                # wins, and an existing replacement keeps its original
+                # `built_at` and Redis TTL. Never read-then-write (two
+                # overlapping readers would both see "absent"). Genuine expiry
+                # still remints: the key's TTL is the lease, so once it lapses
+                # the next read's NX lands. The token check below is only a
+                # shortcut that skips a write the build's own mint makes moot.
+                if (
+                    _base_opening is not None
+                    and _base_opening.status == OPENING_EDITION_COMPOSED
+                    and _base_opening.manifest is not None
+                    and _base_opening.token != _base_body.get(FEED_EDITION_FIELD)
+                ):
+                    try:
+                        _composed_json = _json_module.dumps(
+                            _base_opening.manifest, default=str
+                        )
+
+                        async def _publish_composed_manifest(
+                            _client=_shared_redis,
+                            _json=_composed_json,
+                            _key=edition_manifest_cache_key(
+                                token=_base_opening.token, policy=_edition_policy
+                            ),
+                        ):
+                            await _rc.bounded_redis_call(
+                                lambda: _client.set(
+                                    _key, _json, ex=EDITION_LEASE_SECONDS, nx=True
+                                )
+                            )
+
+                        _rc.schedule_background(_publish_composed_manifest())
+                    except Exception:
+                        pass
                 # Deliberately republishes NOTHING. LAT-P089 backfills the
                 # private key because its share saves a whole DB context load on
                 # the next open; here the next open is already ~10 ms and a
@@ -4898,9 +5116,11 @@ async def get_feed(
             _incomplete_capture = display_capture_from_request(request)
             if _incomplete_capture is not None:
                 _incomplete_capture.abandon(reason)
+            # #5105: a seated request admits no offset-page last-good (see
+            # `_live_bounded_last_good`), so it reaches the truthful refusal.
             _prior, _prior_origin = (
                 _rc.recall_last_good_entry(_cache_key)
-                if _cache_key
+                if _cache_key and not _opening_seating
                 else (None, None)
             )
             if isinstance(_prior, dict) and payload_contains_live_event(_prior):
@@ -5755,7 +5975,52 @@ async def get_feed(
         # broke, the token would stop matching the pin, and
         # ``test_a_pinned_build_re_derives_the_very_token_it_was_asked_for``
         # fails rather than a reader silently seeing a new edition.
-        if _edition_request:
+        #
+        # #5105: a SEATED build composes HERE instead — the same seam, the FINAL
+        # full deck (collections included), before the token and the slice.
+        # `compose_opening_edition` owns the whole transition: hold a compliant
+        # pin (pinned order, current bodies), or retire it whole and seat the
+        # CURRENT deck, fresh entrants included; seat the deck when nothing was
+        # requested. It never rescores, drops or edits a card. An unsupported
+        # deck is not served flat: it is this build's truthful refusal.
+        #
+        # ``feed_items`` STAYS the raw full deck on a seated build: it is what
+        # the venue attach and the scrub below run over and what the page base
+        # stores (every base read composes it at its own clock). A HELD pin
+        # serves a subset of it — newcomers wait for the next edition — so the
+        # served list is ``_served_items`` and the page is cut from that.
+        _opening = None
+        _served_items = feed_items
+        _continuation_start = None
+        if _opening_seating:
+            # A seated build is never a complete display capture. The recorder
+            # would mark ``expected`` complete from the RAW full deck while the
+            # response is cut from the SEATED (or held-subset) ``_served_items``,
+            # and the replay's baseline arm neither seats nor declares a seating
+            # policy — so either list would be an oracle the replay contradicts.
+            # Abandoned here, explicitly, before any hook can record; the served
+            # response itself is unaffected.
+            if _capture is not None:
+                _capture.abandon(_OPENING_SEATING_CAPTURE_UNSUPPORTED)
+            _pin_manifest = (
+                await _read_edition_manifest() if _edition_request else None
+            )
+            _opening = compose_opening_edition(
+                feed_items,
+                _pin_manifest,
+                requested_token=_edition_request,
+                requested_policy=_edition_policy,
+                now=now,
+            )
+            if not _opening.usable:
+                await _release_incomplete_build(
+                    "opening_unsupported", session_cancelled=False
+                )
+                return _serve_incomplete_build("opening_unsupported")
+            _served_items = _opening.items
+            _continuation_start = _opening.continuation_start
+            _edition_status = _opening.edition_status if _edition_request else None
+        elif _edition_request:
             _pin_manifest = await _read_edition_manifest()
             _pin_now = time.time()
             _pin_items, _edition_status = apply_pinned_edition(
@@ -5766,6 +6031,7 @@ async def get_feed(
             )
             if _edition_status == EDITION_STATUS_PINNED and _pin_items is not None:
                 feed_items = _pin_items
+                _served_items = feed_items
             if _capture is not None:
                 _capture.record_edition(
                     manifest=_pin_manifest,
@@ -5775,8 +6041,8 @@ async def get_feed(
                     items=feed_items,
                 )
 
-        total = len(feed_items)
-        paginated = feed_items[offset : offset + limit]
+        total = len(_served_items)
+        paginated = _served_items[offset : offset + limit]
 
         debug_payload = None
         if debug:
@@ -5920,12 +6186,13 @@ async def get_feed(
             _publish_feed_item(item)
 
         payload = _feed_page_payload(
-            feed_items,
+            _served_items,
             paginated,
             total=total,
             limit=limit,
             offset=offset,
             edition_status=_edition_status,
+            continuation_start=_continuation_start,
         )
         _edition = payload.get(FEED_EDITION_FIELD)
 
@@ -6049,7 +6316,8 @@ async def get_feed(
                 _rc.recall_last_good_entry(
                     _cache_key, max_age_s=FEED_LAST_GOOD_MAX_AGE_LIVE_SECONDS
                 )
-                if _cache_key
+                # #5105: not for a seated request — an offset page.
+                if _cache_key and not _opening_seating
                 else (None, None)
             )
             _previous_at = _record_feed_timing(
@@ -6180,7 +6448,15 @@ async def get_feed(
         if _cache_key and not _is_degraded_build:
             _rc.remember_last_good(_cache_key, payload, built_at=_age_origin)
         if _is_build_leader and _sf_future is not None:
-            _rc.finish_build(_cache_key, _sf_future, result=payload)
+            _rc.finish_build(
+                _cache_key,
+                _sf_future,
+                result=(
+                    _with_opening_leader_deck(payload, feed_items, _edition_policy)
+                    if _opening is not None
+                    else payload
+                ),
+            )
 
         # Redis publication runs detached so a slow/hung write never delays THIS
         # response (the cache-write-stall seam). Both the fresh + :stale mirrors are
@@ -6218,7 +6494,8 @@ async def get_feed(
             # as you keep scrolling" — an edition that never ages, pinning a reader
             # to a slate from hours ago. The lease is measured from the mint.
             if (
-                _edition is not None
+                _opening is None
+                and _edition is not None
                 and _shared_redis is not None
                 and _edition_status != EDITION_STATUS_PINNED
             ):
@@ -6249,6 +6526,53 @@ async def get_feed(
                 except Exception:
                     # A feed read must not fail because an optimization could not be
                     # written. Same posture as the page-base publish below.
+                    pass
+
+            # #5105: a seated build publishes the SECTION-AWARE manifest the
+            # composition minted, and only for a COMPOSED edition — a HELD pin is
+            # the pinned serve the clause above refuses to republish. With a page base, a HELD build also
+            # mints the base's own unpinned composition (unless it IS the held
+            # token), so the edition the base later serves has a manifest.
+            _seated_mint = None
+            if _opening is not None:
+                _seated_mint = _opening
+                if _opening.status == OPENING_EDITION_HELD:
+                    _seated_mint = None
+                    if _page_base_key is not None:
+                        _unpinned = compose_opening_edition(
+                            feed_items,
+                            None,
+                            requested_token=None,
+                            requested_policy=_edition_policy,
+                            now=now,
+                        )
+                        if _unpinned.usable and _unpinned.token != _edition_request:
+                            _seated_mint = _unpinned
+            if (
+                _seated_mint is not None
+                and _seated_mint.manifest is not None
+                and _shared_redis is not None
+            ):
+                try:
+                    _seated_json = _json_module.dumps(
+                        _seated_mint.manifest, default=str
+                    )
+
+                    async def _publish_seated_manifest(
+                        _client=_shared_redis,
+                        _json=_seated_json,
+                        _key=edition_manifest_cache_key(
+                            token=_seated_mint.token, policy=_edition_policy
+                        ),
+                    ):
+                        await _rc.bounded_redis_call(
+                            lambda: _client.setex(
+                                _key, EDITION_LEASE_SECONDS, _json
+                            )
+                        )
+
+                    _rc.schedule_background(_publish_seated_manifest())
+                except Exception:
                     pass
 
             # --- LAT-P141: publish the offset-independent page base ----------
@@ -6284,6 +6608,24 @@ async def get_feed(
                     # reader take one page's window for the base's own.
                     for _per_serve in ("cache", "limit", "offset", "has_more"):
                         _page_base_body.pop(_per_serve, None)
+                    if _opening is not None:
+                        # #5105: a seated base is the RAW full deck — every read
+                        # composes it at its own clock — and its edition fields
+                        # name only the edition this build minted (the reader
+                        # publishes any other), never this request's status.
+                        _page_base_body["total"] = len(feed_items)
+                        for _per_request in (
+                            FEED_EDITION_FIELD,
+                            "continuation_start",
+                            FEED_EDITION_STATUS_FIELD,
+                        ):
+                            _page_base_body.pop(_per_request, None)
+                        if _seated_mint is not None and _seated_mint.token is not None:
+                            _page_base_body[FEED_EDITION_FIELD] = _seated_mint.token
+                            if _seated_mint.continuation_start is not None:
+                                _page_base_body["continuation_start"] = (
+                                    _seated_mint.continuation_start
+                                )
                     # CERT-409: carry the age origin the payload already
                     # computed. Minting a new one at read time is the exact
                     # clock-restart that ruling forbids. CERT-1856: that origin
@@ -6345,7 +6687,9 @@ async def get_feed(
             shared_tiers=_shared_tiers,
         )
         # #10290: the ONLY point a capture may call itself complete — this
-        # build, returned. Every earlier exit leaves it incomplete.
+        # build, returned. Every earlier exit leaves it incomplete. ``feed_items``
+        # is the served deck only when unseated: a seated build abandoned its
+        # capture at the seam, so this call is inert for it (#5105).
         if _capture is not None:
             _capture.record_response(payload, feed_items, timings=_timings)
         return payload
@@ -6713,6 +7057,98 @@ def _publish_feed_item(item: dict) -> None:
         item.pop(private_key, None)
 
 
+#: #5105 — whether ``GET /api/feed`` serves the seated Discover opening (Alex,
+#: Option A + thin supply + "expire and recompose", 2026-10-08). The ONE switch
+#: for the whole serving path: no env var, no query parameter, no warmer reads
+#: it. ``False`` leaves every key, fingerprint, tier and payload byte-identical
+#: to the pre-#5105 route. Turning it on is a release decision that also needs
+#: the web/native section + restart consumers and the warm rail's seated shapes.
+_DISCOVER_OPENING_SEATING_SERVED = False
+
+#: Private key a SEATED build leader attaches to the payload it hands its
+#: coalesced waiters (never to anything published or served): the raw full deck
+#: it composed from and the edition policy it resolved. A waiter re-composes that
+#: deck at its OWN request clock and serves the leader's page only when the
+#: outcome is identical — a page alone cannot prove its opening is still valid.
+_OPENING_LEADER_DECK_KEY = "_opening_leader_deck"
+
+
+#: #5105 — why a seated build's display capture is abandoned (see the seam).
+#: ``discover_display_replay`` records the raw full deck as ``expected`` and its
+#: baseline replay arm does not seat, so no complete capture can be truthful.
+_OPENING_SEATING_CAPTURE_UNSUPPORTED = (
+    "opening_seating_unsupported: the served deck is the seated composition, "
+    "which the display capture's expected full deck and baseline replay do not "
+    "model"
+)
+
+
+def _feed_request_clock() -> datetime:
+    """The seated route's one request clock (#5105). A seam so route tests can
+    move time across a tournament's published start without faking globals."""
+    return datetime.now(timezone.utc)
+
+
+def _feed_opening_seating_policy(
+    *,
+    mode: Optional[str],
+    sport: Optional[str],
+    category: Optional[str],
+    tags: Optional[str],
+    my_teams_only: bool,
+    include_events: bool,
+    include_futures: bool,
+) -> bool:
+    """Does this request take the seated opening? (#5105)
+
+    Only the Discover deck — the surface Alex's ruling names. Sports mode,
+    sport/tag filters, a category browse and My Teams are other lists and keep
+    their legacy shape. Web Discover sends ``event_pct`` and so keeps
+    ``mode=None``; ``mode or "discover"`` is the edition fingerprint's own
+    reading of that. Always ``False`` while the served switch is off.
+    """
+    return bool(
+        _DISCOVER_OPENING_SEATING_SERVED
+        and (mode or "discover").lower() == "discover"
+        and sport is None
+        and category is None
+        and tags is None
+        and not my_teams_only
+        and include_events
+        and include_futures
+    )
+
+
+def _apply_opening_envelope(page: dict, outcome: Any, *, requested: bool) -> dict:
+    """Stamp one usable ``compose_opening_edition`` outcome onto a page (#5105).
+
+    The token and boundary describe the WHOLE composed deck, never the page:
+    ``continuation_start`` is a global position (``0`` included) and is removed,
+    not zeroed, when the deck has no continuation. ``edition_status`` appears
+    only when an edition was requested — the unpinned shape stays as it was.
+    """
+    if outcome.token is not None:
+        page[FEED_EDITION_FIELD] = outcome.token
+    else:
+        page.pop(FEED_EDITION_FIELD, None)
+    if outcome.continuation_start is not None:
+        page["continuation_start"] = outcome.continuation_start
+    else:
+        page.pop("continuation_start", None)
+    if requested:
+        page[FEED_EDITION_STATUS_FIELD] = outcome.edition_status
+    else:
+        page.pop(FEED_EDITION_STATUS_FIELD, None)
+    return page
+
+
+def _with_opening_leader_deck(payload: dict, deck: list, policy: str) -> dict:
+    """A shallow copy of ``payload`` for ``finish_build`` carrying the raw deck."""
+    handed = dict(payload)
+    handed[_OPENING_LEADER_DECK_KEY] = {"items": deck, "policy": policy}
+    return handed
+
+
 def _feed_page_payload(
     feed_items: list,
     paginated: list,
@@ -6721,12 +7157,21 @@ def _feed_page_payload(
     limit: int,
     offset: int,
     edition_status: str | None,
+    continuation_start: int | None = None,
 ) -> dict:
     """The page envelope ``get_feed`` builds over a published list (#10290).
 
     Extracted unchanged so the offline display replay builds the same envelope
     by calling this, not by restating it. Fields added afterwards by the route
     (cache metadata, build quality, personalization, debug) stay in the route.
+
+    ``continuation_start`` (#5105, thin supply) is the GLOBAL 0-based position
+    in ``feed_items`` — never in ``paginated`` — where an ordinary-live
+    continuation begins. Absent/``None`` (every ``get_feed`` call today) leaves
+    the envelope and edition token exactly as before. When supplied — including
+    ``0`` — it rides the envelope as ``continuation_start`` beside the cards,
+    never as a card, so ``total``/offsets still count real cards, and it is bound
+    into the edition token. A malformed boundary raises ``ValueError``.
     """
     payload = {
         "items": paginated,
@@ -6750,7 +7195,14 @@ def _feed_page_payload(
     # identities a client sees, and before the page base is stored, so
     # ``render_feed_page_from_base`` carries it to every page for free (it
     # copies every key that is not per-serve, and this is not per-serve).
-    _edition = feed_edition_token(feed_items)
+    #
+    # #5105: the token call is also the boundary's validation (it raises on a
+    # malformed one), so it runs BEFORE the boundary is written. The boundary is
+    # a whole-deck fact for the same reason the token is: every offset page of
+    # one deck carries the same value, and the slicer copies it unchanged.
+    _edition = feed_edition_token(feed_items, continuation_start)
+    if continuation_start is not None:
+        payload["continuation_start"] = continuation_start
     if _edition is not None:
         payload[FEED_EDITION_FIELD] = _edition
     if edition_status is not None:
@@ -15505,24 +15957,43 @@ def _drop_futures_blended_into_tournaments(items: list[dict]) -> list[dict]:
 def _tournament_is_live(t: dict, now: datetime) -> bool:
     """Check if a tournament is currently live."""
     # #9212: ESPN called it final. Checked first, because every arm below can
-    # still say yes to a tournament that has ended: the date window runs 12h past
-    # the last day, and a winner's 24h movement outlives the final putt.
+    # still say yes to a tournament that has ended: the date window covers the
+    # whole last day, and an in-progress status can lag the final putt.
     if t.get("champion"):
         return False
     if t.get("schedule_status") == "in-progress":
         return True
-    if t.get("start_date") and t.get("end_date"):
+    start = None
+    if t.get("start_date"):
         try:
-            start = datetime.fromisoformat(t["start_date"]).replace(tzinfo=timezone.utc)
-            end = datetime.fromisoformat(t["end_date"]).replace(tzinfo=timezone.utc)
-            if start <= now <= end + timedelta(hours=12):
+            start = datetime.fromisoformat(t["start_date"])
+            if start.tzinfo is None:
+                start = start.replace(tzinfo=timezone.utc)
+            # #5105: price discovery before play is not live golf. A known
+            # future start cannot be live, even when the listing has no end
+            # date. Explicit in-progress above
+            # still takes precedence over a stale schedule.
+            if start > now:
+                return False
+        except (ValueError, TypeError):
+            pass
+    if start is not None and t.get("end_date"):
+        try:
+            end = datetime.fromisoformat(t["end_date"])
+            if end.tzinfo is None:
+                end = end.replace(tzinfo=timezone.utc)
+            # Published play dates name calendar days, not finish instants.
+            # Match the web's supported window: the full last day, exclusive
+            # of the following midnight. Removing the price fallback must
+            # not retire the final round at noon.
+            if start <= now < end + timedelta(days=1):
                 return True
         except (ValueError, TypeError):
             pass
-    # Fallback: significant movement = in progress
-    golfers = t.get("golfers", [])
-    if any(g.get("movement_24h") and abs(g["movement_24h"]) >= 0.01 for g in golfers):
-        return True
+    # #9596 / #5105: odds can move before play or after it ends. The web
+    # retired this price-only live inference already; without a live status
+    # or a supported play window, do not grant the headline or live bonus.
+    # The separate movement component in _score_tournament is unchanged.
     return False
 
 

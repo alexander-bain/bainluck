@@ -1441,6 +1441,9 @@ export async function fetchFeed(
     tags?: string[];
     mode?: string;
     category?: string;
+    /** #5102/#5105 — pin this page to a previous page's `edition` token. Optional;
+     *  absent sends no parameter, so every existing caller's URL is unchanged. */
+    edition?: string;
   },
   // L2-242 / C133 — for the PROVEN first request of a fresh, signed-out,
   // zero-interaction visitor, omit `x-session-id` so the backend serves the
@@ -1465,6 +1468,7 @@ export async function fetchFeed(
   if (params?.tags?.length) searchParams.set("tags", JSON.stringify(params.tags));
   if (params?.mode) searchParams.set("mode", params.mode);
   if (params?.category) searchParams.set("category", params.category);
+  if (params?.edition) searchParams.set("edition", params.edition);
 
   const query = searchParams.toString();
   // A suppressed request must NOT read-through-mint a session id; only the

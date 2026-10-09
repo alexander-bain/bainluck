@@ -1284,13 +1284,214 @@ def offline():
 # Replay
 # --------------------------------------------------------------------------- #
 
+#: #10356 / #5105 — a candidate policy that changes ONE named stage of the
+#: shared chain, for an offline arm. ``arm`` can only rewrite the pool; a policy
+#: that lives inside the chain (which cards the first page selects) is reached
+#: by rebinding that one stage for the duration of the replay, inside the same
+#: offline fence, and restoring it afterwards. Never the production default:
+#: ``routes/feed.py`` is unchanged and nothing outside a replay passes this.
+#: ``cold_start_first_cards``: ``diversify_discover_first_page`` with
+#: ``cold_start_window=COLD_START_WINDOW_FIRST_CARDS`` (see that constant).
+STAGE_POLICY_COLD_START_FIRST_CARDS = "cold_start_first_cards"
+
+#: #5105 D2 — the variety-promotion comparison. All three run the served
+#: ``diversify_discover_first_page`` with its opt-in promotion hook
+#: (``feed_market_quality.PromotionGate``) and return the per-seat trace:
+#:
+#: ``d2_baseline_trace``: an OBSERVER gate — every check is computed and
+#: recorded, every promotion is allowed, so the deck is the served one (the
+#: parity test asserts it byte for byte against the capture's oracle).
+#: ``d2_arm_a``: a variety-only promotion must pass ``_is_clean_replacement_for``
+#: at its destination slot (quality class, ladder, silence, and the type-agnostic
+#: why-now inside ``FIRST_PAGE_WHY_NOW_WINDOW``) and the score bar its own
+#: mechanism already applies (none for a cap-walk seat).
+#: ``d2_arm_b``: A, plus ``lacks_a_why_now`` (the type-scoped clause-(d) check:
+#: futures and bundles) at every first-page slot, plus a DEFINED bar — the
+#: higher of the card's category hunger threshold and the required-archetype
+#: bar, for whichever of the two applies to it. A card to which neither applies
+#: has no defined bar and is NOT variety-promotable under B: it keeps ordinary
+#: rank-earned seats only ("unbarred categories still earn ordinary ranked
+#: seats"), and no threshold is invented for it.
+#:
+#: Ordinary rank-earned seats are never gated. Nothing outside this module
+#: passes a gate; ``routes/feed.py`` is unchanged.
+STAGE_POLICY_D2_BASELINE_TRACE = "d2_baseline_trace"
+STAGE_POLICY_D2_ARM_A = "d2_arm_a"
+STAGE_POLICY_D2_ARM_B = "d2_arm_b"
+D2_POLICIES = (
+    STAGE_POLICY_D2_BASELINE_TRACE,
+    STAGE_POLICY_D2_ARM_A,
+    STAGE_POLICY_D2_ARM_B,
+)
+STAGE_POLICIES = frozenset({STAGE_POLICY_COLD_START_FIRST_CARDS, *D2_POLICIES})
+
+
+def d2_defined_bar(card: dict) -> Optional[int]:
+    """Arm B's bar for ``card``: the higher of the existing bars that apply to it.
+
+    The category hunger threshold when the card's category has one, and the
+    required-archetype bar when its archetype is a required texture. ``None``
+    for a card in neither — politics, geopolitics, an unlisted archetype: it is
+    unbarred, keeps rank-earned access, and cannot be variety-promoted under B.
+    No blanket threshold is introduced.
+    """
+    from app.utils.feed_market_quality import (
+        _DISCOVER_REQUIRED_ARCHETYPES,
+        DISCOVER_CATEGORY_HUNGER_THRESHOLDS,
+        DISCOVER_REQUIRED_ARCHETYPE_MIN_SCORE,
+        _discover_archetype_group,
+        _discover_category_group,
+    )
+
+    bars = []
+    category_bar = DISCOVER_CATEGORY_HUNGER_THRESHOLDS.get(_discover_category_group(card))
+    if category_bar is not None:
+        bars.append(category_bar)
+    if _discover_archetype_group(card) in _DISCOVER_REQUIRED_ARCHETYPES:
+        bars.append(DISCOVER_REQUIRED_ARCHETYPE_MIN_SCORE)
+    return max(bars) if bars else None
+
+
+def d2_promotion_gate(policy: str) -> Callable[..., tuple[bool, dict]]:
+    """The ``PromotionGate`` for one D2 policy. Every check is computed for every
+    arm and recorded, so the ledger shows what A and B would each have said
+    about a baseline promotion; only ``policy`` decides what is allowed."""
+    if policy not in D2_POLICIES:
+        raise DisplayReplayError(UNSUPPORTED, f"unknown D2 policy {policy!r}")
+    from app.utils import feed_market_quality as fmq
+
+    def gate(card: dict, *, slot: int, mechanism: str, existing_bar: Any) -> tuple[bool, dict]:
+        score = card.get("score", 0)
+        window = fmq.FIRST_PAGE_WHY_NOW_WINDOW
+        clean = fmq._is_clean_replacement_for(card, position=slot, why_now_window=window)
+        bar = d2_defined_bar(card)
+        checks = {
+            "score_read_by_bars": score,
+            "quality_class_ok": not fmq.is_first_page_quality_offender(card),
+            "not_wholly_silent": not fmq.is_wholly_silent_card(card),
+            "why_now_first_ten_ok": slot >= window or not fmq._is_reasonless(card),
+            "clean_replacement": clean,
+            "existing_bar": existing_bar,
+            "existing_bar_ok": existing_bar is None or score >= existing_bar,
+            "why_now_twenty_ok": not fmq.lacks_a_why_now(card),
+            "defined_bar": bar,
+            "defined_bar_ok": bar is not None and score >= bar,
+        }
+        checks["a_allowed"] = checks["clean_replacement"] and checks["existing_bar_ok"]
+        checks["b_allowed"] = (
+            checks["a_allowed"] and checks["why_now_twenty_ok"] and checks["defined_bar_ok"]
+        )
+        if policy == STAGE_POLICY_D2_ARM_A:
+            return checks["a_allowed"], checks
+        if policy == STAGE_POLICY_D2_ARM_B:
+            return checks["b_allowed"], checks
+        return True, checks
+
+    return gate
+
+
+@contextmanager
+def _stage_policy(feed_route: Any, policy: Optional[str]):
+    """Yields the D2 promotion trace (a list) for a D2 policy, else ``None``."""
+    if policy is None:
+        yield None
+        return
+    from functools import partial
+
+    from app.utils.feed_market_quality import (
+        COLD_START_WINDOW_FIRST_CARDS,
+        diversify_discover_first_page,
+    )
+
+    trace: Optional[list] = None
+    if policy == STAGE_POLICY_COLD_START_FIRST_CARDS:
+        replacement = partial(
+            diversify_discover_first_page,
+            cold_start_window=COLD_START_WINDOW_FIRST_CARDS,
+        )
+    else:
+        trace = []
+        replacement = partial(
+            diversify_discover_first_page,
+            promotion_gate=d2_promotion_gate(policy),
+            promotion_trace=trace,
+        )
+    original = feed_route.diversify_discover_first_page
+    feed_route.diversify_discover_first_page = replacement
+    try:
+        yield trace
+    finally:
+        feed_route.diversify_discover_first_page = original
+
+
+def _trace_card(card: Optional[dict]) -> Optional[dict]:
+    if card is None:
+        return None
+    from app.utils.feed_market_quality import (
+        _discover_archetype_group,
+        _discover_category_group,
+    )
+
+    data = card.get("data") if isinstance(card.get("data"), dict) else {}
+    return {
+        "identity": _member(card),
+        "type": card.get("type"),
+        "title": data.get("name") or card.get("headline"),
+        "score": card.get("score"),
+        # Never the display score standing in for a missing ordering score.
+        "ordering_score": card.get("_rank_score"),
+        "quality_class": card.get("_quality_class"),
+        "ladder_or_bucket": card.get("_quality_ladder_or_bucket"),
+        "category_group": _discover_category_group(card),
+        "archetype_group": _discover_archetype_group(card),
+    }
+
+
+def _serialize_promotion_trace(trace: list) -> list[dict]:
+    out = []
+    for entry in trace:
+        row = {k: v for k, v in entry.items() if k not in ("card", "displaced", "deferred")}
+        row["card"] = _trace_card(entry.get("card"))
+        for key in ("displaced", "deferred"):
+            if key in entry:
+                row[key] = _trace_card(entry[key])
+        out.append(row)
+    return out
+
+
 
 def replay_capture(
-    capture: dict, *, arm: Optional[Callable[[list], list]] = None
+    capture: dict,
+    *,
+    arm: Optional[Callable[[list], list]] = None,
+    stage_policy: Optional[str] = None,
+    opening_seating: bool = False,
 ) -> dict:
     """Run one arm of a validated capture offline. Returns the replayed deck,
     page and diagnostics. ``arm`` (a candidate policy) receives a fresh decoded
-    copy of the pool; the baseline arm is ``arm=None``.
+    copy of the pool; the baseline arm is ``arm=None``. ``stage_policy`` (one
+    of :data:`STAGE_POLICIES`) swaps one chain stage for a candidate rule; the
+    baseline arm is ``stage_policy=None``.
+
+    ``opening_seating`` (#5105, Alex's Option A) runs
+    ``discover_opening_seating.seat_opening`` over the FINAL full deck — after
+    collections, before pagination — at the capture's scoring clock. It
+    composes with any ``stage_policy``. It refuses (``UNSUPPORTED``) a capture
+    with an active edition, because reordering a pinned edition is exactly what
+    the edition contract forbids and minting one under a new policy is release
+    wiring this offline arm does not invent; it also refuses when the helper
+    returns anything but applied/compliant/sparse_continuation (group
+    membership, lifecycle conflicts, unknown kinds), so an unsupported shape is
+    never counted as a pass. Under thin supply the summary's
+    ``continuation_start`` is the FULL-deck position where the ordinary-live
+    continuation begins (``None`` when there is none); every page is a slice of
+    that one deck, so a page at ``offset`` meets it at ``continuation_start -
+    offset`` when that falls inside the page. The same global value rides
+    ``public_response`` as ``continuation_start`` and is bound into its edition
+    token (``_feed_page_payload``); absent when there is no continuation. It
+    raises ``MISMATCH`` if the
+    stage changed, added or dropped any card.
+    Default ``False``: the baseline arm is untouched.
 
     Never consults ``capture['expected']`` — that is the oracle, read only by
     :func:`verify_baseline`. Refuses (``validate_replay_inputs``) any capture
@@ -1303,12 +1504,21 @@ def replay_capture(
     from app.utils.feed_editions import EDITION_STATUS_PINNED, apply_pinned_edition
     from app.utils.personalization import PersonalizationContext
 
+    if stage_policy is not None and stage_policy not in STAGE_POLICIES:
+        raise DisplayReplayError(UNSUPPORTED, f"unknown stage_policy {stage_policy!r}")
     validate_replay_inputs(capture)
+    if opening_seating and capture["downstream"]["edition"].get("active"):
+        raise DisplayReplayError(
+            UNSUPPORTED,
+            "opening_seating does not replay an active-edition capture: a pinned "
+            "edition is never reordered, and minting one under a new seating "
+            "policy is release wiring this offline arm does not have",
+        )
     kw = capture["chain_kwargs"]
     request = decode_value(capture["effective_request"])
     now = _dt.datetime.fromisoformat(capture["clocks"]["scoring_now"])
 
-    with offline():
+    with offline(), _stage_policy(feed_route, stage_policy) as promotion_trace:
         pool = decode_value(capture["scored_pool"]["items"])
         if arm is not None:
             pool = arm(pool)
@@ -1347,13 +1557,26 @@ def replay_capture(
             )
             if edition_status == EDITION_STATUS_PINNED and pinned is not None:
                 items = pinned
+        pre_seating = items
+        seating = None
+        if opening_seating:
+            stages["pre_seating"] = deck_identities(items)
+            items, seating = _seat_opening(items, now)
         stages["pre_slice"] = deck_identities(items)
+        # D2 only: read the internal fields BEFORE publication, which strips
+        # ``_rank_score`` / ``_quality_*`` from the dicts in place.
+        promotion_rows = card_facts = None
+        if promotion_trace is not None:
+            promotion_rows = _serialize_promotion_trace(promotion_trace)
+            card_facts = {_member(item): _trace_card(item) for item in items}
 
         total = len(items)
         offset, limit = request["offset"], request["limit"]
         paginated = items[offset : offset + limit]
 
-        _apply_venue_deltas(items, capture["downstream"]["venue_settlement"])
+        # Deltas name the CAPTURED position; seating moves the same card objects,
+        # so they are checked against the order the capture saw.
+        _apply_venue_deltas(pre_seating, capture["downstream"]["venue_settlement"])
 
         for item in items:
             feed_route._publish_feed_item(item)
@@ -1364,6 +1587,9 @@ def replay_capture(
             limit=limit,
             offset=offset,
             edition_status=edition_status,
+            # Only the opt-in seating arm states a boundary; the baseline arm
+            # (and every non-sparse outcome) passes ``None`` — the route's default.
+            continuation_start=seating["continuation_start"] if seating else None,
         )
         # The route adds these only for a degraded build, from the futures
         # stage's outcome — an upstream fact, carried and declared as such.
@@ -1378,7 +1604,60 @@ def replay_capture(
         "public_response": payload,
         "chain_meta": meta,
         "stage_identities": stages,
+        "stage_policy": stage_policy,
+        "promotion_trace": promotion_rows,
+        "card_facts": card_facts,
+        "opening_seating": seating,
     }
+
+
+def _seat_opening(items: list, now: _dt.datetime) -> tuple[list, dict]:
+    """The ``opening_seating`` stage, fenced: refuse what the helper refuses and
+    prove — on the unpublished cards, private ranking fields included — that it
+    moved cards without touching one."""
+    from app.utils.discover_opening_seating import (
+        APPLIED,
+        COMPLIANT,
+        SPARSE_CONTINUATION,
+        seat_opening,
+    )
+
+    def facts(card: dict) -> dict:
+        return {
+            "identity": _member(card),
+            "type": card.get("type"),
+            "score": card.get("score"),
+            "_rank_score": card.get("_rank_score"),
+        }
+
+    before = {_member(card): (_digest(card), facts(card)) for card in items}
+    outcome = seat_opening(items, now=now)
+    if outcome.status not in (APPLIED, COMPLIANT, SPARSE_CONTINUATION):
+        raise DisplayReplayError(
+            UNSUPPORTED, f"opening seating {outcome.status}: {outcome.detail}"
+        )
+    after = {_member(card): (_digest(card), facts(card)) for card in outcome.items}
+    if not len(items) == len(before) == len(after) == len(outcome.items) or set(
+        after
+    ) != set(before):
+        raise DisplayReplayError(MISMATCH, "opening seating changed the deck's membership")
+    boundary = outcome.continuation_start
+    if (boundary is None) != (outcome.status != SPARSE_CONTINUATION) or (
+        boundary is not None
+        and not (type(boundary) is int and 0 <= boundary < len(outcome.items))
+    ):
+        raise DisplayReplayError(
+            MISMATCH,
+            f"opening seating {outcome.status} carried continuation_start {boundary!r}",
+        )
+    changed = [ident for ident in before if before[ident] != after[ident]]
+    if changed:
+        raise DisplayReplayError(
+            MISMATCH, f"opening seating changed card content: {changed[:5]}"
+        )
+    summary = outcome.summary()
+    summary["card_facts"] = [after[_member(card)][1] for card in outcome.items]
+    return outcome.items, summary
 
 
 def _apply_venue_deltas(items: list, venue: dict) -> None:
@@ -1512,6 +1791,131 @@ def _first_content_divergence(capture: dict, replay: dict) -> Optional[str]:
         if ident in by_id and canonical(by_id[ident]) != canonical(item):
             return ident
     return None
+
+
+# --------------------------------------------------------------------------- #
+# Arm-vs-arm card comparison (#5105 root review of e4ed56d308)
+# --------------------------------------------------------------------------- #
+#
+# A policy arm may move cards; it must not change one. The first comparison of
+# two arms compared a hand-written PROJECTION of each card, which omitted
+# tournament prices, bundle member prices, sources and timestamps, so "every
+# shared card is identical" was never shown. This compares the WHOLE published
+# card through the same codec as every parity check (type-exact, and anything
+# it cannot freeze refuses rather than turning into a string), keyed by the
+# edition identity, independent of deck order.
+
+
+def _diff_encoded(before: Any, after: Any, path: str, out: list) -> None:
+    def leaf(value: Any) -> str:
+        return json.dumps(value, separators=(",", ":"), allow_nan=False)
+
+    if isinstance(before, dict) and isinstance(after, dict):
+        if _TAG in before or _TAG in after:
+            if leaf(before) != leaf(after):
+                out.append(
+                    {
+                        "path": path,
+                        "before": {"value": before},
+                        "after": {"value": after},
+                    }
+                )
+            return
+        for key in list(before) + [k for k in after if k not in before]:
+            _diff_encoded(
+                before.get(key, _ABSENT), after.get(key, _ABSENT), f"{path}.{key}", out
+            )
+        if [k for k in before if k in after] != [k for k in after if k in before]:
+            out.append(
+                {
+                    "path": f"{path}<key order>",
+                    "before": {"value": list(before)},
+                    "after": {"value": list(after)},
+                }
+            )
+        return
+    if isinstance(before, list) and isinstance(after, list):
+        for index in range(max(len(before), len(after))):
+            _diff_encoded(
+                before[index] if index < len(before) else _ABSENT,
+                after[index] if index < len(after) else _ABSENT,
+                f"{path}[{index}]",
+                out,
+            )
+        return
+    if before is _ABSENT or after is _ABSENT or leaf(before) != leaf(after):
+        out.append(
+            {"path": path, "before": _absent_enc(before), "after": _absent_enc(after)}
+        )
+
+
+def _is_permitted(path: str, permitted: frozenset) -> bool:
+    return any(
+        path == p or path.startswith(p + ".") or path.startswith(p + "[")
+        for p in permitted
+    )
+
+
+def compare_decks_by_identity(
+    before: list,
+    after: list,
+    *,
+    require_same_inventory: bool = True,
+    permitted_positional_paths: Iterable[str] = (),
+) -> dict:
+    """Compare two published decks card by card, by identity, ignoring order.
+
+    Refuses (``INVALID``/``UNSUPPORTED``, the same rule as the capture's own
+    decks) a deck holding a duplicate identity, a card with no identity or an
+    unsupported kind — a duplicate is never allowed to collapse into one map
+    entry. ``verdict`` is ``PASS`` only when no shared card differs anywhere in
+    its encoded payload and, under ``require_same_inventory``, no card was added
+    or removed.
+
+    ``permitted_positional_paths`` names exact card paths (``"$.data.rank"``)
+    that legitimately depend on position; their differences are reported under
+    ``positional_changes`` and never hidden. Empty by default: nothing is
+    permitted unless a caller names it.
+    """
+    permitted = frozenset(permitted_positional_paths)
+    before_ids = _check_identities(before, kinds=SUPPORTED_DECK_KINDS, where="before")
+    after_ids = _check_identities(after, kinds=SUPPORTED_DECK_KINDS, where="after")
+    before_by = dict(zip(before_ids, before))
+    after_by = dict(zip(after_ids, after))
+    after_set = set(after_ids)
+    added = [i for i in after_ids if i not in before_by]
+    removed = [i for i in before_ids if i not in after_set]
+
+    content: list[dict] = []
+    positional: list[dict] = []
+    shared = [i for i in before_ids if i in after_set]
+    for ident in shared:
+        a, b = before_by[ident], after_by[ident]
+        changes: list[dict] = []
+        _diff_encoded(encode_value(a, ident), encode_value(b, ident), "$", changes)
+        if not changes and canonical(a) != canonical(b):  # pragma: no cover
+            raise DisplayReplayError(
+                INVALID,
+                f"{ident}: canonical forms differ but no field difference found",
+            )
+        for change in changes:
+            target = positional if _is_permitted(change["path"], permitted) else content
+            target.append({"identity": ident, **change})
+
+    inventory_ok = not (added or removed) or not require_same_inventory
+    return {
+        "verdict": PASS if inventory_ok and not content else MISMATCH,
+        "compared": "full published card, encode_value codec, keyed by edition identity",
+        "totals": {"before": len(before_ids), "after": len(after_ids)},
+        "shared": len(shared),
+        "require_same_inventory": require_same_inventory,
+        "added": added,
+        "removed": removed,
+        "cards_with_content_changes": sorted({c["identity"] for c in content}),
+        "content_changes": content,
+        "permitted_positional_paths": sorted(permitted),
+        "positional_changes": positional,
+    }
 
 
 def write_capture(capture: dict, path: str) -> None:

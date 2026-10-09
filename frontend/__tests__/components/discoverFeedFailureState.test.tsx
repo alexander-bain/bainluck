@@ -141,11 +141,16 @@ describe("#1909 — the retry is a feed revalidation, not a document reload", ()
 
 describe("#1909 — the other direction (gotcha #43): a recovering feed is not latched", () => {
   test("the failure branch is derived from SWR state, holding no error flag of its own", () => {
-    // `{!isLoading && feedError && !data && (` — three live values, no useState.
-    // A `setHasError(true)` anywhere in this path would survive the recovery that
-    // clears `feedError`, and the reader would be stuck on an error over a
-    // working feed. Asserting the SHAPE is what keeps that from being reintroduced.
-    expect(PAGE_SOURCE).toContain("{!isLoading && feedError && !data && (");
+    // `{!isLoading && feedError && (!data || editionAwaitingOwnReply) && (` — live
+    // values, no useState. A `setHasError(true)` anywhere in this path would
+    // survive the recovery that clears `feedError`, and the reader would be stuck
+    // on an error over a working feed. Asserting the SHAPE is what keeps that from
+    // being reintroduced. #5105's `editionAwaitingOwnReply` is false whenever the
+    // opening-edition switch is off, and is itself derived on every render, never
+    // remembered — so the branch still clears the moment `feedError` does.
+    expect(PAGE_SOURCE).toContain("{!isLoading && feedError && (!data || editionAwaitingOwnReply) && (");
+    expect(PAGE_SOURCE).toMatch(/const editionAwaitingOwnReply = editionEnabled && /);
+    expect(PAGE_SOURCE).not.toMatch(/\[editionAwaitingOwnReply,\s*set/);
     expect(PAGE_SOURCE).not.toMatch(/set(Feed)?(Load)?Error\s*\(/);
   });
 

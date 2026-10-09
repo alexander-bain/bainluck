@@ -2008,6 +2008,9 @@ export interface FeedItem {
   personalization_reasons?: string[];
 }
 
+/** The backend's served `edition_status` values (`feed_editions.py`). */
+export type FeedEditionStatus = "pinned" | "expired" | "superseded" | "invalidated";
+
 export interface FeedResponse {
   items: FeedItem[];
   total: number;
@@ -2045,6 +2048,19 @@ export interface FeedResponse {
    * opinion, so reconcile rather than reorder.
    */
   edition?: string;
+  /**
+   * #5105 — GLOBAL 0-based deck position where the ordinary-live continuation
+   * begins; the same on every page of one edition. Absent/null = no section;
+   * 0 is a real boundary. Read via `lib/discover/continuationSections`.
+   */
+  continuation_start?: number | null;
+  /**
+   * T4-B2/#5102 — what happened to the `edition` this request asked for:
+   * `pinned` (served in that edition's order) or `expired` / `superseded` /
+   * `invalidated` (the current list was served instead). Absent when no edition
+   * was sent. Read via `lib/discover/feedEditionTransition`, never inline.
+   */
+  edition_status?: FeedEditionStatus;
   // Present when my_teams_only=true
   my_teams_only?: boolean;
   requires_auth?: boolean;

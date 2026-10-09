@@ -406,6 +406,18 @@ _PAGE_BASE_OFF_VALUES = frozenset({"0", "false", "no", "off"})
 #: because ``cache`` describes a serve and the base is never served as-is.
 FEED_PAGE_BASE_BUILT_AT_FIELD = "_page_base_built_at"
 
+#: #5105. Folded into BOTH cache keys when a build opted into opening seating
+#: (``discover_opening_seating.seat_opening``). A seated deck and an unseated
+#: deck are two different lists, so a page — or a whole-deck base — built under
+#: one policy must never be read back under the other. The literal is the SAME
+#: one `feed_editions.edition_policy_fingerprint` folds in, deliberately: the
+#: cache entry and the edition minted from it then name one policy, not two
+#: that merely agree today. Duplicated rather than imported because
+#: `feed_editions` already imports this module; a test pins the two equal.
+#: Bump the version (``-v2``) when the seating rule changes what it seats —
+#: that is a new list, and the old pages must miss rather than be reused.
+FEED_OPENING_SEATING_KEY_MARKER = "seat=opening-v1"
+
 
 def feed_page_base_enabled() -> bool:
     """Whether the offset-independent page base may be read or published.
@@ -437,6 +449,7 @@ def feed_page_base_cache_key(
     mode: Optional[str] = None,
     category: Optional[str] = None,
     collections: Optional[str] = None,
+    opening_seating: bool = False,
 ) -> str:
     """Key for one stored, offset-independent Discover build.
 
@@ -454,6 +467,12 @@ def feed_page_base_cache_key(
     ``get_feed``'s ``_cache_shape`` so a build input added to the response key
     cannot be silently omitted here — omitting one would serve page 2 of the
     wrong list, which no latency test would catch.
+
+    ``opening_seating`` (#5105, default ``False``) is a build input: seating
+    reorders the whole deck, so a seated base and an unseated one are two
+    lists. ``False`` hashes exactly what this function always hashed. The
+    continuation boundary is NOT a parameter — it is the edition's layout,
+    derived from the seated deck, not an input to building it.
     """
     parts = (
         f"pagebase:{sport or 'all'}:{limit}:"
@@ -470,6 +489,10 @@ def feed_page_base_cache_key(
         # base carries the hubs `add_feed_collections` inserted. Same form and
         # same reason as on ``feed_response_cache_key``.
         parts = f"col={len(collections)}:{collections}|{parts}"
+    if opening_seating:
+        # #5105. Prepended under the `if`, like every segment above, so a
+        # legacy build keeps its byte-identical key.
+        parts = f"{FEED_OPENING_SEATING_KEY_MARKER}|{parts}"
     return f"{FEED_PAGE_BASE_CACHE_PREFIX}:{hashlib.md5(parts.encode()).hexdigest()}"
 
 
@@ -666,7 +689,9 @@ def _feed_edition_member(item: Any) -> str:
 feed_edition_member = _feed_edition_member
 
 
-def feed_edition_token(items: Any) -> Optional[str]:
+def feed_edition_token(
+    items: Any, continuation_start: Optional[int] = None
+) -> Optional[str]:
     """Stable identifier for one ORDERED feed list.
 
     Pure: no clock, no I/O, no Redis, no randomness — the same list yields the
@@ -681,10 +706,36 @@ def feed_edition_token(items: Any) -> Optional[str]:
     client that reconciled against a stable "empty edition" token would be
     treating three different failures as one authoritative ordering. Absent is
     also what an older backend sends, so the client needs that branch regardless.
+
+    ``continuation_start`` (#5105, thin supply): the FULL-deck 0-based position
+    where an ordinary-live continuation section begins. It is LAYOUT, so it is
+    part of the edition: the same cards in the same order with the boundary
+    moved are a different thing to paint, and must not reuse a token a client
+    already reconciled against. ``None`` (the default) is "no section" and
+    hashes exactly what this function always hashed — legacy tokens are
+    byte-for-byte unchanged, not merely self-consistent. ``0`` is a real
+    boundary (no eligible opening), never "missing". Anything else that is not
+    an ``int`` inside the deck — ``bool``, negative, ``>= len(items)``, or any
+    boundary on an empty/non-list deck — raises ``ValueError``: a malformed
+    boundary is refused, never silently hashed as some other layout.
     """
+    if continuation_start is not None and not (
+        type(continuation_start) is int
+        and isinstance(items, list)
+        and 0 <= continuation_start < len(items)
+    ):
+        raise ValueError(
+            f"continuation_start {continuation_start!r} is not a position in the "
+            f"{len(items) if isinstance(items, list) else 'non-list'} card deck"
+        )
     if not isinstance(items, list) or not items:
         return None
     joined = "\n".join(_feed_edition_member(item) for item in items)
+    if continuation_start is not None:
+        # A trailer line no member can produce (members are ``?`` or
+        # ``kind:ident``, never NUL-led), so a bounded deck can never hash to
+        # any unbounded deck's token.
+        joined += f"\n\x00continuation_start={continuation_start}"
     return hashlib.sha256(joined.encode("utf-8")).hexdigest()[:_FEED_EDITION_HEX_LEN]
 
 
@@ -704,6 +755,7 @@ def feed_response_cache_key(
     category: Optional[str] = None,
     edition: Optional[str] = None,
     collections: Optional[str] = None,
+    opening_seating: bool = False,
 ) -> str:
     """Build the Redis response-cache key for one ``GET /api/feed`` shape.
 
@@ -718,6 +770,10 @@ def feed_response_cache_key(
     The principal segment mirrors the L2-242 shared-anon contract: an
     authenticated user and a session both get their own key; only a request with
     neither shares the ``anon`` key.
+
+    ``opening_seating`` (#5105, default ``False``): see
+    ``FEED_OPENING_SEATING_KEY_MARKER``. ``False`` hashes exactly what this
+    function always hashed.
     """
     if user_id is not None:
         user_part = f"u:{user_id}"
@@ -766,6 +822,10 @@ def feed_response_cache_key(
         # step to forget. Flag-off requests pass None and hash the
         # byte-identical string they always did.
         parts = f"col={len(collections)}:{collections}|{parts}"
+    if opening_seating:
+        # #5105. A page cut from a seated deck is not the legacy page at the
+        # same offset. Same `if` as `edition` above: legacy keys are unchanged.
+        parts = f"{FEED_OPENING_SEATING_KEY_MARKER}|{parts}"
     return f"{FEED_RESPONSE_CACHE_PREFIX}:{hashlib.md5(parts.encode()).hexdigest()}"
 
 

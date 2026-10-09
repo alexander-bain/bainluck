@@ -1,0 +1,305 @@
+{
+  "about": "#5105 web/server connection gate: exact get_feed responses (served switch ON, fixed request clocks, dict Redis, mocked DB) for the real Discover page to consume. Generated, never hand-edited.",
+  "generator": "backend/tests/integration/test_discover_web_transcript_5105.py",
+  "regenerate": "cd backend && DISCOVER_5105_TRANSCRIPT_WRITE=1 python3 -m pytest tests/integration/test_discover_web_transcript_5105.py",
+  "scenarios": {
+    "boundary_zero": [
+      {
+        "body": "{\"items\":[{\"type\":\"event\",\"score\":95,\"data\":{\"id\":1,\"status\":\"live\",\"commence_time\":\"2026-10-09T16:50:00+00:00\"}},{\"type\":\"event\",\"score\":95,\"data\":{\"id\":2,\"status\":\"live\",\"commence_time\":\"2026-10-09T16:50:00+00:00\"}},{\"type\":\"event\",\"score\":95,\"data\":{\"id\":3,\"status\":\"live\",\"commence_time\":\"2026-10-09T16:50:00+00:00\"}},{\"type\":\"event\",\"score\":95,\"data\":{\"id\":4,\"status\":\"live\",\"commence_time\":\"2026-10-09T16:50:00+00:00\"}},{\"type\":\"event\",\"score\":95,\"data\":{\"id\":5,\"status\":\"live\",\"commence_time\":\"2026-10-09T16:50:00+00:00\"}},{\"type\":\"event\",\"score\":95,\"data\":{\"id\":6,\"status\":\"live\",\"commence_time\":\"2026-10-09T16:50:00+00:00\"}},{\"type\":\"event\",\"score\":95,\"data\":{\"id\":7,\"status\":\"live\",\"commence_time\":\"2026-10-09T16:50:00+00:00\"}},{\"type\":\"event\",\"score\":95,\"data\":{\"id\":8,\"status\":\"live\",\"commence_time\":\"2026-10-09T16:50:00+00:00\"}},{\"type\":\"event\",\"score\":95,\"data\":{\"id\":9,\"status\":\"live\",\"commence_time\":\"2026-10-09T16:50:00+00:00\"}},{\"type\":\"event\",\"score\":95,\"data\":{\"id\":10,\"status\":\"live\",\"commence_time\":\"2026-10-09T16:50:00+00:00\"}},{\"type\":\"event\",\"score\":95,\"data\":{\"id\":11,\"status\":\"live\",\"commence_time\":\"2026-10-09T16:50:00+00:00\"}},{\"type\":\"event\",\"score\":95,\"data\":{\"id\":12,\"status\":\"live\",\"commence_time\":\"2026-10-09T16:50:00+00:00\"}},{\"type\":\"event\",\"score\":95,\"data\":{\"id\":13,\"status\":\"live\",\"commence_time\":\"2026-10-09T16:50:00+00:00\"}},{\"type\":\"event\",\"score\":95,\"data\":{\"id\":14,\"status\":\"live\",\"commence_time\":\"2026-10-09T16:50:00+00:00\"}},{\"type\":\"event\",\"score\":95,\"data\":{\"id\":15,\"status\":\"live\",\"commence_time\":\"2026-10-09T16:50:00+00:00\"}},{\"type\":\"event\",\"score\":95,\"data\":{\"id\":16,\"status\":\"live\",\"commence_time\":\"2026-10-09T16:50:00+00:00\"}},{\"type\":\"event\",\"score\":95,\"data\":{\"id\":17,\"status\":\"live\",\"commence_time\":\"2026-10-09T16:50:00+00:00\"}},{\"type\":\"event\",\"score\":95,\"data\":{\"id\":18,\"status\":\"live\",\"commence_time\":\"2026-10-09T16:50:00+00:00\"}},{\"type\":\"event\",\"score\":95,\"data\":{\"id\":19,\"status\":\"live\",\"commence_time\":\"2026-10-09T16:50:00+00:00\"}},{\"type\":\"event\",\"score\":95,\"data\":{\"id\":20,\"status\":\"live\",\"commence_time\":\"2026-10-09T16:50:00+00:00\"}}],\"total\":25,\"limit\":20,\"offset\":0,\"has_more\":true,\"continuation_start\":0,\"edition\":\"8670f7b18e145238\",\"cache\":{\"status\":\"miss\",\"built_at\":1791568200.0,\"ttl_seconds\":30,\"stale_ttl_seconds\":60,\"live\":true}}",
+        "clock": "2026-10-09T17:50:00+00:00",
+        "headers": {
+          "content-type": "application/json",
+          "x-feed-cache": "miss",
+          "x-feed-singleflight": "leader"
+        },
+        "label": "page0",
+        "request": {
+          "session": null,
+          "url": "/api/feed?limit=20&event_pct=0.15"
+        },
+        "status": 200
+      },
+      {
+        "body": "{\"items\":[{\"type\":\"event\",\"score\":95,\"data\":{\"id\":21,\"status\":\"live\",\"commence_time\":\"2026-10-09T16:50:00+00:00\"}},{\"type\":\"event\",\"score\":95,\"data\":{\"id\":22,\"status\":\"live\",\"commence_time\":\"2026-10-09T16:50:00+00:00\"}},{\"type\":\"event\",\"score\":95,\"data\":{\"id\":23,\"status\":\"live\",\"commence_time\":\"2026-10-09T16:50:00+00:00\"}},{\"type\":\"event\",\"score\":95,\"data\":{\"id\":24,\"status\":\"live\",\"commence_time\":\"2026-10-09T16:50:00+00:00\"}},{\"type\":\"event\",\"score\":95,\"data\":{\"id\":25,\"status\":\"live\",\"commence_time\":\"2026-10-09T16:50:00+00:00\"}}],\"total\":25,\"edition\":\"8670f7b18e145238\",\"continuation_start\":0,\"limit\":20,\"offset\":20,\"has_more\":false,\"edition_status\":\"pinned\",\"cache\":{\"status\":\"page_base_hit\",\"built_at\":1791568200.0,\"ttl_seconds\":5,\"stale_ttl_seconds\":30,\"reason\":\"page_base\",\"live\":true}}",
+        "clock": "2026-10-09T17:50:30+00:00",
+        "headers": {
+          "content-type": "application/json",
+          "x-feed-cache": "page_base_hit",
+          "x-feed-singleflight": "leader"
+        },
+        "label": "page1",
+        "request": {
+          "session": "sess-5105-web-gate",
+          "url": "/api/feed?limit=20&offset=20&event_pct=0.15&edition=8670f7b18e145238"
+        },
+        "status": 200
+      }
+    ],
+    "empty_vs_refusal": [
+      {
+        "body": "{\"items\":[],\"total\":0,\"limit\":20,\"offset\":0,\"has_more\":false,\"cache\":{\"status\":\"miss\",\"built_at\":1791568200.0,\"ttl_seconds\":60,\"stale_ttl_seconds\":300,\"live\":false}}",
+        "clock": "2026-10-09T17:50:00+00:00",
+        "headers": {
+          "content-type": "application/json",
+          "x-feed-cache": "miss",
+          "x-feed-singleflight": "leader"
+        },
+        "label": "complete-empty-page0",
+        "request": {
+          "session": null,
+          "url": "/api/feed?limit=20&event_pct=0.15"
+        },
+        "status": 200
+      },
+      {
+        "body": "{\"items\":[],\"total\":0,\"limit\":20,\"offset\":0,\"has_more\":false,\"cache\":{\"status\":\"unavailable\",\"ttl_seconds\":0,\"stale_ttl_seconds\":0,\"reason\":\"opening_unsupported\"}}",
+        "clock": "2026-10-09T17:51:00+00:00",
+        "headers": {
+          "content-type": "application/json",
+          "x-feed-cache": "unavailable",
+          "x-feed-singleflight": "none"
+        },
+        "label": "refused-page0",
+        "request": {
+          "session": null,
+          "url": "/api/feed?limit=20&event_pct=0.15"
+        },
+        "status": 200
+      },
+      {
+        "body": "{\"items\":[{\"type\":\"futures\",\"score\":90,\"data\":{\"id\":0,\"probability\":0.5}},{\"type\":\"futures\",\"score\":89,\"data\":{\"id\":1,\"probability\":0.5}},{\"type\":\"futures\",\"score\":88,\"data\":{\"id\":2,\"probability\":0.5}},{\"type\":\"futures\",\"score\":87,\"data\":{\"id\":3,\"probability\":0.5}},{\"type\":\"futures\",\"score\":86,\"data\":{\"id\":4,\"probability\":0.5}},{\"type\":\"futures\",\"score\":85,\"data\":{\"id\":5,\"probability\":0.5}},{\"type\":\"futures\",\"score\":84,\"data\":{\"id\":6,\"probability\":0.5}},{\"type\":\"futures\",\"score\":83,\"data\":{\"id\":7,\"probability\":0.5}},{\"type\":\"futures\",\"score\":82,\"data\":{\"id\":8,\"probability\":0.5}},{\"type\":\"futures\",\"score\":81,\"data\":{\"id\":9,\"probability\":0.5}},{\"type\":\"futures\",\"score\":80,\"data\":{\"id\":10,\"probability\":0.5}},{\"type\":\"futures\",\"score\":79,\"data\":{\"id\":11,\"probability\":0.5}},{\"type\":\"futures\",\"score\":78,\"data\":{\"id\":12,\"probability\":0.5}},{\"type\":\"futures\",\"score\":77,\"data\":{\"id\":13,\"probability\":0.5}},{\"type\":\"futures\",\"score\":76,\"data\":{\"id\":14,\"probability\":0.5}},{\"type\":\"futures\",\"score\":75,\"data\":{\"id\":15,\"probability\":0.5}},{\"type\":\"futures\",\"score\":74,\"data\":{\"id\":16,\"probability\":0.5}},{\"type\":\"futures\",\"score\":73,\"data\":{\"id\":17,\"probability\":0.5}},{\"type\":\"futures\",\"score\":72,\"data\":{\"id\":18,\"probability\":0.5}},{\"type\":\"futures\",\"score\":71,\"data\":{\"id\":19,\"probability\":0.5}}],\"total\":30,\"limit\":20,\"offset\":0,\"has_more\":true,\"edition\":\"8c89457b35fd20b3\",\"cache\":{\"status\":\"miss\",\"built_at\":1791568320.0,\"ttl_seconds\":60,\"stale_ttl_seconds\":300,\"live\":false}}",
+        "clock": "2026-10-09T17:52:00+00:00",
+        "headers": {
+          "content-type": "application/json",
+          "x-feed-cache": "miss",
+          "x-feed-singleflight": "leader"
+        },
+        "label": "retry-page0",
+        "request": {
+          "session": null,
+          "url": "/api/feed?limit=20&event_pct=0.15"
+        },
+        "status": 200
+      }
+    ],
+    "full_opening_back": [
+      {
+        "body": "{\"items\":[{\"type\":\"futures\",\"score\":90,\"data\":{\"id\":0,\"probability\":0.5}},{\"type\":\"futures\",\"score\":89,\"data\":{\"id\":1,\"probability\":0.5}},{\"type\":\"futures\",\"score\":88,\"data\":{\"id\":2,\"probability\":0.5}},{\"type\":\"futures\",\"score\":87,\"data\":{\"id\":3,\"probability\":0.5}},{\"type\":\"futures\",\"score\":86,\"data\":{\"id\":4,\"probability\":0.5}},{\"type\":\"futures\",\"score\":85,\"data\":{\"id\":5,\"probability\":0.5}},{\"type\":\"futures\",\"score\":84,\"data\":{\"id\":6,\"probability\":0.5}},{\"type\":\"futures\",\"score\":83,\"data\":{\"id\":7,\"probability\":0.5}},{\"type\":\"futures\",\"score\":82,\"data\":{\"id\":8,\"probability\":0.5}},{\"type\":\"futures\",\"score\":81,\"data\":{\"id\":9,\"probability\":0.5}},{\"type\":\"futures\",\"score\":80,\"data\":{\"id\":10,\"probability\":0.5}},{\"type\":\"futures\",\"score\":79,\"data\":{\"id\":11,\"probability\":0.5}},{\"type\":\"futures\",\"score\":78,\"data\":{\"id\":12,\"probability\":0.5}},{\"type\":\"futures\",\"score\":77,\"data\":{\"id\":13,\"probability\":0.5}},{\"type\":\"futures\",\"score\":76,\"data\":{\"id\":14,\"probability\":0.5}},{\"type\":\"futures\",\"score\":75,\"data\":{\"id\":15,\"probability\":0.5}},{\"type\":\"futures\",\"score\":74,\"data\":{\"id\":16,\"probability\":0.5}},{\"type\":\"futures\",\"score\":73,\"data\":{\"id\":17,\"probability\":0.5}},{\"type\":\"futures\",\"score\":72,\"data\":{\"id\":18,\"probability\":0.5}},{\"type\":\"futures\",\"score\":71,\"data\":{\"id\":19,\"probability\":0.5}}],\"total\":40,\"limit\":20,\"offset\":0,\"has_more\":true,\"edition\":\"676a36a9753e4b02\",\"cache\":{\"status\":\"miss\",\"built_at\":1791568200.0,\"ttl_seconds\":60,\"stale_ttl_seconds\":300,\"live\":false}}",
+        "clock": "2026-10-09T17:50:00+00:00",
+        "headers": {
+          "content-type": "application/json",
+          "x-feed-cache": "miss",
+          "x-feed-singleflight": "leader"
+        },
+        "label": "page0",
+        "request": {
+          "session": null,
+          "url": "/api/feed?limit=20&event_pct=0.15"
+        },
+        "status": 200
+      },
+      {
+        "body": "{\"items\":[{\"type\":\"futures\",\"score\":90,\"data\":{\"id\":0,\"probability\":0.5}},{\"type\":\"futures\",\"score\":89,\"data\":{\"id\":1,\"probability\":0.5}},{\"type\":\"futures\",\"score\":88,\"data\":{\"id\":2,\"probability\":0.5}},{\"type\":\"futures\",\"score\":87,\"data\":{\"id\":3,\"probability\":0.5}},{\"type\":\"futures\",\"score\":86,\"data\":{\"id\":4,\"probability\":0.5}},{\"type\":\"futures\",\"score\":85,\"data\":{\"id\":5,\"probability\":0.5}},{\"type\":\"futures\",\"score\":84,\"data\":{\"id\":6,\"probability\":0.5}},{\"type\":\"futures\",\"score\":83,\"data\":{\"id\":7,\"probability\":0.5}},{\"type\":\"futures\",\"score\":82,\"data\":{\"id\":8,\"probability\":0.5}},{\"type\":\"futures\",\"score\":81,\"data\":{\"id\":9,\"probability\":0.5}},{\"type\":\"futures\",\"score\":80,\"data\":{\"id\":10,\"probability\":0.5}},{\"type\":\"futures\",\"score\":79,\"data\":{\"id\":11,\"probability\":0.5}},{\"type\":\"futures\",\"score\":78,\"data\":{\"id\":12,\"probability\":0.5}},{\"type\":\"futures\",\"score\":77,\"data\":{\"id\":13,\"probability\":0.5}},{\"type\":\"futures\",\"score\":76,\"data\":{\"id\":14,\"probability\":0.5}},{\"type\":\"futures\",\"score\":75,\"data\":{\"id\":15,\"probability\":0.5}},{\"type\":\"futures\",\"score\":74,\"data\":{\"id\":16,\"probability\":0.5}},{\"type\":\"futures\",\"score\":73,\"data\":{\"id\":17,\"probability\":0.5}},{\"type\":\"futures\",\"score\":72,\"data\":{\"id\":18,\"probability\":0.5}},{\"type\":\"futures\",\"score\":71,\"data\":{\"id\":19,\"probability\":0.5}}],\"total\":40,\"edition\":\"676a36a9753e4b02\",\"limit\":20,\"offset\":0,\"has_more\":true,\"edition_status\":\"pinned\",\"cache\":{\"status\":\"page_base_hit\",\"built_at\":1791568200.0,\"ttl_seconds\":60,\"stale_ttl_seconds\":300,\"reason\":\"page_base\",\"live\":false}}",
+        "clock": "2026-10-09T17:51:00+00:00",
+        "headers": {
+          "content-type": "application/json",
+          "x-feed-cache": "page_base_hit",
+          "x-feed-singleflight": "leader"
+        },
+        "label": "back-revalidate-page0",
+        "request": {
+          "session": null,
+          "url": "/api/feed?limit=20&event_pct=0.15&edition=676a36a9753e4b02"
+        },
+        "status": 200
+      },
+      {
+        "body": "{\"items\":[{\"type\":\"futures\",\"score\":70,\"data\":{\"id\":20,\"probability\":0.5}},{\"type\":\"futures\",\"score\":69,\"data\":{\"id\":21,\"probability\":0.5}},{\"type\":\"futures\",\"score\":68,\"data\":{\"id\":22,\"probability\":0.5}},{\"type\":\"futures\",\"score\":67,\"data\":{\"id\":23,\"probability\":0.5}},{\"type\":\"futures\",\"score\":66,\"data\":{\"id\":24,\"probability\":0.5}},{\"type\":\"futures\",\"score\":65,\"data\":{\"id\":25,\"probability\":0.5}},{\"type\":\"futures\",\"score\":64,\"data\":{\"id\":26,\"probability\":0.5}},{\"type\":\"futures\",\"score\":63,\"data\":{\"id\":27,\"probability\":0.5}},{\"type\":\"futures\",\"score\":62,\"data\":{\"id\":28,\"probability\":0.5}},{\"type\":\"futures\",\"score\":61,\"data\":{\"id\":29,\"probability\":0.5}},{\"type\":\"futures\",\"score\":60,\"data\":{\"id\":30,\"probability\":0.5}},{\"type\":\"futures\",\"score\":59,\"data\":{\"id\":31,\"probability\":0.5}},{\"type\":\"futures\",\"score\":58,\"data\":{\"id\":32,\"probability\":0.5}},{\"type\":\"futures\",\"score\":57,\"data\":{\"id\":33,\"probability\":0.5}},{\"type\":\"futures\",\"score\":56,\"data\":{\"id\":34,\"probability\":0.5}},{\"type\":\"futures\",\"score\":55,\"data\":{\"id\":35,\"probability\":0.5}},{\"type\":\"futures\",\"score\":54,\"data\":{\"id\":36,\"probability\":0.5}},{\"type\":\"futures\",\"score\":53,\"data\":{\"id\":37,\"probability\":0.5}},{\"type\":\"futures\",\"score\":52,\"data\":{\"id\":38,\"probability\":0.5}},{\"type\":\"futures\",\"score\":51,\"data\":{\"id\":39,\"probability\":0.5}}],\"total\":40,\"edition\":\"676a36a9753e4b02\",\"limit\":20,\"offset\":20,\"has_more\":false,\"edition_status\":\"pinned\",\"cache\":{\"status\":\"page_base_hit\",\"built_at\":1791568200.0,\"ttl_seconds\":5,\"stale_ttl_seconds\":300,\"reason\":\"page_base\",\"live\":false}}",
+        "clock": "2026-10-09T17:51:30+00:00",
+        "headers": {
+          "content-type": "application/json",
+          "x-feed-cache": "page_base_hit",
+          "x-feed-singleflight": "leader"
+        },
+        "label": "page1",
+        "request": {
+          "session": "sess-5105-web-gate",
+          "url": "/api/feed?limit=20&offset=20&event_pct=0.15&edition=676a36a9753e4b02"
+        },
+        "status": 200
+      }
+    ],
+    "sparse_opening": [
+      {
+        "body": "{\"items\":[{\"type\":\"futures\",\"score\":90,\"data\":{\"id\":0,\"probability\":0.5}},{\"type\":\"futures\",\"score\":89,\"data\":{\"id\":1,\"probability\":0.5}},{\"type\":\"futures\",\"score\":88,\"data\":{\"id\":2,\"probability\":0.5}},{\"type\":\"event\",\"score\":95,\"data\":{\"id\":1,\"status\":\"live\",\"commence_time\":\"2026-10-09T16:50:00+00:00\"}},{\"type\":\"event\",\"score\":95,\"data\":{\"id\":2,\"status\":\"live\",\"commence_time\":\"2026-10-09T16:50:00+00:00\"}},{\"type\":\"event\",\"score\":95,\"data\":{\"id\":3,\"status\":\"live\",\"commence_time\":\"2026-10-09T16:50:00+00:00\"}},{\"type\":\"event\",\"score\":95,\"data\":{\"id\":4,\"status\":\"live\",\"commence_time\":\"2026-10-09T16:50:00+00:00\"}},{\"type\":\"event\",\"score\":95,\"data\":{\"id\":5,\"status\":\"live\",\"commence_time\":\"2026-10-09T16:50:00+00:00\"}},{\"type\":\"event\",\"score\":95,\"data\":{\"id\":6,\"status\":\"live\",\"commence_time\":\"2026-10-09T16:50:00+00:00\"}},{\"type\":\"event\",\"score\":95,\"data\":{\"id\":7,\"status\":\"live\",\"commence_time\":\"2026-10-09T16:50:00+00:00\"}},{\"type\":\"event\",\"score\":95,\"data\":{\"id\":8,\"status\":\"live\",\"commence_time\":\"2026-10-09T16:50:00+00:00\"}},{\"type\":\"event\",\"score\":95,\"data\":{\"id\":9,\"status\":\"live\",\"commence_time\":\"2026-10-09T16:50:00+00:00\"}},{\"type\":\"event\",\"score\":95,\"data\":{\"id\":10,\"status\":\"live\",\"commence_time\":\"2026-10-09T16:50:00+00:00\"}},{\"type\":\"event\",\"score\":95,\"data\":{\"id\":11,\"status\":\"live\",\"commence_time\":\"2026-10-09T16:50:00+00:00\"}},{\"type\":\"event\",\"score\":95,\"data\":{\"id\":12,\"status\":\"live\",\"commence_time\":\"2026-10-09T16:50:00+00:00\"}},{\"type\":\"event\",\"score\":95,\"data\":{\"id\":13,\"status\":\"live\",\"commence_time\":\"2026-10-09T16:50:00+00:00\"}},{\"type\":\"event\",\"score\":95,\"data\":{\"id\":14,\"status\":\"live\",\"commence_time\":\"2026-10-09T16:50:00+00:00\"}},{\"type\":\"event\",\"score\":95,\"data\":{\"id\":15,\"status\":\"live\",\"commence_time\":\"2026-10-09T16:50:00+00:00\"}},{\"type\":\"event\",\"score\":95,\"data\":{\"id\":16,\"status\":\"live\",\"commence_time\":\"2026-10-09T16:50:00+00:00\"}},{\"type\":\"event\",\"score\":95,\"data\":{\"id\":17,\"status\":\"live\",\"commence_time\":\"2026-10-09T16:50:00+00:00\"}}],\"total\":33,\"limit\":20,\"offset\":0,\"has_more\":true,\"continuation_start\":3,\"edition\":\"8a08158c8ce29581\",\"cache\":{\"status\":\"miss\",\"built_at\":1791568200.0,\"ttl_seconds\":30,\"stale_ttl_seconds\":60,\"live\":true}}",
+        "clock": "2026-10-09T17:50:00+00:00",
+        "headers": {
+          "content-type": "application/json",
+          "x-feed-cache": "miss",
+          "x-feed-singleflight": "leader"
+        },
+        "label": "page0",
+        "request": {
+          "session": null,
+          "url": "/api/feed?limit=20&event_pct=0.15"
+        },
+        "status": 200
+      },
+      {
+        "body": "{\"items\":[{\"type\":\"event\",\"score\":95,\"data\":{\"id\":18,\"status\":\"live\",\"commence_time\":\"2026-10-09T16:50:00+00:00\"}},{\"type\":\"event\",\"score\":95,\"data\":{\"id\":19,\"status\":\"live\",\"commence_time\":\"2026-10-09T16:50:00+00:00\"}},{\"type\":\"event\",\"score\":95,\"data\":{\"id\":20,\"status\":\"live\",\"commence_time\":\"2026-10-09T16:50:00+00:00\"}},{\"type\":\"event\",\"score\":95,\"data\":{\"id\":21,\"status\":\"live\",\"commence_time\":\"2026-10-09T16:50:00+00:00\"}},{\"type\":\"event\",\"score\":95,\"data\":{\"id\":22,\"status\":\"live\",\"commence_time\":\"2026-10-09T16:50:00+00:00\"}},{\"type\":\"event\",\"score\":95,\"data\":{\"id\":23,\"status\":\"live\",\"commence_time\":\"2026-10-09T16:50:00+00:00\"}},{\"type\":\"event\",\"score\":95,\"data\":{\"id\":24,\"status\":\"live\",\"commence_time\":\"2026-10-09T16:50:00+00:00\"}},{\"type\":\"event\",\"score\":95,\"data\":{\"id\":25,\"status\":\"live\",\"commence_time\":\"2026-10-09T16:50:00+00:00\"}},{\"type\":\"event\",\"score\":95,\"data\":{\"id\":26,\"status\":\"live\",\"commence_time\":\"2026-10-09T16:50:00+00:00\"}},{\"type\":\"event\",\"score\":95,\"data\":{\"id\":27,\"status\":\"live\",\"commence_time\":\"2026-10-09T16:50:00+00:00\"}},{\"type\":\"event\",\"score\":95,\"data\":{\"id\":28,\"status\":\"live\",\"commence_time\":\"2026-10-09T16:50:00+00:00\"}},{\"type\":\"event\",\"score\":95,\"data\":{\"id\":29,\"status\":\"live\",\"commence_time\":\"2026-10-09T16:50:00+00:00\"}},{\"type\":\"event\",\"score\":95,\"data\":{\"id\":30,\"status\":\"live\",\"commence_time\":\"2026-10-09T16:50:00+00:00\"}}],\"total\":33,\"edition\":\"8a08158c8ce29581\",\"continuation_start\":3,\"limit\":20,\"offset\":20,\"has_more\":false,\"edition_status\":\"pinned\",\"cache\":{\"status\":\"page_base_hit\",\"built_at\":1791568200.0,\"ttl_seconds\":5,\"stale_ttl_seconds\":30,\"reason\":\"page_base\",\"live\":true}}",
+        "clock": "2026-10-09T17:50:30+00:00",
+        "headers": {
+          "content-type": "application/json",
+          "x-feed-cache": "page_base_hit",
+          "x-feed-singleflight": "leader"
+        },
+        "label": "page1",
+        "request": {
+          "session": "sess-5105-web-gate",
+          "url": "/api/feed?limit=20&offset=20&event_pct=0.15&edition=8a08158c8ce29581"
+        },
+        "status": 200
+      }
+    ],
+    "tournament_start": [
+      {
+        "body": "{\"items\":[{\"type\":\"futures\",\"score\":90,\"data\":{\"id\":0,\"probability\":0.5}},{\"type\":\"tournament\",\"score\":88,\"data\":{\"key\":\"t-open\",\"start_date\":\"2026-10-09T18:00:00+00:00\",\"end_date\":\"2026-10-12T18:00:00+00:00\"}},{\"type\":\"futures\",\"score\":89,\"data\":{\"id\":1,\"probability\":0.5}},{\"type\":\"futures\",\"score\":88,\"data\":{\"id\":2,\"probability\":0.5}},{\"type\":\"futures\",\"score\":87,\"data\":{\"id\":3,\"probability\":0.5}},{\"type\":\"futures\",\"score\":86,\"data\":{\"id\":4,\"probability\":0.5}},{\"type\":\"futures\",\"score\":85,\"data\":{\"id\":5,\"probability\":0.5}},{\"type\":\"futures\",\"score\":84,\"data\":{\"id\":6,\"probability\":0.5}},{\"type\":\"futures\",\"score\":83,\"data\":{\"id\":7,\"probability\":0.5}},{\"type\":\"futures\",\"score\":82,\"data\":{\"id\":8,\"probability\":0.5}},{\"type\":\"futures\",\"score\":81,\"data\":{\"id\":9,\"probability\":0.5}},{\"type\":\"futures\",\"score\":80,\"data\":{\"id\":10,\"probability\":0.5}},{\"type\":\"futures\",\"score\":79,\"data\":{\"id\":11,\"probability\":0.5}},{\"type\":\"futures\",\"score\":78,\"data\":{\"id\":12,\"probability\":0.5}},{\"type\":\"futures\",\"score\":77,\"data\":{\"id\":13,\"probability\":0.5}},{\"type\":\"futures\",\"score\":76,\"data\":{\"id\":14,\"probability\":0.5}},{\"type\":\"futures\",\"score\":75,\"data\":{\"id\":15,\"probability\":0.5}},{\"type\":\"futures\",\"score\":74,\"data\":{\"id\":16,\"probability\":0.5}},{\"type\":\"futures\",\"score\":73,\"data\":{\"id\":17,\"probability\":0.5}},{\"type\":\"futures\",\"score\":72,\"data\":{\"id\":18,\"probability\":0.5}}],\"total\":45,\"limit\":20,\"offset\":0,\"has_more\":true,\"edition\":\"d31e2f0e879afa1c\",\"cache\":{\"status\":\"miss\",\"built_at\":1791568200.0,\"ttl_seconds\":60,\"stale_ttl_seconds\":300,\"live\":false}}",
+        "clock": "2026-10-09T17:50:00+00:00",
+        "headers": {
+          "content-type": "application/json",
+          "x-feed-cache": "miss",
+          "x-feed-singleflight": "leader"
+        },
+        "label": "page0",
+        "request": {
+          "session": null,
+          "url": "/api/feed?limit=20&event_pct=0.15"
+        },
+        "status": 200
+      },
+      {
+        "body": "{\"items\":[{\"type\":\"futures\",\"score\":72,\"data\":{\"id\":18,\"probability\":0.5}},{\"type\":\"futures\",\"score\":71,\"data\":{\"id\":19,\"probability\":0.5}},{\"type\":\"futures\",\"score\":70,\"data\":{\"id\":20,\"probability\":0.5}},{\"type\":\"futures\",\"score\":69,\"data\":{\"id\":21,\"probability\":0.5}},{\"type\":\"futures\",\"score\":68,\"data\":{\"id\":22,\"probability\":0.5}},{\"type\":\"futures\",\"score\":67,\"data\":{\"id\":23,\"probability\":0.5}},{\"type\":\"futures\",\"score\":66,\"data\":{\"id\":24,\"probability\":0.5}},{\"type\":\"futures\",\"score\":65,\"data\":{\"id\":25,\"probability\":0.5}},{\"type\":\"futures\",\"score\":64,\"data\":{\"id\":26,\"probability\":0.5}},{\"type\":\"futures\",\"score\":63,\"data\":{\"id\":27,\"probability\":0.5}},{\"type\":\"futures\",\"score\":62,\"data\":{\"id\":28,\"probability\":0.5}},{\"type\":\"futures\",\"score\":61,\"data\":{\"id\":29,\"probability\":0.5}},{\"type\":\"futures\",\"score\":60,\"data\":{\"id\":30,\"probability\":0.5}},{\"type\":\"futures\",\"score\":59,\"data\":{\"id\":31,\"probability\":0.5}},{\"type\":\"futures\",\"score\":58,\"data\":{\"id\":32,\"probability\":0.5}},{\"type\":\"futures\",\"score\":57,\"data\":{\"id\":33,\"probability\":0.5}},{\"type\":\"futures\",\"score\":56,\"data\":{\"id\":34,\"probability\":0.5}},{\"type\":\"futures\",\"score\":55,\"data\":{\"id\":35,\"probability\":0.5}},{\"type\":\"futures\",\"score\":54,\"data\":{\"id\":36,\"probability\":0.5}},{\"type\":\"futures\",\"score\":53,\"data\":{\"id\":37,\"probability\":0.5}}],\"total\":46,\"limit\":20,\"offset\":20,\"has_more\":true,\"edition\":\"c3fbea5ff011f662\",\"edition_status\":\"expired\",\"cache\":{\"status\":\"miss\",\"built_at\":1791569100.0,\"ttl_seconds\":5,\"stale_ttl_seconds\":300,\"live\":false}}",
+        "clock": "2026-10-09T18:05:00+00:00",
+        "headers": {
+          "content-type": "application/json",
+          "x-feed-cache": "miss",
+          "x-feed-singleflight": "leader"
+        },
+        "label": "retired-page1",
+        "request": {
+          "session": "sess-5105-web-gate",
+          "url": "/api/feed?limit=20&offset=20&event_pct=0.15&edition=d31e2f0e879afa1c"
+        },
+        "status": 200
+      },
+      {
+        "body": "{\"items\":[{\"type\":\"futures\",\"score\":90,\"data\":{\"id\":0,\"probability\":0.5}},{\"type\":\"futures\",\"score\":-410,\"data\":{\"id\":500,\"probability\":0.5}},{\"type\":\"futures\",\"score\":89,\"data\":{\"id\":1,\"probability\":0.5}},{\"type\":\"futures\",\"score\":88,\"data\":{\"id\":2,\"probability\":0.5}},{\"type\":\"futures\",\"score\":87,\"data\":{\"id\":3,\"probability\":0.5}},{\"type\":\"futures\",\"score\":86,\"data\":{\"id\":4,\"probability\":0.5}},{\"type\":\"futures\",\"score\":85,\"data\":{\"id\":5,\"probability\":0.5}},{\"type\":\"futures\",\"score\":84,\"data\":{\"id\":6,\"probability\":0.5}},{\"type\":\"futures\",\"score\":83,\"data\":{\"id\":7,\"probability\":0.5}},{\"type\":\"futures\",\"score\":82,\"data\":{\"id\":8,\"probability\":0.5}},{\"type\":\"tournament\",\"score\":88,\"data\":{\"key\":\"t-open\",\"start_date\":\"2026-10-09T18:00:00+00:00\",\"end_date\":\"2026-10-12T18:00:00+00:00\"}},{\"type\":\"futures\",\"score\":81,\"data\":{\"id\":9,\"probability\":0.5}},{\"type\":\"futures\",\"score\":80,\"data\":{\"id\":10,\"probability\":0.5}},{\"type\":\"futures\",\"score\":79,\"data\":{\"id\":11,\"probability\":0.5}},{\"type\":\"futures\",\"score\":78,\"data\":{\"id\":12,\"probability\":0.5}},{\"type\":\"futures\",\"score\":77,\"data\":{\"id\":13,\"probability\":0.5}},{\"type\":\"futures\",\"score\":76,\"data\":{\"id\":14,\"probability\":0.5}},{\"type\":\"futures\",\"score\":75,\"data\":{\"id\":15,\"probability\":0.5}},{\"type\":\"futures\",\"score\":74,\"data\":{\"id\":16,\"probability\":0.5}},{\"type\":\"futures\",\"score\":73,\"data\":{\"id\":17,\"probability\":0.5}}],\"total\":46,\"edition\":\"c3fbea5ff011f662\",\"limit\":20,\"offset\":0,\"has_more\":true,\"cache\":{\"status\":\"page_base_hit\",\"built_at\":1791569100.0,\"ttl_seconds\":5,\"stale_ttl_seconds\":300,\"reason\":\"page_base\",\"live\":false}}",
+        "clock": "2026-10-09T18:05:02+00:00",
+        "headers": {
+          "content-type": "application/json",
+          "x-feed-cache": "page_base_hit",
+          "x-feed-singleflight": "leader"
+        },
+        "label": "replacement-page0",
+        "request": {
+          "session": "sess-5105-web-gate",
+          "url": "/api/feed?limit=20&event_pct=0.15"
+        },
+        "status": 200
+      },
+      {
+        "body": "{\"items\":[{\"type\":\"futures\",\"score\":72,\"data\":{\"id\":18,\"probability\":0.5}},{\"type\":\"futures\",\"score\":71,\"data\":{\"id\":19,\"probability\":0.5}},{\"type\":\"futures\",\"score\":70,\"data\":{\"id\":20,\"probability\":0.5}},{\"type\":\"futures\",\"score\":69,\"data\":{\"id\":21,\"probability\":0.5}},{\"type\":\"futures\",\"score\":68,\"data\":{\"id\":22,\"probability\":0.5}},{\"type\":\"futures\",\"score\":67,\"data\":{\"id\":23,\"probability\":0.5}},{\"type\":\"futures\",\"score\":66,\"data\":{\"id\":24,\"probability\":0.5}},{\"type\":\"futures\",\"score\":65,\"data\":{\"id\":25,\"probability\":0.5}},{\"type\":\"futures\",\"score\":64,\"data\":{\"id\":26,\"probability\":0.5}},{\"type\":\"futures\",\"score\":63,\"data\":{\"id\":27,\"probability\":0.5}},{\"type\":\"futures\",\"score\":62,\"data\":{\"id\":28,\"probability\":0.5}},{\"type\":\"futures\",\"score\":61,\"data\":{\"id\":29,\"probability\":0.5}},{\"type\":\"futures\",\"score\":60,\"data\":{\"id\":30,\"probability\":0.5}},{\"type\":\"futures\",\"score\":59,\"data\":{\"id\":31,\"probability\":0.5}},{\"type\":\"futures\",\"score\":58,\"data\":{\"id\":32,\"probability\":0.5}},{\"type\":\"futures\",\"score\":57,\"data\":{\"id\":33,\"probability\":0.5}},{\"type\":\"futures\",\"score\":56,\"data\":{\"id\":34,\"probability\":0.5}},{\"type\":\"futures\",\"score\":55,\"data\":{\"id\":35,\"probability\":0.5}},{\"type\":\"futures\",\"score\":54,\"data\":{\"id\":36,\"probability\":0.5}},{\"type\":\"futures\",\"score\":53,\"data\":{\"id\":37,\"probability\":0.5}}],\"total\":46,\"edition\":\"c3fbea5ff011f662\",\"limit\":20,\"offset\":20,\"has_more\":true,\"edition_status\":\"pinned\",\"cache\":{\"status\":\"page_base_hit\",\"built_at\":1791569100.0,\"ttl_seconds\":5,\"stale_ttl_seconds\":300,\"reason\":\"page_base\",\"live\":false}}",
+        "clock": "2026-10-09T18:05:30+00:00",
+        "headers": {
+          "content-type": "application/json",
+          "x-feed-cache": "page_base_hit",
+          "x-feed-singleflight": "leader"
+        },
+        "label": "page1",
+        "request": {
+          "session": "sess-5105-web-gate",
+          "url": "/api/feed?limit=20&offset=20&event_pct=0.15&edition=c3fbea5ff011f662"
+        },
+        "status": 200
+      },
+      {
+        "body": "{\"items\":[{\"type\":\"futures\",\"score\":52,\"data\":{\"id\":38,\"probability\":0.5}},{\"type\":\"futures\",\"score\":51,\"data\":{\"id\":39,\"probability\":0.5}},{\"type\":\"futures\",\"score\":50,\"data\":{\"id\":40,\"probability\":0.5}},{\"type\":\"futures\",\"score\":49,\"data\":{\"id\":41,\"probability\":0.5}},{\"type\":\"futures\",\"score\":48,\"data\":{\"id\":42,\"probability\":0.5}},{\"type\":\"futures\",\"score\":47,\"data\":{\"id\":43,\"probability\":0.5}}],\"total\":46,\"edition\":\"c3fbea5ff011f662\",\"limit\":20,\"offset\":40,\"has_more\":false,\"edition_status\":\"pinned\",\"cache\":{\"status\":\"page_base_hit\",\"built_at\":1791569100.0,\"ttl_seconds\":5,\"stale_ttl_seconds\":300,\"reason\":\"page_base\",\"live\":false}}",
+        "clock": "2026-10-09T18:05:31+00:00",
+        "headers": {
+          "content-type": "application/json",
+          "x-feed-cache": "page_base_hit",
+          "x-feed-singleflight": "leader"
+        },
+        "label": "lookahead-page2",
+        "request": {
+          "session": "sess-5105-web-gate",
+          "url": "/api/feed?limit=20&offset=40&event_pct=0.15&edition=c3fbea5ff011f662"
+        },
+        "status": 200
+      }
+    ],
+    "unavailable_replacement": [
+      {
+        "body": "{\"items\":[{\"type\":\"futures\",\"score\":90,\"data\":{\"id\":0,\"probability\":0.5}},{\"type\":\"tournament\",\"score\":88,\"data\":{\"key\":\"t-open\",\"start_date\":\"2026-10-09T18:00:00+00:00\",\"end_date\":\"2026-10-12T18:00:00+00:00\"}},{\"type\":\"futures\",\"score\":89,\"data\":{\"id\":1,\"probability\":0.5}},{\"type\":\"futures\",\"score\":88,\"data\":{\"id\":2,\"probability\":0.5}},{\"type\":\"futures\",\"score\":87,\"data\":{\"id\":3,\"probability\":0.5}},{\"type\":\"futures\",\"score\":86,\"data\":{\"id\":4,\"probability\":0.5}},{\"type\":\"futures\",\"score\":85,\"data\":{\"id\":5,\"probability\":0.5}},{\"type\":\"futures\",\"score\":84,\"data\":{\"id\":6,\"probability\":0.5}},{\"type\":\"futures\",\"score\":83,\"data\":{\"id\":7,\"probability\":0.5}},{\"type\":\"futures\",\"score\":82,\"data\":{\"id\":8,\"probability\":0.5}},{\"type\":\"futures\",\"score\":81,\"data\":{\"id\":9,\"probability\":0.5}},{\"type\":\"futures\",\"score\":80,\"data\":{\"id\":10,\"probability\":0.5}},{\"type\":\"futures\",\"score\":79,\"data\":{\"id\":11,\"probability\":0.5}},{\"type\":\"futures\",\"score\":78,\"data\":{\"id\":12,\"probability\":0.5}},{\"type\":\"futures\",\"score\":77,\"data\":{\"id\":13,\"probability\":0.5}},{\"type\":\"futures\",\"score\":76,\"data\":{\"id\":14,\"probability\":0.5}},{\"type\":\"futures\",\"score\":75,\"data\":{\"id\":15,\"probability\":0.5}},{\"type\":\"futures\",\"score\":74,\"data\":{\"id\":16,\"probability\":0.5}},{\"type\":\"futures\",\"score\":73,\"data\":{\"id\":17,\"probability\":0.5}},{\"type\":\"futures\",\"score\":72,\"data\":{\"id\":18,\"probability\":0.5}}],\"total\":45,\"limit\":20,\"offset\":0,\"has_more\":true,\"edition\":\"d31e2f0e879afa1c\",\"cache\":{\"status\":\"miss\",\"built_at\":1791568200.0,\"ttl_seconds\":60,\"stale_ttl_seconds\":300,\"live\":false}}",
+        "clock": "2026-10-09T17:50:00+00:00",
+        "headers": {
+          "content-type": "application/json",
+          "x-feed-cache": "miss",
+          "x-feed-singleflight": "leader"
+        },
+        "label": "page0",
+        "request": {
+          "session": null,
+          "url": "/api/feed?limit=20&event_pct=0.15"
+        },
+        "status": 200
+      },
+      {
+        "body": "{\"items\":[{\"type\":\"futures\",\"score\":72,\"data\":{\"id\":18,\"probability\":0.5}},{\"type\":\"futures\",\"score\":71,\"data\":{\"id\":19,\"probability\":0.5}},{\"type\":\"futures\",\"score\":70,\"data\":{\"id\":20,\"probability\":0.5}},{\"type\":\"futures\",\"score\":69,\"data\":{\"id\":21,\"probability\":0.5}},{\"type\":\"futures\",\"score\":68,\"data\":{\"id\":22,\"probability\":0.5}},{\"type\":\"futures\",\"score\":67,\"data\":{\"id\":23,\"probability\":0.5}},{\"type\":\"futures\",\"score\":66,\"data\":{\"id\":24,\"probability\":0.5}},{\"type\":\"futures\",\"score\":65,\"data\":{\"id\":25,\"probability\":0.5}},{\"type\":\"futures\",\"score\":64,\"data\":{\"id\":26,\"probability\":0.5}},{\"type\":\"futures\",\"score\":63,\"data\":{\"id\":27,\"probability\":0.5}},{\"type\":\"futures\",\"score\":62,\"data\":{\"id\":28,\"probability\":0.5}},{\"type\":\"futures\",\"score\":61,\"data\":{\"id\":29,\"probability\":0.5}},{\"type\":\"futures\",\"score\":60,\"data\":{\"id\":30,\"probability\":0.5}},{\"type\":\"futures\",\"score\":59,\"data\":{\"id\":31,\"probability\":0.5}},{\"type\":\"futures\",\"score\":58,\"data\":{\"id\":32,\"probability\":0.5}},{\"type\":\"futures\",\"score\":57,\"data\":{\"id\":33,\"probability\":0.5}},{\"type\":\"futures\",\"score\":56,\"data\":{\"id\":34,\"probability\":0.5}},{\"type\":\"futures\",\"score\":55,\"data\":{\"id\":35,\"probability\":0.5}},{\"type\":\"futures\",\"score\":54,\"data\":{\"id\":36,\"probability\":0.5}},{\"type\":\"futures\",\"score\":53,\"data\":{\"id\":37,\"probability\":0.5}}],\"total\":46,\"limit\":20,\"offset\":20,\"has_more\":true,\"edition\":\"c3fbea5ff011f662\",\"edition_status\":\"expired\",\"cache\":{\"status\":\"miss\",\"built_at\":1791569100.0,\"ttl_seconds\":5,\"stale_ttl_seconds\":300,\"live\":false}}",
+        "clock": "2026-10-09T18:05:00+00:00",
+        "headers": {
+          "content-type": "application/json",
+          "x-feed-cache": "miss",
+          "x-feed-singleflight": "leader"
+        },
+        "label": "retired-page1",
+        "request": {
+          "session": "sess-5105-web-gate",
+          "url": "/api/feed?limit=20&offset=20&event_pct=0.15&edition=d31e2f0e879afa1c"
+        },
+        "status": 200
+      },
+      {
+        "body": "{\"items\":[],\"total\":0,\"limit\":20,\"offset\":0,\"has_more\":false,\"cache\":{\"status\":\"unavailable\",\"ttl_seconds\":0,\"stale_ttl_seconds\":0,\"reason\":\"opening_unsupported\"}}",
+        "clock": "2026-10-09T18:05:02+00:00",
+        "headers": {
+          "content-type": "application/json",
+          "x-feed-cache": "unavailable",
+          "x-feed-singleflight": "none"
+        },
+        "label": "unavailable-page0",
+        "request": {
+          "session": "sess-5105-web-gate",
+          "url": "/api/feed?limit=20&event_pct=0.15"
+        },
+        "status": 200
+      },
+      {
+        "body": "{\"items\":[{\"type\":\"futures\",\"score\":90,\"data\":{\"id\":0,\"probability\":0.5}},{\"type\":\"futures\",\"score\":-410,\"data\":{\"id\":500,\"probability\":0.5}},{\"type\":\"futures\",\"score\":89,\"data\":{\"id\":1,\"probability\":0.5}},{\"type\":\"futures\",\"score\":88,\"data\":{\"id\":2,\"probability\":0.5}},{\"type\":\"futures\",\"score\":87,\"data\":{\"id\":3,\"probability\":0.5}},{\"type\":\"futures\",\"score\":86,\"data\":{\"id\":4,\"probability\":0.5}},{\"type\":\"futures\",\"score\":85,\"data\":{\"id\":5,\"probability\":0.5}},{\"type\":\"futures\",\"score\":84,\"data\":{\"id\":6,\"probability\":0.5}},{\"type\":\"futures\",\"score\":83,\"data\":{\"id\":7,\"probability\":0.5}},{\"type\":\"futures\",\"score\":82,\"data\":{\"id\":8,\"probability\":0.5}},{\"type\":\"tournament\",\"score\":88,\"data\":{\"key\":\"t-open\",\"start_date\":\"2026-10-09T18:00:00+00:00\",\"end_date\":\"2026-10-12T18:00:00+00:00\"}},{\"type\":\"futures\",\"score\":81,\"data\":{\"id\":9,\"probability\":0.5}},{\"type\":\"futures\",\"score\":80,\"data\":{\"id\":10,\"probability\":0.5}},{\"type\":\"futures\",\"score\":79,\"data\":{\"id\":11,\"probability\":0.5}},{\"type\":\"futures\",\"score\":78,\"data\":{\"id\":12,\"probability\":0.5}},{\"type\":\"futures\",\"score\":77,\"data\":{\"id\":13,\"probability\":0.5}},{\"type\":\"futures\",\"score\":76,\"data\":{\"id\":14,\"probability\":0.5}},{\"type\":\"futures\",\"score\":75,\"data\":{\"id\":15,\"probability\":0.5}},{\"type\":\"futures\",\"score\":74,\"data\":{\"id\":16,\"probability\":0.5}},{\"type\":\"futures\",\"score\":73,\"data\":{\"id\":17,\"probability\":0.5}}],\"total\":46,\"limit\":20,\"offset\":0,\"has_more\":true,\"edition\":\"c3fbea5ff011f662\",\"edition_status\":\"expired\",\"cache\":{\"status\":\"miss\",\"built_at\":1791569100.0,\"ttl_seconds\":5,\"stale_ttl_seconds\":300,\"live\":false}}",
+        "clock": "2026-10-09T18:05:20+00:00",
+        "headers": {
+          "content-type": "application/json",
+          "x-feed-cache": "miss",
+          "x-feed-singleflight": "leader"
+        },
+        "label": "retry-page0",
+        "request": {
+          "session": "sess-5105-web-gate",
+          "url": "/api/feed?limit=20&event_pct=0.15&edition=d31e2f0e879afa1c"
+        },
+        "status": 200
+      }
+    ]
+  },
+  "session": "sess-5105-web-gate"
+}

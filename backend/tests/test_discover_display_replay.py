@@ -897,7 +897,7 @@ async def test_a_failed_collection_read_replays_its_fail_open_branch(
     assert ddr.verify_baseline(artifact)["verdict"] == ddr.PASS
 
 
-async def test_venue_settlement_deltas_keep_absent_apart_from_false(harness, monkeypatch):
+def _arm_venue_reads(harness, monkeypatch):
     from app.utils import venue_settlement_reader
 
     harness.venue_rows = [
@@ -930,6 +930,10 @@ async def test_venue_settlement_deltas_keep_absent_apart_from_false(harness, mon
                 brief["venue_closed_no_winner"] = True
 
     monkeypatch.setattr(venue_settlement_reader, "attach_venue_settlement", attach)
+
+
+async def test_venue_settlement_deltas_keep_absent_apart_from_false(harness, monkeypatch):
+    _arm_venue_reads(harness, monkeypatch)
     artifact = await _capture(harness)
     venue = artifact["downstream"]["venue_settlement"]
     assert venue["branch"] == "read"
@@ -1458,3 +1462,715 @@ async def test_an_exception_in_the_build_is_not_a_cache_refusal(
     monkeypatch.setattr(feed_route, "get_feed", _boom)
     with pytest.raises(RuntimeError, match="build failed"):
         await _script_capture(harness, monkeypatch, tmp_path, warm_rail=True)
+
+
+# --------------------------------------------------------------------------- #
+# #10356 / #5105 — a stage policy is an offline arm, never the default
+# --------------------------------------------------------------------------- #
+
+
+async def test_a_stage_policy_rebinds_one_stage_only_for_its_replay(harness, monkeypatch):
+    from app.utils.feed_market_quality import COLD_START_WINDOW_FIRST_CARDS
+
+    artifact = await _capture(harness)
+    original = harness.feed.diversify_discover_first_page
+    seen: list = []
+    real_chain = harness.feed.apply_discover_display_chain
+
+    def spy(items, **kw):
+        seen.append(harness.feed.diversify_discover_first_page)
+        return real_chain(items, **kw)
+
+    monkeypatch.setattr(harness.feed, "apply_discover_display_chain", spy)
+    replay = ddr.replay_capture(
+        artifact, stage_policy=ddr.STAGE_POLICY_COLD_START_FIRST_CARDS
+    )
+    assert replay["stage_policy"] == ddr.STAGE_POLICY_COLD_START_FIRST_CARDS
+    assert seen[0] is not original
+    assert seen[0].keywords == {"cold_start_window": COLD_START_WINDOW_FIRST_CARDS}
+    assert harness.feed.diversify_discover_first_page is original
+    # The oracle arm is untouched by an arm that ran before it.
+    assert ddr.verify_baseline(artifact)["verdict"] == ddr.PASS
+    assert ddr.replay_capture(artifact)["stage_policy"] is None
+
+
+async def test_a_stage_policy_is_restored_when_the_replay_raises(harness):
+    artifact = await _capture(harness)
+    original = harness.feed.diversify_discover_first_page
+
+    def broken(_pool):
+        raise RuntimeError("arm failed")
+
+    with pytest.raises(RuntimeError):
+        ddr.replay_capture(
+            artifact,
+            arm=broken,
+            stage_policy=ddr.STAGE_POLICY_COLD_START_FIRST_CARDS,
+        )
+    assert harness.feed.diversify_discover_first_page is original
+
+
+@pytest.mark.parametrize("policy", ddr.D2_POLICIES)
+async def test_a_d2_policy_is_an_offline_arm_restored_after_its_replay(harness, policy):
+    """#5105 D2 — the observer arm reproduces the oracle; every arm restores the
+    stage and returns its trace plus the pre-publication facts it reads."""
+    artifact = await _capture(harness)
+    original = harness.feed.diversify_discover_first_page
+    replay = ddr.replay_capture(artifact, stage_policy=policy)
+    assert harness.feed.diversify_discover_first_page is original
+    assert replay["stage_policy"] == policy
+    assert isinstance(replay["promotion_trace"], list) and replay["promotion_trace"]
+    assert set(replay["card_facts"]) == set(replay["deck_identities"])
+    if policy == ddr.STAGE_POLICY_D2_BASELINE_TRACE:
+        assert ddr._compare(artifact, replay)["verdict"] == ddr.PASS
+    plain = ddr.replay_capture(artifact)
+    assert plain["promotion_trace"] is None and plain["card_facts"] is None
+    assert ddr.verify_baseline(artifact)["verdict"] == ddr.PASS
+
+
+async def test_an_unknown_stage_policy_refuses_before_any_stage(harness, monkeypatch):
+    artifact = await _capture(harness)
+    called: list = []
+    monkeypatch.setattr(
+        harness.feed, "apply_discover_display_chain", lambda *a, **k: called.append(1)
+    )
+    with pytest.raises(ddr.DisplayReplayError) as refused:
+        ddr.replay_capture(artifact, stage_policy="interleave_sports")
+    assert refused.value.code == ddr.UNSUPPORTED
+    assert called == []
+
+
+# --------------------------------------------------------------------------- #
+# #5105 root review — arm-vs-arm comparison covers the WHOLE card, by identity
+# --------------------------------------------------------------------------- #
+
+
+def _published_deck() -> list[dict]:
+    """Published-shaped cards carrying the nested fields the old projection
+    never read: tournament prices, bundle member prices, sources, timestamps
+    and venue contract ids."""
+    member = {
+        "type": "futures",
+        "score": 80,
+        "data": {
+            "id": 501,
+            "name": "AI member",
+            "sources": ["kalshi", "polymarket"],
+            "price_observed_at": "2026-10-04T10:00:00+00:00",
+            "top_outcomes": [{"id": 9001, "name": "Yes", "probability": 0.41}],
+        },
+    }
+    return [
+        {
+            "type": "tournament",
+            "score": 98,
+            "data": {
+                "key": "bank_of_utah_championship",
+                "name": "Bank of Utah Championship",
+                "market_ids": [77, 78],
+                "golfers": [{"name": "A. Golfer", "probability": 0.12}],
+            },
+        },
+        {
+            "type": "bundle",
+            "score": 90,
+            "data": {"id": "theme:ai", "title": "AI", "items": [member]},
+        },
+        {
+            "type": "futures",
+            "score": 95,
+            "data": {
+                "id": 601,
+                "name": "World Series Winner",
+                "source_count": 2,
+                "sources": ["kalshi", "polymarket"],
+                "price_observed_at": "2026-10-04T10:05:00+00:00",
+                "top_outcomes": [
+                    {"id": 9101, "name": "Dodgers", "probability": 0.3, "rendered_percent": 30}
+                ],
+            },
+        },
+        {
+            "type": "event",
+            "score": 70,
+            "data": {
+                "id": 14639205,
+                "away_team": "Colts",
+                "home_team": "Commanders",
+                "win_probability_sources": {
+                    "kalshi": {
+                        "value": 0.55,
+                        "updated_at": "2026-10-04T10:01:00+00:00",
+                        "eligibility": {"source_market_id": "KXNFLGAME-26OCT04"},
+                    }
+                },
+            },
+        },
+    ]
+
+
+def _compare(before, after, **kw):
+    return ddr.compare_decks_by_identity(before, after, **kw)
+
+
+def test_full_card_compare_passes_a_pure_reordering():
+    before = _published_deck()
+    after = copy.deepcopy(list(reversed(before)))
+    result = _compare(before, after)
+    assert result["verdict"] == ddr.PASS
+    assert result["shared"] == 4
+    assert result["content_changes"] == []
+    assert result["added"] == result["removed"] == []
+
+
+@pytest.mark.parametrize(
+    "where, path, mutate",
+    [
+        (
+            0,
+            "$.data.golfers[0].probability",
+            lambda c: c["data"]["golfers"][0].update(probability=0.13),
+        ),
+        (
+            1,
+            "$.data.items[0].data.top_outcomes[0].probability",
+            lambda c: c["data"]["items"][0]["data"]["top_outcomes"][0].update(
+                probability=0.42
+            ),
+        ),
+        (
+            2,
+            "$.data.sources[1]",
+            lambda c: c["data"]["sources"].pop(),
+        ),
+        (
+            2,
+            "$.data.price_observed_at",
+            lambda c: c["data"].update(price_observed_at="2026-10-04T10:06:00+00:00"),
+        ),
+        (
+            2,
+            "$.data.top_outcomes[0].id",
+            lambda c: c["data"]["top_outcomes"][0].update(id=9102),
+        ),
+        (
+            3,
+            "$.data.win_probability_sources.kalshi.eligibility.source_market_id",
+            lambda c: c["data"]["win_probability_sources"]["kalshi"][
+                "eligibility"
+            ].update(source_market_id="KXNFLGAME-26OCT05"),
+        ),
+        (
+            0,
+            "$.data.market_ids[1]",
+            lambda c: c["data"]["market_ids"].pop(),
+        ),
+    ],
+    ids=[
+        "tournament-price",
+        "bundle-member-price",
+        "source-composition",
+        "price-timestamp",
+        "outcome-contract-id",
+        "event-venue-contract",
+        "tournament-market-ids",
+    ],
+)
+def test_full_card_compare_fails_on_a_nested_change(where, path, mutate):
+    before = _published_deck()
+    after = list(reversed(copy.deepcopy(before)))
+    mutate(after[len(after) - 1 - where])
+    result = _compare(before, after)
+    assert result["verdict"] == ddr.MISMATCH
+    assert [c["path"] for c in result["content_changes"]] == [path]
+    assert result["cards_with_content_changes"] == [ddr.deck_identities([before[where]])[0]]
+
+
+def test_full_card_compare_is_type_exact_not_stringified():
+    before = _published_deck()
+    after = copy.deepcopy(before)
+    # 30 vs 30.0 is a different card in the published JSON.
+    after[2]["data"]["top_outcomes"][0]["rendered_percent"] = 30.0
+    stamp = datetime(2026, 10, 4, 10, 5, tzinfo=timezone.utc)
+    before[2]["data"]["price_observed_at"] = stamp
+    after[2]["data"]["price_observed_at"] = stamp.isoformat()
+    result = _compare(before, after)
+    assert result["verdict"] == ddr.MISMATCH
+    assert {c["path"] for c in result["content_changes"]} == {
+        "$.data.top_outcomes[0].rendered_percent",
+        "$.data.price_observed_at",
+    }
+
+
+def test_full_card_compare_refuses_what_the_codec_cannot_freeze():
+    before = _published_deck()
+    after = copy.deepcopy(before)
+    after[2]["data"]["opaque"] = object()
+    with pytest.raises(ddr.DisplayReplayError) as refused:
+        _compare(before, after)
+    assert refused.value.code == ddr.UNSUPPORTED
+
+
+def test_full_card_compare_reports_added_and_removed_keys():
+    before = _published_deck()
+    after = copy.deepcopy(before)
+    after[2]["data"]["hook_description"] = "new"
+    del after[3]["data"]["home_team"]
+    result = _compare(before, after)
+    paths = {c["path"]: c for c in result["content_changes"]}
+    assert paths["$.data.hook_description"]["before"] == {"absent": True}
+    assert paths["$.data.home_team"]["after"] == {"absent": True}
+
+
+@pytest.mark.parametrize("side", ["before", "after"])
+def test_full_card_compare_refuses_a_duplicate_identity(side):
+    deck = _published_deck()
+    twin = copy.deepcopy(deck[2])
+    twin["data"]["top_outcomes"][0]["probability"] = 0.9
+    doubled = deck + [twin]
+    args = (doubled, _published_deck()) if side == "before" else (_published_deck(), doubled)
+    with pytest.raises(ddr.DisplayReplayError) as refused:
+        _compare(*args)
+    assert refused.value.code == ddr.INVALID
+    assert "duplicate identity futures:601" in refused.value.detail
+
+
+def test_full_card_compare_refuses_a_card_without_identity():
+    deck = _published_deck()
+    del deck[2]["data"]["id"]
+    with pytest.raises(ddr.DisplayReplayError) as refused:
+        _compare(_published_deck(), deck)
+    assert refused.value.code == ddr.INVALID
+
+
+def test_full_card_compare_fails_an_added_or_removed_card_under_same_inventory():
+    before = _published_deck()
+    removed = _compare(before, copy.deepcopy(before[:-1]))
+    assert removed["verdict"] == ddr.MISMATCH
+    assert removed["removed"] == ["event:14639205"]
+    extra = copy.deepcopy(before[2])
+    extra["data"]["id"] = 602
+    added = _compare(before, copy.deepcopy(before) + [extra])
+    assert added["verdict"] == ddr.MISMATCH
+    assert added["added"] == ["futures:602"]
+    # Without the inventory claim the same diff is reported, not failed.
+    loose = _compare(before, copy.deepcopy(before) + [extra], require_same_inventory=False)
+    assert loose["verdict"] == ddr.PASS
+    assert loose["added"] == ["futures:602"]
+
+
+def test_full_card_compare_reports_named_positional_fields_separately():
+    before = _published_deck()
+    after = copy.deepcopy(before)
+    before[2]["data"]["rank"] = 3
+    after[2]["data"]["rank"] = 9
+    unnamed = _compare(before, after)
+    assert unnamed["verdict"] == ddr.MISMATCH
+    named = _compare(before, after, permitted_positional_paths=["$.data.rank"])
+    assert named["verdict"] == ddr.PASS
+    assert [c["path"] for c in named["positional_changes"]] == ["$.data.rank"]
+    # A permitted name never hides a content change elsewhere on the card.
+    after[2]["data"]["top_outcomes"][0]["probability"] = 0.31
+    both = _compare(before, after, permitted_positional_paths=["$.data.rank"])
+    assert both["verdict"] == ddr.MISMATCH
+    assert [c["path"] for c in both["content_changes"]] == [
+        "$.data.top_outcomes[0].probability"
+    ]
+    # A name is matched exactly: "$.data.r" does not cover "$.data.rank".
+    prefix = _compare(before, after, permitted_positional_paths=["$.data.r"])
+    assert "$.data.rank" in [c["path"] for c in prefix["content_changes"]]
+
+
+def test_full_card_compare_does_not_mutate_either_deck():
+    before, after = _published_deck(), list(reversed(_published_deck()))
+    snapshot = (ddr.canonical(before), ddr.canonical(after))
+    _compare(before, after)
+    assert (ddr.canonical(before), ddr.canonical(after)) == snapshot
+
+
+# --------------------------------------------------------------------------- #
+# #5105 Option A — opening seating is an opt-in offline arm over the final deck
+# --------------------------------------------------------------------------- #
+
+
+_LIVE_TOURNAMENT = "tournament:golf-tour-championship-2026"
+
+
+def _make_tournament_ordinary_live(harness, score=99.0):
+    """The pool's tournament becomes an ordinary (not major, not marquee) event
+    the schedule says is in progress at the build clock, scored to open the deck."""
+    card = next(c for c in harness.pool if c["type"] == "tournament")
+    card["score"] = card["_rank_score"] = score
+    card["data"].update(
+        schedule_status="in-progress",
+        start_date=_iso(harness.now - timedelta(days=1)),
+        end_date=_iso(harness.now + timedelta(days=2)),
+        champion=None,
+        is_major=False,
+        is_marquee=False,
+    )
+
+
+async def test_opening_seating_is_off_by_default_and_moves_only_order(harness):
+    _make_tournament_ordinary_live(harness)
+    artifact = await _capture(harness)
+    assert ddr.verify_baseline(artifact)["verdict"] == ddr.PASS
+    plain = ddr.replay_capture(artifact)
+    off = ddr.replay_capture(artifact, opening_seating=False)
+    assert plain["opening_seating"] is None and off["opening_seating"] is None
+    assert ddr.canonical(off["deck"]) == ddr.canonical(plain["deck"])
+    assert ddr.canonical(off["public_response"]) == ddr.canonical(plain["public_response"])
+    # The specimen really opens the served deck, or this proves nothing.
+    assert plain["deck_identities"].index(_LIVE_TOURNAMENT) < 10
+
+    seated = ddr.replay_capture(artifact, opening_seating=True)
+    summary = seated["opening_seating"]
+    assert summary["status"] == "applied"
+    assert summary["displaced"] == [_LIVE_TOURNAMENT]
+    assert seated["deck_identities"].index(_LIVE_TOURNAMENT) == 10
+    assert seated["stage_identities"]["pre_seating"] == plain["deck_identities"]
+    assert seated["stage_identities"]["pre_slice"] == seated["deck_identities"]
+    assert seated["total"] == plain["total"]
+    guard = ddr.compare_decks_by_identity(plain["deck"], seated["deck"])
+    assert guard["verdict"] == ddr.PASS and not guard["content_changes"]
+    page = [ddr._member(c) for c in seated["public_response"]["items"]]
+    assert page == seated["deck_identities"][:20]
+    # Facts are read before publication strips the private ranking fields.
+    facts = {f["identity"]: f for f in summary["card_facts"]}
+    assert facts[_LIVE_TOURNAMENT]["_rank_score"] == 99.0
+    # The oracle arm is untouched by the arm that ran before it.
+    assert ddr.verify_baseline(artifact)["verdict"] == ddr.PASS
+
+
+async def test_a_second_page_is_a_slice_of_the_same_seated_deck(harness):
+    _make_tournament_ordinary_live(harness)
+    first = ddr.replay_capture(await _capture(harness), opening_seating=True)
+    second_capture = await _capture(harness, url="/api/feed?limit=20&offset=20")
+    assert ddr.verify_baseline(second_capture)["verdict"] == ddr.PASS
+    second = ddr.replay_capture(second_capture, opening_seating=True)
+    assert second["deck_identities"] == first["deck_identities"]
+    page = [ddr._member(c) for c in second["public_response"]["items"]]
+    assert page == first["deck_identities"][20:40]
+
+
+async def test_opening_seating_composes_with_a_d2_policy(harness):
+    _make_tournament_ordinary_live(harness)
+    artifact = await _capture(harness)
+    original = harness.feed.diversify_discover_first_page
+    b = ddr.replay_capture(artifact, stage_policy=ddr.STAGE_POLICY_D2_ARM_B)
+    both = ddr.replay_capture(
+        artifact, stage_policy=ddr.STAGE_POLICY_D2_ARM_B, opening_seating=True
+    )
+    assert harness.feed.diversify_discover_first_page is original
+    assert both["stage_identities"]["pre_seating"] == b["deck_identities"]
+    assert both["opening_seating"]["status"] in ("applied", "compliant")
+    assert _LIVE_TOURNAMENT not in both["deck_identities"][:10]
+    guard = ddr.compare_decks_by_identity(b["deck"], both["deck"])
+    assert guard["verdict"] == ddr.PASS
+
+
+async def test_opening_seating_refuses_a_pinned_edition_before_any_stage(harness, monkeypatch):
+    from tests.integration.test_route_feed_collections_cache_10003 import _DictRedis
+
+    fake = _DictRedis()
+    harness.set_redis(fake)
+    scheduled: list = []
+    harness.monkeypatch.setattr(_rc, "schedule_background", scheduled.append)
+    first = await harness.get("/api/feed?limit=20")
+    while scheduled:
+        await scheduled.pop(0)
+    url = f"/api/feed?limit=20&offset=20&edition={first.json()['edition']}"
+    for key in [k for k in fake.store if not k.startswith("feed_cache:edition:")]:
+        del fake.store[key]
+    artifact = await _capture(harness, url=url)
+    assert artifact["downstream"]["edition"]["status"] == "pinned"
+
+    called: list = []
+    real_chain = harness.feed.apply_discover_display_chain
+    monkeypatch.setattr(
+        harness.feed,
+        "apply_discover_display_chain",
+        lambda *a, **k: called.append(1) or real_chain(*a, **k),
+    )
+    with pytest.raises(ddr.DisplayReplayError) as refused:
+        ddr.replay_capture(artifact, opening_seating=True)
+    assert refused.value.code == ddr.UNSUPPORTED
+    assert "pinned edition is never reordered" in refused.value.detail
+    assert called == []
+    assert ddr.verify_baseline(artifact)["verdict"] == ddr.PASS
+
+
+# "unresolved_sparse_supply" is retired (thin supply now continues, 2026-10-08):
+# a status the arm does not accept still refuses.
+@pytest.mark.parametrize("status", ["unresolved_sparse_supply", "unsupported"])
+async def test_a_refused_seating_refuses_the_arm(harness, monkeypatch, status):
+    from app.utils import discover_opening_seating as seating
+
+    artifact = await _capture(harness)
+    monkeypatch.setattr(
+        seating,
+        "seat_opening",
+        lambda items, now: seating.OpeningSeatingOutcome(
+            status=status, items=list(items), detail="refused for the test"
+        ),
+    )
+    with pytest.raises(ddr.DisplayReplayError) as refused:
+        ddr.replay_capture(artifact, opening_seating=True)
+    assert refused.value.code == ddr.UNSUPPORTED
+    assert status in refused.value.detail
+
+
+def _ordinary_live_tournament(harness, key, score):
+    return {
+        "type": "tournament",
+        "score": score,
+        "_rank_score": score,
+        "_sort_time": 0,
+        "reason": "Tournament",
+        "headline": None,
+        "data": {
+            "key": key,
+            "name": key,
+            "schedule_status": "in-progress",
+            "start_date": _iso(harness.now - timedelta(days=1)),
+            "end_date": _iso(harness.now + timedelta(days=2)),
+            "champion": None,
+            "is_major": False,
+            "is_marquee": False,
+        },
+    }
+
+
+_THIN_LIVE = ("tournament:thin-live-a", "tournament:thin-live-b")
+
+
+def _thin_pool(harness):
+    """Two ordinary live tournaments scored to open the deck over three
+    futures: fewer than ten eligible cards (Alex's 2026-10-08 thin-supply case)."""
+    harness.pool = [
+        _ordinary_live_tournament(harness, "thin-live-a", 99.0),
+        _ordinary_live_tournament(harness, "thin-live-b", 98.0),
+        *(_futures(95001 + n, 70.0 - n, "politics", 0.4) for n in range(3)),
+    ]
+
+
+async def test_thin_supply_replays_the_eligible_opening_then_the_continuation(harness):
+    _thin_pool(harness)
+    artifact = await _capture(harness)
+    assert ddr.verify_baseline(artifact)["verdict"] == ddr.PASS
+    plain = ddr.replay_capture(artifact)
+    # The specimen really opens with the ordinary live cards, or this proves nothing.
+    assert plain["deck_identities"][:2] == list(_THIN_LIVE)
+    eligible = [i for i in plain["deck_identities"] if i not in _THIN_LIVE]
+    assert 0 < len(eligible) < 10
+
+    seated = ddr.replay_capture(artifact, opening_seating=True)
+    summary = seated["opening_seating"]
+    assert summary["status"] == "sparse_continuation"
+    assert summary["continuation_start"] == len(eligible)
+    assert seated["deck_identities"] == eligible + list(_THIN_LIVE)
+    assert seated["total"] == plain["total"] == len(plain["deck_identities"])
+    guard = ddr.compare_decks_by_identity(plain["deck"], seated["deck"])
+    assert guard["verdict"] == ddr.PASS and not guard["content_changes"]
+    # The boundary is beside the cards: no header pseudo-card was inserted.
+    assert sorted(seated["deck_identities"]) == sorted(plain["deck_identities"])
+    facts = {f["identity"]: f for f in summary["card_facts"]}
+    assert facts[_THIN_LIVE[0]]["_rank_score"] == 99.0
+    assert ddr.verify_baseline(artifact)["verdict"] == ddr.PASS
+
+
+@pytest.mark.parametrize("offset", [0, 1, 2, 3, 4])
+async def test_every_page_carries_the_one_full_deck_boundary(harness, offset):
+    """Pages that end before, start before, start AT and start after the
+    boundary all read the same global ``continuation_start`` and are slices of
+    the same seated deck — there is no page-local boundary to drift."""
+    _thin_pool(harness)
+    first = ddr.replay_capture(await _capture(harness), opening_seating=True)
+    boundary = first["opening_seating"]["continuation_start"]
+    assert boundary == 3
+    capture = await _capture(harness, url=f"/api/feed?limit=2&offset={offset}")
+    assert ddr.verify_baseline(capture)["verdict"] == ddr.PASS
+    paged = ddr.replay_capture(capture, opening_seating=True)
+    assert paged["opening_seating"]["continuation_start"] == boundary
+    assert paged["deck_identities"] == first["deck_identities"]
+    page = [ddr._member(c) for c in paged["public_response"]["items"]]
+    assert page == first["deck_identities"][offset : offset + 2]
+    in_page = boundary - offset
+    if 0 <= in_page < len(page):
+        assert page[in_page] == _THIN_LIVE[0]
+        assert all(p not in _THIN_LIVE for p in page[:in_page])
+    elif in_page < 0:
+        assert all(p in _THIN_LIVE for p in page)
+    else:
+        assert not any(p in _THIN_LIVE for p in page)
+
+
+async def test_enough_supply_replays_with_no_continuation_marker(harness):
+    _make_tournament_ordinary_live(harness)
+    seated = ddr.replay_capture(await _capture(harness), opening_seating=True)
+    assert seated["opening_seating"]["status"] == "applied"
+    assert "continuation_start" in seated["opening_seating"]
+    assert seated["opening_seating"]["continuation_start"] is None
+
+
+@pytest.mark.parametrize(
+    "status, boundary",
+    [("sparse_continuation", None), ("applied", 3), ("compliant", 0),
+     ("sparse_continuation", -1), ("sparse_continuation", 10_000),
+     ("sparse_continuation", True)],
+)
+async def test_a_boundary_that_disagrees_with_its_status_is_a_mismatch(
+    harness, monkeypatch, status, boundary
+):
+    from app.utils import discover_opening_seating as seating
+
+    artifact = await _capture(harness)
+    monkeypatch.setattr(
+        seating,
+        "seat_opening",
+        lambda items, now: seating.OpeningSeatingOutcome(
+            status=status, items=list(items), continuation_start=boundary
+        ),
+    )
+    with pytest.raises(ddr.DisplayReplayError) as refused:
+        ddr.replay_capture(artifact, opening_seating=True)
+    assert refused.value.code == ddr.MISMATCH
+    assert "continuation_start" in refused.value.detail
+
+
+def _make_tournament_ordinary_conflicted(harness, score):
+    """The pool's tournament asserts in-progress on a window that has not
+    started (Root's #5105 reproduction shape): an unexempt CONFLICT."""
+    card = next(c for c in harness.pool if c["type"] == "tournament")
+    card["score"] = card["_rank_score"] = score
+    card["data"].update(
+        schedule_status="in-progress",
+        start_date=_iso(harness.now + timedelta(days=6)),
+        end_date=_iso(harness.now + timedelta(days=9)),
+        champion=None,
+        is_major=False,
+        is_marquee=False,
+    )
+
+
+async def test_a_real_conflict_in_the_opening_refuses_the_arm_not_a_compliant_deck(harness):
+    """No stub: the helper's own UNSUPPORTED for a conflicted opening card
+    reaches the caller as a refusal; the arm never returns a compliant deck."""
+    _make_tournament_ordinary_conflicted(harness, score=99.0)
+    artifact = await _capture(harness)
+    plain = ddr.replay_capture(artifact)
+    assert plain["deck_identities"].index(_LIVE_TOURNAMENT) < 10  # it really opens
+    with pytest.raises(ddr.DisplayReplayError) as refused:
+        ddr.replay_capture(artifact, opening_seating=True)
+    assert refused.value.code == ddr.UNSUPPORTED
+    assert "opening seating unsupported" in refused.value.detail
+    assert _LIVE_TOURNAMENT in refused.value.detail and "conflict" in refused.value.detail
+    assert ddr.verify_baseline(artifact)["verdict"] == ddr.PASS
+
+
+async def test_a_real_conflict_below_the_opening_leaves_the_arm_supported(harness):
+    _make_tournament_ordinary_conflicted(harness, score=1.0)
+    artifact = await _capture(harness)
+    plain = ddr.replay_capture(artifact)
+    assert plain["deck_identities"].index(_LIVE_TOURNAMENT) >= 11  # beyond any promotion
+    seated = ddr.replay_capture(artifact, opening_seating=True)
+    summary = seated["opening_seating"]
+    assert summary["status"] in ("applied", "compliant")
+    assert summary["refused_conflicts"] == []
+    assert [c["identity"] for c in summary["conflicts"]] == [_LIVE_TOURNAMENT]
+
+
+@pytest.mark.parametrize("vandalism", ["score", "drop", "rank"])
+async def test_a_seating_stage_that_touches_a_card_is_a_mismatch(harness, monkeypatch, vandalism):
+    from app.utils import discover_opening_seating as seating
+
+    artifact = await _capture(harness)
+
+    def vandal(items, now):
+        out = [dict(card) for card in items]
+        if vandalism == "score":
+            out[3]["score"] = out[3]["score"] + 1
+        elif vandalism == "rank":
+            out[3]["_rank_score"] = -1.0
+        else:
+            out.pop()
+        return seating.OpeningSeatingOutcome(status=seating.APPLIED, items=out)
+
+    monkeypatch.setattr(seating, "seat_opening", vandal)
+    with pytest.raises(ddr.DisplayReplayError) as refused:
+        ddr.replay_capture(artifact, opening_seating=True)
+    assert refused.value.code == ddr.MISMATCH
+
+
+async def test_seating_checks_venue_deltas_against_the_captured_order(harness, monkeypatch):
+    """Deltas name the position the capture saw. Seating moves the same card
+    objects, so a moved settled game still gets its delta — checked at its
+    captured position, not refused because it now sits one seat earlier."""
+    _arm_venue_reads(harness, monkeypatch)
+    _make_tournament_ordinary_live(harness)
+    for card in harness.pool:
+        if card["type"] == "event" and card["data"]["id"] in _ASKABLE_IDS:
+            card["score"] = card["_rank_score"] = 98.0
+    artifact = await _capture(harness)
+    deltas = artifact["downstream"]["venue_settlement"]["deltas"]
+    assert deltas, "the specimen needs venue deltas"
+    plain = ddr.replay_capture(artifact)
+    tournament_at = plain["deck_identities"].index(_LIVE_TOURNAMENT)
+    # At least one delta sits behind the tournament inside the opening, so the
+    # move shifts it: the case a position check on the seated deck would refuse.
+    assert any(tournament_at < d["position"] <= 10 for d in deltas)
+    seated = ddr.replay_capture(artifact, opening_seating=True)
+    assert seated["opening_seating"]["status"] == "applied"
+    guard = ddr.compare_decks_by_identity(plain["deck"], seated["deck"])
+    assert guard["verdict"] == ddr.PASS
+    settled = next(c for c in seated["deck"] if ddr._member(c) == f"event:{_ASKABLE_IDS[0]}")
+    assert settled["data"]["venue_settled"] is True
+
+
+# --------------------------------------------------------------------------- #
+# #5105 page envelope — the seating arm hands its global boundary to the shared
+# ``_feed_page_payload``, which carries it beside the cards and binds it into
+# the edition token. Every other arm stays on the route's default.
+# --------------------------------------------------------------------------- #
+
+
+@pytest.mark.parametrize("offset", [0, 1, 2, 3, 4])
+async def test_every_seated_page_envelope_carries_one_boundary_and_one_token(harness, offset):
+    from app.utils.feed_cache import feed_edition_token
+
+    _thin_pool(harness)
+    first = ddr.replay_capture(await _capture(harness), opening_seating=True)
+    boundary = first["opening_seating"]["continuation_start"]
+    assert boundary == 3
+    capture = await _capture(harness, url=f"/api/feed?limit=2&offset={offset}")
+    paged = ddr.replay_capture(capture, opening_seating=True)
+    public = paged["public_response"]
+
+    assert public["continuation_start"] == boundary  # global, not page-local
+    assert public["edition"] == first["public_response"]["edition"]
+    assert public["edition"] == feed_edition_token(paged["deck"], boundary)
+    # Same cards, same order, no boundary => a different (legacy) token.
+    assert public["edition"] != feed_edition_token(paged["deck"])
+    assert public["total"] == len(paged["deck_identities"]) == 5
+    assert [ddr._member(c) for c in public["items"]] == (
+        first["deck_identities"][offset : offset + 2]
+    )
+
+
+async def test_a_seated_deck_without_a_continuation_keeps_the_legacy_envelope(harness):
+    from app.utils.feed_cache import feed_edition_token
+
+    _make_tournament_ordinary_live(harness)
+    artifact = await _capture(harness)
+    seated = ddr.replay_capture(artifact, opening_seating=True)
+    assert seated["opening_seating"]["status"] == "applied"
+    assert "continuation_start" not in seated["public_response"]
+    assert seated["public_response"]["edition"] == feed_edition_token(seated["deck"])
+
+
+async def test_the_baseline_arm_never_states_a_boundary_even_under_thin_supply(harness):
+    _thin_pool(harness)
+    artifact = await _capture(harness)
+    plain = ddr.replay_capture(artifact)
+    assert "continuation_start" not in plain["public_response"]
+    assert ddr.verify_baseline(artifact)["verdict"] == ddr.PASS

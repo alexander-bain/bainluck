@@ -146,7 +146,8 @@ describe("#8413 — the page uses the shared spacing at both sites", () => {
   });
 
   it("spaces the raw list and the grouped list through spaceBySport", () => {
-    expect(page).toContain("groupRelatedMarkets(spaceBySport(cooldownSafe, getItemCategory))");
+    // #5105 — the ordering runs once per list (the whole list, or each section).
+    expect(page).toContain("groupRelatedMarkets(spaceBySport(cards, getItemCategory))");
     // #9905: the spaced grouped list is then handed to `placeCollections`, so it
     // is bound to a name rather than returned directly.
     expect(page).toMatch(/const ordered = spaceBySport\(\s*applyLocalPersonalization\(/);

@@ -52,7 +52,7 @@ from __future__ import annotations
 import hashlib
 from typing import Any, Iterable, Optional
 
-from app.utils.feed_cache import feed_edition_member
+from app.utils.feed_cache import feed_edition_member, feed_edition_token
 
 #: How long a reader may keep browsing one edition. The design calls it a
 #: "browsing lease": long enough to read a deck and come back from a phone call,
@@ -90,6 +90,27 @@ EDITION_STATUS_SUPERSEDED = "superseded"
 #: without either a hole or a splice, so it is retired whole. See the header.
 EDITION_STATUS_INVALIDATED = "invalidated"
 
+#: #5105 — the manifest key a SECTION-AWARE edition carries its layout under.
+#: Absent from every manifest a legacy build mints, so the legacy shape is
+#: byte-for-byte what it was. Present (even with no boundary) only when the
+#: build opted in, so "missing" and "no section" are two different facts.
+EDITION_LAYOUT_FIELD = "layout"
+
+#: Version of the layout record. A reader refuses any other value rather than
+#: guessing at a layout it was not written for.
+EDITION_LAYOUT_VERSION = 1
+
+#: Layout readings, see :func:`manifest_section_layout`.
+LAYOUT_LEGACY = "legacy"
+LAYOUT_SECTIONS = "sections"
+LAYOUT_MALFORMED = "malformed"
+
+#: The opt-in marker folded into a section-aware build's policy fingerprint.
+#: Seated decks and unseated decks are two different lists, so a manifest
+#: minted by one must never pin the other — the fingerprint is where
+#: `apply_pinned_edition` already reads "a different list".
+_OPENING_SEATING_POLICY_MARKER = "seat=opening-v1"
+
 
 def edition_policy_fingerprint(
     *,
@@ -103,6 +124,7 @@ def edition_policy_fingerprint(
     mode: Optional[str] = None,
     category: Optional[str] = None,
     principal: Optional[str] = None,
+    opening_seating: bool = False,
 ) -> str:
     """Identity of the BUILD an edition was minted from.
 
@@ -125,6 +147,14 @@ def edition_policy_fingerprint(
     Length-delimited for `category` and `principal` for the same reason
     `feed_response_cache_key` does it: two free-text values concatenated with a
     separator they may themselves contain can otherwise collide.
+
+    ``opening_seating`` (#5105, default ``False``) is the opt-in for a build
+    whose final deck went through ``discover_opening_seating.seat_opening`` and
+    whose manifests carry a section layout. It is a build input like the rest:
+    a seated deck and an unseated one are two lists, so a legacy manifest reads
+    `superseded` under a section-aware request and vice versa. ``False`` hashes
+    exactly what this function always hashed — every legacy fingerprint, and
+    so every legacy manifest key, is unchanged.
     """
     parts = (
         f"{sport or 'all'}:{limit}:{include_events}:{include_futures}:"
@@ -134,6 +164,8 @@ def edition_policy_fingerprint(
         parts = f"cat={len(category)}:{category}|{parts}"
     if principal:
         parts = f"prin={len(principal)}:{principal}|{parts}"
+    if opening_seating:
+        parts = f"{_OPENING_SEATING_POLICY_MARKER}|{parts}"
     return hashlib.sha256(parts.encode("utf-8")).hexdigest()[:16]
 
 
@@ -156,7 +188,13 @@ def edition_manifest_cache_key(*, token: str, policy: str) -> str:
 
 
 def build_edition_manifest(
-    items: Any, *, token: str, policy: str, built_at: float
+    items: Any,
+    *,
+    token: str,
+    policy: str,
+    built_at: float,
+    sections: bool = False,
+    continuation_start: Optional[int] = None,
 ) -> Optional[dict]:
     """The storable record of one ordered list.
 
@@ -174,19 +212,82 @@ def build_edition_manifest(
     because ``"?"`` is positional and two unidentified cards could swap under a
     pin without the manifest noticing — which would make the pin silently serve
     a different order, the precise failure it exists to prevent.
+
+    ``sections`` (#5105, default ``False``) mints a SECTION-AWARE manifest: the
+    same record plus ``layout`` = ``{"version": 1, "continuation_start": N}``,
+    where ``N`` is the full-deck position of the ordinary-live continuation or
+    ``None`` for "this section-aware deck has no continuation". The boundary is
+    edition identity (it is hashed into the token), so a section-aware manifest
+    is minted only when ``token`` IS ``feed_edition_token(items,
+    continuation_start)`` — a manifest that disagrees with its own name would
+    pin a layout the client never reconciled. A malformed boundary or a
+    disagreeing token mints nothing. With ``sections=False`` a boundary is
+    refused (``ValueError``) rather than silently dropped, and the record is
+    exactly the legacy shape.
     """
+    if not sections and continuation_start is not None:
+        raise ValueError(
+            "continuation_start needs a section-aware manifest (sections=True)"
+        )
     if not isinstance(items, list) or not items:
         return None
     members = [feed_edition_member(item) for item in items]
     if any(member == "?" for member in members):
         return None
-    return {
+    manifest = {
         "token": token,
         "policy": policy,
         "members": members,
         "total": len(members),
         "built_at": float(built_at),
     }
+    if sections:
+        try:
+            expected = feed_edition_token(items, continuation_start)
+        except ValueError:
+            return None
+        if token != expected:
+            return None
+        manifest[EDITION_LAYOUT_FIELD] = {
+            "version": EDITION_LAYOUT_VERSION,
+            "continuation_start": continuation_start,
+        }
+    return manifest
+
+
+def manifest_section_layout(manifest: Any) -> tuple[str, Optional[int]]:
+    """Read a manifest's layout: ``(reading, continuation_start)``.
+
+    * :data:`LAYOUT_LEGACY` — no ``layout`` key: minted by a build that did not
+      opt in. Never a section-aware pin, whatever its members say.
+    * :data:`LAYOUT_SECTIONS` — a valid version-1 layout. ``continuation_start``
+      is ``None`` (section-aware, no continuation) or a position inside the
+      deck; ``0`` is a real boundary.
+    * :data:`LAYOUT_MALFORMED` — a ``layout`` key that is not exactly that
+      record, or a boundary that is not an ``int`` position in the members list
+      (``bool`` is not an int here). Not repaired, not guessed.
+    """
+    if not isinstance(manifest, dict) or EDITION_LAYOUT_FIELD not in manifest:
+        return LAYOUT_LEGACY, None
+    layout = manifest[EDITION_LAYOUT_FIELD]
+    if not isinstance(layout, dict) or set(layout) != {"version", "continuation_start"}:
+        return LAYOUT_MALFORMED, None
+    if (
+        layout["version"] != EDITION_LAYOUT_VERSION
+        or type(layout["version"]) is not int
+    ):
+        return LAYOUT_MALFORMED, None
+    start = layout["continuation_start"]
+    if start is None:
+        return LAYOUT_SECTIONS, None
+    members = manifest.get("members")
+    if (
+        type(start) is not int
+        or not isinstance(members, list)
+        or not 0 <= start < len(members)
+    ):
+        return LAYOUT_MALFORMED, None
+    return LAYOUT_SECTIONS, start
 
 
 def manifest_is_within_lease(
@@ -218,6 +319,7 @@ def apply_pinned_edition(
     requested_policy: str,
     now: float,
     lease_seconds: float = EDITION_LEASE_SECONDS,
+    sections: bool = False,
 ) -> tuple[Optional[list], str]:
     """Reorder the current build into a requested edition's order.
 
@@ -241,6 +343,16 @@ def apply_pinned_edition(
     two" clause — a new card belongs to the next edition. ``total`` therefore
     comes from the manifest, which the caller must carry through, or the scroll
     would run past the end of the pinned list.
+
+    ``sections`` (#5105) is the READ half of the section-aware opt-in. A reader
+    that did not opt in (the default — every caller today) refuses a manifest
+    carrying a layout as `superseded`: it would otherwise pin a sectioned
+    edition and render it flat, with the boundary silently gone. A reader that
+    opted in refuses a legacy manifest the same way, so a legacy pin cannot
+    masquerade as a section-aware one; and a malformed layout reads `expired`,
+    exactly as a malformed member list does. Both checks sit in the slots the
+    order above already gives them: the contract mismatch beside the policy
+    (same diagnosis — "a different list"), the malformed body after the lease.
     """
     if not isinstance(items, list):
         return None, EDITION_STATUS_EXPIRED
@@ -248,11 +360,16 @@ def apply_pinned_edition(
         return None, EDITION_STATUS_EXPIRED
     if manifest.get("policy") != requested_policy:
         return None, EDITION_STATUS_SUPERSEDED
+    layout, _ = manifest_section_layout(manifest)
+    if (layout == LAYOUT_LEGACY) is sections:
+        return None, EDITION_STATUS_SUPERSEDED
     if not manifest_is_within_lease(manifest, now=now, lease_seconds=lease_seconds):
         return None, EDITION_STATUS_EXPIRED
 
     members = manifest.get("members")
     if not isinstance(members, list) or not members:
+        return None, EDITION_STATUS_EXPIRED
+    if layout == LAYOUT_MALFORMED:
         return None, EDITION_STATUS_EXPIRED
 
     index: dict[str, Any] = {}

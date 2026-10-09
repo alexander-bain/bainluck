@@ -1,0 +1,105 @@
+{
+  "capture_sha256": "e93246d2c2f22b50d6345898b505fee6709947726894c68ffc5cdb5f81888c1a",
+  "scoring_now": "2026-10-04T10:18:07.854207+00:00",
+  "captured_score": 78,
+  "captured_headline": "Live",
+  "data": {
+    "key": "compliance_solutions_championship",
+    "name": "Compliance Solutions Championship",
+    "slug": "compliance-solutions-championship",
+    "tour": "korn_ferry",
+    "tour_label": "Korn Ferry Tour",
+    "is_major": false,
+    "venue": null,
+    "location": null,
+    "start_date": null,
+    "end_date": null,
+    "schedule_status": null,
+    "commence_time": "2026-09-28T15:31:28+00:00",
+    "resolution_date": "2026-10-05T03:59:00+00:00",
+    "champion": null,
+    "golfers": [
+      {
+        "name": "Trent Phillips",
+        "probability": 0.32,
+        "rank": 1,
+        "movement_24h": 0.2666,
+        "movement_is_dated": true
+      },
+      {
+        "name": "Carson Young",
+        "probability": 0.225,
+        "rank": 2,
+        "movement_24h": 0.1822,
+        "movement_is_dated": true
+      },
+      {
+        "name": "Ross Steelman",
+        "probability": 0.094,
+        "rank": 3,
+        "movement_24h": 0.0795,
+        "movement_is_dated": true
+      },
+      {
+        "name": "Sandy Scott",
+        "probability": 0.069,
+        "rank": 4,
+        "movement_24h": -0.3023,
+        "movement_is_dated": true
+      },
+      {
+        "name": "Nick Gabrelcik",
+        "probability": 0.064,
+        "rank": 5,
+        "movement_24h": 0.0357,
+        "movement_is_dated": true
+      },
+      {
+        "name": "William Sides",
+        "probability": 0.061,
+        "rank": 6,
+        "movement_24h": 0.0551,
+        "movement_is_dated": true
+      },
+      {
+        "name": "Robby Shelton",
+        "probability": 0.06,
+        "rank": 7,
+        "movement_24h": 0.0478,
+        "movement_is_dated": true
+      },
+      {
+        "name": "Trevor Cone",
+        "probability": 0.027,
+        "rank": 8,
+        "movement_24h": 0.0153,
+        "movement_is_dated": true
+      },
+      {
+        "name": "Yuta Sugiura",
+        "probability": 0.026,
+        "rank": 9,
+        "movement_24h": 0.0258,
+        "movement_is_dated": true
+      },
+      {
+        "name": "Derek Hitchner",
+        "probability": 0.021,
+        "rank": 10,
+        "movement_24h": -0.008,
+        "movement_is_dated": true
+      }
+    ],
+    "market_ids": [
+      61720774,
+      61720775,
+      61720772,
+      61720776,
+      61720773,
+      63049619
+    ],
+    "source_count": 2,
+    "is_marquee": false,
+    "marquee_whathit": false
+  }
+}

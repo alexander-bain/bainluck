@@ -311,7 +311,8 @@ describe("#9905 page wiring", () => {
   });
 
   it("the render branch draws the collection card, outside the learning shell", () => {
-    const loop = PAGE.slice(PAGE.indexOf("visibleItems.map((gi, idx)"));
+    // #5105 — the card renderer is shared by the flat list and both sections.
+    const loop = PAGE.slice(PAGE.indexOf("const renderFeedCard = (gi: DiscoverGroupedItem, idx: number)"));
     const branch = loop.slice(0, loop.indexOf("const isGuessSlot"));
     expect(branch).toContain("admitCollection(gi.item)");
     expect(branch).toContain("<DiscoverCollectionCard entry={collection} />");
