@@ -91,6 +91,33 @@ async def test_fenced_or_foreign_cohorts_are_refused_and_left_to_the_caller(
     assert x.r.pending_event_ids() == frozenset()
 
 
+async def test_later_waves_publish_after_earlier_admitted_workers_finished(
+    monkeypatch,
+):
+    # More than FRESH_STAMP_WORKERS separately completed waves while the
+    # running call's own stamp is held: each finished worker must give its
+    # place back, or wave 5 is accepted, queued with no worker, and only
+    # returned to debt once game 1 is released.
+    x = refresher_rig(monkeypatch, count=6, block=True, blocked=(1,))
+    running = asyncio.create_task(x.r.refresh([1], flush_started=1000))
+    try:
+        await settle_until(lambda: "update" in x.commands)
+        for event_id in (2, 3, 4, 5, 6):
+            assert x.r.admit_fresh([event_id], flush_started=1000) == {event_id}
+            await settle_until(lambda: event_id in x.published)
+            await settle_until(
+                lambda: all(t.done() for t in x.r._admission.workers)
+            )
+        assert x.published == [2, 3, 4, 5, 6] and 1 not in x.committed
+        assert not running.done(), "the call still joins the held stamp"
+    finally:
+        x.release.set()
+    await asyncio.wait_for(running, 2)
+    assert x.published == [2, 3, 4, 5, 6, 1]
+    assert not x.r.pending_event_ids() and x.r._admission is None
+    assert x.r.stats["errors"] == 0
+
+
 async def test_admitted_stamp_waits_for_a_free_slot_within_the_same_call(
     monkeypatch,
 ):

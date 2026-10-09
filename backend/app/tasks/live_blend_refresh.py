@@ -1866,6 +1866,14 @@ class LiveBlendRefresher:
             window.admitted.update(due)
             window.retry.update(retry)
             window.queue.extend(due)
+            # A finished worker consumes nothing more: reap it (its outcome
+            # retrieved) so it never holds a worker place while the running
+            # call's own stamps keep `_admission_join` from reaching it.
+            finished = {task for task in window.workers if task.done()}
+            window.workers.difference_update(finished)
+            for task in finished:
+                if not task.cancelled():
+                    task.exception()
             for _ in range(min(FRESH_STAMP_WORKERS - len(window.workers), len(due))):
                 window.workers.add(asyncio.create_task(self._admitted_worker(window)))
         return frozenset(taken)
