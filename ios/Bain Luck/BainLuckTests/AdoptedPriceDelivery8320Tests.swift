@@ -51,6 +51,8 @@ final class AdoptedPriceDelivery8320Tests: XCTestCase {
         var beforeEventResponse: (() async -> Void)?
         var failEvent = false
         private(set) var historyFetches = 0
+        private(set) var freshEventFetches = 0
+        private(set) var freshHistoryFetches = 0
         init(_ response: EventDetail, history: EventHistoryResponse? = nil) {
             self.response = response
             self.historyResponse = history
@@ -65,6 +67,14 @@ final class AdoptedPriceDelivery8320Tests: XCTestCase {
             historyFetches += 1
             guard let historyResponse else { throw Missing() }
             return historyResponse
+        }
+        func fetchFreshEvent(id: Int) async throws -> EventDetail {
+            freshEventFetches += 1
+            return try await fetchEvent(id: id)
+        }
+        func fetchFreshEventHistory(id: Int, hours: Int) async throws -> EventHistoryResponse {
+            freshHistoryFetches += 1
+            return try await fetchEventHistory(id: id, hours: hours)
         }
         func fetchRelatedFutures(eventId: Int) async throws -> RelatedFuturesResponse { throw Missing() }
         func fetchTeamProgression(eventId: Int) async throws -> TeamProgressionResponse { throw Missing() }
@@ -244,6 +254,119 @@ final class AdoptedPriceDelivery8320Tests: XCTestCase {
     }
 
     // MARK: - The authoritative pair
+
+    func testResyncReadsTheFreshPairAndOnlyItsNewerPriceRecoversDelivery10090() async throws {
+        let client = Client(try event(p: 0.60, revision: Self.folded20),
+                            history: try history(p: 0.60, revision: Self.folded20))
+        let (vm, handle, clock) = await page(client)
+        defer { vm.stopRefresh() }
+        for _ in 0..<5 { step(vm, handle, clock) }
+        XCTAssertFalse(vm.streamDelivering)
+        let detailReads = client.freshEventFetches, historyReads = client.freshHistoryFetches
+        client.response = try event(p: 0.62, revision: Self.folded21)
+        client.historyResponse = try history(p: 0.62, revision: Self.folded21)
+
+        handle.fire("resync", #"{"generation":1}"#)
+        XCTAssertFalse(vm.streamDelivering, "resync itself is not price delivery")
+        XCTAssertNil(vm.priceActivity)
+        await settle { vm.streamHasPushedPrice }
+        XCTAssertEqual(client.freshEventFetches, detailReads + 1)
+        XCTAssertEqual(client.freshHistoryFetches, historyReads + 1)
+        XCTAssertEqual(vm.event?.currentOdds?.homeProbability, 0.62)
+        XCTAssertEqual(vm.history?.aggregateLine?.last?.homeProbability, 0.62)
+        XCTAssertEqual(vm.liveUpdateStatus, .live)
+        XCTAssertEqual(vm.priceActivity?.receivedAt, Date(timeIntervalSince1970: clock.t))
+        XCTAssertFalse(handle.isClosed, "recovery uses the existing connection")
+    }
+
+    func testUnchangedOrFailedResyncKeepsLastGoodAndDoesNotRenewDelivery10090() async throws {
+        for failed in [false, true] {
+            let client = Client(try event(p: 0.60, revision: Self.folded20),
+                                history: try history(p: 0.60, revision: Self.folded20))
+            let (vm, handle, clock) = await page(client)
+            defer { vm.stopRefresh() }
+            let historyReads = client.freshHistoryFetches
+            client.failEvent = failed
+            step(vm, handle, clock, by: 60) { handle.fire("resync", #"{"generation":1}"#) }
+            await settle { client.freshHistoryFetches > historyReads }
+            if failed { await settle { vm.pricePairRefreshFailed } }
+            for _ in 0..<20 { await Task.yield() }
+            XCTAssertEqual(vm.event?.currentOdds?.homeProbability, 0.60)
+            XCTAssertEqual(vm.history?.aggregateLine?.last?.homeProbability, 0.60)
+            XCTAssertNil(vm.priceActivity, "unchanged/failed resync earned a price receipt")
+            XCTAssertFalse(vm.streamHasPushedPrice)
+            XCTAssertEqual(vm.pricePairRefreshFailed, failed)
+            step(vm, handle, clock, by: 31)
+            XCTAssertFalse(vm.streamDelivering, "resync or its unchanged/failed pair renewed delivery")
+        }
+    }
+
+    func testResyncBurstDuringAPairOwesOnlyOneFreshTrailingPair10090() async throws {
+        let client = Client(try event(p: 0.60, revision: Self.folded20),
+                            history: try history(p: 0.60, revision: Self.folded20))
+        let (vm, handle, clock) = await page(client)
+        defer { vm.stopRefresh() }
+        let detailReads = client.freshEventFetches, historyReads = client.freshHistoryFetches
+        var gate: CheckedContinuation<Void, Never>?
+        client.response = try event(p: 0.62, revision: Self.folded21)
+        client.historyResponse = try history(p: 0.62, revision: Self.folded21)
+        client.beforeEventResponse = { await withCheckedContinuation { gate = $0 } }
+        handle.fire("resync", #"{"generation":1}"#)
+        await settle { gate != nil && client.freshHistoryFetches == historyReads + 1 }
+        XCTAssertNotNil(gate)
+        for generation in 2...20 { handle.fire("resync", "{\"generation\":\(generation)}") }
+        XCTAssertEqual(client.freshEventFetches, detailReads + 1, "resync launched parallel reads")
+        XCTAssertEqual(client.freshHistoryFetches, historyReads + 1)
+        client.response = try event(p: 0.64, revision: #"{"4242":22,"999":5}"#)
+        client.historyResponse = try history(p: 0.64, revision: #"{"4242":22,"999":5}"#)
+        client.beforeEventResponse = nil
+        clock.t += 1 // The existing coalescer's one-second window has elapsed.
+        gate?.resume()
+        await settle { vm.event?.currentOdds?.homeProbability == 0.64 }
+        for _ in 0..<20 { await Task.yield() }
+        XCTAssertEqual(client.freshEventFetches, detailReads + 2)
+        XCTAssertEqual(client.freshHistoryFetches, historyReads + 2)
+        XCTAssertEqual(vm.history?.aggregateLine?.last?.homeProbability, 0.64)
+        XCTAssertTrue(vm.streamHasPushedPrice)
+    }
+
+    func testResyncQueuedBeforeRetirementCannotEarnASuccessorsReceipt10090() async throws {
+        let client = Client(try event(p: 0.60, revision: Self.folded20),
+                            history: try history(p: 0.60, revision: Self.folded20))
+        let handle = Handle(), clock = Clock()
+        var pause: CheckedContinuation<Void, Never>?
+        let vm = EventDetailViewModel(
+            eventId: 4242, client: client, makeStreamHandle: { _ in handle }, now: { clock.t },
+            sleep: { seconds in
+                if seconds <= 1 { await withCheckedContinuation { pause = $0 } }
+                else { try? await Task.sleep(nanoseconds: 60_000_000_000) }
+            })
+        defer { vm.stopRefresh() }
+        await vm.load()
+        handle.fire("open")
+        client.response = try event(p: 0.62, revision: Self.folded21)
+        client.historyResponse = try history(p: 0.62, revision: Self.folded21)
+        handle.fire("resync", #"{"generation":1}"#)
+        await settle { vm.streamHasPushedPrice }
+        for _ in 0..<20 { await Task.yield() }
+        let receipt = try XCTUnwrap(vm.priceActivity)
+        handle.fire("resync", #"{"generation":2}"#)
+        await settle { pause != nil }
+        XCTAssertNotNil(pause, "the second read was not queued inside the existing throttle")
+        handle.fire("resync", #"{"generation":3}"#) // One pending invalidation, now retired too.
+        handle.fire("error")
+        client.response = try event(p: 0.64, revision: #"{"4242":22,"999":5}"#)
+        client.historyResponse = try history(p: 0.64, revision: #"{"4242":22,"999":5}"#)
+        clock.t += 1
+        let detailReads = client.freshEventFetches
+        pause?.resume()
+        await settle { vm.event?.currentOdds?.homeProbability == 0.64 }
+        for _ in 0..<20 { await Task.yield() }
+        XCTAssertEqual(client.freshEventFetches, detailReads + 1, "retired pending resync launched another read")
+        XCTAssertFalse(vm.streamDelivering)
+        XCTAssertFalse(vm.streamHasPushedPrice)
+        XCTAssertEqual(vm.priceActivity, receipt, "a queued retired resync earned a receipt")
+    }
 
     /// A folded hero refuses every raw frame; the pair the CURRENT connection
     /// asks for is how it adopts. A newer pair after a fallback recovers
