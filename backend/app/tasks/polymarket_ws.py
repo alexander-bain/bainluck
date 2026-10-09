@@ -1354,7 +1354,11 @@ async def _run_polymarket_ws_consumer(*, sessions, stop=None):
 
     # #9418: the admission floor is measured from here, the previous recycle.
     run_started_at = time.monotonic()
-    ws = PolymarketWebSocket()
+    # A reconnect/admission book uses the existing game quote guards, even
+    # when the venue sends no later move. The shared snapshot switch is the undo.
+    ws = PolymarketWebSocket(
+        price_book_snapshots=book_snapshot_prices_enabled(),
+    )
 
     async def load_game_slate():
         # Load linked Polymarket market asset IDs
