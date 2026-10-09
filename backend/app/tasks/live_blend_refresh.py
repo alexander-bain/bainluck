@@ -1040,7 +1040,9 @@ class _FreshAdmission:
     clock, its same-event fence (``events``: everything the call took or
     admitted), the FRESH_STAMP_WORKERS session slots every one of its stamp
     and preparation sessions holds, and its one frame sender. Each admitted
-    event keeps its own staged input mark and retry origin.
+    event keeps its own staged input mark, retry origin and flush clock: a
+    LATER flush's cohort may join while the call's own stamps are unfinished
+    (``own_done``), and is stamped on its own flush's clock, never the call's.
     """
 
     def __init__(self, flush_started, clock, events) -> None:
@@ -1058,6 +1060,11 @@ class _FreshAdmission:
         self.failed: set[int] = set()
         self.staged: dict[int, InputMark] = {}
         self.stored_wall: dict[int, Optional[float]] = {}
+        #: Each admitted event's own flush clock (its cohort's `flush_started`).
+        self.clocks: dict[int, float] = {}
+        #: Set once the call's own stamps have returned; later flushes are
+        #: refused from then on, so the call ends after a bounded drain.
+        self.own_done = False
         self.closed = False
         self.publish: Optional[Callable[[list[dict]], Awaitable[None]]] = None
         self.publish_inline: Optional[Callable[[list[dict]], Awaitable[None]]] = None
@@ -1119,6 +1126,10 @@ class LiveBlendRefresher:
         self._pending_attempted = False
         self._pending_attempts = 0
         self._pending_fresh_flush = False
+        #: #10090 — the latest flush whose committed cohort a running call of
+        #: an EARLIER flush admitted; that flush is fresh-bearing when its own
+        #: `refresh` begins.
+        self._admitted_fresh_flush: Optional[float] = None
         self._last_refresh_at: dict[int, float] = {}
         #: Events whose last batch failed -> the monotonic time before which
         #: they are not due, whatever the throttle says.
@@ -1263,7 +1274,10 @@ class LiveBlendRefresher:
             self._pending_started_at = None
             self._pending_attempted = False
             self._pending_attempts = 0
-            self._pending_fresh_flush = False
+            self._pending_fresh_flush = (
+                flush_started is not None
+                and flush_started == self._admitted_fresh_flush
+            )
         if flush_started is not None and fresh:
             # Sticky for the flush: old attempts made before its first fresh
             # call count against the same allowance, so none is added after.
@@ -1659,7 +1673,9 @@ class LiveBlendRefresher:
                             break
                         await stamp_event(event_id)
             # Admitted cohorts finish inside this call; the door closes with
-            # no turn between its last worker ending and the close.
+            # no turn between its last worker ending and the close. From here
+            # no later flush is admitted, so the remaining drain is bounded.
+            window.own_done = True
             await self._admission_join(window)
             await publication_done()
         except CancelledError as exc:
@@ -1812,10 +1828,16 @@ class LiveBlendRefresher:
 
         Returns the events this refresher now owns: each is stamped before the
         running call returns, on a free one of its stamp workers, or is left
-        owed exactly as a `refresh` would leave it (throttled). Empty means the
+        owed exactly as a `refresh` would leave it (throttled). Each is due,
+        stamped and held on ITS flush's clock (``flush_started``): a cohort of
+        a LATER flush than the running call's joins while that call's own
+        stamps are still unfinished, so a new batch does not wait for an
+        unrelated older stamp; once they have returned, later flushes are
+        refused and the call ends after its bounded drain. Empty means the
         caller keeps them for its next `refresh`, as before: no call is
-        running, it belongs to another flush clock (or none — the final drain
-        keeps its own contract), or the event is fenced — the running call
+        running, the clock is earlier, a later one arrived after the call's
+        own stamps returned, or there is none (the final drain keeps its own
+        contract), or the event is fenced — the running call
         already took it, or the caller is still writing its cohort
         (``defer_event_ids``) — so no partial board is read and no two stamps
         of one event overlap or reorder. ``marks`` are the cohort's committed
@@ -1825,7 +1847,11 @@ class LiveBlendRefresher:
         window = self._admission
         if (
             window is None or window.closed or flush_started is None
-            or window.flush_started != flush_started
+            or window.flush_started is None
+        ):
+            return frozenset()
+        if flush_started != window.flush_started and (
+            flush_started < window.flush_started or window.own_done
         ):
             return frozenset()
         excluded = set(defer_event_ids)
@@ -1835,7 +1861,7 @@ class LiveBlendRefresher:
         }
         if not taken:
             return frozenset()
-        clock = window.clock
+        clock = flush_started
         due = sorted(eid for eid in taken if self._due(eid, clock))
         throttled = taken.difference(due, self._throttle_deferred)
         self._throttle_deferred.update(taken.difference(due))
@@ -1847,8 +1873,13 @@ class LiveBlendRefresher:
         self._pending_continuation = [
             eid for eid in self._pending_continuation if eid not in taken
         ]
-        # Sticky for the flush, exactly as a fresh `refresh` call would be.
-        self._pending_fresh_flush = True
+        # Sticky for the flush, exactly as a fresh `refresh` call would be. A
+        # later flush's allowance is not the running call's to spend: it is
+        # marked for that flush's own first `refresh`.
+        if flush_started == self._pending_flush_started:
+            self._pending_fresh_flush = True
+        else:
+            self._admitted_fresh_flush = flush_started
         self.stats["considered"] += len(due)
         window.events.update(taken)
         receipts = self.receipts
@@ -1864,6 +1895,7 @@ class LiveBlendRefresher:
             import asyncio
 
             window.admitted.update(due)
+            window.clocks.update(dict.fromkeys(due, clock))
             window.retry.update(retry)
             window.queue.extend(due)
             # A finished worker consumes nothing more: reap it (its outcome
@@ -1892,6 +1924,7 @@ class LiveBlendRefresher:
             {event_id: window.staged[event_id]} if event_id in window.staged else {}
         )
         stored_wall = window.stored_wall.get(event_id)
+        clock = window.clocks.get(event_id, window.clock)
 
         def committed(ids):
             window.completed.update(ids)
@@ -1903,7 +1936,7 @@ class LiveBlendRefresher:
 
         try:
             await self._refresh_batch(
-                group_ids, window.clock,
+                group_ids, clock,
                 on_committed=committed, publish_committed=window.publish,
             )
         except Exception as exc:
@@ -1915,7 +1948,7 @@ class LiveBlendRefresher:
             if event_id not in window.completed:
                 window.failed.add(event_id)
                 self._refresh_failed(
-                    group_ids, window.retry, window.clock, receipts, staged,
+                    group_ids, window.retry, clock, receipts, staged,
                     stored_wall, exc,
                 )
         else:
@@ -1968,7 +2001,8 @@ class LiveBlendRefresher:
         unfinished = window.admitted.difference(window.completed, window.failed)
         for event_id in sorted(unfinished):
             self._refresh_failed(
-                [event_id], window.retry, window.clock, self.receipts,
+                [event_id], window.retry, window.clocks.get(event_id, window.clock),
+                self.receipts,
                 {event_id: window.staged[event_id]} if event_id in window.staged else {},
                 window.stored_wall.get(event_id),
                 interrupted or CancelledError(), hold=False,

@@ -97,8 +97,10 @@ class Scope:
         return Result()  # same existing lock/rank statements, no unrelated DB work
 
 
-class Prices:
+class Prices(task._KalshiPriceOwner):
+    # #10090: the run's stamp state and `join_stamp` are the real owner's.
     def __init__(self, scope):
+        super().__init__()
         self.scope = scope
         self.lock_retry_until = {}
         self.committed_outcome_ids = set()

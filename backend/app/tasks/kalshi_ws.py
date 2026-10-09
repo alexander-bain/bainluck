@@ -345,6 +345,49 @@ class _KalshiPriceOwner:
         self.lock_retry_until: dict[int, float] = {}
         # #10090: the consumer's `_FlushTimings`, when it keeps one.
         self.timings = None
+        # #10090: the run's one blend refresh. It may outlive the flush that
+        # started it, so the next flush's committed cohort joins it
+        # (`admit_fresh`) instead of that flush waiting for it to return. With
+        # it: the events it holds (the same-event fence) and the committed
+        # events it owes (kept owed if it fails or is cancelled).
+        self.stamping = None
+        self.stamping_events: set[int] = set()
+        self.stamping_fresh: set[int] = set()
+
+    async def join_stamp(self, refresher, *, cancel=False):
+        """Wait for the run's blend refresh, if any, and retrieve its outcome.
+
+        A repeated cancellation cannot let the task escape: it is recorded,
+        the refresh is cancelled and joined, then the cancellation propagates.
+        """
+        stamping = self.stamping
+        if stamping is None:
+            return
+        if cancel and not stamping.cancelling():
+            stamping.cancel()
+        interrupted = None
+        while not stamping.done():
+            try:
+                await asyncio.wait({stamping})
+            except asyncio.CancelledError as exc:
+                interrupted = exc
+                if not stamping.cancelling():
+                    stamping.cancel()
+        fresh = self.stamping_fresh
+        self.stamping = None
+        self.stamping_events = set()
+        self.stamping_fresh = set()
+        if stamping.cancelled() or stamping.exception() is not None:
+            # Also covers cancellation before refresh's first turn, before
+            # it has taken these committed IDs into its own debt sets.
+            refresher.adopt_pending(fresh)
+            if not stamping.cancelled():
+                logger.error(
+                    "Kalshi WS: blend refresh raised after its write committed",
+                    exc_info=stamping.exception(),
+                )
+        if interrupted is not None:
+            raise interrupted
 
     async def phase(self, session, phase, *, force_observation=False):
         """Yield `PriceRunResult`s for one phase. Consume in `aclosing`.
@@ -1024,8 +1067,13 @@ async def _run_kalshi_ws_consumer(*, sessions, prices):
             # #837 tail — a flush with no new prices still owes the stamps a row
             # lock deferred: those prices are already stored, so waiting for the
             # next venue tick would strand them on a quiet market. Free when
-            # nothing is queued (no session is opened).
-            await blend_refresher.refresh_pending(flush_started=flush_started)
+            # nothing is queued (no session is opened). #10090: while an earlier
+            # flush's refresh still runs, the debt stays owed for a later flush:
+            # two refreshes never share the refresher.
+            if prices.stamping is not None and prices.stamping.done():
+                await prices.join_stamp(blend_refresher)
+            if prices.stamping is None:
+                await blend_refresher.refresh_pending(flush_started=flush_started)
             return True
         # Q491 repair 2 (CERT-659 BLOCK) — THE BUFFER IS DELIBERATELY *NOT*
         # CLEARED HERE. Draining first and putting the batch back on failure
@@ -1050,10 +1098,8 @@ async def _run_kalshi_ws_consumer(*, sessions, prices):
         flush_counted = False
         # #10090: one refresh may cover several committed whole-event phases.
         # Independent writes keep progressing while it runs; receipts are staged
-        # only when that task starts, and no refresh outlives this flush.
-        stamping = None
-        stamping_events = set()
-        stamping_fresh = set()
+        # only when that task starts. It is the run's (`prices.stamping`): it may
+        # have been started by an earlier flush, and may outlive this one.
         queued_events = set()
         queued_marks = {}
         queued_refresh = False
@@ -1072,37 +1118,11 @@ async def _run_kalshi_ws_consumer(*, sessions, prices):
         nonlive_started = 0
 
         async def stamp_done(*, cancel=False):
-            nonlocal stamping, stamping_events, stamping_fresh
-            if stamping is None:
-                return
-            if cancel and not stamping.cancelling():
-                stamping.cancel()
             # Repeated cancellation cannot let a task escape beside the drain.
-            interrupted = None
-            while not stamping.done():
-                try:
-                    await asyncio.wait({stamping})
-                except asyncio.CancelledError as exc:
-                    interrupted = exc
-                    if not stamping.cancelling():
-                        stamping.cancel()
-            task, stamping = stamping, None
-            fresh, stamping_fresh = stamping_fresh, set()
-            stamping_events = set()
-            if task.cancelled() or task.exception() is not None:
-                # Also covers cancellation before refresh's first turn, before
-                # it has taken these committed IDs into its own debt sets.
-                blend_refresher.adopt_pending(fresh)
-                if not task.cancelled():
-                    logger.error(
-                        "Kalshi WS: blend refresh raised after its write committed",
-                        exc_info=task.exception(),
-                    )
-            if interrupted is not None:
-                raise interrupted
+            await prices.join_stamp(blend_refresher, cancel=cancel)
 
         async def stamp_start():
-            nonlocal stamping, stamping_events, stamping_fresh, queued_refresh
+            nonlocal queued_refresh
             stamping_fresh = set(queued_events)
             unfinished_events = event_ids_for_outcomes(
                 cohort_event_ids, unfinished_price_ids,
@@ -1110,12 +1130,13 @@ async def _run_kalshi_ws_consumer(*, sessions, prices):
             # refresh takes implicit debt too. Capture before its first turn.
             # Excluded cohorts remain owed but cannot read a partially written
             # board or hold unrelated whole-game price transactions together.
-            stamping_events = (
+            prices.stamping_fresh = stamping_fresh
+            prices.stamping_events = (
                 stamping_fresh | set(blend_refresher.pending_event_ids())
             ).difference(unfinished_events)
             with contextlib.suppress(Exception):
                 tail_receipts.stage(list(queued_marks.values()))
-            stamping = asyncio.create_task(blend_refresher.refresh(
+            prices.stamping = asyncio.create_task(blend_refresher.refresh(
                 stamping_fresh, flush_started=flush_started,
                 defer_event_ids=unfinished_events,
             ))
@@ -1126,10 +1147,11 @@ async def _run_kalshi_ws_consumer(*, sessions, prices):
 
         def stamp_admit():
             # #10090 — a refresh is still running (an earlier game's stamp may
-            # be waiting on a row lock or its frame). This newly committed whole
-            # cohort joins it on a free stamp worker instead of waiting for it
-            # to return. The refresher fences what it refuses; that stays queued
-            # for the next launch, exactly as before.
+            # be waiting on a row lock or its frame), possibly started by an
+            # earlier flush. This newly committed whole cohort joins it on a
+            # free stamp worker, on this flush's clock, instead of waiting for
+            # it to return. The refresher fences what it refuses; that stays
+            # queued for the next launch, exactly as before.
             nonlocal queued_refresh
             admitted = blend_refresher.admit_fresh(
                 queued_events,
@@ -1142,8 +1164,8 @@ async def _run_kalshi_ws_consumer(*, sessions, prices):
             if not admitted:
                 return
             # Joined, fenced and adopted on cancellation with the running task.
-            stamping_fresh.update(admitted)
-            stamping_events.update(admitted)
+            prices.stamping_fresh.update(admitted)
+            prices.stamping_events.update(admitted)
             queued_events.difference_update(admitted)
             for oid in [
                 oid for oid in queued_marks if cohort_event_ids.get(oid) in admitted
@@ -1205,14 +1227,15 @@ async def _run_kalshi_ws_consumer(*, sessions, prices):
                         stats["live_preempted"] += sum(len(p) for p in phases[index:])
                         break
                     nonlive_started += 1
-                if stamping is not None and stamping.done():
+                if prices.stamping is not None and prices.stamping.done():
                     await stamp_done()
                     if queued_refresh:
                         await stamp_start()
                 # Normally disjoint by the unchanged whole-event planner. A
                 # late bridge may name an event in a later phase; implicit debt
-                # captured by the active refresh must obey the same fence.
-                if not stamping_events.isdisjoint(
+                # captured by the active refresh must obey the same fence. So
+                # must an event an earlier flush's refresh still holds.
+                if not prices.stamping_events.isdisjoint(
                     event_ids_for_outcomes(cohort_event_ids, phase.keys())
                 ):
                     await stamp_done()
@@ -1430,7 +1453,7 @@ async def _run_kalshi_ws_consumer(*, sessions, prices):
                 # The event refresh uses its own session and committed prices.
                 # Start it before awaiting the separate MARKET notification;
                 # either delivery can progress while the other awaits Redis.
-                if stamping is None or stamping.done():
+                if prices.stamping is None or prices.stamping.done():
                     await stamp_done()
                     if queued_refresh:
                         await stamp_start()
@@ -1462,7 +1485,7 @@ async def _run_kalshi_ws_consumer(*, sessions, prices):
                 queue_committed(index, phase, written_outcome_ids, registered=registered)
                 # Only newly admitted bridge events need another launch. Known
                 # events were already registered before MARKET publication.
-                if stamping is None or stamping.done():
+                if prices.stamping is None or prices.stamping.done():
                     await stamp_done()
                     if queued_refresh:
                         await stamp_start()
@@ -1482,9 +1505,28 @@ async def _run_kalshi_ws_consumer(*, sessions, prices):
                     keep_queued()
             else:
                 try:
-                    await stamp_done()
+                    # #10090: the refresh is the run's; this flush returns
+                    # without waiting for it, so the next flush's committed
+                    # cohort joins it rather than waiting behind an unrelated
+                    # older stamp. The consumer joins it at a scope change and
+                    # before its final drain.
+                    if prices.stamping is not None and prices.stamping.done():
+                        await stamp_done()
+                    if queued_refresh and prices.stamping is not None:
+                        stamp_admit()
+                        if queued_refresh and not queued_events:
+                            # Only prior debt: it stays owed for a later flush,
+                            # which never waits on the running refresh for it.
+                            queued_marks.clear()
+                            queued_refresh = False
                     if queued_refresh:
+                        # Refused: the same event is still held, or the running
+                        # call no longer admits. Join it, as before, then start.
+                        await stamp_done()
                         await stamp_start()
+                    if final_drain:
+                        # The drain has no next flush: its hand-off and exit
+                        # follow, so no stamp may outlive it.
                         await stamp_done()
                 except asyncio.CancelledError:
                     # Cancellation landing on the final/error join has the same
@@ -1559,6 +1601,11 @@ async def _run_kalshi_ws_consumer(*, sessions, prices):
         cancellation at its next turn. A second cancellation landing on the
         join is recorded, not obeyed early: the join and the drain both still
         run, then the cancellation propagates.
+
+        #10090: a refresh an earlier flush started may still be running after
+        the flush loop has stopped. It is joined to completion here too, so
+        its committed stamps finish and nothing shares the refresher with the
+        drain.
         """
         interrupted = None
         while not flush_task.done():
@@ -1573,6 +1620,11 @@ async def _run_kalshi_ws_consumer(*, sessions, prices):
                     "the final drain waits for it",
                     LOOP_REAP_TIMEOUT_S,
                 )
+        try:
+            await prices.join_stamp(blend_refresher)
+        except asyncio.CancelledError as exc:
+            # Joined before re-raising; the drain still runs first.
+            interrupted = exc
         try:
             await drain_prices()
         finally:
@@ -2412,6 +2464,8 @@ async def _run_kalshi_ws_consumer(*, sessions, prices):
         if game_plan is None or open_plan is None:
             return "rebuild"
         async with flush_gate:
+            # #10090: a refresh may outlive its flush; none runs across a swap.
+            await prices.join_stamp(blend_refresher)
             changed = apply_scope(linked, maps, ids, bridge, game_plan, open_plan)
         logger.info(
             "Kalshi WS: scope changed in place — %d linked / %d open tickers; "
