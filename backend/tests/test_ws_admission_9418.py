@@ -363,7 +363,15 @@ class TestTheRereadIsTheSlatesLiveArm:
         _install_quiet_socket(monkeypatch)
         state = _install_session(monkeypatch, slate, lambda: [900])
 
-        await asyncio.wait_for(consumer(), timeout=5)
+        # #10090: a refresh no longer ends a run whose scope merely changed;
+        # this reads the reread's SQL, so stop once one has been recorded.
+        running = asyncio.create_task(consumer())
+        for _ in range(500):
+            if state["rereads"] or running.done():
+                break
+            await asyncio.sleep(0.01)
+        running.cancel()
+        await asyncio.gather(running, return_exceptions=True)
 
         assert state["rereads"], "the reread never ran"
         sql = _sql(state["rereads"][0])

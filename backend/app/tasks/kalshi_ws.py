@@ -424,6 +424,105 @@ def _kalshi_slate_event_window():
     )
 
 
+#: #10090 — how long a replacement client must have been connected before its
+#: predecessor stops reading. Both carry the shared tickers meanwhile; ticker
+#: ownership (`_KalshiClient`) keeps one writer per ticker at every instant.
+SUCCESSOR_OVERLAP_SECONDS = 5.0
+
+#: #10090 — how long a retiring client may take to drain callbacks it already
+#: accepted before it is cancelled like the old recycle did.
+RETIRE_DRAIN_SECONDS = 30.0
+
+#: #10090 — how long a connected client may go without Kalshi acknowledging
+#: every channel it subscribed before the next refresh rebuilds the run. A
+#: rejected subscription rebuilds at once; either way the socket may be silent.
+SUBSCRIBE_ACK_DEADLINE_SECONDS = 30.0
+
+#: #10090 — open-contract connections a changed scope may hold beyond the
+#: packed minimum before the run takes the full rebuild instead.
+OPEN_CONTRACT_EXTRA_CONNECTIONS = 2
+
+
+class _KalshiClient:
+    """#10090 — one Kalshi connection and the exact tickers it subscribed.
+
+    ``predecessor`` is the client a make-before-break replacement takes over
+    from; until it retires the two are each other's ``pair`` and share
+    ``lifecycle_seen`` and ``pair_lock``, so a settlement both deliver is
+    handled once and sibling settlements never run concurrently.
+    """
+
+    __slots__ = (
+        "sock", "task", "tickers", "kind", "predecessor", "pair", "lifecycle_seen",
+        "pair_lock",
+    )
+
+    def __init__(self, sock, tickers, kind):
+        self.sock = sock
+        self.task = None
+        self.tickers = frozenset(tickers)
+        self.kind = kind
+        self.predecessor = None
+        self.pair = None
+        self.lifecycle_seen = None
+        # Serializes the pair's settlement writes, as one socket's dispatch did.
+        self.pair_lock = None
+
+
+def plan_stable_shards(current, scope, per_connection=None, extra=0, busy=()):
+    """#10090 — keep, replace, start or retire clients for a changed scope.
+
+    ``current`` lists each steady client's subscribed tickers. A client whose
+    tickers left scope keeps its connection while any of them remain (their
+    frames are no longer mapped) and is retired once none do. New tickers go
+    to ONE replacement — the client with the most room, which also sheds its
+    dead tickers — and any overflow to new connections, so a removal never
+    re-deals every shard. ``per_connection=None`` is the single game client.
+    ``busy`` clients are mid-handoff and are never replaced or retired.
+
+    Returns ``(keep, replace, start, retire)`` — indexes, ``{index: tickers}``,
+    new ticker sets, indexes — or None when the result would exceed the packed
+    minimum by more than ``extra`` connections (the caller rebuilds instead).
+    """
+    import math
+
+    scope = frozenset(scope)
+    live = [frozenset(tickers) & scope for tickers in current]
+    carried = frozenset().union(*live) if live else frozenset()
+    added = sorted(scope - carried)
+    retire = [index for index, tickers in enumerate(live) if not tickers]
+    if any(index in busy for index in retire):
+        return None
+    candidates = [index for index, tickers in enumerate(live) if tickers]
+    replace, start = {}, []
+    if added:
+        size = None if per_connection is None else max(1, int(per_connection))
+        choices = [
+            index for index in candidates
+            if index not in busy and (size is None or len(live[index]) < size)
+        ]
+        if size is None and candidates and not choices:
+            return None
+        rest = added
+        if choices:
+            index = min(choices, key=lambda i: (len(live[i]), i)) if size else max(
+                choices, key=lambda i: (len(live[i]), -i),
+            )
+            room = len(rest) if size is None else size - len(live[index])
+            replace[index] = live[index] | frozenset(rest[:room])
+            rest = rest[room:]
+        step = size or max(1, len(rest))
+        start = [frozenset(rest[i:i + step]) for i in range(0, len(rest), step)]
+    keep = [index for index in candidates if index not in replace]
+    if per_connection is None:
+        needed = 1 if scope else 0
+    else:
+        needed = math.ceil(len(scope) / max(1, int(per_connection)))
+    if len(keep) + len(replace) + len(start) > needed + extra:
+        return None
+    return keep, replace, start, retire
+
+
 def _packed(groups, max_rows, max_groups=None):
     """Consecutive whole ``groups`` merged into phases of at most ``max_rows``
     rows and ``max_groups`` groups."""
@@ -550,9 +649,9 @@ async def _run_kalshi_ws_consumer(*, sessions, prices):
         LiveBlendRefresher, TailReceipts, adopt_handed_off, event_ids_for_outcomes,
         LOOP_REAP_TIMEOUT_S, hand_off_pending, reap_stopped_loops, run_flush_cadence,
     )
+    from app.tasks import ws_open_contracts
     from app.tasks.ws_admission import (  # #9418
-        run_until_admission, unadmitted_live_events,
-        watch_for_unadmitted_live_events,
+        unadmitted_live_events, watch_for_unadmitted_live_events,
     )
     from app.tasks.ws_liveness import report as _report_liveness
     from app.tasks.ws_open_contracts import (  # #9484
@@ -594,8 +693,6 @@ async def _run_kalshi_ws_consumer(*, sessions, prices):
 
     # #9418: the admission floor is measured from here, the previous recycle.
     run_started_at = time.monotonic()
-    ws = KalshiWebSocket()
-    ws.exact_trace = exact_trace
 
     # Same full admission read at startup and each routine refresh.
     async def read_linked_slate():
@@ -636,20 +733,31 @@ async def _run_kalshi_ws_consumer(*, sessions, prices):
         return (frozenset(tuple(row) for row in rows),
                 frozenset(tuple(row) for row in outcome_rows))
 
+    def linked_maps(rows, outcome_rows):
+        """(lifecycle market map, market → event, ticker → ids) for one read."""
+        by_ext = {row[0]: row[1] for row in rows}
+        # Q460: the linked event behind each market, so a flushed price can be
+        # traced back to the card it belongs on and the blend re-stamped there.
+        by_market = {row[1]: row[2] for row in rows if row[2] is not None}
+        ids = {}
+        for ext_id, market_id, outcome_id in outcome_rows:
+            ids[ext_id.upper()] = (market_id, outcome_id)
+        return by_ext, by_market, ids
+
     rows, outcome_rows = await read_linked_slate()
-    initial_linked_scope = linked_scope(rows, outcome_rows)
+    # #10090: the scope this run currently streams. An in-place scope change
+    # replaces these values; the maps below are always mutated in place,
+    # because the handlers, flush and watchers read them through these objects.
+    current = {"linked": linked_scope(rows, outcome_rows), "bridge": {},
+               "open_policy": None}
 
     event_tickers = list({row[0] for row in rows})
-    market_id_by_ext = {row[0]: row[1] for row in rows}
-    # Q460: the linked event behind each market, so a flushed price can be
-    # traced back to the card it belongs on and the blend re-stamped there.
-    event_id_by_market: dict[int, int] = {
-        row[1]: row[2] for row in rows if row[2] is not None
-    }
-
-    ticker_to_ids: dict[str, tuple[int, int]] = {}
-    for ext_id, market_id, outcome_id in outcome_rows:
-        ticker_to_ids[ext_id.upper()] = (market_id, outcome_id)
+    market_id_by_ext: dict[str, int]
+    event_id_by_market: dict[int, int]
+    ticker_to_ids: dict[str, tuple[int, int]]
+    market_id_by_ext, event_id_by_market, ticker_to_ids = linked_maps(
+        rows, outcome_rows,
+    )
 
     market_tickers = list(ticker_to_ids.keys())
     if exact_trace is not None:
@@ -672,9 +780,13 @@ async def _run_kalshi_ws_consumer(*, sessions, prices):
     # the flush re-stamps their event blend like a slate leg's. Its own read
     # fails on its own: a failed bridge costs the blend re-stamp, never the
     # prices.
-    async def read_open_contracts() -> tuple[
+    async def read_open_contracts(linked=None) -> tuple[
         dict[str, tuple[int, int]], dict[int, int], bool, bool,
     ]:
+        # #10090: a changed-scope refresh excludes the slate it is about to
+        # install, not the one the run is still streaming.
+        if linked is None:
+            linked = ticker_to_ids
         if not open_contract_prices_enabled():
             return {}, {}, False, False
         try:
@@ -688,8 +800,8 @@ async def _run_kalshi_ws_consumer(*, sessions, prices):
                 "streaming the linked slate only this run"
             )
             return {}, {}, True, False
-        ids = open_contract_ticker_map(open_rows, ticker_to_ids)
-        candidates = open_contract_event_candidates(open_rows, ticker_to_ids)
+        ids = open_contract_ticker_map(open_rows, linked)
+        candidates = open_contract_event_candidates(open_rows, linked)
         if not candidates:
             return ids, {}, False, False
         try:
@@ -1427,9 +1539,47 @@ async def _run_kalshi_ws_consumer(*, sessions, prices):
         except (ValueError, TypeError):
             return None
 
-    async def handle_ticker(msg: dict):
+    # #10090 — the one client whose frames may write each mapped ticker. A
+    # replacement takes a shared ticker over at its first frame for it: it is
+    # subscribed by then, so anything its predecessor still has unread is older
+    # or also on the successor's ordered stream. One writer per ticker at every
+    # instant, so an overlap never interleaves two streams into the buffer.
+    ticker_owner: dict[str, _KalshiClient] = {}
+
+    def lifecycle_admitted(client, msg) -> bool:
+        """#10090 — True when ``client``'s lifecycle frame should be handled.
+
+        A frame for a ticker another client owns is that client's, except
+        between a replacement and its predecessor, which both deliver every
+        shared settlement: there the first to run it handles it, once.
+        """
+        if client is None:
+            return True
+        ticker = (msg.get("market_ticker") or "").upper()
+        owner = ticker_owner.get(ticker)
+        if owner is not None and owner is not client and owner is not client.pair:
+            return False
+        seen = client.lifecycle_seen
+        if seen is not None:
+            key = (ticker, msg.get("status"), msg.get("event_type"), msg.get("result"))
+            if key in seen:
+                return False
+            seen.add(key)
+        return True
+
+    async def handle_ticker(msg: dict, client=None):
         exact_trace = getattr(tail_receipts, "exact_trace", None)
         ticker = (msg.get("market_ticker") or msg.get("ticker", "")).upper()
+        if client is not None:
+            owner = ticker_owner.get(ticker)
+            if owner is not None and owner is not client:
+                if owner is client.predecessor and ticker in client.tickers:
+                    ticker_owner[ticker] = client
+                else:
+                    if exact_trace is not None:
+                        with contextlib.suppress(Exception):
+                            exact_trace.decided(msg, reason="SUPERSEDED_CONNECTION")
+                    return
         ids = ticker_to_ids.get(ticker) or open_contract_ids.get(ticker)
         if not ids:
             if exact_trace is not None:
@@ -1494,16 +1644,17 @@ async def _run_kalshi_ws_consumer(*, sessions, prices):
     # Wait before opening a session; unwind the transaction before the permit.
     open_grade_admission = asyncio.Semaphore(OPEN_CONTRACT_GRADE_CONCURRENCY)
 
-    async def handle_open_contract_lifecycle(ticker: str, msg: dict):
+    async def handle_open_contract_lifecycle(ticker: str, msg: dict, ids=None):
         """#10022: one open-contract leg, graded by its own frame — never the
-        two-sided write below (see `ws_open_contracts`)."""
+        two-sided write below (see `ws_open_contracts`). #10090: ``ids`` were
+        captured when the frame was accepted, before any scope change."""
         if not open_contract_settlement_enabled():
             return  # the undo line: prices only, settlement left to REST
         verdict = lifecycle_verdict(msg)
         if verdict is None:
             stats["open_contract_lifecycle_unverdicted"] += 1
             return
-        market_id, outcome_id = open_contract_ids[ticker]
+        market_id, outcome_id = ids if ids is not None else open_contract_ids[ticker]
         try:
             async with open_grade_admission, get_task_session() as session:
                 graded, resolved = await grade_open_contract_leg(
@@ -1545,26 +1696,57 @@ async def _run_kalshi_ws_consumer(*, sessions, prices):
             stats["errors"] += 1
             logger.exception("Kalshi WS: open-contract settlement error for %s", ticker)
 
-    async def handle_shard_lifecycle(msg: dict):
+    _UNCAPTURED = object()
+
+    async def handle_shard_lifecycle(msg: dict, *, client=None, ids=_UNCAPTURED):
         """An open-contract connection grades its own legs and nothing else: a
         linked-slate frame is the game socket's to handle, exactly once."""
+        if client is not None:
+            if not lifecycle_admitted(client, msg):
+                return
+            if client.pair_lock is not None:
+                async with client.pair_lock:
+                    return await handle_shard_lifecycle(msg, ids=ids)
         ticker = (msg.get("market_ticker") or "").upper()
+        if ids is not _UNCAPTURED:
+            if ids is not None:
+                await handle_open_contract_lifecycle(ticker, msg, ids=ids)
+            return
         if ticker in open_contract_ids and ticker not in ticker_to_ids:
             await handle_open_contract_lifecycle(ticker, msg)
 
-    async def prepare_shard_lifecycle(msg: dict):
-        """Defer the per-leg grader; it has no buffer-derived closing input."""
-        return handle_shard_lifecycle
+    async def prepare_shard_lifecycle(msg: dict, *, client=None):
+        """Defer the per-leg grader; it has no buffer-derived closing input.
 
-    _UNCAPTURED = object()
+        #10090: the leg's identity is captured here, at acceptance, so a scope
+        change before the deferred grade runs cannot re-route or lose it.
+        """
+        ticker = (msg.get("market_ticker") or "").upper()
+        ids = (
+            open_contract_ids.get(ticker) if ticker not in ticker_to_ids else None
+        )
+        return functools.partial(handle_shard_lifecycle, client=client, ids=ids)
 
-    async def prepare_lifecycle(msg: dict):
+    async def prepare_lifecycle(msg: dict, *, client=None):
         """Capture closing inputs before deferring slow settlement work (#10667)."""
         from functools import partial
 
         ticker = (msg.get("market_ticker") or "").upper()
         parts = ticker.rsplit("-", 1)
         closing_price = _UNCAPTURED
+        # #10090: and the route, so a scope change before the deferred write
+        # runs cannot re-route or drop a frame already accepted.
+        # #10090: as in `handle_lifecycle`, a connection's frame takes the
+        # two-sided write only for a ticker the slate still maps.
+        if ticker in open_contract_ids and ticker not in ticker_to_ids:
+            route = ("open", open_contract_ids[ticker])
+        elif (
+            len(parts) == 2 and parts[0] in market_id_by_ext
+            and (client is None or ticker in ticker_to_ids)
+        ):
+            route = ("linked", market_id_by_ext[parts[0]])
+        else:
+            route = None
         if (
             not (ticker in open_contract_ids and ticker not in ticker_to_ids)
             and is_terminal(msg.get("status", ""))
@@ -1575,19 +1757,45 @@ async def _run_kalshi_ws_consumer(*, sessions, prices):
                 ids = ticker_to_ids.get(ticker)
                 buffered = price_buffer.get(ids[1]) if ids else None
                 closing_price = buffered[0] if buffered else None
-        return partial(handle_lifecycle, closing_price=closing_price)
+        return partial(
+            handle_lifecycle, closing_price=closing_price, client=client, route=route,
+        )
 
-    async def handle_lifecycle(msg: dict, *, closing_price=_UNCAPTURED):
+    async def handle_lifecycle(
+        msg: dict, *, closing_price=_UNCAPTURED, client=None, route=_UNCAPTURED,
+    ):
         ticker = (msg.get("market_ticker") or "").upper()
-        status = msg.get("status", "")
-        result = msg.get("result")
-
         # #10022: an open contract is never in the lifecycle map (its event
         # ticker is not the linked slate's), so it is routed before the
         # two-sided handler can see it. `open_contract_ids` already excludes
         # every ticker the linked slate carries.
-        if ticker in open_contract_ids and ticker not in ticker_to_ids:
-            await handle_open_contract_lifecycle(ticker, msg)
+        if route is _UNCAPTURED:
+            parts = ticker.rsplit("-", 1)
+            # #10090: a connection keeps the tickers that left scope until it
+            # retires, so its frames take the two-sided write only for a
+            # ticker the slate still maps, as every subscribed ticker was.
+            if ticker in open_contract_ids and ticker not in ticker_to_ids:
+                route = ("open", open_contract_ids[ticker])
+            elif (
+                len(parts) == 2 and parts[0] in market_id_by_ext
+                and (client is None or ticker in ticker_to_ids)
+            ):
+                route = ("linked", market_id_by_ext[parts[0]])
+            else:
+                route = None
+        if client is not None:
+            if not lifecycle_admitted(client, msg):
+                return
+            if client.pair_lock is not None:
+                async with client.pair_lock:
+                    return await handle_lifecycle(
+                        msg, closing_price=closing_price, route=route,
+                    )
+        status = msg.get("status", "")
+        result = msg.get("result")
+
+        if route is not None and route[0] == "open":
+            await handle_open_contract_lifecycle(ticker, msg, ids=route[1])
             return
 
         # CAL-P049 (#1818): this writes FuturesMarket.status='resolved', so it is
@@ -1596,14 +1804,9 @@ async def _run_kalshi_ws_consumer(*, sessions, prices):
         if not is_terminal(status):
             return
 
-        parts = ticker.rsplit("-", 1)
-        if len(parts) < 2:
+        if route is None:
             return
-        event_ticker = parts[0]
-        if event_ticker not in market_id_by_ext:
-            return
-
-        market_id = market_id_by_ext[event_ticker]
+        market_id = route[1]
 
         # Direct callers retain the original capture path. Prepared callbacks
         # carry an explicit value, including None, captured before offloading.
@@ -1680,9 +1883,134 @@ async def _run_kalshi_ws_consumer(*, sessions, prices):
             stats["errors"] += 1
             logger.exception("Kalshi WS: settlement error for %s", ticker)
 
-    ws.on_ticker = handle_ticker
-    ws.on_lifecycle = handle_lifecycle
-    ws.on_lifecycle_prepare = prepare_lifecycle
+    # -- Connections (#10090) --
+    # Steady clients by kind; a replaced or retired client leaves these lists
+    # at once and stays in `retiring` until its reader has stopped and drained.
+    game_clients: list[_KalshiClient] = []
+    open_clients: list[_KalshiClient] = []
+    retiring: list[_KalshiClient] = []
+    handoff_tasks: set[asyncio.Task] = set()
+    retired_messages = {"game": 0, "open": 0}
+
+    def start_client(tickers, kind, *, prepared=True, predecessor=None):
+        sock = KalshiWebSocket()
+        sock.exact_trace = exact_trace
+        client = _KalshiClient(sock, tickers, kind)
+        sock.on_ticker = functools.partial(handle_ticker, client=client)
+        if kind == "game":
+            sock.on_lifecycle = functools.partial(handle_lifecycle, client=client)
+            sock.on_lifecycle_prepare = functools.partial(prepare_lifecycle, client=client)
+        else:
+            sock.on_lifecycle = functools.partial(handle_shard_lifecycle, client=client)
+            set_prepared(client, prepared)
+        if predecessor is not None:
+            # Both deliver every shared settlement until the predecessor stops.
+            client.predecessor = predecessor
+            client.pair, predecessor.pair = predecessor, client
+            client.lifecycle_seen = predecessor.lifecycle_seen = set()
+            client.pair_lock = predecessor.pair_lock = asyncio.Lock()
+            if predecessor.kind != "game":
+                # Inline on both while they overlap; recomputed at retirement.
+                set_prepared(predecessor, False)
+                set_prepared(client, False)
+        # A replacement's set subscribes sorted; startup keeps the read's order.
+        tickers = list(tickers) if isinstance(tickers, list) else sorted(tickers)
+        if kind == "game":
+            run = sock.run(market_tickers=tickers)
+        else:
+            run = sock.run(market_tickers=tickers, channels=open_contract_channels())
+        client.task = asyncio.create_task(run, name=f"kalshi-{kind}-client")
+        return client
+
+    def set_prepared(client, prepared):
+        """An open shard defers lifecycle only when it alone owns each market
+        key (`prepared_shard_indexes`); otherwise inline, the original order."""
+        client.sock.on_lifecycle_prepare = (
+            functools.partial(prepare_shard_lifecycle, client=client)
+            if prepared else None
+        )
+
+    async def retire_client(client, successor=None):
+        """Stop ``client`` once ``successor`` (if any) has held an acknowledged
+        subscription for the overlap, without cancelling callbacks it already
+        accepted. Ownership of their shared tickers moves only after it has
+        stopped delivering. A successor whose subscription is rejected or never
+        acknowledged never retires its predecessor: the refresh rebuilds
+        (`refresh_subscription_scope`), which ends both."""
+        try:
+            if successor is not None:
+                subscribed_since = None
+                while True:
+                    if successor.sock.is_subscribed:
+                        if subscribed_since is None:
+                            subscribed_since = time.monotonic()
+                        if time.monotonic() - subscribed_since >= SUCCESSOR_OVERLAP_SECONDS:
+                            break
+                    else:
+                        subscribed_since = None
+                    await asyncio.sleep(min(0.25, SUCCESSOR_OVERLAP_SECONDS))
+            await client.sock.retire()
+            done, _ = await asyncio.wait({client.task}, timeout=RETIRE_DRAIN_SECONDS)
+            if not done:
+                logger.error(
+                    "Kalshi WS: retiring %s connection still draining after %.0fs; "
+                    "cancelling it", client.kind, RETIRE_DRAIN_SECONDS,
+                )
+                client.task.cancel()
+                await asyncio.gather(client.task, return_exceptions=True)
+            elif not client.task.cancelled() and client.task.exception() is not None:
+                logger.warning(
+                    "Kalshi WS: retired %s connection ended with an error",
+                    client.kind, exc_info=client.task.exception(),
+                )
+        finally:
+            for ticker, owner in list(ticker_owner.items()):
+                if owner is client:
+                    if successor is not None and ticker in successor.tickers:
+                        ticker_owner[ticker] = successor
+                    else:
+                        del ticker_owner[ticker]
+            if successor is not None:
+                successor.predecessor = successor.pair = None
+                successor.lifecycle_seen = successor.pair_lock = None
+            client.pair = client.lifecycle_seen = client.pair_lock = None
+            if client in retiring:
+                retiring.remove(client)
+            retired_messages[client.kind] += client.sock.stats.get("messages", 0)
+            if client.kind != "game":
+                with contextlib.suppress(Exception):
+                    refresh_prepared(open_contract_ids)
+
+    def launch_retire(client, successor=None):
+        retiring.append(client)
+        task = asyncio.create_task(
+            retire_client(client, successor), name="kalshi-client-handoff",
+        )
+        handoff_tasks.add(task)
+        task.add_done_callback(handoff_tasks.discard)
+
+    def claim_tickers(client, scope):
+        """Point each in-scope ticker ``client`` carries at its writer: still
+        the predecessor for a ticker both carry, until the successor's first
+        frame for it (`handle_ticker`) or the predecessor's retirement."""
+        pred = client.predecessor
+        for ticker in client.tickers & scope:
+            if (
+                pred is not None and ticker in pred.tickers
+                and ticker_owner.get(ticker) in (None, pred)
+            ):
+                ticker_owner[ticker] = pred
+            else:
+                ticker_owner[ticker] = client
+
+    def game_messages():
+        return retired_messages["game"] + sum(
+            c.sock.stats.get("messages", 0)
+            for c in (*game_clients, *retiring) if c.kind == "game"
+        )
+
+    def game_connected():
+        return any(c.sock.is_connected for c in game_clients)
 
     # -- Periodic flush task --
     # #10090: start to start, so the flush's own work is not added to the
@@ -1702,12 +2030,17 @@ async def _run_kalshi_ws_consumer(*, sessions, prices):
         if method is not None:
             setattr(blend_refresher, name, flush_timings.timed(bucket, method))
 
+    # #10090: an in-place scope change swaps the maps between flushes, never
+    # under one that planned its phases from the previous maps.
+    flush_gate = asyncio.Lock()
+
     async def timed_flush(flush_started):
-        started = time.monotonic()
-        try:
-            return await flush_prices(flush_started)
-        finally:
-            flush_timings.flushed(time.monotonic() - started)
+        async with flush_gate:
+            started = time.monotonic()
+            try:
+                return await flush_prices(flush_started)
+            finally:
+                flush_timings.flushed(time.monotonic() - started)
 
     async def flush_loop():
         if failed_retry is None:
@@ -1736,7 +2069,7 @@ async def _run_kalshi_ws_consumer(*, sessions, prices):
                 "preempted=%d live=%d",
                 stats["price_updates"], stats["flushes"],
                 stats["settlements"], stats["errors"],
-                ws.stats.get("messages", 0),
+                game_messages(),
                 blend["stamped"], blend["no_reading"],
                 blend["throttled"], blend["errors"],
                 blend.get("lock_skipped", 0),
@@ -1749,9 +2082,9 @@ async def _run_kalshi_ws_consumer(*, sessions, prices):
             )
             flush_timings.reset()
             _report_liveness(
-                "kalshi", "streaming" if ws.is_connected else "disconnected",
+                "kalshi", "streaming" if game_connected() else "disconnected",
                 legs=len(market_tickers),
-                msgs=ws.stats.get("messages", 0),
+                msgs=game_messages(),
                 stamped=blend["stamped"],
                 no_reading=blend["no_reading"],
             )
@@ -1762,27 +2095,28 @@ async def _run_kalshi_ws_consumer(*, sessions, prices):
     # #9484: the open-contract connections, admitted beside the game socket and
     # torn down in the `finally` on every exit path. #10022: they also carry
     # `market_lifecycle_v2`, routed to the PER-LEG grader (never the two-sided
-    # handler — see `ws_open_contracts`).
-    open_contract_sockets = []
-    open_contract_tasks = []
-    initial_open_scope = None
+    # handler — see `ws_open_contracts`). #10090: `open_clients`.
 
-    def open_scope(ids, bridge):
-        shards = shard_tickers(ids)
-        # Effective maps and callback/subscription policy, not merely tickers.
+    def open_policy():
+        # Callback/subscription policy. A switch takes the full rebuild.
         return (
-            frozenset(ids.items()), frozenset(bridge.items()),
             open_contract_prices_enabled(), open_contract_settlement_enabled(),
-            tuple(open_contract_channels()), tuple(tuple(shard) for shard in shards),
-            frozenset(prepared_shard_indexes(ids, shards)),
+            tuple(open_contract_channels()),
         )
 
+    def refresh_prepared(scope_ids):
+        layout = [sorted(c.tickers & frozenset(scope_ids)) for c in open_clients]
+        prepared = prepared_shard_indexes(scope_ids, layout)
+        for index, client in enumerate(open_clients):
+            if client.predecessor is None:
+                set_prepared(client, index in prepared)
+
     async def admit_open_contracts():
-        nonlocal initial_open_scope
         ids, bridge, failed, bridge_failed = (
             preread if preread is not None else await read_open_contracts()
         )
-        initial_open_scope = open_scope(ids, bridge)
+        current["open_policy"] = open_policy()
+        current["bridge"] = dict(bridge)
         stats["open_contract_admission_error"] = failed
         stats["open_contract_bridge_error"] = bridge_failed
         # #9484: their event is re-stamped after a flush exactly like a slate
@@ -1813,18 +2147,11 @@ async def _run_kalshi_ws_consumer(*, sessions, prices):
         stats["open_contract_connections"] = len(shards)
         prepared_shards = prepared_shard_indexes(ids, shards)
         for shard_index, shard in enumerate(shards):
-            sock = KalshiWebSocket()
-            sock.exact_trace = exact_trace
-            sock.on_ticker = handle_ticker
-            sock.on_lifecycle = handle_shard_lifecycle
-            if shard_index in prepared_shards:
-                sock.on_lifecycle_prepare = prepare_shard_lifecycle
-            open_contract_sockets.append(sock)
-            open_contract_tasks.append(
-                asyncio.create_task(
-                    sock.run(market_tickers=shard, channels=open_contract_channels())
-                )
+            client = start_client(
+                shard, "open", prepared=shard_index in prepared_shards,
             )
+            open_clients.append(client)
+            claim_tickers(client, frozenset(ids))
         if ids:
             logger.info(
                 "Kalshi WS: %d open-contract tickers over %d connection(s)",
@@ -1833,38 +2160,189 @@ async def _run_kalshi_ws_consumer(*, sessions, prices):
 
     admission_task = asyncio.create_task(admit_open_contracts())
 
-    async def subscription_scope_changed():
-        if any(task.done() for task in open_contract_tasks):
+    def apply_scope(linked, maps, ids, bridge, game_plan, open_plan):
+        """#10090 — install a changed scope without tearing down the run.
+
+        Synchronous from the first map write to the last task start, so no
+        handler, flush or watcher ever reads half of it. Buffered prices whose
+        outcome left scope keep their event/market identities until written:
+        that is debt the flush still owes, exactly as the final drain paid it.
+        """
+        new_by_ext, new_by_market, new_ids = maps
+        buffered = set(price_buffer)
+        by_outcome = {
+            oid: new_by_market[mid] for mid, oid in new_ids.values()
+            if mid in new_by_market
+        }
+        market_by_outcome = {oid: mid for mid, oid in new_ids.values()}
+        ticker_by_market = {mid: ticker for ticker, mid in new_by_ext.items()}
+        non_blend = {
+            oid for oid, mid in market_by_outcome.items()
+            if kalshi_non_speaking_ticker(ticker_by_market.get(mid))
+        }
+        for oid, event_id in bridge.items():
+            by_outcome.setdefault(oid, event_id)
+            non_blend.discard(oid)
+        market_by_outcome.update((oid, mid) for mid, oid in ids.values())
+        open_oids = {oid for _, oid in ids.values()}
+        fresh = set(market_by_outcome) | set(by_outcome)
+        for oid in buffered - fresh:
+            if oid in event_id_by_outcome:
+                by_outcome[oid] = event_id_by_outcome[oid]
+            if oid in market_id_by_outcome:
+                market_by_outcome[oid] = market_id_by_outcome[oid]
+            if oid in non_blend_outcome_ids:
+                non_blend.add(oid)
+            if oid in open_contract_outcome_ids:
+                open_oids.add(oid)
+
+        for target, value in (
+            (market_id_by_ext, new_by_ext), (event_id_by_market, new_by_market),
+            (ticker_to_ids, new_ids), (event_id_by_outcome, by_outcome),
+            (market_id_by_outcome, market_by_outcome), (open_contract_ids, ids),
+        ):
+            target.clear()
+            target.update(value)
+        for target, value in (
+            (non_blend_outcome_ids, non_blend), (open_contract_outcome_ids, open_oids),
+            (legged_market_ids, {mid for mid, _ in new_ids.values()}),
+        ):
+            target.clear()
+            target.update(value)
+        market_tickers[:] = list(new_ids)
+        current["linked"] = linked
+        current["bridge"] = dict(bridge)
+
+        changed = {"kept": 0, "replaced": 0, "started": 0, "retired": 0}
+        for kind, clients, plan, scope in (
+            ("game", game_clients, game_plan, frozenset(new_ids)),
+            ("open", open_clients, open_plan, frozenset(ids)),
+        ):
+            keep, replace, start, retire = plan
+            steady = []
+            for index, client in enumerate(clients):
+                if index in replace:
+                    successor = start_client(replace[index], kind, predecessor=client)
+                    launch_retire(client, successor)
+                    steady.append(successor)
+                elif index in retire:
+                    launch_retire(client)
+                else:
+                    steady.append(client)
+            steady.extend(start_client(tickers, kind) for tickers in start)
+            clients[:] = steady
+            changed["kept"] += len(keep)
+            changed["replaced"] += len(replace)
+            changed["started"] += len(start)
+            changed["retired"] += len(retire)
+        game_scope, open_scope = frozenset(new_ids), frozenset(ids)
+        for ticker in [t for t in ticker_owner if t not in game_scope | open_scope]:
+            del ticker_owner[ticker]
+        # Each client claims only within its own arm: a kept open shard still
+        # physically carries a ticker that moved to the game arm, and must not
+        # take it back from the game connection that now streams it.
+        for client in game_clients:
+            claim_tickers(client, game_scope)
+        for client in open_clients:
+            claim_tickers(client, open_scope)
+        refresh_prepared(ids)
+
+        stats["tickers_subscribed"] = len(new_ids)
+        stats["open_contract_tickers"] = len(ids)
+        stats["open_contract_connections"] = len(open_clients)
+        stats["open_contract_bridged_outcomes"] = len(bridge)
+        stats["open_contract_bridged_events"] = len(set(bridge.values()))
+        stats["scope_in_place"] = stats.get("scope_in_place", 0) + 1
+        for key, count in changed.items():
+            stats[f"clients_{key}"] = stats.get(f"clients_{key}", 0) + count
+        if exact_trace is not None:
+            with contextlib.suppress(Exception):
+                exact_trace.admission(
+                    ticker_to_ids, open_contract_ids, event_id_by_outcome,
+                    phase="SCOPE_IN_PLACE", open_status="SELECTED",
+                )
+        return changed
+
+    async def refresh_subscription_scope():
+        """``"keep"``, ``"applied"`` or ``"rebuild"`` (the old full recycle).
+
+        #10090: an unchanged scope keeps everything; a changed one is applied
+        in place when the policy is unchanged and the connection bound holds.
+        Ended clients, an unfinished or failed admission, a policy switch, a
+        busy handoff, or a failed read of a changed slate keep the rebuild.
+        """
+        if any(client.task.done() for client in open_clients):
             # The old unconditional recycle also repaired an ended auxiliary
             # client. An unchanged mapping cannot certify its lifetime.
-            return True
+            return "rebuild"
+        if any(
+            client.sock.subscription_failed(SUBSCRIBE_ACK_DEADLINE_SECONDS)
+            for client in (*game_clients, *open_clients, *retiring)
+        ):
+            # A rejected or never-acknowledged subscription may be a silent
+            # socket; keeping it would retain exactly what the recycle repaired.
+            stats["recycle_reason"] = "subscription"
+            return "rebuild"
         # A stalled initial open/bridge read has no working arm to retain.
         # Preserve the old deadline's bounded cleanup/rebuild repair.
         if not admission_task.done():
-            return True
+            return "rebuild"
         if admission_task.cancelled() or admission_task.exception() is not None:
-            return True  # rebuild a partially admitted arm through the safe path
+            return "rebuild"  # rebuild a partially admitted arm through the safe path
         try:
             refreshed_rows, refreshed_outcomes = await read_linked_slate()
-            if linked_scope(refreshed_rows, refreshed_outcomes) != initial_linked_scope:
-                return True
-            ids, bridge, failed, bridge_failed = await read_open_contracts()
-            if failed or bridge_failed:
-                # No successful full-scope observation: keep working sockets.
-                return False
-            return open_scope(ids, bridge) != initial_open_scope
+            linked = linked_scope(refreshed_rows, refreshed_outcomes)
+            maps = linked_maps(refreshed_rows, refreshed_outcomes)
+            ids, bridge, failed, bridge_failed = await read_open_contracts(maps[2])
         except Exception:
             logger.warning(
                 "Kalshi WS: subscription refresh read failed, keeping the subscription",
                 exc_info=True,
             )
-            return False
+            return "keep"
+        if failed or bridge_failed:
+            # No successful full-scope observation: keep working sockets unless
+            # the slate itself moved, which the rebuild re-reads in full.
+            return "rebuild" if linked != current["linked"] else "keep"
+        if open_policy() != current["open_policy"]:
+            return "rebuild"
+        if not maps[2] and not ids:
+            # Nothing left to stream: the rebuild reports `no_markets` exactly
+            # as a startup with this scope does.
+            return "rebuild"
+        if (
+            linked == current["linked"] and ids == open_contract_ids
+            and bridge == current["bridge"]
+        ):
+            return "keep"
+        game_plan = plan_stable_shards(
+            [c.tickers for c in game_clients], maps[2],
+            busy={i for i, c in enumerate(game_clients) if c.predecessor is not None},
+        )
+        open_plan = plan_stable_shards(
+            [c.tickers for c in open_clients], ids,
+            per_connection=ws_open_contracts.OPEN_CONTRACT_TICKERS_PER_CONNECTION,
+            extra=OPEN_CONTRACT_EXTRA_CONNECTIONS,
+            busy={i for i, c in enumerate(open_clients) if c.predecessor is not None},
+        )
+        if game_plan is None or open_plan is None:
+            return "rebuild"
+        async with flush_gate:
+            changed = apply_scope(linked, maps, ids, bridge, game_plan, open_plan)
+        logger.info(
+            "Kalshi WS: scope changed in place — %d linked / %d open tickers; "
+            "connections kept=%d replaced=%d started=%d retired=%d",
+            len(ticker_to_ids), len(open_contract_ids), changed["kept"],
+            changed["replaced"], changed["started"], changed["retired"],
+        )
+        return "applied"
 
     _report_liveness("kalshi", "subscribing", legs=len(market_tickers))
 
     # #9462 review: the markets with a ticker on the wire. A market row that
     # exists without an outcome ticker (or gained its winner market after the
-    # slate was read) is not among them.
+    # slate was read) is not among them. #10090: refilled in place by a scope
+    # change.
     legged_market_ids = {market_id for market_id, _ in ticker_to_ids.values()}
 
     # #9418: the slate's live arm, re-read while the socket runs. Same source,
@@ -1895,41 +2373,71 @@ async def _run_kalshi_ws_consumer(*, sessions, prices):
         live_event_ids.update(row[0] for row in rows)
         return unadmitted_live_events(rows, legged_market_ids)
 
-    # The game and admission watcher live across unchanged routine refreshes.
-    # Scope changes still return to the runner, which rebuilds every map/socket.
-    lifetime_task = asyncio.create_task(
-        run_until_admission(
-            # #9484: an EMPTY ticker list means "every market, both
-            # channels" to `KalshiWebSocket.run`, so an open-only run
-            # opens no game socket while its scope is refreshed normally.
-            (
-                ws.run(market_tickers=market_tickers)
-                if market_tickers
-                else asyncio.Event().wait()
-            ),
+    def start_watcher():
+        # The events this slate tried are held to the timer, as at startup:
+        # a scope change re-ran their lookup, so it restarts the baseline.
+        return asyncio.create_task(
             watch_for_unadmitted_live_events(
                 load_unadmitted_live_event_ids,
-                event_id_by_market.values(),
+                list(event_id_by_market.values()),
                 arm="Kalshi",
                 started_at=run_started_at,
             ),
-        ),
-        name="kalshi-subscription-lifetime",
-    )
+            name="kalshi-admission-watch",
+        )
+
+    # The game client(s) and admission watcher live across routine refreshes;
+    # a changed scope is applied in place (#10090). An admission miss, a policy
+    # switch or an ended client still returns to the runner, which rebuilds.
+    # #9484: an EMPTY ticker list means "every market, both channels" to
+    # `KalshiWebSocket.run`, so an open-only run opens no game socket.
+    if market_tickers:
+        game_clients.append(start_client(market_tickers, "game"))
+        claim_tickers(game_clients[0], frozenset(ticker_to_ids))
+    watch_task = start_watcher()
     interrupted = None
+    admitted = None
     try:
+        next_refresh = time.monotonic() + SUBSCRIPTION_REFRESH_SECONDS
         while True:
-            done, _ = await asyncio.wait(
-                {lifetime_task}, timeout=SUBSCRIPTION_REFRESH_SECONDS,
-            )
-            if done:
-                admitted = lifetime_task.result()
+            waits = {c.task for c in game_clients}
+            if watch_task is not None:
+                waits.add(watch_task)
+            timeout = max(0.0, next_refresh - time.monotonic())
+            if waits:
+                done, _ = await asyncio.wait(
+                    waits, timeout=timeout, return_when=asyncio.FIRST_COMPLETED,
+                )
+            else:
+                await asyncio.sleep(timeout)
+                done = set()
+            if watch_task is not None and watch_task in done:
+                finished, watch_task = watch_task, None
+                if not finished.cancelled() and finished.exception() is None:
+                    admitted = finished.result()
+                    break
+                logger.error(
+                    "WS admission watcher failed; the subscription recycles on its timer",
+                    exc_info=None if finished.cancelled() else finished.exception(),
+                )
+            ended = [c.task for c in game_clients if c.task in done]
+            if ended:
+                ended[0].result()  # a socket error propagates as it always did
                 break
-            if await subscription_scope_changed():
+            if time.monotonic() < next_refresh:
+                continue
+            verdict = await refresh_subscription_scope()
+            if verdict == "rebuild":
                 stats["status"] = "resubscribe"
-                stats["recycle_reason"] = "scope"
-                admitted = None
+                stats.setdefault("recycle_reason", "scope")
                 break
+            if verdict == "applied":
+                # #9418: restart the watcher on the slate this run now streams.
+                if watch_task is not None:
+                    watch_task.cancel()
+                    await asyncio.gather(watch_task, return_exceptions=True)
+                watch_task = start_watcher()
+            next_refresh = time.monotonic() + SUBSCRIPTION_REFRESH_SECONDS
         if admitted:
             stats["status"] = "resubscribe"
             stats["recycle_reason"] = "admission"
@@ -1948,22 +2456,32 @@ async def _run_kalshi_ws_consumer(*, sessions, prices):
     finally:
         # Like the old wait_for recycle, stop and join the game/watcher before
         # draining. Repeated cancellation cannot leave callbacks beside a drain.
-        if not lifetime_task.done():
-            lifetime_task.cancel()
-        while not lifetime_task.done():
+        # #10090: handoffs and every game connection, retiring ones included.
+        # Snapshot first: a cancelled handoff takes its client out of `retiring`.
+        every_client = [*game_clients, *open_clients, *retiring]
+        lifetime = [*handoff_tasks]
+        if watch_task is not None:
+            lifetime.append(watch_task)
+        lifetime.extend(c.task for c in every_client if c.kind == "game")
+        for task in lifetime:
+            if not task.done():
+                task.cancel()
+        while not all(task.done() for task in lifetime):
             try:
-                await asyncio.wait({lifetime_task})
+                await asyncio.wait(lifetime)
             except asyncio.CancelledError as exc:
                 interrupted = exc
-        if not lifetime_task.cancelled():
-            lifetime_task.exception()
+        for task in lifetime:
+            if not task.cancelled():
+                task.exception()
         loops_stop.set()
         flush_task.cancel()
         stats_task.cancel()
         # #9484: cancelled here, awaited only after the drain below, so a
         # second cancellation landing on that await can never skip the drain.
         admission_task.cancel()
-        for task in open_contract_tasks:
+        open_tasks = [c.task for c in every_client if c.kind != "game"]
+        for task in open_tasks:
             task.cancel()
         # Q491 repair (CERT-654 BLOCK): the last flush has no successor, so it
         # must RETRY rather than requeue into a buffer nobody will read again.
@@ -1974,9 +2492,10 @@ async def _run_kalshi_ws_consumer(*, sessions, prices):
             # but a price it (or the last flush) committed inside the 2 s
             # throttle is still owed its blend stamp. The next run adopts it.
             stats["blend_pending_carried"] = hand_off_pending(blend_refresher)
-            stats["open_contract_messages"] = sum(
-                sock.stats.get("messages", 0) for sock in open_contract_sockets
-            )
+            stats["open_contract_messages"] = retired_messages["open"] + sum(
+                c.sock.stats.get("messages", 0)
+                for c in (*open_clients, *retiring) if c.kind != "game"
+            )  # a client retired during teardown is already in `retired_messages`
             # #10090: after the drain and hand-off, so the run's last stamps
             # are in the final minute's line.
             with contextlib.suppress(Exception):
@@ -1984,9 +2503,7 @@ async def _run_kalshi_ws_consumer(*, sessions, prices):
                     "recycle_reset" if stats.get("status") == "resubscribe"
                     else "exit"
                 )
-            await asyncio.gather(
-                admission_task, *open_contract_tasks, return_exceptions=True,
-            )
+            await asyncio.gather(admission_task, *open_tasks, return_exceptions=True)
             # #10657: reaped after the drain like the tasks above — a loop
             # that lost its cancellation must end here, not outlive the run
             # and keep calling into its closed sessions.
