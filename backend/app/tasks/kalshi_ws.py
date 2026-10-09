@@ -433,6 +433,11 @@ SUCCESSOR_OVERLAP_SECONDS = 5.0
 #: accepted before it is cancelled like the old recycle did.
 RETIRE_DRAIN_SECONDS = 30.0
 
+#: #10090 — how long a connected client may go without Kalshi acknowledging
+#: every channel it subscribed before the next refresh rebuilds the run. A
+#: rejected subscription rebuilds at once; either way the socket may be silent.
+SUBSCRIBE_ACK_DEADLINE_SECONDS = 30.0
+
 #: #10090 — open-contract connections a changed scope may hold beyond the
 #: packed minimum before the run takes the full rebuild instead.
 OPEN_CONTRACT_EXTRA_CONNECTIONS = 2
@@ -1926,20 +1931,23 @@ async def _run_kalshi_ws_consumer(*, sessions, prices):
         )
 
     async def retire_client(client, successor=None):
-        """Stop ``client`` once ``successor`` (if any) has been connected for the
-        overlap, without cancelling callbacks it already accepted. Ownership of
-        their shared tickers moves only after it has stopped delivering."""
+        """Stop ``client`` once ``successor`` (if any) has held an acknowledged
+        subscription for the overlap, without cancelling callbacks it already
+        accepted. Ownership of their shared tickers moves only after it has
+        stopped delivering. A successor whose subscription is rejected or never
+        acknowledged never retires its predecessor: the refresh rebuilds
+        (`refresh_subscription_scope`), which ends both."""
         try:
             if successor is not None:
-                connected_since = None
+                subscribed_since = None
                 while True:
-                    if successor.sock.is_connected:
-                        if connected_since is None:
-                            connected_since = time.monotonic()
-                        if time.monotonic() - connected_since >= SUCCESSOR_OVERLAP_SECONDS:
+                    if successor.sock.is_subscribed:
+                        if subscribed_since is None:
+                            subscribed_since = time.monotonic()
+                        if time.monotonic() - subscribed_since >= SUCCESSOR_OVERLAP_SECONDS:
                             break
                     else:
-                        connected_since = None
+                        subscribed_since = None
                     await asyncio.sleep(min(0.25, SUCCESSOR_OVERLAP_SECONDS))
             await client.sock.retire()
             done, _ = await asyncio.wait({client.task}, timeout=RETIRE_DRAIN_SECONDS)
@@ -2227,11 +2235,16 @@ async def _run_kalshi_ws_consumer(*, sessions, prices):
             changed["replaced"] += len(replace)
             changed["started"] += len(start)
             changed["retired"] += len(retire)
-        in_scope = frozenset(new_ids) | frozenset(ids)
-        for ticker in [t for t in ticker_owner if t not in in_scope]:
+        game_scope, open_scope = frozenset(new_ids), frozenset(ids)
+        for ticker in [t for t in ticker_owner if t not in game_scope | open_scope]:
             del ticker_owner[ticker]
-        for client in (*game_clients, *open_clients):
-            claim_tickers(client, in_scope)
+        # Each client claims only within its own arm: a kept open shard still
+        # physically carries a ticker that moved to the game arm, and must not
+        # take it back from the game connection that now streams it.
+        for client in game_clients:
+            claim_tickers(client, game_scope)
+        for client in open_clients:
+            claim_tickers(client, open_scope)
         refresh_prepared(ids)
 
         stats["tickers_subscribed"] = len(new_ids)
@@ -2261,6 +2274,14 @@ async def _run_kalshi_ws_consumer(*, sessions, prices):
         if any(client.task.done() for client in open_clients):
             # The old unconditional recycle also repaired an ended auxiliary
             # client. An unchanged mapping cannot certify its lifetime.
+            return "rebuild"
+        if any(
+            client.sock.subscription_failed(SUBSCRIBE_ACK_DEADLINE_SECONDS)
+            for client in (*game_clients, *open_clients, *retiring)
+        ):
+            # A rejected or never-acknowledged subscription may be a silent
+            # socket; keeping it would retain exactly what the recycle repaired.
+            stats["recycle_reason"] = "subscription"
             return "rebuild"
         # A stalled initial open/bridge read has no working arm to retain.
         # Preserve the old deadline's bounded cleanup/rebuild repair.
@@ -2408,7 +2429,7 @@ async def _run_kalshi_ws_consumer(*, sessions, prices):
             verdict = await refresh_subscription_scope()
             if verdict == "rebuild":
                 stats["status"] = "resubscribe"
-                stats["recycle_reason"] = "scope"
+                stats.setdefault("recycle_reason", "scope")
                 break
             if verdict == "applied":
                 # #9418: restart the watcher on the slate this run now streams.

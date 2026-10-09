@@ -227,6 +227,36 @@ class KalshiWebSocket:
         # accepted callbacks drain; `run` then returns instead of reconnecting.
         self._retiring = False
         self._socket = None
+        # #10090: this connection's subscribe commands (id -> channel), the
+        # channels Kalshi acknowledged, and the first rejection. Reset at every
+        # connect and disconnect, so a successor is ready only while its
+        # current connection carries every channel it asked for.
+        self._subscribe_pending: dict[int, str] = {}
+        self._subscribed: set[str] = set()
+        self._subscribe_rejected: Optional[dict] = None
+        self._connected_at: Optional[float] = None
+
+    def _reset_subscription(self):
+        self._subscribe_pending = {}
+        self._subscribed = set()
+        self._subscribe_rejected = None
+        self._connected_at = None
+
+    def _note_subscription_response(self, msg_type, data) -> None:
+        """#10090 — record Kalshi's answer to one of this connection's
+        subscribe commands (``subscribed`` or ``error`` with its ``id``)."""
+        channel = self._subscribe_pending.pop(data.get("id"), None)
+        if channel is None:
+            return
+        if msg_type == "subscribed":
+            self._subscribed.add(channel)
+            return
+        if self._subscribe_rejected is None:
+            self._subscribe_rejected = {"channel": channel, "msg": data.get("msg")}
+        logger.warning(
+            "Kalshi WS: subscription to %s REJECTED: %s",
+            channel, str(data.get("msg"))[:200],
+        )
 
     def _ensure_key(self):
         if self._private_key is None:
@@ -268,6 +298,8 @@ class KalshiWebSocket:
                     close_timeout=5,
                 ) as ws:
                     self._socket = ws
+                    self._reset_subscription()
+                    self._connected_at = time.monotonic()
                     connection = None
                     if self.exact_trace is not None:
                         try:
@@ -298,6 +330,7 @@ class KalshiWebSocket:
                             "cmd": "subscribe",
                             "params": params,
                         }
+                        self._subscribe_pending[cmd["id"]] = channel
                         await ws.send(json.dumps(cmd))
                         if self.exact_trace is not None and connection is not None:
                             try:
@@ -337,6 +370,8 @@ class KalshiWebSocket:
                                             self.exact_trace.received(connection, payload)
                                     except Exception:
                                         pass
+                                if msg_type in ("subscribed", "error"):
+                                    self._note_subscription_response(msg_type, data)
                                 if msg_type == "ticker" and self.on_ticker:
                                     await dispatch.submit(
                                         self.on_ticker, payload, "Ticker"
@@ -361,6 +396,7 @@ class KalshiWebSocket:
                         finally:
                             self._connected = False
                             self._socket = None
+                            self._reset_subscription()
                     if self._retiring:
                         return
 
@@ -378,11 +414,13 @@ class KalshiWebSocket:
                 # expects, and lets a genuine shutdown cancel actually stop.
                 logger.info("Kalshi WS cancelled, shutting down")
                 self._connected = False
+                self._reset_subscription()
                 raise
 
             except Exception as e:
                 self._connected = False
                 self._socket = None
+                self._reset_subscription()
                 if self._retiring:
                     # The close `retire` requested, or a transport error after
                     # it: either way a successor owns these tickers now.
@@ -418,6 +456,30 @@ class KalshiWebSocket:
     @property
     def is_connected(self) -> bool:
         return self._connected
+
+    @property
+    def is_subscribed(self) -> bool:
+        """#10090 — connected, every channel sent on this connection
+        acknowledged, and none rejected. ``is_connected`` turns true before the
+        subscribe commands are even sent, so it cannot say a successor carries
+        its tickers."""
+        return (
+            self._connected and self._subscribe_rejected is None
+            and not self._subscribe_pending and bool(self._subscribed)
+        )
+
+    def subscription_failed(self, ack_deadline_s: float) -> bool:
+        """#10090 — True when this connection's subscription was rejected, or
+        it has been connected ``ack_deadline_s`` without every acknowledgement:
+        a socket that may be silent, which only a rebuild repairs."""
+        if not self._connected:
+            return False
+        if self._subscribe_rejected is not None:
+            return True
+        return (
+            not self.is_subscribed and self._connected_at is not None
+            and time.monotonic() - self._connected_at >= ack_deadline_s
+        )
 
     @property
     def stats(self) -> dict:

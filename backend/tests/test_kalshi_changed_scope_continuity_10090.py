@@ -117,15 +117,35 @@ class Prices:
 
 
 class Socket:
-    def __init__(self):
+    """A Kalshi connection double. It acknowledges each subscribe command as
+    Kalshi does (``subscribed`` with the command's id) unless built with
+    ``ack=False``, when the control answers with `respond`."""
+
+    def __init__(self, ack=True):
         self.inbox = asyncio.Queue()
-        self.processed = asyncio.Event()
         self.commands = []
         self.closed = False
-        self.previous = False
+        self.ack = ack
+        self.queued = 0
+        self.handed = 0
+        self.done = 0
 
     async def send(self, raw):
-        self.commands.append(json.loads(raw))
+        command = json.loads(raw)
+        self.commands.append(command)
+        if self.ack:
+            await self.respond(command, "subscribed")
+
+    async def respond(self, command, kind):
+        msg = (
+            {"channel": command["params"]["channels"][0], "sid": command["id"]}
+            if kind == "subscribed" else {"code": 16, "msg": "Market not found"}
+        )
+        await self._put(json.dumps({"id": command["id"], "type": kind, "msg": msg}))
+
+    async def _put(self, raw):
+        self.queued += 1
+        await self.inbox.put(raw)
 
     async def close(self):
         if not self.closed:
@@ -139,18 +159,18 @@ class Socket:
         return self
 
     async def __anext__(self):
-        if self.previous:
-            self.processed.set()
+        # Asked for the next frame: every frame handed out so far is processed.
+        self.done = self.handed
         raw = await self.inbox.get()
         if raw is None:
             raise StopAsyncIteration
-        self.previous = True
+        self.handed += 1
         return raw
 
     async def deliver(self, kind, payload):
-        self.processed.clear()
-        await self.inbox.put(json.dumps({"type": kind, "msg": payload}))
-        await asyncio.wait_for(self.processed.wait(), 10)
+        await self._put(json.dumps({"type": kind, "msg": payload}))
+        target = self.queued
+        await _until(lambda: self.done >= target, f"{kind} to be processed")
 
 
 async def _until(predicate, what):
@@ -161,10 +181,10 @@ async def _until(predicate, what):
     raise AssertionError(f"timed out waiting for {what}")
 
 
-@pytest.mark.asyncio
-async def test_changed_scope_keeps_unaffected_connections_and_one_writer_per_ticker(
-    monkeypatch,
-):
+def _rig(monkeypatch, scope, per_connection=1):
+    """Run the actual consumer/service/dispatch on ``scope``; only external
+    resources and the price driver's RETURNING rows are doubled. New sockets
+    acknowledge their subscriptions while ``acking["on"]``."""
     monkeypatch.setenv("KALSHI_API_KEY_ID", "control")
     monkeypatch.setenv("KALSHI_RSA_PRIVATE_KEY", "control")
     monkeypatch.setenv("WS_OPEN_CONTRACT_PRICES", "1")
@@ -178,16 +198,19 @@ async def test_changed_scope_keeps_unaffected_connections_and_one_writer_per_tic
     monkeypatch.setattr(service, "_load_rsa_key", lambda: object())
     monkeypatch.setattr(service, "_sign_ws_request", lambda *_: {})
     monkeypatch.setattr("app.tasks.ws_liveness.report", lambda *_args, **_kw: None)
-    # One ticker per open connection, so a removal could re-deal every shard.
+    # A small shard size, so a removal could re-deal every shard.
     original_shards = opened.shard_tickers
-    monkeypatch.setattr(opened, "OPEN_CONTRACT_TICKERS_PER_CONNECTION", 1)
-    monkeypatch.setattr(opened, "shard_tickers",
-                        lambda tickers, per_connection=1: original_shards(tickers, 1))
+    monkeypatch.setattr(opened, "OPEN_CONTRACT_TICKERS_PER_CONNECTION", per_connection)
+    monkeypatch.setattr(
+        opened, "shard_tickers",
+        lambda tickers, per_connection=per_connection: original_shards(tickers, per_connection),
+    )
     sockets = []
+    acking = {"on": True}
 
     @asynccontextmanager
     async def connect(*_args, **_kwargs):
-        socket = Socket()
+        socket = Socket(ack=acking["on"])
         sockets.append(socket)
         try:
             yield socket
@@ -199,7 +222,6 @@ async def test_changed_scope_keeps_unaffected_connections_and_one_writer_per_tic
 
     monkeypatch.setattr(websockets, "connect", connect)
     monkeypatch.setattr(blend.LiveBlendRefresher, "publish_market_changes", publish)
-    scope = Scope()
     running = asyncio.create_task(task._run_kalshi_ws_consumer.__wrapped__.__wrapped__(
         sessions=scope, prices=Prices(scope),
     ))
@@ -207,8 +229,27 @@ async def test_changed_scope_keeps_unaffected_connections_and_one_writer_per_tic
     def socket_for(tickers):
         return next(s for s in sockets if s.commands and s.tickers() == tickers)
 
+    def opened_sockets():
+        return sum(bool(s.commands) for s in sockets)
+
+    return running, sockets, acking, socket_for, opened_sockets
+
+
+async def _stop(running):
+    if not running.done():
+        running.cancel()
+    await asyncio.gather(running, return_exceptions=True)
+
+
+@pytest.mark.asyncio
+async def test_changed_scope_keeps_unaffected_connections_and_one_writer_per_ticker(
+    monkeypatch,
+):
+    scope = Scope()
+    running, sockets, _acking, socket_for, opened_sockets = _rig(monkeypatch, scope)
+
     try:
-        await _until(lambda: sum(bool(s.commands) for s in sockets) == 3, "startup sockets")
+        await _until(lambda: opened_sockets() == 3, "startup sockets")
         game_1 = socket_for({GAME_A})
         open_1 = socket_for({OPEN_1})
         open_2 = socket_for({OPEN_2})
@@ -218,7 +259,7 @@ async def test_changed_scope_keeps_unaffected_connections_and_one_writer_per_tic
         await open_2.deliver("ticker", {"market_ticker": OPEN_2, "price_dollars": "0.40"})
 
         scope.version = 2
-        await _until(lambda: sum(bool(s.commands) for s in sockets) == 5, "changed scope")
+        await _until(lambda: opened_sockets() == 5, "changed scope")
         assert not running.done()
         game_2 = socket_for({GAME_A, GAME_B})
         open_3 = socket_for({OPEN_3})
@@ -266,9 +307,100 @@ async def test_changed_scope_keeps_unaffected_connections_and_one_writer_per_tic
             t.get_name().startswith("kalshi-") for t in asyncio.all_tasks() if not t.done()
         )
     finally:
-        if not running.done():
-            running.cancel()
-        await asyncio.gather(running, return_exceptions=True)
+        await _stop(running)
+
+
+class SiblingScope(Scope):
+    """Version 2 links OPEN_2 to a game: it leaves the open arm while its
+    open shard is kept for its retained sibling OPEN_1."""
+
+    async def execute(self, statement, *args):
+        columns = [str(c) for c in getattr(statement, "selected_columns", ())]
+        if self.version == 2 and columns == [
+            "futures_markets.external_id", "futures_markets.id", "futures_markets.event_id",
+        ]:
+            return Result([(_event(GAME_A), 7, 900), (_event(OPEN_2), 10, 905)])
+        if self.version == 2 and columns == [
+            "futures_outcomes.external_id", "futures_outcomes.market_id", "futures_outcomes.id",
+        ]:
+            return Result([(GAME_A, 7, 71), (OPEN_2, 10, 82)])
+        if len(columns) > 3 and columns[0] == "futures_outcomes.external_id":
+            rows = [(OPEN_1, 8, 81, 901, _event(OPEN_1))]
+            if self.version == 1:
+                rows.append((OPEN_2, 10, 82, None, None))
+            return Result(rows)
+        return await super().execute(statement, *args)
+
+
+@pytest.mark.asyncio
+async def test_a_ticker_moving_open_to_game_belongs_to_the_game_connection(monkeypatch):
+    """Root review of ded5f8 (1): the kept open shard still physically carries
+    OPEN_2; claiming against the union scope handed it back to that shard, so
+    the game connection's quotes and settlement for it were refused."""
+    scope = SiblingScope()
+    running, _sockets, _acking, socket_for, opened_sockets = _rig(
+        monkeypatch, scope, per_connection=2,
+    )
+    try:
+        await _until(lambda: opened_sockets() == 2, "startup sockets")
+        shard = socket_for({OPEN_1, OPEN_2})
+        scope.version = 2
+        await _until(lambda: opened_sockets() == 3, "changed scope")
+        game_2 = socket_for({GAME_A, OPEN_2})
+        assert not shard.closed  # kept for its sibling, still subscribed to OPEN_2
+
+        await game_2.deliver("ticker", {"market_ticker": OPEN_2, "price_dollars": "0.33"})
+        await shard.deliver("ticker", {"market_ticker": OPEN_2, "price_dollars": "0.99"})
+        await game_2.deliver("market_lifecycle_v2", {
+            "market_ticker": OPEN_2, "status": "determined", "result": "yes",
+        })
+        await _until(lambda: len(scope.market_settlements) >= 1, "the game settlement")
+
+        monkeypatch.setenv("WS_OPEN_CONTRACT_SETTLEMENT", "0")
+        stats = await asyncio.wait_for(running, 10)
+        assert stats["scope_in_place"] == 1
+        assert scope.written[82][0] == 0.33  # the game connection is the writer
+        assert stats["settlements"] == 1
+    finally:
+        await _stop(running)
+
+
+@pytest.mark.asyncio
+async def test_a_successor_retires_its_predecessor_only_once_subscribed(monkeypatch):
+    """Root review of ded5f8 (2): `is_connected` is true before the subscribe
+    commands are sent. A pending successor keeps its predecessor until Kalshi
+    acknowledges every channel; a rejected one rebuilds the run."""
+    scope = Scope()
+    running, _sockets, acking, socket_for, opened_sockets = _rig(monkeypatch, scope)
+    try:
+        await _until(lambda: opened_sockets() == 3, "startup sockets")
+        game_1 = socket_for({GAME_A})
+        acking["on"] = False
+        monkeypatch.setattr(task, "SUCCESSOR_OVERLAP_SECONDS", 0)
+        scope.version = 2
+        await _until(lambda: opened_sockets() == 5, "changed scope")
+        game_2 = socket_for({GAME_A, GAME_B})
+        open_3 = socket_for({OPEN_3})
+        assert len(game_2.commands) == 2
+
+        # Connected and pending, then half acknowledged: the predecessor stays.
+        await asyncio.sleep(0.3)
+        assert not game_1.closed and not running.done()
+        await game_2.respond(game_2.commands[0], "subscribed")
+        await asyncio.sleep(0.3)
+        assert not game_1.closed and not running.done()
+        await game_2.respond(game_2.commands[1], "subscribed")
+        await _until(lambda: game_1.closed, "the predecessor to retire")
+        assert not game_2.closed
+
+        # A rejected subscription may be a silent socket: the refresh rebuilds.
+        await open_3.respond(open_3.commands[0], "error")
+        stats = await asyncio.wait_for(running, 10)
+        assert stats["status"] == "resubscribe"
+        assert stats["recycle_reason"] == "subscription"
+        assert stats["final_flush_dropped"] == stats["errors"] == 0
+    finally:
+        await _stop(running)
 
 
 @pytest.mark.parametrize("current, scope, per, extra, busy, expected", [
