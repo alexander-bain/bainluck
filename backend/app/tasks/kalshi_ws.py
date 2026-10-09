@@ -503,6 +503,48 @@ def kalshi_book_max_tickers() -> int:
     except ValueError:
         return 200
 
+
+#: #10090 — how recent a winner leg's accepted quote must be for a started,
+#: unresolved, not-``live`` event to share the live games' delivery priority
+#: (`load_quote_priority_event_ids`). Three admission rereads (30 s each).
+QUOTE_PRIORITY_EVIDENCE_SECONDS = 90.0
+
+
+def _kalshi_quote_priority_window():
+    """#10090 — the events a recent winner quote may lift to live priority.
+
+    Moller–Pereira (event 15327169, 10/09): ``suspended``, no score, both
+    winner contracts active and trading, admitted by the slate's suspended arm
+    — yet only ``status == 'live'`` filled the live set, so its quotes waited
+    behind the flush budget and never got a book. Started by schedule, inside
+    the suspended arm's age floor, market not resolved, and still
+    ``scheduled``/``suspended``: a completed/cancelled event, or a settled
+    market, never qualifies. The event's status is never written from here.
+    """
+    from sqlalchemy import and_, or_, text
+
+    from app.models.models import Event, FuturesMarket
+    from app.tasks.ws_slate import SUSPENDED_SLATE_MAX_AGE_HOURS
+
+    return and_(
+        Event.status.in_(("scheduled", "suspended")),
+        Event.commence_time <= text("NOW()"),
+        Event.commence_time >= text(
+            f"NOW() - INTERVAL '{int(SUSPENDED_SLATE_MAX_AGE_HOURS)} hours'"
+        ),
+        or_(
+            FuturesMarket.status.is_(None),
+            FuturesMarket.status != "resolved",
+        ),
+    )
+
+
+def recently_quoted_event_ids(quoted_at, now, window=QUOTE_PRIORITY_EVIDENCE_SECONDS):
+    """#10090 — drop expired quote evidence IN PLACE; return the events left."""
+    for event_id in [e for e, at in quoted_at.items() if now - at > window]:
+        del quoted_at[event_id]
+    return set(quoted_at)
+
 #: #10090 — open-contract connections a changed scope may hold beyond the
 #: packed minimum before the run takes the full rebuild instead.
 OPEN_CONTRACT_EXTRA_CONNECTIONS = 2
@@ -1003,8 +1045,13 @@ async def _run_kalshi_ws_consumer(*, sessions, prices):
     open_contract_outcome_ids: set[int] = set()
     # #10090: the slate's live events, refilled IN PLACE by the #9418 live
     # reread (`load_unadmitted_live_event_ids`, at once and every 30 s). The
-    # flush writes their games first and never defers them.
+    # flush writes their games first and never defers them. Also holds the
+    # started, unresolved events whose winner legs are quoting now
+    # (`quote_only_event_ids`): priority follows the market, not the status.
     live_event_ids: set[int] = set()
+    quote_only_event_ids: set[int] = set()
+    # #10090: event id → monotonic time of its last accepted winner-leg quote.
+    winner_quoted_at: dict[int, float] = {}
     flush_timings = _FlushTimings()
     prices.timings = flush_timings
     blend_refresher = LiveBlendRefresher(
@@ -1738,6 +1785,11 @@ async def _run_kalshi_ws_consumer(*, sessions, prices):
                 mark = None
             if mark is not None:
                 input_marks[outcome_id] = mark
+            # #10090: evidence that this linked winner leg is trading now.
+            if ticker in ticker_to_ids and outcome_id not in non_blend_outcome_ids:
+                event_id = event_id_by_outcome.get(outcome_id)
+                if event_id is not None:
+                    winner_quoted_at[event_id] = time.monotonic()
             if exact_trace is not None:
                 with contextlib.suppress(Exception):
                     exact_trace.decided(
@@ -2121,13 +2173,21 @@ async def _run_kalshi_ws_consumer(*, sessions, prices):
 
     def book_population() -> frozenset:
         """#10090 — the linked winner legs (the blend's own eligibility) of
-        events live now, independent of who is reading them, within the cap."""
+        events live now, independent of who is reading them, within the cap.
+        Live games take the cap before quote-only events do."""
         if not kalshi_direct_book_enabled():
             return frozenset()
         eligible = sorted(
-            ticker for ticker, (_market_id, outcome_id) in ticker_to_ids.items()
-            if outcome_id not in non_blend_outcome_ids
-            and event_id_by_outcome.get(outcome_id) in live_event_ids
+            (
+                ticker for ticker, (_market_id, outcome_id) in ticker_to_ids.items()
+                if outcome_id not in non_blend_outcome_ids
+                and event_id_by_outcome.get(outcome_id) in live_event_ids
+            ),
+            key=lambda ticker: (
+                event_id_by_outcome.get(ticker_to_ids[ticker][1])
+                in quote_only_event_ids,
+                ticker,
+            ),
         )
         cap = kalshi_book_max_tickers()
         if len(eligible) > cap:
@@ -2200,7 +2260,8 @@ async def _run_kalshi_ws_consumer(*, sessions, prices):
                 "Kalshi WS: %d updates, %d flushes, %d settlements, %d errors, "
                 "%d msgs | blend stamped=%d no_reading=%d throttled=%d errors=%d "
                 "lock_skipped=%d unobserved=%d stale=%d | %s deferred=%d "
-                "preempted=%d live=%d book=%d quotes=%d resnapshots=%d",
+                "preempted=%d live=%d book=%d quotes=%d resnapshots=%d "
+                "quote_priority=%d",
                 stats["price_updates"], stats["flushes"],
                 stats["settlements"], stats["errors"],
                 game_messages(),
@@ -2217,6 +2278,8 @@ async def _run_kalshi_ws_consumer(*, sessions, prices):
                 stats.get("book_tickers", 0),
                 sum(c.sock.stats.get("book_quotes", 0) for c in game_clients),
                 sum(c.sock.stats.get("book_resnapshots", 0) for c in game_clients),
+                # #10090: of `live`, the not-live events lifted by their quotes.
+                len(quote_only_event_ids),
             )
             flush_timings.reset()
             _report_liveness(
@@ -2511,12 +2574,54 @@ async def _run_kalshi_ws_consumer(*, sessions, prices):
                 .distinct()
             )
             rows = list(result.all())
-        # #10090: the same read names the live games the flush writes first.
+        live = {row[0] for row in rows}
+        quoting = await load_quote_priority_event_ids(live)
+        # #10090: the same read names the live games the flush writes first,
+        # plus the started, unresolved events whose winner legs quote now.
+        # Admission (below) still reads the live rows alone.
         live_event_ids.clear()
-        live_event_ids.update(row[0] for row in rows)
+        live_event_ids.update(live | quoting)
+        quote_only_event_ids.clear()
+        quote_only_event_ids.update(quoting - live)
         # #10090: the same read moves the order books onto the live games.
         await refresh_books()
         return unadmitted_live_events(rows, legged_market_ids)
+
+    async def load_quote_priority_event_ids(live):
+        """#10090 — events with a recent winner quote that are not ``live``
+        but started, unresolved and in `_kalshi_quote_priority_window`. No
+        read when nothing outside the live set is quoting; a failed read
+        lifts nothing (the live set alone, as before)."""
+        recent = recently_quoted_event_ids(winner_quoted_at, time.monotonic())
+        recent -= live
+        # The winner markets themselves: a quoting event's open prop market
+        # never stands in for a resolved winner market.
+        winner_market_ids = sorted({
+            market_id for market_id, outcome_id in ticker_to_ids.values()
+            if outcome_id not in non_blend_outcome_ids
+            and event_id_by_outcome.get(outcome_id) in recent
+        })
+        if not winner_market_ids:
+            return set()
+        try:
+            async with get_task_session() as session:
+                result = await session.execute(
+                    select(FuturesMarket.event_id)
+                    .join(Event, FuturesMarket.event_id == Event.id)
+                    .where(
+                        FuturesMarket.source == "kalshi",
+                        FuturesMarket.id.in_(winner_market_ids),
+                        _kalshi_quote_priority_window(),
+                    )
+                    .distinct()
+                )
+                return {row[0] for row in result.all()} & recent
+        except Exception:
+            logger.warning(
+                "Kalshi WS: quote-priority read failed; live events only",
+                exc_info=True,
+            )
+            return set()
 
     def start_watcher():
         # The events this slate tried are held to the timer, as at startup:
