@@ -127,3 +127,56 @@ async def test_quiet_and_untimed_calls_keep_the_shared_read(monkeypatch):
     await y.r.refresh([5])
     assert calls == [[1, 2, 3, 4]]
     assert y.committed == [5, 2, 3, 1, 4]
+
+
+async def test_single_old_event_without_a_head_stamps_while_shared_reads_are_held(monkeypatch):
+    # One due old event has no order to decide, continuation or not.
+    x = rig(monkeypatch, count=5)
+    x.r._lock_retry = {2}
+    calls, _release = hold_preparation(x)
+    # Parent: the one-event shared read is held, so its stamp never starts.
+    async with asyncio.timeout(1):
+        await x.r.refresh([5], flush_started=1000)
+    assert calls == []
+    assert x.committed == x.published == [5, 2]
+    assert not x.r.pending_event_ids()
+    assert x.r._pending_continuation == []
+    assert not x.r._failed_hold_until
+
+
+async def test_single_old_event_read_failure_stays_with_it(monkeypatch):
+    x = rig(monkeypatch, count=5)
+    x.r._lock_retry = {2}
+    read_groups = x.r._read_groups
+
+    async def failing_read(session, event_ids):
+        if event_ids == [2]:
+            raise RuntimeError("old event read failed")
+        return await read_groups(session, event_ids)
+
+    x.r._read_groups = failing_read
+    await x.r.refresh([5], flush_started=1000)
+    assert x.committed == [5]
+    assert x.r.pending_event_ids() == frozenset({2})
+    assert x.r._lock_retry == {2}
+
+
+async def test_two_old_events_and_untimed_single_keep_the_shared_read(monkeypatch):
+    x = rig(monkeypatch, count=5, statuses={
+        1: "scheduled", 2: "live", 3: "scheduled", 4: "scheduled", 5: "live",
+    })
+    x.r._lock_retry = {1, 2}
+    calls, release = hold_preparation(x)
+    release.set()
+    await x.r.refresh([5], flush_started=1000)
+    assert calls == [[1, 2]]
+    assert x.committed == [5, 2]
+    assert x.r._pending_continuation == [1]
+
+    y = rig(monkeypatch, count=5)
+    y.r._lock_retry = {2}
+    calls, release = hold_preparation(y)
+    release.set()
+    await y.r.refresh([5])
+    assert calls == [[2]]
+    assert y.committed == [5, 2]
