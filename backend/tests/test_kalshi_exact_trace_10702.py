@@ -11,6 +11,7 @@ import contextlib
 from datetime import datetime, timezone
 import json
 from pathlib import Path
+import time
 from types import SimpleNamespace
 
 import pytest
@@ -239,7 +240,7 @@ async def test_trace_connection_identity_failure_preserves_subscription_and_call
     assert [r["stage"] for r in records] == ["START"]
 
 
-def handler(trace, mapped=True):
+def handler(trace, mapped=True, non_blend=()):
     tree = ast.parse(Path(task.__file__).read_text())
     nodes = [
         n
@@ -260,6 +261,10 @@ def handler(trace, mapped=True):
         buffer_lock=asyncio.Lock(),
         price_buffer={},
         input_marks={},
+        # #10090 closure names in the worker (`_run_kalshi_ws_consumer`).
+        time=time,
+        non_blend_outcome_ids=set(non_blend),
+        winner_quoted_at={},
     )
     exec(compile(ast.Module(body=nodes, type_ignores=[]), task.__file__, "exec"), ns)
     return ns
@@ -298,6 +303,11 @@ async def test_actual_handler_retains_price_policy_and_records_why(fields, reaso
     await off["handle_ticker"](dict(msg))
     assert on["price_buffer"] == off["price_buffer"]
     assert records[-1]["reason"] == reason
+    # #10090: only an accepted winner-leg quote marks its event as quoting.
+    stamped = {900} if reason == "ACCEPTED" else set()
+    assert set(on["winner_quoted_at"]) == stamped
+    assert set(off["winner_quoted_at"]) == stamped
+
     if reason == "ACCEPTED":
         mark = on["input_marks"][81]
         assert records[-1]["input_seq"] == mark.seq and records[-1]["receive_id"] == 1
@@ -305,6 +315,15 @@ async def test_actual_handler_retains_price_policy_and_records_why(fields, reaso
         assert records[-1]["input_recv_wall"] == mark.recv_wall
     else:
         assert not on["input_marks"]
+
+
+async def test_an_accepted_non_blend_quote_never_marks_its_event_quoting():
+    ns = handler(None, non_blend=(81,))
+    await ns["handle_ticker"](dict(
+        market_ticker=TICKER, price_dollars=".80",
+        yes_bid_dollars=".66", yes_ask_dollars=".70",
+    ))
+    assert 81 in ns["price_buffer"] and ns["winner_quoted_at"] == {}
 
 
 async def test_unmapped_target_is_recorded_before_it_disappears():
