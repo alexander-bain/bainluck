@@ -310,3 +310,60 @@ async def test_identical_ack_skips_fresh_receipt_but_database_change_and_livenes
     result = await r.ns["write_chunk"]({1: 0.7})
     assert result.written_ids == () and r.ns["price_buffer"][1] == 0.8
     assert r.ns["successful_price_write_at"][1] == 1032
+
+
+async def test_later_admitted_pair_adopts_latest_values_marks_and_new_withdrawal(monkeypatch):
+    clock = _FakeTime(monkeypatch, t=1000)
+    r, state = writer_rig(
+        clock,
+        batch={900: 0.1, 901: 0.9, 1: 0.6, 2: 0.4},
+        mapping={900: 90, 901: 90, 1: 10, 2: 10, 940: 94},
+        books={},
+    )
+    state.held = False
+    r.ns["open_outcome_ids"] = set()
+    r.ns["open_complement_of"].update({900: 901, 901: 900})
+    first_started, first_release = asyncio.Event(), asyncio.Event()
+    observed = []
+    factory = r.ns["get_task_session"]
+
+    class DelayedSession:
+        def __init__(self, session):
+            self.session = session
+
+        async def execute(self, stmt, params=None):
+            if isinstance(stmt, tuple) and stmt[0] == "price":
+                chunk, _forced = stmt[1]
+                observed.append(dict(chunk))
+                if 900 in chunk:
+                    first_started.set()
+                    await first_release.wait()
+                elif 1 in chunk:
+                    # Inputs after adoption still survive the successful write.
+                    r.ns["price_buffer"].update({1: 0.85, 2: 0.15})
+                    r.ns["input_marks"].update({1: "after1", 2: "after2"})
+            return await self.session.execute(stmt, params)
+
+    @asynccontextmanager
+    async def delayed_session():
+        async with factory() as session:
+            yield DelayedSession(session)
+
+    r.ns["get_task_session"] = delayed_session
+    task = asyncio.create_task(r.ns["flush_prices"](flush_started=1000))
+    try:
+        await asyncio.wait_for(first_started.wait(), 1)
+        async with r.ns["buffer_lock"]:
+            r.ns["price_buffer"].update({1: 0.8, 2: 0.2, 940: 0.7})
+            r.ns["input_marks"].update({1: "latest1", 2: "latest2", 940: "new-id"})
+            r.books[1] = (0.1, 0.9)
+        first_release.set()
+        assert await task
+    finally:
+        first_release.set()
+        await task
+    assert observed == [{900: 0.1, 901: 0.9}, {1: 0.8, 2: 0.2}]
+    assert r.marks == [900, 901, "latest1", "latest2"]
+    assert r.ns["price_buffer"] == {1: 0.85, 2: 0.15, 940: 0.7}
+    assert r.trace.index(("withdraw", [1])) < r.trace.index(("refresh", [10]))
+    assert state.commits == [900, 901, 1, 2] and not r.books

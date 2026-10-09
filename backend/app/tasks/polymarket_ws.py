@@ -2040,6 +2040,11 @@ async def _run_polymarket_ws_consumer(*, sessions, stop=None):
 
             try:
                 for index, chunk_ids in enumerate(chunks):
+                    async with buffer_lock:
+                        withdraw_cohort_ids.update(withdraw_buffer)
+                        withdraw_events = event_ids_for_outcomes(
+                            event_id_by_outcome, withdraw_buffer,
+                        )
                     if stamping is not None:
                         unwritten_events = {
                             eid for eid, last in last_chunk_of_event.items()
@@ -2053,12 +2058,29 @@ async def _run_polymarket_ws_consumer(*, sessions, stop=None):
                             unwritten_events | withdraw_events
                         ):
                             await stamp_done()
-                    wrote = await write_chunk(
-                        {oid: batch[oid] for oid in chunk_ids}, final=final,
-                    )
+                    # The plan freezes membership/caps, not a later chunk's
+                    # prices. Adopt the newest values and their matching input
+                    # marks together, after any preceding stamp has joined.
+                    # Handlers update complementary legs under this same lock;
+                    # newly buffered ids still belong to a successor flush.
+                    async with buffer_lock:
+                        current_chunk = {oid: price_buffer[oid] for oid in chunk_ids}
+                        for oid in chunk_ids:
+                            if oid in input_marks:
+                                batch_marks[oid] = input_marks[oid]
+                            else:
+                                batch_marks.pop(oid, None)
+                    wrote = await write_chunk(current_chunk, final=final)
                     # Join any safe overlapping stamp before this chunk's
                     # withdrawals, receipts or refresh.
                     await stamp_done()
+                    # A wide book can arrive during the earlier write or this
+                    # one. It must mature/hold this event before its fresh stamp.
+                    async with buffer_lock:
+                        withdraw_cohort_ids.update(withdraw_buffer)
+                        withdraw_events = event_ids_for_outcomes(
+                            event_id_by_outcome, withdraw_buffer,
+                        )
                     if wrote:
                         unfinished_price_ids.difference_update(chunk_ids)
                         owed.extend(getattr(wrote, "written_ids", chunk_ids))
@@ -2095,6 +2117,7 @@ async def _run_polymarket_ws_consumer(*, sessions, stop=None):
                             )
                             withdraw_events.difference_update(mature)
                             async with buffer_lock:
+                                withdraw_cohort_ids.update(withdraw_buffer)
                                 withdraw_events.update(event_ids_for_outcomes(
                                     event_id_by_outcome,
                                     withdraw_cohort_ids.intersection(withdraw_buffer),
@@ -2172,6 +2195,7 @@ async def _run_polymarket_ws_consumer(*, sessions, stop=None):
             wrote_all = False
             withdrawn = []
         async with buffer_lock:
+            withdraw_cohort_ids.update(withdraw_buffer)
             unfinished_events = (
                 event_ids_for_outcomes(headline_event_ids, unfinished_price_ids)
                 | event_ids_for_outcomes(
