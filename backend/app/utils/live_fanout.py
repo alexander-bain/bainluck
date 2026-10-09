@@ -175,6 +175,7 @@ class LiveFanout:
         self._reader: Optional[asyncio.Task] = None
         self._recovery_generation = 0
         self._recovery_pending: Set[str] = set()
+        self._quote_projector = None
 
     # -- what a guard test reads -------------------------------------------
 
@@ -220,6 +221,14 @@ class LiveFanout:
         """Give up a subscription. SYNCHRONOUS on purpose (module docstring)."""
         if self._forget(sub):
             self._pending_unsubscribe.add(sub.channel)
+
+    async def project_folded_quote(self, event_id: int, frame: dict):
+        """Coalesce compact fold reads outside the serial Redis reader loop."""
+        if self._quote_projector is None:
+            from app.utils.folded_live_quote import FoldedQuoteProjector
+
+            self._quote_projector = FoldedQuoteProjector()
+        return await self._quote_projector.project(event_id, frame)
 
     # -- the Redis side -----------------------------------------------------
 
