@@ -17,7 +17,9 @@ price policy, map, buffer, write, stamp and publication stays in the parent.
 Bounded both ways: the child awaits the pipe's ``drain`` after every frame, so
 a slow parent stalls the child's socket reads exactly as a slow callback stalls
 them in-process today (websockets' own ``max_queue`` then the TCP window), and
-only the LATEST desired catalog is held for the child. Shutdown is the pipe:
+only the LATEST desired catalog is held for the child. The catalog is the one
+large message and has its own budget (``MAX_CATALOG_FRAME_BYTES``); the frames
+coming back keep the small one. Shutdown is the pipe:
 closing the child's stdin (or the parent dying) ends it; it ignores TERM/INT so
 a dyno-wide signal cannot cut it off ahead of the parent's final drain.
 
@@ -42,6 +44,17 @@ _HEADER = struct.Struct(">I")
 #: larger is a broken pipe, not a message.
 MAX_FRAME_BYTES = 1 << 20
 
+#: The parent's START/ASSETS catalog. Measured 10/09: 76,632 retained open
+#: contracts (77-digit ids) pickle to 6,131,659 bytes, ~80 bytes an id, so this
+#: admits ~209k ids (2.7x today). Memory at the bound, transient per catalog:
+#: parent <= 3x (pickle output, the pipe transport's copy while it drains,
+#: one coalesced successor encoding) = 48 MiB; child <= ~4x (stream buffer, the
+#: frame bytes, the decoded list ~1.7x) = 64 MiB. Only the latest catalog is
+#: ever pending, so that is the whole of it. A larger catalog is refused, not
+#: truncated: the run fails (``catalog of N bytes exceeds ...``) and the
+#: consumer's existing open-client failure path logs it.
+MAX_CATALOG_FRAME_BYTES = 16 << 20
+
 #: How often the child reports its client's ``stats`` (connection, coverage).
 STATS_SECONDS = 5.0
 
@@ -56,19 +69,25 @@ RECEIVER_SCRIPT = os.path.join(
 PRICE, TRADE, STATS, START, ASSETS = "p", "t", "s", "start", "assets"
 
 
-def encode_frame(message: Any) -> bytes:
+def encode_frame(message: Any, max_bytes: int = MAX_FRAME_BYTES) -> bytes:
     body = pickle.dumps(message, protocol=pickle.HIGHEST_PROTOCOL)
-    if len(body) > MAX_FRAME_BYTES:
-        raise ValueError(f"frame of {len(body)} bytes exceeds {MAX_FRAME_BYTES}")
+    if len(body) > max_bytes:
+        raise ValueError(f"frame of {len(body)} bytes exceeds {max_bytes}")
     return _HEADER.pack(len(body)) + body
 
 
-async def read_frame(reader: asyncio.StreamReader) -> Any:
+def encode_catalog(kind: str, body: dict) -> bytes:
+    return encode_frame((kind, body), MAX_CATALOG_FRAME_BYTES)
+
+
+async def read_frame(
+    reader: asyncio.StreamReader, max_bytes: int = MAX_FRAME_BYTES,
+) -> Any:
     """The next message, or ``None`` once the peer has gone (EOF anywhere)."""
     try:
         (size,) = _HEADER.unpack(await reader.readexactly(_HEADER.size))
-        if size > MAX_FRAME_BYTES:
-            raise ValueError(f"frame of {size} bytes exceeds {MAX_FRAME_BYTES}")
+        if size > max_bytes:
+            raise ValueError(f"frame of {size} bytes exceeds {max_bytes}")
         return pickle.loads(await reader.readexactly(size))
     except asyncio.IncompleteReadError:
         return None
@@ -92,6 +111,7 @@ class PolymarketOpenReceiverProcess:
         self._stats: dict = {}
         self._wanted: Optional[tuple[list[str], bool]] = None
         self._wake: Optional[asyncio.Event] = None
+        self._sender_error: Optional[BaseException] = None
         self.on_price: Optional[Callable] = None
         self.on_trade: Optional[Callable] = None
 
@@ -123,35 +143,48 @@ class PolymarketOpenReceiverProcess:
         *,
         price_book_snapshots: Optional[bool] = None,
     ):
-        """Run one child until cancelled; its exit is this call's failure."""
+        """Run one child until cancelled; its exit is this call's failure.
+
+        A catalog over its budget (START here, before any child is spawned, or
+        a later one in the sender) fails this call; the sender's failure ends
+        the child so the read below sees EOF and raises from it.
+        """
         if self._wake is not None:
             raise RuntimeError("Polymarket refreshable client is already running")
         if price_book_snapshots is not None:
             self._price_book_snapshots = price_book_snapshots
+        start = encode_catalog(START, {
+            "asset_ids": list(dict.fromkeys(asset_ids)),
+            "price_book_snapshots": self._price_book_snapshots,
+            "max_concurrent_handshakes": self._max_concurrent_handshakes,
+            "max_queue": self._max_queue,
+        })
         self._wake = asyncio.Event()
         self._wanted = None
-        child = await asyncio.create_subprocess_exec(
-            *self._command,
-            stdin=asyncio.subprocess.PIPE,
-            stdout=asyncio.subprocess.PIPE,
-        )
+        self._sender_error = None
+        try:
+            child = await asyncio.create_subprocess_exec(
+                *self._command,
+                stdin=asyncio.subprocess.PIPE,
+                stdout=asyncio.subprocess.PIPE,
+            )
+        except BaseException:
+            self._wake = None
+            raise
         logger.info("Polymarket open receiver started pid=%d", child.pid)
         sender = None
         try:
-            child.stdin.write(encode_frame((START, {
-                "asset_ids": list(dict.fromkeys(asset_ids)),
-                "price_book_snapshots": self._price_book_snapshots,
-                "max_concurrent_handshakes": self._max_concurrent_handshakes,
-                "max_queue": self._max_queue,
-            })))
+            child.stdin.write(start)
+            start = None
             await child.stdin.drain()
             sender = asyncio.create_task(self._send_catalogs(child.stdin))
+            sender.add_done_callback(lambda task: self._sender_done(task, child))
             while True:
                 message = await read_frame(child.stdout)
                 if message is None:
                     raise RuntimeError(
                         f"Polymarket open receiver exited (pid={child.pid})"
-                    )
+                    ) from self._sender_error
                 kind, body = message
                 message = None
                 if kind == STATS:
@@ -189,10 +222,26 @@ class PolymarketOpenReceiverProcess:
             if wanted is None:
                 continue
             ids, snapshots = wanted
-            stdin.write(encode_frame((ASSETS, {
+            frame = encode_catalog(ASSETS, {
                 "asset_ids": ids, "price_book_snapshots": snapshots,
-            })))
+            })
+            wanted = ids = None
+            stdin.write(frame)
+            frame = None
             await stdin.drain()
+
+    def _sender_done(self, task: asyncio.Task, child) -> None:
+        """The sole writer stopped on its own: end the child, keep the cause."""
+        if task.cancelled() or task.exception() is None:
+            return
+        self._sender_error = task.exception()
+        logger.error(
+            "Polymarket open receiver catalog not delivered: %s", self._sender_error,
+        )
+        try:
+            child.stdin.close()  # child leaves on EOF; the read loop then raises
+        except Exception:
+            pass
 
 
 async def _stop_child(child) -> None:
@@ -242,7 +291,7 @@ async def serve_receiver(client_cls, *, read_fd: int = 0, write_fd: int = 1) -> 
     )
     writer = asyncio.StreamWriter(transport, protocol, None, loop)
 
-    start = await read_frame(reader)
+    start = await read_frame(reader, MAX_CATALOG_FRAME_BYTES)
     if start is None:
         return 0
     _, config = start
@@ -268,10 +317,11 @@ async def serve_receiver(client_cls, *, read_fd: int = 0, write_fd: int = 1) -> 
         # Started after `run_refreshable` owns the refresh event.
         await asyncio.sleep(0)
         while True:
-            message = await read_frame(reader)
+            message = await read_frame(reader, MAX_CATALOG_FRAME_BYTES)
             if message is None:
                 return
             _, body = message
+            message = None
             client.update_asset_ids(
                 body["asset_ids"], price_book_snapshots=body["price_book_snapshots"],
             )
