@@ -14,12 +14,17 @@ drop-in for the client's surface the consumer uses: ``on_price``/``on_trade``,
 ``run_refreshable``, ``update_asset_ids``, ``stats``, ``is_connected``. Every
 price policy, map, buffer, write, stamp and publication stays in the parent.
 
-Bounded both ways: the child awaits the pipe's ``drain`` after every frame, so
-a slow parent stalls the child's socket reads exactly as a slow callback stalls
-them in-process today (websockets' own ``max_queue`` then the TCP window), and
-only the LATEST desired catalog is held for the child. The catalog is the one
-large message and has its own budget (``MAX_CATALOG_FRAME_BYTES``); the frames
-coming back keep the small one. Shutdown is the pipe:
+Bounded both ways, with no unbounded queue: the child awaits the pipe's
+``drain`` after every frame, so a slow parent stalls the child's socket reads
+exactly as a slow callback stalls them in-process today (websockets' own
+``max_queue`` then the TCP window). The pipe's high-water mark is not the whole
+of it: every active shard calls back independently, writes its one frame and
+only then waits on ``drain``, so the child can hold up to one pending frame per
+shard (~150 today; a few KiB each, ``MAX_FRAME_BYTES`` at most) on top of the
+transport's high-water mark and the parent's stdout reader buffer. Only the
+LATEST desired catalog is held for the child; the catalog is the one large
+message, has its own budget (``MAX_CATALOG_FRAME_BYTES``, copies accounted
+there), and the frames coming back keep the small one. Shutdown is the pipe:
 closing the child's stdin (or the parent dying) ends it; it ignores TERM/INT so
 a dyno-wide signal cannot cut it off ahead of the parent's final drain.
 
@@ -111,7 +116,6 @@ class PolymarketOpenReceiverProcess:
         self._stats: dict = {}
         self._wanted: Optional[tuple[list[str], bool]] = None
         self._wake: Optional[asyncio.Event] = None
-        self._sender_error: Optional[BaseException] = None
         self.on_price: Optional[Callable] = None
         self.on_trade: Optional[Callable] = None
 
@@ -145,9 +149,16 @@ class PolymarketOpenReceiverProcess:
     ):
         """Run one child until cancelled; its exit is this call's failure.
 
-        A catalog over its budget (START here, before any child is spawned, or
-        a later one in the sender) fails this call; the sender's failure ends
-        the child so the read below sees EOF and raises from it.
+        One ownership boundary covers spawn, START, the catalog sender, the
+        frame reader and teardown. The sender and the reader are supervised
+        together: whichever stops first fails this call (a catalog over its
+        budget, a pipe write/drain error, the child's EOF), so a child can never
+        go on serving an old catalog after its updates stopped being delivered.
+        Teardown always joins both tasks, closes the child's stdin and reaps it
+        (kill past ``CHILD_EXIT_SECONDS``) — including when spawn or START
+        failed, and through further cancellations, which are re-raised only
+        once the child is gone. Afterwards the proxy is reusable: the consumer
+        retries the same object at its next catalog boundary.
         """
         if self._wake is not None:
             raise RuntimeError("Polymarket refreshable client is already running")
@@ -161,57 +172,63 @@ class PolymarketOpenReceiverProcess:
         })
         self._wake = asyncio.Event()
         self._wanted = None
-        self._sender_error = None
+        spawn: Optional[asyncio.Future] = None
+        tasks: list[asyncio.Task] = []
         try:
-            child = await asyncio.create_subprocess_exec(
+            # A task, so a cancellation landing mid-spawn leaves a handle the
+            # teardown can await for the child that may already exist.
+            spawn = asyncio.ensure_future(asyncio.create_subprocess_exec(
                 *self._command,
                 stdin=asyncio.subprocess.PIPE,
                 stdout=asyncio.subprocess.PIPE,
-            )
-        except BaseException:
-            self._wake = None
-            raise
-        logger.info("Polymarket open receiver started pid=%d", child.pid)
-        sender = None
-        try:
+            ))
+            child = await asyncio.shield(spawn)
+            logger.info("Polymarket open receiver started pid=%d", child.pid)
             child.stdin.write(start)
             start = None
             await child.stdin.drain()
             sender = asyncio.create_task(self._send_catalogs(child.stdin))
-            sender.add_done_callback(lambda task: self._sender_done(task, child))
-            while True:
-                message = await read_frame(child.stdout)
-                if message is None:
-                    raise RuntimeError(
-                        f"Polymarket open receiver exited (pid={child.pid})"
-                    ) from self._sender_error
-                kind, body = message
-                message = None
-                if kind == STATS:
-                    self._stats = body
-                    continue
-                handler = self.on_price if kind == PRICE else (
-                    self.on_trade if kind == TRADE else None
-                )
-                if handler is not None:
-                    try:
-                        result = handler(body)
-                        if asyncio.iscoroutine(result):
-                            await result
-                    except Exception:
-                        logger.exception(
-                            "Polymarket %s handler error",
-                            "price" if kind == PRICE else "trade",
-                        )
-                body = result = None
-                await asyncio.sleep(0)
+            reader = asyncio.create_task(self._dispatch(child))
+            tasks = [sender, reader]
+            await asyncio.wait(tasks, return_when=asyncio.FIRST_COMPLETED)
+            if sender.done():
+                raise RuntimeError(
+                    f"Polymarket open receiver catalog not delivered (pid={child.pid})"
+                ) from (None if sender.cancelled() else sender.exception())
+            reader.result()  # only ever ends by raising
+            raise RuntimeError(f"Polymarket open receiver reader ended (pid={child.pid})")
         finally:
             self._wake = None
+            self._wanted = None
             self._stats = {**self._stats, "connected": False, "shards_connected": 0}
-            if sender is not None:
-                sender.cancel()
-                await asyncio.gather(sender, return_exceptions=True)
-            await _stop_child(child)
+            await _to_completion(_teardown(spawn, tasks))
+
+    async def _dispatch(self, child) -> None:
+        """The child's frames, to the callbacks one at a time, in pipe order."""
+        while True:
+            message = await read_frame(child.stdout)
+            if message is None:
+                raise RuntimeError(f"Polymarket open receiver exited (pid={child.pid})")
+            kind, body = message
+            message = None
+            if kind == STATS:
+                self._stats = body
+                continue
+            handler = self.on_price if kind == PRICE else (
+                self.on_trade if kind == TRADE else None
+            )
+            if handler is not None:
+                try:
+                    result = handler(body)
+                    if asyncio.iscoroutine(result):
+                        await result
+                except Exception:
+                    logger.exception(
+                        "Polymarket %s handler error",
+                        "price" if kind == PRICE else "trade",
+                    )
+            body = result = None
+            await asyncio.sleep(0)
 
     async def _send_catalogs(self, stdin: asyncio.StreamWriter) -> None:
         wake = self._wake
@@ -230,18 +247,39 @@ class PolymarketOpenReceiverProcess:
             frame = None
             await stdin.drain()
 
-    def _sender_done(self, task: asyncio.Task, child) -> None:
-        """The sole writer stopped on its own: end the child, keep the cause."""
-        if task.cancelled() or task.exception() is None:
-            return
-        self._sender_error = task.exception()
-        logger.error(
-            "Polymarket open receiver catalog not delivered: %s", self._sender_error,
-        )
+
+async def _teardown(spawn: Optional[asyncio.Future], tasks: list) -> None:
+    """Join the run's tasks, then close and reap its child, if one exists."""
+    for task in tasks:
+        task.cancel()
+    if tasks:
+        await asyncio.gather(*tasks, return_exceptions=True)
+    if spawn is None:
+        return
+    try:
+        child = await spawn
+    except BaseException:
+        return  # no child: the spawn failed (asyncio reaps a half-made one)
+    await _stop_child(child)
+
+
+async def _to_completion(coro) -> None:
+    """Run ``coro`` to its end however often the caller is cancelled meanwhile;
+    a cancellation that arrived is re-raised only after it finishes."""
+    task = asyncio.ensure_future(coro)
+    cancelled = False
+    while not task.done():
         try:
-            child.stdin.close()  # child leaves on EOF; the read loop then raises
-        except Exception:
-            pass
+            await asyncio.shield(task)
+        except asyncio.CancelledError:
+            if task.done():
+                break
+            cancelled = True
+    exc = None if task.cancelled() else task.exception()
+    if exc is not None:
+        logger.error("Polymarket open receiver teardown failed", exc_info=exc)
+    if cancelled:
+        raise asyncio.CancelledError
 
 
 async def _stop_child(child) -> None:
@@ -256,11 +294,6 @@ async def _stop_child(child) -> None:
         logger.error("Polymarket open receiver ignored stdin close; killing")
         _kill(child)
         await child.wait()
-    except BaseException:
-        # A second cancellation landing on the join still reaps the child.
-        _kill(child)
-        await child.wait()
-        raise
 
 
 def _kill(child) -> None:

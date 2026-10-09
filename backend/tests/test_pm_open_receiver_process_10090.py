@@ -255,8 +255,8 @@ async def test_an_over_budget_start_is_refused_before_any_child(monkeypatch):
 
 @pytest.mark.asyncio
 async def test_an_over_budget_update_fails_the_run_not_the_feed(tmp_path, monkeypatch):
-    """The sender's refusal is not swallowed: the child leaves on EOF and the
-    run raises from the refusal, so the consumer's failure path owns it."""
+    """The sender's refusal is not swallowed: the run raises from it, so the
+    consumer's failure path owns it, and teardown ends the child on EOF."""
     proxy, _ = _proxy(tmp_path, 1)
     proxy.on_price = proxy.on_trade = lambda msg: None
     spawned = []
@@ -271,7 +271,7 @@ async def test_an_over_budget_update_fails_the_run_not_the_feed(tmp_path, monkey
     assert await _wait_for(lambda: proxy.stats.get("emitted") == 1)
     monkeypatch.setattr(pwp, "MAX_CATALOG_FRAME_BYTES", 4096)
     proxy.update_asset_ids(_catalog(200, 5))
-    with pytest.raises(RuntimeError, match="receiver exited") as failed:
+    with pytest.raises(RuntimeError, match="catalog not delivered") as failed:
         await asyncio.wait_for(run, 30)
     assert isinstance(failed.value.__cause__, ValueError)
     assert "exceeds 4096" in str(failed.value.__cause__)
@@ -297,3 +297,162 @@ async def test_the_quote_bound_is_unchanged_by_the_catalog_budget():
     with pytest.raises(ValueError, match="exceeds"):
         await pwp.read_frame(reader())
     assert (await pwp.read_frame(reader(), pwp.MAX_CATALOG_FRAME_BYTES))[0] == pwp.PRICE
+
+
+def _recording_exec(monkeypatch, spawned, fail_first=None, delay=None):
+    """Spawn real children, recording each; optionally fail the first spawn or
+    hold a created child back from the caller for ``delay``."""
+    real_exec = asyncio.create_subprocess_exec
+    calls = []
+
+    async def recording_exec(*args, **kwargs):
+        calls.append(args)
+        if fail_first is not None and len(calls) == 1:
+            raise fail_first
+        child = await real_exec(*args, **kwargs)
+        spawned.append(child)
+        if delay is not None:
+            await delay.wait()
+        return child
+
+    monkeypatch.setattr(pwp.asyncio, "create_subprocess_exec", recording_exec)
+    return calls
+
+
+@pytest.mark.asyncio
+async def test_a_failed_spawn_leaves_the_proxy_reusable(tmp_path, monkeypatch):
+    """The consumer retries the SAME proxy at its next catalog boundary; one
+    failed spawn must not leave it refusing as 'already running' forever."""
+    proxy, _ = _proxy(tmp_path, 1)
+    proxy.on_price = proxy.on_trade = lambda msg: None
+    spawned = []
+    calls = _recording_exec(
+        monkeypatch, spawned, fail_first=OSError("process capacity unavailable"),
+    )
+    with pytest.raises(OSError, match="capacity"):
+        await proxy.run_refreshable(["a"])
+    assert spawned == [] and len(calls) == 1
+    with pytest.raises(RuntimeError, match="not running"):
+        proxy.update_asset_ids(["a"])
+
+    run = asyncio.create_task(proxy.run_refreshable(["a"]))  # the retry
+    assert await _wait_for(lambda: proxy.stats.get("emitted") == 1)
+    assert len(calls) == 2
+    run.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await run
+    (child,) = spawned
+    assert child.returncode == 0
+
+
+@pytest.mark.asyncio
+async def test_a_cancel_during_spawn_reaps_the_child_already_created(tmp_path, monkeypatch):
+    proxy, _ = _proxy(tmp_path, 1)
+    spawned, held = [], asyncio.Event()
+    _recording_exec(monkeypatch, spawned, delay=held)
+    run = asyncio.create_task(proxy.run_refreshable(["a"]))
+    assert await _wait_for(lambda: spawned)
+    run.cancel()
+    await asyncio.sleep(0.05)
+    assert not run.done()  # waiting for the spawn it owns, not abandoning it
+    held.set()
+    with pytest.raises(asyncio.CancelledError):
+        await asyncio.wait_for(run, 30)
+    (child,) = spawned
+    assert child.returncode == 0  # closed and joined: left on stdin EOF
+    held.clear()
+    with pytest.raises(RuntimeError, match="not running"):
+        proxy.update_asset_ids(["a"])
+
+
+@pytest.mark.asyncio
+async def test_repeated_cancellation_still_closes_and_reaps_the_child(tmp_path, monkeypatch):
+    """cancel, one loop turn, cancel again: the child is gone before the
+    cancellation reaches the caller."""
+    proxy, _ = _proxy(tmp_path, 1)
+    proxy.on_price = proxy.on_trade = lambda msg: None
+    spawned = []
+    _recording_exec(monkeypatch, spawned)
+    run = asyncio.create_task(proxy.run_refreshable(["a"]))
+    assert await _wait_for(lambda: proxy.is_connected)
+    run.cancel()
+    await asyncio.sleep(0)
+    run.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await run
+    (child,) = spawned
+    assert child.returncode == 0
+    assert child.stdin.is_closing()
+
+
+STUBBORN_CHILD = textwrap.dedent(
+    """
+    import signal, sys, time
+    signal.signal(signal.SIGTERM, signal.SIG_IGN)
+    sys.stdin.close()  # ignores its pipe closing too
+    time.sleep(120)
+    """
+)
+
+
+@pytest.mark.asyncio
+async def test_cancellations_during_the_child_join_still_reap_it(monkeypatch):
+    """A child that ignores stdin EOF and TERM is killed past the bound even if
+    the caller keeps cancelling while the join waits."""
+    monkeypatch.setattr(pwp, "CHILD_EXIT_SECONDS", 0.5)
+    proxy = pwp.PolymarketOpenReceiverProcess(
+        command=[sys.executable, "-c", STUBBORN_CHILD],
+    )
+    spawned = []
+    _recording_exec(monkeypatch, spawned)
+    run = asyncio.create_task(proxy.run_refreshable(["a"]))
+    assert await _wait_for(lambda: spawned)
+    await asyncio.sleep(0.2)
+    run.cancel()
+    for _ in range(5):
+        await asyncio.sleep(0.05)
+        assert not run.done()
+        run.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await asyncio.wait_for(run, 30)
+    (child,) = spawned
+    assert child.returncode == -9  # killed past the bound, and reaped
+
+
+PIPE_BREAKING_CHILD = textwrap.dedent(
+    """
+    import importlib.util, os, sys, time
+    spec = importlib.util.spec_from_file_location("pwp_child", sys.argv[1])
+    pwp = importlib.util.module_from_spec(spec); spec.loader.exec_module(pwp)
+    (size,) = pwp._HEADER.unpack(sys.stdin.buffer.read(pwp._HEADER.size))
+    sys.stdin.buffer.read(size)  # START
+    os.close(0)  # its catalog pipe breaks; it keeps quoting the old catalog
+    seq = 0
+    while True:
+        sys.stdout.buffer.write(pwp.encode_frame(("s", {"connected": True, "seq": seq})))
+        sys.stdout.buffer.flush()
+        seq += 1
+        time.sleep(0.02)
+    """
+)
+
+
+@pytest.mark.asyncio
+async def test_a_catalog_write_failure_fails_the_run_while_the_child_still_quotes(monkeypatch):
+    """The sender is supervised: a broken catalog pipe ends the run even though
+    the child's stdout is still flowing, instead of dispatching an old catalog."""
+    monkeypatch.setattr(pwp, "CHILD_EXIT_SECONDS", 0.5)
+    proxy = pwp.PolymarketOpenReceiverProcess(
+        command=[sys.executable, "-c", PIPE_BREAKING_CHILD, PROCESS_FILE],
+    )
+    spawned = []
+    _recording_exec(monkeypatch, spawned)
+    run = asyncio.create_task(proxy.run_refreshable(["a"]))
+    assert await _wait_for(lambda: (proxy.stats.get("seq") or 0) >= 3)
+    proxy.update_asset_ids(_catalog(20000, 6))  # past the pipe buffer
+    with pytest.raises(RuntimeError, match="catalog not delivered") as failed:
+        await asyncio.wait_for(run, 30)
+    assert isinstance(failed.value.__cause__, (BrokenPipeError, ConnectionResetError))
+    (child,) = spawned
+    assert child.returncode is not None
+    assert not proxy.is_connected
