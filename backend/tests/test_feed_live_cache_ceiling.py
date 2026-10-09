@@ -397,6 +397,7 @@ async def _drive_feed(*, redis, monkeypatch, headers=None, during_build=None, ev
 
 
 @pytest.mark.asyncio
+@pytest.mark.usefixtures("opening_seating_off")
 async def test_the_private_backfill_applies_the_live_ceiling(monkeypatch):
     """THE regression test for the surface that reported the bug.
 
@@ -424,6 +425,7 @@ async def test_the_private_backfill_applies_the_live_ceiling(monkeypatch):
 
 
 @pytest.mark.asyncio
+@pytest.mark.usefixtures("opening_seating_off")
 async def test_a_settled_page_keeps_the_long_mirror(monkeypatch):
     """The control. Without it, 'bounded' could just mean 'broke the cache'."""
     rc._reset_last_good_for_tests()
@@ -1072,6 +1074,7 @@ def _seed_consumed_artifact(monkeypatch, feed_mod, *, age_s: float) -> None:
 
 
 @pytest.mark.asyncio
+@pytest.mark.usefixtures("opening_seating_off")
 async def test_a_live_page_built_from_an_aged_artifact_gets_no_fresh_window(
     monkeypatch,
 ):
@@ -1132,6 +1135,7 @@ async def test_a_live_page_built_from_an_aged_artifact_gets_no_fresh_window(
 
 
 @pytest.mark.asyncio
+@pytest.mark.usefixtures("opening_seating_off")
 async def test_a_build_from_fresh_artifacts_keeps_the_full_window(monkeypatch):
     """THE FRESH CONTROL — the fix must not just disable last-good.
 
@@ -1424,6 +1428,7 @@ async def test_a_live_page_over_the_ceiling_is_not_served_even_once(monkeypatch)
 
 
 @pytest.mark.asyncio
+@pytest.mark.usefixtures("opening_seating_off")
 async def test_a_build_inside_the_ceiling_still_serves_its_live_page(monkeypatch):
     """THE CONTROL, and the reason the test above is a ceiling and not a mute.
 
@@ -1462,6 +1467,7 @@ async def test_a_build_inside_the_ceiling_still_serves_its_live_page(monkeypatch
 
 
 @pytest.mark.asyncio
+@pytest.mark.usefixtures("opening_seating_off")
 async def test_a_still_valid_prior_payload_is_served_instead(monkeypatch):
     """Outcome (b): the fallback is bounded by the same ceiling it replaces.
 
@@ -1502,6 +1508,66 @@ async def test_a_still_valid_prior_payload_is_served_instead(monkeypatch):
     assert [item["data"]["id"] for item in stored[1]["items"]] == [1, 2, 3], (
         "the over-ceiling build overwrote the still-valid prior payload"
     )
+    rc._reset_last_good_for_tests()
+
+
+@pytest.mark.asyncio
+@pytest.mark.usefixtures("opening_seating_on")
+async def test_a_seated_build_inside_the_ceiling_still_serves_its_live_page(monkeypatch):
+    """#5105: the control above, seated. The ordinary live game is the whole
+    (thin) deck, so it is served as the continuation — the ceiling, not the
+    seating, is what the falsifier below is measuring."""
+    import app.routes.feed as feed_mod
+
+    rc._reset_last_good_for_tests()
+    during_build, fired, _shim, _bound = _seed_artifact_and_build_time(
+        monkeypatch, feed_mod, artifact_age_s=50.0, build_s=5.0
+    )
+    resp = await _drive_live_feed(
+        monkeypatch, redis=_SeededRedis(), during_build=during_build
+    )
+
+    assert fired["n"] >= 1
+    body = resp.json()
+    assert body["cache"]["status"] == "miss"
+    assert body["cache"]["live"] is True
+    assert body["items"], "an in-ceiling seated live build served an empty page"
+    assert body["continuation_start"] == 0
+    assert 0 < body["cache"]["ttl_seconds"] <= 10, body["cache"]
+    rc._reset_last_good_for_tests()
+
+
+@pytest.mark.asyncio
+@pytest.mark.usefixtures("opening_seating_on")
+async def test_a_seated_over_ceiling_build_serves_no_prior_page(monkeypatch):
+    """#5105: outcome (b) is closed to a seated request — a remembered page is
+    one offset of a deck composed at an earlier clock and cannot certify the
+    opening now — so the ceiling ends at (c), a truthful `unavailable`, with
+    nothing published. The prior is planted under BOTH the legacy and the
+    seated key so a key slip cannot make this pass."""
+    import app.routes.feed as feed_mod
+
+    rc._reset_last_good_for_tests()
+    seated_key = feed_response_cache_key(
+        user_id=None, session_id=None, opening_seating=True, **_BARE_FEED_SHAPE
+    )
+    assert seated_key != SHARED_KEY
+    for key in (SHARED_KEY, seated_key):
+        rc.remember_last_good(key, LIVE_PAGE, built_at=time_module.time() - 5.0)
+
+    during_build, fired, _shim, _bound = _seed_artifact_and_build_time(
+        monkeypatch, feed_mod, artifact_age_s=50.0, build_s=20.0
+    )
+    redis = _SeededRedis()
+    resp = await _drive_live_feed(monkeypatch, redis=redis, during_build=during_build)
+
+    assert fired["n"] >= 1
+    body = resp.json()
+    assert body["cache"]["status"] == "unavailable"
+    assert body["cache"]["reason"] == "input_age_ceiling"
+    assert body["items"] == []
+    assert resp.headers["X-Feed-Cache"] == "unavailable"
+    assert redis.setex_calls == []
     rc._reset_last_good_for_tests()
 
 

@@ -162,6 +162,7 @@ class Redis:
         return True
 
 
+@pytest.mark.usefixtures("opening_seating_off")
 async def test_discover_paginate_full_deck_and_recheck_revocation(
     client, monkeypatch, enabled, card, ordinary_deck
 ):
@@ -204,6 +205,49 @@ async def test_discover_paginate_full_deck_and_recheck_revocation(
     withdrawn = await client.get("/api/feed?limit=10")
     assert withdrawn.json()["total"] == 25
     assert all(item["type"] != "collection" for item in withdrawn.json()["items"])
+
+
+@pytest.mark.usefixtures("opening_seating_on")
+async def test_seated_discover_paginates_a_deck_whose_collection_holds_no_live_games(
+    client, monkeypatch, enabled, card, ordinary_deck
+):
+    """#5105: the authentic producer card, with a non-live hub status, is a
+    supported seated deck — every page of one edition, the card intact."""
+    scheduled_card = {**card, "status": "scheduled"}
+    read = AsyncMock(return_value=SimpleNamespace(collections=[scheduled_card]))
+    monkeypatch.setattr(producer, "discover_collections", read)
+    monkeypatch.setattr(cache, "get_shared_async_redis", AsyncMock(return_value=Redis()))
+    pages, editions = [], []
+    for offset in (0, 10, 20):
+        body = (await client.get(f"/api/feed?limit=10&offset={offset}")).json()
+        assert body["total"] == 26, body.get("cache")
+        pages.extend(body["items"])
+        editions.append(body["edition"])
+    assert len(set(editions)) == 1
+    assert len(pages) == 26
+    collection = next(item for item in pages if item["type"] == "collection")
+    assert collection["data"] == scheduled_card
+
+
+@pytest.mark.usefixtures("opening_seating_on")
+async def test_seated_discover_refuses_a_deck_whose_collection_reads_live(
+    client, monkeypatch, enabled, card, ordinary_deck
+):
+    """#5105: the same producer card as published (`status: live`, an NFL week
+    in progress) is a group the seating cannot see inside. The whole deck is a
+    truthful `unavailable` — never a flat or partly seated page — even though
+    every member game is scheduled."""
+    assert card["status"] == "live"
+    read = AsyncMock(return_value=SimpleNamespace(collections=[card]))
+    monkeypatch.setattr(producer, "discover_collections", read)
+    monkeypatch.setattr(cache, "get_shared_async_redis", AsyncMock(return_value=Redis()))
+    for offset in (0, 10):
+        response = await client.get(f"/api/feed?limit=10&offset={offset}")
+        body = response.json()
+        assert response.headers["x-feed-cache"] == "unavailable"
+        assert body["cache"]["reason"] == "opening_unsupported"
+        assert body["items"] == [] and body["total"] == 0
+        assert "edition" not in body
 
 
 async def test_flag_off_preserves_cached_ordinary_response(
