@@ -31,11 +31,9 @@ from app.utils.repair_lock_budget import (
 logger = logging.getLogger(__name__)
 
 
-#: Q460 — how long a WS consumer run keeps one subscription list before handing
-#: control back so the slate can be re-read. Ten minutes bounds the "game went
-#: live after we connected" hole to ten minutes; the cost is one reconnect per
-#: consumer per ten minutes, which is ordinary client behaviour on both venues'
-#: published sockets and adds no REST calls at all.
+#: Q460 / #10090 — reread the full eligible subscription scope every ten
+#: minutes. An unchanged scope keeps its healthy sockets and buffered inputs;
+#: changed mappings/policy still use the existing drain/rebuild path.
 SUBSCRIPTION_REFRESH_SECONDS = int(
     os.getenv("WS_SUBSCRIPTION_REFRESH_SECONDS", "600")
 )
@@ -599,22 +597,47 @@ async def _run_kalshi_ws_consumer(*, sessions, prices):
     ws = KalshiWebSocket()
     ws.exact_trace = exact_trace
 
-    # -- Load market tickers to subscribe to --
-    async with get_task_session() as session:
-        result = await session.execute(
-            select(
-                FuturesMarket.external_id,
-                FuturesMarket.id,
-                FuturesMarket.event_id,
+    # Same full admission read at startup and each routine refresh.
+    async def read_linked_slate():
+        async with get_task_session() as session:
+            result = await session.execute(
+                select(
+                    FuturesMarket.external_id,
+                    FuturesMarket.id,
+                    FuturesMarket.event_id,
+                )
+                .join(Event, FuturesMarket.event_id == Event.id)
+                .where(
+                    FuturesMarket.source == "kalshi",
+                    FuturesMarket.event_id.isnot(None),
+                    _kalshi_slate_event_window(),
+                )
             )
-            .join(Event, FuturesMarket.event_id == Event.id)
-            .where(
-                FuturesMarket.source == "kalshi",
-                FuturesMarket.event_id.isnot(None),
-                _kalshi_slate_event_window(),
-            )
-        )
-        rows = result.all()
+            rows = result.all()
+        market_ids = list({row[0]: row[1] for row in rows}.values())
+        outcome_rows = []
+        if market_ids:
+            async with get_task_session() as session:
+                outcome_rows = (
+                    await session.execute(
+                        select(
+                            FuturesOutcome.external_id,
+                            FuturesOutcome.market_id,
+                            FuturesOutcome.id,
+                        ).where(
+                            FuturesOutcome.market_id.in_(market_ids),
+                            FuturesOutcome.external_id.isnot(None),
+                        )
+                    )
+                ).all()
+        return rows, outcome_rows
+
+    def linked_scope(rows, outcome_rows):
+        return (frozenset(tuple(row) for row in rows),
+                frozenset(tuple(row) for row in outcome_rows))
+
+    rows, outcome_rows = await read_linked_slate()
+    initial_linked_scope = linked_scope(rows, outcome_rows)
 
     event_tickers = list({row[0] for row in rows})
     market_id_by_ext = {row[0]: row[1] for row in rows}
@@ -623,23 +646,6 @@ async def _run_kalshi_ws_consumer(*, sessions, prices):
     event_id_by_market: dict[int, int] = {
         row[1]: row[2] for row in rows if row[2] is not None
     }
-
-    # Load outcome tickers for subscription
-    all_market_ids = list(market_id_by_ext.values())
-    outcome_rows = []
-    if all_market_ids:
-        async with get_task_session() as session:
-            outcome_result = await session.execute(
-                select(
-                    FuturesOutcome.external_id,
-                    FuturesOutcome.market_id,
-                    FuturesOutcome.id,
-                ).where(
-                    FuturesOutcome.market_id.in_(all_market_ids),
-                    FuturesOutcome.external_id.isnot(None),
-                )
-            )
-            outcome_rows = outcome_result.all()
 
     ticker_to_ids: dict[str, tuple[int, int]] = {}
     for ext_id, market_id, outcome_id in outcome_rows:
@@ -1759,11 +1765,24 @@ async def _run_kalshi_ws_consumer(*, sessions, prices):
     # handler — see `ws_open_contracts`).
     open_contract_sockets = []
     open_contract_tasks = []
+    initial_open_scope = None
+
+    def open_scope(ids, bridge):
+        shards = shard_tickers(ids)
+        # Effective maps and callback/subscription policy, not merely tickers.
+        return (
+            frozenset(ids.items()), frozenset(bridge.items()),
+            open_contract_prices_enabled(), open_contract_settlement_enabled(),
+            tuple(open_contract_channels()), tuple(tuple(shard) for shard in shards),
+            frozenset(prepared_shard_indexes(ids, shards)),
+        )
 
     async def admit_open_contracts():
+        nonlocal initial_open_scope
         ids, bridge, failed, bridge_failed = (
             preread if preread is not None else await read_open_contracts()
         )
+        initial_open_scope = open_scope(ids, bridge)
         stats["open_contract_admission_error"] = failed
         stats["open_contract_bridge_error"] = bridge_failed
         # #9484: their event is re-stamped after a flush exactly like a slate
@@ -1814,6 +1833,33 @@ async def _run_kalshi_ws_consumer(*, sessions, prices):
 
     admission_task = asyncio.create_task(admit_open_contracts())
 
+    async def subscription_scope_changed():
+        if any(task.done() for task in open_contract_tasks):
+            # The old unconditional recycle also repaired an ended auxiliary
+            # client. An unchanged mapping cannot certify its lifetime.
+            return True
+        # A stalled initial open/bridge read has no working arm to retain.
+        # Preserve the old deadline's bounded cleanup/rebuild repair.
+        if not admission_task.done():
+            return True
+        if admission_task.cancelled() or admission_task.exception() is not None:
+            return True  # rebuild a partially admitted arm through the safe path
+        try:
+            refreshed_rows, refreshed_outcomes = await read_linked_slate()
+            if linked_scope(refreshed_rows, refreshed_outcomes) != initial_linked_scope:
+                return True
+            ids, bridge, failed, bridge_failed = await read_open_contracts()
+            if failed or bridge_failed:
+                # No successful full-scope observation: keep working sockets.
+                return False
+            return open_scope(ids, bridge) != initial_open_scope
+        except Exception:
+            logger.warning(
+                "Kalshi WS: subscription refresh read failed, keeping the subscription",
+                exc_info=True,
+            )
+            return False
+
     _report_liveness("kalshi", "subscribing", legs=len(market_tickers))
 
     # #9462 review: the markets with a ticker on the wire. A market row that
@@ -1849,38 +1895,41 @@ async def _run_kalshi_ws_consumer(*, sessions, prices):
         live_event_ids.update(row[0] for row in rows)
         return unadmitted_live_events(rows, legged_market_ids)
 
-    try:
-        # Q460: RECYCLE, don't run forever. The subscription list above is built
-        # ONCE, from events that are live or start within 6 hours, and `ws.run`
-        # reconnects internally without ever rebuilding it — so a socket that
-        # stays healthy keeps yesterday's slate. Heroku cycles this dyno about
-        # daily, which means a restart at (say) 11:17am subscribes nothing that
-        # starts after 5:17pm, and every evening game silently misses the fast
-        # lane. Returning on a timer hands control back to `run_kalshi_ws.py`,
-        # which re-invokes this function and re-reads the slate.
-        #
-        # #9418: the timer is the ceiling, not the only door. A live event the
-        # slate missed ends the run early through the same cancellation.
-        admitted = await asyncio.wait_for(
-            run_until_admission(
-                # #9484: an EMPTY ticker list means "every market, both
-                # channels" to `KalshiWebSocket.run`, so a run whose linked
-                # slate is empty (open contracts only) opens no game socket
-                # and simply waits out the recycle.
-                (
-                    ws.run(market_tickers=market_tickers)
-                    if market_tickers
-                    else asyncio.Event().wait()
-                ),
-                watch_for_unadmitted_live_events(
-                    load_unadmitted_live_event_ids,
-                    event_id_by_market.values(),
-                    arm="Kalshi",
-                    started_at=run_started_at,
-                ),
+    # The game and admission watcher live across unchanged routine refreshes.
+    # Scope changes still return to the runner, which rebuilds every map/socket.
+    lifetime_task = asyncio.create_task(
+        run_until_admission(
+            # #9484: an EMPTY ticker list means "every market, both
+            # channels" to `KalshiWebSocket.run`, so an open-only run
+            # opens no game socket while its scope is refreshed normally.
+            (
+                ws.run(market_tickers=market_tickers)
+                if market_tickers
+                else asyncio.Event().wait()
             ),
-            timeout=SUBSCRIPTION_REFRESH_SECONDS,
-        )
+            watch_for_unadmitted_live_events(
+                load_unadmitted_live_event_ids,
+                event_id_by_market.values(),
+                arm="Kalshi",
+                started_at=run_started_at,
+            ),
+        ),
+        name="kalshi-subscription-lifetime",
+    )
+    interrupted = None
+    try:
+        while True:
+            done, _ = await asyncio.wait(
+                {lifetime_task}, timeout=SUBSCRIPTION_REFRESH_SECONDS,
+            )
+            if done:
+                admitted = lifetime_task.result()
+                break
+            if await subscription_scope_changed():
+                stats["status"] = "resubscribe"
+                stats["recycle_reason"] = "scope"
+                admitted = None
+                break
         if admitted:
             stats["status"] = "resubscribe"
             stats["recycle_reason"] = "admission"
@@ -1890,16 +1939,24 @@ async def _run_kalshi_ws_consumer(*, sessions, prices):
                 "price, recycling early: %s",
                 len(admitted), sorted(admitted)[:20],
             )
-    except asyncio.TimeoutError:
-        stats["status"] = "resubscribe"
     except asyncio.CancelledError:
-        # Not the recycle — that arrives above as `TimeoutError` now that the
-        # service loop propagates (CERT-491). This is a real shutdown, so it
+        # This is a real shutdown, so it
         # must keep travelling: swallowing it would make `run_kalshi_ws.py`
         # sleep and relaunch a consumer the process is trying to stop. The
         # `finally` below still drains the buffer first.
         raise
     finally:
+        # Like the old wait_for recycle, stop and join the game/watcher before
+        # draining. Repeated cancellation cannot leave callbacks beside a drain.
+        if not lifetime_task.done():
+            lifetime_task.cancel()
+        while not lifetime_task.done():
+            try:
+                await asyncio.wait({lifetime_task})
+            except asyncio.CancelledError as exc:
+                interrupted = exc
+        if not lifetime_task.cancelled():
+            lifetime_task.exception()
         loops_stop.set()
         flush_task.cancel()
         stats_task.cancel()
@@ -1936,6 +1993,8 @@ async def _run_kalshi_ws_consumer(*, sessions, prices):
             stats["loops_unreaped"] = await reap_stopped_loops(
                 "kalshi", (flush_task, stats_task),
             )
+        if interrupted is not None:
+            raise interrupted
 
     logger.info("Kalshi WS consumer exiting: %s", stats)
     return stats
