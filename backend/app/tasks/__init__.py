@@ -3606,18 +3606,14 @@ OPENING_BOOK_SLICES = 12
 
 #: How long one lock acquisition in the movement core may WAIT (#10090).
 #:
-#: The core (A1-A7, B, C) is one transaction by design, so every outcome row it
-#: retires stays locked until C commits, and the quote writers UPDATE those same
-#: rows every flush. A1-A7 take their targets with `SKIP LOCKED`, so they never
-#: queue behind a row a writer holds; a skipped row still qualifies on the next
-#: ten-minute run. This bounds every OTHER wait in that transaction — B and C's
-#: market rows, any relation lock — so maintenance can never sit in a lock queue
-#: while holding quote rows it already took. When it fires the core raises
-#: 55P03 and rolls back whole: no outcome is cleared against an unrecomputed
-#: market, every quote row is released at once, and the run fails loudly.
-#: Half a second for `DEFAULT_STAMP_LOCK_TIMEOUT_MS`'s reason: under the
-#: server's 1 s `deadlock_timeout`, so the core stops waiting before a deadlock
-#: with a writer can be detected against the writer.
+#: A1-A7 and their actually affected market maxima commit together. Outcome
+#: targets use SKIP LOCKED; other waits in that transaction stay bounded so
+#: maintenance cannot queue indefinitely while holding quote rows. A full
+#: B/C recompute follows in its own transaction with the same wait bound and
+#: no outcome locks held. This bounds acquisition, not scan/lock-held duration:
+#: later A sweeps still share the retirement transaction.
+#: Half a second is under the server's 1 s deadlock_timeout. A timeout raises
+#: 55P03 and rolls back that transaction, never a partial outcome/max pair.
 MOVEMENT_CORE_LOCK_TIMEOUT_MS = 500
 
 #: A4's and A7's eligibility, ONE text each, shared by the lock-free prepare
@@ -4047,6 +4043,7 @@ def update_max_movement(self):
                         LIMIT :batch
                         FOR UPDATE SKIP LOCKED
                     )
+                    RETURNING market_id
                 """),
                 {"window_hours": MOVEMENT_WINDOW_HOURS, "batch": STALE_DELTA_BATCH},
             )
@@ -4106,6 +4103,7 @@ def update_max_movement(self):
                         LIMIT :batch
                         FOR UPDATE SKIP LOCKED
                     )
+                    RETURNING market_id
                 """),
                 {"batch": GRADED_DELTA_BATCH},
             )
@@ -4192,6 +4190,7 @@ def update_max_movement(self):
                         LIMIT :batch
                         FOR UPDATE SKIP LOCKED
                     )
+                    RETURNING market_id
                 """),
                 {"batch": IMPOSSIBLE_PRIOR_BATCH},
             )
@@ -4314,6 +4313,7 @@ def update_max_movement(self):
                         LIMIT :batch
                         FOR UPDATE OF fo SKIP LOCKED
                     )
+                    RETURNING market_id
                 """),
                 {
                     "window_hours": MOVEMENT_WINDOW_HOURS,
@@ -4365,6 +4365,7 @@ def update_max_movement(self):
                         LIMIT :batch
                         FOR UPDATE SKIP LOCKED
                     )
+                    RETURNING market_id
                 """),
                 {"window_hours": MOVEMENT_WINDOW_HOURS, "batch": STALE_RANK_BATCH},
             )
@@ -4402,6 +4403,7 @@ def update_max_movement(self):
                         LIMIT :batch
                         FOR UPDATE SKIP LOCKED
                     )
+                    RETURNING market_id
                 """),
                 {"batch": GRADED_RANK_BATCH},
             )
@@ -4508,6 +4510,7 @@ def update_max_movement(self):
                         LIMIT :batch
                         FOR UPDATE OF fo SKIP LOCKED
                     )
+                    RETURNING market_id
                 """),
                 {
                     "window_hours": MOVEMENT_WINDOW_HOURS,
@@ -4522,48 +4525,64 @@ def update_max_movement(self):
                 },
             )
 
-            # B. Recompute the per-market maximum over what survived A, A2, A3,
-            #    A4 and A7.
-            result = await session.execute(text("""
-                UPDATE futures_markets fm
-                SET max_movement_24h = sub.max_mv
-                FROM (
-                    SELECT fo.market_id, MAX(ABS(fo.probability_change_24h)) AS max_mv
-                    FROM futures_outcomes fo
-                    WHERE fo.probability_change_24h IS NOT NULL
-                    GROUP BY fo.market_id
-                ) sub
-                WHERE fm.id = sub.market_id
-                  AND fm.status IN ('open', 'active')
-                  AND (fm.max_movement_24h IS DISTINCT FROM sub.max_mv)
-            """))
+            async def recompute_maxima(market_ids=None):
+                # Restrict the aggregate's INPUT, not only the UPDATE target:
+                # core outcome locks must not wait behind an all-market scan.
+                params = {} if market_ids is None else {"market_ids": market_ids}
+                outcome_scope = (
+                    "" if market_ids is None else " AND fo.market_id = ANY(:market_ids)"
+                )
+                market_scope = (
+                    "" if market_ids is None else " AND fm.id = ANY(:market_ids)"
+                )
+                recomputed = await session.execute(text("""
+                    UPDATE futures_markets fm
+                    SET max_movement_24h = sub.max_mv
+                    FROM (
+                        SELECT fo.market_id, MAX(ABS(fo.probability_change_24h)) AS max_mv
+                        FROM futures_outcomes fo
+                        WHERE fo.probability_change_24h IS NOT NULL
+                """ + outcome_scope + """
+                        GROUP BY fo.market_id
+                    ) sub
+                    WHERE fm.id = sub.market_id
+                      AND fm.status IN ('open', 'active')
+                      AND (fm.max_movement_24h IS DISTINCT FROM sub.max_mv)
+                """), params)
+                emptied = await session.execute(text("""
+                    UPDATE futures_markets fm
+                    SET max_movement_24h = NULL
+                    WHERE fm.status IN ('open', 'active')
+                      AND fm.max_movement_24h IS NOT NULL
+                """ + market_scope + """
+                      AND NOT EXISTS (
+                          SELECT 1
+                          FROM futures_outcomes fo
+                          WHERE fo.market_id = fm.id
+                            AND fo.probability_change_24h IS NOT NULL
+                      )
+                """), params)
+                return recomputed.rowcount, emptied.rowcount
 
-            # C. A market with no surviving delta has no maximum. NULL is the
-            #    honest value — "we do not know", which is what every reader
-            #    already handles — and it keeps
-            #    `max_movement_24h == MAX(ABS(change))` exactly true, which is
-            #    the identity /movers' pool bound rests on.
-            cleared = await session.execute(text("""
-                UPDATE futures_markets fm
-                SET max_movement_24h = NULL
-                WHERE fm.status IN ('open', 'active')
-                  AND fm.max_movement_24h IS NOT NULL
-                  AND NOT EXISTS (
-                      SELECT 1
-                      FROM futures_outcomes fo
-                      WHERE fo.market_id = fm.id
-                        AND fo.probability_change_24h IS NOT NULL
-                  )
-            """))
+            # Actual mutations name the only markets whose maxima retirement
+            # can invalidate. Include rank sweeps too, without broadening any
+            # retirement predicate, batch, ordering or SKIP LOCKED admission.
+            retired_market_ids = sorted({
+                market_id
+                for retirement in (
+                    expired, graded, impossible, unobserved,
+                    rank_expired, rank_graded, contradicted,
+                )
+                for market_id in retirement.scalars().all()
+                if market_id is not None
+            })
+            core_updated = core_cleared = 0
+            if retired_market_ids:
+                core_updated, core_cleared = await recompute_maxima(retired_market_ids)
 
-            # One commit for the movement core: a reader must never see
-            # A/A2/A3/A4/A7's
-            # cleared outcomes against B and C's un-recomputed markets, because
-            # between those two states the superset bound is false. A5 and A6
-            # join the same transaction for the card's sake rather than the
-            # bound's: a commit landing between the delta sweeps and the rank
-            # sweeps would serve, for that window, exactly the card this ship
-            # exists to end — "New favorite" with no movement behind it.
+            # Keep all seven delta/rank retirements and their affected maxima
+            # atomic. The full B/C scan belongs AFTER this commit: no quote row
+            # remains locked while unrelated markets' movement is aggregated.
             await session.commit()
 
             # The core has committed coherent deltas/ranks and maxima. The
@@ -4573,6 +4592,18 @@ def update_max_movement(self):
             # before it reads metadata, including the DataGolf arm.
             bank_transaction_closed = False
             try:
+                # Preserve the original full B/C maintenance for markets whose
+                # prices changed independently of retirement. Its new transaction
+                # owns no outcome locks, and re-arms the same local wait budget.
+                await session.execute(
+                    SET_LOCK_TIMEOUT_SQL,
+                    {"ms": lock_timeout_value(MOVEMENT_CORE_LOCK_TIMEOUT_MS)},
+                )
+                updated, cleared_markets = await recompute_maxima()
+                updated += core_updated
+                cleared_markets += core_cleared
+                await session.commit()
+
                 # A8's carrier key, shared by A8-DG / A9-DG below.
                 bank_key = DATED_BASIS_METADATA_KEY
 
@@ -5019,7 +5050,6 @@ def update_max_movement(self):
                         logger.warning("update_max_movement: warm failed: %s", exc, exc_info=True)
                         warm = {"terminal": "failed", "completed": 0, "reason": "error"}
 
-            updated = result.rowcount
             expired_rows = expired.rowcount
             graded_rows = graded.rowcount
             impossible_rows = impossible.rowcount
@@ -5032,7 +5062,6 @@ def update_max_movement(self):
             opening_markets = openings.rowcount
             rank_expired_rows = rank_expired.rowcount
             rank_graded_rows = rank_graded.rowcount
-            cleared_markets = cleared.rowcount
 
             # `expired` and `backlog_drained` are reported so the drain is
             # observable while it runs: a run that retires exactly
