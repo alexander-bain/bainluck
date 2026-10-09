@@ -13,6 +13,7 @@ import asyncio
 import contextlib
 import functools
 import logging
+import math
 import os
 import time
 from collections.abc import Collection, Iterator, Mapping
@@ -510,7 +511,7 @@ def kalshi_book_max_tickers() -> int:
 QUOTE_PRIORITY_EVIDENCE_SECONDS = 90.0
 
 
-def _kalshi_quote_priority_window():
+def _kalshi_quote_priority_window(starting_within_seconds: float = 0.0):
     """#10090 — the events a recent winner quote may lift to live priority.
 
     Moller–Pereira (event 15327169, 10/09): ``suspended``, no score, both
@@ -520,6 +521,10 @@ def _kalshi_quote_priority_window():
     the suspended arm's age floor, market not resolved, and still
     ``scheduled``/``suspended``: a completed/cancelled event, or a settled
     market, never qualifies. The event's status is never written from here.
+
+    ``starting_within_seconds`` widens ONLY the start clause, to events whose
+    scheduled start is that close: the caller reads when the next one starts
+    and still lifts only rows whose start has passed (`quote_priority_starts_in`).
     """
     from sqlalchemy import and_, or_, text
 
@@ -528,7 +533,10 @@ def _kalshi_quote_priority_window():
 
     return and_(
         Event.status.in_(("scheduled", "suspended")),
-        Event.commence_time <= text("NOW()"),
+        Event.commence_time <= (
+            text(f"NOW() + INTERVAL '{math.ceil(starting_within_seconds)} seconds'")
+            if starting_within_seconds > 0 else text("NOW()")
+        ),
         Event.commence_time >= text(
             f"NOW() - INTERVAL '{int(SUSPENDED_SLATE_MAX_AGE_HOURS)} hours'"
         ),
@@ -537,6 +545,17 @@ def _kalshi_quote_priority_window():
             FuturesMarket.status != "resolved",
         ),
     )
+
+
+def quote_priority_starts_in():
+    """#10090 — seconds until the event's scheduled start, on the DATABASE's
+    clock (the one `_kalshi_quote_priority_window` tests); ``<= 0`` once it
+    has started."""
+    from sqlalchemy import func
+
+    from app.models.models import Event
+
+    return func.extract("epoch", Event.commence_time - func.now())
 
 
 def recently_quoted_event_ids(quoted_at, now, window=QUOTE_PRIORITY_EVIDENCE_SECONDS):
@@ -756,7 +775,7 @@ async def _run_kalshi_ws_consumer(*, sessions, prices):
         LiveBlendRefresher, TailReceipts, adopt_handed_off, event_ids_for_outcomes,
         LOOP_REAP_TIMEOUT_S, hand_off_pending, reap_stopped_loops, run_flush_cadence,
     )
-    from app.tasks import ws_open_contracts
+    from app.tasks import ws_admission, ws_open_contracts
     from app.tasks.ws_admission import (  # #9418
         unadmitted_live_events, watch_for_unadmitted_live_events,
     )
@@ -1057,6 +1076,12 @@ async def _run_kalshi_ws_consumer(*, sessions, prices):
     # (`load_quote_priority_event_ids`) runs now, not at the next 30 s check.
     # Its later quotes, and an event the read refuses, never set it again.
     admission_wake = asyncio.Event()
+    # #10090: the monotonic time the soonest quoting, otherwise-eligible event
+    # starts, from the last quote-priority read; the watcher's next reread is
+    # due then instead of at the next 30 s check (an event that quotes BEFORE
+    # its start keeps its evidence fresh, so its start wakes nothing else).
+    # The reread it brings forward decides; this time lifts nothing itself.
+    quote_priority_due: list[float | None] = [None]
     flush_timings = _FlushTimings()
     prices.timings = flush_timings
     blend_refresher = LiveBlendRefresher(
@@ -2604,6 +2629,7 @@ async def _run_kalshi_ws_consumer(*, sessions, prices):
         but started, unresolved and in `_kalshi_quote_priority_window`. No
         read when nothing outside the live set is quoting; a failed read
         lifts nothing (the live set alone, as before)."""
+        quote_priority_due[0] = None
         recent = recently_quoted_event_ids(winner_quoted_at, time.monotonic())
         recent -= live
         # The winner markets themselves: a quoting event's open prop market
@@ -2615,19 +2641,29 @@ async def _run_kalshi_ws_consumer(*, sessions, prices):
         })
         if not winner_market_ids:
             return set()
+        # Events that pass every clause but start before the next check are
+        # read too, only to time the reread that may lift them at their start.
+        horizon = ws_admission.ADMISSION_CHECK_SECONDS
         try:
             async with get_task_session() as session:
                 result = await session.execute(
-                    select(FuturesMarket.event_id)
+                    select(FuturesMarket.event_id, quote_priority_starts_in())
                     .join(Event, FuturesMarket.event_id == Event.id)
                     .where(
                         FuturesMarket.source == "kalshi",
                         FuturesMarket.id.in_(winner_market_ids),
-                        _kalshi_quote_priority_window(),
+                        _kalshi_quote_priority_window(horizon),
                     )
                     .distinct()
                 )
-                return {row[0] for row in result.all()} & recent
+                rows = [
+                    (event_id, float(starts_in)) for event_id, starts_in in result.all()
+                    if event_id in recent and starts_in is not None
+                ]
+            starts = [starts_in for _, starts_in in rows if starts_in > 0]
+            if starts:
+                quote_priority_due[0] = time.monotonic() + min(starts)
+            return {event_id for event_id, starts_in in rows if starts_in <= 0}
         except Exception:
             logger.warning(
                 "Kalshi WS: quote-priority read failed; live events only",
@@ -2645,6 +2681,7 @@ async def _run_kalshi_ws_consumer(*, sessions, prices):
                 arm="Kalshi",
                 started_at=run_started_at,
                 wake=admission_wake,
+                due=lambda: quote_priority_due[0],
             ),
             name="kalshi-admission-watch",
         )

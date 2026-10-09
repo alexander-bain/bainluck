@@ -12,33 +12,44 @@ all), or a quote on an event the window refuses (completed, settled market).
 """
 
 import asyncio
+import time
 
 import pytest
 
 import app.tasks.kalshi_ws as task
+import app.tasks.ws_admission as admission
 from tests.test_kalshi_changed_scope_continuity_10090 import (
     GAME_A, Result, Scope, _rig, _stop, _until,
 )
 
-QUOTE_READ = ["futures_markets.event_id"]
+QUOTE_READ = "futures_markets.event_id"
 
 
 class SuspendedScope(Scope):
     """Event 900 is never in the live reread; ``window`` is the quote-priority
-    read's answer (the event is started, unresolved, scheduled/suspended)."""
+    read's answer (the event is unresolved, scheduled/suspended). It started a
+    minute ago, or at monotonic ``starts_at``; like the read's start clause, a
+    start beyond the next admission check returns no row."""
 
-    def __init__(self, window):
+    def __init__(self, window, starts_at=None):
         super().__init__()
         self.window = window
+        self.starts_at = starts_at
         self.quote_reads = []
 
     async def execute(self, statement, *args):
         columns = [str(c) for c in getattr(statement, "selected_columns", ())]
         if columns and "win_probability_sources" in " ".join(columns):
             return Result([])  # not live
-        if columns == QUOTE_READ:
+        if columns[:1] == [QUOTE_READ] and len(columns) == 2:
             self.quote_reads.append(str(statement))
-            return Result([(900,)] if self.window else [])
+            if not self.window:
+                return Result([])
+            starts_in = (-60.0 if self.starts_at is None
+                         else self.starts_at - time.monotonic())
+            if starts_in > admission.ADMISSION_CHECK_SECONDS:
+                return Result([])
+            return Result([(900, starts_in)])
         return await super().execute(statement, *args)
 
 

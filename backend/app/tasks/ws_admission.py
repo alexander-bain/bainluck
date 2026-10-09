@@ -139,6 +139,7 @@ async def watch_for_unadmitted_live_events(
     clock: Callable[[], float] = time.monotonic,
     wake: Optional[asyncio.Event] = None,
     wake_cooldown_seconds: Optional[float] = None,
+    due: Optional[Callable[[], Optional[float]]] = None,
 ) -> frozenset:
     """Return the live events the run cannot price, once it may recycle.
 
@@ -157,6 +158,12 @@ async def watch_for_unadmitted_live_events(
     the next reread forward to `wake_cooldown_seconds` after the previous one
     began; wakes during a reread carry to the next. After a failed reread the
     wait is the full interval, woken or not. Without ``wake`` nothing changes.
+
+    #10090: a caller may also pass ``due``, asked after each successful reread
+    for the `clock` time the next one is due (None: no sooner than usual). An
+    earlier due time shortens that wait, never below `wake_cooldown_seconds`
+    after the previous reread began; the reread decides, the due time decides
+    nothing. A failed reread still waits the full interval.
     """
     if check_seconds is None:
         check_seconds = ADMISSION_CHECK_SECONDS
@@ -170,9 +177,15 @@ async def watch_for_unadmitted_live_events(
     read_at = clock()
     while True:
         if held is not None:
+            wait = check_seconds
+            due_at = None if failed or due is None else due()
+            if due_at is not None:
+                wait = min(wait, max(
+                    due_at - clock(), wake_cooldown_seconds - (clock() - read_at),
+                ))
             if wake is None or failed:
-                await asyncio.sleep(check_seconds)
-            elif await _woken_within(wake, check_seconds):
+                await asyncio.sleep(max(0.0, wait))
+            elif await _woken_within(wake, max(0.0, wait)):
                 await asyncio.sleep(
                     max(0.0, wake_cooldown_seconds - (clock() - read_at))
                 )
