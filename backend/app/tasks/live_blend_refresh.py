@@ -65,7 +65,6 @@ from __future__ import annotations
 
 from asyncio import CancelledError
 import contextlib
-import copy
 from collections import deque
 import logging
 import math
@@ -1790,51 +1789,20 @@ class LiveBlendRefresher:
         return grouped
 
     async def _prepare_groups(self, event_ids: list[int]) -> dict[int, tuple]:
-        """Read once; no ORM identity or mutable JSON escapes this transaction.
+        """Read one fresh scalar graph owned only by this refresh call.
 
-        Groups belong to this call, passed explicitly rather than stored on the
-        refresher. The unproven/cold orientation fallback deliberately reads a
-        later Event/peer view in the group's write session; named proof uses the
-        prepared board, while the cache remains a boolean, never a price.
+        `_read_groups` materializes plain namespaces from scalar query rows,
+        including newly decoded JSON. No ORM objects or shared cache escape
+        the transaction, so rebuilding and recursively copying that graph
+        again only delays the first stamp. Each event's group belongs to one
+        worker. Queued fresh events still reread their current quotes; the
+        cold orientation fallback still reads in the stamp's own session.
         """
-        from types import SimpleNamespace
         from app.tasks.base import get_task_session
-        from app.utils.live_blend import MarketOutcomes
-
-        def scalar(row, fields):
-            return SimpleNamespace(
-                **{
-                    key: copy.deepcopy(getattr(row, key))
-                    for key in fields
-                }
-            )
 
         factory = self._session_factory or get_task_session
         async with factory() as session:
-            grouped = await self._read_groups(session, event_ids)
-            return {
-                event_id: (
-                    SimpleNamespace(
-                        **{
-                            key: copy.deepcopy(getattr(event, key))
-                            for key in PREPARED_EVENT_FIELDS
-                        }
-                    ),
-                    [
-                        MarketOutcomes(
-                            market=scalar(entry.market, PREPARED_MARKET_FIELDS),
-                            outcomes=[
-                                scalar(outcome, PREPARED_OUTCOME_FIELDS)
-                                for outcome in entry.outcomes
-                            ],
-                            event_has_result=entry.event_has_result,
-                            event_commence_time=entry.event_commence_time,
-                        )
-                        for entry in group
-                    ],
-                )
-                for event_id, (event, group) in grouped.items()
-            }
+            return await self._read_groups(session, event_ids)
 
     @contextlib.asynccontextmanager
     async def _event_stamp_scope(self, session, *, single_event: bool):
@@ -2295,8 +2263,6 @@ class LiveBlendRefresher:
         exact_trace = getattr(self.receipts, "exact_trace", None)
         try:
             import asyncio
-            import json
-
             from redis.exceptions import ResponseError
 
             from app.utils.live_push import frame_publish_command
