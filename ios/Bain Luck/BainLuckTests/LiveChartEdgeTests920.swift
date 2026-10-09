@@ -162,11 +162,13 @@ final class LiveChartEdgeTests920: XCTestCase {
     // MARK: - The three refusals
 
     /// The 120 s poll keeps swallowing the buffer's older half. A frame the
-    /// payload already covers must not be drawn twice.
+    /// payload already covers must not be drawn twice. Since #10090 "covers"
+    /// means the served value held across the frame: held frames that MOVED
+    /// inside a served interval stay (`AHeldChartKeepsTheDipItDrew10090Tests`).
     func testAFrameTheBackendHasAlreadyCaughtUpToIsNotDrawnAgain() throws {
         let stale = [
-            LiveBlendPoint(date: at("2026-09-21T12:04:00Z"), homeProbability: 0.43),
-            LiveBlendPoint(date: at("2026-09-21T12:09:00Z"), homeProbability: 0.45),
+            LiveBlendPoint(date: at("2026-09-21T12:04:00Z"), homeProbability: 0.41),
+            LiveBlendPoint(date: at("2026-09-21T12:09:00Z"), homeProbability: 0.41),
         ]
         let blend = aggregate(OddsChartView.chartPoints(from: try blended(), liveFrames: stale))
 

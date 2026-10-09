@@ -2181,6 +2181,15 @@ struct OddsChartView: View {
     ///    covers would put two points on one timestamp, so the buffer only ever
     ///    contributes the part the server has not caught up to yet — and shrinks
     ///    to nothing by itself when it does.
+    ///
+    /// Refusal 3 is about the EDGE, not about movement already drawn (#10090).
+    /// Applied to every frame, it erased a dip the page had just drawn as soon
+    /// as a later sparse history row moved the edge past it: `.565 → .525 →
+    /// .51 → .565`, then a refresh that stored only a later `.565`, and the line
+    /// went flat while the buffer still held the dip. So the held frames that
+    /// sit strictly between two served points stay at their own times, under
+    /// `heldReadingsBetween`'s rules (web twin: `sessionReadingsBetween`,
+    /// `frontend/lib/liveChartHistory.ts`, #10795).
     static func extendingBlendToLiveEdge(
         _ points: [ChartDataPoint],
         with liveFrames: [LiveBlendPoint],
@@ -2196,7 +2205,7 @@ struct OddsChartView: View {
         guard let publishedEdge else {
             return extendingServedSourceSeries(
                 points, with: liveFrames,
-                servedSources: Set((history.winProbHistory ?? [:]).keys))
+                served: history.winProbHistory ?? [:])
         }
 
         var extended = points
@@ -2205,7 +2214,18 @@ struct OddsChartView: View {
                 ChartDataPoint(date: frame.date, probability: frame.homeProbability, source: "aggregate")
             )
         }
-        return extended
+        // Only a frame before the edge can sit inside the served blend.
+        guard liveFrames.contains(where: { $0.date < publishedEdge }) else { return extended }
+        // The blend carries no evidence and no live-edge flag on this client,
+        // so every served blend point is a reading that can open an interval.
+        let servedBlend = points.lazy.filter { $0.source == "aggregate" }.map {
+            (date: $0.date, value: Optional($0.probability), synthetic: false, coveredThrough: Date?.none)
+        }
+        let held = heldReadingsBetween(
+            Array(servedBlend), liveFrames.map { (date: $0.date, value: $0.homeProbability) })
+        return inserting(
+            held.map { ChartDataPoint(date: $0.date, probability: $0.value, source: "aggregate") },
+            into: extended)
     }
 
     /// Where the backend blended NOTHING, carry each served venue series forward
@@ -2222,7 +2242,10 @@ struct OddsChartView: View {
     ///    already drawn is extended. Two pushed frames of an unserved source would
     ///    be a line with no history, no legend entry and no colour.
     /// 2. **Strictly newer than THAT series' own edge.** Ties go to the served
-    ///    point; each series has its own edge, not the page's.
+    ///    point; each series has its own edge, not the page's. That is the
+    ///    TAIL's rule. Readings this page already drew inside the series stay
+    ///    at their own times (#10090, `heldReadingsBetween`): a later sparse row
+    ///    moves the edge, it does not prove the readings before it never moved.
     /// 3. **The venue's value at the stamped time** — `sourceProbability`, never
     ///    the blend `homeProbability` standing in for it.
     ///
@@ -2231,8 +2254,9 @@ struct OddsChartView: View {
     static func extendingServedSourceSeries(
         _ points: [ChartDataPoint],
         with liveFrames: [LiveBlendPoint],
-        servedSources: Set<String>
+        served: [String: [WinProbHistoryPoint]]
     ) -> [ChartDataPoint] {
+        let servedSources = Set(served.keys)
         var edges: [String: Date] = [:]
         for point in points where servedSources.contains(point.source) {
             if let edge = edges[point.source], edge >= point.date { continue }
@@ -2249,7 +2273,98 @@ struct OddsChartView: View {
                   let edge = edges[venue], frame.date > edge else { continue }
             extended.append(ChartDataPoint(date: frame.date, probability: value, source: venue))
         }
-        return extended
+
+        var held: [ChartDataPoint] = []
+        for venue in edges.keys.sorted() {
+            // Only a reading before this series' edge can sit inside it.
+            guard let edge = edges[venue],
+                  liveFrames.contains(where: { $0.source == venue && $0.date < edge }) else { continue }
+            // The RAW served series, not the drawn points: a served point with
+            // no number is dropped from the plot but still closes the interval
+            // it opens, and the synthetic edge and `observed` coverage are read
+            // from what the producer said, contract or not.
+            let series = (served[venue] ?? []).compactMap { wp in
+                wp.timestamp.asDate.map { date in
+                    (date: date, value: wp.homeProbability,
+                     synthetic: wp.liveEdge == true || wp.evidence?.kind == "live_edge",
+                     coveredThrough: wp.evidence?.kind == "observed" ? wp.evidence?.coveredThrough?.asDate : nil)
+                }
+            }
+            let readings = liveFrames.compactMap { frame in
+                frame.source == venue ? frame.sourceProbability.map { (date: frame.date, value: $0) } : nil
+            }
+            held += heldReadingsBetween(series, readings).map {
+                ChartDataPoint(date: $0.date, probability: $0.value, source: venue)
+            }
+        }
+        return inserting(held, into: extended)
+    }
+
+    /// #10090 — the held readings that sit strictly between two served points,
+    /// before the series' last real reading. Web twin: `sessionReadingsBetween`
+    /// (`frontend/lib/liveChartHistory.ts`, #10795); the rules are the same.
+    ///
+    /// Each interval between consecutive served points is judged on its own:
+    ///
+    /// - **It moved.** A run whose readings all equal the served value that
+    ///   opened the interval proves only "it held" — nothing to draw. A run with
+    ///   one differing reading keeps ALL its readings, so the reversal is drawn
+    ///   at its real time too.
+    /// - **The backend's proof wins.** Nothing at the same instant as a served
+    ///   point, and nothing at or before an `observed` point's `covered_through`.
+    /// - **It has a real reading to join.** Nothing before the first served
+    ///   point, after the synthetic live edge, or after a served point with no
+    ///   number: a gap the server left open stays open.
+    ///
+    /// Readings past the last real served point are the tail's business and are
+    /// not returned. Only frames this page received are used (the bounded
+    /// `LiveBlendBuffer`); nothing persists, so a reload shows served history
+    /// only. Linear in both inputs: the memo rebuilds this on every frame.
+    static func heldReadingsBetween(
+        _ served: [(date: Date, value: Double?, synthetic: Bool, coveredThrough: Date?)],
+        _ readings: [(date: Date, value: Double)]
+    ) -> [(date: Date, value: Double)] {
+        let series = served.enumerated()
+            .sorted { ($0.element.date, $0.offset) < ($1.element.date, $1.offset) }
+            .map(\.element)
+        guard let real = series.lastIndex(where: { $0.value != nil && !$0.synthetic }) else { return [] }
+        let lastRead = series[real].date
+
+        var runs: [Int: [(date: Date, value: Double)]] = [:]
+        var opening = -1
+        for reading in readings.sorted(by: { $0.date < $1.date }) {
+            guard reading.date < lastRead else { break }
+            while opening < real, series[opening + 1].date < reading.date { opening += 1 }
+            guard opening >= 0, series[opening + 1].date != reading.date else { continue }
+            let from = series[opening]
+            guard !from.synthetic, from.value != nil else { continue }
+            if let held = from.coveredThrough, reading.date <= held { continue }
+            runs[opening, default: []].append(reading)
+        }
+        return runs.keys.sorted().flatMap { index -> [(date: Date, value: Double)] in
+            let run = runs[index] ?? []
+            return run.contains { $0.value != series[index].value } ? run : []
+        }
+    }
+
+    /// Places `held` inside its own series in time order, leaving every other
+    /// series exactly where and how it was. `heldReadingsBetween` never returns
+    /// a served instant, so the order within a series is total.
+    static func inserting(_ held: [ChartDataPoint], into points: [ChartDataPoint]) -> [ChartDataPoint] {
+        guard !held.isEmpty else { return points }
+        let heldBySource = Dictionary(grouping: held, by: \.source)
+        var merged: [ChartDataPoint] = []
+        merged.reserveCapacity(points.count + held.count)
+        var placed = Set<String>()
+        for point in points {
+            guard let extra = heldBySource[point.source] else { merged.append(point); continue }
+            guard placed.insert(point.source).inserted else { continue }
+            merged += (points.filter { $0.source == point.source } + extra)
+                .enumerated()
+                .sorted { ($0.element.date, $0.offset) < ($1.element.date, $1.offset) }
+                .map(\.element)
+        }
+        return merged
     }
 
     // MARK: - Primary line & 0–100 axis (pure, unit-tested in OddsChartAxisTests)
