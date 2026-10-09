@@ -42,6 +42,44 @@ logger = logging.getLogger(__name__)
 PRICE_CHUNK_LOCK_TIMEOUT_MS = 500
 
 
+class _PMCatalogFlushBoundary:
+    """Catalog handover waits for both disjoint flushes without serializing them."""
+
+    def __init__(self):
+        self.condition = asyncio.Condition()
+        self.active = 0
+        self.changing = False
+
+    @contextlib.asynccontextmanager
+    async def flushing(self):
+        async with self.condition:
+            await self.condition.wait_for(lambda: not self.changing)
+            self.active += 1
+        try:
+            yield
+        finally:
+            async with self.condition:
+                self.active -= 1
+                self.condition.notify_all()
+
+    @contextlib.asynccontextmanager
+    async def updating(self):
+        async with self.condition:
+            self.changing = True
+            try:
+                await self.condition.wait_for(lambda: self.active == 0)
+            except BaseException:
+                self.changing = False
+                self.condition.notify_all()
+                raise
+        try:
+            yield
+        finally:
+            async with self.condition:
+                self.changing = False
+                self.condition.notify_all()
+
+
 def pm_non_speaking_metadata(metadata: Any) -> bool:
     """Only the shared venue-label refutation can exclude a loaded question."""
     from types import SimpleNamespace
@@ -1008,8 +1046,8 @@ def _log_unserved_sample(ws) -> None:
 
 
 @owns_consumer_sessions("polymarket")
-async def _run_polymarket_ws_consumer(*, sessions):
-    """Main Polymarket WebSocket consumer loop."""
+async def _run_polymarket_ws_consumer(*, sessions, stop=None):
+    """Stream until cancellation; an explicit stop also runs the final drain."""
     # `text`/`or_`/`and_` left with `_slate_event_window`, which now owns the
     # only expression in this consumer that needed them.
     from sqlalchemy import select, update, func
@@ -1028,7 +1066,7 @@ async def _run_polymarket_ws_consumer(*, sessions):
         topup_clob_tokens, topup_outcome_clob_tokens,
     )
     from app.tasks.ws_admission import (  # #9418
-        run_until_admission, unadmitted_live_events,
+        unadmitted_live_events,
         watch_for_unadmitted_live_events,
     )
     from app.tasks.polymarket_open_contracts import (  # #9484
@@ -1133,237 +1171,256 @@ async def _run_polymarket_ws_consumer(*, sessions):
     run_started_at = time.monotonic()
     ws = PolymarketWebSocket()
 
-    # Load linked Polymarket market asset IDs
-    async with get_task_session() as session:
-        result = await session.execute(
-            select(
-                FuturesOutcome.id,
-                FuturesOutcome.market_id,
-                FuturesOutcome.external_id,
-                FuturesMarket.external_id.label("market_ext_id"),
-                FuturesMarket.event_id.label("linked_event_id"),
+    async def load_game_slate():
+        # Load linked Polymarket market asset IDs
+        async with get_task_session() as session:
+            result = await session.execute(
+                select(
+                    FuturesOutcome.id,
+                    FuturesOutcome.market_id,
+                    FuturesOutcome.external_id,
+                    FuturesMarket.external_id.label("market_ext_id"),
+                    FuturesMarket.event_id.label("linked_event_id"),
+                )
+                .join(FuturesMarket, FuturesOutcome.market_id == FuturesMarket.id)
+                .join(Event, FuturesMarket.event_id == Event.id)
+                .where(
+                    FuturesMarket.source == "polymarket",
+                    FuturesMarket.event_id.isnot(None),
+                    _slate_event_window(),
+                    _slate_market_filter(),
+                )
             )
-            .join(FuturesMarket, FuturesOutcome.market_id == FuturesMarket.id)
-            .join(Event, FuturesMarket.event_id == Event.id)
-            .where(
-                FuturesMarket.source == "polymarket",
-                FuturesMarket.event_id.isnot(None),
-                _slate_event_window(),
-                _slate_market_filter(),
+            rows = result.all()
+
+        # Polymarket outcomes store condition_id as external_id (e.g. "0xabc..._yes").
+        # But the WS needs asset_ids (token IDs), which we store in market_metadata.
+        # For now, load token IDs from the outcomes' market_metadata.
+        # Build lookup: condition_id → (market_id, outcome_id)
+        condition_to_ids: dict[str, tuple[int, int]] = {}
+        market_ids = set()
+        # Q460: linked event per market, so a flushed price can re-stamp the blend.
+        event_id_by_market: dict[int, int] = {}
+        for outcome_id, market_id, ext_id, market_ext_id, linked_event_id in rows:
+            if ext_id:
+                condition_to_ids[ext_id] = (market_id, outcome_id)
+            market_ids.add(market_id)
+            if linked_event_id is not None:
+                event_id_by_market[market_id] = linked_event_id
+
+        # Load clob_token_ids from market_metadata
+        asset_ids: list[str] = []
+        asset_to_outcome: dict[str, int] = {}  # asset_id → outcome_id
+        asset_to_market: dict[str, int] = {}   # asset_id → market_id
+        condition_to_market: dict[str, int] = {}  # condition_id → market_id
+
+        tokens_by_market: dict[int, list[str]] = {}
+        non_blend_market_ids: set[int] = set()
+
+        async with get_task_session() as session:
+            market_result = await session.execute(
+                select(FuturesMarket.id, FuturesMarket.external_id, FuturesMarket.market_metadata)
+                .where(FuturesMarket.id.in_(list(market_ids)))
             )
-        )
-        rows = result.all()
-
-    # #9484: with no game slate there is nothing for the open-contract read to
-    # delay, so it runs up front; otherwise it runs beside the game socket.
-    preread = None
-    if not rows:
-        preread = await read_open_contracts(set(), set())
-        if preread[0] is None or not preread[0].asset_to_outcome:
-            logger.info("Polymarket WS: no live/upcoming linked markets")
-            return {"status": "no_markets"}
-
-    # Polymarket outcomes store condition_id as external_id (e.g. "0xabc..._yes").
-    # But the WS needs asset_ids (token IDs), which we store in market_metadata.
-    # For now, load token IDs from the outcomes' market_metadata.
-    # Build lookup: condition_id → (market_id, outcome_id)
-    condition_to_ids: dict[str, tuple[int, int]] = {}
-    market_ids = set()
-    # Q460: linked event per market, so a flushed price can re-stamp the blend.
-    event_id_by_market: dict[int, int] = {}
-    for outcome_id, market_id, ext_id, market_ext_id, linked_event_id in rows:
-        if ext_id:
-            condition_to_ids[ext_id] = (market_id, outcome_id)
-        market_ids.add(market_id)
-        if linked_event_id is not None:
-            event_id_by_market[market_id] = linked_event_id
-
-    # Load clob_token_ids from market_metadata
-    asset_ids: list[str] = []
-    asset_to_outcome: dict[str, int] = {}  # asset_id → outcome_id
-    asset_to_market: dict[str, int] = {}   # asset_id → market_id
-    condition_to_market: dict[str, int] = {}  # condition_id → market_id
-
-    tokens_by_market: dict[int, list[str]] = {}
-    non_blend_market_ids: set[int] = set()
-
-    async with get_task_session() as session:
-        market_result = await session.execute(
-            select(FuturesMarket.id, FuturesMarket.external_id, FuturesMarket.market_metadata)
-            .where(FuturesMarket.id.in_(list(market_ids)))
-        )
-        ext_by_market: dict[int, str] = {}
-        for mid, mext, metadata in market_result.all():
-            # Same authoritative refutation as shared WIN admission, using the
-            # catalog metadata this token read already owns. Missing labels
-            # remain conservative; titles and outcome names are never guessed.
-            if pm_non_speaking_metadata(metadata):
-                non_blend_market_ids.add(mid)
-            if mext:
-                condition_to_market[mext] = mid
-                ext_by_market[mid] = mext
-            if not metadata:
-                continue
-            tokens = metadata.get("clob_token_ids") or metadata.get("clobTokenIds")
-            if not tokens:
-                continue
-            if isinstance(tokens, str):
-                import json
-                try:
-                    tokens = json.loads(tokens)
-                except Exception:
+            ext_by_market: dict[int, str] = {}
+            for mid, mext, metadata in market_result.all():
+                # Same authoritative refutation as shared WIN admission, using the
+                # catalog metadata this token read already owns. Missing labels
+                # remain conservative; titles and outcome names are never guessed.
+                if pm_non_speaking_metadata(metadata):
+                    non_blend_market_ids.add(mid)
+                if mext:
+                    condition_to_market[mext] = mid
+                    ext_by_market[mid] = mext
+                if not metadata:
                     continue
-            for token in tokens:
-                asset_ids.append(str(token))
-                asset_to_market[str(token)] = mid
-            tokens_by_market[mid] = [str(t) for t in tokens]
-
-        # Q490 — ask for the slate's tokens instead of waiting for a rotation.
-        # The ingest stamp (Q460) is correct and covers the catalogue, but Gamma
-        # caps `/events` at offset 2000, so the poll addresses ~2,000 of ~39,000
-        # open markets per run on a rotating cursor. Measured 2h after that
-        # deploy: 701 markets carried tokens and 0 of the 77 on THIS slate did.
-        # `/markets?condition_ids=` does not paginate, so the fast lane can name
-        # exactly what it needs. Bounded by the slate size, which is ~77.
-        topup_missing = [
-            (mid, ext_by_market.get(mid))
-            for mid in market_ids
-            if mid not in tokens_by_market
-        ]
-        if topup_missing:
-            try:
-                topped = await topup_clob_tokens(session, topup_missing)
-            except Exception:
-                # A Gamma outage must not take the socket down with it: the
-                # markets that already have tokens keep streaming, and the next
-                # recycle retries. Loud, because a silently-empty top-up is the
-                # failure this whole queue exists to end.
-                logger.exception(
-                    "Polymarket WS: token top-up failed for %d markets; "
-                    "continuing with the %d already stamped",
-                    len(topup_missing), len(tokens_by_market),
-                )
-                topped = {}
-            for mid, tokens in topped.items():
-                tokens_by_market[mid] = tokens
+                tokens = metadata.get("clob_token_ids") or metadata.get("clobTokenIds")
+                if not tokens:
+                    continue
+                if isinstance(tokens, str):
+                    import json
+                    try:
+                        tokens = json.loads(tokens)
+                    except Exception:
+                        continue
                 for token in tokens:
-                    asset_ids.append(token)
-                    asset_to_market[token] = mid
+                    asset_ids.append(str(token))
+                    asset_to_market[str(token)] = mid
+                tokens_by_market[mid] = [str(t) for t in tokens]
 
-        outcome_result = await session.execute(
-            select(FuturesOutcome.id, FuturesOutcome.market_id, FuturesOutcome.external_id)
-            .where(FuturesOutcome.market_id.in_(list(market_ids)))
-            .order_by(FuturesOutcome.id)
-        )
-        outcomes_by_market: dict[int, list[tuple[int, str]]] = {}
-        for oid, mid, ext in outcome_result.all():
-            outcomes_by_market.setdefault(mid, []).append((oid, ext or ""))
+            # Q490 — ask for the slate's tokens instead of waiting for a rotation.
+            # The ingest stamp (Q460) is correct and covers the catalogue, but Gamma
+            # caps `/events` at offset 2000, so the poll addresses ~2,000 of ~39,000
+            # open markets per run on a rotating cursor. Measured 2h after that
+            # deploy: 701 markets carried tokens and 0 of the 77 on THIS slate did.
+            # `/markets?condition_ids=` does not paginate, so the fast lane can name
+            # exactly what it needs. Bounded by the slate size, which is ~77.
+            topup_missing = [
+                (mid, ext_by_market.get(mid))
+                for mid in market_ids
+                if mid not in tokens_by_market
+            ]
+            if topup_missing:
+                try:
+                    topped = await topup_clob_tokens(session, topup_missing)
+                except Exception:
+                    # A Gamma outage must not take the socket down with it: the
+                    # markets that already have tokens keep streaming, and the next
+                    # recycle retries. Loud, because a silently-empty top-up is the
+                    # failure this whole queue exists to end.
+                    logger.exception(
+                        "Polymarket WS: token top-up failed for %d markets; "
+                        "continuing with the %d already stamped",
+                        len(topup_missing), len(tokens_by_market),
+                    )
+                    topped = {}
+                for mid, tokens in topped.items():
+                    tokens_by_market[mid] = tokens
+                    for token in tokens:
+                        asset_ids.append(token)
+                        asset_to_market[token] = mid
 
-        # ── THE MONEYLINE LEG ────────────────────────────────────────────────
-        # Everything above addresses a market by its OWN condition id, which a
-        # parent/field row does not have — its `external_id` is a bare Gamma
-        # event id ("917153"), so `condition_id_of` returns None and the
-        # market-level top-up skips it by design. That row is the three-way
-        # "who wins" market: the ONLY market on the event that
-        # `compute_source_home_probability` can read, and therefore the only one
-        # whose price is the number the hero renders.
+            outcome_result = await session.execute(
+                select(FuturesOutcome.id, FuturesOutcome.market_id, FuturesOutcome.external_id)
+                .where(FuturesOutcome.market_id.in_(list(market_ids)))
+                .order_by(FuturesOutcome.id)
+            )
+            outcomes_by_market: dict[int, list[tuple[int, str]]] = {}
+            for oid, mid, ext in outcome_result.all():
+                outcomes_by_market.setdefault(mid, []).append((oid, ext or ""))
+
+            # ── THE MONEYLINE LEG ────────────────────────────────────────────────
+            # Everything above addresses a market by its OWN condition id, which a
+            # parent/field row does not have — its `external_id` is a bare Gamma
+            # event id ("917153"), so `condition_id_of` returns None and the
+            # market-level top-up skips it by design. That row is the three-way
+            # "who wins" market: the ONLY market on the event that
+            # `compute_source_home_probability` can read, and therefore the only one
+            # whose price is the number the hero renders.
+            #
+            # Measured on production 2026-09-01 before this block existed: the
+            # socket was streaming continuously (7 distinct sub-minute flushes in
+            # one minute) into Over/Under and Both-Teams-To-Score props, while
+            # across EVERY live event the `polymarket` and `kalshi` blend stamps sat
+            # at p50 age 122s — the 120s poll's sawtooth — with 0 of 9 fresher than
+            # two minutes, against `betting` at 23s. The fast lane was real and it
+            # was pointed at the markets nobody reads.
+            #
+            # A field market's OUTCOMES each carry a real condition id, so the
+            # tokens were reachable one level down the whole time. Only markets
+            # still missing tokens after the market-level pass are asked about, so
+            # an ordinary binary sub-market costs nothing here.
+            outcome_topup_targets: list[tuple[int, int, str]] = [
+                (mid, oid, ext)
+                for mid in market_ids
+                if mid not in tokens_by_market
+                for oid, ext in outcomes_by_market.get(mid, [])
+            ]
+            outcome_yes_token: dict[int, str] = {}
+            if outcome_topup_targets:
+                try:
+                    outcome_yes_token = {
+                        oid: token
+                        for oid, (_mid, token) in (
+                            await topup_outcome_clob_tokens(
+                                session, outcome_topup_targets
+                            )
+                        ).items()
+                    }
+                except Exception:
+                    # Same posture as the market-level top-up: a Gamma outage must
+                    # not take the socket down. The props keep streaming and the
+                    # next recycle retries the moneyline.
+                    logger.exception(
+                        "Polymarket WS: outcome token top-up failed for %d outcomes; "
+                        "continuing without the moneyline legs",
+                        len(outcome_topup_targets),
+                    )
+                    outcome_yes_token = {}
+
+            market_by_outcome: dict[int, int] = {
+                oid: mid
+                for mid, pairs in outcomes_by_market.items()
+                for oid, _ext in pairs
+            }
+            for oid, token in outcome_yes_token.items():
+                mid = market_by_outcome.get(oid)
+                if mid is None:
+                    continue
+                asset_ids.append(token)
+                asset_to_market[token] = mid
+                # Attributed directly, never positionally: this token IS the book
+                # for "will <this outcome> win", so the pairing is carried by the
+                # condition id rather than reconstructed from ordering.
+                asset_to_outcome[token] = oid
+
+        # Q489 — WHICH outcome an asset id belongs to. Both CLOB tokens of a binary
+        # (`clobTokenIds == [yesToken, noToken]`) map to the same FuturesMarket, and
+        # the price handlers used to resolve every tick to `outcomes[0]` — the
+        # Over/Yes leg — because this map was declared and never filled. A No-token
+        # `best_bid_ask` therefore wrote P(No) into the Yes outcome, and since both
+        # legs stream continuously the rendered number would oscillate between p and
+        # 1-p on every tick. That is strictly worse than a stale price: a stale card
+        # is wrong once, an inverted card is wrong at random.
         #
-        # Measured on production 2026-09-01 before this block existed: the
-        # socket was streaming continuously (7 distinct sub-minute flushes in
-        # one minute) into Over/Under and Both-Teams-To-Score props, while
-        # across EVERY live event the `polymarket` and `kalshi` blend stamps sat
-        # at p50 age 122s — the 120s poll's sawtooth — with 0 of 9 fresher than
-        # two minutes, against `betting` at 23s. The fast lane was real and it
-        # was pointed at the markets nobody reads.
+        # The pairing is positional and both sides are already ordered the same way:
+        # Gamma serves `[yes, no]`, and the ingest inserts the Over/Yes outcome
+        # before the Under/No one (`polymarket.py`, the sub-market loop), so ordering
+        # by `FuturesOutcome.id` reproduces the token order. `zip` is deliberate — a
+        # market whose outcome count disagrees with its token count maps only the
+        # pairs it can prove and leaves the rest unmapped, so a shape we did not
+        # anticipate drops ticks instead of writing them to the wrong leg.
         #
-        # A field market's OUTCOMES each carry a real condition id, so the
-        # tokens were reachable one level down the whole time. Only markets
-        # still missing tokens after the market-level pass are asked about, so
-        # an ordinary binary sub-market costs nothing here.
-        outcome_topup_targets: list[tuple[int, int, str]] = [
-            (mid, oid, ext)
-            for mid in market_ids
-            if mid not in tokens_by_market
-            for oid, ext in outcomes_by_market.get(mid, [])
-        ]
-        outcome_yes_token: dict[int, str] = {}
-        if outcome_topup_targets:
-            try:
-                outcome_yes_token = {
-                    oid: token
-                    for oid, (_mid, token) in (
-                        await topup_outcome_clob_tokens(
-                            session, outcome_topup_targets
-                        )
-                    ).items()
-                }
-            except Exception:
-                # Same posture as the market-level top-up: a Gamma outage must
-                # not take the socket down. The props keep streaming and the
-                # next recycle retries the moneyline.
-                logger.exception(
-                    "Polymarket WS: outcome token top-up failed for %d outcomes; "
-                    "continuing without the moneyline legs",
-                    len(outcome_topup_targets),
-                )
-                outcome_yes_token = {}
+        # #8403: "ordering by id reproduces the token order" is an ASSUMPTION about
+        # insertion order, and on a named two-sided game it fails. The legs are
+        # `{condition}` (Gamma `outcomes[0]`, token 0) and `{condition}_side1`
+        # (`outcomes[1]`, token 1), and on 21 of 67 live-or-upcoming markets
+        # measured 2026-09-24 the `_side1` leg held the LOWER id — so token 0 was
+        # zipped onto the second team's row and each team's price streamed onto
+        # the other's. The leg's own suffix says which token it is; ordering by it
+        # is `legs_in_token_order`.
+        for mid, mtokens in tokens_by_market.items():
+            for token, (oid, _ext) in zip(
+                mtokens, legs_in_token_order(outcomes_by_market.get(mid, []))
+            ):
+                asset_to_outcome[token] = oid
 
-        market_by_outcome: dict[int, int] = {
-            oid: mid
-            for mid, pairs in outcomes_by_market.items()
-            for oid, _ext in pairs
+        unmapped_assets = [a for a in asset_ids if a not in asset_to_outcome]
+
+        return {
+            "asset_ids": asset_ids,
+            "asset_to_outcome": asset_to_outcome,
+            "asset_to_market": asset_to_market,
+            "condition_to_market": condition_to_market,
+            "market_ids": market_ids,
+            "event_id_by_market": event_id_by_market,
+            "outcomes_by_market": outcomes_by_market,
+            "market_by_outcome": market_by_outcome,
+            "non_blend_market_ids": non_blend_market_ids,
+            "outcome_yes_token": outcome_yes_token,
+            "unmapped_assets": unmapped_assets,
         }
-        for oid, token in outcome_yes_token.items():
-            mid = market_by_outcome.get(oid)
-            if mid is None:
-                continue
-            asset_ids.append(token)
-            asset_to_market[token] = mid
-            # Attributed directly, never positionally: this token IS the book
-            # for "will <this outcome> win", so the pairing is carried by the
-            # condition id rather than reconstructed from ordering.
-            asset_to_outcome[token] = oid
 
-    # Q489 — WHICH outcome an asset id belongs to. Both CLOB tokens of a binary
-    # (`clobTokenIds == [yesToken, noToken]`) map to the same FuturesMarket, and
-    # the price handlers used to resolve every tick to `outcomes[0]` — the
-    # Over/Yes leg — because this map was declared and never filled. A No-token
-    # `best_bid_ask` therefore wrote P(No) into the Yes outcome, and since both
-    # legs stream continuously the rendered number would oscillate between p and
-    # 1-p on every tick. That is strictly worse than a stale price: a stale card
-    # is wrong once, an inverted card is wrong at random.
-    #
-    # The pairing is positional and both sides are already ordered the same way:
-    # Gamma serves `[yes, no]`, and the ingest inserts the Over/Yes outcome
-    # before the Under/No one (`polymarket.py`, the sub-market loop), so ordering
-    # by `FuturesOutcome.id` reproduces the token order. `zip` is deliberate — a
-    # market whose outcome count disagrees with its token count maps only the
-    # pairs it can prove and leaves the rest unmapped, so a shape we did not
-    # anticipate drops ticks instead of writing them to the wrong leg.
-    #
-    # #8403: "ordering by id reproduces the token order" is an ASSUMPTION about
-    # insertion order, and on a named two-sided game it fails. The legs are
-    # `{condition}` (Gamma `outcomes[0]`, token 0) and `{condition}_side1`
-    # (`outcomes[1]`, token 1), and on 21 of 67 live-or-upcoming markets
-    # measured 2026-09-24 the `_side1` leg held the LOWER id — so token 0 was
-    # zipped onto the second team's row and each team's price streamed onto
-    # the other's. The leg's own suffix says which token it is; ordering by it
-    # is `legs_in_token_order`.
-    for mid, mtokens in tokens_by_market.items():
-        for token, (oid, _ext) in zip(
-            mtokens, legs_in_token_order(outcomes_by_market.get(mid, []))
-        ):
-            asset_to_outcome[token] = oid
+    game_slate = await load_game_slate()
+    asset_ids = game_slate["asset_ids"].copy()
+    asset_to_outcome = game_slate["asset_to_outcome"].copy()
+    asset_to_market = game_slate["asset_to_market"].copy()
+    condition_to_market = game_slate["condition_to_market"].copy()
+    market_ids = game_slate["market_ids"].copy()
+    event_id_by_market = game_slate["event_id_by_market"].copy()
+    outcomes_by_market = game_slate["outcomes_by_market"].copy()
+    market_by_outcome = game_slate["market_by_outcome"].copy()
+    non_blend_market_ids = game_slate["non_blend_market_ids"].copy()
+    outcome_yes_token = game_slate["outcome_yes_token"].copy()
+    unmapped_assets = game_slate["unmapped_assets"].copy()
 
-    unmapped_assets = [a for a in asset_ids if a not in asset_to_outcome]
-
+    preread = None
     if not asset_ids:
-        if preread is None:
-            preread = await read_open_contracts(set(), market_ids)
+        preread = await read_open_contracts(set(), market_ids)
         if preread[0] is None or not preread[0].asset_to_outcome:
-            logger.info("Polymarket WS: no asset IDs found in market_metadata")
+            logger.info("Polymarket WS: no game or open-contract asset IDs")
             _report_liveness("polymarket", "no_asset_ids", legs=0)
-            return {"status": "no_asset_ids"}
+            return {"status": "no_asset_ids" if market_ids else "no_markets"}
 
     logger.info(
         "Polymarket WS: %d asset IDs (%d markets), %d mapped to an outcome, "
@@ -1448,6 +1505,7 @@ async def _run_polymarket_ws_consumer(*, sessions):
     # Buffered price updates
     price_buffer: dict[int, float] = {}
     buffer_lock = asyncio.Lock()
+    catalog_boundary = _PMCatalogFlushBoundary()
     lock_retry_until: dict[int, float] = {}
     withdrawal_retry_until: dict[int, float] = {}
     # Q460: outcome → linked event, for the blend re-stamp after each flush.
@@ -1495,6 +1553,8 @@ async def _run_polymarket_ws_consumer(*, sessions):
     open_complement_of: dict[int, int] = {}
     open_outcome_ids: set[int] = set()
     open_sockets: list = []
+    open_run_task = None
+    routing_generation = 0
     # #9913: token → (latest, previous) distinct top of book, wide or not, so
     # a trade can be read against the book it hit. One entry per subscribed
     # token; rebuilt from the subscribe snapshot on every recycle.
@@ -1711,7 +1771,7 @@ async def _run_polymarket_ws_consumer(*, sessions):
         stats["held_prices_withdrawn"] += len(rows)
         return [row.id for row in rows]
 
-    async def flush_prices(flush_started=None, final=False):
+    async def _flush_prices(flush_started=None, final=False):
         """One flush. Non-lock failures return False for the cadence retry;
         lock-held whole chunks retain their own eligibility cooldown. #10090
         ``flush_started`` is this flush's start, for the refresher's floor."""
@@ -2008,7 +2068,7 @@ async def _run_polymarket_ws_consumer(*, sessions):
         )
         return wrote_all
 
-    async def flush_standalone(flush_started=None):
+    async def _flush_standalone(flush_started=None):
         """#10090: write the standalone open legs, then their withdrawals.
 
         Their own loop, so a standalone chunk's UPDATE no longer holds the next
@@ -2041,6 +2101,14 @@ async def _run_polymarket_ws_consumer(*, sessions):
         if await flush_withdrawals(standalone=True) is None:
             wrote_all = False
         return wrote_all
+
+    async def flush_prices(flush_started=None, final=False):
+        async with catalog_boundary.flushing():
+            return await _flush_prices(flush_started, final=final)
+
+    async def flush_standalone(flush_started=None):
+        async with catalog_boundary.flushing():
+            return await _flush_standalone(flush_started)
 
     async def drain_prices():
         """The LAST flush of this consumer's life — retry, never requeue.
@@ -2101,7 +2169,10 @@ async def _run_polymarket_ws_consumer(*, sessions):
         A second cancellation landing on the join is recorded, not obeyed
         early: the join and the drain both still run, then it propagates.
         """
-        flushes = {flush_task, standalone_task}
+        flushes = {flush_task, standalone_task, admission_task, game_run_task}
+        flushes.update(resolution_tasks)
+        if open_run_task is not None:
+            flushes.add(open_run_task)
         interrupted = None
         while not all(task.done() for task in flushes):
             try:
@@ -2112,7 +2183,7 @@ async def _run_polymarket_ws_consumer(*, sessions):
             running = sorted(t.get_name() for t in flushes if not t.done())
             if running:
                 logger.error(
-                    "Polymarket WS: cancelled flush %s still running after "
+                    "Polymarket WS: cancelled producer/flush %s still running after "
                     "%.0fs; the final drain waits for it",
                     ", ".join(running), LOOP_REAP_TIMEOUT_S,
                 )
@@ -2138,6 +2209,7 @@ async def _run_polymarket_ws_consumer(*, sessions):
     async def handle_price(msg: dict):
         """Handle best_bid_ask event."""
         asset_id = msg.get("asset_id", "")
+        input_generation = routing_generation
         # #9484: a game-slate token, else an open contract's (never both —
         # the open map excludes every token the game socket carries).
         market_id = asset_to_market.get(asset_id) or open_asset_to_market.get(
@@ -2179,11 +2251,15 @@ async def _run_polymarket_ws_consumer(*, sessions):
         )
         if _poly_book_is_untradeable(bid_f, ask_f):
             async with buffer_lock:
+                if input_generation != routing_generation:
+                    return
                 for outcome_id, leg_bid, leg_ask in legs:
                     withdraw_buffer[outcome_id] = (leg_bid, leg_ask)
             return
         if legs:
             async with buffer_lock:
+                if input_generation != routing_generation:
+                    return
                 for outcome_id, _bid, _ask in legs:
                     withdraw_buffer.pop(outcome_id, None)
 
@@ -2199,6 +2275,8 @@ async def _run_polymarket_ws_consumer(*, sessions):
             return
 
         async with buffer_lock:
+            if input_generation != routing_generation:
+                return
             for outcome_id, leg_prob in with_complements(
                 targets, prob, open_complement_of
             ):
@@ -2250,6 +2328,7 @@ async def _run_polymarket_ws_consumer(*, sessions):
     async def handle_trade(msg: dict):
         """Handle last_trade_price event."""
         asset_id = msg.get("asset_id", "")
+        input_generation = routing_generation
         # #9484: a game-slate token, else an open contract's (never both —
         # the open map excludes every token the game socket carries).
         market_id = asset_to_market.get(asset_id) or open_asset_to_market.get(
@@ -2288,6 +2367,8 @@ async def _run_polymarket_ws_consumer(*, sessions):
             return
 
         async with buffer_lock:
+            if input_generation != routing_generation:
+                return
             for outcome_id, leg_prob in with_complements(
                 targets, prob, open_complement_of
             ):
@@ -2318,11 +2399,14 @@ async def _run_polymarket_ws_consumer(*, sessions):
         market_id = condition_to_market.get(condition_id)
         if not market_id:
             return
-        task = asyncio.create_task(_settle_resolution(msg, condition_id, market_id))
+        task = asyncio.create_task(_settle_resolution(
+            msg, condition_id, market_id,
+            list(outcomes_by_market.get(market_id, [])), dict(asset_to_outcome),
+        ))
         resolution_tasks.add(task)
         task.add_done_callback(resolution_tasks.discard)
 
-    async def _ask_venue(winning_asset_id, condition_id: str, outcomes):
+    async def _ask_venue(winning_asset_id, condition_id: str, outcomes, token_owners):
         """One confirmation attempt: CLOB first, then Gamma when CLOB has not
         decided (#9418 after-check — CLOB lags the push by minutes, Gamma
         does not). Either read failing is an `unconfirmed` answer, not an error.
@@ -2340,7 +2424,7 @@ async def _run_polymarket_ws_consumer(*, sessions):
                 exc_info=True,
             )
         verdict = ws_resolution_verdict(
-            winning_asset_id, clob_market, outcome_ids, asset_to_outcome
+            winning_asset_id, clob_market, outcome_ids, token_owners
         )
         if verdict[0] != WS_RESOLUTION_UNCONFIRMED:
             return verdict
@@ -2356,7 +2440,7 @@ async def _run_polymarket_ws_consumer(*, sessions):
             )
             return verdict
         gamma_verdict = gamma_resolution_verdict(
-            winning_asset_id, gamma_market, outcome_ids, asset_to_outcome
+            winning_asset_id, gamma_market, outcome_ids, token_owners
         )
         if gamma_verdict[0] != WS_RESOLUTION_UNCONFIRMED:
             stats["resolutions_via_gamma"] += 1
@@ -2395,7 +2479,7 @@ async def _run_polymarket_ws_consumer(*, sessions):
             written, len(outcomes),
         )
 
-    async def _settle_resolution(msg: dict, condition_id: str, market_id: int):
+    async def _settle_resolution(msg: dict, condition_id: str, market_id: int, outcomes, token_owners):
         """Resolve now; grade as soon as the venue confirms the token.
 
         The market is marked resolved on the FIRST answer whatever it is, so
@@ -2407,10 +2491,8 @@ async def _run_polymarket_ws_consumer(*, sessions):
         which the Gamma rail then supplies, exactly as before.
         """
         winning_asset_id = msg.get("winning_asset_id")
-        outcomes = outcomes_by_market.get(market_id, [])
-
         async def ask():
-            return await _ask_venue(winning_asset_id, condition_id, outcomes)
+            return await _ask_venue(winning_asset_id, condition_id, outcomes, token_owners)
 
         writes = []
 
@@ -2474,9 +2556,11 @@ async def _run_polymarket_ws_consumer(*, sessions):
                 _log_open_contract_line(stats, open_sockets[0].stats)
             _report_liveness(
                 "polymarket",
-                "streaming"
-                if getattr(ws, "is_connected", False) or open_connected
-                else "disconnected",
+                (
+                    "streaming"
+                    if getattr(ws, "is_connected", False) or open_connected
+                    else "disconnected"
+                ),
                 legs=len(asset_ids),
                 msgs=ws_stats.get("messages", 0),
                 served=ws_stats.get("assets_served", 0),
@@ -2499,85 +2583,165 @@ async def _run_polymarket_ws_consumer(*, sessions):
         asset_to_market[a] for a in asset_to_outcome if a in asset_to_market
     }
 
-    # #9484: the open-contract client — prices only (no `on_resolved`), its
-    # handshakes and initial dumps bounded, admitted beside the game socket and
-    # torn down in the `finally` on every exit path. Its run lives inside this
-    # task, so cancelling the task closes every one of its connections.
-    async def admit_open_contracts():
-        # #9736 repair: which contract each game-socket token is, by its leg's
-        # id, so an open leg with no token of its own can mirror it.
-        admission, failed, bridge, bridge_failed = (
-            preread
-            if preread is not None
-            else await read_open_contracts(
-                set(asset_ids),
-                market_ids,
-                tokens_by_contract(
-                    asset_to_outcome,
-                    {
-                        oid: ext
-                        for pairs in outcomes_by_market.values()
-                        for oid, ext in pairs
-                    },
-                ),
-            )
-        )
+    # One callback/buffer/session owner spans routine catalog refreshes. Only
+    # changed subscriptions reconnect; unchanged open-contract shards keep
+    # their books and receive queues instead of rebuilding the whole fleet.
+    async def refresh_catalog(slate, open_read):
+        nonlocal open_run_task, routing_generation
+        admission, failed, bridge, bridge_failed = open_read
         stats["open_contract_admission_error"] = failed
         stats["open_contract_bridge_error"] = bridge_failed
-        if admission is None:
-            return
-        for key, value in admission.counts.items():
-            stats[f"open_contract_{key}"] = value
-        # #10091: their event is re-stamped after a flush exactly like a slate
-        # leg's (`event_ids_for_outcomes` in `flush_prices`). Never overwrites a
-        # slate entry — admission excluded every slate market's legs.
-        for outcome_id, event_id in bridge.items():
-            event_id_by_outcome.setdefault(outcome_id, event_id)
-        stats["open_contract_bridged_outcomes"] = len(bridge)
-        stats["open_contract_bridged_events"] = len(set(bridge.values()))
-        stats["open_contract_assets"] = len(admission.asset_to_outcome)
-        # #9736: a mirror of a game-socket token needs no open subscription, so
-        # it is registered even when this arm subscribes nothing of its own.
-        mirrored = admission.mirrored_outcomes()
-        market_by_outcome.update(mirrored)
-        open_outcome_ids.update(mirrored)
-        open_asset_mirrors.update(admission.asset_mirrors)
-        open_complement_of.update(admission.complement_of)
-        if not admission.asset_to_outcome:
-            return
-        # An open contract's field is re-ranked like a linked one's.
-        market_by_outcome.update(
-            (oid, admission.asset_to_market[token])
-            for token, oid in admission.asset_to_outcome.items()
+        fresh_open_markets = (
+            {}
+            if admission is None
+            else {
+                oid: admission.asset_to_market[token]
+                for token, oid in admission.asset_to_outcome.items()
+            }
         )
-        open_outcome_ids.update(admission.asset_to_outcome.values())
-        open_asset_to_market.update(admission.asset_to_market)
-        open_asset_to_outcome.update(admission.asset_to_outcome)
-        open_ws = PolymarketWebSocket(
-            max_concurrent_handshakes=OPEN_CONTRACT_MAX_CONCURRENT_HANDSHAKES,
-            max_queue=OPEN_CONTRACT_MAX_QUEUE,
-            # #9733: a quiet book that moved while this client was down (every
-            # recycle) is priced from the subscribe snapshot, not left frozen
-            # until it moves again.
-            price_book_snapshots=book_snapshot_prices_enabled(),
-        )
-        open_ws.on_price = handle_price
-        open_ws.on_trade = handle_trade
-        open_sockets.append(open_ws)
-        logger.info(
-            "Polymarket WS: %d open-contract assets (%d markets) admitted "
-            "beside the game slate: %s",
-            len(admission.asset_to_outcome),
-            admission.counts["markets_admitted"],
-            admission.counts,
-        )
-        # Sorted so a recycle re-deals the same shards when nothing moved.
+        if admission is not None:
+            fresh_open_markets.update(admission.mirrored_outcomes())
+            for key, value in admission.counts.items():
+                stats[f"open_contract_{key}"] = value
+        async with catalog_boundary.updating():
+            async with buffer_lock:
+                routing_generation += 1
+                # Keep accepted writes' ownership through their drain even if the
+                # token has left the catalog. New inputs use ONLY the fresh maps.
+                protected = set(price_buffer) | set(withdraw_buffer)
+                current_outcomes = (
+                    slate["market_by_outcome"].keys() | fresh_open_markets.keys()
+                )
+                old_debt = protected - current_outcomes
+                for owners in (market_by_outcome, event_id_by_outcome):
+                    for oid in owners.keys() - old_debt:
+                        del owners[oid]
+                asset_ids[:] = slate["asset_ids"]
+                market_ids.clear()
+                market_ids.update(slate["market_ids"])
+                for name, target in (
+                    ("asset_to_outcome", asset_to_outcome),
+                    ("asset_to_market", asset_to_market),
+                    ("condition_to_market", condition_to_market),
+                    ("event_id_by_market", event_id_by_market),
+                    ("outcomes_by_market", outcomes_by_market),
+                ):
+                    target.clear()
+                    target.update(slate[name])
+                market_by_outcome.update(slate["market_by_outcome"])
+                market_by_outcome.update(fresh_open_markets)
+                fresh_events = {
+                    oid: event_id_by_market[mid]
+                    for oid, mid in slate["market_by_outcome"].items()
+                    if mid in event_id_by_market
+                }
+                event_id_by_outcome.update(bridge)
+                event_id_by_outcome.update(fresh_events)
+                non_blend_outcome_ids.intersection_update(old_debt)
+                non_blend_outcome_ids.update(
+                    oid
+                    for oid, mid in slate["market_by_outcome"].items()
+                    if mid in slate["non_blend_market_ids"]
+                )
+                open_outcome_ids.intersection_update(old_debt)
+                open_outcome_ids.update(fresh_open_markets)
+                for target, fresh in (
+                    (
+                        open_asset_to_market,
+                        {} if admission is None else admission.asset_to_market,
+                    ),
+                    (
+                        open_asset_to_outcome,
+                        {} if admission is None else admission.asset_to_outcome,
+                    ),
+                    (
+                        open_asset_mirrors,
+                        {} if admission is None else admission.asset_mirrors,
+                    ),
+                ):
+                    target.clear()
+                    target.update(fresh)
+                for oid in open_complement_of.keys() - old_debt:
+                    del open_complement_of[oid]
+                if admission is not None:
+                    open_complement_of.update(admission.complement_of)
+                live_assets = (
+                    asset_to_outcome.keys()
+                    | open_asset_to_outcome.keys()
+                    | open_asset_mirrors.keys()
+                )
+                for token in books_by_asset.keys() - live_assets:
+                    del books_by_asset[token]
+                for held in (lock_retry_until, withdrawal_retry_until):
+                    for oid in held.keys() - protected:
+                        del held[oid]
+                legged_market_ids.clear()
+                legged_market_ids.update(
+                    asset_to_market[a] for a in asset_to_outcome if a in asset_to_market
+                )
+            stats["assets_subscribed"] = len(asset_ids)
+            stats["assets_mapped"] = len(asset_to_outcome)
+            stats["assets_unmapped"] = len(slate["unmapped_assets"])
+            stats["moneyline_legs_subscribed"] = len(slate["outcome_yes_token"])
+            stats["open_contract_bridged_outcomes"] = len(bridge)
+            stats["open_contract_bridged_events"] = len(set(bridge.values()))
+            stats["open_contract_assets"] = len(open_asset_to_outcome)
+            if not open_sockets:
+                open_ws = PolymarketWebSocket(
+                    max_concurrent_handshakes=OPEN_CONTRACT_MAX_CONCURRENT_HANDSHAKES,
+                    max_queue=OPEN_CONTRACT_MAX_QUEUE,
+                    price_book_snapshots=book_snapshot_prices_enabled(),
+                )
+                open_ws.on_price = handle_price
+                open_ws.on_trade = handle_trade
+                open_sockets.append(open_ws)
+            open_ws = open_sockets[0]
+            # Existing flag is re-read at the same catalog boundary as before.
+            snapshot_prices = book_snapshot_prices_enabled()
+            desired_open = sorted(open_asset_to_outcome)
+            if open_run_task is None or open_run_task.done():
+                if open_run_task is not None:
+                    await asyncio.gather(open_run_task, return_exceptions=True)
+                open_run_task = asyncio.create_task(
+                    run_open_client(open_ws, desired_open, snapshot_prices),
+                    name="polymarket-open-sockets",
+                )
+                # Start the owner before allowing an immediate second refresh.
+                await asyncio.sleep(0)
+            else:
+                open_ws.update_asset_ids(
+                    desired_open, price_book_snapshots=snapshot_prices
+                )
+
+    async def run_open_client(open_ws, desired_open, snapshot_prices):
         try:
-            await open_ws.run(asset_ids=sorted(admission.asset_to_outcome))
+            await open_ws.run_refreshable(
+                desired_open,
+                price_book_snapshots=snapshot_prices,
+            )
         except Exception:
-            # Costs the arm until the next recycle, never the game socket.
             stats["open_contract_admission_error"] = True
             logger.exception("Polymarket WS: open-contract client failed")
+
+    async def read_catalog_open(slate):
+        return await read_open_contracts(
+            set(slate["asset_ids"]),
+            slate["market_ids"],
+            tokens_by_contract(
+                slate["asset_to_outcome"],
+                {
+                    oid: ext
+                    for pairs in slate["outcomes_by_market"].values()
+                    for oid, ext in pairs
+                },
+            ),
+        )
+
+    async def admit_open_contracts():
+        await refresh_catalog(
+            game_slate,
+            preread if preread is not None else await read_catalog_open(game_slate),
+        )
 
     admission_task = asyncio.create_task(admit_open_contracts())
 
@@ -2608,39 +2772,114 @@ async def _run_polymarket_ws_consumer(*, sessions):
             )
             return unadmitted_live_events(result.all(), legged_market_ids)
 
+    def start_game_socket():
+        # `run([])` means every market to the legacy resolution client.
+        return asyncio.create_task(
+            ws.run(asset_ids=asset_ids.copy()) if asset_ids else asyncio.Event().wait(),
+            name="polymarket-game-sockets",
+        )
+
+    game_run_task = start_game_socket()
+    stop_task = asyncio.create_task(stop.wait()) if stop is not None else None
+    watch_task = None
     exit_reason = "consumer_exit"
     try:
-        # Q460: recycle on a timer so the slate is re-read — same reasoning as
-        # `kalshi_ws.SUBSCRIPTION_REFRESH_SECONDS`, and the same constant, so the
-        # two sockets on this dyno cannot drift to different coverage windows.
-        # #9418: the timer is the ceiling, not the only door. A live event the
-        # slate missed ends the run early through the same cancellation.
-        admitted = await asyncio.wait_for(
-            run_until_admission(
-                # #9484: an EMPTY id list means "every market" to
-                # `PolymarketWebSocket.run`, so a run with only open contracts
-                # opens no game socket and simply waits out the recycle.
-                ws.run(asset_ids=asset_ids) if asset_ids else asyncio.Event().wait(),
+        while True:
+            cycle_started_at = time.monotonic()
+            watch_task = asyncio.create_task(
                 watch_for_unadmitted_live_events(
                     load_unadmitted_live_event_ids,
                     event_id_by_market.values(),
                     arm="Polymarket",
                     started_at=run_started_at,
                 ),
-            ),
-            timeout=SUBSCRIPTION_REFRESH_SECONDS,
-        )
-        if admitted:
-            stats["status"] = "resubscribe"
-            stats["recycle_reason"] = "admission"
-            stats["admitted_event_ids"] = sorted(admitted)[:20]
-            logger.info(
-                "Polymarket WS: %d live event(s) without a mapped leg for their "
-                "rendered price, recycling early: %s",
-                len(admitted), sorted(admitted)[:20],
             )
-    except asyncio.TimeoutError:
-        stats["status"] = "resubscribe"
+            done, _ = await asyncio.wait(
+                {game_run_task, watch_task}
+                | ({stop_task} if stop_task is not None else set()),
+                timeout=SUBSCRIPTION_REFRESH_SECONDS,
+                return_when=asyncio.FIRST_COMPLETED,
+            )
+            if stop_task is not None and stop_task in done:
+                stats["status"] = "stopped"
+                exit_reason = "shutdown"
+                break
+            if game_run_task in done:
+                game_run_task.result()
+                break
+            admitted = None
+            if watch_task in done:
+                if watch_task.exception() is None:
+                    admitted = watch_task.result()
+                else:
+                    logger.error(
+                        "Polymarket WS admission watcher failed; keeping sockets to the timer",
+                        exc_info=watch_task.exception(),
+                    )
+                    remaining = max(
+                        0,
+                        SUBSCRIPTION_REFRESH_SECONDS
+                        - (time.monotonic() - cycle_started_at),
+                    )
+                    finished, _ = await asyncio.wait(
+                        {game_run_task}
+                        | ({stop_task} if stop_task is not None else set()),
+                        timeout=remaining,
+                        return_when=asyncio.FIRST_COMPLETED,
+                    )
+                    if stop_task is not None and stop_task in finished:
+                        stats["status"] = "stopped"
+                        exit_reason = "shutdown"
+                        break
+                    if finished:
+                        game_run_task.result()
+                        break
+            watch_task.cancel()
+            await asyncio.gather(watch_task, return_exceptions=True)
+            watch_task = None
+            # Loading does not close either client: quotes still reach these
+            # same buffers while the database/top-up prepares the next slate.
+            await admission_task
+            if not open_asset_to_outcome and not open_asset_mirrors:
+                # No open fleet to retain: preserve the game-only runner's
+                # existing recycle/debt-handoff contract.
+                stats["status"] = "resubscribe"
+                if admitted:
+                    stats["recycle_reason"] = "admission"
+                    stats["admitted_event_ids"] = sorted(admitted)[:20]
+                break
+            try:
+                fresh_slate = await load_game_slate()
+                fresh_open = await read_catalog_open(fresh_slate)
+                if fresh_open[1]:
+                    stats["open_contract_admission_error"] = True
+                    logger.warning(
+                        "Polymarket WS open admission failed; retaining the current catalog"
+                    )
+                    run_started_at = time.monotonic()
+                    continue
+            except Exception:
+                logger.exception(
+                    "Polymarket WS catalog refresh failed; keeping subscriptions"
+                )
+                run_started_at = time.monotonic()
+                continue
+            # Only the game arm recycles. Its existing resolution-only policy
+            # and fresh-slate subscribe behavior remain; the open arm keeps all
+            # unchanged sockets, callbacks, books, buffers and blend debt.
+            game_run_task.cancel()
+            await asyncio.gather(game_run_task, return_exceptions=True)
+            await refresh_catalog(fresh_slate, fresh_open)
+            game_run_task = start_game_socket()
+            run_started_at = time.monotonic()
+            stats["catalog_refreshes"] = stats.get("catalog_refreshes", 0) + 1
+            stats["recycle_reason"] = "admission" if admitted else "timer"
+            if admitted:
+                stats["admitted_event_ids"] = sorted(admitted)[:20]
+            logger.info(
+                "Polymarket WS refreshed game slate (%s); open catalog retained: %d assets",
+                stats["recycle_reason"], len(open_asset_to_outcome),
+            )
     except asyncio.CancelledError:
         # Real shutdown, not the planned recycle (CERT-491) — keep it travelling
         # so the runner stops instead of relaunching. Buffer still drains below.
@@ -2658,6 +2897,13 @@ async def _run_polymarket_ws_consumer(*, sessions):
         # #9484: cancelled here, awaited only after the drain below, so a
         # second cancellation landing on that await can never skip the drain.
         admission_task.cancel()
+        game_run_task.cancel()
+        if watch_task is not None:
+            watch_task.cancel()
+        if stop_task is not None:
+            stop_task.cancel()
+        if open_run_task is not None:
+            open_run_task.cancel()
         # Q491 repair (CERT-654 BLOCK): the last flush has no successor, so it
         # must RETRY rather than requeue into a buffer nobody will read again.
         # #10090 review: only after both cancelled flushes have finished.
@@ -2668,7 +2914,13 @@ async def _run_polymarket_ws_consumer(*, sessions):
             # but a price it (or the last flush) committed inside the 2 s
             # throttle is still owed its blend stamp. The next run adopts it.
             stats["blend_pending_carried"] = hand_off_pending(blend_refresher)
-            await asyncio.gather(admission_task, return_exceptions=True)
+            await asyncio.gather(
+                admission_task, game_run_task,
+                *([watch_task] if watch_task is not None else []),
+                *([stop_task] if stop_task is not None else []),
+                *([open_run_task] if open_run_task is not None else []),
+                return_exceptions=True,
+            )
             # #10657: a loop that lost its cancellation ends here, after the
             # drain, rather than outliving the run on its closed sessions.
             stats["loops_unreaped"] = await reap_stopped_loops(

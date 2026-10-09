@@ -12,7 +12,7 @@ from pathlib import Path
 from types import SimpleNamespace
 from typing import Iterable, Mapping, Optional
 
-from app.tasks.polymarket_ws import PRICE_CHUNK_LOCK_TIMEOUT_MS
+from app.tasks.polymarket_ws import PRICE_CHUNK_LOCK_TIMEOUT_MS, _PMCatalogFlushBoundary
 from app.utils.repair_lock_budget import SET_LOCK_TIMEOUT_SQL, is_lock_timeout, lock_timeout_value
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -111,6 +111,7 @@ def rig(
         "FLUSH_CHUNK_ROWS": 2,
         "OPEN_FLUSH_CHUNKS_PER_FLUSH": 2,
         "buffer_lock": asyncio.Lock(),
+        "catalog_boundary": _PMCatalogFlushBoundary(),
         "price_buffer": batch,
         "withdraw_buffer": books,
         "withdrawal_retry_until": {},
@@ -143,6 +144,8 @@ def rig(
         [
             "standalone_open_outcome_ids",
             "flush_withdrawals",
+            "_flush_prices",
+            "_flush_standalone",
             "flush_prices",
             "flush_standalone",
         ],
