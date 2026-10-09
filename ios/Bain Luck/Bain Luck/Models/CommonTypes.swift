@@ -242,7 +242,7 @@ nonisolated struct ESPNData: Decodable, Sendable {
 // MARK: - Win Probability Sources
 
 /// One source's win probability value and display metadata.
-nonisolated struct WinProbSource: Decodable, Sendable {
+nonisolated struct WinProbSource: Decodable, Sendable, Equatable {
     /// The source write clock, used to reconcile cached REST against live push.
     var updatedAt: String?
     var value: WinProbValue?
@@ -333,7 +333,7 @@ enum WinProbSourceCatalog {
 }
 
 /// Flexible value that handles both numeric (0.65) and string ("987726") from API.
-nonisolated enum WinProbValue: Decodable, Sendable {
+nonisolated enum WinProbValue: Decodable, Sendable, Equatable {
     case number(Double)
     case string(String)
 
