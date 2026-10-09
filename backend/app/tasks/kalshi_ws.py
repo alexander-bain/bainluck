@@ -339,13 +339,16 @@ class _KalshiPriceOwner:
 
     def __init__(self):
         self.pipeline = None
+        # Only a successful outer commit pays first-observation admission.
+        # Values are always compared in SQL, including after external writers.
+        self.committed_outcome_ids: set[int] = set()
         # The existing failed-price delay belongs to the failed whole cohort,
         # not unrelated inputs sharing the consumer's normal flush timer.
         self.lock_retry_until: dict[int, float] = {}
         # #10090: the consumer's `_FlushTimings`, when it keeps one.
         self.timings = None
 
-    async def phase(self, session, phase):
+    async def phase(self, session, phase, *, force_observation=False):
         """Yield `PriceRunResult`s for one phase. Consume in `aclosing`.
 
         A successful phase is exhausted by its caller. A caller error closes
@@ -358,7 +361,16 @@ class _KalshiPriceOwner:
             if self.pipeline is None:
                 self.pipeline = install_kalshi_price_pipeline(session.bind)
             async with contextlib.aclosing(
-                self.pipeline.iter_phase(session, phase)
+                self.pipeline.iter_phase(
+                    session,
+                    {
+                        oid: (
+                            *values,
+                            force_observation or oid not in self.committed_outcome_ids,
+                        )
+                        for oid, values in phase.items()
+                    },
+                )
             ) as results:
                 async for result in results:
                     yield result
@@ -731,6 +743,7 @@ async def _run_kalshi_ws_consumer(*, sessions, prices):
         # absence — "it returned" is not "it wrote" (gotcha #53). A refusal is
         # terminal, not an error: the entry leaves the buffer like any other.
         "settled_declined": 0,
+        "repeat_or_settled_declined": 0,
         # #9484: rows a flush wrote whose price and book were already what it
         # stored — written (liveness), but no market invalidation sent.
         "quotes_unchanged": 0,
@@ -977,8 +990,8 @@ async def _run_kalshi_ws_consumer(*, sessions, prices):
         def queue_committed(index, phase, written_outcome_ids, *, registered=None):
             nonlocal queued_refresh
             blend_outcomes = (
-                phase.keys() if final_drain else
-                (oid for oid in phase if oid not in non_blend_outcome_ids)
+                written_outcome_ids if final_drain else
+                (oid for oid in written_outcome_ids if oid not in non_blend_outcome_ids)
             )
             linked_events = event_ids_for_outcomes(cohort_event_ids, blend_outcomes)
             new_events = linked_events if registered is None else linked_events - registered
@@ -1096,15 +1109,13 @@ async def _run_kalshi_ws_consumer(*, sessions, prices):
                         # days stale — measured 2026-08-30 at up to 23 days on rows
                         # whose price had moved seconds earlier.
                         async with contextlib.aclosing(
-                            prices.phase(session, phase)
+                            prices.phase(session, phase, force_observation=final_drain)
                         ) as price_results:
                             async for result in price_results:
                                 # #5411 — a settled row matches the id and fails the
-                                # guard, so it returns no row. (A row deleted between
-                                # subscription and flush lands here too; both are
-                                # honestly "a buffered price that did not become a
-                                # stored price", which is what this counter is named
-                                # for.)
+                                # guard, so it returns no row. A fresh repeat can
+                                # also return nothing. Only returned rows are writes;
+                                # no local observation time substitutes for them.
                                 declined += result.attempted - result.rowcount
                                 # #9484: one market invalidation per row the UPDATE
                                 # RETURNED, stamped with the stored `last_updated` —
@@ -1116,7 +1127,7 @@ async def _run_kalshi_ws_consumer(*, sessions, prices):
                                 # And only when the write changed what a reader is
                                 # served (price or book, `quote_moved_column`). A tick
                                 # that only re-stamped `last_updated` (volume, open
-                                # interest, the same quote again) still writes —
+                                # interest, a due liveness refresh) still writes —
                                 # liveness reads that stamp — but a frame for it sends
                                 # every held page to re-read an unchanged row (ux,
                                 # #9526).
@@ -1162,7 +1173,20 @@ async def _run_kalshi_ws_consumer(*, sessions, prices):
                         stats["flushes"] += 1
                         flush_counted = True
                     stats["price_updates"] += len(phase) - declined
-                    stats["settled_declined"] += declined
+                    # First observations are forced, so their missing rows still
+                    # mean settled/deleted. Repeats may also be skipped by SQL.
+                    first_declined = sum(
+                        oid not in prices.committed_outcome_ids
+                        and oid not in written_outcome_ids
+                        for oid in phase
+                    )
+                    stats["settled_declined"] += first_declined
+                    if declined > first_declined:
+                        stats["repeat_or_settled_declined"] = (
+                            stats.get("repeat_or_settled_declined", 0)
+                            + declined
+                            - first_declined
+                        )
                     stats["open_contract_prices_written"] += sum(
                         1 for oid in written_outcome_ids
                         if oid in open_contract_outcome_ids
@@ -1205,6 +1229,7 @@ async def _run_kalshi_ws_consumer(*, sessions, prices):
 
                 # The transaction has committed. Register debt before any
                 # publication/bookkeeping await can be interrupted.
+                prices.committed_outcome_ids.update(written_outcome_ids)
                 for oid in phase:
                     prices.lock_retry_until.pop(oid, None)
                 unfinished_price_ids.difference_update(phase)
@@ -1217,7 +1242,7 @@ async def _run_kalshi_ws_consumer(*, sessions, prices):
                         exact_trace.write_failed(
                             [batch_marks[oid] for oid in phase
                              if oid not in written_outcome_ids and oid in batch_marks],
-                            "DECLINED_SETTLED_OR_MISSING",
+                            "NO_WRITE_UNCHANGED_SETTLED_OR_MISSING",
                         )
 
                 # The event refresh uses its own session and committed prices.

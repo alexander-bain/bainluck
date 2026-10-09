@@ -99,11 +99,35 @@ TRACE_OBSERVERS = (
     'written_observations: dict = {}',
     'if exact_trace is not None:\n    with contextlib.suppress(Exception):\n        exact_trace.snapshot(batch_marks.values())',
     'if exact_trace is not None:\n    with contextlib.suppress(Exception):\n        exact_trace.write_failed(\n            [batch_marks[oid] for oid in phase if oid in batch_marks],\n            "LOCK_TIMEOUT" if lock_timed_out else "ROLLED_BACK",\n        )',
-    'if exact_trace is not None:\n    with contextlib.suppress(Exception):\n        for oid, observed_at in written_observations.items():\n            exact_trace.committed(batch_marks.get(oid), observed_at)\n        exact_trace.write_failed(\n            [batch_marks[oid] for oid in phase\n             if oid not in written_outcome_ids and oid in batch_marks],\n            "DECLINED_SETTLED_OR_MISSING",\n        )',
+    'if exact_trace is not None:\n    with contextlib.suppress(Exception):\n        for oid, observed_at in written_observations.items():\n            exact_trace.committed(batch_marks.get(oid), observed_at)\n        exact_trace.write_failed(\n            [batch_marks[oid] for oid in phase\n             if oid not in written_outcome_ids and oid in batch_marks],\n            "NO_WRITE_UNCHANGED_SETTLED_OR_MISSING",\n        )',
 )
 
 
+def _without_reviewed_repeat_guard(fn):
+    # #10090: exclude only the reviewed first-commit accounting statements.
+    # The whole original transaction/debt/rollback body remains pinned.
+    sources = (
+        "first_declined = sum(oid not in prices.committed_outcome_ids and oid not in written_outcome_ids for oid in phase)",
+        'stats["settled_declined"] += first_declined',
+        'if declined > first_declined:\n    stats["repeat_or_settled_declined"] = stats.get("repeat_or_settled_declined", 0) + declined - first_declined',
+        "prices.committed_outcome_ids.update(written_outcome_ids)",
+    )
+    accepted = {ast.dump(ast.parse(source).body[0]): index for index, source in enumerate(sources)}
+    removed = []
+    class NormalizeRepeatGuard(ast.NodeTransformer):
+        def visit(self, node):
+            if isinstance(node, ast.stmt) and ast.dump(node) in accepted:
+                index = accepted[ast.dump(node)]
+                removed.append(index)
+                return ast.parse('stats["settled_declined"] += declined').body[0] if index == 1 else None
+            return super().visit(node)
+    result = NormalizeRepeatGuard().visit(fn)
+    assert sorted(removed) == list(range(len(sources)))
+    return result
+
+
 def _without_reviewed_observers(fn):
+    fn = _without_reviewed_repeat_guard(fn)
     accepted = {ast.dump(ast.parse(source).body[0]) for source in TRACE_OBSERVERS}
     snapshot = ast.dump(ast.parse(TRACE_OBSERVERS[2]).body[0])
     # Pin only the writer's snapshot, under the original buffer lock, before
@@ -191,7 +215,7 @@ PIPELINE_DECLARATIONS = (
     queued_refresh = False""",
     """def queue_committed(index, phase, written_outcome_ids, *, registered=None):
     nonlocal queued_refresh
-    blend_outcomes = phase.keys() if final_drain else (oid for oid in phase if oid not in non_blend_outcome_ids)
+    blend_outcomes = written_outcome_ids if final_drain else (oid for oid in written_outcome_ids if oid not in non_blend_outcome_ids)
     linked_events = event_ids_for_outcomes(event_id_by_outcome, blend_outcomes)
     new_events = linked_events if registered is None else linked_events - registered
     if (index == 0 and registered is None) or new_events:
@@ -235,7 +259,7 @@ COMMITTED_STAMP_QUEUE = (
     "registered = queue_committed(index, phase, written_outcome_ids)",
     "queue_committed(index, phase, written_outcome_ids, registered=registered)",
 )
-SERIAL_EVENT_PREFIX = """blend_outcomes = phase.keys() if final_drain else (oid for oid in phase if oid not in non_blend_outcome_ids)
+SERIAL_EVENT_PREFIX = """blend_outcomes = written_outcome_ids if final_drain else (oid for oid in written_outcome_ids if oid not in non_blend_outcome_ids)
 linked_events = event_ids_for_outcomes(event_id_by_outcome, blend_outcomes)"""
 _STAGE = (
     "with contextlib.suppress(Exception):\n"
