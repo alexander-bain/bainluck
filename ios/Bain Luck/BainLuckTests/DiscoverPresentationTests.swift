@@ -349,3 +349,50 @@ final class MemoizedPresentationTests: XCTestCase {
         XCTAssertEqual(memo.buildCount, 5)
     }
 }
+
+/// #5105 — the "Live events" heading splits ONE visible window; it is never a
+/// card, never a second window, and never resets a card's index.
+final class DiscoverContinuationSectionsTests: XCTestCase {
+
+    private typealias Block = DiscoverView.SectionBlock
+
+    /// Opening 3, continuation 30, window 20: exactly 20 cards in two blocks,
+    /// the continuation keeping indices 3..<20 of the whole window.
+    func testHeadingSplitsTheOneVisibleWindow5105() {
+        let blocks = DiscoverView.sectionBlocks(cardCount: 20, continuationStart: 3)
+        XCTAssertEqual(blocks, [
+            Block(range: 0..<3, isContinuation: false),
+            Block(range: 3..<20, isContinuation: true),
+        ])
+        XCTAssertEqual(blocks.map(\.range.count).reduce(0, +), 20, "the heading takes no card slot")
+    }
+
+    /// E=0: the heading leads and there is still exactly one first card (index 0).
+    func testZeroBoundaryLeadsWithTheHeading5105() {
+        XCTAssertEqual(DiscoverView.sectionBlocks(cardCount: 20, continuationStart: 0),
+                       [Block(range: 0..<20, isContinuation: true)])
+    }
+
+    /// No continuation card in the window yet, or no section at all: one block,
+    /// no heading — the legacy single list.
+    func testNoContinuationOnScreenDrawsNoHeading5105() {
+        let legacy = [Block(range: 0..<20, isContinuation: false)]
+        XCTAssertEqual(DiscoverView.sectionBlocks(cardCount: 20, continuationStart: nil), legacy)
+        XCTAssertEqual(DiscoverView.sectionBlocks(cardCount: 20, continuationStart: 20), legacy)
+        XCTAssertEqual(DiscoverView.sectionBlocks(cardCount: 20, continuationStart: 25), legacy)
+        XCTAssertEqual(DiscoverView.sectionBlocks(cardCount: 0, continuationStart: nil),
+                       [Block(range: 0..<0, isContinuation: false)])
+    }
+
+    /// The filtered list is split by served section with order kept inside each;
+    /// a card the edition never placed is not guessed into one.
+    func testPartitionKeepsOrderAndNeverGuesses5105() {
+        let served: [Int: FeedSection] = [1: .opening, 2: .continuation, 3: .opening, 4: .continuation]
+        let split = DiscoverView.partitionBySection([4, 1, 2, 3]) { served[$0] }
+        XCTAssertEqual(split?.opening, [1, 3])
+        XCTAssertEqual(split?.continuation, [4, 2])
+        XCTAssertNil(DiscoverView.partitionBySection([1, 99]) { served[$0] },
+            "an unplaced card means the list is shown whole")
+        XCTAssertNil(DiscoverView.partitionBySection([1, 2]) { _ in nil }, "legacy: no record")
+    }
+}
