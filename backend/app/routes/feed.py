@@ -4085,6 +4085,7 @@ async def get_feed(
             category=category,
             edition=_edition_request,
             collections=_collections_fingerprint,
+            opening_seating=False,
         )
         # LAT-P001: shared key builder — the pre-warm beat writes through the
         # SAME function, so a warmed key can never drift from the read key.

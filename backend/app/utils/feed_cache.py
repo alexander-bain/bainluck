@@ -406,6 +406,18 @@ _PAGE_BASE_OFF_VALUES = frozenset({"0", "false", "no", "off"})
 #: because ``cache`` describes a serve and the base is never served as-is.
 FEED_PAGE_BASE_BUILT_AT_FIELD = "_page_base_built_at"
 
+#: #5105. Folded into BOTH cache keys when a build opted into opening seating
+#: (``discover_opening_seating.seat_opening``). A seated deck and an unseated
+#: deck are two different lists, so a page — or a whole-deck base — built under
+#: one policy must never be read back under the other. The literal is the SAME
+#: one `feed_editions.edition_policy_fingerprint` folds in, deliberately: the
+#: cache entry and the edition minted from it then name one policy, not two
+#: that merely agree today. Duplicated rather than imported because
+#: `feed_editions` already imports this module; a test pins the two equal.
+#: Bump the version (``-v2``) when the seating rule changes what it seats —
+#: that is a new list, and the old pages must miss rather than be reused.
+FEED_OPENING_SEATING_KEY_MARKER = "seat=opening-v1"
+
 
 def feed_page_base_enabled() -> bool:
     """Whether the offset-independent page base may be read or published.
@@ -437,6 +449,7 @@ def feed_page_base_cache_key(
     mode: Optional[str] = None,
     category: Optional[str] = None,
     collections: Optional[str] = None,
+    opening_seating: bool = False,
 ) -> str:
     """Key for one stored, offset-independent Discover build.
 
@@ -454,6 +467,12 @@ def feed_page_base_cache_key(
     ``get_feed``'s ``_cache_shape`` so a build input added to the response key
     cannot be silently omitted here — omitting one would serve page 2 of the
     wrong list, which no latency test would catch.
+
+    ``opening_seating`` (#5105, default ``False``) is a build input: seating
+    reorders the whole deck, so a seated base and an unseated one are two
+    lists. ``False`` hashes exactly what this function always hashed. The
+    continuation boundary is NOT a parameter — it is the edition's layout,
+    derived from the seated deck, not an input to building it.
     """
     parts = (
         f"pagebase:{sport or 'all'}:{limit}:"
@@ -470,6 +489,10 @@ def feed_page_base_cache_key(
         # base carries the hubs `add_feed_collections` inserted. Same form and
         # same reason as on ``feed_response_cache_key``.
         parts = f"col={len(collections)}:{collections}|{parts}"
+    if opening_seating:
+        # #5105. Prepended under the `if`, like every segment above, so a
+        # legacy build keeps its byte-identical key.
+        parts = f"{FEED_OPENING_SEATING_KEY_MARKER}|{parts}"
     return f"{FEED_PAGE_BASE_CACHE_PREFIX}:{hashlib.md5(parts.encode()).hexdigest()}"
 
 
@@ -732,6 +755,7 @@ def feed_response_cache_key(
     category: Optional[str] = None,
     edition: Optional[str] = None,
     collections: Optional[str] = None,
+    opening_seating: bool = False,
 ) -> str:
     """Build the Redis response-cache key for one ``GET /api/feed`` shape.
 
@@ -746,6 +770,10 @@ def feed_response_cache_key(
     The principal segment mirrors the L2-242 shared-anon contract: an
     authenticated user and a session both get their own key; only a request with
     neither shares the ``anon`` key.
+
+    ``opening_seating`` (#5105, default ``False``): see
+    ``FEED_OPENING_SEATING_KEY_MARKER``. ``False`` hashes exactly what this
+    function always hashed.
     """
     if user_id is not None:
         user_part = f"u:{user_id}"
@@ -794,6 +822,10 @@ def feed_response_cache_key(
         # step to forget. Flag-off requests pass None and hash the
         # byte-identical string they always did.
         parts = f"col={len(collections)}:{collections}|{parts}"
+    if opening_seating:
+        # #5105. A page cut from a seated deck is not the legacy page at the
+        # same offset. Same `if` as `edition` above: legacy keys are unchanged.
+        parts = f"{FEED_OPENING_SEATING_KEY_MARKER}|{parts}"
     return f"{FEED_RESPONSE_CACHE_PREFIX}:{hashlib.md5(parts.encode()).hexdigest()}"
 
 
