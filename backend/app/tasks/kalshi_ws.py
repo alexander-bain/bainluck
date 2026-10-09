@@ -2285,6 +2285,10 @@ async def _run_kalshi_ws_consumer(*, sessions, prices):
             return "rebuild" if linked != current["linked"] else "keep"
         if open_policy() != current["open_policy"]:
             return "rebuild"
+        if not maps[2] and not ids:
+            # Nothing left to stream: the rebuild reports `no_markets` exactly
+            # as a startup with this scope does.
+            return "rebuild"
         if (
             linked == current["linked"] and ids == open_contract_ids
             and bridge == current["bridge"]
