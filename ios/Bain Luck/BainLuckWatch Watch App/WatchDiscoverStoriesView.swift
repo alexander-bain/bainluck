@@ -11,6 +11,7 @@ struct WatchDiscoverStoriesView: View {
     @State private var continuationQuestion: String?
     @State private var showingContinuationHelp = false
     @State private var manualRefresh: Task<Void, Never>?
+    @State private var showingNFLWeeks = false
 
     private var visibleReadings: [WatchDiscoveryReading] {
         discoveries.visibleReadings(hasSelectedGame: selected.selectedEventID != nil)
@@ -58,6 +59,9 @@ struct WatchDiscoverStoriesView: View {
                 if !visibleReadings.isEmpty {
                     discoveryRecovery
                 }
+                Button("Browse NFL weeks") { showingNFLWeeks = true }
+                    .disabled(scenePhase != .active)
+                    .accessibilityIdentifier("watch.discovery.browse-nfl")
                 #if DEBUG
                 if WatchUIFixture.current != nil, let continuation,
                    let url = StoryContinuation.url(for: continuation) {
@@ -68,6 +72,11 @@ struct WatchDiscoverStoriesView: View {
                 #endif
             }
             .padding(.horizontal, 6)
+        }
+        .sheet(isPresented: $showingNFLWeeks) {
+            WatchNFLCollectionView(selected: selected,
+                close: { showingNFLWeeks = false },
+                selectedGame: { showingNFLWeeks = false; close() })
         }
         .onAppear {
             discoveries.telemetry = { outcome, ms, count in

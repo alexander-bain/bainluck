@@ -1,0 +1,42 @@
+{
+  "_representative": "REPRESENTATIVE FIXTURE for #9653/#9652 \u2014 the producer's output for test rows; NOT production data. Regenerate with BL_WRITE_9653_FIXTURES=1 (backend/tests/test_container_discovery_9653.py).",
+  "request": "discover_collections(session, event_ids=[501, 502, 503])",
+  "response": {
+    "collections": [
+      {
+        "destination": {
+          "api": "/api/containers/nfl-2026-week-5",
+          "kind": "container",
+          "slug": "nfl-2026-week-5",
+          "web": "/collections/nfl-2026-week-5"
+        },
+        "edition": {
+          "kind": "nfl_week",
+          "league": "nfl",
+          "season": 2026,
+          "stage": "Regular Season",
+          "week": 5
+        },
+        "game_count": 4,
+        "id": 70,
+        "matched_event_ids": [
+          501,
+          502
+        ],
+        "name": "NFL 2026 \u00b7 Week 5",
+        "question_count": 1,
+        "revision": 4,
+        "slug": "nfl-2026-week-5",
+        "state": "published",
+        "status": "live",
+        "text": "NFL 2026 \u00b7 Week 5",
+        "type": "collection",
+        "window_end": "2026-10-08T17:00:00+00:00",
+        "window_start": "2026-10-01T17:00:00+00:00"
+      }
+    ],
+    "excluded": {},
+    "reason": null,
+    "truncated": {}
+  }
+}
