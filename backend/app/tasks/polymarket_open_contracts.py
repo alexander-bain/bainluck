@@ -81,6 +81,16 @@ def open_contract_prices_enabled() -> bool:
     )
 
 
+def open_contract_receiver_process_enabled() -> bool:
+    """#10090: receive/decode the open-contract sockets in a child process.
+
+    Off unless ``POLYMARKET_WS_OPEN_RECEIVER_PROCESS=1``. Prices, maps, writes
+    and stamps stay in the consumer either way; unset it to undo at the next
+    worker-ws restart.
+    """
+    return os.getenv("POLYMARKET_WS_OPEN_RECEIVER_PROCESS", "0").strip() == "1"
+
+
 def book_snapshot_prices_enabled() -> bool:
     """#9733: price open contracts from the venue's subscribe snapshot.
 
