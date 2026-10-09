@@ -13,6 +13,7 @@ struct WatchDiscoverStoriesView: View {
     @State private var manualRefresh: Task<Void, Never>?
     @State private var showingNFLWeeks = false
     @State private var showingMLBPostseason = false
+    @State private var questionDestination: WatchQuestionDetailDestination?
 
     private var visibleReadings: [WatchDiscoveryReading] {
         discoveries.visibleReadings(hasSelectedGame: selected.selectedEventID != nil)
@@ -76,6 +77,9 @@ struct WatchDiscoverStoriesView: View {
                 #endif
             }
             .padding(.horizontal, 6)
+        }
+        .sheet(item: $questionDestination) { destination in
+            WatchQuestionDetailView(destination: destination, close: { questionDestination = nil })
         }
         .sheet(isPresented: $showingMLBPostseason) {
             WatchMLBCollectionView(selected: selected,
@@ -271,6 +275,11 @@ struct WatchDiscoverStoriesView: View {
                     .accessibilityValue(display.observationValue)
                     .accessibilityIdentifier("watch.discovery.age.\(reading.id)")
             }
+            Button("Read full question") {
+                questionDestination = WatchQuestionDetailDestination(id: reading.id, question: reading.question)
+            }
+            .disabled(scenePhase != .active)
+            .accessibilityIdentifier("watch.discovery.read-question.\(reading.id)")
             Button("Continue on iPhone") {
                 WatchTelemetry.shared.action(.phoneContinuation, surface: .discoveries)
                 continuation = .futures(reading.id)
