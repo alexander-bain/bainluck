@@ -1,6 +1,32 @@
 #if DEBUG
 import XCTest
 
+// BEGIN WATCH_HEADER_LABEL_TOPOLOGY
+// XCUI retains a same-frame Text child under the explicitly labelled .ignore row.
+// Count one semantic root; refuse a second root, extra descendants or shifted copies.
+enum WatchHeaderLabelTopology {
+    struct Child {
+        let frame: CGRect
+        let isStaticText: Bool
+        let identifier: String
+        let descendantCount: Int
+    }
+
+    static func isUnique(rootCount: Int, rootIsStaticText: Bool, labelCount: Int, rootFrame: CGRect,
+                         children: [Child]) -> Bool {
+        guard rootCount == 1, rootIsStaticText, children.count <= 1,
+              labelCount == 1 + children.count,
+              !rootFrame.isEmpty, !rootFrame.isNull,
+              rootFrame.minX.isFinite, rootFrame.minY.isFinite,
+              rootFrame.maxX.isFinite, rootFrame.maxY.isFinite else { return false }
+        return children.allSatisfy {
+            $0.isStaticText && $0.identifier.isEmpty && $0.descendantCount == 0 &&
+            $0.frame == rootFrame
+        }
+    }
+}
+// END WATCH_HEADER_LABEL_TOPOLOGY
+
 /// Local design journeys: actual store responses and mounted native controls.
 /// They do not substitute for the eventual complete release or device gates.
 final class PickerCurrentGameJourneyTests: XCTestCase {
@@ -689,7 +715,7 @@ final class PickerCurrentGameJourneyTests: XCTestCase {
         }
         XCTAssertEqual(state.label, expectedHeader)
         XCTAssertFalse(app.staticTexts["watch.home-probability-unavailable"].exists)
-        XCTAssertEqual(app.descendants(matching: .any).matching(NSPredicate(format: "label == %@", expectedHeader)).count, 1)
+        try assertSingleResultQualification(in: app, label: expectedHeader)
         XCTAssertFalse(app.descendants(matching: .any)["watch.home-probability"].firstMatch.exists)
         XCTAssertFalse(app.staticTexts["watch.scheduled-start"].exists)
         XCTAssertFalse(app.staticTexts["watch.score-heading"].exists)
@@ -818,7 +844,7 @@ final class PickerCurrentGameJourneyTests: XCTestCase {
             XCTAssertFalse(app.staticTexts["watch.home-probability-unavailable"].exists)
             XCTAssertFalse(app.staticTexts["Win probability unavailable"].exists,
                            "Closed events require result qualification, not a missing-forecast invitation")
-            XCTAssertEqual(app.descendants(matching: .any).matching(NSPredicate(format: "label == %@", "Result not confirmed")).count, 1)
+            try assertSingleResultQualification(in: app, label: "Result not confirmed")
             XCTAssertFalse(app.staticTexts["Closed · result unverified"].exists)
             XCTAssertFalse(app.staticTexts["Last reported score · final result unverified"].exists)
             XCTAssertFalse(app.staticTexts["Final score"].exists)
@@ -1595,6 +1621,27 @@ final class PickerCurrentGameJourneyTests: XCTestCase {
     }
 
     @MainActor
+    private func assertSingleResultQualification(in app: XCUIApplication, label: String) throws {
+        let roots = app.descendants(matching: .any).matching(identifier: "watch.game-state")
+        guard roots.count == 1 else {
+            throw failure("Expected exactly one identified result qualification", in: app)
+        }
+        let root = roots.element(boundBy: 0)
+        XCTAssertEqual(root.label, label)
+        let matchingLabel = NSPredicate(format: "label == %@", label)
+        let children = root.children(matching: .any).matching(matchingLabel).allElementsBoundByIndex
+        let topology = children.map {
+            WatchHeaderLabelTopology.Child(frame: $0.frame, isStaticText: $0.elementType == .staticText,
+                identifier: $0.identifier, descendantCount: $0.descendants(matching: .any).count)
+        }
+        guard WatchHeaderLabelTopology.isUnique(rootCount: roots.count, rootIsStaticText: root.elementType == .staticText,
+            labelCount: app.descendants(matching: .any).matching(matchingLabel).count,
+            rootFrame: root.frame, children: topology) else {
+            throw failure("Result qualification has a separate copy or unexpected label topology", in: app)
+        }
+    }
+
+    @MainActor
     private func viewport(in app: XCUIApplication) throws -> CGRect {
         let visible = app.scrollViews.allElementsBoundByIndex.filter {
             $0.isHittable && !$0.frame.intersection(app.frame).isEmpty
@@ -1666,6 +1713,14 @@ final class PickerCurrentGameJourneyTests: XCTestCase {
             let frame = element.frame
             // Native multiline alert text has an offscreen midpoint; geometry proves readable coverage.
             let readable = element.isHittable || (handoffTable && element.elementType == .staticText)
+            // A contained footer can be fully readable without scrolling above mid-screen.
+            // Keep the same hittability rule and the chrome-excluded, inset viewport.
+            if readable && !frame.isEmpty && !frame.isNull &&
+                frame.minX.isFinite && frame.minY.isFinite &&
+                frame.maxX.isFinite && frame.maxY.isFinite && bounds.contains(frame) {
+                capture(app, name + " - complete")
+                return
+            }
             if readable && frame.minY >= bounds.minY && frame.minY < bounds.midY {
                 capture(app, name + " - top")
                 covered = min(frame.height, bounds.maxY - frame.minY)
