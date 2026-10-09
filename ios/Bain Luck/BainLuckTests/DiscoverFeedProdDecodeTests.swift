@@ -148,9 +148,9 @@ extension DiscoverFeedProdDecodeTests {
 
     private static let malformedRow = #"{"garbage": true, "score": 1}"#
 
-    private func seatedPage(rows: [String], extra: String) throws -> FeedResponse {
+    private func seatedPage(rows: [String], extra: String, offset: Int = 0) throws -> FeedResponse {
         let json = """
-        {"items":[\(rows.joined(separator: ","))],"total":9999,"limit":50,"offset":0,
+        {"items":[\(rows.joined(separator: ","))],"total":9999,"limit":50,"offset":\(offset),
          "has_more":true,"edition":"ed-1"\(extra)}
         """
         return try Self.seatingDecoder().decode(FeedResponse.self, from: Data(json.utf8))
@@ -194,16 +194,29 @@ extension DiscoverFeedProdDecodeTests {
     func testUnusableBoundaryIsInvalidAndTheFeedSurvives5105() throws {
         let rows = [Self.futuresRow(1), Self.futuresRow(2)]
         for extra in [#","continuation_start":-1"#, #","continuation_start":"3""#,
-                      #","continuation_start":1.5"#, #","continuation_start":3"#] {
+                      #","continuation_start":1.5"#] {
             let page = try seatedPage(rows: rows, extra: extra)
             XCTAssertEqual(page.continuationStart, .invalid, extra)
             XCTAssertNil(page.openingItemCount, extra)
             XCTAssertEqual(page.items.count, 2, extra)
         }
-        // The page's own length is a valid boundary: every card is opening.
-        let whole = try seatedPage(rows: rows, extra: #","continuation_start":2"#)
-        XCTAssertEqual(whole.continuationStart, .at(2))
-        XCTAssertEqual(whole.openingItemCount, 2)
+        // A GLOBAL position past this page's end is ordinary (a long opening):
+        // every card here is opening, nothing is invalid.
+        let long = try seatedPage(rows: rows, extra: #","continuation_start":60"#)
+        XCTAssertEqual(long.continuationStart, .at(60))
+        XCTAssertEqual(long.openingItemCount, 2)
+    }
+
+    /// The boundary is global: a later page reads it against its own offset, so
+    /// on page 50 with start 51 one card is opening and the rest continuation,
+    /// and with start 3 the whole page is continuation.
+    func testBoundaryIsReadAgainstThePagesOffset5105() throws {
+        let rows = [Self.futuresRow(51), Self.futuresRow(52), Self.futuresRow(53)]
+        let straddling = try seatedPage(rows: rows, extra: #","continuation_start":51"#, offset: 50)
+        XCTAssertEqual(straddling.openingItemCount, 1)
+        let later = try seatedPage(rows: rows, extra: #","continuation_start":3"#, offset: 50)
+        XCTAssertEqual(later.continuationStart, .at(3))
+        XCTAssertEqual(later.openingItemCount, 0)
     }
 
     /// The production capture predates #5105: it must read as absent, with raw
