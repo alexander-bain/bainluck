@@ -1180,7 +1180,7 @@ async def _run_polymarket_ws_consumer(*, sessions, stop=None):
     """Stream until cancellation; an explicit stop also runs the final drain."""
     # `text`/`or_`/`and_` left with `_slate_event_window`, which now owns the
     # only expression in this consumer that needed them.
-    from sqlalchemy import select, update, func
+    from sqlalchemy import select
 
     from app.models.models import (
         Event, FuturesMarket, FuturesOutcome,
@@ -1212,8 +1212,6 @@ async def _run_polymarket_ws_consumer(*, sessions, stop=None):
     )
     from app.tasks.ws_liveness import report as _report_liveness
     from app.utils.futures_rank import rerank_market_fields_stmt  # #6598
-    from app.utils.price_change_stamp import price_changed_at_value
-    from app.utils.price_change_stamp import quote_moved_column  # #9484
     # #2471: one engine for this run, a fresh session per operation; the
     # decorator disposes it after the final drain. Same call shape as the
     # task factory, so every site below is unchanged.
@@ -1696,7 +1694,9 @@ async def _run_polymarket_ws_consumer(*, sessions, stop=None):
     # clears the entry, since its midpoint is about to replace the price.
     withdraw_buffer: dict[int, tuple] = {}
 
-    async def write_chunk(chunk: dict[int, float], *, final=False) -> _PMPriceWriteResult | bool | None:
+    async def write_chunk(
+        chunk: dict[int, float], *, final=False, start_market_publish=None,
+    ) -> _PMPriceWriteResult | bool | None:
         """One flush transaction: write, re-rank, commit, publish, un-buffer.
 
         #9484: the flush used to write its whole batch in ONE transaction, so a
@@ -1807,9 +1807,14 @@ async def _run_polymarket_ws_consumer(*, sessions, stop=None):
         successful_price_write_at.update(dict.fromkeys(
             (row.id for row in written_rows), _mono(),
         ))
-        # #9484 — twin of the Kalshi socket's: the commit landed, so publish
-        # before the buffer bookkeeping and the blend refresh can suppress it.
-        await blend_refresher.publish_market_changes(session)
+        # Register publication immediately after COMMIT, before buffer cleanup
+        # can be interrupted. The game flush owns and joins its one sender so
+        # event stamping can proceed while this separate notification awaits
+        # Redis. Standalone writes retain their inline publication contract.
+        if start_market_publish is None:
+            await blend_refresher.publish_market_changes(session)
+        else:
+            start_market_publish(session)
 
         # Q491 repair 2 — the write landed, so and only so do these entries
         # leave the buffer. The `== prob` test is what used to be `setdefault`:
@@ -2024,12 +2029,48 @@ async def _run_polymarket_ws_consumer(*, sessions, stop=None):
             # overlaps chunk N's stamp. Unchanged: writes stay strictly sequential, one in flight;
             # the refresher still runs ONE refresh at a time, in chunk order
             # (each joins the previous one before its receipts are staged); a
-            # chunk's stamp starts only after its own write committed and
-            # published; withdrawals still follow the stamp before them; and
+            # chunk's stamp starts only after its own write committed;
+            # its market notification may run alongside the event stamp.
+            # Withdrawals still follow the stamp before them; and
             # no stamp outlives its flush, so the final drain never refreshes
             # beside it.
             stamping = None
             stamping_events = None
+            market_publishing = None
+
+            def start_market_publish(session):
+                nonlocal market_publishing
+                # The previous sender joins before the next price transaction.
+                # No publication backlog and no database session held open.
+                assert market_publishing is None
+                market_publishing = asyncio.create_task(
+                    blend_refresher.publish_market_changes(session),
+                    name="polymarket-committed-market-publish",
+                )
+
+            async def market_publish_done(*, cancel=False):
+                nonlocal market_publishing
+                if market_publishing is None:
+                    return
+                task = market_publishing
+                if cancel and not task.cancelling():
+                    task.cancel()
+                interrupted = None
+                while not task.done():
+                    try:
+                        await asyncio.wait({task})
+                    except asyncio.CancelledError as exc:
+                        interrupted = exc
+                        if not task.cancelling():
+                            task.cancel()
+                market_publishing = None
+                if not task.cancelled() and task.exception() is not None:
+                    logger.error(
+                        "Polymarket WS: committed market publication failed",
+                        exc_info=task.exception(),
+                    )
+                if interrupted is not None:
+                    raise interrupted
 
             async def stamp_done(*, cancel=False):
                 nonlocal stamping, stamping_events
@@ -2061,6 +2102,7 @@ async def _run_polymarket_ws_consumer(*, sessions, stop=None):
 
             try:
                 for index, chunk_ids in enumerate(chunks):
+                    await market_publish_done()
                     async with buffer_lock:
                         withdraw_cohort_ids.update(withdraw_buffer)
                         withdraw_events = event_ids_for_outcomes(
@@ -2091,7 +2133,10 @@ async def _run_polymarket_ws_consumer(*, sessions, stop=None):
                                 batch_marks[oid] = input_marks[oid]
                             else:
                                 batch_marks.pop(oid, None)
-                    wrote = await write_chunk(current_chunk, final=final)
+                    wrote = await write_chunk(
+                        current_chunk, final=final,
+                        start_market_publish=start_market_publish,
+                    )
                     # Join any safe overlapping stamp before this chunk's
                     # withdrawals, receipts or refresh.
                     await stamp_done()
@@ -2192,10 +2237,16 @@ async def _run_polymarket_ws_consumer(*, sessions, stop=None):
                 # as it cancelled a stamp it interrupted before, and joins it
                 # before the flush ends. The refresher's cancellation path keeps
                 # a stamp cancelled before its COMMIT owed for the hand-off.
-                await stamp_done(cancel=True)
+                try:
+                    await stamp_done(cancel=True)
+                finally:
+                    await market_publish_done(cancel=True)
                 raise
             finally:
-                await stamp_done()
+                try:
+                    await stamp_done()
+                finally:
+                    await market_publish_done()
         # Keep isolation beyond cooldown expiry until every failed price row
         # has committed. A newer quote on a successful row may batch normally.
         lock_retry_events.intersection_update(
