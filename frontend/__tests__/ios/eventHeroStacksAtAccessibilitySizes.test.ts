@@ -1,6 +1,7 @@
 /**
  * #3978 (Alex, D93 = A) — at the accessibility text sizes the event hero stacks
- * vertically: away team, then the percentage, then home team.
+ * into bounded rows. #10796 keeps teams together above the percentage and
+ * begins this layout at xxLarge so modest increases remain readable.
  *
  * ═══ WHAT A READER SAW ═══
  *
@@ -92,15 +93,15 @@ d("#3978 — the event hero restacks at accessibility text sizes", () => {
     );
   });
 
-  it("the decision is `isAccessibilitySize`, taken once and shared by both rows", () => {
+  it("the larger-text decision is taken once and shared by both rows", () => {
     // One `let`, not two call sites: the meta row and the team row must agree.
     // A hero whose badge row stacked while its teams did not would be a third
     // layout nobody designed.
     const body = heroBody();
-    expect(body).toMatch(/let stacked = dynamicTypeSize\.isAccessibilitySize/);
-    expect(body).toMatch(/let heroLayout = stacked\n\s*\? AnyLayout\(VStackLayout/);
+    expect(body).toMatch(/let stacked = dynamicTypeSize >= \.xxLarge/);
+    expect(body).toMatch(/let heroLayout = stacked\n\s*\? AnyLayout\(EventHeroTeamLayout/);
     expect(body).toMatch(/let metaLayout = stacked\n\s*\? AnyLayout\(VStackLayout/);
-    // …and the non-accessibility arm is still the row it always was.
+    // …and the default-size arm retains the compact row.
     expect(body).toMatch(/: AnyLayout\(HStackLayout\(spacing: 0\)\)/);
     expect(body).toMatch(/: AnyLayout\(HStackLayout\(spacing: 8\)\)/);
   });

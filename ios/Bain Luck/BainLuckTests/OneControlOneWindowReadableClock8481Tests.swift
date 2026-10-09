@@ -372,7 +372,9 @@ final class OneControlOneWindowReadableClock8481Tests: XCTestCase {
     func testEveryTimeLabelRendersSeparatelyOnBothCharts() throws {
         for range in OddsTimeRange.allCases {
             let window = try Self.window(range)
-            let plan = OddsChartView.xAxisPlan(for: window, plotWidth: Self.phonePlot)
+            // #10796: the rendered axis now starts at 12pt, with the same
+            // density budget as its visible labels (measured widths are 9pt).
+            let plan = OddsChartView.xAxisPlan(for: window, plotWidth: Self.phonePlot, labelScale: 12.0 / 9)
             let expected = OddsChartView.xAxisTicks(for: window, plan: plan).count
             XCTAssertGreaterThanOrEqual(expected, 4, "control: the specimen axis has too few ticks to test")
 

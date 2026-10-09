@@ -38,6 +38,25 @@ final class ProjectedFinalPointsSeries10239Tests: XCTestCase {
         XCTAssertNil(result.latestActual)
     }
 
+    func testQuietPregameRetainsOlderForecastButMarksRecentIntervalUnavailable() throws {
+        let result = try XCTUnwrap(Series.build(input(
+            [pair(-17 * 3600, 24.2, 20.8), pair(-16 * 3600, nil, nil)],
+            floor: nil, now: 0)))
+        XCTAssertEqual(result.phase, .before)
+        XCTAssertEqual(result.start, t(-17 * 3600))
+        XCTAssertEqual(result.latest.at, t(-17 * 3600))
+        XCTAssertEqual(result.latest.holdEnd, result.latest.at)
+        XCTAssertTrue(result.latestIntervalUnavailable)
+        XCTAssertTrue(result.actualSteps.isEmpty)
+    }
+
+    func testOlderPregameForecastDoesNotOverrideAnExplicitWindowOrProvenance() {
+        XCTAssertNil(Series.build(input([pair(-17 * 3600)], floor: nil, now: 0, start: -6 * 3600)))
+        XCTAssertNil(Series.build(input([pair(-17 * 3600, kind: .synthetic)], floor: nil, now: 0)))
+        XCTAssertNil(Series.build(input([pair(-17 * 3600, 20, 24)], floor: nil, now: 0)))
+        XCTAssertNil(Series.build(input([pair(-17 * 3600)], floor: nil, now: 0, cutoff: -16 * 3600)))
+    }
+
     func testObservedFloorRejectsPregameScores() throws {
         let result = try XCTUnwrap(Series.build(input([pair(60)], actuals: [score(-1, 0, 0), score(30, 7, 0)])))
         XCTAssertEqual(result.phase, .during)

@@ -344,6 +344,7 @@ final class OddsChartViewModel: ObservableObject {
 // MARK: - View
 
 struct OddsChartView: View {
+    @ScaledMetric(relativeTo: .caption2) private var axisFontSize: CGFloat = 12
     let eventId: Int
     var teamColors: (away: Color, home: Color)?
     var commenceTime: String?
@@ -1734,7 +1735,8 @@ struct OddsChartView: View {
             for: domain,
             plotWidth: Self.axisPlanWidth(
                 own: plotWidth.wrappedValue,
-                pageNarrowest: sharesPageAxis ? pageAxisPlotWidth : 0))
+                pageNarrowest: sharesPageAxis ? pageAxisPlotWidth : 0),
+            labelScale: axisFontSize / 9)
         let ticks = Self.xAxisTicks(for: domain, plan: plan)
         // #4974 — neither runs under a checkpoint mount. The balance ink would
         // draw the blend a second time, uncut, and color a crossing of 50% that
@@ -1911,8 +1913,8 @@ struct OddsChartView: View {
                 AxisValueLabel {
                     if let v = value.as(Double.self) {
                         Text(Self.axisLabel(for: v))
-                            .font(.system(size: 9))
-                            .foregroundStyle(.secondary)
+                            .font(.system(size: axisFontSize))
+                            .foregroundStyle(Color.primary)
                     }
                 }
             }
@@ -1921,7 +1923,7 @@ struct OddsChartView: View {
             AxisMarks(values: ticks) { _ in
                 AxisGridLine(stroke: StrokeStyle(lineWidth: 0.15))
                     .foregroundStyle(.secondary.opacity(0.3))
-                ChartTimeAxisLabels.reservedRow(format: plan.format)
+                ChartTimeAxisLabels.reservedRow(format: plan.format, fontSize: axisFontSize)
             }
         }
         .onPreferenceChange(PlotWidthPreferenceKey.self) { width in
@@ -3209,7 +3211,7 @@ struct OddsChartView: View {
         (.minute, 30, 1800), (.minute, 45, 2700),
         (.hour, 1, 3600), (.hour, 2, 7200), (.hour, 3, 10800), (.hour, 4, 14400),
         (.hour, 6, 21600), (.hour, 8, 28800), (.hour, 12, 43200),
-        (.day, 1, 86400), (.day, 2, 172800), (.day, 7, 604800),
+        (.day, 1, 86400), (.day, 2, 172800), (.day, 3, 259200), (.day, 4, 345600), (.day, 7, 604800),
         (.day, 14, 1209600), (.day, 30, 2592000), (.day, 60, 5184000),
         (.day, 90, 7776000), (.day, 180, 15552000), (.day, 365, 31536000),
     ]
