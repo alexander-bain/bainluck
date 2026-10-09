@@ -159,6 +159,13 @@ function replaceFromPageZero<T>(
   if (result.sections.boundary !== null && result.sections.edition === null) {
     return preserve(input, "edition_missing");
   }
+  // Nor does a nonempty reply without one replace a held section deck: a
+  // missing boundary beside a missing token is unproven, not legacy. The server
+  // tokens every nonempty list, so a real no-section edition still replaces; an
+  // empty list carries no token and stays decideFeedPage's call.
+  if (accepted?.sections.boundary != null && reply.items.length > 0 && result.sections.edition === null) {
+    return preserve(input, "edition_missing");
+  }
   const end = reply.items.length;
   return {
     kind: "replace",

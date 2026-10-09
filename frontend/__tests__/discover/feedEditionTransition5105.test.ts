@@ -309,6 +309,89 @@ describe("refusals keep the accepted state", () => {
   });
 });
 
+describe("a held section deck is never replaced by an unproven flat page zero", () => {
+  /** A page-zero reply with `drop` keys REMOVED (absent, not undefined-valued). */
+  function pageZero(deck: Card[], extra: Record<string, unknown>, drop: string[] = []) {
+    const body: Record<string, unknown> = reply(deck, 0, 20, extra);
+    for (const key of drop) delete body[key];
+    return body;
+  }
+
+  // The restart's own page zero (no token sent, no status back) and a retired
+  // page zero answered directly: the two routes into replaceFromPageZero.
+  const routes: Array<[string, FeedEditionRequest, Record<string, unknown>]> = [
+    ["restart page zero", { edition: null, offset: 0, generation: 1 }, {}],
+    ...(["expired", "superseded", "invalidated"] as const).map(
+      (status): [string, FeedEditionRequest, Record<string, unknown>] => [
+        `${status} page zero`,
+        { edition: "E1", offset: 0, generation: 1 },
+        { edition_status: status },
+      ],
+    ),
+  ];
+
+  const editions: Array<[string, Record<string, unknown>, string[]]> = [
+    ["absent edition", {}, ["edition"]],
+    ["null edition", { edition: null }, []],
+    ["empty edition", { edition: "" }, []],
+    ["numeric edition", { edition: 7 }, []],
+    ["object edition", { edition: {} }, []],
+  ];
+  const boundaries: Array<[string, Record<string, unknown>, string[]]> = [
+    ["absent boundary", {}, ["continuation_start"]],
+    ["null boundary", { continuation_start: null }, []],
+  ];
+
+  const unproven = routes.flatMap(([route, request, status]) =>
+    editions.flatMap(([edition, editionExtra, editionDrop]) =>
+      boundaries.map(([boundary, boundaryExtra, boundaryDrop]) => ({
+        name: `${route}, ${edition}, ${boundary}`,
+        request,
+        extra: { ...status, ...editionExtra, ...boundaryExtra },
+        drop: [...editionDrop, ...boundaryDrop],
+      })),
+    ),
+  );
+
+  it.each(unproven)("$name keeps the accepted deck", ({ request, extra, drop }) => {
+    const { deck } = heldAtTwenty();
+    expect(deck.sections.boundary).toBe(25);
+    const result = decide(deck, request, pageZero(cards("b", 30), extra, drop));
+    expect(result).toEqual({ kind: "preserve", reason: "edition_missing", showUnavailable: false, hasMore: true });
+  });
+
+  it.each(routes)("%s: a tokened no-section edition still replaces (absent or null boundary)", (_, request, status) => {
+    // `reply` never sets `continuation_start`, so `{}` is the absent case.
+    for (const boundary of [{}, { continuation_start: null }]) {
+      const { deck } = heldAtTwenty();
+      const replaced = deckOf(decide(deck, request, pageZero(cards("b", 30), { ...status, ...boundary, edition: "E2" })));
+      expect(replaced.edition).toBe("E2");
+      expect(replaced.sections.boundary).toBeNull();
+      expect(replaced.sections.opening.map(getId)).toEqual(cards("b", 20).map(getId));
+      expect(replaced.generation).toBe(2);
+    }
+  });
+
+  it.each(routes)("%s: a complete empty list (the server tokens none) still replaces with an empty deck", (_, request, status) => {
+    const { deck } = heldAtTwenty();
+    const empty = deckOf(decide(deck, request, { items: [], offset: 0, limit: 20, total: 0, has_more: false, ...status }));
+    expect(empty.edition).toBeNull();
+    expect(empty.sections.opening).toEqual([]);
+    expect(empty.sections.continuation).toEqual([]);
+    expect(nextPageRequest(empty)).toBeNull();
+  });
+
+  it("a cold legacy load and a held legacy deck still take an untokened flat page zero", () => {
+    const cold = deckOf(decide(null, first(), pageZero(cards("l", 30), {}, ["edition", "continuation_start"]), false));
+    expect(cold.edition).toBeNull();
+    expect(cold.sections.boundary).toBeNull();
+
+    const replaced = deckOf(decide(cold, { edition: null, offset: 0, generation: 1 }, pageZero(cards("m", 30), { continuation_start: null }, ["edition"])));
+    expect(replaced.sections.opening.map(getId)).toEqual(cards("m", 20).map(getId));
+    expect(replaced.generation).toBe(2);
+  });
+});
+
 describe("late replies are inert", () => {
   it("an old in-flight page of the replaced edition cannot roll the new deck back or retire it", () => {
     const { e1, deck: oldDeck } = heldAtTwenty();
