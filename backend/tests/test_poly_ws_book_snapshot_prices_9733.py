@@ -16,7 +16,7 @@ book that moved while the socket was down (every ten-minute recycle) or before
 
 THE RULE. The open-contract client hands each snapshot book to the ordinary
 price handler as a quote: same tradeable-book refusal, same Yes/No complement,
-same flush. The game socket and the shadow consumer are unchanged.
+same flush. The game client now also opts in; the shadow consumer is unchanged.
 ``POLYMARKET_WS_BOOK_SNAPSHOT_PRICES=0`` is the undo line.
 """
 
@@ -189,7 +189,7 @@ class TestTheClient:
         assert ws.stats["book_snapshot_quotes"] == 2
 
     async def test_every_other_client_still_skips_the_snapshot(self, monkeypatch):
-        """The game socket and the shadow consumer construct the default."""
+        """The service default (including the shadow consumer) stays off."""
         seen = []
         ws = await _client_quotes(monkeypatch, [_kittle_frame()], seen.append)
         assert seen == []
@@ -301,11 +301,10 @@ class TestTheConsumer:
         assert _stored(engine, KITTLE_YES) == pytest.approx(0.77)
         assert _stored(engine, KITTLE_NO) == pytest.approx(0.10)
 
-    async def test_the_game_socket_still_skips_its_snapshot(
+    async def test_the_game_socket_prices_its_snapshot_by_default(
         self, monkeypatch, tmp_path
     ):
-        """Scope: the game slate's legs are refreshed by the poll and their own
-        ticks; this change does not reprice them at every recycle."""
+        """The game client opts in through the same snapshot undo switch."""
         monkeypatch.delenv("POLYMARKET_WS_BOOK_SNAPSHOT_PRICES", raising=False)
         engine = _frozen_kittle(tmp_path)
         game_book = [_book(GAME_TOKEN, [("0.60", "50")], [("0.62", "50")])]
@@ -317,4 +316,4 @@ class TestTheConsumer:
         )
         await _drive(monkeypatch, rig)
 
-        assert _stored(engine, GAME_OUTCOME) == pytest.approx(0.30)
+        assert _stored(engine, GAME_OUTCOME) == pytest.approx(0.61)
