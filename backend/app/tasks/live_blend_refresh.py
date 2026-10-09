@@ -139,6 +139,11 @@ DEFAULT_STAMP_LOCK_TIMEOUT_MS = 500
 # writes wait for the next one. Cooperative: finish each attempted transaction
 # and publication; never cancel a stamp merely because this budget elapsed.
 PENDING_STAMP_BUDGET_S = 1.0
+# #10090 — a flush that carries fresh event IDs attempts at most this many old
+# stamps across all of its refresh calls; the rest stay owed in continuation
+# order for a quiet flush, which keeps the full time budget above. Without it a
+# busy flush's old debt ran serially for up to that second after its fresh work.
+FRESH_FLUSH_PENDING_ATTEMPTS = 1
 
 # #10090 — fixed fresh-stamp workers per refresh. Two disjoint stamps waiting
 # on rows/publication must not hold a third ready fresh event. Each holds one
@@ -1075,6 +1080,8 @@ class LiveBlendRefresher:
         self._pending_flush_started: Optional[float] = None
         self._pending_started_at: Optional[float] = None
         self._pending_attempted = False
+        self._pending_attempts = 0
+        self._pending_fresh_flush = False
         self._last_refresh_at: dict[int, float] = {}
         #: Events whose last batch failed -> the monotonic time before which
         #: they are not due, whatever the throttle says.
@@ -1216,11 +1223,23 @@ class LiveBlendRefresher:
             self._pending_flush_started = flush_started
             self._pending_started_at = None
             self._pending_attempted = False
+            self._pending_attempts = 0
+            self._pending_fresh_flush = False
+        if flush_started is not None and fresh:
+            # Sticky for the flush: old attempts made before its first fresh
+            # call count against the same allowance, so none is added after.
+            self._pending_fresh_flush = True
 
         def pending_budget_spent():
+            if flush_started is None:
+                return False
+            if (
+                self._pending_fresh_flush
+                and self._pending_attempts >= FRESH_FLUSH_PENDING_ATTEMPTS
+            ):
+                return True
             return (
-                flush_started is not None
-                and self._pending_attempted
+                self._pending_attempted
                 and self._pending_started_at is not None
                 and _mono() - self._pending_started_at >= PENDING_STAMP_BUDGET_S
             )
@@ -1255,6 +1274,7 @@ class LiveBlendRefresher:
                 if self._pending_started_at is None:
                     self._pending_started_at = _mono()
                 self._pending_attempted = True
+                self._pending_attempts += 1
             self._pending_continuation = [
                 eid for eid in self._pending_continuation if eid not in due
             ]
@@ -1446,6 +1466,7 @@ class LiveBlendRefresher:
                     ]
                     if pending_only and flush_started is not None:
                         self._pending_attempted = True
+                        self._pending_attempts += 1
                     group_ids = [event_id]
                     if read_current:
                         reread_events.add(event_id)
