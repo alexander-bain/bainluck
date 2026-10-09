@@ -35,7 +35,7 @@ import bisect
 import json
 import logging
 from datetime import datetime, timedelta, timezone
-from typing import Optional
+from typing import Collection, Optional
 
 logger = logging.getLogger(__name__)
 
@@ -61,6 +61,9 @@ OUTCOME_TOKEN_METADATA_KEY = "clob_yes_token_by_outcome"
 #: moment the slate moves past it, and a migration for it would outlive its
 #: usefulness by years.
 TOPUP_CURSOR_KEY = "polymarket_token_topup:outcome_cursor"
+
+# Separate positions keep market recovery independent of outcome recovery.
+MARKET_TOPUP_CURSOR_KEY = "polymarket_token_topup:market_cursor"
 
 #: Long enough to survive a deploy and a quiet night, short enough that a
 #: position from a dead era expires instead of resuming into a slate that no
@@ -211,19 +214,19 @@ def _is_stale(commence_time, status, cutoff: datetime) -> bool:
     return commence_time < cutoff
 
 
-def _read_cursor_sync() -> Optional[str]:
+def _read_cursor_sync(key: str = TOPUP_CURSOR_KEY) -> Optional[str]:
     from app.tasks.redis_state import get_redis_client
 
-    raw = get_redis_client().get(TOPUP_CURSOR_KEY)
+    raw = get_redis_client().get(key)
     if not raw:
         return None
     return raw.decode() if isinstance(raw, (bytes, bytearray)) else str(raw)
 
 
-def _write_cursor_sync(cursor: str) -> None:
+def _write_cursor_sync(cursor: str, key: str = TOPUP_CURSOR_KEY) -> None:
     from app.tasks.redis_state import get_redis_client
 
-    get_redis_client().setex(TOPUP_CURSOR_KEY, TOPUP_CURSOR_TTL_SECONDS, cursor)
+    get_redis_client().setex(key, TOPUP_CURSOR_TTL_SECONDS, cursor)
 
 
 async def load_topup_cursor() -> Optional[str]:
@@ -877,12 +880,38 @@ async def topup_outcome_clob_tokens(
     return filled
 
 
+async def _market_ask_window(ordered: list[str], size: int, tier: str) -> list[str]:
+    """Rotate each urgency group without spending another group's position."""
+    if size <= 0:
+        return []
+    if len(ordered) <= size:
+        return ordered
+    key = f"{MARKET_TOPUP_CURSOR_KEY}:{tier}"
+    try:
+        cursor = await asyncio.to_thread(_read_cursor_sync, key)
+    except Exception:
+        logger.warning(
+            "Polymarket market token top-up: cursor read failed", exc_info=True
+        )
+        cursor = None
+    kept, next_cursor = select_ask_window(ordered, size, cursor)
+    # Advance before Gamma: an unfillable or failed slice cannot pin recovery.
+    try:
+        await asyncio.to_thread(_write_cursor_sync, next_cursor, key)
+    except Exception:
+        logger.warning(
+            "Polymarket market token top-up: cursor write failed", exc_info=True
+        )
+    return kept
+
+
 async def topup_clob_tokens(
     session,
     markets: list[tuple[int, Optional[str]]],
     *,
     service=None,
     max_markets: int = MAX_TOPUP_MARKETS,
+    priority_market_ids: Collection[int] = (),
 ) -> dict[int, list[str]]:
     """Fetch and persist ``clob_token_ids`` for ``markets`` that lack them.
 
@@ -890,6 +919,10 @@ async def topup_clob_tokens(
     ``{futures_market_id: [token, ...]}`` for the markets that were actually
     filled, so the caller can subscribe in the same pass rather than waiting for
     the next recycle to re-read the row it just wrote.
+
+    Live WIN candidates supplied by the caller take the first seats under the
+    unchanged cap. Each urgency group resumes after its last requested id, so
+    unfillable conditions cannot pin the same window on every refresh.
 
     Writes MERGE (``COALESCE(md,'{}') || jsonb_build_object(...)``), the same
     idiom the ingest uses, so a top-up cannot clobber ``polymarket_event_id``,
@@ -906,13 +939,15 @@ async def topup_clob_tokens(
         if cid:
             addressable[cid] = market_id
 
-    if not addressable:
+    if not addressable or max_markets <= 0:
         return {}
 
     if len(addressable) > max_markets:
-        # Loud, not silent — and deterministic, so a repeated run makes progress
-        # through the same order rather than re-drawing the same truncated slice.
-        kept = sorted(addressable)[:max_markets]
+        priority = set(priority_market_ids)
+        urgent = sorted(cid for cid, mid in addressable.items() if mid in priority)
+        other = sorted(cid for cid, mid in addressable.items() if mid not in priority)
+        kept = await _market_ask_window(urgent, max_markets, "live_win")
+        kept += await _market_ask_window(other, max_markets - len(kept), "other")
         logger.warning(
             "Polymarket token top-up: %d markets needed tokens, capped at %d "
             "(%d deferred to the next recycle)",
