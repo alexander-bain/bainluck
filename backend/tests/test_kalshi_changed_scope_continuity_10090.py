@@ -426,3 +426,62 @@ def test_plan_stable_shards(current, scope, per, extra, busy, expected):
     assert task.plan_stable_shards(
         [frozenset(c) for c in current], scope, per, extra, busy,
     ) == expected
+
+
+class LargeOpenScope(Scope):
+    """Production-sized open arm (v5614: 41,497 open tickers). Version 2 adds
+    one contract (and the base double's second game), so the refresh applies
+    a changed scope in place: both connections get a successor."""
+
+    SIZE = 20000
+
+    async def execute(self, statement, *args):
+        columns = [str(c) for c in getattr(statement, "selected_columns", ())]
+        if len(columns) > 3 and columns[0] == "futures_outcomes.external_id":
+            count = self.SIZE + (1 if self.version == 2 else 0)
+            return Result([
+                (f"KXNBAGAME-26OCT20T{i:05d}-A", 100000 + i, 200000 + i, None, None)
+                for i in range(count)
+            ])
+        return await super().execute(statement, *args)
+
+
+@pytest.mark.asyncio
+async def test_applying_a_production_sized_scope_does_not_stall_the_loop(monkeypatch):
+    """v5614 (09:08–09:09Z): each in-place refresh froze the Kalshi process's
+    event loop ~93 s (heartbeat lag max=93317ms, no stats line for the minute),
+    so every Kalshi quote stopped. `apply_scope` rebuilt the union of the two
+    scopes once per owned ticker — quadratic in the ~44k tickers. Every frame
+    handler shares this loop, so the apply must stay well under a second."""
+    scope = LargeOpenScope()
+    running, _sockets, _acking, _socket_for, opened_sockets = _rig(
+        monkeypatch, scope, per_connection=100000,
+    )
+    gaps = []
+
+    async def heartbeat():
+        loop = asyncio.get_running_loop()
+        last = loop.time()
+        while True:
+            await asyncio.sleep(0.01)
+            now = loop.time()
+            gaps.append(now - last)
+            last = now
+
+    beat = None
+    try:
+        await _until(lambda: opened_sockets() == 2, "startup sockets")
+        beat = asyncio.create_task(heartbeat())
+        await _until(lambda: gaps, "the heartbeat")
+        scope.version = 2
+        await _until(lambda: opened_sockets() == 4, "the changed scope")
+        # One more beat: a stall is recorded when the heartbeat next wakes.
+        before = len(gaps)
+        await _until(lambda: len(gaps) > before + 1, "the heartbeat after the apply")
+        assert not running.done()
+        assert max(gaps) < 2.0, f"the scope apply stalled the loop {max(gaps):.1f}s"
+    finally:
+        if beat is not None:
+            beat.cancel()
+            await asyncio.gather(beat, return_exceptions=True)
+        await _stop(running)
