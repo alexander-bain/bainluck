@@ -81,7 +81,11 @@ async def test_new_committed_binary_frame_publishes_before_old_stamp_releases(mo
     try:
         await settle_until(lambda: 2 in x.published)
         assert 1 not in x.committed and not x.release.is_set()
-        assert not flush.done(), "the final join still owns the older stamp"
+        assert await asyncio.wait_for(flush, 2) is True
+        owner = p.ns["catalog_boundary"].stamps
+        assert (
+            owner.task is not None and not owner.task.done()
+        ), "the persistent owner retains the older stamp after the batch returns"
         assert ("write", [900, 901]) in p.trace  # complements commit together
         assert calls[0][0] == {2} and calls[0][2] == frozenset({2})
         offered = calls[0][1]
@@ -94,6 +98,7 @@ async def test_new_committed_binary_frame_publishes_before_old_stamp_releases(mo
     finally:
         x.release.set()
         await asyncio.wait_for(flush, 2)
+        await p.ns["catalog_boundary"].join_stamps()
     assert x.published == [2, 1]
     assert not x.r.pending_event_ids()
     assert not p.ns["price_buffer"]
@@ -120,6 +125,7 @@ async def test_late_same_event_withdrawal_joins_owner_before_fresh_admission(mon
     finally:
         x.release.set()
         assert await asyncio.wait_for(flush, 2)
+        await p.ns["catalog_boundary"].join_stamps()
     assert p.trace.index(("event_frame", 1)) < p.trace.index(("withdraw", [1]))
     assert p.trace.index(("withdraw", [1])) < p.trace.index(("event_frame", 2))
     assert not x.r.pending_event_ids()
@@ -153,6 +159,7 @@ async def test_implicit_debt_waits_for_the_final_planned_leg(monkeypatch, fail_l
         last_release.set()
         x.release.set()
         ok = await asyncio.wait_for(flush, 2)
+        await p.ns["catalog_boundary"].join_stamps()
     if fail_last:
         assert ok is False and 901 in p.ns["price_buffer"]
         assert 2 not in x.published and x.r.pending_event_ids() == frozenset({2})
@@ -185,21 +192,23 @@ async def test_repeated_cancellation_joins_admitted_stamp_before_catalog_handove
     update = None
     try:
         await asyncio.wait_for(x.second_stamp.wait(), 2)
-        flush.cancel()
-        await asyncio.wait_for(unwinding.wait(), 2)
+        assert await asyncio.wait_for(flush, 2) is True
         update = asyncio.create_task(handover())
+        await asyncio.sleep(0)  # catalog enters the persistent-owner join
+        update.cancel()
+        await asyncio.wait_for(unwinding.wait(), 2)
+        update.cancel()
         await asyncio.sleep(0)
-        flush.cancel()
-        await asyncio.sleep(0)
-        assert not flush.done() and not handed_over.is_set()
+        assert not update.done() and not handed_over.is_set()
         assert not x.published and not x.committed
         finish_unwind.set()
         with pytest.raises(asyncio.CancelledError):
-            await asyncio.wait_for(flush, 2)
-        await asyncio.wait_for(update, 2)
+            await asyncio.wait_for(update, 2)
+        assert not handed_over.is_set()
         assert x.r.pending_event_ids() == frozenset({1, 2})
         assert x.r._admission is None
         assert p.ns["catalog_boundary"].active == 0
+        assert not p.ns["catalog_boundary"].changing
     finally:
         finish_unwind.set()
         x.release.set()
