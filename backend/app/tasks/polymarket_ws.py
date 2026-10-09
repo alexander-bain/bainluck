@@ -378,6 +378,90 @@ def chunk_price_update_stmt(chunk: dict):
     )
 
 
+def _pm_lock_isolated_chunks(
+    chunks: list[list[int]],
+    retry_events: set[int],
+    event_by_outcome: dict[int, int],
+    market_by_outcome: dict[int, int],
+    complement_of: dict[int, int],
+    chunk_rows: int,
+) -> list[list[int]]:
+    """Isolate admitted event cohorts only after their ordinary lock failure.
+
+    The caller passes separately planned headline and prop transactions. Never
+    admit another buffered row or change the open cap here. Within the admitted
+    population a whole question and its complements stay indivisible; an
+    oversized question keeps one transaction rather than exposing half of it.
+    Unaffected rows retain their original chunks and order.
+    """
+    if not retry_events:
+        return chunks
+    admitted = [oid for chunk in chunks for oid in chunk]
+    parents = {oid: oid for oid in admitted}
+
+    def root(oid):
+        while parents[oid] != oid:
+            parents[oid] = parents[parents[oid]]
+            oid = parents[oid]
+        return oid
+
+    def join(left, right):
+        parents[root(right)] = root(left)
+
+    first_by_market = {}
+    for oid in admitted:
+        market = market_by_outcome.get(oid)
+        if market is not None:
+            if market in first_by_market:
+                join(first_by_market[market], oid)
+            else:
+                first_by_market[market] = oid
+        other = complement_of.get(oid)
+        if other in parents:
+            join(oid, other)
+    units = {}
+    for oid in admitted:
+        units.setdefault(root(oid), []).append(oid)
+    groups = {}
+    group_by_outcome = {}
+    for unit in units.values():
+        events = frozenset(
+            event_by_outcome[oid] for oid in unit if oid in event_by_outcome
+        )
+        if events.isdisjoint(retry_events):
+            continue
+        groups.setdefault(events, []).append(unit)
+        group_by_outcome.update(dict.fromkeys(unit, events))
+    packed = {}
+    for events, event_units in groups.items():
+        packed[events] = []
+        current = []
+        for unit in event_units:
+            if current and len(current) + len(unit) > chunk_rows:
+                packed[events].append(current)
+                current = []
+            current.extend(unit)
+        if current:
+            packed[events].append(current)
+    result = []
+    emitted = set()
+    for chunk in chunks:
+        remainder = [oid for oid in chunk if oid not in group_by_outcome]
+        remainder_emitted = False
+        for oid in chunk:
+            events = group_by_outcome.get(oid)
+            if events is None:
+                if not remainder_emitted:
+                    result.append(remainder)
+                    remainder_emitted = True
+            elif events not in emitted:
+                # Place each cohort at its first admitted appearance, keeping
+                # the unaffected remainder in its original transaction.
+                result.extend(packed[events])
+                emitted.add(events)
+    return result
+
+
 def standalone_open_outcome_ids(
     outcome_ids,
     open_outcome_ids,
@@ -1507,6 +1591,7 @@ async def _run_polymarket_ws_consumer(*, sessions, stop=None):
     buffer_lock = asyncio.Lock()
     catalog_boundary = _PMCatalogFlushBoundary()
     lock_retry_until: dict[int, float] = {}
+    lock_retry_events: set[int] = set()
     withdrawal_retry_until: dict[int, float] = {}
     # Q460: outcome → linked event, for the blend re-stamp after each flush.
     #
@@ -1658,6 +1743,9 @@ async def _run_polymarket_ws_consumer(*, sessions, stop=None):
             if not final and is_lock_timeout(exc):
                 until = _mono() + PRICE_FLUSH_SECONDS
                 lock_retry_until.update(dict.fromkeys(chunk, until))
+                lock_retry_events.update(
+                    event_ids_for_outcomes(event_id_by_outcome, chunk)
+                )
                 return None
             return False
 
@@ -1776,7 +1864,7 @@ async def _run_polymarket_ws_consumer(*, sessions, stop=None):
         lock-held whole chunks retain their own eligibility cooldown. #10090
         ``flush_started`` is this flush's start, for the refresher's floor."""
         import asyncio  # the pipelined stamp below; executed rigs bring no globals
-        from app.tasks.polymarket_ws import _PMHeadlineEvents
+        from app.tasks.polymarket_ws import _PMHeadlineEvents, _pm_lock_isolated_chunks
 
         headline_event_ids = _PMHeadlineEvents(
             event_id_by_outcome, () if final else non_blend_outcome_ids,
@@ -1825,9 +1913,20 @@ async def _run_polymarket_ws_consumer(*, sessions, stop=None):
             # tail transactions. All linked prices still write; complement
             # pairs stay atomic and the existing open-contract cap is intact.
             if not final:
-                chunks.extend(plan_flush_chunks(
+                # A typed rollback may have coupled unrelated events in one
+                # ordinary chunk. Retry only its admitted event/question units;
+                # fresh siblings then retain their own cooldown eligibility.
+                chunks = _pm_lock_isolated_chunks(
+                    chunks, lock_retry_events, event_id_by_outcome,
+                    market_by_outcome, open_complement_of, FLUSH_CHUNK_ROWS,
+                )
+                prop_chunks = plan_flush_chunks(
                     (oid for oid in batch if oid in non_blend_outcome_ids),
                     set(), FLUSH_CHUNK_ROWS, None, open_complement_of,
+                )
+                chunks.extend(_pm_lock_isolated_chunks(
+                    prop_chunks, lock_retry_events, event_id_by_outcome,
+                    market_by_outcome, open_complement_of, FLUSH_CHUNK_ROWS,
                 ))
             stats["open_contract_flush_deferred"] += len(batch) - sum(
                 len(c) for c in chunks
@@ -2015,6 +2114,11 @@ async def _run_polymarket_ws_consumer(*, sessions, stop=None):
                 raise
             finally:
                 await stamp_done()
+        # Keep isolation beyond cooldown expiry until every failed price row
+        # has committed. A newer quote on a successful row may batch normally.
+        lock_retry_events.intersection_update(
+            event_ids_for_outcomes(event_id_by_outcome, lock_retry_until)
+        )
         # #9934: after the prices, so a held number is judged as it now stands.
         # Events already attempted above wait for the next flush if their
         # withdrawal failed or a newer book arrived during the transaction.

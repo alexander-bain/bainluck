@@ -4,7 +4,7 @@ import asyncio
 from contextlib import asynccontextmanager
 from types import SimpleNamespace
 
-from app.tasks.polymarket_ws import PRICE_CHUNK_LOCK_TIMEOUT_MS
+from app.tasks.polymarket_ws import PRICE_CHUNK_LOCK_TIMEOUT_MS, _pm_lock_isolated_chunks
 from app.tasks.kalshi_ws import PRICE_FLUSH_SECONDS
 from app.tasks.live_blend_refresh import run_flush_cadence
 from app.utils.repair_lock_budget import SET_LOCK_TIMEOUT_SQL, is_lock_timeout, lock_timeout_value
@@ -16,8 +16,8 @@ class LockHeld(Exception):
     sqlstate = "55P03"
 
 
-def writer_rig(clock, *, error=None):
-    r = rig(books={1: (0.2, 0.8)})
+def writer_rig(clock, *, error=None, **kwargs):
+    r = rig(**({"books": {1: (0.2, 0.8)}} | kwargs))
     r.release.set()
     state = SimpleNamespace(held=True, attempts=[], settings=[], commits=[], pending=set())
 
@@ -141,3 +141,84 @@ async def test_non_lock_error_retains_existing_global_failure_result(monkeypatch
     assert await r.ns["write_chunk"]({1: 0.6, 2: 0.4}) is False
     assert not r.ns["lock_retry_until"] and not state.commits
     assert r.ns["price_buffer"][1] == 0.9 and 2 in r.ns["price_buffer"]
+
+
+async def test_mixed_lock_failure_retries_events_separately_and_keeps_full_fences(monkeypatch):
+    clock = _FakeTime(monkeypatch, t=1000)
+    r, state = writer_rig(
+        clock,
+        batch={1: 0.6, 2: 0.4, 900: 0.7, 901: 0.3, 3: 0.8, 902: 0.8},
+        mapping={1: 10, 2: 10, 3: 10, 900: 90, 901: 90, 902: 90},
+        books={1: (0.2, 0.8), 900: (0.1, 0.9)},
+    )
+    r.ns["FLUSH_CHUNK_ROWS"] = 4
+    r.ns["open_outcome_ids"] = set()
+    r.ns["open_complement_of"].update({900: 901, 901: 900})
+    pending = {10, 90}
+    admitted = []
+    original = r.ns["blend_refresher"]
+
+    class Refresher:
+        publish_market_changes = original.publish_market_changes
+
+        def pending_event_ids(self):
+            return frozenset(pending)
+
+        async def refresh(self, ids, **kwargs):
+            due = (set(ids) | pending) - set(kwargs.get("defer_event_ids", ()))
+            admitted.append(due)
+            pending.difference_update(due)
+            await original.refresh(ids, **kwargs)
+
+        async def refresh_pending(self, **kwargs):
+            await self.refresh(set(), **kwargs)
+
+    r.ns["blend_refresher"] = Refresher()
+    assert await r.ns["flush_prices"](flush_started=1000)
+    # First attempt keeps ordinary batching: two unrelated event pairs share
+    # one rollback. The later successful chunks must not release either stamp.
+    assert state.attempts == [(1000, (1, 2, 900, 901)), (1000.5, (3, 902))]
+    assert state.commits == [3, 902]
+    assert pending == {10, 90} and all(not due for due in admitted)
+    assert r.ns["lock_retry_events"] == {10, 90}
+    assert r.books.keys() == {1, 900}
+
+    clock.t = 1001
+    assert await r.ns["flush_prices"](flush_started=1001)
+    assert len(state.attempts) == 2, "cooldown still protects the original failed rows"
+
+    clock.t = 1003
+    # A new question for the held event is part of this admitted cohort too.
+    r.ns["price_buffer"][3] = 0.85
+    assert await r.ns["flush_prices"](flush_started=1003)
+    assert state.attempts[-2:] == [(1003, (1, 2, 3)), (1003.5, (900, 901))]
+    assert state.commits == [3, 902, 900, 901]
+    assert r.ns["price_buffer"] == {1: 0.9, 2: 0.4, 3: 0.85}
+    assert r.ns["lock_retry_events"] == {10}
+    assert set(r.ns["lock_retry_until"]) == {1, 2, 3}
+    assert r.books.keys() == {1} and pending == {10}
+    assert ("refresh", [90]) in r.trace and ("refresh", [10]) not in r.trace
+    assert ("withdraw", [900]) in r.trace and ("withdraw", [1]) not in r.trace
+
+    clock.t = 1004
+    r.ns["price_buffer"][900] = 0.75
+    assert await r.ns["flush_prices"](flush_started=1004)
+    assert state.attempts[-1] == (1004, (900,)), "healthy event keeps ordinary eligibility"
+    state.held = False
+    clock.t = 1006
+    assert await r.ns["flush_prices"](flush_started=1006)
+    assert not r.ns["price_buffer"] and not r.ns["lock_retry_until"]
+    assert not r.ns["lock_retry_events"] and not pending and not r.books
+
+
+def test_isolation_preserves_admitted_questions_complements_and_ordinary_remainders():
+    chunks = [[700, 1, 2, 900], [3, 901, 701, 702], [902]]
+    mapping = {1: 10, 2: 10, 3: 10, 900: 90, 901: 90, 902: 90}
+    markets = {1: 100, 2: 200, 3: 100, 900: 900, 901: 901, 902: 902}
+    pairs = {1: 2, 2: 1}
+    assert _pm_lock_isolated_chunks(chunks, set(), mapping, markets, pairs, 2) is chunks
+    planned = _pm_lock_isolated_chunks(chunks, {10, 90}, mapping, markets, pairs, 2)
+    assert planned == [[700], [1, 2, 3], [900, 901], [902], [701, 702]]
+    assert sorted(oid for chunk in planned for oid in chunk) == sorted(
+        oid for chunk in chunks for oid in chunk
+    ), "isolation cannot admit capped-out or newer buffered rows"
