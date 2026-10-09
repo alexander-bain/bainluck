@@ -122,3 +122,76 @@ final class APIClientFeedStoreTests: XCTestCase {
                         "the anonymous namespace survives")
     }
 }
+
+// MARK: - #5105: the accepted edition reaches BOTH Discover request builders
+
+/// Real `APIClient` + real `URLSession`; only the origin is stubbed. The
+/// principal-resolving offset-0 revalidation is a separate query builder from
+/// `fetchFeed`, so a token added to one and not the other silently re-asks for an
+/// unpinned order on every background revalidation of an accepted deck.
+final class APIClientFeedEditionTransport5105Tests: XCTestCase {
+    private nonisolated final class Origin: URLProtocol, @unchecked Sendable {
+        private static let lock = NSLock()
+        nonisolated(unsafe) private static var captured: [URL] = []
+
+        static func reset() { lock.withLock { captured = [] } }
+        static var feedURLs: [URL] {
+            lock.withLock { captured.filter { $0.path == "/api/feed" } }
+        }
+
+        override class func canInit(with request: URLRequest) -> Bool { true }
+        override class func canonicalRequest(for request: URLRequest) -> URLRequest { request }
+        override func startLoading() {
+            if let url = request.url { Self.lock.withLock { Self.captured.append(url) } }
+            // UNAVAILABLE: decodes, and is never stored as last-good, so the test
+            // writes nothing to the on-disk feed cache.
+            let body = #"{"items":[],"total":0,"limit":50,"offset":0,"has_more":false,"cache":{"status":"unavailable"}}"#
+            let response = HTTPURLResponse(url: request.url!, statusCode: 200, httpVersion: "HTTP/1.1",
+                headerFields: ["Content-Type": "application/json"])!
+            client?.urlProtocol(self, didReceive: response, cacheStoragePolicy: .notAllowed)
+            client?.urlProtocol(self, didLoad: Data(body.utf8))
+            client?.urlProtocolDidFinishLoading(self)
+        }
+        override func stopLoading() {}
+    }
+
+    private func client() -> APIClient {
+        Origin.reset()
+        let configuration = URLSessionConfiguration.ephemeral
+        configuration.protocolClasses = [Origin.self]
+        return APIClient(session: URLSession(configuration: configuration))
+    }
+
+    private func edition(of url: URL) -> String? {
+        URLComponents(url: url, resolvingAgainstBaseURL: false)?
+            .queryItems?.first { $0.name == "edition" }?.value
+    }
+
+    func testTokenRidesPaginationAndPrincipalResolvingRevalidation() async throws {
+        let api = client()
+        _ = try await api.fetchDiscoverFeedResolvingPrincipal(
+            limit: 50, offset: 0, eventPct: 0.15, edition: "ed-7", cacheTTL: nil)
+        _ = try await api.fetchDiscoverFeed(
+            limit: 200, offset: 50, eventPct: 0.15, edition: "ed-7", cacheTTL: nil)
+
+        let urls = Origin.feedURLs
+        XCTAssertEqual(urls.count, 2)
+        XCTAssertEqual(urls.map { edition(of: $0) }, ["ed-7", "ed-7"],
+            "the token must reach the offset-0 principal-resolving builder AND pagination")
+    }
+
+    func testUnpinnedRequestsCarryNoToken() async throws {
+        let api = client()
+        _ = try await api.fetchDiscoverFeedResolvingPrincipal(
+            limit: 50, offset: 0, eventPct: 0.15, cacheTTL: nil)
+        _ = try await api.fetchDiscoverFeedResolvingPrincipal(
+            limit: 50, offset: 0, eventPct: 0.15, edition: nil, cacheTTL: nil)
+        _ = try await api.fetchDiscoverFeed(
+            limit: 200, offset: 50, eventPct: 0.15, edition: "  ", cacheTTL: nil)
+
+        let urls = Origin.feedURLs
+        XCTAssertEqual(urls.count, 3)
+        XCTAssertTrue(urls.allSatisfy { edition(of: $0) == nil },
+            "a new opening / manual replacement sends no token; a blank one is none: \(urls)")
+    }
+}
