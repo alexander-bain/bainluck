@@ -272,6 +272,11 @@ class _FlushTimings:
     Pipelined stamps (#10090): `stamp` overlaps the next phase's write, so the
     buckets can sum past `total` and `rank_commit`, the floored remainder,
     reads low. `total` below `save + publish + stamp` is that overlap.
+
+    Cross-flush (#10090): a refresh may outlive the flush that started it. Its
+    time joins whichever flush returns after it ends, so `stamp` is the
+    minute's refresh time, not any one flush's own: never read it, or
+    `rank_commit`, as a per-flush or per-origin stage time.
     """
 
     BUCKETS = ("save", "publish", "stamp")
