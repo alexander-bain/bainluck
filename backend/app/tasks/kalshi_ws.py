@@ -2236,7 +2236,10 @@ async def _run_kalshi_ws_consumer(*, sessions, prices):
             changed["started"] += len(start)
             changed["retired"] += len(retire)
         game_scope, open_scope = frozenset(new_ids), frozenset(ids)
-        for ticker in [t for t in ticker_owner if t not in game_scope | open_scope]:
+        # Built once: inside the comprehension it was rebuilt per owned ticker,
+        # quadratic in ~44k tickers — a ~93 s frozen loop in production (v5614).
+        in_scope = game_scope | open_scope
+        for ticker in [t for t in ticker_owner if t not in in_scope]:
             del ticker_owner[ticker]
         # Each client claims only within its own arm: a kept open shard still
         # physically carries a ticker that moved to the game arm, and must not
