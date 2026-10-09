@@ -1066,6 +1066,21 @@ async def _run_kalshi_ws_consumer(*, sessions, prices):
                                 SET_LOCK_TIMEOUT_SQL,
                                 {"ms": lock_timeout_value(PRICE_PHASE_LOCK_TIMEOUT_MS)},
                             )
+                        # The admitted whole-question phase keeps its IDs and
+                        # ordering, but takes the newest eligible tuple and its
+                        # matching receipt before writing. A concurrent open-leg
+                        # settlement may remove an ID; retain its admitted tuple
+                        # for the existing authoritative SQL refusal to judge.
+                        async with buffer_lock:
+                            phase = {
+                                oid: price_buffer.get(oid, entry)
+                                for oid, entry in phase.items()
+                            }
+                            for oid in phase:
+                                if oid in input_marks:
+                                    batch_marks[oid] = input_marks[oid]
+                                else:
+                                    batch_marks.pop(oid, None)
                         # #10693: the phase's rows go through the run's price pipeline,
                         # in batch order. A run of two or more consecutive rows of one
                         # shape (full book / no book, `utils/kalshi_price_statement.py`)
