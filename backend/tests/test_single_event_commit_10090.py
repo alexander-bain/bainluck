@@ -110,26 +110,30 @@ async def test_pending_budget_frees_next_fresh_flush_and_fairly_resumes_old_debt
 
     x.r._refresh_batch = slow_stamp
     await x.r.refresh([7], flush_started=1000)
-    assert attempted == [7, 2, 3]
-    assert x.published == [7, 3]
-    assert x.r.pending_event_ids() == frozenset({1, 2, 4, 5, 6})
+    # A flush carrying fresh work attempts ONE old stamp (#10090 successor).
+    assert attempted == [7, 2]
+    assert x.published == [7]
+    assert x.r.pending_event_ids() == frozenset({1, 2, 3, 4, 5, 6})
     assert not x.r._failed_hold_until
 
     # More callbacks in the SAME producer flush must not buy another budget.
     reads = x.commands.count("read")
     await x.r.refresh_pending(flush_started=1000)
-    assert attempted == [7, 2, 3] and x.commands.count("read") == reads
+    assert attempted == [7, 2] and x.commands.count("read") == reads
     await x.r.refresh([7], flush_started=1000)
-    assert attempted == [7, 2, 3, 7]  # fresh remains admitted
+    assert attempted == [7, 2, 7]  # fresh remains admitted
 
     # Newly arrived fresh work leads, but repeatedly locked live2 cannot jump
     # ahead of the untouched debt left by the previous flush, including1.
     await x.r.refresh([7], flush_started=1002)
-    assert attempted[-3:] == [7, 4, 5]
+    assert attempted[-2:] == [7, 3]
+    # Quiet flushes keep the full time budget and resume the continuation.
     await x.r.refresh_pending(flush_started=1004)
+    assert attempted[-2:] == [4, 5]
+    await x.r.refresh_pending(flush_started=1006)
     assert attempted[-2:] == [6, 1]
     assert x.r.pending_event_ids() == frozenset({2})
-    await x.r.refresh_pending(flush_started=1006)
+    await x.r.refresh_pending(flush_started=1008)
     assert attempted[-1] == 2  # quiet singleton still retries
     assert set(x.published) == {1, 3, 4, 5, 6, 7}
 
@@ -199,7 +203,10 @@ async def test_live_stamps_lead_within_fresh_and_pending_but_fresh_stays_first(m
     await x.r.refresh([1, 3], flush_started=1000)
     # Fresh 1 and 3 fit the workers, so both start at once with no claim
     # order; both still precede debt, where live 4 precedes scheduled 2.
-    # No event is dropped or grouped.
+    # A fresh-bearing flush attempts one old stamp; 2 stays owed, not dropped.
+    assert x.committed == x.published == [1, 3, 4]
+    assert x.r.pending_event_ids() == frozenset({2})
+    await x.r.refresh_pending(flush_started=1002)
     assert x.committed == x.published == [1, 3, 4, 2]
     assert [s.event_ids for s in x.sessions if s.event_ids] == [[1], [3], [4], [2]]
     assert x.r.stats["stamped"] == 4
@@ -239,8 +246,12 @@ async def test_fresh_stamp_publishes_before_pending_preparation(monkeypatch, out
             release.set()
             await asyncio.wait_for(task, 1)
         if outcome == "release":
-            assert x.published == x.committed == [3, 1, 2]
+            # One old attempt in the fresh-bearing flush; 2 waits for a quiet one.
+            assert x.published == x.committed == [3, 1]
             assert x.commands.count("read") == 2
+            assert x.r.pending_event_ids() == frozenset({2})
+            await x.r.refresh_pending(flush_started=1002)
+            assert x.published == x.committed == [3, 1, 2]
             assert not x.r.pending_event_ids()
         else:
             assert x.published == x.committed == [3]
@@ -265,10 +276,14 @@ async def test_fresh_preparation_failure_keeps_fresh_owed_and_attempts_pending(m
 
     x.r._read_groups = read_population
     await x.r.refresh([3], flush_started=1000)
-    assert x.published == x.committed == [1, 2]
-    assert x.r.pending_event_ids() == frozenset({3})
+    # The failed fresh stamp still made this a fresh-bearing flush: one old.
+    assert x.published == x.committed == [1]
+    assert x.r.pending_event_ids() == frozenset({2, 3})
     assert x.r._failed_hold_until == {3: 1005}
     assert x.r.stats["errors"] == 1
+    await x.r.refresh_pending(flush_started=1002)
+    assert x.published == x.committed == [1, 2]
+    assert x.r.pending_event_ids() == frozenset({3})
 
 
 @pytest.mark.parametrize("count", [2, 4, 5])
