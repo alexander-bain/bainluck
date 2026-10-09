@@ -4,19 +4,24 @@
 // THE DEFECT (production, 15319175 Lens v Lyon, 390px held page 19:19:51Z–
 // 19:21:12Z). Polymarket rev 218 (0.37, 19:20:28.820Z) reached the headline in
 // 23 ms. The final screenshot, 43 s later, read 37% over a chart endpoint of
-// 36% — rev 217's value. The page's t=65 s automatic history poll (served
-// 19:20:57Z) is what took it back: this is a single-source page, so the line is
-// `win_prob_history.polymarket`, the backend had stored 0.36 at 19:20:19.59 and
-// never stored 218, and the response ended in the synthetic `live_edge` at
-// 19:20:57 carrying that stored 0.36. The push extension only appended readings
-// strictly newer than the served edge, so 218 (behind the edge, ahead of the
-// stored reading the edge carries) was dropped and the line froze one revision
-// behind the headline.
+// 36% — rev 217's value. Two ways in this path drop 218, and either one is
+// enough to freeze the line one revision behind the headline:
+//   1. The automatic history poll (served 19:20:57Z). This is a single-source
+//      page, so the line is `win_prob_history.polymarket`. The backend stored
+//      0.36 at 19:20:19.59 and never stored 218, and the response ends in the
+//      synthetic `live_edge` at 19:20:57 carrying that stored 0.36. The push
+//      extension only appended readings strictly newer than the served edge,
+//      so 218 (behind the edge but ahead of the stored reading the edge
+//      carries) was dropped.
+//   2. `quoteChartFrames` (found by ux at 1940Z). A newer revision with 218's
+//      price and clock makes frame 218 "older", AT the held clock, and the
+//      strict `at < heldAt` refused the very reading the headline shows.
 //
-// Rig: the page's own path — frames through `rememberLiveChartFrame` →
-// `quoteChartFrames` → `mergeLiveChartHistory` — onto the production body cut at
-// the 19:20:57Z serve instant (fixture `_provenance` says exactly how), rendered
-// by the real `OddsChart` at 390px. The frames are the eleven the harness
+// Rig: the page's own path, with frames going through `rememberLiveChartFrame`
+// → `quoteChartFrames` → `mergeLiveChartHistory` onto a RECONSTRUCTED 19:20:57Z
+// poll body (the captured response was not retained; the fixture's
+// `_provenance` says how it was built). The real `OddsChart` renders it at
+// 390px. The frames are the eleven the harness
 // recorded, verbatim.
 
 import React from "react";
@@ -128,13 +133,46 @@ describe("#10090 the chart endpoint follows the accepted reading through a later
     expect(plain(series(body).slice(0, before.length))).toEqual(plain(before));
     const times = series(body).map(p => Date.parse(p.timestamp));
     expect([...times].sort((a, b) => a - b)).toEqual(times);
-    // Interior frames (209–216 sit between stored readings) are not inserted:
-    // only the tail past the last stored reading is this change's — 217
-    // (19:20:19.705, a hair after the stored 19:20:19.591), 218, then the edge.
+    // Interior frames (209–216 sit between stored readings) are not inserted.
+    // 217 (19:20:19.705, a hair after the stored 19:20:19.591) repeats 0.36, so
+    // it is coverage on the stored reading (#10671), not a point; only 218 and
+    // the edge follow.
+    expect(series(body)[before.length - 1].evidence).toEqual({
+      kind: "observed", covered_through: "2026-10-09T19:20:19.705652+00:00",
+    });
     expect(series(body).slice(before.length).map(p => p.timestamp)).toEqual([
-      "2026-10-09T19:20:19.705652+00:00", "2026-10-09T19:20:28.820452+00:00", "2026-10-09T19:20:57+00:00",
+      "2026-10-09T19:20:28.820452+00:00", "2026-10-09T19:20:57+00:00",
     ]);
     expect(served.win_prob_history!.polymarket.at(-1)!.home_probability).toBe(0.36);
+  });
+
+  describe("a newer revision that kept 218's price and clock (ux 1940Z, quoteChartFrames boundary)", () => {
+    // The revision bumps on ANY bag change (wps_revision.py trigger), so the
+    // headline can hold rev 219 stamped with rev 218's own clock and price.
+    // Frame 218 is then "older", AT the held clock: the reading the headline
+    // shows. The strict `at < heldAt` refused it and the line ended on 36%.
+    const points = () => frames
+      .reduce<LiveChartFrame[]>((acc, f) => rememberLiveChartFrame(acc, f, EVENT_ID), []);
+    const held219 = (over: object = {}) => ({ ...heroAfter(218), blend_fold_revision: { [EVENT_ID]: 219 }, ...over });
+
+    it("held rev 219 at 218's clock: 218 is admitted and the endpoint reads 37%, as the headline", () => {
+      const admitted = quoteChartFrames(points(), held219());
+      expect(admitted.at(-1)!.timestamp).toBe("2026-10-09T19:20:28.820452+00:00");
+      const body = mergeLiveChartHistory(served, admitted)!;
+      expect(callout(render(body))).toBe("37%");
+      expect(series(body).at(-1)).toMatchObject({ live_edge: true, home_probability: 0.37 });
+    });
+
+    it("REFUSES: a frame at the held clock with a DIFFERENT value is not the headline's reading", () => {
+      const admitted = quoteChartFrames(points(), held219({ hero_probability: 0.4 }));
+      expect(admitted.map(p => p.timestamp)).not.toContain("2026-10-09T19:20:28.820452+00:00");
+    });
+
+    it("FAILS CLOSED: an unknown held clock admits no older frame (the served 36% stands)", () => {
+      const admitted = quoteChartFrames(points(), held219({ hero_probability_observed_at: null }));
+      expect(admitted).toEqual([]);
+      expect(callout(render(mergeLiveChartHistory(served, admitted)!))).toBe("36%");
+    });
   });
 
   it("a reading the headline refused (an older fold revision) never moves the endpoint", () => {

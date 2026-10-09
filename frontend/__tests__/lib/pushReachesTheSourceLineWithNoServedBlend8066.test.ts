@@ -27,6 +27,7 @@
 import {
   rememberLiveChartFrame,
   mergeLiveChartHistory,
+  quoteChartFrames,
   type LiveChartFrame,
 } from "@/lib/liveChartHistory";
 import type { LiveStreamFrame } from "@/lib/liveStreamController";
@@ -173,6 +174,45 @@ describe("#8066 remainder: with no backend blend, push extends the source's own 
     };
     expect(mergeLiveChartHistory(served, buffer(frame(25, .5, .5)))!.win_prob_history.kalshi
       .map(p => p.timestamp)).toEqual([t(0), t(30)]);
+  });
+
+  describe("#10090: a real reading's observed coverage bounds what may move the edge (Root review of ae5a413b63)", () => {
+    // The stored 0.5 at :00 was seen again, unmoved, through :40
+    // (`evidence.observed.covered_through`, winprob_evidence.py) — a genuine
+    // later observation, not a synthetic clock. The edge at :60 carries 0.5.
+    const covered = () => ({
+      win_prob_history: { kalshi: [
+        wp(0, .5, { evidence: { kind: "observed", covered_through: t(40) } }),
+        wp(60, .5, { live_edge: true, evidence: { kind: "live_edge" } }),
+      ] },
+    });
+    const held = (rev: number, p: number, s: number) => ({
+      status: "live", hero_probability: p, hero_probability_source: "blend",
+      hero_probability_observed_at: t(s), blend_fold_revision: { 42: rev },
+    });
+    const revFrame = (s: number, p: number, rev: number): LiveStreamFrame =>
+      ({ ...frame(s, p, p), rev: { 42: rev } });
+
+    it("REFUSES: a historical 0.6 at :25 (rev 10, kept by quoteChartFrames) never overwrites the 0.5 proven through :40", () => {
+      const served = covered();
+      const admitted = quoteChartFrames(buffer(revFrame(25, .6, 10)), held(11, .5, 40));
+      expect(admitted.map(p => p.timestamp)).toEqual([t(25)]); // legitimately retained
+      const line = mergeLiveChartHistory(served, admitted)!.win_prob_history.kalshi;
+      expect(line.map(p => [p.timestamp, p.home_probability])).toEqual([[t(0), .5], [t(60), .5]]);
+      expect(served.win_prob_history.kalshi[1].home_probability).toBe(.5);
+    });
+
+    it("REFUSES: a reading AT the coverage instant ties to the served proof", () => {
+      const line = mergeLiveChartHistory(covered(), buffer(frame(40, .6, .6)))!.win_prob_history.kalshi;
+      expect(line.map(p => p.home_probability)).toEqual([.5, .5]);
+    });
+
+    it("MOVES: a 0.6 genuinely newer than the coverage lands at its time and the edge carries it", () => {
+      const admitted = quoteChartFrames(buffer(revFrame(45, .6, 12)), held(12, .6, 45));
+      const line = mergeLiveChartHistory(covered(), admitted)!.win_prob_history.kalshi;
+      expect(line.map(p => [p.timestamp, p.home_probability, p.live_edge === true]))
+        .toEqual([[t(0), .5, false], [t(45), .6, false], [t(60), .6, true]]);
+    });
   });
 
   it("leaves the source series exactly as served once the backend has a blend", () => {

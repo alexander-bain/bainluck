@@ -97,6 +97,9 @@ export function rememberLiveChartFrame(
  *      served had it stored that publication. The edge keeps its delivery time
  *      and flag; nothing is drawn backwards because the endpoint moves with
  *      the reading. Ties with a REAL served point go to the served point.
+ *      "The last real reading" includes its `observed` coverage: a reading
+ *      at or before `covered_through` is older than the backend's proof that
+ *      the served value still held, so it changes nothing.
  *
  * What lands is an observation, not a delivery: these frames are stamped at
  * `live_blend_refresh`'s write time, so they carry no `live_edge` flag and
@@ -117,8 +120,15 @@ function extendServedSourceSeries(
     // The trailing synthetic edge(s), if any, and the real reading before them.
     let real = series.length - 1;
     while (real >= 0 && isSyntheticEdge(series[real])) real--;
-    const readAt = real >= 0 && real < series.length - 1 ? Date.parse(series[real].timestamp) : edge;
-    if (!Number.isFinite(readAt)) continue;
+    const lastRead = real >= 0 && real < series.length - 1 ? Date.parse(series[real].timestamp) : edge;
+    if (!Number.isFinite(lastRead)) continue;
+    // A real reading served as `observed` was seen again, unmoved, through
+    // `covered_through`; a pushed reading at or before that is older than the
+    // proof and must not overwrite it. Only a REAL reading's coverage counts —
+    // the edge's own evidence is a delivery time, never an observation.
+    const coverage = real >= 0 && series[real].evidence?.kind === "observed"
+      ? Date.parse(series[real].evidence?.covered_through ?? "") : NaN;
+    const readAt = Number.isFinite(coverage) && coverage > lastRead ? coverage : lastRead;
     // `points` is kept sorted by `rememberLiveChartFrame`, so a filter
     // preserves that order.
     const readings = points
@@ -424,9 +434,16 @@ export function quoteChartFrames(
     if (order === "incomparable") return false;
     // A delayed old commit may carry a newer observation clock. It is not
     // permission to draw a value the headline correctly refused at the edge.
+    // A newer revision can carry the same price and clock as this frame (the
+    // revision bumps on ANY bag change, #10090: held rev 219 stamped with rev
+    // 218's clock), so a frame AT the held clock that carries the held value
+    // is the very reading the headline shows. An unknown clock admits nothing:
+    // without it a delayed old commit cannot be told from an earlier one.
     if (order === "older") {
       const heldAt = Date.parse(hero.hero_probability_observed_at ?? "");
-      return Number.isFinite(heldAt) && Date.parse(point.timestamp) < heldAt;
+      if (!Number.isFinite(heldAt)) return false;
+      const at = Date.parse(point.timestamp);
+      return at < heldAt || (at === heldAt && point.home_probability === hero.hero_probability);
     }
     return true;
   });
