@@ -18,6 +18,7 @@ def _get_task_engine(
     *,
     statement_timeout_ms: int | None = None,
     lock_timeout_ms: int | None = None,
+    retain_full_pool: bool = False,
 ):
     """Create a fresh async engine for Celery task execution.
 
@@ -35,6 +36,11 @@ def _get_task_engine(
     are why this function takes arguments at all — see ``build_connect_args``
     for why a per-job budget cannot be a ``SET`` or a ``SET LOCAL`` on the
     session and has to be a property of the connection.
+
+    Socket consumers retain all five permitted connections between flushes.
+    With three concurrent event stamps plus a price writer, retaining only
+    three closes a connection after each overlapping batch and makes the next
+    batch connect again. Other tasks retain their existing 3 + 2 pool.
     """
     connect_args = build_connect_args(
         DATABASE_URL,
@@ -45,8 +51,8 @@ def _get_task_engine(
     return create_async_engine(
         DATABASE_URL,
         pool_pre_ping=True,
-        pool_size=3,
-        max_overflow=2,
+        pool_size=5 if retain_full_pool else 3,
+        max_overflow=0 if retain_full_pool else 2,
         pool_recycle=1800,
         connect_args=connect_args,
     )
