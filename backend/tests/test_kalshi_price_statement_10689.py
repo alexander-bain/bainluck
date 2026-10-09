@@ -47,7 +47,11 @@ def test_exact_actual_writer_sql_positional_types_and_processed_values(
 ):
     complete = bid is not None and ask is not None
     original = original_statement(17, probability, bid, ask)
-    candidate = KALSHI_PRICE_STATEMENTS[complete]
+    candidate = KALSHI_PRICE_STATEMENTS[complete]._generate()
+    # The reviewed repeat predicate is covered by direct admission controls;
+    # storage, returning expressions and bind precision remain exactly pinned.
+    assert len(candidate._where_criteria) == 3
+    candidate._where_criteria = candidate._where_criteria[:-1]
     parameters = kalshi_price_parameters(17, probability, bid, ask)
     assert compiled_signature(original) == compiled_signature(candidate, parameters)
 

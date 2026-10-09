@@ -28,7 +28,10 @@ from app.utils.kalshi_price_statement import (
 _SUPPORTED = frozenset({("2.0.50", "0.31.0"), ("2.0.54", "0.32.0")})
 _TAG = "_kalshi_price_pipeline_10693"
 _OWNER = "_kalshi_price_pipeline_10693_owner"
-PriceInput = tuple[float, float | None, float | None]
+PriceInput = (
+    tuple[float, float | None, float | None]
+    | tuple[float, float | None, float | None, bool]
+)
 
 
 @dataclass(frozen=True)
