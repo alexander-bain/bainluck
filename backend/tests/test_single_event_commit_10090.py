@@ -169,10 +169,11 @@ async def test_fresh_work_spending_residual_budget_skips_later_pending_read(monk
     x.r._lock_retry = {2}
     attempt, prepare = x.r._refresh_batch, x.r._prepare_groups
     second_call = False
-    reads = []
+    reads, old_attempts = [], []
 
     async def slow_stamp(ids, *args, **kwargs):
         if ids == [2]:
+            old_attempts.append(second_call)
             clock[0] += 0.6
         elif second_call:
             clock[0] += 0.3
@@ -187,9 +188,10 @@ async def test_fresh_work_spending_residual_budget_skips_later_pending_read(monk
     assert x.r._lock_retry == {2}
     second_call = True
     await x.r.refresh([3, 4], flush_started=1000)
-    # Fresh populations within the workers read in their own stamp sessions;
-    # only old debt takes a shared read, and the spent budget skips the second.
-    assert reads == [{2}]
+    # Fresh populations within the workers, and a lone old event, read in
+    # their own stamp sessions; the spent budget skips the second old attempt.
+    assert reads == []
+    assert old_attempts == [False]
     assert 3 in x.committed and 3 in x.published
     assert x.r.pending_event_ids() == frozenset({2})
     assert not x.r._failed_hold_until

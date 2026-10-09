@@ -1425,17 +1425,24 @@ class LiveBlendRefresher:
                 # shared read below could not reorder. It reads its own group,
                 # as a singleton does, instead of first reading every old
                 # event. The rest stay owed in their continuation order; debt
-                # without one gets its live-first order from a later read.
+                # without one gets its live-first order from a later read. A
+                # single old event without a head has no order to decide
+                # either, so it reads its own group the same way.
                 carried = [
                     eid for eid in self._pending_continuation if eid in population
                 ]
-                head_only = (
+                head = None
+                if (
                     pending_only
-                    and bool(carried)
                     and flush_started is not None
                     and self._pending_fresh_flush
                     and FRESH_FLUSH_PENDING_ATTEMPTS - self._pending_attempts == 1
-                )
+                ):
+                    if carried:
+                        head = carried[0]
+                    elif len(population) == 1:
+                        (head,) = population
+                head_only = head is not None
                 # A fresh population that fits the fixed workers has no claim
                 # order to decide: every event starts at once. Each stamp reads
                 # its own group in its own write session, as a singleton does,
@@ -1518,8 +1525,8 @@ class LiveBlendRefresher:
                             committed(group_ids)
 
                 if head_only:
-                    await stamp_event(carried[0])
-                    remaining = population.difference(carried[:1])
+                    await stamp_event(head)
+                    remaining = population.difference({head})
                     budget_deferred.update(remaining)
                     self._lock_retry.update(remaining.intersection(retry))
                     self._throttle_deferred.update(remaining.difference(retry))
