@@ -2939,9 +2939,10 @@ async def _run_polymarket_ws_consumer(*, sessions, stop=None):
             return unadmitted_live_events(result.all(), legged_market_ids)
 
     def start_game_socket():
-        # `run([])` means every market to the legacy resolution client.
+        # Reuse the open arm's per-shard owner for game quotes/resolutions.
+        # Empty means no subscriptions here, never the legacy all-market run.
         return asyncio.create_task(
-            ws.run(asset_ids=asset_ids.copy()) if asset_ids else asyncio.Event().wait(),
+            ws.run_refreshable(asset_ids.copy()),
             name="polymarket-game-sockets",
         )
 
@@ -3030,21 +3031,16 @@ async def _run_polymarket_ws_consumer(*, sessions, stop=None):
                 )
                 run_started_at = time.monotonic()
                 continue
-            # Callbacks read the refreshed maps: unchanged token membership
-            # needs no reconnect, even if database ordering changed. A changed
-            # slate keeps the existing cancel/join/subscribe contract.
-            game_members_changed = set(asset_ids) != set(fresh_slate["asset_ids"])
-            if game_members_changed:
-                game_run_task.cancel()
-                await asyncio.gather(game_run_task, return_exceptions=True)
+            # Install new callback ownership before subscribing new tokens.
+            # The existing refreshable owner changes only affected shards, so
+            # unrelated live games keep their connections, books and coverage.
             await refresh_catalog(fresh_slate, fresh_open)
-            if game_members_changed:
-                game_run_task = start_game_socket()
-            elif game_run_task.done():
+            if game_run_task.done():
                 # Loading/updating can yield while the retained client exits.
                 # Propagate its failure (or end this run) just as the wait above.
                 game_run_task.result()
                 break
+            ws.update_asset_ids(asset_ids.copy())
             run_started_at = time.monotonic()
             stats["catalog_refreshes"] = stats.get("catalog_refreshes", 0) + 1
             stats["recycle_reason"] = "admission" if admitted else "timer"

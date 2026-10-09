@@ -272,7 +272,7 @@ async def test_real_consumer_keeps_open_quotes_and_drains_once_after_refresh(
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("client_exit_during_refresh", [False, True])
-async def test_game_socket_retains_reordered_catalog_then_restarts_and_drains(
+async def test_game_refresh_retains_unaffected_shard_and_drains(
     monkeypatch, client_exit_during_refresh,
 ):
     def slate(mid, yes_oid, no_oid, condition, tokens, event):
@@ -303,6 +303,9 @@ async def test_game_socket_retains_reordered_catalog_then_restarts_and_drains(
                 self.slate = slate(8, 91, 92, "0xnew", ["333", "444"], 901)
             else:
                 self.slate = [[], [], []]
+            if n <= 4:
+                stable = slate(9, 101, 102, "0xstable", ["555", "666"], 902)
+                self.slate = [left + right for left, right in zip(self.slate, stable)]
             return self.slate[0]
 
     rig, sockets, stop = Rig(), [], asyncio.Event()
@@ -353,6 +356,11 @@ async def test_game_socket_retains_reordered_catalog_then_restarts_and_drains(
     monkeypatch.setattr(websockets, "connect", lambda *args, **kwargs: Socket())
     monkeypatch.setattr(blend, "LiveBlendRefresher", Refresher)
     monkeypatch.setattr(task, "SUBSCRIPTION_REFRESH_SECONDS", 0.02)
+    monkeypatch.setattr(service, "MAX_ASSETS_PER_CONNECTION", 2)
+    split = service._shard_asset_ids
+    monkeypatch.setattr(
+        service, "_shard_asset_ids", lambda ids: split(ids, max_assets=2)
+    )
     monkeypatch.setattr(task, "PRICE_FLUSH_SECONDS", 10)
     monkeypatch.delenv("PM_WS_PRICE_FLUSH_SECONDS", raising=False)
     monkeypatch.setenv("POLYMARKET_WS_OPEN_CONTRACT_PRICES", "1")
@@ -362,8 +370,9 @@ async def test_game_socket_retains_reordered_catalog_then_restarts_and_drains(
         # Read 4 is held: both the unchanged and reordered refresh completed.
         await until(lambda: rig.catalog_reads == 4)
         games = [sock for sock in sockets if sock.assets != ("open",)]
-        assert len(games) == 1
-        first = games[0]
+        assert len(games) == 2
+        first = next(sock for sock in games if sock.assets == ("111", "222"))
+        stable = next(sock for sock in games if sock.assets == ("555", "666"))
         assert first.assets == ("111", "222")
         assert not first.closed and not first.owner.done()
         # The retained reader uses the NEW outcome routing, not its initial map.
@@ -372,8 +381,13 @@ async def test_game_socket_retains_reordered_catalog_then_restarts_and_drains(
             first.owner.cancel()
             await asyncio.gather(first.owner, return_exceptions=True)
             rig.gates[4].set()
-            with pytest.raises(asyncio.CancelledError):
+            # The service may still be joining its other shards when refresh
+            # observes its closed admission boundary. Both paths must fail out
+            # of the consumer and join/drain, never retain a dead game client.
+            with pytest.raises((asyncio.CancelledError, RuntimeError)) as failure:
                 await asyncio.wait_for(owner, 5)
+            if isinstance(failure.value, RuntimeError):
+                assert str(failure.value) == "Polymarket refreshable client is not running"
             stats = None
         else:
             rig.gates[4].set()
@@ -382,11 +396,14 @@ async def test_game_socket_retains_reordered_catalog_then_restarts_and_drains(
             second = next(sock for sock in sockets if sock.assets == ("333", "444"))
             assert first.closed and first.owner.done()
             assert second.owner is not first.owner and not second.closed
+            # A change in the first shard leaves the other game's reader alive.
+            assert not stable.closed and not stable.owner.done()
+            await stable.quote("555", "0.80", "0.84")
             await second.quote("333", "0.70", "0.74")
             rig.gates[5].set()
             await until(lambda: rig.catalog_reads == 6)
             assert second.closed and second.owner.done()
-            assert len(sockets) == 3  # two game subscriptions plus one retained open
+            assert len(sockets) == 4  # replaced first game, retained sibling and open
             assert all(sock.assets for sock in sockets)  # empty never means all markets
             stop.set()
             rig.gates[6].set()
@@ -396,9 +413,9 @@ async def test_game_socket_retains_reordered_catalog_then_restarts_and_drains(
         await asyncio.gather(owner, return_exceptions=True)
     expected = [(82, pytest.approx(0.62))]
     if client_exit_during_refresh:
-        assert len(sockets) == 2  # a dead game client is never silently retained
+        assert len(sockets) == 3  # a dead game client is never silently retained
     else:
-        expected.append((91, pytest.approx(0.72)))
+        expected.extend([(91, pytest.approx(0.72)), (101, pytest.approx(0.82))])
         assert stats["final_flush_dropped"] == 0
     assert sorted(rig.writes) == expected
     assert all(sock.closed and sock.owner.done() for sock in sockets)
