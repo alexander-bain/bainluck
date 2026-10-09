@@ -85,7 +85,10 @@ nonisolated struct WatchScoreLayoutUIFixture: WatchSelectedGameTransport {
         }
         // SELECTED_BOUNDARIES_END
         if scenario == "long-clock" {
-            payload["espn"] = ["period": "4th Quarter", "game_clock": "12:34"]
+            payload["espn"] = [
+                "period": "4th Quarter",
+                "game_clock": "12:34",
+            ]
         }
         if scenario == "compact-final" {
             payload["home_team"] = "Chelsea"
