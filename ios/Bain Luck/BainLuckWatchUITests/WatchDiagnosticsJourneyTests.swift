@@ -31,9 +31,13 @@ final class WatchDiagnosticsJourneyTests: XCTestCase {
         if large { XCTAssertEqual(size, "accessibility5") }
         else { XCTAssertFalse(size.hasPrefix("accessibility")) }
         try captureContent(choice, app: app, name: "Watch diagnostics default off - \(size)")
+        let phoneRequirement = app.staticTexts["watch.diagnostics.phone-requirement"].firstMatch
+        try reveal(phoneRequirement, app: app)
+        XCTAssertEqual(phoneRequirement.label, "Your iPhone must also allow analytics.")
+        try captureContent(phoneRequirement, app: app, name: "Watch diagnostics iPhone requirement beside choice - \(size)")
         let disclosure = app.staticTexts["watch.diagnostics.disclosure"].firstMatch
-        XCTAssertTrue(disclosure.label.contains("part of your iPhone’s analytics"))
-        XCTAssertTrue(disclosure.label.contains("Your iPhone must also allow analytics"))
+        try reveal(disclosure, app: app)
+        XCTAssertEqual(disclosure.label, "Shares screen visits, actions and load times as part of your iPhone’s analytics. No game names or search text are included.")
         try captureContent(disclosure, app: app, name: "Watch diagnostics consent disclosure - \(size)")
         let revocation = app.staticTexts["watch.diagnostics.revocation"].firstMatch
         try reveal(revocation, app: app)
@@ -65,9 +69,14 @@ final class WatchDiagnosticsJourneyTests: XCTestCase {
     }
 
     @MainActor private func openSettings(_ app: XCUIApplication) throws {
+        let more = app.buttons["watch.more-actions"]
+        try reveal(more, app: app)
+        XCTAssertEqual(more.value as? String, "Collapsed")
+        more.tap()
+        XCTAssertEqual(more.value as? String, "Expanded")
         let link = app.buttons["watch.diagnostics"].firstMatch
         XCTAssertTrue(link.waitForExistence(timeout: 20))
-        try reveal(link, app: app)
+        try reveal(link, app: app, maxScrollFraction: 0.55)
         link.tap()
         XCTAssertTrue(app.switches["watch.diagnostics.choice"].firstMatch.waitForExistence(timeout: 10))
     }
@@ -82,22 +91,27 @@ final class WatchDiagnosticsJourneyTests: XCTestCase {
                       height: max(1, content.maxY - top)).intersection(app.frame)
     }
 
-    @MainActor private func scroll(_ app: XCUIApplication, earlier: Bool) {
+    @MainActor private func scroll(_ app: XCUIApplication, earlier: Bool, fraction: CGFloat = 0.20) {
         let box = bounds(app)
+        // Longer moves only traverse distant content. Keep both endpoints
+        // inside the viewport and retain the small step near the target.
+        let startFraction: CGFloat = fraction > 0.20 ? (earlier ? 0.20 : 0.80) : 0.60
         let start = app.coordinate(withNormalizedOffset: .zero).withOffset(
-            CGVector(dx: box.midX - app.frame.minX, dy: box.minY + box.height * 0.60 - app.frame.minY))
-        let end = start.withOffset(CGVector(dx: 0, dy: box.height * (earlier ? 0.20 : -0.20)))
+            CGVector(dx: box.midX - app.frame.minX, dy: box.minY + box.height * startFraction - app.frame.minY))
+        let end = start.withOffset(CGVector(dx: 0, dy: box.height * (earlier ? fraction : -fraction)))
         start.press(forDuration: 0.1, thenDragTo: end, withVelocity: .slow, thenHoldForDuration: 0.3)
     }
 
-    @MainActor private func reveal(_ element: XCUIElement, app: XCUIApplication, earlierWhenMissing: Bool = false) throws {
+    @MainActor private func reveal(_ element: XCUIElement, app: XCUIApplication, earlierWhenMissing: Bool = false, maxScrollFraction: CGFloat = 0.20) throws {
         for _ in 0..<24 {
             let box = bounds(app)
             // Form lazily mounts offscreen rows; never read a missing row's frame or label.
             if !element.exists { scroll(app, earlier: earlierWhenMissing); continue }
             if element.isHittable && (box.contains(element.frame) ||
                 (element.frame.height > box.height && box.intersects(element.frame))) { return }
-            scroll(app, earlier: element.frame.midY < box.midY)
+            let distance = abs(element.frame.midY - box.midY) / box.height
+            let fraction = min(maxScrollFraction, max(0.20, distance))
+            scroll(app, earlier: element.frame.midY < box.midY, fraction: fraction)
         }
         capture(app, "Unreachable diagnostics element - \(element.identifier)")
         throw NSError(domain: "WatchDiagnostics", code: 1)

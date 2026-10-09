@@ -11,6 +11,11 @@ final class LargeTextRecoveryJourneyTests: XCTestCase {
         defer { app.terminate() }
         let probability = app.descendants(matching: .any)["watch.home-probability"].firstMatch
         let reading = probability.label
+        let more = app.buttons["watch.more-actions"]
+        try reveal(more, in: app)
+        XCTAssertEqual(more.value as? String, "Collapsed")
+        more.tap()
+        XCTAssertEqual(more.value as? String, "Expanded")
         let help = app.buttons["watch.continue-on-phone"]
         try reveal(help, in: app)
         capture(app, "Largest text reachable Continue on iPhone control")
@@ -23,6 +28,7 @@ final class LargeTextRecoveryJourneyTests: XCTestCase {
         try reveal(change, in: app)
         capture(app, "Largest text reachable change control")
         change.tap()
+        try expandPickerDetails(in: app)
         let error = app.staticTexts["watch.picker-error"]
         XCTAssertTrue(error.waitForExistence(timeout: 15))
         let heading = app.staticTexts["watch.picker-heading"]
@@ -116,6 +122,7 @@ final class LargeTextRecoveryJourneyTests: XCTestCase {
         XCTAssertFalse(app.descendants(matching: .any)["watch.game-state"].firstMatch.exists)
         XCTAssertFalse(app.buttons["watch.clear-selection"].exists)
         XCTAssertFalse(app.buttons["watch.choose-another"].exists)
+        try expandPickerDetails(in: app)
         let error = app.staticTexts["watch.picker-error"]
         XCTAssertTrue(error.waitForExistence(timeout: 15))
         XCTAssertEqual(error.label, "Offline. Connect to the internet, then refresh games.")
@@ -125,6 +132,19 @@ final class LargeTextRecoveryJourneyTests: XCTestCase {
         expectation(for: NSPredicate(format: "enabled == true"), evaluatedWith: refresh)
         waitForExpectations(timeout: 15)
         try reveal(refresh, in: app)
+    }
+
+    @MainActor
+    private func expandPickerDetails(in app: XCUIApplication) throws {
+        let details = app.buttons["watch.picker-info"]
+        XCTAssertTrue(details.waitForExistence(timeout: 15))
+        XCTAssertEqual(details.label, "About this list")
+        try reveal(details, in: app)
+        if details.value as? String != "Expanded" {
+            XCTAssertEqual(details.value as? String, "Collapsed")
+            details.tap()
+        }
+        XCTAssertEqual(details.value as? String, "Expanded")
     }
 
     @MainActor
