@@ -359,6 +359,10 @@ class _KalshiPriceOwner:
         self.stamping = None
         self.stamping_events: set[int] = set()
         self.stamping_fresh: set[int] = set()
+        # #10090: flushes that attempted price or owed-stamp work. The cadence
+        # spends its once-per-period budget only on these, so an empty timer
+        # probe leaves the next accepted winner quote free to start at once.
+        self.flush_work = 0
 
     async def join_stamp(self, refresher, *, cancel=False):
         """Wait for the run's blend refresh, if any, and retrieve its outcome.
@@ -1076,6 +1080,11 @@ async def _run_kalshi_ws_consumer(*, sessions, prices):
     # (`load_quote_priority_event_ids`) runs now, not at the next 30 s check.
     # Its later quotes, and an event the read refuses, never set it again.
     admission_wake = asyncio.Event()
+    # #10090: set by every accepted linked winner-leg quote, so the flush
+    # cadence starts unused budget at once instead of at its next timer phase
+    # (`run_flush_cadence`'s opt-in wake). Refused, unmapped, open-contract and
+    # prop input never sets it; the actual-work ceiling is the cadence's.
+    flush_wake = asyncio.Event()
     # #10090: the monotonic time the soonest quoting, otherwise-eligible event
     # starts, from the last quote-priority read; the watcher's next reread is
     # due then instead of at the next 30 s check (an event that quotes BEFORE
@@ -1155,8 +1164,13 @@ async def _run_kalshi_ws_consumer(*, sessions, prices):
             if prices.stamping is not None and prices.stamping.done():
                 await prices.join_stamp(blend_refresher)
             if prices.stamping is None:
+                if blend_refresher.pending_event_ids():
+                    prices.flush_work += 1  # owed stamps are actual work
                 await blend_refresher.refresh_pending(flush_started=flush_started)
             return True
+        # #10090: a snapshot with prices is actual work, held cohorts included,
+        # so a held game's quotes cannot buy more than one flush per period.
+        prices.flush_work += 1
         # Q491 repair 2 (CERT-659 BLOCK) — THE BUFFER IS DELIBERATELY *NOT*
         # CLEARED HERE. Draining first and putting the batch back on failure
         # only covers the failures you thought to catch, and two rounds of certs
@@ -1819,6 +1833,7 @@ async def _run_kalshi_ws_consumer(*, sessions, prices):
             if ticker in ticker_to_ids and outcome_id not in non_blend_outcome_ids:
                 event_id = event_id_by_outcome.get(outcome_id)
                 if event_id is not None:
+                    flush_wake.set()
                     now = time.monotonic()
                     previous = winner_quoted_at.get(event_id)
                     winner_quoted_at[event_id] = now
@@ -2274,12 +2289,17 @@ async def _run_kalshi_ws_consumer(*, sessions, prices):
                 flush_timings.flushed(time.monotonic() - started)
 
     async def flush_loop():
+        # #10090: an accepted winner quote after an empty probe starts the
+        # unused period now; actual work still starts at most once per period.
+        idle_wake = dict(wake=flush_wake, work_count=lambda: prices.flush_work)
         if failed_retry is None:
-            await run_flush_cadence(timed_flush, flush_period, stop=loops_stop)
+            await run_flush_cadence(
+                timed_flush, flush_period, stop=loops_stop, **idle_wake,
+            )
         else:
             await run_flush_cadence(
                 timed_flush, flush_period, stop=loops_stop,
-                failed_retry_interval_s=failed_retry,
+                failed_retry_interval_s=failed_retry, **idle_wake,
             )
 
     # -- Periodic stats logging --

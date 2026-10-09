@@ -25,12 +25,13 @@ ENV = "KALSHI_WS_PRICE_FLUSH_SECONDS"
 
 
 async def _run_recording(monkeypatch, arm):
-    """Run the REAL consumer to its recycle; return (cadence calls, refreshers)."""
+    """Run the REAL consumer to its recycle; return (cadence calls, refreshers,
+    per-call (wake is an Event, work_count() at entry))."""
     module, consumer, slate = _arm(monkeypatch, arm)
     _install_quiet_socket(monkeypatch)
     _install_session(monkeypatch, slate, lambda _: [])
     _timing(monkeypatch, module, refresh=0.05)
-    instances, calls = [], []
+    instances, calls, wakes = [], [], []
     original = lbr.LiveBlendRefresher
 
     class RecordingRefresher(original):
@@ -38,14 +39,23 @@ async def _run_recording(monkeypatch, arm):
             super().__init__(*args, **kwargs)
             instances.append(self)
 
-    async def cadence(flush, period, stop=None, *, failed_retry_interval_s=None):
+    async def cadence(
+        flush, period, stop=None, *, failed_retry_interval_s=None,
+        wake=None, work_count=None,
+    ):
+        # #10090: what each caller passes for the idle wake, asserted per
+        # caller by the tests (PM's standalone flush passes neither).
+        wakes.append((
+            isinstance(wake, asyncio.Event),
+            None if work_count is None else work_count(),
+        ))
         calls.append((period, failed_retry_interval_s))
         await stop.wait()
 
     monkeypatch.setattr(lbr, "LiveBlendRefresher", RecordingRefresher)
     monkeypatch.setattr(lbr, "run_flush_cadence", cadence)
     await asyncio.wait_for(consumer(), timeout=3)
-    return calls, instances
+    return calls, instances, wakes
 
 
 @pytest.mark.parametrize(
@@ -66,8 +76,10 @@ async def test_real_kalshi_consumer_binds_timer_floor_and_legacy_retry(
     else:
         monkeypatch.setenv(ENV, override)
     monkeypatch.setattr(kalshi_task, "PRICE_FLUSH_SECONDS", legacy)
-    calls, instances = await _run_recording(monkeypatch, "kalshi")
+    calls, instances, wakes = await _run_recording(monkeypatch, "kalshi")
     assert calls == [(expected_period, expected_retry)]
+    # The Kalshi flush opts into the idle wake with a zero actual-work count.
+    assert wakes == [(True, 0)]
     (refresher,) = instances
     assert refresher.min_refresh_interval_s == expected_floor
     # Nothing else about the refresher moves with the timer.
@@ -101,9 +113,11 @@ async def test_kalshi_override_does_not_change_real_pm_consumer(monkeypatch):
     import app.tasks.polymarket_ws as poly_task
 
     monkeypatch.setattr(poly_task, "PRICE_FLUSH_SECONDS", 3.5)
-    calls, instances = await _run_recording(monkeypatch, "polymarket")
+    calls, instances, wakes = await _run_recording(monkeypatch, "polymarket")
     # The PM game flush, then its standalone flush on the base timer (962ced).
     assert calls == [(3.5, 3.5), (3.5, None)]
+    # Only the game flush takes the idle wake; standalone stays timer-only.
+    assert wakes == [(True, 0), (False, None)]
     assert instances[0].min_refresh_interval_s == 2
 
 

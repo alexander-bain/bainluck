@@ -50,8 +50,13 @@ async def test_real_pm_consumer_binds_timer_floor_and_legacy_retry(
             super().__init__(*args, **kwargs)
             instances.append(self)
 
-    async def cadence(flush, period, stop=None, *, failed_retry_interval_s=None):
+    async def cadence(flush, period, stop=None, *, failed_retry_interval_s=None,
+                      wake=None, work_count=None):
         calls.append((period, failed_retry_interval_s))
+        if failed_retry_interval_s is not None:
+            assert isinstance(wake, asyncio.Event) and work_count() == 0
+        else:
+            assert wake is None and work_count is None
         await stop.wait()
 
     monkeypatch.setattr(lbr, "LiveBlendRefresher", RecordingRefresher)
@@ -104,7 +109,8 @@ async def test_pm_override_does_not_change_real_kalshi_consumer(monkeypatch):
             super().__init__(*args, **kwargs)
             instances.append(self)
 
-    async def cadence(flush, period, stop=None, *, failed_retry_interval_s=None):
+    async def cadence(flush, period, stop=None, *, failed_retry_interval_s=None,
+                      **_idle_wake):
         calls.append((period, failed_retry_interval_s))
         await stop.wait()
 
