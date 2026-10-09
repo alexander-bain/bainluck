@@ -7063,7 +7063,9 @@ def _publish_feed_item(item: dict) -> None:
 #: it. ``False`` leaves every key, fingerprint, tier and payload byte-identical
 #: to the pre-#5105 route. Turning it on is a release decision that also needs
 #: the web/native section + restart consumers and the warm rail's seated shapes.
-_DISCOVER_OPENING_SEATING_SERVED = False
+#: ``True`` here is the LOCAL switch-on release candidate only; rollback is this
+#: one constant back to ``False``.
+_DISCOVER_OPENING_SEATING_SERVED = True
 
 #: Private key a SEATED build leader attaches to the payload it hands its
 #: coalesced waiters (never to anything published or served): the raw full deck

@@ -163,6 +163,9 @@ nonisolated struct FixedDiscoverFeed: DiscoverFeedProviding {
             "edition": fixture.edition,
         ]
         if let cache = body["cache"] { window["cache"] = cache }
+        // #5105: a seated deck states its global boundary on every page, as the
+        // server does, so the rig can draw the "Live events" section.
+        if let start = body["continuation_start"] { window["continuation_start"] = start }
         let data = try JSONSerialization.data(withJSONObject: window)
         return try Self.decoder.decode(FeedResponse.self, from: data)
     }

@@ -34,6 +34,26 @@ protocol DiscoverFeedProviding: Sendable {
     /// over another's (the `boolean_only_a_to_b_publish` counterexample).
     nonisolated func currentFeedPrincipal() async -> String
 
+    /// #5102/#5105: the two fetches above, carrying an accepted edition token.
+    /// `nil` means an unpinned request (new opening, manual replacement). Defaulted
+    /// below to the token-less calls so every existing fake keeps compiling and
+    /// behaving as before; only `APIClient` and edition-aware fakes see the token.
+    nonisolated func fetchDiscoverFeed(
+        limit: Int,
+        offset: Int,
+        eventPct: Double?,
+        edition: String?,
+        cacheTTL: TimeInterval?
+    ) async throws -> FeedResponse
+
+    nonisolated func fetchDiscoverFeedResolvingPrincipal(
+        limit: Int,
+        offset: Int,
+        eventPct: Double?,
+        edition: String?,
+        cacheTTL: TimeInterval?
+    ) async throws -> DiscoverFeedFetchResult
+
     /// Whether the optimistic last-good cache seed may be admitted for the CURRENT
     /// persisted identity before auth restore resolves (L2-212 Item 1 / C76). Reports
     /// whether the current namespace is signed-in and whether a credential is
@@ -95,6 +115,30 @@ extension DiscoverFeedProviding {
     /// publish-always (same behavior as before this seam existed).
     nonisolated func currentFeedPrincipal() async -> String { "" }
 
+    /// Default: a fake that does not model editions ignores the token.
+    nonisolated func fetchDiscoverFeed(
+        limit: Int,
+        offset: Int,
+        eventPct: Double?,
+        edition: String?,
+        cacheTTL: TimeInterval?
+    ) async throws -> FeedResponse {
+        try await fetchDiscoverFeed(
+            limit: limit, offset: offset, eventPct: eventPct, cacheTTL: cacheTTL)
+    }
+
+    /// Default: a fake that does not model editions ignores the token.
+    nonisolated func fetchDiscoverFeedResolvingPrincipal(
+        limit: Int,
+        offset: Int,
+        eventPct: Double?,
+        edition: String?,
+        cacheTTL: TimeInterval?
+    ) async throws -> DiscoverFeedFetchResult {
+        try await fetchDiscoverFeedResolvingPrincipal(
+            limit: limit, offset: offset, eventPct: eventPct, cacheTTL: cacheTTL)
+    }
+
     /// Default: anonymous namespace, seed admissible — an unmodeled fake seeds its
     /// last-good exactly as before.
     nonisolated func optimisticSeedContext() async -> DiscoverOptimisticSeedContext {
@@ -151,6 +195,26 @@ enum DiscoverLoadOutcome: Equatable, Sendable {
     /// refreshed either, which is exactly the pair the old `error == nil` read
     /// could not distinguish.
     case cancelled
+}
+
+/// #5105 — the internal switch for the seated Discover opening, the native twin
+/// of the web's `DISCOVER_OPENING_EDITION_ENABLED`
+/// (`frontend/lib/discover/openingEditionOption.ts`).
+///
+/// ON, page 0's edition is the deck the reader browses whether or not it has a
+/// "Live events" continuation: later pages are pinned to it at its own page
+/// size, a retired edition is replaced by one unpinned page 0, and the
+/// continuation (when there is one) is drawn under its own heading.
+///
+/// OFF retains the prior Discover behavior: the same
+/// unpinned 200-card pages, the same merge, one flat list.
+///
+/// A constant, not a launch argument or a server field: the wire cannot tell an
+/// options-OFF page from a seated deck with no continuation (both are an
+/// edition with `continuation_start` absent), so turning this on is a release
+/// decision made beside the server switch, never inferred from a response.
+nonisolated enum DiscoverOpeningEditionOption {
+    static let enabled = true
 }
 
 final class DiscoverViewModel: ObservableObject {
@@ -229,6 +293,40 @@ final class DiscoverViewModel: ObservableObject {
     /// cached body, or an empty refusal), which `DiscoverFeedReconcile.decision`
     /// treats as "not equal".
     private(set) var paintedEdition: String?
+
+    /// #5105: whether this view model consumes the seated opening at all. The
+    /// shipping value is `DiscoverOpeningEditionOption.enabled`; tests set it.
+    /// Off, every request, merge and render is the pre-#5105 path.
+    var openingEditionEnabled = DiscoverOpeningEditionOption.enabled
+
+    /// #5105: the seated edition the reader is browsing, set ONLY by a network
+    /// publication while `openingEditionEnabled` is on and the page carried an
+    /// edition — with a usable boundary or with none (a deck whose opening has
+    /// no "Live events" continuation is still one pinned edition). A
+    /// cache-seeded preview, any page with the option off, and an empty refusal
+    /// leave it nil, which keeps pagination on the legacy path exactly as
+    /// before. While set, every page is requested pinned to this token at the
+    /// edition's own page size.
+    private(set) var acceptedSeatedEdition: String?
+    /// #5105: the page size the accepted edition was minted at. The server binds
+    /// an edition to its `limit`, so a page asked at any other size reads
+    /// `superseded` by construction.
+    private var acceptedSeatedLimit = 50
+    /// #5105: the accepted edition's boundary — nil when the edition has no
+    /// continuation. Every pinned page restates it (or its absence); a page that
+    /// states another one is not the same deck.
+    private var acceptedSeatedStart: Int?
+    /// #5105: the section each card of the accepted edition was SERVED in, keyed
+    /// like the page dedup (`itemKey`). Recorded from the server's raw positions
+    /// before any client filter, first sight wins, reset with the edition — so a
+    /// filtered or malformed card can never move the boundary. Empty on the
+    /// legacy path. Written in the same main-actor turn as `items` at every
+    /// terminal that changes both, so the view never reads one list against the
+    /// other's record.
+    private(set) var seatedSections: [String: FeedSection] = [:]
+    /// #5105: a pinned page came back retired and the one replacement page 0 has
+    /// not landed. Pagination then targets that replacement, never the old offset.
+    @Published private(set) var awaitingEditionReplacement = false
 
     /// Provenance of the data that FIRST became renderable for the current load
     /// (L2-208 Item 2 / C67 P2): `true` when the last-good cache seed produced the
@@ -669,6 +767,10 @@ final class DiscoverViewModel: ObservableObject {
                     // same one. A pre-`edition` cached body leaves this nil, which
                     // the decision reads as "not equal" — the safe direction.
                     paintedEdition = cached.response.edition
+                    // #5105: a saved preview is never an accepted seated edition.
+                    acceptedSeatedEdition = nil
+                    acceptedSeatedStart = nil
+                    seatedSections = [:]
                     // First paint provenance: the cache seed produced first paint.
                     if firstDataFromCache == nil { firstDataFromCache = true }
                     // Freeze the render-generation token from the cache seed
@@ -811,7 +913,15 @@ final class DiscoverViewModel: ObservableObject {
                 // refuses to publish those as shared truth, so an empty one must
                 // not blank the generation on screen either. A genuinely empty,
                 // genuinely COMPLETE page still applies — that is real exhaustion.
-                if !response.mayReplaceRendered(hasRenderedItems: !items.isEmpty) {
+                //
+                // #5105: and, with the opening-edition option on, a page that
+                // states a seated boundary it cannot back (malformed, out of
+                // range, or with no edition to bind it) is refused the same way.
+                // The server only sends the field when seating is on, so
+                // flattening it into the legacy single list would paint a deck
+                // whose sections we know we cannot draw.
+                if !response.mayReplaceRendered(hasRenderedItems: !items.isEmpty)
+                    || Self.seatedBoundary(response, enabled: openingEditionEnabled) == .refused {
                     loading = false
                     if items.isEmpty {
                         error = "Couldn't load feed"
@@ -862,6 +972,17 @@ final class DiscoverViewModel: ObservableObject {
                 // page dropped, identity-free, on the network path only.
                 reportSuppressedEnvelopes(response.items)
                 let mergeStart = Date()
+                // #5105: the cursor, order and membership reset together at this
+                // terminal, so the accepted seated edition and its section record
+                // are decided here too — before the repaint, whose spacing pass
+                // must run inside each section rather than across the boundary.
+                let seating = Self.acceptedSeating(
+                    response, paintedEdition: staged.edition, enabled: openingEditionEnabled)
+                acceptedSeatedEdition = seating?.edition
+                acceptedSeatedStart = seating?.start
+                if let seating { acceptedSeatedLimit = seating.limit }
+                seatedSections = seating?.sections ?? [:]
+                awaitingEditionReplacement = false
                 // #4110: THE FIX. This used to be an unconditional
                 // `items = Self.interleave(renderable)`, which re-derived the
                 // whole order from a different input than the boot seed had — so
@@ -874,7 +995,7 @@ final class DiscoverViewModel: ObservableObject {
                     incomingEdition: staged.edition
                 ) {
                 case .repaint:
-                    items = DiscoverPriceRefresh.retainingPrices(Self.interleave(renderable), accepted: &acceptedPriceCards, fences: &priceFences)
+                    items = DiscoverPriceRefresh.retainingPrices(Self.interleave(renderable, within: seatedSections), accepted: &acceptedPriceCards, fences: &priceFences)
                 case .reconcile:
                     items = DiscoverPriceRefresh.retainingPrices(DiscoverFeedReconcile.merge(
                         painted: items, incoming: renderable, key: Self.itemKey), accepted: &acceptedPriceCards, fences: &priceFences)
@@ -1218,6 +1339,10 @@ final class DiscoverViewModel: ObservableObject {
         // the previous identity's ordering — and an accidental match would
         // reconcile one account's feed into another's.
         paintedEdition = nil
+        acceptedSeatedEdition = nil
+        acceptedSeatedStart = nil
+        seatedSections = [:]
+        awaitingEditionReplacement = false
         nextOffset = 0
         hasMore = true
         isShowingCachedContent = false
@@ -1434,7 +1559,7 @@ final class DiscoverViewModel: ObservableObject {
     /// indefinite "Finding fresh markets…" spinner.
     @MainActor
     func loadMoreIfNeeded() async {
-        guard hasMore, !loading, !loadingMore else { return }
+        guard hasMore || awaitingEditionReplacement, !loading, !loadingMore else { return }
         loadingMore = true
         defer { loadingMore = false; reconcilePriceSubscriptions() }
 
@@ -1444,16 +1569,28 @@ final class DiscoverViewModel: ObservableObject {
         // generation's paging state.
         let generation = loadGeneration
 
+        // #5105: a retired edition's Retry is the replacement page 0, never the
+        // old offset of a list that no longer exists.
+        if awaitingEditionReplacement {
+            await replaceRetiredEdition(generation: generation)
+            return
+        }
+        // Read once: the whole scan belongs to the edition accepted when it began.
+        let seatedToken = acceptedSeatedEdition
+        let seatedStart = acceptedSeatedStart
+
         var scans = 0
         while hasMore, scans < Self.maxPageScans {
             scans += 1
 
+            let requestedOffset = nextOffset
             let response: FeedResponse
             do {
                 response = try await client.fetchDiscoverFeed(
-                    limit: 200,
-                    offset: nextOffset,
+                    limit: seatedToken == nil ? 200 : acceptedSeatedLimit,
+                    offset: requestedOffset,
                     eventPct: 0.15,
+                    edition: seatedToken,
                     cacheTTL: nil
                 )
             } catch let cancel where Self.isCancellation(cancel) {
@@ -1499,6 +1636,19 @@ final class DiscoverViewModel: ObservableObject {
                 return
             }
 
+            // #5105: decide expiry BEFORE anything moves. A page that does not
+            // continue the accepted edition belongs to a different list: it must
+            // not append, must not advance the cursor, and must not be scanned
+            // past. The current cards stay; exactly one unpinned page 0 replaces
+            // the whole deck (order, membership and cursor together) or, failing
+            // that, Retry asks for that page 0 again.
+            if let seatedToken, !Self.continuesSeatedEdition(
+                response, token: seatedToken, start: seatedStart, requestedOffset: requestedOffset
+            ) {
+                await replaceRetiredEdition(generation: generation)
+                return
+            }
+
             // Advance by the SERVER page boundary FIRST, not the decoded item
             // count. The tolerant FeedResponse decoder silently drops malformed
             // rows (FeedModels), so `items.count` is NOT the number of server
@@ -1533,6 +1683,13 @@ final class DiscoverViewModel: ObservableObject {
             // yields `fresh == []` and falls through to the duplicate-only branch,
             // which keeps scanning on the server's own `has_more` rather than
             // declaring a false exhaustion.
+            // #5105: a continuing page's sections are read off the server's raw
+            // positions NOW, before the renderable filter and the dedup below
+            // compact the page. A card already held keeps the section it was
+            // first served in.
+            if seatedToken != nil {
+                Self.recordSections(response, start: seatedStart, into: &seatedSections)
+            }
             let renderable = Self.renderable(response.items)
             // The suppression metric had the same first-page-only blind spot
             // (`reportSuppressedEnvelopes` fired only on initial network publish),
@@ -1568,7 +1725,7 @@ final class DiscoverViewModel: ObservableObject {
                 // defect as the network path, just triggered by the reader instead
                 // of by the clock. The new page is interleaved among ITSELF so the
                 // page keeps its category diversity; the painted prefix does not move.
-                items = items + DiscoverPriceRefresh.retainingPrices(Self.interleave(fresh), accepted: &acceptedPriceCards, fences: &priceFences)
+                items = items + DiscoverPriceRefresh.retainingPrices(Self.interleave(fresh, within: seatedSections), accepted: &acceptedPriceCards, fences: &priceFences)
                 hasMore = response.hasMore
                 error = nil
                 return
@@ -1622,6 +1779,115 @@ final class DiscoverViewModel: ObservableObject {
         return max(currentOffset, serverPageEnd, decodedPageEnd)
     }
 
+    /// #5105: what a page lets the client do with the seated opening.
+    enum SeatedBoundary: Equatable {
+        /// No section opinion: the option is off, or the page carries no
+        /// edition to pin (an older backend, an empty refusal).
+        case legacy
+        /// A seated edition: the page's token, with the GLOBAL position where
+        /// its continuation begins — nil when the composed deck has none (no
+        /// heading, every card opening). Heading presence is not participation:
+        /// both pin, page at the edition's size and expire the same way.
+        case seated(Int?)
+        /// A boundary present but unusable: malformed, outside `0..<total`, or
+        /// with no edition to bind it. Never guessed into a boundary or flattened.
+        case refused
+    }
+
+    /// #5105: read a page's seating. With the option off nothing is read, so
+    /// the legacy path is byte-for-byte today's. On, the server's own bound
+    /// applies (`0 <= start < total`, and only beside an edition token).
+    ///
+    /// The wire cannot tell an options-OFF page from a seated deck with no
+    /// continuation — both are an edition token with `continuation_start`
+    /// absent — so the CLIENT option decides, exactly as the web's
+    /// `DISCOVER_OPENING_EDITION_ENABLED` does. It is turned on only beside the
+    /// server switch.
+    static func seatedBoundary(_ response: FeedResponse, enabled: Bool) -> SeatedBoundary {
+        guard enabled else { return .legacy }
+        let hasEdition = !(response.edition ?? "").isEmpty
+        switch response.continuationStart {
+        case .absent:
+            return hasEdition ? .seated(nil) : .legacy
+        case .invalid:
+            return .refused
+        case .at(let start):
+            guard start < response.total, hasEdition else { return .refused }
+            return .seated(start)
+        }
+    }
+
+    /// #5105: the seated edition a network page 0 opts the reader into — the
+    /// painted token, its boundary (nil = no continuation), its page size and
+    /// its section record — or nil for a legacy page (which keeps every existing
+    /// path unchanged).
+    static func acceptedSeating(
+        _ response: FeedResponse, paintedEdition: String?, enabled: Bool
+    ) -> (edition: String, start: Int?, limit: Int, sections: [String: FeedSection])? {
+        guard case .seated(let start) = seatedBoundary(response, enabled: enabled),
+              let paintedEdition, !paintedEdition.isEmpty else { return nil }
+        var sections: [String: FeedSection] = [:]
+        recordSections(response, start: start, into: &sections)
+        return (paintedEdition, start, response.limit, sections)
+    }
+
+    /// #5105: record each decoded card's section from its RAW server position
+    /// (`offset + rawPositions[i] >= start`; every card is opening when the
+    /// edition has no continuation). First sight wins: a card the edition
+    /// already placed is never re-sectioned by a later page.
+    static func recordSections(
+        _ response: FeedResponse, start: Int?, into sections: inout [String: FeedSection]
+    ) {
+        for (item, raw) in zip(response.items, response.rawPositions) {
+            let key = itemKey(item)
+            if sections[key] == nil {
+                if let start, response.offset + raw >= start {
+                    sections[key] = .continuation
+                } else {
+                    sections[key] = .opening
+                }
+            }
+        }
+    }
+
+    /// #5105: the section the accepted seated edition served `item` in, or nil
+    /// on the legacy path (and for a card the edition never served).
+    func seatedSection(of item: FeedItem) -> FeedSection? {
+        guard acceptedSeatedEdition != nil else { return nil }
+        return seatedSections[Self.itemKey(item)]
+    }
+
+    /// #5105: whether a pinned page continues the accepted edition: the server
+    /// held the order (`pinned`), for THIS token and boundary (or its absence),
+    /// at the offset that was asked. A page restating a different, newly
+    /// present or unusable boundary is not the same deck, so it is refused like
+    /// a retired one — never flattened. Only an accepted edition reaches here,
+    /// so the option is on by construction.
+    static func continuesSeatedEdition(
+        _ response: FeedResponse, token: String, start: Int?, requestedOffset: Int
+    ) -> Bool {
+        response.editionStatus == FeedResponse.pinnedEditionStatus
+            && response.edition == token
+            && response.offset == requestedOffset
+            && seatedBoundary(response, enabled: true) == .seated(start)
+    }
+
+    /// #5105: one unpinned page 0 through `load()`, which already owns every
+    /// publication fence (generation, principal, renderability, price retention)
+    /// and resets order, membership and cursor at one terminal. With cards on
+    /// screen it never re-seeds the saved preview and never blanks the deck.
+    private func replaceRetiredEdition(generation: Int) async {
+        guard Self.shouldApplyPaginationResult(
+            capturedGeneration: generation, currentGeneration: loadGeneration
+        ) else { return }
+        awaitingEditionReplacement = true
+        // Only a network publication clears the flag (at the same terminal that
+        // swaps the deck). A refusal, failure or cancellation leaves it set, so the
+        // existing Retry asks for page 0 again; a newer load that publishes clears
+        // it there instead.
+        _ = await load()
+    }
+
     /// Page-merge spacing: delegates to the shared pass (#8415), which keeps
     /// the served ranking and only defers cards the spacing rules hold back.
     /// The core handles 0/1/2 items itself.
@@ -1630,6 +1896,19 @@ final class DiscoverViewModel: ObservableObject {
             items, sportsCategories: sportsCategories,
             category: category(for:), family: family(for:)
         )
+    }
+
+    /// #5105: the same spacing pass, run inside each served section so it can
+    /// never carry a card across the boundary. An empty record is the legacy
+    /// path: one pass over the whole list, exactly as before.
+    private static func interleave(
+        _ items: [FeedItem], within sections: [String: FeedSection]
+    ) -> [FeedItem] {
+        guard !sections.isEmpty else { return interleave(items) }
+        let continuation = items.filter { sections[itemKey($0)] == .continuation }
+        guard !continuation.isEmpty else { return interleave(items) }
+        let opening = items.filter { sections[itemKey($0)] != .continuation }
+        return interleave(opening) + interleave(continuation)
     }
 
     /// #1885: the page-merge interleave's finer run token. Same default
@@ -1697,6 +1976,33 @@ extension APIClient: DiscoverFeedProviding {
     /// actor so a mid-flight identity change is reflected at publication time.
     nonisolated func currentFeedPrincipal() async -> String {
         await resolvedFeedIdentity()
+    }
+
+    /// #5105: the edition-carrying twins route through the same two builders, so
+    /// the token reaches pagination AND the principal-resolving offset-0
+    /// revalidation with the identity-at-dispatch fences unchanged.
+    nonisolated func fetchDiscoverFeed(
+        limit: Int,
+        offset: Int,
+        eventPct: Double?,
+        edition: String?,
+        cacheTTL: TimeInterval?
+    ) async throws -> FeedResponse {
+        try await fetchFeedPersistingLastGood(
+            limit: limit, offset: offset, eventPct: eventPct, edition: edition,
+            cacheTTL: cacheTTL).response
+    }
+
+    nonisolated func fetchDiscoverFeedResolvingPrincipal(
+        limit: Int,
+        offset: Int,
+        eventPct: Double?,
+        edition: String?,
+        cacheTTL: TimeInterval?
+    ) async throws -> DiscoverFeedFetchResult {
+        try await fetchFeedPersistingLastGood(
+            limit: limit, offset: offset, eventPct: eventPct, edition: edition,
+            cacheTTL: cacheTTL)
     }
 
     /// The optimistic-seed admission context for the current identity (L2-212 Item 1
