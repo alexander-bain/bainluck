@@ -100,6 +100,15 @@ export function rememberLiveChartFrame(
  *      "The last real reading" includes its `observed` coverage: a reading
  *      at or before `covered_through` is older than the backend's proof that
  *      the served value still held, so it changes nothing.
+ *   3. AN EXCURSION ALREADY DRAWN IS NOT ERASED BY A LATER SPARSE ROW (#10795).
+ *      Rule 2 is about the ENDPOINT. Applied to every reading, it threw away
+ *      the dip the page had just drawn as soon as the backend stored any later
+ *      row. On 15325669 the reader watched 0.565 → 0.525 → 0.51 → 0.565 at
+ *      20:18:32; the next history response stored a later reading, the cutoff
+ *      moved past the dip, and the line went flat. A blended page never lost
+ *      it, because `aggregate_line` keeps every session frame. So the session's
+ *      readings that fall strictly between two served points stay, under the
+ *      tail's own rules (`sessionReadingsBetween`).
  *
  * What lands is an observation, not a delivery: these frames are stamped at
  * `live_blend_refresh`'s write time, so they carry no `live_edge` flag and
@@ -131,23 +140,22 @@ function extendServedSourceSeries(
     const readAt = Number.isFinite(coverage) && coverage > lastRead ? coverage : lastRead;
     // `points` is kept sorted by `rememberLiveChartFrame`, so a filter
     // preserves that order.
-    const readings = points
-      .filter(point =>
-        point.source === source &&
-        typeof point.source_probability === "number" &&
-        Date.parse(point.timestamp) > readAt)
-      .map(point => ({
-        timestamp: point.timestamp,
-        home_probability: point.source_probability as number,
-        away_probability: null,
-      }));
-    if (readings.length === 0) continue;
+    const own = points
+      .filter(point => point.source === source && typeof point.source_probability === "number")
+      .map(sessionReading);
+    const readings = own.filter(point => Date.parse(point.timestamp) > readAt);
+    const interior = real >= 0 ? sessionReadingsBetween(series, real, own) : [];
     let behind = readings.filter(point => Date.parse(point.timestamp) <= edge);
     const ahead = readings.filter(point => Date.parse(point.timestamp) > edge);
     // Readings that only re-confirm the carried value change no endpoint;
     // #10671 already records them as coverage, and nothing is drawn for them.
     if (!behind.some(point => point.home_probability !== series[real]?.home_probability)) behind = [];
-    if (behind.length === 0 && ahead.length === 0) continue;
+    if (behind.length === 0 && ahead.length === 0 && interior.length === 0) continue;
+    // No reading in `interior` shares an instant with a served point, so the
+    // order is total.
+    const head = interior.length === 0 ? series.slice(0, real + 1)
+      : [...series.slice(0, real + 1), ...interior]
+        .sort((a, b) => Date.parse(a.timestamp) - Date.parse(b.timestamp));
     let tail: WinProbHistoryPoint[] = [];
     if (behind.length > 0) {
       // Each synthetic point re-delivers the newest reading at or before it.
@@ -164,10 +172,67 @@ function extendServedSourceSeries(
     }
     next ??= { ...served };
     next[source] = behind.length > 0
-      ? [...series.slice(0, real + 1), ...tail, ...ahead]
-      : [...series, ...ahead];
+      ? [...head, ...tail, ...ahead]
+      : [...head, ...series.slice(real + 1), ...ahead];
   }
   return next;
+}
+
+function sessionReading(point: LiveChartFrame): WinProbHistoryPoint {
+  return {
+    timestamp: point.timestamp,
+    home_probability: point.source_probability as number,
+    away_probability: null,
+  };
+}
+
+/**
+ * #10795 — the session's readings that sit strictly between two served points
+ * at or before the last real reading, `series[real]`.
+ *
+ * Each interval between consecutive served points is judged on its own, with
+ * the same bar the tail uses after `series[real]`:
+ *
+ *   - It moved. A run whose readings all equal the served value that opened
+ *     the interval proves only "it held", and that is #10671's evidence to
+ *     record, not a line to draw. A run with one differing reading keeps ALL
+ *     of its readings, so the reversal is drawn at its real time too.
+ *   - The backend's proof wins. A reading at or before an `observed` point's
+ *     `covered_through` is not admitted. A reading at the same instant as a
+ *     served point is not admitted either.
+ *   - It has a real reading to join. Nothing goes before the first served
+ *     point, after a synthetic point, or after a served point with no number.
+ *     A gap the server left open stays open.
+ *
+ * Only readings this page received are used (at most `MAX_LIVE_CHART_FRAMES`).
+ * Nothing persists: a reload shows durable history only.
+ */
+function sessionReadingsBetween(
+  series: WinProbHistoryPoint[], real: number, own: WinProbHistoryPoint[],
+): WinProbHistoryPoint[] {
+  const lastRead = Date.parse(series[real].timestamp);
+  const runs = new Map<number, WinProbHistoryPoint[]>();
+  let opening = -1;
+  for (const reading of own) {
+    const at = Date.parse(reading.timestamp);
+    if (!Number.isFinite(at)) continue;
+    if (!(at < lastRead)) break;
+    while (opening < real && Date.parse(series[opening + 1].timestamp) < at) opening++;
+    if (opening < 0 || Date.parse(series[opening + 1].timestamp) === at) continue;
+    const from = series[opening];
+    const value = from.home_probability;
+    if (isSyntheticEdge(from) || typeof value !== "number" || !Number.isFinite(value)) continue;
+    const held = from.evidence?.kind === "observed" ? Date.parse(from.evidence.covered_through ?? "") : NaN;
+    if (Number.isFinite(held) && at <= held) continue;
+    const run = runs.get(opening);
+    if (run) run.push(reading); else runs.set(opening, [reading]);
+  }
+  const kept: WinProbHistoryPoint[] = [];
+  for (const [index, run] of runs) {
+    const value = series[index].home_probability;
+    if (run.some(reading => reading.home_probability !== value)) kept.push(...run);
+  }
+  return kept;
 }
 
 /** The backend's synthetic "now" point (#920 / #7878): a delivery time, not a reading. */
