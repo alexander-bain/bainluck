@@ -944,19 +944,119 @@ describe("#5105 option ON — a first opening the edition refuses offers Retry, 
     expect(sequence(page)).toEqual(["c0", "c1", "c2", "H", ...ids(3, 20)]);
     expect(has(page, "data-unavailable")).toBe(false);
   });
+});
 
-  it("control: a first-deck preview over a refused own reply keeps its cards and today's status line", async () => {
-    const cache = new Map<unknown, unknown>();
-    const page = await mountApp(cache);
+describe("#5105 option ON — a refused reply over the saved first-deck preview keeps the cards and offers Retry", () => {
+  /** Nonempty, sectioned, and missing the token that binds the section. */
+  const untokenedOpening = (from = 0) => reply(list(40, from), 0, { boundary: 3, edition: null });
+  const showsInlineRetry = (page: Node) => walk(page).some((n) => n["data-unavailable"] === "inline");
+  const UPDATING = "Updating saved cards…";
+  const UNAVAILABLE_LINE = "Saved cards · updates unavailable";
+  /** Back to Discover with no Back snapshot: the saved first deck paints while this mount's own page zero is asked. */
+  async function returnWithPreview() {
+    const page = await mountApp(new Map<unknown, unknown>());
     await answer(calls[0], reply(list(40), 0, { boundary: 3, edition: "OLD" }));
     await leavePage();
     dropBackSnapshot();
     await returnToPage();
     expect(cardsOf(page)).toEqual(ids(0, 20));
+    expect(page.textContent).toContain(UPDATING);
+    return page;
+  }
+
+  it("a refused own reply keeps the saved cards, ends the updating line on inline Retry, and asks nothing by itself", async () => {
+    const page = await returnWithPreview();
+    const issued = calls.length;
     await answer(lastCall(), untokenedOpening(200));
     expect(cardsOf(page)).toEqual(ids(0, 20));
+    expect(showsInlineRetry(page)).toBe(true);
+    expect(page.textContent).toContain(UNAVAILABLE_LINE);
+    expect(page.textContent).not.toContain(UPDATING);
+    expect(has(page, "data-end-of-feed")).toBe(false);
+    await settle(10);
+    expect(calls.length).toBe(issued);
+  });
+
+  it("Retry is one unpinned page zero; a supported reply replaces the preview and clears the notice and its line", async () => {
+    const page = await returnWithPreview();
+    await answer(lastCall(), untokenedOpening(200));
+    const issued = calls.length;
+    await act(async () => { unavailable.onRetry!(); });
+    await settle(10);
+    expect(calls.length).toBe(issued + 1);
+    // The preview is not an accepted edition: nothing to pin to.
+    expect(lastCall().params).toEqual({ limit: 20, offset: 0, event_pct: 0.15 });
+    await answer(lastCall(), reply(list(40, 200), 0, { boundary: 3, edition: "CURRENT" }));
+    expect(sequence(page)).toEqual(["c200", "c201", "c202", "H", ...ids(203, 220)]);
+    expect(has(page, "data-unavailable")).toBe(false);
+    expect(page.textContent).not.toContain(UNAVAILABLE_LINE);
+    expect(page.textContent).not.toContain(UPDATING);
+    expect(has(page, "data-end-of-feed")).toBe(false);
+    await settle(10);
+    expect(calls.length).toBe(issued + 1);
+  });
+
+  it("a Retry refused again keeps the saved cards and comes back to Retry, one request per press", async () => {
+    const page = await returnWithPreview();
+    await answer(lastCall(), untokenedOpening(200));
+    const issued = calls.length;
+    await act(async () => { unavailable.onRetry!(); });
+    await settle(10);
+    expect(calls.length).toBe(issued + 1);
+    await answer(lastCall(), UNAVAILABLE);
+    expect(cardsOf(page)).toEqual(ids(0, 20));
+    expect(showsInlineRetry(page)).toBe(true);
+    expect(page.textContent).toContain(UNAVAILABLE_LINE);
+    await act(async () => { unavailable.onRetry!(); });
+    await settle(10);
+    expect(calls.length).toBe(issued + 2);
+    expect(lastCall().params).toEqual({ limit: 20, offset: 0, event_pct: 0.15 });
+    await answer(lastCall(), untokenedOpening(400));
+    expect(cardsOf(page)).toEqual(ids(0, 20));
+    expect(showsInlineRetry(page)).toBe(true);
+    expect(page.textContent).not.toContain(UPDATING);
+    expect(has(page, "data-end-of-feed")).toBe(false);
+    await settle(10);
+    expect(calls.length).toBe(issued + 2);
+  });
+
+  it("control: a refused reply to a Retry that another page zero has overtaken is inert", async () => {
+    const page = await returnWithPreview();
+    await answer(lastCall(), untokenedOpening(200));
+    await act(async () => { unavailable.onRetry!(); });
+    await settle(10);
+    const overtaken = lastCall();
+    await revalidate();
+    const current = lastCall();
+    expect(current).not.toBe(overtaken);
+    await answer(current, reply(list(40, 600), 0, { boundary: 3, edition: "CURRENT" }));
+    expect(sequence(page)).toEqual(["c600", "c601", "c602", "H", ...ids(603, 620)]);
+    await answer(overtaken, untokenedOpening(400));
+    expect(sequence(page)).toEqual(["c600", "c601", "c602", "H", ...ids(603, 620)]);
     expect(has(page, "data-unavailable")).toBe(false);
     expect(has(page, "data-end-of-feed")).toBe(false);
+  });
+
+  it("control: an earlier mount's refused reply is not this mount's answer — the preview keeps updating and Retry stays away", async () => {
+    const page = await mountApp(new Map<unknown, unknown>());
+    await answer(calls[0], reply(list(40), 0, { boundary: 3, edition: "OLD" }));
+    await revalidate();
+    const earlier = lastCall();
+    expect(earlier.params).toEqual({ limit: 20, offset: 0, event_pct: 0.15, edition: "OLD" });
+    await leavePage();
+    dropBackSnapshot();
+    await returnToPage();
+    expect(cardsOf(page)).toEqual(ids(0, 20));
+    await answer(earlier, untokenedOpening(200));
+    expect(cardsOf(page)).toEqual(ids(0, 20));
+    expect(has(page, "data-unavailable")).toBe(false);
+    expect(page.textContent).toContain(UPDATING);
+    const own = lastCall();
+    expect(own).not.toBe(earlier);
+    expect(own.params).toEqual({ limit: 20, offset: 0, event_pct: 0.15 });
+    await answer(own, reply(list(40, 600), 0, { boundary: 3, edition: "CURRENT" }));
+    expect(sequence(page)).toEqual(["c600", "c601", "c602", "H", ...ids(603, 620)]);
+    expect(page.textContent).not.toContain(UPDATING);
   });
 });
 

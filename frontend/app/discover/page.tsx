@@ -968,8 +968,11 @@ export default function DiscoverPage() {
       // over a deck or cards already on screen — except that a refused page
       // zero with NOTHING accepted and nothing shown is not an empty edition:
       // left quiet, it paints "caught up" over a reply that had cards. It takes
-      // the same retry state instead (one controlled page zero, no loop).
-      const nothingAccepted = editionDeckRef.current === null && renderedCountRef.current === 0;
+      // the same retry state instead (one controlled page zero, no loop). A
+      // saved first-deck preview is not an accepted edition either: its cards
+      // stay, and the refusal ends "Updating saved cards…" on that retry.
+      const nothingAccepted = editionDeckRef.current === null &&
+        (renderedCountRef.current === 0 || replacePreviewRef.current);
       setFeedUnavailable(source === "page" || nothingAccepted ? true : transition.showUnavailable);
       return;
     }
