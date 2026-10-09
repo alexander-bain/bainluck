@@ -141,6 +141,12 @@ DEFAULT_STAMP_LOCK_TIMEOUT_MS = 500
 # and publication; never cancel a stamp merely because this budget elapsed.
 PENDING_STAMP_BUDGET_S = 1.0
 
+# #10090 — fixed fresh-stamp workers per refresh. Two disjoint stamps waiting
+# on rows/publication must not hold a third ready fresh event. Each holds one
+# session only inside its stamp; with a consumer's price writer and standalone
+# writer that is the lent engine's five connections (pool 3 + overflow 2).
+FRESH_STAMP_WORKERS = 3
+
 #: #837 receipt — the per-event floor between receipt lines for chains that
 #: cannot qualify as a quiet tail (a busy market's routine deferrals, a held
 #: price that rounded to the stored value). Those are summarised with a count.
@@ -1467,9 +1473,9 @@ class LiveBlendRefresher:
                             committed(group_ids)
 
                 if not pending_only:
-                    # Two fixed workers claim fresh IDs in order; a waiting
-                    # stamp cannot hold every fresh sibling behind its row lock.
-                    # No task/session fanout proportional to population size.
+                    # FRESH_STAMP_WORKERS fixed workers claim fresh IDs in
+                    # order; waiting stamps cannot hold every fresh sibling
+                    # behind their row locks. No population-sized fanout.
                     event_ids = iter(ordered)
 
                     async def fresh_worker(initial_event_id):
@@ -1481,11 +1487,12 @@ class LiveBlendRefresher:
                             # Cost: one joined read per queued fresh event.
                             await stamp_event(event_id, read_current=True)
 
-                    # Claim both initial IDs before scheduling either worker:
+                    # Claim every initial ID before scheduling any worker:
                     # even a worker completing without yielding cannot consume
                     # a sibling's initial prepared slot. No population fanout.
                     initial_events = [
-                        next(event_ids) for _ in range(min(2, len(ordered)))
+                        next(event_ids)
+                        for _ in range(min(FRESH_STAMP_WORKERS, len(ordered)))
                     ]
                     workers = {
                         asyncio.create_task(fresh_worker(event_id))
