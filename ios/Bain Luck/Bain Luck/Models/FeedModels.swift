@@ -31,11 +31,14 @@ nonisolated struct FeedCacheMetadata: Decodable, Sendable {
 
 /// #5105: where the seated opening ends on an offset-0 page, as the server said it.
 ///
-/// Three states are kept apart on purpose. `absent` is an older backend or the
-/// options-OFF path: no section opinion, render exactly as before. `invalid` is a
-/// field that was present but unusable (negative, not an integer, past the end of
-/// the page): it must not be guessed into a boundary, so it reads like `absent`.
-/// `at(0)` is a real answer — no opening cards, the continuation starts at the top.
+/// It is a GLOBAL 0-based position in the whole ranked deck, never an index into
+/// one page: every offset page of one deck carries the same value, so a boundary
+/// past this page's end (a long opening) or before its offset (a later page) is
+/// ordinary. Three states are kept apart on purpose. `absent` is an older backend
+/// or the options-OFF path: no section opinion, render exactly as before.
+/// `invalid` is a field that was present but unusable (negative, not an integer):
+/// it must not be guessed into a boundary, so it reads like `absent`. `at(0)` is a
+/// real answer — the whole deck is continuation.
 nonisolated enum FeedContinuationStart: Equatable, Sendable {
     case absent
     case invalid
@@ -64,9 +67,9 @@ nonisolated struct FeedResponse: Decodable, Sendable {
     /// `superseded` or `invalidated`. Nil when no edition was requested (or on an
     /// older backend). Only `pinned` means this page continues the requested order.
     let editionStatus: String?
-    /// #5105: the seated-opening boundary, in RAW page positions (see
-    /// `rawPositions`). Membership belongs to the accepted edition, not to the
-    /// compacted array, so it is kept in the server's own coordinates.
+    /// #5105: the seated-opening boundary, as a GLOBAL deck position. A card's
+    /// section is `offset + rawPositions[i] >= start`, read on the server's own
+    /// array: membership belongs to the edition, not to the compacted array.
     let continuationStart: FeedContinuationStart
     /// #5105: each decoded item's ORIGINAL slot in the server's `items` array.
     /// A malformed row is skipped while decoding, so `items[i]` is not raw slot `i`
@@ -76,12 +79,12 @@ nonisolated struct FeedResponse: Decodable, Sendable {
     /// The edition status meaning the requested order was held for this page.
     static let pinnedEditionStatus = "pinned"
 
-    /// #5105: how many of the SURVIVING decoded items sit before the boundary.
-    /// Nil when the server stated no usable boundary (absent or invalid), so the
-    /// caller keeps the legacy single-list rendering.
+    /// #5105: how many of the SURVIVING decoded items on this page sit before
+    /// the boundary. Nil when the server stated no usable boundary (absent or
+    /// invalid), so the caller keeps the legacy single-list rendering.
     var openingItemCount: Int? {
         guard case .at(let start) = continuationStart else { return nil }
-        return rawPositions.prefix { $0 < start }.count
+        return rawPositions.prefix { offset + $0 < start }.count
     }
 
     /// The cache status the backend uses for the truthful no-data terminal.
@@ -159,7 +162,7 @@ nonisolated struct FeedResponse: Decodable, Sendable {
         if !c.contains(.continuationStart) || (try? c.decodeNil(forKey: .continuationStart)) == true {
             continuationStart = .absent
         } else if let start = try? c.decode(Int.self, forKey: .continuationStart),
-                  start >= 0, start <= rawCount {
+                  start >= 0 {
             continuationStart = .at(start)
         } else {
             continuationStart = .invalid
