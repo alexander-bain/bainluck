@@ -152,7 +152,7 @@ KALSHI_SLATE = [
 ]
 POLY_SLATE = [
     [(71, 7, "0xabc_yes", "0xabc", 900)],
-    [(7, "0xabc", {"clob_token_ids": ["111", "222"]})],
+    [(7, "0xabc", {"clob_token_ids": ["111", "222"]}, "scheduled")],
     [(71, 7, "0xabc_yes")],
 ]
 

@@ -692,7 +692,7 @@ def _database(tmp_path, fail_outcome=None, extra=()):
 
 GAME_SLATE = [
     [(GAME_OUTCOME, GAME_MARKET, f"0x{GAME_MARKET}", f"0x{GAME_MARKET}", EVENT_ID)],
-    [(GAME_MARKET, f"0x{GAME_MARKET}", {"clob_token_ids": [GAME_TOKEN]})],
+    [(GAME_MARKET, f"0x{GAME_MARKET}", {"clob_token_ids": [GAME_TOKEN]}, "scheduled")],
     [(GAME_OUTCOME, GAME_MARKET, f"0x{GAME_MARKET}")],
 ]
 OPEN_MARKET_ROWS = [(mid, [tok], None, None) for mid, _oid, tok in OPEN]

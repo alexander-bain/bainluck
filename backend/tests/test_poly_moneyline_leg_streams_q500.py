@@ -415,7 +415,7 @@ def _production_batches():
             (DRAW_OUTCOME_ID, MARKET_ID, DRAW_CONDITION, PARENT_EVENT_ID, EVENT_ID),
         ],
         # market rows: a parent row with NO clob_token_ids — production's state
-        [(MARKET_ID, PARENT_EVENT_ID, {"polymarket_event_id": PARENT_EVENT_ID})],
+        [(MARKET_ID, PARENT_EVENT_ID, {"polymarket_event_id": PARENT_EVENT_ID}, "scheduled")],
         # outcome rows, ordered by id
         [
             (AWAY_OUTCOME_ID, MARKET_ID, AWAY_CONDITION),
@@ -578,8 +578,8 @@ class TestTheMoneylineLegReachesTheRenderedBlend:
                 (901, 59620623, f"{prop_condition}_yes", prop_condition, EVENT_ID),
             ],
             [
-                (MARKET_ID, PARENT_EVENT_ID, {}),
-                (59620623, prop_condition, {"clob_token_ids": ["ptok_y", "ptok_n"]}),
+                (MARKET_ID, PARENT_EVENT_ID, {}, "scheduled"),
+                (59620623, prop_condition, {"clob_token_ids": ["ptok_y", "ptok_n"]}, "scheduled"),
             ],
             [
                 (HOME_OUTCOME_ID, MARKET_ID, HOME_CONDITION),

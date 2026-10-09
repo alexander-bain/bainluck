@@ -146,7 +146,7 @@ POLY_TWO_EVENTS = [
         (71, 7, "0xabc_yes", "0xabc", 800),
         (91, 9, "0xdef_yes", "0xdef", 900),
     ],
-    [(7, "0xabc", {"clob_token_ids": ["111", "222"]}), (9, "0xdef", None)],
+    [(7, "0xabc", {"clob_token_ids": ["111", "222"]}, "scheduled"), (9, "0xdef", None, "scheduled")],
     [(71, 7, "0xabc_yes"), (91, 9, "0xdef_yes")],
 ]
 
@@ -157,7 +157,7 @@ POLY_PROP_AND_MONEYLINE = [
         (71, 7, "0xabc_yes", "0xabc", 900),
         (91, 9, "0xdef_yes", "0xdef", 900),
     ],
-    [(7, "0xabc", {"clob_token_ids": ["111", "222"]}), (9, "0xdef", None)],
+    [(7, "0xabc", {"clob_token_ids": ["111", "222"]}, "scheduled"), (9, "0xdef", None, "scheduled")],
     [(71, 7, "0xabc_yes"), (91, 9, "0xdef_yes")],
 ]
 
@@ -426,7 +426,7 @@ def _arm(monkeypatch, arm):
         return kalshi_task, kalshi_task._run_kalshi_ws_consumer, KALSHI_ONE_MARKET
     slate = [
         [(71, 7, "0xabc_yes", "0xabc", 900)],
-        [(7, "0xabc", {"clob_token_ids": ["111", "222"]})],
+        [(7, "0xabc", {"clob_token_ids": ["111", "222"]}, "scheduled")],
         [(71, 7, "0xabc_yes")],
     ]
     return poly_task, poly_task._run_polymarket_ws_consumer, slate

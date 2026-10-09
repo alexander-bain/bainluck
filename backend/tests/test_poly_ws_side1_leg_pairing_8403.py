@@ -39,7 +39,7 @@ def _slate(legs):
     """Three queries in the consumer's order; `legs` is ORDER BY outcome_id."""
     return [
         [(oid, MARKET_ID, ext, CONDITION, EVENT_ID) for oid, ext in legs],
-        [(MARKET_ID, CONDITION, {"clob_token_ids": [LUKKO_TOKEN, TAPPARA_TOKEN]})],
+        [(MARKET_ID, CONDITION, {"clob_token_ids": [LUKKO_TOKEN, TAPPARA_TOKEN]}, "scheduled")],
         [(oid, MARKET_ID, ext) for oid, ext in legs],
     ]
 

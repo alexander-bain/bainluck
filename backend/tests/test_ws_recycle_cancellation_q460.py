@@ -163,7 +163,7 @@ KALSHI_REBUILD_SLATE = [*KALSHI_SLATE, []]
 #: rows, then (market_id, market_ext, metadata), then (outcome_id, mid, ext)
 POLY_SLATE = [
     [(71, 7, "0xabc_yes", "0xabc", 900)],
-    [(7, "0xabc", {"clob_token_ids": ["111", "222"]})],
+    [(7, "0xabc", {"clob_token_ids": ["111", "222"]}, "scheduled")],
     [(71, 7, "0xabc_yes")],
 ]
 

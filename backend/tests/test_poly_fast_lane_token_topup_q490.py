@@ -311,7 +311,7 @@ class TestTheSocketSubscribesToAMarketItHadToAskFor:
                 ),
             ],
             # market rows: metadata WITHOUT tokens — the production state
-            [(MARKET_ID, CONDITION_ID, {"polymarket_event_id": "31415"})],
+            [(MARKET_ID, CONDITION_ID, {"polymarket_event_id": "31415"}, "scheduled")],
             # outcome rows, ordered by id: Yes then No
             [
                 (YES_OUTCOME_ID, MARKET_ID, f"{CONDITION_ID}_yes"),
@@ -396,8 +396,8 @@ class TestTheSocketSubscribesToAMarketItHadToAskFor:
                 (81, 8, "0xdef_yes", "0xdef", EVENT_ID),
             ],
             [
-                (MARKET_ID, CONDITION_ID, {"clob_token_ids": [YES_TOKEN, NO_TOKEN]}),
-                (8, "0xdef", {}),  # no tokens, and Gamma is down
+                (MARKET_ID, CONDITION_ID, {"clob_token_ids": [YES_TOKEN, NO_TOKEN]}, "scheduled"),
+                (8, "0xdef", {}, "scheduled"),  # no tokens, and Gamma is down
             ],
             [
                 (YES_OUTCOME_ID, MARKET_ID, f"{CONDITION_ID}_yes"),

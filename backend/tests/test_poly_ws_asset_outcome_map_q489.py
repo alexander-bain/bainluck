@@ -49,7 +49,7 @@ POLY_SLATE = [
         (YES_OUTCOME_ID, MARKET_ID, f"{CONDITION_ID}_yes", CONDITION_ID, EVENT_ID),
         (NO_OUTCOME_ID, MARKET_ID, f"{CONDITION_ID}_no", CONDITION_ID, EVENT_ID),
     ],
-    [(MARKET_ID, CONDITION_ID, {"clob_token_ids": [YES_TOKEN, NO_TOKEN]})],
+    [(MARKET_ID, CONDITION_ID, {"clob_token_ids": [YES_TOKEN, NO_TOKEN]}, "scheduled")],
     [
         (YES_OUTCOME_ID, MARKET_ID, f"{CONDITION_ID}_yes"),
         (NO_OUTCOME_ID, MARKET_ID, f"{CONDITION_ID}_no"),
@@ -258,7 +258,7 @@ class TestUnmappableAssetsAreDroppedNotGuessed:
 
         batches = [
             list(POLY_SLATE[0]),
-            [(MARKET_ID, CONDITION_ID, {"clob_token_ids": [YES_TOKEN, NO_TOKEN, "999"]})],
+            [(MARKET_ID, CONDITION_ID, {"clob_token_ids": [YES_TOKEN, NO_TOKEN, "999"]}, "scheduled")],
             list(POLY_SLATE[2]),
         ]
 

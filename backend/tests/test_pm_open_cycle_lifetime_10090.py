@@ -281,7 +281,7 @@ async def test_game_refresh_retains_unaffected_shard_and_drains(
                 (yes_oid, mid, f"{condition}_yes", condition, event),
                 (no_oid, mid, f"{condition}_no", condition, event),
             ],
-            [(mid, condition, {"clob_token_ids": tokens})],
+            [(mid, condition, {"clob_token_ids": tokens}, "scheduled")],
             [(yes_oid, mid, f"{condition}_yes"), (no_oid, mid, f"{condition}_no")],
         ]
 
