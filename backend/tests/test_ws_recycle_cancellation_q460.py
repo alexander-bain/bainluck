@@ -155,6 +155,11 @@ KALSHI_SLATE = [
     [("KXNFLGAME-26AUG31SFLAR-SF", 7, 71)],
 ]
 
+#: #10090: an unchanged Kalshi scope is kept across its refresh, so the planned
+#: recycle these tests drive is the refresh finding the slate EMPTY — a rebuild
+#: (one query: no markets, no outcome read). Cycled, every run starts full.
+KALSHI_REBUILD_SLATE = [*KALSHI_SLATE, []]
+
 #: rows, then (market_id, market_ext, metadata), then (outcome_id, mid, ext)
 POLY_SLATE = [
     [(71, 7, "0xabc_yes", "0xabc", 900)],
@@ -223,9 +228,9 @@ class TestConsumerReportsThePlannedRecycle:
         monkeypatch.setenv("KALSHI_RSA_PRIVATE_KEY", "test-pem")
         monkeypatch.setattr(kalshi_task, "SUBSCRIPTION_REFRESH_SECONDS", 0.05)
         _install_quiet_socket(monkeypatch)
-        _install_slate(monkeypatch, KALSHI_SLATE)
+        _install_slate(monkeypatch, KALSHI_REBUILD_SLATE)
 
-        stats = await kalshi_task._run_kalshi_ws_consumer()
+        stats = await asyncio.wait_for(kalshi_task._run_kalshi_ws_consumer(), timeout=10)
 
         assert stats["status"] == "resubscribe", stats
 
@@ -385,12 +390,12 @@ class TestTheWholeStackRecyclesForFree:
         monkeypatch.setenv("KALSHI_RSA_PRIVATE_KEY", "test-pem")
         monkeypatch.setattr(kalshi_task, "SUBSCRIPTION_REFRESH_SECONDS", 0.05)
         connects = _install_quiet_socket(monkeypatch, stop_after=3)
-        _install_slate(monkeypatch, KALSHI_SLATE)
+        _install_slate(monkeypatch, KALSHI_REBUILD_SLATE)
         shim = _AsyncioShim()
         monkeypatch.setattr(run_kalshi_ws, "asyncio", shim)
 
         with pytest.raises(_Stop):
-            await run_kalshi_ws.run_kalshi()
+            await asyncio.wait_for(run_kalshi_ws.run_kalshi(), timeout=10)
 
         assert connects["n"] == 4, "the runner must re-read the slate each cycle"
         assert shim.sleeps == [], (
