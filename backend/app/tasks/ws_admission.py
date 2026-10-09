@@ -70,6 +70,13 @@ ADMISSION_MIN_RECYCLE_SECONDS = float(
     os.getenv("WS_ADMISSION_MIN_RECYCLE_SECONDS", "60")
 )
 
+#: #10090 — the least time between a reread and one a caller's ``wake`` brings
+#: forward. A burst of wakes is one reread, and a woken reread never comes
+#: sooner than this after the previous one.
+ADMISSION_WAKE_COOLDOWN_SECONDS = float(
+    os.getenv("WS_ADMISSION_WAKE_COOLDOWN_SECONDS", "5")
+)
+
 
 def feeding_market_ids(source_entry: Any) -> frozenset:
     """The markets behind a stored blend reading, or empty if none is proven.
@@ -130,6 +137,8 @@ async def watch_for_unadmitted_live_events(
     check_seconds: Optional[float] = None,
     min_recycle_seconds: Optional[float] = None,
     clock: Callable[[], float] = time.monotonic,
+    wake: Optional[asyncio.Event] = None,
+    wake_cooldown_seconds: Optional[float] = None,
 ) -> frozenset:
     """Return the live events the run cannot price, once it may recycle.
 
@@ -142,16 +151,34 @@ async def watch_for_unadmitted_live_events(
     while the reread fails, or before `min_recycle_seconds` have passed since
     `started_at`. Both intervals default to the module constants, read at call
     time.
+
+    #10090: a caller may pass ``wake``, an event it sets when it sees something
+    the next reread should not wait `check_seconds` for. A set ``wake`` brings
+    the next reread forward to `wake_cooldown_seconds` after the previous one
+    began; wakes during a reread carry to the next. After a failed reread the
+    wait is the full interval, woken or not. Without ``wake`` nothing changes.
     """
     if check_seconds is None:
         check_seconds = ADMISSION_CHECK_SECONDS
     if min_recycle_seconds is None:
         min_recycle_seconds = ADMISSION_MIN_RECYCLE_SECONDS
+    if wake_cooldown_seconds is None:
+        wake_cooldown_seconds = ADMISSION_WAKE_COOLDOWN_SECONDS
     tried = frozenset(tried_event_ids)
     held: Optional[frozenset] = None
+    failed = False
+    read_at = clock()
     while True:
         if held is not None:
-            await asyncio.sleep(check_seconds)
+            if wake is None or failed:
+                await asyncio.sleep(check_seconds)
+            elif await _woken_within(wake, check_seconds):
+                await asyncio.sleep(
+                    max(0.0, wake_cooldown_seconds - (clock() - read_at))
+                )
+        if wake is not None:
+            wake.clear()
+        read_at = clock()
         try:
             unadmitted = frozenset(await load_unadmitted_live_event_ids())
         except Exception:
@@ -159,9 +186,11 @@ async def watch_for_unadmitted_live_events(
                 "%s WS admission: live reread failed, keeping the subscription",
                 arm, exc_info=True,
             )
+            failed = True
             if held is None:
                 await asyncio.sleep(check_seconds)
             continue
+        failed = False
         if held is None:
             held = unadmitted & tried
             if held:
@@ -175,6 +204,20 @@ async def watch_for_unadmitted_live_events(
         missing = unadmitted - held
         if missing and clock() - started_at >= min_recycle_seconds:
             return missing
+
+
+async def _woken_within(wake: asyncio.Event, seconds: float) -> bool:
+    """True once ``wake`` is set, False after ``seconds``; the loser is joined."""
+    sleeper = asyncio.ensure_future(asyncio.sleep(seconds))
+    waiter = asyncio.ensure_future(wake.wait())
+    try:
+        await asyncio.wait({sleeper, waiter}, return_when=asyncio.FIRST_COMPLETED)
+        return waiter.done() and not waiter.cancelled()
+    finally:
+        for task in (sleeper, waiter):
+            if not task.done():
+                task.cancel()
+        await asyncio.gather(sleeper, waiter, return_exceptions=True)
 
 
 async def run_until_admission(

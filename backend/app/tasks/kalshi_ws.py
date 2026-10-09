@@ -1052,6 +1052,11 @@ async def _run_kalshi_ws_consumer(*, sessions, prices):
     quote_only_event_ids: set[int] = set()
     # #10090: event id → monotonic time of its last accepted winner-leg quote.
     winner_quoted_at: dict[int, float] = {}
+    # #10090: set by a winner leg's first quote in the evidence window for an
+    # event outside `live_event_ids`, so the admission reread that may lift it
+    # (`load_quote_priority_event_ids`) runs now, not at the next 30 s check.
+    # Its later quotes, and an event the read refuses, never set it again.
+    admission_wake = asyncio.Event()
     flush_timings = _FlushTimings()
     prices.timings = flush_timings
     blend_refresher = LiveBlendRefresher(
@@ -1789,7 +1794,14 @@ async def _run_kalshi_ws_consumer(*, sessions, prices):
             if ticker in ticker_to_ids and outcome_id not in non_blend_outcome_ids:
                 event_id = event_id_by_outcome.get(outcome_id)
                 if event_id is not None:
-                    winner_quoted_at[event_id] = time.monotonic()
+                    now = time.monotonic()
+                    previous = winner_quoted_at.get(event_id)
+                    winner_quoted_at[event_id] = now
+                    if event_id not in live_event_ids and (
+                        previous is None
+                        or now - previous > QUOTE_PRIORITY_EVIDENCE_SECONDS
+                    ):
+                        admission_wake.set()
             if exact_trace is not None:
                 with contextlib.suppress(Exception):
                     exact_trace.decided(
@@ -2632,6 +2644,7 @@ async def _run_kalshi_ws_consumer(*, sessions, prices):
                 list(event_id_by_market.values()),
                 arm="Kalshi",
                 started_at=run_started_at,
+                wake=admission_wake,
             ),
             name="kalshi-admission-watch",
         )
