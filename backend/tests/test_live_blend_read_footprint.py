@@ -33,6 +33,10 @@ class ReadSession:
     async def execute(self, statement):
         self.statements.append(statement)
         from app.utils.live_blend import is_game_winner_market
+        from app.utils.content_understanding import (
+            CONTENT_UNDERSTANDING_KEY, CONTENT_UNDERSTANDING_VERSION,
+            venue_label_refutes_full_contest_winner,
+        )
 
         columns = list(getattr(statement, "selected_columns", ()))
         column = columns[len(PREPARED_MARKET_FIELDS) + PREPARED_EVENT_FIELDS.index(
@@ -56,6 +60,23 @@ class ReadSession:
                 market.source != "kalshi" or not market.external_id
                 or is_game_winner_market(market)
             )
+            if market.source == "polymarket":
+                metadata = market.market_metadata
+                understanding = (
+                    metadata.get(CONTENT_UNDERSTANDING_KEY)
+                    if isinstance(metadata, dict)
+                    else None
+                )
+                # The read is conservative: only known current-version records
+                # use the existing authoritative refusal; all other rows hydrate.
+                current = (
+                    isinstance(understanding, dict)
+                    and type(understanding.get("v")) is int
+                    and (understanding["v"] == CONTENT_UNDERSTANDING_VERSION)
+                )
+                eligible = not (
+                    current and venue_label_refutes_full_contest_winner(market)
+                )
             if eligible:
                 self.outcome_ids.append(market.id)
             outcomes = [
@@ -335,3 +356,124 @@ async def test_one_read_replays_latest_quote_withdrawal_and_settlement():
     settled = await refresher._read_groups(session, [1])
     assert reading_signature(settled[1][1]) is None
     assert len(session.statements) == 4
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "shape, skipped",
+    [
+        ({"v": 1, "semantic_type": "moneyline", "venue_type": "child_moneyline"}, True),
+        (
+            {
+                "v": 1,
+                "semantic_type": "moneyline",
+                "venue_type": "tennis_completed_match",
+            },
+            True,
+        ),
+        ({"v": 1, "semantic_type": "totals", "venue_type": "totals"}, True),
+        ({"v": 1, "semantic_type": "moneyline", "venue_type": "moneyline"}, False),
+        ({"v": 1, "semantic_type": "moneyline"}, False),
+        ({"v": 1, "semantic_type": "moneyline", "venue_type": None}, False),
+        ({"v": 1, "semantic_type": "moneyline", "venue_type": ""}, False),
+        ({"v": 1, "semantic_type": "moneyline", "venue_type": ["totals"]}, False),
+        ({"v": 1, "venue_type": "totals"}, False),
+        ({"v": 1, "semantic_type": "", "venue_type": "totals"}, False),
+        ({"v": 1, "semantic_type": 4, "venue_type": "totals"}, False),
+        ({"v": True, "semantic_type": "moneyline", "venue_type": "totals"}, False),
+        ({"v": "1", "semantic_type": "moneyline", "venue_type": "totals"}, False),
+        ({"v": 1.0, "semantic_type": "moneyline", "venue_type": "totals"}, False),
+        ({"v": 2, "semantic_type": "moneyline", "venue_type": "totals"}, False),
+        ({"v": 0, "semantic_type": "moneyline", "venue_type": "totals"}, False),
+        (None, False),
+        ([], False),
+    ],
+)
+async def test_pm_outcome_read_omits_only_known_refusals_and_keeps_full_reading(
+    shape, skipped
+):
+    from sqlalchemy.dialects import postgresql
+    from app.utils.content_understanding import CONTENT_UNDERSTANDING_KEY
+
+    e = event()
+    candidate = market(1, source="polymarket")
+    winner = market(2, source="polymarket")
+    candidate.market_metadata = {CONTENT_UNDERSTANDING_KEY: shape}
+    quotes = outcomes(candidate, home=0.2) + outcomes(winner, home=0.67)
+    baseline = [
+        MarketOutcomes(m, [o for o in quotes if o.market_id == m.id])
+        for m in [candidate, winner]
+    ]
+    session = ReadSession([e], [candidate, winner], quotes)
+    grouped = await LiveBlendRefresher("polymarket")._read_groups(session, [1])
+    graph = grouped[1][1]
+    assert [g.market.id for g in graph] == [1, 2]
+    assert len(graph[0].outcomes) == (0 if skipped else 2)
+    assert len(graph[1].outcomes) == 2
+    assert reading_signature(graph) == reading_signature(baseline)
+    # Assert the ACTUAL generated predicate is on the outcome OUTER JOIN,
+    # with type/version/absence guards, never on market selection.
+    statement = session.statements[0]
+    sql = str(
+        statement.compile(
+            dialect=postgresql.dialect(), compile_kwargs={"literal_binds": True}
+        )
+    )
+    join, where = sql.split("\nWHERE ")
+    assert (
+        "LEFT OUTER JOIN futures_outcomes ON futures_outcomes.market_id = futures_markets.id AND NOT coalesce("
+        in join
+    )
+    assert "jsonb_typeof" not in where
+    assert "jsonb_typeof(futures_markets.market_metadata) = 'object'" in join
+    assert " ->> 'v') = '1'" in join
+    assert " ->> 'venue_type') NOT IN ('moneyline')" in join
+    assert "false)" in join
+    assert len(session.statements) == 1
+
+
+@pytest.mark.asyncio
+async def test_pm_many_refused_outcomes_keep_shell_count_devig_and_retirement():
+    from app.utils.content_understanding import CONTENT_UNDERSTANDING_KEY
+
+    e = event()
+    prop = market(1, source="polymarket")
+    prop.market_metadata = {
+        CONTENT_UNDERSTANDING_KEY: {
+            "v": 1,
+            "semantic_type": "moneyline",
+            "venue_type": "child_moneyline",
+        }
+    }
+    home = market(2, source="polymarket")
+    away = market(3, source="polymarket")
+    props = [
+        FuturesOutcome(
+            id=1000 + i,
+            market_id=1,
+            name="Boston Celtics",
+            rank=i,
+            current_probability=0.2,
+        )
+        for i in range(128)
+    ]
+    quotes = props + outcomes(home, home=0.67) + outcomes(away, home=0.61)
+    baseline = [
+        MarketOutcomes(m, [o for o in quotes if o.market_id == m.id])
+        for m in [prop, home, away]
+    ]
+    session = ReadSession([e], [prop, home, away], quotes)
+    refresher = LiveBlendRefresher("polymarket")
+    graph = (await refresher._read_groups(session, [1]))[1][1]
+    assert [g.market.id for g in graph] == [1, 2, 3]
+    assert sum(len(g.outcomes) for g in graph) == 4  # Full graph hydrated132.
+    assert reading_signature(graph) == reading_signature(baseline)
+    assert (
+        reading_signature(graph)[2] is False
+    )  # Shell keeps3, never a false devig pair.
+    session.markets = [prop]
+    assert reading_signature((await refresher._read_groups(session, [1]))[1][1]) is None
+    session.markets = [prop, home, away]
+    for q in quotes:
+        q.current_probability = None
+    assert reading_signature((await refresher._read_groups(session, [1]))[1][1]) is None
