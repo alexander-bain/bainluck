@@ -38,7 +38,8 @@ async def _run_recording(monkeypatch, arm):
             super().__init__(*args, **kwargs)
             instances.append(self)
 
-    async def cadence(flush, period, stop=None, *, failed_retry_interval_s=None):
+    async def cadence(flush, period, stop=None, *, failed_retry_interval_s=None,
+                      wake=None, work_count=None):
         calls.append((period, failed_retry_interval_s))
         await stop.wait()
 
