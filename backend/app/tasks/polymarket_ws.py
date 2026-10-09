@@ -2027,8 +2027,9 @@ async def _run_polymarket_ws_consumer(*, sessions, stop=None):
             # so an event in a later chunk waited for every earlier chunk's
             # write AND stamp in turn. A safe independent chunk N+1's write
             # overlaps chunk N's stamp. Unchanged: writes stay strictly sequential, one in flight;
-            # the refresher still runs ONE refresh at a time, in chunk order
-            # (each joins the previous one before its receipts are staged); a
+            # the refresher still runs ONE refresh at a time. A later complete
+            # cohort may join that call on its existing fresh workers; a refused
+            # cohort joins the previous call before its receipts are staged. A
             # chunk's stamp starts only after its own write committed;
             # its market notification may run alongside the event stamp.
             # Withdrawals still follow the stamp before them; and
@@ -2036,6 +2037,7 @@ async def _run_polymarket_ws_consumer(*, sessions, stop=None):
             # beside it.
             stamping = None
             stamping_events = None
+            stamping_fresh = set()
             market_publishing = None
 
             def start_market_publish(session):
@@ -2073,7 +2075,7 @@ async def _run_polymarket_ws_consumer(*, sessions, stop=None):
                     raise interrupted
 
             async def stamp_done(*, cancel=False):
-                nonlocal stamping, stamping_events
+                nonlocal stamping, stamping_events, stamping_fresh
                 if stamping is None:
                     return
                 if cancel:
@@ -2089,7 +2091,12 @@ async def _run_polymarket_ws_consumer(*, sessions, stop=None):
                         interrupted = exc
                         stamping.cancel()
                 task, stamping = stamping, None
+                fresh, stamping_fresh = stamping_fresh, set()
                 stamping_events = None
+                if task.cancelled() or task.exception() is not None:
+                    # Includes cancellation before refresh's first turn takes
+                    # the committed cohort (and every cohort it later admitted).
+                    blend_refresher.adopt_pending(fresh)
                 if not task.cancelled() and task.exception() is not None:
                     # `refresh` never raises; if it ever does, its write already
                     # committed, so say so rather than fail the flush after it.
@@ -2137,9 +2144,6 @@ async def _run_polymarket_ws_consumer(*, sessions, stop=None):
                         current_chunk, final=final,
                         start_market_publish=start_market_publish,
                     )
-                    # Join any safe overlapping stamp before this chunk's
-                    # withdrawals, receipts or refresh.
-                    await stamp_done()
                     # A wide book can arrive during the earlier write or this
                     # one. It must mature/hold this event before its fresh stamp.
                     async with buffer_lock:
@@ -2171,6 +2175,9 @@ async def _run_polymarket_ws_consumer(*, sessions, stop=None):
                         and eid not in failed_price_events
                     }
                     if mature:
+                        # Withdrawals retain their existing order after the
+                        # preceding stamp, including implicit debt it admitted.
+                        await stamp_done()
                         attempted_withdraw_events.update(mature)
                         early_withdrawn = await flush_withdrawals(
                             only_events=mature, final=final,
@@ -2203,10 +2210,6 @@ async def _run_polymarket_ws_consumer(*, sessions, stop=None):
                         # `Event.win_probability_sources`, the JSONB the card
                         # renders. #837 receipt: the revisions these writes
                         # committed ride into this refresh, and only this one.
-                        tail_receipts.stage(
-                            [batch_marks[oid] for oid in ready if oid in batch_marks
-                             and oid not in headline_event_ids.non_speakers]
-                        )
                         refresh_events = event_ids_for_outcomes(
                             headline_event_ids, ready,
                         )
@@ -2214,6 +2217,32 @@ async def _run_polymarket_ws_consumer(*, sessions, stop=None):
                         unfinished_events = (
                             event_ids_for_outcomes(headline_event_ids, unfinished_price_ids)
                             | withdraw_events
+                        )
+                        if stamping is not None and not stamping.done():
+                            # A committed whole cohort in THIS flush may use
+                            # the running owner's free worker. Its marks travel
+                            # directly; never overwrite that call's staging slot.
+                            admitted = blend_refresher.admit_fresh(
+                                refresh_events, flush_started=flush_started,
+                                marks=[batch_marks[oid] for oid in ready
+                                       if oid in batch_marks
+                                       and oid not in headline_event_ids.non_speakers],
+                                defer_event_ids=unfinished_events,
+                            )
+                            stamping_fresh.update(admitted)
+                            if stamping_events is not None:
+                                stamping_events.update(admitted)
+                            ready = [oid for oid in ready
+                                     if headline_event_ids.get(oid) not in admitted]
+                            refresh_events.difference_update(admitted)
+                            if not ready:
+                                continue
+                        # Same-event/refused cohorts keep the previous joined
+                        # path. No second mutable refresher call runs beside it.
+                        await stamp_done()
+                        tail_receipts.stage(
+                            [batch_marks[oid] for oid in ready if oid in batch_marks
+                             and oid not in headline_event_ids.non_speakers]
                         )
                         # Capture BEFORE refresh consumes due debt and starts
                         # awaiting its database read; querying it later can miss
@@ -2224,6 +2253,7 @@ async def _run_polymarket_ws_consumer(*, sessions, stop=None):
                                 unfinished_events,
                             )
                         )
+                        stamping_fresh = set(refresh_events)
                         stamping = asyncio.create_task(blend_refresher.refresh(
                             refresh_events, flush_started=flush_started,
                             defer_event_ids=unfinished_events,
