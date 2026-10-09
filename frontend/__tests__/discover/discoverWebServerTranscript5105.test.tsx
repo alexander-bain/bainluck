@@ -19,7 +19,8 @@
  *
  * Replaced, as in the sibling harness: auth, analytics, the price stream, and
  * the leaf card components (which print the card's server identity). The
- * internal option is mocked ON; it ships OFF.
+ * internal option is mocked ON (the local switch-on release candidate also ships
+ * it ON).
  */
 import "../helpers/minimalDom";
 import * as fs from "fs";

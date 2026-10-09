@@ -4,7 +4,8 @@
  * paging / restore / transition / section helpers and the real section
  * component. Only the network (`fetchFeed`), auth, analytics, the price
  * stream and the leaf card components are replaced, and the internal option is
- * mocked ON (it ships OFF; the first suite proves that and the legacy path).
+ * mocked per test (ON by default; the legacy suite pins OFF itself). The local
+ * switch-on release candidate ships the option ON; the first suite proves that.
  *
  * Every payload is a local mocked page. Cards are `politics` events, a
  * category `spaceBySport` never moves, so served order is rendered order.
@@ -315,9 +316,9 @@ afterEach(async () => {
 
 // ─────────────────────────────────────────────────────────────────────────────
 
-describe("#5105 option OFF (the shipped value): today's page exactly", () => {
-  it("ships the option false", () => {
-    expect(jest.requireActual("@/lib/discover/openingEditionOption").DISCOVER_OPENING_EDITION_ENABLED).toBe(false);
+describe("#5105 option OFF (the rollback value): today's page exactly", () => {
+  it("the local switch-on release candidate ships the option true", () => {
+    expect(jest.requireActual("@/lib/discover/openingEditionOption").DISCOVER_OPENING_EDITION_ENABLED).toBe(true);
   });
 
   it("renders one flat list with no heading, pins nothing and writes today's snapshot bytes", async () => {
