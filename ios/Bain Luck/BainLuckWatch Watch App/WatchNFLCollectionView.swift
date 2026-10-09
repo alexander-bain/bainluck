@@ -20,12 +20,13 @@ struct WatchNFLCollectionView: View {
                             ForEach(membership.games) { game in
                                 Button {
                                     start {
-                                        if let id = await browser.validateGame(game.id),
-                                           !Task.isCancelled, scenePhase == .active {
-                                            WatchTelemetry.shared.action(.selectGame, surface: .picker)
-                                            selected.select(eventID: id)
-                                            selectedGame()
-                                        }
+                                        await browser.selectGame(game.id,
+                                            isActive: { scenePhase == .active },
+                                            select: { id in
+                                                WatchTelemetry.shared.action(.selectGame, surface: .picker)
+                                                selected.select(eventID: id)
+                                                selectedGame()
+                                            })
                                     }
                                 } label: {
                                     VStack(alignment: .leading, spacing: 3) {

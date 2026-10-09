@@ -78,6 +78,18 @@ final class WatchNFLCollectionStore: ObservableObject {
               membership?.games.contains(where: { $0.id == id }) == true else { return nil }
         return id
     }
+    /// Keep the final validation guard and selection effect in one MainActor turn.
+    /// A test can observe this exact production seam without loading SwiftUI.
+    @MainActor @discardableResult
+    func selectGame(_ id: Int, isActive: () -> Bool, select: (Int) -> Void) async -> Bool {
+        guard isActive(), !Task.isCancelled else { return false }
+        let expectedRevision = revision + 1
+        guard let validatedID = await validateGame(id),
+              revision == expectedRevision,
+              isActive(), !Task.isCancelled else { return false }
+        select(validatedID)
+        return true
+    }
     @MainActor private func finish(_ error: Error, stamp: Int) {
         guard stamp == revision else { return }
         isLoading = false
