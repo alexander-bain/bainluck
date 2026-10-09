@@ -43,6 +43,8 @@ class Scope:
         self.linked_reads = self.open_reads = self.bridge_reads = 0
         self.active = 0
         self.written = {}
+        self.pending_started = asyncio.Event()
+        self.pending_cancelled = False
 
     @asynccontextmanager
     async def session(self):
@@ -73,6 +75,13 @@ class Scope:
             return Result([(GAME, 7, 72 if self.change == "outcome_map" else 71)])
         if columns and columns[0] == "futures_outcomes.external_id":
             self.open_reads += 1
+            if self.change == "initial_pending":
+                self.pending_started.set()
+                try:
+                    await asyncio.Event().wait()
+                except asyncio.CancelledError:
+                    self.pending_cancelled = True
+                    raise
             return Result([(OPEN, 8, 82 if self.change == "open_map" else 81,
                             901, OPEN.rsplit("-", 1)[0])])
         if columns == ["events.id"]:
@@ -126,7 +135,7 @@ class Socket:
 @pytest.mark.asyncio
 @pytest.mark.parametrize("change", [
     "event_map", "outcome_map", "open_map", "bridge", "channels",
-    "open_prices", "open_ended", "admission", "stop",
+    "open_prices", "open_ended", "admission", "stop", "initial_pending",
 ])
 async def test_real_clients_keep_latest_inputs_until_scope_change_or_final_stop(monkeypatch, change):
     monkeypatch.setenv("KALSHI_API_KEY_ID", "control")
@@ -134,7 +143,7 @@ async def test_real_clients_keep_latest_inputs_until_scope_change_or_final_stop(
     monkeypatch.setenv("WS_OPEN_CONTRACT_PRICES", "1")
     monkeypatch.setenv("WS_OPEN_CONTRACT_SETTLEMENT", "1")
     monkeypatch.delenv("WS_KALSHI_TRACE_TICKERS", raising=False)
-    monkeypatch.setattr(task, "SUBSCRIPTION_REFRESH_SECONDS", 0.02)
+    monkeypatch.setattr(task, "SUBSCRIPTION_REFRESH_SECONDS", 2 if change == "initial_pending" else 0.02)
     monkeypatch.setattr(task, "kalshi_flush_cadence", lambda: (1000, 2, None, 4))
     monkeypatch.setattr(admission, "ADMISSION_CHECK_SECONDS", 0.01)
     monkeypatch.setattr(admission, "ADMISSION_MIN_RECYCLE_SECONDS", 0)
@@ -155,7 +164,7 @@ async def test_real_clients_keep_latest_inputs_until_scope_change_or_final_stop(
     async def connect(*_args, **_kwargs):
         socket = Socket()
         sockets.append(socket)
-        if len(sockets) == 2:
+        if len(sockets) == (1 if change == "initial_pending" else 2):
             connected.set()
         try:
             yield socket
@@ -177,6 +186,8 @@ async def test_real_clients_keep_latest_inputs_until_scope_change_or_final_stop(
     monkeypatch.setattr(opened, "grade_open_contract_leg", grade)
     monkeypatch.setattr(blend.LiveBlendRefresher, "publish_market_changes", publish)
     scope = Scope()
+    if change == "initial_pending":
+        scope.change = change
     # Run the actual consumer body/service/dispatch. Only external resources and
     # the price driver's RETURNING rows are doubled; ownership wrappers are separate.
     running = asyncio.create_task(task._run_kalshi_ws_consumer.__wrapped__.__wrapped__(
@@ -185,6 +196,22 @@ async def test_real_clients_keep_latest_inputs_until_scope_change_or_final_stop(
     try:
         await asyncio.wait_for(connected.wait(), 10)
         game = next(s for s in sockets if s.commands[0]["params"]["market_tickers"] == [GAME])
+        if change == "initial_pending":
+            await asyncio.wait_for(scope.pending_started.wait(), 30)
+            await game.deliver("ticker", {"market_ticker": GAME, "price_dollars": "0.80"})
+            stats = await asyncio.wait_for(running, 30)
+            assert stats["status"] == "resubscribe"
+            assert stats["recycle_reason"] == "scope"
+            assert stats["final_flush_dropped"] == stats["errors"] == stats["loops_unreaped"] == 0
+            assert scope.pending_cancelled and scope.active == 0
+            assert scope.written[71][0] == 0.8
+            assert len(clients) == len(sockets) == 1
+            assert all(socket.closed for socket in sockets)
+            assert all(client.owner.done() for client in clients)
+            assert not any(t.get_name() in {
+                "kalshi-flush-loop", "kalshi-stats-loop", "kalshi-subscription-lifetime",
+            } for t in asyncio.all_tasks() if not t.done())
+            return
         other = next(s for s in sockets if s is not game)
         await game.deliver("ticker", {"market_ticker": GAME, "price_dollars": "0.60"})
         assert await asyncio.wait_for(scope.refreshed.get(), 10) == 1  # initial admission
