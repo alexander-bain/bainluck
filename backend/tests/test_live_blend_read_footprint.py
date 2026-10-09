@@ -1,6 +1,7 @@
 """Fresh card probabilities: smaller reads must keep the same blend reading."""
 
 from contextlib import asynccontextmanager
+import copy
 from dataclasses import asdict
 from datetime import datetime, timedelta, timezone
 
@@ -303,7 +304,9 @@ async def test_prepared_context_keeps_fallbacks_and_detaches_json_without_copyin
         def __getattr__(self, key):
             if key not in PREPARED_EVENT_FIELDS:
                 raise AssertionError(f"unprojected Event field: {key}")
-            return getattr(e, key)
+            # The scalar read selects columns, never entities: the driver
+            # decodes a fresh JSON object on every execution (no identity map).
+            return copy.deepcopy(getattr(e, key))
 
     session = ReadSession([GuardedEvent()], [], [])
     m = market(2)
@@ -314,9 +317,8 @@ async def test_prepared_context_keeps_fallbacks_and_detaches_json_without_copyin
     async def factory():
         yield session
 
-    prepared = await LiveBlendRefresher(
-        "kalshi", session_factory=factory
-    )._prepare_groups([1])
+    refresher = LiveBlendRefresher("kalshi", session_factory=factory)
+    prepared = await refresher._prepare_groups([1])
     context = prepared[1][0]
     assert set(vars(context)) == set(PREPARED_EVENT_FIELDS)
     assert context.espn_win_prob_home == 0.7
@@ -327,6 +329,10 @@ async def test_prepared_context_keeps_fallbacks_and_detaches_json_without_copyin
     context.win_probability_sources["kalshi"]["value"] = 0.1
     assert e.win_probability_sources["kalshi"]["value"] == 0.67
     assert e.win_probability_sources["espn"]["value"] == 0.7
+    # The graph belongs to one call: nothing it mutates reaches the next one.
+    again = await refresher._prepare_groups([1])
+    assert again[1][0] is not context
+    assert again[1][0].win_probability_sources["kalshi"]["value"] == 0.67
 
 
 @pytest.mark.asyncio
