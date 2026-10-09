@@ -2470,6 +2470,35 @@ async def _run_kalshi_ws_consumer(*, sessions, prices):
                 finished, watch_task = watch_task, None
                 if not finished.cancelled() and finished.exception() is None:
                     admitted = finished.result()
+                    # A newly live leg need not tear down every working socket.
+                    # Reuse the bounded, ACK-gated scope handoff; only keep it
+                    # when the same admission read confirms the leg is mapped.
+                    # Failed/unchanged/unadmittable scopes retain the old recycle.
+                    if not any(c.task.done() for c in game_clients):
+                        verdict = await refresh_subscription_scope()
+                        if verdict == "applied":
+                            try:
+                                remaining = await load_unadmitted_live_event_ids()
+                            except Exception:
+                                logger.warning(
+                                    "Kalshi WS: in-place admission unconfirmed; "
+                                    "keeping the admission recycle", exc_info=True,
+                                )
+                            else:
+                                if admitted.isdisjoint(remaining):
+                                    stats["admission_in_place"] = (
+                                        stats.get("admission_in_place", 0) + 1
+                                    )
+                                    logger.info(
+                                        "Kalshi WS: admitted live events in place: %s",
+                                        sorted(admitted)[:20],
+                                    )
+                                    admitted = None
+                                    watch_task = start_watcher()
+                                    next_refresh = (
+                                        time.monotonic() + SUBSCRIPTION_REFRESH_SECONDS
+                                    )
+                                    continue
                     break
                 logger.error(
                     "WS admission watcher failed; the subscription recycles on its timer",
