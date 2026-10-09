@@ -291,6 +291,10 @@ class KalshiWebSocket:
         action = self._book_commands.pop(command_id, None)
         if action is not None:
             if msg_type == "error":
+                # Membership/resync is now uncertain. Discard cached overlays;
+                # genuine ticker quotes must keep flowing on this connection.
+                self._book = None
+                self._book_requested = frozenset()
                 logger.warning(
                     "Kalshi WS: order book %s refused: %s",
                     action, str(data.get("msg"))[:200],
@@ -554,6 +558,16 @@ class KalshiWebSocket:
         if self._book is None:
             return
         quote = self._book.apply(data)
+        if data.get("type") == "orderbook_snapshot":
+            self._book_commands.pop(data.get("id"), None)
+        payload = data.get("msg")
+        ticker = payload.get("market_ticker") if isinstance(payload, dict) else None
+        ticker = ticker.upper() if isinstance(ticker, str) else ""
+        if ticker not in self.book_tickers:
+            # Still consume the SID sequence: later wanted deltas share it.
+            # A queued snapshot after removal must not recreate an overlay.
+            self._book.forget([ticker])
+            quote = None
         await self._request_resnapshots(ws)
         if quote is None or not self.on_ticker:
             return

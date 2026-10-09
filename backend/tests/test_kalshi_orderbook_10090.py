@@ -67,3 +67,12 @@ def test_removal_and_reconnect_never_reuse_previous_book():
     fresh_connection = KalshiOrderBook()
     assert fresh_connection.apply(delta(2)) is None
     assert fresh_connection.take_resnapshot_requests() == {2: ("GAME-A",)}
+
+
+def test_optional_empty_side_accepts_its_later_first_offer():
+    book = KalshiOrderBook()
+    frame = snapshot()
+    del frame["msg"]["yes_dollars_fp"]
+    assert book.apply(frame)["yes_bid_dollars"] is None
+    assert book.take_resnapshot_requests() == {}
+    assert book.apply(delta(2, price="0.80", quantity="5"))["yes_bid_dollars"] == "0.80"

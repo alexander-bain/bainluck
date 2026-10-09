@@ -103,7 +103,8 @@ class KalshiOrderBook:
                 book = {}
                 for side in ("yes", "no"):
                     levels = {}
-                    for price, quantity in msg[side + "_dollars_fp"]:
+                    # Kalshi omits a side when it has no resting offers.
+                    for price, quantity in msg.get(side + "_dollars_fp", []):
                         price, quantity = _number(price), _number(quantity)
                         if not 0 <= price <= 1 or quantity < 0 or price in levels:
                             raise ValueError("invalid snapshot level")

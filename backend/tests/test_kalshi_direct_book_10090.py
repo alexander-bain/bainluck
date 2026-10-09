@@ -143,10 +143,35 @@ async def test_book_quote_reaches_the_price_callback_before_the_summary(monkeypa
         assert wire.updates("delete_markets") == [
             {"sids": [sid], "market_tickers": [ZVE], "action": "delete_markets"},
         ]
+        # A snapshot already queued before deletion cannot recreate an overlay.
+        count = len(seen)
+        await wire.frame(_snapshot(11, sid=sid))
+        assert len(seen) == count
         await wire.deliver("ticker", {"market_ticker": ZVE, "price_dollars": "0.85",
                                       "yes_bid_dollars": "0.80", "yes_ask_dollars": "0.82"})
         assert seen[-1]["yes_bid_dollars"] == "0.80"
         assert sock.stats["book_quotes"] == 4 and sock.stats["book_resnapshots"] == 1
+    finally:
+        run.cancel()
+        await asyncio.gather(run, return_exceptions=True)
+
+
+@pytest.mark.asyncio
+async def test_rejected_membership_update_discards_cached_book_overlay(monkeypatch):
+    sock, run, wire, seen = await _service(monkeypatch, {ZVE})
+    try:
+        book = wire.book_subscribe()
+        await wire.respond(book, "subscribed")
+        await wire.frame(_snapshot(1, sid=book["id"]))
+        await sock.set_book_tickers({ZVE, "GAME-B"})
+        command = wire.commands[-1]
+        assert command["params"]["action"] == "add_markets"
+        await wire.respond(command, "error")
+        summary = {"market_ticker": ZVE, "price_dollars": "0.91",
+                   "yes_bid_dollars": "0.90", "yes_ask_dollars": "0.92"}
+        await wire.deliver("ticker", summary)
+        assert seen[-1] == summary
+        assert sock.is_subscribed
     finally:
         run.cancel()
         await asyncio.gather(run, return_exceptions=True)
