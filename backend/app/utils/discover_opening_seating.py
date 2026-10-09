@@ -60,10 +60,18 @@ Groups
 
 Grouping is out of scope, so a group may not launder a child's restriction into
 an opening seat. A ``bundle`` whose ``data.items`` hold a restricted child, or a
-child of a kind this module does not know, and a ``collection`` whose own status
-reads live or whose ``matched_event_ids`` name a restricted event card in the
-deck, make the whole call UNSUPPORTED (input unchanged). Groups with nothing to
-launder are ordinary cards.
+child of a kind this module does not know, and a ``collection`` whose
+``matched_event_ids`` name a restricted event card in the deck, make the whole
+call UNSUPPORTED (input unchanged). Groups with nothing to launder are ordinary
+cards.
+
+A collection's own ``status`` is never read as evidence about its games: it is
+the hub's lifecycle from its own authority (``container_graph`` — never inferred
+from children), copied by ``container_discovery`` beside a separate publication
+``state``. A published NFL week reads ``live`` while every game it names is
+scheduled. ``matched_event_ids`` are a relevance subset, not a membership
+census: only the members the deck itself represents are checked, and nothing
+here claims the hub's unseen members are verified.
 
 Order
 -----
@@ -133,9 +141,6 @@ TOURNAMENT_END_TAIL = timedelta(days=1)
 #: The event status that means in play (``routes/event_stream.LIVE_STATUSES``).
 EVENT_LIVE_STATUSES = frozenset({"live"})
 CONCEPT_LIVE_STATUSES = frozenset({"live"})
-#: Collection statuses that would put live games inside a group whose members
-#: this module cannot all see.
-COLLECTION_LIVE_STATUSES = frozenset({"live", "in_progress", "in-progress", "active"})
 
 EXEMPT_TAGS = frozenset({"tier:1", "importance:playoff"})
 
@@ -366,12 +371,8 @@ def _group_refusal(
                     "event; grouped membership is not supported by opening seating"
                 )
         return None
-    status = data.get("status")
-    if isinstance(status, str) and status.lower() in COLLECTION_LIVE_STATUSES:
-        return (
-            f"{ident}: collection status {status!r} holds live games this "
-            "module cannot all see"
-        )
+    # A collection's ``status`` is its hub's own lifecycle, not its games' (see
+    # "Groups" above); only the represented matched members are evidence.
     for event_id in data.get("matched_event_ids") or ():
         member = by_event_id.get(event_id)
         if member is not None and member.restricted:

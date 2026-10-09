@@ -230,15 +230,53 @@ async def test_seated_discover_paginates_a_deck_whose_collection_holds_no_live_g
 
 
 @pytest.mark.usefixtures("opening_seating_on")
-async def test_seated_discover_refuses_a_deck_whose_collection_reads_live(
+async def test_seated_discover_paginates_the_unchanged_live_hub_of_scheduled_games(
     client, monkeypatch, enabled, card, ordinary_deck
 ):
-    """#5105: the same producer card as published (`status: live`, an NFL week
-    in progress) is a group the seating cannot see inside. The whole deck is a
-    truthful `unavailable` — never a flat or partly seated page — even though
-    every member game is scheduled."""
-    assert card["status"] == "live"
+    """#5105: the producer card exactly as published — ``state: published``,
+    the hub's own ``status: live`` (an NFL week in progress) — over a deck whose
+    represented games are all scheduled. The hub's status is its authority's
+    lifecycle, not its games'; this deck was once refused whole as
+    ``unavailable``/``opening_unsupported``. Every page, one edition."""
+    assert card["state"] == "published" and card["status"] == "live"
+    assert all(c["data"]["status"] == "scheduled" for c in ordinary_deck)
+    published = copy.deepcopy(card)
     read = AsyncMock(return_value=SimpleNamespace(collections=[card]))
+    monkeypatch.setattr(producer, "discover_collections", read)
+    monkeypatch.setattr(cache, "get_shared_async_redis", AsyncMock(return_value=Redis()))
+    pages, editions = [], []
+    for offset in (0, 10, 20):
+        response = await client.get(f"/api/feed?limit=10&offset={offset}")
+        body = response.json()
+        assert response.headers.get("x-feed-cache") != "unavailable", body.get("cache")
+        assert body["total"] == 26, body.get("cache")
+        pages.extend(body["items"])
+        editions.append(body["edition"])
+    assert len(set(editions)) == 1 and editions[0]
+    assert len(pages) == 26
+    assert len({(item["type"], item["data"]["id"]) for item in pages}) == 26
+    collection = next(item for item in pages if item["type"] == "collection")
+    assert collection["data"] == card == published
+
+
+@pytest.mark.usefixtures("opening_seating_on")
+@pytest.mark.parametrize("hub_status", ["live", "scheduled"])
+@pytest.mark.parametrize(
+    "live_id,matched",
+    [(502, None), (519, [501, 519])],  # a member in the opening / past seat ten
+)
+async def test_seated_discover_refuses_a_hub_naming_a_represented_live_game(
+    client, monkeypatch, enabled, card, ordinary_deck, hub_status, live_id, matched
+):
+    """#5105: whatever the hub's own status, a matched member the deck carries
+    as an ordinary live game refuses the whole deck truthfully — never a flat or
+    partly seated page."""
+    hub = {**card, "status": hub_status}
+    if matched is not None:
+        hub["matched_event_ids"] = matched
+    member = next(c for c in ordinary_deck if c["data"]["id"] == live_id)
+    member["data"]["status"] = "live"
+    read = AsyncMock(return_value=SimpleNamespace(collections=[hub]))
     monkeypatch.setattr(producer, "discover_collections", read)
     monkeypatch.setattr(cache, "get_shared_async_redis", AsyncMock(return_value=Redis()))
     for offset in (0, 10):

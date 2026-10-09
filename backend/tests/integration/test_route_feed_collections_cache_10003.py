@@ -15,9 +15,11 @@ ASGI app and pin the three claims the fix makes:
 
 #5105: claims 1–2 and the unreadable-fingerprint rule are pinned on BOTH sides
 of the seated-opening switch. The legacy tests set it OFF themselves. Under ON,
-a supported (non-live) collection keeps all three guarantees; the original
-fixture (``status: live``) is grouped-live input seating refuses, so ON must
-answer it with a truthful ``unavailable`` and publish nothing reusable.
+a supported collection keeps all three guarantees — the original fixture
+(``status: live``, the hub's own lifecycle) included, since a hub's status says
+nothing about its games. A hub naming a represented ordinary LIVE game is
+grouped-live input seating refuses, so ON must answer it with a truthful
+``unavailable`` and publish nothing reusable.
 """
 
 import copy
@@ -78,8 +80,9 @@ def card():
 
 @pytest.fixture
 def scheduled_card(card):
-    """A SYNTHETIC copy of the 9653 hub that is not live — the collection
-    shape seating supports. The shared fixture itself is left untouched."""
+    """A SYNTHETIC copy of the 9653 hub whose own status is not live. Seating
+    supports it exactly as it supports the original live hub (whose games are
+    scheduled). The shared fixture itself is left untouched."""
     synthetic = copy.deepcopy(card)
     assert synthetic["status"] == "live"
     synthetic["status"] = "scheduled"
@@ -261,9 +264,11 @@ async def test_the_sports_events_backfill_keeps_its_cache_and_skips_publication(
 # ---------------------------------------------------------------------------
 
 
+@pytest.mark.parametrize("hub", ["scheduled_card", "card"])
 async def test_seated_a_supported_collection_reuses_one_publication_and_a_withdrawal_misses(
-    client, monkeypatch, enabled, seated, scheduled_card, ordinary_deck, redis
+    client, monkeypatch, enabled, seated, ordinary_deck, redis, request, hub
 ):
+    scheduled_card = request.getfixturevalue(hub)
     fake, scheduled = redis
     state = {"fingerprint": "published-rev-1"}
     fingerprint = AsyncMock(
@@ -323,13 +328,16 @@ async def test_seated_an_unreadable_fingerprint_builds_fresh_and_caches_nothing(
     assert not any(key.startswith("feed_cache:") for key in fake.store), fake.store
 
 
-async def test_seated_the_live_collection_is_refused_truthfully_and_publishes_nothing(
+async def test_seated_a_hub_naming_a_live_game_is_refused_truthfully_and_publishes_nothing(
     client, monkeypatch, enabled, seated, card, ordinary_deck, redis
 ):
-    """The original fixture is a LIVE hub: grouped-live input the seating
-    helper refuses. ON answers it with the existing ``unavailable`` shape (the
-    client keeps its accepted deck), never a flat or blank opening, and leaves
-    no seated page, base or manifest a later open could reuse."""
+    """The original hub, naming a game the deck carries as ordinary LIVE:
+    grouped-live input the seating helper refuses. ON answers it with the
+    existing ``unavailable`` shape (the client keeps its accepted deck), never a
+    flat or blank opening, and leaves no seated page, base or manifest a later
+    open could reuse."""
+    assert 502 in card["matched_event_ids"]
+    next(c for c in ordinary_deck if c["data"]["id"] == 502)["data"]["status"] = "live"
     fake, scheduled = redis
     state = {"fingerprint": "published-rev-1"}
     fingerprint = AsyncMock(
@@ -353,8 +361,9 @@ async def test_seated_the_live_collection_is_refused_truthfully_and_publishes_no
         assert seated[-1][1] is False and "collection" in seated[-1][0]
         assert not any(key.startswith("feed_cache:") for key in fake.store), fake.store
 
-    # Control: the same route, once the live hub is withdrawn, serves the deck —
-    # the refusal above is the live hub's, not a dark seated route.
+    # Control: the same route, once the hub is withdrawn, serves the deck (the
+    # live game seated past the opening) — the refusal above is the hub's, not
+    # a dark seated route.
     state["fingerprint"] = "withdrawn-rev-2"
     read.return_value = SimpleNamespace(collections=[])
     recovered = await client.get("/api/feed?limit=10")
