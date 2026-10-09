@@ -13,8 +13,9 @@ wiring will rely on:
   fingerprint together, for every principal and every category/collections
   shape, while staying under the prefixes ``invalidate_feed_response_cache``
   scans.
-* The route passes an explicit ``opening_seating=False`` and nothing else; no
-  warmer, env var or query parameter can turn it on.
+* The route derives the value from ONE internal served switch that is
+  ``False`` (``routes/feed.py::_DISCOVER_OPENING_SEATING_SERVED``); no warmer,
+  env var or query parameter can turn it on.
 
 Pure: no Redis, no DB, no network.
 """
@@ -217,14 +218,25 @@ def test_the_base_takes_no_offset_edition_or_boundary():
 # ---------------------------------------------------------------------------
 
 
-def test_the_route_passes_an_explicit_false_and_nothing_else():
+def test_the_route_keys_on_the_one_policy_and_its_switch_is_off():
+    # The seated serving path is commissioned default-OFF (#5105 server
+    # connection): `_cache_shape` and the edition fingerprint both read the one
+    # `_opening_seating` value, which is False unless the single internal
+    # switch is flipped. Route behaviour is pinned in
+    # `tests/integration/test_route_feed_opening_seating_5105.py`.
     src = inspect.getsource(feed_route.get_feed)
     shape = src[src.index("_cache_shape = dict(") :]
     shape = shape[: shape.index("\n        )\n")]
-    assert "opening_seating=False," in shape
-    assert src.count("opening_seating") == 1, (
-        "get_feed must name opening_seating exactly once — the explicit False "
-        "in _cache_shape — until the seated route path is commissioned"
+    assert "opening_seating=_opening_seating," in shape
+    assert feed_route._DISCOVER_OPENING_SEATING_SERVED is False
+    assert not feed_route._feed_opening_seating_policy(
+        mode=None,
+        sport=None,
+        category=None,
+        tags=None,
+        my_teams_only=False,
+        include_events=True,
+        include_futures=True,
     )
 
 
