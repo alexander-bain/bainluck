@@ -83,10 +83,74 @@ nonisolated enum LiveEventPriceReconciliation {
             kept.currentOdds = held.currentOdds
         }
         kept.heroProbability = held.heroProbability
+        kept.heroProbabilityAway = held.heroProbabilityAway
         kept.heroProbabilityObservedAt = held.heroProbabilityObservedAt
         kept.winProbabilitySources = held.winProbabilitySources
         kept.blendFoldRevision = held.blendFoldRevision
         return kept
+    }
+
+    /// #10090 — what a held folded blend does with a frame that speaks for the
+    /// server's FULL fold (or promises to). Web's `adoptFoldedQuote`.
+    enum FoldedQuoteDecision: Equatable {
+        /// A newer full vector: replace hero, pair, clock, vector and rail.
+        case adopt(FoldedQuote)
+        /// The same or an older fold than the page shows: nothing to do.
+        case hold
+        /// A raw frame on a multirow fold whose authoritative answer follows.
+        /// No detail/history read — the result frame settles it.
+        case awaitResult
+        /// Not this path's to decide: the existing frame rules apply, including
+        /// the detail/history read a folded hero asks for.
+        case fallback
+    }
+
+    /// Only a page already showing a live server blend with a vector can be
+    /// moved by a quote. An opening/consensus label, a phase change, a sport
+    /// or event mismatch, a non-blend hero and different fold membership
+    /// (`incomparable`) keep the authoritative paired read.
+    static func foldedQuoteDecision(_ frame: LiveStreamFrame, held: EventDetail) -> FoldedQuoteDecision {
+        guard frame.eventId == held.id, let heldRevision = pairedFoldRevision(in: held) else { return .fallback }
+        guard frame.foldedResult else {
+            // Only the raw PROMISE defers. An absent status is no claim (a
+            // sibling's invalidation carries none); a different one is a phase
+            // change and keeps its read.
+            guard frame.foldedQuotePending == true, heldRevision.rows.count > 1,
+                  frame.status == nil || frame.status == held.status else { return .fallback }
+            return .awaitResult
+        }
+        // Explicit null or a refused quote: the existing fallback, never a
+        // second deferral.
+        guard let quote = frame.foldedQuote?.quote, quote.eventId == held.id,
+              quote.heroProbabilitySource == "blend", quote.heroProbability != nil,
+              quote.status == held.status, quote.sport == held.sport else { return .fallback }
+        switch FoldRevision.compare(quote.blendFoldRevision, heldRevision) {
+        case .newer: return .adopt(quote)
+        case .same, .older: return .hold
+        case .incomparable: return .fallback
+        }
+    }
+
+    /// #10090 — the quote, exactly as served. The full vector dates the whole
+    /// quote, so an older clock after a removal still lands, and the complete
+    /// rail replaces the held one: a removed source never survives. The away
+    /// side is the server's (`nil` on a draw-priced sport), never `1 - p`.
+    /// Score, clock, status and everything else stay as held.
+    static func adoptingFoldedQuote(_ quote: FoldedQuote, into event: inout EventDetail) {
+        guard let hero = quote.heroProbability else { return }
+        if var odds = event.currentOdds {
+            odds.homeProbability = hero
+            odds.awayProbability = quote.heroProbabilityAway
+            // The served whole percents described the previous pair.
+            odds.homeRenderedPercent = nil
+            odds.awayRenderedPercent = nil
+            event.currentOdds = odds
+        }
+        event.heroProbability = hero
+        event.heroProbabilityAway = quote.heroProbabilityAway
+        event.heroProbabilityObservedAt = quote.heroProbabilityObservedAt
+        event.blendFoldRevision = ServedFoldRevision(quote.blendFoldRevision)
+        event.winProbabilitySources = quote.winProbabilitySources
     }
 
     static func shouldPreserve(_ frame: LiveStreamFrame?, over polled: EventDetail, streamRecoverable: Bool) -> Bool {

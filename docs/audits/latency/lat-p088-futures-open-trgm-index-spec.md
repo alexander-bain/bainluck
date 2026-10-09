@@ -8,6 +8,52 @@ site down (the May 22 `odds_snapshots` outage).
 **Gate:** `backend/scripts/gate_futures_open_trgm_index.py`. Recorded RED at **exit 1** before this
 spec was written — `docs/audits/latency/lat-p088-futures-open-trgm-red.json`.
 
+
+## Re-checked 2026-10-08 (latency, #1866) — still not built, and the case is stronger
+
+Nobody ran this runbook after 2026-08-24; `pg_indexes` on 2026-10-08 18:3xZ lists no
+`ix_futures_name_trgm_open`. The table has doubled since the spec was written and the open share
+halved, so every number in §1 understates today's discard:
+
+| | 2026-08-24 (spec) | 2026-10-08 (now) |
+|---|---|---|
+| `futures_markets` rows | 858,938 | **1,494,808** (2,685 MB with indexes) |
+| of which `status='open'` | 71,368 (8.3%) | **63,307 (4.2%)** |
+| `ix_futures_name_trgm` size | 182 MB | **267 MB** |
+| open names, total text | — | 2.8 MB (so the partial should be ~15-20 MB, like `ix_futures_name_fts_open` at 16 MB) |
+
+Reader symptom, production 2026-10-08 18:1xZ, `/api/events/typeahead` cache misses on plain team
+words: **1.0-4.4 s wall, 90-97% of it DB** (`x-timing-split`), with `futures_query` 0.17-0.89 s and
+`futures_outcome_arm` 0.24-1.17 s the two largest stages on first touch (`?debug_timing=1`).
+
+The open-only market-name arm this index serves, `EXPLAIN (ANALYZE, BUFFERS)`, 2026-10-08
+(`1866-open-trgm-single-word-before.jsonl`):
+
+| term | open rows returned | rows discarded by the status filter | heap+index blocks touched | exec |
+|---|---|---|---|---|
+| ranger | 210 | 5,197 | 4,614 | 322 ms |
+| eagle | 225 | 2,727 | 2,606 | 170 ms |
+| yankee | 2 | 2,324 | 1,558 | 18 ms |
+| dodger | 8 | (status bitmap AND) | 1,008 | 35 ms |
+
+Distinct heap pages holding the OPEN matches only (`ctid` count): ranger 195 of 3,852, steeler 182
+of 1,085, falcon 144 of 2,298, eagle 211 of 2,512 — a **6-20x** cut in pages read for the same rows.
+
+**What this does NOT fix (said up front so the after-check is not over-read):** the outcome-name
+probe (`futures_outcome_arm`) reads `futures_outcomes`, which has no status column; 80-93% of its
+matches belong to resolved markets too, but no partial predicate on that table is recall-identical
+(`is_winner IS NULL` would drop the 30 already-graded outcomes on still-open markets for `ranger`).
+Expect the `futures_query` stage to fall; expect `futures_outcome_arm` unchanged.
+
+**Fresh BEFORE recorded** by `gate_futures_open_trgm_index.py --label before` on 2026-10-08
+(exit 1 = RED by construction; overwrote the stale 8/24 file). Its 8 terms are mostly multi-word
+and served by `ix_futures_name_fts_open`, so for the single-word typing case also re-run the
+`1866-open-trgm-single-word-before.jsonl` queries after the build and compare blocks.
+
+**Timing:** the build scans the 2.7 GB heap twice; run it away from the heavy accuracy rebuild
+(:15-:40 UTC). The older gate `gate_futures_name_fts_index.py` now accepts this index as the
+trigram branch, so it will not false-RED after the build.
+
 ---
 
 ## 🔴 0. THE DIRECTIVE'S NAMED LEVER IS THE WRONG INSTRUMENT — read this before §2

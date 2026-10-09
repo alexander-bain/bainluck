@@ -229,13 +229,17 @@ function SearchContent() {
     // effect re-runs (new query) or the page unmounts (navigation away), so a
     // superseded/late response is dropped instead of published.
     let ignore = false;
+    // #10727: the same cleanup also aborts the superseded request, so it stops
+    // downloading and never retries. `ignore` stays as the publication guard
+    // for a response that resolved before the abort landed.
+    const controller = new AbortController();
 
     searchEvents({
       q: query,
       sport: sportFilter,
       page: currentPage,
       per_page: 25,
-    })
+    }, { signal: controller.signal })
       .then((data) => {
         if (ignore) return;
         setResults(data);
@@ -269,7 +273,7 @@ function SearchContent() {
         setIsLoading(false);
       });
 
-    return () => { ignore = true; };
+    return () => { ignore = true; controller.abort(); };
   }, [query, sportFilter, currentPage]);
 
   useEffect(() => {

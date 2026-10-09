@@ -628,7 +628,8 @@ describe("#4571 the page hands the badge the score it actually rendered", () => 
       // #10294: the event row's pair and clock now arrive as ONE object, the
       // newer of the page's two reads of that row (`newestServedScore`); the
       // fourth argument is still that row's clock, never a neighbour's.
-      /computeLastChartPoint\(\s*historyData,\s*servedScore\.home_score,\s*servedScore\.away_score,\s*servedScore\.score_observed_at,\s*(?:event\?\.status === "live" \? event\?\.espn \?\? null : null,?\s*)?\)/,
+      // #10747 added a sixth (the event's own status); the fourth is unchanged.
+      /computeLastChartPoint\(\s*historyData,\s*servedScore\.home_score,\s*servedScore\.away_score,\s*servedScore\.score_observed_at,\s*(?:event\?\.status === "live" \? event\?\.espn \?\? null : null,?\s*(?:event\?\.status,?\s*)?)?\)/,
     );
     // And it is a dependency of the memo, or the badge freezes at the first
     // stamp the page ever saw.

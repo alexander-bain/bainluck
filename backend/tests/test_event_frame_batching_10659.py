@@ -21,7 +21,7 @@ from redis.asyncio import Redis
 from redis.exceptions import ConnectionError, ResponseError
 
 from app.tasks.live_blend_refresh import LiveBlendRefresher
-from app.utils.live_push import build_frame
+from app.utils.live_push import build_frame, frame_publish_command
 
 
 def frames(n):
@@ -90,7 +90,7 @@ async def test_exact_frames_order_zero_listener_success_and_bounded_sends(n):
     batch = frames(n)
     await r._publish(batch)
     assert client.commands == [
-        ("PUBLISH", f'live:event:{f["event_id"]}', json.dumps(f)) for f in batch
+        frame_publish_command(f) for f in batch
     ]
     assert client.batch_sizes == [min(32, n - start) for start in range(0, n, 32)]
     assert client.reads_before_send == list(range(0, n, 32))
@@ -122,7 +122,7 @@ async def test_serialization_and_command_faults_preserve_siblings_and_context(ca
     batch = frames(4)
     batch[1]["invalid"] = object()
     await r._publish(batch)
-    assert [json.loads(cmd[2])["event_id"] for cmd in client.commands] == [1, 3, 4]
+    assert [json.loads(cmd[5] if cmd[0] == "EVAL" else cmd[2])["event_id"] for cmd in client.commands] == [1, 3, 4]
     assert r.stats["published"] == 2 and r.stats["publish_errors"] == 2
     assert r._redis is client
     assert (

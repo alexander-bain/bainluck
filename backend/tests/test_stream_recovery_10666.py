@@ -158,10 +158,19 @@ def private_redis():
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("protocol", [2, 3])
+@pytest.mark.parametrize("stream_kind", ["event", "market_quote", "market_terminal"])
 async def test_real_last_quote_gap_announces_recovery_without_another_quote(
-    monkeypatch, private_redis, protocol
+    monkeypatch, private_redis, protocol, stream_kind
 ):
     from redis.asyncio import Redis
+    from app.routes import market_stream
+    from app.utils.market_quote_push import market_channel
+    from tests.test_market_stream import frame as market_frame
+
+    is_market = stream_kind != "event"
+    stream_route = market_stream if is_market else route
+    channel = market_channel(1) if is_market else event_channel(1)
+    quote_event = "event: market" if is_market else "event: probability"
 
     def client():
         return Redis(
@@ -173,7 +182,7 @@ async def test_real_last_quote_gap_announces_recovery_without_another_quote(
 
     monkeypatch.setattr(redis_state, "get_async_redis_client", client)
     monkeypatch.setattr(fanout, "READ_TIMEOUT_S", 0.01)
-    monkeypatch.setattr(route, "FRAME_WAIT_S", 0.02)
+    monkeypatch.setattr(stream_route, "FRAME_WAIT_S", 0.02)
     entered, resume = asyncio.Event(), asyncio.Event()
 
     class Hub(fanout.LiveFanout):
@@ -191,7 +200,11 @@ async def test_real_last_quote_gap_announces_recovery_without_another_quote(
     chunks = []
 
     async def read():
-        async for chunk in route._stream(1, Request()):
+        stream = (
+            market_stream._stream([1], [], Request())
+            if is_market else route._stream(1, Request())
+        )
+        async for chunk in stream:
             chunks.append(chunk)
 
     async def until(predicate):
@@ -205,11 +218,11 @@ async def test_real_last_quote_gap_announces_recovery_without_another_quote(
         await until(lambda: any("event: open" in c for c in chunks))
         # Server receipt confirms subscription, rather than sleeping a guess.
         async with asyncio.timeout(3):
-            while (await writer.pubsub_numsub(event_channel(1)))[0][1] != 1:
+            while (await writer.pubsub_numsub(channel))[0][1] != 1:
                 await asyncio.sleep(0.005)
         first = {"event_id": 1, "p": 0.4, "status": "scheduled", "rev": {"1": 11}}
-        await writer.publish(event_channel(1), json.dumps(first))
-        await until(lambda: any("event: probability" in c for c in chunks))
+        await writer.publish(channel, market_frame() if is_market else json.dumps(first))
+        await until(lambda: any(quote_event in c for c in chunks))
         assert not any("event: resync" in c for c in chunks)
         original = hub._pubsub.get_message
         fail = True
@@ -226,16 +239,19 @@ async def test_real_last_quote_gap_announces_recovery_without_another_quote(
         await asyncio.wait_for(entered.wait(), 3)
         assert (
             await writer.publish(
-                event_channel(1), json.dumps({**first, "p": 0.52, "rev": {"1": 12}})
+                channel,
+                market_frame(terminal=stream_kind == "market_terminal")
+                if is_market else json.dumps({**first, "p": 0.52, "rev": {"1": 12}}),
             )
             == 0
         )
         resume.set()
         await until(lambda: any("event: resync" in c for c in chunks))
-        assert (await writer.pubsub_numsub(event_channel(1)))[0][1] == 1
+        assert (await writer.pubsub_numsub(channel))[0][1] == 1
         await asyncio.sleep(0.06)
         assert sum("event: resync" in c for c in chunks) == 1
-        assert sum("event: probability" in c for c in chunks) == 1
+        assert sum(quote_event in c for c in chunks) == 1
+        assert not any("event: closed" in c for c in chunks)
         assert not any("event: reconnect" in c for c in chunks)
         assert hub.subscriber_count == 1 and not task.done()
     finally:

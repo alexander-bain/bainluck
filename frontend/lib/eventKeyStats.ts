@@ -2203,6 +2203,51 @@ function pickHistorySide(
   return { value: espnValue, stamp: espnStamp };
 }
 
+const NO_HISTORY_SIDE: { value: number | null; stamp: string | null } = { value: null, stamp: null };
+
+/**
+ * #10747 — may an explicitly LIVE view take the event row's whole pair over the
+ * selected history pair? Every clause fails closed to the existing pick:
+ *
+ *   - `eventStatus` is exactly `"live"` and `completed_at` is absent. A present
+ *     completion marker — even empty or malformed — refuses, whatever the caller
+ *     says; a final keeps #7315's boundary.
+ *   - both event scores and both selected history scores are finite numbers
+ *     (zero counts). Half a pair is never moved, and a `mixed` pair keeps its
+ *     oldest-half rule.
+ *   - the pairs differ. An unchanged pair keeps history's provenance and the
+ *     #4571 same-tuple confirmation below.
+ *   - the event stamp and BOTH selected sides' OWN stamps parse, and the event
+ *     stamp is strictly newer than EACH. Not `scoreStamp`: that is the pair's
+ *     OLDEST half, and beating it alone would let an older read replace a newer
+ *     side. An unknown history age is never assumed to be older.
+ *
+ * No monotonic rule: a downward official correction is a confirmed pair like any
+ * other.
+ */
+function liveEventPairOutranksHistory(
+  eventStatus: string | null | undefined,
+  completedAt: string | null | undefined,
+  eventHome: number | null | undefined,
+  eventAway: number | null | undefined,
+  eventStamp: string | null,
+  homeHist: { value: number | null; stamp: string | null },
+  awayHist: { value: number | null; stamp: string | null },
+): boolean {
+  if (eventStatus !== "live" || completedAt != null) return false;
+  const finite = (v: number | null | undefined): v is number =>
+    typeof v === "number" && Number.isFinite(v);
+  if (!finite(eventHome) || !finite(eventAway)) return false;
+  if (!finite(homeHist.value) || !finite(awayHist.value)) return false;
+  if (eventHome === homeHist.value && eventAway === awayHist.value) return false;
+  const ms = (stamp: string | null) => (stamp ? Date.parse(stamp) : NaN);
+  const eventMs = ms(eventStamp);
+  const homeMs = ms(homeHist.stamp);
+  const awayMs = ms(awayHist.stamp);
+  if (Number.isNaN(eventMs) || Number.isNaN(homeMs) || Number.isNaN(awayMs)) return false;
+  return eventMs > homeMs && eventMs > awayMs;
+}
+
 /**
  * Compute the most recent chart point for GamePlayCard default display.
  */
@@ -2222,6 +2267,14 @@ export function computeLastChartPoint(
    * clock. The caller passes it for a live event only; omitted, nothing changes.
    */
   eventLiveState?: { period?: string | null; game_clock?: string | null } | null,
+  /**
+   * #10747 — the event's own `status`. Its only effect: when it is exactly
+   * `"live"`, a newer confirmed whole event pair may replace an older held
+   * history pair (see `liveEventPairOutranksHistory`). Omitted or anything else,
+   * nothing changes. The fifth argument is not a live signal — tests pass it
+   * explicitly and a live event can carry no ESPN state at all.
+   */
+  eventStatus?: string | null,
 ): ActiveChartPoint | null {
   if (!historyData) return null;
 
@@ -2381,21 +2434,43 @@ export function computeLastChartPoint(
     snapWins,
   );
 
-  const resolvedHomeScore = homeHist.value ?? homeScore ?? null;
-  const resolvedAwayScore = awayHist.value ?? awayScore ?? null;
   const eventStamp = eventScoreObservedAt ?? null;
+
+  // #10747 — ON A LIVE PAGE, A NEWER CONFIRMED WHOLE PAIR BEATS AN OLDER HELD ONE.
+  //
+  // A non-null history pair used to win outright, so the page could hold the
+  // event row's confirmed 3–2 and still print the history row's 4–2 beside a
+  // current probability. When the guard admits the event pair, both history
+  // sides step aside and the cascade below falls through to the event row for
+  // BOTH values and BOTH stamps — so `scoreFrom` reads `"event"`, the pair is
+  // dated by its own confirmation, and the same-tuple block further down (which
+  // needs `"history"`) does not run. A correction downward is just another pair.
+  const adoptEventPair = liveEventPairOutranksHistory(
+    eventStatus,
+    historyData.completed_at,
+    homeScore,
+    awayScore,
+    eventStamp,
+    homeHist,
+    awayHist,
+  );
+  const homeSide = adoptEventPair ? NO_HISTORY_SIDE : homeHist;
+  const awaySide = adoptEventPair ? NO_HISTORY_SIDE : awayHist;
+
+  const resolvedHomeScore = homeSide.value ?? homeScore ?? null;
+  const resolvedAwayScore = awaySide.value ?? awayScore ?? null;
 
   // `period` and `clock` below stay ESPN's, because `score_history` carries
   // neither. A snapshot-supplied score can therefore sit beside an ESPN period,
   // which is the honest shape: each field is the newest reading OF THAT FIELD.
   const arms: Array<{ from: "history" | "event"; stamp: string | null }> = [];
   if (resolvedHomeScore !== null) {
-    const fromHistory = homeHist.value !== null;
-    arms.push({ from: fromHistory ? "history" : "event", stamp: fromHistory ? homeHist.stamp : eventStamp });
+    const fromHistory = homeSide.value !== null;
+    arms.push({ from: fromHistory ? "history" : "event", stamp: fromHistory ? homeSide.stamp : eventStamp });
   }
   if (resolvedAwayScore !== null) {
-    const fromHistory = awayHist.value !== null;
-    arms.push({ from: fromHistory ? "history" : "event", stamp: fromHistory ? awayHist.stamp : eventStamp });
+    const fromHistory = awaySide.value !== null;
+    arms.push({ from: fromHistory ? "history" : "event", stamp: fromHistory ? awaySide.stamp : eventStamp });
   }
 
   let scoreStamp: string | null = null;

@@ -70,12 +70,42 @@ def test_no_required_matrix_job_is_skipped_at_job_level_by_change_scope():
     )
 
 
-def test_backend_tests_is_still_a_matrix():
-    matrix = (_jobs()["backend-tests"].get("strategy") or {}).get("matrix") or {}
-    assert matrix.get("shard") == [1, 2, 3, 4], (
-        "backend-tests' shard list changed; branch protection's required contexts "
-        "`backend-tests (1)`..`(4)` must be changed with it."
-    )
+def _validate_backend_partition(jobs):
+    job = jobs["backend-tests"]
+    shards = job["strategy"]["matrix"]["shard"]
+    assert shards == list(range(1, 9)), "eight unique nonempty backend contexts"
+    assert set(range(1, 5)) <= set(shards), "original required contexts must remain"
+    assert job["strategy"]["fail-fast"] is False
+    assert "continue-on-error" not in job
+    assert all("continue-on-error" not in step for step in job["steps"])
+    verifier = jobs["shard-completeness"]["steps"][-1]["run"]
+    assert verifier == "python scripts/ci_shard.py --verify --of 8"
+    command = next(s["run"] for s in job["steps"] if s.get("name", "").startswith("Run tests"))
+    assert "--of ${{ strategy.job-total }}" in command
+    assert "python -m pytest $FILES" in command
+    assert "backend-tests" in jobs["deploy"]["needs"]
+
+
+def test_backend_tests_keeps_required_contexts_and_checks_the_actual_partition():
+    _validate_backend_partition(_jobs())
+
+
+@pytest.mark.parametrize("mutation", ["omitted", "duplicate", "wrong_verifier", "waived_failure", "lost_dependency"])
+def test_backend_partition_guard_rejects_lost_work_or_failed_matrix_bypass(mutation):
+    jobs = _jobs()
+    job = jobs["backend-tests"]
+    if mutation == "omitted":
+        job["strategy"]["matrix"]["shard"].pop()
+    elif mutation == "duplicate":
+        job["strategy"]["matrix"]["shard"][-1] = 7
+    elif mutation == "wrong_verifier":
+        jobs["shard-completeness"]["steps"][-1]["run"] = "python scripts/ci_shard.py --verify --of 4"
+    elif mutation == "waived_failure":
+        job["continue-on-error"] = True
+    else:
+        jobs["deploy"]["needs"].remove("backend-tests")
+    with pytest.raises(AssertionError):
+        _validate_backend_partition(jobs)
 
 
 def test_every_backend_tests_step_carries_one_of_the_two_scope_conditions():

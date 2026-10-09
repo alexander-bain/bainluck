@@ -529,6 +529,7 @@ class _RecordingSession:
         #: #837 — each event's stamp runs in a SAVEPOINT; this records how each
         #: one ended ("release" or "rollback") so a test can see the boundary.
         self.savepoints = []
+        self.rollbacks = 0
 
     async def execute(self, statement, *args, **kwargs):
         from sqlalchemy.sql.dml import Update
@@ -537,9 +538,36 @@ class _RecordingSession:
             self.updates.append(statement)
             return _Result(scalar=self._returned, rev=self.returned_rev)
         self._selects += 1
-        if self._selects == 1:
-            return _Result(rows=self._market_rows)
-        return _Result(rows=self._outcomes)
+        from app.tasks.live_blend_refresh import (
+            PREPARED_EVENT_FIELDS, PREPARED_MARKET_FIELDS, PREPARED_OUTCOME_FIELDS,
+        )
+        columns = list(getattr(statement, "selected_columns", ()))
+        column = columns[len(PREPARED_MARKET_FIELDS) + PREPARED_EVENT_FIELDS.index(
+            "win_probability_sources"
+        )] if columns else None
+        source = column.element.right.value if hasattr(column, "element") else None
+
+        def field(obj, key):
+            raw = getattr(obj, key, None)
+            if key == "win_probability_sources" and source is not None:
+                return raw.get(source) if isinstance(raw, dict) else None
+            return raw
+
+        return _Result(rows=[
+            tuple(
+                field(obj, key)
+                for obj, fields in (
+                    (market, PREPARED_MARKET_FIELDS),
+                    (event, PREPARED_EVENT_FIELDS),
+                    (outcome, PREPARED_OUTCOME_FIELDS),
+                ) for key in fields
+            )
+            for market, event in self._market_rows
+            for outcome in (
+                [o for o in self._outcomes if getattr(o, "market_id", None) == market.id]
+                or [None]
+            )
+        ])
 
     def add(self, row):
         pass
@@ -559,6 +587,9 @@ class _RecordingSession:
 
     async def flush(self):
         pass
+
+    async def rollback(self):
+        self.rollbacks += 1
 
 
 class TestTheFrameCarriesTheStoredBlend:
@@ -812,8 +843,8 @@ class TestTheFastLaneActuallyCallsTheSnapshot:
         from app.tasks.live_blend_refresh import LiveBlendRefresher
 
         src = inspect.getsource(LiveBlendRefresher._refresh_batch)
-        savepoint = src.index("async with session.begin_nested():")
-        assert savepoint < src.index("update(Event)")
+        stamp_scope = src.index("async with self._event_stamp_scope(")
+        assert stamp_scope < src.index("update(Event)")
         assert (
             src.index("if new_sources is None")
             < src.index("_maybe_snapshot")
@@ -825,6 +856,141 @@ class _LockTimeout(Exception):
     """What asyncpg raises when `lock_timeout` fires: SQLSTATE 55P03."""
 
     sqlstate = "55P03"
+
+
+class TestSingleEventStampTransaction:
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("count,snapshot_due", [(1, False), (2, False), (1, True), (2, True)])
+    async def test_snapshot_clock_skips_only_chart_transaction_work(
+        self, monkeypatch, count, snapshot_due,
+    ):
+        from contextlib import asynccontextmanager
+        from copy import copy
+
+        event, market = _event_and_market()
+        rows = [(market, event)]
+        if count == 2:
+            other_event, other_market = copy(event), copy(market)
+            other_event.id = other_market.event_id = 2
+            other_market.id = 20
+            rows.append((other_market, other_event))
+        session = _RecordingSession(rows, [], {
+            "polymarket": {"value": 0.9, "updated_at": "2026-10-08T15:00:00+00:00"},
+        })
+        session.returned_rev = 42
+        r, _ = _one_event_refresher(monkeypatch, session)
+        monkeypatch.setattr("app.tasks.live_blend_refresh.time.monotonic", lambda: 1000.0)
+        if not snapshot_due:
+            r._last_snapshot_at = {event_id: 999.0 for event_id in range(1, count + 1)}
+        snapshots, flushes, committed, published = [], [], [], []
+
+        async def snapshot(session, event_id, *args):
+            snapshots.append(event_id)
+
+        async def flush():
+            flushes.append(True)
+
+        @asynccontextmanager
+        async def factory():
+            yield session
+            committed.append(True)
+
+        async def publish(frames):
+            assert committed == [True]
+            published.extend(frames)
+
+        r._session_factory = factory
+        monkeypatch.setattr(r, "_maybe_snapshot", snapshot)
+        monkeypatch.setattr(r, "_publish", publish)
+        monkeypatch.setattr(session, "flush", flush)
+        await r.refresh(list(range(1, count + 1)))
+        assert len(session.updates) == count
+        assert r.stats["stamped"] == count
+        assert snapshots == (list(range(1, count + 1)) if snapshot_due else [])
+        assert len(flushes) == (count if snapshot_due else 0)
+        event_savepoints = 0 if count == 1 else count
+        assert session.savepoints == ["release"] * (
+            event_savepoints + (count if snapshot_due else 0)
+        )
+        assert len(published) == count
+        assert all(frame["p"] == 0.9 for frame in published)
+        assert all(frame["rev"][str(frame["event_id"])] == 42 for frame in published)
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("single_event", [True, False])
+    async def test_failed_scope_rolls_back_its_own_boundary(self, single_event):
+        session = _RecordingSession([], [], None)
+        r = LiveBlendRefresher("kalshi")
+        with pytest.raises(_LockTimeout):
+            async with r._event_stamp_scope(session, single_event=single_event):
+                raise _LockTimeout("row lock")
+        assert session.rollbacks == (1 if single_event else 0)
+        assert session.savepoints == ([] if single_event else ["rollback"])
+
+    @pytest.mark.asyncio
+    async def test_cancelled_single_scope_rolls_back_before_propagating(self):
+        import asyncio
+
+        session = _RecordingSession([], [], None)
+        with pytest.raises(asyncio.CancelledError):
+            async with LiveBlendRefresher("kalshi")._event_stamp_scope(
+                session, single_event=True,
+            ):
+                raise asyncio.CancelledError()
+        assert session.rollbacks == 1
+        assert session.savepoints == []
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("count,snapshot_fails", [(1, False), (2, False), (1, True)])
+    async def test_success_removes_only_single_event_outer_savepoint_and_publishes_after_commit(
+        self, monkeypatch, count, snapshot_fails,
+    ):
+        from contextlib import asynccontextmanager
+        from copy import copy
+
+        event, market = _event_and_market()
+        rows = [(market, event)]
+        if count == 2:
+            other_event, other_market = copy(event), copy(market)
+            other_event.id = other_market.event_id = 2
+            other_market.id = 20
+            rows.append((other_market, other_event))
+        session = _RecordingSession(rows, [], {
+            "polymarket": {"value": 0.9, "updated_at": "2026-10-08T15:00:00+00:00"},
+        })
+        session.returned_rev = 42
+        r, _ = _one_event_refresher(monkeypatch, session)
+        committed = []
+
+        @asynccontextmanager
+        async def factory():
+            yield session
+            committed.append(True)
+
+        r._session_factory = factory
+
+        async def snapshot(*args):
+            if snapshot_fails:
+                raise RuntimeError("history failed")
+
+        monkeypatch.setattr(r, "_maybe_snapshot", snapshot)
+        published = []
+
+        async def publish(frames):
+            assert committed == [True]
+            published.extend(frames)
+
+        monkeypatch.setattr(r, "_publish", publish)
+        await r.refresh(list(range(1, count + 1)))
+        assert r.stats["stamped"] == count
+        assert session.rollbacks == 0
+        assert session.savepoints == (
+            ["rollback"] if snapshot_fails else ["release"] * (1 if count == 1 else 4)
+        )
+        assert len(published) == count
+        assert all(frame["p"] == 0.9 for frame in published)
+        assert all(frame["rev"][str(frame["event_id"])] == 42 for frame in published)
+        assert r.stats["errors"] == (1 if snapshot_fails else 0)
 
 
 class _LockedRowSession(_RecordingSession):

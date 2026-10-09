@@ -180,7 +180,7 @@ final class DiscoverViewModelLoadTests: XCTestCase {
 
         XCTAssertEqual(fake.callCount, 1, "exactly one initial fetch")
         let first = try XCTUnwrap(fake.calls.first)
-        XCTAssertEqual(first.limit, DiscoverViewModel.firstPageLimit, "first page uses the bounded limit, not the former 200")
+        XCTAssertEqual(first.limit, 20, "first page uses the bounded limit, not the former 200")
         XCTAssertEqual(first.offset, 0)
         XCTAssertEqual(first.eventPct, 0.15, "Discover mix preserved")
         XCTAssertEqual(vm.items.count, 12)
@@ -226,23 +226,23 @@ final class DiscoverViewModelLoadTests: XCTestCase {
     }
 
     func testBoundedFirstPageThenBackgroundPaginationPreservesOrderAndDedup() async throws {
-        // Frozen ordered-ID equivalence: the bounded first page is the first 50 IDs
-        // in server order; the next page concatenates 51...80 with no gaps or
+        // Frozen ordered-ID equivalence: the first paint is the first 20 IDs
+        // in server order; the next page concatenates 21...80 with no gaps or
         // duplicates. (All economics → interleave is order-preserving.)
         let fake = RecordingFakeClient([
-            .ok(try futuresResponse(ids: Array(1...50), offset: 0, hasMore: true, limit: 50)),
-            .ok(try futuresResponse(ids: Array(51...80), offset: 50, hasMore: false, limit: 50)),
+            .ok(try futuresResponse(ids: Array(1...20), offset: 0, hasMore: true, limit: 20)),
+            .ok(try futuresResponse(ids: Array(21...80), offset: 20, hasMore: false, limit: 60)),
         ])
         let vm = DiscoverViewModel(client: fake, lastGood: nil, telemetry: nil)
 
         await vm.load()
-        XCTAssertEqual(vm.items.compactMap { $0.futures?.id }, Array(1...50), "first page = first 50 IDs in order")
+        XCTAssertEqual(vm.items.compactMap { $0.futures?.id }, Array(1...20), "first page = first 20 IDs in order")
         XCTAssertEqual(fake.calls.first?.limit, DiscoverViewModel.firstPageLimit)
 
         await vm.loadMoreIfNeeded()
         XCTAssertEqual(vm.items.compactMap { $0.futures?.id }, Array(1...80), "background merge preserves order, no dupes")
         XCTAssertFalse(vm.hasMore, "server exhaustion honored")
-        XCTAssertEqual(fake.calls.last?.offset, 50, "next page begins at the server boundary")
+        XCTAssertEqual(fake.calls.last?.offset, 20, "next page begins at the server boundary")
         XCTAssertEqual(Set(vm.items.compactMap { $0.futures?.id }).count, 80, "stable identity — no duplicated IDs")
     }
 

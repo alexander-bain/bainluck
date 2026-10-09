@@ -71,7 +71,7 @@ sibling that can hang. So each request carries a `blocking` flag taken from the
 client's own control flow, the HEADLINE is the blocking member, and the whole
 set is printed beneath it.
 
-  Discover  BLOCKING  /api/feed?limit=50&offset=0&event_pct=0.15  (native)
+  Discover  BLOCKING  /api/feed?limit=20&offset=0&event_pct=0.15  (native)
                       /api/feed?limit=20&offset=0&event_pct=0.15  (web)
             after     /api/predictions/resolutions  — uncached, live DB
   Sports    BLOCKING  /api/feed?limit=50&offset=0&mode=sports     (native)
@@ -238,7 +238,7 @@ PATHS: tuple[ColdPath, ...] = (
         "discover_native",
         "Discover",
         "native",
-        "/api/feed?limit=50&offset=0&event_pct=0.15",
+        "/api/feed?limit=20&offset=0&event_pct=0.15",
         "DiscoverView.task:1216 -> DiscoverViewModel -> "
         "fetchFeedPersistingLastGood (DiscoverViewModel.swift:1063); limit "
         "default 50 at APIClient.swift:606",

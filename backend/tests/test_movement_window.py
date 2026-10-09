@@ -22,8 +22,8 @@ Measured on production 2026-08-31, before the fix:
 
 It pins the WIRING, because the wiring is where every version of this bug has
 lived: which stamp is consulted, that the sweep is bounded, that it is ordered
-so the visible strip converges first, and that all three statements land in ONE
-transaction.
+so the visible strip converges first, and that retirements plus their actually affected maxima land in ONE
+transaction, before the full recompute releases unrelated-market scan work.
 
 It does NOT pin the row-level semantics — "a stale row is cleared, a fresh one
 is not, and a market with nothing left goes NULL". Those need real Postgres
@@ -66,8 +66,15 @@ from app.utils.futures_highlights import MODERATE_MOVEMENT_THRESHOLD
 
 
 class _Result:
-    def __init__(self, rowcount: int) -> None:
+    def __init__(self, rowcount: int, ids: list[int] | None = None) -> None:
         self.rowcount = rowcount
+        self._ids = list(ids or [])
+
+    def scalars(self):
+        return self
+
+    def all(self):
+        return list(self._ids)
 
 
 class _RecordingSession:
@@ -77,19 +84,65 @@ class _RecordingSession:
     matched N rows" and drive the task's own arithmetic from it.
     """
 
-    def __init__(self, rowcounts: list[int] | None = None) -> None:
+    def __init__(
+        self, rowcounts: list[int] | None = None, *, fail_bank: bool = False,
+        retired_ids=None, fail_maxima=None,
+    ) -> None:
         self.calls: list[tuple[str, dict]] = []
         self.events: list[str] = []
         self._rowcounts = list(rowcounts or [])
+        self.fail_bank = fail_bank
+        self.retired_ids = list(retired_ids or [[] for _ in range(7)])
+        self.retirement_index = 0
+        self.fail_maxima = fail_maxima
+        self.core_max_counts = (3, 2)
+        self.warm_snapshots = []
+        # (position in `events`, params) per transaction lock budget. Kept out
+        # of `events`/`calls`/`rowcounts` so the phase-indexed controls below
+        # keep reading A..C; its own control pins where it lands.
+        self.lock_budgets: list[tuple[int, dict]] = []
+        # (position in `events`, sql, params) per A4/A7 lock-free prepare read
+        # (#10090), kept out of `events` for the lock budget's reason. Each
+        # answers `prepared_ids[label]`, so a control can follow the ids into
+        # the core's locking write.
+        self.prepares: list[tuple[int, str, dict]] = []
+        self.prepared_ids = {"A4": [41, 42], "A7": [71]}
+        # Relative order of the two out-of-band kinds above.
+        self.out_of_band: list[str] = []
 
     async def execute(self, stmt, params=None):  # noqa: ANN001
         sql = " ".join(str(stmt).split())
+        if "set_config('lock_timeout'" in sql:
+            self.lock_budgets.append((len(self.events), params or {}))
+            self.out_of_band.append("LOCK BUDGET")
+            return _Result(0)
+        if "/* movement prepare:" in sql:
+            self.prepares.append((len(self.events), sql, params or {}))
+            label = "A4" if "movement prepare: A4" in sql else "A7"
+            self.out_of_band.append(f"PREPARE {label}")
+            return _Result(0, self.prepared_ids[label])
         self.calls.append((sql, params or {}))
         self.events.append(sql)
-        return _Result(self._rowcounts.pop(0) if self._rowcounts else 0)
+        if self.fail_bank and "jsonb_object_agg" in sql:
+            raise RuntimeError("bank failed")
+        if "SET max_movement_24h" in sql:
+            targeted = bool((params or {}).get("market_ids"))
+            if self.fail_maxima == ("core" if targeted else "full"):
+                raise RuntimeError("maxima failed")
+            if targeted:
+                return _Result(self.core_max_counts["= NULL" in sql])
+        rowcount = self._rowcounts.pop(0) if self._rowcounts else 0
+        if sql.startswith("UPDATE futures_outcomes"):
+            ids = self.retired_ids[self.retirement_index]
+            self.retirement_index += 1
+            return _Result(rowcount, ids)
+        return _Result(rowcount)
 
     async def commit(self):
         self.events.append("COMMIT")
+
+    async def rollback(self):
+        self.events.append("ROLLBACK")
 
 
 class _SessionCtx:
@@ -111,8 +164,20 @@ def run_task(monkeypatch):
     task imports both INSIDE its own body — patching `app.tasks` would miss.
     """
 
-    def _run(rowcounts: list[int] | None = None) -> tuple[dict, _RecordingSession]:
-        session = _RecordingSession(rowcounts)
+    def _run(
+        rowcounts: list[int] | None = None, *, fail_bank: bool = False,
+        retired_ids=None, fail_maxima=None,
+    ) -> tuple[dict, _RecordingSession]:
+        # Counter controls name the established A..A10/B/C phase order.
+        # Execute A10 first, then A1-A7/B/C, then the four bank operations.
+        # Preserve each control's named phase value across that reorder.
+        phase_counts = list(rowcounts or []) + [0] * 14
+        order = (11, 0, 1, 2, 3, 4, 5, 6, 12, 13, 7, 8, 9, 10)
+        session = _RecordingSession(
+            [phase_counts[i] for i in order], fail_bank=fail_bank,
+            retired_ids=retired_ids, fail_maxima=fail_maxima,
+        )
+        _run.last_session = session
 
         import app.tasks.base as base_mod
         import app.tasks.futures_movers_warm as warm_mod
@@ -120,6 +185,7 @@ def run_task(monkeypatch):
         monkeypatch.setattr(base_mod, "get_task_session", lambda: _SessionCtx(session))
 
         async def _fake_warm(_session):
+            session.warm_snapshots.append(list(session.events))
             return {"terminal": "ok", "completed": 1}
 
         monkeypatch.setattr(warm_mod, "warm_futures_movers", _fake_warm)
@@ -128,6 +194,154 @@ def run_task(monkeypatch):
         return result, session
 
     return _run
+
+
+def _movement_events(session: _RecordingSession) -> list[str]:
+    """A10 and banks commit separately; delta/rank/max core stays atomic."""
+    events = session.events
+    commits = [i for i, event in enumerate(events) if event == "COMMIT"]
+    assert len(commits) == 4, events
+    assert commits[0] == 1, events
+    assert "unpriced_opening_ids" in events[0], events
+    assert "probability_change_24h" not in events[0], events[0]
+    assert "rank_change_24h" not in events[0], events[0]
+    assert commits[-1] == len(events) - 1, events
+    core = events[2:commits[1] + 1]
+    assert "jsonb_object_agg" not in " ".join(core), core
+    return core
+
+
+def test_opening_sweep_releases_market_locks_before_any_outcome_write(run_task):
+    events = _movement_events(run_task()[1])
+    assert "UPDATE futures_outcomes" in events[0], events
+    assert "unpriced_opening_ids" not in " ".join(events), events
+
+
+def test_the_core_yields_quote_rows_instead_of_waiting_for_them(run_task):
+    """#10090: maintenance never queues behind a quote writer holding outcomes.
+
+    Every outcome target is taken with SKIP LOCKED (a skipped row qualifies
+    again next run), and the core's remaining waits — B/C market rows — are
+    bounded by a transaction-local lock budget issued as the core's FIRST
+    statement, after A10 commits and before any outcome lock is taken.
+    """
+    from app.tasks import MOVEMENT_CORE_LOCK_TIMEOUT_MS
+
+    _, session = run_task()
+    core = _movement_events(session)
+    commits = [i for i, event in enumerate(session.events) if event == "COMMIT"]
+    assert session.lock_budgets == [
+        (commits[0] + 1, {"ms": f"{MOVEMENT_CORE_LOCK_TIMEOUT_MS}ms"}),
+        (commits[1] + 1, {"ms": f"{MOVEMENT_CORE_LOCK_TIMEOUT_MS}ms"}),
+    ], session.lock_budgets
+    assert MOVEMENT_CORE_LOCK_TIMEOUT_MS < 1000  # under deadlock_timeout
+
+    outcome_writes = [s for s in core if s.startswith("UPDATE futures_outcomes")]
+    assert len(outcome_writes) == 7, core
+    for sql in outcome_writes:
+        lock = "FOR UPDATE OF fo SKIP LOCKED" if "futures_outcomes fo" in sql else (
+            "FOR UPDATE SKIP LOCKED"
+        )
+        assert f"LIMIT :batch {lock} )" in sql, sql
+    # B/C keep their coherent recompute: no market is skipped.
+    for sql in core:
+        if sql.startswith("UPDATE futures_markets"):
+            assert "SKIP LOCKED" not in sql, sql
+
+
+def test_only_actual_retirement_markets_are_recomputed_before_quote_locks_release(run_task):
+    ids = [[101, 102], [102], [], [104], [105], [106], [107]]
+    result, session = run_task(retired_ids=ids)
+    core = _movement_events(session)
+    writes = [s for s in core if s.startswith("UPDATE futures_outcomes")]
+    assert len(writes) == 7 and all("RETURNING market_id" in s for s in writes)
+    # Neither prepared candidates (41,42,71) nor a predicted rowcount supplies
+    # this set. It is exactly the markets of rows the UPDATE actually kept.
+    targets = [(sql, p) for sql, p in session.calls if p.get("market_ids")]
+    assert len(targets) == 2
+    for _, params in targets:
+        assert params == {"market_ids": [101, 102, 104, 105, 106, 107]}
+    aggregate, clear = [sql for sql, _ in targets]
+    assert "fo.market_id = ANY(:market_ids) GROUP BY fo.market_id" in aggregate
+    assert "fm.id = ANY(:market_ids) AND NOT EXISTS" in clear
+    assert all(sql in core for sql, _ in targets)
+    assert all("fm.status IN ('open', 'active')" in sql for sql, _ in targets)
+    commits = [i for i, event in enumerate(session.events) if event == "COMMIT"]
+    full_scan = session.events[commits[1] + 1:commits[2]]
+    assert len(full_scan) == 2
+    assert all("SET max_movement_24h" in sql and "ANY(:market_ids)" not in sql
+               for sql in full_scan)
+    assert not any("UPDATE futures_outcomes" in sql for sql in full_scan)
+    assert result["updated"] == 3 and result["cleared_markets"] == 2
+
+
+def test_no_retirements_skip_targeted_scan_but_keep_full_market_maintenance(run_task):
+    _, session = run_task()
+    assert not any(p.get("market_ids") for _, p in session.calls)
+    core = _movement_events(session)
+    assert not any("SET max_movement_24h" in sql for sql in core)
+    full = _max_movement_statements(session)
+    assert len(full) == 2 and all("ANY(:market_ids)" not in sql for sql in full)
+
+
+def test_full_scan_failure_propagates_after_coherent_core_and_warms_it(run_task):
+    with pytest.raises(RuntimeError, match="maxima failed"):
+        run_task(retired_ids=[[101], [], [], [], [], [], []], fail_maxima="full")
+    session = run_task.last_session
+    assert session.events.count("COMMIT") == 2  # opening, coherent retirements
+    assert session.events[-1] == "ROLLBACK"
+    assert session.warm_snapshots == [session.events]
+    commits = [i for i, event in enumerate(session.events) if event == "COMMIT"]
+    core = session.events[commits[0] + 1:commits[1]]
+    assert sum("ANY(:market_ids)" in event for event in core) == 2
+
+
+def test_targeted_scan_failure_never_commits_retirement_without_its_maxima(run_task):
+    with pytest.raises(RuntimeError, match="maxima failed"):
+        run_task(retired_ids=[[101], [], [], [], [], [], []], fail_maxima="core")
+    session = run_task.last_session
+    assert session.events.count("COMMIT") == 1  # only opening maintenance
+    assert not session.warm_snapshots
+
+
+def test_snapshot_scans_run_before_any_outcome_lock(run_task):
+    """#10090: A4/A7's snapshot LATERAL scans no longer run while A1-A3's
+    outcome locks are held.
+
+    Each runs first as a plain read (no row lock) after A10 commits and before
+    the core's lock budget; the core's locking write re-evaluates the SAME
+    predicate text restricted to exactly the ids that read returned, so a row
+    rewritten or cleared in between is re-judged, never retired on stale word.
+    """
+    from app.tasks import A4_UNOBSERVED_PREDICATE, A7_CONTRADICTED_PREDICATE
+
+    _, session = run_task()
+    commits = [i for i, event in enumerate(session.events) if event == "COMMIT"]
+    assert session.out_of_band == [
+        "PREPARE A4", "PREPARE A7", "LOCK BUDGET", "LOCK BUDGET",
+    ], session.out_of_band
+    assert [p[0] for p in session.prepares] == [commits[0] + 1] * 2
+
+    core = _movement_events(session)
+    for (_, prep_sql, prep_params), predicate, label in zip(
+        session.prepares,
+        (A4_UNOBSERVED_PREDICATE, A7_CONTRADICTED_PREDICATE),
+        ("A4", "A7"),
+    ):
+        shared = " ".join(predicate.split())
+        assert "FOR UPDATE" not in prep_sql, prep_sql
+        assert prep_sql.startswith(f"/* movement prepare: {label} */ SELECT fo.id {shared} ORDER BY"), prep_sql
+        writes = [
+            (sql, params) for sql, params in session.calls
+            if sql.startswith("UPDATE futures_outcomes") and shared in sql
+        ]
+        assert len(writes) == 1, (label, core)
+        sql, params = writes[0]
+        assert f"{shared} AND fo.id = ANY(:prepared_ids) ORDER BY" in sql, sql
+        assert "FOR UPDATE OF fo SKIP LOCKED" in sql, sql
+        assert params["prepared_ids"] == session.prepared_ids[label], params
+        assert params["batch"] == prep_params["batch"], (params, prep_params)
+        assert {k: v for k, v in params.items() if k != "prepared_ids"} == prep_params
 
 
 def _statements(session: _RecordingSession) -> list[str]:
@@ -359,9 +573,9 @@ def test_the_two_market_statements_are_complements(run_task) -> None:
 
 def test_the_sweep_runs_before_both_market_statements(run_task) -> None:
     """Order is load-bearing: B and C must see the swept state, not the old one."""
-    events = _statements(run_task()[1])
+    events = run_task()[1].events
     sweep = next(i for i, s in enumerate(events) if "UPDATE futures_outcomes" in s)
-    markets = [i for i, s in enumerate(events) if "UPDATE futures_markets" in s]
+    markets = [i for i, s in enumerate(events) if "SET max_movement_24h" in s]
 
     assert markets and sweep < min(markets), (
         "the market statements ran BEFORE the outcome sweep, so they recomputed "
@@ -377,8 +591,9 @@ def test_all_three_statements_share_one_transaction(run_task) -> None:
     and C sees cleared outcomes against un-recomputed markets, where that is not
     true. One commit, at the end, is the guarantee.
     """
-    _, session = run_task()
-    events = session.events
+    _, session = run_task(retired_ids=[[701], [], [], [], [], [], []])
+    events = _movement_events(session)
+    assert sum("SET max_movement_24h" in event for event in events) == 2
 
     assert events.count("COMMIT") == 1, (
         f"expected exactly one commit; got {events.count('COMMIT')}: {events}"
@@ -404,20 +619,13 @@ def test_a_full_batch_reports_the_backlog_as_undrained(run_task) -> None:
     )
 
 
-def test_a_short_batch_reports_the_backlog_as_drained(run_task) -> None:
-    """And the day it comes up short, the sweep has caught up.
+def test_a_short_batch_reports_the_backlog_drain_as_unverified(run_task) -> None:
+    """A short batch is not proof of drain (#10090: `SKIP LOCKED` passes over
+    eligible rows a writer holds), so the flag reads `None`, never `True`.
 
-    The list is consumed in EXECUTION order, so every statement added to the
-    task shifts everything after it. Seven outcome sweeps now — A, A2, A3, A4,
-    the two RANK sweeps A5/A6, and A7, the dated-direction sweep — then #4079's
-    DataGolf bank and unbank (A8-DG / A9-DG, which run first so the shared
-    exclusions are load-bearing), then A8/A9, which publish and retire the
-    dated-basis bank, then #8612's A10, which lists
-    unpriced openings, which puts the two `max_movement_24h` statements at
-    positions 13 and 14. Each counter is
-    asserted against a DISTINCT value so a statement that read its sibling's
-    rowcount could not pass — which is the whole reason this fixture is a
-    sequence rather than a repeated number.
+    The fixture names counters in the established A1-A7, four bank arms,
+    A10, B/C order and maps them to the actual execution order. Each counter
+    uses a distinct value, so reading a sibling's rowcount cannot pass.
     """
     result, _ = run_task([12, 6, 9, 8, 1, 1, 5, 14, 15, 7, 3, 13, 4, 2])
 
@@ -432,15 +640,15 @@ def test_a_short_batch_reports_the_backlog_as_drained(run_task) -> None:
     assert result["dated_basis_unbanked_datagolf"] == 15
     assert result["unpriced_openings_written"] == 13
     assert result["cleared_markets"] == 2
-    assert result["backlog_drained"] is True, (
-        f"a short run did not report the backlog drained: {result}"
+    assert result["backlog_drained"] is None, (
+        f"a short SKIP LOCKED run claimed the backlog drained: {result}"
     )
 
 
 def test_the_result_still_carries_the_original_contract(run_task) -> None:
     """LAT-P115's keys survive: the warm is still reported, never swallowed.
 
-    Positions 5 and 6 are #4079's rank sweeps A5/A6, position 7 is its
+    Counter-control positions 5 and 6 are #4079's rank sweeps A5/A6, position 7 is its
     dated-direction sweep A7, positions 8 and 9 are #10248's DataGolf bank and
     unbank (A8-DG / A9-DG), positions 10 and 11 are #4079's dated-basis bank
     (A8) and unbank (A9) and position 12 is #8612's unpriced-opening list
@@ -668,7 +876,7 @@ def test_both_sweeps_run_before_either_market_statement(run_task) -> None:
     The count is the half that catches a DROPPED sweep, which is why it is
     pinned here rather than left to the per-statement `_phase_*` helpers.
     """
-    events = _statements(run_task()[1])
+    events = _movement_events(run_task(retired_ids=[[101], [102], [], [], [], [], []])[1])
     outcome_idx = [i for i, s in enumerate(events) if "UPDATE futures_outcomes" in s]
     market_idx = [i for i, s in enumerate(events) if "UPDATE futures_markets" in s]
 
@@ -683,7 +891,7 @@ def test_both_sweeps_run_before_either_market_statement(run_task) -> None:
 
 def test_all_four_statements_share_one_transaction(run_task) -> None:
     """A2 joins the existing transaction; it does not open a second one."""
-    events = run_task()[1].events
+    events = _movement_events(run_task()[1])
 
     assert events.count("COMMIT") == 1, (
         f"the graded sweep added a commit; got {events.count('COMMIT')}: {events}"
@@ -707,12 +915,12 @@ def test_a_full_graded_batch_reports_the_backlog_as_undrained(run_task) -> None:
     )
 
 
-def test_both_backlogs_empty_reports_drained(run_task) -> None:
-    """And the day both come up short, the column is honest."""
+def test_both_short_batches_report_drain_unverified(run_task) -> None:
+    """Both short is still not proof under `SKIP LOCKED` (#10090)."""
     result, _ = run_task([2, 3, 4, 5, 6])
 
-    assert result["backlog_drained"] is True, f"{result}"
-    assert result["graded_backlog_drained"] is True, f"{result}"
+    assert result["backlog_drained"] is None, f"{result}"
+    assert result["graded_backlog_drained"] is None, f"{result}"
 
 
 # ---------------------------------------------------------------------------
@@ -1238,7 +1446,7 @@ def test_all_eight_statements_share_one_transaction(run_task) -> None:
     commit landing between the delta sweeps and the rank sweeps would serve, for
     that window, exactly the "New favorite with no movement" this ship ends.
     """
-    events = run_task()[1].events
+    events = _movement_events(run_task()[1])
 
     assert events.count("COMMIT") == 1, (
         f"a rank sweep added a commit; got {events.count('COMMIT')}: {events}"
@@ -1263,7 +1471,7 @@ def test_the_rank_counters_are_reported_separately(run_task) -> None:
     assert result["rank_expired"] == STALE_RANK_BATCH, result
     assert result["rank_graded_retired"] == 7, result
 
-    assert result["backlog_drained"] is True, (
+    assert result["backlog_drained"] is None, (
         "a full RANK batch reported the DELTA backlog as undrained — the two "
         f"populations drain on different schedules: {result}"
     )
@@ -1272,11 +1480,11 @@ def test_the_rank_counters_are_reported_separately(run_task) -> None:
     )
 
 
-def test_a_short_rank_batch_reports_the_rank_backlog_drained(run_task) -> None:
-    """And the day both rank sweeps come up short, the drain is over."""
+def test_a_short_rank_batch_reports_the_rank_drain_unverified(run_task) -> None:
+    """Short rank sweeps are not proof of drain under `SKIP LOCKED` (#10090)."""
     result, _ = run_task([2, 3, 4, 5, 6, 7, 8, 1])
 
-    assert result["rank_backlog_drained"] is True, result
+    assert result["rank_backlog_drained"] is None, result
 
 
 # ---------------------------------------------------------------------------
@@ -1523,41 +1731,49 @@ def test_a_market_out_of_claim_scope_loses_its_bank(run_task) -> None:
     )
 
 
-def test_the_bank_lands_inside_the_one_transaction(run_task) -> None:
-    """A reader must never see a bank against un-swept deltas, or the reverse.
-
-    Between A7's retirements and the bank there is a state where a card's
-    evidence and its selection disagree; the single commit is what makes that
-    state unobservable, exactly as it is for A/A2/A3/A4/A7 and B/C.
-    """
+def test_the_bank_commits_after_the_atomic_core_and_before_the_warm(run_task) -> None:
+    """Core quote locks are released before all four metadata maintenance arms."""
     _, session = run_task()
+    _movement_events(session)
     events = session.events
-
-    assert events.count("COMMIT") == 1, (
-        f"the sweep no longer commits exactly once: {events}"
+    commits = [i for i, event in enumerate(events) if event == "COMMIT"]
+    banked = [i for i, event in enumerate(events) if "jsonb_object_agg" in event]
+    assert len(banked) == 2, events
+    assert commits[2] < min(banked) <= max(banked) < commits[3], events
+    assert all(
+        "UPDATE futures_markets" in event
+        for event in events[commits[2] + 1:commits[3]]
     )
-    commit = events.index("COMMIT")
-    banked = [i for i, s in enumerate(events) if "jsonb_object_agg" in s]
-    assert banked and max(banked) < commit, (
-        f"the dated-basis bank landed outside the single transaction: {events}"
-    )
+    assert session.warm_snapshots == [events], session.warm_snapshots
 
 
-def test_the_bank_runs_after_every_retirement_and_before_the_recompute(
+def test_bank_failure_rolls_back_and_warms_committed_core_then_propagates(run_task) -> None:
+    with pytest.raises(RuntimeError, match="bank failed"):
+        run_task(fail_bank=True)
+    session = run_task.last_session
+    events = session.events
+    assert events.count("COMMIT") == 3, events
+    assert events[-1] == "ROLLBACK", events
+    core_commit = max(i for i, event in enumerate(events) if event == "COMMIT")
+    assert "SET max_movement_24h = NULL" in events[core_commit - 1], events
+    assert "jsonb_object_agg" in events[core_commit + 1], events
+    assert session.warm_snapshots == [events], session.warm_snapshots
+
+
+def test_the_bank_runs_after_every_retirement_and_the_committed_recompute(
     run_task,
 ) -> None:
     """Order is load-bearing in both directions.
 
-    AFTER the retirements, so a delta A7 is about to retire never gets evidence
-    banked for it. BEFORE B and C, so the run's arithmetic on the column reads
-    one settled state rather than two.
+    AFTER the retirements and B/C commit, so the expensive metadata scans
+    read coherent committed movement without holding outcome quote locks.
     """
     events = _statements(run_task()[1])
     sweeps = [i for i, s in enumerate(events) if "UPDATE futures_outcomes" in s]
     bank = next(i for i, s in enumerate(events) if "jsonb_object_agg" in s)
     recompute = next(i for i, s in enumerate(events) if "max_movement_24h = sub.max_mv" in s)
 
-    assert max(sweeps) < bank < recompute, (
+    assert max(sweeps) < recompute < bank, (
         f"the bank is out of order — sweeps={sweeps} bank={bank} "
         f"recompute={recompute}: {events}"
     )

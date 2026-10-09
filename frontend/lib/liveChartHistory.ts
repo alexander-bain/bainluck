@@ -1,5 +1,6 @@
 import { isQuoteStreamStatus } from "./eventQuoteStream";
-import { frameFoldOrder } from "./foldRevision";
+import { isFinishedStatus } from "./eventState";
+import { compareFoldRevision, frameFoldOrder, parseFoldRevision } from "./foldRevision";
 import { PINNABLE_HERO_SOURCE } from "./chartEdgePin";
 import type { LiveStreamFrame } from "./liveStreamController";
 import type { OddsHistoryPoint, WinProbHistoryPoint } from "./types";
@@ -388,5 +389,113 @@ export function quoteChartFrames(
       return Number.isFinite(heldAt) && Date.parse(point.timestamp) < heldAt;
     }
     return true;
+  });
+}
+
+/**
+ * #10751 — the frames the page actually DREW while quotes were eligible, and
+ * the held vector they were admitted against.
+ *
+ * Not the hook's bank: `useLiveEventStream` keeps every valid callback, before
+ * the fold filter above, and keeps it after transport stops. Retaining that
+ * would resurrect frames the headline refused. This is the RESULT of
+ * `quoteChartFrames` on the last eligible render, replaced on every one, so a
+ * membership change that refuses a frame drops it here too.
+ */
+export type AdmittedChartFrames = {
+  eventId: number;
+  points: LiveChartFrame[];
+  foldRevision: unknown;
+};
+
+export function admitChartFrames(
+  eventId: number, points: LiveChartFrame[] = [],
+  hero: (HeroObservation & { blend_fold_revision?: unknown }) | null | undefined,
+): AdmittedChartFrames {
+  return { eventId, points: quoteChartFrames(points, hero), foldRevision: hero?.blend_fold_revision ?? null };
+}
+
+/** The subset of the finished detail payload the selector reads. */
+export type FinishedHero = {
+  id?: number;
+  status?: string | null;
+  completed_at?: string | null;
+  blend_fold_revision?: unknown;
+};
+
+/** The subset of the SERVED history payload the selector reads. */
+export type FinishedServed = ChartHistory & {
+  event_id?: number;
+  completed_at?: string | null;
+};
+
+/**
+ * #10751 — a finished game keeps the movement it already drew while its
+ * history read catches up.
+ *
+ * The detail and history are separate reads. A completed detail ends quote
+ * eligibility, and the page used to pass no frames at all, so the chart fell
+ * back to the OLD served body and the excursion the reader had just watched
+ * vanished until the next history response. The settled hero was right; the
+ * journey under it lost its last minutes.
+ *
+ * This returns only frames from `admitted` — never a frame admitted after the
+ * finish, never one the live filter refused — and only when every proof holds.
+ * Any doubt returns `[]`, which is exactly the old behaviour:
+ *
+ *   1. SAME EVENT, EXPLICITLY FINISHED. The admission, the detail and the
+ *      served body all name this event, and the detail says completed/closed.
+ *   2. A SERVED BLEND. The current body carries the backend's own aggregate
+ *      line (#8066); nothing here mints one for a source-only response.
+ *   3. COMPARABLE, AND NOT BEHIND. The terminal detail's one-row vector is at
+ *      least as new as the vector the frames were admitted against, and at
+ *      least as new as each frame's own. Missing, malformed, folded or
+ *      changed membership is not comparable evidence.
+ *   4. A KNOWN COMPLETION BOUND. The detail's `completed_at`, tightened by the
+ *      served body's when it carries a valid one; a frame after it is not
+ *      pre-finish movement. An unparseable bound on either side is a
+ *      contradiction, not a cue to guess. This is an upper bound only — not
+ *      a whistle time — and `OddsChart`'s own game-end and range filters still
+ *      decide what is drawn.
+ *
+ * Each frame keeps its own value, revision and clock; `mergeLiveChartHistory`
+ * still lets a later REST point win an exact-time tie. No result endpoint, no
+ * interpolation, and no live status — `appendHeroObservation` and
+ * `pinChartEdgeToHero` keep standing down for a settled hero.
+ */
+export function finishedChartFrames(
+  admitted: AdmittedChartFrames | null | undefined,
+  eventId: number,
+  hero: FinishedHero | null | undefined,
+  served: FinishedServed | null | undefined,
+): LiveChartFrame[] {
+  if (!admitted || admitted.eventId !== eventId || admitted.points.length === 0) return [];
+  if (!hero || (hero.id !== undefined && hero.id !== eventId) || !isFinishedStatus(hero.status)) return [];
+  if (!served || served.event_id !== eventId || !served.aggregate_line?.length) return [];
+
+  const completed = Date.parse(hero.completed_at ?? "");
+  if (!Number.isFinite(completed)) return [];
+  let bound = completed;
+  if (served.completed_at !== undefined && served.completed_at !== null) {
+    const servedBound = Date.parse(served.completed_at);
+    if (!Number.isFinite(servedBound)) return [];
+    bound = Math.min(bound, servedBound);
+  }
+
+  const terminal = parseFoldRevision(hero.blend_fold_revision);
+  const atAdmission = parseFoldRevision(admitted.foldRevision);
+  if (!terminal || !atAdmission) return [];
+  const since = compareFoldRevision(terminal, atAdmission);
+  if (since !== "same" && since !== "newer") return [];
+
+  return admitted.points.filter(point => {
+    // `frameFoldOrder` refuses a folded terminal vector (a raw-row frame never
+    // computed a multi-row fold) and an unversioned frame: both incomparable.
+    const order = frameFoldOrder(terminal, point.rev);
+    if (order !== "same" && order !== "older") return false;
+    const at = Date.parse(point.timestamp);
+    const p = point.home_probability;
+    return Number.isFinite(at) && at <= bound &&
+      typeof p === "number" && Number.isFinite(p) && p >= 0 && p <= 1;
   });
 }

@@ -106,6 +106,10 @@ actor APIClient {
     /// raw offset-0 `/api/feed` body so a repeat launch can render a first card
     /// immediately instead of blocking on the 9–13s cold server miss (#1459).
     private let feedCache = DiscoverFeedCache()
+    /// One launch-only decoded seed. The optional payload also remembers a miss,
+    /// so the first appearance does not repeat the same disk read/JSON decode.
+    private var launchFeedSeed: (identity: String, payload: CachedDiscoverFeed?)?
+
 
     /// Backend user id of the signed-in account, or nil when anonymous. Pushed by
     /// `AuthManager` on sign-in/out/restore; partitions the feed cache namespace.
@@ -246,6 +250,7 @@ actor APIClient {
         sessionId = Self.loadOrCreateSessionId()
         guard sessionId != previous else { return }
         responseCache.removeAll()
+        launchFeedSeed = nil
         feedCache.evict(keepingOnly: currentFeedIdentity())
     }
 
@@ -272,6 +277,7 @@ actor APIClient {
         // so a superseded identity's entries can't linger and waste memory. Runs on
         // the actor before any subsequent fetch can observe the cache.
         responseCache.removeAll()
+        launchFeedSeed = nil
         feedCache.evict(keepingOnly: currentFeedIdentity())
     }
 
@@ -907,6 +913,7 @@ actor APIClient {
             ), Self.shouldStoreFeedAsLastGood(net.value) {
                 let t0 = Date()
                 feedCache.store(rawBody: raw, identity: identityAtFetch, storedAt: Date())
+                launchFeedSeed = nil
                 storeMs = Date().timeIntervalSince(t0) * 1000
             } else {
                 storeMs = nil
@@ -930,10 +937,24 @@ actor APIClient {
         )
     }
 
+    /// Started before synchronous app bootstrap, on this actor rather than the
+    /// main actor. It prepares data only: Discover still admits the seed through
+    /// its current identity/credential and renderability gates.
+    func prepareLastGoodFeedForLaunch() {
+        guard launchFeedSeed == nil else { return }
+        let identity = currentFeedIdentity()
+        launchFeedSeed = (identity, feedCache.load(identity: identity))
+    }
+
     /// Read the last-good Discover payload for the current identity (#1465), or
     /// nil when none exists. Fails closed on any corrupt/foreign entry.
     func loadLastGoodFeed() -> CachedDiscoverFeed? {
-        feedCache.load(identity: currentFeedIdentity())
+        let identity = currentFeedIdentity()
+        defer { launchFeedSeed = nil }
+        if let seed = launchFeedSeed, seed.identity == identity {
+            return seed.payload
+        }
+        return feedCache.load(identity: identity)
     }
 
     // MARK: - Grouped Futures Feed

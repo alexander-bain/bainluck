@@ -18,6 +18,8 @@ final class MarketStreamSubscription {
     private var tickTask: Task<Void, Never>?
     private var connected = false
     private var terminalIDs: Set<Int> = []
+    /// Highest shared-hub recovery seen on the current handle; a new hub starts at 1.
+    private var recoveredGeneration = 0
 
     init(makeHandle: Factory? = nil,
          onInvalidate: @escaping @MainActor ([Int]) -> Void,
@@ -110,6 +112,7 @@ final class MarketStreamSubscription {
         catch { recycle(after: 60); return }
         handle = next
         lastWireAt = now()
+        recoveredGeneration = 0
         next.on("open") { [weak self] _ in
             guard let self, self.generation == epoch else { return }
             self.lastWireAt = self.now()
@@ -121,6 +124,19 @@ final class MarketStreamSubscription {
         next.on("heartbeat") { [weak self] _ in
             guard let self, self.generation == epoch else { return }
             self.lastWireAt = self.now()
+        }
+        next.on("resync") { [weak self] raw in
+            guard let self, self.generation == epoch,
+                  let data = raw.data(using: .utf8),
+                  let frame = try? JSONDecoder().decode(MarketRecovery.self, from: data),
+                  (1...MarketRecovery.maxGeneration).contains(frame.generation),
+                  frame.generation > self.recoveredGeneration else { return }
+            self.recoveredGeneration = frame.generation
+            self.lastWireAt = self.now()
+            // Recovery owes a REST read, never quote freshness or terminal truth:
+            // frames published while the hub was unsubscribed are gone.
+            let remaining = active.filter { !self.terminalIDs.contains($0) }
+            if !remaining.isEmpty { self.onInvalidate(remaining) }
         }
         next.on("market") { [weak self] raw in
             guard let self, self.generation == epoch,
@@ -159,6 +175,11 @@ private struct MarketInvalidation: Decodable {
     let invalidation: Bool
     let terminal: Bool
     enum CodingKeys: String, CodingKey { case marketID = "market_id", invalidation, terminal }
+}
+private struct MarketRecovery: Decodable {
+    /// Same ceiling as the browser client's `Number.isSafeInteger`.
+    static let maxGeneration = 9_007_199_254_740_991
+    let generation: Int
 }
 private struct MarketClosure: Decodable {
     let marketIDs: [Int]

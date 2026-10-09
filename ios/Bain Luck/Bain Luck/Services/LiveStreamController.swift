@@ -76,9 +76,22 @@ nonisolated struct LiveStreamFrame: Decodable, Sendable, Equatable {
     /// ROW's aggregate, so it orders only against a held one-row vector; see
     /// `FoldRevision.frameOrder`. Absent from a producer before the contract.
     let rev: ServedFoldRevision?
+    /// #10090 — on a FOLDED page's raw `probability` frame: the server promises
+    /// one `folded_probability` frame next, carrying the authoritative quote or
+    /// an explicit null. `false`/absent on that result and on every other frame.
+    let foldedQuotePending: Bool?
+    /// #10090 — the authoritative full-fold quote a `folded_probability` frame
+    /// carries. `nil` for explicit null, for a malformed quote, and on every
+    /// raw frame; `foldedResult` tells those apart.
+    let foldedQuote: ServedFoldedQuote?
+    /// #10090 — set by the controller, never decoded: this frame arrived as the
+    /// named `folded_probability` event, the answer to a pending raw frame.
+    var foldedResult = false
 
     init(eventId: Int, p: Double?, source: String?, sourceValue: Double?,
-         updatedAt: String?, status: String?, rev: ServedFoldRevision? = nil) {
+         updatedAt: String?, status: String?, rev: ServedFoldRevision? = nil,
+         foldedQuotePending: Bool? = nil, foldedQuote: ServedFoldedQuote? = nil,
+         foldedResult: Bool = false) {
         self.eventId = eventId
         self.p = p
         self.source = source
@@ -86,6 +99,87 @@ nonisolated struct LiveStreamFrame: Decodable, Sendable, Equatable {
         self.updatedAt = updatedAt
         self.status = status
         self.rev = rev
+        self.foldedQuotePending = foldedQuotePending
+        self.foldedQuote = foldedQuote
+        self.foldedResult = foldedResult
+    }
+
+    private enum CodingKeys: String, CodingKey {
+        case eventId, p, source, sourceValue, updatedAt, status, rev, foldedQuotePending, foldedQuote
+    }
+}
+
+/// #10090 — the server's full fold for an event, pushed beside a raw row write
+/// so a folded hero can move without re-reading detail and history. Built by
+/// the same fold, hero resolver and source formatter as the detail route
+/// (`backend/app/utils/folded_live_quote.py`).
+nonisolated struct FoldedQuote: Decodable, Sendable, Equatable {
+    let eventId: Int
+    let heroProbability: Double?
+    let heroProbabilityAway: Double?
+    let heroProbabilitySource: String?
+    let heroProbabilityObservedAt: String?
+    let blendFoldRevision: FoldRevision
+    let winProbabilitySources: [String: WinProbSource]
+    let heroSportsbookCount: Int?
+    let status: String?
+    let sport: String?
+    let heroSettledResult: String?
+
+    private enum CodingKeys: String, CodingKey {
+        case eventId, heroProbability, heroProbabilityAway, heroProbabilitySource,
+             heroProbabilityObservedAt, blendFoldRevision, winProbabilitySources,
+             heroSportsbookCount, status, sport, heroSettledResult
+    }
+
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        eventId = try c.decode(Int.self, forKey: .eventId)
+        heroProbability = try c.decodeIfPresent(Double.self, forKey: .heroProbability)
+        heroProbabilityAway = try c.decodeIfPresent(Double.self, forKey: .heroProbabilityAway)
+        heroProbabilitySource = try c.decodeIfPresent(String.self, forKey: .heroProbabilitySource)
+        heroProbabilityObservedAt = try c.decodeIfPresent(String.self, forKey: .heroProbabilityObservedAt)
+        // A quote without a well-formed vector dates nothing, so it is no quote.
+        guard let revision = try c.decode(ServedFoldRevision.self, forKey: .blendFoldRevision).revision else {
+            throw DecodingError.dataCorruptedError(
+                forKey: .blendFoldRevision, in: c, debugDescription: "malformed fold revision"
+            )
+        }
+        blendFoldRevision = revision
+        winProbabilitySources = try c.decode([String: WinProbSource].self, forKey: .winProbabilitySources)
+        heroSportsbookCount = try c.decodeIfPresent(Int.self, forKey: .heroSportsbookCount)
+        status = try c.decodeIfPresent(String.self, forKey: .status)
+        sport = try c.decodeIfPresent(String.self, forKey: .sport)
+        heroSettledResult = try c.decodeIfPresent(String.self, forKey: .heroSettledResult)
+        // Same refusals as web's `readFoldedQuote`: a quote that cannot be
+        // printed exactly as served is refused whole, never half-adopted.
+        let probabilities = [heroProbability, heroProbabilityAway].compactMap { $0 }
+        guard probabilities.allSatisfy({ $0.isFinite && (0...1).contains($0) }),
+              heroProbabilityObservedAt.map({ $0.asDate != nil }) ?? true,
+              heroSportsbookCount.map({ $0 >= 0 }) ?? true,
+              winProbabilitySources.allSatisfy({ key, source in
+                  guard let value = source.value?.doubleValue, value.isFinite else { return false }
+                  // `betting_book_count` is a count wearing a source's shape.
+                  return WinProbSourceCatalog.realSourceKeys.contains(key) ? (0...1).contains(value) : value >= 0
+              }) else {
+            throw DecodingError.dataCorrupted(.init(codingPath: decoder.codingPath,
+                                                    debugDescription: "unprintable folded quote"))
+        }
+    }
+}
+
+/// The quote as it arrived. NEVER THROWS, like `ServedFoldRevision`: a bad quote
+/// degrades to "no quote" — the existing detail/history fallback — and never
+/// drops the frame around it.
+nonisolated struct ServedFoldedQuote: Decodable, Sendable, Equatable {
+    let quote: FoldedQuote?
+
+    init(_ quote: FoldedQuote?) {
+        self.quote = quote
+    }
+
+    init(from decoder: Decoder) throws {
+        quote = try? decoder.singleValueContainer().decode(FoldedQuote.self)
     }
 }
 
@@ -166,6 +260,10 @@ final class LiveStreamController {
     private let now: () -> TimeInterval
     private let onFrame: @MainActor (LiveStreamFrame) -> Void
     private let onDeliveringChange: @MainActor (Bool) -> Void
+    /// #10090 — whether the owner reads `folded_probability`. Opt-in, so a
+    /// surface that only needs "something moved" (Discover's cards) keeps its
+    /// one refresh per raw frame instead of a second for the quote after it.
+    private let deliversFoldedQuotes: Bool
 
     private var handle: LiveStreamHandle?
     private var delivering = false
@@ -191,12 +289,14 @@ final class LiveStreamController {
         open: @escaping @MainActor () throws -> LiveStreamHandle,
         now: @escaping () -> TimeInterval,
         onFrame: @escaping @MainActor (LiveStreamFrame) -> Void,
-        onDeliveringChange: @escaping @MainActor (Bool) -> Void
+        onDeliveringChange: @escaping @MainActor (Bool) -> Void,
+        deliversFoldedQuotes: Bool = false
     ) {
         self.open = open
         self.now = now
         self.onFrame = onFrame
         self.onDeliveringChange = onDeliveringChange
+        self.deliversFoldedQuotes = deliversFoldedQuotes
     }
 
     // MARK: Public surface
@@ -337,25 +437,34 @@ final class LiveStreamController {
             self.setDelivering(true)
         }
 
-        next.on("probability") { [weak self, weak next] raw in
-            guard let self, let next, !self.stopped, self.handle === next else { return }
-            self.lastMessageAt = self.now()
-            guard let data = raw.data(using: .utf8) else { return }
-            let decoder = JSONDecoder()
-            decoder.keyDecodingStrategy = .convertFromSnakeCase
-            // One bad frame is not a reason to abandon the stream. A decode
-            // failure also GUARDS THE SHAPE: a malformed frame that dropped
-            // `event_id` would otherwise be handed on and could blank a working
-            // hero.
-            guard let frame = try? decoder.decode(LiveStreamFrame.self, from: data) else { return }
-            // TRANSPORT clock only (above), exactly like a heartbeat. Decoding a
-            // frame is not delivering a price: the owner may refuse it (wrong
-            // event, an old or equal revision, no usable value), and a stream of
-            // refused frames used to renew the data-silence budget forever
-            // (#10468). The owner calls `acknowledgeAcceptedPrice()` from inside
-            // this callback once — and only if — it adopts the price.
-            self.onFrame(frame)
+        let onProbability = { (foldedResult: Bool) -> @MainActor (String) -> Void in
+            { [weak self, weak next] raw in
+                guard let self, let next, !self.stopped, self.handle === next else { return }
+                self.lastMessageAt = self.now()
+                guard let data = raw.data(using: .utf8) else { return }
+                let decoder = JSONDecoder()
+                decoder.keyDecodingStrategy = .convertFromSnakeCase
+                // One bad frame is not a reason to abandon the stream. A decode
+                // failure also GUARDS THE SHAPE: a malformed frame that dropped
+                // `event_id` would otherwise be handed on and could blank a working
+                // hero.
+                guard var frame = try? decoder.decode(LiveStreamFrame.self, from: data) else { return }
+                frame.foldedResult = foldedResult
+                // TRANSPORT clock only (above), exactly like a heartbeat. Decoding a
+                // frame is not delivering a price: the owner may refuse it (wrong
+                // event, an old or equal revision, no usable value), and a stream of
+                // refused frames used to renew the data-silence budget forever
+                // (#10468). The owner calls `acknowledgeAcceptedPrice()` from inside
+                // this callback once — and only if — it adopts the price.
+                self.onFrame(frame)
+            }
         }
+        next.on("probability", onProbability(false))
+        // #10090 — the same decoder, marked as the answer to a pending raw
+        // frame. It shares that frame's raw revision, so it is handed on whole:
+        // the quote inside is ordered by its own full vector, never deduped as
+        // a repeat of the raw row.
+        if deliversFoldedQuotes { next.on("folded_probability", onProbability(true)) }
 
         next.on("heartbeat") { [weak self, weak next] _ in
             guard let self, let next, !self.stopped, self.handle === next else { return }

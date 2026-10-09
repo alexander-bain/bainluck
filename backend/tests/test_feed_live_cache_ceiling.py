@@ -321,6 +321,9 @@ class _SeededRedis:
         self.delete_calls: list[str] = []
         self.fail = fail
 
+    async def mget(self, keys):
+        return [await self.get(key) for key in keys]
+
     async def get(self, key):
         if self.fail:
             raise ConnectionError("redis is down")

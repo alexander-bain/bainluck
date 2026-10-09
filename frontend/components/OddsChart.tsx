@@ -3386,6 +3386,15 @@ export default function OddsChart({
                 excluded from the tooltip so no minute in the hole gets a
                 number. The backend blend keeps its `connectNulls`: it is not
                 an observation series and is not judged here. */}
+            {/* #10090 — every probability line below is `isAnimationActive={false}`.
+                Recharts' default eases each new data array in over 1.5 s, and
+                when the row count changes (every history read on a live page:
+                the 32 s poll and the fresh read a frame asks for) it starts
+                each vertex from a NEIGHBOURING row's old position. Measured on
+                a held live page (15326254): the line's live end jumped ~5–10 px
+                to a value no source published and slid back for ~1.5 s after
+                each read, while the hero had adopted the frame within 30 ms.
+                A price lands where it is, on the next paint. */}
             {/* ── MODE B: Sportsbooks-only — individual bookmaker lines (thin grey) ── */}
             {!isMultiSource && bookmakers.map((bookmaker) => (
               <Line
@@ -3395,6 +3404,7 @@ export default function OddsChart({
                 stroke="rgba(0,0,0,0.15)"
                 strokeWidth={1}
                 dot={false}
+                isAnimationActive={false}
                 activeDot={{ r: 3, fill: "rgba(0,0,0,0.3)" }}
                 legendType="none"
               />
@@ -3445,6 +3455,7 @@ export default function OddsChart({
                 strokeOpacity={isPrimarySource ? 1 : legendExpanded ? 0.85 : 0.28}
                 strokeDasharray={source.dashPattern ?? undefined}
                 dot={false}
+                isAnimationActive={false}
                 activeDot={{ r: isPrimarySource ? 4 : 3, fill: source.color }}
               />
               );
@@ -3478,6 +3489,7 @@ export default function OddsChart({
                 strokeWidth={2.5}
                 strokeDasharray="6 3"
                 dot={false}
+                isAnimationActive={false}
                 activeDot={{ r: 4, fill: sourceHex("espn") }}
               />
             )}
@@ -3495,6 +3507,7 @@ export default function OddsChart({
                 stroke={BAIN_LUCK_CONFIG.color}
                 strokeWidth={3}
                 dot={false}
+                isAnimationActive={false}
                 activeDot={{ r: 5, fill: BAIN_LUCK_CONFIG.color }}
                 connectNulls
               />
@@ -3515,6 +3528,7 @@ export default function OddsChart({
                   stroke={BAIN_LUCK_CONFIG.color}
                   strokeWidth={3}
                   dot={false}
+                  isAnimationActive={false}
                   activeDot={{ r: 5, fill: BAIN_LUCK_CONFIG.color }}
                   connectNulls
                   tooltipType="none"
@@ -3567,6 +3581,7 @@ export default function OddsChart({
                 stroke={sourceHex("betting")}
                 strokeWidth={3}
                 dot={false}
+                isAnimationActive={false}
                 activeDot={{ r: 5, fill: sourceHex("betting") }}
               />
             )}

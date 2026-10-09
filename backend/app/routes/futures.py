@@ -6989,7 +6989,9 @@ async def _load_generic_venue_history(
                 # its declared life — never a fresh TTL, which would let a bank
                 # outlive its own lifetime once per eviction. Best-effort in
                 # every direction: this is an optimisation for the NEXT request
-                # and may not cost this one its series.
+                # and may not cost this one its series. And ONLY into an empty
+                # key (#10749): a fill may have cached a newer bank while this
+                # read held the older one, and the older one must not cover it.
                 built = payload_built_at(payload)
                 if built is not None:
                     settled = bool(payload.get("market_settled"))
@@ -7000,7 +7002,7 @@ async def _load_generic_venue_history(
                         await asyncio.to_thread(
                             write_cached_history, market.id, payload,
                             settled=settled, rc=_request_path_redis(),
-                            ttl_s=int(remaining),
+                            ttl_s=int(remaining), only_if_absent=True,
                         )
         if payload is None:
             venue.state = "cold"

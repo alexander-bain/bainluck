@@ -33,6 +33,11 @@ USAGE
     python3 scripts/evals/scan_mutation_residue.py                # vs origin/master
     python3 scripts/evals/scan_mutation_residue.py --base HEAD~3
     python3 scripts/evals/scan_mutation_residue.py --all-tracked  # whole tree
+    python3 scripts/evals/scan_mutation_residue.py --base BASE --head HEAD
+
+The opt-in BASE/HEAD mode scans committed Pass B blobs at those exact endpoints,
+not the checkout's merge commit or dirty files. Pass A still grades the checkout.
+Deleted paths are reported separately; Git/read/decode failures refuse with 2.
 
 Exit codes (gotcha #54): `0` clean, `1` residue found — a real result, `2` the
 scan could not be performed (unknown harness shape, git unavailable).
@@ -43,9 +48,11 @@ from __future__ import annotations
 import argparse
 import importlib.util
 import json
+import re
 import subprocess
 import sys
 from pathlib import Path
+from typing import NoReturn
 
 EVALS = Path(__file__).resolve().parent
 BACKEND = EVALS.parents[1]
@@ -456,11 +463,123 @@ def _base_already_has(base: str, rel: str, literal: str) -> bool:
     return literal in out.stdout
 
 
+def _range_refusal(reason: str) -> NoReturn:
+    print(f"🔴 scan: CANNOT MEASURE — exact range: {reason}", file=sys.stderr)
+    raise SystemExit(2)
+
+
+def _range_git(*args: str) -> bytes:
+    """Only the opt-in mode uses bounded, byte-preserving Git reads."""
+    try:
+        out = subprocess.run(
+            ["git", "-C", str(REPO), *args],
+            capture_output=True,
+            timeout=30,
+        )
+    except (OSError, subprocess.TimeoutExpired) as exc:
+        _range_refusal(f"git {args[0]} failed: {exc}")
+    if out.returncode:
+        _range_refusal(
+            f"git {args[0]} failed ({out.returncode}): "
+            f"{out.stderr.decode('utf-8', errors='replace').strip()}"
+        )
+    return out.stdout
+
+
+def _range_commit(ref: str) -> str:
+    raw = _range_git("rev-parse", "--verify", "--end-of-options", f"{ref}^{{commit}}")
+    try:
+        oid = raw.decode("ascii").strip()
+    except UnicodeDecodeError:
+        _range_refusal("non-ASCII commit identity")
+    if not re.fullmatch(r"[0-9a-f]{40}|[0-9a-f]{64}", oid):
+        _range_refusal("invalid commit identity")
+    return oid
+
+
+def _range_blob(oid: str) -> str:
+    try:
+        return _range_git("cat-file", "blob", oid).decode("utf-8")
+    except UnicodeDecodeError as exc:
+        _range_refusal(f"blob {oid} is not UTF-8: {exc}")
+
+
+def _committed_range(
+    base: str, head: str, suffixes: list[str]
+) -> tuple[str, str, str, dict[Path, tuple[str, str | None]], list[str]]:
+    """Return exact endpoint identities, candidate blobs/base IDs, and deletions.
+
+    Raw NUL-delimited records preserve whitespace/glob characters in filenames.
+    Blob IDs bind reads even if refs or checkout bytes subsequently move. Rename
+    detection is disabled, so both halves of a move remain visible.
+    """
+    base, head, checkout = (
+        _range_commit(base),
+        _range_commit(head),
+        _range_commit("HEAD"),
+    )
+    raw = _range_git(
+        "diff",
+        "--raw",
+        "--no-abbrev",
+        "--no-renames",
+        "-z",
+        base,
+        head,
+        "--",
+        *(f"*{suffix}" for suffix in suffixes),
+    )
+    records = raw.split(b"\0")
+    if records.pop() != b"" or len(records) % 2:
+        _range_refusal("malformed diff records")
+    files: dict[Path, tuple[str, str | None]] = {}
+    deleted: list[str] = []
+    seen: set[str] = set()
+    for header, name in zip(records[::2], records[1::2]):
+        try:
+            fields = header.decode("ascii").split()
+            rel = name.decode("utf-8")
+        except UnicodeDecodeError:
+            _range_refusal("diff metadata/path is not UTF-8")
+        if len(fields) != 5 or not fields[0].startswith(":"):
+            _range_refusal("malformed diff header")
+        old_mode, mode, old_oid, oid, status = fields
+        if (
+            not rel
+            or Path(rel).is_absolute()
+            or ".." in Path(rel).parts
+            or rel in seen
+            or status not in {"A", "M", "D", "T"}
+            or not re.fullmatch(r"[0-9a-f]{40}|[0-9a-f]{64}", oid)
+            or not re.fullmatch(r"[0-9a-f]{40}|[0-9a-f]{64}", old_oid)
+        ):
+            _range_refusal("unsupported/duplicate path or diff status")
+        seen.add(rel)
+        if status == "D":
+            if mode != "000000" or set(oid) != {"0"}:
+                _range_refusal("deletion has a candidate object")
+            deleted.append(rel)
+            continue
+        if mode not in {"100644", "100755"} or set(oid) == {"0"}:
+            _range_refusal(f"unsupported candidate file mode for {rel!r}: {mode}")
+        # A non-blob base (e.g. submodule -> file) cannot establish precedent.
+        if old_mode not in {":000000", ":100644", ":100755", ":120000"}:
+            _range_refusal(f"unsupported base file mode for {rel!r}: {old_mode}")
+        files[REPO / rel] = (
+            _range_blob(oid),
+            old_oid if set(old_oid) != {"0"} else None,
+        )
+    return base, head, checkout, files, deleted
+
 def main() -> int:
     ap = argparse.ArgumentParser(description=__doc__)
-    ap.add_argument("--base", default="origin/master")
+    ap.add_argument("--base")
+    ap.add_argument("--head", help="opt in to exact BASE/HEAD committed Pass B blobs")
     ap.add_argument("--all-tracked", action="store_true")
     args = ap.parse_args()
+    if args.head is not None and (args.base is None or args.all_tracked):
+        ap.error("--head requires an explicit --base and cannot be combined with --all-tracked")
+    args.base = args.base if args.base is not None else "origin/master"
 
     pairs, unknown = harvest()
 
@@ -615,11 +734,20 @@ def main() -> int:
     scannable = [p for p in pairs if len(p.repl.strip()) >= MIN_LITERAL]
     skipped = len(pairs) - len(scannable)
     suffixes = _suffixes(pairs)
-    files = _files(args.base, args.all_tracked, suffixes)
     kinds = " ".join(suffixes)
-    scope = (
-        f"all tracked {kinds}" if args.all_tracked else f"changed {kinds} vs {args.base}"
-    )
+    committed = None
+    if args.head is not None:
+        args.base, head, checkout, committed, deleted = _committed_range(args.base, args.head, suffixes)
+        files = list(committed)
+        scope = f"committed {kinds} {args.base}..{head}; checkout={checkout}"
+        print(f"Exact range: {len(files)} existing candidate file(s), {len(deleted)} deletion(s)")
+        for rel in deleted:
+            print(f"  DELETED at candidate head (no blob to scan): {rel!r}")
+    else:
+        files = _files(args.base, args.all_tracked, suffixes)
+        scope = (
+            f"all tracked {kinds}" if args.all_tracked else f"changed {kinds} vs {args.base}"
+        )
 
     print()
     print(f"PASS B — broad sweep: {len(scannable)} literals x {len(files)} files ({scope})")
@@ -632,15 +760,25 @@ def main() -> int:
 
     hits: list[str] = []
     preexisting: list[str] = []
+    base_blobs: dict[str, str] = {}
     for path in files:
-        try:
-            text = path.read_text()
-        except (UnicodeDecodeError, OSError):
-            continue
+        if committed is not None:
+            text, base_oid = committed[path]
+        else:
+            try:
+                text = path.read_text()
+            except (UnicodeDecodeError, OSError):
+                continue
         rel = str(path.relative_to(REPO))
         for pair in scannable:
             if pair.repl in text and pair.needle not in text:
-                if _base_already_has(args.base, rel, pair.repl):
+                if committed is not None:
+                    if base_oid and base_oid not in base_blobs:
+                        base_blobs[base_oid] = _range_blob(base_oid)
+                    already_present = bool(base_oid and pair.repl in base_blobs[base_oid])
+                else:
+                    already_present = _base_already_has(args.base, rel, pair.repl)
+                if already_present:
                     preexisting.append(f"{rel}  <-  {pair}")
                     continue
                 hits.append(f"{rel}  <-  {pair}")

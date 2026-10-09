@@ -569,14 +569,15 @@ def test_a_bounded_run_retires_the_biggest_liar_first() -> None:
     )
 
 
-def test_a_run_with_nothing_to_do_reports_a_drained_backlog() -> None:
-    """And it must not disturb anything while saying so."""
+def test_a_run_with_nothing_to_do_reports_drain_unverified() -> None:
+    """Under `SKIP LOCKED` an empty run is not proof of drain (#10090), and it
+    must not disturb anything either way."""
     ids = asyncio.run(_reset_and_seed([("live", "open", 1, 0.22, 0.22)]))
     result = _run_task()
     after = asyncio.run(_read(ids))
 
     assert result["expired"] == 0
-    assert result["backlog_drained"] is True, result
+    assert result["backlog_drained"] is None, result
     assert after["live"] == (pytest.approx(0.22), pytest.approx(0.22)), (
         f"an idle run moved a healthy row: {after}"
     )
@@ -2488,3 +2489,78 @@ def test_a_market_whose_every_outcome_is_refused_loses_its_old_bank() -> None:
         f"an in-scope market with nothing to bank was given an empty cell: {never_meta}"
     )
     assert bank["control"] is not None, f"the control lost its basis: {bank}"
+
+
+# ---------------------------------------------------------------------------
+# #10090 — the core yields to quote writers instead of queueing behind them
+# ---------------------------------------------------------------------------
+
+
+def _hold_row_lock(table: str, row_id: int):
+    """A second connection holding a row lock, the way a quote flush does.
+
+    Bounded so a regression cannot hang the gate: if the core WAITS instead of
+    skipping, Postgres ends this holder after five seconds, the core then takes
+    the row, and the assertions below red on the row it should have left alone.
+    """
+    import psycopg2
+
+    conn = psycopg2.connect(DB_URL.replace("+asyncpg", ""))
+    cur = conn.cursor()
+    cur.execute("SET idle_in_transaction_session_timeout = '5s'")
+    cur.execute(f"SELECT 1 FROM {table} WHERE id = %s FOR UPDATE", (row_id,))
+    return conn
+
+
+def test_a_quote_locked_outcome_is_skipped_not_waited_for() -> None:
+    """A1-A7 take SKIP LOCKED targets; the skipped row is swept next run."""
+    ids = asyncio.run(
+        _reset_and_seed(
+            [
+                ("held", "open", 0, 0.44, 0.44, "api_settlement"),
+                ("free", "open", 0, 0.31, 0.31, "api_settlement"),
+            ]
+        )
+    )
+    holder = _hold_row_lock("futures_outcomes", ids["held"][1])
+    try:
+        result = _run_task()
+        during = asyncio.run(_read(ids))
+    finally:
+        holder.rollback()
+        holder.close()
+
+    assert during["held"] == (0.44, 0.44), (
+        "the core took an outcome row a quote writer holds — it waited for the "
+        f"lock instead of skipping it. got={during['held']}"
+    )
+    assert during["free"] == (None, None), during
+    assert result["graded_retired"] == 1, result
+
+    _run_task()
+    after = asyncio.run(_read(ids))
+    assert after["held"] == (None, None), (
+        f"the skipped row was not swept once its lock was released: {after}"
+    )
+
+
+def test_a_market_row_held_past_the_budget_rolls_the_whole_core_back() -> None:
+    """B/C's market waits are bounded; a fired budget leaves no half-core."""
+    from app.utils.repair_lock_budget import is_lock_timeout
+
+    ids = asyncio.run(
+        _reset_and_seed([("held", "open", 0, 0.44, 0.44, "api_settlement")])
+    )
+    holder = _hold_row_lock("futures_markets", ids["held"][0])
+    try:
+        with pytest.raises(Exception) as raised:
+            _run_task()
+    finally:
+        holder.rollback()
+        holder.close()
+
+    assert is_lock_timeout(raised.value), repr(raised.value)
+    assert asyncio.run(_read(ids))["held"] == (0.44, 0.44), (
+        "A2 cleared the outcome but C never recomputed its market — the core "
+        "must roll back whole when its lock budget fires."
+    )

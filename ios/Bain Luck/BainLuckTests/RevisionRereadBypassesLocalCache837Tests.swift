@@ -106,7 +106,8 @@ final class RevisionRereadBypassesLocalCache837Tests: XCTestCase {
         XCTAssertEqual(cachedHistory.aggregateLine?.last?.homeProbability, 0.60)
         XCTAssertEqual(Origin.requests(ending: "/4242").count, 1)
         XCTAssertEqual(Origin.requests(ending: "/history").count, 1)
-        XCTAssertNil(Origin.requests(ending: "/4242").first?.url?.query)
+        // The opening read is the intentional fresh read (#10090); its bytes warm the cache.
+        XCTAssertEqual(Origin.requests(ending: "/4242").first?.url?.query, "fresh=true")
         XCTAssertFalse(Origin.requests(ending: "/history").first?.url?.query?.contains("fresh") ?? false)
 
         handle.pushNewRevision()

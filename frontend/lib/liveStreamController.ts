@@ -58,6 +58,10 @@ export interface LiveStreamFrame {
    * see `lib/foldRevision.ts`. Absent from a producer before the contract.
    */
   rev?: Record<string, number> | null;
+  /** Explicit full fold carried by the optional folded_probability event. */
+  folded_quote?: unknown;
+  /** Raw actual-fold notification promises an object/null projection result. */
+  folded_quote_pending?: boolean;
 }
 
 /** The slice of `EventSource` this controller uses. */
@@ -304,7 +308,7 @@ export function createLiveStreamController(
       onRecovery?.(++recoveryNotifications);
     });
 
-    next.addEventListener('probability', (event) => {
+    const onProbability = (event: unknown) => {
       if (stopped || handle !== next) return;
       lastMessageAt = now();
       const raw = (event as { data?: unknown })?.data;
@@ -324,7 +328,11 @@ export function createLiveStreamController(
       onFrame(parsed);
       setDelivering(true);
       setStatus('open');
-    });
+    };
+    next.addEventListener('probability', onProbability);
+    // Legacy clients ignore this event. It is not deduped by raw revision:
+    // the authoritative fold can arrive after the same write's invalidation.
+    next.addEventListener('folded_probability', onProbability);
 
     next.addEventListener('heartbeat', () => {
       if (stopped || handle !== next) return;

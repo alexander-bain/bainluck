@@ -116,11 +116,12 @@ class _MarketSubscriptions:
 
 
 async def _stream(ids: list[int], unavailable: list[int], request: Request):
-    from app.utils.live_fanout import CLOSED, fanout
+    from app.utils.live_fanout import CLOSED, Recovery, fanout
 
     subscriptions = _MarketSubscriptions(fanout())
     started = asyncio.get_running_loop().time()
     settled = []
+    recovery_generation = 0
     try:
         await subscriptions.subscribe(ids)
         yield f"retry: {RETRY_MS}\n\n"
@@ -140,7 +141,15 @@ async def _stream(ids: list[int], unavailable: list[int], request: Request):
             if raw is CLOSED:
                 yield sse_encode(json.dumps({"reason": "upstream"}), event="reconnect")
                 return
-            if raw is not None:
+            if isinstance(raw, Recovery):
+                # One hub recovery is offered on every subscribed channel.
+                # Owe one authoritative catch-up read, never a market verdict.
+                if raw.generation > recovery_generation:
+                    recovery_generation = raw.generation
+                    yield sse_encode(
+                        json.dumps({"generation": recovery_generation}), event="resync"
+                    )
+            elif raw is not None:
                 frame = parse_market_frame(raw)
                 if frame is not None and frame["market_id"] == mid:
                     age = (

@@ -31,6 +31,7 @@ cannot prove, and this guard defaults to red on anything it cannot account for.
 
 from __future__ import annotations
 
+import ast
 import re
 import subprocess
 from pathlib import Path
@@ -42,6 +43,102 @@ REPO = Path(__file__).resolve().parents[2]
 SCRIPT = REPO / ".github" / "scripts" / "ci-change-scope.sh"
 MANIFEST = REPO / ".github" / "ci-cross-tier-paths.txt"
 BACKEND_TESTS = REPO / "backend" / "tests"
+ROSTER = REPO / ".github" / "ci-native-backend-readers.txt"
+ROSTER_SCRIPT = REPO / ".github" / "scripts" / "ci-native-backend-readers.sh"
+
+# #10708 is INACTIVE: workflow normalization retains full backend/DB coverage.
+# Direct text signals are an aid, not a complete reader/dependency boundary.
+NATIVE_ACTIVATION_HOLDS = (
+    "transitive test/helper/conftest/script and unresolved dynamic readers",
+    "indirect database target dependencies",
+    "residue Pass B origin/master...HEAD differs from classifier BASE HEAD",
+)
+_NATIVE_PATTERNS = {
+    "chain": re.compile(r"[\"']ios[\"']\s*/"),
+    "whole": re.compile(r"[\"'](?:\./)?ios/"),
+    "token": re.compile(
+        r"[\"'][^\"'\n]*\.(?:swift|pbxproj|xcodeproj|plist|entitlements)[\"']"
+    ),
+    "scanner": re.compile(r"scan_mutation_residue"),
+}
+
+
+def _roster_paths() -> list[str]:
+    return [
+        value
+        for raw in ROSTER.read_text(encoding="utf-8").splitlines()
+        if (value := raw.split("#", 1)[0].strip())
+    ]
+
+
+def _native_signal_tags(text: str) -> list[str]:
+    return [name for name, pattern in _NATIVE_PATTERNS.items() if pattern.search(text)]
+
+
+def _native_reader_signals(root: Path = BACKEND_TESTS) -> dict[str, list[str]]:
+    """Only direct test-body signals; no inference of transitive completeness."""
+    found = {}
+    for path in sorted(root.rglob("test_*.py")):
+        text = path.read_text(encoding="utf-8")  # decode failure must fail the guard
+        ast.parse(text, filename=str(path))  # syntax failure must not reduce it
+        tags = _native_signal_tags(text)
+        if tags:
+            found[str(path.relative_to(root.parent))] = tags
+    return found
+
+
+_REQUIRED_NATIVE_INPUTS = tuple(
+    "ios/Bain Luck/" + path
+    for path in (
+        "Bain Luck/Views/LeaguesView.swift",
+        "Bain Luck/Views/MyStuffView.swift",
+        "Bain Luck/ViewModels/DiscoverViewModel.swift",
+        "Bain Luck/ViewModels/FeedViewModel.swift",
+        "Bain Luck/Services/APIClient.swift",
+        "Bain Luck.xcodeproj/project.pbxproj",
+        "BainLuckWidget/WidgetAPIClient.swift",
+        "BainLuckWidget/WidgetFeedDecoding.swift",
+        "Bain Luck/Models/CommonTypes.swift",
+        "Bain Luck/Services/DiscoverFeedCache.swift",
+        "Bain Luck/Views/DiscoverView.swift",
+        "BainLuckTests/NumericSuffixDecodeTests.swift",
+        "Bain Luck/ViewModels/FuturesListViewModel.swift",
+        "Bain Luck/Views/PreferencesView.swift",
+        "Bain Luck/Components/RelatedFuturesView.swift",
+        "Bain Luck/Utilities/FormattingUtilities.swift",
+        "Bain Luck/Components/PlayerPropsCardView.swift",
+        "Bain Luck/Utilities/EventState.swift",
+        "BainLuckTests/Fixtures/event-ufc-26sep19.served6816.SYNTHETIC.json",
+        "BainLuckWatch Watch App/WatchTabView.swift",
+        "BainLuckWatchUITests/ComplicationContentJourneyTests.swift",
+        "BainLuckWatchUITests/WatchDiscoverJourneyTests.swift",
+        "Bain Luck/Utilities/RenderedPercent.swift",
+        "Bain Luck/Components/DiscoverEventCard.swift",
+        "Bain Luck/Components/RelatedByTagView.swift",
+        "Bain Luck/Views/MenuBarView.swift",
+    )
+)
+_REQUIRED_NATIVE_GLOBS = ("ios/Bain Luck/BainLuckWatchUITests/*.swift",)
+
+
+def _missing_native_inputs(
+    root: Path = REPO,
+    inputs: tuple[str, ...] = _REQUIRED_NATIVE_INPUTS,
+    globs: tuple[str, ...] = _REQUIRED_NATIVE_GLOBS,
+) -> list[str]:
+    """Bounded reviewed inputs, not inferred coverage of every native reader."""
+    missing = []
+    for name in inputs:
+        try:
+            with (root / name).open("rb") as handle:
+                if not handle.read(1):
+                    missing.append(name)
+        except OSError:
+            missing.append(name)
+    for pattern in globs:
+        if not any(path.is_file() for path in root.glob(pattern)):
+            missing.append(pattern)
+    return missing
 
 
 def _manifest_paths() -> set[str]:
@@ -172,7 +269,11 @@ def repo(tmp_path: Path):
 
     def git(*args: str) -> str:
         return subprocess.run(
-            ["git", *args], cwd=tmp_path, check=True, capture_output=True, text=True
+            ["git", "-C", str(tmp_path), *args],
+            cwd=tmp_path,
+            check=True,
+            capture_output=True,
+            text=True,
         ).stdout.strip()
 
     git("init", "-q", "-b", "main")
@@ -196,7 +297,10 @@ def repo(tmp_path: Path):
             cwd=tmp_path,
             capture_output=True,
             text=True,
-            env={"PATH": "/usr/bin:/bin:/usr/local/bin", "CI_CROSS_TIER_MANIFEST": str(manifest)},
+            env={
+                "PATH": "/usr/bin:/bin:/usr/local/bin",
+                "CI_CROSS_TIER_MANIFEST": str(manifest),
+            },
         )
         assert proc.returncode == 0, proc.stderr
         return proc.stdout.strip()
@@ -246,17 +350,18 @@ class TestTheClassifierFailsClosed:
         # Rename detection would print only the frontend destination and hide the
         # backend file that vanished. `--no-renames` is what stops that.
         base = repo.commit({"backend/app/served.py": "payload"})
-        head = repo.commit({"frontend/served.py": "payload"}, removing=("backend/app/served.py",))
+        head = repo.commit(
+            {"frontend/served.py": "payload"}, removing=("backend/app/served.py",)
+        )
         assert repo.scope(base, head) == "full"
 
     @pytest.mark.parametrize(
         "path",
-        ["ios/Bain Luck/Bain Luck/Views/FeedView.swift", "docs/rulings/001-x.md", "CLAUDE.md"],
-        ids=["ios", "docs", "root-markdown"],
+        ["docs/rulings/001-x.md", "CLAUDE.md"],
+        ids=["docs", "root-markdown"],
     )
     def test_buckets_that_look_inert_are_not_reduced(self, repo, path):
-        # ios/ is read by test_cold_path_charter; CLAUDE.md is guarded by
-        # test_claude_md_size; docs/rulings by the ledger gates. Deliberately
+        # CLAUDE.md is guarded by test_claude_md_size; docs/rulings by the ledger gates. Deliberately
         # absent from the safe set, and pinned so a later "obvious" widening
         # has to argue with a test.
         base = repo.commit({path: "a"})
@@ -293,7 +398,9 @@ class TestTheClassifierFailsClosed:
         ],
         ids=["tournament-reskin", "discover-interactions", "play-session"],
     )
-    def test_whole_path_frontend_consumer_cannot_be_classified_frontend(self, repo, consumer):
+    def test_whole_path_frontend_consumer_cannot_be_classified_frontend(
+        self, repo, consumer
+    ):
         """CERT-2566's repair, proven per file.
 
         These three are named in `backend/tests/` as single whole-path string
@@ -367,3 +474,256 @@ class TestTheClassifierFailsClosed:
         base = repo.commit({"frontend/lib/marketShape.ts.bak": "a"})
         head = repo.commit({"frontend/lib/marketShape.ts.bak": "b"})
         assert repo.scope(base, head) == "frontend"
+
+
+class TestNativeInactivePreparation:
+    def resolve(self, roster, cwd):
+        return subprocess.run(
+            ["bash", str(ROSTER_SCRIPT)],
+            cwd=cwd,
+            capture_output=True,
+            text=True,
+            env={
+                "PATH": "/usr/bin:/bin:/usr/local/bin",
+                "CI_NATIVE_BACKEND_READERS": str(roster),
+            },
+        )
+
+    def test_known_direct_signals_are_rostered_without_completeness_claim(self):
+        found = _native_reader_signals()
+        assert not (set(found) - set(_roster_paths()))
+        for name, tag in (
+            ("cold_path_charter", "chain"),
+            ("discover_provenance", "whole"),
+            ("ios_codable_nonisolated_1775", "token"),
+            ("mutation_guard", "scanner"),
+        ):
+            assert tag in found["tests/test_" + name + ".py"]
+        assert "tests/test_ci_cross_tier_manifest.py" in _roster_paths()
+        assert len(NATIVE_ACTIVATION_HOLDS) == 3
+
+    def test_workflow_still_normalizes_native_to_full(self):
+        workflow = (REPO / ".github/workflows/ci.yml").read_text()
+        assert "full|frontend) ;;" in workflow
+        assert "unparseable scope" in workflow and "SCOPE=full ;;" in workflow
+
+    def test_required_reviewed_native_inputs_and_glob_are_present(self):
+        assert _missing_native_inputs() == []
+
+    def test_skip_bearing_reader_deletion_is_refused_by_preflight(self, tmp_path):
+        # Execute the actual source guard on a missing scratch input: it SKIPS.
+        # Our explicit preflight must independently make the omission red.
+        source = ast.parse((BACKEND_TESTS / "test_cold_path_charter.py").read_text())
+        guard = next(
+            node
+            for node in source.body
+            if isinstance(node, ast.FunctionDef)
+            and node.name == "test_browse_issues_no_network_request_on_appear"
+        )
+        namespace = {"IOS": tmp_path / "ios/Bain Luck/Bain Luck", "pytest": pytest}
+        exec(
+            compile(
+                ast.Module(body=[guard], type_ignores=[]), "actual-skip-reader", "exec"
+            ),
+            namespace,
+        )
+        with pytest.raises(pytest.skip.Exception):
+            namespace[guard.name]()
+        required = "ios/Bain Luck/Bain Luck/Views/LeaguesView.swift"
+        assert _missing_native_inputs(tmp_path, inputs=(required,), globs=()) == [
+            required
+        ]
+
+    @pytest.mark.parametrize(
+        "path",
+        [
+            "ios/Bain Luck/BainLuckWatchUITests/ComplicationContentJourneyTests.swift",
+            "ios/Bain Luck/BainLuckTests/Fixtures/event-ufc-26sep19.served6816.SYNTHETIC.json",
+        ],
+    )
+    def test_watch_deletion_and_moved_fixture_are_refused(self, tmp_path, path):
+        original = tmp_path / path
+        original.parent.mkdir(parents=True)
+        original.write_text("fixture")
+        assert _missing_native_inputs(tmp_path, inputs=(path,), globs=()) == []
+        original.rename(original.with_suffix(".moved"))
+        assert _missing_native_inputs(tmp_path, inputs=(path,), globs=()) == [path]
+
+    def test_empty_native_glob_is_refused(self, tmp_path):
+        pattern = _REQUIRED_NATIVE_GLOBS[0]
+        assert _missing_native_inputs(tmp_path, inputs=(), globs=(pattern,)) == [
+            pattern
+        ]
+
+    def test_empty_required_native_input_is_refused(self, tmp_path):
+        name = "ios/empty.swift"
+        target = tmp_path / name
+        target.parent.mkdir()
+        target.write_text("")
+        assert _missing_native_inputs(tmp_path, inputs=(name,), globs=()) == [name]
+
+    def test_resolver_actual_roster_and_normalization(self, tmp_path):
+        result = self.resolve(ROSTER, REPO / "backend")
+        assert (
+            result.returncode == 0 and result.stdout == " ".join(_roster_paths()) + "\n"
+        )
+        roster = tmp_path / "roster"
+        roster.write_text(
+            "  tests/test_mutation_guard.py # comment\n\n tests/test_ci_cross_tier_manifest.py  \n"
+        )
+        result = self.resolve(roster, REPO / "backend")
+        assert result.returncode == 0
+        assert (
+            result.stdout
+            == "tests/test_mutation_guard.py tests/test_ci_cross_tier_manifest.py\n"
+        )
+
+    @pytest.mark.parametrize(
+        "entry",
+        [
+            "",
+            "# comment",
+            "tests/test_no_such_file.py",
+            "/tests/test_x.py",
+            "../tests/test_x.py",
+            "tests/../test_x.py",
+            "-q",
+            "tests/test_*.py",
+            "tests/test_x.py tests/test_y.py",
+            "tests/test_mutation_guard.py",
+        ],
+    )
+    def test_resolver_invalid_missing_empty_or_duplicate_has_no_partial_output(
+        self, tmp_path, entry
+    ):
+        roster = tmp_path / "roster"
+        # Leading valid selection followed by each invalid row must emit nothing.
+        prefix = "" if entry in ("", "# comment") else "tests/test_mutation_guard.py\n"
+        roster.write_text(prefix + entry + "\n")
+        result = self.resolve(roster, REPO / "backend")
+        assert result.returncode == 1 and result.stdout == ""
+
+    def test_resolver_unreadable_or_decode_failure_has_no_partial_output(
+        self, tmp_path
+    ):
+        missing = self.resolve(tmp_path / "missing", REPO / "backend")
+        assert missing.returncode == 1 and missing.stdout == ""
+        roster = tmp_path / "invalid-utf8"
+        roster.write_bytes(b"tests/test_mutation_guard.py\n\xff")
+        result = self.resolve(roster, REPO / "backend")
+        assert result.returncode == 1 and result.stdout == ""
+
+    @pytest.mark.parametrize("body", [b"\xff", b"if ):\n"])
+    def test_signal_scan_refuses_read_or_parse_failure(self, tmp_path, body):
+        root = tmp_path / "tests"
+        root.mkdir()
+        (root / "test_reader.py").write_bytes(body)
+        with pytest.raises((UnicodeError, SyntaxError)):
+            _native_reader_signals(root)
+
+    @pytest.mark.parametrize(
+        "source",
+        [
+            'p = root.joinpath("ios", "Bain Luck", "event.json")',
+            'p = root / ("i" + "os") / ("View." + "swi" + "ft")',
+            "from reader_helper import read; read()",
+            'subprocess.run(["python", "reader_helper.py"])',
+            'p = inherited_root.glob("*.swift*")',
+        ],
+    )
+    def test_missed_shapes_are_explicit_activation_holds(self, source):
+        assert _native_signal_tags(source) == []  # never promote this to irrelevance
+
+
+class TestNativeWholeRangeClassifier:
+    PATH = "ios/Bain Luck/Bain Luck/Views/DiscoverView.swift"
+
+    @pytest.mark.parametrize(
+        "native",
+        [PATH, "ios/Bain Luck/Bain Luck.xcodeproj/project.pbxproj", "ios/fixture.json"],
+    )
+    def test_native_only_is_prepared_native(self, repo, native):
+        base = repo.commit({native: "a"})
+        head = repo.commit({native: "b"})
+        assert repo.scope(base, head) == "native"
+
+    @pytest.mark.parametrize(
+        "other",
+        [
+            "frontend/app/page.tsx",
+            "backend/app/main.py",
+            ".github/workflows/ci.yml",
+            ".github/ci-native-backend-readers.txt",
+            "backend/requirements.txt",
+            "tools/native-gates.sh",
+            "docs/rulings/001-x.md",
+            "CLAUDE.md",
+        ],
+    )
+    def test_mixed_range_is_full(self, repo, other):
+        base = repo.commit({self.PATH: "a", other: "a"})
+        head = repo.commit({self.PATH: "b", other: "b"})
+        assert repo.scope(base, head) == "full"
+
+    def test_shared_change_behind_native_tip_is_full(self, repo):
+        base = repo.commit({"README.md": "a"})
+        repo.commit({"backend/app/main.py": "x"})
+        head = repo.commit({self.PATH: "a"})
+        assert repo.scope(base, head) == "full"
+
+    @pytest.mark.parametrize(
+        "origin,destination",
+        [
+            ("backend/app/served.py", "ios/served.py"),
+            ("ios/served.py", "frontend/served.py"),
+        ],
+    )
+    def test_both_halves_of_moves_are_seen(self, repo, origin, destination):
+        base = repo.commit({origin: "same"})
+        head = repo.commit({destination: "same"}, removing=(origin,))
+        assert repo.scope(base, head) == "full"
+
+    def test_native_deletion_classifies_but_does_not_claim_reader_failure(self, repo):
+        base = repo.commit({self.PATH: "a"})
+        head = repo.commit({}, removing=(self.PATH,))
+        assert repo.scope(base, head) == "native"
+
+    @pytest.mark.parametrize("path", [PATH, "frontend/app/page.tsx"])
+    @pytest.mark.parametrize("body", ["", "# comments only\n"])
+    def test_empty_manifest_falls_back_full(self, repo, tmp_path, body, path):
+        manifest = tmp_path / "empty-manifest"
+        manifest.write_text(body)
+        base = repo.commit({path: "a"})
+        head = repo.commit({path: "b"})
+        assert repo.scope(base, head, manifest) == "full"
+
+    def test_manifest_parsing_error_falls_back_full(self, repo, tmp_path):
+        manifest = tmp_path / "not-a-manifest"
+        manifest.mkdir()
+        base = repo.commit({self.PATH: "a"})
+        head = repo.commit({self.PATH: "b"})
+        assert repo.scope(base, head, manifest) == "full"
+
+    def test_native_unknown_missing_head_and_empty_range_are_full(self, repo):
+        base = repo.commit({self.PATH: "a"})
+        for first, last in [
+            (base, ""),
+            (base, "deadbeef" * 5),
+            (base, base),
+            ("", base),
+        ]:
+            assert repo.scope(first, last) == "full"
+
+    def test_native_preparation_preserves_no_release_subset(self, repo):
+        release = REPO / ".github/scripts/heroku-release-required.sh"
+        for path in (self.PATH, "ios/Bain Luck/Bain Luck.xcodeproj/project.pbxproj"):
+            base = repo.commit({path: "a"})
+            head = repo.commit({path: "b"})
+            assert repo.scope(base, head) == "native"
+            result = subprocess.run(
+                ["bash", str(release), base, head],
+                cwd=repo.path,
+                capture_output=True,
+                text=True,
+            )
+            assert result.returncode == 0 and result.stdout.strip() == "false"

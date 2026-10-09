@@ -52,7 +52,7 @@ def pipeline_handoff(node):
         for n in ast.walk(node)
         if isinstance(n, ast.AsyncWith)
         and ast.unparse(n.items[0].context_expr)
-        == "contextlib.aclosing(prices.phase(session, phase))"
+        == "contextlib.aclosing(prices.phase(session, phase, force_observation=final_drain))"
     )
 
 

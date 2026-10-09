@@ -578,6 +578,22 @@ def _session_id_from_request(request: Request) -> str | None:
     return request.cookies.get("session_id") or request.headers.get("x-session-id")
 
 
+async def _read_feed_cache_pair(redis, key: str):
+    """Read both feed cache tiers in one network round trip."""
+    from app.utils import request_cache as _rc
+
+    result = await _rc.bounded_redis_call(lambda: redis.mget([key, f"{key}:stale"]))
+    if result.is_failure:
+        return result, result
+    values = result.value if result.is_ok else None
+    if not isinstance(values, (list, tuple)) or len(values) != 2:
+        return _rc.RedisResult(_rc.MISS), _rc.RedisResult(_rc.MISS)
+    return tuple(
+        _rc.RedisResult(_rc.OK if value is not None else _rc.MISS, value)
+        for value in values
+    )
+
+
 async def _read_shared_feed_cache(shared_redis, shared_key: str):
     """Fresh-then-stale read of the principal-INDEPENDENT feed cache entry.
 
@@ -594,12 +610,9 @@ async def _read_shared_feed_cache(shared_redis, shared_key: str):
     from app.utils import request_cache as _rc
 
     try:
-        fresh = await _rc.bounded_redis_call(lambda: shared_redis.get(shared_key))
+        fresh, stale = await _read_feed_cache_pair(shared_redis, shared_key)
         if fresh.is_ok and fresh.value is not None:
             return fresh.value, "shared_hit"
-        stale = await _rc.bounded_redis_call(
-            lambda: shared_redis.get(f"{shared_key}:stale")
-        )
         if stale.is_ok and stale.value is not None:
             return stale.value, "shared_stale_hit"
     except Exception:
@@ -3809,13 +3822,6 @@ async def get_feed(
     debug_global = debug and not debug_personalization and not my_teams_only
     feed_user = None if debug_global else user
     feed_session_id = None if debug_global else session_id
-    discover_config = await _load_discover_runtime_config()
-    if debug:
-        discover_config = {
-            **discover_config,
-            "interaction_suppression_enabled": False,
-        }
-
     # --- Redis response cache (anon 60s, auth/session 5s, my_teams 30s) ---
     # Queue 271 (#1459/#1197): reads go through the process-SHARED async client +
     # a hard-bounded op (no per-request pool churn, no unbounded await). A Redis
@@ -4055,13 +4061,16 @@ async def get_feed(
     # cached ONLY under the publication state it was built from (#10003): the
     # fingerprint joins the cache shape, so every tier keyed from it —
     # response, stale, last-good, page base, the LAT-P089 shared key — misses
-    # the moment a hub is published, withdrawn or re-membered. When the
+    # within five seconds of a hub publication or membership change. A short
+    # process-local reuse avoids database work on every warm feed open. When the
     # fingerprint cannot be read the page is not cached at all, which is what
     # every collection-bearing page got before #10003 (1.4–2.3 s per Discover
     # open). Flag-off requests pass None and keep byte-identical keys.
     _collections_fingerprint = None
     if _collections_enabled and not debug and not exclude_reviewed:
-        _collections_fingerprint = await feed_collections_cache_fingerprint(db)
+        _collections_fingerprint = await feed_collections_cache_fingerprint(
+            db, max_age_seconds=0.0 if _prewarm_rebuild else 5.0
+        )
     if (
         not debug
         and not exclude_reviewed
@@ -4111,11 +4120,10 @@ async def get_feed(
             # publication below is unchanged. This also means live traffic keeps
             # being served the existing fresh/stale entry at ~15ms while the rebuild
             # runs underneath it, instead of being exposed to a cold window.
-            _fresh = (
-                _rc.RedisResult(_rc.MISS)
-                if _prewarm_rebuild
-                else await _rc.bounded_redis_call(lambda: _shared_redis.get(_cache_key))
-            )
+            if _prewarm_rebuild:
+                _fresh, _stale = _rc.RedisResult(_rc.MISS), _rc.RedisResult(_rc.MISS)
+            else:
+                _fresh, _stale = await _read_feed_cache_pair(_shared_redis, _cache_key)
             if _fresh.is_ok:
                 payload = _safe_cache_payload(_fresh.value)
                 # CERT-409 [P1]: read provenance BEFORE the metadata below
@@ -4164,13 +4172,6 @@ async def get_feed(
                     return payload
                 # Malformed fresh value → typed miss; fall through to stale/build.
             # Stale fallback: serve old data if primary cache expired.
-            _stale = (
-                _rc.RedisResult(_rc.MISS)
-                if _prewarm_rebuild
-                else await _rc.bounded_redis_call(
-                    lambda: _shared_redis.get(f"{_cache_key}:stale")
-                )
-            )
             if _stale.is_ok:
                 payload = _safe_cache_payload(_stale.value)
                 _stale_built_at = _payload_built_at(payload)
@@ -4420,6 +4421,14 @@ async def get_feed(
     # cancellation — so a dead leader can never leave an unresolved future
     # that poisons the slot and hangs the next request.
     try:
+        # Ranking settings only affect a build. Cached cards are already ranked;
+        # do not make their delivery wait for an unrelated Redis config read.
+        discover_config = await _load_discover_runtime_config()
+        if debug:
+            discover_config = {
+                **discover_config,
+                "interaction_suppression_enabled": False,
+            }
         # Load personalization context (one DB query for all user data)
         try:
             ctx = await _load_personalization_context(

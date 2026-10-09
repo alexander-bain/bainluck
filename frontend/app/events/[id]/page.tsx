@@ -26,11 +26,18 @@ import { teamTextColor } from "@/lib/teamColors";
 import { useLiveEventStream, type LiveFrame } from "@/hooks/useLiveEventStream";
 import { createReconnectCatchup } from "@/lib/reconnectCatchup";
 import { fetchEventWithLiveFrame, keepNewerHeldHeadline } from "@/lib/reconcileEventPoll";
-import { appendHeroObservation, mergeLiveChartHistory, quoteChartFrames } from "@/lib/liveChartHistory";
+import {
+  admitChartFrames,
+  appendHeroObservation,
+  finishedChartFrames,
+  mergeLiveChartHistory,
+  type AdmittedChartFrames,
+} from "@/lib/liveChartHistory";
 import { canSubscribeEventQuotes, quotePairCoversTrigger } from "@/lib/eventQuoteStream";
 import FreshnessChip from "@/components/event/FreshnessChip";
 import {
   applyLiveFrame,
+  adoptFoldedQuote,
   frameInvalidatesFoldedBlend,
   eventFeedIsStalled,
   makeEventRefreshInterval,
@@ -452,6 +459,19 @@ export default function EventPage({ params }: EventPageProps) {
     // this tick, because swr drops a fetch that a later mutation (even a no-op
     // `applyLiveFrame` returning `prev`) post-dates. See the scheduler.
     const held = heldEventRef.current;
+    // The second frame may have the same raw revision as its invalidation;
+    // its explicit full fold is independently ordered against the held hero.
+    const folded = adoptFoldedQuote(held, liveFrame, eventId);
+    if (folded.handled) {
+      if (folded.next !== held) {
+        refreshEvent(
+          (prev) => adoptFoldedQuote(prev, liveFrame, eventId).next,
+          { revalidate: false },
+        );
+        setLastRefresh(Date.now());
+      }
+      return;
+    }
     if (held && canSubscribeEventQuotes(held) && (
       liveFrame.p === null || held.hero_probability_source !== "blend" ||
       (liveFrame.status && liveFrame.status !== held.status) ||
@@ -841,9 +861,21 @@ export default function EventPage({ params }: EventPageProps) {
   // groups the main chart by minute; this is delivery, not a resolution change.
   // Without added publications, preserve #3911's server-authorized edge pin
   // for detail/history responses served by different workers.
+  //
+  // #10751: what the chart DREW while eligible is kept, per event, so a
+  // completed detail landing before the next history read does not take the
+  // last minutes of the journey off the chart. Replaced on every eligible
+  // render; after the finish only `finishedChartFrames` may read it, and it
+  // admits nothing new.
+  const admittedChartRef = useRef<AdmittedChartFrames | null>(null);
   const historyData = useMemo(
     () => {
-      const pushed = mergeLiveChartHistory(servedHistory, quoteEligible ? quoteChartFrames(chartPoints, event) : []);
+      if (admittedChartRef.current?.eventId !== eventId) admittedChartRef.current = null;
+      if (quoteEligible) admittedChartRef.current = admitChartFrames(eventId, chartPoints, event);
+      const frames = quoteEligible
+        ? admittedChartRef.current?.points ?? []
+        : finishedChartFrames(admittedChartRef.current, eventId, event, servedHistory);
+      const pushed = mergeLiveChartHistory(servedHistory, frames);
       // A push is an observation at its own time, not permission to rewrite
       // the previous poll's endpoint with today's hero value (#920).
       const joined = pushed !== servedHistory ? pushed : pinChartEdgeToHero(servedHistory, event);
@@ -852,7 +884,7 @@ export default function EventPage({ params }: EventPageProps) {
       // headline never moves alone.
       return quoteEligible ? appendHeroObservation(joined, event, servedHistory) : joined;
     },
-    [servedHistory, event, quoteEligible, chartPoints],
+    [servedHistory, event, quoteEligible, chartPoints, eventId],
   );
 
   // UX-P051 (#1710) — which of ESPN's two clock fields the phase badge may
@@ -1128,6 +1160,9 @@ export default function EventPage({ params }: EventPageProps) {
         // #925 — the header's own inning, for a live game whose history rows
         // never named one. Live only: a finished row's period is its result.
         event?.status === "live" ? event?.espn ?? null : null,
+        // #10747 — the event's own status: only an explicitly live page lets a
+        // newer confirmed whole pair replace an older held history pair.
+        event?.status,
       ),
     [historyData, servedScore, event?.status, event?.espn],
   );

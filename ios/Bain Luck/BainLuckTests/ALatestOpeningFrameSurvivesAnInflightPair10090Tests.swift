@@ -30,6 +30,7 @@ final class ALatestOpeningFrameSurvivesAnInflightPair10090Tests: XCTestCase {
         struct Declined: Error {}
         private var detailCount = 0
         private var historyCount = 0
+        private(set) var openingFreshReads = 0
         private var released = false
         private var waiters: [CheckedContinuation<Void, Never>] = []
         /// The revisions the first (held) and the trailing pair answer with.
@@ -78,6 +79,13 @@ final class ALatestOpeningFrameSurvivesAnInflightPair10090Tests: XCTestCase {
         func fetchEvent(id: Int) async throws -> EventDetail { try detail(10, opening: true) }
         func fetchEventHistory(id: Int, hours: Int) async throws -> EventHistoryResponse { try history(10) }
         func fetchFreshEvent(id: Int) async throws -> EventDetail {
+            // The explicit initial open now asks fresh too. It serves the
+            // opening independently; only the later stream-triggered pair is
+            // held while newer frames arrive, preserving this regression guard.
+            if openingFreshReads == 0 {
+                openingFreshReads += 1
+                return try detail(10, opening: true)
+            }
             detailCount += 1
             let revision = detailCount == 1 ? pairs.0 : pairs.1
             if detailCount == 1 { await holdFirstPair() }
@@ -108,6 +116,7 @@ final class ALatestOpeningFrameSurvivesAnInflightPair10090Tests: XCTestCase {
         )
         defer { vm.stopRefresh() }
         await vm.load()
+        XCTAssertEqual(client.openingFreshReads, 1)
         XCTAssertEqual(vm.event?.heroProbabilitySource, "opening")
         handle.fire("open")
         handle.push(11, 0.55)
@@ -150,6 +159,7 @@ final class ALatestOpeningFrameSurvivesAnInflightPair10090Tests: XCTestCase {
         )
         defer { vm.stopRefresh() }
         await vm.load()
+        XCTAssertEqual(client.openingFreshReads, 1)
         handle.fire("open")
         handle.push(11, 0.55)
         for _ in 0..<200 {

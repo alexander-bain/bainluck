@@ -31442,6 +31442,103 @@ def one_row_per_bookmaker_in_bucket(snaps: list) -> list:
 
 
 @router.get("/{event_id}/history")
+async def get_event_odds_history_cached(
+    event_id: int,
+    hours: int = Query(24, description="Hours of history to return"),
+    chart_range: str = Query(
+        "all",
+        alias="range",
+        description="'all' (default) or 'since_start'; see get_event_odds_history.",
+    ),
+    response: Response = None,
+    db: AsyncSession = Depends(get_db),
+    fresh: bool = False,
+):
+    """The history route's CACHE POLICY; the build is `get_event_odds_history`,
+    unchanged apart from the marks it leaves for this policy. Alex Oct 8 load-speed push (#10090, #1469) — the chart had no
+    server cache and cost 1.5–3.6 s on every open of a finished game. Lease and
+    the reason it is process memory only: `utils/event_history_cache.py`.
+    """
+    import asyncio as _asyncio
+
+    from fastapi.encoders import jsonable_encoder
+    from fastapi.responses import JSONResponse
+
+    from app.utils import event_history_cache as ehc
+    from app.utils import request_cache as _rc
+
+    key = ehc.cache_key(event_id, hours, chart_range)
+
+    def _respond(body: bytes, cache_control: Optional[str], state: str) -> Response:
+        headers = {"X-Feed-Cache": state}
+        if cache_control:
+            headers["Cache-Control"] = cache_control
+        return Response(content=body, media_type="application/json", headers=headers)
+
+    async def _build(publish: bool) -> tuple[bytes, Optional[str]]:
+        sub = Response()
+        marks, token = ehc.begin_marks()
+        try:
+            payload = await get_event_odds_history(
+                event_id,
+                hours=hours,
+                chart_range=chart_range,
+                response=sub,
+                db=db,
+                fresh=fresh,
+            )
+        finally:
+            ehc.end_marks(token)
+        body = JSONResponse(content=jsonable_encoder(payload)).body
+        cache_control = sub.headers.get("cache-control")
+        if publish:
+            ehc.write(key, body, cache_control, ehc.lease_for(marks, payload))
+        return body, cache_control
+
+    if fresh:
+        body, cache_control = await _build(publish=False)
+        return _respond(body, cache_control, "bypass")
+
+    flight_key = f"event_history:{key[0]}:{key[1]}:{key[2]}"
+    while True:
+        hit = ehc.read(key)
+        if hit is not None:
+            return _respond(hit[0], hit[1], "hit")
+
+        leader, fut = _rc.begin_build(flight_key)
+        if not leader:
+            # No timeout of our own: a live leader is the sole owner of this
+            # key (`request_cache.begin_build`), so a waiter never starts a
+            # second build beside it. The leader resolves the future on every
+            # exit, and its wait is never longer than building our own would be.
+            try:
+                body, cache_control = await _asyncio.shield(fut)
+            except _asyncio.CancelledError:
+                raise
+            except Exception:
+                # The leader exited without a body (failed, 404, or its reader
+                # went away). It is no longer running: re-check and claim.
+                continue
+            return _respond(body, cache_control, "coalesced")
+
+        try:
+            built = await _build(publish=True)
+        except BaseException as exc:
+            _rc.finish_build(
+                flight_key,
+                fut,
+                exc=exc if isinstance(exc, Exception)
+                else RuntimeError("event history build cancelled"),
+            )
+            # Nobody may be awaiting it; mark retrieved so asyncio does
+            # not log "exception was never retrieved".
+            if fut.done() and not fut.cancelled():
+                fut.exception()
+            raise
+        _rc.finish_build(flight_key, fut, result=built)
+        return _respond(built[0], built[1], "miss")
+
+
 async def get_event_odds_history(
     event_id: int,
     hours: int = Query(24, description="Hours of history to return"),
@@ -31466,6 +31563,13 @@ async def get_event_odds_history(
     Returns aggregated probability snapshots over time for visualization.
     Each data point represents the consensus across all bookmakers at that time.
     """
+    # Read-error and finished marks for the cache policy in front of this build
+    # (`get_event_odds_history_cached`); no-ops when called any other way.
+    from app.utils.event_history_cache import (
+        mark_finished as _history_mark_finished,
+        mark_partial as _history_mark_partial,
+    )
+
     # Verify event exists
     event_result = await db.execute(
         select(Event)
@@ -31543,6 +31647,7 @@ async def get_event_odds_history(
     try:
         recover_kalshi_occurrence_starts([event])
     except Exception:
+        _history_mark_partial()
         # Gotcha #42, and the identical bargain the detail route strikes: this
         # correction improves the chart and is never a precondition for having
         # one. The ROW's id and never the path parameter — `event_id` is
@@ -31564,6 +31669,7 @@ async def get_event_odds_history(
     try:
         await recover_kalshi_expiration_starts(db, [event])
     except Exception:
+        _history_mark_partial()
         logger.exception(
             "event history: kalshi expiration recovery failed for %s",
             getattr(event, "id", None),
@@ -31620,6 +31726,7 @@ async def get_event_odds_history(
     # For live/scheduled events, apply a time window to keep responses focused.
     now = datetime.now(timezone.utc)
     is_finished = _event_is_really_finished(event, now)
+    _history_mark_finished(is_finished)
     # Actually in progress — NOT merely "not finished", which is also every game
     # that has yet to start. Computed once so the three consumers below cannot
     # drift apart again (#6150: the time domain was the one that had).
@@ -31956,6 +32063,7 @@ async def get_event_odds_history(
             for snap in score_snapshots
         ]
     except Exception:
+        _history_mark_partial()
         # Table may not exist yet - return empty history
         pass
 
@@ -31986,6 +32094,7 @@ async def get_event_odds_history(
             for snap in espn_snapshots
         ]
     except Exception:
+        _history_mark_partial()
         # Table may not exist yet - return empty history
         pass
 
@@ -32130,6 +32239,7 @@ async def get_event_odds_history(
                 "snapshot_count": len(win_prob_history[source_key]),
             }
     except Exception:
+        _history_mark_partial()
         # Table may not exist yet
         pass
 
@@ -32302,6 +32412,7 @@ async def get_event_odds_history(
             for row in pm_result.all()
         ]
     except Exception:
+        _history_mark_partial()
         pass
 
     # Fallback: derive period markers from computed scoring_plays (ESPN box score)
@@ -32755,6 +32866,7 @@ async def get_event_odds_history(
             "projected_final": projected,
         }
     except Exception as e:
+        _history_mark_partial()
         logger.warning("Error computing PM spread data for event %d: %s", event_id, e)
         pm_spread_data = {}
 
@@ -32854,6 +32966,8 @@ async def get_event_odds_history(
                 agg_sources,
                 bucket_seconds=60,
                 pregame_until=chart_pregame_until,
+                # Keep post-kickoff live history on the same policy after final.
+                live_blend=event.status in ("live", "completed", "closed"),
             )
             aggregate_line = [
                 {
@@ -32863,6 +32977,7 @@ async def get_event_odds_history(
                 for p in agg_result
             ]
     except Exception:
+        _history_mark_partial()
         # Graceful degradation — frontend falls back to naive averaging
         pass
 
@@ -33269,6 +33384,7 @@ async def get_event_odds_history(
                     _val = _flag.decode() if isinstance(_flag, bytes) else _flag
                     _surface = str(_val) not in ("0", "false", "False")
             except Exception:  # noqa: BLE001 — kill switch is best-effort; default surface
+                _history_mark_partial()
                 _surface = True
             if _surface:
                 moments = [
@@ -33285,6 +33401,7 @@ async def get_event_odds_history(
                     if m.ts is not None
                 ]
     except Exception as exc:  # noqa: BLE001 — moments are additive, never break history
+        _history_mark_partial()
         logger.warning("moments load failed for event %s: %s", event_id, exc)
 
     # live/036 ruling (c) — THE CHART FILLS FOR THE PAGES PEOPLE ACTUALLY OPEN.
@@ -33334,6 +33451,7 @@ async def get_event_odds_history(
                 release_on_demand_claim(event_id)
                 raise
     except Exception as exc:  # noqa: BLE001 — a chart never fails on its refill
+        _history_mark_partial()
         logger.warning(
             "on-demand chart backfill consideration failed for event %s: %s",
             event_id, exc,
@@ -35189,98 +35307,9 @@ def _format_event(
         # Also expose win_probability_sources at top level with source metadata
         if _wps:
             try:
-                from app.config.win_prob_sources import WIN_PROB_SOURCES
-                from app.utils.aggregation import parse_source_entry
-                from app.utils.probability_eligibility import (
-                    from_entry as _eligibility_of,
-                    grade_entry as _grade_entry,
-                    is_refused as _is_refused,
-                )
-                wp_sources = {}
-                for src_key, src_value in _wps.items():
-                    if src_key.startswith("_"):
-                        continue
-                    # #1829: `value` stays a bare NUMBER on the wire. The column
-                    # now holds `{"value": x, "updated_at": ...}`, and assigning
-                    # the raw entry here would double-nest it —
-                    # `{"value": {"value": x, ...}}` — silently breaking every
-                    # reader that does `sources[k].value` (web Models page, the
-                    # #1640 untraded-placeholder suppression) and hard-failing
-                    # the iOS decoder. The write time is exposed as a SIBLING,
-                    # never inside `value`.
-                    numeric, updated_at = parse_source_entry(src_value)
-                    # #4120 — AND THE `else src_value` FALLBACK BELOW WAS DOING
-                    # EXACTLY WHAT THE PARAGRAPH ABOVE FORBIDS.
-                    #
-                    # `parse_source_entry` returns None for anything that is not
-                    # a number or a `{"value": number}` wrapper, and this line
-                    # then shipped the RAW entry. This column is a grab-bag:
-                    # `statpal_injuries` is an ARRAY of injury dicts (89 events)
-                    # and `statpal_injuries_updated` is an ISO STRING (89), so
-                    # both went onto the wire as a "source" whose probability was
-                    # an array or a date, labelled with their own snake_case key.
-                    #
-                    # For iOS that is not cosmetic, it is fatal, and the comment
-                    # above predicted it. `WinProbValue` accepts Double or String
-                    # and THROWS on anything else; `decodeIfPresent` only swallows
-                    # an ABSENT key, so a present-but-wrong-type value propagates
-                    # out through `[String: WinProbSource]` and fails the whole
-                    # `EventDetail`. Reproduced against the shipped model
-                    # definitions: the served payload for event 15296356 throws
-                    # `typeMismatch at winProbabilitySources.statpal_injuries.value`
-                    # and the same payload minus that entry decodes. **The iOS
-                    # event page could not render those 89 events at all.**
-                    #
-                    # So the gate is the SHAPE, not the key. `betting_book_count`
-                    # is numeric and stays on the wire deliberately: it is not a
-                    # source, but iOS consumes it to label the sportsbook row
-                    # "Sportsbooks (14)" (`WinProbSourceCatalog`), and both
-                    # clients already keep it out of their source LISTS with
-                    # their own allowlists (`PROBABILITY_SOURCE_KEYS` #3914,
-                    # `realSourceKeys`). Filtering it here would silently take
-                    # that count away from the app.
-                    if numeric is None:
-                        continue
-                    # CU-4 (#5311): a reading the hero REFUSED must not be served
-                    # as a source row. This loop reads the JSONB directly rather
-                    # than through `_tier1_readings`, so without this the two
-                    # halves of one screen would disagree — the hero computed
-                    # without the entry while the source list printed it, with a
-                    # number nothing on the page stands behind. That is the
-                    # ticket's own "one screen fixes the failure while another
-                    # reintroduces it", inside a single response.
-                    if _is_refused(src_value):
-                        continue
-                    source_config = WIN_PROB_SOURCES.get(src_key, {})
-                    wp_sources[src_key] = {
-                        "value": numeric,
-                        "display_name": source_config.get("display_name", src_key),
-                        "type": source_config.get("source_type", "model"),
-                        "color": source_config.get("color", "#6b7280"),
-                    }
-                    if updated_at is not None:
-                        wp_sources[src_key]["updated_at"] = updated_at.isoformat()
-                    # The additive eligibility fields. SIBLINGS of `value`, never
-                    # inside it, for the reason the #1829/#4120 paragraphs above
-                    # spell out: iOS `WinProbValue` throws on an unexpected type
-                    # inside `value`, while an unknown sibling key is ignored by
-                    # every Swift `Decodable` struct — which is exactly how
-                    # `updated_at` was added safely.
-                    #
-                    # `evidence_status` is emitted for EVERY source, including
-                    # the five that can never carry a record. An absent key would
-                    # be ambiguous between "this server predates CU-4" and "this
-                    # source is not applicable", and collapsing those is how a
-                    # census counts a deployment gap as a clean result.
-                    wp_sources[src_key]["evidence_status"] = _grade_entry(
-                        src_key, src_value
-                    )
-                    _record = _eligibility_of(src_value)
-                    if _record is not None:
-                        if _record.scope:
-                            wp_sources[src_key]["verified_scope"] = _record.scope
-                        if _record.rule:
-                            wp_sources[src_key]["contract_version"] = _record.rule
+                from app.utils.probability_source_format import format_probability_sources
+
+                wp_sources = format_probability_sources(_wps)
                 if wp_sources:
                     response["win_probability_sources"] = wp_sources
             except Exception:

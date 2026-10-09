@@ -199,6 +199,12 @@ final class EventDetailViewModel: ObservableObject {
     private var scoreCatchUpUntil: TimeInterval?
 
     private var latestPriceFrame: LiveStreamFrame?
+    /// #10090 — a pending raw frame was held back from the detail/history read
+    /// because its authoritative quote follows on the same connection. The
+    /// result clears it; a null result runs the read the raw frame skipped.
+    /// Cleared with the connection: a result lost to a drop is the existing
+    /// recovery and poll's, never a new timer's.
+    private var awaitingFoldedResult = false
     private var latestSourceFrames: [String: LiveStreamFrame] = [:]
     private var latestAcceptedSourceDates: [String: Date] = [:]
     private var latestAcceptedPriceDate: Date?
@@ -312,7 +318,7 @@ final class EventDetailViewModel: ObservableObject {
     }
 
     @MainActor
-    func load() async {
+    func load(fresh: Bool = true) async {
         loading = event == nil
 
         // Start secondary fetches immediately (they only need eventId)
@@ -337,7 +343,17 @@ final class EventDetailViewModel: ObservableObject {
 
         // Await primary fetch (controls loading state)
         do {
-            let fetched = try await client.fetchEvent(id: eventId)
+            // An open, return or manual refresh asks for the current blend,
+            // rather than renewing a 15s device/30s server detail lease. The existing
+            // fresh endpoint coalesces reads; adopt still protects newer held
+            // fold revisions and pushed prices from older responses. Routine
+            // timer polls retain the ordinary server cache and its shared build.
+            let fetched: EventDetail
+            if fresh {
+                fetched = try await client.fetchFreshEvent(id: eventId)
+            } else {
+                fetched = try await client.fetchEvent(id: eventId)
+            }
             adopt(fetched)
             // A refusal retires the controller, not this page's eligibility for
             // push forever. Only a successful eligible detail may authorize another
@@ -810,7 +826,7 @@ final class EventDetailViewModel: ObservableObject {
                     await self.rereadGameState()
                 } else {
                     slot = 0
-                    await self.load()
+                    await self.load(fresh: false)
                 }
             }
         }
@@ -863,6 +879,7 @@ final class EventDetailViewModel: ObservableObject {
                     self.streamRefetchGeneration = nil
                     self.provenanceRefetchFrame = nil
                     self.trailingProvenanceFrame = nil
+                    self.awaitingFoldedResult = false
                     // The dot and fast polling reflect the outage immediately.
                     // A recoverable outage does not invalidate a price already
                     // observed; load() checks terminal refusal before using it.
@@ -871,7 +888,8 @@ final class EventDetailViewModel: ObservableObject {
                 // Only reacting to the good one would leave the page frozen the
                 // first time a stream went quiet.
                 self.configureAutoRefresh()
-            }
+            },
+            deliversFoldedQuotes: true
         )
         stream = controller
         lastStreamAttemptAt = now()
@@ -909,6 +927,7 @@ final class EventDetailViewModel: ObservableObject {
         streamRefetchGeneration = nil
         provenanceRefetchFrame = nil
         trailingProvenanceFrame = nil
+        awaitingFoldedResult = false
         streamHasPushedPrice = false
         streamTickTask?.cancel()
         streamTickTask = nil
@@ -917,6 +936,41 @@ final class EventDetailViewModel: ObservableObject {
         streamDelivering = false
         latestPriceFrame = nil
         latestSourceFrames.removeAll()
+    }
+
+    /// #10090 — an adopted authoritative quote, committed the way an accepted
+    /// frame is: hero and chart move together on the quote's own observation
+    /// clock (no clock, no chart point — never "now"), the dot earns green,
+    /// and the controller hears a delivery LAST.
+    @MainActor
+    private func commitAdoptedPrice(prior: EventDetail, current: EventDetail, at observed: Date?) {
+        // The held raw frame no longer describes the hero; the vector does.
+        latestPriceFrame = nil
+        if let observed, latestAcceptedPriceDate.map({ observed > $0 }) ?? true {
+            latestAcceptedPriceDate = observed
+        }
+        var armScoreCatchUp = false
+        if let p = current.currentOdds?.homeProbability {
+            if let base = probabilityAtLastLoad, abs(p - base) >= EventRefreshPlan.scoreCatchUpMove {
+                armScoreCatchUp = scoreCatchUpUntil == nil
+                scoreCatchUpUntil = now() + EventRefreshPlan.scoreCatchUpWindow
+            }
+            if let observed {
+                liveBlend = LiveBlendBuffer.appending(
+                    LiveBlendPoint(date: observed, homeProbability: p), to: liveBlend
+                )
+            }
+        }
+        streamHasPushedPrice = true
+        acceptPushedPrice()
+        event = current
+        recordPriceActivity(from: prior, to: current)
+        if armScoreCatchUp, current.status == "live" { configureAutoRefresh() }
+        stream?.acknowledgeAcceptedPrice()
+        // A removal can advance the fold on an OLDER clock, which the chart
+        // buffer refuses: the existing revision-aware check asks history once.
+        // A forward-clock quote ends the drawn line on the hero and asks nothing.
+        requestChartRevisionRefreshIfNeeded()
     }
 
     /// Write a pushed price into the model the page already reads.
@@ -940,6 +994,31 @@ final class EventDetailViewModel: ObservableObject {
             current = updated
             latestSourceFrames[key] = frame
             latestAcceptedSourceDates[key] = frame.updatedAt?.asDate
+        }
+
+        // #10090 — the server's full fold, or its promise. Decided before any
+        // raw-row rule: those can only refuse a folded hero and re-read it.
+        let wasAwaitingFoldedResult = awaitingFoldedResult
+        if frame.foldedResult { awaitingFoldedResult = false }
+        switch LiveEventPriceReconciliation.foldedQuoteDecision(frame, held: current) {
+        case .adopt(let quote):
+            LiveEventPriceReconciliation.adoptingFoldedQuote(quote, into: &current)
+            commitAdoptedPrice(prior: prior, current: current, at: quote.heroProbabilityObservedAt?.asDate)
+            return
+        case .hold:
+            event = current
+            return
+        case .awaitResult:
+            awaitingFoldedResult = true
+            event = current
+            return
+        case .fallback:
+            // The raw frame already took the existing path unless it was held
+            // back for this result; only then does the result run it.
+            if frame.foldedResult && !wasAwaitingFoldedResult {
+                event = current
+                return
+            }
         }
 
         let stamped = frame.updatedAt?.asDate

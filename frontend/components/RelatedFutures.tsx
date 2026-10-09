@@ -2949,9 +2949,14 @@ export default function RelatedFutures({
                         <div className="text-sm text-text-primary truncate flex-1 min-w-0">{displayName}</div>
                         <div className="flex items-center gap-2 shrink-0 ml-3">
                           {/* #9919: a leg already answered ("BOS wins 2-0" once NYY
-                              took Game 1) is a result, in the one settled vocabulary. */}
+                              took Game 1) is a result, in the one settled vocabulary.
+                              #10762: only a GRADE prints a verdict. A resolved Polymarket
+                              market can serve its legs `settled` with `is_winner: null`
+                              (nobody graded them yet), and reading null as Lost put
+                              "Brewers Lost" under Kalshi's "Milwaukee Won". Ungraded ⇒
+                              the space stays empty (notice 34), never a guessed result. */}
                           {isSettledOutcome(o) ? (
-                            <SettledMark won={o.is_winner === true} />
+                            o.is_winner == null ? null : <SettledMark won={o.is_winner} />
                           ) : (
                             <>
                               {o.probability_change_24h != null && Math.abs(o.probability_change_24h) >= 0.005 && (

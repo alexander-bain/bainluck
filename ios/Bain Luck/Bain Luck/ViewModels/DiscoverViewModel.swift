@@ -384,15 +384,11 @@ final class DiscoverViewModel: ObservableObject {
     private var eventPriceStreams: [Int: LiveStreamController] = [:]
 
 
-    /// Bounded first page (L2-201 / #1472). The initial load requests only enough
-    /// cards for the first viewport so first paint no longer waits on the full
-    /// former window to transfer/decode/interleave (C42 P1). The remaining pages
-    /// load in the background through the existing scroll-driven
-    /// `loadMoreIfNeeded` pagination/merge contract (DiscoverView prefetches ~3
-    /// cards before the rendered window's end). The backend ranks the full
-    /// candidate universe before slicing, so a 50-card first page returns the
-    /// first 50 of the former 200 in the same order.
-    static let firstPageLimit = 50
+    /// First useful deck: request the 20 cards initially displayed by Discover.
+    /// Ranking still happens on the server; the existing cursor and short-page
+    /// refill fetch the rest after these cards can render. This keeps another 30
+    /// cards' transfer, decoding and presentation off the first network paint.
+    static let firstPageLimit = 20
 
     /// Upper bound on how many consecutive duplicate-only / ineligible server
     /// pages a single loadMore pass will scan before surfacing a retryable

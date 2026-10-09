@@ -145,6 +145,11 @@ def eligible(issue):
     return (
         issue.get("state", "OPEN") == "OPEN"
         and "needs-agent" in labels
+        # Routing is ownership before the builder acquires in-progress.
+        # Explicit coordinator missions bypass this automatic-scout predicate.
+        and not any(
+            label.startswith("lane:") and label != "lane:diagnosis" for label in labels
+        )
         and not labels.intersection({"in-progress", "needs-user", "blocked", "parked"})
         and not issue.get("assignees")
     )

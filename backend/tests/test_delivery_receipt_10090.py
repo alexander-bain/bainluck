@@ -288,12 +288,13 @@ class TestTheRealKalshiConsumer:
 
         class _Recording(LiveBlendRefresher):
             def __init__(self, source, **kw):
-                super().__init__(source, min_refresh_interval_s=0.01, **kw)
+                kw["min_refresh_interval_s"] = 0.01
+                super().__init__(source, **kw)
                 seen["refresher"] = self
                 self._rev = 500
 
             async def _refresh_batch(
-                self, event_ids, now, *, prepared=None, on_committed=None
+                self, event_ids, now, *, prepared=None, on_committed=None, publish_committed=None
             ):
                 for eid in event_ids:
                     self._last_refresh_at[eid] = now
@@ -373,7 +374,7 @@ class TestTheRealPolymarketConsumer:
                 self._rev = 700
 
             async def _refresh_batch(
-                self, event_ids, now, *, prepared=None, on_committed=None
+                self, event_ids, now, *, prepared=None, on_committed=None, publish_committed=None
             ):
                 for eid in event_ids:
                     self._last_refresh_at[eid] = now

@@ -15,9 +15,39 @@ import logging
 import random
 from typing import Any, Callable, Optional
 
+from pydantic_core import from_json
+
 logger = logging.getLogger(__name__)
 
 WS_URL = "wss://ws-subscriptions-clob.polymarket.com/ws/market"
+
+
+def _decode_message(raw):
+    """#10090: lower receive CPU without narrowing stdlib JSON semantics.
+
+    The existing Pydantic dependency parses arbitrary-size integers exactly.
+    Disable its string cache for the changing asset/book stream. Inputs it
+    refuses (e.g. lone surrogate escapes) go through the original decoder,
+    which also preserves the original accepted values and exception contract.
+    """
+    try:
+        return from_json(raw, cache_strings=False)
+    except (ValueError, TypeError):
+        return json.loads(raw)
+
+
+async def _cooperative_messages(socket):
+    """Let ready stamp/publish work run during an already-buffered burst.
+
+    Receiving a cached frame and awaiting an uncontended price handler need
+    not suspend. Yield after every processed message, before consuming the next
+    one, so ready probability writers do not wait behind another frame batch.
+    """
+    async for raw in socket:
+        yield raw
+        raw = None  # Do not retain the last full-depth book on a quiet socket.
+        await asyncio.sleep(0)
+
 
 # #837 — THE VENUE ACCEPTS AN OVERSIZED SUBSCRIBE AND SERVES A FRACTION OF IT,
 # silently: no error, no close, the connection just holds and streams a few
@@ -69,7 +99,7 @@ MAX_ASSETS_PER_CONNECTION = 500
 # uptime 1560s, `shards=3/3`, two shards subscribed at the full 500 assets
 # (`0:448/500 1:482/500`) — the socket had received and json-parsed 186,472
 # messages and delivered 3,611 prices to `on_price` with 0 errors and no 1009.
-# `_shard_wire` is written only after `json.loads` succeeds, so those counts are
+# `_shard_wire` is written only after JSON decoding succeeds, so those counts are
 # proof of RECEIPT. They are WIRE counts and not the coverage figure `served=`
 # reports today: they were taken before the numerator was narrowed to the
 # subscription, so do not line them up against a current `served=` reading. Whichever spares us (thin sports books landing
@@ -415,6 +445,118 @@ class PolymarketWebSocket:
         self.on_trade: Optional[Callable] = None
         self.on_resolved: Optional[Callable] = None
         self.on_new_market: Optional[Callable] = None
+        self._asset_refresh: Optional[asyncio.Event] = None
+        self._next_asset_ids: list[str] = []
+
+    def update_asset_ids(
+        self,
+        asset_ids: list[str],
+        *,
+        price_book_snapshots: Optional[bool] = None,
+    ) -> None:
+        """Replace a refreshable client's desired catalog, including an empty one."""
+        if self._asset_refresh is None:
+            raise RuntimeError("Polymarket refreshable client is not running")
+        if price_book_snapshots is not None:
+            self._price_book_snapshots = price_book_snapshots
+        self._next_asset_ids = list(dict.fromkeys(asset_ids))
+        self._asset_refresh.set()
+
+    async def run_refreshable(
+        self,
+        asset_ids: list[str],
+        *,
+        price_book_snapshots: Optional[bool] = None,
+    ):
+        """Keep unchanged shards connected while admitting/removing catalog tokens.
+
+        Empty means no subscriptions here, unlike the resolution-only `run()`.
+        One owner reconciles shard tasks; cancellation joins every socket before
+        returning. Existing subscription-size and reconnect safeguards remain.
+        """
+        if self._asset_refresh is not None:
+            raise RuntimeError("Polymarket refreshable client is already running")
+        if price_book_snapshots is not None:
+            self._price_book_snapshots = price_book_snapshots
+        self._asset_refresh = asyncio.Event()
+        self._next_asset_ids = list(dict.fromkeys(asset_ids))
+        self._shard_ids = {}
+        self._shard_wire = {}
+        self._shards_connected.clear()
+        self._shard_connected_at.clear()
+        self._handshake_gate = (
+            asyncio.Semaphore(max(1, int(self._max_concurrent_handshakes)))
+            if self._max_concurrent_handshakes
+            else None
+        )
+        tasks: dict[int, asyncio.Task] = {}
+        coverage = asyncio.create_task(self._coverage_loop())
+        refresh = None
+        try:
+            while True:
+                self._asset_refresh.clear()
+                wanted = set(self._next_asset_ids)
+                retained = {
+                    i: [a for a in ids if a in wanted]
+                    for i, ids in self._shard_ids.items()
+                }
+                present = {a for ids in retained.values() for a in ids}
+                added = [a for a in self._next_asset_ids if a not in present]
+                # Fill spare capacity without moving any retained token to a
+                # different shard. A stable catalog therefore restarts NONE.
+                for i, ids in retained.items():
+                    if added and len(ids) < MAX_ASSETS_PER_CONNECTION:
+                        filled = _shard_asset_ids(ids + added)[0]
+                        used = len(filled) - len(ids)
+                        retained[i] = filled
+                        added = added[used:]
+                next_index = max(retained, default=-1) + 1
+                for ids in _shard_asset_ids(added):
+                    retained[next_index] = ids
+                    next_index += 1
+                desired = {i: ids for i, ids in retained.items() if ids}
+                changed = {
+                    i
+                    for i in self._shard_ids.keys() | desired.keys()
+                    if self._shard_ids.get(i) != desired.get(i)
+                }
+                stopped = [tasks.pop(i) for i in changed if i in tasks]
+                for task in stopped:
+                    task.cancel()
+                await asyncio.gather(*stopped, return_exceptions=True)
+                for i in changed:
+                    self._mark_shard_down(i)
+                    self._shard_ids.pop(i, None)
+                    self._shard_wire.pop(i, None)
+                    if i in desired:
+                        self._shard_ids[i] = desired[i]
+                        self._shard_wire[i] = set()
+                        tasks[i] = asyncio.create_task(self._run_one(desired[i], i))
+                refresh = asyncio.create_task(self._asset_refresh.wait())
+                done, _ = await asyncio.wait(
+                    {refresh, *tasks.values()},
+                    return_when=asyncio.FIRST_COMPLETED,
+                )
+                for task in done - {refresh}:
+                    task.result()
+                    raise RuntimeError("Polymarket shard exited unexpectedly")
+                await refresh
+                refresh = None
+        finally:
+            self._asset_refresh = None
+            if refresh is not None:
+                refresh.cancel()
+            coverage.cancel()
+            for task in tasks.values():
+                task.cancel()
+            await asyncio.gather(
+                *tasks.values(),
+                coverage,
+                *([refresh] if refresh is not None else []),
+                return_exceptions=True,
+            )
+            self._shards_connected.clear()
+            self._shard_connected_at.clear()
 
     async def run(self, asset_ids: Optional[list[str]] = None):
         """Connect and stream messages forever, fanned over sized connections.
@@ -614,14 +756,14 @@ class PolymarketWebSocket:
                     hb = asyncio.create_task(heartbeat())
 
                     try:
-                        async for raw in ws:
+                        async for raw in _cooperative_messages(ws):
                             try:
                                 if raw == "PONG":
                                     continue
                                 self._message_count += 1
 
                                 try:
-                                    data = json.loads(raw)
+                                    data = _decode_message(raw)
                                 except (json.JSONDecodeError, TypeError):
                                     continue
                                 finally:

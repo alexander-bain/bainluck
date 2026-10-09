@@ -228,6 +228,16 @@ API = os.environ.get("BAINLUCK_API", "https://api.bainluck.com")
 #: merely tolerated, and why `BitmapOr` is no longer part of this check.
 EXPECTED_INDEXES = ("ix_futures_name_fts_open", "ix_futures_name_trgm")
 
+#: #1866: the trigram branch is served by EITHER trigram GIN. Once the attended
+#: `ix_futures_name_trgm_open` (partial, `WHERE status = 'open'`; runbook
+#: `docs/audits/latency/lat-p088-futures-open-trgm-index-spec.md`) exists, the
+#: planner picks it for the open-only arm and the full index drops out of the
+#: plan. That is the improvement, not an abandoned branch, so it must not read
+#: RED here. The FTS branch has no alternate: a plan without it is still a scan.
+INDEX_ALTERNATES = {
+    "ix_futures_name_trgm": ("ix_futures_name_trgm", "ix_futures_name_trgm_open"),
+}
+
 #: Rounds for the ungraded OR-fold contrast. One, deliberately: nobody grades it,
 #: and it is the 1,434-2,232 ms form on a database already at its plan limit.
 OR_FOLD_ROUNDS = 1
@@ -361,7 +371,11 @@ def _shape_verdict(indexes) -> tuple[bool, list[str]]:
     failure #2394 filed. Passing one in would be the only way to reintroduce it,
     so the signature refuses it.
     """
-    missing = [name for name in EXPECTED_INDEXES if name not in indexes]
+    missing = [
+        name
+        for name in EXPECTED_INDEXES
+        if not any(alt in indexes for alt in INDEX_ALTERNATES.get(name, (name,)))
+    ]
     return (not missing), missing
 
 

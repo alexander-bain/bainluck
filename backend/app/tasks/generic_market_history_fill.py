@@ -184,7 +184,7 @@ def declared_ttl_seconds(*, settled: bool) -> int:
 
 def write_cached_history(
     market_id: int, payload: dict, *, settled: bool, rc: Any = None,
-    ttl_s: int | None = None,
+    ttl_s: int | None = None, only_if_absent: bool = False,
 ) -> bool:
     """Cache the bank. ``ttl_s`` overrides the declared TTL with what is LEFT of it.
 
@@ -193,12 +193,25 @@ def write_cached_history(
     36 hours: re-caching it at full TTL would let a payload outlive the lifetime
     it was written with, every time it were evicted and restored. So the reader
     passes the remainder and the bank expires when it always would have.
+
+    ``only_if_absent`` is the same caller's second contract (#10749), and a
+    separate one: TTL says how long, this says whether it may REPLACE. The
+    reader read Postgres after a cache miss; a fill may have committed and
+    cached a newer bank while it held the old one. Re-caching unconditionally
+    would put the older bank back over the newer one for every later reader. So
+    rehydration writes with one atomic ``SET NX EX`` — never a GET then a SET —
+    and an occupied key is left alone, value and expiry both. Losing that race
+    is a skipped optimisation and returns False, not an error. A normal fill
+    keeps the unconditional write: it is the producer, and replacing is its job.
     """
     try:
         ttl = declared_ttl_seconds(settled=settled) if ttl_s is None else int(ttl_s)
         if ttl <= 0:
             return False
-        _client(rc).set(cache_key(market_id), json.dumps(payload, separators=(",", ":")), ex=ttl)
+        serialized = json.dumps(payload, separators=(",", ":"))
+        if only_if_absent:
+            return bool(_client(rc).set(cache_key(market_id), serialized, ex=ttl, nx=True))
+        _client(rc).set(cache_key(market_id), serialized, ex=ttl)
         return True
     except Exception as exc:  # noqa: BLE001
         logger.warning("generic market history: cache write failed for %s: %s",

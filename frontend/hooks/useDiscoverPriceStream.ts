@@ -21,7 +21,8 @@ export function useDiscoverPriceStream(groups: DiscoverGroupedItem[], principal:
   // Derive before rendering children, so even a t1 -> newer t3 -> cached t2
   // feed sequence cannot briefly paint t2 or forget its accepted fence.
   if (stored.principal !== principal || book !== stored.book) setStored({ principal, book });
-  const projected = projectPriceGroups(groups, book);
+  // Stable while neither the groups nor the book moved, so consumers can memo on it.
+  const projected = useMemo(() => projectPriceGroups(groups, book), [groups, book]);
   const visibleKeys = useMemo(() => new Set(Object.values(owners).flat()), [owners]);
   const leaves = groupedLeaves(projected).filter(item => visibleKeys.has(priceKey(item)!));
   const leavesRef = useRef(leaves);

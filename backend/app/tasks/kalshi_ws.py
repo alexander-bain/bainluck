@@ -15,6 +15,7 @@ import functools
 import logging
 import os
 import time
+from collections.abc import Collection, Iterator, Mapping
 from datetime import datetime, timezone
 
 from app.utils.kalshi_market_status import is_terminal
@@ -47,6 +48,10 @@ SUBSCRIPTION_REFRESH_SECONDS = int(
 #: this is how long after the failure the price waits for the next attempt.
 PRICE_FLUSH_SECONDS = float(os.getenv("WS_PRICE_FLUSH_SECONDS", "2"))
 
+# #10737: leave one of the task engine's existing 3+2 slots outside this
+# grade class. Other consumer operations can still contend for that slot.
+OPEN_CONTRACT_GRADE_CONCURRENCY = 4
+
 # Q491 repair (CERT-654 BLOCK). The periodic flush can afford to requeue a failed
 # batch because another flush is `PRICE_FLUSH_SECONDS` away. **The final flush has
 # no successor** — after it the consumer returns and the buffer is garbage — so
@@ -71,6 +76,257 @@ FINAL_FLUSH_ATTEMPTS = int(os.getenv("WS_FINAL_FLUSH_ATTEMPTS", "3"))
 #: would otherwise give up on a lock held ~1.5 s and drop the last prices.
 PRICE_PHASE_LOCK_TIMEOUT_MS = 500
 
+#: #10090 — how long one periodic flush may keep STARTING phases that hold no
+#: live game. Production 2026-10-08 00:25–00:35Z (run b47fefde): a flush on the
+#: 2 s cadence took 1.5–3.3 min, because it wrote every game that ticked since
+#: the last one — ~55 s of per-game phases across ~976 subscribed events — and
+#: then one ~1,300-row futures/props transaction, so a live game's moving price
+#: waited minutes for its turn. Live games are now planned first and always
+#: written (`linked_first_phases`); past this budget the remaining phases stay
+#: buffered, at the front, for the next flush. Never applied to the final drain.
+FLUSH_BUDGET_SECONDS = 2 * PRICE_FLUSH_SECONDS
+
+#: #10090 — opt-in Kalshi cadence, the #10662 Polymarket shape. Unset, the
+#: consumer keeps the shared 2 s timer and the refresher's 2 s per-event floor,
+#: which together cap a held game at one Kalshi stamp per 2 s (production
+#: 2026-10-08 17:05–17:12Z: 20–28 flushes a minute, most ~1 s of work then idle
+#: until the next 2 s start). Set, it is the timer and the blend floor. The
+#: failed-write retry keeps `PRICE_FLUSH_SECONDS` and the non-live budget keeps
+#: `FLUSH_BUDGET_SECONDS`: the budget counts live-phase time too, so halving it
+#: would starve non-live phases whenever live work takes 2-4 s.
+KALSHI_FLUSH_PERIOD_ENV = "KALSHI_WS_PRICE_FLUSH_SECONDS"
+
+
+def kalshi_flush_cadence():
+    """``(period, blend_floor, failed_retry, budget)`` for one consumer run.
+
+    ``failed_retry`` is ``None`` without the override, so the unset path calls
+    the cadence exactly as before; ``budget`` is always ``None`` (the module
+    `FLUSH_BUDGET_SECONDS`, read at call time). Raises
+    ValueError for anything but a positive finite number.
+    """
+    import math
+
+    from app.tasks.live_blend_refresh import DEFAULT_MIN_REFRESH_INTERVAL_S
+
+    override = os.getenv(KALSHI_FLUSH_PERIOD_ENV)
+    if override is None:
+        return PRICE_FLUSH_SECONDS, DEFAULT_MIN_REFRESH_INTERVAL_S, None, None
+    try:
+        period = float(override)
+    except ValueError as invalid:
+        raise ValueError(
+            f"{KALSHI_FLUSH_PERIOD_ENV} must be a positive finite number"
+        ) from invalid
+    if not math.isfinite(period) or period <= 0:
+        raise ValueError(f"{KALSHI_FLUSH_PERIOD_ENV} must be a positive finite number")
+    return period, period, PRICE_FLUSH_SECONDS, None
+
+#: #10090 — the most rows one non-live phase packs. Pre-game games are packed
+#: whole, several per transaction, and futures/props whole MARKETS at a time, so
+#: the budget can stop between phases instead of behind one unbounded one. A
+#: single game or market larger than this is still one phase, never cut.
+NONLIVE_PHASE_MAX_ROWS = 200
+
+#: #10090 — the most games one non-live phase packs. The phase's blend refresh
+#: stamps each of its games, so its cost grows per game, and the longest phase
+#: a flush starts before its budget runs out is what the next flush's live games
+#: wait behind. Production's ~0.5 s per game phase puts eight at a few seconds.
+NONLIVE_PHASE_MAX_GAMES = 8
+
+
+def flush_budget_spent(
+    flush_started, phase, event_id_by_outcome, live_events, budget_seconds=None,
+):
+    """#10090 — True when a periodic flush should leave ``phase`` buffered.
+
+    Never for a phase holding a live game's outcome, never without a start
+    (the final drain, a direct call) and never without a live set (the
+    pre-#10090 plan). Read on the refresher's clock, which `flush_started` is.
+    ``budget_seconds`` is the run's (`kalshi_flush_cadence`); ``None`` reads
+    `FLUSH_BUDGET_SECONDS` at call time.
+    """
+    if flush_started is None or live_events is None:
+        return False
+    if any(event_id_by_outcome.get(oid) in live_events for oid in phase):
+        return False
+    from app.tasks.live_blend_refresh import _mono
+
+    budget = FLUSH_BUDGET_SECONDS if budget_seconds is None else budget_seconds
+    return _mono() - flush_started >= budget
+
+
+def kalshi_non_speaking_ticker(external_id: str | None) -> bool:
+    """Suppress blend triggers only for a known series rejected by admission.
+
+    Classify the MARKET ticker, just like LiveBlendRefresher._read_groups.
+    Missing/empty/unknown series retain refresh rather than guess at new rules.
+    """
+    from app.utils.prediction_market_matching import feeds_win_prob_blend
+    from app.utils.sport_keys import (
+        KALSHI_FUTURES_TICKER_TO_SPORT_KEY,
+        KALSHI_TICKER_TO_SPORT_KEY,
+    )
+
+    if not isinstance(external_id, str) or not external_id:
+        return False
+    prefix, separator, suffix = external_id.lower().partition("-")
+    if not separator or not suffix or feeds_win_prob_blend(external_id):
+        return False
+    return (
+        prefix in KALSHI_TICKER_TO_SPORT_KEY
+        or prefix in KALSHI_FUTURES_TICKER_TO_SPORT_KEY
+    )
+
+
+class _KalshiHeadlineEvents(Mapping[int, int]):
+    """Live view of existing event admission, omitting known non-speakers.
+
+    Unknown identities retain their full event cohort. Admission may bridge an
+    outcome while a flush awaits publication; read the owner maps in place so
+    the existing unfinished-event fences see that bridge immediately.
+    """
+
+    def __init__(self, events: Mapping[int, int], non_speakers: Collection[int]):
+        self.events = events
+        self.non_speakers = non_speakers
+
+    def __getitem__(self, outcome_id: int) -> int:
+        if outcome_id in self.non_speakers:
+            raise KeyError(outcome_id)
+        return self.events[outcome_id]
+
+    def __iter__(self) -> Iterator[int]:
+        return (oid for oid in self.events if oid not in self.non_speakers)
+
+    def __len__(self) -> int:
+        return sum(1 for _ in self)
+
+
+def live_input_waiting(buffer, batch, event_id_by_outcome, live_events):
+    """#10090 — True when ``buffer`` holds input for a live game that
+    ``batch`` (this flush's snapshot) does not: a new outcome, or a value that
+    changed since the snapshot. An entry still equal to its snapshot (a phase
+    this flush has not reached, or one a lock timeout kept) is not new input.
+    """
+    if not live_events:
+        return False
+    return any(
+        entry != batch.get(oid) and event_id_by_outcome.get(oid) in live_events
+        for oid, entry in buffer.items()
+    )
+
+
+def yield_written_nonlive_tail(
+    buffer, phase, written_outcome_ids, event_id_by_outcome, live_events,
+    final_drain,
+):
+    """A served nonlive cohort's newer quotes yield to untouched tail work.
+
+    Called under the buffer lock after commit and ordinary removal. Never
+    moves live quotes, failed/unwritten rows, or final-drain work. The retained
+    entry is still the newest one; only its scheduling position changes.
+    """
+    if final_drain or not live_events or any(
+        event_id_by_outcome.get(oid) in live_events for oid in phase
+    ):
+        return
+    written = set(written_outcome_ids)
+    for oid, entry in phase.items():
+        if oid in written and oid in buffer and buffer[oid] != entry:
+            newest = buffer.pop(oid)
+            buffer[oid] = newest
+
+
+def live_preempts_tail(
+    flush_started, period, nonlive_started, buffer, batch, event_id_by_outcome,
+    live_events,
+):
+    """#10090 — True when a periodic flush should stop before a non-live phase
+    because a live game has new input waiting (see `flush_prices`).
+
+    Only after ``period`` on the refresher's clock and once at least one
+    non-live phase has started (``nonlive_started``), so preemption permits
+    nonlive work before yielding. Never without a start (the final drain, a direct
+    call) or without a live set.
+    """
+    if flush_started is None or not live_events or not nonlive_started:
+        return False
+    from app.tasks.live_blend_refresh import _mono
+
+    if _mono() - flush_started < period:
+        return False
+    return live_input_waiting(buffer, batch, event_id_by_outcome, live_events)
+
+
+class _FlushTimings:
+    """#10090 — where the Kalshi flush time went, per stats-line minute.
+
+    `save` is the price pipeline (rows written, including their lock waits),
+    `publish` the market invalidations, `stamp` the event blend refresh, and
+    `rank_commit` the rest of the flush: re-rank, commit, session checkout and
+    bookkeeping. One flush's phases are the transactions it opened.
+
+    A flush's bucket time is held IN FLIGHT and joins the minute only with
+    that flush's total (`flushed`), so a stats-line reset mid-flush cannot
+    split the two and misattribute `rank_commit` (CERT-4016 follow-up).
+
+    Pipelined stamps (#10090): `stamp` overlaps the next phase's write, so the
+    buckets can sum past `total` and `rank_commit`, the floored remainder,
+    reads low. `total` below `save + publish + stamp` is that overlap.
+    """
+
+    BUCKETS = ("save", "publish", "stamp")
+
+    def __init__(self):
+        self.in_flight = dict.fromkeys(self.BUCKETS, 0.0)
+        self.in_flight_phases = 0
+        self.reset()
+
+    def reset(self):
+        """Start a new minute. In-flight time stays with its flush."""
+        self.flushes = 0
+        self.phases = 0
+        self.total = 0.0
+        self.longest = 0.0
+        self.spent = dict.fromkeys(self.BUCKETS, 0.0)
+
+    def add(self, bucket, seconds, *, phase=False):
+        self.in_flight[bucket] += seconds
+        self.in_flight_phases += int(phase)
+
+    def flushed(self, seconds):
+        self.flushes += 1
+        self.total += seconds
+        self.longest = max(self.longest, seconds)
+        self.phases += self.in_flight_phases
+        for bucket, spent in self.in_flight.items():
+            self.spent[bucket] += spent
+        self.in_flight = dict.fromkeys(self.BUCKETS, 0.0)
+        self.in_flight_phases = 0
+
+    def timed(self, bucket, method):
+        """``method`` (a coroutine function) with its duration added to ``bucket``."""
+
+        @functools.wraps(method)
+        async def run(*args, **kwargs):
+            started = time.monotonic()
+            try:
+                return await method(*args, **kwargs)
+            finally:
+                self.add(bucket, time.monotonic() - started)
+
+        return run
+
+    def line(self):
+        rank_commit = max(0.0, self.total - sum(self.spent.values()))
+        return (
+            f"flush n={self.flushes} total={self.total:.1f}s "
+            f"max={self.longest:.1f}s phases={self.phases} "
+            f"save={self.spent['save']:.1f}s rank_commit={rank_commit:.1f}s "
+            f"publish={self.spent['publish']:.1f}s stamp={self.spent['stamp']:.1f}s"
+        )
+
 
 class _KalshiPriceOwner:
     """#10693 — one consumer run's Kalshi price pipeline, installed lazily.
@@ -83,8 +339,16 @@ class _KalshiPriceOwner:
 
     def __init__(self):
         self.pipeline = None
+        # Only a successful outer commit pays first-observation admission.
+        # Values are always compared in SQL, including after external writers.
+        self.committed_outcome_ids: set[int] = set()
+        # The existing failed-price delay belongs to the failed whole cohort,
+        # not unrelated inputs sharing the consumer's normal flush timer.
+        self.lock_retry_until: dict[int, float] = {}
+        # #10090: the consumer's `_FlushTimings`, when it keeps one.
+        self.timings = None
 
-    async def phase(self, session, phase):
+    async def phase(self, session, phase, *, force_observation=False):
         """Yield `PriceRunResult`s for one phase. Consume in `aclosing`.
 
         A successful phase is exhausted by its caller. A caller error closes
@@ -92,13 +356,27 @@ class _KalshiPriceOwner:
         """
         from app.utils.kalshi_price_pipeline import install_kalshi_price_pipeline
 
-        if self.pipeline is None:
-            self.pipeline = install_kalshi_price_pipeline(session.bind)
-        async with contextlib.aclosing(
-            self.pipeline.iter_phase(session, phase)
-        ) as results:
-            async for result in results:
-                yield result
+        started = time.monotonic()
+        try:
+            if self.pipeline is None:
+                self.pipeline = install_kalshi_price_pipeline(session.bind)
+            async with contextlib.aclosing(
+                self.pipeline.iter_phase(
+                    session,
+                    {
+                        oid: (
+                            *values,
+                            force_observation or oid not in self.committed_outcome_ids,
+                        )
+                        for oid, values in phase.items()
+                    },
+                )
+            ) as results:
+                async for result in results:
+                    yield result
+        finally:
+            if self.timings is not None:
+                self.timings.add("save", time.monotonic() - started, phase=True)
 
     def close(self):
         if self.pipeline is not None:
@@ -148,8 +426,27 @@ def _kalshi_slate_event_window():
     )
 
 
+def _packed(groups, max_rows, max_groups=None):
+    """Consecutive whole ``groups`` merged into phases of at most ``max_rows``
+    rows and ``max_groups`` groups."""
+    phases, current, count = [], {}, 0
+    for group in groups:
+        if current and (
+            len(current) + len(group) > max_rows
+            or (max_groups is not None and count >= max_groups)
+        ):
+            phases.append(current)
+            current, count = {}, 0
+        current.update(group)
+        count += 1
+    if current:
+        phases.append(current)
+    return phases
+
+
 def linked_first_phases(
     batch, market_id_by_outcome, event_id_by_outcome, pending_events=(),
+    live_events=None, pending_events_fenced=False,
 ):
     """Publish independent games separately, followed by unrelated contracts.
 
@@ -162,10 +459,24 @@ def linked_first_phases(
     tick, so sparse arrivals cannot split an event's markets. Preserve batch
     order within each component and first-seen order between components.
     Unknown market membership retains the original single transaction.
-    If a refresh is already owed, retain the all-games phase: refresh() also
-    drains that debt, so splitting could stamp a later game before its new
-    price is written and throttle its actual new reading.
+    If a refresh is already owed for an event this batch writes, retain the
+    all-games phase: refresh() also drains that debt, so splitting could stamp
+    a later game before its new price is written and throttle its actual new
+    reading. #10728 — debt owed ONLY to events with no price in this batch (a
+    quiet game's held stamp) keeps the split: its price is already stored, so
+    the first phase's refresh paying it early stamps nothing unwritten, and
+    joining would put every game behind the slowest one and defeat the live
+    first plan and its budget below. Any overlap, mixed or not, joins unless
+    the caller fences unfinished cohorts out of each refresh explicitly.
     This only plans phases; the existing flush owns SQL, retry and publish.
+
+    #10090 — with ``live_events`` (the run's live event ids; ``None`` keeps
+    the plan above), each game holding a live event is its own phase, FIRST,
+    in batch order. Every other game is packed whole (at most
+    `NONLIVE_PHASE_MAX_GAMES` per phase), and futures/props whole markets at a
+    time, into phases of at most `NONLIVE_PHASE_MAX_ROWS` rows, in
+    batch order — oldest buffered first, so a budget-deferred tail
+    (`flush_budget_spent`) is the head of the next flush's non-live work.
     """
     if not batch or any(market_id_by_outcome.get(oid) is None for oid in batch):
         return [batch]
@@ -194,13 +505,29 @@ def linked_first_phases(
             games.setdefault(root(market), {})[oid] = entry
         else:
             rest[oid] = entry
-    if pending_events and games:
+    if games and not pending_events_fenced and not set(pending_events).isdisjoint(
+        event_id_by_outcome.get(oid) for oid in batch
+    ):
         # Preserve batch order in the original single game transaction.
         games = {None: {oid: entry for oid, entry in batch.items() if oid not in rest}}
-    phases = list(games.values())
-    if rest:
-        phases.append(rest)
-    return phases
+    if live_events is None:
+        phases = list(games.values())
+        if rest:
+            phases.append(rest)
+        return phases
+
+    live, other = [], []
+    for game in games.values():
+        holds_live = any(event_id_by_outcome.get(oid) in live_events for oid in game)
+        (live if holds_live else other).append(game)
+    markets = {}
+    for oid, entry in rest.items():
+        markets.setdefault(market_id_by_outcome[oid], {})[oid] = entry
+    return (
+        live
+        + _packed(other, NONLIVE_PHASE_MAX_ROWS, NONLIVE_PHASE_MAX_GAMES)
+        + _packed(markets.values(), NONLIVE_PHASE_MAX_ROWS)
+    )
 
 
 @owns_consumer_sessions("kalshi")
@@ -223,7 +550,7 @@ async def _run_kalshi_ws_consumer(*, sessions, prices):
     from app.tasks.kalshi import _kalshi_yes_probability  # #8753
     from app.tasks.live_blend_refresh import (
         LiveBlendRefresher, TailReceipts, adopt_handed_off, event_ids_for_outcomes,
-        hand_off_pending, reap_stopped_loops, run_flush_cadence,
+        LOOP_REAP_TIMEOUT_S, hand_off_pending, reap_stopped_loops, run_flush_cadence,
     )
     from app.tasks.ws_admission import (  # #9418
         run_until_admission, unadmitted_live_events,
@@ -236,9 +563,18 @@ async def _run_kalshi_ws_consumer(*, sessions, prices):
         open_contract_channels, open_contract_event_bridge,
         open_contract_event_candidates, open_contract_prices_enabled,
         open_contract_settlement_enabled, open_contract_ticker_map,
-        shard_tickers,
+        prepared_shard_indexes, shard_tickers,
     )
     from app.utils.futures_rank import rerank_market_fields_stmt  # #6598
+    from app.utils.kalshi_exact_trace import ExactKalshiTrace
+
+    # #10090: an invalid override fails here, before the slate or a socket.
+    flush_period, blend_floor, failed_retry, flush_budget = kalshi_flush_cadence()
+
+    # A START exists even when slate loading never finishes or selects nothing.
+    exact_trace = None
+    with contextlib.suppress(Exception):
+        exact_trace = ExactKalshiTrace.from_env(os.environ, run=None)
 
     # #2471: one engine for this run, a fresh session per operation; the
     # decorator disposes it after the final drain. Same call shape as the
@@ -261,6 +597,7 @@ async def _run_kalshi_ws_consumer(*, sessions, prices):
     # #9418: the admission floor is measured from here, the previous recycle.
     run_started_at = time.monotonic()
     ws = KalshiWebSocket()
+    ws.exact_trace = exact_trace
 
     # -- Load market tickers to subscribe to --
     async with get_task_session() as session:
@@ -309,6 +646,14 @@ async def _run_kalshi_ws_consumer(*, sessions, prices):
         ticker_to_ids[ext_id.upper()] = (market_id, outcome_id)
 
     market_tickers = list(ticker_to_ids.keys())
+    if exact_trace is not None:
+        with contextlib.suppress(Exception):
+            exact_trace.admission(
+                ticker_to_ids, {},
+                {oid: event_id_by_market[mid] for mid, oid in ticker_to_ids.values()
+                 if mid in event_id_by_market},
+                phase="LINKED_SLATE", open_status="UNAVAILABLE_PENDING_ADMISSION",
+            )
 
     # #9484 — every other unsettled Kalshi contract, for PRICES only, on its own
     # connections (`app.tasks.ws_open_contracts`). Never added to
@@ -363,6 +708,13 @@ async def _run_kalshi_ws_consumer(*, sessions, prices):
     preread = None
     if not market_tickers:
         preread = await read_open_contracts()
+        if exact_trace is not None:
+            with contextlib.suppress(Exception):
+                exact_trace.admission(
+                    ticker_to_ids, preread[0], preread[1], phase="OPEN_PREREAD",
+                    open_status=("UNAVAILABLE_READ_FAILED" if preread[2]
+                                 else "SELECTED" if open_contract_prices_enabled() else "DISABLED"),
+                )
         if not preread[0]:
             logger.info("Kalshi WS: no live/upcoming linked markets")
             _report_liveness("kalshi", "no_markets", legs=0)
@@ -391,6 +743,7 @@ async def _run_kalshi_ws_consumer(*, sessions, prices):
         # absence — "it returned" is not "it wrote" (gotcha #53). A refusal is
         # terminal, not an error: the entry leaves the buffer like any other.
         "settled_declined": 0,
+        "repeat_or_settled_declined": 0,
         # #9484: rows a flush wrote whose price and book were already what it
         # stored — written (liveness), but no market invalidation sent.
         "quotes_unchanged": 0,
@@ -421,6 +774,14 @@ async def _run_kalshi_ws_consumer(*, sessions, prices):
         "open_contract_bridged_outcomes": 0,
         "open_contract_bridged_events": 0,
         "open_contract_bridge_error": False,
+        # #10090: buffered prices a periodic flush left for the next one after
+        # spending `FLUSH_BUDGET_SECONDS` (non-live phases only). Deferred, not
+        # dropped: they stay at the head of the buffer.
+        "budget_deferred": 0,
+        # #10090: buffered non-live prices a periodic flush left for the next
+        # one because a live game had new input waiting (`live_input_waiting`).
+        # Deferred like `budget_deferred`, never dropped.
+        "live_preempted": 0,
     }
 
     # -- Buffered price updates --
@@ -442,12 +803,30 @@ async def _run_kalshi_ws_consumer(*, sessions, prices):
     market_id_by_outcome: dict[int, int] = {
         outcome_id: market_id for market_id, outcome_id in ticker_to_ids.values()
     }
+    # #10090: full outcome/event/market maps still own every price write,
+    # lifecycle and market invalidation. Known non-speakers can use the normal
+    # tail without joining the event's headline cohort or live priority.
+    # Derive from the market ticker already read for admission, with no query.
+    _ticker_by_market = {
+        market_id: ticker for ticker, market_id in market_id_by_ext.items()
+    }
+    non_blend_outcome_ids = {
+        outcome_id for outcome_id, market_id in market_id_by_outcome.items()
+        if kalshi_non_speaking_ticker(_ticker_by_market.get(market_id))
+    }
     # #9484: filled IN PLACE by `admit_open_contracts`, which the handlers and
     # the flush read through these same objects.
     open_contract_ids: dict[str, tuple[int, int]] = {}
     open_contract_outcome_ids: set[int] = set()
+    # #10090: the slate's live events, refilled IN PLACE by the #9418 live
+    # reread (`load_unadmitted_live_event_ids`, at once and every 30 s). The
+    # flush writes their games first and never defers them.
+    live_event_ids: set[int] = set()
+    flush_timings = _FlushTimings()
+    prices.timings = flush_timings
     blend_refresher = LiveBlendRefresher(
         "kalshi", session_factory=get_task_session,  # #2471
+        min_refresh_interval_s=blend_floor,
     )
     # #10090 — the receipt Polymarket has carried since #837: every accepted
     # input is marked (seq, receive instant) as it is buffered, so the
@@ -455,6 +834,11 @@ async def _run_kalshi_ws_consumer(*, sessions, prices):
     # published revision carried it. Keyed like `price_buffer`.
     tail_receipts = TailReceipts("kalshi")
     blend_refresher.receipts = tail_receipts
+    # #10702: disabled without exact targets AND a short absolute expiry.
+    # One budget for this run, including its existing open-contract sockets.
+    if exact_trace is not None:
+        tail_receipts.run = exact_trace.run
+    tail_receipts.exact_trace = exact_trace
     input_marks: dict = {}
     # #9462 review: stamps the previous run still owed when it recycled. Its
     # prices are already stored; the first flush below stamps them.
@@ -463,8 +847,9 @@ async def _run_kalshi_ws_consumer(*, sessions, prices):
     async def flush_prices(flush_started=None, *, final_drain=False):
         """Write buffered price updates to DB — #10640: game markets first.
 
-        Returns False when a write failed (its rows stay buffered and the
-        cadence waits a full interval before retrying); #10090
+        Returns False for a non-lock failure (the cadence waits before retrying).
+        Lock-failed whole cohorts stay buffered and retain that same retry delay,
+        while unrelated phases keep the normal timer. #10090
         ``flush_started`` is this flush's start, for the refresher's floor.
 
         #10640 — the batch is split by `linked_first_phases`. The game phase is
@@ -477,11 +862,29 @@ async def _run_kalshi_ws_consumer(*, sessions, prices):
         tail. Earlier committed games stay done. ``final_drain`` waits for locks
         as long as Postgres does: the drain has no next flush to retry in.
         """
+        from app.tasks.kalshi_ws import _KalshiHeadlineEvents
+
+        # Winner/source questions commit together. Known props still write and
+        # publish, but cannot hold their event's headline stamp or live priority.
+        # Final drain retains its full original event-cohort contract.
+        cohort_event_ids = _KalshiHeadlineEvents(
+            event_id_by_outcome, () if final_drain else non_blend_outcome_ids,
+        )
+        exact_trace = getattr(tail_receipts, "exact_trace", None)
+        from app.tasks.live_blend_refresh import _mono
+
         async with buffer_lock:
             batch = dict(price_buffer)
+            prices.lock_retry_until = {
+                oid: until for oid, until in prices.lock_retry_until.items()
+                if oid in batch and until > _mono()
+            }
             batch_marks = {
                 oid: input_marks[oid] for oid in batch if oid in input_marks
             }
+            if exact_trace is not None:
+                with contextlib.suppress(Exception):
+                    exact_trace.snapshot(batch_marks.values())
         if not batch:
             # #837 tail — a flush with no new prices still owes the stamps a row
             # lock deferred: those prices are already stored, so waiting for the
@@ -500,207 +903,416 @@ async def _run_kalshi_ws_consumer(*, sessions, prices):
         # — can lose a price the buffer was holding. Nothing needs to be
         # "put back", because it was never taken away.
         phases = linked_first_phases(
-            batch, market_id_by_outcome, event_id_by_outcome,
+            batch, market_id_by_outcome, cohort_event_ids,
             pending_events=blend_refresher.pending_event_ids(),
+            live_events=live_event_ids,
+            pending_events_fenced=True,
         )
+        # Includes failed/budget-deferred phases until a whole phase commits.
+        # Re-resolve through the current map at each launch for late bridges.
+        unfinished_price_ids = set(batch)
         had_lock_failure = False
         flush_counted = False
-        for index, phase in enumerate(phases):
-            declined = 0
-            written_outcome_ids: list[int] = []
-            try:
-                async with get_task_session() as session:
-                    # #10661: bound each lock acquisition in this transaction.
-                    # Pool checkout and total phase duration have separate costs.
-                    if not final_drain:
-                        await session.execute(
-                            SET_LOCK_TIMEOUT_SQL,
-                            {"ms": lock_timeout_value(PRICE_PHASE_LOCK_TIMEOUT_MS)},
-                        )
-                    # #10693: the phase's rows go through the run's price pipeline,
-                    # in batch order. A run of two or more consecutive rows of one
-                    # shape (full book / no book, `utils/kalshi_price_statement.py`)
-                    # is ONE driver round trip on the supported SQLAlchemy/asyncpg
-                    # pair; a single row, or any other installed pair, is the
-                    # ordinary one execute per row. Either way each row runs the
-                    # same statement with the same binds, the phase stays one
-                    # transaction, and a lock timeout or any error raises here with
-                    # the whole phase rolled back. Nothing submitted is replayed.
-                    #
-                    # The statement (built once per process, #10689) carries:
-                    #
-                    # #8753: the book columns move only when the tick carried BOTH
-                    # sides; otherwise each is set to itself (a no-op). Half a book
-                    # beside the other half from an older REST poll is a quote
-                    # nobody ever offered.
-                    #
-                    # #9484: the TABLE, not the entity. An ORM-enabled UPDATE ...
-                    # RETURNING comes back as an ORM result with no `rowcount`;
-                    # the Core form returns the rows that actually took the price.
-                    #
-                    # #5411 — A SETTLED CONTRACT HAS NO LIVE PRICE. It is worth
-                    # exactly 1 or 0, and #5246 made every reachable settlement
-                    # writer say so. This socket had never heard of settlement: it
-                    # wrote `current_probability` unconditionally, so 189 of the
-                    # 6,895 rows that repair cleared were re-priced within 55
-                    # minutes (one burst, 22:48-22:52Z on 9/11) and eliminated
-                    # players went back to showing a live number. The invariant
-                    # was enforced on ENTRY and not on UPDATE.
-                    #
-                    # The refusal is the TIER-3 set, not `IS NOT NULL`, and the
-                    # distinction is the whole correctness of it: the two live US
-                    # Open finalists carry `ungradeable_result` (tier 1 — a
-                    # RETRACTION meaning the venue never called it, explicitly
-                    # reversible by evidence), so refusing every graded-looking
-                    # row would have FROZEN the two rows that most need to move.
-                    # Guess-family and NULL rows stay writable for the same
-                    # reason. `or_` with an explicit NULL arm because the column
-                    # is nullable and `NOT IN (...)` is NULL — not TRUE — for a
-                    # NULL source. Mirrors `polymarket_ws`'s `is_authoritative`
-                    # skip; that socket has always had this guard.
-                    #
-                    # This socket IS a live writer of this row, so it owes both
-                    # stamps the polls owe (#2024). Without `last_updated` the
-                    # playoff grid's liveness gate read actively-streaming rows as
-                    # days stale — measured 2026-08-30 at up to 23 days on rows
-                    # whose price had moved seconds earlier.
-                    async with contextlib.aclosing(
-                        prices.phase(session, phase)
-                    ) as price_results:
-                        async for result in price_results:
-                            # #5411 — a settled row matches the id and fails the
-                            # guard, so it returns no row. (A row deleted between
-                            # subscription and flush lands here too; both are
-                            # honestly "a buffered price that did not become a
-                            # stored price", which is what this counter is named
-                            # for.)
-                            declined += result.attempted - result.rowcount
-                            # #9484: one market invalidation per row the UPDATE
-                            # RETURNED, stamped with the stored `last_updated` —
-                            # never the buffered id, never a local clock. A #5411
-                            # refusal or a deleted row returns nothing, so it
-                            # signals nothing. Staged against this transaction;
-                            # published below only once the outer commit landed.
-                            #
-                            # And only when the write changed what a reader is
-                            # served (price or book, `quote_moved_column`). A tick
-                            # that only re-stamped `last_updated` (volume, open
-                            # interest, the same quote again) still writes —
-                            # liveness reads that stamp — but a frame for it sends
-                            # every held page to re-read an unchanged row (ux,
-                            # #9526).
-                            for row in result.all():
-                                written_outcome_ids.append(row.id)
-                                if not row.quote_moved:
-                                    stats["quotes_unchanged"] += 1
-                                    continue
-                                queue_market_change(
-                                    session,
-                                    market_id=row.market_id,
-                                    source="kalshi",
-                                    outcome_observed_at={row.id: row.last_updated},
-                                )
+        # #10090: one refresh may cover several committed whole-event phases.
+        # Independent writes keep progressing while it runs; receipts are staged
+        # only when that task starts, and no refresh outlives this flush.
+        stamping = None
+        stamping_events = set()
+        stamping_fresh = set()
+        queued_events = set()
+        queued_marks = {}
+        queued_refresh = False
+        # A skipped/failed first phase must not starve unrelated prior debt.
+        implicit_debt_queued = False
+        cancelled = False
+        # #10090 — LIVE INPUT PREEMPTS THE NON-LIVE TAIL. A live game's tick
+        # that arrived after the snapshot used to wait for every later phase of
+        # this flush (up to the whole non-live budget) before the next flush
+        # could take it. Once one period has passed and at least one non-live
+        # phase has started, a non-live phase is not started while such input
+        # waits: the tail stays buffered, at the head, like a budget deferral,
+        # and the cadence starts the next flush at once with live games first.
+        # Preemption permits one non-live phase; the existing budget still
+        # applies. Served hot non-live entries yield to the untouched tail.
+        nonlive_started = 0
 
-                    # #6598 / CERT-3182. `rank` is derived from the price this loop
-                    # just moved, and nothing in this module has ever written it —
-                    # so a favourite changing hands mid-game left the board numbered
-                    # by whichever REST poll last saw it, on the exact rows this
-                    # socket exists to keep current.
-                    #
-                    # KEYED ON THE ROWS THAT ACTUALLY WROTE, not on the batch: a
-                    # settled row declined by the #5411 guard changed nothing, and
-                    # re-deriving its market's field would be this socket reaching a
-                    # board it was just refused. Same session, so it lands in the
-                    # transaction that carries the prices.
-                    reranked_markets = {
-                        market_id_by_outcome[oid]
-                        for oid in written_outcome_ids
-                        if oid in market_id_by_outcome
-                    }
-                    if reranked_markets:
-                        stats["ranks_rederived"] += (
-                            await session.execute(
-                                rerank_market_fields_stmt(sorted(reranked_markets))
-                            )
-                        ).rowcount
-                if not flush_counted:
-                    stats["flushes"] += 1
-                    flush_counted = True
-                stats["price_updates"] += len(phase) - declined
-                stats["settled_declined"] += declined
-                stats["open_contract_prices_written"] += sum(
-                    1 for oid in written_outcome_ids
-                    if oid in open_contract_outcome_ids
-                )
-            except Exception as exc:
-                # Q491 — the batch is still in `price_buffer`, so the next flush
-                # retries it. Before Q491 the buffer was drained up front and a
-                # failed write discarded those prices outright: the socket only
-                # refills an outcome when that market ticks again, and 86.7% of open
-                # Polymarket markets never tick, so one transient error left the
-                # card on its old number with a stale `last_updated` (#2024).
-                #
-                # #10661: a lock timeout retains this component but permits later
-                # independent components. Other errors still stop the unpaid tail.
-                lock_timed_out = is_lock_timeout(exc)
-                unpaid = (
-                    len(phase) if lock_timed_out
-                    else sum(len(p) for p in phases[index:])
-                )
-                stats["errors"] += 1
-                stats["requeued"] += unpaid
-                logger.exception(
-                    "Kalshi WS: flush error (%d updates retained for retry)", unpaid
-                )
-                if lock_timed_out:
-                    # The transaction rolled back; all its prices remain buffered.
-                    # Only proceed to phases the unchanged planner separated.
-                    had_lock_failure = True
-                    continue
-                return False
-
-            # #9484 — the commit landed, so the rows it carried may now say so on
-            # `live:market:{id}`. Before the buffer bookkeeping and the blend
-            # refresh, so neither can suppress it: a standalone future or prop has
-            # no event blend, and its moved quote is just as real.
-            await blend_refresher.publish_market_changes(session)
-
-            # Q491 repair 2 — the write landed, so and only so do these entries
-            # leave the buffer. The `== prob` test is what used to be `setdefault`:
-            # `handle_ticker` may have buffered a FRESHER price for the same outcome
-            # while this write was in flight, and that newer value is the truth, so
-            # it must survive to the next flush rather than be dropped as "already
-            # written". Same contract, enforced at removal instead of at re-queue.
-            async with buffer_lock:
-                for outcome_id, entry in phase.items():
-                    if price_buffer.get(outcome_id) == entry:
-                        del price_buffer[outcome_id]
-
-            # Q460 — THE SHIP. Prices in `futures_outcomes` are invisible; the card
-            # renders `Event.win_probability_sources`. Push the freshly-flushed
-            # prices through to that blend so the number on screen moves with the
-            # action instead of waiting for the next 120s poll. Failures are counted
-            # inside the refresher and never interrupt streaming. #10090: the
-            # revisions this write committed ride into this refresh, and only this
-            # one (a settled row the #5411 guard declined committed nothing).
-            #
-            # #10640/#10655: each game component refreshes BEFORE any later
-            # component or unrelated phase is written.
-            # The unrelated phase has no linked event by construction, so it refreshes
-            # only if the #9484 bridge named one of its rows since the split.
-            linked_events = event_ids_for_outcomes(event_id_by_outcome, phase.keys())
-            if index == 0 or linked_events:
-                with contextlib.suppress(Exception):
-                    tail_receipts.stage(
-                        [
-                            batch_marks[oid]
-                            for oid in written_outcome_ids if oid in batch_marks
-                        ]
+        async def stamp_done(*, cancel=False):
+            nonlocal stamping, stamping_events, stamping_fresh
+            if stamping is None:
+                return
+            if cancel and not stamping.cancelling():
+                stamping.cancel()
+            # Repeated cancellation cannot let a task escape beside the drain.
+            interrupted = None
+            while not stamping.done():
+                try:
+                    await asyncio.wait({stamping})
+                except asyncio.CancelledError as exc:
+                    interrupted = exc
+                    if not stamping.cancelling():
+                        stamping.cancel()
+            task, stamping = stamping, None
+            fresh, stamping_fresh = stamping_fresh, set()
+            stamping_events = set()
+            if task.cancelled() or task.exception() is not None:
+                # Also covers cancellation before refresh's first turn, before
+                # it has taken these committed IDs into its own debt sets.
+                blend_refresher.adopt_pending(fresh)
+                if not task.cancelled():
+                    logger.error(
+                        "Kalshi WS: blend refresh raised after its write committed",
+                        exc_info=task.exception(),
                     )
-                await blend_refresher.refresh(
-                    linked_events, flush_started=flush_started,
-                )
-        return not had_lock_failure
+            if interrupted is not None:
+                raise interrupted
+
+        async def stamp_start():
+            nonlocal stamping, stamping_events, stamping_fresh, queued_refresh
+            stamping_fresh = set(queued_events)
+            unfinished_events = event_ids_for_outcomes(
+                cohort_event_ids, unfinished_price_ids,
+            )
+            # refresh takes implicit debt too. Capture before its first turn.
+            # Excluded cohorts remain owed but cannot read a partially written
+            # board or hold unrelated whole-game price transactions together.
+            stamping_events = (
+                stamping_fresh | set(blend_refresher.pending_event_ids())
+            ).difference(unfinished_events)
+            with contextlib.suppress(Exception):
+                tail_receipts.stage(list(queued_marks.values()))
+            stamping = asyncio.create_task(blend_refresher.refresh(
+                stamping_fresh, flush_started=flush_started,
+                defer_event_ids=unfinished_events,
+            ))
+            queued_events.clear()
+            queued_marks.clear()
+            queued_refresh = False
+            await asyncio.sleep(0)
+
+        def queue_committed(index, phase, written_outcome_ids, *, registered=None):
+            nonlocal queued_refresh, implicit_debt_queued
+            blend_outcomes = (
+                written_outcome_ids if final_drain else
+                (oid for oid in written_outcome_ids if oid not in non_blend_outcome_ids)
+            )
+            linked_events = event_ids_for_outcomes(cohort_event_ids, blend_outcomes)
+            new_events = linked_events if registered is None else linked_events - registered
+            first_ack = registered is None and not implicit_debt_queued
+            if first_ack:
+                implicit_debt_queued = True
+            if first_ack or new_events:
+                queued_events.update(new_events)
+                queued_marks.update({
+                    oid: batch_marks[oid]
+                    for oid in written_outcome_ids if oid in batch_marks
+                    and (registered is None or cohort_event_ids.get(oid) in new_events)
+                })
+                queued_refresh = True
+            return linked_events
+
+        def keep_queued():
+            nonlocal queued_refresh
+            blend_refresher.adopt_pending(queued_events)
+            queued_events.clear()
+            queued_marks.clear()
+            queued_refresh = False
+
+        try:
+            for index, phase in enumerate(phases):
+                if not final_drain and any(
+                    prices.lock_retry_until.get(oid, 0) > _mono() for oid in phase
+                ):
+                    # Keep the planner's whole group and unfinished-price fence.
+                    # New ticks on the same game cannot bypass its held cohort.
+                    continue
+                # #10090: live games are first and never budget-deferred; past the
+                # budget every later phase stays buffered for the next flush.
+                if not final_drain and flush_budget_spent(
+                    flush_started, phase, cohort_event_ids, live_event_ids,
+                    flush_budget,
+                ):
+                    stats["budget_deferred"] += sum(len(p) for p in phases[index:])
+                    break
+                if live_event_ids and not final_drain and not any(
+                    cohort_event_ids.get(oid) in live_event_ids for oid in phase
+                ):
+                    if live_preempts_tail(
+                        flush_started, flush_period, nonlive_started, price_buffer,
+                        batch, cohort_event_ids, live_event_ids,
+                    ):
+                        stats["live_preempted"] += sum(len(p) for p in phases[index:])
+                        break
+                    nonlive_started += 1
+                if stamping is not None and stamping.done():
+                    await stamp_done()
+                    if queued_refresh:
+                        await stamp_start()
+                # Normally disjoint by the unchanged whole-event planner. A
+                # late bridge may name an event in a later phase; implicit debt
+                # captured by the active refresh must obey the same fence.
+                if not stamping_events.isdisjoint(
+                    event_ids_for_outcomes(cohort_event_ids, phase.keys())
+                ):
+                    await stamp_done()
+                declined = 0
+                written_outcome_ids: list[int] = []
+                written_observations: dict = {}
+                try:
+                    async with get_task_session() as session:
+                        # #10661: bound each lock acquisition in this transaction.
+                        # Pool checkout and total phase duration have separate costs.
+                        if not final_drain:
+                            await session.execute(
+                                SET_LOCK_TIMEOUT_SQL,
+                                {"ms": lock_timeout_value(PRICE_PHASE_LOCK_TIMEOUT_MS)},
+                            )
+                        # #10693: the phase's rows go through the run's price pipeline,
+                        # in batch order. A run of two or more consecutive rows of one
+                        # shape (full book / no book, `utils/kalshi_price_statement.py`)
+                        # is ONE driver round trip on the supported SQLAlchemy/asyncpg
+                        # pair; a single row, or any other installed pair, is the
+                        # ordinary one execute per row. Either way each row runs the
+                        # same statement with the same binds, the phase stays one
+                        # transaction, and a lock timeout or any error raises here with
+                        # the whole phase rolled back. Nothing submitted is replayed.
+                        #
+                        # The statement (built once per process, #10689) carries:
+                        #
+                        # #8753: the book columns move only when the tick carried BOTH
+                        # sides; otherwise each is set to itself (a no-op). Half a book
+                        # beside the other half from an older REST poll is a quote
+                        # nobody ever offered.
+                        #
+                        # #9484: the TABLE, not the entity. An ORM-enabled UPDATE ...
+                        # RETURNING comes back as an ORM result with no `rowcount`;
+                        # the Core form returns the rows that actually took the price.
+                        #
+                        # #5411 — A SETTLED CONTRACT HAS NO LIVE PRICE. It is worth
+                        # exactly 1 or 0, and #5246 made every reachable settlement
+                        # writer say so. This socket had never heard of settlement: it
+                        # wrote `current_probability` unconditionally, so 189 of the
+                        # 6,895 rows that repair cleared were re-priced within 55
+                        # minutes (one burst, 22:48-22:52Z on 9/11) and eliminated
+                        # players went back to showing a live number. The invariant
+                        # was enforced on ENTRY and not on UPDATE.
+                        #
+                        # The refusal is the TIER-3 set, not `IS NOT NULL`, and the
+                        # distinction is the whole correctness of it: the two live US
+                        # Open finalists carry `ungradeable_result` (tier 1 — a
+                        # RETRACTION meaning the venue never called it, explicitly
+                        # reversible by evidence), so refusing every graded-looking
+                        # row would have FROZEN the two rows that most need to move.
+                        # Guess-family and NULL rows stay writable for the same
+                        # reason. `or_` with an explicit NULL arm because the column
+                        # is nullable and `NOT IN (...)` is NULL — not TRUE — for a
+                        # NULL source. Mirrors `polymarket_ws`'s `is_authoritative`
+                        # skip; that socket has always had this guard.
+                        #
+                        # This socket IS a live writer of this row, so it owes both
+                        # stamps the polls owe (#2024). Without `last_updated` the
+                        # playoff grid's liveness gate read actively-streaming rows as
+                        # days stale — measured 2026-08-30 at up to 23 days on rows
+                        # whose price had moved seconds earlier.
+                        async with contextlib.aclosing(
+                            prices.phase(session, phase, force_observation=final_drain)
+                        ) as price_results:
+                            async for result in price_results:
+                                # #5411 — a settled row matches the id and fails the
+                                # guard, so it returns no row. A fresh repeat can
+                                # also return nothing. Only returned rows are writes;
+                                # no local observation time substitutes for them.
+                                declined += result.attempted - result.rowcount
+                                # #9484: one market invalidation per row the UPDATE
+                                # RETURNED, stamped with the stored `last_updated` —
+                                # never the buffered id, never a local clock. A #5411
+                                # refusal or a deleted row returns nothing, so it
+                                # signals nothing. Staged against this transaction;
+                                # published below only once the outer commit landed.
+                                #
+                                # And only when the write changed what a reader is
+                                # served (price or book, `quote_moved_column`). A tick
+                                # that only re-stamped `last_updated` (volume, open
+                                # interest, a due liveness refresh) still writes —
+                                # liveness reads that stamp — but a frame for it sends
+                                # every held page to re-read an unchanged row (ux,
+                                # #9526).
+                                for row in result.all():
+                                    written_outcome_ids.append(row.id)
+                                    if exact_trace is not None:
+                                        with contextlib.suppress(Exception):
+                                            if exact_trace.tracks(batch_marks.get(row.id)):
+                                                written_observations[row.id] = row.last_updated
+                                    if not row.quote_moved:
+                                        stats["quotes_unchanged"] += 1
+                                        continue
+                                    queue_market_change(
+                                        session,
+                                        market_id=row.market_id,
+                                        source="kalshi",
+                                        outcome_observed_at={row.id: row.last_updated},
+                                    )
+
+                        # #6598 / CERT-3182. `rank` is derived from the price this loop
+                        # just moved, and nothing in this module has ever written it —
+                        # so a favourite changing hands mid-game left the board numbered
+                        # by whichever REST poll last saw it, on the exact rows this
+                        # socket exists to keep current.
+                        #
+                        # KEYED ON THE ROWS THAT ACTUALLY WROTE, not on the batch: a
+                        # settled row declined by the #5411 guard changed nothing, and
+                        # re-deriving its market's field would be this socket reaching a
+                        # board it was just refused. Same session, so it lands in the
+                        # transaction that carries the prices.
+                        reranked_markets = {
+                            market_id_by_outcome[oid]
+                            for oid in written_outcome_ids
+                            if oid in market_id_by_outcome
+                        }
+                        if reranked_markets:
+                            stats["ranks_rederived"] += (
+                                await session.execute(
+                                    rerank_market_fields_stmt(sorted(reranked_markets))
+                                )
+                            ).rowcount
+                    if not flush_counted:
+                        stats["flushes"] += 1
+                        flush_counted = True
+                    stats["price_updates"] += len(phase) - declined
+                    # First observations are forced, so their missing rows still
+                    # mean settled/deleted. Repeats may also be skipped by SQL.
+                    first_declined = sum(
+                        oid not in prices.committed_outcome_ids
+                        and oid not in written_outcome_ids
+                        for oid in phase
+                    )
+                    stats["settled_declined"] += first_declined
+                    if declined > first_declined:
+                        stats["repeat_or_settled_declined"] = (
+                            stats.get("repeat_or_settled_declined", 0)
+                            + declined
+                            - first_declined
+                        )
+                    stats["open_contract_prices_written"] += sum(
+                        1 for oid in written_outcome_ids
+                        if oid in open_contract_outcome_ids
+                    )
+                except Exception as exc:
+                    # Q491 — the batch is still in `price_buffer`, so the next flush
+                    # retries it. Before Q491 the buffer was drained up front and a
+                    # failed write discarded those prices outright: the socket only
+                    # refills an outcome when that market ticks again, and 86.7% of open
+                    # Polymarket markets never tick, so one transient error left the
+                    # card on its old number with a stale `last_updated` (#2024).
+                    #
+                    # #10661: a lock timeout retains this component but permits later
+                    # independent components. Other errors still stop the unpaid tail.
+                    lock_timed_out = is_lock_timeout(exc)
+                    unpaid = (
+                        len(phase) if lock_timed_out
+                        else sum(len(p) for p in phases[index:])
+                    )
+                    stats["errors"] += 1
+                    stats["requeued"] += unpaid
+                    if exact_trace is not None:
+                        with contextlib.suppress(Exception):
+                            exact_trace.write_failed(
+                                [batch_marks[oid] for oid in phase if oid in batch_marks],
+                                "LOCK_TIMEOUT" if lock_timed_out else "ROLLED_BACK",
+                            )
+                    logger.exception(
+                        "Kalshi WS: flush error (%d updates retained for retry)", unpaid
+                    )
+                    if lock_timed_out:
+                        # The transaction rolled back; all its prices remain buffered.
+                        # Only proceed to phases the unchanged planner separated.
+                        had_lock_failure = True
+                        if not final_drain:
+                            until = _mono() + PRICE_FLUSH_SECONDS
+                            prices.lock_retry_until.update(dict.fromkeys(phase, until))
+                        continue
+                    return False
+
+                # The transaction has committed. Register debt before any
+                # publication/bookkeeping await can be interrupted.
+                prices.committed_outcome_ids.update(written_outcome_ids)
+                for oid in phase:
+                    prices.lock_retry_until.pop(oid, None)
+                unfinished_price_ids.difference_update(phase)
+                registered = queue_committed(index, phase, written_outcome_ids)
+
+                if exact_trace is not None:
+                    with contextlib.suppress(Exception):
+                        for oid, observed_at in written_observations.items():
+                            exact_trace.committed(batch_marks.get(oid), observed_at)
+                        exact_trace.write_failed(
+                            [batch_marks[oid] for oid in phase
+                             if oid not in written_outcome_ids and oid in batch_marks],
+                            "NO_WRITE_UNCHANGED_SETTLED_OR_MISSING",
+                        )
+
+                # The event refresh uses its own session and committed prices.
+                # Start it before awaiting the separate MARKET notification;
+                # either delivery can progress while the other awaits Redis.
+                if stamping is None or stamping.done():
+                    await stamp_done()
+                    if queued_refresh:
+                        await stamp_start()
+
+                # #9484: keep every committed MARKET notification, including
+                # standalone futures/props which have no event blend.
+                await blend_refresher.publish_market_changes(session)
+
+                # Q491 repair 2 — the write landed, so and only so do these entries
+                # leave the buffer. The `== prob` test is what used to be `setdefault`:
+                # `handle_ticker` may have buffered a FRESHER price for the same outcome
+                # while this write was in flight, and that newer value is the truth, so
+                # it must survive to the next flush rather than be dropped as "already
+                # written". Same contract, enforced at removal instead of at re-queue.
+                async with buffer_lock:
+                    for outcome_id, entry in phase.items():
+                        if price_buffer.get(outcome_id) == entry:
+                            del price_buffer[outcome_id]
+                    if live_event_ids and not final_drain:
+                        yield_written_nonlive_tail(
+                            price_buffer, phase, written_outcome_ids,
+                            cohort_event_ids, live_event_ids, final_drain,
+                        )
+
+                # Admission may fill an unknown bridge during the postcommit
+                # awaits. Recheck at the original trigger boundary as well.
+                queue_committed(index, phase, written_outcome_ids, registered=registered)
+                # Only newly admitted bridge events need another launch. Known
+                # events were already registered before MARKET publication.
+                if stamping is None or stamping.done():
+                    await stamp_done()
+                    if queued_refresh:
+                        await stamp_start()
+            # Lock retries are bounded on their cohorts above. A handled lock
+            # must not add two seconds after unrelated successful work.
+            return not had_lock_failure if final_drain else True
+        except asyncio.CancelledError:
+            cancelled = True
+            raise
+        finally:
+            if cancelled:
+                try:
+                    await stamp_done(cancel=True)
+                finally:
+                    keep_queued()
+            else:
+                try:
+                    await stamp_done()
+                    if queued_refresh:
+                        await stamp_start()
+                        await stamp_done()
+                except asyncio.CancelledError:
+                    # Cancellation landing on the final/error join has the same
+                    # precedence and debt preservation as one during a write.
+                    try:
+                        await stamp_done(cancel=True)
+                    finally:
+                        keep_queued()
+                    raise
 
     async def drain_prices():
         """The LAST flush of this consumer's life — retry, never requeue.
@@ -754,6 +1366,38 @@ async def _run_kalshi_ws_consumer(*, sessions, prices):
                 stranded, FINAL_FLUSH_ATTEMPTS,
             )
 
+    async def join_flush_then_drain():
+        """#10090 review: the cancelled periodic flush — and the stamp it joins
+        on the way out — finishes before the final drain enters the refresher,
+        so two refreshes never share its throttle/retry sets and receipts.
+
+        Joined to COMPLETION, never to a timeout (Root 1648Z): a flush whose
+        rollback outlasts the reap bound is still inside the refresher, so
+        draining then would be the overlap this exists to prevent. Its own
+        DB/socket bounds end it, and `loops_stop` ends a flush that lost its
+        cancellation at its next turn. A second cancellation landing on the
+        join is recorded, not obeyed early: the join and the drain both still
+        run, then the cancellation propagates.
+        """
+        interrupted = None
+        while not flush_task.done():
+            try:
+                await asyncio.wait({flush_task}, timeout=LOOP_REAP_TIMEOUT_S)
+            except asyncio.CancelledError as exc:
+                interrupted = exc
+                continue
+            if not flush_task.done():
+                logger.error(
+                    "Kalshi WS: cancelled flush still running after %.0fs; "
+                    "the final drain waits for it",
+                    LOOP_REAP_TIMEOUT_S,
+                )
+        try:
+            await drain_prices()
+        finally:
+            if interrupted is not None:
+                raise interrupted
+
     def _parse_dollar(val) -> float | None:
         if val is None or val == "":
             return None
@@ -763,12 +1407,16 @@ async def _run_kalshi_ws_consumer(*, sessions, prices):
             return None
 
     async def handle_ticker(msg: dict):
+        exact_trace = getattr(tail_receipts, "exact_trace", None)
         ticker = (msg.get("market_ticker") or msg.get("ticker", "")).upper()
         ids = ticker_to_ids.get(ticker) or open_contract_ids.get(ticker)
         if not ids:
+            if exact_trace is not None:
+                with contextlib.suppress(Exception):
+                    exact_trace.decided(msg, reason="UNMAPPED")
             return
 
-        _, outcome_id = ids
+        market_id, outcome_id = ids
         # #10090 — a message for this game's contract, before the price policy.
         with contextlib.suppress(Exception):
             tail_receipts.note_raw(event_id_by_outcome.get(outcome_id))
@@ -791,6 +1439,15 @@ async def _run_kalshi_ws_consumer(*, sessions, prices):
         # The socket's historical open bounds, kept: a terminal 0 or 1 is
         # settlement's to write (`handle_lifecycle`), never a streamed tick's.
         if prob is None or not 0 < prob < 1:
+            if exact_trace is not None:
+                with contextlib.suppress(Exception):
+                    exact_trace.decided(
+                        msg, reason=("MISSING_OR_INVALID_DOLLAR_FIELDS"
+                                     if last_price is None and yes_bid is None and yes_ask is None
+                                     else "PRICE_POLICY_REFUSED" if prob is None else "TERMINAL_OR_INVALID"),
+                        market=market_id, outcome=outcome_id,
+                        event=event_id_by_outcome.get(outcome_id), probability=prob,
+                    )
             return
 
         async with buffer_lock:
@@ -805,6 +1462,16 @@ async def _run_kalshi_ws_consumer(*, sessions, prices):
                 mark = None
             if mark is not None:
                 input_marks[outcome_id] = mark
+            if exact_trace is not None:
+                with contextlib.suppress(Exception):
+                    exact_trace.decided(
+                        msg, reason="ACCEPTED", market=market_id, outcome=outcome_id,
+                        event=event_id_by_outcome.get(outcome_id), probability=prob, mark=mark,
+                    )
+
+    # Shared by every auxiliary socket and the main/fallback open-leg route.
+    # Wait before opening a session; unwind the transaction before the permit.
+    open_grade_admission = asyncio.Semaphore(OPEN_CONTRACT_GRADE_CONCURRENCY)
 
     async def handle_open_contract_lifecycle(ticker: str, msg: dict):
         """#10022: one open-contract leg, graded by its own frame — never the
@@ -817,7 +1484,7 @@ async def _run_kalshi_ws_consumer(*, sessions, prices):
             return
         market_id, outcome_id = open_contract_ids[ticker]
         try:
-            async with get_task_session() as session:
+            async with open_grade_admission, get_task_session() as session:
                 graded, resolved = await grade_open_contract_leg(
                     session, market_id=market_id, outcome_id=outcome_id,
                     state=lifecycle_state(msg), result=msg.get("result"),
@@ -863,6 +1530,10 @@ async def _run_kalshi_ws_consumer(*, sessions, prices):
         ticker = (msg.get("market_ticker") or "").upper()
         if ticker in open_contract_ids and ticker not in ticker_to_ids:
             await handle_open_contract_lifecycle(ticker, msg)
+
+    async def prepare_shard_lifecycle(msg: dict):
+        """Defer the per-leg grader; it has no buffer-derived closing input."""
+        return handle_shard_lifecycle
 
     _UNCAPTURED = object()
 
@@ -999,8 +1670,32 @@ async def _run_kalshi_ws_consumer(*, sessions, prices):
     # a flush still ends the loop at its next turn (`run_flush_cadence`).
     loops_stop = asyncio.Event()
 
+    # #10090: each flush's duration, and its publish and stamp time, for the
+    # stats line (`_FlushTimings`; the price save is timed by `prices`).
+    # `refresh_pending` stamps through `self.refresh`, so it is timed there.
+    for name, bucket in (
+        ("publish_market_changes", "publish"),
+        ("refresh", "stamp"),
+    ):
+        method = getattr(blend_refresher, name, None)
+        if method is not None:
+            setattr(blend_refresher, name, flush_timings.timed(bucket, method))
+
+    async def timed_flush(flush_started):
+        started = time.monotonic()
+        try:
+            return await flush_prices(flush_started)
+        finally:
+            flush_timings.flushed(time.monotonic() - started)
+
     async def flush_loop():
-        await run_flush_cadence(flush_prices, PRICE_FLUSH_SECONDS, stop=loops_stop)
+        if failed_retry is None:
+            await run_flush_cadence(timed_flush, flush_period, stop=loops_stop)
+        else:
+            await run_flush_cadence(
+                timed_flush, flush_period, stop=loops_stop,
+                failed_retry_interval_s=failed_retry,
+            )
 
     # -- Periodic stats logging --
     async def stats_loop():
@@ -1016,7 +1711,8 @@ async def _run_kalshi_ws_consumer(*, sessions, prices):
             logger.info(
                 "Kalshi WS: %d updates, %d flushes, %d settlements, %d errors, "
                 "%d msgs | blend stamped=%d no_reading=%d throttled=%d errors=%d "
-                "lock_skipped=%d unobserved=%d stale=%d",
+                "lock_skipped=%d unobserved=%d stale=%d | %s deferred=%d "
+                "preempted=%d live=%d",
                 stats["price_updates"], stats["flushes"],
                 stats["settlements"], stats["errors"],
                 ws.stats.get("messages", 0),
@@ -1026,7 +1722,11 @@ async def _run_kalshi_ws_consumer(*, sessions, prices):
                 blend.get("unobserved_skipped", 0),
                 # #8910: readings refused as older than the stored observation.
                 blend.get("stale_readings_refused", 0),
+                # #10090: this minute's flush phases, then cumulative deferrals.
+                flush_timings.line(), stats["budget_deferred"],
+                stats["live_preempted"], len(live_event_ids),
             )
+            flush_timings.reset()
             _report_liveness(
                 "kalshi", "streaming" if ws.is_connected else "disconnected",
                 legs=len(market_tickers),
@@ -1056,6 +1756,9 @@ async def _run_kalshi_ws_consumer(*, sessions, prices):
         # slate entry — the map excluded every ticker the slate carries.
         for outcome_id, event_id in bridge.items():
             event_id_by_outcome.setdefault(outcome_id, event_id)
+            # Bridge candidates passed canonical winner admission; keep this
+            # new/refreshed map member speaking even if an old entry existed.
+            non_blend_outcome_ids.discard(outcome_id)
         stats["open_contract_bridged_outcomes"] = len(bridge)
         stats["open_contract_bridged_events"] = len(set(bridge.values()))
         # An open contract's field is re-ranked like a linked one's.
@@ -1064,13 +1767,24 @@ async def _run_kalshi_ws_consumer(*, sessions, prices):
         )
         open_contract_outcome_ids.update(oid for _, oid in ids.values())
         open_contract_ids.update(ids)
+        if exact_trace is not None:
+            with contextlib.suppress(Exception):
+                exact_trace.admission(
+                    ticker_to_ids, open_contract_ids, event_id_by_outcome, phase="OPEN_ADMISSION",
+                    open_status=("UNAVAILABLE_READ_FAILED" if failed
+                                 else "SELECTED" if open_contract_prices_enabled() else "DISABLED"),
+                )
         shards = shard_tickers(ids)
         stats["open_contract_tickers"] = len(ids)
         stats["open_contract_connections"] = len(shards)
-        for shard in shards:
+        prepared_shards = prepared_shard_indexes(ids, shards)
+        for shard_index, shard in enumerate(shards):
             sock = KalshiWebSocket()
+            sock.exact_trace = exact_trace
             sock.on_ticker = handle_ticker
             sock.on_lifecycle = handle_shard_lifecycle
+            if shard_index in prepared_shards:
+                sock.on_lifecycle_prepare = prepare_shard_lifecycle
             open_contract_sockets.append(sock)
             open_contract_tasks.append(
                 asyncio.create_task(
@@ -1114,7 +1828,11 @@ async def _run_kalshi_ws_consumer(*, sessions, prices):
                 )
                 .distinct()
             )
-            return unadmitted_live_events(result.all(), legged_market_ids)
+            rows = list(result.all())
+        # #10090: the same read names the live games the flush writes first.
+        live_event_ids.clear()
+        live_event_ids.update(row[0] for row in rows)
+        return unadmitted_live_events(rows, legged_market_ids)
 
     try:
         # Q460: RECYCLE, don't run forever. The subscription list above is built
@@ -1178,7 +1896,7 @@ async def _run_kalshi_ws_consumer(*, sessions, prices):
         # Q491 repair (CERT-654 BLOCK): the last flush has no successor, so it
         # must RETRY rather than requeue into a buffer nobody will read again.
         try:
-            await drain_prices()
+            await join_flush_then_drain()
         finally:
             # #9462 review: the drain returns once the price BUFFER is empty,
             # but a price it (or the last flush) committed inside the 2 s

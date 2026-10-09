@@ -101,8 +101,32 @@ class _Session:
         if hasattr(statement, "text"):  # SET lock_timeout
             return SimpleNamespace()
         self._selects += 1
-        rows = self._market_rows if self._selects == 1 else []
-        return SimpleNamespace(all=lambda: rows, scalars=lambda: iter(rows))
+        from app.tasks.live_blend_refresh import (
+            PREPARED_EVENT_FIELDS, PREPARED_MARKET_FIELDS, PREPARED_OUTCOME_FIELDS,
+        )
+        columns = list(getattr(statement, "selected_columns", ()))
+        column = columns[len(PREPARED_MARKET_FIELDS) + PREPARED_EVENT_FIELDS.index(
+            "win_probability_sources"
+        )] if columns else None
+        source = column.element.right.value if hasattr(column, "element") else None
+
+        def field(obj, key):
+            raw = getattr(obj, key, None)
+            if key == "win_probability_sources" and source is not None:
+                return raw.get(source) if isinstance(raw, dict) else None
+            return raw
+
+        rows = [
+            tuple(
+                field(obj, key)
+                for obj, fields in (
+                    (market, PREPARED_MARKET_FIELDS),
+                    (event, PREPARED_EVENT_FIELDS),
+                    (None, PREPARED_OUTCOME_FIELDS),
+                ) for key in fields
+            ) for market, event in self._market_rows
+        ]
+        return SimpleNamespace(all=lambda: rows)
 
     def add(self, row):
         pass

@@ -884,6 +884,8 @@ _SOCCER_TOP_LEAGUE_GAME_TICKER_TO_SPORT_KEY: dict[str, str] = {
 KALSHI_TICKER_TO_SPORT_KEY: dict[str, str] = {
     # Major US sports — moneyline
     "kxnbagame": "basketball_nba",
+    # #10090: full-game winner contracts for the EuroLeague fixtures we hold.
+    "kxeuroleaguegame": "basketball_euroleague",
     "kxnflgame": "americanfootball_nfl",
     "kxnhlgame": "icehockey_nhl",
     "kxmlbgame": "baseball_mlb",
@@ -2121,6 +2123,7 @@ KALSHI_TICKER_PREFIXES_NOT_A_SPORT: frozenset[str] = frozenset(
 
 KALSHI_TICKER_TO_DISPLAY_LABEL: dict[str, str] = {
     "kxnbagame": "NBA",
+    "kxeuroleaguegame": "EuroLeague",
     "kxnflgame": "NFL",
     "kxnhlgame": "NHL",
     "kxmlbgame": "MLB",

@@ -150,6 +150,9 @@ class Redis:
     def __init__(self):
         self.keys = []
 
+    async def mget(self, keys):
+        return [await self.get(key) for key in keys]
+
     async def get(self, key):
         self.keys.append(key)
         # A previous public page must not substitute for a fresh publication.

@@ -17,12 +17,12 @@ is the refresher's, upstream (`DEFAULT_MIN_REFRESH_INTERVAL_S`: the 2026-08-30
 ruling's "≤1 update/5 s", moved to one per 2 s flush for Alex's 2026-09-28 live
 benchmark). A second timer in this file could only drift away from the first.
 
-WHAT THIS FILE MUST NOT DO. It shares the web dyno's two uvicorn event loops
-with `/api/feed`. Every connection here is long-lived, so any per-tick database
-work or blocking call would put feed latency behind stream fanout for every
-other request on the same loop. After the bounded live-gate and fold lookup at connect there
-is no database access on this path at all: frames carry their own values, and
-the client's initial state comes from the REST payload the page already fetched.
+It shares the web dyno's event loop with `/api/feed`. Single-row frames remain
+database-free after connection. Actual folded streams forward the raw update
+immediately, then request a bounded compact authoritative quote shared across
+recipients of that update. Projection never blocks the Redis fanout reader and
+failure retains the existing invalidation/detail fallback. No full page or
+history read belongs on this path.
 
 AND IT MUST NOT OPEN A REDIS CONNECTION PER STREAM (#6515). It used to: the
 uncached `get_async_redis_client()` lived inside `_stream`, so N readers meant N
@@ -40,6 +40,7 @@ import asyncio
 import json
 import logging
 import os
+from collections import deque
 from datetime import datetime, timedelta, timezone
 from typing import AsyncIterator, Optional
 
@@ -52,7 +53,7 @@ from sqlalchemy.orm import selectinload
 from app.models import Event, FuturesMarket
 from app.services.database import async_session_maker
 from app.utils.live_push import (
-    MAX_FRAME_AGE_S, event_channel, parse_frame, sse_encode,
+    MAX_FRAME_AGE_S, event_channel, latest_frames, parse_frame, sse_encode,
 )
 
 logger = logging.getLogger(__name__)
@@ -360,6 +361,10 @@ async def _stream(
         yield f"retry: {RETRY_MS}\n\n"
         yield sse_encode(json.dumps({"event_id": event_id}), event="open")
 
+        # Replay immediately after initiating subscription. This is best-effort:
+        # Redis may not have acknowledged SUBSCRIBE yet. The existing live path
+        # and client revision guards handle later and duplicate frames.
+        replay = deque(await latest_frames([event_id, *(contributor_ids or [])]))
         last_beat = started
         recovery_generation = 0
         while True:
@@ -378,7 +383,10 @@ async def _stream(
             # when the market is completely silent, and what keeps this
             # coroutine yielding control back to the loop that is also serving
             # `/api/feed`.
-            origin_id, payload = await subscription.next(timeout=FRAME_WAIT_S)
+            if replay:
+                origin_id, payload = replay.popleft()
+            else:
+                origin_id, payload = await subscription.next(timeout=FRAME_WAIT_S)
             if isinstance(payload, Recovery):
                 # Fold subscriptions share a hub generation; emit it only once.
                 if payload.generation > recovery_generation:
@@ -405,11 +413,18 @@ async def _stream(
                         and frame["event_id"] == origin_id and _frame_is_fresh(
                             frame, datetime.now(timezone.utc)
                         )):
+                    incoming = frame
                     if origin_id != event_id:
                         frame = _fold_invalidation(frame, event_id, origin_id)
                         if frame is None:
                             continue
-                    yield sse_encode(json.dumps(frame), event="probability")
+                    project = getattr(hub, "project_folded_quote", None)
+                    pending_quote = (
+                        len(subscription.subscriptions) > 1 and callable(project)
+                        and not (origin_id == event_id and frame.get("status") not in QUOTE_STATUSES)
+                    )
+                    raw = {**frame, "folded_quote_pending": True} if pending_quote else frame
+                    yield sse_encode(json.dumps(raw), event="probability")
                     # A frame is as good as a heartbeat for keeping the router
                     # from reaping us; a busy market should not also pay for
                     # pings it does not need.
@@ -422,6 +437,16 @@ async def _stream(
                             json.dumps({"reason": "not_live"}), event="closed"
                         )
                         return
+                    if pending_quote:
+                        quote = await project(event_id, incoming)
+                        # Every promise completes, including null on failure.
+                        # Legacy clients ignore this named event; modern clients
+                        # can defer raw invalidation and fall back only on null.
+                        yield sse_encode(
+                            json.dumps({**frame, "folded_quote_pending": False,
+                                        "folded_quote": quote}),
+                            event="folded_probability",
+                        )
                 continue
 
             if loop_now - last_beat >= HEARTBEAT_INTERVAL_S:

@@ -528,7 +528,7 @@ export async function searchEvents(params: {
   tags?: string[];
   page?: number;
   per_page?: number;
-}): Promise<SearchResponse> {
+}, options?: { signal?: AbortSignal }): Promise<SearchResponse> {
   const searchParams = new URLSearchParams();
   searchParams.set("q", params.q);
   if (params.sport) searchParams.set("sport", params.sport);
@@ -541,7 +541,12 @@ export async function searchEvents(params: {
   // attributed via the Bearer token apiFetch attaches.
   const sessionId = getDiscoverSessionId();
   const headers = sessionId ? { "x-session-id": sessionId } : undefined;
-  return apiFetch<SearchResponse>(`/api/events/search?${searchParams.toString()}`, { headers });
+  // #10727: the caller's signal cancels a superseded results request — apiFetch
+  // aborts the in-flight attempt and skips its retries.
+  return apiFetch<SearchResponse>(`/api/events/search?${searchParams.toString()}`, {
+    headers,
+    signal: options?.signal,
+  });
 }
 
 /**

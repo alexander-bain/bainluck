@@ -893,7 +893,15 @@ async def _drive(
     monkeypatch.setattr(redis_state, "get_async_redis_client", lambda: rig.redis)
     monkeypatch.setattr(websockets, "connect", lambda *a, **kw: _VenueSocket(rig))
     monkeypatch.setattr(task_base, "get_task_session", lambda *a, **kw: _Ctx())
-    return await poly_task._run_polymarket_ws_consumer()
+    # The open client now survives routine game-slate refresh. These price
+    # controls stop explicitly at their original bounded observation window;
+    # final drain/session disposal still run through the real consumer.
+    stop = asyncio.Event()
+    timer = asyncio.get_running_loop().call_later(refresh, stop.set)
+    try:
+        return await poly_task._run_polymarket_ws_consumer(stop=stop)
+    finally:
+        timer.cancel()
 
 
 def _stored(engine, outcome_id):
@@ -1036,7 +1044,7 @@ class TestTheConsumer:
         assert None not in rig.subscribes, "an empty list subscribes to everything"
         assert rig.subscribes == [sorted(["711", "811", "911"])]
         assert _stored(engine, 91) == pytest.approx(0.42)
-        assert stats["status"] == "resubscribe"
+        assert stats["status"] == "stopped"
 
     async def test_no_slate_and_no_open_contracts_is_still_no_markets(
         self, monkeypatch, tmp_path

@@ -28,16 +28,29 @@ final class AGamePageReadsAgainWhenTheAppReturns1833Tests: XCTestCase {
     }
 
     /// Serves `script` in order, then repeats its last entry, counting detail
-    /// reads. Every other endpoint declines.
+    /// fresh reads. Ordinary detail reads repeat the held value, modelling the
+    /// device/server lease. Every other endpoint declines.
     private nonisolated final class ScriptedClient: EventDetailProviding, @unchecked Sendable {
         struct Declined: Error {}
         private let lock = NSLock()
         private var script: [EventDetail]
         private var last: EventDetail?
         private var details = 0
+        private var cachedDetails = 0
         init(_ script: [EventDetail]) { self.script = script }
         var detailCount: Int { lock.withLock { details } }
+        var cachedDetailCount: Int { lock.withLock { cachedDetails } }
         func fetchEvent(id: Int) async throws -> EventDetail {
+            // A cached read could replay the pre-background price. Initial
+            // opens and returns must select the fresh endpoint instead.
+            let cached = lock.withLock { () -> EventDetail? in
+                cachedDetails += 1
+                return last ?? script.first
+            }
+            guard let cached else { throw Declined() }
+            return cached
+        }
+        func fetchFreshEvent(id: Int) async throws -> EventDetail {
             let next: EventDetail? = lock.withLock {
                 details += 1
                 if !script.isEmpty { last = script.removeFirst() }
@@ -88,6 +101,7 @@ final class AGamePageReadsAgainWhenTheAppReturns1833Tests: XCTestCase {
         await vm.load()
         XCTAssertEqual(vm.event?.status, "live")
         XCTAssertEqual(client.detailCount, 1)
+        XCTAssertEqual(client.cachedDetailCount, 0, "an open must request current probabilities")
         return (vm, client)
     }
 
@@ -106,6 +120,7 @@ final class AGamePageReadsAgainWhenTheAppReturns1833Tests: XCTestCase {
         await read?.value
 
         XCTAssertEqual(client.detailCount, 2)
+        XCTAssertEqual(client.cachedDetailCount, 0, "a return must not replay its cached price")
         XCTAssertEqual(vm.event?.status, "completed", "the reopened page still reads live")
         XCTAssertFalse(vm.isAutoRefreshing, "a settled page kept polling")
     }
@@ -126,6 +141,21 @@ final class AGamePageReadsAgainWhenTheAppReturns1833Tests: XCTestCase {
     }
 
     // MARK: - What is not a return
+
+    func testRoutineLoadKeepsTheCacheButManualRefreshAsksFresh() async throws {
+        let (vm, client) = try await heldLivePage(then: try game(status: "completed"))
+        defer { vm.stopRefresh() }
+
+        await vm.load(fresh: false)
+        XCTAssertEqual(client.cachedDetailCount, 1)
+        XCTAssertEqual(client.detailCount, 1, "routine loads must not start a fresh build")
+        XCTAssertEqual(vm.event?.status, "live")
+
+        await vm.load()
+        XCTAssertEqual(client.cachedDetailCount, 1)
+        XCTAssertEqual(client.detailCount, 2)
+        XCTAssertEqual(vm.event?.status, "completed", "manual refresh must request the current detail")
+    }
 
     /// Control Center or a notification pulled down: the app kept running.
     func testAnInactiveSceneIsNotAReturn() async throws {

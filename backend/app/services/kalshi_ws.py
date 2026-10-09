@@ -22,6 +22,23 @@ WS_URL = "wss://api.elections.kalshi.com/trade-api/ws/v2"
 WS_SIGN_PATH = "/trade-api/ws/v2"
 
 
+async def _cooperative_messages(socket):
+    """Give ready probability writers a turn during an already-buffered burst.
+
+    A cached receive and an uncontended inline callback need not suspend.
+    Yield between processed frames, including ignored/invalid inputs, before
+    consuming the next one. Dispatch retains its existing settlement ordering.
+    """
+    processed = 0
+    async for raw in socket:
+        yield raw
+        raw = None
+        processed += 1
+        if processed >= 32:
+            processed = 0
+            await asyncio.sleep(0)
+
+
 # Includes lifecycle callbacks and quotes queued behind their own event's
 # settlement. The reader backpressures at this bound; it never drops a frame.
 MAX_PENDING_CALLBACKS = 64
@@ -204,6 +221,8 @@ class KalshiWebSocket:
         self.on_lifecycle: Optional[Callable] = None
         self.on_lifecycle_prepare: Optional[Callable] = None
         self.on_trade: Optional[Callable] = None
+        # #10702: supplied by the consumer, shared across its existing sockets.
+        self.exact_trace = None
 
     def _ensure_key(self):
         if self._private_key is None:
@@ -242,6 +261,13 @@ class KalshiWebSocket:
                     ping_timeout=10,
                     close_timeout=5,
                 ) as ws:
+                    connection = None
+                    if self.exact_trace is not None:
+                        try:
+                            import uuid
+                            connection = uuid.uuid4().hex[:12]
+                        except Exception:
+                            pass
                     self._connected = True
                     if self._reconnect_count > 0:
                         logger.info(
@@ -266,8 +292,16 @@ class KalshiWebSocket:
                             "params": params,
                         }
                         await ws.send(json.dumps(cmd))
+                        if self.exact_trace is not None and connection is not None:
+                            try:
+                                self.exact_trace.sent(
+                                    connection, cmd["id"], channel,
+                                    params.get("market_tickers"), subscribe_all,
+                                )
+                            except Exception:
+                                pass
                         logger.info(
-                            "Subscribed to %s (%s)",
+                            "Subscription SENT to %s (%s)",
                             channel,
                             (
                                 f"{len(market_tickers)} tickers"
@@ -278,15 +312,24 @@ class KalshiWebSocket:
 
                     async with _KalshiCallbackDispatch() as dispatch:
                         try:
-                            async for raw in ws:
+                            async for raw in _cooperative_messages(ws):
                                 self._message_count += 1
                                 try:
                                     data = json.loads(raw)
                                 except (json.JSONDecodeError, TypeError):
                                     continue
+                                finally:
+                                    raw = None
 
                                 msg_type = data.get("type")
                                 payload = data.get("msg", data)
+                                if self.exact_trace is not None and connection is not None:
+                                    try:
+                                        self.exact_trace.response(connection, data)
+                                        if msg_type == "ticker":
+                                            self.exact_trace.received(connection, payload)
+                                    except Exception:
+                                        pass
                                 if msg_type == "ticker" and self.on_ticker:
                                     await dispatch.submit(
                                         self.on_ticker, payload, "Ticker"

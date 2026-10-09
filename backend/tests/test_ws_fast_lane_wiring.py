@@ -175,8 +175,11 @@ def _flush_statements(flush):
     """
     for stmt in flush.body:
         yield stmt
-        if isinstance(stmt, ast.For):
-            yield from stmt.body
+        # #10090 pipelined stamps: the Kalshi phase loop sits in the try that
+        # owns its in-flight stamp, so look one level into a top-level try.
+        for loop in (stmt.body if isinstance(stmt, ast.Try) else [stmt]):
+            if isinstance(loop, ast.For):
+                yield from loop.body
 
 
 CONSUMERS = [
@@ -436,8 +439,8 @@ def _exec_flush(module, consumer_name: str, namespace: dict):
     """The consumer's REAL `flush_prices` body, compiled against `namespace`.
 
     The closure cannot be reached without a venue socket and a database, but its
-    quiet-flush branch touches only three names, so it can run for real. A name
-    the branch should not reach is simply absent: touching it is a NameError.
+    run-scoped receipt and quiet-flush dependencies are supplied so it can run
+    for real. Transaction-only names are absent: touching them is a NameError.
     """
     fn = _flush_function(module, consumer_name)
     code = compile(
@@ -448,8 +451,28 @@ def _exec_flush(module, consumer_name: str, namespace: dict):
     return namespace["flush_prices"]
 
 
-async def _no_withdrawals():
+async def _no_withdrawals(**_kw):
     return []
+
+
+def _quiet_namespace(module, refresher):
+    import asyncio
+
+    return {
+        "buffer_lock": asyncio.Lock(),
+        "price_buffer": {},
+        "blend_refresher": refresher,
+        "tail_receipts": refresher.receipts,
+        # #9934: the Polymarket flush also asks its wide books; none here.
+        "flush_withdrawals": _no_withdrawals,
+        # #10090: and splits off its standalone legs; none here either.
+        "standalone_open_outcome_ids": getattr(
+            module, "standalone_open_outcome_ids", None
+        ),
+        "open_outcome_ids": set(),
+        "event_id_by_outcome": {},
+        "open_complement_of": {},
+    }
 
 
 class TestAQuietFlushServicesLockDeferredStamps:
@@ -463,10 +486,11 @@ class TestAQuietFlushServicesLockDeferredStamps:
     def test_a_pending_retry_is_stamped_on_an_empty_flush(self):
         import asyncio
 
-        from app.tasks.live_blend_refresh import LiveBlendRefresher
+        from app.tasks.live_blend_refresh import LiveBlendRefresher, TailReceipts
 
         for module, consumer in CONSUMERS:
             refresher = LiveBlendRefresher("kalshi")
+            refresher.receipts = TailReceipts("kalshi")
             refresher._lock_retry = {15318131}
             seen = []
 
@@ -474,13 +498,9 @@ class TestAQuietFlushServicesLockDeferredStamps:
                 _seen.append(sorted(event_ids))
 
             refresher._refresh_batch = _batch
-            flush = _exec_flush(module, consumer, {
-                "buffer_lock": asyncio.Lock(),
-                "price_buffer": {},
-                "blend_refresher": refresher,
-                # #9934: the Polymarket flush also asks its wide books; none here.
-                "flush_withdrawals": _no_withdrawals,
-            })
+            flush = _exec_flush(
+                module, consumer, _quiet_namespace(module, refresher)
+            )
             asyncio.run(flush())
             assert seen == [[15318131]], f"{consumer}: quiet flush skipped the retry"
             assert refresher._lock_retry == set(), consumer
@@ -488,21 +508,18 @@ class TestAQuietFlushServicesLockDeferredStamps:
     def test_an_empty_flush_with_nothing_queued_does_no_work(self):
         import asyncio
 
-        from app.tasks.live_blend_refresh import LiveBlendRefresher
+        from app.tasks.live_blend_refresh import LiveBlendRefresher, TailReceipts
 
         for module, consumer in CONSUMERS:
             refresher = LiveBlendRefresher("kalshi")
+            refresher.receipts = TailReceipts("kalshi")
 
             async def _must_not_run(event_ids, now):
                 raise AssertionError(f"{consumer}: opened a batch for nothing")
 
             refresher._refresh_batch = _must_not_run
-            flush = _exec_flush(module, consumer, {
-                "buffer_lock": asyncio.Lock(),
-                "price_buffer": {},
-                "blend_refresher": refresher,
-                # #9934: the Polymarket flush also asks its wide books; none here.
-                "flush_withdrawals": _no_withdrawals,
-            })
+            flush = _exec_flush(
+                module, consumer, _quiet_namespace(module, refresher)
+            )
             asyncio.run(flush())
             assert refresher.stats["considered"] == 0, consumer

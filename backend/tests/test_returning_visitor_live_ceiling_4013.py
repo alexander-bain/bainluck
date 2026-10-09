@@ -212,6 +212,9 @@ class _SeededRedis:
         self.gets = []
         self.setex_calls = []
 
+    async def mget(self, keys):
+        return [await self.get(key) for key in keys]
+
     async def get(self, key):
         self.gets.append(key)
         return self.contents.get(key)

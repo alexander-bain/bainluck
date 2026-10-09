@@ -140,7 +140,7 @@ class _Recording(lbr.LiveBlendRefresher):
         self.batches: list[tuple[list[int], float]] = []
 
     async def _refresh_batch(
-        self, event_ids, now, *, prepared=None, on_committed=None
+        self, event_ids, now, *, prepared=None, on_committed=None, publish_committed=None
     ):
         self.batches.append((sorted(event_ids), now))
         for event_id in event_ids:

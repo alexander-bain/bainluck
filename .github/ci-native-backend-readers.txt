@@ -1,0 +1,27 @@
+# #10708 INACTIVE native-reader preparation; ci.yml still maps native to full.
+# Known direct-signal readers and conservative over-inclusions, NOT a complete
+# transitive reader boundary. Before activation resolve test/helper/conftest/
+# script edges and DB reach, or retain full coverage for unresolved cases.
+# test_mutation_guard retains its origin/master...HEAD invocation, NOT the
+# classifier's caller-supplied BASE HEAD range. Pass B range remains a hold.
+# Resolver emits nothing unless every normalized backend-relative path is valid.
+tests/test_cold_path_charter.py
+tests/test_ios_codable_nonisolated_1775.py
+tests/test_feed_prewarm.py
+tests/test_grouped_feed_cache.py
+tests/test_futures_movers_warm_p115.py
+tests/test_discover_provenance.py
+tests/test_ios_interest_tile_names_readable_6681.py
+tests/test_ios_missing_probability_render.py
+tests/test_ios_settled_props_caption_6826.py
+tests/test_combat_pair_display_6816.py
+tests/test_watch_fresh_face_receipt_10577.py
+tests/test_watch_ui_timeout_scope.py
+tests/test_mutation_guard.py
+tests/test_native_residue_range_10708.py
+tests/test_rail_clock_is_the_recovered_kickoff_6031.py
+tests/test_native_gates_compile_provenance.py
+tests/test_native_gates_tree_resolution.py
+tests/test_native_shoot_binary_resolution.py
+tests/test_native_upload_preflight.py
+tests/test_ci_cross_tier_manifest.py

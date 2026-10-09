@@ -297,6 +297,55 @@ enum TeamShortName {
         "nig", "sht", "tit", "twa", "wtf", "jiz", "pis", "sex", "hoe",
     ]
 
+    /// Three-glyph badges that read as a RESULT (#10714, the iPhone twin of #10690).
+    ///
+    /// A photo-less player's circle is lettered by `abbreviation`, and a person's
+    /// badge is the surname's first three letters: "Chak Lam Coleman Wong" on
+    /// tennis painted **`WON`** on the event hero, beside the real WON chip after
+    /// the final (/events/15326071). The Discover tiles paint "Learner Tien" `TIE`,
+    /// "Dallas Wings" `WIN` and "Denver Outlaws" `OUT`.
+    ///
+    /// Kept APART from `unshippableBadges`, as the browser keeps its
+    /// `RESULT_WORD_BADGES`: `abbreviation` mirrors `teamCrestBadge`
+    /// test-for-test, and these words are only wrong on a tile a reader can
+    /// mistake for a status chip. Compared out of source with the browser's set by
+    /// `teamDesignatorParityAcrossClients.test.ts`.
+    private static let resultWordBadges: Set<String> = [
+        "won", "win", "tie", "out",
+    ]
+
+    /// `badge` as a reader-facing tile may paint it: unchanged, unless it spells a
+    /// result word, in which case it is re-lettered from `name` — the browser's
+    /// `shippableCrestBadge` arm for #10690, so both clients draw the same tile.
+    ///
+    /// A PERSON takes first and last initial ("Chak Lam Coleman Wong" `CW`), which
+    /// is how a reader abbreviates a person; a club takes its initials, capped at
+    /// three ("Dallas Wings" `DW`). A one-word person, or a re-lettering that is
+    /// itself refused, falls back to a first initial per space-separated word
+    /// ("Wong" `W`) — the browser's fallback.
+    static func refusingResultWord(_ badge: String, name: String, sportKey: String? = nil) -> String {
+        guard resultWordBadges.contains(badge.lowercased()) else { return badge }
+        let shippable = { (candidate: String) in
+            !candidate.isEmpty
+                && !unshippableBadges.contains(candidate.lowercased())
+                && !resultWordBadges.contains(candidate.lowercased())
+                && !candidate.contains(where: \.isWhitespace)
+        }
+        let full = name.trimmingCharacters(in: .whitespacesAndNewlines)
+        let words = full.components(separatedBy: tokenSeparators).map(bareToken).filter { !$0.isEmpty }
+        let relettered: String
+        if !namesAPerson(sportKey: sportKey) {
+            relettered = String(words.compactMap(\.first).prefix(3)).uppercased()
+        } else if words.count >= 2, let first = words.first?.first, let last = words.last?.first {
+            relettered = String([first, last]).uppercased()
+        } else {
+            relettered = ""
+        }
+        if shippable(relettered) { return relettered }
+        let initials = String(full.split(separator: " ").compactMap(\.first).prefix(3)).uppercased()
+        return shippable(initials) ? initials : ""
+    }
+
     /// The sport keys whose competitor is a PERSON rather than a club.
     ///
     /// #4624 — the discriminator #4466 said did not exist in the string, and it

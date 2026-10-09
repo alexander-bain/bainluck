@@ -346,3 +346,38 @@ def shard_tickers(
     ordered = sorted(tickers)
     size = max(1, int(per_connection))
     return [ordered[i:i + size] for i in range(0, len(ordered), size)]
+
+
+def prepared_shard_indexes(
+    ids: Mapping[str, tuple[int, int]], shards: list[list[str]],
+) -> set[int]:
+    """Opt in only when each market has one key and that key owns one shard.
+
+    Numeric shard boundaries can split sibling tickers. Ambiguous or split
+    cohorts keep their original inline callback on every affected shard.
+    This is a finite admission check, never a per-frame queue or history.
+    """
+    keys = {}
+    market_keys = {}
+    for ticker, (market_id, _outcome_id) in ids.items():
+        parts = ticker.upper().rsplit("-", 1) if isinstance(ticker, str) else []
+        key = parts[0] if len(parts) == 2 and all(parts) else None
+        keys[ticker] = key
+        market_keys.setdefault(market_id, set()).add(key)
+    owners = {}
+    for index, shard in enumerate(shards):
+        for ticker in shard:
+            owners.setdefault(keys.get(ticker), set()).add(index)
+    ambiguous = {
+        market_id for market_id, cohort in market_keys.items()
+        if len(cohort) != 1 or None in cohort
+    }
+    return {
+        index for index, shard in enumerate(shards)
+        if shard and all(
+            ticker in ids and keys[ticker] is not None
+            and ids[ticker][0] not in ambiguous
+            and len(owners[keys[ticker]]) == 1
+            for ticker in shard
+        )
+    }

@@ -56,6 +56,9 @@ class _Redis:
         self.reads: list[str] = []
         self.setex_keys: list[str] = []
 
+    async def mget(self, keys):
+        return [await self.get(key) for key in keys]
+
     async def get(self, key, *a, **k):
         self.reads.append(key)
         return self._kill_value if key == self._kill_key else None

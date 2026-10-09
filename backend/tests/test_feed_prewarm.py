@@ -490,9 +490,9 @@ def test_warm_limit_tracks_the_frontend_page_limit():
 def test_native_warm_shape_tracks_the_ios_first_page_limit():
     """Pin against the Swift constant, not a copy of the number.
 
-    LAT-P089. The native shape is enrolled precisely BECAUSE its limit differs
-    from the web's; a stale copy of that number here warms a key the app never
-    asks for, which fails exactly as silently as warming nothing.
+    LAT-P089. Native must request an enrolled warm shape. It may share the web's
+    shape; the descriptive label is not part of the query or cache key. Older
+    installed apps can retain their distinct 50-card warm shape.
     """
     view_model = (
         Path(__file__).resolve().parents[2]
@@ -520,14 +520,29 @@ def test_native_warm_shape_tracks_the_ios_first_page_limit():
     assert pct_match, "could not read the native first-paint eventPct"
     native_event_pct = float(pct_match.group(1))
 
-    native = next(s for s in pcp.FEED_PREWARM_SHAPES if s["label"] == "discover_native")
-    assert native["limit"] == native_limit, (
-        f"warmer warms limit={native['limit']} but the native first paint requests "
-        f"limit={native_limit} — different cache key, so nothing is warmed"
+    native_request = {
+        "limit": native_limit,
+        "offset": 0,
+        "event_pct": native_event_pct,
+        "mode": None,
+        "include_events": True,
+        "include_futures": True,
+    }
+    warmed = [
+        shape
+        for shape in pcp.FEED_PREWARM_SHAPES
+        if {key: shape[key] for key in native_request} == native_request
+    ]
+    assert warmed, (
+        f"no warm shape matches native first paint {native_request}; "
+        "a differently labelled matching shape is sufficient, a different query is not"
     )
-    assert native["event_pct"] == native_event_pct
-    assert native["offset"] == 0
-    assert native["mode"] is None
+    native_key = feed_response_cache_key(**native_request)
+    assert all(
+        feed_response_cache_key(**{key: shape[key] for key in native_request})
+        == native_key
+        for shape in warmed
+    )
 
 
 # --- The warmer must publish only good payloads, under the resolved key -------
@@ -912,9 +927,31 @@ def test_prewarm_skips_the_cache_read_so_it_actually_rebuilds():
     """
     from app.routes.feed import get_feed
 
-    source = inspect.getsource(get_feed)
-    # Both reads are guarded by the marker.
-    for target in ["_fresh = (", "_stale = ("]:
-        assert target in source, f"expected guarded read {target!r}"
-    guarded = source.count("if _prewarm_rebuild\n") + source.count("if _prewarm_rebuild")
-    assert guarded >= 2, "both the fresh and stale reads must be pre-warm guarded"
+    tree = ast.parse(textwrap.dedent(inspect.getsource(get_feed)))
+    # The fresh/stale tiers now share one MGET. The rebuild arm must manufacture
+    # two misses without Redis I/O; only the ordinary-request arm may read them.
+    guards = [
+        node
+        for node in ast.walk(tree)
+        if isinstance(node, ast.If)
+        and isinstance(node.test, ast.Name)
+        and node.test.id == "_prewarm_rebuild"
+        and any(
+            isinstance(call, ast.Call)
+            and isinstance(call.func, ast.Name)
+            and call.func.id == "_read_feed_cache_pair"
+            for statement in node.orelse
+            for call in ast.walk(statement)
+        )
+    ]
+    assert len(guards) == 1, "the paired cache read must be pre-warm guarded"
+    guard = guards[0]
+    assert len(guard.body) == 1
+    assignment = guard.body[0]
+    assert isinstance(assignment, ast.Assign)
+    assert ast.unparse(assignment.targets[0]) == "(_fresh, _stale)"
+    assert isinstance(assignment.value, ast.Tuple)
+    assert [ast.unparse(value) for value in assignment.value.elts] == [
+        "_rc.RedisResult(_rc.MISS)",
+        "_rc.RedisResult(_rc.MISS)",
+    ]
