@@ -3030,13 +3030,21 @@ async def _run_polymarket_ws_consumer(*, sessions, stop=None):
                 )
                 run_started_at = time.monotonic()
                 continue
-            # Only the game arm recycles. Its existing resolution-only policy
-            # and fresh-slate subscribe behavior remain; the open arm keeps all
-            # unchanged sockets, callbacks, books, buffers and blend debt.
-            game_run_task.cancel()
-            await asyncio.gather(game_run_task, return_exceptions=True)
+            # Callbacks read the refreshed maps: unchanged token membership
+            # needs no reconnect, even if database ordering changed. A changed
+            # slate keeps the existing cancel/join/subscribe contract.
+            game_members_changed = set(asset_ids) != set(fresh_slate["asset_ids"])
+            if game_members_changed:
+                game_run_task.cancel()
+                await asyncio.gather(game_run_task, return_exceptions=True)
             await refresh_catalog(fresh_slate, fresh_open)
-            game_run_task = start_game_socket()
+            if game_members_changed:
+                game_run_task = start_game_socket()
+            elif game_run_task.done():
+                # Loading/updating can yield while the retained client exits.
+                # Propagate its failure (or end this run) just as the wait above.
+                game_run_task.result()
+                break
             run_started_at = time.monotonic()
             stats["catalog_refreshes"] = stats.get("catalog_refreshes", 0) + 1
             stats["recycle_reason"] = "admission" if admitted else "timer"

@@ -122,6 +122,11 @@ class CatalogRig(_Rig):
         super().__init__([])
         self.catalog_reads = self.open_reads = 0
         self.fail_refresh = False
+        self.slate = POLY_SLATE
+
+    async def read_slate_rows(self):
+        self.catalog_reads += 1
+        return self.slate[0]
 
     def get_task_session(self, **kwargs):
         original, rig = super().get_task_session(**kwargs), self
@@ -145,14 +150,13 @@ class CatalogRig(_Rig):
                     if sql == str(admission.open_contract_outcomes_stmt()):
                         return _Result([(171, 17, "0xopen", False)])
                     if "linked_event_id" in sql:
-                        rig.catalog_reads += 1
-                        return _Result(POLY_SLATE[0])
+                        return _Result(await rig.read_slate_rows())
                     if "futures_markets.market_metadata" in sql:
-                        return _Result(POLY_SLATE[1])
+                        return _Result(rig.slate[1])
                     if sql.startswith(
                         "SELECT futures_outcomes.id, futures_outcomes.market_id, futures_outcomes.external_id"
                     ):
-                        return _Result(POLY_SLATE[2])
+                        return _Result(rig.slate[2])
                     return _Result([])
 
                 session.execute = route
@@ -200,7 +204,7 @@ async def test_real_consumer_keeps_open_quotes_and_drains_once_after_refresh(
                         lambda: (
                             rig.open_reads >= 3
                             if fail_refresh
-                            else subscribed.count(("111", "222")) >= 3
+                            else rig.catalog_reads >= 4
                         )
                     )
                     self.queue.put_nowait(frame)
@@ -257,10 +261,146 @@ async def test_real_consumer_keeps_open_quotes_and_drains_once_after_refresh(
     else:
         if stats is not None:
             assert stats["catalog_refreshes"] >= 2
-        assert subscribed.count(("111", "222")) >= 3
+        assert subscribed.count(("111", "222")) == 1
     assert rig.writes == [(171, pytest.approx(0.62))]
     if stats is not None:
         assert stats["final_flush_dropped"] == 0
     assert all(sock.closed for sock in sockets)
+    _assert_one_lent_engine(rig, "polymarket")
+    _assert_disposed_once_after_last_session(rig, "polymarket")
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("client_exit_during_refresh", [False, True])
+async def test_game_socket_retains_reordered_catalog_then_restarts_and_drains(
+    monkeypatch, client_exit_during_refresh,
+):
+    def slate(mid, yes_oid, no_oid, condition, tokens, event):
+        return [
+            [
+                (yes_oid, mid, f"{condition}_yes", condition, event),
+                (no_oid, mid, f"{condition}_no", condition, event),
+            ],
+            [(mid, condition, {"clob_token_ids": tokens})],
+            [(yes_oid, mid, f"{condition}_yes"), (no_oid, mid, f"{condition}_no")],
+        ]
+
+    class Rig(CatalogRig):
+        def __init__(self):
+            super().__init__()
+            self.gates = {n: asyncio.Event() for n in (4, 5, 6)}
+
+        async def read_slate_rows(self):
+            self.catalog_reads += 1
+            n = self.catalog_reads
+            if n in self.gates:
+                await self.gates[n].wait()
+            if n <= 2:
+                self.slate = POLY_SLATE
+            elif n == 3 or (n == 4 and client_exit_during_refresh):
+                self.slate = slate(7, 81, 82, "0xabc", ["222", "111"], 900)
+            elif n == 4:
+                self.slate = slate(8, 91, 92, "0xnew", ["333", "444"], 901)
+            else:
+                self.slate = [[], [], []]
+            return self.slate[0]
+
+    rig, sockets, stop = Rig(), [], asyncio.Event()
+
+    class Socket:
+        def __init__(self):
+            self.queue = asyncio.Queue()
+            self.closed = False
+            self.assets, self.owner, self.ack = None, None, None
+            sockets.append(self)
+
+        async def send(self, payload):
+            if payload != "PING":
+                self.assets = tuple(json.loads(payload)["assets_ids"])
+                self.owner = asyncio.current_task()
+
+        def __aiter__(self):
+            return self
+
+        async def __anext__(self):
+            if self.ack is not None:
+                self.ack.set()
+                self.ack = None
+            return await self.queue.get()
+
+        async def quote(self, token, bid, ask):
+            ack = self.ack = asyncio.Event()
+            self.queue.put_nowait(json.dumps({
+                "event_type": "best_bid_ask", "asset_id": token,
+                "best_bid": bid, "best_ask": ask,
+            }))
+            await asyncio.wait_for(ack.wait(), 5)
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *exc):
+            self.closed = True
+
+    class Refresher(blend.LiveBlendRefresher):
+        async def refresh(self, *args, **kwargs):
+            return None
+
+        async def refresh_pending(self, **kwargs):
+            return None
+
+    _install(monkeypatch, rig)
+    monkeypatch.setattr(websockets, "connect", lambda *args, **kwargs: Socket())
+    monkeypatch.setattr(blend, "LiveBlendRefresher", Refresher)
+    monkeypatch.setattr(task, "SUBSCRIPTION_REFRESH_SECONDS", 0.02)
+    monkeypatch.setattr(task, "PRICE_FLUSH_SECONDS", 10)
+    monkeypatch.delenv("PM_WS_PRICE_FLUSH_SECONDS", raising=False)
+    monkeypatch.setenv("POLYMARKET_WS_OPEN_CONTRACT_PRICES", "1")
+    monkeypatch.setenv("WS_OPEN_CONTRACT_PRICES", "1")
+    owner = asyncio.create_task(task._run_polymarket_ws_consumer(stop=stop))
+    try:
+        # Read 4 is held: both the unchanged and reordered refresh completed.
+        await until(lambda: rig.catalog_reads == 4)
+        games = [sock for sock in sockets if sock.assets != ("open",)]
+        assert len(games) == 1
+        first = games[0]
+        assert first.assets == ("111", "222")
+        assert not first.closed and not first.owner.done()
+        # The retained reader uses the NEW outcome routing, not its initial map.
+        await first.quote("111", "0.60", "0.64")
+        if client_exit_during_refresh:
+            first.owner.cancel()
+            await asyncio.gather(first.owner, return_exceptions=True)
+            rig.gates[4].set()
+            with pytest.raises(asyncio.CancelledError):
+                await asyncio.wait_for(owner, 5)
+            stats = None
+        else:
+            rig.gates[4].set()
+            await until(lambda: rig.catalog_reads == 5)
+            await until(lambda: any(sock.assets == ("333", "444") for sock in sockets))
+            second = next(sock for sock in sockets if sock.assets == ("333", "444"))
+            assert first.closed and first.owner.done()
+            assert second.owner is not first.owner and not second.closed
+            await second.quote("333", "0.70", "0.74")
+            rig.gates[5].set()
+            await until(lambda: rig.catalog_reads == 6)
+            assert second.closed and second.owner.done()
+            assert len(sockets) == 3  # two game subscriptions plus one retained open
+            assert all(sock.assets for sock in sockets)  # empty never means all markets
+            stop.set()
+            rig.gates[6].set()
+            stats = await asyncio.wait_for(owner, 5)
+    finally:
+        owner.cancel()
+        await asyncio.gather(owner, return_exceptions=True)
+    expected = [(82, pytest.approx(0.62))]
+    if client_exit_during_refresh:
+        assert len(sockets) == 2  # a dead game client is never silently retained
+    else:
+        expected.append((91, pytest.approx(0.72)))
+        assert stats["final_flush_dropped"] == 0
+    assert sorted(rig.writes) == expected
+    assert all(sock.closed and sock.owner.done() for sock in sockets)
     _assert_one_lent_engine(rig, "polymarket")
     _assert_disposed_once_after_last_session(rig, "polymarket")
