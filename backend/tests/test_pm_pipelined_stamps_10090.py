@@ -31,6 +31,12 @@ def held_refresher(r, hold_ids=(10,), pending_events=()):
         def pending_event_ids(self):
             return frozenset(pending)
 
+        def admit_fresh(self, ids, **kwargs):
+            return frozenset()
+
+        def adopt_pending(self, ids):
+            pending.update(ids)
+
         async def publish_market_changes(self, session):
             r.trace.append(("publish", None))
 
