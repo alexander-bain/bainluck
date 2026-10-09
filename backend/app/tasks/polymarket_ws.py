@@ -1256,7 +1256,7 @@ async def _run_polymarket_ws_consumer(*, sessions, stop=None):
     )
     from app.tasks.polymarket_open_contracts import (  # #9484
         FLUSH_CHUNK_ROWS, OPEN_CONTRACT_MAX_CONCURRENT_HANDSHAKES,
-        book_snapshot_prices_enabled,
+        book_snapshot_prices_enabled, open_contract_receiver_process_enabled,
         OPEN_CONTRACT_MAX_QUEUE, OPEN_FLUSH_CHUNKS_PER_FLUSH,
         open_contract_asset_map, open_contract_event_candidates,
         open_contract_markets_stmt, open_contract_outcome_stmts,
@@ -3029,7 +3029,13 @@ async def _run_polymarket_ws_consumer(*, sessions, stop=None):
             stats["open_contract_bridged_events"] = len(set(bridge.values()))
             stats["open_contract_assets"] = len(open_asset_to_outcome)
             if not open_sockets:
-                open_ws = PolymarketWebSocket(
+                # #10090: the same client surface, received in a child process.
+                open_client = PolymarketWebSocket
+                if open_contract_receiver_process_enabled():
+                    from app.services.polymarket_ws_process import (
+                        PolymarketOpenReceiverProcess as open_client,
+                    )
+                open_ws = open_client(
                     max_concurrent_handshakes=OPEN_CONTRACT_MAX_CONCURRENT_HANDSHAKES,
                     max_queue=OPEN_CONTRACT_MAX_QUEUE,
                     price_book_snapshots=book_snapshot_prices_enabled(),
