@@ -197,6 +197,26 @@ enum DiscoverLoadOutcome: Equatable, Sendable {
     case cancelled
 }
 
+/// #5105 — the internal switch for the seated Discover opening, the native twin
+/// of the web's `DISCOVER_OPENING_EDITION_ENABLED`
+/// (`frontend/lib/discover/openingEditionOption.ts`).
+///
+/// ON, page 0's edition is the deck the reader browses whether or not it has a
+/// "Live events" continuation: later pages are pinned to it at its own page
+/// size, a retired edition is replaced by one unpinned page 0, and the
+/// continuation (when there is one) is drawn under its own heading.
+///
+/// OFF — the only value this ships with — Discover is exactly today's: the same
+/// unpinned 200-card pages, the same merge, one flat list.
+///
+/// A constant, not a launch argument or a server field: the wire cannot tell an
+/// options-OFF page from a seated deck with no continuation (both are an
+/// edition with `continuation_start` absent), so turning this on is a release
+/// decision made beside the server switch, never inferred from a response.
+nonisolated enum DiscoverOpeningEditionOption {
+    static let enabled = false
+}
+
 final class DiscoverViewModel: ObservableObject {
     @Published private(set) var items: [FeedItem] = [] {
         didSet { itemsVersion &+= 1 }
@@ -274,18 +294,27 @@ final class DiscoverViewModel: ObservableObject {
     /// treats as "not equal".
     private(set) var paintedEdition: String?
 
+    /// #5105: whether this view model consumes the seated opening at all. The
+    /// shipping value is `DiscoverOpeningEditionOption.enabled`; tests set it.
+    /// Off, every request, merge and render is the pre-#5105 path.
+    var openingEditionEnabled = DiscoverOpeningEditionOption.enabled
+
     /// #5105: the seated edition the reader is browsing, set ONLY by a network
-    /// publication whose page stated a usable opening boundary. A cache-seeded
-    /// preview, a legacy page and an empty refusal leave it nil, which keeps
-    /// pagination on the legacy path exactly as before. While set, every page
-    /// is requested pinned to this token at the edition's own page size.
+    /// publication while `openingEditionEnabled` is on and the page carried an
+    /// edition — with a usable boundary or with none (a deck whose opening has
+    /// no "Live events" continuation is still one pinned edition). A
+    /// cache-seeded preview, any page with the option off, and an empty refusal
+    /// leave it nil, which keeps pagination on the legacy path exactly as
+    /// before. While set, every page is requested pinned to this token at the
+    /// edition's own page size.
     private(set) var acceptedSeatedEdition: String?
     /// #5105: the page size the accepted edition was minted at. The server binds
     /// an edition to its `limit`, so a page asked at any other size reads
     /// `superseded` by construction.
     private var acceptedSeatedLimit = 50
-    /// #5105: the accepted edition's boundary. Every pinned page restates it; a
-    /// page that states another one is not the same deck.
+    /// #5105: the accepted edition's boundary — nil when the edition has no
+    /// continuation. Every pinned page restates it (or its absence); a page that
+    /// states another one is not the same deck.
     private var acceptedSeatedStart: Int?
     /// #5105: the section each card of the accepted edition was SERVED in, keyed
     /// like the page dedup (`itemKey`). Recorded from the server's raw positions
@@ -885,13 +914,14 @@ final class DiscoverViewModel: ObservableObject {
                 // not blank the generation on screen either. A genuinely empty,
                 // genuinely COMPLETE page still applies — that is real exhaustion.
                 //
-                // #5105: and a page that states a seated boundary it cannot back
-                // (malformed, out of range, or with no edition to bind it) is
-                // refused the same way. The server only sends the field when
-                // seating is on, so flattening it into the legacy single list
-                // would paint a deck whose sections we know we cannot draw.
+                // #5105: and, with the opening-edition option on, a page that
+                // states a seated boundary it cannot back (malformed, out of
+                // range, or with no edition to bind it) is refused the same way.
+                // The server only sends the field when seating is on, so
+                // flattening it into the legacy single list would paint a deck
+                // whose sections we know we cannot draw.
                 if !response.mayReplaceRendered(hasRenderedItems: !items.isEmpty)
-                    || Self.seatedBoundary(response) == .refused {
+                    || Self.seatedBoundary(response, enabled: openingEditionEnabled) == .refused {
                     loading = false
                     if items.isEmpty {
                         error = "Couldn't load feed"
@@ -946,7 +976,8 @@ final class DiscoverViewModel: ObservableObject {
                 // terminal, so the accepted seated edition and its section record
                 // are decided here too — before the repaint, whose spacing pass
                 // must run inside each section rather than across the boundary.
-                let seating = Self.acceptedSeating(response, paintedEdition: staged.edition)
+                let seating = Self.acceptedSeating(
+                    response, paintedEdition: staged.edition, enabled: openingEditionEnabled)
                 acceptedSeatedEdition = seating?.edition
                 acceptedSeatedStart = seating?.start
                 if let seating { acceptedSeatedLimit = seating.limit }
@@ -1611,7 +1642,7 @@ final class DiscoverViewModel: ObservableObject {
             // past. The current cards stay; exactly one unpinned page 0 replaces
             // the whole deck (order, membership and cursor together) or, failing
             // that, Retry asks for that page 0 again.
-            if let seatedToken, let seatedStart, !Self.continuesSeatedEdition(
+            if let seatedToken, !Self.continuesSeatedEdition(
                 response, token: seatedToken, start: seatedStart, requestedOffset: requestedOffset
             ) {
                 await replaceRetiredEdition(generation: generation)
@@ -1656,7 +1687,7 @@ final class DiscoverViewModel: ObservableObject {
             // positions NOW, before the renderable filter and the dedup below
             // compact the page. A card already held keeps the section it was
             // first served in.
-            if seatedToken != nil, let seatedStart {
+            if seatedToken != nil {
                 Self.recordSections(response, start: seatedStart, into: &seatedSections)
             }
             let renderable = Self.renderable(response.items)
@@ -1748,40 +1779,52 @@ final class DiscoverViewModel: ObservableObject {
         return max(currentOffset, serverPageEnd, decodedPageEnd)
     }
 
-    /// #5105: what a page's `continuation_start` lets the client do with it.
+    /// #5105: what a page lets the client do with the seated opening.
     enum SeatedBoundary: Equatable {
-        /// No section opinion (older backend, seating off, or no continuation).
+        /// No section opinion: the option is off, or the page carries no
+        /// edition to pin (an older backend, an empty refusal).
         case legacy
-        /// A usable global boundary bound to the page's edition.
-        case seated(Int)
-        /// Present but unusable: malformed, outside `0..<total`, or with no
-        /// edition to bind it. Never guessed into a boundary or flattened.
+        /// A seated edition: the page's token, with the GLOBAL position where
+        /// its continuation begins — nil when the composed deck has none (no
+        /// heading, every card opening). Heading presence is not participation:
+        /// both pin, page at the edition's size and expire the same way.
+        case seated(Int?)
+        /// A boundary present but unusable: malformed, outside `0..<total`, or
+        /// with no edition to bind it. Never guessed into a boundary or flattened.
         case refused
     }
 
-    /// #5105: read a page's boundary with the server's own bound
-    /// (`0 <= start < total`, and only beside an edition token).
-    static func seatedBoundary(_ response: FeedResponse) -> SeatedBoundary {
+    /// #5105: read a page's seating. With the option off nothing is read, so
+    /// the legacy path is byte-for-byte today's. On, the server's own bound
+    /// applies (`0 <= start < total`, and only beside an edition token).
+    ///
+    /// The wire cannot tell an options-OFF page from a seated deck with no
+    /// continuation — both are an edition token with `continuation_start`
+    /// absent — so the CLIENT option decides, exactly as the web's
+    /// `DISCOVER_OPENING_EDITION_ENABLED` does. It is turned on only beside the
+    /// server switch.
+    static func seatedBoundary(_ response: FeedResponse, enabled: Bool) -> SeatedBoundary {
+        guard enabled else { return .legacy }
+        let hasEdition = !(response.edition ?? "").isEmpty
         switch response.continuationStart {
         case .absent:
-            return .legacy
+            return hasEdition ? .seated(nil) : .legacy
         case .invalid:
             return .refused
         case .at(let start):
-            guard start < response.total, let edition = response.edition, !edition.isEmpty else {
-                return .refused
-            }
+            guard start < response.total, hasEdition else { return .refused }
             return .seated(start)
         }
     }
 
     /// #5105: the seated edition a network page 0 opts the reader into — the
-    /// painted token, its boundary, its page size and its section record — or
-    /// nil for a legacy page (which keeps every existing path unchanged).
+    /// painted token, its boundary (nil = no continuation), its page size and
+    /// its section record — or nil for a legacy page (which keeps every existing
+    /// path unchanged).
     static func acceptedSeating(
-        _ response: FeedResponse, paintedEdition: String?
-    ) -> (edition: String, start: Int, limit: Int, sections: [String: FeedSection])? {
-        guard case .seated(let start) = seatedBoundary(response),
+        _ response: FeedResponse, paintedEdition: String?, enabled: Bool
+    ) -> (edition: String, start: Int?, limit: Int, sections: [String: FeedSection])? {
+        guard case .seated(let start) = seatedBoundary(response, enabled: enabled),
               let paintedEdition, !paintedEdition.isEmpty else { return nil }
         var sections: [String: FeedSection] = [:]
         recordSections(response, start: start, into: &sections)
@@ -1789,15 +1832,20 @@ final class DiscoverViewModel: ObservableObject {
     }
 
     /// #5105: record each decoded card's section from its RAW server position
-    /// (`offset + rawPositions[i] >= start`). First sight wins: a card the
-    /// edition already placed is never re-sectioned by a later page.
+    /// (`offset + rawPositions[i] >= start`; every card is opening when the
+    /// edition has no continuation). First sight wins: a card the edition
+    /// already placed is never re-sectioned by a later page.
     static func recordSections(
-        _ response: FeedResponse, start: Int, into sections: inout [String: FeedSection]
+        _ response: FeedResponse, start: Int?, into sections: inout [String: FeedSection]
     ) {
         for (item, raw) in zip(response.items, response.rawPositions) {
             let key = itemKey(item)
             if sections[key] == nil {
-                sections[key] = response.offset + raw >= start ? .continuation : .opening
+                if let start, response.offset + raw >= start {
+                    sections[key] = .continuation
+                } else {
+                    sections[key] = .opening
+                }
             }
         }
     }
@@ -1810,16 +1858,18 @@ final class DiscoverViewModel: ObservableObject {
     }
 
     /// #5105: whether a pinned page continues the accepted edition: the server
-    /// held the order (`pinned`), for THIS token and boundary, at the offset
-    /// that was asked. A page restating a different or unusable boundary is not
-    /// the same deck, so it is refused like a retired one — never flattened.
+    /// held the order (`pinned`), for THIS token and boundary (or its absence),
+    /// at the offset that was asked. A page restating a different, newly
+    /// present or unusable boundary is not the same deck, so it is refused like
+    /// a retired one — never flattened. Only an accepted edition reaches here,
+    /// so the option is on by construction.
     static func continuesSeatedEdition(
-        _ response: FeedResponse, token: String, start: Int, requestedOffset: Int
+        _ response: FeedResponse, token: String, start: Int?, requestedOffset: Int
     ) -> Bool {
         response.editionStatus == FeedResponse.pinnedEditionStatus
             && response.edition == token
             && response.offset == requestedOffset
-            && seatedBoundary(response) == .seated(start)
+            && seatedBoundary(response, enabled: true) == .seated(start)
     }
 
     /// #5105: one unpinned page 0 through `load()`, which already owns every
