@@ -1124,6 +1124,33 @@ async def _run_kalshi_ws_consumer(*, sessions, prices):
             queued_refresh = False
             await asyncio.sleep(0)
 
+        def stamp_admit():
+            # #10090 — a refresh is still running (an earlier game's stamp may
+            # be waiting on a row lock or its frame). This newly committed whole
+            # cohort joins it on a free stamp worker instead of waiting for it
+            # to return. The refresher fences what it refuses; that stays queued
+            # for the next launch, exactly as before.
+            nonlocal queued_refresh
+            admitted = blend_refresher.admit_fresh(
+                queued_events,
+                flush_started=flush_started,
+                marks=list(queued_marks.values()),
+                defer_event_ids=event_ids_for_outcomes(
+                    cohort_event_ids, unfinished_price_ids,
+                ),
+            )
+            if not admitted:
+                return
+            # Joined, fenced and adopted on cancellation with the running task.
+            stamping_fresh.update(admitted)
+            stamping_events.update(admitted)
+            queued_events.difference_update(admitted)
+            for oid in [
+                oid for oid in queued_marks if cohort_event_ids.get(oid) in admitted
+            ]:
+                del queued_marks[oid]
+            queued_refresh = bool(queued_events)
+
         def queue_committed(index, phase, written_outcome_ids, *, registered=None):
             nonlocal queued_refresh, implicit_debt_queued
             blend_outcomes = (
@@ -1407,6 +1434,8 @@ async def _run_kalshi_ws_consumer(*, sessions, prices):
                     await stamp_done()
                     if queued_refresh:
                         await stamp_start()
+                elif queued_refresh:
+                    stamp_admit()
 
                 # #9484: keep every committed MARKET notification, including
                 # standalone futures/props which have no event blend.
@@ -1437,6 +1466,8 @@ async def _run_kalshi_ws_consumer(*, sessions, prices):
                     await stamp_done()
                     if queued_refresh:
                         await stamp_start()
+                elif queued_refresh:
+                    stamp_admit()
             # Lock retries are bounded on their cohorts above. A handled lock
             # must not add two seconds after unrelated successful work.
             return not had_lock_failure if final_drain else True
