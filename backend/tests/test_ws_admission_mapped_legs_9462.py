@@ -459,9 +459,16 @@ class TestAnAdmissionRecycleKeepsTheOwedStamp:
         assert 900 not in [e for b in run1.batches for e in b]
         assert first["blend_pending_carried"] == 1
 
-        # Run 2, 2 s floor long since passed for a fresh refresher.
-        _timing(monkeypatch, module, refresh=0.2)
-        _install_session(monkeypatch, slate, lambda n: [])
+        # Run 2, 2 s floor long since passed for a fresh refresher. #10090: it
+        # ends by admission once it has stamped — a changed scope no longer
+        # ends a run at its refresh.
+        def reread_2(_n):
+            runs = _RecordingRefresher.instances
+            stamped = len(runs) > 1 and [900] in runs[1].batches
+            return [(901, 9010, None)] if stamped else []
+
+        _timing(monkeypatch, module, refresh=30)
+        _install_session(monkeypatch, slate, reread_2)
         second = await asyncio.wait_for(consumer(), timeout=5)
         run2 = _RecordingRefresher.instances[1]
 

@@ -1693,22 +1693,6 @@ async def _run_kalshi_ws_consumer(*, sessions, prices):
 
     _UNCAPTURED = object()
 
-    def lifecycle_route(ticker, client=None):
-        """``("open", ids)``, ``("linked", market_id)`` or None for a frame.
-
-        #10090: a connection keeps the tickers that left scope until it
-        retires, so its frames take the two-sided write only for a ticker the
-        slate still maps — every ticker a connection subscribed was, before.
-        """
-        if ticker in open_contract_ids and ticker not in ticker_to_ids:
-            return ("open", open_contract_ids[ticker])
-        parts = ticker.rsplit("-", 1)
-        if len(parts) != 2 or parts[0] not in market_id_by_ext:
-            return None
-        if client is not None and ticker not in ticker_to_ids:
-            return None
-        return ("linked", market_id_by_ext[parts[0]])
-
     async def handle_shard_lifecycle(msg: dict, *, client=None, ids=_UNCAPTURED):
         """An open-contract connection grades its own legs and nothing else: a
         linked-slate frame is the game socket's to handle, exactly once."""
@@ -1747,7 +1731,17 @@ async def _run_kalshi_ws_consumer(*, sessions, prices):
         closing_price = _UNCAPTURED
         # #10090: and the route, so a scope change before the deferred write
         # runs cannot re-route or drop a frame already accepted.
-        route = lifecycle_route(ticker, client)
+        # #10090: as in `handle_lifecycle`, a connection's frame takes the
+        # two-sided write only for a ticker the slate still maps.
+        if ticker in open_contract_ids and ticker not in ticker_to_ids:
+            route = ("open", open_contract_ids[ticker])
+        elif (
+            len(parts) == 2 and parts[0] in market_id_by_ext
+            and (client is None or ticker in ticker_to_ids)
+        ):
+            route = ("linked", market_id_by_ext[parts[0]])
+        else:
+            route = None
         if (
             not (ticker in open_contract_ids and ticker not in ticker_to_ids)
             and is_terminal(msg.get("status", ""))
@@ -1765,6 +1759,25 @@ async def _run_kalshi_ws_consumer(*, sessions, prices):
     async def handle_lifecycle(
         msg: dict, *, closing_price=_UNCAPTURED, client=None, route=_UNCAPTURED,
     ):
+        ticker = (msg.get("market_ticker") or "").upper()
+        # #10022: an open contract is never in the lifecycle map (its event
+        # ticker is not the linked slate's), so it is routed before the
+        # two-sided handler can see it. `open_contract_ids` already excludes
+        # every ticker the linked slate carries.
+        if route is _UNCAPTURED:
+            parts = ticker.rsplit("-", 1)
+            # #10090: a connection keeps the tickers that left scope until it
+            # retires, so its frames take the two-sided write only for a
+            # ticker the slate still maps, as every subscribed ticker was.
+            if ticker in open_contract_ids and ticker not in ticker_to_ids:
+                route = ("open", open_contract_ids[ticker])
+            elif (
+                len(parts) == 2 and parts[0] in market_id_by_ext
+                and (client is None or ticker in ticker_to_ids)
+            ):
+                route = ("linked", market_id_by_ext[parts[0]])
+            else:
+                route = None
         if client is not None:
             if not lifecycle_admitted(client, msg):
                 return
@@ -1773,16 +1786,9 @@ async def _run_kalshi_ws_consumer(*, sessions, prices):
                     return await handle_lifecycle(
                         msg, closing_price=closing_price, route=route,
                     )
-        ticker = (msg.get("market_ticker") or "").upper()
         status = msg.get("status", "")
         result = msg.get("result")
 
-        # #10022: an open contract is never in the lifecycle map (its event
-        # ticker is not the linked slate's), so it is routed before the
-        # two-sided handler can see it. `open_contract_ids` already excludes
-        # every ticker the linked slate carries.
-        if route is _UNCAPTURED:
-            route = lifecycle_route(ticker, client)
         if route is not None and route[0] == "open":
             await handle_open_contract_lifecycle(ticker, msg, ids=route[1])
             return

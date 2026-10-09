@@ -614,5 +614,12 @@ async def test_prepare_leaves_ineligible_frames_to_the_callback_unchanged():
 
 
 def test_consumer_registers_the_preparation_beside_the_callback():
-    assert "ws.on_lifecycle = handle_lifecycle\n" in TASK_SOURCE
-    assert "ws.on_lifecycle_prepare = prepare_lifecycle\n" in TASK_SOURCE
+    # #10090: registered per game connection, bound to that connection.
+    assert (
+        "sock.on_lifecycle = functools.partial(handle_lifecycle, client=client)\n"
+        in TASK_SOURCE
+    )
+    assert (
+        "sock.on_lifecycle_prepare = functools.partial(prepare_lifecycle, client=client)\n"
+        in TASK_SOURCE
+    )
