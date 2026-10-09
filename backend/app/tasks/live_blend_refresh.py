@@ -1420,6 +1420,22 @@ class LiveBlendRefresher:
                 if pending_only and flush_started is not None:
                     if self._pending_started_at is None:
                         self._pending_started_at = _mono()
+                # A fresh-bearing flush with one old attempt left and a due
+                # continuation head attempts exactly that head, which the
+                # shared read below could not reorder. It reads its own group,
+                # as a singleton does, instead of first reading every old
+                # event. The rest stay owed in their continuation order; debt
+                # without one gets its live-first order from a later read.
+                carried = [
+                    eid for eid in self._pending_continuation if eid in population
+                ]
+                head_only = (
+                    pending_only
+                    and bool(carried)
+                    and flush_started is not None
+                    and self._pending_fresh_flush
+                    and FRESH_FLUSH_PENDING_ATTEMPTS - self._pending_attempts == 1
+                )
                 # A fresh population that fits the fixed workers has no claim
                 # order to decide: every event starts at once. Each stamp reads
                 # its own group in its own write session, as a singleton does,
@@ -1427,7 +1443,9 @@ class LiveBlendRefresher:
                 # read of all of them. A read failure stays with its own event.
                 prepared = None
                 try:
-                    if pending_only or len(population) > FRESH_STAMP_WORKERS:
+                    if not head_only and (
+                        pending_only or len(population) > FRESH_STAMP_WORKERS
+                    ):
                         prepared = await self._prepare_groups(list(population))
                 except Exception as exc:
                     self.stats["errors"] += 1
@@ -1454,11 +1472,8 @@ class LiveBlendRefresher:
                     # Finish last flush's unattempted debt before beginning a
                     # new live-first debt cycle. Fresh remains ahead of both;
                     # repeated locked live IDs cannot starve quieter old debt.
-                    continuation = [
-                        eid for eid in self._pending_continuation if eid in population
-                    ]
-                    carried = set(continuation)
-                    ordered = continuation + [eid for eid in ordered if eid not in carried]
+                    queued = set(carried)
+                    ordered = carried + [eid for eid in ordered if eid not in queued]
 
                 async def stamp_event(event_id, *, read_current=False):
                     self._pending_continuation = [
@@ -1502,7 +1517,17 @@ class LiveBlendRefresher:
                         if not completed.issuperset(group_ids):
                             committed(group_ids)
 
-                if not pending_only:
+                if head_only:
+                    await stamp_event(carried[0])
+                    remaining = population.difference(carried[:1])
+                    budget_deferred.update(remaining)
+                    self._lock_retry.update(remaining.intersection(retry))
+                    self._throttle_deferred.update(remaining.difference(retry))
+                    self._pending_continuation = carried[1:] + [
+                        eid for eid in self._pending_continuation
+                        if eid not in population
+                    ]
+                elif not pending_only:
                     # FRESH_STAMP_WORKERS fixed workers claim fresh IDs in
                     # order; waiting stamps cannot hold every fresh sibling
                     # behind their row locks. No population-sized fanout.
