@@ -245,18 +245,23 @@ class TestContainment:
         r = LiveBlendRefresher("kalshi", min_refresh_interval_s=1e9)
         seen = []
 
-        async def _spy(event_ids, now):
+        async def _spy(event_ids, now, **_):
             seen.append(sorted(event_ids))
 
+        async def _prepare(event_ids):
+            return {}
+
         monkeypatch.setattr(r, "_refresh_batch", _spy)
+        # #10090: several due events prepare once, then commit one per call.
+        monkeypatch.setattr(r, "_prepare_groups", _prepare)
         await r.refresh([1, 2])
-        assert seen == [[1, 2]]
+        assert sorted(seen) == [[1], [2]]
         # Mark them refreshed the way `_refresh_batch` would.
         import time as _t
         r._last_refresh_at[1] = _t.monotonic()
         r._last_refresh_at[2] = _t.monotonic()
         await r.refresh([1, 2])
-        assert seen == [[1, 2]], "second pass must not re-enter the batch"
+        assert sorted(seen) == [[1], [2]], "second pass must not re-enter the batch"
         assert r.stats["throttled"] == 2
 
 
@@ -277,7 +282,7 @@ class TestThrottleIsStampedBeforeResolution:
         r = LiveBlendRefresher("kalshi")
         opened = []
 
-        async def _fake_batch(event_ids, now):
+        async def _fake_batch(event_ids, now, **_):
             opened.append(sorted(event_ids))
             # Mimic the real early-return when the market query finds nothing,
             # which happens AFTER the throttle stamp in the implementation.
@@ -285,11 +290,15 @@ class TestThrottleIsStampedBeforeResolution:
                 r._last_refresh_at[eid] = now
             return
 
+        async def _prepare(event_ids):
+            return {}  # no linked markets of this source
+
         monkeypatch.setattr(r, "_refresh_batch", _fake_batch)
+        monkeypatch.setattr(r, "_prepare_groups", _prepare)
         await r.refresh([501, 502])
-        assert opened == [[501, 502]]
+        assert sorted(opened) == [[501], [502]]
         await r.refresh([501, 502])
-        assert opened == [[501, 502]], (
+        assert sorted(opened) == [[501], [502]], (
             "an unresolvable event must not re-open a session every flush"
         )
 
@@ -896,7 +905,8 @@ class TestSingleEventStampTransaction:
             committed.append(True)
 
         async def publish(frames):
-            assert committed == [True]
+            # Each event publishes only after its own commit.
+            assert len(committed) >= len(published) + len(frames)
             published.extend(frames)
 
         r._session_factory = factory
@@ -908,10 +918,9 @@ class TestSingleEventStampTransaction:
         assert r.stats["stamped"] == count
         assert snapshots == (list(range(1, count + 1)) if snapshot_due else [])
         assert len(flushes) == (count if snapshot_due else 0)
-        event_savepoints = 0 if count == 1 else count
-        assert session.savepoints == ["release"] * (
-            event_savepoints + (count if snapshot_due else 0)
-        )
+        # #10090: every event commits in its own single-event transaction, so
+        # no event needs an outer savepoint; only chart snapshots take one.
+        assert session.savepoints == ["release"] * (count if snapshot_due else 0)
         assert len(published) == count
         assert all(frame["p"] == 0.9 for frame in published)
         assert all(frame["rev"][str(frame["event_id"])] == 42 for frame in published)
@@ -977,7 +986,8 @@ class TestSingleEventStampTransaction:
         published = []
 
         async def publish(frames):
-            assert committed == [True]
+            # Each event publishes only after its own commit.
+            assert len(committed) >= len(published) + len(frames)
             published.extend(frames)
 
         monkeypatch.setattr(r, "_publish", publish)
@@ -985,7 +995,7 @@ class TestSingleEventStampTransaction:
         assert r.stats["stamped"] == count
         assert session.rollbacks == 0
         assert session.savepoints == (
-            ["rollback"] if snapshot_fails else ["release"] * (1 if count == 1 else 4)
+            ["rollback"] if snapshot_fails else ["release"] * count
         )
         assert len(published) == count
         assert all(frame["p"] == 0.9 for frame in published)
@@ -1335,12 +1345,16 @@ class TestAThrottledPriceIsStampedWhenItsThrottleExpires:
         r = LiveBlendRefresher("polymarket", min_refresh_interval_s=5.0)
         batches = []
 
-        async def _batch(event_ids, now):
+        async def _batch(event_ids, now, **_):
             batches.append(sorted(event_ids))
             for eid in event_ids:  # what the real batch stamps first
                 r._last_refresh_at[eid] = now
 
+        async def _prepare(event_ids):
+            return {}
+
         r._refresh_batch = _batch
+        r._prepare_groups = _prepare
         return r, clock, batches
 
     @pytest.mark.asyncio
@@ -1370,7 +1384,8 @@ class TestAThrottledPriceIsStampedWhenItsThrottleExpires:
         await r.refresh([1])
         clock["t"] = 1006.0
         await r.refresh([2])
-        assert batches == [[1], [1, 2]]
+        # #10090: the fresh price commits first, then the held one, each alone.
+        assert batches == [[1], [2], [1]]
 
     @pytest.mark.asyncio
     async def test_waiting_out_the_throttle_opens_no_batch_and_counts_once(

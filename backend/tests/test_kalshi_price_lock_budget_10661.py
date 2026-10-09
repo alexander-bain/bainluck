@@ -43,7 +43,10 @@ async def test_a_held_first_game_lets_the_later_game_commit_and_refresh():
     """THE SHIP. Before #10661 the held game stopped the flush at its phase."""
     r = rig(locked={1})
     r.release.set()
-    assert await bounded(r.flush()) is False  # a retained phase still waits a full interval
+    # #10090 (a5b06f85fa): the retained phase holds its own retry delay rather
+    # than returning False to slow the whole cadence.
+    assert await bounded(r.flush()) is True
+    assert set(r.ns["prices"].lock_retry_until) == set(GAME_100)
     assert r.committed == [3, 9]
     assert set(r.batch) == set(GAME_100)
     # The failed component published, receipted and refreshed nothing.
@@ -60,6 +63,9 @@ async def test_a_held_first_game_lets_the_later_game_commit_and_refresh():
 
     # The next flush pays the retained game once the holder lets go.
     r.lock_released.set()
+    assert await bounded(r.flush()) is True
+    assert r.committed == [3, 9], "inside its retry delay the held game waits"
+    r.ns["prices"].lock_retry_until.clear()  # the retry delay has elapsed
     assert await bounded(r.flush()) is True
     assert r.committed == [3, 9, 1, 2]
     assert not r.batch
@@ -94,9 +100,11 @@ async def test_a_newer_tick_buffered_during_the_held_flush_survives():
     r.batch[1] = (.9, .89, .91)  # a fresher tick for the held game
     r.batch[3] = (.8, .79, .81)  # and for the game being written
     r.release.set()
-    assert await asyncio.wait_for(task, 2) is False
+    assert await asyncio.wait_for(task, 2) is True  # a5b06f85fa: cohort holds the delay
+    assert set(r.ns["prices"].lock_retry_until) == set(GAME_100)
     assert r.batch == {1: (.9, .89, .91), 2: (.4, .39, .41), 3: (.8, .79, .81)}
     r.lock_released.set()
+    r.ns["prices"].lock_retry_until.clear()  # the retry delay has elapsed
     assert await bounded(r.flush()) is True
     assert not r.batch
 
@@ -145,11 +153,14 @@ async def test_the_real_refresher_stamps_the_continued_game_after_its_commit():
     refresher = RecordingRefresher("kalshi")
     r.ns["blend_refresher"] = refresher
     r.release.set()
-    assert await bounded(r.flush(flush_started=100.0)) is False
+    assert await bounded(r.flush(flush_started=100.0)) is True  # a5b06f85fa
+    assert set(r.ns["prices"].lock_retry_until) == set(GAME_100)
     stamps = [t for t in r.trace if t[0] == "real-refresh"]
     assert stamps == [("real-refresh", (200,), (3,))]
+    # Stamp vs MARKET publish order is #10090's (2959d4bc51), owned by
+    # test_kalshi_event_before_market_10090.py; here both follow the commit.
     assert r.trace.index(("commit", (3,))) < r.trace.index(("publish", (3,)))
-    assert r.trace.index(("publish", (3,))) < r.trace.index(stamps[0])
+    assert r.trace.index(("commit", (3,))) < r.trace.index(stamps[0])
     assert r.trace.index(stamps[0]) < r.trace.index(("commit", (9,)))
     assert refresher.pending_event_ids() == frozenset()
 
