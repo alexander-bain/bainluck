@@ -1344,19 +1344,30 @@ async def _run_polymarket_ws_consumer(*, sessions, stop=None):
 
         tokens_by_market: dict[int, list[str]] = {}
         non_blend_market_ids: set[int] = set()
+        live_win_topup_ids: set[int] = set()
 
         async with get_task_session() as session:
             market_result = await session.execute(
-                select(FuturesMarket.id, FuturesMarket.external_id, FuturesMarket.market_metadata)
+                select(
+                    FuturesMarket.id,
+                    FuturesMarket.external_id,
+                    FuturesMarket.market_metadata,
+                    Event.status,
+                )
+                .join(Event, FuturesMarket.event_id == Event.id)
                 .where(FuturesMarket.id.in_(list(market_ids)))
             )
             ext_by_market: dict[int, str] = {}
-            for mid, mext, metadata in market_result.all():
+            for mid, mext, metadata, event_status in market_result.all():
                 # Same authoritative refutation as shared WIN admission, using the
                 # catalog metadata this token read already owns. Missing labels
                 # remain conservative; titles and outcome names are never guessed.
                 if pm_non_speaking_metadata(metadata):
                     non_blend_market_ids.add(mid)
+                elif event_status == "live":
+                    # Same conservative WIN eligibility as the blend owner map.
+                    # Props remain in the fleet but cannot take these ask seats.
+                    live_win_topup_ids.add(mid)
                 if mext:
                     condition_to_market[mext] = mid
                     ext_by_market[mid] = mext
@@ -1390,7 +1401,11 @@ async def _run_polymarket_ws_consumer(*, sessions, stop=None):
             ]
             if topup_missing:
                 try:
-                    topped = await topup_clob_tokens(session, topup_missing)
+                    topped = await topup_clob_tokens(
+                        session,
+                        topup_missing,
+                        priority_market_ids=live_win_topup_ids,
+                    )
                 except Exception:
                     # A Gamma outage must not take the socket down with it: the
                     # markets that already have tokens keep streaming, and the next
