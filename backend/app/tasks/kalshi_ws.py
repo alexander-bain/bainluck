@@ -438,6 +438,23 @@ RETIRE_DRAIN_SECONDS = 30.0
 #: rejected subscription rebuilds at once; either way the socket may be silent.
 SUBSCRIBE_ACK_DEADLINE_SECONDS = 30.0
 
+
+def kalshi_direct_book_enabled() -> bool:
+    """#10090 — ``KALSHI_WS_DIRECT_BOOK=1`` streams order books for the live
+    winner legs (`KalshiWebSocket.set_book_tickers`). Off by default; unset or
+    ``0`` is the undo, back to ticker summaries alone."""
+    return os.getenv("KALSHI_WS_DIRECT_BOOK", "0").strip() == "1"
+
+
+def kalshi_book_max_tickers() -> int:
+    """#10090 — the bound on order books streamed at once. A live tennis
+    match alone sent ~60 book deltas a second (Zverev–Wu, 10/09), so the
+    population is the LIVE events' winner legs, capped here."""
+    try:
+        return max(0, int(os.getenv("KALSHI_WS_BOOK_MAX_TICKERS", "200")))
+    except ValueError:
+        return 200
+
 #: #10090 — open-contract connections a changed scope may hold beyond the
 #: packed minimum before the run takes the full rebuild instead.
 OPEN_CONTRACT_EXTRA_CONNECTIONS = 2
@@ -1896,6 +1913,8 @@ async def _run_kalshi_ws_consumer(*, sessions, prices):
         sock = KalshiWebSocket()
         sock.exact_trace = exact_trace
         client = _KalshiClient(sock, tickers, kind)
+        if kind == "game":
+            sock.book_tickers = client.tickers & book_population()
         sock.on_ticker = functools.partial(handle_ticker, client=client)
         if kind == "game":
             sock.on_lifecycle = functools.partial(handle_lifecycle, client=client)
@@ -2012,6 +2031,33 @@ async def _run_kalshi_ws_consumer(*, sessions, prices):
     def game_connected():
         return any(c.sock.is_connected for c in game_clients)
 
+    def book_population() -> frozenset:
+        """#10090 — the linked winner legs (the blend's own eligibility) of
+        events live now, independent of who is reading them, within the cap."""
+        if not kalshi_direct_book_enabled():
+            return frozenset()
+        eligible = sorted(
+            ticker for ticker, (_market_id, outcome_id) in ticker_to_ids.items()
+            if outcome_id not in non_blend_outcome_ids
+            and event_id_by_outcome.get(outcome_id) in live_event_ids
+        )
+        cap = kalshi_book_max_tickers()
+        if len(eligible) > cap:
+            stats["book_over_cap"] = len(eligible) - cap
+        return frozenset(eligible[:cap])
+
+    async def refresh_books():
+        population = book_population()
+        stats["book_tickers"] = len(population)
+        for client in list(game_clients):
+            try:
+                await client.sock.set_book_tickers(client.tickers & population)
+            except Exception:
+                logger.warning(
+                    "Kalshi WS: order book membership update failed; ticker "
+                    "summaries carry on", exc_info=True,
+                )
+
     # -- Periodic flush task --
     # #10090: start to start, so the flush's own work is not added to the
     # interval; see `run_flush_cadence` for what it preserves.
@@ -2066,7 +2112,7 @@ async def _run_kalshi_ws_consumer(*, sessions, prices):
                 "Kalshi WS: %d updates, %d flushes, %d settlements, %d errors, "
                 "%d msgs | blend stamped=%d no_reading=%d throttled=%d errors=%d "
                 "lock_skipped=%d unobserved=%d stale=%d | %s deferred=%d "
-                "preempted=%d live=%d",
+                "preempted=%d live=%d book=%d quotes=%d resnapshots=%d",
                 stats["price_updates"], stats["flushes"],
                 stats["settlements"], stats["errors"],
                 game_messages(),
@@ -2079,6 +2125,10 @@ async def _run_kalshi_ws_consumer(*, sessions, prices):
                 # #10090: this minute's flush phases, then cumulative deferrals.
                 flush_timings.line(), stats["budget_deferred"],
                 stats["live_preempted"], len(live_event_ids),
+                # #10090 direct book: tickers carried, quotes taken, resyncs.
+                stats.get("book_tickers", 0),
+                sum(c.sock.stats.get("book_quotes", 0) for c in game_clients),
+                sum(c.sock.stats.get("book_resnapshots", 0) for c in game_clients),
             )
             flush_timings.reset()
             _report_liveness(
@@ -2371,6 +2421,8 @@ async def _run_kalshi_ws_consumer(*, sessions, prices):
         # #10090: the same read names the live games the flush writes first.
         live_event_ids.clear()
         live_event_ids.update(row[0] for row in rows)
+        # #10090: the same read moves the order books onto the live games.
+        await refresh_books()
         return unadmitted_live_events(rows, legged_market_ids)
 
     def start_watcher():
@@ -2432,6 +2484,7 @@ async def _run_kalshi_ws_consumer(*, sessions, prices):
                 stats.setdefault("recycle_reason", "scope")
                 break
             if verdict == "applied":
+                await refresh_books()
                 # #9418: restart the watcher on the slate this run now streams.
                 if watch_task is not None:
                     watch_task.cancel()
