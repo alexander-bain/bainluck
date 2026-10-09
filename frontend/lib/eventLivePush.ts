@@ -29,7 +29,7 @@ import { isQuoteStreamStatus } from "./eventQuoteStream";
  * honesty mechanism itself lying.
  */
 
-import { frameFoldOrder, parseFoldRevision } from "./foldRevision";
+import { compareFoldRevision, frameFoldOrder, parseFoldRevision } from "./foldRevision";
 
 /**
  * How often an open event page revalidates, given what the stream is doing.
@@ -385,6 +385,98 @@ type HeldHero = {
 function holdsLiveBlend(held: HeldHero): boolean {
   return isQuoteStreamStatus(held.status) && held.hero_probability_source === "blend" &&
     typeof held.hero_probability === "number" && Number.isFinite(held.hero_probability);
+}
+
+type FoldedQuote = {
+  event_id: number;
+  hero_probability: number | null;
+  hero_probability_away: number | null;
+  hero_probability_source: string | null;
+  hero_probability_observed_at: string | null;
+  blend_fold_revision: Record<string, number>;
+  win_probability_sources: Record<string, Record<string, unknown>>;
+  hero_sportsbook_count: number | null;
+  status: string | null;
+  sport: string | null;
+  hero_settled_result: string | null;
+};
+
+function record(value: unknown): value is Record<string, unknown> {
+  return value !== null && typeof value === "object" && !Array.isArray(value);
+}
+
+function nullableProbability(value: unknown): boolean {
+  return value === null || (typeof value === "number" && Number.isFinite(value) && value >= 0 && value <= 1);
+}
+
+function readFoldedQuote(value: unknown, eventId: number): FoldedQuote | null {
+  if (!record(value) || value.event_id !== eventId || !Number.isSafeInteger(value.event_id) ||
+      !nullableProbability(value.hero_probability) || !nullableProbability(value.hero_probability_away) ||
+      !parseFoldRevision(value.blend_fold_revision) || !record(value.win_probability_sources)) return null;
+  for (const key of ["hero_probability_source", "status", "sport", "hero_settled_result"]) {
+    if (value[key] !== null && typeof value[key] !== "string") return null;
+  }
+  const clock = value.hero_probability_observed_at;
+  if (clock !== null && (typeof clock !== "string" || !Number.isFinite(Date.parse(clock)))) return null;
+  const count = value.hero_sportsbook_count;
+  if (count !== null && (typeof count !== "number" || !Number.isSafeInteger(count) || count < 0)) return null;
+  for (const source of Object.values(value.win_probability_sources)) {
+    if (!record(source) || typeof source.value !== "number" || !nullableProbability(source.value) ||
+        ["display_name", "type", "color"].some(key => typeof source[key] !== "string")) return null;
+  }
+  const quote = value as FoldedQuote;
+  // Copy only the declared fields; an additive payload must not overwrite
+  // unrelated detail (scores, game clocks, or event identity).
+  return {
+    event_id: quote.event_id,
+    hero_probability: quote.hero_probability,
+    hero_probability_away: quote.hero_probability_away,
+    hero_probability_source: quote.hero_probability_source,
+    hero_probability_observed_at: quote.hero_probability_observed_at,
+    blend_fold_revision: quote.blend_fold_revision,
+    win_probability_sources: quote.win_probability_sources,
+    hero_sportsbook_count: quote.hero_sportsbook_count,
+    status: quote.status,
+    sport: quote.sport,
+    hero_settled_result: quote.hero_settled_result,
+  };
+}
+
+/** An explicit server fold can replace a held blend without a detail read.
+ * Raw row prices still go through the legacy refusal/refetch path. The full
+ * vector dates the whole quote, including source removals and an older clock.
+ * Opening/phase transitions and incomparable membership keep the paired read.
+ */
+export function adoptFoldedQuote<T>(
+  prev: T | undefined,
+  frame: { event_id: number; status?: string | null; folded_quote?: unknown; folded_quote_pending?: boolean },
+  eventId: number,
+): { handled: boolean; next: T | undefined } {
+  const fallback = { handled: false, next: prev };
+  if (!prev || frame.event_id !== eventId) return fallback;
+  const held = prev as HeldHero & { id?: number; sport?: string; completed_at?: string | null };
+  if (held.id !== eventId || held.completed_at || !holdsLiveBlend(held)) return fallback;
+  const heldRevision = parseFoldRevision(held.blend_fold_revision);
+  if (!heldRevision) return fallback;
+  // Only the raw promise can defer the read. The bounded producer always
+  // follows it with object/null; explicit null must reach the legacy fallback.
+  if (frame.folded_quote_pending === true && !("folded_quote" in frame) &&
+      frame.status === held.status && Object.keys(heldRevision).length > 1) {
+    return { handled: true, next: prev };
+  }
+  const quote = readFoldedQuote(frame.folded_quote, eventId);
+  if (!quote ||
+      quote.hero_probability_source !== "blend" || quote.hero_probability === null ||
+      quote.status !== held.status || quote.sport !== held.sport) return fallback;
+  const order = compareFoldRevision(quote.blend_fold_revision, heldRevision);
+  if (order === "incomparable") return fallback;
+  if (order !== "newer") return { handled: true, next: prev };
+  const { event_id: target, ...fields } = quote;
+  // Keep unrelated score/clock/detail data, but replace the complete public
+  // rail. Never derive away, invent an observation stamp, or retain a removed
+  // source from the previous snapshot.
+  void target;
+  return { handled: true, next: { ...prev, ...fields } as T };
 }
 
 /**

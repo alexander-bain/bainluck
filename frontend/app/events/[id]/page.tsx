@@ -37,6 +37,7 @@ import { canSubscribeEventQuotes, quotePairCoversTrigger } from "@/lib/eventQuot
 import FreshnessChip from "@/components/event/FreshnessChip";
 import {
   applyLiveFrame,
+  adoptFoldedQuote,
   frameInvalidatesFoldedBlend,
   eventFeedIsStalled,
   makeEventRefreshInterval,
@@ -458,6 +459,19 @@ export default function EventPage({ params }: EventPageProps) {
     // this tick, because swr drops a fetch that a later mutation (even a no-op
     // `applyLiveFrame` returning `prev`) post-dates. See the scheduler.
     const held = heldEventRef.current;
+    // The second frame may have the same raw revision as its invalidation;
+    // its explicit full fold is independently ordered against the held hero.
+    const folded = adoptFoldedQuote(held, liveFrame, eventId);
+    if (folded.handled) {
+      if (folded.next !== held) {
+        refreshEvent(
+          (prev) => adoptFoldedQuote(prev, liveFrame, eventId).next,
+          { revalidate: false },
+        );
+        setLastRefresh(Date.now());
+      }
+      return;
+    }
     if (held && canSubscribeEventQuotes(held) && (
       liveFrame.p === null || held.hero_probability_source !== "blend" ||
       (liveFrame.status && liveFrame.status !== held.status) ||
