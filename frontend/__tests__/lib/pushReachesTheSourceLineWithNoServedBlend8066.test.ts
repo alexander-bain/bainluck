@@ -120,9 +120,11 @@ describe("#8066 remainder: with no backend blend, push extends the source's own 
     expect(result.win_prob_history.polymarket).toBe(served.win_prob_history.polymarket);
   });
 
-  it("never inserts behind a REAL served edge", () => {
+  it("never appends behind a REAL served edge", () => {
     // A reading stamped a moment before the last stored reading is already
-    // behind it: appending it would draw 0.52 → 0.61 → 0.52.
+    // behind it: appending it would draw 0.52 → 0.61 → 0.52. #10795: it lands
+    // at its OWN time between the stored readings (the dip the page drew stays
+    // drawn), so the line never runs backwards and the endpoint is unchanged.
     const served = {
       win_prob_history: { kalshi: [wp(0, .5), wp(30, .52)] },
     };
@@ -130,7 +132,9 @@ describe("#8066 remainder: with no backend blend, push extends the source's own 
       frame(25, .61, .61), frame(30, .62, .62), frame(35, .63, .63),
     ))!;
     expect(result.win_prob_history.kalshi.map(p => p.timestamp))
-      .toEqual([t(0), t(30), t(35)]);
+      .toEqual([t(0), t(25), t(30), t(35)]);
+    // The stored 0.52 wins its own instant over the pushed 0.62.
+    expect(result.win_prob_history.kalshi[2].home_probability).toBe(.52);
     expect(result.win_prob_history.kalshi.at(-1)!.home_probability).toBe(.63);
     const times = result.win_prob_history.kalshi.map(p => Date.parse(p.timestamp));
     expect([...times].sort((a, b) => a - b)).toEqual(times);

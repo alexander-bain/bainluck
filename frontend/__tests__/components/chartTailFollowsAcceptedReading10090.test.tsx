@@ -130,17 +130,25 @@ describe("#10090 the chart endpoint follows the accepted reading through a later
     // #10671's `observed` coverage from rev 217's equal price — evidence only.)
     const before = series(served).slice(0, -1);
     const plain = (pts: typeof before) => pts.map(p => [p.timestamp, p.home_probability]);
-    expect(plain(series(body).slice(0, before.length))).toEqual(plain(before));
+    const stored = new Set(before.map(p => p.timestamp));
+    expect(plain(series(body).filter(p => stored.has(p.timestamp)))).toEqual(plain(before));
     const times = series(body).map(p => Date.parse(p.timestamp));
     expect([...times].sort((a, b) => a - b)).toEqual(times);
-    // Interior frames (209–216 sit between stored readings) are not inserted.
+    // #10795: an interior frame (209–216 sit between stored readings) may stay
+    // at its own time and value when its interval moved — a session reading,
+    // never an invented point.
+    const last = series(body).findIndex(p => p.timestamp === before.at(-1)!.timestamp);
+    const recorded = new Map(RECORDED.map(([, p, at]) => [at, p]));
+    for (const point of series(body).slice(0, last).filter(p => !stored.has(p.timestamp))) {
+      expect(recorded.get(point.timestamp)).toBe(point.home_probability);
+    }
     // 217 (19:20:19.705, a hair after the stored 19:20:19.591) repeats 0.36, so
     // it is coverage on the stored reading (#10671), not a point; only 218 and
     // the edge follow.
-    expect(series(body)[before.length - 1].evidence).toEqual({
+    expect(series(body)[last].evidence).toEqual({
       kind: "observed", covered_through: "2026-10-09T19:20:19.705652+00:00",
     });
-    expect(series(body).slice(before.length).map(p => p.timestamp)).toEqual([
+    expect(series(body).slice(last + 1).map(p => p.timestamp)).toEqual([
       "2026-10-09T19:20:28.820452+00:00", "2026-10-09T19:20:57+00:00",
     ]);
     expect(served.win_prob_history!.polymarket.at(-1)!.home_probability).toBe(0.36);
