@@ -33,6 +33,7 @@ import {
 import { SHAPE_UNSHAPED } from "@/lib/marketShape";
 import {
   FEED_EVENT_PCT,
+  FEED_PAGE_LIMIT,
   initialFeedRequest,
   nextFeedRequest,
   dedupeById,
@@ -50,6 +51,7 @@ import {
   shouldRestoreOnMount,
   writeFeedSnapshot,
   writeScrollMark,
+  type FeedSnapshot,
 } from "@/lib/discover/feedRestore";
 import { firstDeckOwner, firstDeckRequestPrincipal, readFirstDeck, writeFirstDeck } from "@/lib/discover/firstDeck";
 import FeedBootScript from "@/components/discover/FeedBootScript";
@@ -76,6 +78,11 @@ import { CHALLENGE_SURFACES_ENABLED } from "@/lib/launchSurfaces";
 import { useDiscoverPriceStream } from "@/hooks/useDiscoverPriceStream";
 import { groupedLeaves, priceKey } from "@/lib/discover/priceRefresh";
 import { admitCollection, isCollectionItem, placeCollections, splitCollections } from "@/lib/discover/collectionFeed";
+import { DISCOVER_OPENING_EDITION_ENABLED } from "@/lib/discover/openingEditionOption";
+import { useDiscoverOpeningEdition, type OpeningEditionTagged } from "@/hooks/useDiscoverOpeningEdition";
+import type { EditionDeck, EditionTransition, FeedEditionRequest } from "@/lib/discover/feedEditionTransition";
+import { partitionBySection } from "@/lib/discover/continuationSections";
+import ContinuationSections from "@/components/discover/ContinuationSections";
 
 const PAGE_SIZE = 20;
 const DISMISS_TTL_MS = 6 * 60 * 60 * 1000;
@@ -595,6 +602,24 @@ export default function DiscoverPage() {
   // has empty item state, and saving that over a good edition is how a restore
   // destroys the thing it is restoring.
   const restoreCheckedRef = useRef(false);
+  // #5105 — the opening-edition wiring, OFF unless the internal option is on
+  // (`lib/discover/openingEditionOption`). Off, nothing below reads the deck
+  // and every request, reconciliation and snapshot is today's.
+  const editionEnabled = DISCOVER_OPENING_EDITION_ENABLED;
+  const {
+    deck: editionDeck,
+    deckRef: editionDeckRef,
+    legacySessionRef: editionLegacySessionRef,
+    replacingRef: editionReplacingRef,
+    adopt: adoptEdition,
+    extend: extendEdition,
+    clear: clearEdition,
+    restore: restoreEdition,
+    restoreLegacy: restoreLegacyEdition,
+    issuePageZero: issueEditionPageZero,
+    issueNextPage: issueEditionNextPage,
+    decide: decideEdition,
+  } = useDiscoverOpeningEdition<FeedItem>(getItemId);
   // Queue 309 — first-run orientation state. `null` means "storage not read
   // yet": the pre-mount render is deliberately today's Discover exactly, so no
   // first-run UI can appear in SSR markup and diverge from first hydration.
@@ -728,7 +753,27 @@ export default function DiscoverPage() {
       return;
     }
 
-    const snapshot = readFeedSnapshot<FeedItem>();
+    // #5105 — ON, a section edition is read too, and its deck is held HERE,
+    // before SWR's first request reads it: the restored deck takes a fresh
+    // generation, so a reply SWR cached before this mount is inert against it.
+    // A stored window wider than the retained cards could neither advance nor
+    // page, so it is clamped to them; the stored cursor and `hasMore` already
+    // account for whatever the cap dropped. A legacy edition carries no token
+    // and stays a legacy session.
+    const restoreOpeningEdition = (): FeedSnapshot<FeedItem> | null => {
+      const stored = readFeedSnapshot<FeedItem>({ getId: getItemId });
+      if (!stored) return null;
+      if (!stored.sections) {
+        restoreLegacyEdition();
+        return stored;
+      }
+      if (stored.cursor === undefined) return null;
+      restoreEdition({ ...stored, sections: stored.sections, cursor: stored.cursor });
+      const retained = stored.page1.length + stored.rest.length;
+      return { ...stored, visibleCount: Math.min(stored.visibleCount, Math.max(PAGE_SIZE, retained)) };
+    };
+
+    const snapshot = editionEnabled ? restoreOpeningEdition() : readFeedSnapshot<FeedItem>();
     if (!snapshot) { previewFirstDeck(); return; }
 
     setPage1Items(snapshot.page1);
@@ -742,7 +787,7 @@ export default function DiscoverPage() {
       restorePendingRef.current = true;
       setPendingScrollY(mark.scrollY);
     }
-  }, [authLoading, user?.uid]);
+  }, [authLoading, user?.uid, editionEnabled, restoreEdition, restoreLegacyEdition]);
 
   // Confirm the owner before fetching/writing a personalized deck. Persisted
   // auth can paint its preview while Firebase restores; it is not fetch authority.
@@ -760,8 +805,10 @@ export default function DiscoverPage() {
       editionScoresRef.current = new Map();
       setVisibleCount(PAGE_SIZE);
       setInitialVisibleCount(PAGE_SIZE);
+      // #5105 — another reader's edition is not this one's.
+      if (editionEnabled) clearEdition();
     }
-  }, [authLoading, user?.uid, requestPrincipal]);
+  }, [authLoading, user?.uid, requestPrincipal, editionEnabled, clearEdition]);
 
   const { data, isLoading, error: feedError, mutate: mutateFeed } = useSWR(
     requestPrincipal === null ? null : ["discover-feed", requestPrincipal],
@@ -769,10 +816,18 @@ export default function DiscoverPage() {
       // One bounded initial (offset-zero) request. SWR owns this single fetch;
       // background revalidation reuses the same key/shape (no duplicate initial).
       const { limit, offset } = initialFeedRequest();
+      // #5105 — ON: this request's edition context is taken NOW, as it is
+      // issued, and travels with the reply (a background tick pins the held
+      // edition; the first request holds none and its URL is unchanged).
+      const openingRequest = editionEnabled && !editionLegacySessionRef.current ? issueEditionPageZero(true) : undefined;
       return fetchFeed(
-        { limit, offset, event_pct: FEED_EVENT_PCT },
+        { limit, offset, event_pct: FEED_EVENT_PCT, ...(openingRequest?.edition ? { edition: openingRequest.edition } : {}) },
         { sharedAnonEligible: sharedAnonEligibleRef.current, authenticated: !!user }
-      ).then(payload => ({ ...payload, firstDeckPrincipal: requestPrincipal } as typeof payload & { firstDeckPrincipal?: string | null }));
+      ).then(payload => ({
+        ...payload,
+        firstDeckPrincipal: requestPrincipal,
+        ...(openingRequest ? { openingRequest } : {}),
+      } as typeof payload & { firstDeckPrincipal?: string | null } & OpeningEditionTagged));
     },
     { refreshInterval: 120000, revalidateOnFocus: false, keepPreviousData: false }
   );
@@ -798,6 +853,121 @@ export default function DiscoverPage() {
     renderedCountRef.current = page1Items.length + allItems.length;
   }, [page1Items, allItems]);
 
+  /**
+   * #5105 — open a new edition from an accepted page zero, as ONE transition.
+   *
+   * Everything that belonged to the old edition goes together: its cards, its
+   * window AND the window's seed (#7417 — leaving the seed behind stalls the
+   * auto-pager), its first-sight scores and ordering profile, its paging, its
+   * stored restore state and any scroll landing still aimed at it. `swrValue`
+   * hands SWR the same page tagged with the context it was issued under, so
+   * the data effect sees a reply that is already stale and replays nothing.
+   */
+  const replaceEdition = useCallback((
+    next: EditionDeck<FeedItem>,
+    items: readonly FeedItem[],
+    swrValue?: NonNullable<typeof data>,
+  ) => {
+    adoptEdition(next);
+    replacePreviewRef.current = false;
+    previewOwnerRef.current = null;
+    setSavedDeckPreview(false);
+    editionScoresRef.current = new Map();
+    setOrderingProfile(readDiscoverInteractionProfile());
+    setPage1Items([...items]);
+    setAllItems([]);
+    setVisibleCount(PAGE_SIZE);
+    setInitialVisibleCount(PAGE_SIZE);
+    setHasMore(next.hasMore);
+    setFeedUnavailable(false);
+    restorePendingRef.current = false;
+    setPendingScrollY(null);
+    clearFeedRestore();
+    writeFirstDeck({ items: [...items], hasMore: next.hasMore }, firstDeckOwner(user?.uid, false));
+    if (swrValue) mutateFeed(swrValue, { revalidate: false });
+  }, [adoptEdition, mutateFeed, user?.uid]);
+
+  /**
+   * #5105 — the held edition was retired: ask for page zero of the current list
+   * WITHOUT the retired token, once. The visible deck stays exactly as it is
+   * until a supported page zero replaces it; an unavailable, unsupported or
+   * failed reply keeps the deck and its cursor and raises the retry state. A
+   * second retirement of the same generation while this is in flight asks
+   * nothing more.
+   */
+  const requestEditionReplacement = useCallback(async (request: FeedEditionRequest) => {
+    if (editionReplacingRef.current !== null && editionReplacingRef.current === request.generation) return;
+    editionReplacingRef.current = request.generation;
+    try {
+      const { limit } = initialFeedRequest();
+      const payload = await fetchFeed(
+        { limit, offset: request.offset, event_pct: FEED_EVENT_PCT },
+        { sharedAnonEligible: sharedAnonEligibleRef.current, authenticated: !!user },
+      );
+      const transition = decideEdition(request, payload, renderedCountRef.current > 0);
+      if (transition.kind === "replace") {
+        replaceEdition(transition.deck, transition.items, { ...payload, firstDeckPrincipal: requestPrincipal, openingRequest: request });
+      } else if (!(transition.kind === "preserve" && transition.reason === "stale_request")) {
+        setFeedUnavailable(true);
+      }
+    } catch {
+      setFeedUnavailable(true);
+    } finally {
+      if (editionReplacingRef.current === request.generation) editionReplacingRef.current = null;
+    }
+  }, [decideEdition, editionReplacingRef, replaceEdition, requestPrincipal, user]);
+
+  /**
+   * #5105 — apply one reply on the ON path. `decideEditionTransition` decides;
+   * this only carries the decision into page state. A reply issued against an
+   * older deck (`stale_request`) changes nothing at all.
+   *
+   * Cards stay in the page's own state: a pinned page zero folds its fresh
+   * bodies in through the existing `reconcilePage1`, a later page appends what
+   * the deck had not held, and the deck records identity, position, section
+   * and the raw server cursor beside them.
+   */
+  const applyEditionReply = useCallback(async (request: FeedEditionRequest, payload: unknown, source: "page-zero" | "page") => {
+    const transition: EditionTransition<FeedItem> = decideEdition(request, payload, renderedCountRef.current > 0);
+    if (transition.kind === "preserve") {
+      if (transition.reason === "stale_request") return;
+      // A page that cannot extend the edition must not be re-asked in a loop:
+      // paging stops on the existing retry state. Page zero keeps today's rule.
+      setFeedUnavailable(source === "page" ? true : transition.showUnavailable);
+      return;
+    }
+    if (transition.kind === "restart") {
+      await requestEditionReplacement(transition.request);
+      return;
+    }
+    if (transition.kind === "replace") {
+      replaceEdition(transition.deck, transition.items);
+      return;
+    }
+    // Every card the page holds was received into the deck it is replacing.
+    const prior = editionDeckRef.current?.sections.membership ?? new Map<string, unknown>();
+    extendEdition(transition.deck);
+    const items = [...transition.items];
+    if (request.offset === 0) {
+      setPage1Items((prev) => reconcilePage1(prev, items, getItemId));
+      writeFirstDeck({ items, hasMore: transition.deck.hasMore }, firstDeckOwner(user?.uid, false));
+    } else {
+      const fresh = items.filter((item) => !prior.has(getItemId(item)));
+      if (fresh.length > 0) {
+        setAllItems((prev) => {
+          const prevIds = new Set(prev.map(getItemId));
+          return [...prev, ...fresh.filter((item) => !prevIds.has(getItemId(item)))];
+        });
+      }
+    }
+    setFeedUnavailable(false);
+    setHasMore(transition.deck.hasMore);
+  }, [decideEdition, editionDeckRef, extendEdition, replaceEdition, requestEditionReplacement, user?.uid]);
+  // Read through a ref by the data effect so its dependency list — and so its
+  // runs — stay exactly today's.
+  const applyEditionReplyRef = useRef(applyEditionReply);
+  applyEditionReplyRef.current = applyEditionReply;
+
   // L2-238: run every page-1 payload (initial load AND background revalidation)
   // through the availability decision before it touches rendered state. An
   // unavailable payload contributes no items, does not close pagination, and
@@ -806,6 +976,13 @@ export default function DiscoverPage() {
   useEffect(() => {
     if (!data || requestPrincipal === null ||
         (data.firstDeckPrincipal !== undefined && data.firstDeckPrincipal !== requestPrincipal)) return;
+    // #5105 — ON: a reply is judged against the context it was ISSUED with;
+    // one that carries none is never consumed. A legacy session (restored from
+    // a token-less snapshot) keeps today's handling below.
+    if (editionEnabled && !editionLegacySessionRef.current) {
+      if (data.openingRequest) void applyEditionReplyRef.current(data.openingRequest, data, "page-zero");
+      return;
+    }
     const decision = decideFeedPage({
       payload: data,
       previousHasMore: hasMoreRef.current,
@@ -845,6 +1022,28 @@ export default function DiscoverPage() {
     // spinning forever instead of terminating on an actionable retry.
     if (loadingMore || !hasMore || feedUnavailable) return;
     setLoadingMore(true);
+    // #5105 — ON: the next page belongs to the held edition, at its RAW server
+    // cursor (never a count of held cards), with its token. A retired reply
+    // keeps every card on screen while one unpinned page zero is asked for.
+    if (editionEnabled && !editionLegacySessionRef.current) {
+      const request = issueEditionNextPage();
+      try {
+        if (request === null) setHasMore(false);
+        else {
+          const resp = await fetchFeed({
+            limit: FEED_PAGE_LIMIT,
+            offset: request.offset,
+            event_pct: FEED_EVENT_PCT,
+            ...(request.edition ? { edition: request.edition } : {}),
+          });
+          await applyEditionReplyRef.current(request, resp, "page");
+        }
+      } catch {
+        setFeedUnavailable(true);
+      }
+      setLoadingMore(false);
+      return;
+    }
     try {
       const loadedItems = [...page1Items, ...allItems];
       const loadedIds = new Set(loadedItems.map(getItemId));
@@ -889,7 +1088,7 @@ export default function DiscoverPage() {
       setFeedUnavailable(true);
     }
     setLoadingMore(false);
-  }, [allItems, page1Items, loadingMore, hasMore, feedUnavailable]);
+  }, [allItems, page1Items, loadingMore, hasMore, feedUnavailable, editionEnabled, editionLegacySessionRef, issueEditionNextPage]);
 
   // L2-238: the reader's way out of an unavailable feed. Clears the state and
   // revalidates page 1 — already-rendered cards stay exactly where they are.
@@ -941,6 +1140,11 @@ export default function DiscoverPage() {
     if (typeof window !== "undefined") {
       window.scrollTo({ top: 0, behavior: "smooth" });
     }
+    // #5105 — ON: the same refresh, decided by the edition transition and
+    // issued unpinned under the context held NOW. Only a replacement opens the
+    // new edition, and today's refusal of an empty page one still holds.
+    const openingRequest = editionEnabled ? issueEditionPageZero(false) : null;
+    const decided: { transition?: EditionTransition<FeedItem> } = {};
     const outcome = await runManualRefresh({
       fetchPage: () => {
         const { limit, offset } = initialFeedRequest();
@@ -949,15 +1153,28 @@ export default function DiscoverPage() {
           { sharedAnonEligible: sharedAnonEligibleRef.current, authenticated: !!user }
         );
       },
-      decide: (payload) => decideFeedPage({
-        payload,
-        previousHasMore: hasMoreRef.current,
-        hasRenderedItems: renderedCountRef.current > 0,
-      }),
+      decide: (payload) => {
+        if (!openingRequest) {
+          return decideFeedPage({
+            payload,
+            previousHasMore: hasMoreRef.current,
+            hasRenderedItems: renderedCountRef.current > 0,
+          });
+        }
+        const transition = decideEdition(openingRequest, payload, renderedCountRef.current > 0);
+        decided.transition = transition;
+        return transition.kind === "replace"
+          ? { acceptItems: true, hasMore: transition.deck.hasMore, showUnavailable: false }
+          : { acceptItems: false, hasMore: hasMoreRef.current, showUnavailable: transition.kind === "preserve" && transition.showUnavailable };
+      },
       getId: getItemId,
     });
     if (outcome.kind === "keep") {
       setFeedUnavailable(outcome.showUnavailable);
+      return;
+    }
+    if (openingRequest && decided.transition?.kind === "replace") {
+      replaceEdition(decided.transition.deck, outcome.page1, { ...outcome.payload, firstDeckPrincipal: requestPrincipal, openingRequest });
       return;
     }
     replacePreviewRef.current = false;
@@ -985,7 +1202,7 @@ export default function DiscoverPage() {
     // Hand SWR the same page so the next background tick folds into THIS
     // edition (the data effect's reconcile of identical ids is a no-op).
     mutateFeed(outcome.payload, { revalidate: false });
-  }, [mutateFeed, user]);
+  }, [mutateFeed, user, editionEnabled, issueEditionPageZero, decideEdition, replaceEdition, requestPrincipal]);
 
   // Infinite scroll observer. Re-armed whenever the sentinel unmounts and
   // remounts (L2-238: an unavailable page swaps the spinner for a retry, so the
@@ -1024,7 +1241,10 @@ export default function DiscoverPage() {
       // would keep firing against a sentinel nobody can see.
       setSentinelVisible(false);
     };
-  }, [feedUnavailable, isLoading]);
+    // #5105 — ON, a newly adopted edition (a refresh from the end-of-feed card,
+    // where no sentinel is mounted, or a restart) re-arms the observer on the
+    // sentinel it mounts. Off, this is a constant and the list is today's.
+  }, [feedUnavailable, isLoading, editionEnabled ? editionDeck?.generation ?? null : null]);
 
   /**
    * #7417 — land the reader on the offset they left from, once the restored
@@ -1078,8 +1298,15 @@ export default function DiscoverPage() {
   useEffect(() => {
     if (!restoreCheckedRef.current || savedDeckPreview) return;
     if (page1Items.length === 0) return;
-    writeFeedSnapshot({ page1: page1Items, rest: allItems, visibleCount, hasMore });
-  }, [page1Items, allItems, visibleCount, hasMore, savedDeckPreview]);
+    // #5105 — ON, the held deck's section evidence and RAW cursor ride along
+    // (a legacy deck still writes today's bytes). Off, `editionDeck` is null.
+    writeFeedSnapshot(
+      { page1: page1Items, rest: allItems, visibleCount, hasMore },
+      editionEnabled && editionDeck
+        ? { deck: editionDeck.sections, cursor: editionDeck.nextOffset, getId: getItemId }
+        : undefined,
+    );
+  }, [page1Items, allItems, visibleCount, hasMore, savedDeckPreview, editionEnabled, editionDeck]);
 
   /**
    * #7417 — keep the scroll mark current, throttled.
@@ -1206,25 +1433,61 @@ export default function DiscoverPage() {
       ? filtered.filter((item) => !suppressedCategories.has(getItemCategory(item).toLowerCase()))
       : filtered;
     const cooldownSafe = cooldownFiltered.length > 0 ? cooldownFiltered : filtered;
-    const grouped = groupRelatedMarkets(spaceBySport(cooldownSafe, getItemCategory));
-    const ordered = spaceBySport(
-      applyLocalPersonalization(grouped, activeOrderingProfile, (groupedItem) => {
-        const item = groupedItem.type === "single" ? groupedItem.item : groupedItem.items?.[0];
-        if (!item) return null;
-        return {
-          score: editionScores.get(getItemId(item)) ?? item.score ?? 0,
-          category: getDiscoverItemAnalytics(item).category,
-        };
-      }),
-      getGroupedCategory,
-    );
-    return placeCollections<DiscoverGroupedItem>(
-      ordered,
-      collections,
-      (gi) => (gi.type === "single" ? (gi.item ? [gi.item] : []) : gi.items ?? []).map(getItemId),
-      (item) => ({ type: "single", item }),
-    );
-  }, [page1Items, allItems, dismissed, dismissedOwner, interactionProfile, orderingProfile, learningState, user?.uid]);
+    const orderList = (cards: FeedItem[], anchored: typeof collections): DiscoverGroupedItem[] => {
+      const grouped = groupRelatedMarkets(spaceBySport(cards, getItemCategory));
+      const ordered = spaceBySport(
+        applyLocalPersonalization(grouped, activeOrderingProfile, (groupedItem) => {
+          const item = groupedItem.type === "single" ? groupedItem.item : groupedItem.items?.[0];
+          if (!item) return null;
+          return {
+            score: editionScores.get(getItemId(item)) ?? item.score ?? 0,
+            category: getDiscoverItemAnalytics(item).category,
+          };
+        }),
+        getGroupedCategory,
+      );
+      return placeCollections<DiscoverGroupedItem>(
+        ordered,
+        anchored,
+        (gi) => (gi.type === "single" ? (gi.item ? [gi.item] : []) : gi.items ?? []).map(getItemId),
+        (item) => ({ type: "single", item }),
+      );
+    };
+    // #5105 — ON with a section deck: every filter and fallback above stayed
+    // GLOBAL. The admitted cards and the collection envelopes are split by the
+    // section the server placed them in (decided from raw server positions
+    // when they arrived, so a filtered card cannot move the boundary), and
+    // grouping, spacing, personalization and collection placement then run
+    // inside each section on its own — nothing crosses the boundary. A card
+    // the deck never received cannot be given a section; that does not happen
+    // by construction (every held card came through the deck), and if it ever
+    // did the list is shown whole rather than guessed at or dropped.
+    const sections = editionEnabled ? editionDeck?.sections ?? null : null;
+    if (sections && sections.boundary !== null) {
+      const cards = partitionBySection(cooldownSafe, sections, getItemId);
+      const envelopes = partitionBySection(collections, sections, (entry) => getItemId(entry.item));
+      if (cards.unclassified.length === 0 && envelopes.unclassified.length === 0) {
+        return [...orderList(cards.opening, envelopes.opening), ...orderList(cards.continuation, envelopes.continuation)];
+      }
+    }
+    return orderList(cooldownSafe, collections);
+  }, [page1Items, allItems, dismissed, dismissedOwner, interactionProfile, orderingProfile, learningState, user?.uid, editionEnabled, editionDeck]);
+
+  // #5105 — how many processed items are opening: the list above puts every
+  // opening item (a group or a collection keeps its section) ahead of every
+  // continuation item. Null = one flat list — no section deck, or a held item
+  // the deck cannot place.
+  const openingCount = useMemo((): number | null => {
+    const sections = editionEnabled ? editionDeck?.sections ?? null : null;
+    if (!sections || sections.boundary === null) return null;
+    const sectionOf = (gi: DiscoverGroupedItem) => {
+      const lead = gi.type === "single" ? gi.item : gi.items?.[0];
+      return lead ? sections.membership.get(getItemId(lead)) : undefined;
+    };
+    if (processedItems.some((gi) => sectionOf(gi) === undefined)) return null;
+    const first = processedItems.findIndex((gi) => sectionOf(gi) === "continuation");
+    return first === -1 ? processedItems.length : first;
+  }, [processedItems, editionEnabled, editionDeck]);
 
   // L2-215 Item 1 — suppression telemetry. Count the empty predictive envelopes
   // dropped by the fail-closed filter, by card type + machine reason, with NO
@@ -1253,6 +1516,8 @@ export default function DiscoverPage() {
 
   const streamedPrices = useDiscoverPriceStream(processedItems, user?.uid ?? 'anonymous');
   const visibleItems = streamedPrices.items.slice(0, visibleCount);
+  // #5105 — how much of the visible window is opening; null = one flat list.
+  const visibleOpeningCount = openingCount === null ? null : Math.min(openingCount, visibleItems.length);
 
   // Queue 309 — the whole first-run decision, in two lines. Both delegate to
   // pure functions that take no time input, so neither can expire on a timer
@@ -1487,6 +1752,79 @@ export default function DiscoverPage() {
     }
   }, [visibleCount, loadedCount, processedItems.length, initialVisibleCount, hasMore, loadingMore, loadNextPage]);
 
+  // One card of the visible window. `idx` is its place in the WHOLE window —
+  // #5105: the continuation section passes its offset in, so the first card,
+  // the swipe-hint peek and every-fifth slot stay where they are.
+  const renderFeedCard = (gi: DiscoverGroupedItem, idx: number) => {
+    const key = gi.type === "single" ? getItemId(gi.item!) : `group-${gi.groupTitle}-${idx}`;
+    // #9905 — only admitted collections reach this list.
+    const collection = gi.type === "single" ? admitCollection(gi.item) : null;
+    if (collection) {
+      return (
+        <MasonryCell key={key} data-testid="discover-card">
+          <DiscoverCollectionCard entry={collection} />
+        </MasonryCell>
+      );
+    }
+    // Queue 309 Item 3: a locked slot falls through to the normal
+    // DiscoverCard rather than rendering nothing — suppressing the quiz
+    // must never leave a hole in the masonry grid.
+    // #5763 — `feedItemCanBeGuessed` replaces the bare type test here.
+    // Every fifth card was offered as a "higher or lower?" question on
+    // nothing but its type, so a finished game seated on page one by the
+    // marquee-final arm (#4681/#5100) was asked as a live question, and
+    // graded against an in-game probability frozen at the whistle. A
+    // rejected slot falls through to the ordinary card below, exactly as
+    // a locked one does — the masonry grid never gains a hole.
+    const isGuessSlot = gamesUnlocked && gi.type === "single" && (idx + 1) % 5 === 0 && feedItemCanBeGuessed(gi.item);
+    const analytics = getGroupedAnalytics(gi);
+    const personalizationTrace = analytics
+      ? getDiscoverPersonalizationTrace(interactionProfile, analytics.category)
+      : undefined;
+
+    const handleLessLike = gi.type === "single"
+      ? () => {
+          handleDismiss(getItemId(gi.item!));
+        }
+      : undefined;
+
+    // One first-card concept, two consumers: the existing peek animation
+    // (swipe-hint cohort) and Queue 309's hero label (first-run cohort).
+    const isFirstPosition = idx === 0;
+    const isFirstCard = isFirstPosition && showSwipeHint;
+
+    return (
+      // `data-testid="discover-card"` is the browser-audit rail's
+      // proof that REAL content rendered (L2-223). The audit used to
+      // match `main div.break-inside-avoid`, which the loading
+      // skeleton also carries — so a Discover stuck on skeletons
+      // satisfied "a real card was visible", recorded a first-card
+      // latency, and reported green. This hook exists only on a
+      // mounted feed item, so that false green cannot recur.
+      <MasonryCell
+        key={key}
+        data-testid="discover-card"
+        className={isFirstCard ? "animate-peek-right" : ""}
+      >
+        <FeedItemShell groupedItem={gi} positionIndex={idx} personalizationTrace={personalizationTrace} onSeen={handleCardSeen}
+          priceOwner={key} onPriceVisibility={streamedPrices.setPriceVisibility}>
+          {isGuessSlot ? (
+            <GuessCard item={gi.item!} onGuessCompleted={incrementDailyGuesses} />
+          ) : (
+            <DiscoverCard
+              groupedItem={gi}
+              positionIndex={idx}
+              onDismiss={handleLessLike}
+              showProbabilityHint={isFirstPosition && isFirstRunAnon}
+              pinFor={pinForFutures}
+              onFeedbackAttempt={handleFeedbackAttempt}
+            />
+          )}
+        </FeedItemShell>
+      </MasonryCell>
+    );
+  };
+
   return (
     <ErrorBoundary fallback={<div className="p-8 text-center"><h2>Something went wrong</h2><button onClick={() => window.location.reload()} className="mt-2 text-sm text-accent-brand hover:underline">Reload page</button></div>}>
     <div className="min-h-screen bg-surface-deep">
@@ -1663,77 +2001,23 @@ export default function DiscoverPage() {
         )}
 
         {/* #8491 — across then down: see MasonryCell. */}
-        <div className={MASONRY_GRID_CLASS}>
-          {visibleItems.map((gi, idx) => {
-            const key = gi.type === "single" ? getItemId(gi.item!) : `group-${gi.groupTitle}-${idx}`;
-            // #9905 — only admitted collections reach this list.
-            const collection = gi.type === "single" ? admitCollection(gi.item) : null;
-            if (collection) {
-              return (
-                <MasonryCell key={key} data-testid="discover-card">
-                  <DiscoverCollectionCard entry={collection} />
-                </MasonryCell>
-              );
-            }
-            // Queue 309 Item 3: a locked slot falls through to the normal
-            // DiscoverCard rather than rendering nothing — suppressing the quiz
-            // must never leave a hole in the masonry grid.
-            // #5763 — `feedItemCanBeGuessed` replaces the bare type test here.
-            // Every fifth card was offered as a "higher or lower?" question on
-            // nothing but its type, so a finished game seated on page one by the
-            // marquee-final arm (#4681/#5100) was asked as a live question, and
-            // graded against an in-game probability frozen at the whistle. A
-            // rejected slot falls through to the ordinary card below, exactly as
-            // a locked one does — the masonry grid never gains a hole.
-            const isGuessSlot = gamesUnlocked && gi.type === "single" && (idx + 1) % 5 === 0 && feedItemCanBeGuessed(gi.item);
-            const analytics = getGroupedAnalytics(gi);
-            const personalizationTrace = analytics
-              ? getDiscoverPersonalizationTrace(interactionProfile, analytics.category)
-              : undefined;
-
-            const handleLessLike = gi.type === "single"
-              ? () => {
-                  handleDismiss(getItemId(gi.item!));
-                }
-              : undefined;
-
-            // One first-card concept, two consumers: the existing peek animation
-            // (swipe-hint cohort) and Queue 309's hero label (first-run cohort).
-            const isFirstPosition = idx === 0;
-            const isFirstCard = isFirstPosition && showSwipeHint;
-
-            return (
-              // `data-testid="discover-card"` is the browser-audit rail's
-              // proof that REAL content rendered (L2-223). The audit used to
-              // match `main div.break-inside-avoid`, which the loading
-              // skeleton also carries — so a Discover stuck on skeletons
-              // satisfied "a real card was visible", recorded a first-card
-              // latency, and reported green. This hook exists only on a
-              // mounted feed item, so that false green cannot recur.
-              <MasonryCell
-                key={key}
-                data-testid="discover-card"
-                className={isFirstCard ? "animate-peek-right" : ""}
-              >
-                <FeedItemShell groupedItem={gi} positionIndex={idx} personalizationTrace={personalizationTrace} onSeen={handleCardSeen}
-                  priceOwner={key} onPriceVisibility={streamedPrices.setPriceVisibility}>
-                  {isGuessSlot ? (
-                    <GuessCard item={gi.item!} onGuessCompleted={incrementDailyGuesses} />
-                  ) : (
-                    <DiscoverCard
-                      groupedItem={gi}
-                      positionIndex={idx}
-                      onDismiss={handleLessLike}
-                      showProbabilityHint={isFirstPosition && isFirstRunAnon}
-                      pinFor={pinForFutures}
-                      onFeedbackAttempt={handleFeedbackAttempt}
-                    />
-                  )}
-                </FeedItemShell>
-              </MasonryCell>
-            );
-          })}
-        </div>
+        {/* #5105 — ON with a section deck, the SAME visible window (one stream,
+            one `visibleCount`) is split at the opening's length: the heading
+            takes no card slot, and the continuation's cards keep their place in
+            the whole window. */}
+        {visibleOpeningCount === null ? (
+          <div className={MASONRY_GRID_CLASS}>{visibleItems.map(renderFeedCard)}</div>
+        ) : (
+          <ContinuationSections
+            opening={visibleItems.slice(0, visibleOpeningCount)}
+            continuation={visibleItems.slice(visibleOpeningCount)}
+            renderSection={(items, section) => (
+              <div className={MASONRY_GRID_CLASS}>
+                {items.map((gi, i) => renderFeedCard(gi, (section === "continuation" ? visibleOpeningCount : 0) + i))}
+              </div>
+            )}
+          />
+        )}
 
         {/* L2-238: unavailable-with-last-good. The cards above stay usable; the
             spinner is replaced by a terminating, actionable retry so the reader

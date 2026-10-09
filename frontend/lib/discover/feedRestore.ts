@@ -116,7 +116,26 @@ export interface FeedSectionOptions<T> {
 /** A snapshot read by a section-aware caller. `null` sections = a legacy edition. */
 export interface FeedSectionSnapshot<T> extends FeedSnapshot<T> {
   sections: ContinuationSections<T> | null;
+  /** The raw server offset a section edition resumes paging from; present only
+   *  when the writer supplied one (see `FeedSectionWrite.cursor`). */
+  cursor?: number;
 }
+
+/**
+ * #5105 — what a section-aware writer passes. `cursor` is the accepted deck's
+ * RAW server cursor (`EditionDeck.nextOffset`), never a count of held cards.
+ *
+ * 🔴 THE CAP DECIDES WHERE PAGING RESUMES. The snapshot keeps only the first
+ * `FEED_SNAPSHOT_MAX_ITEMS` cards. Restoring 120 of 160 accepted cards with the
+ * old cursor (160) would skip the 40 it dropped; restoring them with the old
+ * `hasMore: false` would strand them. With a cursor, the stored cursor is the
+ * lowest server position the deck received but the snapshot did not keep (or
+ * the deck's own cursor when it kept everything), and `hasMore` is stored true
+ * whenever that moved the cursor back — the server answers for what is really
+ * left. A card held but not kept for any reason moves the cursor back, so a
+ * filter, a hole or a duplicate-only page can never move it forward.
+ */
+export type FeedSectionWrite<T> = { deck: ContinuationSections<unknown> | null; cursor?: number } & FeedSectionOptions<T>;
 
 interface StoredSnapshot<T> extends FeedSnapshot<T> {
   v: number;
@@ -125,6 +144,7 @@ interface StoredSnapshot<T> extends FeedSnapshot<T> {
 interface StoredSectionSnapshot<T> extends FeedSnapshot<T> {
   v: typeof FEED_SECTION_SNAPSHOT_VERSION;
   sections: StoredContinuationDeck;
+  cursor?: number;
 }
 
 interface StoredScroll extends FeedScrollMark {
@@ -133,6 +153,25 @@ interface StoredScroll extends FeedScrollMark {
 
 function isPositiveInt(value: unknown): value is number {
   return typeof value === "number" && Number.isInteger(value) && value > 0;
+}
+
+function isCursor(value: unknown, total: number): value is number {
+  return typeof value === "number" && Number.isInteger(value) && value >= 0 && value <= total;
+}
+
+/** The retained frontier: see `FeedSectionWrite`. Null when the cursor is not a raw offset of this deck. */
+function retainedFrontier(
+  deck: ContinuationSections<unknown>,
+  storedIds: ReadonlySet<string>,
+  cursor: number,
+  hasMore: boolean,
+): { cursor: number; hasMore: boolean } | null {
+  if (!isCursor(cursor, deck.total)) return null;
+  let resume = cursor;
+  for (const [id, position] of deck.positions) {
+    if (!storedIds.has(id) && position < resume) resume = position;
+  }
+  return { cursor: resume, hasMore: hasMore || resume < cursor };
 }
 
 /**
@@ -160,20 +199,28 @@ export function capSnapshotItems<T>(page1: T[], rest: T[]): { page1: T[]; rest: 
  *  a legacy deck, the bytes are exactly today's. */
 export function serializeFeedSnapshot<T>(
   snapshot: FeedSnapshot<T>,
-  section?: { deck: ContinuationSections<unknown> | null } & FeedSectionOptions<T>,
+  section?: FeedSectionWrite<T>,
 ): string | null {
   if (!Array.isArray(snapshot.page1) || snapshot.page1.length === 0) return null;
   const capped = capSnapshotItems(snapshot.page1, snapshot.rest ?? []);
   if (section?.deck && section.deck.boundary !== null) {
     const sections = encodeContinuationDeck(section.deck, [...capped.page1, ...capped.rest], section.getId);
     if (!sections) return null;
+    let paging: { cursor?: number; hasMore: boolean } = { hasMore: snapshot.hasMore };
+    if (section.cursor !== undefined) {
+      // `encodeContinuationDeck` bound every stored card to an id, so these are its ids.
+      const frontier = retainedFrontier(section.deck, new Set(sections.cards.map(([id]) => id)), section.cursor, snapshot.hasMore);
+      if (!frontier) return null;
+      paging = frontier;
+    }
     const stored: StoredSectionSnapshot<T> = {
       v: FEED_SECTION_SNAPSHOT_VERSION,
       page1: capped.page1,
       rest: capped.rest,
       visibleCount: snapshot.visibleCount,
-      hasMore: snapshot.hasMore,
+      hasMore: paging.hasMore,
       sections,
+      ...(paging.cursor !== undefined ? { cursor: paging.cursor } : {}),
     };
     return JSON.stringify(stored);
   }
@@ -239,7 +286,12 @@ export function parseFeedSnapshot<T>(
     section.getId,
   );
   if (!sections) return null;
-  return { ...snapshot, sections };
+  // A section edition's resume cursor is optional; one that is present must be
+  // a raw offset inside the deck, or the edition is refused.
+  if (!("cursor" in candidate)) return { ...snapshot, sections };
+  const cursor = (candidate as Partial<StoredSectionSnapshot<T>>).cursor;
+  if (!isCursor(cursor, sections.total)) return null;
+  return { ...snapshot, sections, cursor };
 }
 
 function readStoredEdition<T>(candidate: Partial<FeedSnapshot<T>>): FeedSnapshot<T> | null {
@@ -367,7 +419,7 @@ export function readFeedSnapshot<T>(
 
 export function writeFeedSnapshot<T>(
   snapshot: FeedSnapshot<T>,
-  section?: { deck: ContinuationSections<unknown> | null } & FeedSectionOptions<T>,
+  section?: FeedSectionWrite<T>,
 ): void {
   if (typeof window === "undefined") return;
   if (section?.deck && section.deck.boundary !== null) {
@@ -398,7 +450,7 @@ export function writeFeedSnapshot<T>(
  */
 function writeSectionSnapshot<T>(
   snapshot: FeedSnapshot<T>,
-  section: { deck: ContinuationSections<unknown> | null } & FeedSectionOptions<T>,
+  section: FeedSectionWrite<T>,
 ): void {
   let raw: string | null;
   try {
