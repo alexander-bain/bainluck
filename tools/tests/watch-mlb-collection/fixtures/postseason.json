@@ -1,0 +1,270 @@
+{
+  "_representative": "REPRESENTATIVE FIXTURE for #9636/#9652 \u2014 built from test rows through the real card serializers; NOT production data. Regenerate with BL_WRITE_9636_FIXTURES=1 (see backend/tests/test_container_hydrated_reader_9636.py).",
+  "request": "GET /api/containers/mlb-2026-postseason",
+  "response": {
+    "assembled": true,
+    "children": [],
+    "container": {
+      "category": "sports",
+      "id": 80,
+      "kind": "season",
+      "name": "MLB 2026 Postseason",
+      "parent_container_id": null,
+      "slug": "mlb-2026-postseason",
+      "status": "live",
+      "window_end": "2026-10-08T17:00:00+00:00",
+      "window_start": "2026-10-01T17:00:00+00:00"
+    },
+    "edition": {
+      "kind": "mlb_postseason",
+      "league": "mlb",
+      "season": 2026
+    },
+    "known_classes": [
+      "advancement",
+      "doubles",
+      "match_winner",
+      "prop",
+      "side_question",
+      "title",
+      "unclassified"
+    ],
+    "member_count": 4,
+    "reason": null,
+    "revision": 11,
+    "sections": [
+      {
+        "class": "match_winner",
+        "count": 3,
+        "members": [
+          {
+            "card": {
+              "away_score": 5,
+              "away_team": "Boston Red Sox",
+              "commence_time": "2026-09-30T13:00:00+00:00",
+              "completed_at": "2026-09-30T16:00:00+00:00",
+              "external_id": "rep-801",
+              "hero_probability": 0.0,
+              "hero_probability_away": 1.0,
+              "hero_probability_source": "settled",
+              "hero_settled_result": "away",
+              "highlight": {
+                "flags": {
+                  "favorite_switched": false,
+                  "has_lead_changes": false,
+                  "has_recent_momentum": false,
+                  "is_blowout": false,
+                  "is_close_matchup": false,
+                  "is_live": false,
+                  "is_recently_finished": false,
+                  "is_starting_soon": false,
+                  "is_upset": false,
+                  "is_volatile": false,
+                  "league_tier": 1,
+                  "probability_swing": "stable",
+                  "score_swing": "stable"
+                },
+                "label": null,
+                "reasons": [
+                  "tier_1"
+                ],
+                "score": 20,
+                "should_feature": false
+              },
+              "home_score": 2,
+              "home_team": "New York Yankees",
+              "id": 801,
+              "sport": "baseball_mlb",
+              "sport_name": "MLB",
+              "start_is_tbd": false,
+              "started_without_result": false,
+              "status": "completed"
+            },
+            "confidence": 1.0,
+            "container_id": 80,
+            "destination": {
+              "api": "/api/events/801",
+              "id": 801,
+              "kind": "event",
+              "web": "/events/801"
+            },
+            "id": 801,
+            "question_ids": [],
+            "source": "espn",
+            "type": "event"
+          },
+          {
+            "card": {
+              "away_score": null,
+              "away_team": "San Diego Padres",
+              "commence_time": "2026-10-06T19:00:00+00:00",
+              "completed_at": null,
+              "external_id": "rep-802",
+              "highlight": {
+                "flags": {
+                  "favorite_switched": false,
+                  "has_lead_changes": false,
+                  "has_recent_momentum": false,
+                  "is_blowout": false,
+                  "is_close_matchup": false,
+                  "is_live": false,
+                  "is_recently_finished": false,
+                  "is_starting_soon": false,
+                  "is_upset": false,
+                  "is_volatile": false,
+                  "league_tier": 1,
+                  "probability_swing": "stable",
+                  "score_swing": "stable"
+                },
+                "label": null,
+                "reasons": [
+                  "tier_1"
+                ],
+                "score": 20,
+                "should_feature": false
+              },
+              "home_score": null,
+              "home_team": "Los Angeles Dodgers",
+              "id": 802,
+              "sport": "baseball_mlb",
+              "sport_name": "MLB",
+              "start_is_tbd": false,
+              "started_without_result": false,
+              "status": "scheduled"
+            },
+            "confidence": 1.0,
+            "container_id": 80,
+            "destination": {
+              "api": "/api/events/802",
+              "id": 802,
+              "kind": "event",
+              "web": "/events/802"
+            },
+            "id": 802,
+            "question_ids": [
+              9201
+            ],
+            "source": "espn",
+            "type": "event"
+          },
+          {
+            "card": {
+              "category": "sports",
+              "id": 9201,
+              "llm_sport_category": null,
+              "market_tier": 2,
+              "market_type": null,
+              "market_type_label": "Conference",
+              "name": "Padres at Dodgers: winner",
+              "outcome_count": 2,
+              "prices_updated_at": null,
+              "resolution_date": null,
+              "source": "kalshi",
+              "sport": "baseball_mlb",
+              "sport_name": "MLB",
+              "status": "open",
+              "top_outcomes": [
+                {
+                  "american_odds": null,
+                  "id": 92010,
+                  "is_winner": null,
+                  "movement": null,
+                  "name": "Los Angeles Dodgers",
+                  "probability": 0.58,
+                  "rank": null,
+                  "resolution_source": null
+                },
+                {
+                  "american_odds": null,
+                  "id": 92011,
+                  "is_winner": null,
+                  "movement": null,
+                  "name": "San Diego Padres",
+                  "probability": 0.42,
+                  "rank": null,
+                  "resolution_source": null
+                }
+              ],
+              "updated_at": null
+            },
+            "confidence": 1.0,
+            "container_id": 80,
+            "destination": {
+              "api": "/api/futures/9201",
+              "id": 9201,
+              "kind": "market",
+              "web": "/futures/9201"
+            },
+            "event_id": 802,
+            "id": 9201,
+            "source": "register",
+            "type": "market"
+          }
+        ]
+      },
+      {
+        "class": "title",
+        "count": 1,
+        "members": [
+          {
+            "card": {
+              "category": "sports",
+              "id": 9202,
+              "llm_sport_category": null,
+              "market_tier": 2,
+              "market_type": null,
+              "market_type_label": "Conference",
+              "name": "2026 World Series champion",
+              "outcome_count": 2,
+              "prices_updated_at": null,
+              "resolution_date": null,
+              "source": "kalshi",
+              "sport": "baseball_mlb",
+              "sport_name": "MLB",
+              "status": "open",
+              "top_outcomes": [
+                {
+                  "american_odds": null,
+                  "id": 92020,
+                  "is_winner": null,
+                  "movement": null,
+                  "name": "Los Angeles Dodgers",
+                  "probability": 0.21,
+                  "rank": null,
+                  "resolution_source": null
+                },
+                {
+                  "american_odds": null,
+                  "id": 92021,
+                  "is_winner": null,
+                  "movement": null,
+                  "name": "New York Yankees",
+                  "probability": 0.12,
+                  "rank": null,
+                  "resolution_source": null
+                }
+              ],
+              "updated_at": null
+            },
+            "confidence": 1.0,
+            "container_id": 80,
+            "destination": {
+              "api": "/api/futures/9202",
+              "id": 9202,
+              "kind": "market",
+              "web": "/futures/9202"
+            },
+            "event_id": null,
+            "id": 9202,
+            "source": "register",
+            "type": "market"
+          }
+        ]
+      }
+    ],
+    "slug": "mlb-2026-postseason",
+    "state": "published",
+    "withheld": [],
+    "withheld_count": 0
+  }
+}

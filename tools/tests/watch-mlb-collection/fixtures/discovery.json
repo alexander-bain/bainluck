@@ -1,0 +1,37 @@
+{
+  "_representative": "REPRESENTATIVE FIXTURE for #9653/#9652 \u2014 the producer's output for test rows; NOT production data. Regenerate with BL_WRITE_9653_FIXTURES=1 (backend/tests/test_container_discovery_9653.py).",
+  "request": "discover_collections(session, league='mlb', season=2026)",
+  "response": {
+    "collections": [
+      {
+        "destination": {
+          "api": "/api/containers/mlb-2026-postseason",
+          "kind": "container",
+          "slug": "mlb-2026-postseason",
+          "web": "/collections/mlb-2026-postseason"
+        },
+        "edition": {
+          "kind": "mlb_postseason",
+          "league": "mlb",
+          "season": 2026
+        },
+        "game_count": 9,
+        "id": 81,
+        "matched_event_ids": [],
+        "name": "MLB 2026 \u00b7 Postseason",
+        "question_count": 6,
+        "revision": 2,
+        "slug": "mlb-2026-postseason",
+        "state": "published",
+        "status": "scheduled",
+        "text": "MLB 2026 \u00b7 Postseason",
+        "type": "collection",
+        "window_end": "2026-10-08T17:00:00+00:00",
+        "window_start": "2026-10-01T17:00:00+00:00"
+      }
+    ],
+    "excluded": {},
+    "reason": null,
+    "truncated": {}
+  }
+}
