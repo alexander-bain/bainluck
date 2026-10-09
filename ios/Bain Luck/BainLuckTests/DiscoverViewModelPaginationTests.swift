@@ -713,15 +713,21 @@ final class DiscoverViewModelPaginationTests: XCTestCase {
     /// A page in the seated format: `edition` + `continuation_start`, and an
     /// `edition_status` when the request was pinned.
     private static func seatedPage(
-        ids: [Int], offset: Int, edition: String, status: String? = nil,
-        start: Int? = 3, limit: Int = 12, hasMore: Bool = true
+        ids: [Int], offset: Int, edition: String?, status: String? = nil,
+        start: Int? = 3, limit: Int = 12, hasMore: Bool = true,
+        total: Int = 9999, malformedAt: [Int] = []
     ) throws -> FeedResponse {
-        let items = ids.map { futuresJSON(id: $0) }.joined(separator: ",")
-        var extra = #","edition":"\#(edition)""#
+        // `malformedAt` are RAW slots: a row there fails to decode, so every
+        // later card's raw position is one more than its decoded index.
+        var rows = ids.map { futuresJSON(id: $0) }
+        for slot in malformedAt.sorted() { rows.insert(#"{"garbage": true}"#, at: slot) }
+        let items = rows.joined(separator: ",")
+        var extra = ""
+        if let edition { extra += #","edition":"\#(edition)""# }
         if let start { extra += #","continuation_start":\#(start)"# }
         if let status { extra += #","edition_status":"\#(status)""# }
         let json = """
-        {"items":[\(items)],"total":9999,"limit":\(limit),"offset":\(offset),"has_more":\(hasMore)\(extra)}
+        {"items":[\(items)],"total":\(total),"limit":\(limit),"offset":\(offset),"has_more":\(hasMore)\(extra)}
         """
         return try decoder().decode(FeedResponse.self, from: Data(json.utf8))
     }
@@ -823,6 +829,118 @@ final class DiscoverViewModelPaginationTests: XCTestCase {
         await vm.loadMoreIfNeeded()
         XCTAssertEqual(fake.requestedEditions, [nil])
         XCTAssertEqual(fake.requestedLimits, [200])
+    }
+
+    // MARK: - #5105: the served section survives decode, filters and merges
+
+    @MainActor private func section(_ vm: DiscoverViewModel, _ id: Int) -> FeedSection? {
+        vm.items.first { $0.futures?.id == id }.flatMap(vm.seatedSection(of:))
+    }
+
+    /// The opening cards come first in the published deck, whatever the spacing
+    /// pass does inside each section.
+    @MainActor private func assertSectionsContiguous(
+        _ vm: DiscoverViewModel, file: StaticString = #filePath, line: UInt = #line
+    ) {
+        let sections = vm.items.map { vm.seatedSection(of: $0) }
+        let firstContinuation = sections.firstIndex(of: .continuation) ?? sections.count
+        XCTAssertFalse(sections[firstContinuation...].contains(.opening),
+            "an opening card was published after the continuation began", file: file, line: line)
+        XCTAssertFalse(sections.contains(nil), "every published card has a served section", file: file, line: line)
+    }
+
+    /// E=3 with raw slot 1 malformed: the two SURVIVING opening cards are the
+    /// opening; the card at raw slot 3 is continuation, never pulled up by the
+    /// compaction.
+    @MainActor
+    func testPageZeroSectionsAreReadFromRawPositions5105() async throws {
+        let fake = FakeFeedClient([.ok(try Self.seatedPage(
+            ids: [1, 3, 4, 5, 6], offset: 0, edition: "ed-1", malformedAt: [1]))])
+        let vm = DiscoverViewModel(client: fake, lastGood: nil, telemetry: nil)
+        await vm.load()
+
+        XCTAssertEqual(vm.acceptedSeatedEdition, "ed-1")
+        XCTAssertEqual(section(vm, 1), .opening)
+        XCTAssertEqual(section(vm, 3), .opening, "raw slot 2 is before the boundary")
+        XCTAssertEqual(section(vm, 4), .continuation, "raw slot 3 IS the boundary")
+        XCTAssertEqual(section(vm, 6), .continuation)
+        assertSectionsContiguous(vm)
+    }
+
+    /// A pinned page's sections are read against ITS offset, and a card the
+    /// edition already placed keeps its first section.
+    @MainActor
+    func testPinnedPageSectionsReadAgainstItsOffsetFirstSightWins5105() async throws {
+        let (vm, _) = try await seatedVM([
+            .ok(try Self.seatedPage(ids: [13, 2, 14], offset: 12, edition: "ed-1", status: "pinned")),
+        ])
+        XCTAssertEqual(section(vm, 2), .opening)
+        await vm.loadMoreIfNeeded()
+
+        XCTAssertEqual(ids(vm), Array(1...14), "the duplicate is not appended twice")
+        XCTAssertEqual(section(vm, 2), .opening, "first sight wins: raw slot 13 does not re-section it")
+        XCTAssertEqual(section(vm, 13), .continuation)
+        XCTAssertEqual(section(vm, 14), .continuation)
+        assertSectionsContiguous(vm)
+    }
+
+    /// A pinned page that restates a DIFFERENT boundary is not the same deck:
+    /// it is refused like a retired page (one unpinned page 0), never appended.
+    @MainActor
+    func testPinnedPageWithAnotherBoundaryIsReplacedNotAppended5105() async throws {
+        let (vm, fake) = try await seatedVM([
+            .ok(try Self.seatedPage(ids: [13, 14], offset: 12, edition: "ed-1", status: "pinned", start: 5)),
+            .ok(try Self.seatedPage(ids: Array(201...212), offset: 0, edition: "ed-2", start: 0)),
+        ])
+        await vm.loadMoreIfNeeded()
+
+        XCTAssertEqual(fake.requestedOffsets, [12, 0])
+        XCTAssertEqual(fake.requestedEditions, ["ed-1", nil])
+        XCTAssertFalse(ids(vm).contains(13), "a page from another boundary never appends")
+        XCTAssertEqual(ids(vm), Array(201...212))
+        XCTAssertEqual(section(vm, 201), .continuation, "the replacement's own record: E=0, all continuation")
+    }
+
+    /// A page 0 whose boundary cannot be backed — malformed, out of range, or
+    /// with no edition to bind it — is refused, never flattened into the legacy
+    /// single list: a cold screen gets the honest error, a painted deck stays.
+    @MainActor
+    func testPageZeroWithUnusableBoundaryIsRefusedNotFlattened5105() async throws {
+        let unusable: [(String, FeedResponse)] = [
+            ("negative", try Self.seatedPage(ids: [1, 2], offset: 0, edition: "ed-x", start: -1)),
+            ("at total", try Self.seatedPage(ids: [1, 2], offset: 0, edition: "ed-x", start: 2, total: 2)),
+            ("no edition", try Self.seatedPage(ids: [1, 2], offset: 0, edition: nil, start: 1)),
+        ]
+        for (label, page) in unusable {
+            let cold = DiscoverViewModel(
+                client: FakeFeedClient([.ok(page)]), lastGood: nil, telemetry: nil,
+                autoRecoveryDelays: [])
+            await cold.load()
+            XCTAssertTrue(cold.items.isEmpty, "cold, \(label): nothing painted")
+            XCTAssertEqual(cold.error, "Couldn't load feed", "cold, \(label)")
+            XCTAssertNil(cold.acceptedSeatedEdition, "cold, \(label)")
+
+            let (warm, fake) = try await seatedVM([.ok(page)])
+            await warm.load()
+            XCTAssertEqual(fake.requestedOffsets, [0])
+            XCTAssertEqual(ids(warm), Array(1...12), "painted, \(label): the deck stays")
+            XCTAssertTrue(warm.refreshFailedShowingCache, "painted, \(label)")
+            XCTAssertEqual(warm.acceptedSeatedEdition, "ed-1", "painted, \(label): still the accepted deck")
+            XCTAssertEqual(section(warm, 4), .continuation, "painted, \(label): its record stays too")
+        }
+    }
+
+    /// The record belongs to the edition: an account change clears it with the
+    /// deck, so the same card can land in another section of the next edition.
+    @MainActor
+    func testIdentityRebindClearsTheSectionRecord5105() async throws {
+        let (vm, fake) = try await seatedVM([])
+        XCTAssertEqual(section(vm, 2), .opening)
+        fake.append([.ok(try Self.seatedPage(ids: Array(1...12), offset: 0, edition: "ed-9", start: 0))])
+        await vm.rebindForIdentityChange()
+
+        XCTAssertEqual(vm.acceptedSeatedEdition, "ed-9")
+        XCTAssertEqual(section(vm, 2), .continuation, "the new edition's record, not the old one's")
     }
 
     private static func unavailablePage() throws -> FeedResponse {

@@ -45,6 +45,12 @@ nonisolated enum FeedContinuationStart: Equatable, Sendable {
     case at(Int)
 }
 
+/// #5105: which side of the seated-opening boundary the server placed a card on.
+nonisolated enum FeedSection: Equatable, Sendable {
+    case opening
+    case continuation
+}
+
 /// Paginated Discover feed response containing event and futures cards.
 nonisolated struct FeedResponse: Decodable, Sendable {
     let items: [FeedItem]
