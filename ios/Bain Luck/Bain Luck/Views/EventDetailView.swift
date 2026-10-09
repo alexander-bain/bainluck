@@ -81,13 +81,8 @@ struct EventDetailView: View {
     }
     @Environment(\.horizontalSizeClass) private var sizeClass
 
-    /// #3978 (Alex, D93 = A) — the hero restacks at the accessibility text sizes.
-    ///
-    /// Read here rather than inside `heroSection` because it decides a LAYOUT and
-    /// not a font: at `.accessibility1` and above the hero's three columns cannot
-    /// fit side by side on any phone, and the row does not merely get tight, it
-    /// overflows its parent and is CENTRED in the overflow — so the card bleeds off
-    /// both edges at once and the team names collapse to `Cle m…`.
+    /// Reflow the hero before its growing center column squeezes the teams.
+    /// #10796 keeps the competitors together in the larger-text layout.
     @Environment(\.dynamicTypeSize) private var dynamicTypeSize
 
     init(eventId: Int, viewModel: EventDetailViewModel? = nil) {
@@ -1197,9 +1192,9 @@ struct EventDetailView: View {
         // matters here — there is exactly one copy of the hero to maintain. Two
         // copies is how the three-column version and its replacement drift apart.
         // `PoliticsView:330` already carries this idiom.
-        let stacked = dynamicTypeSize.isAccessibilitySize
+        let stacked = dynamicTypeSize >= .xxLarge
         let heroLayout = stacked
-            ? AnyLayout(VStackLayout(spacing: 16))
+            ? AnyLayout(EventHeroTeamLayout())
             : AnyLayout(HStackLayout(spacing: 0))
         let metaLayout = stacked
             ? AnyLayout(VStackLayout(alignment: .leading, spacing: 4))
@@ -1279,10 +1274,8 @@ struct EventDetailView: View {
                 }
             }
 
-            // Center: logos flanking giant probabilities — or, at accessibility
-            // sizes, away above the percentage above home (D93 = A). The order is
-            // the row's own order read top-to-bottom, so the hero says the same
-            // sentence either way.
+            // At larger text sizes keep the competitors together, then give
+            // the probability its own full-width row (#10796).
             heroLayout {
                 // Away team logo + score
                 VStack(spacing: 6) {
@@ -1303,7 +1296,7 @@ struct EventDetailView: View {
                     Text(event.awayTeam)
                         .font(.caption2)
                         .fontWeight(.semibold)
-                        .lineLimit(2)
+                        .lineLimit(stacked ? nil : 2)
                         .multilineTextAlignment(.center)
                         .foregroundStyle(.primary)
                     if hasScore {
@@ -1313,8 +1306,8 @@ struct EventDetailView: View {
                     }
                     if carriesContext, let record = event.awayTeamData?.record {
                         Text(record)
-                            .font(.system(size: 9))
-                            .foregroundStyle(.quaternary)
+                            .font(.caption)
+                            .foregroundStyle(Color.primary)
                     }
                 }
                 .frame(maxWidth: .infinity)
@@ -1682,8 +1675,8 @@ struct EventDetailView: View {
                     // of the context; `projectionText` is the one spelling.
                     if carriesContext, let projection = projectionText(event, hasScore: hasScore) {
                         Text(projection)
-                            .font(.system(size: 10))
-                            .foregroundStyle(.tertiary)
+                            .font(.caption)
+                            .foregroundStyle(Color.primary)
                     }
                     // #6544 — THE COUNTDOWN USED TO BE PRINTED HERE TOO, and the
                     // two copies could not disagree: one `formatCountdown`
@@ -1730,7 +1723,7 @@ struct EventDetailView: View {
                     Text(event.homeTeam)
                         .font(.caption2)
                         .fontWeight(.semibold)
-                        .lineLimit(2)
+                        .lineLimit(stacked ? nil : 2)
                         .multilineTextAlignment(.center)
                         .foregroundStyle(.primary)
                     if hasScore {
@@ -1740,8 +1733,8 @@ struct EventDetailView: View {
                     }
                     if carriesContext, let record = event.homeTeamData?.record {
                         Text(record)
-                            .font(.system(size: 10))
-                            .foregroundStyle(.tertiary)
+                            .font(.caption)
+                            .foregroundStyle(Color.primary)
                     }
                 }
                 .frame(maxWidth: .infinity)
