@@ -13,7 +13,7 @@ final class EventPageReadableText10796Tests: XCTestCase {
             Color.green.frame(height: 60)
             Color.blue.frame(height: 90)
         }
-        let host = UIHostingController(rootView: content)
+        let host = hostForMeasurement(content)
         let measured = host.sizeThatFits(in: CGSize(width: 358, height: 1000))
         XCTAssertEqual(measured.width, 358, accuracy: 1)
         XCTAssertEqual(measured.height, 162, accuracy: 1)
@@ -25,8 +25,8 @@ final class EventPageReadableText10796Tests: XCTestCase {
             Text("Las Vegas Raiders").font(.caption2).fixedSize(horizontal: false, vertical: true)
             Text("36% – 64%").font(.title)
             Text("New England Patriots").font(.caption2).fixedSize(horizontal: false, vertical: true)
-        }.environment(\.dynamicTypeSize, .accessibility3)
-        let host = UIHostingController(rootView: content)
+        }
+        let host = hostForMeasurement(content, at: .accessibility3)
         let measured = host.sizeThatFits(in: CGSize(width: 326, height: 1500))
         XCTAssertEqual(measured.width, 326, accuracy: 1)
         XCTAssertGreaterThan(measured.height, 80)
