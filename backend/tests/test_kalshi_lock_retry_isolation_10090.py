@@ -17,11 +17,11 @@ async def test_normal_cadence_keeps_fresh_game_progress_without_hammering_failed
     x.release.set()
     original = x.ns["prices"].phase
     attempts = []
-    async def phase(session, group):
+    async def phase(session, group, **kwargs):
         if 1 in group:
             attempts.append(clock.t)
         try:
-            async for result in original(session, group):
+            async for result in original(session, group, **kwargs):
                 yield result
         except Exception:
             clock.t += 0.5  # the configured lock acquisition cost

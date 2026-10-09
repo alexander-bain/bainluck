@@ -607,6 +607,15 @@ async def _drain(r):
     return ["drained"]
 
 
+def _lock_released_after_retry_delay(r):
+    # #10090 (a5b06f85fa): a lock-failed cohort now waits out the failed-retry
+    # delay before its next attempt; the frozen flush retried on the next call.
+    # The second flush here stands for one after that delay, so the retry itself
+    # is compared. The delay is guarded by test_kalshi_lock_retry_isolation_10090.
+    r.lock_released.set()
+    getattr(r.ns["prices"], "lock_retry_until", {}).clear()
+
+
 def _reshape(**rows):
     def apply(r):
         for oid, value in rows.items():
@@ -622,16 +631,20 @@ SCENARIOS = {
         {"failed": 3}, lambda r: _twice(r, lambda r: r.control.update(failed=None)),
     ),
     "lock_timeout_then_retry": (
-        {"locked": {1}}, lambda r: _twice(r, lambda r: r.lock_released.set()),
+        {"locked": {1}}, lambda r: _twice(r, _lock_released_after_retry_delay),
     ),
     "lock_timeout_on_the_second_row_of_a_run": (
-        {"locked": {2}}, lambda r: _twice(r, lambda r: r.lock_released.set()),
+        {"locked": {2}}, lambda r: _twice(r, _lock_released_after_retry_delay),
     ),
     "cancellation": ({}, _cancelled),
     "newer_tick_beside_refusal": ({"declined": 2}, _newer_tick),
     "final_drain_waits_for_the_lock": ({"locked": {1}}, _final_drain_waits),
     "drain": ({"locked": {1}}, _drain),
 }
+
+LOCK_RETRY_SCENARIOS = frozenset({
+    "lock_timeout_then_retry", "lock_timeout_on_the_second_row_of_a_run",
+})
 
 #: Book shapes the pipeline groups by: a no-book run, a full/no-book split and a
 #: half book (written as no book, #8753), each applied before the first flush.
@@ -652,7 +665,14 @@ async def test_the_flush_behaves_exactly_as_the_frozen_flush(scenario, shape):
     for r in (current, frozen):
         _reshape(**SHAPES[shape])(r)
         observed.append(_observe(r, await drive(r)))
-    assert _frozen_order(observed[0]) == observed[1]
+    current = _frozen_order(observed[0])
+    if scenario in LOCK_RETRY_SCENARIOS:
+        # #10090 (a5b06f85fa): a handled lock no longer returns False to slow the
+        # whole cadence; its cohort holds its own retry delay. The only reviewed
+        # difference: the lock-failed flush's own result.
+        assert (current["results"][0], observed[1]["results"][0]) == (True, False)
+        current = {**current, "results": [False, *current["results"][1:]]}
+    assert current == observed[1]
     # Non-vacuity: the scenario wrote prices through the price statement.
     assert any(t[0] == "write" for t in observed[0]["trace"]), observed[0]
 
