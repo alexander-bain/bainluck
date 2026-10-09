@@ -218,6 +218,9 @@ final class EventDetailViewModel: ObservableObject {
     static let revisionRefetchWindow: TimeInterval = 1
     private var revisionRefetchTask: Task<Void, Never>?
     private var revisionRefetchPending = false
+    /// A resync arriving during a pair owes one trailing read, bound to the
+    /// connection that requested it even if the first pair clears its proof.
+    private var pendingResyncGeneration: Int?
     private var lastRevisionRefetchAt: TimeInterval?
     /// The held revision the chart last asked history to catch up to, so one
     /// accepted fold asks once (`chartRevisionRefreshKey`).
@@ -551,11 +554,13 @@ final class EventDetailViewModel: ObservableObject {
     /// Ask for detail + history again because the held blend could not be
     /// ordered against what just arrived. See `revisionRefetchWindow`.
     @MainActor
-    private func requestRevisionRefetch() {
+    private func requestRevisionRefetch(resyncGeneration: Int? = nil) {
         if revisionRefetchTask != nil {
-            revisionRefetchPending = true
+            if let resyncGeneration { pendingResyncGeneration = resyncGeneration }
+            else { revisionRefetchPending = true }
             return
         }
+        if let resyncGeneration { streamRefetchGeneration = resyncGeneration }
         let wait = lastRevisionRefetchAt.map { max(0, $0 + Self.revisionRefetchWindow - now()) } ?? 0
         let pause = sleep
         revisionRefetchTask = Task { @MainActor [weak self] in
@@ -563,12 +568,15 @@ final class EventDetailViewModel: ObservableObject {
             guard !Task.isCancelled, let self else { return }
             self.revisionRefetchPending = false
             self.lastRevisionRefetchAt = self.now()
-            await self.rereadPricePair()
+            await self.rereadPricePair(resyncGeneration: resyncGeneration)
             guard !Task.isCancelled else { return }
             self.revisionRefetchTask = nil
-            if self.revisionRefetchPending {
+            let pendingResync = self.pendingResyncGeneration
+            self.pendingResyncGeneration = nil
+            let currentResync = pendingResync == self.deliveryGeneration ? pendingResync : nil
+            if self.revisionRefetchPending || currentResync != nil {
                 self.revisionRefetchPending = false
-                self.requestRevisionRefetch()
+                self.requestRevisionRefetch(resyncGeneration: currentResync)
             }
         }
     }
@@ -610,10 +618,12 @@ final class EventDetailViewModel: ObservableObject {
     /// Detail and history only — the two payloads that carry the blend and its
     /// revision. Not a `load()`: that is six requests and owns `lastLoadedAt`.
     @MainActor
-    private func rereadPricePair() async {
+    private func rereadPricePair(resyncGeneration: Int? = nil) async {
         let client = self.client
         let id = eventId
-        let requestedGeneration = streamRefetchGeneration
+        // Capture a resync's owner when queued, not after its throttle wait:
+        // losing delivery during that wait cannot turn it into an unowned read.
+        let requestedGeneration = resyncGeneration ?? streamRefetchGeneration
         let pushesAtRequest = acceptedPushCount
         async let detailRead = client.fetchFreshEvent(id: id)
         async let historyRead = client.fetchFreshEventHistory(id: id, hours: 168)
@@ -877,6 +887,7 @@ final class EventDetailViewModel: ObservableObject {
                     self.streamHasPushedPrice = false
                     self.deliveryGeneration += 1
                     self.streamRefetchGeneration = nil
+                    self.pendingResyncGeneration = nil
                     self.provenanceRefetchFrame = nil
                     self.trailingProvenanceFrame = nil
                     self.awaitingFoldedResult = false
@@ -888,6 +899,13 @@ final class EventDetailViewModel: ObservableObject {
                 // Only reacting to the good one would leave the page frozen the
                 // first time a stream went quiet.
                 self.configureAutoRefresh()
+            },
+            onResync: { [weak self] in
+                guard let self, EventPriceStreaming.isEligible(self.event?.status) else { return }
+                // A resync has no price/revision to adopt or acknowledge. The
+                // existing coalesced fresh pair keeps last-good on failure and
+                // acknowledges only a newer price for this delivery generation.
+                self.requestRevisionRefetch(resyncGeneration: self.deliveryGeneration)
             },
             deliversFoldedQuotes: true
         )
@@ -925,6 +943,7 @@ final class EventDetailViewModel: ObservableObject {
     private func stopStream() {
         deliveryGeneration += 1
         streamRefetchGeneration = nil
+        pendingResyncGeneration = nil
         provenanceRefetchFrame = nil
         trailingProvenanceFrame = nil
         awaitingFoldedResult = false

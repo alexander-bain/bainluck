@@ -51,6 +51,7 @@ final class LiveStreamControllerTests: XCTestCase {
         var handles: [FakeHandle] = []
         var frames: [LiveStreamFrame] = []
         var deliveringChanges: [Bool] = []
+        var resyncs = 0
         /// Frames and delivery edges in the order the owner saw them (#10468).
         var log: [String] = []
         var openFailure: Error?
@@ -80,7 +81,8 @@ final class LiveStreamControllerTests: XCTestCase {
                 onDeliveringChange: { [self] d in
                     deliveringChanges.append(d)
                     log.append("delivering:\(d)")
-                }
+                },
+                onResync: { [self] in resyncs += 1 }
             )
         }
 
@@ -323,6 +325,52 @@ final class LiveStreamControllerTests: XCTestCase {
     }
 
     // MARK: - #10468: A FRAME THE OWNER REFUSED IS NOT A DELIVERY
+
+    func testResyncKeepsTransportAliveWithoutRenewingPriceDelivery10090() {
+        let rig = Rig()
+        rig.startDelivering()
+        for generation in 1...5 {
+            rig.clock += 20
+            rig.current?.fire("resync", "{\"generation\":\(generation)}")
+            rig.controller.tick()
+        }
+        XCTAssertEqual(rig.resyncs, 5)
+        XCTAssertTrue(rig.frames.isEmpty, "an invalidation is not a probability")
+        XCTAssertFalse(rig.controller.state.delivering, "resync renewed the price budget")
+        XCTAssertFalse(rig.controller.state.stopped, "resync proves transport activity")
+        XCTAssertEqual(rig.controller.state.connections, 1, "resync never reopens the stream")
+    }
+
+    func testResyncInvalidatesOncePerIncreasingValidGeneration10090() {
+        let rig = Rig()
+        rig.startDelivering()
+        for raw in [#"{"generation":1}"#, #"{"generation":1}"#, #"{"generation":0}"#,
+                    #"{"generation":-1}"#, #"{"generation":"2"}"#, #"{"generation":true}"#,
+                    #"{}"#, "not json", #"{"generation":2}"#, #"{"generation":1}"#] {
+            rig.current?.fire("resync", raw)
+        }
+        XCTAssertEqual(rig.resyncs, 2, "duplicates, older and malformed generations cannot multiply reads")
+        rig.current?.fire("open")
+        rig.current?.fire("resync", #"{"generation":1}"#)
+        XCTAssertEqual(rig.resyncs, 3, "a transport reopen can connect to a new hub on the same handle")
+    }
+
+    func testRetiredResyncIsIgnoredAndSuccessorGenerationStartsAgain10090() {
+        let rig = Rig()
+        rig.startDelivering()
+        let retired = rig.current
+        retired?.fire("resync", #"{"generation":9}"#)
+        retired?.fire("reconnect")
+        rig.advance(2)
+        XCTAssertEqual(rig.controller.state.connections, 2)
+        retired?.fire("resync", #"{"generation":10}"#)
+        XCTAssertEqual(rig.resyncs, 1, "a retired socket invalidated its successor")
+        rig.current?.fire("resync", #"{"generation":1}"#)
+        XCTAssertEqual(rig.resyncs, 2, "the successor has its own recovery generation")
+        rig.controller.stop()
+        rig.current?.fire("resync", #"{"generation":2}"#)
+        XCTAssertEqual(rig.resyncs, 2, "a stopped controller invalidated the page")
+    }
 
     func testRefusedFramesAndHeartbeatsDoNotRenewTheDataBudget() {
         // THE DEFECT. Every decoded frame used to rearm the delivery clock, so
