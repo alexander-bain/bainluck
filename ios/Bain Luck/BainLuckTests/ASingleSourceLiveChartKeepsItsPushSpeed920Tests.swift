@@ -16,7 +16,8 @@ import XCTest
 ///   1. NEVER MINT A SERIES — a source the payload does not already serve is
 ///      skipped however good its frames.
 ///   2. STRICTLY NEWER THAN THAT SERIES' OWN SERVED EDGE — ties go to the
-///      served point.
+///      served point. (The tail's rule. Since #10090 a held reading that moved
+///      inside the series stays: `AHeldChartKeepsTheDipItDrew10090Tests`.)
 ///   3. The SOURCE'S value at the frame's STAMPED time — never the blend `p`,
 ///      never the arrival time.
 ///   4. Where the backend DID blend, the blend carries the push and the source
@@ -170,9 +171,10 @@ final class ASingleSourceLiveChartKeepsItsPushSpeed920Tests: XCTestCase {
     }
 
     /// Only past that series' own served edge; a tie goes to the served point.
+    /// The 12:05 reading only re-confirms the served 0.41, so it adds nothing.
     func testAReadingAtOrBeforeTheServedEdgeIsNotDrawnAgain() async throws {
         try await withLivePage { vm, handle in
-            handle.fire("probability", frame(p: 0.40, source: "kalshi", value: 0.39, at: "2026-09-23T12:05:00Z"))
+            handle.fire("probability", frame(p: 0.40, source: "kalshi", value: 0.41, at: "2026-09-23T12:05:00Z"))
             handle.fire("probability", frame(p: 0.45, source: "kalshi", value: 0.99, at: "2026-09-23T12:10:00Z"))
             handle.fire("probability", frame(p: 0.46, source: "kalshi", value: 0.47, at: "2026-09-23T12:12:00Z"))
 
