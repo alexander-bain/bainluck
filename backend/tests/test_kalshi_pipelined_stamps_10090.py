@@ -32,6 +32,12 @@ def held_refresher(r, hold_ids=(100,)):
         def adopt_pending(self, ids):
             calls["adopted"].append(set(ids))
 
+        def admit_fresh(self, ids, **kwargs):
+            # #10090: a refresher that refuses admission keeps the flush's
+            # queue-then-launch contract these tests pin; admission itself
+            # is proven on the real refresher (test_kalshi_fresh_admission).
+            return frozenset()
+
         async def publish_market_changes(self, s):
             r.trace.append(("publish", tuple(s.rows)))
 

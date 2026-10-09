@@ -499,13 +499,18 @@ class TailReceipts:
         """The revisions a flush just COMMITTED — called after the commit and
         immediately before `refresh`, which takes them. Per event, the newest
         input the write carried."""
+        self._staged, self._staged_wall = self.staged_for(marks)
+
+    @staticmethod
+    def staged_for(marks: Iterable[InputMark]) -> tuple[dict[int, InputMark], float]:
+        """`stage`'s per-event newest mark, without taking the staging slot —
+        for a cohort admitted into a refresh that already took its own."""
         staged: dict[int, InputMark] = {}
         for mark in marks:
             held = staged.get(mark.event_id)
             if held is None or mark.seq > held.seq:
                 staged[mark.event_id] = mark
-        self._staged = staged
-        self._staged_wall = _wall()
+        return staged, _wall()
 
     def roll(self) -> None:
         """Close the delivery minute if the clock has left it. Every flush
@@ -1026,6 +1031,38 @@ PREPARED_OUTCOME_FIELDS = (
 )
 
 
+class _FreshAdmission:
+    """#10090 — the door a running `refresh` holds open for committed cohorts.
+
+    One refresh owns the refresher at a time. A whole cohort its caller
+    COMMITS after that refresh began joins it here (`admit_fresh`) instead of
+    waiting for every earlier stamp to return. Fixed for the call: its flush
+    clock, its same-event fence (``events``: everything the call took or
+    admitted), the FRESH_STAMP_WORKERS session slots every one of its stamp
+    and preparation sessions holds, and its one frame sender. Each admitted
+    event keeps its own staged input mark and retry origin.
+    """
+
+    def __init__(self, flush_started, clock, events) -> None:
+        import asyncio
+
+        self.flush_started = flush_started
+        self.clock = clock
+        self.events: set[int] = set(events)
+        self.slots = asyncio.Semaphore(FRESH_STAMP_WORKERS)
+        self.queue: deque = deque()
+        self.workers: set = set()
+        self.admitted: set[int] = set()
+        self.retry: set[int] = set()
+        self.completed: set[int] = set()
+        self.failed: set[int] = set()
+        self.staged: dict[int, InputMark] = {}
+        self.stored_wall: dict[int, Optional[float]] = {}
+        self.closed = False
+        self.publish: Optional[Callable[[list[dict]], Awaitable[None]]] = None
+        self.publish_inline: Optional[Callable[[list[dict]], Awaitable[None]]] = None
+
+
 class LiveBlendRefresher:
     """Stateful per-source refresher, owned by one WS consumer run.
 
@@ -1130,6 +1167,8 @@ class LiveBlendRefresher:
         #: What the current batch did with each event it attempted, for the
         #: receipt. Filled by `_refresh_batch`, read only after it returns.
         self._dispositions: dict[int, tuple] = {}
+        #: #10090 — open only while a `refresh` runs (see `admit_fresh`).
+        self._admission: Optional[_FreshAdmission] = None
 
     # ── throttling ───────────────────────────────────────────────────────────
 
@@ -1265,63 +1304,6 @@ class LiveBlendRefresher:
             return self.stats
 
         self._dispositions = {}
-        # One event already owns its transaction. For multiple admitted events,
-        # prepare once and commit each independently so a later row lock cannot
-        # hold an earlier stamp or its publication until the batch ends.
-        if len(due) == 1:
-            pending_only = due[0] not in fresh
-            if pending_only and flush_started is not None:
-                if self._pending_started_at is None:
-                    self._pending_started_at = _mono()
-                self._pending_attempted = True
-                self._pending_attempts += 1
-            self._pending_continuation = [
-                eid for eid in self._pending_continuation if eid not in due
-            ]
-            try:
-                await self._refresh_batch(due, clock)
-            except CancelledError as exc:
-                # #10090 review: a recycle can cancel this stamp after its
-                # prices committed and left the buffer, so no later input
-                # re-asks for it. Keep it owed for the hand-off exactly as the
-                # grouped arm below does, with the retry/deferred work it took.
-                # A cancel that lands after COMMIT (while publishing) costs one
-                # redundant re-stamp, never a lost one.
-                self._refresh_failed(
-                    due,
-                    retry,
-                    clock,
-                    receipts,
-                    staged,
-                    stored_wall,
-                    exc,
-                    hold=False,
-                )
-                raise
-            except Exception as exc:
-                self.stats["errors"] += 1
-                logger.exception("live_blend_refresh[%s]: batch failed", self.source)
-                self._refresh_failed(
-                    due,
-                    retry,
-                    clock,
-                    receipts,
-                    staged,
-                    stored_wall,
-                    exc,
-                )
-            else:
-                if receipts is not None:
-                    self._receipt_call(
-                        receipts.resolve,
-                        due,
-                        self._dispositions,
-                        staged,
-                        stored_wall,
-                        _mono(),
-                    )
-            return self.stats
-
         completed: set[int] = set()
         failed_groups: set[int] = set()
         budget_deferred: set[int] = set()
@@ -1381,6 +1363,13 @@ class LiveBlendRefresher:
                 # No cancellation point between removing and submitting frames.
                 publishing = asyncio.create_task(self._publish(frames))
 
+        async def publish_inline(frames):
+            # The singleton still sends its own frames before its stamp
+            # returns. The lock only orders them with an admitted cohort's.
+            async with publication_lock:
+                await publication_done()
+                await self._publish(frames)
+
         def committed(group_ids):
             # Called synchronously AFTER COMMIT and cache installation, BEFORE
             # the first publication await. Interrupted delivery does not undo
@@ -1400,12 +1389,83 @@ class LiveBlendRefresher:
                     _mono(),
                 )
 
+        # #10090 — while this call runs, a cohort its caller commits later
+        # joins it on a free stamp worker (`admit_fresh`) rather than waiting
+        # for every stamp below to return. Its frames go through this call's
+        # one sender; its sessions share this call's FRESH_STAMP_WORKERS slots.
+        window = _FreshAdmission(flush_started, clock, due)
+        window.publish = publish_committed
+        window.publish_inline = publish_inline
+        self._admission = window
+        interrupted = False
         try:
+            # One event already owns its transaction. For multiple admitted events,
+            # prepare once and commit each independently so a later row lock cannot
+            # hold an earlier stamp or its publication until the batch ends.
+            if len(due) == 1:
+                pending_only = due[0] not in fresh
+                if pending_only and flush_started is not None:
+                    if self._pending_started_at is None:
+                        self._pending_started_at = _mono()
+                    self._pending_attempted = True
+                    self._pending_attempts += 1
+                self._pending_continuation = [
+                    eid for eid in self._pending_continuation if eid not in due
+                ]
+                try:
+                    await self._refresh_batch(due, clock)
+                except CancelledError as exc:
+                    # #10090 review: a recycle can cancel this stamp after its
+                    # prices committed and left the buffer, so no later input
+                    # re-asks for it. Keep it owed for the hand-off exactly as the
+                    # grouped arm below does, with the retry/deferred work it took.
+                    # A cancel that lands after COMMIT (while publishing) costs one
+                    # redundant re-stamp, never a lost one.
+                    self._refresh_failed(
+                        due,
+                        retry,
+                        clock,
+                        receipts,
+                        staged,
+                        stored_wall,
+                        exc,
+                        hold=False,
+                    )
+                    failed_groups.update(due)
+                    raise
+                except Exception as exc:
+                    self.stats["errors"] += 1
+                    logger.exception("live_blend_refresh[%s]: batch failed", self.source)
+                    self._refresh_failed(
+                        due,
+                        retry,
+                        clock,
+                        receipts,
+                        staged,
+                        stored_wall,
+                        exc,
+                    )
+                    failed_groups.update(due)
+                else:
+                    completed.update(due)
+                    if receipts is not None:
+                        self._receipt_call(
+                            receipts.resolve,
+                            due,
+                            self._dispositions,
+                            staged,
+                            stored_wall,
+                            _mono(),
+                        )
+
             # Read/stamp fresh prices before reading older debt. Each nonempty
             # population prepares one view for order and the initial worker
             # claims. Queued fresh stamps reread below; old debt and the
             # singleton path above keep their existing read behavior.
-            for population in (fresh.intersection(due), set(due).difference(fresh)):
+            populations = () if len(due) == 1 else (
+                fresh.intersection(due), set(due).difference(fresh),
+            )
+            for population in populations:
                 if not population:
                     continue
                 pending_only = population.isdisjoint(fresh)
@@ -1598,19 +1658,24 @@ class LiveBlendRefresher:
                             ]
                             break
                         await stamp_event(event_id)
+            # Admitted cohorts finish inside this call; the door closes with
+            # no turn between its last worker ending and the close.
+            await self._admission_join(window)
             await publication_done()
         except CancelledError as exc:
+            interrupted = True
             remaining = set(due).difference(completed, failed_groups, budget_deferred)
-            self._refresh_failed(
-                remaining,
-                retry,
-                clock,
-                receipts,
-                staged,
-                stored_wall,
-                exc,
-                hold=False,
-            )
+            if remaining:
+                self._refresh_failed(
+                    remaining,
+                    retry,
+                    clock,
+                    receipts,
+                    staged,
+                    stored_wall,
+                    exc,
+                    hold=False,
+                )
             raise
         except Exception as exc:
             # Setup can fail between populations after earlier stamps committed.
@@ -1628,21 +1693,25 @@ class LiveBlendRefresher:
             )
         finally:
             # Cancellation or any pre-commit failure must not leave a sender
-            # running beside the consumer's final drain or next refresh.
+            # running beside the consumer's final drain or next refresh. An
+            # admitted stamp ends first: it may still submit a frame.
             try:
-                await publication_done(cancel=True)
+                await self._admission_close(window, cancel=interrupted)
             finally:
-                if waiting_frames:
-                    import asyncio
+                try:
+                    await publication_done(cancel=True)
+                finally:
+                    if waiting_frames:
+                        import asyncio
 
-                    # These committed frames were NEVER submitted. Finish one
-                    # bounded send before exit; do not retry the predecessor's
-                    # uncertain send or interrupt this cleanup on a second
-                    # consumer cancellation. _publish retains its 5s bound.
-                    frames = [frame for group in waiting_frames for frame in group]
-                    waiting_frames.clear()
-                    publishing = asyncio.create_task(self._publish(frames))
-                    await publication_done(cancel_on_interrupt=False)
+                        # These committed frames were NEVER submitted. Finish one
+                        # bounded send before exit; do not retry the predecessor's
+                        # uncertain send or interrupt this cleanup on a second
+                        # consumer cancellation. _publish retains its 5s bound.
+                        frames = [frame for group in waiting_frames for frame in group]
+                        waiting_frames.clear()
+                        publishing = asyncio.create_task(self._publish(frames))
+                        await publication_done(cancel_on_interrupt=False)
         return self.stats
 
     def _refresh_failed(
@@ -1728,6 +1797,176 @@ class LiveBlendRefresher:
         the first flush (`refresh` or `refresh_pending`) finds them due.
         """
         self._throttle_deferred.update(event_ids)
+
+    # ── #10090: admitting a committed cohort into the running refresh ────────
+
+    def admit_fresh(
+        self,
+        event_ids: Iterable[int],
+        *,
+        flush_started: Optional[float],
+        marks: Iterable[InputMark] = (),
+        defer_event_ids: Iterable[int] = (),
+    ) -> frozenset:
+        """Hand a newly COMMITTED whole cohort to the running `refresh`.
+
+        Returns the events this refresher now owns: each is stamped before the
+        running call returns, on a free one of its stamp workers, or is left
+        owed exactly as a `refresh` would leave it (throttled). Empty means the
+        caller keeps them for its next `refresh`, as before: no call is
+        running, it belongs to another flush clock (or none — the final drain
+        keeps its own contract), or the event is fenced — the running call
+        already took it, or the caller is still writing its cohort
+        (``defer_event_ids``) — so no partial board is read and no two stamps
+        of one event overlap or reorder. ``marks`` are the cohort's committed
+        inputs; they are kept with the admitted events, never staged over
+        the running call's own. Synchronous: nothing is awaited here.
+        """
+        window = self._admission
+        if (
+            window is None or window.closed or flush_started is None
+            or window.flush_started != flush_started
+        ):
+            return frozenset()
+        excluded = set(defer_event_ids)
+        taken = {
+            eid for eid in event_ids
+            if eid not in excluded and eid not in window.events
+        }
+        if not taken:
+            return frozenset()
+        clock = window.clock
+        due = sorted(eid for eid in taken if self._due(eid, clock))
+        throttled = taken.difference(due, self._throttle_deferred)
+        self._throttle_deferred.update(taken.difference(due))
+        if throttled:
+            self.stats["throttled"] += len(throttled)
+        retry = self._lock_retry.intersection(due)
+        self._lock_retry.difference_update(due)
+        self._throttle_deferred.difference_update(due)
+        self._pending_continuation = [
+            eid for eid in self._pending_continuation if eid not in taken
+        ]
+        # Sticky for the flush, exactly as a fresh `refresh` call would be.
+        self._pending_fresh_flush = True
+        self.stats["considered"] += len(due)
+        window.events.update(taken)
+        receipts = self.receipts
+        if receipts is not None:
+            staged, wall = self._receipt_call(receipts.staged_for, marks) or ({}, None)
+            staged = {eid: m for eid, m in staged.items() if eid in taken}
+            self._receipt_call(receipts.observe, staged, wall, set(due), _mono())
+            for event_id in due:
+                if event_id in staged:
+                    window.staged[event_id] = staged[event_id]
+                    window.stored_wall[event_id] = wall
+        if due:
+            import asyncio
+
+            window.admitted.update(due)
+            window.retry.update(retry)
+            window.queue.extend(due)
+            for _ in range(min(FRESH_STAMP_WORKERS - len(window.workers), len(due))):
+                window.workers.add(asyncio.create_task(self._admitted_worker(window)))
+        return frozenset(taken)
+
+    async def _admitted_worker(self, window: _FreshAdmission) -> None:
+        while window.queue:
+            await self._stamp_admitted(window, window.queue.popleft())
+
+    async def _stamp_admitted(self, window: _FreshAdmission, event_id: int) -> None:
+        """One admitted event, read in its own session after its cohort
+        committed, exactly as a singleton stamp reads, published through the
+        running call's one sender. Never raises but for cancellation."""
+        receipts = self.receipts
+        group_ids = [event_id]
+        staged = (
+            {event_id: window.staged[event_id]} if event_id in window.staged else {}
+        )
+        stored_wall = window.stored_wall.get(event_id)
+
+        def committed(ids):
+            window.completed.update(ids)
+            if receipts is not None:
+                self._receipt_call(
+                    receipts.resolve, ids, self._dispositions, staged,
+                    stored_wall, _mono(),
+                )
+
+        try:
+            await self._refresh_batch(
+                group_ids, window.clock,
+                on_committed=committed, publish_committed=window.publish,
+            )
+        except Exception as exc:
+            self.stats["errors"] += 1
+            logger.exception(
+                "live_blend_refresh[%s]: admitted group failed for %s",
+                self.source, group_ids,
+            )
+            if event_id not in window.completed:
+                window.failed.add(event_id)
+                self._refresh_failed(
+                    group_ids, window.retry, window.clock, receipts, staged,
+                    stored_wall, exc,
+                )
+        else:
+            if event_id not in window.completed:
+                committed(group_ids)
+
+    async def _admission_join(self, window: _FreshAdmission) -> None:
+        """Wait for every admitted stamp; close the door in the same turn the
+        last one is seen finished, so nothing is admitted that no one joins."""
+        import asyncio
+
+        while window.workers:
+            done, _ = await asyncio.wait(set(window.workers))
+            window.workers.difference_update(done)
+            for task in done:
+                if not task.cancelled():
+                    task.exception()
+        window.closed = True
+
+    async def _admission_close(self, window: _FreshAdmission, *, cancel: bool) -> None:
+        """End admission for this call. On cancellation the admitted stamps are
+        cancelled and joined — a repeated cancellation is recorded, never
+        obeyed early — and every admitted event that did not commit stays
+        owed with no failed-retry hold, including one whose worker never ran
+        its first turn."""
+        import asyncio
+
+        window.closed = True
+        interrupted = None
+        while True:
+            active = {task for task in window.workers if not task.done()}
+            if not active:
+                break
+            if cancel:
+                for task in active:
+                    if not task.cancelling():
+                        task.cancel()
+            try:
+                await asyncio.wait(active)
+            except CancelledError as exc:
+                interrupted = exc
+                cancel = True
+        for task in window.workers:
+            if not task.cancelled():
+                task.exception()
+        window.workers.clear()
+        # Only now: a worker still joining above takes its session slot here.
+        if self._admission is window:
+            self._admission = None
+        unfinished = window.admitted.difference(window.completed, window.failed)
+        for event_id in sorted(unfinished):
+            self._refresh_failed(
+                [event_id], window.retry, window.clock, self.receipts,
+                {event_id: window.staged[event_id]} if event_id in window.staged else {},
+                window.stored_wall.get(event_id),
+                interrupted or CancelledError(), hold=False,
+            )
+        if interrupted is not None:
+            raise interrupted
 
     async def _read_groups(self, session, event_ids: list[int]) -> dict[int, tuple]:
         from types import SimpleNamespace
@@ -1864,8 +2103,15 @@ class LiveBlendRefresher:
         from app.tasks.base import get_task_session
 
         factory = self._session_factory or get_task_session
-        async with factory() as session:
+        async with self._session_slot(), factory() as session:
             return await self._read_groups(session, event_ids)
+
+    def _session_slot(self):
+        """#10090 — one of the running call's FRESH_STAMP_WORKERS slots, held
+        for exactly as long as a stamp or preparation session is open, so an
+        admitted cohort never adds a connection; free outside a `refresh`."""
+        window = self._admission
+        return contextlib.nullcontext() if window is None else window.slots
 
     @contextlib.asynccontextmanager
     async def _event_stamp_scope(self, session, *, single_event: bool):
@@ -1940,6 +2186,7 @@ class LiveBlendRefresher:
         if self._session_factory is not None:
             get_task_session = self._session_factory  # #2471: the consumer's
         async with (
+            self._session_slot(),
             self._snapshot_slots_follow_the_commit(event_ids),
             get_task_session() as session,
         ):
@@ -2245,7 +2492,13 @@ class LiveBlendRefresher:
                     exact_trace.stamp(event_id, basis, revision, stamped_at)
         if on_committed is not None:
             on_committed(event_ids)
-        await (self._publish if publish_committed is None else publish_committed)(pending)
+        if publish_committed is None:
+            # Inside a `refresh`, ordered with any admitted cohort's frames.
+            window = self._admission
+            publish_committed = (
+                self._publish if window is None else window.publish_inline
+            )
+        await publish_committed(pending)
 
     @contextlib.asynccontextmanager
     async def _snapshot_slots_follow_the_commit(self, event_ids: list[int]):
