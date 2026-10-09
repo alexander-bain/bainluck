@@ -237,7 +237,7 @@ async def _gated_cadence(rig):
     is the head-of-line shape. Failure keeps the real rule: wait, then retry.
     #10657: it takes and honours the consumer's ``stop`` like the real one."""
 
-    async def cadence(flush, period, stop=None):
+    async def cadence(flush, period, stop=None, **_idle_wake):
         await rig.both_buffered.wait()
         while stop is None or not stop.is_set():
             ok = await flush(blend_mod._mono())

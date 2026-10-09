@@ -38,7 +38,12 @@ async def _run_recording(monkeypatch, arm):
             super().__init__(*args, **kwargs)
             instances.append(self)
 
-    async def cadence(flush, period, stop=None, *, failed_retry_interval_s=None):
+    async def cadence(
+        flush, period, stop=None, *, failed_retry_interval_s=None,
+        wake=None, work_count=None,
+    ):
+        # #10090: both arms opt into the idle wake and its actual-work count.
+        assert isinstance(wake, asyncio.Event) and work_count() == 0
         calls.append((period, failed_retry_interval_s))
         await stop.wait()
 

@@ -267,6 +267,7 @@ def handler(trace, mapped=True, non_blend=()):
         winner_quoted_at={},
         live_event_ids=set(),
         admission_wake=asyncio.Event(),
+        flush_wake=asyncio.Event(),
         QUOTE_PRIORITY_EVIDENCE_SECONDS=task.QUOTE_PRIORITY_EVIDENCE_SECONDS,
     )
     exec(compile(ast.Module(body=nodes, type_ignores=[]), task.__file__, "exec"), ns)

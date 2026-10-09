@@ -291,6 +291,18 @@ async def _run_poly(monkeypatch, frames, fail_writes=0, gated=(), flush=0.02,
     return writes, stats, budget
 
 
+def _timer_only_kalshi_cadence(monkeypatch):
+    """#10090: an accepted winner tick wakes Kalshi's periodic flush at once.
+    A drain-only case keeps that flush on its timer, so `flush` longer than
+    `recycle` still means the final drain is the only flush that runs."""
+    real = blend_mod.run_flush_cadence
+
+    async def cadence(flush, period, stop=None, *, wake=None, work_count=None, **kw):
+        await real(flush, period, stop, **kw)
+
+    monkeypatch.setattr(blend_mod, "run_flush_cadence", cadence)
+
+
 async def _run_kalshi(monkeypatch, frames, fail_writes=0, flush=0.02,
                       recycle=0.5, cancel_writes=0):
     writes: list[tuple[int, float]] = []
@@ -510,6 +522,7 @@ class TestTheFinalFlushRetriesInsteadOfRequeueing:
 
     async def test_kalshi_final_flush_recovers_a_failed_write(self, monkeypatch):
         """The twin. Both sockets share the constant and the defect."""
+        _timer_only_kalshi_cadence(monkeypatch)
         writes, stats, budget = await _run_kalshi(
             monkeypatch,
             [json.dumps({
