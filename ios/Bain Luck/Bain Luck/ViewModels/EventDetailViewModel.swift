@@ -229,6 +229,8 @@ final class EventDetailViewModel: ObservableObject {
     private var stream: LiveStreamController?
     private var lastStreamAttemptAt: TimeInterval?
     private var streamTickTask: Task<Void, Never>?
+    /// True only while `stopStream()` is stopping the controller (#10834).
+    private var stoppingStream = false
     /// Injected so tests can drive the lifecycle without a socket. `nil` means
     /// the real `URLSession` transport.
     private let makeStreamHandle: (@MainActor (Int) throws -> LiveStreamHandle)?
@@ -997,6 +999,13 @@ final class EventDetailViewModel: ObservableObject {
                 // Re-decide the poll on every transition, in BOTH directions.
                 // Only reacting to the good one would leave the page frozen the
                 // first time a stream went quiet.
+                //
+                // Not when the page itself is stopping the stream (#10834). Its
+                // caller re-plans on its own: `configureAutoRefresh` and `load()`
+                // plan after `stopStream()`, and `stopRefresh()` must not plan at
+                // all. Re-planning here, with `stream` not yet cleared, installed
+                // a fresh 30 s poll on a page the reader had just left.
+                guard !self.stoppingStream else { return }
                 self.configureAutoRefresh()
             },
             onResync: { [weak self] in
@@ -1049,7 +1058,9 @@ final class EventDetailViewModel: ObservableObject {
         streamHasPushedPrice = false
         streamTickTask?.cancel()
         streamTickTask = nil
+        stoppingStream = true
         stream?.stop()
+        stoppingStream = false
         stream = nil
         streamDelivering = false
         latestPriceFrame = nil
