@@ -420,12 +420,28 @@ def prop_window_closed(
 
     # SCALE SANITY. The number is only comparable with the window when both are
     # measured on the same thing. Overtime/final is past everything on every
-    # scale, so it is the one value that compares with any window; otherwise the
-    # scales must match outright. Without this, "2nd Half Total" during "Q3"
-    # computes 3 > 2 and suppresses a market whose window is still open, and a
-    # first-inning window judged against a quarter would do the same.
+    # scale, so it is the one value that compares with any window. Without this,
+    # "2nd Half Total" during "Q3" computes 3 > 2 and suppresses a market whose
+    # window is still open, and a first-inning window judged against a quarter
+    # would do the same.
+    #
+    # HALVES AND QUARTERS ARE NOT TWO SCALES, THOUGH (#10850). Refusing them
+    # outright failed OPEN in both directions on the 2026-10-10 NCAAF slate:
+    # Army–Tulane (15324325) at "13:54 - 3rd Quarter" served all 19 of its 1st
+    # half rows ungraded and quoting ("Army wins 1st Half" 0.99), and Bowling
+    # Green–Sac State (15324326) at "Halftime" served its 1Q moneyline at
+    # 0.90/0.10 and its 2Q O/U at 0.90/0.90. Every sport that writes a quarter
+    # plays two of them per half, so the reading converts exactly — onto the
+    # EARLIEST position it allows, which keeps this module's fail-safe
+    # direction: Q3 is in half 2 (so "2nd Half Total" stays open), and half n
+    # (Halftime reads as half 2) starts at quarter 2n-1.
     if scale != _PAST_ALL and scale != unit:
-        return False
+        if scale == "quarter" and unit == "half":
+            current = (current + 1) // 2
+        elif scale == "half" and unit == "quarter":
+            current = 2 * current - 1
+        else:
+            return False
 
     return current > closes_after
 
