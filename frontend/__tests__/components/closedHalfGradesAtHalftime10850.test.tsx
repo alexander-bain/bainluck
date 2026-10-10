@@ -205,3 +205,65 @@ describe("#10850 the live page at halftime", () => {
     expect(render(payload(closedAt(HALFTIME)), "scheduled")).not.toContain("1st half margin");
   });
 });
+
+/**
+ * Root's two counterexamples on 90b1dc9f62 (ROOT-INDEPENDENT-90B1.md). Both
+ * payloads are synthetic contract violations — the server half (6eaa74a28c)
+ * emits one shared score and a numeric line — so these are refusals the
+ * client owes, not defects seen in production.
+ */
+describe("#10850 one half, one score, real lines only", () => {
+  /** Spread rows claim the half ended 10–3, total rows claim 7–3. */
+  const splitAcrossCards = () =>
+    live15322373.period_markets
+      .filter(isFirstHalf)
+      .map((r) => closedRow(r, r.market_type === "half_spread" ? HALFTIME : { home: 7, away: 3 }));
+
+  /** One Over row of an otherwise valid closed ladder loses its line. */
+  const withTotalLine = (line: number | null) =>
+    closedAt(HALFTIME).map((r) =>
+      r.market_type === "half_total" && r.outcome_name === "Over" && r.threshold === 27.5 ? { ...r, threshold: line } : r
+    );
+
+  it("refuses BOTH cards when the margin and total rows disagree on the half's score", () => {
+    const rows = splitAcrossCards();
+    expect(closedHalfRows(rows, [], "half_spread", "1H")).toBeNull();
+    expect(closedHalfRows(rows, [], "half_total", "1H")).toBeNull();
+  });
+
+  it("the page draws neither 1st half card from conflicting finals", () => {
+    const text = render(payload(splitAcrossCards()));
+    expect(text).not.toContain("1st half margin");
+    expect(text).not.toContain("1st half points");
+    expect(text).toContain("2nd half margin");
+  });
+
+  it("control: agreeing rows draw both cards from the one final", () => {
+    const text = render(payload(closedAt(HALFTIME)));
+    expect(cardBody(text, "1st half margin")).toMatch(/Final\s+NEB by 7/);
+    expect(cardBody(text, "1st half points")).toMatch(/Final\s+13/);
+  });
+
+  it("refuses the closed total card when a row has no line — never an Over 0", () => {
+    expect(closedHalfRows(withTotalLine(null), [], "half_total", "1H")).toBeNull();
+    expect(closedHalfRows(withTotalLine(Number.NaN), [], "half_total", "1H")).toBeNull();
+    expect(closedHalfRows(withTotalLine(Number.POSITIVE_INFINITY), [], "half_total", "1H")).toBeNull();
+  });
+
+  it("the page withholds only that card: no 1st half points, no Over 0, margin intact", () => {
+    const text = render(payload(withTotalLine(null)));
+    expect(text).not.toContain("1st half points");
+    expect(text).not.toMatch(/Over 0\b/);
+    expect(cardBody(text, "1st half margin")).toMatch(/Final\s+NEB by 7/);
+  });
+
+  it("a spread's cut lives in its title, so a null threshold there still draws", () => {
+    // The specimen's spread rows all serve `threshold: null`.
+    expect(closedAt(HALFTIME).filter((r) => r.market_type === "half_spread").every((r) => r.threshold == null)).toBe(true);
+    expect(closedHalfRows(closedAt(HALFTIME), [], "half_spread", "1H")).not.toBeNull();
+  });
+
+  it("an explicit line of 0 is a real line, not a missing one", () => {
+    expect(closedHalfRows(withTotalLine(0), [], "half_total", "1H")?.score).toEqual(HALFTIME);
+  });
+});

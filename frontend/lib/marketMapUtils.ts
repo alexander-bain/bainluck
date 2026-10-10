@@ -733,6 +733,9 @@ export interface ClosedPeriodRow extends PeriodTotalRow {
   period_score?: { home: number; away: number } | null;
 }
 
+/** The closed half rows the server serves (#10850), all sharing one score. */
+const CLOSED_HALF_TYPES = new Set(["half_spread", "half_total", "half_winner"]);
+
 /**
  * The closed rows one half card may draw, and the score it grades them by.
  *
@@ -744,6 +747,13 @@ export interface ClosedPeriodRow extends PeriodTotalRow {
  * contract's fields, or a half whose rows disagree on the score, draws nothing.
  * A half still quoting in `period_markets` keeps that card; a row is never in
  * both lists, and if it were, the quoting list wins.
+ *
+ * The score is one per half, so it is checked across EVERY closed row of the
+ * half before the card's own type is picked out: a margin card and a points
+ * card graded from two different "finals" of the same half is the defect.
+ * A total rung's line is the row's own number — never a parsed title, never a
+ * default — so a closed total row without a finite threshold refuses its card
+ * rather than becoming an invented "Over 0".
  */
 export function closedHalfRows(
   closedRows: ClosedPeriodRow[] | null | undefined,
@@ -752,18 +762,23 @@ export function closedHalfRows(
   half: string
 ): { rows: ClosedPeriodRow[]; score: { home: number; away: number } } | null {
   if ((quotingRows || []).some((r) => r.market_type === marketType && derivePeriod(r) === half)) return null;
-  const rows = (closedRows || []).filter((r) => r.market_type === marketType && r.period === half);
-  if (rows.length === 0) return null;
+  const halfRows = (closedRows || []).filter((r) => CLOSED_HALF_TYPES.has(r.market_type) && r.period === half);
   let score: { home: number; away: number } | null = null;
-  for (const r of rows) {
-    if (r.window_closed !== true || r.probability != null || r.over_probability != null) return null;
+  for (const r of halfRows) {
     const s = r.period_score;
     if (!s || !Number.isInteger(s.home) || !Number.isInteger(s.away) || s.home < 0 || s.away < 0) return null;
     if (score && (score.home !== s.home || score.away !== s.away)) return null;
     score = { home: s.home, away: s.away };
   }
-  return score ? { rows, score } : null;
+  const rows = halfRows.filter((r) => r.market_type === marketType);
+  if (rows.length === 0 || !score) return null;
+  for (const r of rows) {
+    if (r.window_closed !== true || r.probability != null || r.over_probability != null) return null;
+    if (marketType === "half_total" && !(typeof r.threshold === "number" && Number.isFinite(r.threshold))) return null;
+  }
+  return { rows, score };
 }
+
 
 /**
  * The period a half market belongs to: the backend's own field where it has
