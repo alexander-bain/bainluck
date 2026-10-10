@@ -62,14 +62,27 @@ nonisolated enum WatchComplicationProjection {
 }
 
 nonisolated enum WatchComplicationPublisher {
+    #if canImport(WidgetKit)
+    @MainActor private static let reloads = WatchComplicationReloads {
+        WidgetCenter.shared.reloadTimelines(ofKind: "BainLuckComplication")
+    }
+    #endif
     /// Shared storage is unavailable until the app and extension are properly entitled.
     /// Never substitute separate standard defaults and pretend data was shared.
     static func publish(game: WatchSelectedGame?, savedAt: Date?) {
         let directory = FileManager.default.containerURL(forSecurityApplicationGroupIdentifier: "group.com.bainluck.watch")
         let snapshot = game.flatMap { game in savedAt.flatMap { WatchComplicationProjection.snapshot(game: game, savedAt: $0) } }
-        guard write(snapshot, to: directory) else { return }
+        let now = Date()
+        let valid = snapshot.flatMap { $0.isValid(now: now) ? $0 : nil }
+        guard write(valid, to: directory, now: now) else { return }
         #if canImport(WidgetKit)
-        WidgetCenter.shared.reloadTimelines(ofKind: "BainLuckComplication")
+        // The shared snapshot is already current. Foreground stream bursts
+        // must not ask WidgetKit to rebuild on every accepted detail response.
+        let key = valid.map { "\($0.eventID):\(String(describing: $0.circularReading?.kind))" }
+        let live = valid != nil && game?.isLive == true
+        DispatchQueue.main.async {
+            reloads.changed(key: key, live: live)
+        }
         #endif
     }
 
@@ -96,5 +109,49 @@ nonisolated enum WatchComplicationPublisher {
             try data.write(to: url, options: .atomic)
             return true
         } catch { return false }
+    }
+}
+
+
+/// Bound WidgetKit reload requests independently of visible app updates.
+/// Every snapshot is still written immediately by the publisher above.
+@MainActor final class WatchComplicationReloads {
+    private let now: () -> TimeInterval
+    private let sleep: @MainActor (TimeInterval) async throws -> Void
+    private let reload: @MainActor () -> Void
+    private var lastKey: String?
+    private var lastReload: TimeInterval?
+    private var pending: Task<Void, Never>?
+    private var generation = UUID()
+    private static let liveInterval: TimeInterval = 30
+
+    init(now: @escaping () -> TimeInterval = { ProcessInfo.processInfo.systemUptime },
+         sleep: @escaping @MainActor (TimeInterval) async throws -> Void = { try await Task.sleep(for: .seconds($0)) },
+         reload: @escaping @MainActor () -> Void) {
+        self.now = now; self.sleep = sleep; self.reload = reload
+    }
+
+    func changed(key: String?, live: Bool) {
+        // Clear, a different event/reading kind and non-live results are urgent.
+        guard let key, key == lastKey, live, let lastReload else {
+            reloadNow(key: key)
+            return
+        }
+        let remaining = Self.liveInterval - (now() - lastReload)
+        guard remaining > 0 else { reloadNow(key: key); return }
+        guard pending == nil else { return } // Do not postpone the trailing edge.
+        let token = generation
+        pending = Task { @MainActor [weak self, sleep = self.sleep] in
+            do { try await sleep(remaining) } catch { return }
+            guard let self, !Task.isCancelled, self.generation == token else { return }
+            self.reloadNow(key: key)
+        }
+    }
+
+    private func reloadNow(key: String?) {
+        generation = UUID()
+        pending?.cancel(); pending = nil
+        lastKey = key; lastReload = now()
+        reload()
     }
 }
