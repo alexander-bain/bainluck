@@ -175,8 +175,12 @@ class TestClockBracketRefusals:
             assert got == [], opening
 
     def test_other_sports_are_untouched(self):
-        assert pm.observed_transition_markers("basketball_nba", [
-            self._obs(0, "15:00 - 1st Quarter"), self._obs(1, "14:44 - 1st Quarter")]) == []
+        # #10851 admits four exact basketball keys (their own opening clocks:
+        # `test_basketball_observed_period_starts_10549.py`); an unlisted league
+        # and hockey still get nothing.
+        for sport in ("basketball_euroleague", "icehockey_nhl"):
+            assert pm.observed_transition_markers(sport, [
+                self._obs(0, "15:00 - 1st Quarter"), self._obs(1, "14:44 - 1st Quarter")]) == [], sport
 
 
 @pytest.mark.asyncio

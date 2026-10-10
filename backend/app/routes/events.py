@@ -32638,8 +32638,10 @@ async def get_event_odds_history(
 
     # #5140 — football: where the state stream SAW the periods change, that is the
     # answer, and it outranks every first-score tier above. `[]` (another sport, or
-    # nothing observed) leaves the chain exactly as it was.
-    if _is_transition_sport:
+    # nothing observed) leaves the chain exactly as it was. #10851 widens THIS call,
+    # and only this one, to four exact basketball keys; `_is_transition_sport`
+    # above stays football for the tiers it labels.
+    if event.sport and pm_source.observes_period_transitions(event.sport.key):
         _observed = pm_source.observed_transition_markers(
             event.sport.key,
             # #6718: each observation names the series it came from, so the

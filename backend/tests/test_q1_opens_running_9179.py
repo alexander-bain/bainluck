@@ -211,6 +211,9 @@ class TestKickoffBracketRefusals:
         assert (q1["timestamp"], q1["not_before"]) == (rows[1]["timestamp"], rows[0]["timestamp"])
 
     def test_other_sports_are_untouched(self):
-        assert pm.observed_transition_markers(
-            "basketball_nba", [self._obs(3, "11:40 - 1st Quarter")],
-            kickoff_not_before=self.T0) == []
+        # #10851: the NBA now takes this arm against its own 12:00 clock (pinned in
+        # `test_basketball_observed_period_starts_10549.py`); unlisted leagues do not.
+        for sport in ("basketball_euroleague", "icehockey_nhl"):
+            assert pm.observed_transition_markers(
+                sport, [self._obs(3, "11:40 - 1st Quarter")],
+                kickoff_not_before=self.T0) == [], sport
