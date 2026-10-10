@@ -723,6 +723,49 @@ export interface PeriodTotalRow {
 }
 
 /**
+ * #10850: a period row whose window has closed and that the venue has not
+ * graded yet, as `GameMarketsResponse.closed_period_markets` serves it. It
+ * never carries a price; `period_score` is that period's evidenced score.
+ */
+export interface ClosedPeriodRow extends PeriodTotalRow {
+  source?: string | null;
+  window_closed?: boolean | null;
+  period_score?: { home: number; away: number } | null;
+}
+
+/**
+ * The closed rows one half card may draw, and the score it grades them by.
+ *
+ * #10850. At halftime the server stops quoting a finished half (#1588), so the
+ * 1st half cards vanished just as the half had a result. Their rows now come
+ * back under their own key, unpriced, beside the score the server evidenced.
+ * The card grades every rung against that score. It never reads a price here
+ * and never infers a half score from the scoreboard: a row without the
+ * contract's fields, or a half whose rows disagree on the score, draws nothing.
+ * A half still quoting in `period_markets` keeps that card; a row is never in
+ * both lists, and if it were, the quoting list wins.
+ */
+export function closedHalfRows(
+  closedRows: ClosedPeriodRow[] | null | undefined,
+  quotingRows: Array<{ market_type: string; period?: string | null; outcome_name: string; market_name: string }> | null | undefined,
+  marketType: "half_spread" | "half_total",
+  half: string
+): { rows: ClosedPeriodRow[]; score: { home: number; away: number } } | null {
+  if ((quotingRows || []).some((r) => r.market_type === marketType && derivePeriod(r) === half)) return null;
+  const rows = (closedRows || []).filter((r) => r.market_type === marketType && r.period === half);
+  if (rows.length === 0) return null;
+  let score: { home: number; away: number } | null = null;
+  for (const r of rows) {
+    if (r.window_closed !== true || r.probability != null || r.over_probability != null) return null;
+    const s = r.period_score;
+    if (!s || !Number.isInteger(s.home) || !Number.isInteger(s.away) || s.home < 0 || s.away < 0) return null;
+    if (score && (score.home !== s.home || score.away !== s.away)) return null;
+    score = { home: s.home, away: s.away };
+  }
+  return score ? { rows, score } : null;
+}
+
+/**
  * The period a half market belongs to: the backend's own field where it has
  * one, text otherwise. Lifted out of `MarketMapSection` for #3240 so the
  * half-total selector below and the card that draws it read one definition.
@@ -1120,7 +1163,8 @@ export function settledHalfScoresFromGrades(
 export function selectHalfTotalRungs(
   periodMarkets: PeriodTotalRow[] | null | undefined,
   halfKey: string,
-  eventStatus?: string | null
+  eventStatus?: string | null,
+  opts: { keepUnpriced?: boolean } = {}
 ): Array<{ threshold: number; overProbability: number; rowGrade?: HalfRungGrade }> {
   const halfItemsRaw = (periodMarkets || []).filter(
     (p) =>
@@ -1129,8 +1173,9 @@ export function selectHalfTotalRungs(
       !isTeamScopedHalfTotal(p.market_name) &&
       derivePeriod(p) === halfKey &&
       // #8811: on a quoting card an unpriced rung is absent, not a 0% rung
-      // (see parseSpreadRungs); a graded card keeps it for its row grade.
-      (marketMapIsGraded(eventStatus) || Number.isFinite(p.over_probability ?? p.probability))
+      // (see parseSpreadRungs); a graded card keeps it for its row grade, and
+      // #10850's closed half keeps it to grade against the half's score.
+      (opts.keepUnpriced || marketMapIsGraded(eventStatus) || Number.isFinite(p.over_probability ?? p.probability))
   );
 
   // One rung per threshold, before the monotonicity pass and before the

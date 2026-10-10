@@ -5,6 +5,7 @@
 import type { EntityAvailability, EntityTier } from "@/lib/entityPageChrome";
 import type { DiscoverPriceCards } from "@/lib/discover/priceRefresh";
 import type { TournamentPayload } from "@/lib/tournament";
+import type { ClosedPeriodRow } from "@/lib/marketMapUtils";
 import type {
   EventsResponse,
   EventDetailResponse,
@@ -1256,6 +1257,8 @@ export interface GameMarketsResponse {
     movement?: number | null;
     period?: string | null;
   }[];
+  /** #10850: closed, not-yet-graded period rows — never priced, graded from `period_score`. */
+  closed_period_markets?: ClosedPeriodRow[] | null;
   matchups: {
     market_name: string;
     type: "h2h" | "3ball";
