@@ -103,37 +103,12 @@ struct WatchMyStuffView: View {
     }
 }
 
-/// Team identity is always the API's numeric ID, never a name search. Briefs
-/// provide destinations only: readings and their clocks come from exact detail.
-private nonisolated struct WatchMyStuffTeamPage: Decodable, Sendable {
-    struct Team: Decodable, Sendable { let id: Int; let name: String }
-    struct Game: Decodable, Identifiable, Sendable {
-        let id: Int; let homeTeam: String; let awayTeam: String
-    }
-    struct Market: Decodable, Sendable {
-        let marketId: Int; let marketName: String
-    }
-    let team: Team
-    let upcomingEvents: [Game]
-    let recentEvents: [Game]
-    let futures: [Market]
-    var games: [Game] {
-        var seen = Set<Int>()
-        return (upcomingEvents + recentEvents).filter { $0.id > 0 && seen.insert($0.id).inserted }
-    }
-    var questions: [Market] {
-        var seen = Set<Int>()
-        return futures.filter { $0.marketId > 0 && seen.insert($0.marketId).inserted }
-    }
-}
-
 private struct WatchMyStuffTeamView: View {
     @Environment(\.scenePhase) private var scenePhase
     let item: WatchMyStuffSnapshot.Item
     let select: (Int) -> Void
     let close: () -> Void
-    @State private var page: WatchMyStuffTeamPage?
-    @State private var error: String?
+    @State private var teamState = WatchMyStuffTeamState()
     @State private var loading = false
     @State private var refreshID = 0
     @State private var request = UUID()
@@ -142,8 +117,8 @@ private struct WatchMyStuffTeamView: View {
     var body: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 10) {
-                Text(page?.team.name ?? item.title).font(.headline)
-                if let page {
+                Text(teamState.page?.team.name ?? item.title).font(.headline)
+                if let page = teamState.page {
                     if page.games.isEmpty { Text("No games listed for this team.") }
                     ForEach(Array(page.games.prefix(12))) { game in
                         Button("\(game.awayTeam) at \(game.homeTeam)") { select(game.id) }
@@ -159,7 +134,7 @@ private struct WatchMyStuffTeamView: View {
                     }
                 }
                 if loading { ProgressView("Loading team") }
-                if let error { Text(error) }
+                if let error = teamState.error { Text(error) }
                 Button("Refresh") { refreshID += 1 }.disabled(loading || scenePhase != .active)
                 Button("Back to My Stuff", action: close)
             }.fixedSize(horizontal: false, vertical: true).padding(.horizontal, 6)
@@ -168,6 +143,7 @@ private struct WatchMyStuffTeamView: View {
             guard scenePhase == .active else { return }
             let accountGeneration = WatchMyStuffStore.shared.navigationGeneration
             let token = UUID(); request = token; loading = true
+            teamState.beginRefresh(); question = nil
             defer { if request == token { loading = false } }
             do {
                 var urlRequest = URLRequest(url: URL(string: "https://api.bainluck.com/api/teams/\(item.targetID)")!)
@@ -179,17 +155,15 @@ private struct WatchMyStuffTeamView: View {
                       WatchMyStuffStore.shared.contains(item) else { return }
                 guard let http = response as? HTTPURLResponse else { throw URLError(.badServerResponse) }
                 guard http.statusCode == 200 else {
-                    error = [404, 410].contains(http.statusCode)
+                    teamState.fail([404, 410].contains(http.statusCode)
                         ? "This team is no longer listed. Your other saved items are still available."
-                        : "Couldn't refresh this team. Try again."
+                        : "Couldn't refresh this team. Try again.")
                     return
                 }
-                let decoder = JSONDecoder(); decoder.keyDecodingStrategy = .convertFromSnakeCase
-                page = try decoder.decode(WatchMyStuffTeamPage.self, from: data)
-                error = nil
+                teamState.receive(data, expectedTeamID: item.targetID)
             } catch {
                 guard request == token, !Task.isCancelled else { return }
-                self.error = "Couldn't refresh this team. Try again."
+                teamState.fail("Couldn't refresh this team. Try again.")
             }
         }
         .onDisappear { request = UUID(); question = nil }
