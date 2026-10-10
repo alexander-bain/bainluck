@@ -61,6 +61,12 @@ def rig(monkeypatch, *, count=12, block_db=False, fail_db=False):
     async def publish(frames):
         ids = [f["event_id"] for f in frames]
         assert len(committed) >= len(publications) + 1
+        # Per-event transactions commit concurrently, so a count of commits
+        # is not the published event's own commit: each published id must
+        # already be one its transaction stamped and committed.
+        assert set(ids) <= set(committed_events), (
+            f"published {ids} before their own commit; committed {committed_events}"
+        )
         publications.append(ids)
         entered.set()
         try:
@@ -185,6 +191,21 @@ async def test_cancel_joins_sender_and_only_uncommitted_groups_remain_owed(monke
         for ack in x.ack.values():
             ack.set()
         await asyncio.gather(task, return_exceptions=True)
+
+
+async def test_strawman_an_uncommitted_event_is_refused_even_after_another_commits(monkeypatch):
+    # The rig's publication guard itself: one transaction (event 1) has
+    # committed, so the commit COUNT admits a first publication, but a frame
+    # for event 2, whose own transaction never committed, must be refused.
+    x = rig(monkeypatch, count=2)
+    async with x.factory():
+        pass
+    assert x.committed == [1] and x.committed_events == []
+    x.committed_events.append(1)
+    x.ack[2].set()  # an admitted frame would finish rather than wait
+    with pytest.raises(AssertionError, match="before their own commit"):
+        await x.publish([{"event_id": 2}])
+    assert x.publications == []
 
 
 async def test_one_group_still_awaits_its_publication_directly(monkeypatch):
