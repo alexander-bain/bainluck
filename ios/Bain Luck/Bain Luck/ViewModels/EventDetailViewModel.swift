@@ -410,9 +410,9 @@ final class EventDetailViewModel: ObservableObject {
     /// One section into the page, after the load that asked for it took its
     /// detail — only updated if successful AND non-empty (preserve existing
     /// data when a refresh returns nil or empty results), and never with a
-    /// read older than the one already applied.
+    /// read older than the one already applied. `visit` is the applying load's.
     @MainActor
-    private func applyOptional(_ section: OptionalSection, _ payload: OptionalPayload?, generation: Int) {
+    private func applyOptional(_ section: OptionalSection, _ payload: OptionalPayload?, generation: Int, visit: Int) {
         if let payload, generation > appliedOptionalGeneration[section, default: 0] {
             switch payload {
             case .history(let h):
@@ -436,7 +436,10 @@ final class EventDetailViewModel: ObservableObject {
         // Every load whose history read succeeded checks the chart against the
         // detail that load just adopted — also when the joined read was already
         // applied by an earlier load against an older detail. Deduplicated by key.
-        if section == .history, payload != nil { requestChartRevisionRefreshIfNeeded() }
+        // #10834: not for a load whose page was left — the repair is a new task
+        // `stopRefresh()` never cancelled, and its pair re-plans the page. The
+        // key stays unclaimed, so a return holding the same fold still repairs.
+        if section == .history, payload != nil, visit == self.visit { requestChartRevisionRefreshIfNeeded() }
     }
 
     /// `awaitingOptionalSections: false` is the poll loop's: it returns once the
@@ -456,7 +459,7 @@ final class EventDetailViewModel: ObservableObject {
             return Task { @MainActor [weak self] in
                 let payload = await shared.read.value
                 await detailTaken.wait()
-                self?.applyOptional(section, payload, generation: shared.generation)
+                self?.applyOptional(section, payload, generation: shared.generation, visit: visit)
             }
         }
 
