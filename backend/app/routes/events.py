@@ -18960,20 +18960,47 @@ class _FreshBuildAbandoned(Exception):
 async def _coalesced_fresh_detail(event_id: int, asked_at: float, build) -> dict:
     """Serve a fresh detail read from a build that started after ``asked_at``.
 
-    Strictly after: two clocks that read equal cannot say which came first,
-    and the safe reading of a tie is "before". A build that started before the
-    caller asked is awaited only as a queue position — its answer, or its
-    error, belongs to the readers who were already waiting for it.
+    The barrier is `_coalesced_fresh_build`; this tier adds two things to it.
+    Any ordinary cache entry built after we asked is as good as a fresh build,
+    and the leader's re-entry into `get_event` must skip the barrier.
     """
-    import asyncio
 
-    while True:
+    def _newer_cached(asked_at: float):
         entry = _event_detail_cache.get(event_id)
         if entry is not None and entry[0] > asked_at:
             # Any build that started after we asked — fresh or an ordinary
             # miss — read state at least as new as the write we were told of.
             return entry[2]
-        inflight = _DETAIL_FRESH_BUILDS.get(event_id)
+        return None
+
+    return await _coalesced_fresh_build(
+        _DETAIL_FRESH_BUILDS, event_id, asked_at, build,
+        newer_cached=_newer_cached, leader=_detail_fresh_leader,
+    )
+
+
+async def _coalesced_fresh_build(
+    builds: dict, key, asked_at: float, build, *, newer_cached=None, leader=None,
+):
+    """Serve a fresh read from a build that started after ``asked_at``.
+
+    Strictly after: two clocks that read equal cannot say which came first,
+    and the safe reading of a tie is "before". A build that started before the
+    caller asked is awaited only as a queue position — its answer, or its
+    error, belongs to the readers who were already waiting for it.
+
+    ``builds`` is the tier's own registry (one entry per key while a build is
+    in flight). ``newer_cached`` may answer from a cache entry built after
+    ``asked_at``; ``leader`` is set True for the duration of the one build.
+    """
+    import asyncio
+
+    while True:
+        if newer_cached is not None:
+            cached = newer_cached(asked_at)
+            if cached is not None:
+                return cached
+        inflight = builds.get(key)
         if inflight is None:
             break
         started_at, shared = inflight
@@ -18992,8 +19019,8 @@ async def _coalesced_fresh_detail(event_id: int, asked_at: float, build) -> dict
     shared = asyncio.get_running_loop().create_future()
     # Nobody may be waiting; an unread exception must not log as a leak.
     shared.add_done_callback(lambda f: f.cancelled() or f.exception())
-    _DETAIL_FRESH_BUILDS[event_id] = (started_at, shared)
-    token = _detail_fresh_leader.set(True)
+    builds[key] = (started_at, shared)
+    token = leader.set(True) if leader is not None else None
     try:
         result = await build()
     except Exception as exc:
@@ -19003,9 +19030,10 @@ async def _coalesced_fresh_detail(event_id: int, asked_at: float, build) -> dict
         shared.set_exception(_FreshBuildAbandoned())
         raise
     finally:
-        _detail_fresh_leader.reset(token)
-        if _DETAIL_FRESH_BUILDS.get(event_id, (None, None))[1] is shared:
-            del _DETAIL_FRESH_BUILDS[event_id]
+        if token is not None:
+            leader.reset(token)
+        if builds.get(key, (None, None))[1] is shared:
+            del builds[key]
     shared.set_result(result)
     return result
 
@@ -25117,6 +25145,14 @@ def _estimate_game_pace(
     }
 
 
+#: #1587 — `fresh=true` game-markets reads, coalesced per event per process by
+#: `_coalesced_fresh_build` (the #9296 barrier): a fresh read is answered by a
+#: build that STARTED after it asked, and readers who arrive while one runs share
+#: the next. Measured 10/10 01:40Z: a live game page re-reads `?fresh=true` every
+#: 2 s, and each read was its own full build (NCAAF 2.0–6.0 s back to back).
+_GAME_MARKETS_FRESH_BUILDS: dict[int, tuple[float, object]] = {}
+
+
 @router.get("/{event_id}/game-markets")
 async def get_game_markets(
     event_id: int,
@@ -25159,8 +25195,17 @@ async def get_game_markets(
 
     # Invalidation readers need current rows, not either cached response tier.
     # This read never publishes into the ordinary route's cache ladder.
+    # #1587: and coalesced, the way #9296 coalesces fresh detail. Every open
+    # page of a live game re-reads this every 2 s off the market stream, so
+    # uncoalesced, N readers were N full builds back to back.
     if fresh is True:
-        body, _status, _market_ids = await _build_game_markets(event_id, db)
+        async def _fresh_build():
+            body, _status, _market_ids = await _build_game_markets(event_id, db)
+            return body
+
+        body = await _coalesced_fresh_build(
+            _GAME_MARKETS_FRESH_BUILDS, event_id, time.time(), _fresh_build
+        )
         if response is not None:
             response.headers["Cache-Control"] = "no-store"
         return body
