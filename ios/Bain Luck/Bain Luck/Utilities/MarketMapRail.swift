@@ -769,8 +769,13 @@ enum MarketMapRail {
     /// `formatProbability` is where the app keeps the `<1%` / `>99%` rule, and the
     /// margin card's own header already went through it (`marginHeadline`); the
     /// rungs under that header never did.
-    static func rungPercentText(_ probability: Double) -> String {
-        formatProbability(probability)
+    ///
+    /// #10830 — `nil` is a rung with no price, and it prints the app's absent
+    /// mark rather than a number: the half ladder's "All N lines" reaches every
+    /// quoted line, priced or not, and a row that drew `0.5` for a missing
+    /// price printed a 50% no venue quoted.
+    static func rungPercentText(_ probability: Double?) -> String {
+        formatProbabilityOrDash(probability)
     }
 
     /// The caption an **ungraded** rung prints, beside the percentage it is the
@@ -1072,12 +1077,13 @@ enum MarketMapRail {
         return start ..< (start + limit)
     }
 
-    /// The price a totals rung hands the WINDOW, which is not the price it
-    /// draws.
+    /// The price a totals rung hands the WINDOW, and since #10830 the price its
+    /// row draws too.
     ///
-    /// #7737 — a ladder ROW falls back to `0.5` when a rung carries no price,
-    /// because a bar has to be some length. The window must not inherit that
-    /// fallback: a fabricated `0.5` is not `< 0.5`, so it reads as "the market
+    /// #7737 — a ladder ROW used to fall back to `0.5` when a rung carried no
+    /// price, because a bar had to be some length. #10830 retired that: an
+    /// unpriced row draws an empty track and prints `—`
+    /// (``rungPercentText(_:)``). The window never inherited the fallback: a fabricated `0.5` is not `< 0.5`, so it reads as "the market
     /// expects this line to clear", and — worse — it is non-nil, so an entirely
     /// unpriced ladder would slip past
     /// ``pregameLadderWindow(sortedOverProbabilities:limit:)``'s no-opinion arm
