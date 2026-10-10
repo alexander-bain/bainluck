@@ -49,6 +49,36 @@ nonisolated struct ProjectedFinalPointsSeries: Equatable {
         let reason: WithheldReason
     }
 
+    /// #10549 follow-through (Alex, 2026-10-10: "shouldn't projected final
+    /// score be an easy fix to show everywhere?") — the leagues whose
+    /// sportsbook spread is an expected full-game margin in POINTS, so one
+    /// book's spread and total captured together are a pair of projected
+    /// final scores. The producer (`odds_polling._parse_snapshot_values`,
+    /// `sportsbook_spread_is_a_margin`) projects for these and refuses a
+    /// baseball run line and a fight's rounds line.
+    ///
+    /// Admission is by NAME, never by prefix. A hockey puck line is a fixed
+    /// ±1.5 handicap, not an expected margin (#8231, #8617), so hockey and
+    /// baseball are absent; tennis sets/games and other quantities are not
+    /// points. An unlisted key keeps its Score Differential card.
+    struct League: Equatable {
+        /// The chip (`PeriodLabel.normalize` with this key) an observed first
+        /// period carries. Men's college basketball plays two halves; every
+        /// other league here opens with a first quarter.
+        let firstPeriod: String
+        /// Y-axis gridline step in points: a touchdown with the extra point in
+        /// football; twenty in basketball, whose finals sit in the 60s–130s.
+        let tickStep: Double
+    }
+    static let leagues: [String: League] = [
+        "americanfootball_nfl": League(firstPeriod: "Q1", tickStep: 7),
+        "americanfootball_ncaaf": League(firstPeriod: "Q1", tickStep: 7),
+        "basketball_nba": League(firstPeriod: "Q1", tickStep: 20),
+        "basketball_wnba": League(firstPeriod: "Q1", tickStep: 20),
+        "basketball_ncaab": League(firstPeriod: "1H", tickStep: 20),
+        "basketball_wncaab": League(firstPeriod: "Q1", tickStep: 20),
+    ]
+
     static let maxCaptureGap: TimeInterval = 3600
     static let cutoffRestampSlack: TimeInterval = 120
     let sourceKey: String
@@ -63,7 +93,8 @@ nonisolated struct ProjectedFinalPointsSeries: Equatable {
     let latestActual: Actual?
     let latestIntervalUnavailable: Bool
     let yMax: Double
-    var yTicks: [Double] { Array(stride(from: 0, through: yMax, by: 7)) }
+    let tickStep: Double
+    var yTicks: [Double] { Array(stride(from: 0, through: yMax, by: tickStep)) }
 
     private static func isPoints(_ value: Double) -> Bool { value.isFinite && value >= 0 }
     private static func validTime(_ date: Date) -> Bool { date.timeIntervalSince1970.isFinite }
@@ -91,7 +122,7 @@ nonisolated struct ProjectedFinalPointsSeries: Equatable {
     /// Nil omits this optional experiment for unsupported or unproven inputs.
     @MainActor
     static func build(_ input: Input) -> Self? {
-        guard input.sportKey == "americanfootball_nfl",
+        guard let league = leagues[input.sportKey],
               let sourceName = SourceLabels.sportsbookName(for: input.sourceKey),
               validTime(input.asOf) else { return nil }
         let floor = input.kickoffAt ?? input.scoreObservationStartAt
@@ -162,11 +193,12 @@ nonisolated struct ProjectedFinalPointsSeries: Equatable {
         let unavailable = ordered.last.map { reason($0) != nil } == true || end.timeIntervalSince(latest.at) > maxCaptureGap
         let forecastHigh = segments.flatMap { $0 }.map { max($0.home, $0.away) }.max() ?? 0
         let actualHigh = actuals.map { max($0.home, $0.away) }.max() ?? 0
-        let yMax = max(7, ceil((max(forecastHigh, actualHigh) + 7 / 4.0) / 7) * 7)
+        let step = league.tickStep
+        let yMax = max(step, ceil((max(forecastHigh, actualHigh) + step / 4) / step) * step)
         return Self(sourceKey: input.sourceKey, sourceName: sourceName, phase: phase,
                     segments: segments, withheld: withheld, actualSteps: actuals,
                     start: start, end: end, latest: latest, latestActual: actual(at: end, in: actuals),
-                    latestIntervalUnavailable: unavailable, yMax: yMax)
+                    latestIntervalUnavailable: unavailable, yMax: yMax, tickStep: step)
     }
 
     /// Freeze the original window and clip both quantities, so inspection never

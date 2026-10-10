@@ -1,7 +1,8 @@
 import SwiftUI
 import Charts
 
-/// Optional NFL experiment, secondary to the overall win probability.
+/// Optional football and basketball module (`ProjectedFinalPointsSeries.leagues`),
+/// secondary to the overall win probability.
 /// The caller supplies one named book's proven full-game history and request cutoff.
 ///
 /// #10549 (native twin of web #10539, Alex on 14781135): one chart, read at a
@@ -100,7 +101,7 @@ struct ProjectedFinalPointsChartView: View {
                 VStack(alignment: .leading, spacing: 8) {
                     Text(Self.sourceExplanation(for: full))
                     if !markers.isEmpty {
-                        Text(Self.markerExplanation)
+                        Text(Self.markerExplanation(sportKey: input.sportKey))
                     }
                 }
                 .font(.caption).foregroundStyle(.secondary)
@@ -130,9 +131,13 @@ struct ProjectedFinalPointsChartView: View {
             + "probability above and not an average of sources. The last projection is never joined to the score."
     }
 
-    static let markerExplanation =
-        "The thin vertical lines mark each period break (Q1–Q4, HT, OT) at the time it was observed. "
-        + "A break first seen in progress can be a little after it began."
+    /// The period vocabulary is the league's own: men's college basketball
+    /// plays halves, so its breaks are never called quarters.
+    static func markerExplanation(sportKey: String) -> String {
+        let periods = ProjectedFinalPointsSeries.leagues[sportKey]?.firstPeriod == "1H" ? "1H, HT, 2H, OT" : "Q1–Q4, HT, OT"
+        return "The thin vertical lines mark each period break (\(periods)) at the time it was observed. "
+            + "A break first seen in progress can be a little after it began."
+    }
 
     private func readout(_ series: ProjectedFinalPointsSeries) -> some View {
         VStack(alignment: .leading, spacing: 6) {

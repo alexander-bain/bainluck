@@ -4,8 +4,15 @@ import Foundation
 /// final-points module. Twin of web's `projectedFinalPointsMount`
 /// (`frontend/components/event/ProjectedFinalPointsModule.tsx`).
 ///
-/// NFL, before, during and after the game. It mounts nothing unless every
-/// input below is present.
+/// The leagues `ProjectedFinalPointsSeries.leagues` names (NFL, college
+/// football, NBA, WNBA, men's and women's college basketball), before, during
+/// and after the game. It mounts nothing unless every input below is present.
+///
+/// - The page's own sport key reaches the series unchanged; it picks the
+///   league's first period and axis step. Basketball's during/after phases
+///   need an observed first-period start, which the server serves only for
+///   football today (`period_markers.TRANSITION_SPORT_PREFIXES`), so a live or
+///   finished basketball page keeps its Score Differential card until it does.
 ///
 /// - The page and the history must be in the same phase. The history carries
 ///   its own served `status`; a finished page over a live, scheduled or
@@ -33,8 +40,8 @@ import Foundation
 ///   would let a book of refused rows hide one with real readings.
 /// - Before the game there is no score floor, no actual score and no final
 ///   boundary, whatever markers or scores the history retains. During and
-///   after, the score floor is the first Q1 boundary a named instrument
-///   OBSERVED. It is not a kickoff, so `kickoffAt` stays nil; without it
+///   after, the score floor is the first first-period boundary (Q1, or 1H in
+///   men's college basketball) a named instrument OBSERVED. It is not a kickoff, so `kickoffAt` stays nil; without it
 ///   nothing mounts.
 /// - After the game the final score is the page's own (the pair the hero
 ///   prints), appended as the last ACTUAL step at completion. `score_history`'s
@@ -72,7 +79,7 @@ enum ProjectedFinalPointsMount {
     @MainActor
     static func input(sportKey: String?, eventStatus: String?, history: EventHistoryResponse?,
                       finalHome: Int?, finalAway: Int?, asOf readerNow: Date? = nil) -> ProjectedFinalPointsSeries.Input? {
-        guard sportKey == "americanfootball_nfl",
+        guard let sportKey, ProjectedFinalPointsSeries.leagues[sportKey] != nil,
               let pagePhase = Self.phase(of: eventStatus),
               let history,
               // A missing history status says nothing, so it refuses too.
@@ -119,7 +126,7 @@ enum ProjectedFinalPointsMount {
                              homeProbability: row.homeProbability, kind: admitted.kind)
             }
             return ProjectedFinalPointsSeries.Input(
-                sportKey: "americanfootball_nfl", sourceKey: sourceKey,
+                sportKey: sportKey, sourceKey: sourceKey,
                 basis: .sameBookSameCaptureFullGameSpreadAndTotal,
                 pairs: pairs, actuals: actuals, kickoffAt: nil, scoreObservationStartAt: scoreFloor,
                 finalAt: finalAt, asOf: asOf, windowStartAt: nil, requestCutoffAt: nil)
@@ -177,14 +184,18 @@ enum ProjectedFinalPointsMount {
         return best
     }
 
-    /// Earliest `not_before` of an OBSERVED first-quarter start marker (web
-    /// `firstRecordedGameStateAt`). Estimated, unsourced and first-score
-    /// markers are refused.
+    /// Earliest `not_before` of an OBSERVED start marker of the league's first
+    /// period (web `firstRecordedGameStateAt`). Estimated, unsourced and
+    /// first-score markers are refused, and so is another period vocabulary:
+    /// a men's college basketball game never opens on a "Q1". An unlisted
+    /// sport has no first period here.
     static func firstRecordedGameStateAt(_ markers: [PeriodMarkerPayload]?, sportKey: String?) -> Date? {
-        (markers ?? []).compactMap { marker -> Date? in
+        guard let firstPeriod = sportKey.flatMap({ ProjectedFinalPointsSeries.leagues[$0]?.firstPeriod })
+        else { return nil }
+        return (markers ?? []).compactMap { marker -> Date? in
             guard let source = marker.source, observingMarkerSources.contains(source),
                   let precision = marker.precision, periodStartPrecisions.contains(precision),
-                  let period = marker.period, PeriodLabel.normalize(period, sport: sportKey) == "Q1"
+                  let period = marker.period, PeriodLabel.normalize(period, sport: sportKey) == firstPeriod
             else { return nil }
             return marker.notBefore?.asDate
         }.min()

@@ -494,8 +494,10 @@ struct EventDetailView: View {
                     // "Why the Line Moved" removed — content was low quality
                     // (obvious statements, minor injuries). See #745 for revamp plan.
                     // #10239 / #10478 / #10549 — the ONE projected-points
-                    // decision. NFL before, during and after the game, secondary
-                    // to the win probability above; before and during read the
+                    // decision. Football and basketball leagues the series
+                    // names (#10549 follow-through), before, during and after
+                    // the game, secondary to the win probability above, on the
+                    // page's own sport key; before and during read the
                     // clock the history arrived on. When it admits a drawable
                     // chart, that chart takes the Score Differential card's place
                     // (never two answers to one question); every refusal keeps
