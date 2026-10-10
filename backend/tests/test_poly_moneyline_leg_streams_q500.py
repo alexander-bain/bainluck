@@ -45,6 +45,8 @@ end to end, on the production shape.
 
 import asyncio
 import json
+from datetime import datetime, timezone
+from types import SimpleNamespace
 
 import pytest
 from tests.pm_bulk_test_support import price_writes
@@ -54,6 +56,7 @@ from sqlalchemy.sql.dml import Update
 
 import app.tasks.live_blend_refresh as blend_mod
 import app.tasks.polymarket_ws as poly_task
+from app.utils.repair_lock_budget import SET_LOCK_TIMEOUT_SQL
 from app.tasks.polymarket_token_topup import (
     OUTCOME_TOKEN_METADATA_KEY,
     topup_outcome_clob_tokens,
@@ -66,6 +69,8 @@ from app.tasks.polymarket_token_topup import (
 PARENT_EVENT_ID = "917153"
 MARKET_ID = 59613231
 EVENT_ID = 15291224
+#: The stored write time a returned price row carries.
+STORED_AT = datetime(2026, 9, 1, 18, 43, tzinfo=timezone.utc)
 
 HOME_CONDITION = "0xfa91ccd064fb0916295a44e03077ab8632b6943af710bebaae55a85954e3f1bf"
 AWAY_CONDITION = "0x95022b5ffea20c57f676dfe76473b5617cd39431edff5710ca595bb989cc7d6f"
@@ -362,7 +367,9 @@ class _Session:
         self._writes = writes
         self._meta_writes = meta_writes
 
-    async def execute(self, stmt):
+    async def execute(self, stmt, params=None):
+        if stmt is SET_LOCK_TIMEOUT_SQL:  # the chunk's per-transaction lock budget
+            return _Result([])
         if isinstance(stmt, Update):
             params = stmt.compile(dialect=postgresql.dialect()).params
             if (
@@ -370,6 +377,17 @@ class _Session:
                 and price_writes(stmt)
             ):
                 self._writes.extend(price_writes(stmt))
+                # 1b298f0362: only the rows the chunk UPDATE returns count as
+                # written (and so as owed a blend); every given price lands.
+                # Unmoved, as in the q491 rig: market invalidations (#9484)
+                # have their own tests and need a real session.
+                return _Result([
+                    SimpleNamespace(
+                        ord=i, id=oid, market_id=MARKET_ID,
+                        last_updated=STORED_AT, quote_moved=False,
+                    )
+                    for i, (oid, _prob) in enumerate(price_writes(stmt), start=1)
+                ])
             elif stmt.table.name == "futures_markets":
                 self._meta_writes.append(params["id_1"])
             return _Result([])
