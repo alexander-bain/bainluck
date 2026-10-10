@@ -101,7 +101,7 @@ final class MarketMapColumnHeaders5656Tests: XCTestCase {
         XCTAssertFalse(source.contains("horizontalSizeClass"),
                        "a size-class read is back — that is a second layout to drift")
         XCTAssertFalse(source.contains("useColumns"), "the column branch is back")
-        XCTAssertEqual(occurrences(of: "private var mapEntries", in: source), 1,
+        XCTAssertEqual(occurrences(of: "var mapEntries: [MapEntry]", in: source), 1,
                        "the map list must be declared exactly once")
         XCTAssertEqual(occurrences(of: "items: mapEntries", in: source), 1,
                        "the map list must be what the one layout browses")
@@ -109,7 +109,7 @@ final class MarketMapColumnHeaders5656Tests: XCTestCase {
 
     func testTheCardsThemselvesSurvive() throws {
         let source = try marketMapSource()
-        let router = try XCTUnwrap(source.range(of: "private func mapEntryCard("),
+        let router = try XCTUnwrap(source.range(of: "func mapEntryCard(_ entry: MapEntry)"),
                                    "the card router is gone")
         let body = String(source[router.upperBound...].prefix(800))
         for card in ["marginMapCard", "halfMarginCard(", "totalMapCard", "halfTotalCard("] {
