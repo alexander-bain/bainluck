@@ -205,6 +205,12 @@ final class ALeftPageStaysStopped10834Tests: XCTestCase {
 
     // MARK: - A read that lands after the reader left
 
+    /// Nothing the test held may outlive it: a parked read here spins forever.
+    private func assertNoHeldRead(_ client: HeldClient, _ note: String) async {
+        try? await Task.sleep(nanoseconds: 30_000_000)
+        XCTAssertEqual(client.heldCount, 0, "a held read outlived the test (\(note))")
+    }
+
     /// A page with a held client, its stream handles and its sleeper.
     private func heldPage(free: Int)
         -> (EventDetailViewModel, HeldClient, Sleeper, () -> [FakeHandle]) {
@@ -247,6 +253,7 @@ final class ALeftPageStaysStopped10834Tests: XCTestCase {
             XCTAssertEqual(handles().count, 0, "a left page opened a stream (\(landing))")
             try? await Task.sleep(nanoseconds: 30_000_000)
             XCTAssertEqual(sleeper.parked, 0, "a left page parked a loop (\(landing))")
+            await assertNoHeldRead(client, "load \(landing)")
         }
     }
 
@@ -278,6 +285,7 @@ final class ALeftPageStaysStopped10834Tests: XCTestCase {
             XCTAssertNil(vm.currentRefreshPlan, "a left page names a cadence (\(landing))")
             XCTAssertEqual(handles().count, 1, "a left page opened another stream (\(landing))")
             XCTAssertEqual(sleeper.parked, 0, "a left page parked a loop (\(landing))")
+            await assertNoHeldRead(client, "game state \(landing)")
         }
     }
 
@@ -305,6 +313,7 @@ final class ALeftPageStaysStopped10834Tests: XCTestCase {
         await waitUntil("the returned page to park one loop") { sleeper.parked == 1 }
         try? await Task.sleep(nanoseconds: 30_000_000)
         XCTAssertEqual(sleeper.parked, 1, "a duplicate loop is parked")
+        await assertNoHeldRead(client, "return")
     }
 
     // MARK: - Coming back
