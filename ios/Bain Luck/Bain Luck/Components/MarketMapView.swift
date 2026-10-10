@@ -710,10 +710,10 @@ struct MarketMapView: View {
         // with the Projected scoring card. `thresholds` still feeds the rail's
         // density and bounds, which read every rung rather than the drawn six.
         //
-        // `ladderWindowPrice` is `LadderRow.prob`'s expression below MINUS its
-        // `?? 0.5`, and it is a named function rather than a second copy of the
-        // coalesce because the Projected scoring card has to reach the same
-        // answer — see its doc for what the fallback would do to the window.
+        // `ladderWindowPrice` is also `LadderRow.prob`'s expression below
+        // (`totalsOverRow`), and it is a named function rather than a second
+        // copy of the coalesce because the Projected scoring card has to reach
+        // the same answer — see its doc for what a fallback would do.
         let drawnRungs = MarketMapRail.drawnFullTotalRungs(
             outcomeNames: fullGameTotals.map(\.outcomeName),
             thresholds: fullGameTotals.map(\.threshold),
@@ -730,10 +730,9 @@ struct MarketMapView: View {
         // scoring card reads (#4782); opening the rest changes neither.
         func totalLadderRow(_ rung: MarketMapRail.TotalRung) -> LadderRow {
             let outcome = fullGameTotals[rung.index]
-            return LadderRow(
+            return Self.totalsOverRow(
                 label: "Over \(formatThreshold(rung.threshold))",
-                prob: outcome.overProbability ?? outcome.probability ?? 0.5,
-                color: Color(hex: "#7c3aed"),
+                outcome: outcome,
                 result: settledTotal.map {
                     MarketMapRail.totalLadderResult(
                         threshold: rung.threshold, finalTotal: $0
@@ -1116,11 +1115,9 @@ struct MarketMapView: View {
             played: halfScores.score(half)
         )?.total
         func halfTotalRow(_ rung: MarketMapRail.TotalRung) -> LadderRow {
-            let outcome = outcomes[rung.index]
-            return LadderRow(
+            return Self.totalsOverRow(
                 label: "Over \(formatThreshold(rung.threshold))",
-                prob: outcome.overProbability ?? outcome.probability ?? 0.5,
-                color: Color(hex: "#7c3aed"),
+                outcome: outcomes[rung.index],
                 result: settledHalfTotal.map {
                     MarketMapRail.totalLadderResult(threshold: rung.threshold, finalTotal: $0)
                 }
@@ -1419,20 +1416,42 @@ struct MarketMapView: View {
     /// call site would have had to name a totals-only concept to say it has none.
     struct LadderRow {
         let label: String
-        let prob: Double
+        /// `nil` where the rung carries no price (#10830): the row keeps its
+        /// line, draws an empty track and prints `—`, never a made-up 50%.
+        let prob: Double?
         let color: Color
         /// The verdict this row earned, or nil while the game can still decide
         /// it. Nil is the ONLY state in which the row prints a probability —
         /// see ``MarketMapRail/settledLadderWindow(sortedThresholds:finalTotal:limit:)``.
         var result: MarketMapRail.TotalLadderResult?
 
-        init(label: String, prob: Double, color: Color,
+        init(label: String, prob: Double?, color: Color,
              result: MarketMapRail.TotalLadderResult? = nil) {
             self.label = label
             self.prob = prob
             self.color = color
             self.result = result
         }
+    }
+
+    /// One Over row of a totals ladder, full game or half — both cards build
+    /// every row, drawn window and "All N lines" alike, through this.
+    ///
+    /// #10830 — the price is `ladderWindowPrice`, the same absent-stays-absent
+    /// read the window takes. Both used to write `?? 0.5`, so a quoted line
+    /// with no price (`Over: 1H 17.5`, both fields null) printed 50% once the
+    /// half ladder made every line reachable. The verdict is the caller's.
+    static func totalsOverRow(
+        label: String, outcome: GameMarketOutcome, result: MarketMapRail.TotalLadderResult?
+    ) -> LadderRow {
+        LadderRow(
+            label: label,
+            prob: MarketMapRail.ladderWindowPrice(
+                overProbability: outcome.overProbability, probability: outcome.probability
+            ),
+            color: Color(hex: "#7c3aed"),
+            result: result
+        )
     }
 
     /// #3823 — green and red are `TotalPointsSpectrumView`'s own, to the hex,
@@ -1459,9 +1478,12 @@ struct MarketMapView: View {
                         Capsule()
                             .fill(Color.secondary.opacity(0.08))
                             .overlay(alignment: .leading) {
-                                Capsule()
-                                    .fill(entry.color.opacity(0.55))
-                                    .frame(width: max(2, geo.size.width * min(entry.prob, 1.0)))
+                                // #10830 — no price, no bar: the track alone.
+                                if let price = entry.prob {
+                                    Capsule()
+                                        .fill(entry.color.opacity(0.55))
+                                        .frame(width: max(2, geo.size.width * min(price, 1.0)))
+                                }
                             }
                     }
                     .frame(height: 16)

@@ -410,4 +410,72 @@ final class CompactEventMarkets10830Tests: XCTestCase {
         XCTAssertTrue(results.contains(.over) && results.contains(.under),
                       "the settled window straddles the half's own total: \(settled.map(\.threshold))")
     }
+
+    // MARK: - An unpriced totals line (#10830 follow-up)
+
+    private func totalsOutcome(
+        _ name: String, threshold: Double, over: Double?, probability: Double? = nil
+    ) throws -> GameMarketOutcome {
+        var body: [String: Any] = [
+            "market_name": "Bills at Jets: 1st Half Total", "outcome_name": name, "threshold": threshold,
+        ]
+        if let over { body["over_probability"] = over }
+        if let probability { body["probability"] = probability }
+        let decoder = JSONDecoder()
+        decoder.keyDecodingStrategy = .convertFromSnakeCase
+        return try decoder.decode(GameMarketOutcome.self, from: JSONSerialization.data(withJSONObject: body))
+    }
+
+    /// A quoted half-total line with neither price keeps its row and prints
+    /// the absent mark — never the 50% the old `?? 0.5` made up — while a real
+    /// coin flip, a real 0 and a real 1 still print as quoted.
+    func testAnUnpricedTotalsLineKeepsItsRowAndPrintsNoNumber() throws {
+        let unpriced = MarketMapView.totalsOverRow(
+            label: "Over 17.5", outcome: try totalsOutcome("Over: 1H 17.5", threshold: 17.5, over: nil), result: nil)
+        XCTAssertEqual(unpriced.label, "Over 17.5")
+        XCTAssertNil(unpriced.prob, "a missing price stays missing")
+        XCTAssertEqual(MarketMapRail.rungPercentText(unpriced.prob), absentProbabilityMarker)
+
+        let cases: [(over: Double?, plain: Double?, expected: Double, text: String)] = [
+            (0.5, nil, 0.5, "50%"), (0.0, nil, 0.0, "<1%"), (1.0, nil, 1.0, ">99%"),
+            (nil, 0.5, 0.5, "50%"), (0.7, 0.2, 0.7, "70%"),
+        ]
+        for c in cases {
+            let row = MarketMapView.totalsOverRow(
+                label: "Over 20.5",
+                outcome: try totalsOutcome("Over: 1H 20.5", threshold: 20.5, over: c.over, probability: c.plain),
+                result: nil)
+            XCTAssertEqual(row.prob, c.expected, "over \(String(describing: c.over)) plain \(String(describing: c.plain))")
+            XCTAssertEqual(MarketMapRail.rungPercentText(row.prob), c.text)
+        }
+    }
+
+    /// The half's own grade still lands on an unpriced line: a finished half
+    /// of 24 grades Over 17.5 a HIT whether or not a price survived.
+    func testAnUnpricedLineStillTakesItsOwnHalfsGrade() throws {
+        let row = MarketMapView.totalsOverRow(
+            label: "Over 17.5",
+            outcome: try totalsOutcome("Over: 1H 17.5", threshold: 17.5, over: nil),
+            result: MarketMapRail.totalLadderResult(threshold: 17.5, finalTotal: 24))
+        XCTAssertEqual(row.result, .over)
+        XCTAssertNil(row.prob)
+    }
+
+    /// Both totals cards build their rows through the shared builder, and the
+    /// ladder draws a bar only for a price — so neither the half ladder nor the
+    /// full card's "All N lines" can reintroduce a fabricated coin flip.
+    func testBothTotalsLaddersBuildRowsWithoutAFallbackPrice() throws {
+        let source = try String(
+            contentsOf: URL(fileURLWithPath: #filePath)
+                .deletingLastPathComponent().deletingLastPathComponent()
+                .appendingPathComponent("Bain Luck/Components/MarketMapView.swift"),
+            encoding: .utf8)
+        for builder in ["func totalLadderRow(", "func halfTotalRow("] {
+            let start = try XCTUnwrap(source.range(of: builder), builder)
+            let body = String(source[start.upperBound...].prefix(400))
+            XCTAssertTrue(body.contains("Self.totalsOverRow("), "\(builder) no longer uses the shared row")
+            XCTAssertFalse(body.contains("?? 0.5"), "\(builder) fabricates a price again")
+        }
+        XCTAssertTrue(source.contains("if let price = entry.prob {"), "the ladder bar no longer refuses a missing price")
+    }
 }
