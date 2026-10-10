@@ -291,6 +291,10 @@ async def _consume(monkeypatch, engine, *, frames, open_rows, publisher, refresh
     monkeypatch.setenv("KALSHI_API_KEY_ID", "test-key")
     monkeypatch.setenv("KALSHI_RSA_PRIVATE_KEY", "test-secret")
     monkeypatch.setattr(kalshi_task, "SUBSCRIPTION_REFRESH_SECONDS", refresh)
+    # d1a2bcb366: an unchanged routine refresh no longer recycles the run.
+    # These sockets never acknowledge a subscription, so the first routine
+    # refresh rebuilds them — ending the run where the old timer recycle did.
+    monkeypatch.setattr(kalshi_task, "SUBSCRIBE_ACK_DEADLINE_SECONDS", 0.0)
     monkeypatch.setattr(kalshi_task, "PRICE_FLUSH_SECONDS", flush)
     monkeypatch.setattr(admission, "ADMISSION_CHECK_SECONDS", 60.0)
     monkeypatch.setattr(admission, "ADMISSION_MIN_RECYCLE_SECONDS", 0)

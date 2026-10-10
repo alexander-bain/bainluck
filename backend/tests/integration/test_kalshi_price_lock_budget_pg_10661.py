@@ -220,6 +220,7 @@ def _rig(engine, ids, batch):
         market_id_by_outcome=market_of, event_id_by_outcome=event_of,
         input_marks={oid: oid for oid in batch}, tail_receipts=_Receipts(trace),
         open_contract_outcome_ids=set(), blend_refresher=RecordingRefresher("kalshi"),
+        non_blend_outcome_ids=set(),  # 78d4774b67: no known prop-only leg here
         get_task_session=partial(get_task_session, engine=engine),
         stats=stats, logger=logging.getLogger(__name__),
         prices=kalshi_ws._KalshiPriceOwner(),  # #10693: the run's price pipeline
@@ -296,7 +297,10 @@ async def test_a_held_game_lets_the_later_games_commit(pg):
     ns["queue_market_change"] = tick_arrives
 
     async with _holding(side, legs["a2"]) as held:
-        assert await asyncio.wait_for(ns["flush_prices"](), 5) is False
+        # #10090 (a5b06f85fa): the retained game holds its own retry delay
+        # rather than returning False to slow the whole cadence.
+        assert await asyncio.wait_for(ns["flush_prices"](), 5) is True
+        assert set(ns["prices"].lock_retry_until) == {legs["a1"]}
         assert held.is_active  # all of this happened while A was still held
 
         stored = await _prices(side, ids)
@@ -316,6 +320,9 @@ async def test_a_held_game_lets_the_later_games_commit(pg):
         async with engine.connect() as conn:
             assert await conn.scalar(text("SHOW lock_timeout")) == "0"
 
+    assert await asyncio.wait_for(ns["flush_prices"](), 5) is True
+    assert (await _prices(side, ids))["a1"] == (0.3, 2), "inside its retry delay A waits"
+    ns["prices"].lock_retry_until.clear()  # the retry delay has elapsed
     assert await asyncio.wait_for(ns["flush_prices"](), 5) is True
     stored = await _prices(side, ids)
     assert stored["a1"] == (0.8, 1) and stored["a2"] == (0.5, 2)
@@ -451,7 +458,8 @@ async def test_a_held_row_inside_a_pipelined_run_lets_the_later_games_commit(pg)
     path = _selected_path(engine)
 
     async with _holding(side, legs["a2"]) as held:
-        assert await asyncio.wait_for(ns["flush_prices"](), 5) is False
+        assert await asyncio.wait_for(ns["flush_prices"](), 5) is True  # a5b06f85fa
+        assert set(ns["prices"].lock_retry_until) == {legs["a1"], legs["a2"]}
         assert held.is_active
 
         stored = await _prices(side, ids)
@@ -467,6 +475,7 @@ async def test_a_held_row_inside_a_pipelined_run_lets_the_later_games_commit(pg)
         async with engine.connect() as conn:
             assert await conn.scalar(text("SHOW lock_timeout")) == "0"
 
+    ns["prices"].lock_retry_until.clear()  # the retry delay has elapsed
     assert await asyncio.wait_for(ns["flush_prices"](), 5) is True
     stored = await _prices(side, ids)
     assert stored["a1"] == (0.7, 1) and stored["a2"] == (0.2, 2)
