@@ -27064,7 +27064,9 @@ async def _build_game_markets(
     # served 0.825. Same rule as 7d below: a market is the widest a cap may
     # travel, the club the outcome names splits a two-club market, and
     # `_is_threshold_ladder` decides whether the rows left are rungs at all. A
-    # row with no market id is never grouped. Rows not capped still pass through
+    # row with no market id, or no positively identified home/away club, is never
+    # grouped: unattributed rows of a two-club market may belong to different
+    # clubs, so they keep their own prices. Rows not capped still pass through
     # `_enforce_monotonicity` one at a time, so its `> 0` filter (and the #6196
     # verdict exemption) still runs on every row.
     _tt_side_order: dict[str, int] = {}
@@ -27073,7 +27075,7 @@ async def _build_game_markets(
         side = tt.get("team_side", "unknown")
         _tt_side_order.setdefault(side, len(_tt_side_order))
         mid = tt.get("_market_id")
-        key = (mid, side) if mid is not None else (None, i)
+        key = (mid, side) if mid is not None and side in ("home", "away") else (None, i)
         team_total_groups.setdefault(key, []).append(tt)
     team_total_items = []
     for key, group in team_total_groups.items():

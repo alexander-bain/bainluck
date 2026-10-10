@@ -216,6 +216,22 @@ async def test_rows_of_a_two_club_market_naming_neither_club_are_not_capped_or_g
 
 
 @pytest.mark.asyncio
+async def test_unattributed_rows_at_distinct_rungs_are_not_capped_as_one_ladder():
+    """Refusal control with NO repeated rung: two distinct thresholds pass
+    `_is_threshold_ladder`, so only the club requirement keeps them apart. The
+    rows may be different clubs' lines; the dearer harder rung keeps its price."""
+    rows = [
+        (K_TWO_CLUB, "Over 10.5 points", 0.45),
+        (K_TWO_CLUB, "Over 17.5 points", 0.70),
+    ]
+    served = await _team_totals(rows)
+
+    assert len(served) == 2
+    assert all(r.get("team_side") is None for r in served)
+    assert sorted(round(r["over_probability"], 3) for r in served) == [0.45, 0.70]
+
+
+@pytest.mark.asyncio
 async def test_a_priceless_team_total_row_is_still_dropped():
     """The `> 0` filter lived inside `_enforce_monotonicity`; rows no longer capped
     still pass through it one at a time."""
