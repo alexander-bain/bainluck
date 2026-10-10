@@ -28,10 +28,10 @@ final class ChartGutterRunTests: XCTestCase {
     }
 
     func testTheRunLeavesRoomForAnOrdinaryNameOnAPhone() {
-        // The phone event page: chartHeight 260, 8pt of padding. A run this size
+        // The phone event page: `OddsChartView.phoneChartHeight`, 8pt of padding. A run this size
         // has to hold an uppercase surname at 11pt bold without truncating, or the
         // fix trades a clipped name for an ellipsised one and gains nothing.
-        let run = ChartGutter.run(chartHeight: 260, verticalPadding: 8)
+        let run = ChartGutter.run(chartHeight: OddsChartView.phoneChartHeight, verticalPadding: 8)
 
         // "SABALENKA" at 11pt bold measures ~85pt; the longest names we draw sit
         // under ~110pt. The bound below is the claim that matters.

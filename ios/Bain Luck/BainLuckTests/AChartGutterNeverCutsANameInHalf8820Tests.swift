@@ -12,8 +12,8 @@ import SwiftUI
 /// whole name (`artifacts-native-020/n323-after2-15292394.png`).
 final class AChartGutterNeverCutsANameInHalf8820Tests: XCTestCase {
 
-    /// The phone's Win Probability gutter: 260 pt chart, 8 pt padding, 11 pt.
-    private let winProbRun = ChartGutter.run(chartHeight: 260, verticalPadding: 8)
+    /// The phone's Win Probability gutter: the phone chart, 8 pt padding, 11 pt.
+    private let winProbRun = ChartGutter.run(chartHeight: OddsChartView.phoneChartHeight, verticalPadding: 8)
     private let winProbFont: CGFloat = 11
     /// The Score Differential gutter below it: shorter chart, 10 pt.
     private let diffRun = ChartGutter.run(

@@ -38,6 +38,10 @@ enum ConfidenceTier: String, CaseIterable {
 enum Confidence {
     // Shown to screen readers so the glyph is never unexplained chrome.
     static let tooltip = "Signal strength: sources + liquidity + freshness"
+    /// #10830 — the event hero's tier reads only its source count and whether the
+    /// line moved off open (`fromSources` at the hero's call site), so its popup
+    /// says that, not the feed's generic `tooltip`.
+    static let heroBasis = "Based on the number of sources and movement since open."
 
     // Tier cut points and signal weights — MUST match lib/confidence.ts and
     // backend feed_market_quality.compute_confidence_score.

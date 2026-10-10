@@ -366,11 +366,6 @@ struct EventDetailView: View {
                                     heroBottom: proxy.frame(in: .named(Self.scrollSpace)).maxY,
                                     viewportTop: scrollViewportTop))
                         })
-                    #if os(iOS)
-                    if let reading = GameActivitySnapshot.liveActivityReading(for: event) {
-                        GameActivityControl(snapshot: reading)
-                    }
-                    #endif
                     VStack(spacing: 0) {
                         OddsChartView(eventId: event.id, teamColors: teamColors(event),
                                      commenceTime: event.commenceTime, status: event.status,
@@ -457,6 +452,16 @@ struct EventDetailView: View {
                     }
                     .background(Color.cardBackground)
                     .clipShape(RoundedRectangle(cornerRadius: 12))
+                    // #10830 — Alex, build 46: Start Live Activity sat between the
+                    // hero and the chart and took "too much prime real estate".
+                    // It follows the chart now, a small leading control.
+                    #if os(iOS)
+                    if let reading = GameActivitySnapshot.liveActivityReading(for: event) {
+                        GameActivityControl(snapshot: reading)
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                            .padding(.horizontal, 4)
+                    }
+                    #endif
                     // #9483 C3 — the venue's winner price is read under the
                     // chart, never between the hero's result and the chart.
                     if let gameMarkets = vm.gameMarkets,
@@ -877,6 +882,13 @@ struct EventDetailView: View {
             home: event.homeTeam,
             away: event.awayTeam
         )
+    }
+
+    private func movementCaptionSlot(_ event: EventDetail, colors: (away: Color, home: Color)) -> some View {
+        LivePriceMovementCaption(sequence: vm.priceActivity?.sequence ?? 0,
+                                 text: movementCaption(event),
+                                 color: colors.home,
+                                 isEnabled: priceStreamingEligible && vm.liveUpdateStatus != .interrupted)
     }
 
     private func movementCaption(_ event: EventDetail) -> String? {
@@ -1631,15 +1643,24 @@ struct EventDetailView: View {
                                 .foregroundStyle(.secondary)
                                 .frame(minHeight: 44)
                         } else {
+                            // #10830 — at standard text sizes the caption rides the
+                            // card's bottom padding instead of reserving a band of
+                            // its own (Alex, build 46: "weigh empty space" under
+                            // Live updates). Accessibility sizes outgrow that
+                            // padding, so there it keeps its slot below.
                             probabilityDetails(confidenceTier: confidenceTier)
+                                .overlay(alignment: .bottom) {
+                                    if priceStreamingEligible && !dynamicTypeSize.isAccessibilitySize {
+                                        movementCaptionSlot(event, colors: colors)
+                                            .alignmentGuide(.bottom) { $0[.top] }
+                                    }
+                                }
                         }
                         // #9500 — any streamable status moves the hero, but an
                         // opening line (#9470) still reports no delivery.
-                        if priceStreamingEligible && !shown.isOpeningLine {
-                            LivePriceMovementCaption(sequence: vm.priceActivity?.sequence ?? 0,
-                                                     text: movementCaption(event),
-                                                     color: colors.home,
-                                                     isEnabled: priceStreamingEligible && vm.liveUpdateStatus != .interrupted)
+                        if priceStreamingEligible && !shown.isOpeningLine
+                            && dynamicTypeSize.isAccessibilitySize {
+                            movementCaptionSlot(event, colors: colors)
                         }
                         // #8320 — #3313's live sparkline was drawn here, and it
                         // is gone: it was a thumbnail of the full chart one card

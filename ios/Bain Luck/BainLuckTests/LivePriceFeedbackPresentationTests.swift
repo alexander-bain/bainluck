@@ -127,6 +127,8 @@ extension LivePriceFeedbackPresentationTests {
         XCTAssertTrue(text.contains("Received on this device"), text)
         XCTAssertTrue(text.contains("High confidence"), text)
         XCTAssertFalse(text.contains("published"), "local receipt must never be called source publication: \(text)")
+        // #10830 — the hero's confidence is described by what it reads.
+        XCTAssertFalse(text.contains("liquidity"), text)
     }
 
     func testActualNumericHighlightAppearsThenClearsInCurrentAccessibilityEnvironment() throws {

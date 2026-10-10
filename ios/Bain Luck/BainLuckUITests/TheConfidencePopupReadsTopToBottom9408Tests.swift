@@ -20,7 +20,7 @@ final class TheConfidencePopupReadsTopToBottom9408Tests: XCTestCase {
     private var env: [String: String] { ProcessInfo.processInfo.environment }
 
     /// Always the popup's LAST line: the one build 30 cut in half.
-    private static let lastLine = "Signal strength: sources + liquidity + freshness"
+    private static let lastLine = "Based on the number of sources and movement since open."
 
     func testEveryLineOfTheConfidencePopupCanBeRead() throws {
         continueAfterFailure = false
