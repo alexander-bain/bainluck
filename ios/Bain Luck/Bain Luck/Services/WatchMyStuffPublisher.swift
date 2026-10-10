@@ -167,8 +167,23 @@ import Foundation
     private var teamRequest = UUID()
 
     static func boundedTitle(_ text: String) -> String {
-        // A visible ellipsis indicates shortened labels; exact detail retains full text.
-        text.count > 400 ? String(text.prefix(400)) + "…" : text
+        let limit = WatchMyStuffSnapshot.maxTitleBytes
+        guard text.count > 400 || text.utf8.count > limit else { return text }
+        let ellipsis = "…"
+        let budget = limit - ellipsis.utf8.count
+        var result = ""
+        var bytes = 0
+        var characters = 0
+        // Iterate extended grapheme clusters: never split a composed character
+        // or ZWJ emoji. Even one oversized cluster becomes a visible ellipsis.
+        for character in text {
+            let part = String(character)
+            guard characters < 400, part.utf8.count <= budget - bytes else { break }
+            result.append(character)
+            bytes += part.utf8.count
+            characters += 1
+        }
+        return result + ellipsis
     }
 
     private func emit(account: WatchMyStuffSnapshot.Account? = nil) {

@@ -6,6 +6,7 @@ nonisolated struct WatchMyStuffSnapshot: Codable, Equatable, Sendable {
     static let handshakeKey = "watch_my_stuff_handshake_v1"
     static let maxBytes = 48 * 1024
     static let maxItems = 48
+    static let maxTitleBytes = 2048
     static let maxSessionAge: TimeInterval = 24 * 60 * 60
     let version: Int
     let publisher: UUID
@@ -58,7 +59,7 @@ nonisolated struct WatchMyStuffSnapshot: Codable, Equatable, Sendable {
             && Set(section.items.map(\.id)).count == section.items.count
             && section.items.allSatisfy {
                 $0.targetID > 0 && !$0.kind.isEmpty && $0.kind.utf8.count <= 32
-                && $0.title.utf8.count <= 2048 && ($0.relation?.utf8.count ?? 0) <= 64
+                && $0.title.utf8.count <= Self.maxTitleBytes && ($0.relation?.utf8.count ?? 0) <= 64
             }
             && (section.syncedAt.map { $0.timeIntervalSince1970.isFinite && $0 <= sampledAt } ?? true)
         }
