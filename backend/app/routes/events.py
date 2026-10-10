@@ -90,6 +90,7 @@ from app.utils.prematch_reading import (
     prematch_row_to_reading,
     resolve_prematch_reading,
 )
+from app.utils.closed_period_markets import closed_period_markets
 from app.utils.period_window_grade import grade_period_window, window_outcome_label
 from app.utils.served_period_scores import served_period_scores
 from app.utils.final_score_margin import margin_verdict_from_final_score
@@ -27694,7 +27695,18 @@ async def _build_game_markets(
     game_totals = [m for m in game_totals if _window_open(m)]
     player_props = [m for m in player_props if _window_open(m)]
     team_total_items = [m for m in team_total_items if _window_open(m)]
-    period_markets = [m for m in period_markets if _window_open(m)]
+    # #10850: the closed period rows leave `period_markets` exactly as before;
+    # they are kept aside for `closed_period_markets`, which serves the ones the
+    # line score can pin without any price.
+    _closed_period_rows: list[dict] = []
+
+    def _period_row_open(item: dict) -> bool:
+        if _window_open(item):
+            return True
+        _closed_period_rows.append(item)
+        return False
+
+    period_markets = [m for m in period_markets if _period_row_open(m)]
     other_markets = [m for m in other_markets if _window_open(m)]
     # `spreads` was missing from this list, so the rule never reached it in any
     # game state — and "First 5 Spread" is a window-bounded prop that lands
@@ -27838,6 +27850,21 @@ async def _build_game_markets(
                 or _row.get("outcome_name")
             )
 
+    # #10850 — additive and never fails the page; an error serves nothing.
+    try:
+        _closed_period_markets = closed_period_markets(
+            _closed_period_rows,
+            league=event.__dict__.get("llm_league"),
+            box_score_data=event.box_score_data,
+            home_score=event.home_score,
+            away_score=event.away_score,
+        )
+    except Exception as exc:
+        logger.warning(
+            "game-markets %s: closed period rows refused on error (%s)", event_id, exc
+        )
+        _closed_period_markets = []
+
     # #10238 G1 — the Game question matrix: additive, built from the FINAL served
     # lists above and the legs already loaded, with this function's own decisions
     # passed in; see `app/utils/event_question_matrix.py`. Never fails the page.
@@ -27914,6 +27941,9 @@ async def _build_game_markets(
         "team_totals": team_total_items,
         "spreads": spreads,
         "period_markets": period_markets,
+        # #10850 — additive: a finished 1st half's ungraded rows, no price,
+        # with the half's line-score result. See the module docstring.
+        "closed_period_markets": _closed_period_markets,
         "matchups": matchups,
         "other": sorted(other_markets, key=lambda x: (_extract_threshold(x.get("outcome_name", "")) or 0)),
         "pace": pace,
