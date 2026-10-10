@@ -16,7 +16,6 @@ from types import SimpleNamespace
 
 import pytest
 
-from app.tasks.live_blend_refresh import LiveBlendRefresher
 from tests.test_live_blend_refresh import _RecordingSession, _one_event_refresher
 
 
