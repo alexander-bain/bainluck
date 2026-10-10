@@ -38,4 +38,14 @@ describe('#10796 larger text keeps the numbers and the plot readable', () => {
     const label = spectrum.slice(spectrum.indexOf('Text("\\(formatThreshold(threshold))+"'));
     expect(label).toMatch(/^Text\([^\n]+\)\s*\.font\([^\n]+\)\s*\.lineLimit\(1\)\s*\.fixedSize\(horizontal: true, vertical: false\)\s*\.frame\(minWidth: thresholdColumnWidth, alignment: \.leading\)/);
   });
+
+  it('the expected and pace totals grow their column and stay indivisible numbers', () => {
+    const spectrum = read('Components/TotalPointsSpectrumView.swift');
+    expect(spectrum).toContain('@ScaledMetric(relativeTo: .caption) private var valueColumnWidth');
+    expect(spectrum).not.toMatch(/\.frame\(width: 36, alignment: \.trailing\)/);
+    for (const value of ['Text(formatValue(value))', 'Text(formatValue(paceTotal))']) {
+      const label = spectrum.slice(spectrum.indexOf(value));
+      expect(label).toMatch(/^Text\([^\n]+\)(?:\s*\.(?:font|fontWeight|foregroundStyle)\([^\n]+\))+\s*\.lineLimit\(1\)\s*\.fixedSize\(horizontal: true, vertical: false\)\s*\.frame\(minWidth: valueColumnWidth, alignment: \.trailing\)/);
+    }
+  });
 });

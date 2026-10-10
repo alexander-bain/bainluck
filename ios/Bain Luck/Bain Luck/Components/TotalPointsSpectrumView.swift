@@ -4,6 +4,7 @@ import SwiftUI
 /// Mirrors the web TotalPointsSpectrum component.
 struct TotalPointsSpectrumView: View {
     @ScaledMetric(relativeTo: .caption) private var thresholdColumnWidth: CGFloat = 50
+    @ScaledMetric(relativeTo: .caption) private var valueColumnWidth: CGFloat = 36
     let gameMarkets: GameMarketsResponse
     let eventStatus: String?
     /// #4018 — the clock half of "can a final still arrive?"; see `MarketMapView`.
@@ -794,7 +795,9 @@ struct TotalPointsSpectrumView: View {
                 .font(.caption.monospacedDigit())
                 .fontWeight(bold ? .semibold : .regular)
                 .foregroundStyle(labelColor)
-                .frame(width: 36, alignment: .trailing)
+                .lineLimit(1)
+                .fixedSize(horizontal: true, vertical: false)
+                .frame(minWidth: valueColumnWidth, alignment: .trailing)
         }
     }
 
@@ -826,7 +829,9 @@ struct TotalPointsSpectrumView: View {
             Text(formatValue(paceTotal))
                 .font(.caption.monospacedDigit().weight(.semibold))
                 .foregroundStyle(color)
-                .frame(width: 36, alignment: .trailing)
+                .lineLimit(1)
+                .fixedSize(horizontal: true, vertical: false)
+                .frame(minWidth: valueColumnWidth, alignment: .trailing)
         }
     }
 
