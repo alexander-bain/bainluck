@@ -20,6 +20,18 @@ enum MarketBrowserLogic {
         !searchable || itemCount > pageSize
     }
 
+    /// Alex 10/10 — the most chips a guided chooser lays out in the open
+    /// before it becomes a labelled menu. Eight wrapped chips still fit in a
+    /// few lines at 390pt; past that the chips would push the rows off screen.
+    static let chooserChipLimit = 8
+
+    /// Whether a guided chooser lists its families in a labelled menu rather
+    /// than as wrapped chips: past ``chooserChipLimit``, or at an accessibility
+    /// text size, where one chip can be wider than the screen.
+    static func choosesFromMenu(groupCount: Int, accessibilityText: Bool) -> Bool {
+        accessibilityText || groupCount > chooserChipLimit
+    }
+
     /// The families, in the order their first item appears. The caller's order
     /// IS the ranking (players by priced depth, maps by the page's own order),
     /// so this never re-sorts.
