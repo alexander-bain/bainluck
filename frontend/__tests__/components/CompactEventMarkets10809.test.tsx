@@ -1,6 +1,7 @@
 /** @jest-environment jsdom */
 import React, { act } from "react";
 import { createRoot } from "react-dom/client";
+import GameLineBrowser from "@/components/event/GameLineBrowser";
 import MarketBrowser from "@/components/event/MarketBrowser";
 import CompactPlayerProps from "@/components/event/CompactPlayerProps";
 import MarketMapSection from "@/components/MarketMapSection";
@@ -279,4 +280,28 @@ test.each([
     if (status === "completed")
       expect(host.textContent).not.toContain("Projection");
   }
+});
+
+test("original Under rows never borrow the normalized over probability", () => {
+  const quote = {
+    market_name: "Patriots Team Total: O/U 6.5",
+    threshold: 6.5,
+    over_probability: 0.82,
+    source: "polymarket",
+    market_type: "team_total",
+    movement: null,
+  };
+  const data = {
+    team_totals: [
+      { ...quote, outcome_name: "Over" },
+      { ...quote, outcome_name: "Under" },
+    ],
+    period_markets: [],
+  } as unknown as GameMarketsResponse;
+  render(<GameLineBrowser data={data} status="scheduled" />);
+  expect(host.textContent).toContain("Under");
+  expect(host.querySelectorAll("strong")).toHaveLength(1);
+  expect(host.querySelector("strong")?.textContent).toBe("82%");
+  render(<GameLineBrowser data={data} status="completed" />);
+  expect(host.querySelector("strong")?.textContent).toBe("Last quote 82%");
 });

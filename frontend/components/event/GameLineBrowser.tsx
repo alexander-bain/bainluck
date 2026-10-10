@@ -20,8 +20,15 @@ export default function GameLineBrowser({
   const settled = isSettledStatus(status);
   const items = groups.flatMap((group) =>
     group.rows.map((row, index) => {
+      // over_probability is normalized to the OVER proposition even on a
+      // source row named Under. Never attach it to that opposite outcome or
+      // invent its complement. A direct outcome quote, when present, wins.
       const probability =
-        row.over_probability ?? ("probability" in row ? row.probability : null);
+        "probability" in row
+          ? row.probability
+          : /\bover\b/i.test(row.outcome_name)
+            ? row.over_probability
+            : null;
       return {
         key: `${group.label}-${index}`,
         group: group.label,
