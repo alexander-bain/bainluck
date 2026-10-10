@@ -83,14 +83,9 @@ struct WatchSelectedGameView: View {
                         .accessibilityIdentifier("watch.selection-context")
                     }
                     VStack(alignment: .leading, spacing: 6) {
-                        if store.isRefreshing {
-                            ProgressView("Loading selected game")
-                                .accessibilityIdentifier("watch.loading-selected-game")
-                            Text("Your selection is retained while details load.")
-                                .font(.footnote).foregroundStyle(.secondary)
-                                .fixedSize(horizontal: false, vertical: true)
-                                .accessibilityIdentifier("watch.selection-loading-explanation")
-                        } else if let error = store.errorMessage {
+                        // A retry is not recovery. Preserve the failure and its
+                        // recovery context until the store accepts a new reading.
+                        if let error = store.errorMessage {
                             Text("Reading unavailable")
                                 .font(.headline)
                                 .fixedSize(horizontal: false, vertical: true)
@@ -102,6 +97,17 @@ struct WatchSelectedGameView: View {
                                 .font(.footnote).foregroundStyle(.secondary)
                                 .fixedSize(horizontal: false, vertical: true)
                                 .accessibilityIdentifier("watch.selection-retry-explanation")
+                            if store.isRefreshing {
+                                ProgressView("Retrying selected game")
+                                    .accessibilityIdentifier("watch.loading-selected-game")
+                            }
+                        } else if store.isRefreshing {
+                            ProgressView("Loading selected game")
+                                .accessibilityIdentifier("watch.loading-selected-game")
+                            Text("Your selection is retained while details load.")
+                                .font(.footnote).foregroundStyle(.secondary)
+                                .fixedSize(horizontal: false, vertical: true)
+                                .accessibilityIdentifier("watch.selection-loading-explanation")
                         } else {
                             Text("Game details have not loaded yet")
                                 .font(.headline)
@@ -132,6 +138,7 @@ struct WatchSelectedGameView: View {
                     }
                     .buttonStyle(.plain)
                     .disabled(store.isRefreshing || scenePhase != .active)
+                    .accessibilityIdentifier("watch.refresh-selected-game")
                     Button {
                         WatchTelemetry.shared.action(.chooseGame, surface: .game)
                         choosingGame = true

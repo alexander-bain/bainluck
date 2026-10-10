@@ -123,6 +123,14 @@ final class WatchDiagnosticsJourneyTests: XCTestCase {
         var covered: CGFloat?
         for _ in 0..<24 {
             let box = bounds(app), frame = element.frame
+            // A fully visible disclosure already has complete coverage. Moving
+            // it into the upper half adds scrolling but proves nothing further.
+            if element.isHittable && !frame.isEmpty && !frame.isNull &&
+                frame.minX.isFinite && frame.minY.isFinite &&
+                frame.maxX.isFinite && frame.maxY.isFinite && box.contains(frame) {
+                capture(app, name + " - complete")
+                return
+            }
             if element.isHittable && frame.minY >= box.minY && frame.minY <= box.midY {
                 covered = min(frame.height, box.maxY - frame.minY)
                 capture(app, name + " - top")
