@@ -74,6 +74,93 @@ final class ALeftPageStaysStopped10834Tests: XCTestCase {
         }
     }
 
+    /// Like `CountingClient`, but every detail read after the first `free`
+    /// parks until the test lets it land — with the detail, or with an error.
+    /// Held reads land in the order they parked.
+    private nonisolated final class HeldClient: EventDetailProviding, @unchecked Sendable {
+        struct Declined: Error {}
+        enum Landing { case detail, failure }
+        private let lock = NSLock()
+        private let detail: EventDetail
+        private var free: Int
+        private var parkedSoFar = 0
+        private var held = 0
+        private var landings: [Landing] = []
+        init(_ detail: EventDetail, free: Int) { self.detail = detail; self.free = free }
+        var heldCount: Int { lock.withLock { held } }
+        func land(_ landing: Landing) { lock.withLock { landings.append(landing) } }
+        func fetchEvent(id: Int) async throws -> EventDetail {
+            let ticket: Int? = lock.withLock {
+                guard free == 0 else { free -= 1; return nil }
+                held += 1
+                parkedSoFar += 1
+                return parkedSoFar - 1
+            }
+            guard let ticket else { return detail }
+            while true {
+                let landing: Landing? = lock.withLock {
+                    guard landings.count > ticket else { return nil }
+                    held -= 1
+                    return landings[ticket]
+                }
+                switch landing {
+                case .detail: return detail
+                case .failure: throw Declined()
+                case nil: try? await Task.sleep(nanoseconds: 200_000)
+                }
+            }
+        }
+        func fetchEventHistory(id: Int, hours: Int) async throws -> EventHistoryResponse { throw Declined() }
+        func fetchRelatedFutures(eventId: Int) async throws -> RelatedFuturesResponse { throw Declined() }
+        func fetchTeamProgression(eventId: Int) async throws -> TeamProgressionResponse { throw Declined() }
+        func fetchGameMarkets(eventId: Int) async throws -> GameMarketsResponse { throw Declined() }
+        func fetchLineMovement(eventId: Int) async throws -> LineMovementResponse { throw Declined() }
+    }
+
+    /// Answers a folded detail every time and holds the next history read until
+    /// the test releases it. Counts the chart's catch-up reads
+    /// (`fetchFreshEventHistory`, `rereadPricePair`'s) apart from a load's own.
+    private nonisolated final class HistoryHeldClient: EventDetailProviding, @unchecked Sendable {
+        struct Declined: Error {}
+        private let lock = NSLock()
+        private let detail: EventDetail
+        private let history: EventHistoryResponse
+        private var holdNext = false
+        private var released = false
+        private var held = 0
+        private var catchUps = 0
+        init(detail: EventDetail, history: EventHistoryResponse) {
+            self.detail = detail
+            self.history = history
+        }
+        var heldCount: Int { lock.withLock { held } }
+        var catchUpCount: Int { lock.withLock { catchUps } }
+        func holdNextHistory() { lock.withLock { holdNext = true; released = false } }
+        func releaseHistory() { lock.withLock { released = true } }
+        func fetchEvent(id: Int) async throws -> EventDetail { detail }
+        func fetchEventHistory(id: Int, hours: Int) async throws -> EventHistoryResponse {
+            let hold: Bool = lock.withLock {
+                guard holdNext else { return false }
+                holdNext = false
+                held += 1
+                return true
+            }
+            if hold {
+                while !lock.withLock({ released }) { try? await Task.sleep(nanoseconds: 200_000) }
+                lock.withLock { held -= 1 }
+            }
+            return history
+        }
+        func fetchFreshEventHistory(id: Int, hours: Int) async throws -> EventHistoryResponse {
+            lock.withLock { catchUps += 1 }
+            return history
+        }
+        func fetchRelatedFutures(eventId: Int) async throws -> RelatedFuturesResponse { throw Declined() }
+        func fetchTeamProgression(eventId: Int) async throws -> TeamProgressionResponse { throw Declined() }
+        func fetchGameMarkets(eventId: Int) async throws -> GameMarketsResponse { throw Declined() }
+        func fetchLineMovement(eventId: Int) async throws -> LineMovementResponse { throw Declined() }
+    }
+
     // MARK: - Fixtures
 
     private func live() throws -> EventDetail {
@@ -87,6 +174,32 @@ final class ALeftPageStaysStopped10834Tests: XCTestCase {
            "home_rendered_percent":86,"away_rendered_percent":14},
          "win_probability_sources":{"kalshi":{"value":0.86,"updated_at":"2026-09-28T02:19:00Z"}}}
         """.utf8))
+    }
+
+    /// #10833's repair shape: the headline holds fold revision 14 at 40%,
+    /// and the history pins its right edge at 60% on revision 12 — a chart
+    /// that has to catch up.
+    private func foldedAhead() throws -> (EventDetail, EventHistoryResponse) {
+        let decoder = JSONDecoder()
+        decoder.keyDecodingStrategy = .convertFromSnakeCase
+        let detail = try decoder.decode(EventDetail.self, from: Data("""
+        {"id":4242,"home_team":"Denver Broncos","away_team":"Los Angeles Rams","status":"live",
+         "home_score":16,"away_score":0,
+         "espn":{"game_clock":"11:13","period":"3"},
+         "current_odds":{"home_probability":0.4,"away_probability":0.6,
+           "home_rendered_percent":40,"away_rendered_percent":60},
+         "hero_probability":0.4,"hero_probability_source":"blend",
+         "hero_probability_observed_at":"2026-09-28T02:19:00Z",
+         "blend_fold_revision":{"4242":14},
+         "win_probability_sources":{"polymarket":{"value":0.4,"updated_at":"2026-09-28T02:19:00Z"}}}
+        """.utf8))
+        let history = try decoder.decode(EventHistoryResponse.self, from: Data("""
+        {"event_id":4242,"home_team":"Denver Broncos","away_team":"Los Angeles Rams","status":"live","history":[],
+         "aggregate_line":[{"timestamp":"2026-09-28T02:00:00Z","home_probability":0.55},
+                           {"timestamp":"2026-09-28T02:19:00Z","home_probability":0.6}],
+         "blend_edge_pinned":true,"blend_edge_fold_revision":{"4242":12}}
+        """.utf8))
+        return (detail, history)
     }
 
     private func waitUntil(
@@ -158,6 +271,210 @@ final class ALeftPageStaysStopped10834Tests: XCTestCase {
         XCTAssertEqual(client.detailCount, base, "a left page kept reading")
         XCTAssertEqual(sleeper.parked, 0, "a left page started another loop")
         XCTAssertFalse(vm.isAutoRefreshing)
+    }
+
+    // MARK: - A read that lands after the reader left
+
+    /// Nothing the test held may outlive it: a parked read here spins forever.
+    private func assertNoHeldRead(_ client: HeldClient, _ note: String) async {
+        try? await Task.sleep(nanoseconds: 30_000_000)
+        XCTAssertEqual(client.heldCount, 0, "a held read outlived the test (\(note))")
+    }
+
+    /// A page with a held client, its stream handles and its sleeper.
+    private func heldPage(free: Int)
+        -> (EventDetailViewModel, HeldClient, Sleeper, () -> [FakeHandle]) {
+        var handles: [FakeHandle] = []
+        let client = HeldClient(try! live(), free: free)
+        let sleeper = Sleeper()
+        let vm = EventDetailViewModel(
+            eventId: 4242,
+            client: client,
+            makeStreamHandle: { _ in
+                let handle = FakeHandle()
+                handles.append(handle)
+                return handle
+            },
+            now: { 1_790_562_050 },
+            sleep: { seconds in await sleeper.sleep(seconds) }
+        )
+        return (vm, client, sleeper, { handles })
+    }
+
+    /// The page is opened and left before its detail answers. When the detail
+    /// lands — with the game, or with an error (a cancelled read takes the
+    /// same catch) — the page keeps what it read and arms nothing: no loop,
+    /// no plan, no stream.
+    func testALoadLandingAfterTheReaderLeftArmsNothing() async throws {
+        for landing in [HeldClient.Landing.detail, .failure] {
+            let (vm, client, sleeper, handles) = heldPage(free: 0)
+            let open = Task { @MainActor in await vm.load() }
+            await waitUntil("the opening detail to be in flight (\(landing))") { client.heldCount == 1 }
+
+            vm.stopRefresh()
+            client.land(landing)
+            await open.value
+
+            if landing == .detail {
+                XCTAssertEqual(vm.event?.id, 4242, "the late detail was dropped, not just fenced")
+            }
+            XCTAssertFalse(vm.isAutoRefreshing, "a load that landed after the reader left re-armed the poll (\(landing))")
+            XCTAssertNil(vm.currentRefreshPlan, "a left page names a cadence (\(landing))")
+            XCTAssertEqual(handles().count, 0, "a left page opened a stream (\(landing))")
+            try? await Task.sleep(nanoseconds: 30_000_000)
+            XCTAssertEqual(sleeper.parked, 0, "a left page parked a loop (\(landing))")
+            await assertNoHeldRead(client, "load \(landing)")
+        }
+    }
+
+    /// The ordinary game-state slot of a delivering page is mid-read when the
+    /// reader leaves. When it lands it re-plans nothing.
+    func testAGameStateReadLandingAfterTheReaderLeftArmsNothing() async throws {
+        for landing in [HeldClient.Landing.detail, .failure] {
+            let (vm, client, sleeper, handles) = heldPage(free: 1)
+            await vm.load()
+            deliver(handles()[0])
+            await waitUntil("the delivering page to park on the push cadence (\(landing))") {
+                vm.currentRefreshPlan == .poll(every: EventRefreshPlan.livePushPollInterval)
+                    && sleeper.parked == 1
+            }
+            XCTAssertGreaterThan(
+                EventRefreshPlan.slots(for: .poll(every: EventRefreshPlan.livePushPollInterval)), 1,
+                "the first push-cadence slot is no longer the game-state read"
+            )
+
+            XCTAssertEqual(client.heldCount, 0, "a read other than the slot's is parked (\(landing))")
+            sleeper.release()
+            await waitUntil("the game-state read to be in flight (\(landing))") { client.heldCount == 1 }
+            vm.stopRefresh()
+            client.land(landing)
+            await waitUntil("the late read to land (\(landing))") { client.heldCount == 0 }
+            try? await Task.sleep(nanoseconds: 30_000_000)
+
+            XCTAssertFalse(vm.isAutoRefreshing, "a game-state read that landed after the reader left re-armed the poll (\(landing))")
+            XCTAssertNil(vm.currentRefreshPlan, "a left page names a cadence (\(landing))")
+            XCTAssertEqual(handles().count, 1, "a left page opened another stream (\(landing))")
+            XCTAssertEqual(sleeper.parked, 0, "a left page parked a loop (\(landing))")
+            await assertNoHeldRead(client, "game state \(landing)")
+        }
+    }
+
+    /// The reader leaves and comes back while the first visit's detail is still
+    /// out. The return plans one loop and one stream; the old read landing after
+    /// it adds neither.
+    func testAReturnWhileTheOldReadIsOutStillArmsOneLoop() async throws {
+        let (vm, client, sleeper, handles) = heldPage(free: 0)
+        defer { vm.stopRefresh() }
+        let first = Task { @MainActor in await vm.load() }
+        await waitUntil("the first visit's detail to be in flight") { client.heldCount == 1 }
+        vm.stopRefresh()
+
+        let back = Task { @MainActor in await vm.load() }
+        await waitUntil("the return's detail to be in flight") { client.heldCount == 2 }
+        client.land(.detail)   // the FIRST visit's read lands first
+        await first.value
+        XCTAssertNil(vm.currentRefreshPlan, "the old visit's read planned the page before the return did")
+        XCTAssertEqual(handles().count, 0)
+
+        client.land(.detail)
+        await back.value
+        XCTAssertEqual(vm.currentRefreshPlan, .poll(every: EventRefreshPlan.livePollInterval))
+        XCTAssertEqual(handles().count, 1, "the return opened no stream, or two")
+        await waitUntil("the returned page to park one loop") { sleeper.parked == 1 }
+        try? await Task.sleep(nanoseconds: 30_000_000)
+        XCTAssertEqual(sleeper.parked, 1, "a duplicate loop is parked")
+        await assertNoHeldRead(client, "return")
+    }
+
+    /// A page with `HistoryHeldClient` on #10833's repair shape.
+    private func historyHeldPage() throws
+        -> (EventDetailViewModel, HistoryHeldClient, Sleeper, () -> [FakeHandle]) {
+        var handles: [FakeHandle] = []
+        let (detail, history) = try foldedAhead()
+        let client = HistoryHeldClient(detail: detail, history: history)
+        let sleeper = Sleeper()
+        let vm = EventDetailViewModel(
+            eventId: 4242,
+            client: client,
+            makeStreamHandle: { _ in
+                let handle = FakeHandle()
+                handles.append(handle)
+                return handle
+            },
+            now: { 1_790_562_050 },
+            sleep: { seconds in await sleeper.sleep(seconds) }
+        )
+        return (vm, client, sleeper, { handles })
+    }
+
+    /// The page opens, takes its detail and is left while its history is
+    /// still out. The history lands on a chart that needs catching up: the
+    /// page keeps the history but asks for no repair — the repair's pair would
+    /// re-plan a page nobody is looking at. Coming back to the same fold, the
+    /// return's own check still asks for the repair, exactly once.
+    func testAHistoryLandingAfterTheReaderLeftStartsNoRepair() async throws {
+        let (vm, client, sleeper, handles) = try historyHeldPage()
+        defer { vm.stopRefresh() }
+        client.holdNextHistory()
+        let open = Task { @MainActor in await vm.load() }
+        await waitUntil("the opening detail to plan and its history to be in flight") {
+            vm.currentRefreshPlan != nil && client.heldCount == 1
+        }
+        XCTAssertEqual(handles().count, 1)
+
+        vm.stopRefresh()
+        client.releaseHistory()
+        await open.value
+        for _ in 0..<50 { await Task.yield() }
+        try? await Task.sleep(nanoseconds: 30_000_000)
+
+        XCTAssertNotNil(vm.history, "the late history was dropped, not just fenced")
+        XCTAssertEqual(client.catchUpCount, 0, "a history that landed after the reader left asked for a chart repair")
+        XCTAssertFalse(vm.isAutoRefreshing, "a late history's repair re-armed the poll on a left page")
+        XCTAssertNil(vm.currentRefreshPlan, "a left page names a cadence")
+        XCTAssertEqual(handles().count, 1, "a late history's repair opened a stream on a left page")
+        XCTAssertEqual(sleeper.parked, 0, "a left page parked a loop")
+
+        await vm.load()
+        await waitUntil("the return to ask the chart to catch up") { client.catchUpCount == 1 }
+        for _ in 0..<50 { await Task.yield() }
+        XCTAssertEqual(client.catchUpCount, 1, "the return's repair was not asked exactly once")
+        XCTAssertEqual(handles().count, 2, "the return opened no stream, or two")
+        await waitUntil("the returned page to park one loop") { sleeper.parked == 1 }
+        try? await Task.sleep(nanoseconds: 30_000_000)
+        XCTAssertEqual(sleeper.parked, 1, "a duplicate loop is parked")
+        XCTAssertEqual(client.heldCount, 0, "a held read outlived the test")
+    }
+
+    /// The reader leaves and comes back while the first visit's history is
+    /// still out; the return joins that read. When it lands, the left visit's
+    /// copy asks for nothing and the return's asks for the repair once — on
+    /// one stream and one loop.
+    func testAReturnJoiningTheLeftVisitsHistoryStillRepairsTheChart() async throws {
+        let (vm, client, sleeper, handles) = try historyHeldPage()
+        defer { vm.stopRefresh() }
+        client.holdNextHistory()
+        let first = Task { @MainActor in await vm.load() }
+        await waitUntil("the first visit's history to be in flight") {
+            vm.currentRefreshPlan != nil && client.heldCount == 1
+        }
+        vm.stopRefresh()
+
+        let back = Task { @MainActor in await vm.load() }
+        await waitUntil("the return to take its detail and plan") { vm.currentRefreshPlan != nil }
+        XCTAssertEqual(client.heldCount, 1, "the return stacked a second history read")
+        XCTAssertEqual(client.catchUpCount, 0)
+
+        client.releaseHistory()
+        await first.value
+        await back.value
+        await waitUntil("the return to ask the chart to catch up") { client.catchUpCount == 1 }
+        for _ in 0..<50 { await Task.yield() }
+        try? await Task.sleep(nanoseconds: 30_000_000)
+        XCTAssertEqual(client.catchUpCount, 1, "the repair was not asked exactly once")
+        XCTAssertEqual(handles().count, 2, "the return opened no stream, or two")
+        XCTAssertEqual(sleeper.parked, 1, "the returned page parked no loop, or two")
+        XCTAssertEqual(client.heldCount, 0, "a held read outlived the test")
     }
 
     // MARK: - Coming back
