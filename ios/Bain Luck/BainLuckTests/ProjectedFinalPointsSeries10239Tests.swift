@@ -22,9 +22,14 @@ final class ProjectedFinalPointsSeries10239Tests: XCTestCase {
               finalAt: final.map(t), asOf: t(now), windowStartAt: start.map(t), requestCutoffAt: cutoff.map(t))
     }
 
-    func testNFLOnlyAndNamedSportsbook() {
-        for sport in ["baseball_mlb", "soccer_epl", "tennis_atp", "golf_pga"] {
-            XCTAssertNil(Series.build(input([pair(0)], sport: sport)))
+    func testNamedLeaguesOnlyAndNamedSportsbook() {
+        for sport in ["baseball_mlb", "icehockey_nhl", "soccer_epl", "tennis_atp", "golf_pga",
+                      "americanfootball_ncaaf_fcs", "basketball_euroleague", "americanfootball", ""] {
+            XCTAssertNil(Series.build(input([pair(0)], sport: sport)), sport)
+        }
+        for sport in ["americanfootball_nfl", "americanfootball_ncaaf", "basketball_nba",
+                      "basketball_wnba", "basketball_ncaab", "basketball_wncaab"] {
+            XCTAssertNotNil(Series.build(input([pair(0)], sport: sport)), sport)
         }
         XCTAssertNil(Series.build(input([pair(0)], source: "unknown")))
         XCTAssertNil(Series.build(input([pair(0)], source: "kalshi")))

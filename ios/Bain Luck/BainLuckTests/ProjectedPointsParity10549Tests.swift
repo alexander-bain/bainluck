@@ -53,9 +53,11 @@ final class ProjectedPointsParity10549Tests: XCTestCase {
         XCTAssertTrue(ProjectedFinalPointsMount.replacesScoreDifferential(input))
         XCTAssertFalse(ProjectedFinalPointsMount.replacesScoreDifferential(nil),
                        "a refused mount keeps the Score Differential card")
-        // Refusals keep the differential: another sport, and an NFL game with no observed floor.
+        // Refusals keep the differential: a sport the series does not name (a
+        // puck line is a fixed handicap, not a margin), and an NFL game with
+        // no observed floor.
         XCTAssertFalse(ProjectedFinalPointsMount.replacesScoreDifferential(ProjectedFinalPointsMount.input(
-            sportKey: "basketball_nba", eventStatus: "completed", history: h, finalHome: 30, finalAway: 24)))
+            sportKey: "icehockey_nhl", eventStatus: "completed", history: h, finalHome: 30, finalAway: 24)))
         let noFloor = try history(status: "completed", completedAt: #""\#(Self.day)T03:30:00Z""#,
                                   markers: [marker("00:20", "1st Quarter", source: "estimated")])
         XCTAssertFalse(ProjectedFinalPointsMount.replacesScoreDifferential(ProjectedFinalPointsMount.input(
