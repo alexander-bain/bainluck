@@ -56,6 +56,7 @@ test("the existing bundle renders aligned score columns, original numbers and bo
   expect(grid.rows.map(r => r.points.map(p => p.probability))).toEqual([[.655, .555, .425], [.515, .375, .255]]);
   const html = renderToStaticMarkup(<DiscoverCard groupedItem={{ type: "single", item: card(items) }} />);
   expect(html).toContain("<table");
+  expect(html).toContain("Forecasts for each score threshold");
   for (const label of ["Above 70", "Above 75", "Above 80", "66%", "56%", "43%", "52%", "38%", "26%"])
     expect(html).toContain(label);
   expect(html).toContain('href="/futures/58728375"');
@@ -66,10 +67,11 @@ test("the existing bundle renders aligned score columns, original numbers and bo
   expect(JSON.stringify(items)).toBe(before);
 });
 
-test.each(["inclusive", "audience", "dates", "missing", "invalid", "duplicate", "resolved", "other-theme", "coordinate-mismatch"])("%s has no aligned grid and retains ordinary member rows", condition => {
+test.each(["inclusive", "audience", "dates", "missing", "invalid", "duplicate", "resolved", "other-theme", "coordinate-mismatch", "direction-mismatch"])("%s has no aligned grid and retains ordinary member rows", condition => {
   const items = films();
   const d = data(items[1]);
   const points = d.discover_card.threshold_points;
+  if (condition === "direction-mismatch") points.forEach((p: any) => { p.direction = "below"; });
   if (condition === "coordinate-mismatch") points[0].value = 99;
   if (condition === "inclusive") points.forEach((p: any) => { p.label = `${p.value}+`; });
   if (condition === "audience") d.name = "Film · Rotten Tomatoes audience score";

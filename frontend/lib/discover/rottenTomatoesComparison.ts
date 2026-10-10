@@ -50,7 +50,7 @@ export function rottenTomatoesComparison(items: readonly FeedItem[]): RottenToma
       if (p.source !== "outcome" || typeof p.label !== "string"
         || typeof p.value !== "number" || !Number.isFinite(p.value)
         || p.value < 0 || p.value > 100 || typeof p.unit !== "string"
-        || !["", "%"].includes(p.unit) || typeof p.direction !== "string") return null;
+        || !["", "%"].includes(p.unit) || p.direction !== "above") return null;
       // Keep operator spelling explicit; the generic threshold parser's
       // direction alone does not distinguish strict Above from inclusive N+.
       const label = /^(?:Above (\d+(?:\.\d+)?)%?|(\d+(?:\.\d+)?)\+)$/.exec(p.label);

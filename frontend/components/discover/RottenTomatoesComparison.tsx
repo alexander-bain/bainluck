@@ -12,7 +12,7 @@ export function RottenTomatoesComparison({ comparison }: { comparison: Compariso
     <div className="overflow-x-auto border-t border-surface-border">
       <table className="w-full text-sm">
         <caption className="text-left px-4 pt-3 pb-2 text-xs text-text-secondary">
-          Chance of each score. Open a film for its full question and score range.
+          Forecasts for each score threshold. Open a film for its full question and score range.
         </caption>
         <thead>
           <tr className="text-xs text-text-secondary">
