@@ -19,15 +19,18 @@ struct GameActivityControl: View {
     var body: some View {
         Group {
             if presentation.showsControl {
-                VStack(alignment: .leading, spacing: 6) {
+                VStack(alignment: .leading, spacing: 2) {
                     if controller.activeEventIDs.contains(snapshot.eventID) {
-                        Button("Stop Live Activity") {
+                        compactAction("Stop Live Activity", systemImage: "stop.circle") {
                             Task { await controller.stop(eventID: snapshot.eventID) }
                         }
                         .accessibilityIdentifier("game.activity.stop")
                         .disabled(controller.isBusy)
                     } else {
-                        Button("Start Live Activity") { controller.start(snapshot: snapshot) }
+                        compactAction("Start Live Activity",
+                                      systemImage: "dot.radiowaves.left.and.right") {
+                            controller.start(snapshot: snapshot)
+                        }
                             .accessibilityIdentifier("game.activity.start")
                             .disabled(controller.isBusy || snapshot.isTerminal
                                       || !controller.activeEventIDs.isEmpty || scenePhase != .active)
@@ -67,6 +70,19 @@ struct GameActivityControl: View {
         .onDisappear {
             controller.endViewing(eventID: snapshot.eventID)
         }
+    }
+
+    /// #10830 — a secondary action (Alex, build 46: it took "too much prime real
+    /// estate"): footnote text with a glyph, leading-aligned, still a 44pt target.
+    private func compactAction(_ title: String, systemImage: String,
+                               action: @escaping () -> Void) -> some View {
+        Button(action: action) {
+            Label(title, systemImage: systemImage)
+                .font(.footnote.weight(.semibold))
+                .frame(minHeight: 44)
+                .contentShape(Rectangle())
+        }
+        .buttonStyle(.borderless)
     }
 }
 /// Visibility is separate from lifecycle delivery: hiding chrome must not skip final updates.

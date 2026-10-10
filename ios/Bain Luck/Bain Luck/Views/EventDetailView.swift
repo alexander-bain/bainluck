@@ -366,11 +366,6 @@ struct EventDetailView: View {
                                     heroBottom: proxy.frame(in: .named(Self.scrollSpace)).maxY,
                                     viewportTop: scrollViewportTop))
                         })
-                    #if os(iOS)
-                    if let reading = GameActivitySnapshot.liveActivityReading(for: event) {
-                        GameActivityControl(snapshot: reading)
-                    }
-                    #endif
                     VStack(spacing: 0) {
                         OddsChartView(eventId: event.id, teamColors: teamColors(event),
                                      commenceTime: event.commenceTime, status: event.status,
@@ -457,6 +452,16 @@ struct EventDetailView: View {
                     }
                     .background(Color.cardBackground)
                     .clipShape(RoundedRectangle(cornerRadius: 12))
+                    // #10830 — Alex, build 46: Start Live Activity sat between the
+                    // hero and the chart and took "too much prime real estate".
+                    // It follows the chart now, a small leading control.
+                    #if os(iOS)
+                    if let reading = GameActivitySnapshot.liveActivityReading(for: event) {
+                        GameActivityControl(snapshot: reading)
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                            .padding(.horizontal, 4)
+                    }
+                    #endif
                     // #9483 C3 — the venue's winner price is read under the
                     // chart, never between the hero's result and the chart.
                     if let gameMarkets = vm.gameMarkets,
@@ -879,6 +884,13 @@ struct EventDetailView: View {
         )
     }
 
+    private func movementCaptionSlot(_ event: EventDetail, colors: (away: Color, home: Color)) -> some View {
+        LivePriceMovementCaption(sequence: vm.priceActivity?.sequence ?? 0,
+                                 text: movementCaption(event),
+                                 color: colors.home,
+                                 isEnabled: priceStreamingEligible && vm.liveUpdateStatus != .interrupted)
+    }
+
     private func movementCaption(_ event: EventDetail) -> String? {
         guard let delta = vm.priceActivity?.homeDelta, delta != 0 else { return nil }
         let names = TeamShortName.shortPair(away: event.awayTeam, home: event.homeTeam,
@@ -1198,6 +1210,7 @@ struct EventDetailView: View {
         let heroLayout = stacked
             ? AnyLayout(EventHeroTeamLayout())
             : AnyLayout(HStackLayout(spacing: 0))
+        let captionRidesPadding = stacked && !dynamicTypeSize.isAccessibilitySize
         let metaLayout = stacked
             ? AnyLayout(VStackLayout(alignment: .leading, spacing: 4))
             : AnyLayout(HStackLayout(spacing: 8))
@@ -1631,15 +1644,26 @@ struct EventDetailView: View {
                                 .foregroundStyle(.secondary)
                                 .frame(minHeight: 44)
                         } else {
+                            // #10830 — stacked, the caption's reserved slot was the
+                            // last row of the card: the band of "weigh empty space"
+                            // under Live updates (Alex, build 46). There it rides the
+                            // card's bottom padding instead (its one-line text sits
+                            // in the slot's top line). Accessibility sizes outgrow
+                            // that padding, and in a row the taller crest columns
+                            // set the card's height anyway, so both keep the slot
+                            // below, unchanged.
                             probabilityDetails(confidenceTier: confidenceTier)
+                                .overlay(alignment: .bottom) {
+                                    if priceStreamingEligible && captionRidesPadding {
+                                        movementCaptionSlot(event, colors: colors)
+                                            .alignmentGuide(.bottom) { $0[.top] }
+                                    }
+                                }
                         }
                         // #9500 — any streamable status moves the hero, but an
                         // opening line (#9470) still reports no delivery.
-                        if priceStreamingEligible && !shown.isOpeningLine {
-                            LivePriceMovementCaption(sequence: vm.priceActivity?.sequence ?? 0,
-                                                     text: movementCaption(event),
-                                                     color: colors.home,
-                                                     isEnabled: priceStreamingEligible && vm.liveUpdateStatus != .interrupted)
+                        if priceStreamingEligible && !shown.isOpeningLine && !captionRidesPadding {
+                            movementCaptionSlot(event, colors: colors)
                         }
                         // #8320 — #3313's live sparkline was drawn here, and it
                         // is gone: it was a thumbnail of the full chart one card

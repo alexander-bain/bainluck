@@ -449,8 +449,13 @@ struct OddsChartView: View {
     /// #925 — false only under a raster (see `chartScrubSurfaces`).
     @Environment(\.chartScrubSurfaces) private var scrubSurfaces
 
+    /// #10830 — the phone's inline plot (260 through build 46; Alex: "win
+    /// probability needs more V space"). Paid for by the Live Activity row and
+    /// the hero's blank band, both reclaimed above the chart.
+    static let phoneChartHeight: CGFloat = 300
+
     private var chartHeight: CGFloat {
-        guard sizeClass == .regular else { return 260 }
+        guard sizeClass == .regular else { return Self.phoneChartHeight }
         // Medium breakpoint (~320pt) for iPad Air landscape / split-view
         #if os(iOS)
         let bounds = UIScreen.main.bounds

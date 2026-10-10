@@ -13,6 +13,8 @@ import SwiftUI
 final class AChartGutterNeverCutsANameInHalf8820Tests: XCTestCase {
 
     /// The phone's Win Probability gutter: 260 pt chart, 8 pt padding, 11 pt.
+    /// The specimen's height, kept: #10830 grew the phone chart to
+    /// `OddsChartView.phoneChartHeight`, which only widens this run.
     private let winProbRun = ChartGutter.run(chartHeight: 260, verticalPadding: 8)
     private let winProbFont: CGFloat = 11
     /// The Score Differential gutter below it: shorter chart, 10 pt.

@@ -194,7 +194,7 @@ struct FreshnessRevealView: View {
     }
 
     private var content: some View {
-        VStack(alignment: .leading, spacing: 10) {
+        VStack(alignment: .leading, spacing: 8) {
             if status != .hidden {
                 Text(status.title).font(.headline)
             }
@@ -206,20 +206,35 @@ struct FreshnessRevealView: View {
                 } else {
                     receipt(lastReceivedAt, now: .now)
                 }
-                Text("Received on this device at \(lastReceivedAt.formatted(date: .abbreviated, time: .standard)).")
+                // #10830 — the clock alone on the day it arrived (build 46 printed
+                // "Oct 10, 2026 at 3:36:56 PM" under "17 seconds ago"); VoiceOver
+                // still reads the full date.
+                Text("Received on this device at \(Self.receiptClock(lastReceivedAt)).")
                     .foregroundStyle(.secondary)
+                    .accessibilityLabel("Received on this device at \(lastReceivedAt.formatted(date: .abbreviated, time: .standard)).")
             } else {
                 Text("No newer price update received since opening this page.")
             }
             if let tier = Confidence.normalize(confidenceTier) {
+                // #10830 — confidence is not delivery: set apart, and described by
+                // the two inputs the hero's tier is computed from.
+                Divider()
                 Text(tier.label)
-                Text(Confidence.tooltip)
+                Text(Confidence.heroBasis)
                     .foregroundStyle(.secondary)
             }
         }
         .font(.callout)
         .fixedSize(horizontal: false, vertical: true)
         .padding()
+    }
+
+    /// The receipt's clock time, with its date only when it arrived on an earlier day.
+    static func receiptClock(_ receivedAt: Date, now: Date = .now,
+                             calendar: Calendar = .current) -> String {
+        calendar.isDate(receivedAt, inSameDayAs: now)
+            ? receivedAt.formatted(date: .omitted, time: .standard)
+            : receivedAt.formatted(date: .abbreviated, time: .standard)
     }
 
     private func receipt(_ receivedAt: Date, now: Date) -> some View {
