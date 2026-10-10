@@ -185,6 +185,9 @@ final class WatchTelemetry: NSObject, ObservableObject, WCSessionDelegate, @unch
     }
 
     @MainActor func refreshMyStuff() {
+        // WCSession activation/reachability callbacks may arrive after background().
+        // Keep receiving account contexts, but start verified sync work only while foregrounded.
+        guard foregroundActive else { return }
         #if DEBUG
         if WatchUIFixture.current != nil { return }
         #endif
