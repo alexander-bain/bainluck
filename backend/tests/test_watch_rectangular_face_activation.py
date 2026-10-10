@@ -82,9 +82,12 @@ def require_activation_paths(source):
         "let center =",
         "let reading =",
         'XCTAssertTrue(reading.label.contains("San Francisco Giants win"))',
-        "contentBounds.contains(reading.frame)",
+        # XCUIElement frames are screen coordinates: the reading must sit inside
+        # the real center and host frames, not a zero-origin copy of the center.
+        "center.frame.contains(reading.frame) && host.frame.contains(reading.frame)",
         'print("WATCH_UI_RECTANGULAR_ACTUAL_TYPED=PASS")',
     )
+    assert "CGRect(origin: .zero" not in published
     for assertion in [
         'XCTAssertTrue(reading.label.contains("Saved"))',
         'XCTAssertTrue(reading.label.contains("64% · Live"))',

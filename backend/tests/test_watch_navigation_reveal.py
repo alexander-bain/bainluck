@@ -14,7 +14,7 @@ FILES = [
     "WidgetTapJourneyTests.swift",
 ]
 EXPECTED = {
-    "selected_outer": "1a55711d8e5031222b02dcb250e7962abcf7fad49c800716b91906244b86dc03",
+    "selected_outer": "ce52ac82f842940b22b3c237089f1e7bce139a0e89b9966fe17d82efd4b748c3",
     "selected_capture": "3dd15262266ba381a3165fb8078e085ba3be755a0fd9a50963ce22cc5cfce4f5",
     "return_outer": "83b72c06e1da67bae2ec4b754e5276c0cc1bf9a1046cece3e783da03a338bcff",
     "widget_outer": "4038d57aec63a9aadce1430759a8ea080ac1798fcd66b572c750a4ed19c3f79d",
