@@ -129,8 +129,14 @@ async def _seed(maker) -> list[int]:
     return [low, high]
 
 
-async def _run_both_arms(maker, monkeypatch, *, reverse_arm=None):
-    """Run the real `_refresh_batch` for both venues at once, return (stats, frames)."""
+async def _run_both_arms(maker, monkeypatch, *, reverse_arm=None, direct_batch=False):
+    """Run the real `_refresh_batch` for both venues at once, return (stats, frames).
+
+    e0b52e11ed: `refresh` now gives each event its own write transaction, so a
+    two-event refresh holds one row at a time. ``direct_batch`` drives the
+    two-event `_refresh_batch` transaction itself — the shape that deadlocked
+    in production and that the per-event savepoint still contains.
+    """
     from app.tasks import live_blend_refresh as lbr
     from app.utils import live_blend
 
@@ -193,8 +199,14 @@ async def _run_both_arms(maker, monkeypatch, *, reverse_arm=None):
         arm._last_snapshot_at = {eid: now_mark for eid in event_ids}
         arms[source] = arm
 
+    def stamp(arm):
+        if direct_batch:
+            arm._dispositions = {}
+            return arm._refresh_batch(event_ids, lbr._mono())
+        return arm.refresh(event_ids)
+
     tasks = [
-        asyncio.create_task(arms[s].refresh(event_ids), name=s)
+        asyncio.create_task(stamp(arms[s]), name=s)
         for s in ("kalshi", "polymarket")
     ]
     await asyncio.wait_for(asyncio.gather(*tasks), 30)
@@ -233,7 +245,7 @@ async def test_both_arms_stamp_both_events(maker, monkeypatch, caplog):
 async def test_a_deadlock_costs_one_event_not_the_batch(maker, monkeypatch, caplog):
     caplog.set_level(logging.ERROR, logger="app.tasks.live_blend_refresh")
     event_ids, stats, frames, stored = await _run_both_arms(
-        maker, monkeypatch, reverse_arm="kalshi"
+        maker, monkeypatch, reverse_arm="kalshi", direct_batch=True,
     )
 
     # The control half: opposite orders really do deadlock in this harness.
