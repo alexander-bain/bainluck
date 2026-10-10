@@ -250,6 +250,10 @@ async def _start(monkeypatch, rig, *, recycle=1.0):
     monkeypatch.setenv("KALSHI_API_KEY_ID", "test-key")
     monkeypatch.setenv("KALSHI_RSA_PRIVATE_KEY", "test-secret")
     monkeypatch.setattr(kalshi_task, "SUBSCRIPTION_REFRESH_SECONDS", recycle)
+    # d1a2bcb366: an unchanged routine refresh no longer recycles the run.
+    # These sockets never acknowledge a subscription, so the first routine
+    # refresh rebuilds them — ending the run where the old timer recycle did.
+    monkeypatch.setattr(kalshi_task, "SUBSCRIBE_ACK_DEADLINE_SECONDS", 0.0)
     monkeypatch.setattr(admission, "ADMISSION_CHECK_SECONDS", 60.0)
     monkeypatch.setattr(admission, "ADMISSION_MIN_RECYCLE_SECONDS", 0)
     monkeypatch.setattr(blend_mod, "LiveBlendRefresher", _refresher(rig))
@@ -316,7 +320,11 @@ class TestTheGameDoesNotWaitForUnrelatedRows:
         held = list(rig.trace)
         assert ("commit", (GAME_OUTCOME,)) in held
         assert held.index(("commit", (GAME_OUTCOME,))) < held.index(("publish",))
-        assert held.index(("publish",)) < held.index(("refresh", (GAME_EVENT,)))
+        # 2959d4bc51: the event refresh starts before the separate MARKET
+        # notification is awaited (as #10655's sibling assertion now reads).
+        assert held.index(("commit", (GAME_OUTCOME,))) < held.index(
+            ("refresh", (GAME_EVENT,))
+        )
         assert (GAME_OUTCOME, pytest.approx(0.61)) in rig.committed
         assert not any(o == OPEN_OUTCOME for o, _ in rig.committed)
 

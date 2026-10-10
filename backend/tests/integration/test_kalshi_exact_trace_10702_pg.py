@@ -45,6 +45,15 @@ MARKET_TICKER = "KXATPCHALLENGERDOUBLES-26OCT07BARVOCMARWAL"
 TICKER = MARKET_TICKER + "-BARVOC"
 
 
+def _published(commands):
+    """(channel, payload) per recorded publication: a bare PUBLISH, or the
+    retain-and-publish EVAL a revisioned frame takes (88a4a5cad3)."""
+    return [
+        (cmd[4], cmd[5]) if cmd[0] == "EVAL" else (cmd[1], cmd[2])
+        for cmd in commands
+    ]
+
+
 @pytest.mark.parametrize("fail_stage", [None, "price", "event"])
 @pytest.mark.parametrize("repeat_race", [False, True])
 @pytest.mark.parametrize("trace_enabled", [True, False])
@@ -189,12 +198,27 @@ async def test_existing_full_path_and_outer_rollback_marks(
         feed = Feed([frame])
     connect(feed)
     client = ProtocolRedis()
-    monkeypatch.setattr(task_base, "_get_task_engine", lambda: rig.engine)
+    # The consumer's one shared engine asks the real factory signature for its
+    # retained pool (b74d99451b); the rig's engine stands in for what it builds.
+    engine_requests = []
+
+    def task_engine(*, statement_timeout_ms=None, lock_timeout_ms=None,
+                    retain_full_pool=False):
+        engine_requests.append(
+            (statement_timeout_ms, lock_timeout_ms, retain_full_pool)
+        )
+        return rig.engine
+
+    monkeypatch.setattr(task_base, "_get_task_engine", task_engine)
     monkeypatch.setattr(LiveBlendRefresher, "_client", lambda _self: client)
     monkeypatch.setattr(
         task, "SUBSCRIPTION_REFRESH_SECONDS", 2.5 if repeat_race else 0.4
     )
     monkeypatch.setattr(task, "PRICE_FLUSH_SECONDS", 0.02)
+    # d1a2bcb366: an unchanged routine refresh no longer recycles the run.
+    # These sockets never acknowledge a subscription, so the first routine
+    # refresh rebuilds them — ending the run where the old timer recycle did.
+    monkeypatch.setattr(task, "SUBSCRIBE_ACK_DEADLINE_SECONDS", 0.0)
     monkeypatch.setenv("KALSHI_API_KEY_ID", "fixture-id")
     monkeypatch.setenv("KALSHI_RSA_PRIVATE_KEY", "fixture-secret")
     monkeypatch.setenv("WS_OPEN_CONTRACT_PRICES", "0")
@@ -202,6 +226,7 @@ async def test_existing_full_path_and_outer_rollback_marks(
     monkeypatch.setenv("WS_KALSHI_TRACE_EXPIRES_AT", str(time.time() + 120))
     caplog.set_level("INFO")
     await asyncio.wait_for(task._run_kalshi_ws_consumer(), 5)
+    assert engine_requests == [(None, None, True)]
     records = [
         json.loads(r.message.split("kalshi-exact-trace ", 1)[1])
         for r in caplog.records
@@ -223,7 +248,7 @@ async def test_existing_full_path_and_outer_rollback_marks(
                 ] == pytest.approx(expected)
                 frames = [
                     json.loads(payload)
-                    for _verb, channel, payload in client.commands
+                    for channel, payload in _published(client.commands)
                     if channel == f"live:event:{EVENT}"
                 ]
                 assert len(frames) == (2 if repeat_race else 1)
@@ -288,7 +313,7 @@ async def test_existing_full_path_and_outer_rollback_marks(
     assert publication["publication"] == "REDIS_ACK"
     event_frames = [
         json.loads(payload)
-        for _verb, channel, payload in client.commands
+        for channel, payload in _published(client.commands)
         if channel == f"live:event:{EVENT}"
     ]
     assert len(event_frames) == (2 if repeat_race else 1)

@@ -158,15 +158,18 @@ class TestAnOpenContractFrameIsGradedPerLeg:
         }]
 
     async def test_a_redelivered_frame_counts_once(self, monkeypatch):
-        """Game socket and shard both deliver it; the second write changes
-        nothing (the grader returns None) and is neither counted nor announced."""
+        """The frame is delivered twice; the second write changes nothing (the
+        grader returns None) and is neither counted nor announced.
+
+        ded5f8ed39: a frame for a ticker another connection owns is that
+        connection's, so the game socket no longer supplies the second copy;
+        the shard that owns the leg redelivers it instead."""
         calls = _recording_grader(monkeypatch, answers=[(True, False), (False, False)])
         changes = _recording_changes(monkeypatch)
         stats, _record, _state = await _run(
             monkeypatch,
             frames_for={
-                LINKED_TICKER: [_settle(OPEN_TICKER)],
-                OPEN_TICKER: [_settle(OPEN_TICKER)],
+                OPEN_TICKER: [_settle(OPEN_TICKER), _settle(OPEN_TICKER)],
             },
             open_rows=[(OPEN_TICKER, 50, 501)],
         )

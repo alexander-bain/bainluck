@@ -61,19 +61,21 @@ async def test_processed_book_root_is_released(monkeypatch, tail, priced):
     ]
     socket = Socket([json.dumps(message)] + ([] if tail is None else [tail]))
     references, quotes = [], []
-    decode = json.loads
+    # The receive loop decodes with pydantic's `from_json` (abed7efea7), so
+    # the book root is observed where it is actually built.
+    decode = svc.from_json
 
     class BookRoot(list):
         pass
 
-    def observe(raw):
-        value = decode(raw)
+    def observe(raw, **kwargs):
+        value = decode(raw, **kwargs)
         if isinstance(value, list):
             value = BookRoot(value)
             references.append(weakref.ref(value))
         return value
 
-    monkeypatch.setattr(svc.json, "loads", observe)
+    monkeypatch.setattr(svc, "from_json", observe)
     monkeypatch.setattr(websockets, "connect", lambda *_a, **_kw: socket)
     consumer = svc.PolymarketWebSocket(price_book_snapshots=priced)
     consumer.on_price = quotes.append

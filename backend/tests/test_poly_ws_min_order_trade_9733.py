@@ -49,7 +49,12 @@ async def _run(monkeypatch, frames):
         "_slate",
         lambda legs: [
             [(oid, rig.MARKET_ID, ext, CONDITION, rig.EVENT_ID) for oid, ext in legs],
-            [(rig.MARKET_ID, CONDITION, {"clob_token_ids": [YES_TOKEN, NO_TOKEN]})],
+            # The token read also carries the event's status (8b376bc807),
+            # as the rig's own slate does.
+            [(
+                rig.MARKET_ID, CONDITION,
+                {"clob_token_ids": [YES_TOKEN, NO_TOKEN]}, "scheduled",
+            )],
             [(oid, rig.MARKET_ID, ext) for oid, ext in legs],
         ],
     )
