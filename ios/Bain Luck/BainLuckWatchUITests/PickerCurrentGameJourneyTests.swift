@@ -1058,6 +1058,17 @@ final class PickerCurrentGameJourneyTests: XCTestCase {
         XCTAssertEqual(app.staticTexts["watch.selection-state-heading"].label, "Reading unavailable")
         let retained = app.staticTexts["watch.selection-retry-explanation"]
         XCTAssertEqual(retained.label, "Your selection is retained. Refresh to try again.")
+        // Exercise a pending retry explicitly, instead of relying on the time
+        // spent capturing large text to cross the automatic retry deadline.
+        // If that deadline already elapsed, the same identified control is
+        // disabled and the already-pending retry must meet the same assertions.
+        let retry = app.buttons["watch.refresh-selected-game"]
+        try reveal(retry, in: app)
+        if retry.isEnabled { retry.tap() }
+        XCTAssertTrue(app.descendants(matching: .any)["watch.loading-selected-game"].firstMatch.waitForExistence(timeout: 15))
+        XCTAssertTrue(error.exists)
+        XCTAssertEqual(app.staticTexts["watch.selection-state-heading"].label, "Reading unavailable")
+        XCTAssertEqual(retained.label, "Your selection is retained. Refresh to try again.")
         try captureComplete(retained, in: app, name: "Unavailable detail retains selection and names retry")
         XCTAssertTrue(context.exists && context.label.contains("Buffalo Bills"))
         assertNoDetailReading(app)
