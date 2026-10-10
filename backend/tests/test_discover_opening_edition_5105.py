@@ -511,14 +511,51 @@ def test_an_unpinned_refusal_is_unsupported_not_a_deck():
     assert not out.retire_requested and out.token is None
 
 
-def test_a_group_laundering_a_live_child_refuses_the_pin():
+def test_a_bundle_whose_child_goes_live_expires_the_pin_and_recomposes():
+    """#5105 correction A: the group inherits its child's restriction, so the
+    pin expires as a whole and the replacement seats the bundle outside the
+    opening — never a whole-deck refusal."""
     deck = _opening_deck(game_seat=14)
     deck.insert(1, {"type": "bundle", "data": {"id": "b1", "items": [_event(901)]}})
     minted = _mint(deck)
+    assert _ids(minted.items)[1] == "bundle:b1"
     current = _refresh(minted.items)
+    # Before kickoff the same membership is still compliant: HELD.
+    held = _request(current, minted, now=T0 + timedelta(minutes=1))
+    assert held.status == HELD and held.token == minted.token
     current[1]["data"]["items"][0] = _live(current[1]["data"]["items"][0])
+    before = copy.deepcopy(current)
     out = _request(current, minted)
-    assert out.status == UNSUPPORTED and out.edition_status is None
+    assert out.status == COMPOSED and out.usable
+    assert out.edition_status == EDITION_STATUS_EXPIRED
+    assert out.seating_expiry == SEATING_EXPIRY_OPENING_ORDER
+    assert out.retire_requested and out.restart_at_page_one
+    assert out.token not in (None, minted.token) and out.manifest["token"] == out.token
+    assert _ids(out.items).index("bundle:b1") == OPENING_SEATS
+    assert sorted(_ids(out.items)) == sorted(_ids(current)) and current == before
+    assert out.deck_seating.cards[1].restricted_by == ["event:901"]
+
+
+def test_a_collection_whose_represented_game_starts_expires_the_pin():
+    """The kickoff the retained deck counterfactual models: a hub at seat 1 and
+    its matched game at seat 2. At mint both are eligible; once the game is
+    ordinary-live both leave the opening in a recomposed edition, and the
+    recomposed edition then HOLDS."""
+    deck = _opening_deck(game_seat=0)
+    deck.insert(0, {"type": "collection", "score": 35,
+                    "data": {"id": 7, "status": "live", "matched_event_ids": [900]}})
+    minted = _mint(deck)
+    assert _ids(minted.items)[:2] == ["collection:7", "event:900"]
+    current = _refresh(minted.items)
+    current[1] = _live(current[1])
+    out = _request(current, minted)
+    assert out.status == COMPOSED and out.seating_expiry == SEATING_EXPIRY_OPENING_ORDER
+    after = _ids(out.items)
+    assert after[OPENING_SEATS:OPENING_SEATS + 2] == ["collection:7", "event:900"]
+    assert sorted(after) == sorted(_ids(current))
+    assert out.continuation_start is None
+    again = _request(_refresh(current), out, now=T1 + timedelta(minutes=1))
+    assert again.status == HELD and _ids(again.items) == after
 
 
 # --- F. nothing scored, nothing duplicated, manifest ↔ token ----------------

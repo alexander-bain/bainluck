@@ -390,8 +390,9 @@ _SEATED_DECK = [_fut(0), {
 }] + [_fut(i) for i in range(1, 14)]
 
 
-# The same tournament inside a bundle: the bundle itself never moves, so only
-# the group rule — not a changed order or token — can refuse it at T1.
+# The same tournament inside a bundle: at T1 the bundle inherits its child's
+# restriction (#5105 correction A) and leaves the opening, so the leader's T0
+# page no longer re-derives — the waiter refuses it as expired, never serves it.
 _BUNDLED_DECK = [_fut(0), {
     "type": "bundle", "score": 89,
     "data": {"id": "b-open", "items": [_SEATED_DECK[1], _fut(99)]},

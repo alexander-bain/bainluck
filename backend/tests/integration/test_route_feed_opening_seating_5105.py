@@ -446,13 +446,16 @@ async def test_exemptions_and_typed_non_live_keep_their_seats(client, monkeypatc
     )
 
 
-async def test_the_composition_sees_collections_and_refuses_one_that_launders_live(
+async def test_the_composition_sees_collections_and_seats_one_naming_a_live_game(
     client, monkeypatch, seated
 ):
     """The seam is AFTER collections: a collection naming an ordinary live game
-    makes the deck unsupported — which only the post-collection deck shows."""
+    inherits its restriction (#5105 correction A) — which only the
+    post-collection deck shows. The route serves and paginates a seated deck
+    with BOTH the hub and its game outside the first ten, and publishes it."""
     fake = _install(monkeypatch, _DictRedis())
-    _plant(monkeypatch, FULL)
+    long_deck = [fut(0), live(100)] + [fut(i) for i in range(1, 30)]
+    _plant(monkeypatch, long_deck)
     feed_collections = import_module("app.utils.feed_collections")
     monkeypatch.setattr(feed_collections, "feed_collections_enabled", lambda **_: True)
 
@@ -470,11 +473,16 @@ async def test_the_composition_sees_collections_and_refuses_one_that_launders_li
     resp, body = await _get(client, offset=0)
     await _drain()
 
-    assert body["items"] == [] and body["total"] == 0
-    assert body["cache"]["status"] == "unavailable"
-    assert body["cache"]["reason"] == "opening_unsupported"
-    assert resp.headers["X-Feed-Cache"] == "unavailable"
-    assert fake.writes == [], "an unsupported deck publishes nothing"
+    assert body["cache"]["status"] != "unavailable", body["cache"]
+    ids = _ids(body["items"])
+    assert ids == F(*range(0, 10)) + ["collection:c1", "event:100"] + F(*range(10, 18))
+    assert body["total"] == len(long_deck) + 1
+    token = body["edition"]
+    assert token and fake.writes, "a seated deck publishes its base and manifest"
+
+    _, page1 = await _get(client, offset=20, edition=token)
+    assert page1["edition"] == token
+    assert _ids(page1["items"]) == F(*range(18, 30))
 
 
 async def test_an_ordinary_collection_is_seated_like_any_card(client, monkeypatch, seated):

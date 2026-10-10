@@ -560,12 +560,17 @@ def test_protected_cards_keep_the_thin_opening():
         "tournament:major", "event:301", "concept:marquee"}
 
 
-def test_a_thin_deck_with_a_group_still_refuses_unchanged():
+def test_a_thin_deck_seats_a_restricted_group_in_the_continuation():
+    """#5105 correction A: a bundle holding an ordinary-live child inherits the
+    restriction, so under thin supply it continues after the eligible cards
+    instead of refusing the deck."""
     deck = _deck(3, {0: _live("a"), 2: _bundle("weekend", [_tournament("child")])})
     snapshot = copy.deepcopy(deck)
     out = seat_opening(deck, now=NOW)
-    assert out.status == UNSUPPORTED and out.items == snapshot
-    assert out.continuation_start is None and not out.changed
+    _assert_continuation(out, deck, snapshot, 3)
+    assert _ids(out.items) == ["futures:0", "futures:1", "futures:2",
+                               "tournament:a", "bundle:weekend"]
+    assert out.cards[2].restricted_by == ["tournament:child"]
     # A group with nothing to launder is an ordinary eligible card.
     fine = _deck(3, {0: _live("a"), 2: _bundle("fine", [_futures(50)])})
     snapshot = copy.deepcopy(fine)
@@ -842,12 +847,19 @@ def test_a_conflict_cannot_be_laundered_through_thin_supply():
         assert out.continuation_start is None and not out.changed
 
 
-def test_a_group_refusal_keeps_its_own_verdict_beside_a_conflict():
+def test_a_restricted_group_never_hides_a_conflict_in_the_candidate_opening():
+    """The group now seats instead of refusing, so the conflict in the
+    candidate opening is what refuses — named, with the input unmoved."""
     grouped = _deck(20, {0: _conflicted(), 5: _collection(7, matched=[601]),
                          12: _event(601)})
+    snapshot = copy.deepcopy(grouped)
     out = seat_opening(grouped, now=NOW)
-    assert out.status == UNSUPPORTED and "matched event event:601" in out.detail
-    assert out.refused_conflicts == []
+    _assert_refused_unmoved(out, grouped, snapshot, ["tournament:future_ordinary"])
+    assert out.cards[5].restricted and out.cards[5].restricted_by == ["event:601"]
+    # The same group without the conflict seats.
+    del grouped[0]
+    out = seat_opening(grouped, now=NOW)
+    assert out.status == APPLIED and out.displaced == ["collection:7"]
 
 
 # --------------------------------------------------------------------------- #
@@ -872,7 +884,8 @@ def test_every_card_is_the_same_object_with_the_same_payload():
 
 
 # --------------------------------------------------------------------------- #
-# Groups never launder; unknown shapes refuse
+# Groups never launder: a represented restricted member restricts the group
+# (#5105 correction A); malformed and unknown shapes still refuse
 # --------------------------------------------------------------------------- #
 
 
@@ -896,19 +909,81 @@ def _collection(ident, *, status="scheduled", matched=()):
     }
 
 
-def test_a_bundle_of_ordinary_live_events_is_refused_not_seated():
+def _assert_seated_untouched(out, deck, snapshot):
+    """Every input object exactly once, every payload unchanged, no restricted
+    card (group or not) in the opening."""
+    assert deck == snapshot, "no card is rescored, relabelled or mutated"
+    assert len(out.items) == len(deck) and sorted(map(id, out.items)) == sorted(map(id, deck))
+    restricted = {id(card) for card, c in zip(deck, out.cards) if c.restricted}
+    assert not any(id(card) in restricted for card in out.items[:OPENING_SEATS])
+    assert out.refused_conflicts == []
+
+
+def test_a_bundle_of_ordinary_live_events_is_seated_not_refused():
     group = _bundle("golf-weekend", [_tournament("a"), _tournament("b"), _tournament("c")])
     deck = _deck(20, {0: group})
+    snapshot = copy.deepcopy(deck)
     out = seat_opening(deck, now=NOW)
-    assert out.status == UNSUPPORTED
-    assert "golf-weekend" in out.detail and "tournament:a" in out.detail
-    assert out.items == deck
+    assert out.status == APPLIED and out.continuation_start is None
+    _assert_seated_untouched(out, deck, snapshot)
+    assert out.displaced == ["bundle:golf-weekend"]
+    assert _ids(out.items).index("bundle:golf-weekend") == OPENING_SEATS
+    assert out.cards[0].restricted_by == ["tournament:a", "tournament:b", "tournament:c"]
+    assert out.cards[0].lifecycle is None, "a group's own lifecycle is never inferred"
+    assert "1 by represented group membership" in out.detail
+    # The bundle keeps its own members, in their own order, untouched.
+    assert out.items[OPENING_SEATS] is group
+    assert [c["data"]["key"] for c in group["data"]["items"]] == ["a", "b", "c"]
 
 
-def test_a_refused_group_anywhere_in_the_deck_refuses():
+def test_a_restricted_group_already_in_the_tail_stays_where_it_is():
     group = _bundle("deep", [_futures(1), _event(88)])
     deck = _deck(30, {25: group})
-    assert seat_opening(deck, now=NOW).status == UNSUPPORTED
+    out = seat_opening(deck, now=NOW)
+    assert out.status == COMPLIANT and out.items == deck
+    assert out.cards[25].restricted and out.cards[25].restricted_by == ["event:88"]
+
+
+@pytest.mark.parametrize("group_at", [0, 9, 10])
+def test_a_group_at_seat_ten_leaves_and_at_seat_eleven_stays(group_at):
+    group = _bundle("edge", [_event(88)])
+    deck = _deck(20, {group_at: group})
+    out = seat_opening(deck, now=NOW)
+    if group_at < OPENING_SEATS:
+        assert out.status == APPLIED and out.displaced == ["bundle:edge"]
+        assert _ids(out.items).index("bundle:edge") == OPENING_SEATS
+    else:
+        assert out.status == COMPLIANT and out.items == deck
+
+
+def test_a_bundle_mixing_exempt_and_ordinary_live_children_inherits_only_the_ordinary():
+    group = _bundle("mixed", [_tournament("major", is_major=True), _event(88),
+                              _event(89, is_marquee=True), _futures(3)])
+    deck = _deck(20, {2: group})
+    out = seat_opening(deck, now=NOW)
+    assert out.status == APPLIED and out.displaced == ["bundle:mixed"]
+    assert out.cards[2].restricted_by == ["event:88"]
+
+
+@pytest.mark.parametrize("child", [
+    _tournament("major", is_major=True),
+    _event(89, is_marquee=True),
+    _event(90, tags=("tier:1", "importance:playoff")),
+])
+def test_a_group_whose_live_members_are_all_exempt_keeps_its_seat(child):
+    deck = _deck(20, {0: _bundle("exempt", [child, _futures(3)])})
+    out = seat_opening(deck, now=NOW)
+    assert out.status == COMPLIANT and out.items[0]["data"]["id"] == "exempt"
+    assert not out.cards[0].restricted and out.cards[0].restricted_by == []
+
+
+def test_a_bundle_child_in_conflict_or_unknown_passes_nothing_on():
+    group = _bundle("unsure", [_event(91, start=NOW + timedelta(hours=3)),
+                               _event(92, status=None),
+                               _tournament("undated", schedule_status=None, start=None, end=None)])
+    deck = _deck(20, {0: group})
+    out = seat_opening(deck, now=NOW)
+    assert out.status == COMPLIANT and not out.cards[0].restricted
 
 
 @pytest.mark.parametrize(
@@ -956,16 +1031,135 @@ def test_a_live_hub_beside_an_ordinary_live_card_it_does_not_name_is_seated():
 
 
 @pytest.mark.parametrize("status", ["live", "scheduled", None])
-@pytest.mark.parametrize("hub_at,member_at", [(0, 12), (25, 3), (0, 28), (27, 28)])
-def test_a_collection_naming_a_restricted_event_refuses(status, hub_at, member_at):
+@pytest.mark.parametrize("hub_at,member_at", [(0, 12), (25, 3), (0, 28), (27, 28), (1, 0),
+                                              (3, 9), (9, 10)])
+def test_a_collection_naming_a_restricted_event_is_seated_with_it(status, hub_at, member_at):
     """Whatever the hub's own status and wherever either card sits, a matched
-    member the deck represents as an ordinary live event refuses."""
+    member the deck represents as an ordinary live event restricts the hub:
+    BOTH leave the opening, nothing else moves relative to anything else, and
+    no card is dropped or touched."""
     hub = _collection(7, status=status, matched=[999, 601])
     deck = _deck(28, {hub_at: hub, member_at: _event(601)})
     snapshot = copy.deepcopy(deck)
     out = seat_opening(deck, now=NOW)
-    assert out.status == UNSUPPORTED and "matched event event:601" in out.detail
-    assert out.items == deck == snapshot
+    assert out.status in (APPLIED, COMPLIANT)
+    _assert_seated_untouched(out, deck, snapshot)
+    after = _ids(out.items)
+    assert after.index("collection:7") >= OPENING_SEATS
+    assert after.index("event:601") >= OPENING_SEATS
+    hub_seating = next(c for c in out.cards if c.identity == "collection:7")
+    assert hub_seating.restricted and hub_seating.restricted_by == ["event:601"]
+    before = _ids(deck)
+    restricted = {"collection:7", "event:601"}
+    assert [i for i in after if i in restricted] == [i for i in before if i in restricted]
+    assert [i for i in after if i not in restricted] == [i for i in before if i not in restricted]
+    if hub_at >= OPENING_SEATS and member_at >= OPENING_SEATS:
+        assert out.status == COMPLIANT and out.items == deck
+
+
+def test_a_collection_naming_a_member_twice_inherits_it_once():
+    deck = _deck(20, {0: _collection(7, matched=[601, 601]), 14: _event(601)})
+    out = seat_opening(deck, now=NOW)
+    assert out.status == APPLIED and out.cards[0].restricted_by == ["event:601"]
+
+
+def test_an_unseen_member_is_unknown_never_live():
+    """``matched_event_ids`` naming games the deck does not represent: the hub
+    is an ordinary card — nothing is fetched, nothing assumed."""
+    deck = _deck(20, {0: _collection(7, status="live", matched=[601, 602])})
+    out = seat_opening(deck, now=NOW)
+    assert out.status == COMPLIANT and not out.cards[0].restricted
+    absent = _collection(8)
+    del absent["data"]["matched_event_ids"]
+    out = seat_opening(_deck(20, {0: absent, 1: _event(601)}), now=NOW)
+    assert out.status == APPLIED and out.displaced == ["event:601"]
+    assert _ids(out.items)[0] == "collection:8"
+
+
+@pytest.mark.parametrize("matched", ["601", 601, {"id": 601}, [[601]], [{"id": 601}],
+                                     [True], [None]])
+def test_a_malformed_membership_list_refuses_unchanged(matched):
+    hub = _collection(7)
+    hub["data"]["matched_event_ids"] = matched
+    deck = _deck(20, {0: hub, 3: _event(601)})
+    snapshot = copy.deepcopy(deck)
+    out = seat_opening(deck, now=NOW)
+    assert out.status == UNSUPPORTED and out.items == snapshot and not out.changed
+    assert "matched_event_ids is not a list of event ids" in out.detail
+
+
+@pytest.mark.parametrize("group", [
+    {"type": "collection", "data": None},
+    {"type": "bundle", "data": "x"},
+    {"type": "bundle", "data": {"id": "no-items"}},
+    {"type": "bundle", "data": {"id": "str-items", "items": "x"}},
+])
+def test_a_malformed_group_refuses_unchanged(group):
+    deck = _deck(20, {0: group})
+    out = seat_opening(deck, now=NOW)
+    assert out.status == UNSUPPORTED and out.items == deck and not out.changed
+
+
+def test_zero_eligible_cards_with_a_restricted_group_is_continuation_only():
+    deck = [_collection(7, matched=[601]), _event(601),
+            _bundle("b", [_tournament("t")]), _tournament("u")]
+    snapshot = copy.deepcopy(deck)
+    out = seat_opening(deck, now=NOW)
+    _assert_continuation(out, deck, snapshot, 0)
+    assert _ids(out.items) == _ids(deck)
+
+
+def test_thin_supply_puts_a_restricted_hub_and_its_game_in_the_continuation():
+    deck = _deck(4, {0: _collection(7, matched=[601]), 1: _event(601)})
+    snapshot = copy.deepcopy(deck)
+    out = seat_opening(deck, now=NOW)
+    _assert_continuation(out, deck, snapshot, 4)
+    assert _ids(out.items)[4:] == ["collection:7", "event:601"]
+
+
+def test_randomised_decks_with_groups_keep_every_invariant():
+    rng = random.Random(51050)
+    for trial in range(300):
+        n = rng.randint(0, 30)
+        deck, event_ids = [], []
+        for i in range(n):
+            roll = rng.random()
+            if roll < 0.2:
+                eid = 10_000 * trial + i
+                event_ids.append(eid)
+                deck.append(_event(eid, status=rng.choice(["live", "scheduled"]),
+                                   is_marquee=rng.random() < 0.2))
+            elif roll < 0.3:
+                deck.append(_collection(f"c{trial}_{i}", status=rng.choice(["live", "scheduled"]),
+                                        matched=rng.sample(event_ids + [1, 2], k=min(2, len(event_ids) + 2))))
+            elif roll < 0.4:
+                deck.append(_bundle(f"b{trial}_{i}", [rng.choice([
+                    _futures(1), _tournament("bt"), _event(5, status="scheduled"),
+                    _tournament("bm", is_major=True)])]))
+            else:
+                deck.append(_futures(10_000 * trial + i))
+        snapshot = copy.deepcopy(deck)
+        out = seat_opening(deck, now=NOW)
+        assert deck == snapshot
+        assert out.status != UNSUPPORTED, out.detail
+        assert sorted(map(id, out.items)) == sorted(map(id, deck))
+        restricted = [c.restricted for c in out.cards]
+        by_id = {id(card): r for card, r in zip(deck, restricted)}
+        eligible = [i for i, r in enumerate(restricted) if not r]
+        if any(restricted) and len(eligible) < OPENING_SEATS and any(restricted[:OPENING_SEATS]):
+            assert out.continuation_start == len(eligible)
+        else:
+            assert out.continuation_start is None
+            assert not any(by_id[id(card)] for card in out.items[:OPENING_SEATS])
+        order = [next(i for i, d in enumerate(deck) if d is card) for card in out.items]
+        elig = [i for i in order if not restricted[i]]
+        restr = [i for i in order if restricted[i]]
+        assert elig == sorted(elig) and restr == sorted(restr)
+        for card, c in zip(deck, out.cards):
+            if card["type"] == "collection":
+                live_members = {f"event:{e}" for e in card["data"]["matched_event_ids"]} & {
+                    x.identity for x in out.cards if x.kind == "event" and x.restricted}
+                assert set(c.restricted_by) == live_members
 
 
 def test_a_live_hub_naming_an_exempt_live_event_is_an_ordinary_card():

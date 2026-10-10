@@ -59,18 +59,31 @@ Groups
 ------
 
 Grouping is out of scope, so a group may not launder a child's restriction into
-an opening seat. A ``bundle`` whose ``data.items`` hold a restricted child, or a
-child of a kind this module does not know, and a ``collection`` whose
-``matched_event_ids`` name a restricted event card in the deck, make the whole
-call UNSUPPORTED (input unchanged). Groups with nothing to launder are ordinary
-cards.
+an opening seat — and it does not refuse the deck either: a group whose
+REPRESENTED membership holds a restricted card INHERITS the restriction and is
+seated exactly like a restricted card (#5105 correction A, Ranking Root
+2026-10-10). Its membership, payload and score are untouched; it simply cannot
+hold a first-ten seat while a member it represents is ordinary-live.
+
+* A ``bundle`` inherits from a restricted child in its own ``data.items``. A
+  child of a kind this module does not know (or a nested group), a bundle
+  without an ``items`` list, and a group card without a data object are
+  malformed: the whole call is UNSUPPORTED (input unchanged).
+* A ``collection`` inherits from an event card in the deck that its
+  ``matched_event_ids`` name and that is restricted. A ``matched_event_ids``
+  that is present but not a list of plain ids is malformed and refuses.
+
+``CardSeating.restricted_by`` names the members a group inherited from. A
+member that is exempt, unknown or in CONFLICT passes nothing on; a group with
+nothing to inherit is an ordinary card.
 
 A collection's own ``status`` is never read as evidence about its games: it is
 the hub's lifecycle from its own authority (``container_graph`` — never inferred
 from children), copied by ``container_discovery`` beside a separate publication
 ``state``. A published NFL week reads ``live`` while every game it names is
 scheduled. ``matched_event_ids`` are a relevance subset, not a membership
-census: only the members the deck itself represents are checked, and nothing
+census: only the members the deck itself represents are checked, an unseen
+member is unknown (never fetched, never assumed live or not live), and nothing
 here claims the hub's unseen members are verified.
 
 Order
@@ -172,6 +185,9 @@ class CardSeating:
     lifecycle_evidence: dict = field(default_factory=dict)
     exempt_by: list = field(default_factory=list)
     restricted: bool = False
+    #: for a group: identities of the represented restricted members it
+    #: inherited its restriction from (empty for every other card)
+    restricted_by: list = field(default_factory=list)
 
     def as_dict(self) -> dict:
         return {
@@ -181,6 +197,7 @@ class CardSeating:
             "lifecycle_evidence": self.lifecycle_evidence,
             "exempt_by": list(self.exempt_by),
             "restricted": self.restricted,
+            "restricted_by": list(self.restricted_by),
         }
 
 
@@ -334,7 +351,8 @@ def _exemptions(data: dict) -> list[str]:
 
 def classify_card(card: Any, *, now: datetime) -> CardSeating:
     """One card's lifecycle, exemptions and restriction. Groups and futures are
-    never restricted HERE; :func:`seat_opening` checks a group's members."""
+    never restricted HERE; :func:`seat_opening` restricts a group by its
+    represented members."""
     kind = card.get("type") if isinstance(card, dict) else None
     seating = CardSeating(identity=_identity(card) if isinstance(card, dict) else "?", kind=kind)
     if kind not in LIFECYCLE_KINDS:
@@ -349,38 +367,44 @@ def classify_card(card: Any, *, now: datetime) -> CardSeating:
     return seating
 
 
-def _group_refusal(
+def _group_members(
     card: dict, by_event_id: dict, *, now: datetime
-) -> Optional[str]:
-    """Why a group card could launder a restriction, or ``None``."""
+) -> tuple[Optional[str], list[str]]:
+    """``(refusal, restricted_by)`` for one group card: why its shape cannot be
+    judged (``None`` when it can), and the identities of the represented
+    restricted members it inherits from."""
     ident = _identity(card)
     data = card.get("data")
     if not isinstance(data, dict):
-        return f"{ident}: group card without a data object"
+        return f"{ident}: group card without a data object", []
     if card["type"] == "bundle":
         children = data.get("items")
         if not isinstance(children, list):
-            return f"{ident}: bundle without an items list"
+            return f"{ident}: bundle without an items list", []
+        restricted_by = []
         for index, child in enumerate(children):
             kind = child.get("type") if isinstance(child, dict) else None
             if kind not in KNOWN_KINDS or kind in GROUP_KINDS:
-                return f"{ident}: member {index} has unsupported kind {kind!r}"
+                return f"{ident}: member {index} has unsupported kind {kind!r}", []
             if classify_card(child, now=now).restricted:
-                return (
-                    f"{ident}: member {_identity(child)} is an ordinary live "
-                    "event; grouped membership is not supported by opening seating"
-                )
-        return None
+                restricted_by.append(_identity(child))
+        return None, restricted_by
     # A collection's ``status`` is its hub's own lifecycle, not its games' (see
     # "Groups" above); only the represented matched members are evidence.
-    for event_id in data.get("matched_event_ids") or ():
+    matched = data.get("matched_event_ids")
+    if matched is None:
+        return None, []
+    if not isinstance(matched, (list, tuple)) or not all(
+        isinstance(event_id, (int, str)) and not isinstance(event_id, bool)
+        for event_id in matched
+    ):
+        return f"{ident}: matched_event_ids is not a list of event ids", []
+    restricted_by = []
+    for event_id in matched:
         member = by_event_id.get(event_id)
-        if member is not None and member.restricted:
-            return (
-                f"{ident}: matched event {member.identity} is an ordinary live "
-                "event; grouped membership is not supported by opening seating"
-            )
-    return None
+        if member is not None and member.restricted and member.identity not in restricted_by:
+            restricted_by.append(member.identity)
+    return None, restricted_by
 
 
 def seat_opening(items: list, *, now: datetime) -> OpeningSeatingOutcome:
@@ -417,9 +441,13 @@ def seat_opening(items: list, *, now: datetime) -> OpeningSeatingOutcome:
     }
     for card, seating in zip(items, cards):
         if seating.kind in GROUP_KINDS:
-            reason = _group_refusal(card, by_event_id, now=now)
+            reason, restricted_by = _group_members(card, by_event_id, now=now)
             if reason is not None:
                 return refuse(UNSUPPORTED, reason, cards)
+            # A group inherits its represented members' restriction and is then
+            # seated by the same stable move as any restricted card.
+            seating.restricted_by = restricted_by
+            seating.restricted = bool(restricted_by)
 
     restricted_in_opening = any(c.restricted for c in cards[:OPENING_SEATS])
     eligible = [i for i, c in enumerate(cards) if not c.restricted]
@@ -460,6 +488,9 @@ def seat_opening(items: list, *, now: datetime) -> OpeningSeatingOutcome:
         )
     else:
         detail = f"{left} restricted card(s) left the opening"
+        inherited = sum(bool(c.restricted_by) for c in cards[:OPENING_SEATS])
+        if inherited:
+            detail += f" ({inherited} by represented group membership)"
     return OpeningSeatingOutcome(
         status=SPARSE_CONTINUATION if sparse else APPLIED,
         items=[items[i] for i in order],
