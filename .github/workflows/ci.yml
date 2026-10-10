@@ -4579,8 +4579,8 @@ jobs:
             echo "::error::#8129 grouped blend gate SKIPPED"
             exit 1
           fi
-          grep -qE "[^0-9]16 passed[,[:space:]]" /tmp/blend8129.txt || {
-            echo "::error::#8129 grouped blend gate did not run all sixteen cases"
+          grep -qE "[^0-9]17 passed[,[:space:]]" /tmp/blend8129.txt || {
+            echo "::error::#8129 grouped blend gate did not run all seventeen cases"
             exit 1
           }
 

@@ -265,7 +265,9 @@ POLY_SLATE = [
         (OUTCOME_ID, MARKET_ID, f"{POLY_CONDITION}_yes", POLY_CONDITION, EVENT_ID),
         (82, MARKET_ID, f"{POLY_CONDITION}_no", POLY_CONDITION, EVENT_ID),
     ],
-    [(MARKET_ID, POLY_CONDITION, {"clob_token_ids": [POLY_YES_TOKEN, POLY_NO_TOKEN]})],
+    # The token read also carries the event's status (8b376bc807).
+    [(MARKET_ID, POLY_CONDITION,
+      {"clob_token_ids": [POLY_YES_TOKEN, POLY_NO_TOKEN]}, "scheduled")],
     [
         (OUTCOME_ID, MARKET_ID, f"{POLY_CONDITION}_yes"),
         (82, MARKET_ID, f"{POLY_CONDITION}_no"),

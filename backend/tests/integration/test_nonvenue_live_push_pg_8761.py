@@ -37,6 +37,19 @@ def sink(monkeypatch):
 
             self.frames.append((channel, json.loads(data)))
 
+        async def execute_command(self, *command):
+            # 88a4a5cad3: a frame carrying a revision is retained AND published
+            # by one EVAL (RETAIN_AND_PUBLISH, keys = latest-frame key and the
+            # channel); its published channel and payload are args 4 and 5.
+            import json
+
+            from app.utils.live_push import latest_frame_key
+
+            assert command[0] == "EVAL" and command[2] == 2, command[:3]
+            channel, data = command[4], command[5]
+            assert command[3] == latest_frame_key(json.loads(data)["event_id"])
+            await self.publish(channel, data)
+
         async def aclose(self):
             pass
 

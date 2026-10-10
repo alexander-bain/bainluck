@@ -9,8 +9,9 @@ import asyncio
 import contextlib
 import json
 import logging
+import re
 import time
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from types import SimpleNamespace
 
 import pytest
@@ -24,6 +25,7 @@ from app.utils import market_quote_push
 from app.utils.futures_rank import rerank_market_fields_stmt
 from app.utils.kalshi_price_statement import (
     KALSHI_PRICE_STATEMENTS,
+    KALSHI_REPEAT_REFRESH_SECONDS,
     kalshi_price_parameters,
 )
 from app.utils.price_change_stamp import price_changed_at_value, quote_moved_column
@@ -496,6 +498,55 @@ async def _run(control, candidate):
         await engine.dispose()
 
 
+#: 29b2c2ea9b: the typed statement's reviewed repeat skip — write only when
+#: forced, moved, unstamped or older than KALSHI_REPEAT_REFRESH_SECONDS — with
+#: the book clauses only on a statement that writes the book.
+_REPEAT_SKIP = re.compile(
+    r" AND \(\$(?P<force>\d+)::BOOLEAN"
+    r" OR futures_outcomes\.current_probability IS DISTINCT FROM"
+    r" CAST\(\$1::NUMERIC\(7, 6\) AS NUMERIC\(7, 6\)\)"
+    r" OR futures_outcomes\.last_updated IS NULL"
+    r" OR futures_outcomes\.last_updated <= now\(\) - \$(?P<window>\d+)::INTERVAL"
+    r"(?P<book> OR futures_outcomes\.current_yes_bid IS DISTINCT FROM"
+    r" CAST\(\$2::NUMERIC\(5, 4\) AS NUMERIC\(5, 4\)\)"
+    r" OR futures_outcomes\.current_yes_ask IS DISTINCT FROM"
+    r" CAST\(\$3::NUMERIC\(5, 4\) AS NUMERIC\(5, 4\)\))?\)"
+    r"(?= RETURNING )"
+)
+
+
+def _without_reviewed_repeat_skip(hook):
+    """The candidate price statement, less exactly the reviewed repeat skip.
+
+    The baseline is the verbatim pre-#10689 expression and is never refreshed;
+    so the comparison is split: the predicate and its two binds must be present
+    exactly as reviewed, and everything else must equal the baseline byte for
+    byte (later placeholders shift by the two inserted binds).
+    """
+    if hook[0] != "before":
+        return hook
+    kind, sql, params, many = hook
+    if not (
+        sql.startswith("UPDATE futures_outcomes SET current_probability=$1")
+        and " RETURNING futures_outcomes.id" in sql
+    ):
+        return hook  # a control's own competing writer, not the flush's write
+    match = _REPEAT_SKIP.search(sql)
+    assert match, sql
+    force = int(match["force"])
+    assert int(match["window"]) == force + 1
+    assert bool(match["book"]) == ("current_yes_bid=$2::" in sql), sql
+    assert params[force - 1] is True, "the frozen flush forces every observation"
+    assert params[force] == timedelta(seconds=KALSHI_REPEAT_REFRESH_SECONDS)
+    rest = sql[:match.start()] + sql[match.end():]
+    rest = re.sub(
+        r"\$(\d+)",
+        lambda n: f"${int(n[1]) - 2}" if int(n[1]) > force + 1 else n[0],
+        rest,
+    )
+    return kind, rest, params[:force - 1] + params[force + 1:], many
+
+
 @pytest.mark.parametrize(
     "control",
     [
@@ -522,7 +573,12 @@ async def test_actual_flush_source_counters_snapshots_hooks_and_transaction_pari
 ):
     baseline = await _run(control, False)
     candidate = await _run(control, True)
-    assert baseline == candidate
+    assert {k: v for k, v in baseline.items() if k != "hooks"} == {
+        k: v for k, v in candidate.items() if k != "hooks"
+    }
+    assert [
+        _without_reviewed_repeat_skip(hook) for hook in candidate["hooks"]
+    ] == baseline["hooks"]
     before = [item for item in candidate["hooks"] if item[0] == "before"]
     assert all(item[-1] is False for item in before)
     if control == "driver_error":

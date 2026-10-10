@@ -4,10 +4,24 @@ Actual application reader/resolver/orientation/stamp/snapshot and PG revision
 trigger. Delivery is an observer seam, not a Redis or browser receipt. Failure
 injections occur before COMMIT; they do not cover ambiguous acknowledgments.
 Each case owns a random schema on the explicitly supplied disposable database.
+
+e0b52e11ed: every due event now commits in its own write transaction (the
+groups of four this file was written against are gone), with three fresh
+workers (6d8b493900/fe0aa54fbf: a queued fresh event rereads in its own
+session) and old debt prepared once then stamped in order. Failures are keyed
+to the EVENT whose transaction fails, not to a session attempt number, and the
+invariants are asserted per event: a failed or cancelled transaction leaves
+only its own event owed with its slots undone, every committed event stays
+authoritative, and nothing is double counted. An event whose commit was
+bookkept (written value, chart slot and receipt recorded) is never re-owed.
+The one allowed overlap is the ambiguous sibling seam: a worker cancelled
+after its COMMIT but before that synchronous bookkeeping leaves a committed,
+unbookkept event owed, a redundant re-stamp bounded by the other workers.
 """
 
 import asyncio
 import contextlib
+import contextvars
 import os
 from datetime import datetime, timedelta, timezone
 from types import SimpleNamespace
@@ -123,7 +137,14 @@ async def seed(rig, count=12, *, unproven=False):
         await session.commit()
 
 
-def refresher(rig, *, fail_commit=None, fail_prepare=None):
+#: The events of the stamp transaction the current task is running (set
+#: around `_refresh_batch`); empty in the preparation read's session.
+_STAMPING = contextvars.ContextVar("blend8129_stamping", default=())
+
+
+def refresher(
+    rig, *, fail_commit_event=None, cancel_commit_event=None, fail_prepare=None,
+):
     calls = []
     r = None
 
@@ -136,8 +157,13 @@ def refresher(rig, *, fail_commit=None, fail_prepare=None):
                 yield session
                 if attempt == fail_prepare:
                     raise RuntimeError("preparation exit failure")
-                if attempt == fail_commit:
+                stamping = _STAMPING.get()
+                if fail_commit_event in stamping:
                     raise RuntimeError("before outer COMMIT")
+                if cancel_commit_event in stamping:
+                    # Its chart-point slot was taken inside this transaction.
+                    r.slot_at_cancel.append(cancel_commit_event in r._last_snapshot_at)
+                    raise asyncio.CancelledError()
                 await session.commit()
             except BaseException:
                 await session.rollback()
@@ -146,6 +172,17 @@ def refresher(rig, *, fail_commit=None, fail_prepare=None):
     r = LiveBlendRefresher(
         "polymarket", session_factory=factory, min_refresh_interval_s=0
     )
+    r.slot_at_cancel = []
+    real_batch = r._refresh_batch
+
+    async def batch(event_ids, *args, **kwargs):
+        token = _STAMPING.set(tuple(event_ids))
+        try:
+            return await real_batch(event_ids, *args, **kwargs)
+        finally:
+            _STAMPING.reset(token)
+
+    r._refresh_batch = batch
     r.receipts = TailReceipts("polymarket")
     frames = []
     resolved = []
@@ -182,6 +219,40 @@ def stage(r, ids):
     )
 
 
+async def committed_events(rig):
+    """The events whose polymarket stamp the database actually kept."""
+    async with rig.maker() as session:
+        events = (await session.execute(select(Event))).scalars().all()
+    return {e.id for e in events if "polymarket" in e.win_probability_sources}
+
+
+async def cancelled_accounting(rig, r, *, owed_at_least):
+    """A cancelled refresh: nothing uncommitted is lost, and a committed stamp
+    is re-owed only from the ambiguous seam (a worker cancelled after its
+    COMMIT but before its bookkeeping costs "one redundant re-stamp, never a
+    lost one"; at most the other FRESH_STAMP_WORKERS - 1 workers can be in
+    that window). A bookkept commit is past that seam and is never owed."""
+    from app.tasks.live_blend_refresh import FRESH_STAMP_WORKERS
+
+    kept = await committed_events(rig)
+    async with rig.maker() as session:
+        snapshots = set(
+            (await session.execute(select(WinProbSnapshot.event_id))).scalars()
+        )
+    owed = set(r.pending_event_ids())
+    assert set(range(1, 13)) - kept <= owed, "an uncommitted event was lost"
+    assert owed_at_least <= owed
+    written = set(r._last_written_value)
+    redundant = owed & kept
+    assert len(redundant) <= FRESH_STAMP_WORKERS - 1, redundant
+    assert kept == snapshots  # each kept stamp kept its chart point with it
+    assert written == set(r._last_snapshot_at) <= kept
+    assert not owed & written, f"bookkept event re-owed: {sorted(owed & written)}"
+    assert redundant == kept - written  # only the unbookkept commits overlap
+    assert r.stats["stamped"] == len(r._last_written_value)
+    return kept, redundant
+
+
 async def accounting(rig, r, expected):
     async with rig.maker() as session:
         events = (await session.execute(select(Event))).scalars().all()
@@ -207,7 +278,10 @@ async def test_actual_due_count_selects_path(rig, count):
     r.adopt_pending(range(2, count + 1))
     stage(r, range(1, count + 1))
     await r.refresh([1])
-    assert len(calls) == (1 if count <= 4 else 1 + (count + 3) // 4)
+    # One event owns its transaction (the singleton path). Otherwise the fresh
+    # event stamps in its own session and the debt is prepared once, then each
+    # debt event commits in its own transaction.
+    assert len(calls) == (1 if count == 1 else 1 + 1 + (count - 1))
     assert [f["event_id"] for f in frames] == list(range(1, count + 1))
     assert set().union(*resolved) == set(range(1, count + 1))
     assert not r.pending_event_ids()
@@ -244,15 +318,16 @@ async def test_preparation_session_failure_preserves_staged_debt(rig, cancel):
 
 async def test_group_outer_failure_rolls_back_only_current_group(rig):
     await seed(rig)
-    r, frames, _, resolved, _ = refresher(rig, fail_commit=3)
+    r, frames, _, resolved, _ = refresher(rig, fail_commit_event=6)
     stage(r, range(1, 13))
     await r.refresh(range(1, 13))
-    expected = set(range(1, 5)) | set(range(9, 13))
+    expected = set(range(1, 13)) - {6}
     assert {f["event_id"] for f in frames} == expected
-    assert r.pending_event_ids() == set(range(5, 9))
-    assert resolved == [set(range(1, 5)), set(range(9, 13))]
-    assert set(r.receipts._open) == set(range(5, 9))
-    assert all(r.receipts._open[eid].commit_failures == 1 for eid in range(5, 9))
+    assert r.pending_event_ids() == {6}
+    # Each committed event resolved its own receipt at its own commit.
+    assert sorted(map(sorted, resolved)) == [[eid] for eid in sorted(expected)]
+    assert set(r.receipts._open) == {6}
+    assert r.receipts._open[6].commit_failures == 1
     await accounting(rig, r, expected)
 
 
@@ -261,44 +336,47 @@ async def test_partial_delivery_cancel_keeps_committed_group_authoritative(rig):
     r, frames, calls, resolved, publish = refresher(rig)
     stage(r, range(1, 13))
 
+    first = []
+
     async def partial(batch):
-        # First group's COMMIT and receipts have finished. Deliver one frame,
-        # then cancel at an awaited transport seam before the rest can be sent.
-        assert resolved == [set(range(1, 5))]
-        await publish(batch[:1])
-        raise asyncio.CancelledError()
+        # The first committed event's COMMIT and receipt have finished.
+        # Deliver its frame, then cancel at an awaited transport seam.
+        if not first:
+            first.extend(f["event_id"] for f in batch)
+            assert set(first) <= set().union(*resolved)
+            await publish(batch[:1])
+            raise asyncio.CancelledError()
+        await publish(batch)
 
     r._publish = partial
     with pytest.raises(asyncio.CancelledError):
         await r.refresh(range(1, 13))
-    assert calls == [1, 2]
-    assert [f["event_id"] for f in frames] == [1]
-    assert r.pending_event_ids() == set(range(5, 13))
-    assert set(r.receipts._open) == set(range(5, 13))
-    assert r.receipts._live_events == set(range(1, 5))
-    await accounting(rig, r, range(1, 5))
+    kept, redundant = await cancelled_accounting(rig, r, owed_at_least=set())
+    assert first and set(first) <= kept - redundant and len(kept) < 12
+    assert [f["event_id"] for f in frames][:1] == first[:1]
+    assert {f["event_id"] for f in frames} <= kept
+    # The delivered event stays authoritative: delivery, not stamping, was
+    # interrupted, so it is never turned into debt.
+    assert not set(first) & r.pending_event_ids()
+    assert set(first) <= r.receipts._live_events <= kept
     # Existing delivery contract has no replay buffer. Stamp completion is not
     # proof the remaining three frames arrived and cannot be turned into debt.
 
 
 async def test_cancel_midgroup_restores_provisional_slots(rig):
     await seed(rig)
-    r, frames, _, _, _ = refresher(rig)
+    # Event 6's transaction is cancelled at its COMMIT, after it took its
+    # provisional chart-point slot (the per-event form of a group-mate's).
+    r, frames, _, _, _ = refresher(rig, cancel_commit_event=6)
     stage(r, range(1, 13))
-    original = r._oriented
-
-    async def oriented(session, eid, value, **kw):
-        if eid == 6:
-            assert 5 in r._last_snapshot_at
-            raise asyncio.CancelledError()
-        return await original(session, eid, value, **kw)
-
-    r._oriented = oriented
     with pytest.raises(asyncio.CancelledError):
         await r.refresh(range(1, 13))
-    assert {f["event_id"] for f in frames} == set(range(1, 5))
-    assert r.pending_event_ids() == set(range(5, 13))
-    await accounting(rig, r, range(1, 5))
+    assert r.slot_at_cancel == [True], "the cancelled stamp held a slot"
+    kept, _ = await cancelled_accounting(rig, r, owed_at_least={6})
+    assert 6 not in kept
+    # The cancelled transaction's provisional slot followed it out.
+    assert 6 not in r._last_snapshot_at and 6 not in r._last_written_value
+    assert {f["event_id"] for f in frames} <= kept
 
 
 async def test_earlier_group_releases_rows_before_later_lock_timeout(rig):
@@ -313,7 +391,7 @@ async def test_earlier_group_releases_rows_before_later_lock_timeout(rig):
     async def first_group(batch):
         await publish(batch)
         if batch and batch[0]["event_id"] == 1:
-            assert resolved == [set(range(1, 5))]
+            assert {1} in resolved  # event 1's own commit has resolved
             async with rig.maker() as sibling:
                 await sibling.execute(text("SET LOCAL lock_timeout='100ms'"))
                 await sibling.execute(text("UPDATE events SET away_score=1 WHERE id=1"))
@@ -403,22 +481,27 @@ async def test_real_cold_orientation_later_event_view_warm_price_and_named_overr
     await seed(rig, 8, unproven=True)
     r, frames, _, _, _ = refresher(rig)
     orientation_reads = []
-    phase = [None]
+    # Per orienting transaction (its connection), not one shared flag: the
+    # fresh workers orient concurrently (6d8b493900), so a single phase label
+    # set and cleared by each would drop or misattribute a sibling's reads.
+    orienting = {}
 
     @sa_event.listens_for(rig.engine.sync_engine, "before_cursor_execute")
     def observe(conn, cursor, statement, params, context, many):
-        if phase[0] and statement.lstrip().upper().startswith("SELECT"):
-            orientation_reads.append((phase[0], statement))
+        label = orienting.get(id(conn))
+        if label and statement.lstrip().upper().startswith("SELECT"):
+            orientation_reads.append((label, statement))
 
     def track_orientation(refresher, label):
         original_oriented = refresher._oriented
 
-        async def oriented(*args, **kw):
-            phase[0] = label
+        async def oriented(session, *args, **kw):
+            key = id((await session.connection()).sync_connection)
+            orienting[key] = label
             try:
-                return await original_oriented(*args, **kw)
+                return await original_oriented(session, *args, **kw)
             finally:
-                phase[0] = None
+                orienting.pop(key, None)
 
         refresher._oriented = oriented
 
@@ -435,13 +518,20 @@ async def test_real_cold_orientation_later_event_view_warm_price_and_named_overr
             )
         )
         await session.commit()
-    # Baseline's same-session Event identity prevents the extra Event point
-    # read; it still pays the real odds lookup for a cold unproven reading.
+    # 4772b51e0b: the singleton now reads its cohort in one scalar statement,
+    # so no Event sits in its session's identity map and a cold unproven
+    # reading pays the Event point read as well as the real odds lookup, as
+    # every grouped event below does. (673c6a3860's lock budget, installed
+    # just before these fallback reads, is not a read and is not counted.)
     small, _, _, _, _ = refresher(rig)
     track_orientation(small, "baseline")
     await small.refresh([3])
-    baseline_reads = [sql for label, sql in orientation_reads if label == "baseline"]
-    assert len(baseline_reads) == 1 and "FROM odds_snapshots" in baseline_reads[0]
+    baseline_reads = [
+        sql for label, sql in orientation_reads
+        if label == "baseline" and ("FROM odds_snapshots" in sql or "FROM events" in sql)
+    ]
+    assert len(baseline_reads) == 2
+    assert sum("FROM odds_snapshots" in sql for sql in baseline_reads) == 1
     async with rig.maker() as session:
         await session.execute(
             update(FuturesOutcome)
@@ -455,7 +545,8 @@ async def test_real_cold_orientation_later_event_view_warm_price_and_named_overr
         result = await original(ids)
         # Event2 has no sportsbook price. Its later Event view supplies two
         # unanimous peers; earlier prepared Event2 deliberately has none.
-        assert result[2][0].win_probability_sources == {}
+        # 4772b51e0b: the one-read view carries only this source's own entry.
+        assert result[2][0].win_probability_sources == {"polymarket": None}
         async with rig.maker() as session:
             await session.execute(
                 update(Event)
@@ -478,7 +569,10 @@ async def test_real_cold_orientation_later_event_view_warm_price_and_named_overr
     assert r._inversion[1][1] is True and r._inversion[2][1] is True
     # Only point reads of Event and OddsSnapshot classify fallback cost, not
     # publication observer queries. Each cold unproven event adds both reads.
-    grouped_reads = [sql for label, sql in orientation_reads if label == "grouped"]
+    grouped_reads = [
+        sql for label, sql in orientation_reads
+        if label == "grouped" and ("FROM odds_snapshots" in sql or "FROM events" in sql)
+    ]
     assert len(grouped_reads) == 16
     assert sum("FROM odds_snapshots" in sql for sql in grouped_reads) == 8
     assert sum("FROM events" in sql for sql in grouped_reads) == 8
@@ -511,23 +605,52 @@ async def test_real_cold_orientation_later_event_view_warm_price_and_named_overr
     assert [f["source_value"] for f in frames if f["event_id"] == 1] == [0.3, 0.2, 0.75]
 
 
-async def test_later_delivery_cancel_does_not_double_count_prior_failed_group(rig):
+def _reowe_on_cancel(r, event_ids):
+    """Mutant: the cancel cleanup also re-owes events that were bookkept."""
+    real_failed = r._refresh_failed
+
+    def refresh_failed(due, *args, **kwargs):
+        if any(isinstance(a, asyncio.CancelledError) for a in args):
+            due = set(due) | set(event_ids)
+        return real_failed(due, *args, **kwargs)
+
+    r._refresh_failed = refresh_failed
+
+
+@pytest.mark.parametrize("mutant", [False, True], ids=["source", "reowe-bookkept"])
+async def test_later_delivery_cancel_does_not_double_count_prior_failed_group(
+    rig, mutant
+):
     await seed(rig)
-    r, _, _, resolved, publish = refresher(rig, fail_commit=3)
+    r, _, _, resolved, publish = refresher(rig, fail_commit_event=6)
     stage(r, range(1, 13))
+    if mutant:
+        _reowe_on_cancel(r, {9})
 
     async def partial(batch):
         await publish(batch[:1])
         if batch and batch[0]["event_id"] == 9:
+            # Cancel only once event 6's failed commit has been recorded.
+            async with asyncio.timeout(5):
+                while 6 not in r.receipts._open:
+                    await asyncio.sleep(0.005)
             raise asyncio.CancelledError()
 
     r._publish = partial
     with pytest.raises(asyncio.CancelledError):
         await r.refresh(range(1, 13))
-    assert r.pending_event_ids() == set(range(5, 9))
-    assert resolved == [set(range(1, 5)), set(range(9, 13))]
-    assert all(r.receipts._open[eid].commit_failures == 1 for eid in range(5, 9))
-    await accounting(rig, r, set(range(1, 5)) | set(range(9, 13)))
+    if mutant:
+        # Event 9 committed, was bookkept and delivered; owing it again is
+        # not the ambiguous seam, so the accounting must refuse it.
+        assert 9 in r._last_written_value and 9 in r.pending_event_ids()
+        with pytest.raises(AssertionError, match=r"bookkept event re-owed: \[9\]"):
+            await cancelled_accounting(rig, r, owed_at_least={6})
+        return
+    kept, redundant = await cancelled_accounting(rig, r, owed_at_least={6})
+    assert 6 not in kept and 9 in kept
+    assert set().union(*resolved) <= kept
+    assert kept - redundant <= set().union(*resolved)
+    assert r.receipts._open[6].commit_failures == 1  # not counted twice
 
 
 async def test_delivery_exception_cannot_requeue_committed_group(rig):
