@@ -1349,9 +1349,20 @@ export default function MarketMapSection({
             ? halfScores.h1Home - halfScores.h1Away
             : halfScores.h2Home - halfScores.h2Away
           : null;
-      const rawParsedAll = parseSpreadRungs(spreads, homeTeam, awayTeam, vocab.unit, {
+      const plainParsed = parseSpreadRungs(spreads, homeTeam, awayTeam, vocab.unit, {
         keepUnpriced: halfFinalMargin != null,
       });
+      // #10830: a half priced only on Polymarket (`1H Spread: <Team> (-N)`)
+      // is read from its titles — only where nothing else parses, as the
+      // iPhone does (#8739's fallback). Merged beside Kalshi's ladder, the
+      // titled rungs moved settled León–Juárez's graded lines (#9307).
+      const rawParsedAll =
+        plainParsed.length > 0
+          ? plainParsed
+          : parseSpreadRungs(spreads, homeTeam, awayTeam, vocab.unit, {
+              keepUnpriced: halfFinalMargin != null,
+              readsHalfTitles: true,
+            });
       // Collapse before the monotonicity pass: equal duplicates satisfy
       // `prob <= lastProb` trivially, so that guard cannot remove them.
       const rawParsed = collapseDuplicateRungs(
