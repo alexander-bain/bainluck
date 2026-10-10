@@ -6053,12 +6053,19 @@ async def get_progression(
     source_tournament_name = extract_tournament_name(market.name)
 
     # Method 1: DataGolf prefix matching
+    # #10816: `source == "datagolf"` is what lets an index serve this. ILIKE never
+    # uses a btree, so without it the plan walked every open futures row through
+    # `ix_futures_markets_status` (64,581 discarded, 1,104 ms on production
+    # 2026-10-10) to find 4 siblings; with it, the 395 DataGolf rows (3.4 ms,
+    # same 4 ids). The `datagolf:` namespace is minted only by tasks/datagolf.py,
+    # always with source="datagolf". The ILIKE stays the authority.
     dg_prefix = get_datagolf_prefix(market.external_id) if market.external_id else None
     if dg_prefix:
         dg_result = await db.execute(
             select(FuturesMarket)
             .options(selectinload(FuturesMarket.outcomes))
             .where(
+                FuturesMarket.source == "datagolf",
                 FuturesMarket.external_id.ilike(f"{dg_prefix}:%"),
                 FuturesMarket.id != market_id,
                 FuturesMarket.status == "open",
