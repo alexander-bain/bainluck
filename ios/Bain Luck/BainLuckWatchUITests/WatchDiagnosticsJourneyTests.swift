@@ -67,7 +67,7 @@ final class WatchDiagnosticsJourneyTests: XCTestCase {
     @MainActor private func openSettings(_ app: XCUIApplication) throws {
         let link = app.buttons["watch.diagnostics"].firstMatch
         XCTAssertTrue(link.waitForExistence(timeout: 20))
-        try reveal(link, app: app)
+        try reveal(link, app: app, maxScrollFraction: 0.55)
         link.tap()
         XCTAssertTrue(app.switches["watch.diagnostics.choice"].firstMatch.waitForExistence(timeout: 10))
     }
@@ -82,22 +82,27 @@ final class WatchDiagnosticsJourneyTests: XCTestCase {
                       height: max(1, content.maxY - top)).intersection(app.frame)
     }
 
-    @MainActor private func scroll(_ app: XCUIApplication, earlier: Bool) {
+    @MainActor private func scroll(_ app: XCUIApplication, earlier: Bool, fraction: CGFloat = 0.20) {
         let box = bounds(app)
+        // Longer moves only traverse distant content. Keep both endpoints
+        // inside the viewport and retain the small step near the target.
+        let startFraction: CGFloat = fraction > 0.20 ? (earlier ? 0.20 : 0.80) : 0.60
         let start = app.coordinate(withNormalizedOffset: .zero).withOffset(
-            CGVector(dx: box.midX - app.frame.minX, dy: box.minY + box.height * 0.60 - app.frame.minY))
-        let end = start.withOffset(CGVector(dx: 0, dy: box.height * (earlier ? 0.20 : -0.20)))
+            CGVector(dx: box.midX - app.frame.minX, dy: box.minY + box.height * startFraction - app.frame.minY))
+        let end = start.withOffset(CGVector(dx: 0, dy: box.height * (earlier ? fraction : -fraction)))
         start.press(forDuration: 0.1, thenDragTo: end, withVelocity: .slow, thenHoldForDuration: 0.3)
     }
 
-    @MainActor private func reveal(_ element: XCUIElement, app: XCUIApplication, earlierWhenMissing: Bool = false) throws {
+    @MainActor private func reveal(_ element: XCUIElement, app: XCUIApplication, earlierWhenMissing: Bool = false, maxScrollFraction: CGFloat = 0.20) throws {
         for _ in 0..<24 {
             let box = bounds(app)
             // Form lazily mounts offscreen rows; never read a missing row's frame or label.
             if !element.exists { scroll(app, earlier: earlierWhenMissing); continue }
             if element.isHittable && (box.contains(element.frame) ||
                 (element.frame.height > box.height && box.intersects(element.frame))) { return }
-            scroll(app, earlier: element.frame.midY < box.midY)
+            let distance = abs(element.frame.midY - box.midY) / box.height
+            let fraction = min(maxScrollFraction, max(0.20, distance))
+            scroll(app, earlier: element.frame.midY < box.midY, fraction: fraction)
         }
         capture(app, "Unreachable diagnostics element - \(element.identifier)")
         throw NSError(domain: "WatchDiagnostics", code: 1)
