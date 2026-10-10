@@ -180,8 +180,12 @@ class TestScalesMustAgree:
         assert prop_window_closed("1st Half Total", None, NBA, "Q1", "live") is False
         assert prop_window_closed("1st Half Total", None, NBA, "Q2", "live") is False
 
-    def test_a_quarter_market_is_not_judged_against_a_half(self):
-        assert prop_window_closed("1st Quarter Total", None, NBA, "2nd Half", "live") is False
+    def test_a_quarter_market_survives_the_first_half(self):
+        # #10850 corrected this case: it asserted a 1st-quarter window stays
+        # open during "2nd Half", which is the refusal that let 1Q rows quote at
+        # halftime. During "1st Half" no quarter is provably over, so it stays.
+        assert prop_window_closed("1st Quarter Total", None, NBA, "1st Half", "live") is False
+        assert prop_window_closed("2nd Quarter Total", None, NBA, "1st Half", "live") is False
 
     def test_an_inning_window_is_not_judged_against_a_clock_period(self):
         assert prop_window_closed("First inning run", None, NBA, "Q3", "live") is False
@@ -190,6 +194,62 @@ class TestScalesMustAgree:
         # The one value that compares with any window.
         assert prop_window_closed("2nd Half Total", None, NBA, "OT", "live") is True
         assert prop_window_closed("1st Quarter Total", None, NBA, "OT", "live") is True
+
+
+NCAAF = "americanfootball_ncaaf"
+
+
+class TestHalvesAndQuartersNest:
+    """#10850 — a half window judged against a quarter period, and back.
+
+    Refusing the comparison failed OPEN on the 2026-10-10 NCAAF slate. Each
+    test pairs the closing reading with the last reading that must stay open.
+    The period strings and market names are the stored production values.
+    """
+
+    def test_the_first_half_closes_in_the_third_quarter(self):
+        # Army–Tulane 15324325 at "13:54 - 3rd Quarter": all 19 1H rows quoted.
+        for name, outcome in (
+            ("1H Spread: Army (-3.5)", "Army"),
+            ("Tulane at Army: 1st Half Winner", "Army wins 1st Half"),
+            ("Tulane vs. Army: 1H O/U 20.5", "Over"),
+        ):
+            assert prop_window_closed(
+                name, None, NCAAF, "13:54 - 3rd Quarter", "live", outcome=outcome
+            ) is True, name
+            assert prop_window_closed(
+                name, None, NCAAF, "0:20 - 2nd Quarter", "live", outcome=outcome
+            ) is False, name
+
+    def test_a_first_half_window_stays_closed_through_the_fourth(self):
+        assert prop_window_closed("1st Half Total", None, NBA, "Q4", "live") is True
+
+    def test_first_and_second_quarter_windows_close_at_halftime(self):
+        # Bowling Green–Sac State 15324326 at "Halftime": the 1Q moneyline
+        # quoted 0.90/0.10 and the 2Q O/U 0.90/0.90.
+        moneyline = "Sacramento State vs. Bowling Green: 1Q Moneyline"
+        two_q = "Sacramento State vs. Bowling Green: 2Q O/U 7.5"
+        assert prop_window_closed(
+            moneyline, None, NCAAF, "Halftime", "live", outcome="Bowling Green"
+        ) is True
+        assert prop_window_closed(two_q, None, NCAAF, "Halftime", "live", outcome="Over") is True
+        # Open in the quarter it names; the 1Q window is already closed in Q2.
+        assert prop_window_closed(two_q, None, NCAAF, "4:10 - 2nd Quarter", "live", outcome="Over") is False
+        assert prop_window_closed(
+            moneyline, None, NCAAF, "4:10 - 2nd Quarter", "live", outcome="Bowling Green"
+        ) is True
+
+    def test_a_second_half_reading_closes_both_first_half_quarters(self):
+        assert prop_window_closed("1st Quarter Total", None, NBA, "2nd Half", "live") is True
+        assert prop_window_closed("2nd Quarter Total", None, NBA, "2nd Half", "live") is True
+
+    def test_second_half_quarters_stay_open_at_halftime(self):
+        # Halftime proves quarters 1–2 only; the earliest position is used.
+        assert prop_window_closed("3rd Quarter Total", None, NBA, "Halftime", "live") is False
+        assert prop_window_closed("4th Quarter Winner", None, NBA, "2nd Half", "live") is False
+
+    def test_an_inning_window_is_still_refused_against_halves(self):
+        assert prop_window_closed("First inning run", None, NBA, "Halftime", "live") is False
 
 
 class TestTheMeasuredVocabulary:
