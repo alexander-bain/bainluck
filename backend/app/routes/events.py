@@ -28940,14 +28940,20 @@ async def _build_related_futures(
     if event.home_team_name and event.away_team_name:
         _series_home_patterns = _team_name_patterns(event.home_team_name)
         _series_away_patterns = _team_name_patterns(event.away_team_name)
-        # Require a team pattern of at least 4 chars from each side
+        # Require a team pattern of at least 4 chars from each side. #10825: each
+        # side is an OR group, so `_or_group_minimal_patterns` drops the patterns
+        # that cannot decide a match (production, 15324058's shape: 4,553 → 163 ms).
         _series_home_ilike = [
             FuturesMarket.name.ilike(f"%{p}%")
-            for p in _series_home_patterns if len(p) >= 4
+            for p in _or_group_minimal_patterns(
+                [p for p in _series_home_patterns if len(p) >= 4]
+            )
         ]
         _series_away_ilike = [
             FuturesMarket.name.ilike(f"%{p}%")
-            for p in _series_away_patterns if len(p) >= 4
+            for p in _or_group_minimal_patterns(
+                [p for p in _series_away_patterns if len(p) >= 4]
+            )
         ]
         if _series_home_ilike and _series_away_ilike:
             # Detect series markets by ticker prefix or name pattern
