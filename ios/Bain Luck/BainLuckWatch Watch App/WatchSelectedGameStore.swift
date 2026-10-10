@@ -272,6 +272,11 @@ final class WatchSelectedGameStore: ObservableObject {
         if incoming.isFinal || incoming.isClosed || incoming.probabilitySource != held.probabilitySource {
             return true
         }
+        // The decoder intentionally unpairs a blend vector outside live play.
+        // A named non-live lifecycle is not a malformed still-live blend. Its
+        // same-source probability and score clocks must still pass below.
+        let leavesLive = held.isLive && !incoming.isLive
+            && incoming.status.map { !$0.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty } == true
         if let old = held.blendRevision, let next = incoming.blendRevision {
             switch FoldRevision.compare(next, old) {
             case .older: return false
@@ -281,7 +286,7 @@ final class WatchSelectedGameStore: ObservableObject {
             case .same: break
             }
         } else if held.blendRevision != nil, incoming.blendRevision == nil,
-                  !incoming.isFinal, !incoming.isClosed { return false }
+                  !leavesLive { return false }
         if let old = held.probabilityObservedAt, let next = incoming.probabilityObservedAt, next < old {
             return false
         }

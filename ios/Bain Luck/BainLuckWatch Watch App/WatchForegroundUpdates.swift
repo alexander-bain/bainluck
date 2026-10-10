@@ -26,11 +26,21 @@ import Foundation
     }
 }
 
+/// Shared by the mounted default opener and its URLSession boundary test.
+/// Construction alone is inert: connect() is what starts the real byte pump.
+@MainActor enum WatchForegroundStreamFactory {
+    static func open(eventID: Int, session: URLSession? = nil) throws -> LiveStreamHandle {
+        let transport = try LiveEventStreamTransport(eventId: eventID, session: session)
+        transport.connect()
+        return transport
+    }
+}
+
 extension WatchSelectedGameStore {
     /// This method is owned by the visible view's structured task. There is one
     /// stream and one serial HTTP fetch. Background/navigation cancels both.
     @MainActor func runLiveForegroundRefresh(
-        open: @escaping @MainActor (Int) throws -> LiveStreamHandle = { try LiveEventStreamTransport(eventId: $0) },
+        open: @escaping @MainActor (Int) throws -> LiveStreamHandle = { try WatchForegroundStreamFactory.open(eventID: $0) },
         clock: @escaping () -> TimeInterval = { ProcessInfo.processInfo.systemUptime },
         sleep: (TimeInterval) async throws -> Void = { try await Task.sleep(for: .seconds($0)) }
     ) async {
@@ -47,10 +57,14 @@ extension WatchSelectedGameStore {
             if foregroundStreamGeneration == generation { activeForegroundStream = nil }
         }
         while !Task.isCancelled, selectedEventID == eventID, foregroundStreamGeneration == generation {
-            if game?.isFinal == true || game?.isClosed == true {
+            if game?.isLive != true {
+                // Suspended/postponed and other non-live readings use their
+                // ordinary poll. A later authoritative Live reading may reconnect.
                 stream?.stop(); stream = nil
+                activeForegroundStream = nil
+                attemptedStream = false
                 invalidation.take(at: clock())
-            } else if game?.isLive == true, !attemptedStream {
+            } else if !attemptedStream {
                 attemptedStream = true
                 let controller = LiveStreamController(open: { try open(eventID) }, now: clock,
                     onFrame: { frame in invalidation.receive(frame, eventID: eventID) },
