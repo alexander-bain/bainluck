@@ -73,7 +73,7 @@ from __future__ import annotations
 
 import re
 from datetime import datetime, timedelta, timezone
-from typing import Any, Iterable, Optional
+from typing import Any, Callable, Iterable, NamedTuple, Optional
 
 # Which instrument put a period boundary on the chart.
 SOURCE_STATPAL = "statpal"      # tier 1: the scoring_plays table (play-by-play)
@@ -332,8 +332,15 @@ def estimated_period_markers(
 #     Such a row proves nothing about the state at its own capture instant, so it
 #     is refused as a lower bound — otherwise it makes a loose bracket look tight.
 #
-# Football only, on purpose. The vocabulary below is ESPN's football status text;
-# innings, sets, halves and hockey periods keep the existing tiers untouched.
+# Football, plus four EXACT basketball keys (#10851) — see `_BASKETBALL_LEAGUES`.
+# The vocabulary is ESPN's status text, which a row's period carries verbatim;
+# innings, sets, soccer halves, hockey periods and every other basketball league
+# keep the existing tiers untouched.
+#
+# This prefix tuple still means FOOTBALL to `routes/events.py`, which also gates
+# the first-score label, the unresolved-play skip and the win-prob label tier on
+# it. Those were measured on football (#5140/#6718/#9179) and do not widen here;
+# the observed-transition call alone asks :func:`observes_period_transitions`.
 TRANSITION_SPORT_PREFIXES = ("americanfootball_",)
 
 #: A bracket this tight is called `boundary_observed`. A sorting cutoff on the
@@ -417,6 +424,129 @@ def _football_clock(raw: Any) -> Optional[str]:
     return m.group("clock") if m else None
 
 
+#: ESPN basketball status text (#10851), which differs from football's in two
+#: places. The last minute of a period carries tenths (`0:04.2 - 4th Quarter`,
+#: `game_state._GAME_CLOCK_RE`), so the clock takes an optional tail. And the
+#: men's college game is played in halves (`End of 2nd Half` is in the measured
+#: vocabulary, `test_live_state_does_not_run_backwards_6056.py`), so the period
+#: word is captured and checked against the league rather than assumed.
+#: Measured basketball shapes: `7:40 - 3rd Quarter` and `End of 4th Quarter`
+#: (women's college, #5588), `End of 3rd Quarter` (NBA/WNBA), `Halftime`,
+#: `End of OT`, `End of 2OT`.
+_BASKETBALL_STATE = re.compile(
+    r"^(?:(?P<clock>\d{1,2}:\d{2}(?:\.\d+)?)\s*-\s*)?"
+    r"(?P<end>end\s+of\s+)?"
+    r"(?:"
+    r"(?P<n>[1-4])(?:st|nd|rd|th)\s+(?P<word>quarter|half)"
+    r"|(?P<ht>half\s*time)"
+    r"|(?:(?P<otpre>\d+)(?:st|nd|rd|th)?\s*)?(?:overtime|ot)(?:\s*(?P<otpost>\d+))?"
+    r")$",
+    re.IGNORECASE,
+)
+
+
+class _League(NamedTuple):
+    """How one league's state text reads: its period word, how many regulation
+    periods it plays, and the clock a period shows before its first second."""
+
+    word: str
+    periods: int
+    opening_clock: str
+
+
+#: Exact keys, never a prefix: `basketball_euroleague` and the rest have no
+#: measured vocabulary here and keep the existing tiers. NBA quarters are 12
+#: minutes; WNBA and the women's college game play 10-minute quarters; the men's
+#: college game plays two 20-minute halves (`sport_keys.py`'s period table).
+_BASKETBALL_LEAGUES: dict[str, _League] = {
+    "basketball_nba": _League("quarter", 4, "12:00"),
+    "basketball_wnba": _League("quarter", 4, "10:00"),
+    "basketball_wncaab": _League("quarter", 4, "10:00"),
+    "basketball_ncaab": _League("half", 2, "20:00"),
+}
+
+
+def observes_period_transitions(sport_key: Optional[str]) -> bool:
+    """True when :func:`observed_transition_markers` can read this sport's stream."""
+    if not sport_key:
+        return False
+    return sport_key.startswith(TRANSITION_SPORT_PREFIXES) or sport_key in _BASKETBALL_LEAGUES
+
+
+def _basketball_state(raw: Any, league: _League) -> Optional[tuple[int, Optional[str]]]:
+    """``(rank, served label)`` for one league's basketball state text, or ``None``.
+
+    Same ranks as football — period n is ``n*100``, its end ``n*100+50``,
+    overtime n ``500+(n-1)*100`` — except halftime, which sits after the end of
+    the league's middle period: ``260`` for quarters, ``160`` for halves. A period
+    word the league does not play (`1st Half` in the NBA, `1st Quarter` in the
+    men's college game) or a period past its regulation count is not this
+    league's state and reads as ``None``, like any other unknown text.
+    `End of Halftime` is refused too: no basketball row has been seen to carry it,
+    and its football rank would sit above the next period. So is a clock longer
+    than the league's period (`15:00` in the NBA): that row is not this league's
+    game, whatever its label says.
+    """
+    if not isinstance(raw, str):
+        return None
+    m = _BASKETBALL_STATE.match(raw.strip())
+    if not m:
+        return None
+    clock = _clock_seconds(m.group("clock"))
+    if clock is not None and clock > _clock_seconds(league.opening_clock):
+        return None
+    end = bool(m.group("end"))
+    if m.group("n"):
+        n = int(m.group("n"))
+        if m.group("word").lower() != league.word or n > league.periods:
+            return None
+        rank = n * _QUARTER_RANK
+        if end:
+            return (rank + _BREAK_OFFSET, None)
+        return (rank, f"{_ordinal(n)} {league.word.capitalize()}")
+    if m.group("ht"):
+        if end:
+            return None
+        return ((league.periods // 2) * _QUARTER_RANK + 60, "Halftime")
+    n_raw = m.group("otpre") or m.group("otpost")
+    n = max(int(n_raw), 1) if n_raw else 1
+    rank = _OVERTIME_BASE + (n - 1) * _QUARTER_RANK
+    if end:
+        return (rank + _BREAK_OFFSET, None)
+    return (rank, "Overtime" if n == 1 else f"{_ordinal(n)} Overtime")
+
+
+def _basketball_clock(raw: Any) -> Optional[str]:
+    """The game clock on a basketball state row (`'11:44'`, `'0:04.2'`), or ``None``."""
+    if not isinstance(raw, str):
+        return None
+    m = _BASKETBALL_STATE.match(raw.strip())
+    return m.group("clock") if m else None
+
+
+class _Reader(NamedTuple):
+    """One sport's state parser plus what the clock brackets need to know."""
+
+    state: Callable[[Any], Optional[tuple[int, Optional[str]]]]
+    clock: Callable[[Any], Optional[str]]
+    periods: int
+    opening_clock: str
+
+
+def _reader_for(sport_key: str) -> Optional[_Reader]:
+    if sport_key.startswith(TRANSITION_SPORT_PREFIXES):
+        return _Reader(_football_state, _football_clock, 4, _QUARTER_OPENING_CLOCK)
+    league = _BASKETBALL_LEAGUES.get(sport_key)
+    if league is None:
+        return None
+    return _Reader(
+        lambda raw: _basketball_state(raw, league),
+        _basketball_clock,
+        league.periods,
+        league.opening_clock,
+    )
+
+
 def football_period_label(raw: Any) -> Optional[str]:
     """The period a football state row is IN (`'1st Quarter'`), clock stripped.
 
@@ -430,7 +560,11 @@ def football_period_label(raw: Any) -> Optional[str]:
 
 
 def _opening_clock_bracket(
-    rows: list, i: int, can_bound: list[bool]
+    rows: list,
+    i: int,
+    can_bound: list[bool],
+    periods: int = 4,
+    opening_clock: str = _QUARTER_OPENING_CLOCK,
 ) -> Optional[tuple[int, int]]:
     """``(last opening-clock row, first running-clock row)`` for the quarter first
     seen at ``rows[i]``, or ``None``.
@@ -450,10 +584,16 @@ def _opening_clock_bracket(
     quarter had not begun". Quarters only; an overtime clock's opening value is not
     fixed (10:00 regular season, 15:00 playoffs), and every overtime follows a
     4th quarter the transition tier already brackets it from.
+
+    Basketball (#10851) passes its own regulation count and opening clock —
+    `12:00` NBA, `10:00` WNBA and women's college, `20:00` for the men's college
+    halves. A basketball clock does not run until the tip, so there the bracket is
+    if anything tighter than football's.
     """
     rank = rows[i][1]
-    if rank % _QUARTER_RANK or not (_QUARTER_RANK <= rank <= 4 * _QUARTER_RANK):
+    if rank % _QUARTER_RANK or not (_QUARTER_RANK <= rank <= periods * _QUARTER_RANK):
         return None
+    opening = _clock_seconds(opening_clock)
     last_open: Optional[int] = None
     for j in range(i, len(rows)):
         r, clock = rows[j][1], rows[j][5]
@@ -463,7 +603,7 @@ def _opening_clock_bracket(
             continue
         if not can_bound[j] or clock is None:
             continue
-        if clock == _QUARTER_OPENING_CLOCK:
+        if _clock_seconds(clock) == opening:
             last_open = j
         elif last_open is not None:
             return (last_open, j)
@@ -473,18 +613,27 @@ def _opening_clock_bracket(
 
 
 def _clock_seconds(clock: Optional[str]) -> Optional[int]:
-    """`'14:55'` → 895, or ``None``."""
+    """`'14:55'` → 895, or ``None``.
+
+    A tenths tail (`'0:04.2'`, basketball's last minute) is cut, never rounded:
+    whole seconds left can only understate the time remaining, which overstates
+    the game time run and so only ever makes the clock-versus-wall check stricter.
+    """
     if not clock:
         return None
     minutes, _, seconds = clock.partition(":")
     try:
-        return int(minutes) * 60 + int(seconds)
+        return int(minutes) * 60 + int(seconds.split(".", 1)[0])
     except ValueError:
         return None
 
 
 def _kickoff_bracket(
-    rows: list, i: int, can_bound: list[bool], kickoff: Optional[datetime]
+    rows: list,
+    i: int,
+    can_bound: list[bool],
+    kickoff: Optional[datetime],
+    opening_clock: str = _QUARTER_OPENING_CLOCK,
 ) -> bool:
     """True when the listed kickoff bounds a 1st quarter whose stream opened running.
 
@@ -506,15 +655,17 @@ def _kickoff_bracket(
       the listing is then no lower bound at all, and there is no marker.
 
     1st quarter only: every later quarter follows a state the transition tier
-    already brackets it from.
+    already brackets it from. Basketball (#10851) applies the same rule to its
+    first period against its own opening clock. The listed tip is still only the
+    lower end, and the marker still stands on an observed running reading.
     """
     if kickoff is None or not can_bound[i]:
         return False
     when, rank, clock = rows[i][0], rows[i][1], rows[i][5]
-    if rank != _QUARTER_RANK or clock is None or clock == _QUARTER_OPENING_CLOCK:
-        return False
+    opening = _clock_seconds(opening_clock)
     run = _clock_seconds(clock)
-    opening = _clock_seconds(_QUARTER_OPENING_CLOCK)
+    if rank != _QUARTER_RANK or clock is None or run == opening:
+        return False
     if run is None or run > opening:
         return False
     wall = when - kickoff
@@ -545,8 +696,13 @@ def observed_transition_markers(
     ``kickoff_not_before`` is the row's LISTED kickoff, passed only when it is a
     kickoff and not a venue's expected resolution (#7878). It bounds nothing but
     a 1st quarter whose stream opened already running (:func:`_kickoff_bracket`).
+
+    Football, and the four basketball keys in `_BASKETBALL_LEAGUES` (#10851); every
+    other sport returns ``[]``. Basketball runs the identical bracket logic below.
+    Only the parser, the regulation count and the opening clock differ.
     """
-    if not sport_key or not sport_key.startswith(TRANSITION_SPORT_PREFIXES):
+    reader = _reader_for(sport_key) if sport_key else None
+    if reader is None:
         return []
     kickoff = _parse(kickoff_not_before) if kickoff_not_before is not None else None
     if kickoff is not None and kickoff.tzinfo is None:
@@ -556,13 +712,13 @@ def observed_transition_markers(
     seen: set[tuple[datetime, int]] = set()
     for obs in observations or ():
         when = _parse((obs or {}).get("timestamp"))
-        state = _football_state((obs or {}).get("period"))
+        state = reader.state((obs or {}).get("period"))
         if when is None or state is None or (when, state[0]) in seen:
             continue
         seen.add((when, state[0]))
         rows.append((
             when, state[0], state[1], obs.get("timestamp"), obs.get("source"),
-            _football_clock(obs.get("period")),
+            reader.clock(obs.get("period")),
         ))
     if not rows:
         return []
@@ -639,10 +795,12 @@ def observed_transition_markers(
             # No earlier STATE places this period's start after anything. The one
             # bracket left is the period's own clock leaving its opening value
             # (#9179) — without it, absent, never kickoff.
-            clock_bracket = _opening_clock_bracket(rows, i, can_bound)
+            clock_bracket = _opening_clock_bracket(
+                rows, i, can_bound, reader.periods, reader.opening_clock
+            )
             if clock_bracket is None:
                 placed.add(label)
-                if _kickoff_bracket(rows, i, can_bound, kickoff):
+                if _kickoff_bracket(rows, i, can_bound, kickoff, reader.opening_clock):
                     markers.append({
                         "timestamp": raw_ts,
                         "period": label,

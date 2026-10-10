@@ -552,7 +552,9 @@ class TestTransitionRules:
         assert _at(m, "Overtime")["timestamp"] == _obs(179, "")["timestamp"]
 
     def test_other_sports_get_nothing_from_this_helper(self):
-        assert _markers(GAME, sport="basketball_nba") == []
+        # #10851 reads four exact basketball keys; an unlisted league does not.
+        assert _markers(GAME, sport="basketball_euroleague") == []
+        assert _markers(GAME, sport="icehockey_nhl") == []
         assert _markers([_obs(0, "Top 1st"), _obs(9, "Bottom 1st")], sport="baseball_mlb") == []
         assert _markers([_obs(0, "Set 1"), _obs(40, "Set 2")]) == []   # football key, foreign text
         assert _markers([_obs(0, "Final"), _obs(1, "Wed, September 9th at 8:20 PM EDT")]) == []
