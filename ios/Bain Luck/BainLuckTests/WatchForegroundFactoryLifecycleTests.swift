@@ -121,8 +121,10 @@ import XCTest
                 XCTAssertTrue(handles[0].isClosed)
                 XCTAssertNil(store.activeForegroundStream)
                 XCTAssertEqual(store.nextRefreshDelay, 300)
-                // Advance the injected monotonic clock; no real wait or extra socket.
-                clock += store.foregroundPollDelay
+                XCTAssertEqual(seconds, 300, accuracy: 0.001,
+                               "Suspension waits once for its deadline instead of waking every second")
+                // Advance exactly the requested wait; no real delay or extra socket.
+                clock += seconds
             } else if store.successfulRefreshSequence == 3 {
                 XCTAssertEqual(store.game?.status, "live")
                 XCTAssertEqual(handles.count, 2)
@@ -133,6 +135,94 @@ import XCTest
         XCTAssertEqual(store.successfulRefreshSequence, 3)
         XCTAssertEqual(handles.count, 2)
         XCTAssertTrue(handles.allSatisfy(\.isClosed), "Suspension and final task departure close their own streams")
+    }
+
+    func testNonLiveReadingsSleepToTheirPollDeadlineWithoutOpeningAStream() async throws {
+        for status in ["scheduled", "suspended", "final", "closed"] {
+            let name = "watch-idle-deadline-\(UUID())"
+            let defaults = try XCTUnwrap(UserDefaults(suiteName: name))
+            defer { defaults.removePersistentDomain(forName: name) }
+            var clock = 1_000.0
+            let reading = try Self.detail(status: status)
+            let store = WatchSelectedGameStore(transport: Details([reading, reading]),
+                defaults: defaults, retryClock: { clock })
+            store.select(eventID: 101)
+            var sleeps = 0
+            await store.runLiveForegroundRefresh(open: { _ in
+                XCTFail("A non-live reading must not open a stream")
+                return Handle()
+            }, clock: { clock }, sleep: { seconds in
+                sleeps += 1
+                XCTAssertEqual(seconds, 300, accuracy: 0.001)
+                XCTAssertEqual(store.successfulRefreshSequence, sleeps)
+                XCTAssertNil(store.activeForegroundStream)
+                if sleeps == 2 { throw CancellationError() }
+                clock += seconds
+            })
+            XCTAssertEqual(sleeps, 2)
+            XCTAssertEqual(store.successfulRefreshSequence, 2)
+            XCTAssertEqual(clock, 1_300)
+            XCTAssertEqual(store.game?.probabilityObservedAt, reading.probabilityObservedAt)
+            XCTAssertEqual(store.game?.scoreObservedAt, reading.scoreObservedAt)
+        }
+    }
+
+    func testLeavingVisibleTaskCancelsTheLongNonLiveWait() async throws {
+        let name = "watch-idle-cancel-\(UUID())"
+        let defaults = try XCTUnwrap(UserDefaults(suiteName: name))
+        defer { defaults.removePersistentDomain(forName: name) }
+        let store = WatchSelectedGameStore(transport: Details([try Self.detail(status: "scheduled")]),
+            defaults: defaults, retryClock: { 1_000 })
+        store.select(eventID: 101)
+        let sleeping = expectation(description: "Waiting for next non-live deadline")
+        let worker = Task {
+            await store.runLiveForegroundRefresh(open: { _ in
+                XCTFail("No live stream for a scheduled reading")
+                return Handle()
+            }, clock: { 1_000 }, sleep: { seconds in
+                XCTAssertEqual(seconds, 300, accuracy: 0.001)
+                sleeping.fulfill()
+                try await Task.sleep(for: .seconds(seconds))
+            })
+        }
+        await fulfillment(of: [sleeping], timeout: 2)
+        worker.cancel()
+        await worker.value
+        XCTAssertEqual(store.successfulRefreshSequence, 1)
+        XCTAssertNil(store.activeForegroundStream)
+    }
+
+    private actor BusyDetails: WatchSelectedGameTransport {
+        func fetch(eventID: Int) async throws -> WatchSelectedGame {
+            throw WatchSelectedGameRequestError.retryAfter(120)
+        }
+    }
+
+    func testUnloadedBusyReadingSleepsThroughServerWaitWithoutAStream() async throws {
+        let name = "watch-busy-deadline-\(UUID())"
+        let defaults = try XCTUnwrap(UserDefaults(suiteName: name))
+        defer { defaults.removePersistentDomain(forName: name) }
+        var clock = 1_000.0
+        let store = WatchSelectedGameStore(transport: BusyDetails(), defaults: defaults,
+                                          retryClock: { clock })
+        store.select(eventID: 101)
+        var sleeps = 0
+        await store.runLiveForegroundRefresh(open: { _ in
+            XCTFail("No stream before a live detail exists")
+            return Handle()
+        }, clock: { clock }, sleep: { seconds in
+            sleeps += 1
+            XCTAssertEqual(seconds, 120, accuracy: 0.001)
+            XCTAssertEqual(store.foregroundInvalidationDelay, 120, accuracy: 0.001)
+            XCTAssertNil(store.game)
+            XCTAssertNotNil(store.errorMessage)
+            if sleeps == 2 { throw CancellationError() }
+            clock += seconds
+        })
+        XCTAssertEqual(sleeps, 2)
+        XCTAssertEqual(clock, 1_120)
+        XCTAssertEqual(store.successfulRefreshSequence, 0)
+        XCTAssertNil(store.activeForegroundStream)
     }
 
     func testLifecycleAdmissionKeepsMalformedLiveClockAndTerminalGuards() throws {

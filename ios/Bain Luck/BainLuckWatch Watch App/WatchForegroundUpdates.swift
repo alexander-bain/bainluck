@@ -97,7 +97,12 @@ extension WatchSelectedGameStore {
                 // A newer invalidation is still pending. Never run a parallel HTTP read.
                 continue
             }
-            do { try await sleep(1) } catch { return }
+            // No stream exists outside live play. Sleep to the next real
+            // poll/backoff deadline instead of waking the CPU every second.
+            // The visible view's task cancellation still interrupts this wait.
+            let sleepDelay = game?.isLive == true ? 1 : max(
+                foregroundPollDelay, max(0, fallbackNotBefore - clock()))
+            do { try await sleep(max(0.01, sleepDelay)) } catch { return }
         }
     }
 }
