@@ -538,11 +538,15 @@ struct RelatedFuturesView: View {
             let mergedStatLeaders = awayCats.statLeaders + homeCats.statLeaders
             let mergedNovelty = (awayCats.novelty + homeCats.novelty)
                 .filter { ($0.probability ?? 0) >= 0.05 }
+            // #10830 — the complete season collection, reachable even where
+            // no section above has a picture for it.
+            let catalogRows = RelatedMarketsCatalog.rows(home: homeFutures, away: awayFutures)
             let hasSections = !mergedAwards.isEmpty || !mergedStatLeaders.isEmpty
                 || !homeCats.seasonStats.isEmpty || !awayCats.seasonStats.isEmpty
                 || !homeCats.trades.isEmpty || !awayCats.trades.isEmpty
                 || !mergedNovelty.isEmpty
                 || !seriesMarkets.isEmpty
+                || !catalogRows.isEmpty
 
             if hasSections {
                 VStack(alignment: .leading, spacing: 12) {
@@ -621,6 +625,8 @@ struct RelatedFuturesView: View {
                             .fixedSize(horizontal: false, vertical: true)
                         }
                     }
+
+                    RelatedMarketsCatalogView(rows: catalogRows)
                 }
                 .padding()
                 .background(Color.cardBackground)

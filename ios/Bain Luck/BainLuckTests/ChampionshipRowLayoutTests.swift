@@ -676,9 +676,11 @@ final class ChampionshipRowLayoutTests: XCTestCase {
     @MainActor
     func testTheRenderedBarIsAsLongAsTheProbabilityItDraws() throws {
         func barLength(probability: Double) throws -> CGFloat {
+            // #10830 — a one-team page: the only page that still draws the
+            // card (two teams read as the aligned table, held below).
             let card = ChampionshipPathView(
                 progression: try brewersAtRedsProgression(
-                    stageJSON: stageJSON("division", "Division", probability: probability)),
+                    stageJSON: stageJSON("division", "Division", probability: probability), awayOnly: true),
                 homeTeamColor: Self.barColor, awayTeamColor: Self.barColor)
             return longestRun(of: Self.barColor, in: render(card, width: 402))
         }
@@ -720,7 +722,7 @@ final class ChampionshipRowLayoutTests: XCTestCase {
         let card = ChampionshipPathView(
             progression: try brewersAtRedsProgression(
                 stageJSON: stageJSON("division", "Division",
-                                     probability: probability, trend: trend)),
+                                     probability: probability, trend: trend), awayOnly: true),
             homeTeamColor: Self.barColor, awayTeamColor: Self.barColor)
 
         // The width the card itself works out at this render width, not a literal.
@@ -729,7 +731,7 @@ final class ChampionshipRowLayoutTests: XCTestCase {
         // was how #3580's fit formula came to believe it had room for a bar.
         let pagePadding: CGFloat = 16
         let content = ChampionshipRowLayout.teamCardContentWidth(
-            totalWidth: 402 - pagePadding * 2, cardCount: 2)
+            totalWidth: 402 - pagePadding * 2, cardCount: 1)
         let row = try stage("division", "Division", probability: probability, trend: trend)
 
         for (name, size) in [("large", DynamicTypeSize.large),
@@ -856,8 +858,10 @@ final class ChampionshipRowLayoutTests: XCTestCase {
     /// count is half the arithmetic. A one-team fixture gets the whole 346 pt and
     /// stays on one line at phone width, quite correctly, and would hide every
     /// question this file is about.
-    private func brewersAtRedsProgression(stageJSON: String) throws -> TeamProgressionResponse {
-        let json = #"""
+    private func brewersAtRedsProgression(
+        stageJSON: String, awayOnly: Bool = false
+    ) throws -> TeamProgressionResponse {
+        var json = #"""
         {"event_id": 15305463, "league": "mlb", "league_name": "MLB Playoffs 2026",
          "away_team": {"name": "Milwaukee Brewers", "short_name": "Brewers",
                        "record": "88-55", "conference": "National League",
@@ -866,6 +870,31 @@ final class ChampionshipRowLayoutTests: XCTestCase {
                        "record": "68-74", "conference": "National League",
                        "stages": [\#(stageJSON)]}}
         """#
+        // #10830 — the one-team page, which is where the card still draws.
+        if awayOnly, let home = json.range(of: #""home_team""#),
+           let comma = json[..<home.lowerBound].lastIndex(of: ",") {
+            json = String(json[..<comma]) + "}"
+        }
         return try decoder().decode(TeamProgressionResponse.self, from: Data(json.utf8))
+    }
+
+    // MARK: - #10830: the aligned table's bars
+
+    /// Two teams read as ONE table (`SeasonComparisonView`). Its bar is the
+    /// same claim as the card's: as long as the probability it draws, so a
+    /// 96% stage draws a bar several times a 13% one, and never a 2 pt sliver.
+    @MainActor
+    func testTheTableBarIsAsLongAsTheProbabilityItDraws() throws {
+        func barLength(probability: Double) throws -> CGFloat {
+            let table = ChampionshipPathView(
+                progression: try brewersAtRedsProgression(
+                    stageJSON: stageJSON("division", "Division", probability: probability)),
+                homeTeamColor: Self.barColor, awayTeamColor: Self.barColor)
+            return longestRun(of: Self.barColor, in: render(table, width: 402))
+        }
+        let long = try barLength(probability: 0.96)
+        let short = try barLength(probability: 0.13)
+        XCTAssertGreaterThanOrEqual(long, 100.0 / 3.0, "a 96% table bar rendered \(long) pt")
+        XCTAssertGreaterThan(long, short * 3, "96% drew \(long) pt and 13% drew \(short) pt")
     }
 }

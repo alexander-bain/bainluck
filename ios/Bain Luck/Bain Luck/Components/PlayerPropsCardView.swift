@@ -22,18 +22,11 @@ struct PlayerPropsCardView: View {
     var sportKey: String? = nil
 
     @State private var teamFilter: String = "all"
-    @State private var expandedCards: Set<String> = []
-    /// #5137 — separate from `expandedCards`: opening a card's other stats and
-    /// opening its unpriced ones are two different asks, and a reader who wants
-    /// the second should not be handed the first.
-    @State private var unpricedExpandedCards: Set<String> = []
     /// #5176 — the fields opened past their first ``PlayerPropsField/visibleCount`` legs.
     @State private var expandedFields: Set<String> = []
-    /// #5137 — the LOOK rig cannot tap (`LaunchRig.expandsCollapsedSections`),
-    /// so without this the one section this ship adds is the one section it
-    /// could never photograph. Off unless the rig asks: the chevron a reader
-    /// sees still starts closed.
-    private let unpricedStartOpen = LaunchRig.expandsCollapsedSections()
+    /// #10830 — the target the reader picked on each pre-game ladder, by
+    /// ladder id. Absent means the ladder's default (``PlayerPropsFamily/defaultTarget(probabilities:)``).
+    @State private var selectedTargets: [String: Double] = [:]
 
     /// #3430 — both competitors of one matchup, so the pair rule decides. A
     /// prop attributed to a team the other side shares a label with is
@@ -49,6 +42,10 @@ struct PlayerPropsCardView: View {
     }
     private var isDone: Bool { EventState.isFinished(eventStatus) }
     private var isLive: Bool { eventStatus == "live" }
+    /// #10830 — only a game that has not started browses by target. Live and
+    /// finished ladders keep the rung renderer, which carries the live hit
+    /// colouring and the served verdicts.
+    private var browsesByTarget: Bool { !isDone && !isLive }
 
     private struct PlayerCard: Identifiable {
         let id: String
@@ -121,6 +118,49 @@ struct PlayerPropsCardView: View {
         /// #4577 — where this market opened, on the same OVER axis as
         /// ``probability``. nil on 47% of measured rungs; those draw no tick.
         let pregameMark: Double?
+        /// #10830 — did a venue price this rung at all? `probability` is 0 as
+        /// geometry for one that did not, and a target chip must not print it.
+        var priced: Bool = true
+    }
+
+    /// #10830 — one player's one ladder, as a row of the props browser.
+    private struct PropItem: Identifiable {
+        let id: String
+        let card: PlayerCard
+        let group: StatGroup
+        let family: String
+        let statLabel: String
+    }
+
+    /// Every ladder on the page as a browser row: the PRICED ladders under
+    /// their stat's family, the unpriced ones under ``PlayerPropsFamily/unpricedFamily``
+    /// (#5137 — a flat ladder never takes a stat's place). Cards keep their
+    /// #4857 order inside each family; families are dealt by
+    /// ``PlayerPropsFamily/orderedFamilies(_:)``.
+    private func browseItems(_ cards: [PlayerCard]) -> [PropItem] {
+        let items: [PropItem] = cards.flatMap { card -> [PropItem] in
+            let priced = card.pricedGroups.map { group -> PropItem in
+                let label = cleanStatLabel(group.type, player: card.name)
+                return PropItem(id: group.id, card: card, group: group,
+                                family: PlayerPropsFamily.family(statLabel: label, isPriced: true),
+                                statLabel: label)
+            }
+            let unpriced = card.unpricedGroups.map { group -> PropItem in
+                let label = cleanStatLabel(group.type, player: card.name)
+                return PropItem(id: group.id, card: card, group: group,
+                                family: PlayerPropsFamily.family(statLabel: label, isPriced: false),
+                                statLabel: label)
+            }
+            return priced + unpriced
+        }
+        let order = PlayerPropsFamily.orderedFamilies(items.map(\.family))
+        let rank = Dictionary(uniqueKeysWithValues: order.enumerated().map { ($1, $0) })
+        return items.enumerated()
+            .sorted { a, b in
+                let (ra, rb) = (rank[a.element.family] ?? 0, rank[b.element.family] ?? 0)
+                return ra != rb ? ra < rb : a.offset < b.offset
+            }
+            .map(\.element)
     }
 
     private var allPlayerCards: [PlayerCard] {
@@ -180,7 +220,8 @@ struct PlayerPropsCardView: View {
                     movement: prop.movement,
                     actual: prop.actual,
                     hit: prop.hit,
-                    pregameMark: prop.pregameMark
+                    pregameMark: prop.pregameMark,
+                    priced: prop.overProbability != nil
                 )
                 statGroups[statType, default: []].append(rung)
             }
@@ -283,12 +324,16 @@ struct PlayerPropsCardView: View {
                     .background(Color.secondary.opacity(0.08))
                     .clipShape(RoundedRectangle(cornerRadius: 8))
 
-                    // Player grid — responsive columns
-                    let columns = [GridItem(.adaptive(minimum: 280), spacing: 10)]
-                    LazyVGrid(columns: columns, spacing: 10) {
-                        ForEach(cards) { card in
-                            playerCardView(card)
-                        }
+                    // #10830 — every ladder, browsable by stat family and
+                    // searchable by player, in a bounded window (web #10809).
+                    MarketBrowserView(
+                        label: "Player props",
+                        items: browseItems(cards),
+                        group: \.family,
+                        searchText: { "\($0.card.name) \($0.card.teamLabel ?? "") \($0.statLabel)" },
+                        searchPrompt: "player or stat"
+                    ) { item in
+                        propRow(item)
                     }
                 }
             }
@@ -313,128 +358,195 @@ struct PlayerPropsCardView: View {
         .buttonStyle(.plain)
     }
 
-    private func playerCardView(_ card: PlayerCard) -> some View {
-        VStack(alignment: .leading, spacing: 6) {
-            // Header: headshot + name + team label
-            HStack(spacing: 8) {
-                if let crestTeam = card.crestTeam {
-                    TeamLogoView(
-                        url: crestTeam == homeTeam ? homeLogoURL : awayLogoURL,
-                        teamName: crestTeam,
-                        color: card.color,
-                        size: 36,
-                        sportKey: sportKey,
-                        opponentName: crestTeam == homeTeam ? awayTeam : homeTeam
-                    )
-                } else if let url = card.headshotURL {
-                    AsyncImage(url: url) { phase in
-                        switch phase {
-                        case .success(let image):
-                            image.resizable().scaledToFill()
-                        case .empty:
-                            // Loading state — show subtle placeholder
-                            Color(card.color.opacity(0.15))
-                        case .failure:
-                            // Image failed to load — fall back to initials
-                            Text(card.initials)
-                                .font(.system(size: 12, weight: .bold))
-                                .foregroundStyle(.white)
-                        @unknown default:
-                            Text(card.initials)
-                                .font(.system(size: 12, weight: .bold))
-                                .foregroundStyle(.white)
-                        }
-                    }
-                    .frame(width: 36, height: 36)
-                    .background(card.color.opacity(0.2))
-                    .clipShape(Circle())
-                } else {
+    // MARK: - One ladder as a browser row (#10830)
+
+    /// The player, then the ladder. Before the game the ladder is browsed by
+    /// target (``targetRow(_:)``); live and after it, the rung renderer keeps
+    /// every grade it carries (#4959 served verdicts, #4907 live hits). An
+    /// unpriced ladder never draws a price in either (#5137).
+    private func propRow(_ item: PropItem) -> some View {
+        let target = item.group.isPriced && browsesByTarget ? selectedTarget(item) : nil
+        return VStack(alignment: .leading, spacing: 8) {
+            HStack(alignment: .center, spacing: 10) {
+                playerAvatar(item.card, size: 32)
+                VStack(alignment: .leading, spacing: 1) {
+                    Text(item.card.name)
+                        .font(.subheadline.weight(.semibold))
+                        .fixedSize(horizontal: false, vertical: true)
+                    // #4919 — no side label at all when the side is unknown.
+                    Text(rowSubtitle(item, target: target?.rung))
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+                Spacer(minLength: 8)
+                if let target {
+                    Text("\(PlayerPropsPricing.displayPercent(target.rung.probability))%")
+                        .font(.title3.weight(.bold))
+                        .monospacedDigit()
+                }
+            }
+            .accessibilityElement(children: .combine)
+
+            if !item.group.isPriced {
+                unpricedGroupView(item.group, card: item.card)
+            } else if browsesByTarget {
+                targetRow(item, chosen: target?.index)
+            } else {
+                statGroupView(item.group, card: item.card)
+            }
+        }
+        .padding(.vertical, 12)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .overlay(alignment: .bottom) {
+            Rectangle().fill(Color.barTrack.opacity(0.5)).frame(height: 0.5)
+        }
+    }
+
+    /// Crest for a team's own ladder (#6866), headshot for a player, initials
+    /// when there is neither.
+    @ViewBuilder
+    private func playerAvatar(_ card: PlayerCard, size: CGFloat) -> some View {
+        if let crestTeam = card.crestTeam {
+            TeamLogoView(
+                url: crestTeam == homeTeam ? homeLogoURL : awayLogoURL,
+                teamName: crestTeam,
+                color: card.color,
+                size: size,
+                sportKey: sportKey,
+                opponentName: crestTeam == homeTeam ? awayTeam : homeTeam
+            )
+            .accessibilityHidden(true)
+        } else if let url = card.headshotURL {
+            AsyncImage(url: url) { phase in
+                switch phase {
+                case .success(let image):
+                    image.resizable().scaledToFill()
+                case .empty:
+                    // Loading state — show subtle placeholder
+                    Color(card.color.opacity(0.15))
+                case .failure:
+                    // Image failed to load — fall back to initials
                     Text(card.initials)
                         .font(.system(size: 12, weight: .bold))
                         .foregroundStyle(.white)
-                        .frame(width: 36, height: 36)
-                        .background(card.color)
-                        .clipShape(Circle())
-                }
-
-                VStack(alignment: .leading, spacing: 1) {
-                    Text(card.name)
-                        .font(.caption)
-                        .fontWeight(.semibold)
-                        .lineLimit(1)
-                    // #4919 — no label at all when the side is unknown.
-                    if let teamLabel = card.teamLabel {
-                        Text(teamLabel)
-                            .font(.system(size: 10))
-                            .foregroundStyle(.tertiary)
-                    }
-                }
-
-                Spacer()
-            }
-
-            // Stat groups — default to Points, per-card expansion for other stats.
-            // #5137 — over the PRICED ladders only: an unpriced one must not take
-            // the one slot an untapped card has (it did on 52 of 627 measured
-            // cards), and must not be counted in "+N more stats".
-            let priced = card.pricedGroups
-            let isExpanded = expandedCards.contains(card.id)
-            let pointsGroups = priced.filter {
-                $0.type.lowercased().contains("point") || $0.type.lowercased().contains("pts")
-            }
-            let defaultGroups = pointsGroups.isEmpty ? Array(priced.prefix(1)) : pointsGroups
-            let groupsToShow = isExpanded ? priced : defaultGroups
-            let hiddenCount = priced.count - defaultGroups.count
-            if groupsToShow.count == 1 {
-                statGroupView(groupsToShow[0], card: card)
-            } else {
-                let pairs = stride(from: 0, to: groupsToShow.count, by: 2).map { i in
-                    (groupsToShow[i], i + 1 < groupsToShow.count ? groupsToShow[i + 1] : nil)
-                }
-                ForEach(pairs.indices, id: \.self) { idx in
-                    let pair = pairs[idx]
-                    HStack(alignment: .top, spacing: 10) {
-                        statGroupView(pair.0, card: card)
-                            .frame(maxWidth: .infinity, alignment: .leading)
-                        if let second = pair.1 {
-                            statGroupView(second, card: card)
-                                .frame(maxWidth: .infinity, alignment: .leading)
-                        } else {
-                            Spacer().frame(maxWidth: .infinity)
-                        }
-                    }
+                @unknown default:
+                    Text(card.initials)
+                        .font(.system(size: 12, weight: .bold))
+                        .foregroundStyle(.white)
                 }
             }
-            // Per-card expansion link
-            if hiddenCount > 0 {
-                Button {
-                    withAnimation(.easeInOut(duration: 0.15)) {
-                        if isExpanded {
-                            expandedCards.remove(card.id)
-                        } else {
-                            expandedCards.insert(card.id)
-                        }
-                    }
-                } label: {
-                    Text(isExpanded ? "Show less" : "+\(hiddenCount) more stat\(hiddenCount == 1 ? "" : "s")")
-                        .font(.system(size: 11, weight: .medium))
-                        .foregroundStyle(.blue)
-                }
-                .buttonStyle(.plain)
-            }
-            // #5137 — the ladders with no price: present and openable, costing no
-            // real estate closed (D102), and never drawn as probabilities.
-            unpricedSection(card)
+            .frame(width: size, height: size)
+            .background(card.color.opacity(0.2))
+            .clipShape(Circle())
+            .accessibilityHidden(true)
+        } else {
+            Text(card.initials)
+                .font(.system(size: 12, weight: .bold))
+                .foregroundStyle(.white)
+                .frame(width: size, height: size)
+                .background(card.color)
+                .clipShape(Circle())
+                .accessibilityHidden(true)
         }
-        .padding(10)
-        .background(
-            RoundedRectangle(cornerRadius: 10)
-                .fill(Color.secondary.opacity(0.04))
+    }
+
+    /// The rung a pre-game ladder shows: the reader's pick while it is still a
+    /// priced rung, otherwise the priced rung nearest even odds. nil when no
+    /// rung carries a price — then nothing is selected and no number printed.
+    private func selectedTarget(_ item: PropItem) -> (index: Int, rung: Rung)? {
+        let rungs = item.group.rungs
+        let fallback = PlayerPropsFamily.defaultTarget(
+            probabilities: rungs.map { $0.priced ? $0.probability : nil }
         )
-        .overlay(
-            RoundedRectangle(cornerRadius: 10)
-                .strokeBorder(Color.secondary.opacity(0.08), lineWidth: 1)
-        )
+        let chosen = selectedTargets[item.group.id].flatMap { threshold in
+            rungs.firstIndex { $0.threshold == threshold && $0.priced }
+        } ?? fallback
+        return chosen.map { ($0, rungs[$0]) }
+    }
+
+    /// "Touchdowns · 1+ · Home" — the stat, the chosen line (pre-game only)
+    /// and the side when it is known (#4919).
+    private func rowSubtitle(_ item: PropItem, target: Rung?) -> String {
+        var parts = [item.statLabel]
+        if let target { parts.append(PlayerPropsFamily.targetLabel(target.threshold)) }
+        if let side = item.card.teamLabel { parts.append(side) }
+        return parts.joined(separator: " · ")
+    }
+
+    /// A pre-game ladder browsed by TARGET: one chip per quoted line, each
+    /// filled to its own price; the chosen line's chance sits in the row's
+    /// header. Every number is a quoted rung's; an unpriced rung's chip carries
+    /// no fill and is never the one selected.
+    private func targetRow(_ item: PropItem, chosen: Int?) -> some View {
+        let rungs = item.group.rungs
+        let selected = chosen.map { rungs[$0] }
+
+        return VStack(alignment: .leading, spacing: 8) {
+            if rungs.count > 1 {
+                ScrollView(.horizontal, showsIndicators: false) {
+                    HStack(spacing: 6) {
+                        ForEach(Array(rungs.enumerated()), id: \.offset) { index, rung in
+                            targetChip(rung, isSelected: index == chosen, item: item)
+                        }
+                    }
+                    .padding(.vertical, 1)
+                }
+                .accessibilityLabel("\(item.statLabel) targets")
+            } else if let selected {
+                GeometryReader { geo in
+                    Capsule()
+                        .fill(Color.secondary.opacity(0.08))
+                        .overlay(alignment: .leading) {
+                            Capsule()
+                                .fill(item.card.color.opacity(0.45))
+                                .frame(width: max(4, geo.size.width * selected.probability))
+                        }
+                }
+                .frame(height: 8)
+                .accessibilityHidden(true)
+            }
+        }
+    }
+
+    private func targetChip(_ rung: Rung, isSelected: Bool, item: PropItem) -> some View {
+        let label = PlayerPropsFamily.targetLabel(rung.threshold)
+        let percent = PlayerPropsPricing.displayPercent(rung.probability)
+        return Button {
+            guard rung.priced else { return }
+            selectedTargets[item.group.id] = rung.threshold
+        } label: {
+            Text(label)
+                .font(.subheadline.weight(isSelected ? .bold : .regular))
+                .monospacedDigit()
+                .foregroundStyle(isSelected ? Color.primary : Color.secondary)
+                .padding(.horizontal, 10)
+                .frame(minWidth: 52, minHeight: 44)
+                .background(alignment: .bottom) {
+                    if rung.priced {
+                        GeometryReader { geo in
+                            VStack(spacing: 0) {
+                                Spacer(minLength: 0)
+                                Rectangle()
+                                    .fill(item.card.color.opacity(0.18))
+                                    .frame(height: geo.size.height * min(max(rung.probability, 0), 1))
+                            }
+                        }
+                    }
+                }
+                .clipShape(RoundedRectangle(cornerRadius: 8))
+                .overlay(
+                    RoundedRectangle(cornerRadius: 8)
+                        .stroke(isSelected ? item.card.color : Color.barTrack,
+                                lineWidth: isSelected ? 1.5 : 0.5)
+                )
+        }
+        .buttonStyle(.plain)
+        .disabled(!rung.priced)
+        .accessibilityLabel(rung.priced
+            ? "\(label) \(item.statLabel), \(percent)%"
+            : "\(label) \(item.statLabel), not priced")
+        .accessibilityAddTraits(isSelected ? .isSelected : [])
     }
 
     /// #5113 — the stat name, with any prefix the reader can already see
@@ -595,45 +707,6 @@ struct PlayerPropsCardView: View {
     }
 
     // MARK: - Unpriced ladders (#5137)
-
-    /// The card's flat ladders, behind one collapsed line.
-    ///
-    /// Closed it is a single 11pt link, and a card with no flat ladder at all —
-    /// 519 of the 627 measured — never draws it. Open, each ladder
-    /// states the two things about it that are true: what the stat finished on,
-    /// and which rungs hit. The bar and the percentage are the parts that were
-    /// never a price, and they are the parts that do not come back.
-    @ViewBuilder
-    private func unpricedSection(_ card: PlayerCard) -> some View {
-        let groups = card.unpricedGroups
-        if !groups.isEmpty {
-            let isOpen = unpricedStartOpen || unpricedExpandedCards.contains(card.id)
-            Button {
-                withAnimation(.easeInOut(duration: 0.15)) {
-                    if isOpen {
-                        unpricedExpandedCards.remove(card.id)
-                    } else {
-                        unpricedExpandedCards.insert(card.id)
-                    }
-                }
-            } label: {
-                HStack(spacing: 3) {
-                    Image(systemName: isOpen ? "chevron.down" : "chevron.right")
-                        .font(.system(size: 8, weight: .semibold))
-                    Text("Unpriced prop\(groups.count == 1 ? "" : "s") (\(groups.count))")
-                        .font(.system(size: 11, weight: .medium))
-                }
-                .foregroundStyle(.secondary)
-            }
-            .buttonStyle(.plain)
-
-            if isOpen {
-                ForEach(groups) { group in
-                    unpricedGroupView(group, card: card)
-                }
-            }
-        }
-    }
 
     /// One unpriced ladder: its name, what the stat finished on, and the rungs
     /// that were graded.

@@ -131,47 +131,65 @@ struct ChampionshipPathView: View {
                     .font(.headline)
                     .fontWeight(.semibold)
 
-                let cardCount = (away == nil ? 0 : 1) + (home == nil ? 0 : 1)
-                let contentWidth = ChampionshipRowLayout.teamCardContentWidth(
-                    totalWidth: cardsWidth, cardCount: cardCount)
-
-                // One column for both cards, and one shape, so every bar on the
-                // screen has the same track and the reader can compare them
-                // (#3574/#3580). Since #4328 the column is the larger of what
-                // shipped and what this reader's text size actually needs.
-                let columns = ChampionshipRowLayout.columns(
-                    measured: measuredColumns,
-                    for: (away.map { filteredStages(for: $0) } ?? [])
-                        + (home.map { filteredStages(for: $0) } ?? []))
-                let shape = ChampionshipRowLayout.shape(
-                    contentWidth: contentWidth, columns: columns)
-
-                HStack(alignment: .top, spacing: ChampionshipRowLayout.cardSpacing) {
-                    if let away {
-                        teamCard(team: away, stages: filteredStages(for: away),
-                                 color: awayTeamColor, columns: columns, shape: shape)
-                    }
-                    if let home {
-                        teamCard(team: home, stages: filteredStages(for: home),
-                                 color: homeTeamColor, columns: columns, shape: shape)
-                    }
-                }
-                .background(
-                    GeometryReader { geo in
-                        Color.clear.preference(
-                            key: ChampionshipCardsWidthKey.self, value: geo.size.width)
-                    }
-                )
-                .onPreferenceChange(ChampionshipCardsWidthKey.self) { width in
-                    cardsWidth = width
-                }
-                .onPreferenceChange(ChampionshipColumnsKey.self) { columns in
-                    measuredColumns = columns
+                // #10830 — two teams read as ONE aligned table, a row per stage
+                // (web's `SeasonComparison`, #10809). The cells are this view's
+                // own badges and display rule; one team keeps its card below.
+                if let away, let home {
+                    SeasonComparisonView(
+                        away: away, home: home,
+                        awayStages: filteredStages(for: away),
+                        homeStages: filteredStages(for: home),
+                        awayColor: awayTeamColor, homeColor: homeTeamColor
+                    )
+                } else {
+                    teamCards(away: away, home: home)
                 }
             }
             .padding()
             .background(Color.cardBackground)
             .clipShape(RoundedRectangle(cornerRadius: 16))
+        }
+    }
+
+    /// The per-team card layout, for a page that has only one of the two.
+    @ViewBuilder
+    private func teamCards(away: TeamProgressionData?, home: TeamProgressionData?) -> some View {
+        let cardCount = (away == nil ? 0 : 1) + (home == nil ? 0 : 1)
+        let contentWidth = ChampionshipRowLayout.teamCardContentWidth(
+            totalWidth: cardsWidth, cardCount: cardCount)
+
+        // One column for both cards, and one shape, so every bar on the
+        // screen has the same track and the reader can compare them
+        // (#3574/#3580). Since #4328 the column is the larger of what
+        // shipped and what this reader's text size actually needs.
+        let columns = ChampionshipRowLayout.columns(
+            measured: measuredColumns,
+            for: (away.map { filteredStages(for: $0) } ?? [])
+                + (home.map { filteredStages(for: $0) } ?? []))
+        let shape = ChampionshipRowLayout.shape(
+            contentWidth: contentWidth, columns: columns)
+
+        HStack(alignment: .top, spacing: ChampionshipRowLayout.cardSpacing) {
+            if let away {
+                teamCard(team: away, stages: filteredStages(for: away),
+                         color: awayTeamColor, columns: columns, shape: shape)
+            }
+            if let home {
+                teamCard(team: home, stages: filteredStages(for: home),
+                         color: homeTeamColor, columns: columns, shape: shape)
+            }
+        }
+        .background(
+            GeometryReader { geo in
+                Color.clear.preference(
+                    key: ChampionshipCardsWidthKey.self, value: geo.size.width)
+            }
+        )
+        .onPreferenceChange(ChampionshipCardsWidthKey.self) { width in
+            cardsWidth = width
+        }
+        .onPreferenceChange(ChampionshipColumnsKey.self) { columns in
+            measuredColumns = columns
         }
     }
 

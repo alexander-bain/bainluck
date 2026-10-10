@@ -167,80 +167,100 @@ final class NativeScoringRaceOverflowIsReachable5133Tests: XCTestCase {
         XCTAssertEqual(cat.items.map(\.name).firstIndex(of: Self.race7), 9)
     }
 
-    // MARK: - The defect, and the repair
+    // MARK: - The repair, as the browser keeps it (#10830)
+    //
+    // CERT-2620's repair was a per-category "Show N more". #10830 replaced the
+    // category cap with the event page's market browser: every card is a row,
+    // a family shows a bounded window that grows a page at a time, and a search
+    // crosses families. These tests hold the same promise — every race is
+    // reachable — against the seam the body now browses (`browseRows`) and the
+    // browser's own rule (`MarketBrowserLogic`).
 
-    /// THE BLOCK, held as a test. Card 10 of 11 is past a cap of 5.
-    func testRaceTo7IsPastTheFiveCardCategoryCap() throws {
-        let cat = try otherMarketsCategory(wire)
-
-        let collapsed = SpecialEventMarketsView.displayedItems(cat.items, expanded: false)
-
-        XCTAssertEqual(collapsed.count, SpecialEventMarketsView.itemDisplayCap)
-        XCTAssertFalse(collapsed.map(\.name).contains(Self.race7))
+    private func browse(_ rows: [GameMarketOther]) -> [SpecialEventMarketsView.BrowseRow] {
+        let view = SpecialEventMarketsView(markets: rows, eventStatus: nil, commenceTime: nil)
+        return SpecialEventMarketsView.browseRows(view.categories)
     }
 
-    /// THE REPAIR. The named guard: the measured card is actually displayable.
-    func testRaceTo7IsReachablePastFiveCardCategoryCap() throws {
-        let cat = try otherMarketsCategory(wire)
+    /// The indices a reader sees after tapping `family`, with `query` typed,
+    /// before any "Show more".
+    private func firstWindow(
+        _ rows: [SpecialEventMarketsView.BrowseRow], family: String?, query: String = ""
+    ) -> [String] {
+        MarketBrowserLogic.matchingIndices(
+            groupNames: rows.map(\.family),
+            searchTexts: rows.map(SpecialEventMarketsView.searchText),
+            query: query,
+            selected: family
+        )
+        .prefix(MarketBrowserLogic.pageSize)
+        .map { rows[$0].item.name }
+    }
 
-        let expanded = SpecialEventMarketsView.displayedItems(cat.items, expanded: true)
+    /// Nothing is capped away: every card of every category is a browser row.
+    func testEveryCardOfEveryCategoryIsABrowseRow() throws {
+        let view = SpecialEventMarketsView(markets: wire, eventStatus: nil, commenceTime: nil)
+        let rows = SpecialEventMarketsView.browseRows(view.categories)
+
+        XCTAssertEqual(rows.count, view.categories.reduce(0) { $0 + $1.items.count })
+        XCTAssertEqual(rows.first { $0.item.name == Self.race7 }?.family, Self.otherMarkets)
+    }
+
+    /// THE NAMED GUARD: the measured card is on screen once its family is
+    /// chosen — card 10 of 11 sits inside the first window of 12.
+    func testRaceTo7IsReachablePastFiveCardCategoryCap() throws {
+        let window = firstWindow(browse(wire), family: Self.otherMarkets)
 
         XCTAssertTrue(
-            expanded.map(\.name).contains(Self.race7),
+            window.contains(Self.race7),
             "the market #5133 exists to surface is still unreachable on native"
         )
-        XCTAssertEqual(expanded.count, cat.items.count, "expanding must reveal ALL of them")
     }
 
-    /// And it was never only the two-row race: the cap fell between card 5 and
-    /// card 6, so every one of the six families was hidden. A repair that
-    /// rescued `Race to 7` alone — by raising the cap to 10, say — would pass
-    /// the test above and still lose `Race to 35`.
-    func testAllSixRacesWereHiddenAndAllSixComeBack() throws {
-        let cat = try otherMarketsCategory(wire)
-        let races = cat.items.map(\.name).filter {
-            SpecialEventMarketsView.isScoringRaceMarket($0)
-        }
+    /// And by search from wherever the reader is: the field ignores families.
+    func testASearchFindsRaceTo7FromTheFirstFamily() throws {
+        let rows = browse(wire)
+        let found = firstWindow(rows, family: rows.first?.family, query: "race to 7")
+
+        XCTAssertEqual(found, [Self.race7])
+    }
+
+    /// Every one of the six families, not just the two-row race: the old cap
+    /// hid all six, and a repair that rescued one would still lose the rest.
+    func testAllSixRacesAreReachable() throws {
+        let rows = browse(wire)
+        let races = rows.map(\.item.name).filter { SpecialEventMarketsView.isScoringRaceMarket($0) }
         XCTAssertEqual(races.count, 6)
 
-        let collapsed = Set(SpecialEventMarketsView.displayedItems(cat.items, expanded: false).map(\.name))
-        let expanded = Set(SpecialEventMarketsView.displayedItems(cat.items, expanded: true).map(\.name))
-
+        let window = Set(firstWindow(rows, family: Self.otherMarkets))
         for race in races {
-            XCTAssertFalse(collapsed.contains(race), "\(race) was visible before the repair?")
-            XCTAssertTrue(expanded.contains(race), "\(race) is still unreachable")
+            XCTAssertTrue(window.contains(race), "\(race) is still unreachable")
         }
     }
 
-    // MARK: - The cap still does its job
+    // MARK: - The window still does its job
 
-    /// The other direction, and the reason this is a disclosure and not a
-    /// deletion: closed, the category is still five cards. A repair that just
-    /// removed the cap would pass every test above and hand a reader eleven
-    /// stacked cards in a section called "Additional Markets".
-    func testTheCategoryIsStillFiveCardsWhenClosed() throws {
-        let cat = try otherMarketsCategory(wire)
+    /// The other direction: a long family is bounded, never eleven-plus stacked
+    /// cards at once, and "Show more" walks it to the end a page at a time.
+    func testALongFamilyIsWindowedAndWalksToTheEnd() {
+        let long = (1...30).map { row("Market \($0)", "Yes", 0.4) }
+        let rows = browse(long)
+        XCTAssertEqual(rows.count, 30)
+        XCTAssertEqual(firstWindow(rows, family: Self.otherMarkets).count, MarketBrowserLogic.pageSize)
 
-        XCTAssertEqual(SpecialEventMarketsView.displayedItems(cat.items, expanded: false).count, 5)
-    }
-
-    /// A category that fits shows everything either way, and grows no control.
-    func testACategoryUnderTheCapIsUnaffected() {
-        let short = (1...3).map { row("Market \($0)", "Yes", 0.4) }
-        let view = SpecialEventMarketsView(markets: short, eventStatus: nil, commenceTime: nil)
-        let cat = view.categories.first { $0.title == Self.otherMarkets }
-
-        let items = try? XCTUnwrap(cat).items
-        XCTAssertEqual(items?.count, 3)
-        XCTAssertEqual(SpecialEventMarketsView.displayedItems(items ?? [], expanded: false).count, 3)
-        XCTAssertEqual(SpecialEventMarketsView.displayedItems(items ?? [], expanded: true).count, 3)
+        var limit = MarketBrowserLogic.pageSize
+        var steps = 0
+        while limit < rows.count {
+            limit = MarketBrowserLogic.nextLimit(current: limit, matchCount: rows.count)
+            steps += 1
+        }
+        XCTAssertGreaterThanOrEqual(limit, rows.count)
+        XCTAssertEqual(steps, 2, "30 rows in pages of 12 is three windows")
     }
 
     // MARK: - The two halves of #5133 compose
 
     /// CERT-2617's half and CERT-2620's half in one call, on the morning's LIVE
-    /// prices: the two-row race must clear hero suppression AND clear the cap.
-    /// Either one alone leaves the reader with nothing.
+    /// prices: the two-row race must clear hero suppression AND be browsable.
     func testTheExemptionAndTheDisclosureComposeOnTheLiveSpecimen() throws {
         let live = wire.map { r -> GameMarketOther in
             guard r.marketName == Self.race7 else { return r }
@@ -250,14 +270,13 @@ final class NativeScoringRaceOverflowIsReachable5133Tests: XCTestCase {
 
         let cat = try otherMarketsCategory(live)
         XCTAssertTrue(cat.items.map(\.name).contains(Self.race7), "hero suppression took it again")
-
-        let expanded = SpecialEventMarketsView.displayedItems(cat.items, expanded: true)
-        XCTAssertTrue(expanded.map(\.name).contains(Self.race7), "the cap took it instead")
+        XCTAssertTrue(firstWindow(browse(live), family: Self.otherMarkets).contains(Self.race7),
+                      "the browser window took it instead")
 
         // …and the hero's own question is still not in this section.
         XCTAssertFalse(
             cat.items.map(\.name).contains("New Orleans vs Detroit Winner"),
-            "the match winner leaked into Additional Markets"
+            "the match winner leaked into the game questions"
         )
     }
 }

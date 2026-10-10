@@ -388,109 +388,90 @@ struct SpecialEventMarketsView: View {
         )
     }
 
-    /// How many cards a category shows before it collapses the rest.
+    /// One card of the browser: the card and the family it is filed under.
     ///
-    /// CERT-2620 measured what this cap actually costs: production event
-    /// 14780145 yields ELEVEN `Other Markets` cards, and `Race to 7 Points` —
-    /// the exact market #5133 exists to make visible — is card NINE. Moving it
-    /// out of the hero and into this section put it behind the cap instead, so
-    /// the reader gained nothing.
-    static let itemDisplayCap = 5
-
-    /// The cards a category actually renders.
-    ///
-    /// Split out of `body` because a SwiftUI view's body cannot be asserted on:
-    /// "the ninth card is reachable" is a claim about THIS function, so this is
-    /// where the guard can hold it. `body`'s use of it is pinned by the source
-    /// scan in `frontend/__tests__/ios/aScoringRaceStaysVisible5133.test.ts`.
-    static func displayedItems(_ items: [MarketItem], expanded: Bool) -> [MarketItem] {
-        expanded ? items : Array(items.prefix(itemDisplayCap))
+    /// #10830 — replaces CERT-2620's per-category cap of five. That cap's
+    /// lesson stands — production event 14780145 files `Race to 7 Points`
+    /// (#5133) as the NINTH `Other Markets` card — and is now kept by the
+    /// browser rather than by a per-category "Show N more": every card is a
+    /// row, the window grows a page at a time, and a search crosses families.
+    struct BrowseRow: Identifiable {
+        var id: String { item.id }
+        let family: String
+        let item: MarketItem
     }
 
-    /// Which categories the reader has opened. Empty is the D102 shape: the
-    /// overflow takes no real estate closed, and one tap opens it.
-    @State private var expandedCategories: Set<String> = []
+    /// Every card of every category, in category order — nothing capped and
+    /// nothing dropped. Internal so the reachability guard can hold the REAL
+    /// list the body browses (`NativeScoringRaceOverflowIsReachable5133Tests`).
+    static func browseRows(_ categories: [MarketCategory]) -> [BrowseRow] {
+        categories.flatMap { category in
+            category.items.map { BrowseRow(family: category.title, item: $0) }
+        }
+    }
+
+    /// How many outcomes a card shows before "Show all N". The order is
+    /// `sortedOutcomes`' (a graded winner, then prices high to low, then the
+    /// unpriced), so the cap keeps the answer and the likeliest rows on screen.
+    static let outcomeDisplayCap = 5
+
+    /// The outcomes a card draws: all of them once opened, otherwise the first
+    /// ``outcomeDisplayCap``. Never drops a row — the rest are one tap away.
+    static func displayedOutcomes(_ sorted: [OutcomeEntry], expanded: Bool) -> [OutcomeEntry] {
+        expanded ? sorted : Array(sorted.prefix(outcomeDisplayCap))
+    }
+
+    /// The cards whose reader opened every outcome, by card id.
+    @State private var openCards: Set<String> = []
+
+    /// What a search over one card reads: its family, its question and every
+    /// outcome's name, so "touchdown" finds the card and "Jeanty" finds the leg.
+    static func searchText(_ row: BrowseRow) -> String {
+        ([row.family, row.item.name] + row.item.outcomes.map(\.label)).joined(separator: " ")
+    }
 
     var body: some View {
         let cats = categories
         if cats.isEmpty { EmptyView() }
         else {
-            let totalItems = cats.reduce(0) { $0 + $1.items.count }
+            let rows = Self.browseRows(cats)
             VStack(alignment: .leading, spacing: 12) {
                 VStack(alignment: .leading, spacing: 2) {
-                    Text("Additional Markets")
-                        .font(.subheadline)
-                        .fontWeight(.semibold)
+                    Text("More game questions")
+                        .font(.headline)
                     // #3550 — "1 markets grouped by category" is what every US
                     // Open page printed, because a tennis event's props all
                     // arrive under one market name. The count is right; the
                     // noun was not agreeing with it.
-                    let noun = totalItems == 1 ? "market" : "markets"
+                    let noun = rows.count == 1 ? "question" : "questions"
                     Text(
                         isGameFinished
-                            ? "\(totalItems) \(noun) grouped by category · \(SettledQuote.sectionNote)"
-                            : "\(totalItems) \(noun) grouped by category"
+                            ? "\(rows.count) \(noun) · \(SettledQuote.sectionNote)"
+                            : "\(rows.count) \(noun)"
                     )
                     .font(.caption)
                     .foregroundStyle(.secondary)
                 }
 
-                let columns = [GridItem(.flexible())]
-                LazyVGrid(columns: columns, spacing: 12) {
-                    ForEach(cats) { cat in
-                        VStack(alignment: .leading, spacing: 8) {
-                            VStack(alignment: .leading, spacing: 1) {
-                                Text(cat.title)
-                                    .font(.caption)
-                                    .fontWeight(.semibold)
-                                Text(cat.subtitle)
-                                    .font(.system(size: 10))
-                                    .foregroundStyle(.tertiary)
-                            }
-
-                            let isExpanded = expandedCategories.contains(cat.id)
-                            ForEach(Self.displayedItems(cat.items, expanded: isExpanded)) { item in
-                                propMiniCard(item)
-                            }
-                            // CERT-2620 — this was `Text("+N more")`, which is
-                            // inert: the cards past the cap could not be reached
-                            // at all, so a market moved into this section from
-                            // somewhere worse was still invisible to a reader.
-                            if cat.items.count > Self.itemDisplayCap {
-                                Button {
-                                    if isExpanded { expandedCategories.remove(cat.id) }
-                                    else { expandedCategories.insert(cat.id) }
-                                } label: {
-                                    Text(
-                                        isExpanded
-                                            ? "Show less"
-                                            : "Show \(cat.items.count - Self.itemDisplayCap) more"
-                                    )
-                                    .font(.system(size: 11))
-                                    .fontWeight(.medium)
-                                    .foregroundStyle(Color.accentColor)
-                                    .frame(maxWidth: .infinity)
-                                    .padding(.vertical, 6)
-                                    .contentShape(Rectangle())
-                                }
-                                .buttonStyle(.plain)
-                                .accessibilityLabel(
-                                    isExpanded
-                                        ? "Show fewer \(cat.title)"
-                                        : "Show \(cat.items.count - Self.itemDisplayCap) more \(cat.title)"
-                                )
-                            }
-                        }
-                        .padding(12)
-                        .background(Color.cardBackground)
-                        .clipShape(RoundedRectangle(cornerRadius: 12))
-                        .overlay(
-                            RoundedRectangle(cornerRadius: 12)
-                                .stroke(Color.barTrack, lineWidth: 0.5)
-                        )
-                    }
+                // #10830 — the native twin of web's compact
+                // `SpecialEventMarkets` (#10809): family pills, a search across
+                // every family, and a bounded window. Each card is still drawn
+                // by `propMiniCard`, so every row keeps its verdict, frozen-quote
+                // and no-price treatment.
+                MarketBrowserView(
+                    label: "Game questions",
+                    items: rows,
+                    group: \.family,
+                    searchText: Self.searchText,
+                    searchPrompt: "questions"
+                ) { row in
+                    propMiniCard(row.item)
+                        .padding(.vertical, 4)
                 }
             }
+            .padding(12)
+            .background(Color.cardBackground)
+            .clipShape(RoundedRectangle(cornerRadius: 16))
         }
     }
 
@@ -605,8 +586,24 @@ struct SpecialEventMarketsView: View {
                         .foregroundStyle(.blue)
                 }
             }
-            ForEach(sorted.indices, id: \.self) { i in
-                outcomeRow(sorted[i], rank: i, under: item.name, showAge: age.showRowAges)
+            let isOpen = openCards.contains(item.id)
+            let shown = Self.displayedOutcomes(sorted, expanded: isOpen)
+            ForEach(shown.indices, id: \.self) { i in
+                outcomeRow(shown[i], rank: i, under: item.name, showAge: age.showRowAges)
+            }
+            if sorted.count > Self.outcomeDisplayCap {
+                Button {
+                    withAnimation(.easeInOut(duration: 0.15)) {
+                        if isOpen { openCards.remove(item.id) } else { openCards.insert(item.id) }
+                    }
+                } label: {
+                    Text(isOpen ? "Show fewer" : "Show all \(sorted.count)")
+                        .font(.footnote.weight(.semibold))
+                        .frame(minHeight: 44, alignment: .leading)
+                        .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+                .accessibilityHint(isOpen ? "Shows the likeliest outcomes" : "Shows every outcome of \(item.name)")
             }
         }
         .padding(8)

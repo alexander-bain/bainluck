@@ -52,8 +52,8 @@ final class MarketMapColumnHeaders5656Tests: XCTestCase {
         // Control strings: things that are certainly in this file. If the read
         // ever silently returns the wrong file, these go first.
         XCTAssertTrue(source.contains("struct MarketMapView"), "scan did not find MarketMapView's own declaration")
-        XCTAssertTrue(source.contains("fullMarginMap"), "scan did not find a control symbol")
-        XCTAssertTrue(source.contains("halfTotalMaps"), "scan did not find a control symbol")
+        XCTAssertTrue(source.contains("marginMapCard"), "scan did not find a control symbol")
+        XCTAssertTrue(source.contains("halfTotalCard"), "scan did not find a control symbol")
     }
 
     // MARK: - The defect
@@ -91,34 +91,30 @@ final class MarketMapColumnHeaders5656Tests: XCTestCase {
     /// Each column is one definition, rendered by both branches. This is what
     /// stops the iPad growing a label the iPhone lacks — the mechanism behind
     /// #5656, as opposed to its two symptoms.
-    func testEachColumnHasExactlyOneDefinitionSharedByBothBranches() throws {
+    // #10830 — the two branches are now ONE: the maps are a single browsable
+    // list on every size class, which is #5656's finding (the wide layout is a
+    // second layout nobody walks) taken to its end. So the structural guard is
+    // that no size-class branch exists to drift, and that the one list routes
+    // every kind of card.
+    func testThereIsOneLayoutForEverySizeClass() throws {
         let source = try marketMapSource()
-        for column in ["marginCards", "totalCards"] {
-            XCTAssertEqual(
-                occurrences(of: "private var \(column)", in: source), 1,
-                "\(column) must be declared exactly once"
-            )
-            // Once in the wide branch, once in the narrow branch.
-            XCTAssertEqual(
-                occurrences(of: column, in: source) - 1, 2,
-                "\(column) must be rendered by BOTH layout branches, so neither can drift"
-            )
-        }
+        XCTAssertFalse(source.contains("horizontalSizeClass"),
+                       "a size-class read is back — that is a second layout to drift")
+        XCTAssertFalse(source.contains("useColumns"), "the column branch is back")
+        XCTAssertEqual(occurrences(of: "private var mapEntries", in: source), 1,
+                       "the map list must be declared exactly once")
+        XCTAssertEqual(occurrences(of: "items: mapEntries", in: source), 1,
+                       "the map list must be what the one layout browses")
     }
 
-    /// The cards themselves must not have been dropped along with the headers —
-    /// a "fix" that removed the maps would also pass the assertions above.
-    ///
-    /// Counted, not merely `contains`: every one of these is DECLARED in this
-    /// file, so a presence check passes even when nothing renders it. Two is a
-    /// declaration plus at least one render site; one is an orphan.
     func testTheCardsThemselvesSurvive() throws {
         let source = try marketMapSource()
-        for card in ["fullMarginMap", "halfMarginMaps", "fullTotalMap", "halfTotalMaps"] {
-            XCTAssertGreaterThanOrEqual(
-                occurrences(of: card, in: source), 2,
-                "\(card) is declared but never rendered — the card was dropped, not just its header"
-            )
+        let router = try XCTUnwrap(source.range(of: "private func mapEntryCard("),
+                                   "the card router is gone")
+        let body = String(source[router.upperBound...].prefix(800))
+        for card in ["marginMapCard", "halfMarginCard(", "totalMapCard", "halfTotalCard("] {
+            XCTAssertTrue(body.contains(card),
+                          "\(card) is no longer routed — the card was dropped, not just its header")
         }
     }
 

@@ -77,7 +77,13 @@ struct MarketMapView: View {
     /// a surface that renders a map without a history is unchanged.
     var halfScores: HalfScores.Pair = .none
 
-    @Environment(\.horizontalSizeClass) private var sizeClass
+    /// #10830 — the maps whose reader opened every line of the ladder, by
+    /// card title. Closed is the default: the card draws the lines the game is
+    /// poised on (or the result decided) and one tap reaches the rest.
+    @State private var expandedLadders: Set<String> = []
+    /// `-launch_expand_sections` (LaunchRig) starts every ladder open for the
+    /// camera, which cannot tap "All N lines". Off for every reader.
+    private static let rigOpensLadders = LaunchRig.expandsCollapsedSections()
 
     /// The ring drawn around every marker dot on a density rail.
     ///
@@ -253,72 +259,89 @@ struct MarketMapView: View {
     // card in #3503 had a row and drew nothing from it. `showsAnyTotalMap` is
     // the question the layout actually needs, so the weaker one is gone rather
     // than left beside it for someone to reach for.
-    private var useColumns: Bool {
-        #if os(macOS)
-        return true
-        #else
-        return sizeClass == .regular
-        #endif
-    }
 
     var body: some View {
         if !showsAnyMap { EmptyView() }
-        else if useColumns {
+        else {
+            // #10830 — ONE map on screen, chosen from a row of tabs, on every
+            // size class (#5656: the wide layout is not a second layout). The
+            // native twin of web's compact `MarketMapSection` (#10809): the
+            // cards themselves are unchanged and carry every rule they did; the
+            // browser only decides which one is drawn.
             VStack(alignment: .leading, spacing: 8) {
-                HStack(alignment: .top, spacing: 12) {
-                    if showsAnyMarginMap {
-                        VStack(alignment: .leading, spacing: 6) { marginCards }
-                            .frame(maxWidth: .infinity)
-                    }
-                    if showsAnyTotalMap {
-                        VStack(alignment: .leading, spacing: 6) { totalCards }
-                            .frame(maxWidth: .infinity)
-                    }
+                MarketBrowserView(
+                    label: "Game maps",
+                    items: mapEntries,
+                    group: \.title,
+                    searchText: \.title,
+                    searchable: false
+                ) { entry in
+                    mapEntryCard(entry)
                 }
-                unitMismatchFootnote
-            }
-        } else {
-            VStack(spacing: 12) {
-                if showsAnyMarginMap { marginCards }
-                if showsAnyTotalMap { totalCards }
                 unitMismatchFootnote
             }
         }
     }
 
-    // MARK: - What each column says, said once (#5656)
+    // MARK: - The maps as one browsable list (#10830)
 
-    /// The margin cards and the totals cards, ONE definition each, rendered by
-    /// both the wide and the narrow branch.
-    ///
-    /// #5656. The wide branch used to open each column with a heavy 11-point
-    /// `MARGIN MAPS` / `TOTAL MAPS`, and the narrow branch rendered the same two
-    /// cards with no headers at all. So the iPhone had never shown those words
-    /// and the iPad always had — photographed on ŠK Slovan Bratislava @ Paris
-    /// Saint-Germain, a Champions League tie, printing `TOTAL MAPS` over a
-    /// football match ("map" is a Counter-Strike round; on a football match it
-    /// names nothing a reader has, directly above a card already titled "Goals
-    /// map"). Standing notice 34 bars jargon on a reader's screen and notice 35
-    /// bars a page from getting a bespoke label because it is wider, so the
-    /// headers are gone rather than reworded: a label the phone does not need is
-    /// not one the iPad needs either, and the cards title themselves.
-    ///
-    /// They are shared definitions rather than two copies because the headers
-    /// are not really the finding — the finding is that **the wide layout is a
-    /// second layout nobody walks**, free to drift from the narrow one. With one
-    /// definition per column a label cannot be added to the iPad alone; it
-    /// appears on both or neither, which is what notice 35 asks for and what a
-    /// comment asking nicely would not have got.
-    @ViewBuilder
-    private var marginCards: some View {
-        fullMarginMap
-        halfMarginMaps
+    /// One drawable map. Built from the SAME selectors the cards and the
+    /// empty-chrome gates read, so a tab exists exactly when its card draws.
+    struct MapEntry: Identifiable {
+        enum Kind {
+            case fullMargin
+            case halfMargin(label: String, half: GameHalf, outcomes: [GameMarketOutcome])
+            case fullTotal
+            case halfTotal(label: String, half: GameHalf, outcomes: [GameMarketOutcome])
+        }
+        let id: String
+        let title: String
+        let kind: Kind
+    }
+
+    /// Margin maps first, then totals — the order the narrow layout always
+    /// stacked them in, so the first tab is the card the phone opened on.
+    private var mapEntries: [MapEntry] {
+        var entries: [MapEntry] = []
+        if hasSpreads && !marginMapIsEmptyChrome {
+            entries.append(MapEntry(
+                id: "full-margin",
+                title: vocab.marginTitle(quotedBy: fullMarginData.unit),
+                kind: .fullMargin
+            ))
+        }
+        if hasSpreads {
+            entries += halfMarginGroups.map {
+                MapEntry(id: "margin-\($0.id)", title: $0.id,
+                         kind: .halfMargin(label: $0.id, half: $0.half, outcomes: $0.outcomes))
+            }
+        }
+        if !totalMapIsEmptyChrome {
+            entries.append(MapEntry(
+                id: "full-total",
+                title: vocab.totalTitle(quotedBy: fullGameTotals.map(\.marketName)),
+                kind: .fullTotal
+            ))
+        }
+        entries += halfTotalGroups.map {
+            MapEntry(id: "total-\($0.id)", title: $0.id,
+                     kind: .halfTotal(label: $0.id, half: $0.half, outcomes: $0.outcomes))
+        }
+        return entries
     }
 
     @ViewBuilder
-    private var totalCards: some View {
-        fullTotalMap
-        halfTotalMaps
+    private func mapEntryCard(_ entry: MapEntry) -> some View {
+        switch entry.kind {
+        case .fullMargin:
+            marginMapCard
+        case let .halfMargin(label, half, outcomes):
+            halfMarginCard(outcomes: outcomes, label: label, half: half)
+        case .fullTotal:
+            totalMapCard
+        case let .halfTotal(label, half, outcomes):
+            halfTotalCard(outcomes: outcomes, label: label, half: half)
+        }
     }
 
     /// Whether ANY map is on screen — the one selector the footnote and the
@@ -370,15 +393,6 @@ struct MarketMapView: View {
         return !hasProjection && !hasScoreTile
     }
 
-    @ViewBuilder
-    private var fullMarginMap: some View {
-        if marginMapIsEmptyChrome {
-            EmptyView()
-        } else {
-            marginMapCard
-        }
-    }
-
     private var marginMapCard: some View {
         let data = fullMarginData
         let parsed = data.rungs
@@ -420,38 +434,10 @@ struct MarketMapView: View {
         // sort by `abs(margin)`; the home half used to sort by the signed value,
         // which is the same order for the non-negative margins `SpreadRungs`
         // produces and is the order the window rule actually requires.
-        let ladderLimit = 3
-        func marginLadder(
-            _ rungs: [SpreadRungs.Rung], isHome: Bool, abbr: String, color: Color
-        ) -> [LadderRow] {
-            let sorted = rungs.sorted { abs($0.margin) < abs($1.margin) }
-            let lines = sorted.map { abs($0.margin) }
-            let sideFinal = settledMargin.map {
-                MarketMapRail.sideFinalMargin(gameMargin: $0, isHome: isHome)
-            }
-            // Before the result, the tightest lines; after it, the lines the
-            // result actually decided — the totals card's rule, unchanged.
-            let window = sideFinal.map {
-                MarketMapRail.settledLadderWindow(
-                    sortedThresholds: lines, finalTotal: $0, limit: ladderLimit
-                )
-            } ?? 0 ..< Swift.min(ladderLimit, sorted.count)
-            return window.map { i in
-                LadderRow(
-                    // #7905 — `by N+`, not `+N`. The side is already known here,
-                    // so this is the one margin label that names it itself.
-                    label: MarketMapRail.marginThresholdLabel(teamAbbr: abbr, threshold: lines[i]),
-                    prob: sorted[i].probability,
-                    color: color,
-                    result: sideFinal.map {
-                        MarketMapRail.totalLadderResult(threshold: lines[i], finalTotal: $0)
-                    }
-                )
-            }
-        }
-        let ladder: [LadderRow] =
-            marginLadder(parsed.filter { !$0.isHome }, isHome: false, abbr: aAbbr, color: awayColor)
-            + marginLadder(parsed.filter(\.isHome), isHome: true, abbr: hAbbr, color: homeColor)
+        // #10830 — `marginLadder` is a member now so the half cards share it;
+        // `limit: nil` is every line, for the card's "All N lines".
+        let ladder = marginLadders(parsed, settledMargin: settledMargin)
+        let fullLadder = marginLadders(parsed, settledMargin: settledMargin, limit: nil)
 
         // Headline: favored team + win %
         //
@@ -555,7 +541,10 @@ struct MarketMapView: View {
             subtitle: MarketMapRail.fullMarginSubtitle(
                 isDone: isDone,
                 canStillBeGraded: canStillBeGraded,
-                hasDistribution: MarketMapRail.marginRailHasDistribution(density: density)
+                // #10830 — a finished game's resolved prices are not a
+                // distribution, so the caption stops promising one where
+                // `mapCard` withholds the shape (`isDone`).
+                hasDistribution: !isDone && MarketMapRail.marginRailHasDistribution(density: density)
             ),
             headline: headline,
             density: density,
@@ -568,8 +557,63 @@ struct MarketMapView: View {
             axisMid: "Tie",
             axisRight: MarketMapRail.marginThresholdLabel(teamAbbr: hAbbr, threshold: axisEnds.right),
             markers: markers,
-            ladder: ladder
+            ladder: ladder,
+            fullLadder: fullLadder
         )
+    }
+
+    /// #3852 — each SIDE is its own one-sided cover ladder: positive lines
+    /// ascending, graded against the margin that side won by. Both sides sort
+    /// by `abs(margin)`, which is the order the window rule requires.
+    ///
+    /// #10830 — lifted out of `marginMapCard` so a half card builds its ladder
+    /// with the SAME rows and grades; the caller decides which result
+    /// (`settledMargin`, home-signed) the rows may be graded against.
+    private static let marginLadderLimit = 3
+
+    private func marginLadders(
+        _ rungs: [SpreadRungs.Rung], settledMargin: Int?,
+        limit: Int? = MarketMapView.marginLadderLimit
+    ) -> [LadderRow] {
+        marginLadder(rungs.filter { !$0.isHome }, isHome: false, abbr: aAbbr,
+                     color: awayColor, settledMargin: settledMargin, limit: limit)
+            + marginLadder(rungs.filter(\.isHome), isHome: true, abbr: hAbbr,
+                           color: homeColor, settledMargin: settledMargin, limit: limit)
+    }
+
+    private func marginLadder(
+        _ rungs: [SpreadRungs.Rung], isHome: Bool, abbr: String, color: Color,
+        settledMargin: Int?, limit: Int?
+    ) -> [LadderRow] {
+        let sorted = rungs.sorted { abs($0.margin) < abs($1.margin) }
+        let lines = sorted.map { abs($0.margin) }
+        let sideFinal = settledMargin.map {
+            MarketMapRail.sideFinalMargin(gameMargin: $0, isHome: isHome)
+        }
+        // Before the result, the tightest lines; after it, the lines the
+        // result actually decided — the totals card's rule, unchanged.
+        let window: Range<Int>
+        if let limit {
+            window = sideFinal.map {
+                MarketMapRail.settledLadderWindow(
+                    sortedThresholds: lines, finalTotal: $0, limit: limit
+                )
+            } ?? 0 ..< Swift.min(limit, sorted.count)
+        } else {
+            window = 0 ..< sorted.count
+        }
+        return window.map { i in
+            LadderRow(
+                // #7905 — `by N+`, not `+N`. The side is already known here,
+                // so this is the one margin label that names it itself.
+                label: MarketMapRail.marginThresholdLabel(teamAbbr: abbr, threshold: lines[i]),
+                prob: sorted[i].probability,
+                color: color,
+                result: sideFinal.map {
+                    MarketMapRail.totalLadderResult(threshold: lines[i], finalTotal: $0)
+                }
+            )
+        }
     }
 
     // MARK: - Full Game Total Map
@@ -618,15 +662,6 @@ struct MarketMapView: View {
                 && scoredHomeScore != nil && scoredAwayScore != nil,
             hasProjectedTotal: scoreboardIsComparable && liveProjection != nil
         )
-    }
-
-    @ViewBuilder
-    private var fullTotalMap: some View {
-        if totalMapIsEmptyChrome {
-            EmptyView()
-        } else {
-            totalMapCard
-        }
     }
 
     private var totalMapCard: some View {
@@ -690,7 +725,10 @@ struct MarketMapView: View {
             settledTotal: settledTotal,
             limit: MarketMapRail.totalMapLadderLimit
         )
-        let ladder: [LadderRow] = drawnRungs.map { rung in
+        // #10830 — the same row for every Over rung, for "All N lines". The
+        // drawn six above stay the default window and the one the Projected
+        // scoring card reads (#4782); opening the rest changes neither.
+        func totalLadderRow(_ rung: MarketMapRail.TotalRung) -> LadderRow {
             let outcome = fullGameTotals[rung.index]
             return LadderRow(
                 label: "Over \(formatThreshold(rung.threshold))",
@@ -712,6 +750,11 @@ struct MarketMapView: View {
                 }
             )
         }
+        let ladder: [LadderRow] = drawnRungs.map(totalLadderRow)
+        let fullLadder: [LadderRow] = MarketMapRail.fullTotalRungs(
+            outcomeNames: fullGameTotals.map(\.outcomeName),
+            thresholds: fullGameTotals.map(\.threshold)
+        ).map(totalLadderRow)
 
         // Markers are built BEFORE the rail (#3503): with no line parsed they
         // are the only real numbers the card has, so the rail has to be able to
@@ -811,7 +854,8 @@ struct MarketMapView: View {
             title: vocab.totalTitle(quotedBy: fullGameTotals.map(\.marketName)),
             subtitle: MarketMapRail.fullTotalSubtitle(
                 isDone: isDone,
-                hasDistribution: hasDistribution,
+                // #10830 — as on the margin card: no shape after the final.
+                hasDistribution: !isDone && hasDistribution,
                 unit: displayUnit(mapUnit),
                 canStillBeGraded: canStillBeGraded
             ),
@@ -827,20 +871,14 @@ struct MarketMapView: View {
             axisMid: "\(Int((rangeMin + rangeMax) / 2))",
             axisRight: "\(Int(rangeMax))+",
             markers: markers,
-            ladder: ladder
+            ladder: ladder,
+            fullLadder: fullLadder
         )
     }
 
     // MARK: - Half Maps
 
-    @ViewBuilder
-    private var halfMarginMaps: some View {
-        ForEach(halfMarginGroups) { group in
-            halfMarginCard(outcomes: group.outcomes, label: group.id, half: group.half)
-        }
-    }
-
-    /// The half-margin cards that will draw. Extracted from `halfMarginMaps` so
+    /// The half-margin cards that will draw. Extracted so `mapEntries` and
     /// `showsAnyMarginMap` can ask the question without rendering it; the
     /// membership rule is copied unchanged — #3503 does not move the margin
     /// side, it only needs to know whether the margin side is on screen.
@@ -885,13 +923,6 @@ struct MarketMapView: View {
             MapGroup(id: "2nd half total map", half: .second,
                            outcomes: halfTotals.filter { derivePeriod($0) == "2H" }),
         ].filter { !extractTotalThresholds($0.outcomes).isEmpty }
-    }
-
-    @ViewBuilder
-    private var halfTotalMaps: some View {
-        ForEach(halfTotalGroups) { group in
-            halfTotalCard(outcomes: group.outcomes, label: group.id, half: group.half)
-        }
     }
 
     /// Whether the TOTAL MAPS column has anything under its heading. Without
@@ -974,13 +1005,24 @@ struct MarketMapView: View {
             ))
         }
 
+        // #10830 — the half's own phase and result. The full-game card's
+        // ladder rows, graded only against THIS half's finished score.
+        let halfOver = MarketMapRail.halfMapIsOver(
+            gameIsDone: isDone, halfIsComplete: halfScores.isComplete(half)
+        )
+        let settledHalfMargin = MarketMapRail.halfSettledScore(
+            halfIsComplete: halfScores.isComplete(half),
+            scoreboardCountsTheUnit: scoreboardCounts(data.unit),
+            played: halfScores.score(half)
+        )?.margin
+
         // #3642 — each end names its own bound, as on the full-game card above.
         let axisEnds = MarketMapRail.marginAxisEnds(bounds)
         return mapCard(
             // #3763 — as on the full-game card above.
             title: label,
             subtitle: MarketMapRail.halfMarginSubtitle(
-                hasDistribution: MarketMapRail.marginRailHasDistribution(density: density)
+                hasDistribution: !halfOver && MarketMapRail.marginRailHasDistribution(density: density)
             ),
             headline: "",
             density: density, rangeMin: rangeMin, rangeMax: rangeMax,
@@ -989,7 +1031,10 @@ struct MarketMapView: View {
             axisLeft: MarketMapRail.marginThresholdLabel(teamAbbr: aAbbr, threshold: axisEnds.left),
             axisMid: "Tie",
             axisRight: MarketMapRail.marginThresholdLabel(teamAbbr: hAbbr, threshold: axisEnds.right),
-            markers: markers, ladder: []
+            markers: markers,
+            ladder: marginLadders(parsed, settledMargin: settledHalfMargin),
+            fullLadder: marginLadders(parsed, settledMargin: settledHalfMargin, limit: nil),
+            periodIsOver: halfOver
         )
     }
 
@@ -1058,10 +1103,49 @@ struct MarketMapView: View {
         let hasDistribution = MarketMapRail.totalRailHasDistribution(density: density)
         let purpleRgb = (r: 124.0, g: 58.0, b: 237.0)
 
+        // #10830 — the half's own phase and result, as on the half margin card.
+        // Every quoted line is reachable; rows grade only against this half's
+        // finished total, never live (`liveTotalLadderResult` refuses a
+        // sub-contest market) and never from the whole game's score.
+        let halfOver = MarketMapRail.halfMapIsOver(
+            gameIsDone: isDone, halfIsComplete: halfScores.isComplete(half)
+        )
+        let settledHalfTotal = MarketMapRail.halfSettledScore(
+            halfIsComplete: halfScores.isComplete(half),
+            scoreboardCountsTheUnit: scoreboardCounts(mapUnit),
+            played: halfScores.score(half)
+        )?.total
+        func halfTotalRow(_ rung: MarketMapRail.TotalRung) -> LadderRow {
+            let outcome = outcomes[rung.index]
+            return LadderRow(
+                label: "Over \(formatThreshold(rung.threshold))",
+                prob: outcome.overProbability ?? outcome.probability ?? 0.5,
+                color: Color(hex: "#7c3aed"),
+                result: settledHalfTotal.map {
+                    MarketMapRail.totalLadderResult(threshold: rung.threshold, finalTotal: $0)
+                }
+            )
+        }
+        let ladder = MarketMapRail.drawnFullTotalRungs(
+            outcomeNames: outcomes.map(\.outcomeName),
+            thresholds: outcomes.map(\.threshold),
+            overProbabilities: outcomes.map {
+                MarketMapRail.ladderWindowPrice(
+                    overProbability: $0.overProbability, probability: $0.probability
+                )
+            },
+            settledTotal: settledHalfTotal,
+            limit: MarketMapRail.halfMapLadderLimit
+        ).map(halfTotalRow)
+        let fullLadder = MarketMapRail.fullTotalRungs(
+            outcomeNames: outcomes.map(\.outcomeName),
+            thresholds: outcomes.map(\.threshold)
+        ).map(halfTotalRow)
+
         return mapCard(
             title: label,
             subtitle: MarketMapRail.halfTotalSubtitle(
-                hasDistribution: hasDistribution,
+                hasDistribution: !halfOver && hasDistribution,
                 unit: displayUnit(mapUnit)
             ),
             headline: "",
@@ -1070,7 +1154,10 @@ struct MarketMapView: View {
             zeroPosition: nil,
             leftRgb: purpleRgb, rightRgb: purpleRgb,
             axisLeft: "\(Int(rangeMin))", axisMid: "\(Int((rangeMin + rangeMax) / 2))", axisRight: "\(Int(rangeMax))+",
-            markers: markers, ladder: []
+            markers: markers,
+            ladder: ladder,
+            fullLadder: fullLadder,
+            periodIsOver: halfOver
         )
     }
 
@@ -1089,9 +1176,22 @@ struct MarketMapView: View {
         rightRgb: (r: Double, g: Double, b: Double),
         axisLeft: String, axisMid: String, axisRight: String,
         markers: [MapMarker],
-        ladder: [LadderRow]
+        ladder: [LadderRow],
+        fullLadder: [LadderRow] = [],
+        periodIsOver: Bool? = nil
     ) -> some View {
-        VStack(alignment: .leading, spacing: 10) {
+        // #10830 — after the final the rail compares the markers on a plain
+        // number line: a resolved price is not a distribution (web's compact
+        // map withholds the same shape). And with no marker either there is
+        // nothing left for the rail to point at, so it is not drawn.
+        // `periodIsOver` is a half card's own phase (`halfMapIsOver`); the
+        // full-game cards leave it nil and read the game's.
+        let showsShape = drawsDistribution && !(periodIsOver ?? isDone)
+        let drawsRail = !MarketMapRail.railDrawsNothing(density: density, markerCount: markers.count)
+            && (showsShape || !markers.isEmpty)
+        let ladderOpen = expandedLadders.contains(title) || Self.rigOpensLadders
+        let drawnLadder = ladderOpen && fullLadder.count > ladder.count ? fullLadder : ladder
+        return VStack(alignment: .leading, spacing: 10) {
             // Header
             HStack(alignment: .top) {
                 VStack(alignment: .leading, spacing: 1) {
@@ -1142,10 +1242,10 @@ struct MarketMapView: View {
             // together. An axis is a scale FOR something; printing `0 · 10 · 21+`
             // under nothing is the same empty chrome as the capsule above it, so
             // gating only the rail would leave the numbers floating.
-            if !MarketMapRail.railDrawsNothing(density: density, markerCount: markers.count) {
+            if drawsRail {
                 // Density rail with marker dots
                 densityRail(
-                    density: density, drawsDistribution: drawsDistribution,
+                    density: density, drawsDistribution: showsShape,
                     rangeMin: rangeMin, rangeMax: rangeMax,
                     zeroPosition: zeroPosition,
                     leftRgb: leftRgb, rightRgb: rightRgb,
@@ -1183,8 +1283,26 @@ struct MarketMapView: View {
             }
 
             // Probability ladder
-            if !ladder.isEmpty {
-                ladderView(entries: ladder)
+            if !drawnLadder.isEmpty {
+                ladderView(entries: drawnLadder)
+            }
+            // #10830 — the full ladder is one tap away, never a second page.
+            if fullLadder.count > ladder.count {
+                Button {
+                    withAnimation(.easeInOut(duration: 0.15)) {
+                        if ladderOpen { expandedLadders.remove(title) }
+                        else { expandedLadders.insert(title) }
+                    }
+                } label: {
+                    Text(ladderOpen ? "Show fewer lines" : "All \(fullLadder.count) lines")
+                        .font(.subheadline.weight(.semibold))
+                        .frame(minHeight: 44)
+                        .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+                .accessibilityHint(ladderOpen
+                    ? "Shows the lines nearest the market's view"
+                    : "Shows every quoted line on this map")
             }
         }
         .padding(14)

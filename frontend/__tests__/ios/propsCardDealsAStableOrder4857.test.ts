@@ -88,12 +88,12 @@ d("#4857 — the props card deals a stable order", () => {
       );
     });
 
-    it("there are exactly four sorts in the file, and each one is named", () => {
+    it("there are exactly five sorts in the file, and each one is named", () => {
       // A NEW `.sorted` appearing on the cards pipeline would silently take
       // precedence over the helper — the last sort wins — so the tripwire is the
-      // count, and the four are enumerated so the next reader can see which is which.
+      // count, and the five are enumerated so the next reader can see which is which.
       const source = card();
-      expect((source.match(/\.sorted[ (\.{]/g) ?? []).length).toBe(4);
+      expect((source.match(/\.sorted[ (\.{]/g) ?? []).length).toBe(5);
 
       // 1. the rungs inside one stat group, by threshold — already a total order
       //    (thresholds are distinct within a ladder).
@@ -102,6 +102,10 @@ d("#4857 — the props card deals a stable order", () => {
       // 4. the source badge list: a Set of strings through the default comparator,
       //    deterministic already and deliberately left alone.
       expect(source).toMatch(/Array\(Set\(playerProps\.compactMap\(\\\.source\)\)\)\.sorted\(\)/);
+      // 5. #10830 — the browser rows, by family rank and then their position in
+      //    the card order above. It ends on the enumeration offset, so it is a
+      //    total order that keeps sort 3's ranking inside each family.
+      expect(source).toMatch(/return ra != rb \? ra < rb : a\.offset < b\.offset/);
     });
   });
 
@@ -127,11 +131,15 @@ d("#4857 — the props card deals a stable order", () => {
     const source = card();
     expect(source).toMatch(/var orderKey: PlayerPropsOrder\.CardKey \{\s*let priced = pricedGroups/);
     expect(source).toMatch(/rungs: priced\.map\(\\\.rungs\.count\)\.reduce\(0, \+\)/);
-    // The card body must select from the priced ladders too: the untapped card
-    // shows one group, and on 52 of 627 measured cards that slot held a flat one.
-    expect(source).toMatch(/let priced = card\.pricedGroups/);
-    expect(source).toMatch(/let defaultGroups = pointsGroups\.isEmpty \? Array\(priced\.prefix\(1\)\) : pointsGroups/);
-    expect(source).toMatch(/let hiddenCount = priced\.count - defaultGroups\.count/);
+    // #10830 — the browser files rows from the priced ladders too: a flat
+    // ladder never takes a stat family's place (on 52 of 627 measured cards the
+    // old one-group slot held one); it is filed under the unpriced family.
+    expect(source).toMatch(/let priced = card\.pricedGroups\.map/);
+    expect(source).toMatch(/PlayerPropsFamily\.family\(statLabel: label, isPriced: true\)/);
+    expect(source).toMatch(/let unpriced = card\.unpricedGroups\.map/);
+    expect(source).toMatch(/PlayerPropsFamily\.family\(statLabel: label, isPriced: false\)/);
+    // And an unpriced row never reaches a renderer that prints a price.
+    expect(source).toMatch(/if !item\.group\.isPriced \{\s*unpricedGroupView\(item\.group, card: item\.card\)/);
   });
 
   it("#5137 — the flat-ladder rule is asked, and the rung's percentage rounds through it", () => {

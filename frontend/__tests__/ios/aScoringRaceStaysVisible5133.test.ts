@@ -124,62 +124,47 @@ d("a two-sided scoring race stays visible on iOS", () => {
 });
 
 /**
- * #5133 — CERT-2620's half, `5133-NATIVE-SCORING-RACE-OVERFLOW-IS-REACHABLE`.
+ * #5133 — CERT-2620's half, `5133-NATIVE-SCORING-RACE-OVERFLOW-IS-REACHABLE`,
+ * as #10830 keeps it.
  *
- * `NativeScoringRaceOverflowIsReachable5133Tests` proves `displayedItems` hands
- * back the ninth, tenth and eleventh cards when asked to expand. It cannot
- * prove `body` ASKS — a SwiftUI body is unreachable from XCTest, and the whole
- * defect was a body that rendered `prefix(5)` and then an inert `Text`. So the
- * two mutants that matter are pinned here, in a file CI actually runs.
+ * CERT-2620's repair was a per-category "Show N more". #10830 replaced the
+ * category cap with the event page's market browser (family pills, a search
+ * across families, a window that grows a page at a time).
+ * `NativeScoringRaceOverflowIsReachable5133Tests` proves `browseRows` hands the
+ * browser every card and that the race is inside its family's first window. It
+ * cannot prove `body` BROWSES THAT LIST — a SwiftUI body is unreachable from
+ * XCTest, and the original defect was a body that rendered `prefix(5)` and then
+ * an inert `Text`. So the wiring is pinned here, in a file CI actually runs.
  */
-d("the scoring race is reachable past the category cap", () => {
+d("the scoring race is reachable through the browser", () => {
   const view = () => stripSwiftComments(readFileSync(VIEW, "utf8"));
 
-  it("the body renders through the seam the guard tests, not its own cap", () => {
+  it("the body browses the seam the guard tests, not its own cap", () => {
     const code = view();
 
-    expect(code).toMatch(
-      /ForEach\(Self\.displayedItems\(cat\.items, expanded: isExpanded\)\)/,
-    );
+    expect(code).toMatch(/let rows = Self\.browseRows\(cats\)/);
+    expect(code).toMatch(/MarketBrowserView\(\s*label: "Game questions",\s*items: rows,/);
     // THE DEFECT, spelled out so it cannot come back by accident.
-    expect(code).not.toMatch(/cat\.items\.prefix\(/);
-  });
-
-  it("the overflow is a control a reader can hit, not a caption", () => {
-    const code = view();
-    const overflow = /if cat\.items\.count > Self\.itemDisplayCap \{[\s\S]*?\n {28}\}/.exec(code);
-
-    expect(overflow).not.toBeNull();
-    const body = overflow![0];
-
-    // A Button, and one that mutates the state the seam reads.
-    expect(body).toMatch(/Button \{/);
-    expect(body).toMatch(/expandedCategories\.insert\(cat\.id\)/);
-    expect(body).toMatch(/expandedCategories\.remove\(cat\.id\)/);
-    // The old shape: a Text and nothing else.
-    expect(body).not.toMatch(/^\s*Text\("\+\\\(cat\.items\.count/m);
-  });
-
-  it("the cap is one named number, not a literal sprinkled through the view", () => {
-    const code = view();
-
-    expect(code).toMatch(/static let itemDisplayCap = 5/);
-    // `prefix(5)` / `> 5` anywhere in this view is the drift this catches.
+    expect(code).not.toMatch(/\.items\.prefix\(/);
     expect(code).not.toMatch(/\.prefix\(5\)/);
-    expect(code).not.toMatch(/cat\.items\.count > 5/);
   });
 
-  /**
-   * The control. Every assertion above is a `toMatch` against source text, and
-   * source text passes vacuously if the symbol it names does not exist at all —
-   * so assert the seam and its state are really declared.
-   */
-  it("the seam and its state exist", () => {
+  it("the seam hands over every card of every category", () => {
     const code = view();
+    const seam = /static func browseRows\(_ categories: \[MarketCategory\]\) -> \[BrowseRow\] \{[\s\S]*?\n {4}\}/.exec(code);
 
-    expect(code).toMatch(
-      /static func displayedItems\(_ items: \[MarketItem\], expanded: Bool\) -> \[MarketItem\]/,
+    expect(seam).not.toBeNull();
+    // A flatMap over the categories and a map over each one's items — no
+    // filter, no prefix, nothing that could drop a card.
+    expect(seam![0]).toMatch(/categories\.flatMap/);
+    expect(seam![0]).toMatch(/category\.items\.map/);
+    expect(seam![0]).not.toMatch(/filter|prefix|dropLast|\[0\.\./);
+  });
+
+  it("the browser's window grows to every match", () => {
+    const logic = stripSwiftComments(
+      readFileSync(join(REPO, "ios/Bain Luck/Bain Luck/Utilities/MarketBrowserLogic.swift"), "utf8"),
     );
-    expect(code).toMatch(/@State private var expandedCategories: Set<String> = \[\]/);
+    expect(logic).toMatch(/current < matchCount \? current \+ pageSize : pageSize/);
   });
 });

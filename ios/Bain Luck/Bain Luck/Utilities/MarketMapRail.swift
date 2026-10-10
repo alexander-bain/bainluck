@@ -1113,6 +1113,11 @@ enum MarketMapRail {
     /// beside this one is the whole failure this section exists to prevent.
     static let totalMapLadderLimit = 6
 
+    /// How many rungs a HALF totals map draws before "All N lines" (#10830):
+    /// a half card sits under the full map's tabs and stays the shorter card,
+    /// the same three a margin card shows per side.
+    static let halfMapLadderLimit = 3
+
     /// The line an outcome draws on a totals ladder, or `nil` where the row is
     /// not one of its rungs.
     ///
@@ -1798,6 +1803,35 @@ enum MarketMapRail {
     /// `halfTotalCard` read before #3576 gave it ``halfTotalSubtitle``.
     static func halfMarginSubtitle(hasDistribution: Bool) -> String {
         hasDistribution ? "Half margin distribution" : "Half margin"
+    }
+
+    // MARK: - A half map's own phase (#10830)
+
+    /// Whether a half map's period is OVER, which is what withholds its shape.
+    ///
+    /// #10830 — the compact map stopped drawing a finished game's resolved
+    /// prices as a distribution, but asked only the GAME's `isDone`. A first
+    /// half is over the moment halftime is observed, so mid-game its rail was
+    /// still shading settlement prices beside its own `FINAL` tile. The half's
+    /// phase is the game's verdict OR its own (`HalfScores.Pair.isComplete`),
+    /// never something less: a live second half keeps its distribution.
+    static func halfMapIsOver(gameIsDone: Bool, halfIsComplete: Bool) -> Bool {
+        gameIsDone || halfIsComplete
+    }
+
+    /// The half score a half map may GRADE its ladder against, or nil.
+    ///
+    /// Only the half's OWN finished score: a half in play has no result yet,
+    /// and a whole-game final is never split into halves here (a game that is
+    /// over with no halftime reading prints prices, ungraded). Gated, like the
+    /// `FINAL` tile beside it, on the scoreboard counting this map's unit.
+    static func halfSettledScore(
+        halfIsComplete: Bool,
+        scoreboardCountsTheUnit: Bool,
+        played: HalfScoreSplit?
+    ) -> HalfScoreSplit? {
+        guard halfIsComplete, scoreboardCountsTheUnit else { return nil }
+        return played
     }
 
     // MARK: - Whether a map may say PRE-GAME
