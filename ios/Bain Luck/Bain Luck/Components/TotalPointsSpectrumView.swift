@@ -3,6 +3,7 @@ import SwiftUI
 /// Projected scoring spectrum: O/U line, pace/actual bars, and threshold ladder.
 /// Mirrors the web TotalPointsSpectrum component.
 struct TotalPointsSpectrumView: View {
+    @ScaledMetric(relativeTo: .caption) private var thresholdColumnWidth: CGFloat = 50
     let gameMarkets: GameMarketsResponse
     let eventStatus: String?
     /// #4018 — the clock half of "can a final still arrive?"; see `MarketMapView`.
@@ -696,7 +697,9 @@ struct TotalPointsSpectrumView: View {
             HStack(spacing: 10) {
                 Text("\(formatThreshold(threshold))+")
                     .font(.caption.monospacedDigit().weight(.semibold))
-                    .frame(width: 50, alignment: .leading)
+                    .lineLimit(1)
+                    .fixedSize(horizontal: true, vertical: false)
+                    .frame(minWidth: thresholdColumnWidth, alignment: .leading)
 
                 // Whether this row is captioned at all, and with which word, is
                 // ``MarketMapRail/spectrumRowCaption(finalTotal:isSettled:canStillBeGraded:hasStarted:rungResult:)``

@@ -6,7 +6,8 @@ import Charts
 /// Shows projected score differential (spread) and actual score difference over time.
 /// Y-axis centered at 0. Positive = home team leading, negative = away team leading.
 struct ScoreDifferentialChartView: View {
-    @ScaledMetric(relativeTo: .caption2) private var axisFontSize: CGFloat = 12
+    @ScaledMetric(relativeTo: .caption2) private var scaledAxisFontSize: CGFloat = 12
+    private var axisFontSize: CGFloat { EventChartTypography.labelSize(scaled: scaledAxisFontSize) }
     let history: EventHistoryResponse
     let homeTeam: String
     let awayTeam: String
@@ -145,7 +146,7 @@ struct ScoreDifferentialChartView: View {
                     // footprint rather than overdrawing the heading beside it.
                     VStack {
                         let run = ChartGutter.run(chartHeight: Self.chartHeight, verticalPadding: 8)
-                        let gutterFont: CGFloat = 10
+                        let gutterFont = axisFontSize
                         let gutter = gutterLabels(run: run, fontSize: gutterFont)
                         // #4117 — the crest, from the same shared rung the Win
                         // Probability gutter above this one climbs. Without it this
@@ -519,7 +520,10 @@ struct ScoreDifferentialChartView: View {
             plotWidth: OddsChartView.axisPlanWidth(
                 own: plotWidth, pageNarrowest: pageAxisPlotWidth),
             labelScale: axisFontSize / 9)
-        let ticks = OddsChartView.xAxisTicks(for: domain, plan: plan)
+        let ticks = OddsChartView.xAxisContextTicks(
+            for: domain, plan: plan,
+            plotWidth: OddsChartView.axisPlanWidth(own: plotWidth, pageNarrowest: pageAxisPlotWidth),
+            labelScale: axisFontSize / 9)
         let actualDiffs = dataPoints.compactMap(\.actualDiff)
         let projDiffs = dataPoints.compactMap(\.projectedDiff)
         let allDiffs = actualDiffs + projDiffs
@@ -594,8 +598,8 @@ struct ScoreDifferentialChartView: View {
                     if let v = value.as(Double.self) {
                         let intVal = Int(v)
                         Text(intVal > 0 ? "+\(intVal)" : "\(intVal)")
-                            .font(.system(size: 9))
-                            .foregroundStyle(.secondary)
+                            .font(.system(size: axisFontSize))
+                            .foregroundStyle(Color.primary)
                     }
                 }
             }
@@ -663,6 +667,7 @@ struct ScoreDifferentialChartView: View {
                 }
             }
         }
+        .padding(.top, axisFontSize / 2)
         .onPreferenceChange(PlotWidthPreferenceKey.self) { width in
             plotWidth = width
         }

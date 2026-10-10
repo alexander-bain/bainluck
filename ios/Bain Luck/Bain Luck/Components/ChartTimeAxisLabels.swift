@@ -18,8 +18,15 @@ import Charts
 /// visible one at `OddsChartView.xAxisLabelCenters` — centred on its tick,
 /// clamped inside the plot. The period chips have been placed the same way, in
 /// the same overlay, since #3237.
+enum EventChartTypography {
+    /// Grow the plot's labels without letting its axes consume the plot.
+    /// Only chart labels use this budget; page text keeps full Dynamic Type.
+    static func labelSize(scaled: CGFloat) -> CGFloat { min(max(scaled, 12), 16) }
+}
+
 struct ChartTimeAxisLabels: View {
-    @ScaledMetric(relativeTo: .caption2) private var fontSize: CGFloat = 12
+    @ScaledMetric(relativeTo: .caption2) private var scaledFontSize: CGFloat = 12
+    private var fontSize: CGFloat { EventChartTypography.labelSize(scaled: scaledFontSize) }
     let ticks: [Date]
     let plan: OddsChartView.XAxisPlan
     let proxy: ChartProxy

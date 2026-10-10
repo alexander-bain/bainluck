@@ -344,7 +344,8 @@ final class OddsChartViewModel: ObservableObject {
 // MARK: - View
 
 struct OddsChartView: View {
-    @ScaledMetric(relativeTo: .caption2) private var axisFontSize: CGFloat = 12
+    @ScaledMetric(relativeTo: .caption2) private var scaledAxisFontSize: CGFloat = 12
+    private var axisFontSize: CGFloat { EventChartTypography.labelSize(scaled: scaledAxisFontSize) }
     let eventId: Int
     var teamColors: (away: Color, home: Color)?
     var commenceTime: String?
@@ -819,7 +820,7 @@ struct OddsChartView: View {
                         // section heading beside it).
                         VStack {
                             let run = ChartGutter.run(chartHeight: chartHeight, verticalPadding: 8)
-                            let gutterFont: CGFloat = 11
+                            let gutterFont = axisFontSize
                             let gutter = gutterLabels(run: run, fontSize: gutterFont)
                             // Home team (top)
                             ChartGutterLabel(run: run) {
@@ -966,7 +967,7 @@ struct OddsChartView: View {
                                 // run is measured rather than assumed.
                                 GeometryReader { geo in
                                     let run = ChartGutter.run(chartHeight: geo.size.height, verticalPadding: 0)
-                                    let gutterFont: CGFloat = 10
+                                    let gutterFont = axisFontSize
                                     let gutter = gutterLabels(run: run, fontSize: gutterFont)
                                     VStack {
                                         // #4117 — the same crest as the inline gutter.
@@ -1737,7 +1738,11 @@ struct OddsChartView: View {
                 own: plotWidth.wrappedValue,
                 pageNarrowest: sharesPageAxis ? pageAxisPlotWidth : 0),
             labelScale: axisFontSize / 9)
-        let ticks = Self.xAxisTicks(for: domain, plan: plan)
+        let ticks = Self.xAxisContextTicks(
+            for: domain, plan: plan,
+            plotWidth: Self.axisPlanWidth(own: plotWidth.wrappedValue,
+                pageNarrowest: sharesPageAxis ? pageAxisPlotWidth : 0),
+            labelScale: axisFontSize / 9)
         // #4974 — neither runs under a checkpoint mount. The balance ink would
         // draw the blend a second time, uncut, and color a crossing of 50% that
         // nothing recorded; the live split is a live page's, and a mount is a
@@ -1926,6 +1931,7 @@ struct OddsChartView: View {
                 ChartTimeAxisLabels.reservedRow(format: plan.format, fontSize: axisFontSize)
             }
         }
+        .padding(.top, axisFontSize / 2)
         .onPreferenceChange(PlotWidthPreferenceKey.self) { width in
             plotWidth.wrappedValue = width
         }
@@ -3544,6 +3550,37 @@ struct OddsChartView: View {
             ticks.append(tick)
         }
         return ticks
+    }
+
+    /// Multi-day ranges retain their opening and closing dates. Thin interior
+    /// labels against the same measured widths and edge clamps as the renderer;
+    /// do not move data, the domain, or short-game clock ticks.
+    static func xAxisContextTicks(
+        for domain: ClosedRange<Date>, plan: XAxisPlan, plotWidth: CGFloat,
+        labelScale: CGFloat, calendar: Calendar = .current
+    ) -> [Date] {
+        let regular = xAxisTicks(for: domain, plan: plan, calendar: calendar)
+        guard plan.labelStyle == .calendarDay || plan.labelStyle == .monthAndYear,
+              domain.upperBound > domain.lowerBound else { return regular }
+        let width = xAxisLabelWidth(for: plan.labelStyle) * max(labelScale, 1)
+        guard plotWidth >= 2 * width + xAxisLabelMinGap else { return regular }
+        let duration = domain.upperBound.timeIntervalSince(domain.lowerBound)
+        func center(_ date: Date) -> CGFloat {
+            let position = CGFloat(date.timeIntervalSince(domain.lowerBound) / duration) * plotWidth
+            return xAxisLabelCenters(tickPositions: [position], plotWidth: plotWidth, labelWidth: width)[0]
+        }
+        let closing = center(domain.upperBound)
+        var result = [domain.lowerBound]
+        var previous = center(domain.lowerBound)
+        for tick in regular where tick > domain.lowerBound && tick < domain.upperBound {
+            let x = center(tick)
+            if x - previous >= width + xAxisLabelMinGap && closing - x >= width + xAxisLabelMinGap {
+                result.append(tick)
+                previous = x
+            }
+        }
+        result.append(domain.upperBound)
+        return result
     }
 
     /// Where each time label's CENTRE sits, in plot points, given where its tick

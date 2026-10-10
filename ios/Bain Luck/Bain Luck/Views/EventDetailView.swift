@@ -900,7 +900,7 @@ struct EventDetailView: View {
                     sequence: vm.priceActivity?.sequence ?? 0,
                     receivedAt: vm.priceActivity?.receivedAt)
             }
-            .frame(maxWidth: dynamicTypeSize.isAccessibilitySize ? nil : Self.verdictSlotWidth, minHeight: 44)
+            .frame(maxWidth: Self.heroVerdictWidth(at: dynamicTypeSize), minHeight: 44)
             .fixedSize(horizontal: false, vertical: true)
             .contentShape(Rectangle())
         }
@@ -1358,7 +1358,7 @@ struct EventDetailView: View {
                                 .multilineTextAlignment(.center)
                                 .lineLimit(2)
                                 .minimumScaleFactor(0.7)
-                                .frame(maxWidth: EventDetailView.verdictSlotWidth)
+                                .frame(maxWidth: Self.heroVerdictWidth(at: dynamicTypeSize))
                         }
                         // Pre-game odds as secondary context.
                         //
@@ -1403,7 +1403,7 @@ struct EventDetailView: View {
                                     .foregroundStyle(.secondary)
                                     .multilineTextAlignment(.center)
                                     .lineLimit(2)
-                                    .frame(maxWidth: EventDetailView.verdictSlotWidth)
+                                    .frame(maxWidth: Self.heroVerdictWidth(at: dynamicTypeSize))
                             }
                         }
                     } else if EventState.showsVenueSettledVerdict(
@@ -1443,7 +1443,7 @@ struct EventDetailView: View {
                                 .multilineTextAlignment(.center)
                                 .lineLimit(3)
                                 .minimumScaleFactor(0.55)
-                                .frame(maxWidth: EventDetailView.verdictSlotWidth)
+                                .frame(maxWidth: Self.heroVerdictWidth(at: dynamicTypeSize))
                                 .layoutPriority(-1)
                         } else {
                             // 370 of the issue's 426 rows are graded on props
@@ -1774,6 +1774,11 @@ struct EventDetailView: View {
     /// ever held ("Sion Win", "Draw 0-0", "87 – 13") is narrower and centres
     /// inside it unchanged, so nothing that fit before is being re-laid-out.
     static let verdictSlotWidth: CGFloat = 150
+
+    /// The centre becomes a full-width row at the same size as the team layout.
+    static func heroVerdictWidth(at size: DynamicTypeSize) -> CGFloat? {
+        size >= .xxLarge ? nil : verdictSlotWidth
+    }
 
     // MARK: - Hero Status Badge
 

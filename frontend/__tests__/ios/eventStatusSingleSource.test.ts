@@ -897,8 +897,10 @@ describe("#6381 — the hero stops denying a result the venue already gave us", 
     // checked the short specimen would have shipped it.
     const code = read(DETAIL);
     expect(code).toMatch(
-      /Text\(result\)[\s\S]{0,400}?\.frame\(maxWidth: EventDetailView\.verdictSlotWidth\)\s*\n\s*\.layoutPriority\(-1\)/,
+      /Text\(result\)[\s\S]{0,400}?\.frame\(maxWidth: Self\.heroVerdictWidth\(at: dynamicTypeSize\)\)\s*\n\s*\.layoutPriority\(-1\)/,
     );
+    // #10796: the cap applies while the verdict shares a row with the crests.
+    expect(code).toMatch(/size >= \.xxLarge \? nil : verdictSlotWidth/);
     // 🔴 THE CAP IS FINITE, AND THAT IS THE ASSERTION — the second shot of this
     // ship proved `.infinity` does not hold this slot. The two crest columns are
     // `maxWidth: .infinity` siblings, so an infinite maximum here asks the row
