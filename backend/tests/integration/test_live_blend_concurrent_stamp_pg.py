@@ -525,9 +525,14 @@ class TestTheServerSideMergePreservesWhatThePythonHelperDid:
 async def _concurrent_refresh_frames(engine, monkeypatch, *, prelock_control):
     """Actual refresh/commit path; only inputs, snapshots and fanout are seams.
 
-    The first arm reaches the pre-SAVEPOINT await first, but the sibling obtains
+    The first arm reaches the pre-UPDATE await first, but the sibling obtains
     the row lock first. Observe an actual PostgreSQL transaction lock wait before
     releasing the sibling. No sleep determines which UPDATE wins.
+
+    92d3c9fefb: a single-event stamp no longer opens a SAVEPOINT before its
+    UPDATE (the first `begin_nested` is now the chart point, AFTER the row lock
+    is held), so the ordering point is the stamp UPDATE itself — the same
+    instant the event savepoint used to precede.
     """
     from sqlalchemy.ext.asyncio import async_sessionmaker
 
@@ -566,26 +571,22 @@ async def _concurrent_refresh_frames(engine, monkeypatch, *, prelock_control):
     class OrderedSession:
         def __init__(self, session, source):
             self.session, self.source = session, source
-            self.nested_count = 0
+            self.update_count = 0
 
         def __getattr__(self, name):
             return getattr(self.session, name)
 
-        @asynccontextmanager
-        async def begin_nested(self):
-            self.nested_count += 1
-            if self.nested_count == 1:
-                before_lock[self.source] = datetime.now(timezone.utc)
+        async def execute(self, statement, *args, **kwargs):
+            is_update = getattr(statement, "is_update", False)
+            if is_update:
+                self.update_count += 1
+            if is_update and self.update_count == 1:
+                # About to issue its stamp UPDATE, i.e. before the row lock.
                 if self.source == "polymarket":
                     first_at_savepoint.set()
                     await sibling_has_lock.wait()
                 else:
                     await first_at_savepoint.wait()
-            async with self.session.begin_nested():
-                yield
-
-        async def execute(self, statement, *args, **kwargs):
-            is_update = getattr(statement, "is_update", False)
             if is_update and self.source == "polymarket":
                 first_attempting_update.set()
             result = await self.session.execute(statement, *args, **kwargs)
@@ -620,8 +621,12 @@ async def _concurrent_refresh_frames(engine, monkeypatch, *, prelock_control):
         def old_clock(
             source, value, stamped_at=None, eligibility=None, observed_basis=None,
         ):
+            # Taken where the stamp statement is BUILT, just before its
+            # UPDATE is issued and so before the row lock (92d3c9fefb moved
+            # the rig's ordering point from the savepoint to that UPDATE).
+            stamped = before_lock.setdefault(source, datetime.now(timezone.utc))
             return real_expression(
-                source, value, before_lock[source], eligibility, observed_basis,
+                source, value, stamped, eligibility, observed_basis,
             )
 
         monkeypatch.setattr(lbr, "atomic_stamp_expression", old_clock)
