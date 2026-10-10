@@ -292,11 +292,35 @@ async def wired(request, pubsub_server, monkeypatch):
     # which a released channel's UNSUBSCRIBE and idle teardown are noticed.
     monkeypatch.setattr(route, "FRAME_WAIT_S", 0.05)
     monkeypatch.setattr(live_fanout, "READ_TIMEOUT_S", 0.05)
+    # 88a4a5cad3: an opening stream replays the last frame with one read on
+    # the process's ONE shared request pool (`request_cache`, budgeted in the
+    # census below), not on the hub. Its own toy server keeps the hub's count
+    # the hub's, and records that the replay reads stay within that one pool.
+    from app.utils import request_cache
+
+    request_server = _TinyPubSubServer()
+    pubsub_server.request_server = request_server
+    request_url = (
+        f"redis://127.0.0.1:{request_server.port}/0?protocol={request.param}"
+    )
+    shared = []
+
+    async def shared_request_client():
+        if not shared:
+            with monkeypatch.context() as patch:
+                patch.setattr(redis_state, "REDIS_URL", request_url)
+                shared.append(redis_state.get_async_redis_client())
+        return shared[0]
+
+    monkeypatch.setattr(request_cache, "get_shared_async_redis", shared_request_client)
     await live_fanout.reset_fanout()
     try:
         yield pubsub_server
     finally:
         await live_fanout.reset_fanout()
+        for client in shared:
+            await client.aclose()
+        request_server.close()
 
 
 class _ConnectedRequest:
@@ -386,6 +410,10 @@ class TestTheBudgetHoldsAcrossConcurrentStreams:
             assert wired.peak_concurrent == 1
             assert live_fanout.fanout().subscriber_count == 12
             assert live_fanout.fanout().redis_connections == 1
+            # The twelve opening replays share the process's one request pool.
+            assert 1 <= wired.request_server.accepted <= (
+                redis_state._REDIS_MAX_CONNECTIONS
+            ), wired.request_server.accepted
         finally:
             for reader in readers:
                 await reader.stop()
